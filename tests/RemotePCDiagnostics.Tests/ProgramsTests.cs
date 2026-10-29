@@ -60,6 +60,7 @@ public class ProgramsTests
     [InlineData("20260115", 2026, 1, 15)]
     [InlineData("10/14/2026", 2026, 10, 14)]
     [InlineData("2026-03-02", 2026, 3, 2)]
+    [InlineData("1792619134", 2026, 10, 21)]
     public void ParseDate_Formats(string s, int y, int m, int d) => Assert.Equal(new DateOnly(y, m, d), ProgramsModule.ParseDate(s));
 
     [Fact]
