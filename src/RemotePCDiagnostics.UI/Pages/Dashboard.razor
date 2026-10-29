@@ -6,6 +6,7 @@
     var inv = hw.Payload as HardwareInventory;
     var th = Store.Get(RemotePCDiagnostics.Core.Sensors.LibreHardwareMonitorModule.ModuleName);
     var thBusy = th.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
+    var cpu = Store.Get(RemotePCDiagnostics.Core.Stress.CpuStressModule.ModuleName);
     var querying = hw.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
 }
 <div class="toolbar"><h1 data-testid="dashboard-title">Dashboard</h1></div>
@@ -19,15 +20,19 @@
     <span class="@DotClass(th.Status)"></span>
     <span>Temperatures &amp; fans: @(thBusy ? "Checking…" : th.Message)</span>
 </p>
+<p data-testid="dashboard-cpustress" class="status-line">
+    <span class="@DotClass(cpu.Status)"></span>
+    <span>CPU stress test: @(cpu.Status switch { DiagnosticStatus.NotRun => "Not run yet", DiagnosticStatus.Running => "Running…", _ => cpu.Message })</span>
+</p>
 <div class="cards">
     @foreach (var m in Diagnostics.Modules)
     {
         var r = Store.Get(m.Name);
-        var busy = r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
+        var busy = r.Status is DiagnosticStatus.Running || (r.Status is DiagnosticStatus.NotRun && m.IncludeInRunAll);
         <div class="card" data-testid="dashboard-card-@m.Name.ToLowerInvariant()">
             <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@m.DisplayName</strong></div>
-            <div class="headline">@(busy ? "Checking…" : r.Message)</div>
-            @if (!busy) { <div class="meta">Updated @r.Timestamp.ToLocalTime().ToString("g")</div> }
+            <div class="headline">@(busy ? (r.Status is DiagnosticStatus.Running && !m.IncludeInRunAll ? "Running…" : "Checking…") : r.Message)</div>
+            @if (!busy && r.Status != DiagnosticStatus.NotRun) { <div class="meta">Updated @r.Timestamp.ToLocalTime().ToString("g")</div> }
         </div>
     }
 </div>
