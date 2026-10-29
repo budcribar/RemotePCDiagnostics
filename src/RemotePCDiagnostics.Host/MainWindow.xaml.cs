@@ -7,6 +7,7 @@ using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Sensors;
+using RemotePCDiagnostics.Core.Stress;
 using RemotePCDiagnostics.Host.Sensors;
 
 namespace RemotePCDiagnostics.Host;
@@ -29,6 +30,8 @@ public partial class MainWindow : Window
         services.AddSingleton<IDiagnosticModule, OsqueryModule>();
         services.AddSingleton<ISensorProvider, LhmSensorProvider>();
         services.AddSingleton<IDiagnosticModule, LibreHardwareMonitorModule>();
+        // On demand only: not auto-run and excluded from Run All; runs when the user presses Start on its page.
+        services.AddSingleton<IDiagnosticModule>(sp => new CpuStressModule(sp.GetRequiredService<ISensorProvider>(), App.Log));
         services.AddSingleton(new SystemCommandRunner(log: App.Log));
         services.AddSingleton<IDiagnosticModule, DriveHealthModule>();
         services.AddSingleton<IDiagnosticModule, ServicesModule>();

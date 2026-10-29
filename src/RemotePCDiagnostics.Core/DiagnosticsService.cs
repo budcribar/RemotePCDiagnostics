@@ -34,10 +34,11 @@ public sealed class DiagnosticsService
         return await RunAsync(module, progress, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Runs every module concurrently; a slow or failing module does not block the others.</summary>
+    /// <summary>Runs every module concurrently; a slow or failing module does not block the others.
+    /// On-demand modules (<see cref="IDiagnosticModule.IncludeInRunAll"/> false, e.g. stress tests) are skipped.</summary>
     public Task<DiagnosticResult[]> RunAllAsync(CancellationToken ct = default)
     {
-        var modules = _modules.ToArray();
+        var modules = _modules.Where(m => m.IncludeInRunAll).ToArray();
         return Task.WhenAll(modules.Select(m => RunAsync(m, null, ct)));
     }
 
