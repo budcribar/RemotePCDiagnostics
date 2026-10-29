@@ -1,6 +1,6 @@
 @page "/"
 @inherits StoreAwareComponent
-<div class="toolbar"><h1>Dashboard</h1><button @onclick="RunAll" disabled="@_busy">Run All</button></div>
+<div class="toolbar"><h1 data-testid="dashboard-title">Dashboard</h1><button @onclick="RunAll" disabled="@_busy">Run All</button></div>
 <div class="cards">
     @foreach (var m in Diagnostics.Modules)
     {

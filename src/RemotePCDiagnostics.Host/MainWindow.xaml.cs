@@ -26,6 +26,7 @@ public partial class MainWindow : Window
         Resources.Add("services", services.BuildServiceProvider());
 
         InitializeComponent();
+        App.Log($"MainWindow initialized, mode={mode}");
 
         if (serverArg is not null)
         {
