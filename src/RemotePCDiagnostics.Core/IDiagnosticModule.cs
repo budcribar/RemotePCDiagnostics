@@ -3,6 +3,8 @@ namespace RemotePCDiagnostics.Core;
 public interface IDiagnosticModule
 {
     string Name { get; }
+    /// <summary>User-visible label (nav, dashboard). Defaults to <see cref="Name"/>.</summary>
+    string DisplayName => Name;
     Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default);
     Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default);
     /// <summary>Raised when the module pushes an unsolicited update (e.g. live sensors).</summary>

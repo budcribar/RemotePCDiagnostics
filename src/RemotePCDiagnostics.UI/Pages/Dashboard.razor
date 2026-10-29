@@ -1,20 +1,27 @@
 @page "/"
+@using RemotePCDiagnostics.Core.Osquery
 @inherits StoreAwareComponent
-<div class="toolbar"><h1 data-testid="dashboard-title">Dashboard</h1><button @onclick="RunAll" disabled="@_busy">Run All</button></div>
+@{
+    var hw = Store.Get("Osquery");
+    var inv = hw.Payload as HardwareInventory;
+    var querying = hw.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
+}
+<div class="toolbar"><h1 data-testid="dashboard-title">Dashboard</h1></div>
+<p data-testid="dashboard-status" class="@(hw.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
+    <span class="@DotClass(hw.Status)"></span>
+    @if (querying) { <span>Querying hardware…</span> }
+    else if (hw.Status == DiagnosticStatus.Error || inv is null) { <span>@hw.Message</span> }
+    else { <span>@inv.FriendlySummary()</span> }
+</p>
 <div class="cards">
     @foreach (var m in Diagnostics.Modules)
     {
         var r = Store.Get(m.Name);
-        <div class="card">
-            <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@m.Name</strong></div>
-            <div class="headline">@r.Message</div>
-            <div class="meta">@r.Status · @r.Timestamp.ToLocalTime().ToString("g")</div>
-            <button @onclick="() => Refresh(m.Name)" disabled="@(r.Status == DiagnosticStatus.Running)">Refresh</button>
+        var busy = r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
+        <div class="card" data-testid="dashboard-card-@m.Name.ToLowerInvariant()">
+            <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@m.DisplayName</strong></div>
+            <div class="headline">@(busy ? "Checking…" : r.Message)</div>
+            @if (!busy) { <div class="meta">Updated @r.Timestamp.ToLocalTime().ToString("g")</div> }
         </div>
     }
 </div>
-@code {
-    private bool _busy;
-    private async Task RunAll() { _busy = true; try { await Diagnostics.RunAllAsync(); } finally { _busy = false; } }
-    private Task Refresh(string name) => Diagnostics.RunAsync(name);
-}

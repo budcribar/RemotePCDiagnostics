@@ -53,12 +53,19 @@ public sealed record DiskInfo(
 }
 
 /// <summary>One inventory section: parsed items, or the error that prevented them.</summary>
-public sealed record InventorySection<T>(string Sql, IReadOnlyList<T> Items, string? Error)
+/// <remarks>Diagnostics (row count, exit code, stderr, elapsed, stdout head) live in <see cref="Query"/> and the log, never in the UI.
+/// <see cref="FromFallback"/> is true when <see cref="Items"/> were derived from another table because this one returned nothing usable.</remarks>
+public sealed record InventorySection<T>(string Sql, IReadOnlyList<T> Items, string? Error, OsqueryQueryResult? Query = null, bool FromFallback = false)
 {
     public bool Success => Error is null;
+    public int RowCount => Query?.RowCount ?? Items.Count;
+    public int? ExitCode => Query?.ExitCode;
+    public string RawStdErr => Query?.RawStdErr ?? "";
+    public string RawStdOutHead => Query?.RawStdOutHead ?? "";
+    public long ElapsedMs => Query?.ElapsedMs ?? 0;
 
     public static InventorySection<T> From(OsqueryQueryResult q, Func<IReadOnlyDictionary<string, string>, T> map) =>
-        q.Success ? new(q.Sql, q.Rows!.Select(map).ToList(), null) : new(q.Sql, [], q.Error);
+        q.Success ? new(q.Sql, q.Rows!.Select(map).ToList(), null, q) : new(q.Sql, [], q.Error, q);
 }
 
 /// <summary>Aggregate of the hardware inventory queries.</summary>
@@ -72,6 +79,11 @@ public sealed record HardwareInventory(
     public const string CpuSql = "SELECT * FROM cpu_info;";
     public const string MemorySql = "SELECT * FROM memory_devices;";
     public const string DiskSql = "SELECT * FROM disk_info;";
+    /// <summary>Fallback for a blank disk_info.disk_size: total of fixed logical volumes (logical_drives.size, bytes).</summary>
+    public const string LogicalDrivesSql = "SELECT device_id, type, size FROM logical_drives;";
+
+    /// <summary>True when the machine was found to have no osqueryi (every section failed with not-found).</summary>
+    public bool ToolMissing { get; init; }
 
     public int FailedSections => new[] { System.Success, Cpus.Success, Memory.Success, Disks.Success }.Count(ok => !ok);
 
@@ -82,7 +94,64 @@ public sealed record HardwareInventory(
         var cpu = InventorySection<CpuInfo>.From(await Q(CpuSql).ConfigureAwait(false), CpuInfo.FromRow);
         var mem = InventorySection<MemoryDevice>.From(await Q(MemorySql).ConfigureAwait(false), MemoryDevice.FromRow);
         var disk = InventorySection<DiskInfo>.From(await Q(DiskSql).ConfigureAwait(false), DiskInfo.FromRow);
-        return new(sys, cpu, mem, disk);
+
+        // Fallbacks (shown to the user as normal values).
+        var s0 = sys.Items.FirstOrDefault();
+        if (cpu.Success && cpu.Items.Count == 0 && s0 is { CpuBrand.Length: > 0 })
+            cpu = cpu with { Items = [CpuFromSystem(s0)], FromFallback = true };
+        if (mem.Success && !mem.Items.Any(m => m.IsPopulated) && s0?.PhysicalMemoryBytes is > 0)
+            mem = mem with { FromFallback = true }; // UI/summary use system_info.physical_memory for the total
+        if (disk.Success && disk.Items.Count == 1 && disk.Items[0].SizeBytes is not > 0)
+        {
+            var ld = await Q(LogicalDrivesSql).ConfigureAwait(false);
+            var total = ld.Success ? SumFixedDrives(ld.Rows!) : 0;
+            if (total > 0) disk = disk with { Items = [disk.Items[0] with { SizeBytes = total }], FromFallback = true };
+        }
+        return new(sys, cpu, mem, disk) { ToolMissing = !runner.Exists };
+    }
+
+    public static CpuInfo CpuFromSystemPublic(SystemInfo s) => CpuFromSystem(s);
+    internal static CpuInfo CpuFromSystem(SystemInfo s) =>
+        new("", s.CpuBrand, "", s.CpuType, "", s.CpuPhysicalCores, s.CpuLogicalCores, null, null, null, "");
+
+    /// <summary>Sums logical_drives.size for local fixed volumes (Windows type "Local Disk"/"Fixed"); if no type matches, sums all with a size.</summary>
+    public static long SumFixedDrives(IEnumerable<IReadOnlyDictionary<string, string>> rows)
+    {
+        var list = rows.Select(r => (Type: r.Str("type"), Size: r.Long("size") ?? 0)).Where(x => x.Size > 0).ToList();
+        var fixedOnes = list.Where(x => x.Type.Contains("Local", StringComparison.OrdinalIgnoreCase) || x.Type.Contains("Fixed", StringComparison.OrdinalIgnoreCase)).ToList();
+        return (fixedOnes.Count > 0 ? fixedOnes : list).Sum(x => x.Size);
+    }
+
+    /// <summary>Total installed memory: populated memory_devices, otherwise system_info.physical_memory.</summary>
+    public long? TotalMemoryBytes
+    {
+        get
+        {
+            var mb = Memory.Items.Where(d => d.IsPopulated).Sum(d => d.SizeMb ?? 0);
+            return mb > 0 ? mb * 1024 * 1024 : System.Items.FirstOrDefault()?.PhysicalMemoryBytes;
+        }
+    }
+
+    public long TotalDiskBytes => Disks.Items.Sum(d => d.SizeBytes ?? 0);
+
+    /// <summary>End-user one-liner for the Dashboard: computer, processor, memory, storage.</summary>
+    public string FriendlySummary()
+    {
+        var parts = new List<string>();
+        var sys = System.Items.FirstOrDefault();
+        if (sys is not null)
+        {
+            var model = $"{sys.HardwareVendor} {sys.HardwareModel}".Trim();
+            var name = sys.ComputerName.Length > 0 ? sys.ComputerName : sys.Hostname;
+            if (name.Length > 0 && model.Length > 0) parts.Add($"{name} ({model})");
+            else if (name.Length + model.Length > 0) parts.Add(name.Length > 0 ? name : model);
+        }
+        var cpu = Cpus.Items.FirstOrDefault()?.Model is { Length: > 0 } m ? m : sys?.CpuBrand ?? "";
+        if (cpu.Length > 0) parts.Add(cpu);
+        if (TotalMemoryBytes is > 0) parts.Add(FormatBytes(TotalMemoryBytes) + " memory");
+        if (Disks.Success && Disks.Items.Count > 0)
+            parts.Add(Disks.Items.Count == 1 ? "1 drive" + (TotalDiskBytes > 0 ? $" ({FormatBytes(TotalDiskBytes)})" : "") : $"{Disks.Items.Count} drives");
+        return parts.Count > 0 ? string.Join(" · ", parts) : "Hardware details are not available on this PC.";
     }
 
     public static string FormatBytes(long? bytes)

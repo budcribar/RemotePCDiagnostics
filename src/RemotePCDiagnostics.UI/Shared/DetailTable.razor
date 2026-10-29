@@ -1,14 +1,13 @@
 @typeparam T
 @using RemotePCDiagnostics.Core.Osquery
-@* Drawer body: one table per row (field/value), or the query error. *@
-<div class="meta"><code>@Section.Sql</code></div>
+@* Drawer body: one table per item (label/value), or a friendly message. Diagnostics go to the log, not here. *@
 @if (Section.Error is not null)
 {
-    <div class="notice notice-error">@Section.Error</div>
+    <div class="notice notice-error" data-testid="detail-error">@ErrorText</div>
 }
 else if (Section.Items.Count == 0)
 {
-    <p class="meta">The query returned no rows.</p>
+    <p class="meta" data-testid="detail-empty">@EmptyText</p>
 }
 else
 {
@@ -19,7 +18,8 @@ else
             @foreach (var (label, get) in Columns)
             {
                 var v = get(item);
-                <tr><th>@label</th><td>@(string.IsNullOrWhiteSpace(v) ? "—" : v)</td></tr>
+                if (string.IsNullOrWhiteSpace(v) || v == "—") continue;
+                <tr><th>@label</th><td>@v</td></tr>
             }
         </table>
     }
@@ -27,4 +27,6 @@ else
 @code {
     [Parameter, EditorRequired] public InventorySection<T> Section { get; set; } = default!;
     [Parameter, EditorRequired] public (string Label, Func<T, string> Get)[] Columns { get; set; } = [];
+    [Parameter] public string ErrorText { get; set; } = "Couldn't read these details on this PC.";
+    [Parameter] public string EmptyText { get; set; } = "No details are available on this PC.";
 }

@@ -151,7 +151,7 @@ public class OsqueryRunnerTests
         var q = await Runner(l).RunQueryAsync("SELECT * FROM system_info;");
         Assert.True(q.Success);
         Assert.Equal("h", q.Rows!.Single()["hostname"]);
-        Assert.Equal(["--json", "SELECT * FROM system_info;"], l.Calls.Single().Args);
+        Assert.Equal(["--disable_extensions", "--json", "SELECT * FROM system_info;"], l.Calls.Single().Args);
     }
 
     [Theory]
