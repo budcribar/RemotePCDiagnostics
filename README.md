@@ -54,14 +54,14 @@ src/
   RemotePCDiagnostics.Core/   net10.0 class library: IDiagnosticModule, DiagnosticResult/Status, DiagnosticsService,
                               ResultStore, ISessionContext (Local/Remote), OsqueryRunner + OsqueryModule (stubs)
   RemotePCDiagnostics.UI/     net10.0 Razor class library: Dashboard, Osquery placeholder page, nav rail, top bar, CSS
-  RemotePCDiagnostics.Host/   net10.0-windows WPF host with PeakSWC.RemoteBlazorWebView.Wpf, DI wiring, app.manifest
+  RemotePCDiagnostics.Host/   net10.0-windows10.0.19041.0 WPF host with PeakSWC.RemoteBlazorWebView.Wpf, DI wiring, app.manifest
 tests/
   RemotePCDiagnostics.Tests/  xUnit tests for DiagnosticsService and ResultStore
 ```
 
 ### Target framework
 
-.NET 10 (LTS): `net10.0` for Core/UI/Tests, `net10.0-windows` for the WPF Host. Requires the .NET 10 SDK.
+.NET 10 (LTS): `net10.0` for Core/UI/Tests, `net10.0-windows10.0.19041.0` for the WPF Host (versioned so the Windows SDK projection needed by WebView2 is included). Requires the .NET 10 SDK.
 
 ### How to run
 
