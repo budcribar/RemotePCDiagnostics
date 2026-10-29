@@ -1,0 +1,11 @@
+@inherits LayoutComponentBase
+@inject ISessionContext Session
+<div class="app">
+    <header class="topbar">
+        <span class="title">RemotePCDiagnostics</span>
+        <span class="pc">@Session.MachineName</span>
+        <span class="badge badge-@Session.Mode.ToString().ToLowerInvariant()">@Session.Mode</span>
+    </header>
+    <NavRail />
+    <main class="content">@Body</main>
+</div>

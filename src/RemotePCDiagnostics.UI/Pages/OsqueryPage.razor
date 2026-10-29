@@ -1,0 +1,7 @@
+@page "/module/osquery"
+@inherits StoreAwareComponent
+@{ var r = Store.Get("Osquery"); }
+<h1>Osquery</h1>
+<p><span class="@DotClass(r.Status)"></span> @r.Status: @r.Message</p>
+<p class="meta">Placeholder page. Real osquery queries (hardware, disks, services, software, network, event logs) are not implemented yet.</p>
+<button @onclick='() => Diagnostics.RunAsync("Osquery")'>Refresh</button>

@@ -41,3 +41,41 @@ Running diagnostics on a customer's PC remotely needs the customer's consent, a 
 ## Status
 
 Idea stage. This repository currently holds only this README.
+
+## Scaffold (foundation)
+
+> Stubs only. No real diagnostics yet, and no installer exists yet.
+
+### Layout
+
+```
+RemotePCDiagnostics.sln
+src/
+  RemotePCDiagnostics.Core/   net10.0 class library: IDiagnosticModule, DiagnosticResult/Status, DiagnosticsService,
+                              ResultStore, ISessionContext (Local/Remote), OsqueryRunner + OsqueryModule (stubs)
+  RemotePCDiagnostics.UI/     net10.0 Razor class library: Dashboard, Osquery placeholder page, nav rail, top bar, CSS
+  RemotePCDiagnostics.Host/   net10.0-windows WPF host with PeakSWC.RemoteBlazorWebView.Wpf, DI wiring, app.manifest
+tests/
+  RemotePCDiagnostics.Tests/  xUnit tests for DiagnosticsService and ResultStore
+```
+
+### Target framework
+
+.NET 10 (LTS): `net10.0` for Core/UI/Tests, `net10.0-windows` for the WPF Host. Requires the .NET 10 SDK.
+
+### How to run
+
+- Tests (any OS): `dotnet test tests/RemotePCDiagnostics.Tests`
+- App (Windows, WebView2 runtime required):
+  - Local/bench mode: `dotnet run --project src/RemotePCDiagnostics.Host`
+  - Remote mode: start a RemoteWebViewService (`dotnet tool update -g PeakSWC.RemoteWebViewService --version 10.*-*`, then `RemoteWebViewService`), and run
+    `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`. The window shows a link for the technician's browser.
+- osquery: place `osqueryi.exe` in `src/RemotePCDiagnostics.Host/tools/osquery/` (copied to the output as `tools\osquery\osqueryi.exe`). Without it the Osquery module reports a clear "not found" error.
+
+### Elevation
+
+The Host's `app.manifest` sets `requestedExecutionLevel level="requireAdministrator"`, so Windows prompts for elevation (UAC) at launch. Event-log and sensor modules will need it.
+
+### CI
+
+`.github/workflows/ci.yml` runs on `windows-latest` for push, pull request and manual dispatch: it builds the solution in Release with .NET 10, runs the unit tests, then launches the WPF Host with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` and uses Playwright (`tests/smoke/smoke.mjs`, `connectOverCDP`) to check the app stays up and the Dashboard renders. A screenshot, `host.log` (written when `RPD_LOG_FILE` is set) and test results are uploaded as the `ci-artifacts` artifact. Run locally on Windows: build, start the Host with that env var, then `cd tests/smoke && npm install && node smoke.mjs`.
