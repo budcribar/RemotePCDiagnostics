@@ -47,6 +47,9 @@ public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today =
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
         if (DateTime.TryParseExact(s.Trim(), DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)) return DateOnly.FromDateTime(d);
+        // os_version.install_date is Unix seconds.
+        if (s.Length is 9 or 10 && long.TryParse(s, NumberStyles.None, CultureInfo.InvariantCulture, out var unix))
+            return DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime);
         // Some patches report a hex FILETIME (e.g. "01d9a2b3c4d5e6f7").
         if (s.Length == 16 && long.TryParse(s, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var ft))
         {
