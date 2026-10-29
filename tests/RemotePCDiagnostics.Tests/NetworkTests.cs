@@ -28,6 +28,20 @@ public class NetworkTests
     }
 
     [Fact]
+    public async Task BlankCounters_FilledFromAdapterStatistics()
+    {
+        const string osq = """[{"connection_id":"Ethernet 4","description":"Microsoft Hyper-V Network Adapter","mac":"e4:fa","connection_status":"2","enabled":"1","physical_adapter":"1","speed":"0","ipackets":"","ierrors":"","oerrors":""}]""";
+        const string ps = """[{"Name":"Ethernet 4","ipackets":"5000","opackets":"4000","ierrors":"0","oerrors":"0","idrops":"2","odrops":"0"}]""";
+        var l = new ScriptedLauncher((f, a) => f.StartsWith("osqueryi") ? ScriptedLauncher.Ok(osq) : ScriptedLauncher.Ok(ps));
+        var r = await new NetworkModule(ScriptedLauncher.Osquery(l), new SystemCommandRunner(l)).RefreshAsync(null);
+        var card = Assert.IsType<AreaReport>(r.Payload).Cards.Single();
+        Assert.Equal("2 dropped", card.Meta);
+        Assert.Equal("Connected", card.Headline);
+        Assert.Equal("1 of 1 adapter connected · no errors", r.Message);
+        Assert.Contains("Get-NetAdapterStatistics", l.Calls[1].Args[^1]);
+    }
+
+    [Fact]
     public void HighErrorRate_Warns()
     {
         var a = new NetworkAdapter("Ethernet", "", "", "m", "2", true, true, null, 1000, 0, 50, 0, 0, 0);
