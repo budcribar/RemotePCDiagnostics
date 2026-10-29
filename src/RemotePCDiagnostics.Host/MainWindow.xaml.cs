@@ -28,6 +28,21 @@ public partial class MainWindow : Window
         InitializeComponent();
         App.Log($"MainWindow initialized, mode={mode}");
 
+        // CI/diagnostics: pass WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS (e.g. --remote-debugging-port=9222) explicitly
+        // and log WebView2 startup so failures show up in host.log.
+        RemoteBlazorWebView.BlazorWebViewInitializing += (_, e) =>
+        {
+            var extra = Environment.GetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+            if (!string.IsNullOrWhiteSpace(extra))
+            {
+                e.EnvironmentOptions ??= new Microsoft.Web.WebView2.Core.CoreWebView2EnvironmentOptions();
+                e.EnvironmentOptions.AdditionalBrowserArguments = extra;
+            }
+            App.Log($"BlazorWebViewInitializing args='{extra}'");
+        };
+        RemoteBlazorWebView.BlazorWebViewInitialized += (_, e) =>
+            App.Log($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
+
         if (serverArg is not null)
         {
             // Per ConvertToRemoteBlazor.md in budcribar/RemoteBlazorWebViewTutorial.
