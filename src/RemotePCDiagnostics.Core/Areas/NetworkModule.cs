@@ -56,9 +56,21 @@ public sealed record NetworkAdapter(
     };
 }
 
-/// <summary>Network adapters and their error/drop counters via osquery <c>interface_details</c>.</summary>
-public sealed class NetworkModule(OsqueryRunner runner) : OsqueryAreaModuleBase(runner)
+/// <summary>
+/// Network adapters via osquery <c>interface_details</c>. osquery 5.24 on Windows leaves the packet/error counters
+/// blank, so when none are reported they are filled from Windows' Get-NetAdapterStatistics (matched by adapter name).
+/// </summary>
+public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? commands = null) : OsqueryAreaModuleBase(runner)
 {
+    public const string StatsScript =
+        "$ErrorActionPreference='SilentlyContinue';" +
+        "$s=@(Get-NetAdapterStatistics | ForEach-Object { [pscustomobject]@{Name=[string]$_.Name;" +
+        "ipackets=[string]($_.ReceivedUnicastPackets+$_.ReceivedMulticastPackets+$_.ReceivedBroadcastPackets);" +
+        "opackets=[string]($_.SentUnicastPackets+$_.SentMulticastPackets+$_.SentBroadcastPackets);" +
+        "ierrors=[string]$_.ReceivedPacketErrors;oerrors=[string]$_.OutboundPacketErrors;" +
+        "idrops=[string]$_.ReceivedDiscardedPackets;odrops=[string]$_.OutboundDiscardedPackets } });" +
+        "ConvertTo-Json -InputObject $s -Compress";
+
     public const string ModuleName = "Network";
     public const string Sql = "SELECT * FROM interface_details;";
     public override string Name => ModuleName;
@@ -71,8 +83,29 @@ public sealed class NetworkModule(OsqueryRunner runner) : OsqueryAreaModuleBase(
         var q = await QueryAsync(Sql, ct).ConfigureAwait(false);
         if (!q.Success) return AreaReport.Failed(FailedMessage);
         var adapters = q.Rows!.Select(NetworkAdapter.FromRow).ToList();
-        if (adapters.Count > 0 && !adapters.Any(a => a.HasCounters)) Log($"{Name}: no traffic/error counters reported by interface_details");
+        if (adapters.Count > 0 && !adapters.Any(a => a.HasCounters) && commands is not null)
+        {
+            Log($"{Name}: interface_details reported no traffic/error counters; using Get-NetAdapterStatistics");
+            var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
+                ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", StatsScript], ct).ConfigureAwait(false);
+            if (pr is { ExitCode: 0 })
+            {
+                try { adapters = MergeStatistics(adapters, OsqueryJson.ParseRows(pr.StdOut)); }
+                catch (FormatException ex) { Log($"{Name}: adapter statistics unreadable: {ex.Message}"); }
+            }
+        }
         return Build(adapters);
+    }
+
+    /// <summary>Fills blank counters from Get-NetAdapterStatistics rows (matched on adapter name = connection name).</summary>
+    public static List<NetworkAdapter> MergeStatistics(IReadOnlyList<NetworkAdapter> adapters, IReadOnlyList<IReadOnlyDictionary<string, string>> stats)
+    {
+        var byName = stats.GroupBy(r => r.Str("Name"), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        return adapters.Select(a => a.HasCounters || !byName.TryGetValue(a.Name, out var r) ? a : a with
+        {
+            PacketsIn = r.Long("ipackets"), PacketsOut = r.Long("opackets"), ErrorsIn = r.Long("ierrors"), ErrorsOut = r.Long("oerrors"),
+            DropsIn = r.Long("idrops"), DropsOut = r.Long("odrops"),
+        }).ToList();
     }
 
     private static string N(long? v) => v?.ToString("N0", CultureInfo.InvariantCulture) ?? "Not reported";

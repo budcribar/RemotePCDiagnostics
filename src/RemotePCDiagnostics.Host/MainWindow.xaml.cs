@@ -36,7 +36,7 @@ public partial class MainWindow : Window
         services.AddSingleton<IDiagnosticModule, DriveHealthModule>();
         services.AddSingleton<IDiagnosticModule, ServicesModule>();
         services.AddSingleton<IDiagnosticModule, ProgramsModule>(sp => new ProgramsModule(sp.GetRequiredService<OsqueryRunner>()));
-        services.AddSingleton<IDiagnosticModule, NetworkModule>();
+        services.AddSingleton<IDiagnosticModule, NetworkModule>(sp => new NetworkModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
         services.AddSingleton<DiagnosticsService>();
         var provider = services.BuildServiceProvider();
         Resources.Add("services", provider);
