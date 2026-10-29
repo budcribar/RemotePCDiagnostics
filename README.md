@@ -41,3 +41,37 @@ Running diagnostics on a customer's PC remotely needs the customer's consent, a 
 ## Status
 
 Idea stage. This repository currently holds only this README.
+
+## Scaffold (foundation)
+
+> Stubs only. No real diagnostics yet, and no installer exists yet.
+
+### Layout
+
+```
+RemotePCDiagnostics.sln
+src/
+  RemotePCDiagnostics.Core/   net10.0 class library: IDiagnosticModule, DiagnosticResult/Status, DiagnosticsService,
+                              ResultStore, ISessionContext (Local/Remote), OsqueryRunner + OsqueryModule (stubs)
+  RemotePCDiagnostics.UI/     net10.0 Razor class library: Dashboard, Osquery placeholder page, nav rail, top bar, CSS
+  RemotePCDiagnostics.Host/   net10.0-windows WPF host with PeakSWC.RemoteBlazorWebView.Wpf, DI wiring, app.manifest
+tests/
+  RemotePCDiagnostics.Tests/  xUnit tests for DiagnosticsService and ResultStore
+```
+
+### Target framework
+
+.NET 10 (LTS): `net10.0` for Core/UI/Tests, `net10.0-windows` for the WPF Host. Requires the .NET 10 SDK.
+
+### How to run
+
+- Tests (any OS): `dotnet test tests/RemotePCDiagnostics.Tests`
+- App (Windows, WebView2 runtime required):
+  - Local/bench mode: `dotnet run --project src/RemotePCDiagnostics.Host`
+  - Remote mode: start a RemoteWebViewService (`dotnet tool update -g PeakSWC.RemoteWebViewService --version 10.*-*`, then `RemoteWebViewService`), and run
+    `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`. The window shows a link for the technician's browser.
+- osquery: place `osqueryi.exe` in `src/RemotePCDiagnostics.Host/tools/osquery/` (copied to the output as `tools\osquery\osqueryi.exe`). Without it the Osquery module reports a clear "not found" error.
+
+### Elevation
+
+The Host's `app.manifest` sets `requestedExecutionLevel level="requireAdministrator"`, so Windows prompts for elevation (UAC) at launch. Event-log and sensor modules will need it.

@@ -1,0 +1,20 @@
+@page "/"
+@inherits StoreAwareComponent
+<div class="toolbar"><h1>Dashboard</h1><button @onclick="RunAll" disabled="@_busy">Run All</button></div>
+<div class="cards">
+    @foreach (var m in Diagnostics.Modules)
+    {
+        var r = Store.Get(m.Name);
+        <div class="card">
+            <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@m.Name</strong></div>
+            <div class="headline">@r.Message</div>
+            <div class="meta">@r.Status · @r.Timestamp.ToLocalTime().ToString("g")</div>
+            <button @onclick="() => Refresh(m.Name)" disabled="@(r.Status == DiagnosticStatus.Running)">Refresh</button>
+        </div>
+    }
+</div>
+@code {
+    private bool _busy;
+    private async Task RunAll() { _busy = true; try { await Diagnostics.RunAllAsync(); } finally { _busy = false; } }
+    private Task Refresh(string name) => Diagnostics.RunAsync(name);
+}
