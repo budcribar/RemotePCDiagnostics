@@ -18,7 +18,9 @@
     <ProjectReference Include="..\RemotePCDiagnostics.UI\RemotePCDiagnostics.UI.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <!-- osqueryi.exe (not committed) is copied from tools\osquery; see tools/osquery/README.txt. -->
-    <None Include="tools\osquery\**" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="tools\osquery\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Bundled osquery (third_party/osquery, v5.24.0). Lands at <output>\tools\osquery\osqueryi.exe = OsqueryRunner.RelativePath. -->
+    <None Include="..\..\third_party\osquery\osqueryi.exe" Link="tools\osquery\osqueryi.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\third_party\osquery\LICENSE*" Link="tools\osquery\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

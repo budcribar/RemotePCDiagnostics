@@ -1,4 +1,4 @@
-Place osqueryi.exe here (not committed to the repo).
-Get it from an osquery release (https://osquery.io/downloads), e.g. the Windows .zip, and copy osqueryi.exe into this folder.
-It is copied to <app>\tools\osquery\osqueryi.exe on build. Alternatively set RPD_OSQUERYI_PATH to its full path.
+osqueryi.exe is bundled from third_party/osquery (osquery 5.24.0, see third_party/osquery/README.md).
+The Host build/publish copies it to <app>\tools\osquery\osqueryi.exe, where OsqueryRunner looks for it.
+Override at runtime with the RPD_OSQUERYI_PATH environment variable.
 If it is missing, the Osquery page shows a "not found" message with the expected path.

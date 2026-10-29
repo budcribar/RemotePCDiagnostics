@@ -28,6 +28,17 @@ jobs:
       - name: Build (Release)
         run: dotnet build RemotePCDiagnostics.sln -c Release --no-restore
 
+      - name: Verify bundled osqueryi.exe in Host output
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem src/RemotePCDiagnostics.Host/bin/Release -Recurse -Filter RemotePCDiagnostics.Host.exe | Select-Object -First 1
+          $osq = Join-Path $exe.DirectoryName 'tools/osquery/osqueryi.exe'
+          if (-not (Test-Path $osq)) { throw "osqueryi.exe missing from Host output: $osq" }
+          (Get-FileHash $osq -Algorithm SHA256).Hash
+          (Get-AuthenticodeSignature $osq) | Format-List Status, SignerCertificate
+          & $osq --json "SELECT hardware_vendor, hardware_model, physical_memory FROM system_info;"
+          if ($LASTEXITCODE -ne 0) { throw "osqueryi.exe exited $LASTEXITCODE" }
+
       - name: Unit tests
         run: dotnet test RemotePCDiagnostics.sln -c Release --no-build --logger "trx;LogFileName=unit.trx" --results-directory artifacts/test-results
 
