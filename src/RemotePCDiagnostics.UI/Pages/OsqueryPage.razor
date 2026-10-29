@@ -1,7 +1,107 @@
 @page "/module/osquery"
+@using RemotePCDiagnostics.Core.Osquery
 @inherits StoreAwareComponent
-@{ var r = Store.Get("Osquery"); }
-<h1>Osquery</h1>
-<p><span class="@DotClass(r.Status)"></span> @r.Status: @r.Message</p>
-<p class="meta">Placeholder page. Real osquery queries (hardware, disks, services, software, network, event logs) are not implemented yet.</p>
-<button @onclick='() => Diagnostics.RunAsync("Osquery")'>Refresh</button>
+@inject OsqueryRunner Runner
+@{
+    var r = Store.Get("Osquery");
+    var inv = r.Payload as HardwareInventory;
+    var sys = inv?.System.Items.FirstOrDefault();
+}
+<div class="toolbar">
+    <h1 data-testid="osquery-title">Hardware inventory (osquery)</h1>
+    <button data-testid="osquery-refresh" @onclick='() => Diagnostics.RunAsync("Osquery")' disabled="@(r.Status == DiagnosticStatus.Running)">Refresh</button>
+</div>
+<p data-testid="osquery-status"><span class="@DotClass(r.Status)"></span> @r.Status: @r.Message</p>
+
+@if (!Runner.Exists)
+{
+    <div class="notice notice-error" data-testid="osquery-not-found">
+        <strong>osqueryi.exe was not found.</strong>
+        <div>Expected at: <code>@Runner.ResolvedPath</code></div>
+        <div>To bundle it, copy <code>osqueryi.exe</code> from an osquery release (osquery.io/downloads) into
+            <code>src/RemotePCDiagnostics.Host/tools/osquery/</code> and rebuild, or set <code>@OsqueryRunner.PathEnvironmentVariable</code> to its full path.</div>
+    </div>
+}
+else if (inv is null && r.Status != DiagnosticStatus.Running)
+{
+    <p class="meta">Click Refresh to collect the hardware inventory.</p>
+}
+
+@if (inv is not null)
+{
+    <div class="cards">
+        <SummaryCard Id="system" Title="System" Error="@inv.System.Error" OnOpen="Open">
+            @if (sys is null) { <div class="headline">No rows</div> }
+            else
+            {
+                <div class="headline">@Join(sys.HardwareVendor, sys.HardwareModel)</div>
+                <div class="meta">Serial @Dash(sys.HardwareSerial) · @HardwareInventory.FormatBytes(sys.PhysicalMemoryBytes) RAM</div>
+                <div class="meta">Host @Dash(sys.ComputerName.Length > 0 ? sys.ComputerName : sys.Hostname)</div>
+            }
+        </SummaryCard>
+        <SummaryCard Id="cpu" Title="CPU" Error="@inv.Cpus.Error" OnOpen="Open">
+            @{ var c = inv.Cpus.Items.FirstOrDefault(); }
+            <div class="headline">@(c?.Model is { Length: > 0 } m ? m : Dash(sys?.CpuBrand))</div>
+            <div class="meta">@inv.Cpus.Items.Count socket(s) · @(c?.NumberOfCores?.ToString() ?? "—") cores / @(c?.LogicalProcessors?.ToString() ?? "—") threads · max @(c?.MaxClockSpeedMhz?.ToString() ?? "—") MHz</div>
+        </SummaryCard>
+        <SummaryCard Id="memory" Title="Memory" Error="@inv.Memory.Error" OnOpen="Open">
+            @{ var pop = inv.Memory.Items.Where(d => d.IsPopulated).ToList(); }
+            <div class="headline">@HardwareInventory.FormatBytes(pop.Sum(d => d.SizeMb ?? 0) * 1024 * 1024)</div>
+            <div class="meta">@pop.Count of @inv.Memory.Items.Count slots populated · @Dash(pop.FirstOrDefault()?.MemoryType)</div>
+        </SummaryCard>
+        <SummaryCard Id="disks" Title="Disks" Error="@inv.Disks.Error" OnOpen="Open">
+            <div class="headline">@inv.Disks.Items.Count disk(s) · @HardwareInventory.FormatBytes(inv.Disks.Items.Sum(d => d.SizeBytes ?? 0))</div>
+            <div class="meta">@string.Join(", ", inv.Disks.Items.Select(d => Dash(d.HardwareModel)).Take(3))</div>
+        </SummaryCard>
+    </div>
+
+    @if (_open is not null)
+    {
+        <div class="drawer-backdrop" @onclick="Close"></div>
+        <aside class="drawer" data-testid="osquery-drawer-@_open">
+            <div class="drawer-head"><strong>@Titles[_open]</strong><button data-testid="osquery-drawer-close" @onclick="Close">Close</button></div>
+            @switch (_open)
+            {
+                case "system": <DetailTable Section="inv.System" Columns="SystemCols" />; break;
+                case "cpu": <DetailTable Section="inv.Cpus" Columns="CpuCols" />; break;
+                case "memory": <DetailTable Section="inv.Memory" Columns="MemCols" />; break;
+                case "disks": <DetailTable Section="inv.Disks" Columns="DiskCols" />; break;
+            }
+        </aside>
+    }
+}
+
+@code {
+    private string? _open;
+    private static readonly Dictionary<string, string> Titles = new() { ["system"] = "System (system_info)", ["cpu"] = "CPU (cpu_info)", ["memory"] = "Memory (memory_devices)", ["disks"] = "Disks (disk_info)" };
+    private void Open(string id) => _open = id;
+    private void Close() => _open = null;
+    private static string Dash(string? s) => string.IsNullOrWhiteSpace(s) ? "—" : s;
+    private static string Join(params string?[] s) => Dash(string.Join(" ", s.Where(x => !string.IsNullOrWhiteSpace(x))));
+    private static string N(long? v) => v?.ToString() ?? "—";
+
+    private static readonly (string, Func<SystemInfo, string>)[] SystemCols =
+    [
+        ("Vendor", x => x.HardwareVendor), ("Model", x => x.HardwareModel), ("Version", x => x.HardwareVersion), ("Serial", x => x.HardwareSerial),
+        ("Board", x => Join(x.BoardVendor, x.BoardModel, x.BoardVersion)), ("Board serial", x => x.BoardSerial),
+        ("CPU", x => x.CpuBrand), ("Cores / threads", x => $"{N(x.CpuPhysicalCores)} / {N(x.CpuLogicalCores)}"), ("Sockets", x => N(x.CpuSockets)),
+        ("Memory", x => HardwareInventory.FormatBytes(x.PhysicalMemoryBytes)), ("Hostname", x => x.Hostname), ("Computer name", x => x.ComputerName), ("UUID", x => x.Uuid),
+    ];
+    private static readonly (string, Func<CpuInfo, string>)[] CpuCols =
+    [
+        ("Device", x => x.DeviceId), ("Model", x => x.Model), ("Manufacturer", x => x.Manufacturer), ("Socket", x => x.SocketDesignation),
+        ("Cores", x => N(x.NumberOfCores)), ("Logical", x => N(x.LogicalProcessors)), ("Current MHz", x => N(x.CurrentClockSpeedMhz)),
+        ("Max MHz", x => N(x.MaxClockSpeedMhz)), ("Load %", x => N(x.LoadPercentage)), ("Address width", x => x.AddressWidth),
+    ];
+    private static readonly (string, Func<MemoryDevice, string>)[] MemCols =
+    [
+        ("Slot", x => x.DeviceLocator), ("Bank", x => x.BankLocator), ("Size", x => x.SizeMb is > 0 ? HardwareInventory.FormatBytes(x.SizeMb * 1024 * 1024) : "Empty"),
+        ("Type", x => x.MemoryType), ("Form factor", x => x.FormFactor), ("Speed (MT/s)", x => $"{N(x.ConfiguredClockSpeedMts)} / {N(x.MaxSpeedMts)} max"),
+        ("Manufacturer", x => x.Manufacturer), ("Part number", x => x.PartNumber), ("Serial", x => x.SerialNumber),
+    ];
+    private static readonly (string, Func<DiskInfo, string>)[] DiskCols =
+    [
+        ("Index", x => N(x.DiskIndex)), ("Model", x => x.HardwareModel), ("Manufacturer", x => x.Manufacturer), ("Size", x => HardwareInventory.FormatBytes(x.SizeBytes)),
+        ("Interface", x => x.Type), ("Partitions", x => N(x.Partitions)), ("Serial", x => x.Serial), ("Name", x => x.Name), ("Description", x => x.Description),
+    ];
+}

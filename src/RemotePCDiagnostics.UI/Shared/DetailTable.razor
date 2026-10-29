@@ -1,0 +1,30 @@
+@typeparam T
+@using RemotePCDiagnostics.Core.Osquery
+@* Drawer body: one table per row (field/value), or the query error. *@
+<div class="meta"><code>@Section.Sql</code></div>
+@if (Section.Error is not null)
+{
+    <div class="notice notice-error">@Section.Error</div>
+}
+else if (Section.Items.Count == 0)
+{
+    <p class="meta">The query returned no rows.</p>
+}
+else
+{
+    @foreach (var (item, i) in Section.Items.Select((x, i) => (x, i)))
+    {
+        @if (Section.Items.Count > 1) { <h3>#@(i + 1)</h3> }
+        <table class="detail">
+            @foreach (var (label, get) in Columns)
+            {
+                var v = get(item);
+                <tr><th>@label</th><td>@(string.IsNullOrWhiteSpace(v) ? "—" : v)</td></tr>
+            }
+        </table>
+    }
+}
+@code {
+    [Parameter, EditorRequired] public InventorySection<T> Section { get; set; } = default!;
+    [Parameter, EditorRequired] public (string Label, Func<T, string> Get)[] Columns { get; set; } = [];
+}

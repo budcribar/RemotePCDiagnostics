@@ -13,3 +13,11 @@ body { margin: 0; font-family: "Segoe UI", sans-serif; background: #f5f6f8; colo
 .headline { margin: 8px 0; } .meta { color: #666; font-size: 12px; margin-bottom: 8px; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; background: #9ca3af; }
 .dot-running { background: #3b82f6; } .dot-ok { background: #16a34a; } .dot-warning { background: #f59e0b; } .dot-error { background: #dc2626; }
+.card-click { cursor: pointer; } .card-click:hover { border-color: #2563eb; }
+.error-text { color: #b91c1c; }
+.notice { padding: 10px 12px; border-radius: 6px; margin: 8px 0; } .notice-error { background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; }
+.drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 90vw); background: #fff; box-shadow: -4px 0 16px rgba(0,0,0,.15); padding: 16px; overflow: auto; }
+.drawer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+table.detail { border-collapse: collapse; width: 100%; margin-bottom: 12px; font-size: 13px; }
+table.detail th { text-align: left; width: 40%; color: #555; font-weight: 600; } table.detail th, table.detail td { border-bottom: 1px solid #eee; padding: 4px 6px; vertical-align: top; }
