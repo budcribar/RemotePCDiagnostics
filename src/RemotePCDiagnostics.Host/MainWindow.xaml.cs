@@ -5,6 +5,8 @@ using PeakSWC.RemoteWebView;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Session;
+using RemotePCDiagnostics.Core.Sensors;
+using RemotePCDiagnostics.Host.Sensors;
 
 namespace RemotePCDiagnostics.Host;
 
@@ -24,13 +26,15 @@ public partial class MainWindow : Window
         services.AddSingleton<ResultStore>();
         services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = App.Log }));
         services.AddSingleton<IDiagnosticModule, OsqueryModule>();
+        services.AddSingleton<ISensorProvider, LhmSensorProvider>();
+        services.AddSingleton<IDiagnosticModule, LibreHardwareMonitorModule>();
         services.AddSingleton<DiagnosticsService>();
         var provider = services.BuildServiceProvider();
         Resources.Add("services", provider);
 
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
         // Results flow through ResultStore to the Dashboard / Hardware inventory page. Disable with REMOTEPC_AUTORUN=0.
-        AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Log, "Osquery");
+        AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Log, "Osquery", LibreHardwareMonitorModule.ModuleName);
 
         InitializeComponent();
         App.Log($"MainWindow initialized, mode={mode} server={launch.ServerUri}");

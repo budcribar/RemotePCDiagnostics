@@ -13,6 +13,7 @@ body { margin: 0; font-family: "Segoe UI", sans-serif; background: #f5f6f8; colo
 .headline { margin: 8px 0; } .meta { color: #666; font-size: 12px; margin-bottom: 8px; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; background: #9ca3af; }
 .dot-running { background: #3b82f6; } .dot-ok { background: #16a34a; } .dot-warning { background: #f59e0b; } .dot-error { background: #dc2626; }
+.dot-neutral { background: #9ca3af; }
 .card-click { cursor: pointer; } .card-click:hover { border-color: #2563eb; }
 .error-text { color: #b91c1c; }
 .notice { padding: 10px 12px; border-radius: 6px; margin: 8px 0; } .notice-error { background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; }

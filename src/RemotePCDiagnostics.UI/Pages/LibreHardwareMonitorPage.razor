@@ -1,0 +1,115 @@
+@page "/module/sensors"
+@using RemotePCDiagnostics.Core.Sensors
+@inherits StoreAwareComponent
+@implements IAsyncDisposable
+@{
+    var r = Store.Get(LibreHardwareMonitorModule.ModuleName);
+    var report = r.Payload as SensorReport;
+}
+<div class="toolbar">
+    <h1 data-testid="lhm-title">Temperatures &amp; fans</h1>
+    <button data-testid="lhm-refresh" @onclick="Refresh" disabled="@(r.Status == DiagnosticStatus.Running)">Refresh</button>
+    <label class="meta"><input type="checkbox" data-testid="lhm-auto" checked="@_auto" @onchange="ToggleAuto" /> Auto-refresh every 5 s</label>
+</div>
+<p data-testid="lhm-status"><span class="@DotClass(r.Status)"></span> @r.Status: @r.Message</p>
+
+@if (report is null && r.Status != DiagnosticStatus.Running)
+{
+    <p class="meta">Click Refresh to check temperatures and fan speeds.</p>
+}
+@if (report?.Snapshot.Note is { } note)
+{
+    <div class="notice notice-error">@note</div>
+}
+
+@if (report is not null)
+{
+    <div class="cards">
+        @foreach (var g in report.Groups)
+        {
+            <div class="card card-click" data-testid="lhm-card-@g.Id" role="button" tabindex="0"
+                 @onclick="() => _open = g.Id" @onkeydown='e => { if (e.Key is "Enter" or " ") _open = g.Id; }'>
+                <div class="card-head"><span class="@LevelClass(g.Level)"></span><strong>@g.Title</strong></div>
+                @if (g.Readings.Count == 0) { <div class="headline">No sensors</div> }
+                else if (g.Id == "fans")
+                {
+                    var rpm = g.Readings.Where(x => x.Reading.Value is > 0).ToList();
+                    <div class="headline">@rpm.Count of @g.Readings.Count spinning</div>
+                    <div class="meta">@string.Join(", ", rpm.Take(3).Select(x => $"{x.Reading.Value:0} RPM"))</div>
+                }
+                else
+                {
+                    <div class="headline">Hottest @(g.Hottest is { } h ? $"{h:0.0}°C" : "—")</div>
+                    <div class="meta">@g.Readings.Count sensor(s) · @string.Join(", ", g.Readings.Select(x => x.Reading.HardwareName).Distinct().Take(2))</div>
+                }
+                <div class="meta">Click for details</div>
+            </div>
+        }
+    </div>
+
+    @if (_open is not null && report.Groups.FirstOrDefault(g => g.Id == _open) is { } open)
+    {
+        <div class="drawer-backdrop" @onclick="() => _open = null"></div>
+        <aside class="drawer" data-testid="lhm-drawer-@open.Id">
+            <div class="drawer-head"><strong>@open.Title</strong><button data-testid="lhm-drawer-close" @onclick="() => _open = null">Close</button></div>
+            @if (open.Readings.Count == 0) { <p class="meta">Nothing to show here.</p> }
+            else
+            {
+                <table class="detail">
+                    <tr><th>Device</th><th>Reading</th><th>Value</th><th>Min</th><th>Max</th><th>Warning / critical</th></tr>
+                    @foreach (var e in open.Readings)
+                    {
+                        <tr>
+                            <td>@e.Reading.HardwareName</td>
+                            <td><span class="@LevelClass(e.Level)"></span>@e.Reading.SensorName</td>
+                            <td>@Fmt(e.Reading.Value, e.Reading.Unit)</td>
+                            <td>@Fmt(e.Reading.Min, e.Reading.Unit)</td>
+                            <td>@Fmt(e.Reading.Max, e.Reading.Unit)</td>
+                            <td title="@e.Threshold?.Basis">@(e.Threshold is { } t ? $"{t.Warning:0} / {t.Critical:0} °C" : "No limit set")</td>
+                        </tr>
+                    }
+                </table>
+            }
+        </aside>
+    }
+}
+
+@code {
+    private string? _open;
+    private bool _auto;
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _cts;
+
+    private Task Refresh() => Diagnostics.RunAsync(LibreHardwareMonitorModule.ModuleName);
+
+    private void ToggleAuto(ChangeEventArgs e)
+    {
+        _auto = e.Value is true;
+        StopTimer();
+        if (_auto) _ = RunTimer();
+    }
+
+    private async Task RunTimer()
+    {
+        _cts = new CancellationTokenSource();
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        var ct = _cts.Token;
+        try
+        {
+            await Refresh();
+            while (await _timer.WaitForNextTickAsync(ct))
+                if (Store.Get(LibreHardwareMonitorModule.ModuleName).Status != DiagnosticStatus.Running) await Refresh();
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private void StopTimer() { _cts?.Cancel(); _timer?.Dispose(); _timer = null; _cts = null; }
+
+    public ValueTask DisposeAsync() { StopTimer(); Dispose(); return ValueTask.CompletedTask; }
+
+    private static string LevelClass(SensorLevel l) => l switch
+    {
+        SensorLevel.Ok => "dot dot-ok", SensorLevel.Warning => "dot dot-warning", SensorLevel.Critical => "dot dot-error", _ => "dot dot-neutral",
+    };
+    private static string Fmt(double? v, string unit) => v is null ? "—" : unit == "RPM" ? $"{v:0} RPM" : $"{v:0.0} {unit}";
+}
