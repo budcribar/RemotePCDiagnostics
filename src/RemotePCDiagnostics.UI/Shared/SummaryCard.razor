@@ -1,15 +1,22 @@
-@* Clickable summary card; shows a per-query error state instead of content when the query failed. *@
+@* Clickable summary card. Error/empty states use friendly text supplied by the page. *@
 <div class="card card-click" data-testid="osquery-card-@Id" role="button" tabindex="0"
      @onclick="() => OnOpen.InvokeAsync(Id)" @onkeydown='e => { if (e.Key is "Enter" or " ") OnOpen.InvokeAsync(Id); }'>
-    <div class="card-head"><span class="@(Error is null ? "dot dot-ok" : "dot dot-error")"></span><strong>@Title</strong></div>
-    @if (Error is not null) { <div class="headline error-text" data-testid="osquery-card-@Id-error">@Error</div> }
+    <div class="card-head"><span class="@DotCss"></span><strong>@Title</strong></div>
+    @if (ErrorText is not null) { <div class="headline error-text" data-testid="osquery-card-@Id-error">@ErrorText</div> }
+    else if (EmptyText is not null) { <div class="headline warn-text" data-testid="osquery-card-@Id-empty">@EmptyText</div> }
     else { @ChildContent }
     <div class="meta">Click for details</div>
 </div>
 @code {
     [Parameter, EditorRequired] public string Id { get; set; } = "";
     [Parameter, EditorRequired] public string Title { get; set; } = "";
-    [Parameter] public string? Error { get; set; }
+    /// <summary>Friendly error text; when set the card shows red.</summary>
+    [Parameter] public string? ErrorText { get; set; }
+    /// <summary>Friendly "nothing found" text; when set the card shows amber.</summary>
+    [Parameter] public string? EmptyText { get; set; }
+    /// <summary>Optional explicit dot: "ok", "warning", "error".</summary>
+    [Parameter] public string? Dot { get; set; }
     [Parameter] public RenderFragment? ChildContent { get; set; }
     [Parameter] public EventCallback<string> OnOpen { get; set; }
+    private string DotCss => "dot dot-" + (ErrorText is not null ? "error" : EmptyText is not null ? "warning" : Dot ?? "ok");
 }

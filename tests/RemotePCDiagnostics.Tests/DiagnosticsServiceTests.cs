@@ -79,6 +79,6 @@ public class DiagnosticsServiceTests
         Assert.False(runner.Exists);
         var r = await new DiagnosticsService(new ResultStore(), [new OsqueryModule(runner)]).RunAsync("Osquery");
         Assert.Equal(DiagnosticStatus.Error, r.Status);
-        Assert.Contains("not found", r.Message);
+        Assert.Equal(OsqueryModule.ToolMissingMessage, r.Message);
     }
 }

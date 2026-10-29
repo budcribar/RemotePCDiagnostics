@@ -3,11 +3,20 @@ namespace RemotePCDiagnostics.Core.Osquery;
 /// <summary>Hardware inventory via osqueryi (system_info, cpu_info, memory_devices, disk_info).</summary>
 public sealed class OsqueryModule(OsqueryRunner runner) : IDiagnosticModule
 {
+    public const string ToolMissingMessage = "The hardware tool wasn't found. Please reinstall the app.";
+    public const string AllFailedMessage = "Couldn't read hardware details on this PC.";
+
     public string Name => "Osquery";
+    public string DisplayName => "Hardware inventory";
     public event EventHandler<DiagnosticResult>? Updated;
 
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(runner.CheckAvailability());
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default)
+    {
+        var a = runner.CheckAvailability();
+        if (a.IsAvailable) return Task.FromResult(a);
+        runner.Options.Log?.Invoke(a.Reason ?? runner.NotFoundMessage); // developer detail (path) goes to the log only
+        return Task.FromResult(ModuleAvailability.Unavailable(ToolMissingMessage));
+    }
 
     public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
     {
@@ -16,20 +25,11 @@ public sealed class OsqueryModule(OsqueryRunner runner) : IDiagnosticModule
         return new DiagnosticResult<HardwareInventory>(Name, status, Summarize(inv), DateTimeOffset.Now, inv);
     }
 
+    /// <summary>End-user status text (no query names, exit codes or paths).</summary>
     internal static string Summarize(HardwareInventory inv)
     {
-        if (inv.FailedSections == 4) return "All osquery queries failed: " + inv.System.Error;
-        var parts = new List<string>();
-        var sys = inv.System.Items.FirstOrDefault();
-        if (sys is not null)
-        {
-            var model = $"{sys.HardwareVendor} {sys.HardwareModel}".Trim();
-            if (model.Length > 0) parts.Add(model);
-            if (sys.PhysicalMemoryBytes > 0) parts.Add(HardwareInventory.FormatBytes(sys.PhysicalMemoryBytes) + " RAM");
-        }
-        if (inv.Disks.Success) parts.Add($"{inv.Disks.Items.Count} disk(s)");
-        var text = parts.Count > 0 ? string.Join(" · ", parts) : "Inventory collected";
-        return inv.FailedSections > 0 ? $"{text} ({inv.FailedSections} query(ies) failed)" : text;
+        if (inv.FailedSections == 4) return inv.ToolMissing ? ToolMissingMessage : AllFailedMessage;
+        return inv.FriendlySummary();
     }
 
     internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);

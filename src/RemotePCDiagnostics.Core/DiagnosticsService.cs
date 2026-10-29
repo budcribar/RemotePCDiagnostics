@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace RemotePCDiagnostics.Core;
 
 /// <summary>Registers modules and runs them independently, recording results in the store.</summary>
@@ -5,6 +7,8 @@ public sealed class DiagnosticsService
 {
     private readonly List<IDiagnosticModule> _modules = new();
     private readonly ResultStore _store;
+    private readonly ConcurrentDictionary<string, Task<DiagnosticResult>> _inFlight = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _gate = new();
 
     public DiagnosticsService(ResultStore store, IEnumerable<IDiagnosticModule>? modules = null)
     {
@@ -34,16 +38,36 @@ public sealed class DiagnosticsService
     public Task<DiagnosticResult[]> RunAllAsync(CancellationToken ct = default)
     {
         var modules = _modules.ToArray();
-        foreach (var m in modules) MarkRunning(m); // mark all up front so status is consistent before any finishes
-        return Task.WhenAll(modules.Select(m => Task.Run(() => RunAsync(m, null, ct), CancellationToken.None)));
+        return Task.WhenAll(modules.Select(m => RunAsync(m, null, ct)));
     }
 
     private void MarkRunning(IDiagnosticModule module) =>
         _store.Set(new DiagnosticResult(module.Name, DiagnosticStatus.Running, "Running…", DateTimeOffset.Now));
 
-    private async Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct)
+    /// <summary>True while a run of the module is in flight.</summary>
+    public bool IsRunning(string moduleName) => _inFlight.ContainsKey(moduleName);
+
+    /// <summary>Starts a run unless one is already in progress, in which case the in-flight task is returned (no double-runs).</summary>
+    private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct)
     {
-        MarkRunning(module);
+        lock (_gate)
+        {
+            if (_inFlight.TryGetValue(module.Name, out var existing)) return existing;
+            MarkRunning(module);
+            var tcs = new TaskCompletionSource<DiagnosticResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _inFlight[module.Name] = tcs.Task;
+            _ = Task.Run(async () =>
+            {
+                try { tcs.SetResult(await RunCoreAsync(module, progress, ct).ConfigureAwait(false)); }
+                catch (Exception ex) { tcs.SetException(ex); }
+                finally { _inFlight.TryRemove(module.Name, out _); }
+            }, CancellationToken.None);
+            return tcs.Task;
+        }
+    }
+
+    private async Task<DiagnosticResult> RunCoreAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct)
+    {
         DiagnosticResult result;
         try
         {

@@ -22,10 +22,15 @@ public partial class MainWindow : Window
         services.AddRemoteWpfBlazorWebView();
         services.AddSingleton<ISessionContext>(new SessionContext(mode, launch.ServerUri));
         services.AddSingleton<ResultStore>();
-        services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner());
+        services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = App.Log }));
         services.AddSingleton<IDiagnosticModule, OsqueryModule>();
         services.AddSingleton<DiagnosticsService>();
-        Resources.Add("services", services.BuildServiceProvider());
+        var provider = services.BuildServiceProvider();
+        Resources.Add("services", provider);
+
+        // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
+        // Results flow through ResultStore to the Dashboard / Hardware inventory page. Disable with REMOTEPC_AUTORUN=0.
+        AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Log, "Osquery");
 
         InitializeComponent();
         App.Log($"MainWindow initialized, mode={mode} server={launch.ServerUri}");

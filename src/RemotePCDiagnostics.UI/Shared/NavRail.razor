@@ -3,6 +3,6 @@
     <NavLink href="" Match="NavLinkMatch.All">Dashboard</NavLink>
     @foreach (var m in Diagnostics.Modules)
     {
-        <NavLink href="@($"module/{m.Name.ToLowerInvariant()}")"><span class="@DotClass(Store.Get(m.Name).Status)"></span>@m.Name</NavLink>
+        <NavLink href="@($"module/{m.Name.ToLowerInvariant()}")"><span class="@DotClass(Store.Get(m.Name).Status)"></span>@m.DisplayName</NavLink>
     }
 </nav>
