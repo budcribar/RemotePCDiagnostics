@@ -31,12 +31,19 @@ public sealed class DiagnosticsService
     }
 
     /// <summary>Runs every module concurrently; a slow or failing module does not block the others.</summary>
-    public Task<DiagnosticResult[]> RunAllAsync(CancellationToken ct = default) =>
-        Task.WhenAll(_modules.Select(m => Task.Run(() => RunAsync(m, null, ct), CancellationToken.None)));
+    public Task<DiagnosticResult[]> RunAllAsync(CancellationToken ct = default)
+    {
+        var modules = _modules.ToArray();
+        foreach (var m in modules) MarkRunning(m); // mark all up front so status is consistent before any finishes
+        return Task.WhenAll(modules.Select(m => Task.Run(() => RunAsync(m, null, ct), CancellationToken.None)));
+    }
+
+    private void MarkRunning(IDiagnosticModule module) =>
+        _store.Set(new DiagnosticResult(module.Name, DiagnosticStatus.Running, "Running…", DateTimeOffset.Now));
 
     private async Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct)
     {
-        _store.Set(new DiagnosticResult(module.Name, DiagnosticStatus.Running, "Running…", DateTimeOffset.Now));
+        MarkRunning(module);
         DiagnosticResult result;
         try
         {
