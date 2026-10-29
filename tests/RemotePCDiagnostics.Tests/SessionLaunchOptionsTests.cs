@@ -20,14 +20,15 @@ public class SessionLaunchOptionsTests
     {
         var o = SessionLaunchOptions.Resolve([], Env(("REMOTEPC_MODE", "remote")));
         Assert.Equal(SessionMode.Remote, o.Mode);
-        Assert.Equal(new Uri("https://server.remoteblazorwebview.com"), o.ServerUri);
+        Assert.Equal(new Uri("https://remoteblazor.pagetomovie.com:34544"), o.ServerUri);
     }
 
     [Fact]
     public void RemoteEnv_UrlOverride()
     {
-        var o = SessionLaunchOptions.Resolve([], Env(("REMOTEPC_MODE", "Remote"), ("REMOTEPC_SERVER_URL", "https://remoteblazor.pagetomovie.com:34544")));
-        Assert.Equal(34544, o.ServerUri!.Port);
+        var o = SessionLaunchOptions.Resolve([], Env(("REMOTEPC_MODE", "Remote"), ("REMOTEPC_SERVER_URL", "https://server.remoteblazorwebview.com")));
+        Assert.Equal(new Uri("https://server.remoteblazorwebview.com"), o.ServerUri);
+        Assert.Equal(443, o.ServerUri!.Port);
     }
 
     [Fact]

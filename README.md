@@ -79,14 +79,14 @@ The Host has two Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/Pr
 | Profile | Settings | Behavior |
 |---|---|---|
 | **Local** (default) | `REMOTEPC_MODE=Local` | UI renders in the app window only. Running the exe with no settings is also Local (CI uses this). |
-| **Remote (Railway)** | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://server.remoteblazorwebview.com` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a technician drives it from a browser. |
+| **Remote (Railway)** | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazor.pagetomovie.com:34544` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a technician drives it from a browser. |
 
 Configuration (resolved by `SessionLaunchOptions`, precedence top to bottom):
 - `-u=<server url>` command-line arg: forces Remote with that server (the RemoteBlazorWebViewTutorial convention), e.g. `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`.
-- `REMOTEPC_MODE=Local|Remote` and `REMOTEPC_SERVER_URL` env vars. Remote with no URL uses the default `https://server.remoteblazorwebview.com`.
+- `REMOTEPC_MODE=Local|Remote` and `REMOTEPC_SERVER_URL` env vars. Remote with no URL uses the default `https://remoteblazor.pagetomovie.com:34544`.
 - `-i=<guid>` or `REMOTEPC_ID`: fixed session id. Otherwise a new id is assigned each run.
 
-Server address: `https://server.remoteblazorwebview.com` is the intended permanent name. Its DNS and TLS certificate were reported as **not yet confirmed live**. The Railway-direct address `https://remoteblazor.pagetomovie.com:34544` (Railway TCP proxy to the container's port 8443) worked in an earlier test; to use it, set `REMOTEPC_SERVER_URL=https://remoteblazor.pagetomovie.com:34544` in the profile (or pass `-u=`).
+Server address: the default is the Railway-direct address `https://remoteblazor.pagetomovie.com:34544` (Railway TCP proxy to the container's port 8443; Kestrel TLS with a Let's Encrypt cert, HTTP/2 gRPC). Alternative address: `https://server.remoteblazorwebview.com:34544` (same Railway proxy; the port is required, because plain 443 serves a `*.up.railway.app` cert that does not match). The cert on 34544 is issued to `server.remoteblazorwebview.com` and also covers `remoteblazor.pagetomovie.com` (Let's Encrypt, valid until 2027-01-27). `https://server.remoteblazorwebview.com` (no port) is the planned permanent name once Railway serves a matching cert on 443. Use either via `REMOTEPC_SERVER_URL` or `-u=`.
 
 How a technician connects (per PeakSWC.RemoteBlazorWebView / RemoteBlazorWebViewTutorial):
 1. On the customer PC, start the Host in Remote mode (elevated; UAC prompts).
