@@ -5,6 +5,8 @@ using PeakSWC.RemoteWebView;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Session;
+using RemotePCDiagnostics.Core.Sensors;
+using RemotePCDiagnostics.Host.Sensors;
 
 namespace RemotePCDiagnostics.Host;
 
@@ -24,6 +26,8 @@ public partial class MainWindow : Window
         services.AddSingleton<ResultStore>();
         services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner());
         services.AddSingleton<IDiagnosticModule, OsqueryModule>();
+        services.AddSingleton<ISensorProvider, LhmSensorProvider>();
+        services.AddSingleton<IDiagnosticModule, LibreHardwareMonitorModule>();
         services.AddSingleton<DiagnosticsService>();
         Resources.Add("services", services.BuildServiceProvider());
 

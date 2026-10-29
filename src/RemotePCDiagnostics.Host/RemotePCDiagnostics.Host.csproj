@@ -12,6 +12,8 @@
   <ItemGroup>
     <!-- Drop-in replacement for Microsoft.AspNetCore.Components.WebView.Wpf. 10.0.13 is the latest stable on nuget.org (Oct 2026). -->
     <PackageReference Include="PeakSWC.RemoteBlazorWebView.Wpf" Version="10.0.13" />
+    <!-- Live temperatures/fans. 0.9.6 = latest stable (Oct 2026); ships a net10.0 lib. MPL-2.0. -->
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
