@@ -57,6 +57,11 @@ jobs:
           $env:ARTIFACT_DIR = $art
           Push-Location tests/smoke
           try { node smoke.mjs; $code = $LASTEXITCODE } finally { Pop-Location }
+          if ($code -ne 0) {
+            Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Select-Object ProcessId, CommandLine | Format-List | Out-File (Join-Path $art 'webview2-processes.txt')
+            netstat -ano | Select-String ':9222' | Out-File (Join-Path $art 'netstat-9222.txt')
+            Get-Content (Join-Path $art 'host.log') -ErrorAction SilentlyContinue
+          }
           if ($p.HasExited) { "Host exited with code $($p.ExitCode)" } else { Stop-Process -Id $p.Id -Force }
           exit $code
 
