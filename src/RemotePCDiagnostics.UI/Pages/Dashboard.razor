@@ -6,6 +6,7 @@
     var inv = hw.Payload as HardwareInventory;
     var th = Store.Get(RemotePCDiagnostics.Core.Sensors.LibreHardwareMonitorModule.ModuleName);
     var thBusy = th.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
+    var cpu = Store.Get(RemotePCDiagnostics.Core.Stress.CpuStressModule.ModuleName);
     var querying = hw.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
 }
 <div class="toolbar"><h1 data-testid="dashboard-title">Dashboard</h1></div>
@@ -18,6 +19,10 @@
 <p data-testid="dashboard-thermal" class="status-line">
     <span class="@DotClass(th.Status)"></span>
     <span>Temperatures &amp; fans: @(thBusy ? "Checking…" : th.Message)</span>
+</p>
+<p data-testid="dashboard-cpustress" class="status-line">
+    <span class="@DotClass(cpu.Status)"></span>
+    <span>CPU stress test: @(cpu.Status switch { DiagnosticStatus.NotRun => "Not run yet", DiagnosticStatus.Running => "Running…", _ => cpu.Message })</span>
 </p>
 <div class="cards">
     @foreach (var m in Diagnostics.Modules)

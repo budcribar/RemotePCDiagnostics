@@ -8,6 +8,7 @@ using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Sensors;
+using RemotePCDiagnostics.Core.Stress;
 using RemotePCDiagnostics.Host.Sensors;
 
 namespace RemotePCDiagnostics.Host;
@@ -30,9 +31,13 @@ public partial class MainWindow : Window
         services.AddSingleton<IDiagnosticModule, OsqueryModule>();
         services.AddSingleton<ISensorProvider, LhmSensorProvider>();
         services.AddSingleton<IDiagnosticModule, LibreHardwareMonitorModule>();
+        // On demand only: not auto-run and excluded from Run All; runs when the user presses Start on its page.
+        services.AddSingleton<IDiagnosticModule>(sp => new CpuStressModule(sp.GetRequiredService<ISensorProvider>(), App.Log));
         services.AddSingleton(new SystemCommandRunner(log: App.Log));
         services.AddSingleton<IDiagnosticModule, DriveHealthModule>();
         services.AddSingleton<IDiagnosticModule, ServicesModule>();
+        services.AddSingleton<IDiagnosticModule, ProgramsModule>(sp => new ProgramsModule(sp.GetRequiredService<OsqueryRunner>()));
+        services.AddSingleton<IDiagnosticModule, NetworkModule>();
         // On-demand only (Start button on its page): not in AutoRun below and excluded from Run All (IncludeInRunAll=false).
         services.AddSingleton<IDiagnosticModule>(new SecurityAuditModule(new SecurityAuditOptions { Log = App.Log }));
         services.AddSingleton<DiagnosticsService>();
@@ -42,7 +47,7 @@ public partial class MainWindow : Window
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
         // Results flow through ResultStore to the Dashboard / Hardware inventory page. Disable with REMOTEPC_AUTORUN=0.
         AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Log, "Osquery", LibreHardwareMonitorModule.ModuleName,
-            DriveHealthModule.ModuleName, ServicesModule.ModuleName);
+            DriveHealthModule.ModuleName, ServicesModule.ModuleName, ProgramsModule.ModuleName, NetworkModule.ModuleName);
 
         InitializeComponent();
         App.Log($"MainWindow initialized, mode={mode} server={launch.ServerUri}");
