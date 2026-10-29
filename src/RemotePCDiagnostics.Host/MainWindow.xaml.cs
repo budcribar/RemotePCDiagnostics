@@ -31,6 +31,7 @@ public partial class MainWindow : Window
         services.AddSingleton<IDiagnosticModule, LibreHardwareMonitorModule>();
         services.AddSingleton(new SystemCommandRunner(log: App.Log));
         services.AddSingleton<IDiagnosticModule, DriveHealthModule>();
+        services.AddSingleton<IDiagnosticModule, ServicesModule>();
         services.AddSingleton<DiagnosticsService>();
         var provider = services.BuildServiceProvider();
         Resources.Add("services", provider);
@@ -38,7 +39,7 @@ public partial class MainWindow : Window
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
         // Results flow through ResultStore to the Dashboard / Hardware inventory page. Disable with REMOTEPC_AUTORUN=0.
         AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Log, "Osquery", LibreHardwareMonitorModule.ModuleName,
-            DriveHealthModule.ModuleName);
+            DriveHealthModule.ModuleName, ServicesModule.ModuleName);
 
         InitializeComponent();
         App.Log($"MainWindow initialized, mode={mode} server={launch.ServerUri}");
