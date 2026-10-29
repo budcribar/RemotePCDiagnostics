@@ -70,7 +70,29 @@ tests/
   - Local/bench mode: `dotnet run --project src/RemotePCDiagnostics.Host`
   - Remote mode: start a RemoteWebViewService (`dotnet tool update -g PeakSWC.RemoteWebViewService --version 10.*-*`, then `RemoteWebViewService`), and run
     `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`. The window shows a link for the technician's browser.
-- osquery: place `osqueryi.exe` in `src/RemotePCDiagnostics.Host/tools/osquery/` (copied to the output as `tools\osquery\osqueryi.exe`). Without it the Osquery module reports a clear "not found" error.
+- osquery: `osqueryi.exe` 5.24.0 is bundled from `third_party/osquery/` and copied to the Host output as `tools\osquery\osqueryi.exe` (override with `RPD_OSQUERYI_PATH`). Without it the Osquery module reports a clear "not found" error.
+
+### Local vs Remote mode
+
+The Host has two Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/Properties/launchSettings.json`); pick one in the Start button dropdown:
+
+| Profile | Settings | Behavior |
+|---|---|---|
+| **Local** (default) | `REMOTEPC_MODE=Local` | UI renders in the app window only. Running the exe with no settings is also Local (CI uses this). |
+| **Remote (Railway)** | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://server.remoteblazorwebview.com` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a technician drives it from a browser. |
+
+Configuration (resolved by `SessionLaunchOptions`, precedence top to bottom):
+- `-u=<server url>` command-line arg: forces Remote with that server (the RemoteBlazorWebViewTutorial convention), e.g. `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`.
+- `REMOTEPC_MODE=Local|Remote` and `REMOTEPC_SERVER_URL` env vars. Remote with no URL uses the default `https://server.remoteblazorwebview.com`.
+- `-i=<guid>` or `REMOTEPC_ID`: fixed session id. Otherwise a new id is assigned each run.
+
+Server address: `https://server.remoteblazorwebview.com` is the intended permanent name. Its DNS and TLS certificate were reported as **not yet confirmed live**. The Railway-direct address `https://remoteblazor.pagetomovie.com:34544` (Railway TCP proxy to the container's port 8443) worked in an earlier test; to use it, set `REMOTEPC_SERVER_URL=https://remoteblazor.pagetomovie.com:34544` in the profile (or pass `-u=`).
+
+How a technician connects (per PeakSWC.RemoteBlazorWebView / RemoteBlazorWebViewTutorial):
+1. On the customer PC, start the Host in Remote mode (elevated; UAC prompts).
+2. The control registers with the server and the window shows a link `<server>/app/<session-guid>`.
+3. The user sends that link to the technician, who opens it in a browser and gets the same Dashboard/Osquery UI, running on the customer PC.
+The top bar badge shows Local or Remote. Consent prompt and audit log for remote sessions are still TODO (see Safety).
 
 ### Elevation
 

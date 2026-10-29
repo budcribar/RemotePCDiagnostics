@@ -1,0 +1,17 @@
+{
+  "profiles": {
+    "Local": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "REMOTEPC_MODE": "Local"
+      }
+    },
+    "Remote (Railway)": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "REMOTEPC_MODE": "Remote",
+        "REMOTEPC_SERVER_URL": "https://server.remoteblazorwebview.com"
+      }
+    }
+  }
+}
