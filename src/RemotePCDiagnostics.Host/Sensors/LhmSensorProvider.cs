@@ -17,7 +17,7 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
         lock (_gate)
         {
             EnsureOpen();
-            return _openError is null ? ModuleAvailability.Available : ModuleAvailability.Unavailable("LibreHardwareMonitor failed to start: " + _openError);
+            return _openError is null ? ModuleAvailability.Available : ModuleAvailability.Unavailable("Temperature monitoring couldn't start on this PC.");
         }
     }
 
@@ -26,11 +26,11 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
         lock (_gate)
         {
             EnsureOpen();
-            if (_computer is null) throw new InvalidOperationException(_openError ?? "LibreHardwareMonitor not open");
+            if (_computer is null) throw new InvalidOperationException("Temperature monitoring couldn't start on this PC.");
             var list = new List<SensorReading>();
             foreach (var hw in _computer.Hardware) Collect(hw, list);
             var elevated = IsElevated();
-            return new SensorSnapshot(list, elevated, elevated ? null : "Not running as administrator; CPU and fan sensors may be missing.");
+            return new SensorSnapshot(list, elevated, elevated ? null : "Some readings need administrator rights and may be missing.");
         }
     }
 
@@ -47,7 +47,7 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
             c.Open();
             _computer = c;
         }
-        catch (Exception ex) { _openError = ex.Message; }
+        catch (Exception ex) { _openError = ex.Message; App.Log($"LibreHardwareMonitor open failed: {ex}"); }
     }
 
     private static void Collect(IHardware hw, List<SensorReading> list)

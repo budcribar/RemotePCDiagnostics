@@ -3,7 +3,7 @@ namespace RemotePCDiagnostics.Core.Sensors;
 /// <summary>Live temperatures and fan speeds (LibreHardwareMonitorLib via <see cref="ISensorProvider"/>).</summary>
 public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiagnosticModule
 {
-    public const string ModuleName = "LibreHardwareMonitor";
+    public const string ModuleName = "Sensors";
     public string Name => ModuleName;
     public event EventHandler<DiagnosticResult>? Updated;
 
@@ -43,11 +43,11 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
     {
         var s = report.Snapshot;
         if (s.Readings.Count == 0)
-            return s.IsElevated ? "No temperature or fan sensors found" : "No sensors found — run as administrator";
+            return s.IsElevated ? "No temperature or fan sensors found" : "No sensors found. Try running the app as administrator.";
         string T(string id) => report.Groups.First(g => g.Id == id).Hottest is { } v ? $"{v:0}°C" : "—";
         var fans = s.Readings.Count(r => r.SensorType == SensorKind.Fan);
         var text = $"CPU {T("cpu")} · GPU {T("gpu")} · Storage {T("storage")} · {fans} fan(s)";
-        return s.IsElevated ? text : text + " (not elevated; some sensors missing)";
+        return s.IsElevated ? text : text + " (some sensors need administrator rights)";
     }
 
     internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);
