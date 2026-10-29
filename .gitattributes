@@ -1,0 +1,2 @@
+# Vendored third-party files must stay byte-identical (HardeningKitty .psm1/.psd1 are Authenticode-signed; list hashes are in a signed manifest).
+third_party/** -text

@@ -5,6 +5,7 @@ using PeakSWC.RemoteWebView;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Host.Sensors;
@@ -32,6 +33,8 @@ public partial class MainWindow : Window
         services.AddSingleton(new SystemCommandRunner(log: App.Log));
         services.AddSingleton<IDiagnosticModule, DriveHealthModule>();
         services.AddSingleton<IDiagnosticModule, ServicesModule>();
+        // On-demand only (Start button on its page): not in AutoRun below and excluded from Run All (IncludeInRunAll=false).
+        services.AddSingleton<IDiagnosticModule>(new SecurityAuditModule(new SecurityAuditOptions { Log = App.Log }));
         services.AddSingleton<DiagnosticsService>();
         var provider = services.BuildServiceProvider();
         Resources.Add("services", provider);

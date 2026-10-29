@@ -23,11 +23,11 @@
     @foreach (var m in Diagnostics.Modules)
     {
         var r = Store.Get(m.Name);
-        var busy = r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
+        var busy = r.Status is DiagnosticStatus.Running || (r.Status is DiagnosticStatus.NotRun && m.IncludeInRunAll);
         <div class="card" data-testid="dashboard-card-@m.Name.ToLowerInvariant()">
             <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@m.DisplayName</strong></div>
-            <div class="headline">@(busy ? "Checking…" : r.Message)</div>
-            @if (!busy) { <div class="meta">Updated @r.Timestamp.ToLocalTime().ToString("g")</div> }
+            <div class="headline">@(busy ? (r.Status is DiagnosticStatus.Running && !m.IncludeInRunAll ? "Running…" : "Checking…") : r.Message)</div>
+            @if (!busy && r.Status != DiagnosticStatus.NotRun) { <div class="meta">Updated @r.Timestamp.ToLocalTime().ToString("g")</div> }
         </div>
     }
 </div>

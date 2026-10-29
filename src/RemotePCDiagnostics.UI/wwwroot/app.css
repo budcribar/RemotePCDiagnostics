@@ -25,3 +25,6 @@ table.detail th { text-align: left; width: 40%; color: #555; font-weight: 600; }
 .status-line { font-size: 15px; } .error-text { color: #b91c1c; } .warn-text { color: #b45309; }
 .linklike { background: none; border: none; color: #2563eb; cursor: pointer; padding: 0; font-size: 12px; text-decoration: underline; } .linklike:disabled { color: #9ca3af; cursor: default; }
 table.detail.grid th { width: auto; } table.detail.grid td { word-break: break-word; }
+.card.selected { outline: 2px solid #3b82f6; }
+tr.clickable { cursor: pointer; } tr.clickable:hover { background: #f3f4f6; }
+.audit-filters { gap: 8px; flex-wrap: wrap; margin: 12px 0; }
