@@ -40,16 +40,21 @@ public class DiagnosticsServiceTests
         var store = new ResultStore();
         var gate = new TaskCompletionSource();
         var fastDone = new TaskCompletionSource();
+        // RunAll schedules each module via Task.Run, so the Slow module may not have started yet
+        // when Fast completes (seen on Windows CI). Signal when Slow is actually inside RefreshAsync.
+        var slowStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         store.Changed += (_, r) => { if (r.ModuleName == "Fast" && r.Status == DiagnosticStatus.Ok) fastDone.TrySetResult(); };
         var svc = new DiagnosticsService(store,
         [
-            new FakeModule("Slow", async _ => { await gate.Task; return FakeModule.Ok("Slow"); }),
+            new FakeModule("Slow", async _ => { slowStarted.TrySetResult(); await gate.Task; return FakeModule.Ok("Slow"); }),
             new FakeModule("Bad", _ => throw new Exception("fail")),
             new FakeModule("Fast", _ => Task.FromResult(FakeModule.Ok("Fast"))),
         ]);
 
         var all = svc.RunAllAsync();
-        await fastDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await fastDone.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await slowStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // Fast finished and Slow is still blocked on the gate: it must be Running, not done.
         Assert.Equal(DiagnosticStatus.Running, store.Get("Slow").Status);
         gate.SetResult();
         var results = await all;
