@@ -46,7 +46,7 @@
         <div class="card" data-testid="nettest-live-temp">
             <div class="card-head"><span class="dot dot-neutral"></span><strong>CPU temperature</strong></div>
             <div class="headline">@(p?.CpuTemperatureC is { } t ? $"{t:0}°C" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
-            <div class="meta">Fan @(p?.FanRpm is > 0 ? $"{p.FanRpm:0} RPM" : "—") · stops by itself if anything gets too hot</div>
+            <div class="meta">@(p?.FanRpm is { } fr ? $"Fan {fr:0} RPM · " : "")stops by itself if anything gets too hot</div>
         </div>
     </div>
     @if (p is { Samples.Count: > 0 })

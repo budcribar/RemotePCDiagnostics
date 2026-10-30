@@ -69,11 +69,14 @@
             <div class="val">@(driveGroup?.Hottest is { } d ? $"{d:0}°C" : "—")</div>
             <div class="desc">@(driveGroup?.Hottest is null ? "Not reported by this PC" : Level(driveGroup) == "ok" ? "Normal range" : "Running warm")</div>
         </div>
+        @if (fanGroup is { Readings.Count: > 0 })
+        {
         <div class="card dash-card card-click" data-testid="dashboard-card-fans" role="link" tabindex="0" @onclick='() => Open(LibreHardwareMonitorModule.ModuleName)'>
-            <div class="card-head"><span class="icon-badge"><Icon Name="fan" /></span><strong>Fans</strong><StatusChip Status="@ToStatus(fanGroup)" Text="@(fanGroup is not { Readings.Count: > 0 } ? "No reading" : null)" /></div>
+            <div class="card-head"><span class="icon-badge"><Icon Name="fan" /></span><strong>Fans</strong><StatusChip Status="@ToStatus(fanGroup)" /></div>
             <div class="val">@(rpm is { } f ? $"{f:0} RPM" : "—")</div>
-            <div class="desc">@(fanGroup is not { Readings.Count: > 0 } ? "Not reported by this PC" : $"{fanGroup.Readings.Count} fan(s) reported")</div>
+            <div class="desc">@fanGroup.Readings.Count fan(s) reported</div>
         </div>
+        }
     }
 
     @foreach (var m in checks.Where(m => m.Name != LibreHardwareMonitorModule.ModuleName))

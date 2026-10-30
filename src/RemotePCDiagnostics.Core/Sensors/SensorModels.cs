@@ -127,8 +127,9 @@ public sealed record SensorReport(SensorSnapshot Snapshot, IReadOnlyList<SensorG
     {
         get
         {
-            var missing = Groups.Where(g => g.Readings.Count == 0).Select(g => g.MissingLabel).ToList();
-            return missing.Count == 0 || missing.Count == Groups.Count ? null : "Not reported by this PC: " + string.Join(", ", missing);
+            // Fans with no reading are simply hidden (many PCs don't report fans), not listed as missing.
+            var missing = Groups.Where(g => g.Readings.Count == 0 && g.Id != "fans").Select(g => g.MissingLabel).ToList();
+            return missing.Count == 0 || missing.Count == Groups.Count(g => g.Id != "fans") ? null : "Not reported by this PC: " + string.Join(", ", missing);
         }
     }
 

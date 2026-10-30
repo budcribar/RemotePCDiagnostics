@@ -45,7 +45,7 @@
         <div class="card" data-testid="gpustress-live-temp">
             <div class="card-head"><span class="dot dot-neutral"></span><strong>Graphics temperature</strong></div>
             <div class="headline">@(p?.GpuTemperatureC is { } t ? $"{t:0}°C" : "Not reported on this PC")</div>
-            <div class="meta">Fan @(p?.FanRpm is > 0 ? $"{p.FanRpm:0} RPM" : "—") · stops by itself if anything gets too hot</div>
+            <div class="meta">@(p?.FanRpm is { } fr ? $"Fan {fr:0} RPM · " : "")stops by itself if anything gets too hot</div>
         </div>
     </div>
 }

@@ -41,10 +41,13 @@
             <div class="headline">@(p?.CpuTemperatureC is { } t ? $"{t:0}°C" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
             @if (p?.CpuCriticalC is { } c) { <div class="meta">Stops automatically at @c.ToString("0")°C</div> }
         </div>
+        @if (p?.FanRpm is not null)
+        {
         <div class="card" data-testid="cpustress-live-fan">
             <div class="card-head"><span class="dot dot-neutral"></span><strong>Fan speed</strong></div>
-            <div class="headline">@(p?.FanRpm is > 0 ? $"{p.FanRpm:0} RPM" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
+            <div class="headline">@($"{p.FanRpm:0} RPM")</div>
         </div>
+        }
     </div>
 }
 else if (report is not null)
