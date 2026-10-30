@@ -1,0 +1,50 @@
+using RemotePCDiagnostics.Core.Sensors;
+
+namespace RemotePCDiagnostics.Core.Stress;
+
+/// <summary>On-demand GPU stress test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
+public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : IDiagnosticModule
+{
+    public const string ModuleName = "GpuStress";
+    public string Name => ModuleName;
+    public string DisplayName => "Graphics (GPU) stress test";
+    public bool IncludeInRunAll => false;
+    public event EventHandler<DiagnosticResult>? Updated;
+    public event EventHandler<GpuStressProgress>? ProgressChanged;
+
+    public TimeSpan Duration { get; set; } = TimeSpan.FromMinutes(1);
+    public GpuStressOptions? Options { get; set; }
+    public GpuStressProgress? LastProgress { get; private set; }
+
+    private CancellationTokenSource? _stop;
+
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
+
+    public void Stop() => _stop?.Cancel();
+
+    public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
+    {
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _stop = stop;
+        try
+        {
+            LastProgress = null;
+            var opts = (Options ?? new GpuStressOptions()) with { Duration = Duration };
+            var test = new GpuStressTest(factory, sensors, clockFactory?.Invoke(), log);
+            var report = await test.RunAsync(opts, new P(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); }), stop.Token).ConfigureAwait(false);
+            return new DiagnosticResult<GpuStressReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
+        }
+        finally { _stop = null; }
+    }
+
+    public static DiagnosticStatus ToStatus(GpuStressOutcome o) => o switch
+    {
+        GpuStressOutcome.Passed => DiagnosticStatus.Ok,
+        GpuStressOutcome.StoppedByUser or GpuStressOutcome.NoGpu or GpuStressOutcome.SoftwareOnly => DiagnosticStatus.Warning,
+        _ => DiagnosticStatus.Error,
+    };
+
+    private sealed class P(Action<GpuStressProgress> a) : IProgress<GpuStressProgress> { public void Report(GpuStressProgress v) => a(v); }
+
+    internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);
+}

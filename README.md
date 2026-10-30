@@ -111,6 +111,38 @@ To use your own speed server instead, set `REMOTEPC_SPEEDTEST_URL` to a base URL
 endpoints (`GET {base}/__down?bytes=N` returns N bytes; `POST {base}/__up` accepts the body). No iperf3 is required.
 Unit tests use fakes only; CI does not need internet access.
 
+### GPU stress test
+
+On-demand only (never auto-run, not part of Run All). Page: **Graphics (GPU) stress test**; time limit 1/2/5/10/15 min,
+Start/Stop, live progress, answers checked, work rate, GPU temperature and fan.
+
+**Approach: built-in Direct3D 11 compute shader via [Vortice.Direct3D11](https://github.com/amerkoleci/Vortice.Windows) (MIT).**
+Why this instead of D3D12 or a bundled tool (FurMark/OCCT/etc.):
+- D3D11 feature level 11_0 / `cs_5_0` runs on every DirectX 11 GPU including Intel UHD/Iris and AMD Vega/Radeon
+  integrated graphics (e.g. Ryzen 7 5700U), with a much simpler, more forgiving API than D3D12 and clean device-removed reporting.
+- It lets us *verify* the work: the kernel is integer-only (xorshift + FNV multiply + rotate, mod 2^32), so a healthy GPU must
+  match the CPU reference (`GpuStressKernel.Reference`) bit for bit. Floating point is avoided on purpose (drivers may fuse or
+  flush denormals legally). Each dispatch runs 262,144 threads; 512 values per dispatch, at a rotating offset, are checked on
+  the CPU. Any mismatch = "Graphics errors found". Popular GPU burn-in tools either don't check results or aren't redistributable.
+- Managed only: Vortice calls the `d3d11.dll` / `dxgi.dll` / `d3dcompiler_47.dll` that ship with Windows 10/11, so there are no
+  native binaries to bundle. The shader is compiled at runtime from `GpuStressKernel.Hlsl`.
+
+Safety and edge cases:
+- **TDR:** dispatches are sized adaptively, starting at 64 loop iterations and scaling toward ~150 ms (at most ×2 per step,
+  capped at 32,768 iterations); any dispatch over 500 ms halves the work immediately. Windows' TDR timeout is 2 s.
+- **Device lost / driver reset:** `DXGI_ERROR_DEVICE_REMOVED/HUNG/RESET/DRIVER_INTERNAL_ERROR` or a failed `GetDeviceRemovedReason`
+  ends the test as "Graphics driver stopped responding" (an error).
+- **WARP / Microsoft Basic Render Driver** (software flag or vendor 0x1414) is never opened; if it is the only adapter (no driver,
+  some Remote Desktop / VM sessions) the result is "No graphics chip could be tested" (warning), never a pass. The test also
+  refuses a software device as defense in depth. No adapter at all gives the same headline with a different explanation.
+- **Temperatures:** uses the shared sensor provider; shows the GPU temperature when reported (0/missing = no data, common on
+  integrated GPUs) and the GPU fan, else any fan. Stops automatically when any live temperature reaches the red level
+  (`SensorLevel.Critical`), like the other stress modules.
+- Technical details (adapters, vendor IDs, feature level, HRESULTs, dispatch timings) go only to the log (`RPD_LOG_FILE`).
+
+Unit tests use a fake GPU that computes the CPU reference with scripted faults; CI has no GPU, so the D3D11 path is compiled in CI
+but has not been exercised by automated tests.
+
 ### CI
 
 `.github/workflows/ci.yml` runs on `windows-latest` for push, pull request and manual dispatch: it builds the solution in Release with .NET 10, runs the unit tests, then launches the WPF Host with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` and uses Playwright (`tests/smoke/smoke.mjs`, `connectOverCDP`) to check the app stays up and the Dashboard renders. A screenshot, `host.log` (written when `RPD_LOG_FILE` is set) and test results are uploaded as the `ci-artifacts` artifact. Run locally on Windows: build, start the Host with that env var, then `cd tests/smoke && npm install && node smoke.mjs`.
