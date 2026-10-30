@@ -98,7 +98,8 @@ public partial class MainWindow : Window
             StartRemote(launch.ServerUri, launch.Id);
         else
             RemoteBlazorWebView.HostPage = HostPage; // Local: unchanged behavior (HostPage moved from XAML to code)
-    
+    }
+
     /// <summary>
     /// Remote mode, matching RemoteBlazorWebViewTutorial (WpfApp): subscribe ReadyToConnect/Connected/Disconnected and set
     /// Id + ServerUri BEFORE HostPage (setting HostPage starts the control; ServerUri/GrpcBaseUri/Id set afterwards are rejected).
