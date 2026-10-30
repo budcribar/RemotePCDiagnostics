@@ -133,22 +133,45 @@
 
     private async Task RunTimer()
     {
-        _cts = new CancellationTokenSource();
-        _timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
-        var ct = _cts.Token;
+        var cts = new CancellationTokenSource();
+        var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+
+        _cts = cts;
+        _timer = timer;
+
         try
         {
             await Refresh();
-            while (await _timer.WaitForNextTickAsync(ct))
+            while (await timer.WaitForNextTickAsync(cts.Token))
                 if (!_busy && Store.Get(LibreHardwareMonitorModule.ModuleName).Status != DiagnosticStatus.Running) await Refresh();
         }
         catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
         catch (Exception ex) { Diagnostics.Log?.Invoke($"Sensor page timer error: {ex.Message}"); }
+        finally
+        {
+            if (ReferenceEquals(_cts, cts)) _cts = null;
+            if (ReferenceEquals(_timer, timer)) _timer = null;
+            timer.Dispose();
+            cts.Dispose();
+        }
     }
 
-    private void StopTimer() { _cts?.Cancel(); _timer?.Dispose(); _timer = null; _cts = null; }
+    private void StopTimer()
+    {
+        var cts = _cts;
+        var timer = _timer;
+
+        _cts = null;
+        _timer = null;
+
+        cts?.Cancel();
+        timer?.Dispose();
+    }
 
     public ValueTask DisposeAsync() { StopTimer(); Dispose(); return ValueTask.CompletedTask; }
+
+    // ...
 
     private static string LevelClass(SensorLevel l) => l switch
     {
