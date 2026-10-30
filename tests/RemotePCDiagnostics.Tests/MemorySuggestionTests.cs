@@ -152,7 +152,8 @@ public class MemorySuggestionTests
     [Fact]
     public void FastStartup_Uptime_AndInfoRules()
     {
-        Assert.Contains(Build(Snap() with { Uptime = TimeSpan.FromHours(8), FastStartup = true }), x => x.Id == "restart" && x.Kind == SuggestionKind.Guided && x.Why.Contains("8 hours"));
+        Assert.Contains(Build(Snap() with { Uptime = TimeSpan.FromHours(8), FastStartup = true }), x => x.Id == "restart" && x.Kind == SuggestionKind.Automated && x.Why.Contains("8 hours")
+            && x.Actions.Any(a => a.Type == MemoryActionType.RestartPc) && x.Actions.Any(a => a.Type == MemoryActionType.DisableFastStartup));
         Assert.DoesNotContain(Build(Snap() with { Uptime = TimeSpan.FromHours(2), FastStartup = true }), x => x.Id == "restart");
         Assert.DoesNotContain(Build(Snap() with { Uptime = TimeSpan.FromHours(8), FastStartup = false }), x => x.Id == "restart");
         var tight = new MemorySnapshot(new(16 * Gb, 1 * Gb, 30 * Gb, 32 * Gb), [new AppUsage("Memory Compression", 1, 800 * Mb)]);
@@ -249,6 +250,10 @@ public class MemorySuggestionTests
         public void OpenUri(string uri) => Calls.Add("open:" + uri);
         public string GetServiceStartType(string n) => StartTypes.GetValueOrDefault(n, "Automatic");
         public void SetServiceStartType(string n, string t) { Calls.Add($"start-type:{n}={t}"); StartTypes[n] = t; }
+        public bool? Transparency = true;
+        public bool? GetTransparency() => Transparency;
+        public void SetTransparency(bool on) { Calls.Add("transparency:" + on); Transparency = on; }
+        public Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct) { Calls.Add("pagefile"); return Task.FromResult(new ActionOutcome(true, "Windows will manage the page file size from the next restart.")); }
     }
 
     private sealed class SvcBackend : IServiceControlBackend
@@ -262,13 +267,88 @@ public class MemorySuggestionTests
         public Task<bool> WaitForStateAsync(string name, ServiceState t, TimeSpan timeout, CancellationToken ct) => Task.FromResult(true);
     }
 
-    private static (MemorySuggestionService S, FakeSys Sys, List<string> Events) Make(MemorySnapshot snap, IServiceControlBackend? backend = null)
+    private static (MemorySuggestionService S, FakeSys Sys, List<string> Events) Make(MemorySnapshot snap, IServiceControlBackend? backend = null, RemediationService? remediation = null)
     {
         var sys = new FakeSys { Snap = snap };
         var events = new List<string>();
         var svc = new MemorySuggestionService(sys, null, backend is null ? null : new ServiceActionService(backend, new SessionContext(SessionMode.Remote)),
-            new SessionContext(SessionMode.Remote), (l, m) => events.Add(m), settle: TimeSpan.Zero);
+            new SessionContext(SessionMode.Remote), (l, m) => events.Add(m), settle: TimeSpan.Zero, remediation: remediation);
         return (svc, sys, events);
+    }
+
+    // ---- one-click Windows suggestions (Oct 2026)
+    private static readonly MemorySnapshot Busy = new(new(16 * Gb, 3 * Gb), []); // 81% used: transparency suggested
+
+    [Fact]
+    public async Task Transparency_OneClick_WithUndo()
+    {
+        var (svc, sys, events) = Make(Busy);
+        await svc.ScanAsync();
+        var s = svc.Suggestions.Single(x => x.Id == "transparency");
+        Assert.Equal(SuggestionKind.Automated, s.Kind);
+        var r = await svc.ApplyAsync(s, s.Actions.Single(a => a.Type == MemoryActionType.DisableTransparency));
+        Assert.True(r.Success);
+        Assert.Equal(false, sys.Transparency);
+        Assert.Contains(events, e => e.Contains("DisableTransparency"));
+        var u = Assert.Single(svc.Undos, x => x.Type == MemoryActionType.DisableTransparency);
+        Assert.True((await svc.UndoAsync(u)).Success);
+        Assert.Equal(true, sys.Transparency);
+    }
+
+    [Fact]
+    public void Transparency_NotSuggestedWhenAlreadyOff() =>
+        Assert.DoesNotContain(Build(Busy with { TransparencyOn = false }), x => x.Id == "transparency");
+
+    [Fact]
+    public async Task PageFile_FixedSize_OneClick_ManagedIsInfo()
+    {
+        var tight = new MemorySnapshot(new(16 * Gb, 4 * Gb, 30 * Gb, 32 * Gb), []);
+        var info = Build(tight with { AutoPageFile = true }).Single(x => x.Id == "commit");
+        Assert.Equal(SuggestionKind.Info, info.Kind);
+        Assert.Empty(info.Actions);
+        var (svc, sys, _) = Make(tight with { AutoPageFile = false });
+        await svc.ScanAsync();
+        var s = svc.Suggestions.Single(x => x.Id == "commit");
+        Assert.Equal(SuggestionKind.Automated, s.Kind);
+        Assert.True((await svc.ApplyAsync(s, s.Actions.Single())).Success);
+        Assert.Contains("pagefile", sys.Calls);
+    }
+
+    [Fact]
+    public async Task Restart_UsesRemediation_FastStartupToo()
+    {
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var rem = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Remote));
+        var snap = Snap() with { Uptime = TimeSpan.FromHours(8), FastStartup = true };
+        var (svc, _, _) = Make(snap, remediation: rem);
+        await svc.ScanAsync();
+        var s = svc.Suggestions.Single(x => x.Id == "restart");
+        var r = await svc.ApplyAsync(s, s.Actions.Single(a => a.Type == MemoryActionType.DisableFastStartup));
+        Assert.True(r.Success);
+        Assert.Contains(launcher.Calls, c => c.Args.Any(x => x.Contains("HiberbootEnabled")));
+        Assert.Contains(rem.Recent, x => x.Kind == RemediationKind.DisableFastStartup);
+        var (noRem, _, _) = Make(snap);
+        await noRem.ScanAsync();
+        var s2 = noRem.Suggestions.Single(x => x.Id == "restart");
+        Assert.False((await noRem.ApplyAsync(s2, s2.Actions.Single(a => a.Type == MemoryActionType.RestartPc))).Success);
+    }
+
+    [Fact]
+    public void LowRam_MentionsMemorySlots()
+    {
+        var tight = new MemorySnapshot(new(16 * Gb, 1 * Gb), [], Slots: new MemorySlots(2, 1, 32 * Gb, 16 * Gb));
+        Assert.Contains("1 of 2 memory slots used · up to 32.0 GB supported", Build(tight).Single(x => x.Id == "low-ram").Why);
+    }
+
+    [Theory]
+    [InlineData("""{"Auto":"False","Slots":"2","Used":"1","MaxKB":"33554432","Installed":"17179869184"}""", false, 2, 1)]
+    [InlineData("""{"Auto":"True","Slots":"","Used":"0","MaxKB":"","Installed":""}""", true, 0, 0)]
+    public void MemoryProbe_Parses(string json, bool auto, int total, int used)
+    {
+        var (a, slots) = MemoryProbe.Parse(json);
+        Assert.Equal(auto, a);
+        if (total == 0) Assert.Null(slots);
+        else { Assert.Equal((total, used), (slots!.Total, slots.Used)); Assert.Equal(32L * Gb, slots.MaxCapacityBytes); }
     }
 
     [Fact]

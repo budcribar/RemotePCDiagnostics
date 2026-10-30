@@ -78,7 +78,8 @@ public partial class MainWindow : Window
         services.AddSingleton<ChecksScreenState>();
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Memory.MemorySuggestionService(
             new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), App.Log), sp.GetRequiredService<ServicesModule>(), sp.GetRequiredService<ServiceActionService>(),
-            sp.GetRequiredService<ISessionContext>(), (level, text) => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.MemorySuggestion, level, text), App.Log));
+            sp.GetRequiredService<ISessionContext>(), (level, text) => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.MemorySuggestion, level, text), App.Log,
+            remediation: sp.GetRequiredService<RemediationService>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(App.Log));
         var provider = _provider = services.BuildServiceProvider();

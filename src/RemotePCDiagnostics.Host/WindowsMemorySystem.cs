@@ -94,7 +94,53 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
             browsers.Add(new(k, true, IsBrowserRunning(k), BrowserPrefs.ReadMemorySaver(json, k), json is not null && BrowserPrefs.EnableMemorySaver(json, k) is not null));
         }
 
-        return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices());
+        var probe = await RunPowerShellAsync(MemoryProbe.Script, ct).ConfigureAwait(false);
+        var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
+        return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
+            GetTransparency(), autoPageFile, slots);
+    }
+
+    private const string PersonalizeKey = @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+
+    public bool? GetTransparency()
+    {
+        try { return Registry.GetValue(PersonalizeKey, "EnableTransparency", null) is int v ? v != 0 : null; }
+        catch (Exception ex) { Log("Transparency read failed: " + ex.Message); return null; }
+    }
+
+    /// <summary>Same value the Settings toggle writes (current user only); Explorer picks it up within a few seconds.</summary>
+    public void SetTransparency(bool on) => Registry.SetValue(PersonalizeKey, "EnableTransparency", on ? 1 : 0, RegistryValueKind.DWord);
+
+    public async Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct)
+    {
+        var r = await RunPowerShellAsync(MemoryProbe.EnableAutoPageFileScript, ct).ConfigureAwait(false);
+        Log($"Enable automatic page file: exit={r.ExitCode} err={r.Error.Trim()}");
+        return r.ExitCode == 0
+            ? new(true, "Windows will manage the page file size from the next restart.")
+            : new(false, "Couldn't change the page file setting (administrator rights required).");
+    }
+
+    /// <summary>Runs one of this class's fixed PowerShell scripts (never user input) and returns its output.</summary>
+    private async Task<(int ExitCode, string Output, string Error)> RunPowerShellAsync(string script, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"))
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script }) psi.ArgumentList.Add(a);
+        try
+        {
+            using var p = Process.Start(psi)!;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            var outTask = p.StandardOutput.ReadToEndAsync(timeout.Token);
+            var errTask = p.StandardError.ReadToEndAsync(timeout.Token);
+            await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            return (p.ExitCode, await outTask.ConfigureAwait(false), await errTask.ConfigureAwait(false));
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or OperationCanceledException or InvalidOperationException)
+        {
+            Log("PowerShell probe failed: " + ex.Message);
+            return (-1, "", ex.Message);
+        }
     }
 
     private bool? ReadFastStartup()

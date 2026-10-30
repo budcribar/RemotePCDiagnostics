@@ -24,7 +24,8 @@ public static class MemoryFeedback
 
     /// <summary>Whether an action's effect should show right away (closing/stopping) or only later (settings).</summary>
     public static bool IsDeferred(MemoryActionType t) => t is MemoryActionType.DisableStartup or MemoryActionType.EnableBrowserMemorySaver
-        or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings;
+        or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings
+        or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile;
 }
 
 public sealed record ActionOutcome(bool Success, string Message);
@@ -50,6 +51,11 @@ public interface IMemorySystem
     /// <summary>"Automatic", "AutomaticDelayed", "Manual" or "Disabled".</summary>
     string GetServiceStartType(string name);
     void SetServiceStartType(string name, string startType);
+    /// <summary>HKCU transparency effects (Settings > Personalization > Colors); null = not set (Windows default: on).</summary>
+    bool? GetTransparency() => null;
+    void SetTransparency(bool on) => throw new NotSupportedException();
+    /// <summary>Switches the page file to "managed by Windows" (admin; effective after restart).</summary>
+    Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
 }
 
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);
@@ -61,7 +67,8 @@ public sealed record SuggestionResult(string SuggestionId, bool Success, string 
 /// with the actor (Local/Remote technician) and, where possible, can be undone.
 /// </summary>
 public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? services = null, ServiceActionService? serviceActions = null,
-    ISessionContext? session = null, Action<LogLevel, string>? events = null, Action<string>? log = null, TimeSpan? settle = null, Func<DateTime>? now = null)
+    ISessionContext? session = null, Action<LogLevel, string>? events = null, Action<string>? log = null, TimeSpan? settle = null, Func<DateTime>? now = null,
+    RemediationService? remediation = null)
 {
     public static readonly string[] StartTypes = ["Automatic", "AutomaticDelayed", "Manual", "Disabled"];
     private readonly TimeSpan _settle = settle ?? TimeSpan.FromSeconds(2.5);
@@ -163,6 +170,10 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                     sys.SetServiceStartType(u.Target, u.Previous!);
                     outcome = new(true, $"{u.Label} start-up setting restored to {u.Previous}.");
                     break;
+                case MemoryActionType.DisableTransparency:
+                    sys.SetTransparency(u.Previous != "0");
+                    outcome = new(true, u.Previous != "0" ? "Transparency effects turned back on." : "Transparency effects left off (they were off before).");
+                    break;
                 default:
                     outcome = new(false, "This change can't be undone from here.");
                     break;
@@ -252,6 +263,23 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 sys.SetServiceStartType(info.Name, target);
                 AddUndo(new(s.Id, info.Label, a.Type, info.Name, original));
                 return new(true, $"{info.Label} set to {target} (was {original}).");
+
+            case MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup:
+                // Same audited path as the Remediation buttons (restart also registers auto-resume after sign-in).
+                if (remediation is null) return new(false, "Restarting isn't available from here.");
+                var kindR = a.Type == MemoryActionType.RestartPc ? RemediationKind.ScheduleCleanRestart : RemediationKind.DisableFastStartup;
+                var rr = await remediation.ExecuteAsync(new AreaAction(kindR, a.Label), ct).ConfigureAwait(false);
+                return new(rr.Success, rr.Message);
+
+            case MemoryActionType.DisableTransparency:
+                var before = sys.GetTransparency();
+                if (before == false) return new(true, "Transparency effects are already off.");
+                sys.SetTransparency(false);
+                AddUndo(new(s.Id, "Transparency effects", a.Type, "", before == false ? "0" : "1"));
+                return new(true, "Transparency effects turned off (this account).");
+
+            case MemoryActionType.AutoManagePageFile:
+                return await sys.EnableAutoPageFileAsync(ct).ConfigureAwait(false);
         }
         return new(false, "Unknown action.");
     }

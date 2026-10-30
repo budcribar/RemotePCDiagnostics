@@ -1,5 +1,6 @@
 using System.Globalization;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Memory;
 
@@ -55,9 +56,63 @@ public sealed record MemorySnapshot(
     VisualStudioInfo? VisualStudio = null,
     IReadOnlyList<StartupEntry>? Startup = null,
     IReadOnlyList<ServiceUsage>? Services = null,
-    DeviceFacts? Devices = null)
+    DeviceFacts? Devices = null,
+    bool? TransparencyOn = null,
+    bool? AutoPageFile = null,
+    MemorySlots? Slots = null)
 {
     public AppUsage? App(string name) => Apps.FirstOrDefault(a => a.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>Memory slots from Windows (SMBIOS): how many there are, how many are filled, and the most the board supports.</summary>
+public sealed record MemorySlots(int Total, int Used, long? MaxCapacityBytes, long? InstalledBytes)
+{
+    public int Free => Math.Max(0, Total - Used);
+
+    /// <summary>"1 of 2 memory slots used · up to 32 GB supported. …" (laptops often have soldered memory, so it's a hint to check).</summary>
+    public string Text
+    {
+        get
+        {
+            if (Total <= 0) return "";
+            var max = MaxCapacityBytes is long m and > 0 ? $" · up to {MemoryText.Size(m)} supported" : "";
+            var tail = Free > 0
+                ? " A free slot means more memory can usually be added (check the PC model's specs; some laptops have memory soldered on)."
+                : " All slots are in use, so adding memory means replacing a module with a bigger one (if the PC allows it).";
+            return $"{Used} of {Total} memory slot{(Total == 1 ? "" : "s")} used{max}.{tail}";
+        }
+    }
+}
+
+/// <summary>Parses the Host's one-shot CIM probe: page file mode and memory slots.</summary>
+public static class MemoryProbe
+{
+    public const string Script =
+        "$ErrorActionPreference='SilentlyContinue';" +
+        "$c=Get-CimInstance Win32_ComputerSystem;" +
+        "$a=@(Get-CimInstance Win32_PhysicalMemoryArray | Where-Object { $_.Use -eq 3 });" +
+        "$m=@(Get-CimInstance Win32_PhysicalMemory);" +
+        "[pscustomobject]@{Auto=[string]$c.AutomaticManagedPagefile;Slots=[string](($a | Measure-Object MemoryDevices -Sum).Sum);" +
+        "Used=[string]$m.Count;MaxKB=[string](($a | Measure-Object MaxCapacityEx -Sum).Sum);Installed=[string](($m | Measure-Object Capacity -Sum).Sum)} | ConvertTo-Json -Compress";
+
+    public const string EnableAutoPageFileScript =
+        "$ErrorActionPreference='Stop';$c=Get-CimInstance Win32_ComputerSystem;Set-CimInstance -InputObject $c -Property @{AutomaticManagedPagefile=$true}";
+
+    public static (bool? AutoPageFile, MemorySlots? Slots) Parse(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return (null, null);
+        try
+        {
+            var row = OsqueryJson.ParseRows("[" + json.Trim().TrimStart('[').TrimEnd(']') + "]").FirstOrDefault();
+            if (row is null) return (null, null);
+            bool? auto = row.Str("Auto") switch { "True" => true, "False" => false, _ => null };
+            var total = (int)(row.Long("Slots") ?? 0);
+            var used = (int)(row.Long("Used") ?? 0);
+            MemorySlots? slots = total > 0 ? new(total, Math.Min(used, total), row.Long("MaxKB") is long kb and > 0 ? kb * 1024 : null, row.Long("Installed")) : null;
+            return (auto, slots);
+        }
+        catch (FormatException) { return (null, null); }
+    }
 }
 
 public enum SuggestionKind { Automated, Guided, Info }
@@ -67,6 +122,7 @@ public enum MemoryActionType
 {
     CloseApp, ForceCloseApp, ShutdownBuildServers, DisableStartup, EnableBrowserMemorySaver, OpenSettings,
     StopService, SetServiceManual, SetServiceDisabled,
+    RestartPc, DisableFastStartup, DisableTransparency, AutoManagePageFile,
 }
 
 /// <summary>One button on a suggestion card. <see cref="Confirm"/> non-null = ask once inline before running.</summary>

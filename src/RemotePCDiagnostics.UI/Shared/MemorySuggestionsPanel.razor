@@ -114,6 +114,7 @@
     private static string Friendly(MemoryActionType t) => t switch
     {
         MemoryActionType.DisableStartup => "won't start with Windows", MemoryActionType.EnableBrowserMemorySaver => "memory saver turned on",
-        MemoryActionType.SetServiceManual => "set to Manual", MemoryActionType.SetServiceDisabled => "disabled", _ => t.ToString(),
+        MemoryActionType.SetServiceManual => "set to Manual", MemoryActionType.SetServiceDisabled => "disabled",
+        MemoryActionType.DisableTransparency => "turned off", _ => t.ToString(),
     };
 }

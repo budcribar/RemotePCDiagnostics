@@ -217,10 +217,18 @@ public static class MemorySuggestionEngine
             var fs = s.FastStartup == true
                 ? " Fast Startup is on, so \"Shut down\" doesn't fully clear memory. \"Restart\" does."
                 : "";
+            var restartActions = new List<MemoryAction>
+            {
+                new(MemoryActionType.RestartPc, "", "Restart in 60 seconds",
+                    "Restart this PC in 60 seconds? Windows warns the person at the PC first; unsaved work in open apps may be lost. This app reopens after sign-in."),
+            };
+            if (s.FastStartup == true)
+                restartActions.Add(new(MemoryActionType.DisableFastStartup, "", "Turn off Fast Startup",
+                    "Turn off Fast Startup? Every Shut down will then fully reset Windows (startup takes a few seconds longer). Needs administrator rights."));
             list.Add(new("restart", "Restart the PC (Restart, not Shut down)", $"Windows has been running for {(hours >= 48 ? $"{hours / 24} days" : $"{hours} hours")}.{fs} A restart clears leaked memory and leftover background processes.",
-                null, SuggestionRisk.Low, SuggestionKind.Guided,
-                ["Save your work and close your apps", "Start > Power > Restart"], [], "Windows",
-                s.FastStartup == true ? "Turning Fast Startup off changes a PC-wide power setting, so it's left to you: Control Panel > Power Options > Choose what the power buttons do." : null));
+                null, SuggestionRisk.Medium, SuggestionKind.Automated,
+                ["Save work in open apps first", "The restart is scheduled with a 60-second warning and can be cancelled from the Remediation actions"], restartActions, "Windows",
+                s.FastStartup == true ? "Turning off Fast Startup is a PC-wide power setting; Restart alone already clears memory." : null));
         }
 
         // Defender scanning build folders.
@@ -234,20 +242,31 @@ public static class MemorySuggestionEngine
         // Info: memory pressure.
         var m = s.Memory;
         if (m.TotalBytes > 0 && m.UsedPercent >= 85)
-            list.Add(new("low-ram", "Memory is almost full", $"{m.UsedPercent}% of {MemoryText.Size(m.TotalBytes)} is in use; only {MemoryText.Size(m.AvailableBytes)} is available. Windows starts using the much slower page file.",
+            list.Add(new("low-ram", "Memory is almost full", $"{m.UsedPercent}% of {MemoryText.Size(m.TotalBytes)} is in use; only {MemoryText.Size(m.AvailableBytes)} is available. Windows starts using the much slower page file."
+                    + (s.Slots is { Total: > 0 } slots ? " " + slots.Text : ""),
                 null, SuggestionRisk.Low, SuggestionKind.Info, [], [], "Windows"));
         if (m.CommitBytes is { } cb && m.CommitLimitBytes is > 0 and var cl && cb >= cl * 0.8)
-            list.Add(new("commit", "Page file is under pressure", $"Committed memory is {MemoryText.Size(cb)} of a {MemoryText.Size(cl)} limit ({(int)(100.0 * cb / cl)}%). Apps may fail to start if it fills up.",
-                null, SuggestionRisk.Low, SuggestionKind.Info, ["Closing apps is the fastest fix", "Let Windows manage the page file size (System > About > Advanced system settings > Performance > Advanced)"], [], "Windows"));
+        {
+            // A fixed-size page file can be switched to Windows-managed (grows as needed) with one click; already managed = info only.
+            var fixedSize = s.AutoPageFile == false;
+            list.Add(new("commit", "Page file is under pressure", $"Committed memory is {MemoryText.Size(cb)} of a {MemoryText.Size(cl)} limit ({(int)(100.0 * cb / cl)}%). Apps may fail to start if it fills up."
+                    + (fixedSize ? " The page file has a fixed size on this PC." : ""),
+                null, SuggestionRisk.Low, fixedSize ? SuggestionKind.Automated : SuggestionKind.Info,
+                fixedSize ? ["Closing apps is the fastest fix", "Letting Windows manage the page file lets it grow when needed (takes effect after a restart)"] : ["Closing apps is the fastest fix"],
+                fixedSize ? [new(MemoryActionType.AutoManagePageFile, "", "Let Windows manage the page file",
+                    "Let Windows manage the page file size? Takes effect after the next restart. The current custom size isn't kept. Needs administrator rights.")] : [],
+                "Windows"));
+        }
         if (s.App("Memory Compression") is { } mc && mc.MemoryBytes >= 500 * Mb)
             list.Add(new("compression", "Windows is compressing memory", $"Memory compression holds {MemoryText.Size(mc.MemoryBytes)}. That's Windows squeezing memory because RAM is tight; it's normal, but a sign more RAM or fewer open apps would help.",
                 null, SuggestionRisk.Low, SuggestionKind.Info, [], [], "Windows"));
 
         // Low priority Windows extras.
-        if (m.TotalBytes > 0 && m.UsedPercent >= 70)
+        if (m.TotalBytes > 0 && m.UsedPercent >= 70 && s.TransparencyOn != false)
             list.Add(new("transparency", "Turn off transparency effects", "Transparency and animation effects use a little extra graphics memory. A small saving, but free.",
-                null, SuggestionRisk.Low, SuggestionKind.Guided, ["Settings > Personalization > Colors", "Turn off \"Transparency effects\""],
-                [new(MemoryActionType.OpenSettings, "ms-settings:personalization-colors", "Open Colors settings")], "Windows extras"));
+                null, SuggestionRisk.Low, SuggestionKind.Automated, ["Same as Settings > Personalization > Colors > Transparency effects: Off (this account only). Undo turns it back on."],
+                [new(MemoryActionType.DisableTransparency, "", "Turn off transparency"),
+                 new(MemoryActionType.OpenSettings, "ms-settings:personalization-colors", "Open Colors settings")], "Windows extras"));
         if (s.App("Widgets") is { } w)
             list.Add(new("widgets", "Turn off Widgets", $"Widgets is running and using {MemoryText.Size(w.MemoryBytes)}.", w.MemoryBytes, SuggestionRisk.Low, SuggestionKind.Guided,
                 ["Settings > Personalization > Taskbar", "Turn off Widgets (and Copilot if you don't use it)"],
