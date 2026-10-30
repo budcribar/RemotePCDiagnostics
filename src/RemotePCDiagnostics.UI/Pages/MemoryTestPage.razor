@@ -1,0 +1,150 @@
+@page "/module/memorytest"
+@using RemotePCDiagnostics.Core.Stress
+@using RemotePCDiagnostics.Core.Osquery
+@inherits StoreAwareComponent
+@implements IAsyncDisposable
+@{
+    var r = Store.Get(MemoryTestModule.ModuleName);
+    var running = r.Status == DiagnosticStatus.Running;
+    var report = r.Payload as MemoryTestReport;
+    var p = running ? Module?.LastProgress : null;
+    var planned = running ? null : Module?.PlannedBytes(_mode);
+}
+<div class="toolbar">
+    <h1 data-testid="memtest-title">Memory test</h1>
+    <label class="meta">Test
+        <select data-testid="memtest-mode" disabled="@running" @onchange="SetMode">
+            <option value="Quick" selected="@(_mode == MemoryTestMode.Quick)">Quick (a small part of memory)</option>
+            <option value="Full" selected="@(_mode == MemoryTestMode.Full)">Full (as much memory as is safe)</option>
+        </select>
+    </label>
+    <label class="meta">Run for
+        <select data-testid="memtest-duration" disabled="@running" @onchange="SetDuration">
+            @foreach (var d in MemoryTestOptions.DurationChoices)
+            {
+                <option value="@d.TotalMinutes" selected="@(d == _duration)">@(d.TotalMinutes == 1 ? "1 minute" : $"{d.TotalMinutes:0} minutes")</option>
+            }
+        </select>
+    </label>
+    <button data-testid="memtest-start" @onclick="Start" disabled="@(running || Module is null)">Start</button>
+    <button data-testid="memtest-stop" @onclick="Stop" disabled="@(!running)">Stop</button>
+</div>
+<p class="meta">Writes test patterns into your PC's memory and reads them back to find faulty spots. Your PC may feel slower while it runs; other programs keep working, and enough memory is always left free for them.
+    @if (!running) { <span data-testid="memtest-plan">@(planned is { } pb ? $"This test will check about {HardwareInventory.FormatBytes(pb)} of memory." : "There isn't enough free memory to run this test right now. Close some programs and try again.")</span> }
+</p>
+
+<p data-testid="memtest-status" class="status-line">
+    <span class="@DotClass(r.Status)"></span>
+    @(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
+</p>
+
+@if (running)
+{
+    <div class="progress" data-testid="memtest-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
+    <div class="cards">
+        <div class="card" data-testid="memtest-live-progress">
+            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+            <div class="headline">@(p is null ? "Getting ready…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
+            @if (p is not null)
+            {
+                <div class="meta">Testing @HardwareInventory.FormatBytes(p.TestBytes) · @(p.Pass == 1 ? "1 full round done" : $"{p.Pass} full rounds done")</div>
+                @if (p.Errors > 0) { <div class="meta error-text">Problems found so far: @p.Errors.ToString("N0")</div> }
+            }
+        </div>
+        <div class="card" data-testid="memtest-live-temp">
+            <div class="card-head"><span class="dot dot-neutral"></span><strong>CPU temperature</strong></div>
+            <div class="headline">@(p?.CpuTemperatureC is { } t ? $"{t:0}°C" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
+            <div class="meta">The test stops by itself if anything gets too hot</div>
+        </div>
+        <div class="card" data-testid="memtest-live-fan">
+            <div class="card-head"><span class="dot dot-neutral"></span><strong>Fan speed</strong></div>
+            <div class="headline">@(p?.FanRpm is > 0 ? $"{p.FanRpm:0} RPM" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
+        </div>
+    </div>
+}
+else if (report is not null)
+{
+    <div class="cards">
+        <div class="card" data-testid="memtest-result">
+            <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
+            <div class="headline">@report.Explanation</div>
+            <div class="meta">@(report.Mode == MemoryTestMode.Quick ? "Quick test" : "Full test")@(report.TestBytes > 0 ? $" · {HardwareInventory.FormatBytes(report.TestBytes)} checked" : "")@(report.Passes > 0 ? $" · {(report.Passes == 1 ? "1 round" : $"{report.Passes} rounds")}" : "")@(report.MaxCpuTemperatureC is { } mt ? $" · hottest {mt:0}°C" : "")</div>
+            <div class="meta">Finished @r.Timestamp.ToLocalTime().ToString("g")</div>
+        </div>
+    </div>
+}
+
+<div class="card" data-testid="memtest-deeper" style="margin-top:16px">
+    <div class="card-head"><span class="dot dot-neutral"></span><strong>Want a deeper check?</strong></div>
+    <div class="headline">Windows has its own memory test that runs while the PC restarts, before Windows starts. It can check memory this app can't reach while Windows is running.</div>
+    @if (Module?.CanLaunchWindowsDiagnostic == true)
+    {
+        @if (!_confirm)
+        {
+            <button data-testid="memtest-mdsched" @onclick="() => { _confirm = true; _launchMessage = null; }" disabled="@running">Open Windows Memory Diagnostic…</button>
+        }
+        else
+        {
+            <div class="notice notice-error" data-testid="memtest-mdsched-confirm">
+                <p><strong>This can restart your PC.</strong> Windows will ask whether to restart now or check the next time you start your PC. If you restart, save your work and close your programs first. The check takes several minutes and the PC restarts on its own when it's done.</p>
+                <button data-testid="memtest-mdsched-yes" @onclick="LaunchMdsched">Yes, open it</button>
+                <button data-testid="memtest-mdsched-no" @onclick="() => _confirm = false">Cancel</button>
+            </div>
+        }
+    }
+    @if (_launchMessage is not null) { <div class="meta" data-testid="memtest-mdsched-result">@_launchMessage</div> }
+</div>
+
+@code {
+    private MemoryTestModule? Module => Diagnostics.Modules.OfType<MemoryTestModule>().FirstOrDefault();
+    private MemoryTestMode _mode = MemoryTestMode.Quick;
+    private TimeSpan _duration = MemoryTestOptions.DefaultDuration(MemoryTestMode.Quick);
+    private bool _confirm;
+    private string? _launchMessage;
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        if (Module is not { } m) return;
+        _mode = m.Mode; _duration = m.Duration;
+        m.ProgressChanged += OnProgress;
+    }
+
+    private void OnProgress(object? s, MemoryTestProgress p) => _ = InvokeAsync(StateHasChanged);
+
+    private void SetMode(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<MemoryTestMode>(e.Value?.ToString(), out var m)) { _mode = m; _duration = MemoryTestOptions.DefaultDuration(m); }
+    }
+
+    private void SetDuration(ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out var min)) _duration = TimeSpan.FromMinutes(min);
+    }
+
+    private void Start()
+    {
+        if (Module is not { } m || Diagnostics.IsRunning(m.Name)) return;
+        m.Mode = _mode; m.Duration = _duration;
+        _ = Diagnostics.RunAsync(m.Name);
+    }
+
+    private void Stop() => Module?.Stop();
+
+    private void LaunchMdsched()
+    {
+        _confirm = false;
+        _launchMessage = Module?.LaunchWindowsMemoryDiagnostic() == true
+            ? "Windows Memory Diagnostic is open. Choose whether to restart now or check the next time you start your PC."
+            : "Windows Memory Diagnostic couldn't be opened on this PC.";
+    }
+
+    private static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
+
+    public ValueTask DisposeAsync()
+    {
+        if (Module is { } m) m.ProgressChanged -= OnProgress;
+        Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

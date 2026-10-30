@@ -34,6 +34,8 @@ public partial class MainWindow : Window
         // On demand only: not auto-run and excluded from Run All; runs when the user presses Start on its page.
         services.AddSingleton<IDiagnosticModule>(sp => new CpuStressModule(sp.GetRequiredService<ISensorProvider>(), App.Log));
         services.AddSingleton<IDiagnosticModule>(sp => new DiskSpeedModule(new PhysicalDiskTestFileSystem(App.Log), sp.GetRequiredService<ISensorProvider>(), App.Log));
+        services.AddSingleton<IDiagnosticModule>(sp => new MemoryTestModule(new SystemMemoryInfo(), new ProcessMemTestHelperLauncher(log: App.Log),
+            sp.GetRequiredService<ISensorProvider>(), new MdschedLauncher(App.Log), App.Log));
         services.AddSingleton(new SystemCommandRunner(log: App.Log));
         services.AddSingleton<IDiagnosticModule, DriveHealthModule>();
         services.AddSingleton<IDiagnosticModule, ServicesModule>();
