@@ -146,4 +146,36 @@ public class RemediationTests
         Assert.True(trimRes.Success);
         Assert.Contains("Optimized / Retrimmed Samsung SSD 980", trimRes.Message);
     }
+
+    [Fact]
+    public async Task SsdOptimize_RetrimsTheTargetDrive_NotAlwaysC()
+    {
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var svc = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Local));
+
+        var res = await svc.ExecuteAsync(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", "D", "WD Blue SN580"));
+
+        Assert.True(res.Success);
+        var script = Assert.Single(launcher.Calls).Args[^1];
+        Assert.Contains("-DriveLetter D", script);
+        Assert.DoesNotContain("-DriveLetter C", script);
+    }
+
+    [Theory]
+    [InlineData("msedgewebview2")]
+    [InlineData("msedgewebview2.exe")]
+    [InlineData("osqueryi")]
+    [InlineData("MemTestHelper")]
+    [InlineData("LsaIso")]
+    public async Task EndTask_IsRefused_ForProcessesTheMemoryPageAlsoProtects(string process)
+    {
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var svc = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Local));
+        var action = new AreaAction(RemediationKind.EndProcessGroup, "End task", process, process);
+
+        Assert.False(svc.Plan(action).Allowed);
+        var res = await svc.ExecuteAsync(action);
+        Assert.False(res.Success);
+        Assert.Empty(launcher.Calls);
+    }
 }
