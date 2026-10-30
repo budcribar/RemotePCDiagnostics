@@ -147,7 +147,7 @@ public class SensorNoDataTests
         var rep = r.Data!;
         Assert.Null(rep.Groups.First(g => g.Id == "cpu").Hottest);
         Assert.Contains("CPU —", r.Message);
-        Assert.DoesNotContain("0°C", r.Message);
+        Assert.DoesNotContain("CPU 0°C", r.Message);
         Assert.Equal(["storage"], rep.VisibleGroups.Select(g => g.Id));
         Assert.Equal("Not reported by this PC: CPU temperatures, GPU temperatures, board and memory temperatures, fans", rep.MissingText);
     }
