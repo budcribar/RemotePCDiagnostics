@@ -1,0 +1,391 @@
+using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Logging;
+using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Session;
+
+namespace RemotePCDiagnostics.Tests;
+
+public class MemorySuggestionTests
+{
+    private const long Mb = 1L << 20, Gb = 1L << 30;
+    private static readonly MemoryReading Ram = new(16 * Gb, 6 * Gb);
+
+    private static MemorySnapshot Snap(params AppUsage[] apps) => new(Ram, apps);
+    private static IReadOnlyList<MemorySuggestion> Build(MemorySnapshot s) => MemorySuggestionEngine.Build(s);
+    private static ServiceInfo Svc(string name, string status = "RUNNING", string start = "AUTO_START") => new(name, name + " display", status, start, "LocalSystem", "");
+
+    // ---- browsers / prefs
+    private const string ChromeOff = """{"performance_tuning":{"high_efficiency_mode":{"state":0}},"other":1}""";
+    private const string ChromeOn = """{"performance_tuning":{"high_efficiency_mode":{"state":2}}}""";
+    private const string ChromeOld = """{"performance_tuning":{"high_efficiency_mode":{"enabled":false}}}""";
+    private const string EdgeOff = """{"performance_tuning":{"sleeping_tabs":{"enabled":false}}}""";
+
+    [Fact]
+    public void BrowserPrefs_Read()
+    {
+        Assert.False(BrowserPrefs.ReadMemorySaver(ChromeOff, BrowserKind.Chrome));
+        Assert.True(BrowserPrefs.ReadMemorySaver(ChromeOn, BrowserKind.Chrome));
+        Assert.False(BrowserPrefs.ReadMemorySaver(ChromeOld, BrowserKind.Chrome));
+        Assert.False(BrowserPrefs.ReadMemorySaver(EdgeOff, BrowserKind.Edge));
+        Assert.Null(BrowserPrefs.ReadMemorySaver("{}", BrowserKind.Chrome));
+        Assert.Null(BrowserPrefs.ReadMemorySaver("not json", BrowserKind.Edge));
+        Assert.Null(BrowserPrefs.ReadMemorySaver(ChromeOff, BrowserKind.Edge));
+    }
+
+    [Fact]
+    public void BrowserPrefs_Enable_FlipsExistingKeyOnly_KeepsOtherData()
+    {
+        var on = BrowserPrefs.EnableMemorySaver(ChromeOff, BrowserKind.Chrome)!;
+        Assert.True(BrowserPrefs.ReadMemorySaver(on, BrowserKind.Chrome));
+        Assert.Contains("\"other\":1", on);
+        Assert.True(BrowserPrefs.ReadMemorySaver(BrowserPrefs.EnableMemorySaver(ChromeOld, BrowserKind.Chrome), BrowserKind.Chrome));
+        Assert.True(BrowserPrefs.ReadMemorySaver(BrowserPrefs.EnableMemorySaver(EdgeOff, BrowserKind.Edge), BrowserKind.Edge));
+        Assert.Null(BrowserPrefs.EnableMemorySaver("{}", BrowserKind.Chrome));
+    }
+
+    [Fact]
+    public void Browser_Suggestion_AutomatedOnlyWhenClosed()
+    {
+        var chrome = new AppUsage("chrome", 13, 872 * Mb, HasWindow: true);
+        var running = Build(Snap(chrome) with { Browsers = [new(BrowserKind.Chrome, true, true, false, true)] }).Single(x => x.Id == "browser-chrome");
+        Assert.Contains("872 MB across 13 processes", running.Why);
+        Assert.DoesNotContain(running.Actions, a => a.Type == MemoryActionType.EnableBrowserMemorySaver);
+        Assert.Equal(SuggestionKind.Guided, running.Kind);
+        var closed = Build(Snap() with { Browsers = [new(BrowserKind.Edge, true, false, false, true)] }).Single(x => x.Id == "browser-edge");
+        Assert.Contains(closed.Actions, a => a.Type == MemoryActionType.EnableBrowserMemorySaver);
+        Assert.DoesNotContain(Build(Snap() with { Browsers = [new(BrowserKind.Chrome, true, false, true, true), new(BrowserKind.Edge, true, false, null, true)] }), x => x.Id.StartsWith("browser"));
+    }
+
+    // ---- close apps / protected
+    [Theory]
+    [InlineData("csrss"), InlineData("winlogon"), InlineData("lsass"), InlineData("services"), InlineData("svchost"), InlineData("MsMpEng"),
+     InlineData("explorer"), InlineData("dwm"), InlineData("RemotePCDiagnostics.Host"), InlineData("msedgewebview2"), InlineData("WinDefend"), InlineData("System")]
+    public void Protected_NeverOfferedToClose(string name)
+    {
+        Assert.True(ProtectedProcesses.IsProtected(name));
+        Assert.DoesNotContain(Build(Snap(new AppUsage(name, 1, 3 * Gb, HasWindow: true))), x => x.Actions.Any(a => a.Type == MemoryActionType.CloseApp));
+    }
+
+    [Fact]
+    public void CloseApp_OnlyUserAppsWithWindow_GroupedWithCounts_SortedBySaving()
+    {
+        var list = Build(Snap(
+            new AppUsage("ChatGPT", 5, 1 * Gb, HasWindow: true),
+            new AppUsage("slack", 6, 700 * Mb, HasWindow: true),
+            new AppUsage("bgthing", 1, 900 * Mb, HasWindow: false),
+            new AppUsage("svcapp", 1, 900 * Mb, HasWindow: true, IsService: true),
+            new AppUsage("small", 1, 100 * Mb, HasWindow: true)));
+        var closes = list.Where(x => x.Actions.Any(a => a.Type == MemoryActionType.CloseApp)).ToList();
+        Assert.Equal(["close-chatgpt", "close-slack"], closes.Select(x => x.Id));
+        Assert.Contains("across 5 processes", closes[0].Why);
+        Assert.Contains("own copy of a web browser", closes[0].Why);
+        Assert.NotNull(closes[0].Actions[0].Confirm);
+        Assert.Equal(1 * Gb + 700 * Mb, MemorySuggestionEngine.PotentialCloseSavings(list));
+        var order = list.ToList(); Assert.True(order.IndexOf(closes[0]) < order.IndexOf(closes[1]));
+    }
+
+    // ---- VS / build servers
+    [Fact]
+    public void VisualStudio_Rules()
+    {
+        var dev = new AppUsage("devenv", 1, 2 * Gb, HasWindow: true, RunningFor: TimeSpan.FromHours(9));
+        var list = Build(Snap(dev) with { VisualStudio = new(true, [new("ReSharper", 300 * Mb), new("Tiny", 1 * Mb)]) });
+        Assert.Contains(list, x => x.Id == "vs-restart" && x.Why.Contains("9 hours"));
+        Assert.Contains(list, x => x.Id == "vs-liveshare" && x.Kind == SuggestionKind.Guided && x.Actions.Count == 0);
+        Assert.Contains(list, x => x.Id == "vs-extensions" && x.Why.Contains("ReSharper"));
+        // VS not running → no VS suggestions; small and fresh → no restart.
+        Assert.DoesNotContain(Build(Snap() with { VisualStudio = new(true, []) }), x => x.Id.StartsWith("vs-"));
+        Assert.DoesNotContain(Build(Snap(new AppUsage("devenv", 1, 500 * Mb, true, RunningFor: TimeSpan.FromHours(1)))), x => x.Id == "vs-restart");
+    }
+
+    [Fact]
+    public void BuildServers_Suggested_WithAllowlistedCommand()
+    {
+        var s = Build(Snap(new AppUsage("VBCSCompiler", 1, 400 * Mb), new AppUsage("MSBuild", 3, 600 * Mb))).Single(x => x.Id == "build-servers");
+        Assert.Equal(1000 * Mb, s.SavingBytes);
+        Assert.Equal(SuggestionKind.Automated, s.Kind);
+        Assert.DoesNotContain(Build(Snap()), x => x.Id == "build-servers");
+        Assert.True(MemoryCommandAllowlist.IsAllowed("dotnet", ["build-server", "shutdown"]));
+        Assert.True(MemoryCommandAllowlist.IsAllowed(@"C:\Program Files\dotnet\dotnet.exe", ["build-server", "shutdown"]));
+        Assert.False(MemoryCommandAllowlist.IsAllowed("dotnet", ["build-server", "shutdown", "--x"]));
+        Assert.False(MemoryCommandAllowlist.IsAllowed("powershell", ["build-server", "shutdown"]));
+        Assert.False(MemoryCommandAllowlist.IsAllowed("dotnet", ["run"]));
+        Assert.True(MemoryCommandAllowlist.IsAllowedSettingsUri("ms-settings:taskbar"));
+        Assert.False(MemoryCommandAllowlist.IsAllowedSettingsUri("https://evil.example"));
+        Assert.False(MemoryCommandAllowlist.IsAllowedSettingsUri("cmd.exe"));
+    }
+
+    // ---- startup
+    [Theory]
+    [InlineData("\"C:\\Users\\b\\AppData\\Local\\slack\\slack.exe\" --process-start-args --startup", "slack")]
+    [InlineData("C:\\Program Files\\Spotify\\Spotify.exe /minimized", "Spotify")]
+    [InlineData("Discord.exe", "Discord")]
+    [InlineData("", "")]
+    public void Startup_ExeName(string cmd, string exe) => Assert.Equal(exe, StartupParsing.ExeName(cmd));
+
+    [Fact]
+    public void Startup_Approved_Bytes()
+    {
+        Assert.True(StartupParsing.IsEnabled(null));
+        Assert.True(StartupParsing.IsEnabled([2, 0, 0, 0]));
+        Assert.True(StartupParsing.IsEnabled([6, 0]));
+        Assert.False(StartupParsing.IsEnabled([3, 0]));
+        var d = StartupParsing.DisabledValue(new DateTime(2026, 10, 30, 0, 0, 0, DateTimeKind.Utc));
+        Assert.Equal(12, d.Length);
+        Assert.False(StartupParsing.IsEnabled(d));
+    }
+
+    [Fact]
+    public void Startup_SuggestedForHeavyOrElectron_NotWhenDisabled()
+    {
+        var snap = Snap(new AppUsage("Discord", 4, 400 * Mb, true)) with
+        {
+            Startup = [new("Discord", "\"C:\\x\\Discord.exe\"", true), new("Tiny", "C:\\t\\tiny.exe", true), new("Spotify", "\"C:\\s\\Spotify.exe\"", false)],
+        };
+        var ids = Build(snap).Select(x => x.Id).ToList();
+        Assert.Contains("startup-discord", ids);
+        Assert.DoesNotContain("startup-tiny", ids);
+        Assert.DoesNotContain("startup-spotify", ids);
+    }
+
+    // ---- Windows / info
+    [Fact]
+    public void FastStartup_Uptime_AndInfoRules()
+    {
+        Assert.Contains(Build(Snap() with { Uptime = TimeSpan.FromHours(8), FastStartup = true }), x => x.Id == "restart" && x.Kind == SuggestionKind.Guided && x.Why.Contains("8 hours"));
+        Assert.DoesNotContain(Build(Snap() with { Uptime = TimeSpan.FromHours(2), FastStartup = true }), x => x.Id == "restart");
+        Assert.DoesNotContain(Build(Snap() with { Uptime = TimeSpan.FromHours(8), FastStartup = false }), x => x.Id == "restart");
+        var tight = new MemorySnapshot(new(16 * Gb, 1 * Gb, 30 * Gb, 32 * Gb), [new AppUsage("Memory Compression", 1, 800 * Mb)]);
+        var ids = Build(tight).Select(x => x.Id).ToList();
+        Assert.Contains("low-ram", ids); Assert.Contains("commit", ids); Assert.Contains("compression", ids); Assert.Contains("transparency", ids);
+        Assert.DoesNotContain(Build(Snap()), x => x.Kind == SuggestionKind.Info);
+    }
+
+    [Fact]
+    public void Defender_OnlyWithDevTools()
+    {
+        var def = new AppUsage("MsMpEng", 1, 400 * Mb);
+        Assert.DoesNotContain(Build(Snap(def)), x => x.Id == "defender-exclusions");
+        var s = Build(Snap(def, new AppUsage("devenv", 1, 500 * Mb, true))).Single(x => x.Id == "defender-exclusions");
+        Assert.Equal(SuggestionKind.Guided, s.Kind);
+        Assert.DoesNotContain(s.Actions, a => a.Type != MemoryActionType.OpenSettings);
+    }
+
+    // ---- services
+    [Fact]
+    public void Services_Rules()
+    {
+        var snap = Snap() with
+        {
+            Devices = new(HasPrinter: false, HasBluetoothDevices: true),
+            Services =
+            [
+                new(Svc("Spooler"), 30 * Mb), new(Svc("bthserv"), 20 * Mb, 4), new(Svc("DiagTrack"), 40 * Mb),
+                new(Svc("WinDefend"), 200 * Mb), new(Svc("EventLog"), 50 * Mb), new(Svc("Fax", "STOPPED"), 5 * Mb),
+                new(Svc("LenovoVantageService"), 80 * Mb), new(Svc("WbioSrvc"), 10 * Mb), new(Svc("vmcompute"), 10 * Mb),
+            ],
+        };
+        var list = Build(snap);
+        var ids = list.Select(x => x.Id).ToList();
+        Assert.Contains("svc-spooler", ids);
+        Assert.Contains("svc-diagtrack", ids);
+        Assert.Contains("svc-lenovovantageservice", ids);
+        Assert.DoesNotContain("svc-bthserv", ids);   // has BT devices
+        Assert.DoesNotContain("svc-wbiosrvc", ids);  // fingerprint unknown → not suggested
+        Assert.DoesNotContain("svc-windefend", ids); // protected
+        Assert.DoesNotContain("svc-eventlog", ids);  // protected
+        Assert.DoesNotContain("svc-fax", ids);       // not running
+        Assert.Contains("svc-vmcompute", ids);       // no VM/WSL/Docker running
+        Assert.DoesNotContain(Build(snap with { Apps = [new AppUsage("vmmemWSL", 1, 2 * Gb)] }), x => x.Id == "svc-vmcompute");
+        var diag = list.Single(x => x.Id == "svc-diagtrack");
+        Assert.Contains(diag.Actions, a => a.Type == MemoryActionType.SetServiceDisabled);
+        Assert.Contains(diag.Actions, a => a.Type == MemoryActionType.SetServiceManual);
+        Assert.All(diag.Actions, a => Assert.NotNull(a.Confirm));
+        var shared = Build(snap with { Devices = new(false, false) }).Single(x => x.Id == "svc-bthserv");
+        Assert.Null(shared.SavingBytes);
+        Assert.Contains("shared process", shared.Why);
+    }
+
+    [Fact]
+    public void Services_NothingProtectedEverSuggested()
+    {
+        var all = ServiceProtection.Protected.Select(n => new ServiceUsage(Svc(n), 100 * Mb)).ToList();
+        Assert.DoesNotContain(Build(Snap() with { Services = all, Devices = new(false, false, false) }), x => x.Category == "Services");
+    }
+
+    // ---- feedback wording
+    [Fact]
+    public void Feedback_Wording()
+    {
+        var before = new MemoryReading(10 * Gb, (long)(5.2 * Gb));
+        var after = new MemoryReading(10 * Gb, (long)(6.2 * Gb));
+        Assert.Equal("Freed about 1.0 GB. Available RAM 5.2 → 6.2 GB (used 48% → 38%).", MemoryFeedback.Describe(before, after, false));
+        Assert.StartsWith("No measurable change.", MemoryFeedback.Describe(before, before with { AvailableBytes = before.AvailableBytes + 10 * Mb }, false));
+        Assert.StartsWith("No memory freed: other apps used 300 MB more", MemoryFeedback.Describe(before, before with { AvailableBytes = before.AvailableBytes - 300 * Mb }, false));
+        Assert.StartsWith("Takes effect", MemoryFeedback.Describe(before, null, true));
+        Assert.StartsWith("Couldn't measure", MemoryFeedback.Describe(null, after, false));
+    }
+
+    // ---- service orchestration, undo, logging
+    private sealed class FakeSys : IMemorySystem
+    {
+        public MemorySnapshot Snap = new(Ram, []);
+        public Queue<MemoryReading> Readings = new();
+        public List<string> Calls = [];
+        public Dictionary<string, byte[]?> Approved = new();
+        public Dictionary<string, string> StartTypes = new(StringComparer.OrdinalIgnoreCase);
+        public string? LocalState = ChromeOff;
+        public bool BrowserRunning;
+        public MemoryReading ReadMemory() => Readings.Count > 0 ? Readings.Dequeue() : Ram;
+        public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> services, CancellationToken ct) => Task.FromResult(Snap);
+        public Task<ActionOutcome> CloseAppAsync(string p, CancellationToken ct) { Calls.Add("close:" + p); return Task.FromResult(new ActionOutcome(p != "stubborn", p == "stubborn" ? "It didn't close." : $"Closed {p}.")); }
+        public Task<ActionOutcome> ForceCloseAppAsync(string p, CancellationToken ct) { Calls.Add("kill:" + p); return Task.FromResult(new ActionOutcome(true, "Ended.")); }
+        public Task<ActionOutcome> RunCommandAsync(string f, IReadOnlyList<string> a, CancellationToken ct) { Calls.Add($"run:{f} {string.Join(' ', a)}"); return Task.FromResult(new ActionOutcome(true, "Build servers shut down.")); }
+        public byte[]? GetStartupApproved(string name) => Approved.GetValueOrDefault(name);
+        public void SetStartupApproved(string name, byte[]? v) { Calls.Add("approved:" + name); Approved[name] = v; }
+        public bool IsBrowserRunning(BrowserKind k) => BrowserRunning;
+        public string? ReadBrowserLocalState(BrowserKind k) => LocalState;
+        public void WriteBrowserLocalState(BrowserKind k, string json) { Calls.Add("write:" + k); LocalState = json; }
+        public void OpenUri(string uri) => Calls.Add("open:" + uri);
+        public string GetServiceStartType(string n) => StartTypes.GetValueOrDefault(n, "Automatic");
+        public void SetServiceStartType(string n, string t) { Calls.Add($"start-type:{n}={t}"); StartTypes[n] = t; }
+    }
+
+    private sealed class SvcBackend : IServiceControlBackend
+    {
+        public List<string> Calls = [];
+        public ServiceState GetState(string name) => ServiceState.Running;
+        public bool IsDriver(string name) => false;
+        public IReadOnlyList<DependentService> GetRunningDependents(string name) => [];
+        public void Start(string name) => Calls.Add("start:" + name);
+        public void Stop(string name) => Calls.Add("stop:" + name);
+        public Task<bool> WaitForStateAsync(string name, ServiceState t, TimeSpan timeout, CancellationToken ct) => Task.FromResult(true);
+    }
+
+    private static (MemorySuggestionService S, FakeSys Sys, List<string> Events) Make(MemorySnapshot snap, IServiceControlBackend? backend = null)
+    {
+        var sys = new FakeSys { Snap = snap };
+        var events = new List<string>();
+        var svc = new MemorySuggestionService(sys, null, backend is null ? null : new ServiceActionService(backend, new SessionContext(SessionMode.Remote)),
+            new SessionContext(SessionMode.Remote), (l, m) => events.Add(m), settle: TimeSpan.Zero);
+        return (svc, sys, events);
+    }
+
+    [Fact]
+    public async Task Close_MeasuresFeedback_TotalsFreed_LogsEvent()
+    {
+        var (s, sys, events) = Make(Snap(new AppUsage("ChatGPT", 3, 1 * Gb, true)));
+        await s.ScanAsync();
+        sys.Readings.Enqueue(new(16 * Gb, 5 * Gb)); sys.Readings.Enqueue(new(16 * Gb, 6 * Gb));
+        var sug = s.Suggestions.Single(x => x.Id == "close-chatgpt");
+        var r = await s.ApplyAsync(sug, sug.Actions[0]);
+        Assert.True(r.Success);
+        Assert.Contains("Freed about 1.0 GB", r.Message);
+        Assert.Equal(1 * Gb, s.TotalFreedBytes);
+        Assert.Contains("close:ChatGPT", sys.Calls);
+        Assert.Contains(events, e => e.StartsWith("Memory suggestion applied") && e.Contains("Actor: Remote technician") && e.Contains("CloseApp"));
+    }
+
+    [Fact]
+    public async Task Close_Failure_OffersForceClose_NeverKillsByItself()
+    {
+        var (s, sys, _) = Make(Snap(new AppUsage("stubborn", 1, 1 * Gb, true)));
+        await s.ScanAsync();
+        var sug = s.Suggestions.Single(x => x.Id == "close-stubborn");
+        var r = await s.ApplyAsync(sug, sug.Actions[0]);
+        Assert.False(r.Success);
+        Assert.True(r.CanForceClose);
+        Assert.DoesNotContain(sys.Calls, c => c.StartsWith("kill:"));
+        var forced = await s.ApplyAsync(sug, new MemoryAction(MemoryActionType.ForceCloseApp, "stubborn", "Force close"));
+        Assert.True(forced.Success);
+        Assert.Contains("kill:stubborn", sys.Calls);
+    }
+
+    [Fact]
+    public async Task Close_Protected_RefusedEvenIfRequested()
+    {
+        var (s, sys, _) = Make(Snap());
+        var fake = new MemorySuggestion("x", "x", "", null, SuggestionRisk.High, SuggestionKind.Automated, [], [new(MemoryActionType.CloseApp, "explorer", "Close")]);
+        var r = await s.ApplyAsync(fake, fake.Actions[0]);
+        Assert.False(r.Success);
+        Assert.Empty(sys.Calls);
+    }
+
+    [Fact]
+    public async Task BuildServers_RunsOnlyAllowlistedCommand()
+    {
+        var (s, sys, _) = Make(Snap(new AppUsage("VBCSCompiler", 1, 400 * Mb)));
+        await s.ScanAsync();
+        var sug = s.Suggestions.Single(x => x.Id == "build-servers");
+        Assert.True((await s.ApplyAsync(sug, sug.Actions[0])).Success);
+        Assert.Equal(["run:dotnet build-server shutdown"], sys.Calls);
+    }
+
+    [Fact]
+    public async Task Startup_Disable_ThenUndo_RestoresPreviousValue()
+    {
+        var (s, sys, events) = Make(Snap(new AppUsage("slack", 2, 400 * Mb, true)) with { Startup = [new("com.squirrel.slack.slack", "\"C:\\s\\slack.exe\"", true)] });
+        sys.Approved["com.squirrel.slack.slack"] = [2, 0, 0, 0];
+        await s.ScanAsync();
+        var sug = s.Suggestions.Single(x => x.Id.StartsWith("startup-"));
+        var r = await s.ApplyAsync(sug, sug.Actions[0]);
+        Assert.Contains("Takes effect", r.Message);
+        Assert.False(StartupParsing.IsEnabled(sys.Approved["com.squirrel.slack.slack"]));
+        var undo = Assert.Single(s.Undos);
+        Assert.True((await s.UndoAsync(undo)).Success);
+        Assert.Equal(new byte[] { 2, 0, 0, 0 }, sys.Approved["com.squirrel.slack.slack"]);
+        Assert.Empty(s.Undos);
+        Assert.Contains(events, e => e.StartsWith("Memory suggestion undone"));
+    }
+
+    [Fact]
+    public async Task Browser_EnableOnlyWhenClosed_UndoRestoresFile()
+    {
+        var (s, sys, _) = Make(Snap() with { Browsers = [new(BrowserKind.Chrome, true, false, false, true)] });
+        await s.ScanAsync();
+        var sug = s.Suggestions.Single(x => x.Id == "browser-chrome");
+        var act = sug.Actions.Single(a => a.Type == MemoryActionType.EnableBrowserMemorySaver);
+        sys.BrowserRunning = true;
+        Assert.False((await s.ApplyAsync(sug, act)).Success);
+        Assert.DoesNotContain(sys.Calls, c => c.StartsWith("write:"));
+        sys.BrowserRunning = false;
+        Assert.True((await s.ApplyAsync(sug, act)).Success);
+        Assert.True(BrowserPrefs.ReadMemorySaver(sys.LocalState, BrowserKind.Chrome));
+        await s.UndoAsync(s.Undos.Single());
+        Assert.Equal(ChromeOff, sys.LocalState);
+    }
+
+    [Fact]
+    public async Task Service_StartType_RecordsOriginal_AndUndoRestores()
+    {
+        var backend = new SvcBackend();
+        var (s, sys, _) = Make(Snap() with { Services = [new(Svc("DiagTrack"), 40 * Mb)] }, backend);
+        sys.StartTypes["DiagTrack"] = "AutomaticDelayed";
+        await s.ScanAsync();
+        var sug = s.Suggestions.Single(x => x.Id == "svc-diagtrack");
+        var r = await s.ApplyAsync(sug, sug.Actions.Single(a => a.Type == MemoryActionType.SetServiceDisabled));
+        Assert.Contains("was AutomaticDelayed", r.Message);
+        Assert.Equal("Disabled", sys.StartTypes["DiagTrack"]);
+        var undo = s.Undos.Single();
+        Assert.Equal("AutomaticDelayed", undo.Previous);
+        await s.UndoAsync(undo);
+        Assert.Equal("AutomaticDelayed", sys.StartTypes["DiagTrack"]);
+        var stop = await s.ApplyAsync(sug, sug.Actions.Single(a => a.Type == MemoryActionType.StopService));
+        Assert.True(stop.Success);
+        Assert.Contains("stop:DiagTrack", backend.Calls);
+    }
+
+    [Fact]
+    public async Task Service_Protected_RefusedEvenIfRequested()
+    {
+        var backend = new SvcBackend();
+        var (s, sys, _) = Make(Snap() with { Services = [new(Svc("WinDefend"), 200 * Mb)] }, backend);
+        await s.ScanAsync();
+        var fake = new MemorySuggestion("x", "x", "", null, SuggestionRisk.High, SuggestionKind.Automated, [],
+            [new(MemoryActionType.StopService, "WinDefend", "Stop"), new(MemoryActionType.SetServiceDisabled, "WinDefend", "Disable")]);
+        Assert.False((await s.ApplyAsync(fake, fake.Actions[0])).Success);
+        Assert.False((await s.ApplyAsync(fake, fake.Actions[1])).Success);
+        Assert.Empty(backend.Calls);
+        Assert.Empty(sys.Calls);
+    }
+}

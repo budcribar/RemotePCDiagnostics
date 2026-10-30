@@ -17,6 +17,7 @@ public static class LogEventIds
     public const int TestResult = 1100, SuiteStarted = 1110, SuiteFinished = 1111;
     public const int FanDiagnostic = 1200;
     public const int SensorDriver = 1300;
+    public const int MemorySuggestion = 1400;
     public const int Error = 1900;
 }
 
