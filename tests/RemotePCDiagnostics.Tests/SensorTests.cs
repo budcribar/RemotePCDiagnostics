@@ -147,7 +147,7 @@ public class SensorNoDataTests
         var rep = r.Data!;
         Assert.Null(rep.Groups.First(g => g.Id == "cpu").Hottest);
         Assert.Contains("CPU —", r.Message);
-        Assert.DoesNotContain("0°C", r.Message);
+        Assert.DoesNotContain("CPU 0°C", r.Message);
         Assert.Equal(["storage"], rep.VisibleGroups.Select(g => g.Id));
         Assert.Equal("Not reported by this PC: CPU temperatures, GPU temperatures, board and memory temperatures, fans", rep.MissingText);
     }
@@ -212,5 +212,41 @@ public class SensorSignatureTests
         Assert.Equal(SensorReport.Signature("Ok", "m", R(50)), SensorReport.Signature("Ok", "m", R(50)));
         Assert.NotEqual(SensorReport.Signature("Ok", "m", R(50)), SensorReport.Signature("Ok", "m", R(51)));
         Assert.NotEqual(SensorReport.Signature("Ok", "m", R(50)), SensorReport.Signature("Warning", "m", R(50)));
+    }
+}
+
+public class ThermalZoneFallbackTests
+{
+    private sealed class Zones(params double[] v) : IThermalZoneReader { public IReadOnlyList<double> ReadTenthsKelvin() => v; }
+    private sealed class Broken : IThermalZoneReader { public IReadOnlyList<double> ReadTenthsKelvin() => throw new InvalidOperationException("no wmi"); }
+    private static SensorReading Cpu(double v) => new("AMD Ryzen 7 5700U", HardwareKind.Cpu, "Core (Tctl/Tdie)", SensorKind.Temperature, v, v, v, "°C");
+
+    [Theory]
+    [InlineData(3232, 50.0)]
+    [InlineData(0, null)]
+    [InlineData(2731, null)]   // ~0 °C: implausible
+    [InlineData(4500, null)]   // ~177 °C: implausible
+    public void ToCelsius(double raw, double? expected) => Assert.Equal(expected, ThermalZoneFallback.ToCelsius(raw));
+
+    [Fact]
+    public void UsedOnlyWhenNoRealCpuTemp()
+    {
+        var withZero = ThermalZoneFallback.Apply([Cpu(0)], new Zones(3132, 3232));
+        var fb = Assert.Single(withZero, r => r.IsApproximate);
+        Assert.Equal(50.0, fb.Value);
+        Assert.Equal("CPU/system temperature (approximate)", fb.FriendlyName);
+        Assert.DoesNotContain(ThermalZoneFallback.Apply([Cpu(61)], new Zones(3232)), r => r.IsApproximate);
+        Assert.DoesNotContain(ThermalZoneFallback.Apply([], new Zones(0)), r => r.IsApproximate);
+        Assert.Empty(ThermalZoneFallback.Apply([], new Broken()));
+    }
+
+    [Fact]
+    public void Approximate_FeedsCpuCard_ButNeverCritical()
+    {
+        var rep = LibreHardwareMonitorModule.BuildReport(new SensorSnapshot(ThermalZoneFallback.Apply([Cpu(0)], new Zones(3982)), true)); // 125 -> no; use 3972 ~124
+        var rep2 = LibreHardwareMonitorModule.BuildReport(new SensorSnapshot(ThermalZoneFallback.Apply([Cpu(0)], new Zones(3732)), true)); // 100 °C
+        Assert.Null(rep.Groups.First(g => g.Id == "cpu").Hottest);
+        Assert.Equal(100.0, rep2.Groups.First(g => g.Id == "cpu").Hottest);
+        Assert.Equal(SensorLevel.Neutral, rep2.Level);
     }
 }
