@@ -126,13 +126,17 @@ public sealed class DiagnosticsService
     /// (CPU, Memory, Disk, GPU, Network; never in parallel). Each test's Duration (and mode) is set for the run and
     /// restored afterwards. Unavailable tests are skipped; an overheated or failed test stops the sequence.
     /// Throws <see cref="InvalidOperationException"/> if a suite is already running.</summary>
-    public async Task<StressSuiteResult> RunStressSuiteAsync(StressSuiteMode mode, IProgress<StressSuiteProgress>? progress, CancellationToken ct = default)
+    /// <param name="only">When set, only these stress tests run (suite order kept).</param>
+    /// <param name="runQuickChecks">False skips the Run All quick checks before the stress tests.</param>
+    public async Task<StressSuiteResult> RunStressSuiteAsync(StressSuiteMode mode, IProgress<StressSuiteProgress>? progress, CancellationToken ct = default,
+        IReadOnlyCollection<string>? only = null, bool runQuickChecks = true)
     {
         if (Interlocked.CompareExchange(ref _suiteRunning, 1, 0) != 0)
             throw new InvalidOperationException("A stress test run is already in progress.");
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         lock (_gate) _suiteCts = cts;
         var modules = StressSuite.Order
+            .Where(n => only is null || only.Contains(n, StringComparer.OrdinalIgnoreCase))
             .Select(n => _modules.FirstOrDefault(m => string.Equals(m.Name, n, StringComparison.OrdinalIgnoreCase)) as IStressSuiteModule)
             .Where(m => m is not null).Cast<IStressSuiteModule>().ToList();
         var steps = modules.Select(m => new StressSuiteStep(m.Name, m.SuiteName, StressSuiteStepState.Pending)).ToArray();
@@ -159,7 +163,7 @@ public sealed class DiagnosticsService
             CurrentSuiteLabel = label;
             Log?.Invoke($"Stress suite ({label}) started");
             Report(0, false, null);
-            await RunAllAsync(cts.Token).ConfigureAwait(false);
+            if (runQuickChecks) await RunAllAsync(cts.Token).ConfigureAwait(false);
             for (int i = 0; i < modules.Count; i++)
             {
                 var m = modules[i];
