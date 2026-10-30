@@ -1,0 +1,17 @@
+@* Pill showing a module status in plain words: OK / Check / Problem / Not run yet / Running… *@
+<span class="chip chip-@Kind(Status)" data-testid="@TestId"><span class="dot dot-@Status.ToString().ToLowerInvariant()"></span>@(Text ?? Label(Status))</span>
+@code {
+    [Parameter] public DiagnosticStatus Status { get; set; }
+    [Parameter] public string? Text { get; set; }
+    [Parameter] public string? TestId { get; set; }
+    public static string Label(DiagnosticStatus s) => s switch
+    {
+        DiagnosticStatus.Ok => "OK", DiagnosticStatus.Warning => "Check", DiagnosticStatus.Error => "Problem",
+        DiagnosticStatus.Running => "Running…", _ => "Not run yet",
+    };
+    public static string Kind(DiagnosticStatus s) => s switch
+    {
+        DiagnosticStatus.Ok => "ok", DiagnosticStatus.Warning => "warn", DiagnosticStatus.Error => "err",
+        DiagnosticStatus.Running => "run", _ => "na",
+    };
+}

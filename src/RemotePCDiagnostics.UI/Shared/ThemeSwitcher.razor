@@ -8,11 +8,11 @@
         var name = choice.ToString();
         <button type="button" role="radio" aria-checked="@(choice == _choice ? "true" : "false")" title="@name theme"
                 class="@(choice == _choice ? "on" : null)" data-testid="theme-@ThemePreference.ToStorage(choice)"
-                @onclick="() => SetAsync(choice)"><span aria-hidden="true">@icon</span> @name</button>
+                @onclick="() => SetAsync(choice)"><Icon Name="@icon" Size="14" /> @name</button>
     }
 </div>
 @code {
-    static readonly (ThemeChoice, string)[] Options = [(ThemeChoice.Dark, "☾"), (ThemeChoice.System, "◐"), (ThemeChoice.Light, "☀")];
+    static readonly (ThemeChoice, string)[] Options = [(ThemeChoice.Dark, "moon"), (ThemeChoice.System, "system"), (ThemeChoice.Light, "sun")];
     ThemeChoice _choice = ThemePreference.Default;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

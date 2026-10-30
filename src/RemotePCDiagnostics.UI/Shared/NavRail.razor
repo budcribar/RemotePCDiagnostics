@@ -1,8 +1,15 @@
 @inherits StoreAwareComponent
-<nav class="rail">
-    <NavLink href="" Match="NavLinkMatch.All">Dashboard</NavLink>
+<nav class="rail" aria-label="Main">
+    <NavLink href="" Match="NavLinkMatch.All"><Icon Name="dash" /><span class="nav-text">Dashboard</span></NavLink>
     @foreach (var m in Diagnostics.Modules)
     {
-        <NavLink href="@($"module/{m.Name.ToLowerInvariant()}")"><span class="@DotClass(Store.Get(m.Name).Status)"></span>@m.DisplayName</NavLink>
+        <NavLink href="@($"module/{m.Name.ToLowerInvariant()}")"><Icon Name="@Icon.ForModule(m.Name)" /><span class="nav-text">@NavName(m)</span><span class="@DotClass(Store.Get(m.Name).Status)" title="@StatusChip.Label(Store.Get(m.Name).Status)"></span></NavLink>
     }
 </nav>
+@code {
+    // Shorter labels where the module name is long (matches the approved mockup).
+    static string NavName(IDiagnosticModule m) => m.Name switch
+    {
+        "DiskSpeed" => "Disk speed test", "GpuStress" => "GPU stress test", "NetworkTest" => "Network test", _ => m.DisplayName,
+    };
+}

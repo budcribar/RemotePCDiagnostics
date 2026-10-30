@@ -17,7 +17,7 @@ else
     var busy = r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
     var svcModule = m as ServicesModule;
     var svcActions = svcModule is null ? null : Sp.GetService(typeof(ServiceActionService)) as ServiceActionService;
-    <div class="toolbar"><h1 data-testid="area-title">@m.DisplayName</h1></div>
+    <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="@m.Name" Size="20" /></span><h1 data-testid="area-title">@m.DisplayName</h1></div>
     <p data-testid="area-status" class="@(r.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
         <span class="@DotClass(r.Status)"></span>
         <span>@(busy ? "Checking…" : r.Message)</span>

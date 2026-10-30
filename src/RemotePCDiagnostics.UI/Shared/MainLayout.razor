@@ -2,10 +2,11 @@
 @inject ISessionContext Session
 <div class="app">
     <header class="topbar">
-        <span class="title">RemotePCDiagnostics</span>
-        <ThemeSwitcher />
-        <span class="pc">@Session.MachineName</span>
+        <span class="title"><Icon Name="health" Size="22" Class="logo" />RemotePCDiagnostics</span>
         <span class="badge badge-@Session.Mode.ToString().ToLowerInvariant()">@Session.Mode</span>
+        <span class="topbar-spacer"></span>
+        <ThemeSwitcher />
+        <span class="pc" title="Computer name"><Icon Name="pc" Size="16" />@Session.MachineName</span>
     </header>
     <NavRail />
     <main class="content">@Body</main>

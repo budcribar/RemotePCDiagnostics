@@ -11,7 +11,7 @@
     var planned = running ? null : Module?.PlannedBytes(_mode);
 }
 <div class="toolbar">
-    <h1 data-testid="memtest-title">Memory test</h1>
+    <span class="icon-badge page-icon"><Icon Name="mem" Size="20" /></span><h1 data-testid="memtest-title">Memory test</h1>
     <label class="meta">Test
         <select data-testid="memtest-mode" disabled="@running" @onchange="SetMode">
             <option value="Quick" selected="@(_mode == MemoryTestMode.Quick)">Quick (a small part of memory)</option>

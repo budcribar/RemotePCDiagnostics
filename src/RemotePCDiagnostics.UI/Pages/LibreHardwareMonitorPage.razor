@@ -7,7 +7,7 @@
     var report = r.Payload as SensorReport;
 }
 <div class="toolbar">
-    <h1 data-testid="lhm-title">Temperatures &amp; fans</h1>
+    <span class="icon-badge page-icon"><Icon Name="temp" Size="20" /></span><h1 data-testid="lhm-title">Temperatures &amp; fans</h1>
     <button data-testid="lhm-refresh" @onclick="Refresh" disabled="@_busy">Refresh</button>
     <label class="meta"><input type="checkbox" data-testid="lhm-auto" checked="@_auto" @onchange="ToggleAuto" /> Auto-refresh every 5 s</label>
 </div>

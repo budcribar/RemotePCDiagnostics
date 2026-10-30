@@ -9,7 +9,7 @@
     var p = running ? Module?.LastProgress : null;
 }
 <div class="toolbar">
-    <h1 data-testid="cpustress-title">CPU stress test</h1>
+    <span class="icon-badge page-icon"><Icon Name="cpu" Size="20" /></span><h1 data-testid="cpustress-title">CPU stress test</h1>
     <label class="meta">Run for
         <select data-testid="cpustress-duration" disabled="@running" @onchange="SetDuration">
             @foreach (var d in CpuStressOptions.DurationChoices)

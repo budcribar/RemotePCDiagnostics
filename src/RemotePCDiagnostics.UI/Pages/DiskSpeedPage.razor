@@ -11,7 +11,7 @@
     var health = Store.Get(RemotePCDiagnostics.Core.Areas.DriveHealthModule.ModuleName);
 }
 <div class="toolbar">
-    <h1 data-testid="diskspeed-title">Disk speed test</h1>
+    <span class="icon-badge page-icon"><Icon Name="disk" Size="20" /></span><h1 data-testid="diskspeed-title">Disk speed test</h1>
     <label class="meta">Drive
         <select data-testid="diskspeed-drive" disabled="@running" @onchange="SetDrive">
             @foreach (var d in _drives)

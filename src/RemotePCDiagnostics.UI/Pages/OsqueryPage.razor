@@ -8,6 +8,7 @@
     var sys = inv?.System.Items.FirstOrDefault();
     var busy = r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
 }
+<div class="toolbar"><span class="icon-badge page-icon"><Icon Name="hw" Size="20" /></span><h1>Hardware inventory</h1></div>
 <p data-testid="osquery-status" class="status-line">
     <span class="@DotClass(r.Status)"></span>
     @if (busy) { <span>Querying hardware…</span> }

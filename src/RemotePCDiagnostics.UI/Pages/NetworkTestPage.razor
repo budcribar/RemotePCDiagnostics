@@ -9,7 +9,7 @@
     var p = running ? Module?.LastProgress : null;
 }
 <div class="toolbar">
-    <h1 data-testid="nettest-title">Network stability test</h1>
+    <span class="icon-badge page-icon"><Icon Name="net" Size="20" /></span><h1 data-testid="nettest-title">Network stability test</h1>
     <label class="meta">Run for
         <select data-testid="nettest-duration" disabled="@running" @onchange="SetDuration">
             @foreach (var d in NetworkTestOptions.DurationChoices)

@@ -15,7 +15,7 @@ else
     var rep = r.Payload as SecurityAuditReport;
     var running = r.Status == DiagnosticStatus.Running;
     <div class="toolbar">
-        <h1 data-testid="audit-title">@m.DisplayName</h1>
+        <span class="icon-badge page-icon"><Icon Name="sec" Size="20" /></span><h1 data-testid="audit-title">@m.DisplayName</h1>
         @if (running) { <button data-testid="audit-cancel" @onclick="m.Cancel">Cancel</button> }
         else { <button data-testid="audit-start" @onclick="() => Start(m)">@(r.Status == DiagnosticStatus.NotRun ? "Start audit" : "Run again")</button> }
     </div>
