@@ -123,6 +123,14 @@ public sealed class RebootResumeCoordinator(
     public static string DefaultStateFilePath() =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RemotePCDiagnostics", "pending-reboot.json");
 
+    public static PendingRebootState? TryReadPendingStateFile(string? path = null)
+    {
+        var file = path ?? DefaultStateFilePath();
+        if (string.IsNullOrWhiteSpace(file) || !File.Exists(file)) return null;
+        try { return JsonSerializer.Deserialize<PendingRebootState>(File.ReadAllText(file)); }
+        catch { return null; }
+    }
+
     /// <summary>Captures the current resource baseline via osquery (if available) or <see cref="Process.GetProcesses()"/>.</summary>
     public async Task<ResourceBaselineSnapshot> CaptureBaselineAsync(CancellationToken ct = default)
     {

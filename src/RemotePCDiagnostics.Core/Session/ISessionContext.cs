@@ -12,10 +12,19 @@ public interface ISessionContext
     Guid SessionId => Guid.Empty;
 }
 
-public sealed class SessionContext(SessionMode mode, Uri? serverUri = null, Guid sessionId = default) : ISessionContext
+public sealed class SessionContext : ISessionContext
 {
-    public SessionMode Mode { get; } = mode;
-    public Uri? ServerUri { get; } = serverUri;
-    public Guid SessionId { get; set; } = sessionId;
+    public SessionContext(SessionMode mode, Uri? serverUri = null, Guid sessionId = default)
+    {
+        Mode = mode;
+        ServerUri = serverUri;
+        SessionId = sessionId != Guid.Empty
+            ? sessionId
+            : (mode == SessionMode.Remote ? Guid.NewGuid() : Guid.Empty);
+    }
+
+    public SessionMode Mode { get; }
+    public Uri? ServerUri { get; }
+    public Guid SessionId { get; set; }
     public string MachineName { get; } = Environment.MachineName;
 }

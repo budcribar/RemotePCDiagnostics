@@ -1,3 +1,4 @@
+using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Tests;
@@ -48,4 +49,30 @@ public class SessionLaunchOptionsTests
     [Fact]
     public void InvalidUrl_Throws() =>
         Assert.Throws<ArgumentException>(() => SessionLaunchOptions.Resolve(["-u=not a url"], Env()));
+
+    [Fact]
+    public void PostReboot_RestoresPreviousIdAndServerFromPendingRebootState()
+    {
+        // Even if Remote mode was originally started without -i= (so SessionContext generated a SessionId),
+        // that SessionId is saved to PendingRebootState and restored on restart even if launched without args.
+        var initialCtx = new SessionContext(SessionMode.Remote, new Uri("https://remoteblazor.pagetomovie.com:34544"));
+        Assert.NotEqual(Guid.Empty, initialCtx.SessionId);
+
+        var pending = new PendingRebootState(
+            DateTimeOffset.UtcNow,
+            "Remote technician",
+            SessionMode.Remote,
+            initialCtx.ServerUri!.AbsoluteUri,
+            initialCtx.SessionId,
+            PreUptimeSeconds: 500_000,
+            PreUsedMemoryBytes: 8L * 1024 * 1024 * 1024,
+            PreProcessCount: 180,
+            PreTopProcesses: "chrome.exe (4 GB)");
+
+        var resumed = SessionLaunchOptions.Resolve([], Env(), pending);
+        Assert.Equal(SessionMode.Remote, resumed.Mode);
+        Assert.Equal(initialCtx.ServerUri, resumed.ServerUri);
+        Assert.Equal(initialCtx.SessionId, resumed.Id);
+        Assert.True(resumed.PostReboot);
+    }
 }

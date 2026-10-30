@@ -29,12 +29,14 @@ public partial class MainWindow : Window
         // Local (default) or Remote. Remote when started with -u=<server uri> (RemoteBlazorWebViewTutorial convention)
         // or REMOTEPC_MODE=Remote (+ optional REMOTEPC_SERVER_URL, default https://remoteblazor.pagetomovie.com:34544).
         // See Properties/launchSettings.json for the "Local" and "Remote (Railway)" Visual Studio profiles.
-        var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable);
+        var pendingReboot = RebootResumeCoordinator.TryReadPendingStateFile();
+        var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, pendingReboot);
         var mode = launch.Mode;
 
         var services = new ServiceCollection();
         services.AddRemoteWpfBlazorWebView();
-        services.AddSingleton<ISessionContext>(new SessionContext(mode, launch.ServerUri, launch.Id));
+        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id);
+        services.AddSingleton<ISessionContext>(sessionCtx);
         services.AddSingleton<ResultStore>();
         services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = App.Log }));
         services.AddSingleton<IDiagnosticModule, OsqueryModule>();
@@ -131,7 +133,7 @@ public partial class MainWindow : Window
             App.Log($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
 
         if (launch.ServerUri is not null)
-            StartRemote(launch.ServerUri, launch.Id);
+            StartRemote(launch.ServerUri, sessionCtx.SessionId);
         else
             RemoteBlazorWebView.HostPage = HostPage; // Local: unchanged behavior (HostPage moved from XAML to code)
     }
