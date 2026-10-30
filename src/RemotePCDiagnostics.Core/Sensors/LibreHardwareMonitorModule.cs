@@ -32,7 +32,7 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
     {
         snap = snap with { Readings = SensorReading.OnlyWithData(snap.Readings) };
         return new(snap, GroupDefs.Select(g => new SensorGroup(g.Id, g.Title,
-            snap.Readings.Where(g.Match).Select(r => new EvaluatedReading(r, SensorThresholds.Evaluate(r), SensorThresholds.For(r))).ToList(),
+            snap.Readings.Where(g.Match).Select(r => r.IsLimit ? new EvaluatedReading(r, SensorLevel.Neutral, null) : new EvaluatedReading(r, SensorThresholds.Evaluate(r), SensorThresholds.For(r))).ToList(),
             g.MissingLabel)).ToList());
     }
 

@@ -145,7 +145,7 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
         try
         {
             var snap = sensors.Read();
-            var temps = snap.Readings.Where(r => r.SensorType == SensorKind.Temperature && r.HasData).ToList();
+            var temps = snap.Readings.Where(r => r.SensorType == SensorKind.Temperature && r.IsLive).ToList();
             var cpu = temps.Where(r => r.HardwareType == HardwareKind.Cpu).Select(r => r.Value).DefaultIfEmpty().Max();
             var fan = snap.Readings.Where(r => r.SensorType == SensorKind.Fan && r.HasData).Select(r => r.Value).DefaultIfEmpty().Max();
             var crit = temps.FirstOrDefault(r => SensorThresholds.Evaluate(r) == SensorLevel.Critical);
