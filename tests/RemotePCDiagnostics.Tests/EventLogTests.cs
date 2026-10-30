@@ -77,4 +77,27 @@ public class EventLogTests
 
     [Fact]
     public void Quiet_IsOk() => Assert.Equal("No errors in the last 7 days", EventLogModule.Build([], []).Summary);
+
+    private static List<WinEvent> Errs(string source, int n, int level = 2) =>
+        WindowsEventLog.Parse(string.Concat(Enumerable.Range(0, n).Select(k => Ev(source, 7000 + k, level, $"2026-10-2{k % 8 + 1}T09:00:00Z", "Something failed"))), "System").ToList();
+
+    [Fact]
+    public void IsolatedErrors_StayGreen_ButListed()
+    {
+        var rep = EventLogModule.Build([.. Errs("A", 4), .. Errs("B", 2)], []);
+        Assert.Equal(DiagnosticStatus.Ok, rep.Status);
+        Assert.Equal(AreaLevel.Ok, rep.Cards.Single(c => c.Id == "system").Level);
+        Assert.Equal(6, rep.Cards.Single(c => c.Id == "system").Rows.Count);
+    }
+
+    [Fact]
+    public void FiveFromSameSource_Warns()
+    {
+        var rep = EventLogModule.Build(Errs("Disk", 5), []);
+        Assert.Equal(DiagnosticStatus.Warning, rep.Status);
+        Assert.Equal(AreaLevel.Warning, rep.Cards.Single(c => c.Id == "system").Level);
+    }
+
+    [Fact]
+    public void Critical_Warns() => Assert.Equal(DiagnosticStatus.Warning, EventLogModule.Build(Errs("Kernel-Power", 1, level: 1), []).Status);
 }

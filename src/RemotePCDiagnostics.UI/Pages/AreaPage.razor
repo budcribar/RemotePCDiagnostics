@@ -44,7 +44,7 @@ else
                 else if (open.Rows.Count == 0) { <p class="meta" data-testid="detail-empty">@(open.EmptyText ?? "Nothing to show here.")</p> }
                 else
                 {
-                    <table class="detail grid">
+                    <table class="detail grid sticky-head">
                         <tr>@foreach (var h in open.Columns) { <th>@h</th> }</tr>
                         @foreach (var row in open.Rows)
                         {

@@ -222,7 +222,7 @@ public class ThermalZoneFallbackTests
     private static SensorReading Cpu(double v) => new("AMD Ryzen 7 5700U", HardwareKind.Cpu, "Core (Tctl/Tdie)", SensorKind.Temperature, v, v, v, "°C");
 
     [Theory]
-    [InlineData(3232, 50.0)]
+    [InlineData(3231.5, 50.0)]
     [InlineData(0, null)]
     [InlineData(2731, null)]   // ~0 °C: implausible
     [InlineData(4500, null)]   // ~177 °C: implausible
@@ -231,7 +231,7 @@ public class ThermalZoneFallbackTests
     [Fact]
     public void UsedOnlyWhenNoRealCpuTemp()
     {
-        var withZero = ThermalZoneFallback.Apply([Cpu(0)], new Zones(3132, 3232));
+        var withZero = ThermalZoneFallback.Apply([Cpu(0)], new Zones(3131.5, 3231.5));
         var fb = Assert.Single(withZero, r => r.IsApproximate);
         Assert.Equal(50.0, fb.Value);
         Assert.Equal("CPU/system temperature (approximate)", fb.FriendlyName);
@@ -244,7 +244,7 @@ public class ThermalZoneFallbackTests
     public void Approximate_FeedsCpuCard_ButNeverCritical()
     {
         var rep = LibreHardwareMonitorModule.BuildReport(new SensorSnapshot(ThermalZoneFallback.Apply([Cpu(0)], new Zones(3982)), true)); // 125 -> no; use 3972 ~124
-        var rep2 = LibreHardwareMonitorModule.BuildReport(new SensorSnapshot(ThermalZoneFallback.Apply([Cpu(0)], new Zones(3732)), true)); // 100 °C
+        var rep2 = LibreHardwareMonitorModule.BuildReport(new SensorSnapshot(ThermalZoneFallback.Apply([Cpu(0)], new Zones(3731.5)), true)); // 100 °C
         Assert.Null(rep.Groups.First(g => g.Id == "cpu").Hottest);
         Assert.Equal(100.0, rep2.Groups.First(g => g.Id == "cpu").Hottest);
         Assert.Equal(SensorLevel.Neutral, rep2.Level);

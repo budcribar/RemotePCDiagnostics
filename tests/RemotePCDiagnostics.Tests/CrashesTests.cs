@@ -43,4 +43,30 @@ public class CrashesTests
         var r = await new CrashesModule(new SystemCommandRunner(new ScriptedLauncher((f, a) => ScriptedLauncher.Fail()))).RefreshAsync(null);
         Assert.Equal("Couldn't read app crash reports on this PC.", r.Message);
     }
+
+    private static readonly DateTimeOffset Now = new(2026, 10, 29, 12, 0, 0, TimeSpan.Zero);
+    private static string Crash(string app, string time) => EventLogTests.Ev("Application Error", 1000, 2, time, "Faulting application name: " + app, "Application", $"<Data>{app}</Data><Data>1.0</Data><Data>0</Data><Data>x.dll</Data>");
+    private static AreaReport B(params string[] xml) => CrashesModule.Build(WindowsEventLog.Parse(string.Concat(xml), "Application"), Now);
+
+    [Fact]
+    public void OnlyOldCrashes_GreenAndNeutral()
+    {
+        var rep = B(Crash("a.exe", "2026-10-10T09:00:00Z"), Crash("b.exe", "2026-10-05T09:00:00Z"));
+        Assert.Equal(DiagnosticStatus.Ok, rep.Status);
+        Assert.Equal("No crashes in the last 7 days (2 older)", rep.Summary);
+        Assert.Equal(AreaLevel.Neutral, rep.Cards.Single(c => c.Id == "crashes").Level);
+        Assert.All(rep.Cards.Single(c => c.Id == "crashes").Rows, r => Assert.Equal(AreaLevel.Neutral, r.Level));
+    }
+
+    [Fact]
+    public void RecentCrash_Yellow() => Assert.Equal(DiagnosticStatus.Warning, B(Crash("a.exe", "2026-10-27T09:00:00Z"), Crash("a.exe", "2026-10-01T09:00:00Z")).Status);
+
+    [Fact]
+    public void SameAppThreeTimesInWeek_Red()
+    {
+        var rep = B(Crash("a.exe", "2026-10-27T09:00:00Z"), Crash("A.EXE", "2026-10-26T09:00:00Z"), Crash("a.exe", "2026-10-25T09:00:00Z"));
+        Assert.Equal(DiagnosticStatus.Error, rep.Status);
+        Assert.Equal(AreaLevel.Error, rep.Cards.Single(c => c.Id == "crashes").Level);
+        Assert.Contains("crashed 3 times in the last 7 days", rep.Summary);
+    }
 }
