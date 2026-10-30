@@ -1,9 +1,28 @@
 <!DOCTYPE html>
-<html>
+<html data-theme="light" data-theme-choice="system">
 <head>
     <meta charset="utf-8" />
     <title>RemotePCDiagnostics</title>
     <base href="/" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+        // Theme: apply before first paint (no flash). Choice: dark | system | light (default system), kept in localStorage when available.
+        (function () {
+            var KEY = 'rpd-theme', mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null, mem = null;
+            function read() { try { return localStorage.getItem(KEY); } catch (e) { return mem; } }
+            function write(v) { mem = v; try { localStorage.setItem(KEY, v); } catch (e) { } }
+            function norm(v) { v = (v || '').toLowerCase().trim(); return v === 'dark' || v === 'light' ? v : 'system'; }
+            function apply() {
+                var c = norm(read()), d = document.documentElement;
+                d.setAttribute('data-theme', c === 'system' ? (mq && mq.matches ? 'dark' : 'light') : c);
+                d.setAttribute('data-theme-choice', c);
+                return c;
+            }
+            if (mq) { if (mq.addEventListener) mq.addEventListener('change', apply); else if (mq.addListener) mq.addListener(apply); }
+            window.rpdTheme = { get: function () { return norm(read()); }, set: function (v) { write(norm(v)); return apply(); } };
+            apply();
+        })();
+    </script>
     <link href="_content/RemotePCDiagnostics.UI/app.css" rel="stylesheet" />
 </head>
 <body>

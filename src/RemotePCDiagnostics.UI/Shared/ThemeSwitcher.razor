@@ -1,0 +1,31 @@
+@using Microsoft.JSInterop
+@using RemotePCDiagnostics.Core.Theming
+@inject IJSRuntime JS
+@* Dark / System / Light segmented control. The choice is applied and persisted by window.rpdTheme (index.html). *@
+<div class="theme-switch" role="radiogroup" aria-label="Theme" data-testid="theme-switch">
+    @foreach (var (choice, icon) in Options)
+    {
+        var name = choice.ToString();
+        <button type="button" role="radio" aria-checked="@(choice == _choice ? "true" : "false")" title="@name theme"
+                class="@(choice == _choice ? "on" : null)" data-testid="theme-@ThemePreference.ToStorage(choice)"
+                @onclick="() => SetAsync(choice)"><span aria-hidden="true">@icon</span> @name</button>
+    }
+</div>
+@code {
+    static readonly (ThemeChoice, string)[] Options = [(ThemeChoice.Dark, "☾"), (ThemeChoice.System, "◐"), (ThemeChoice.Light, "☀")];
+    ThemeChoice _choice = ThemePreference.Default;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try { _choice = ThemePreference.Parse(await JS.InvokeAsync<string>("rpdTheme.get")); StateHasChanged(); }
+        catch (Exception) { /* script missing: keep default */ }
+    }
+
+    async Task SetAsync(ThemeChoice c)
+    {
+        _choice = c;
+        try { await JS.InvokeAsync<string>("rpdTheme.set", ThemePreference.ToStorage(c)); }
+        catch (Exception) { /* no JS: selection is visual only */ }
+    }
+}

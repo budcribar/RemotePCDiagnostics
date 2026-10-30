@@ -8,17 +8,17 @@
     double Y(double ms) => H - Pad - (H - 2 * Pad) * Math.Min(ms, max) / max;
     string Line(Func<NetworkSample, double?> f) => string.Join(" ", Samples.Where(s => f(s).HasValue).Select(s => $"{X(s):0.#},{Y(f(s)!.Value):0.#}"));
 }
-<svg data-testid="@TestId" viewBox="0 0 @W @H" style="width:100%;max-width:600px;height:auto;background:#fff;border:1px solid #ddd;border-radius:8px" role="img" aria-label="Connection delay over time">
-    <line x1="@Pad" y1="@Y(max / 2)" x2="@(W - Pad)" y2="@Y(max / 2)" stroke="#eee" />
-    <text x="@(W - Pad)" y="@(Y(max / 2) - 2)" font-size="9" fill="#999" text-anchor="end">@($"{max / 2:0} ms")</text>
+<svg data-testid="@TestId" viewBox="0 0 @W @H" class="chart" style="width:100%;max-width:600px;height:auto" role="img" aria-label="Connection delay over time">
+    <line x1="@Pad" y1="@Y(max / 2)" x2="@(W - Pad)" y2="@Y(max / 2)" style="stroke:var(--chart-grid)" />
+    <text x="@(W - Pad)" y="@(Y(max / 2) - 2)" font-size="9" style="fill:var(--chart-label)" text-anchor="end">@($"{max / 2:0} ms")</text>
     @foreach (var s in Samples.Where(s => s.InternetLost))
     {
-        <line x1="@X(s).ToString("0.#")" y1="@Pad" x2="@X(s).ToString("0.#")" y2="@(H - Pad)" stroke="#dc2626" stroke-width="2" opacity="0.7" />
+        <line x1="@X(s).ToString("0.#")" y1="@Pad" x2="@X(s).ToString("0.#")" y2="@(H - Pad)" style="stroke:var(--chart-lost)" stroke-width="2" opacity="0.7" />
     }
-    <polyline points="@Line(s => s.GatewayMs)" fill="none" stroke="#9ca3af" stroke-width="1" />
-    <polyline points="@Line(s => s.InternetMs)" fill="none" stroke="#2563eb" stroke-width="1.5" />
+    <polyline points="@Line(s => s.GatewayMs)" fill="none" style="stroke:var(--chart-router)" stroke-width="1" />
+    <polyline points="@Line(s => s.InternetMs)" fill="none" style="stroke:var(--chart-internet)" stroke-width="1.5" />
 </svg>
-<div class="meta"><span style="color:#2563eb">■</span> Internet delay · <span style="color:#9ca3af">■</span> Router delay · <span style="color:#dc2626">■</span> No reply</div>
+<div class="meta"><span style="color:var(--chart-internet)">■</span> Internet delay · <span style="color:var(--chart-router)">■</span> Router delay · <span style="color:var(--chart-lost)">■</span> No reply</div>
 @code {
     [Parameter, EditorRequired] public IReadOnlyList<NetworkSample> Samples { get; set; } = [];
     [Parameter, EditorRequired] public TimeSpan Duration { get; set; }

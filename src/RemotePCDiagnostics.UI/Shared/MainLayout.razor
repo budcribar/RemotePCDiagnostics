@@ -3,6 +3,7 @@
 <div class="app">
     <header class="topbar">
         <span class="title">RemotePCDiagnostics</span>
+        <ThemeSwitcher />
         <span class="pc">@Session.MachineName</span>
         <span class="badge badge-@Session.Mode.ToString().ToLowerInvariant()">@Session.Mode</span>
     </header>

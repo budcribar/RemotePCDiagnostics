@@ -31,6 +31,18 @@ try {
   await title.waitFor({ state: 'visible', timeout: 60_000 });
   console.log('Dashboard visible:', await title.textContent());
   await page.screenshot({ path: `${outDir}/dashboard.png`, fullPage: true });
+
+  // Theme switcher: each choice must update data-theme / data-theme-choice on <html>.
+  const attr = n => page.evaluate(k => document.documentElement.getAttribute(k), n);
+  for (const [choice, expected] of [['dark', 'dark'], ['light', 'light']]) {
+    await page.getByTestId(`theme-${choice}`).click();
+    await page.waitForFunction(t => document.documentElement.getAttribute('data-theme') === t, expected, { timeout: 10_000 });
+    console.log(`Theme ${choice}: data-theme=${await attr('data-theme')}`);
+    await page.screenshot({ path: `${outDir}/dashboard-${choice}.png`, fullPage: true });
+  }
+  await page.getByTestId('theme-system').click();
+  await page.waitForFunction(() => document.documentElement.getAttribute('data-theme-choice') === 'system', null, { timeout: 10_000 });
+  console.log(`Theme system: data-theme=${await attr('data-theme')}`);
 } catch (e) {
   await page.screenshot({ path: `${outDir}/failure.png`, fullPage: true }).catch(() => {});
   throw e;
