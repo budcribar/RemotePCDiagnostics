@@ -86,5 +86,12 @@ public sealed class WindowsEventLog(SystemCommandRunner commands)
         return list.OrderByDescending(x => x.Time).ToList();
     }
 
-    public static string FormatTime(DateTimeOffset t) => t == default ? "" : t.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
+    /// <summary>Friendly time, e.g. "Oct 29, 2:15 PM" (year added when not this year).</summary>
+    public static string FormatTime(DateTimeOffset t) => FormatTime(t, DateTimeOffset.Now);
+    public static string FormatTime(DateTimeOffset t, DateTimeOffset now)
+    {
+        if (t == default) return "";
+        var l = t.ToLocalTime();
+        return l.ToString(l.Year == now.ToLocalTime().Year ? "MMM d, h:mm tt" : "MMM d yyyy, h:mm tt", CultureInfo.InvariantCulture);
+    }
 }

@@ -20,8 +20,9 @@ public sealed class EventLogModule(SystemCommandRunner commands) : AreaModuleBas
         return Build(system, app);
     }
 
-    private static readonly string[] Cols = ["When", "Source", "What happened"];
-    private static AreaRow Row(WinEvent e) => new(e.Level == 1 ? AreaLevel.Error : AreaLevel.Warning, [WindowsEventLog.FormatTime(e.Time), e.Source, e.ShortMessage]);
+    private static readonly string[] Cols = ["When", "Source", "Level", "What happened"];
+    private static AreaRow Row(WinEvent e) => new(e.Level == 1 ? AreaLevel.Error : AreaLevel.Warning, [WindowsEventLog.FormatTime(e.Time), e.Source, e.Level == 1 ? "Critical" : "Error", e.ShortMessage],
+        [AreaSort.TimeKey(e.Time), null, e.Level == 1 ? "2" : "1", null]);
 
     public static AreaReport Build(IReadOnlyList<WinEvent>? system, IReadOnlyList<WinEvent>? app)
     {
@@ -53,7 +54,8 @@ public sealed class EventLogModule(SystemCommandRunner commands) : AreaModuleBas
             top is null ? "Nothing repeated" : top.Key.Source, top is null ? "" : $"{AreaModuleBase.Plural(top.Count(), "time")} in the last {Days} days",
             ["Source", "Where", "Times", "Last seen"],
             groups.Select(g => new AreaRow(g.Any(e => e.Level == 1) ? AreaLevel.Error : AreaLevel.Warning,
-                [g.Key.Source, g.Key.Channel == "System" ? "Windows" : "Apps", g.Count().ToString(), WindowsEventLog.FormatTime(g.Max(e => e.Time))])).ToList()));
+                [g.Key.Source, g.Key.Channel == "System" ? "Windows" : "Apps", g.Count().ToString(), WindowsEventLog.FormatTime(g.Max(e => e.Time))],
+                [null, null, null, AreaSort.TimeKey(g.Max(e => e.Time))])).ToList()));
 
         var summary = all.Count == 0 && critical.Count == 0
             ? $"No errors in the last {Days} days"

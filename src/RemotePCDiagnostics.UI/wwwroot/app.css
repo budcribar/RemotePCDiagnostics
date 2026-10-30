@@ -31,3 +31,13 @@ table.detail.grid th { width: auto; } table.detail.grid td { word-break: break-w
 .card.selected { outline: 2px solid #3b82f6; }
 tr.clickable { cursor: pointer; } tr.clickable:hover { background: #f3f4f6; }
 .audit-filters { gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+
+/* Sortable drawer tables (shared by all area pages). */
+table.sortable th.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+table.sortable th.sortable-th:hover { color: #000; }
+table.sortable .sort-arrow { font-size: 11px; color: #777; }
+table.sortable td { white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
+table.sortable td:first-child { white-space: nowrap; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #eee; color: #444; }
+.badge-crash, .badge-critical { background: #fde2e1; color: #a61b1b; }
+.badge-freeze, .badge-error { background: #fff1d6; color: #8a5a00; }

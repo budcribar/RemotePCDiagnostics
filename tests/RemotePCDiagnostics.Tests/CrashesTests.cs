@@ -22,9 +22,9 @@ public class CrashesTests
         Assert.Equal("2 crashes, 1 freeze in the last 30 days · most: chrome.exe", r.Message);
         var rep = Assert.IsType<AreaReport>(r.Payload);
         var crashes = rep.Cards.Single(c => c.Id == "crashes");
-        Assert.Equal("Closed unexpectedly (problem in chrome.dll)", crashes.Rows[0].Values[3]);
-        Assert.Equal("Closed unexpectedly (problem in ntdll.dll)", crashes.Rows[1].Values[3]);
-        Assert.Equal("Stopped responding", rep.Cards.Single(c => c.Id == "hangs").Rows.Single().Values[3]);
+        Assert.Equal("Closed unexpectedly (problem in chrome.dll)", crashes.Rows[0].Values[4]);
+        Assert.Equal("Closed unexpectedly (problem in ntdll.dll)", crashes.Rows[1].Values[4]);
+        Assert.Equal("Stopped responding", rep.Cards.Single(c => c.Id == "hangs").Rows.Single().Values[4]);
         Assert.Equal(["chrome.exe", "2", "0"], rep.Cards.Single(c => c.Id == "apps").Rows[0].Values.Take(3));
         Assert.Contains("Application Error", l.Calls[0].Args[2]);
     }
