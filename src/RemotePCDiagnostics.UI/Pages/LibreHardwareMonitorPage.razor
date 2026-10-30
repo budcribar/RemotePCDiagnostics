@@ -8,14 +8,12 @@
 }
 <div class="toolbar">
     <span class="icon-badge page-icon"><Icon Name="temp" Size="20" /></span><h1 data-testid="lhm-title">Temperatures &amp; fans</h1>
-    <button data-testid="lhm-refresh" @onclick="Refresh" disabled="@_busy">Refresh</button>
-    <label class="meta"><input type="checkbox" data-testid="lhm-auto" checked="@_auto" @onchange="ToggleAuto" /> Auto-refresh every 5 s</label>
 </div>
 <p data-testid="lhm-status"><span class="@DotClass(r.Status)"></span> @r.Status: @r.Message</p>
 
 @if (report is null && r.Status != DiagnosticStatus.Running)
 {
-    <p class="meta">Click Refresh to check temperatures and fan speeds.</p>
+    <p class="meta">Checking temperatures and fan speeds… (updates every 5 seconds)</p>
 }
 @if (report?.Snapshot.Note is { } note)
 {
@@ -92,7 +90,6 @@
 @code {
     private string? _openId;
     private string? _open { get => _openId; set { _openId = value; _uiDirty = true; } }
-    private bool _auto = true; // on by default; checkbox turns it off
     private bool _busy;        // a read is in flight; no overlap
     private bool _uiDirty = true;
     private string? _lastSig;
@@ -117,7 +114,7 @@
 
     protected override void OnAfterRender(bool firstRender)
     {
-        if (firstRender && _auto) _ = RunTimer();
+        if (firstRender) _ = RunTimer(); // always refreshes every 5 s until the page closes
     }
     private PeriodicTimer? _timer;
     private CancellationTokenSource? _cts;
@@ -128,13 +125,6 @@
         _busy = true;
         try { await Diagnostics.RunAsync(LibreHardwareMonitorModule.ModuleName); }
         finally { _busy = false; }
-    }
-
-    private void ToggleAuto(ChangeEventArgs e)
-    {
-        _auto = e.Value is true; _uiDirty = true;
-        StopTimer();
-        if (_auto) _ = RunTimer();
     }
 
     private async Task RunTimer()
@@ -153,7 +143,7 @@
 
     private void StopTimer() { _cts?.Cancel(); _timer?.Dispose(); _timer = null; _cts = null; }
 
-    public ValueTask DisposeAsync() { _auto = false; StopTimer(); Dispose(); return ValueTask.CompletedTask; }
+    public ValueTask DisposeAsync() { StopTimer(); Dispose(); return ValueTask.CompletedTask; }
 
     private static string LevelClass(SensorLevel l) => l switch
     {
