@@ -152,4 +152,54 @@ public sealed class HistoryTests
         var csv = HistoryQuery.ToCsv([E(DateTimeOffset.UtcNow) with { Summary = "a, \"b\"" }]);
         Assert.Contains("\"a, \"\"b\"\"\"", csv);
     }
+
+    private sealed class NamedModule(string name, string display) : IDiagnosticModule
+    {
+        public string Name => name;
+        public string DisplayName => display;
+        public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
+        public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
+        public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
+    private static readonly IDiagnosticModule[] Mods = [new NamedModule("DriveHealth", "Drive health"), new NamedModule("EventLog", "Windows error log")];
+
+    [Fact]
+    public void Names_MapOldModuleIdsToDisplayName_FallbackToId()
+    {
+        Assert.Equal("Drive health", HistoryNames.DisplayName("DriveHealth", Mods));
+        Assert.Equal("Drive health", HistoryNames.DisplayName("drivehealth", Mods));
+        Assert.Equal("Mystery", HistoryNames.DisplayName("Mystery", Mods));
+        var now = DateTimeOffset.UtcNow;
+        var old = HistoryEventParser.Parse("Test result: DriveHealth\nOutcome: OK", now)!;
+        var fresh = HistoryEventParser.Parse("Test result: DriveHealth\nTest: Drive health\nOutcome: OK\nFormat: 2", now)!;
+        var unknown = HistoryEventParser.Parse("Test result: Gone\nOutcome: OK", now)!;
+        var n = HistoryNames.Normalize([old, fresh, unknown], Mods);
+        Assert.Equal(new[] { "Drive health", "Drive health", "Gone" }, n.Select(e => e.Test));
+    }
+
+    [Fact]
+    public void Names_FilterOptions_OnePerModule_IncludesUnknown_AndFilterMatchesOldAndNew()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var entries = HistoryNames.Normalize([
+            HistoryEventParser.Parse("Test result: DriveHealth\nOutcome: OK", now)!,
+            HistoryEventParser.Parse("Test result: DriveHealth\nTest: Drive health\nOutcome: OK\nFormat: 2", now)!,
+            HistoryEventParser.Parse("Test result: EventLog\nOutcome: Warning", now)!,
+            HistoryEventParser.Parse("Test result: Legacy\nOutcome: OK", now)!], Mods);
+        var opts = HistoryNames.FilterOptions(entries, Mods);
+        Assert.Equal(new[] { ("DriveHealth", "Drive health"), ("Legacy", "Legacy"), ("EventLog", "Windows error log") }, opts);
+        Assert.Equal(2, HistoryQuery.Filter(entries, "DriveHealth", null, HistoryRange.All, now).Count());
+    }
+
+    [Fact]
+    public void Parser_KeepsDetailLines_Capped()
+    {
+        var msg = "Test result: X\nOutcome: OK\nDetails:\n" + string.Concat(Enumerable.Range(0, 60).Select(i => $"  Line {i}: value {i}\n"));
+        var e = HistoryEventParser.Parse(msg, DateTimeOffset.Now)!;
+        Assert.Equal(HistoryEventParser.MaxDetailLines, e.Details!.Count);
+        Assert.Equal("Line 0: value 0", e.Details[0]);
+        var old = HistoryEventParser.Parse(OldFormat, DateTimeOffset.Now)!;
+        Assert.Contains("Headline: Passed with flying colours", old.Details!);
+    }
 }

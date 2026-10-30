@@ -8,7 +8,7 @@ public sealed record HistoryMeasurement(string Name, string Value);
 /// <summary>One finished test, as kept in the history file (one JSON object per line).</summary>
 public sealed record HistoryEntry(
     DateTimeOffset TimeUtc, string Module, string Test, string Outcome, string Summary, double? DurationSeconds,
-    string? Suite, IReadOnlyList<HistoryMeasurement> Measurements, string Machine, string AppVersion)
+    string? Suite, IReadOnlyList<HistoryMeasurement> Measurements, string Machine, string AppVersion, IReadOnlyList<string>? Details = null)
 {
     public DateTimeOffset LocalTime => TimeUtc.ToLocalTime();
     public string? Measurement(string name) => Measurements.FirstOrDefault(m => m.Name == name)?.Value;
@@ -76,6 +76,8 @@ public sealed class EventLogHistoryStore(Func<string, int, IEnumerable<RawHistor
 /// Older messages (no Format line): measurements taken from numeric "  Name: value" lines under "Details:".</summary>
 public static class HistoryEventParser
 {
+    public const int MaxDetailLines = 40;
+
     public static HistoryEntry? Parse(string? message, DateTimeOffset timeCreated)
     {
         try
@@ -85,6 +87,7 @@ public static class HistoryEventParser
             var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var measurements = new List<HistoryMeasurement>();
             var oldDetails = new List<HistoryMeasurement>();
+            var details = new List<string>();
             string? section = null;
             foreach (var raw in lines)
             {
@@ -93,7 +96,7 @@ public static class HistoryEventParser
                 {
                     var t = raw.Trim();
                     if (section == "Measurements") { var i = t.IndexOf('='); if (i > 0) measurements.Add(new(t[..i].Trim(), t[(i + 1)..].Trim())); }
-                    else if (section == "Details") { var i = t.IndexOf(": ", StringComparison.Ordinal); if (i > 0 && IsSimpleValue(t[(i + 2)..])) oldDetails.Add(new(t[..i].Trim(), t[(i + 2)..].Trim())); }
+                    else if (section == "Details") { if (details.Count < MaxDetailLines) details.Add(t.Length > 300 ? t[..300] + "…" : t); var i = t.IndexOf(": ", StringComparison.Ordinal); if (i > 0 && IsSimpleValue(t[(i + 2)..])) oldDetails.Add(new(t[..i].Trim(), t[(i + 2)..].Trim())); }
                     continue;
                 }
                 var c = raw.IndexOf(':');
@@ -111,7 +114,7 @@ public static class HistoryEventParser
             return new HistoryEntry(time.ToUniversalTime(), module, fields.GetValueOrDefault("Test") is { Length: > 0 } t2 ? t2 : module, outcome,
                 fields.GetValueOrDefault("Summary") ?? "", dur, fields.GetValueOrDefault("Stress suite"),
                 fields.ContainsKey("Format") ? measurements : oldDetails,
-                fields.GetValueOrDefault("Machine") ?? "", fields.GetValueOrDefault("App version") ?? "");
+                fields.GetValueOrDefault("Machine") ?? "", fields.GetValueOrDefault("App version") ?? "", details);
         }
         catch { return null; }
     }
@@ -122,6 +125,34 @@ public static class HistoryEventParser
         v = v.Trim();
         if (v.EndsWith(" s", StringComparison.Ordinal)) v = v[..^2];
         return double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _) || v is "yes" or "no" || (v.Length is > 0 and < 40 && v.All(char.IsLetterOrDigit));
+    }
+}
+
+/// <summary>Consistent test names: events without a "Test:" line (older builds) get the module's display name.</summary>
+public static class HistoryNames
+{
+    /// <summary>Display name for a module ID from the registered modules; the ID itself for unknown modules.</summary>
+    public static string DisplayName(string module, IEnumerable<IDiagnosticModule> modules)
+    {
+        var m = modules.FirstOrDefault(x => string.Equals(x.Name, module, StringComparison.OrdinalIgnoreCase));
+        return m is null || string.IsNullOrWhiteSpace(m.DisplayName) ? module : m.DisplayName;
+    }
+
+    /// <summary>Replaces Test with the display name where the event had none (Test equals the module ID).</summary>
+    public static IReadOnlyList<HistoryEntry> Normalize(IEnumerable<HistoryEntry> entries, IEnumerable<IDiagnosticModule> modules)
+    {
+        var mods = modules.ToList();
+        return entries.Select(e => string.IsNullOrWhiteSpace(e.Test) || string.Equals(e.Test, e.Module, StringComparison.OrdinalIgnoreCase)
+            ? e with { Test = DisplayName(e.Module, mods) } : e).ToList();
+    }
+
+    /// <summary>Test filter options (module ID, name): every module present in the data, once, sorted by name.</summary>
+    public static IReadOnlyList<(string Module, string Test)> FilterOptions(IEnumerable<HistoryEntry> entries, IEnumerable<IDiagnosticModule> modules)
+    {
+        var mods = modules.ToList();
+        return entries.GroupBy(e => e.Module, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Module: g.Key, Test: DisplayName(g.Key, mods) is var d && !string.Equals(d, g.Key, StringComparison.OrdinalIgnoreCase) ? d : g.First().Test))
+            .OrderBy(t => t.Test, StringComparer.OrdinalIgnoreCase).ToList();
     }
 }
 
