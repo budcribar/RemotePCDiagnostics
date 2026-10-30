@@ -54,6 +54,7 @@ public sealed record SensorReading(
             var n = SensorName.Trim();
             if (IsApproximate) return SensorName == CpuTemperatureFallback.ApuSensorName ? CpuTemperatureFallback.ApuFriendlyLabel : ThermalZoneFallback.FriendlyLabel;
             if (IsFromWindows) return GpuTemperatureFallback.SensorName;
+            if (HardwareName == EcFanMonitor.HardwareName && SensorType == SensorKind.Fan) return SensorName; // "CPU fan (from laptop controller)"
             var num = System.Text.RegularExpressions.Regex.Match(n, @"#\s*(\d+)");
             if (SensorType == SensorKind.Fan) return num.Success ? $"Fan {num.Groups[1].Value} speed" : n.Contains("fan", StringComparison.OrdinalIgnoreCase) ? n + " speed" : $"Fan speed ({n})";
             switch (HardwareType)

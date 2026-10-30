@@ -3,7 +3,7 @@ using RemotePCDiagnostics.Core.Sensors;
 namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand CPU stress test module. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
-public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null, ICpuWorkload? workload = null) : IStressSuiteModule
+public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null, ICpuWorkload? workload = null, IEcFanSource? ecFan = null) : IStressSuiteModule
 {
     public const string ModuleName = "CpuStress";
     public string Name => ModuleName;
@@ -32,6 +32,7 @@ public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _stop = stop;
+        try { ecFan?.SetStressLogging(true); } catch { /* log-only diagnostic */ }
         try
         {
             LastProgress = null;
@@ -41,7 +42,11 @@ public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log
             var report = await test.RunAsync(opts, p, stop.Token).ConfigureAwait(false);
             return new DiagnosticResult<CpuStressReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
         }
-        finally { _stop = null; }
+        finally
+        {
+            _stop = null;
+            try { ecFan?.SetStressLogging(false); } catch { /* log-only diagnostic */ }
+        }
     }
 
     public static DiagnosticStatus ToStatus(CpuStressOutcome o) => o switch

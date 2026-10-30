@@ -36,10 +36,12 @@ public partial class MainWindow : Window
         services.AddSingleton<ResultStore>();
         services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = App.Log }));
         services.AddSingleton<IDiagnosticModule, OsqueryModule>();
+        // Read-only EC fan diagnostic, active only on Lenovo IdeaPad 1 15ALC7 (82R4) with PawnIO installed.
+        services.AddSingleton<IEcFanSource>(_ => LenovoEcFanSource.Create(App.Log));
         services.AddSingleton<ISensorProvider, LhmSensorProvider>();
         services.AddSingleton<IDiagnosticModule, LibreHardwareMonitorModule>();
         // On demand only: not auto-run and excluded from Run All; runs when the user presses Start on its page.
-        services.AddSingleton<IDiagnosticModule>(sp => new CpuStressModule(sp.GetRequiredService<ISensorProvider>(), App.Log));
+        services.AddSingleton<IDiagnosticModule>(sp => new CpuStressModule(sp.GetRequiredService<ISensorProvider>(), App.Log, ecFan: sp.GetRequiredService<IEcFanSource>()));
         services.AddSingleton<IDiagnosticModule>(sp => new DiskSpeedModule(new PhysicalDiskTestFileSystem(App.Log), sp.GetRequiredService<ISensorProvider>(), App.Log));
         services.AddSingleton<IDiagnosticModule>(sp => new MemoryTestModule(new SystemMemoryInfo(), new ProcessMemTestHelperLauncher(log: App.Log),
             sp.GetRequiredService<ISensorProvider>(), new MdschedLauncher(App.Log), App.Log));
@@ -64,6 +66,7 @@ public partial class MainWindow : Window
         services.AddSingleton<DiagnosticsService>();
         var provider = services.BuildServiceProvider();
         Resources.Add("services", provider);
+        Closed += (_, _) => { try { provider.GetService<IEcFanSource>()?.Dispose(); } catch { } }; // release the PawnIO EC module handle
         provider.GetRequiredService<DiagnosticsService>().Log = App.Log;
         // Tell the person at this PC when a remote technician starts/stops/restarts a service (non-blocking).
         provider.GetRequiredService<ServiceActionService>().ActionCompleted += rec =>

@@ -6,7 +6,7 @@ using RemotePCDiagnostics.Core.Sensors;
 namespace RemotePCDiagnostics.Host.Sensors;
 
 /// <summary>ISensorProvider backed by LibreHardwareMonitorLib. Many sensors (CPU MSRs, SuperIO fans) need admin.</summary>
-public sealed class LhmSensorProvider : ISensorProvider, IDisposable
+public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDisposable
 {
     private readonly object _gate = new();
     private Computer? _computer;
@@ -46,6 +46,8 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
             var cpuName = _computer.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Cpu)?.Name;
             list = CpuTemperatureFallback.ApplyApuDie(list, cpuName, first ? App.Log : null);
             list = ThermalZoneFallback.Apply(list, _zones, first ? App.Log : null);
+            // EC fan diagnostic (82R4 only; empty elsewhere or until a plausible reading). Never throws.
+            if (!list.Any(r => r.SensorType == SensorKind.Fan && r.HasData)) list.AddRange(ecFan.Read());
             var driver = _driver.Value;
             if (first) App.Log($"CPU sensor driver (PawnIO, needed by LHM 0.9.5+ for Ryzen/Intel CPU temperatures): {driver.Detail}");
             var cpuNote = CpuTemperatureFallback.Note(list, driver.Available);
@@ -122,5 +124,5 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
         return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
-    public void Dispose() { lock (_gate) { _computer?.Close(); _computer = null; } }
+    public void Dispose() { lock (_gate) { _computer?.Close(); _computer = null; } try { ecFan.Dispose(); } catch { } }
 }

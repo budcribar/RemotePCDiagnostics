@@ -190,6 +190,19 @@ approximate) on the Temperatures GPU card and used by the GPU stress test; alert
 when the installed driver fills in the temperature (i.e. when Task Manager shows one). Each source and its result are logged
 once to the `RPD_LOG_FILE` log.
 
+### Laptop fan from the embedded controller (Lenovo IdeaPad 1 15ALC7 only, experimental)
+
+On **one** model, Lenovo IdeaPad 1 15ALC7 (`Win32_ComputerSystemProduct.Name` = `82R4`), and only when PawnIO is installed,
+the app reads two bytes from the laptop's embedded controller (EC): `0x06` (DSDT `FANS`) and `0xFE` (DSDT `FA2S`), plus
+the flag bytes `0xAB` (FAN1/FAN2/FAOK) and `0xAD` (SPDN/FNUM) for the log. Access goes through LibreHardwareMonitorLib 0.9.6's
+public `LpcAcpiEc` (PawnIO `LpcACPIEC` module, port I/O only) with our own read-only ACPI EC protocol (`AcpiEcReader`): only
+the read command `0x80` to port `0x66` and an allowlisted address to `0x62`; nothing is ever written to EC RAM. The shared
+`Global\Access_EC` mutex is held per sample (100 ms timeout); samples at most every 2 s; two failed samples => 30 s back-off.
+The raw byte is assumed to be RPM/100 (as Linux `yogafan` does on the 15ALC6). **This is unverified on real hardware.**
+A reading appears in the existing Fans card as "CPU fan (from laptop controller)" / "Fan 2 (from laptop controller)" only
+when plausible (≤ 8000 RPM; 0 RPM only after a non-zero reading this session); a constant 0x00/0xFF stays hidden.
+Raw bytes, a 30 s rolling summary and every sample during the CPU stress test are logged ("Fan diagnostic", `RPD_LOG_FILE`).
+
 ### CPU temperature fallbacks
 
 LibreHardwareMonitorLib 0.9.5+ reads Ryzen/Intel CPU temperatures through the separately installed **PawnIO** driver
