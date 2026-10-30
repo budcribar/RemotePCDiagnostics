@@ -52,8 +52,16 @@ else
             <input data-testid="audit-filter-text" placeholder="Search settings…" value="@_text" @oninput="SetText" />
             <span class="meta">@rows.Count of @rep.Findings.Count</span>
         </div>
-        <table class="detail grid" data-testid="audit-table">
-            <tr><th>Result</th><th>ID</th><th>Category</th><th>Setting</th><th>Severity</th><th>Current</th><th>Recommended</th></tr>
+        <table class="detail grid sticky-head sortable" data-testid="audit-table">
+            <tr>
+                @foreach (var (col, title) in AuditSort.Columns)
+                {
+                    var c = col;
+                    <th @key="c" class="sortable-th" role="button" tabindex="0" aria-sort="@(_sort.Col == c ? (_sort.Desc ? "descending" : "ascending") : "none")"
+                        data-testid="audit-th-@c.ToString().ToLowerInvariant()" @onclick="() => _sort = AuditSort.Toggle(_sort, c)"
+                        @onkeydown="e => SortKey(e, c)">@title<span class="sort-arrow">@(_sort.Col == c ? (_sort.Desc ? " ▼" : " ▲") : "")</span></th>
+                }
+            </tr>
             @foreach (var f in rows)
             {
                 <tr class="clickable" data-testid="audit-row-@f.Id" @onclick="() => _open = f">
@@ -87,6 +95,8 @@ else
     private AuditOutcome? _outcome;
     private string _category = "", _text = "";
     private AuditFinding? _open;
+    // Static so the chosen sort survives re-runs, live updates and navigation.
+    private static (AuditColumn Col, bool Desc) _sort = AuditSort.Default;
     private DateTimeOffset _started;
     private System.Threading.Timer? _tick;
 
@@ -111,11 +121,13 @@ else
         _ = Diagnostics.RunAsync(m.Name);
     }
 
-    private IEnumerable<AuditFinding> Filtered(SecurityAuditReport rep) => rep.Findings
+    private void SortKey(KeyboardEventArgs e, AuditColumn c) { if (e.Key is "Enter" or " ") _sort = AuditSort.Toggle(_sort, c); }
+
+    private IEnumerable<AuditFinding> Filtered(SecurityAuditReport rep) => AuditSort.Sort(rep.Findings
         .Where(f => _outcome is null || f.Outcome == _outcome)
         .Where(f => _category.Length == 0 || f.Category == _category)
-        .Where(f => _text.Length == 0 || f.Name.Contains(_text, StringComparison.OrdinalIgnoreCase) || f.Id.Contains(_text, StringComparison.OrdinalIgnoreCase))
-        .OrderBy(f => f.Outcome switch { AuditOutcome.Failed => 0, AuditOutcome.Warning => 1, AuditOutcome.NotChecked => 2, _ => 3 });
+        .Where(f => _text.Length == 0 || f.Name.Contains(_text, StringComparison.OrdinalIgnoreCase) || f.Id.Contains(_text, StringComparison.OrdinalIgnoreCase)),
+        _sort.Col, _sort.Desc);
 
     private RenderFragment Card(string id, string title, string dot, int count, string meta, AuditOutcome outcome) => __builder =>
     {
