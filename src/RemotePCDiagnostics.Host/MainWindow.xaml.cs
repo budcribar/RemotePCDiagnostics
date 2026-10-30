@@ -1,4 +1,7 @@
+using System.Diagnostics;
 using System.Windows;
+using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using PeakSWC.RemoteBlazorWebView;
 using PeakSWC.RemoteWebView;
@@ -15,6 +18,10 @@ namespace RemotePCDiagnostics.Host;
 
 public partial class MainWindow : Window
 {
+    private const string HostPage = @"wwwroot\index.html";
+    private Uri? _serverUri;
+    private Uri? _technicianUrl;
+    private DispatcherTimer? _readyTimer;
     public MainWindow()
     {
         // Local (default) or Remote. Remote when started with -u=<server uri> (RemoteBlazorWebViewTutorial convention)
@@ -88,14 +95,89 @@ public partial class MainWindow : Window
             App.Log($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
 
         if (launch.ServerUri is not null)
+            StartRemote(launch.ServerUri, launch.Id);
+        else
+            RemoteBlazorWebView.HostPage = HostPage; // Local: unchanged behavior (HostPage moved from XAML to code)
+    
+    /// <summary>
+    /// Remote mode, matching RemoteBlazorWebViewTutorial (WpfApp): subscribe ReadyToConnect/Connected/Disconnected and set
+    /// Id + ServerUri BEFORE HostPage (setting HostPage starts the control; ServerUri/GrpcBaseUri/Id set afterwards are rejected).
+    /// </summary>
+    private void StartRemote(Uri serverUri, Guid id)
+    {
+        _serverUri = serverUri;
+        RemotePanel.Visibility = Visibility.Visible;
+        SetRemoteState(RemoteSessionState.Connecting);
+
+        RemoteBlazorWebView.ReadyToConnect += (s, e) =>
         {
-            // Per RemoteBlazorWebViewTutorial (WpfApp): set Id and ServerUri; the control registers with the
-            // RemoteWebViewService and raises ReadyToConnect with the technician URL <server>/app/<id>.
-            RemoteBlazorWebView.Id = launch.Id; // Guid.Empty = new id each run; fixed via -i=<guid> or REMOTEPC_ID
-            RemoteBlazorWebView.ServerUri = launch.ServerUri;
-            RemoteBlazorWebView.ReadyToConnect += (s, e) =>
-                (s as IBlazorWebView)?.NavigateToString($"<a href='{e.Url}app/{e.Id}' target='_blank'>{e.Url}app/{e.Id}</a>");
-            // TODO: consent prompt + audit log before accepting a remote session (see README Safety section).
+            _readyTimer?.Stop();
+            _technicianUrl = RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id);
+            App.Log($"ReadyToConnect url={e.Url} id={e.Id} link={_technicianUrl}");
+            RemoteLinkText.Text = _technicianUrl.ToString();
+            RemoteHyperlink.NavigateUri = _technicianUrl;
+            RemoteLinkRow.Visibility = Visibility.Visible;
+            SetRemoteState(RemoteSessionState.Ready);
+            // Fallback: same link inside the web view, as the tutorial does (overlay is primary).
+            try { (s as IBlazorWebView)?.NavigateToString($"<a href='{_technicianUrl}' target='_blank'>{_technicianUrl}</a>"); }
+            catch (Exception ex) { App.Log($"NavigateToString fallback failed: {ex}"); }
+        };
+        RemoteBlazorWebView.Connected += (_, e) =>
+        {
+            App.Log($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User}");
+            SetRemoteState(RemoteSessionState.TechnicianConnected);
+        };
+        RemoteBlazorWebView.Disconnected += (_, e) =>
+        {
+            App.Log($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
+            SetRemoteState(_technicianUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected);
+        };
+        RemoteBlazorWebView.Refreshed += (_, e) => App.Log($"Remote Refreshed {e}");
+
+        _readyTimer = new DispatcherTimer { Interval = RemoteLinkInfo.ReadyTimeout };
+        _readyTimer.Tick += (_, _) =>
+        {
+            _readyTimer.Stop();
+            if (_technicianUrl is null)
+            {
+                App.Log($"No ReadyToConnect after {RemoteLinkInfo.ReadyTimeout.TotalSeconds}s (server={serverUri})");
+                SetRemoteState(RemoteSessionState.Unreachable);
+            }
+        };
+
+        try
+        {
+            RemoteBlazorWebView.Id = id; // Guid.Empty = new id each run; fixed via -i=<guid> or REMOTEPC_ID
+            RemoteBlazorWebView.ServerUri = serverUri;
+            RemoteBlazorWebView.HostPage = HostPage; // must be last (starts the control)
+            _readyTimer.Start();
         }
+        catch (Exception ex)
+        {
+            App.Log($"Remote start failed: {ex}");
+            SetRemoteState(RemoteSessionState.Unreachable);
+        }
+        // TODO: consent prompt + audit log before accepting a remote session (see README Safety section).
+    }
+
+    private void SetRemoteState(RemoteSessionState state)
+    {
+        if (_serverUri is null) return;
+        RemoteStatusText.Text = RemoteLinkInfo.StatusText(state, _serverUri);
+        RemoteStatusText.Foreground = new SolidColorBrush(RemoteLinkInfo.IsWarning(state) ? Color.FromRgb(0xFF, 0xC8, 0x57) : Color.FromRgb(0xD0, 0xD5, 0xDD));
+    }
+
+    private void RemoteHyperlink_RequestNavigate(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
+    {
+        try { Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true }); }
+        catch (Exception ex) { App.Log($"Open link failed: {ex}"); }
+        e.Handled = true;
+    }
+
+    private void CopyLinkButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_technicianUrl is null) return;
+        try { Clipboard.SetText(_technicianUrl.ToString()); CopyLinkButton.Content = "Copied"; }
+        catch (Exception ex) { App.Log($"Copy link failed: {ex}"); }
     }
 }

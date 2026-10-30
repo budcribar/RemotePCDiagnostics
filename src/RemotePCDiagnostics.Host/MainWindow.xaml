@@ -5,10 +5,32 @@
         xmlns:ui="clr-namespace:RemotePCDiagnostics.UI;assembly=RemotePCDiagnostics.UI"
         Title="RemotePCDiagnostics" Height="768" Width="1200">
     <Grid>
-        <blazor:BlazorWebView x:Name="RemoteBlazorWebView" HostPage="wwwroot\index.html" Services="{DynamicResource services}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <!-- HostPage is set in code-behind AFTER Id/ServerUri/event handlers: the control throws
+             "ServerUri must be set before HostPage" (and starts in local mode) if HostPage comes first. -->
+        <blazor:BlazorWebView x:Name="RemoteBlazorWebView" Grid.Row="1" Services="{DynamicResource services}">
             <blazor:BlazorWebView.RootComponents>
                 <blazor:RootComponent Selector="#app" ComponentType="{x:Type ui:Routes}" />
             </blazor:BlazorWebView.RootComponents>
         </blazor:BlazorWebView>
+        <!-- Remote mode only: native panel (neutral colors, independent of web CSS/theme). -->
+        <Border x:Name="RemotePanel" Grid.Row="0" Visibility="Collapsed" Background="#FF2B2F36" BorderBrush="#FF5A6270"
+                BorderThickness="0,0,0,1" Padding="16,10" Panel.ZIndex="10">
+            <StackPanel>
+                <TextBlock Text="Remote session" FontSize="16" FontWeight="SemiBold" Foreground="#FFF2F4F7" />
+                <TextBlock x:Name="RemoteStatusText" Margin="0,4,0,0" TextWrapping="Wrap" Foreground="#FFD0D5DD" Text="Connecting to server…" />
+                <StackPanel x:Name="RemoteLinkRow" Orientation="Horizontal" Margin="0,6,0,0" Visibility="Collapsed">
+                    <TextBlock VerticalAlignment="Center" FontSize="14">
+                        <Hyperlink x:Name="RemoteHyperlink" Foreground="#FF7CB7FF" RequestNavigate="RemoteHyperlink_RequestNavigate">
+                            <Run x:Name="RemoteLinkText" />
+                        </Hyperlink>
+                    </TextBlock>
+                    <Button x:Name="CopyLinkButton" Content="Copy link" Margin="12,0,0,0" Padding="10,3" Click="CopyLinkButton_Click" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

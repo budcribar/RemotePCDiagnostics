@@ -106,7 +106,7 @@ Server address: the default is the Railway-direct address `https://remoteblazor.
 
 How a technician connects (per PeakSWC.RemoteBlazorWebView / RemoteBlazorWebViewTutorial):
 1. On the customer PC, start the Host in Remote mode (elevated; UAC prompts).
-2. The control registers with the server and the window shows a link `<server>/app/<session-guid>`.
+2. The control registers with the server. A native **Remote session** panel at the top of the window shows "Connecting to server…", then "Ready. Share this link with the technician:" with a clickable link `<server>/app/<session-guid>` (opens in the default browser) and a **Copy link** button; it changes to "Technician connected" when the technician joins. If the server isn't reached within ~15 s it shows a friendly "Couldn't reach the server yet: host:port …" warning (details in the host log / `RPD_LOG_FILE`). The link is also shown in the web view, as in the tutorial. Note: the control's `Id`/`ServerUri` must be set before `HostPage` (which is why `HostPage` is set in code, not XAML).
 3. The user sends that link to the technician, who opens it in a browser and gets the same Dashboard/Osquery UI, running on the customer PC.
 The top bar badge shows Local or Remote. Consent prompt and audit log for remote sessions are still TODO (see Safety).
 
