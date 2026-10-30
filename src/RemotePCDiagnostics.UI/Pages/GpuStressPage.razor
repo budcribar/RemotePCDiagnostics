@@ -1,0 +1,111 @@
+@page "/module/gpustress"
+@using RemotePCDiagnostics.Core.Stress
+@inherits StoreAwareComponent
+@implements IAsyncDisposable
+@{
+    var r = Store.Get(GpuStressModule.ModuleName);
+    var running = r.Status == DiagnosticStatus.Running;
+    var report = r.Payload as GpuStressReport;
+    var p = running ? Module?.LastProgress : null;
+}
+<div class="toolbar">
+    <h1 data-testid="gpustress-title">Graphics (GPU) stress test</h1>
+    <label class="meta">Run for
+        <select data-testid="gpustress-duration" disabled="@running" @onchange="SetDuration">
+            @foreach (var d in GpuStressOptions.DurationChoices)
+            {
+                <option value="@d.TotalMinutes" selected="@(d == _duration)">@(d.TotalMinutes == 1 ? "1 minute" : $"{d.TotalMinutes:0} minutes")</option>
+            }
+        </select>
+    </label>
+    <button data-testid="gpustress-start" @onclick="Start" disabled="@(running || Module is null)">Start</button>
+    <button data-testid="gpustress-stop" @onclick="Stop" disabled="@(!running)">Stop</button>
+</div>
+<p class="meta">Works your graphics chip as hard as it can and checks that every answer it gives is correct. Works with built-in and separate graphics. The PC may get warm, the fan may speed up and the screen may feel slower while it runs. It stops by itself if anything gets too hot.</p>
+
+<p data-testid="gpustress-status" class="status-line">
+    <span class="@DotClass(r.Status)"></span>
+    @(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
+</p>
+
+@if (running)
+{
+    <div class="progress" data-testid="gpustress-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
+    <div class="cards">
+        <div class="card" data-testid="gpustress-live-progress">
+            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+            <div class="headline">@(p is null ? "Getting ready…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
+            <div class="meta">@(p?.AdapterName ?? "")</div>
+        </div>
+        <div class="card" data-testid="gpustress-live-checks">
+            <div class="card-head"><span class="@(p is { Mismatches: > 0 } ? "dot dot-error" : "dot dot-ok")"></span><strong>Answers checked</strong></div>
+            <div class="headline">@(p is null ? "—" : p.Mismatches == 0 ? $"{p.ValuesChecked:N0} correct" : $"{p.Mismatches:N0} wrong")</div>
+            <div class="meta">@(p?.BillionOpsPerSecond is { } g ? $"Working at {g:0.0} billion steps per second" : "")</div>
+        </div>
+        <div class="card" data-testid="gpustress-live-temp">
+            <div class="card-head"><span class="dot dot-neutral"></span><strong>Graphics temperature</strong></div>
+            <div class="headline">@(p?.GpuTemperatureC is { } t ? $"{t:0}°C" : "Not reported on this PC")</div>
+            <div class="meta">Fan @(p?.FanRpm is > 0 ? $"{p.FanRpm:0} RPM" : "—") · stops by itself if anything gets too hot</div>
+        </div>
+    </div>
+}
+else if (report is not null)
+{
+    <div class="cards">
+        <div class="card" data-testid="gpustress-result">
+            <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
+            <div class="headline">@report.Explanation</div>
+            <div class="meta">@(report.AdapterName is { } a ? $"{a} · " : "")Ran for @Clock(report.Ran) · finished @r.Timestamp.ToLocalTime().ToString("g")</div>
+        </div>
+        @if (report.Batches > 0)
+        {
+            <div class="card" data-testid="gpustress-card-checks">
+                <div class="card-head"><span class="@(report.Mismatches == 0 ? "dot dot-ok" : "dot dot-error")"></span><strong>Answers checked</strong></div>
+                <div class="headline">@(report.Mismatches == 0 ? $"{report.ValuesChecked:N0} correct" : $"{report.Mismatches:N0} wrong out of {report.ValuesChecked:N0}")</div>
+                <div class="meta">@(report.BillionOpsPerSecond is { } g ? $"Last speed {g:0.0} billion steps per second" : "")</div>
+            </div>
+            <div class="card" data-testid="gpustress-card-temp">
+                <div class="card-head"><span class="dot dot-neutral"></span><strong>Hottest graphics temperature</strong></div>
+                <div class="headline">@(report.MaxGpuTemperatureC is { } t ? $"{t:0}°C" : "Not reported on this PC")</div>
+                <div class="meta">Many laptops with built-in graphics don't report this</div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private GpuStressModule? Module => Diagnostics.Modules.OfType<GpuStressModule>().FirstOrDefault();
+    private TimeSpan _duration = TimeSpan.FromMinutes(1);
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        if (Module is not { } m) return;
+        _duration = m.Duration;
+        m.ProgressChanged += OnProgress;
+    }
+
+    private void OnProgress(object? s, GpuStressProgress p) => _ = InvokeAsync(StateHasChanged);
+
+    private void SetDuration(ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out var min)) _duration = TimeSpan.FromMinutes(min);
+    }
+
+    private void Start()
+    {
+        if (Module is not { } m || Diagnostics.IsRunning(m.Name)) return;
+        m.Duration = _duration;
+        _ = Diagnostics.RunAsync(m.Name);
+    }
+
+    private void Stop() => Module?.Stop();
+    private static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
+
+    public ValueTask DisposeAsync()
+    {
+        if (Module is { } m) m.ProgressChanged -= OnProgress;
+        Dispose();
+        return ValueTask.CompletedTask;
+    }
+}
