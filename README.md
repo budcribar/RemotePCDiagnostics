@@ -53,6 +53,15 @@ Power, Plug and Play, profiles, user manager, Group Policy, Task Scheduler, Trus
 Stop/Restart; a stopped protected service may still be started. In Remote mode actions are attributed to "Remote technician" and the
 person at the PC gets a pop-up notice; the app cannot tell whether a specific click came from the local window or the remote browser.
 
+## Checks & tests screen
+
+**Checks & tests** (sidebar, between Dashboard and History) puts everything that can be run on one screen, in two collapsible groups:
+
+- **System checks** – the quick read-only checks (Windows error log, crashes, drives, services, programs, network…).
+- **Hardware stress & deep scans** – CPU, memory, disk, GPU and network stress tests, plus the security audit (off by default; it runs on its own after the stress tests when ticked).
+
+Each group has a select-all box, "N of M selected", status pills and a **Run selected** button that turns into **Stop** while running. The stress group has a **Quick / Extended** switch (about 1 min / 5 min per test); tests run one at a time and stop automatically if the PC gets too hot or a test fails. Clicking a row (or Enter/Space) opens its details on the right, with **Run just this**. Stopping a run never hides the previous result, and labels show which mode a result came from, e.g. "Passed (short run)". The divider between the list and the details can be dragged or moved with the arrow keys; its position is remembered. Below about 900 px the details stack under the list. Results are still written to the Windows Event Log and appear in History as before.
+
 ## Status
 
 Idea stage. This repository currently holds only this README.
