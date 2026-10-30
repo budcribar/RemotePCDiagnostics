@@ -27,6 +27,8 @@ public static class ProcessProtection
         if (ProtectedNames.Contains(trimmed)) return true;
         var noExt = Path.GetFileNameWithoutExtension(trimmed);
         if (ProtectedNames.Contains(noExt)) return true;
+        // Same list the Memory page uses ("this app and its web view", security, shell), so End task can't kill them either.
+        if (Memory.ProtectedProcesses.Names.Contains(trimmed) || Memory.ProtectedProcesses.Names.Contains(noExt)) return true;
         return ServiceProtection.IsSelfComponent(trimmed);
     }
 }
@@ -207,9 +209,9 @@ public sealed class RemediationService(
                 action,
                 $"Optimize / Retrim {label}?",
                 "Sends TRIM / ReTrim optimization commands to the solid-state drive so it can maintain peak write speeds.",
-                "Runs 'Optimize-Volume -DriveLetter C -ReTrim'.",
-                "Requires administrator privileges.",
-                true),
+                DriveLetters(action.Target) is { Length: > 0 } dl ? $"Runs 'Optimize-Volume -DriveLetter {string.Join(",", dl.ToCharArray())} -ReTrim'." : "Nothing will run.",
+                DriveLetters(action.Target).Length > 0 ? "Requires administrator privileges." : "This drive has no drive letter to optimize.",
+                DriveLetters(action.Target).Length > 0),
 
             _ => new(action, action.ButtonText, "", "", null, true),
         };
@@ -336,7 +338,7 @@ public sealed class RemediationService(
         RemediationKind.CleanTempFiles => await RunCleanTempFilesAsync(ct).ConfigureAwait(false),
 
         RemediationKind.OptimizeSsd => await RunPowerShellAsync(
-            "$ErrorActionPreference='Stop'; Optimize-Volume -DriveLetter C -ReTrim",
+            $"$ErrorActionPreference='Stop'; Optimize-Volume -DriveLetter {string.Join(",", DriveLetters(action.Target).ToCharArray())} -ReTrim",
             $"Optimized / Retrimmed {Display(action)}.",
             $"Couldn't optimize {Display(action)} (administrator rights required).",
             ct).ConfigureAwait(false),
@@ -348,6 +350,13 @@ public sealed class RemediationService(
         !string.IsNullOrWhiteSpace(a.TargetLabel) ? a.TargetLabel : !string.IsNullOrWhiteSpace(a.Target) ? a.Target : "item";
 
     private static string EscapeSingleQuotes(string s) => s.Replace("'", "''");
+
+    /// <summary>Volume letters of an OptimizeSsd target ("C", "DE", "C:"), upper-cased and de-duplicated; empty when anything else is in it.</summary>
+    public static string DriveLetters(string? target)
+    {
+        var t = (target ?? "").Replace(":", "").Replace(",", "").Trim().ToUpperInvariant();
+        return t.Length > 0 && t.All(c => c is >= 'A' and <= 'Z') ? new string(t.Distinct().ToArray()) : "";
+    }
 
     private async Task<RemediationResult> RunSimpleAsync(string exe, IReadOnlyList<string> args, string okMsg, string failMsg, CancellationToken ct)
     {

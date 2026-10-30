@@ -132,7 +132,7 @@ public class RemediationTests
         var svc = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Local));
 
         var drvRep = DriveHealthModule.Build(
-            [new("Samsung SSD 980", "S1", "SSD", "NVMe", "Healthy", "OK", 1_000_000_000_000, 35, 2, 0, 0, 1000)]);
+            [new("Samsung SSD 980", "S1", "SSD", "NVMe", "Healthy", "OK", 1_000_000_000_000, 35, 2, 0, 0, 1000, "C")]);
         var card = Assert.Single(drvRep.Cards);
         Assert.Contains(card.Actions!, a => a.Kind == RemediationKind.CleanTempFiles);
         Assert.Contains(card.Actions!, a => a.Kind == RemediationKind.OptimizeSsd);
@@ -175,6 +175,39 @@ public class RemediationTests
 
         Assert.False(svc.Plan(action).Allowed);
         var res = await svc.ExecuteAsync(action);
+        Assert.False(res.Success);
+        Assert.Empty(launcher.Calls);
+    }
+
+    [Fact]
+    public void SsdOptimize_EachDiskTargetsItsOwnVolumes_AndDisksWithoutLettersGetNoButton()
+    {
+        var rep = DriveHealthModule.Build(
+        [
+            new("Samsung SSD 980", "S1", "SSD", "NVMe", "Healthy", "OK", 1_000_000_000_000, 35, 2, 0, 0, 1000, "C"),
+            new("WD Blue SN580", "S2", "SSD", "NVMe", "Healthy", "OK", 2_000_000_000_000, 33, 1, 0, 0, 500, "DE"),
+            new("Crucial MX500", "S3", "SSD", "SATA", "Healthy", "OK", 500_000_000_000, 30, 1, 0, 0, 100, ""),
+        ]);
+        Assert.Equal("C", rep.Cards[0].Actions!.Single(a => a.Kind == RemediationKind.OptimizeSsd).Target);
+        Assert.Equal("DE", rep.Cards[1].Actions!.Single(a => a.Kind == RemediationKind.OptimizeSsd).Target);
+        Assert.DoesNotContain(rep.Cards[2].Actions ?? [], a => a.Kind == RemediationKind.OptimizeSsd);
+    }
+
+    [Theory]
+    [InlineData("C", "C")]
+    [InlineData("d:", "D")]
+    [InlineData("D,E", "DE")]
+    [InlineData("", "")]
+    [InlineData("C; Remove-Item", "")]
+    public void DriveLetters_OnlyAcceptsLetters(string target, string expected) =>
+        Assert.Equal(expected, RemediationService.DriveLetters(target));
+
+    [Fact]
+    public async Task SsdOptimize_WithNoValidLetter_IsRefusedAndRunsNothing()
+    {
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var svc = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Local));
+        var res = await svc.ExecuteAsync(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", "C; Stop-Computer", "SSD"));
         Assert.False(res.Success);
         Assert.Empty(launcher.Calls);
     }
