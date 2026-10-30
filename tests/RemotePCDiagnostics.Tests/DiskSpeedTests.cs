@@ -185,6 +185,26 @@ public class DiskSpeedTests
         AssertCleaned(fs, r);
     }
 
+    // Live drive temp = hottest non-limit drive sensor (so 74.9 from "Temperature #1", not Composite 50);
+    // the drive-reported "Warning/Critical Temperature" limits are never treated as live readings.
+    [Theory]
+    [InlineData("SAMSUNG MZAL8512HDLU-00BL2", 74.9, 74.9)]
+    [InlineData("Samsung SSD NVMe", 60.0, 60.0)] // SSD threshold critical 70: limits 82/84 must not trip it
+    public async Task DriveLimitSensors_IgnoredForMaxAndCriticalAbort(string drive, double t1, double expectedMax)
+    {
+        var fs = new FakeDiskFs();
+        var sensors = new SequenceSensorProvider(_ => new SensorSnapshot(
+        [
+            new(drive, HardwareKind.Storage, "Composite Temperature", SensorKind.Temperature, 50, 40, 50, "°C"),
+            new(drive, HardwareKind.Storage, "Temperature #1", SensorKind.Temperature, t1, 40, t1, "°C"),
+            new(drive, HardwareKind.Storage, "Warning Temperature", SensorKind.Temperature, 82, 82, 82, "°C"),
+            new(drive, HardwareKind.Storage, "Critical Temperature", SensorKind.Temperature, 84, 84, 84, "°C"),
+        ], true));
+        var r = await new DiskSpeedTest(fs, sensors, new FakeStressClock()).RunAsync(Opts() with { RequestedSizeBytes = 256 * MB, MinTestBytes = 4 * MB });
+        Assert.NotEqual(DiskSpeedOutcome.Overheated, r.Outcome);
+        Assert.Equal(expectedMax, r.MaxDriveTemperatureC!.Value, 1);
+    }
+
     [Fact]
     public async Task CriticalTemperature_Aborts_AndCleansUp()
     {
