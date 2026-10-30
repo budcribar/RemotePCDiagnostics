@@ -174,3 +174,12 @@ Windows 10 2004+/11). The value comes from the GPU driver, so it is shown as "GP
 approximate) on the Temperatures GPU card and used by the GPU stress test; alerts use a conservative 85/95 °C. It only works
 when the installed driver fills in the temperature (i.e. when Task Manager shows one). Each source and its result are logged
 once to the `RPD_LOG_FILE` log.
+
+### CPU temperature fallbacks
+
+LibreHardwareMonitorLib 0.9.5+ reads Ryzen/Intel CPU temperatures through the separately installed **PawnIO** driver
+(https://pawnio.eu); it is not bundled (kernel driver, own installer). The app only detects it (logged) and, when no real CPU
+temperature is available, shows "CPU temperature needs a sensor driver that isn't available on this PC." If LHM has no valid
+CPU temperature: (1) on AMD APUs ("… with Radeon Graphics") the GPU temperature from Windows is shown as
+"CPU temperature (approximate, from built-in graphics)" (same chip); (2) last resort, the ACPI thermal zone (approximate).
+Approximate readings have no alert threshold. AMD ADL/ADLX expose GPU metrics only (no CPU temperature), so they are not used.

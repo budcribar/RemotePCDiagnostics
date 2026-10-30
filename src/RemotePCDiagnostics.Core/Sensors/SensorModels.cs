@@ -31,7 +31,8 @@ public sealed record SensorReading(
     public bool IsLive => HasData && !IsLimit;
 
     /// <summary>True for the ACPI thermal-zone fallback reading (not a real CPU sensor).</summary>
-    public bool IsApproximate => HardwareName == ThermalZoneFallback.HardwareName && SensorName == ThermalZoneFallback.SensorName;
+    public bool IsApproximate => (HardwareName == ThermalZoneFallback.HardwareName && SensorName == ThermalZoneFallback.SensorName)
+        || (HardwareType == HardwareKind.Cpu && SensorName == CpuTemperatureFallback.ApuSensorName);
 
     /// <summary>True for the GPU temperature read through Windows (driver value, not approximate) when LHM had none.</summary>
     public bool IsFromWindows => HardwareType == HardwareKind.Gpu && SensorName == GpuTemperatureFallback.SensorName;
@@ -51,7 +52,7 @@ public sealed record SensorReading(
         get
         {
             var n = SensorName.Trim();
-            if (IsApproximate) return ThermalZoneFallback.FriendlyLabel;
+            if (IsApproximate) return SensorName == CpuTemperatureFallback.ApuSensorName ? CpuTemperatureFallback.ApuFriendlyLabel : ThermalZoneFallback.FriendlyLabel;
             if (IsFromWindows) return GpuTemperatureFallback.SensorName;
             var num = System.Text.RegularExpressions.Regex.Match(n, @"#\s*(\d+)");
             if (SensorType == SensorKind.Fan) return num.Success ? $"Fan {num.Groups[1].Value} speed" : n.Contains("fan", StringComparison.OrdinalIgnoreCase) ? n + " speed" : $"Fan speed ({n})";
@@ -93,7 +94,7 @@ public sealed record SensorReading(
 }
 
 /// <summary>Result of one provider read.</summary>
-public sealed record SensorSnapshot(IReadOnlyList<SensorReading> Readings, bool IsElevated, string? Note = null);
+public sealed record SensorSnapshot(IReadOnlyList<SensorReading> Readings, bool IsElevated, string? Note = null, string? CpuNote = null);
 
 /// <summary>Reading plus its threshold evaluation.</summary>
 public sealed record EvaluatedReading(SensorReading Reading, SensorLevel Level, SensorThreshold? Threshold);

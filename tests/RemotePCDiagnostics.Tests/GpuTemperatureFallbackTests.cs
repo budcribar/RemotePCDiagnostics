@@ -119,3 +119,49 @@ public class GpuTemperatureFallbackTests
         Assert.NotEqual(GpuStressOutcome.Overheated, r.Outcome);
     }
 }
+
+public class CpuTemperatureFallbackTests
+{
+    private const string Apu = "AMD Ryzen 7 5700U with Radeon Graphics";
+    private static SensorReading Cpu(double? v) => new(Apu, HardwareKind.Cpu, "Core (Tctl/Tdie)", SensorKind.Temperature, v, v, v, "°C");
+    private static SensorReading WinGpu(double v) => new("AMD Radeon(TM) Graphics", HardwareKind.Gpu, GpuTemperatureFallback.SensorName, SensorKind.Temperature, v, null, null, "°C");
+    private sealed class Zones(params double[] v) : IThermalZoneReader { public IReadOnlyList<double> ReadTenthsKelvin() => v; }
+
+    [Fact]
+    public void ApuDie_UsedOnlyWithoutRealCpuTemp_AndIsApproximate()
+    {
+        var list = CpuTemperatureFallback.ApplyApuDie([Cpu(0), WinGpu(57)], Apu);
+        var r = Assert.Single(list, x => x.HardwareType == HardwareKind.Cpu && x.IsLive);
+        Assert.Equal(57, r.Value);
+        Assert.True(r.IsApproximate);
+        Assert.Equal("CPU temperature (approximate, from built-in graphics)", r.FriendlyName);
+        Assert.Null(SensorThresholds.For(r)); // approximate: no alert threshold, never aborts a stress test
+        Assert.DoesNotContain(CpuTemperatureFallback.ApplyApuDie([Cpu(62), WinGpu(57)], Apu), x => x.IsApproximate);
+    }
+
+    [Theory]
+    [InlineData("Intel Core i7-1165G7")]
+    [InlineData("AMD Ryzen 9 7950X")]
+    [InlineData(null)]
+    public void ApuDie_NotUsedForNonApu(string? cpu) =>
+        Assert.DoesNotContain(CpuTemperatureFallback.ApplyApuDie([WinGpu(57)], cpu), x => x.HardwareType == HardwareKind.Cpu);
+
+    [Fact]
+    public void Ordering_ApuBeforeThermalZone_ThermalZoneLastResort()
+    {
+        var withApu = ThermalZoneFallback.Apply(CpuTemperatureFallback.ApplyApuDie([WinGpu(57)], Apu), new Zones(3231.5));
+        Assert.Single(withApu, x => x.HardwareType == HardwareKind.Cpu);
+        Assert.DoesNotContain(withApu, x => x.HardwareName == ThermalZoneFallback.HardwareName);
+        var noGpu = ThermalZoneFallback.Apply(CpuTemperatureFallback.ApplyApuDie([], Apu), new Zones(3231.5));
+        Assert.Single(noGpu, x => x.HardwareName == ThermalZoneFallback.HardwareName);
+    }
+
+    [Fact]
+    public void DriverNote_OnlyWithoutRealCpuTemp()
+    {
+        Assert.Equal(CpuTemperatureFallback.DriverMissingNote, CpuTemperatureFallback.Note([Cpu(0)], false));
+        Assert.Equal(CpuTemperatureFallback.DriverMissingNote, CpuTemperatureFallback.Note(CpuTemperatureFallback.ApplyApuDie([WinGpu(50)], Apu), true));
+        Assert.Null(CpuTemperatureFallback.Note([Cpu(55)], false));
+        Assert.DoesNotContain("PawnIO", CpuTemperatureFallback.DriverMissingNote);
+    }
+}

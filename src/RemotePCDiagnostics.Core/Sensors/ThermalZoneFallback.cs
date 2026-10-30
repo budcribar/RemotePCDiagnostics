@@ -28,7 +28,7 @@ public static class ThermalZoneFallback
     public static List<SensorReading> Apply(IReadOnlyList<SensorReading> readings, IThermalZoneReader? zones, Action<string>? log = null)
     {
         var list = readings.ToList();
-        if (zones is null || list.Any(r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Cpu && r.IsLive)) return list;
+        if (zones is null || list.Any(r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Cpu && r.IsLive)) return list; // incl. the APU approximation (thermal zone = last resort)
         IReadOnlyList<double> raw;
         try { raw = zones.ReadTenthsKelvin(); }
         catch (Exception ex) { log?.Invoke($"Thermal zone fallback failed: {ex.Message}"); return list; }

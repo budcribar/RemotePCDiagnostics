@@ -19,7 +19,7 @@ public static class SensorThresholds
 
     public static SensorThreshold? For(SensorReading r)
     {
-        if (r.SensorType != SensorKind.Temperature) return null;
+        if (r.SensorType != SensorKind.Temperature || r.IsApproximate) return null;
         var hw = r.HardwareName; var s = r.SensorName;
         return r.HardwareType switch
         {

@@ -14,6 +14,7 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
     private bool _loggedRead, _fallbackLogged, _gpuLogged;
     private readonly IThermalZoneReader? _zones = OperatingSystem.IsWindows() ? new WmiThermalZoneReader() : null;
     // Used only when LHM has no valid GPU temperature (e.g. Ryzen APU iGPUs). Order = preference.
+    private readonly Lazy<(bool Available, string Detail)> _driver = new(PawnIoProbe.Check);
     private readonly IGpuTemperatureSource[] _gpuSources = OperatingSystem.IsWindows()
         ? [new TimeoutGpuTemperatureSource(new D3dkmtGpuTemperatureSource(), TimeSpan.FromSeconds(2))] : [];
 
@@ -38,12 +39,18 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
             if (!_fallbackLogged && !list.Any(r => r.HardwareType == HardwareKind.Cpu && r.SensorType == SensorKind.Temperature))
                 App.Log("LibreHardwareMonitor: no usable CPU temperature (sensor missing or 0). LHM 0.9.5+ needs the PawnIO driver for low-level CPU access; using ACPI thermal zone fallback if available.");
             var first = !_fallbackLogged; _fallbackLogged = true;
-            list = ThermalZoneFallback.Apply(list, _zones, first ? App.Log : null);
             var firstGpu = !_gpuLogged; _gpuLogged = true;
             if (firstGpu) App.Log($"GPU temperature: LHM valid GPU temperature={(list.Any(r => r.HardwareType == HardwareKind.Gpu && r.SensorType == SensorKind.Temperature && r.IsLive) ? "yes" : "no")}; fallback sources={string.Join(", ", _gpuSources.Select(s => s.Name))}");
             list = GpuTemperatureFallback.Apply(list, _gpuSources, firstGpu ? App.Log : null);
+            // CPU fallbacks (only when LHM has no valid CPU temp): APU shared die from the Windows GPU reading, then ACPI thermal zone.
+            var cpuName = _computer.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Cpu)?.Name;
+            list = CpuTemperatureFallback.ApplyApuDie(list, cpuName, first ? App.Log : null);
+            list = ThermalZoneFallback.Apply(list, _zones, first ? App.Log : null);
+            var driver = _driver.Value;
+            if (first) App.Log($"CPU sensor driver (PawnIO, needed by LHM 0.9.5+ for Ryzen/Intel CPU temperatures): {driver.Detail}");
+            var cpuNote = CpuTemperatureFallback.Note(list, driver.Available);
             var elevated = IsElevated();
-            return new SensorSnapshot(list, elevated, elevated ? null : "Some readings need administrator rights and may be missing.");
+            return new SensorSnapshot(list, elevated, elevated ? null : "Some readings need administrator rights and may be missing.", cpuNote);
         }
     }
 

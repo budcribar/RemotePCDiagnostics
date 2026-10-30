@@ -56,6 +56,10 @@
     {
         <p class="meta" data-testid="lhm-missing">@missing</p>
     }
+    @if (report.Snapshot.CpuNote is { } cpuNote)
+    {
+        <p class="meta" data-testid="lhm-cpu-note">@cpuNote</p>
+    }
 
     @if (_open is not null && report.Groups.FirstOrDefault(g => g.Id == _open) is { } open)
     {
