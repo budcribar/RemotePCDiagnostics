@@ -38,7 +38,9 @@
     {
         "Osquery" => "hw", "Sensors" => "temp", "CpuStress" => "cpu", "DiskSpeed" => "disk", "MemoryTest" => "mem",
         "NetworkTest" => "net", "GpuStress" => "gpu", "DriveHealth" => "health", "Services" => "svc", "Programs" => "prog",
-        "Network" => "adp", "EventLog" => "log", "Crashes" => "crash", "SecurityAudit" => "sec", _ => "health",
+        "Network" => "adp", "EventLog" => "log", "Crashes" => "crash", "SecurityAudit" => "sec",
+        "ResourceHogs" => "cpu", "DeviceDrivers" => "hw", "BsodHistory" => "crash", "BatteryPower" => "health", "WifiConfig" => "net",
+        _ => "health",
     };
 
     static string PathFor(string n) => Paths.TryGetValue(n, out var p) ? p : Paths[ForModule(n)];

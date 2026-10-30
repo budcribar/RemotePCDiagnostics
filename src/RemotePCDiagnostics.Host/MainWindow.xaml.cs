@@ -63,6 +63,11 @@ public partial class MainWindow : Window
         services.AddSingleton<IDiagnosticModule, NetworkModule>(sp => new NetworkModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
         services.AddSingleton<IDiagnosticModule, EventLogModule>();
         services.AddSingleton<IDiagnosticModule, CrashesModule>();
+        services.AddSingleton<IDiagnosticModule>(sp => new ResourceHogsModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
+        services.AddSingleton<IDiagnosticModule>(sp => new DeviceDriversModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
+        services.AddSingleton<IDiagnosticModule, BsodHistoryModule>();
+        services.AddSingleton<IDiagnosticModule>(sp => new BatteryPowerModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
+        services.AddSingleton<IDiagnosticModule, WifiConfigModule>();
         // On-demand only (Start button on its page): not in AutoRun below and excluded from Run All (IncludeInRunAll=false).
         services.AddSingleton<IDiagnosticModule>(new SecurityAuditModule(new SecurityAuditOptions { Log = App.Log }));
         services.AddSingleton<DiagnosticsService>();
@@ -91,7 +96,8 @@ public partial class MainWindow : Window
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
         // Results flow through ResultStore to the Dashboard / Hardware inventory page. Disable with REMOTEPC_AUTORUN=0.
         AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Log, "Osquery", LibreHardwareMonitorModule.ModuleName,
-            DriveHealthModule.ModuleName, ServicesModule.ModuleName, ProgramsModule.ModuleName, NetworkModule.ModuleName, EventLogModule.ModuleName, CrashesModule.ModuleName);
+            DriveHealthModule.ModuleName, ServicesModule.ModuleName, ProgramsModule.ModuleName, NetworkModule.ModuleName, EventLogModule.ModuleName, CrashesModule.ModuleName,
+            ResourceHogsModule.ModuleName, DeviceDriversModule.ModuleName, BsodHistoryModule.ModuleName, BatteryPowerModule.ModuleName, WifiConfigModule.ModuleName);
 
         InitializeComponent();
         App.Log($"MainWindow initialized, mode={mode} server={launch.ServerUri}");
