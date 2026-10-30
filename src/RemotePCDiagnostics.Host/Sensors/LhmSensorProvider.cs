@@ -11,7 +11,8 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
     private readonly object _gate = new();
     private Computer? _computer;
     private string? _openError;
-    private bool _loggedRead;
+    private bool _loggedRead, _fallbackLogged;
+    private readonly IThermalZoneReader? _zones = OperatingSystem.IsWindows() ? new WmiThermalZoneReader() : null;
 
     public ModuleAvailability CheckAvailability()
     {
@@ -31,6 +32,10 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
             var list = new List<SensorReading>();
             foreach (var hw in _computer.Hardware) Collect(hw, list);
             if (!_loggedRead) { _loggedRead = true; LogInventory(_computer, "first read"); }
+            if (!_fallbackLogged && !list.Any(r => r.HardwareType == HardwareKind.Cpu && r.SensorType == SensorKind.Temperature))
+                App.Log("LibreHardwareMonitor: no usable CPU temperature (sensor missing or 0). LHM 0.9.5+ needs the PawnIO driver for low-level CPU access; using ACPI thermal zone fallback if available.");
+            var first = !_fallbackLogged; _fallbackLogged = true;
+            list = ThermalZoneFallback.Apply(list, _zones, first ? App.Log : null);
             var elevated = IsElevated();
             return new SensorSnapshot(list, elevated, elevated ? null : "Some readings need administrator rights and may be missing.");
         }

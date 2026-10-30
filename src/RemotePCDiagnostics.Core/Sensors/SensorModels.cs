@@ -30,6 +30,9 @@ public sealed record SensorReading(
     /// <summary>A usable live reading (has data and is not a reported limit).</summary>
     public bool IsLive => HasData && !IsLimit;
 
+    /// <summary>True for the ACPI thermal-zone fallback reading (not a real CPU sensor).</summary>
+    public bool IsApproximate => HardwareName == ThermalZoneFallback.HardwareName && SensorName == ThermalZoneFallback.SensorName;
+
     public string DeviceType => HardwareType switch
     {
         HardwareKind.Cpu => "CPU", HardwareKind.Gpu => "Graphics", HardwareKind.Storage => "Drive", HardwareKind.Memory => "Memory",
@@ -37,7 +40,7 @@ public sealed record SensorReading(
     };
 
     /// <summary>Friendly device label, e.g. "Drive: SAMSUNG MZAL8512HDLU".</summary>
-    public string FriendlyDevice => $"{DeviceType}: {HardwareName}";
+    public string FriendlyDevice => IsApproximate ? "Windows (approximate)" : $"{DeviceType}: {HardwareName}";
 
     /// <summary>Plain-language sensor label; raw name stays available via SensorName.</summary>
     public string FriendlyName
@@ -45,6 +48,7 @@ public sealed record SensorReading(
         get
         {
             var n = SensorName.Trim();
+            if (IsApproximate) return ThermalZoneFallback.FriendlyLabel;
             var num = System.Text.RegularExpressions.Regex.Match(n, @"#\s*(\d+)");
             if (SensorType == SensorKind.Fan) return num.Success ? $"Fan {num.Groups[1].Value} speed" : n.Contains("fan", StringComparison.OrdinalIgnoreCase) ? n + " speed" : $"Fan speed ({n})";
             switch (HardwareType)
