@@ -37,6 +37,12 @@ public partial class MainWindow : Window
         services.AddSingleton<IDiagnosticModule>(sp => new MemoryTestModule(new SystemMemoryInfo(), new ProcessMemTestHelperLauncher(log: App.Log),
             sp.GetRequiredService<ISensorProvider>(), new MdschedLauncher(App.Log), App.Log));
         services.AddSingleton(new SystemCommandRunner(log: App.Log));
+        services.AddSingleton<IDiagnosticModule>(sp =>
+        {
+            var settings = NetworkTestSettings.FromEnvironment(Environment.GetEnvironmentVariable);
+            return new NetworkTestModule(new SystemPinger(), new SystemGatewayResolver(), new HttpSpeedTester(settings, log: App.Log),
+                new SystemAdapterCounters(sp.GetRequiredService<SystemCommandRunner>()), sp.GetRequiredService<ISensorProvider>(), settings, App.Log);
+        });
         services.AddSingleton<IDiagnosticModule, DriveHealthModule>();
         services.AddSingleton<IDiagnosticModule, ServicesModule>();
         services.AddSingleton<IDiagnosticModule, ProgramsModule>(sp => new ProgramsModule(sp.GetRequiredService<OsqueryRunner>()));
