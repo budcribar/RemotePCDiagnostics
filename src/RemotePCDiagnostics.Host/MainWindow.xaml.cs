@@ -64,6 +64,7 @@ public partial class MainWindow : Window
         services.AddSingleton<DiagnosticsService>();
         var provider = services.BuildServiceProvider();
         Resources.Add("services", provider);
+        provider.GetRequiredService<DiagnosticsService>().Log = App.Log;
         // Tell the person at this PC when a remote technician starts/stops/restarts a service (non-blocking).
         provider.GetRequiredService<ServiceActionService>().ActionCompleted += rec =>
         {

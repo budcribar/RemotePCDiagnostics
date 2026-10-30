@@ -32,6 +32,12 @@ try {
   console.log('Dashboard visible:', await title.textContent());
   await page.screenshot({ path: `${outDir}/dashboard.png`, fullPage: true });
 
+  // Stress suite buttons exist next to Run all tests (not clicked: they start long stress tests).
+  for (const id of ['dashboard-runall', 'dashboard-runall-stress-short', 'dashboard-runall-stress-extended']) {
+    await page.getByTestId(id).waitFor({ state: 'visible', timeout: 10_000 });
+    console.log(`Button ${id}:`, (await page.getByTestId(id).textContent())?.trim());
+  }
+
   // Theme switcher: each choice must update data-theme / data-theme-choice on <html>.
   const attr = n => page.evaluate(k => document.documentElement.getAttribute(k), n);
   for (const [choice, expected] of [['dark', 'dark'], ['light', 'light']]) {

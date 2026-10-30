@@ -3,13 +3,15 @@ using RemotePCDiagnostics.Core.Sensors;
 namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand disk speed test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
-public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : IDiagnosticModule
+public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : IStressSuiteModule
 {
     public const string ModuleName = "DiskSpeed";
     public string Name => ModuleName;
     public string DisplayName => "Disk speed test";
     public bool IncludeInRunAll => false;
     public event EventHandler<DiagnosticResult>? Updated;
+    string IStressSuiteModule.SuiteName => "Disk";
+    bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.Overheated };
     public event EventHandler<DiskSpeedProgress>? ProgressChanged;
 
     public TimeSpan Duration { get; set; } = TimeSpan.FromMinutes(1);

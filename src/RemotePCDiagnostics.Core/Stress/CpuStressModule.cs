@@ -3,13 +3,15 @@ using RemotePCDiagnostics.Core.Sensors;
 namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand CPU stress test module. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
-public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null, ICpuWorkload? workload = null) : IDiagnosticModule
+public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null, ICpuWorkload? workload = null) : IStressSuiteModule
 {
     public const string ModuleName = "CpuStress";
     public string Name => ModuleName;
     public string DisplayName => "CPU stress test";
     public bool IncludeInRunAll => false;
     public event EventHandler<DiagnosticResult>? Updated;
+    string IStressSuiteModule.SuiteName => "CPU";
+    bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is CpuStressReport { Outcome: CpuStressOutcome.Overheated };
 
     /// <summary>Raised with live progress while a run is in progress.</summary>
     public event EventHandler<CpuStressProgress>? ProgressChanged;

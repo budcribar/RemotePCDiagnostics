@@ -4,13 +4,23 @@ namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand memory test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
 public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher launcher, ISensorProvider sensors,
-    IWindowsMemoryDiagnosticLauncher? windowsDiagnostic = null, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : IDiagnosticModule
+    IWindowsMemoryDiagnosticLauncher? windowsDiagnostic = null, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : IStressSuiteModule
 {
     public const string ModuleName = "MemoryTest";
     public string Name => ModuleName;
     public string DisplayName => "Memory test";
     public bool IncludeInRunAll => false;
     public event EventHandler<DiagnosticResult>? Updated;
+    string IStressSuiteModule.SuiteName => "Memory";
+    object IStressSuiteModule.SaveSuiteSettings() => (Mode, Duration);
+    void IStressSuiteModule.RestoreSuiteSettings(object saved) { var (m, d) = ((MemoryTestMode, TimeSpan))saved; Mode = m; Duration = d; }
+    /// <summary>Short: quick mode for 1 minute. Extended: full mode for 5 minutes.</summary>
+    void IStressSuiteModule.ApplySuiteMode(StressSuiteMode mode)
+    {
+        Mode = mode == StressSuiteMode.Extended ? MemoryTestMode.Full : MemoryTestMode.Quick;
+        Duration = StressSuite.PerTestDuration(mode);
+    }
+    bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is MemoryTestReport { Outcome: MemoryTestOutcome.Overheated };
     public event EventHandler<MemoryTestProgress>? ProgressChanged;
 
     public MemoryTestMode Mode { get; set; } = MemoryTestMode.Quick;

@@ -4,13 +4,15 @@ namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand network stability test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
 public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, ISpeedTester speed, IAdapterCounters counters, ISensorProvider sensors,
-    NetworkTestSettings? settings = null, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : IDiagnosticModule
+    NetworkTestSettings? settings = null, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : IStressSuiteModule
 {
     public const string ModuleName = "NetworkTest";
     public string Name => ModuleName;
     public string DisplayName => "Network stability test";
     public bool IncludeInRunAll => false;
     public event EventHandler<DiagnosticResult>? Updated;
+    string IStressSuiteModule.SuiteName => "Network";
+    bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.Overheated };
     public event EventHandler<NetworkTestProgress>? ProgressChanged;
 
     public TimeSpan Duration { get; set; } = TimeSpan.FromMinutes(1);

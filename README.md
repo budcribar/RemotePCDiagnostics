@@ -114,6 +114,21 @@ The top bar badge shows Local or Remote. Consent prompt and audit log for remote
 
 The Host's `app.manifest` sets `requestedExecutionLevel level="requireAdministrator"`, so Windows prompts for elevation (UAC) at launch. Event-log and sensor modules will need it.
 
+### Stress suite (Dashboard)
+
+Next to **Run all tests** (quick checks only; stress tests stay out of it) the Dashboard has
+**Run all + stress tests (short, about 5 min)** and **Run all + stress tests (extended, about 25 min)**. One click, no
+confirmation (also in Remote mode; the person at the PC already let the technician in). It runs the quick checks
+(`RunAllAsync`), then `DiagnosticsService.RunStressSuiteAsync` runs the stress tests strictly one at a time: CPU,
+Memory, Disk, GPU, Network. Short = 1 minute per test (memory in Quick mode); Extended = 5 minutes per test (memory in
+Full mode). Each test's time limit/mode is set for the run and restored afterwards. A test that isn't available on this
+PC (e.g. no graphics card) is skipped; an overheated or failed test stops the sequence and the rest are marked not run.
+Cancel stops the current test and ends the run. Both run buttons are disabled meanwhile, progress reads
+"Stress test 2 of 5: Memory", and results show "(short run)"/"(extended run)". The security audit is not included.
+Who started it (local user or remote technician) goes to the app log. Times are approximate: quick checks and the
+disk test's preparation/clean-up and the network test's capped transfers can add or trim a little; a test already
+started from its own page is waited for rather than restarted.
+
 ### Network stability test
 
 On-demand only (never auto-run, not part of Run All). It pings the default gateway and public hosts

@@ -3,6 +3,8 @@
 @using RemotePCDiagnostics.Core.Sensors
 @inherits StoreAwareComponent
 @inject NavigationManager Nav
+@inject RemotePCDiagnostics.Core.Session.ISessionContext Session
+@implements IAsyncDisposable
 @{
     var hw = Store.Get("Osquery");
     var inv = hw.Payload as HardwareInventory;
@@ -39,9 +41,34 @@
             @if (notRun > 0) { <span> · @notRun @(notRun == 1 ? "test" : "tests") not run yet</span> }
         </div>
     </div>
-    <button class="btn btn-primary" data-testid="dashboard-runall" disabled="@checking" @onclick="RunAll">
-        <Icon Name="@(checking ? "refresh" : "play")" Size="14" />@(checking ? "Checking…" : "Run all tests")</button>
+    <div class="banner-actions">
+        <button class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || suiteBusy)" @onclick="RunAll">
+            <Icon Name="@(checking ? "refresh" : "play")" Size="14" />@(checking ? "Checking…" : "Run all tests")</button>
+        <button class="btn btn-outline" data-testid="dashboard-runall-stress-short" disabled="@(checking || suiteBusy)" @onclick="() => RunSuite(StressSuiteMode.Short)">
+            <Icon Name="play" Size="12" />Run all + stress tests (short, about 5 min)</button>
+        <button class="btn btn-outline" data-testid="dashboard-runall-stress-extended" disabled="@(checking || suiteBusy)" @onclick="() => RunSuite(StressSuiteMode.Extended)">
+            <Icon Name="play" Size="12" />Run all + stress tests (extended, about 25 min)</button>
+    </div>
 </section>
+
+@if (suite is { } sp && (suiteBusy || sp.Finished))
+{
+    <section class="card suite-status" data-testid="dashboard-suite-status">
+        <div class="suite-line">
+            <strong data-testid="dashboard-suite-progress">@(suiteBusy ? sp.Headline : sp.Message)</strong>
+            @if (suiteBusy)
+            {
+                <button class="btn" data-testid="dashboard-suite-cancel" disabled="@cancelling" @onclick="CancelSuite">@(cancelling ? "Cancelling…" : "Cancel")</button>
+            }
+        </div>
+        <ul class="suite-steps">
+            @foreach (var st in sp.Steps)
+            {
+                <li data-testid="dashboard-suite-step-@st.ModuleName.ToLowerInvariant()"><span class="@DotClass(StepStatus(st.State))"></span>@st.DisplayName: @StepText(st.State)</li>
+            }
+        </ul>
+    </section>
+}
 
 <div class="dash-grid">
     <div class="card dash-card gauge-card card-click" data-testid="dashboard-card-sensors" role="link" tabindex="0"
@@ -112,7 +139,7 @@
             <span class="icon-badge icon-@StatusChip.Kind(r.Status)"><Icon Name="@Icon.ForModule(m.Name)" /></span>
             <div>
                 <strong class="test-name">@TestName(m)</strong>
-                <div class="desc" data-testid="dashboard-@TestId(m.Name)"><span class="@DotClass(r.Status)"></span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run yet", DiagnosticStatus.Running => "Running…", _ => r.Message })</div>
+                <div class="desc" data-testid="dashboard-@TestId(m.Name)"><span class="@DotClass(r.Status)"></span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run yet", DiagnosticStatus.Running => "Running…", _ => r.Message })@(Diagnostics.StressRunLabel(m.Name) is { } lbl && r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running) ? $" ({lbl})" : "")</div>
             </div>
             <button class="btn btn-outline" data-testid="dashboard-start-@m.Name.ToLowerInvariant()" @onclick="() => Open(name)">
                 <Icon Name="play" Size="12" />@(r.Status == DiagnosticStatus.Running ? "View" : r.Status == DiagnosticStatus.NotRun ? "Start" : "Run again")</button>
@@ -124,6 +151,49 @@
     private void Open(string module) => Nav.NavigateTo($"module/{module.ToLowerInvariant()}");
     private void Key(KeyboardEventArgs e, string module) { if (e.Key is "Enter" or " ") Open(module); }
     private void RunAll() => _ = Diagnostics.RunAllAsync();
+
+    private StressSuiteProgress? suite;
+    private bool suiteBusy => Diagnostics.IsStressSuiteRunning;
+    private bool cancelling;
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        suite = Diagnostics.LastStressSuiteProgress;
+        Diagnostics.StressSuiteProgressChanged += OnSuite;
+    }
+    private void OnSuite(object? s, StressSuiteProgress p) { suite = p; if (p.Finished) cancelling = false; _ = InvokeAsync(StateHasChanged); }
+    public ValueTask DisposeAsync() { Diagnostics.StressSuiteProgressChanged -= OnSuite; Dispose(); return ValueTask.CompletedTask; }
+
+    // One click, no confirmation (also in Remote mode: the user already let the technician in).
+    private async Task RunSuite(StressSuiteMode mode)
+    {
+        if (Diagnostics.IsStressSuiteRunning) return;
+        Diagnostics.Log?.Invoke($"Stress suite ({StressSuite.RunLabel(mode)}) requested from the Dashboard by the {(Session.Mode == RemotePCDiagnostics.Core.Session.SessionMode.Remote ? "remote technician" : "local user")}");
+        cancelling = false;
+        try { await Diagnostics.RunStressSuiteAsync(mode, null); }
+        catch (InvalidOperationException) { /* already running: the other click won */ }
+        catch (Exception ex) { Diagnostics.Log?.Invoke($"Stress suite failed: {ex.Message}"); }
+        StateHasChanged();
+    }
+    private void CancelSuite() { cancelling = true; Diagnostics.CancelStressSuite(); }
+
+    private static DiagnosticStatus StepStatus(StressSuiteStepState s) => s switch
+    {
+        StressSuiteStepState.Running => DiagnosticStatus.Running,
+        StressSuiteStepState.Passed => DiagnosticStatus.Ok,
+        StressSuiteStepState.Problem => DiagnosticStatus.Warning,
+        _ => DiagnosticStatus.NotRun,
+    };
+    private static string StepText(StressSuiteStepState s) => s switch
+    {
+        StressSuiteStepState.Pending => "Waiting",
+        StressSuiteStepState.Running => "Running…",
+        StressSuiteStepState.Passed => "Passed",
+        StressSuiteStepState.Problem => "Needs a look",
+        StressSuiteStepState.Skipped => "Skipped (not available on this PC)",
+        _ => "Not run",
+    };
 
     // Previous dashboard test ids for the stress status lines.
     private static string TestId(string module) => module switch { "MemoryTest" => "memorytest", "NetworkTest" => "networktest", _ => module.ToLowerInvariant() };

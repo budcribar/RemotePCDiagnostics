@@ -3,13 +3,16 @@ using RemotePCDiagnostics.Core.Sensors;
 namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand GPU stress test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
-public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : IDiagnosticModule
+public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : IStressSuiteModule
 {
     public const string ModuleName = "GpuStress";
     public string Name => ModuleName;
     public string DisplayName => "Graphics (GPU) stress test";
     public bool IncludeInRunAll => false;
     public event EventHandler<DiagnosticResult>? Updated;
+    string IStressSuiteModule.SuiteName => "GPU";
+    bool IStressSuiteModule.IsUnavailableResult(DiagnosticResult r) => r.Payload is GpuStressReport { Outcome: GpuStressOutcome.NoGpu };
+    bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is GpuStressReport { Outcome: GpuStressOutcome.Overheated };
     public event EventHandler<GpuStressProgress>? ProgressChanged;
 
     public TimeSpan Duration { get; set; } = TimeSpan.FromMinutes(1);
