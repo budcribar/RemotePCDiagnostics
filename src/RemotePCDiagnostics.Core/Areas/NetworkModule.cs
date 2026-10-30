@@ -60,7 +60,7 @@ public sealed record NetworkAdapter(
 /// Network adapters via osquery <c>interface_details</c>. osquery 5.24 on Windows leaves the packet/error counters
 /// blank, so when none are reported they are filled from Windows' Get-NetAdapterStatistics (matched by adapter name).
 /// </summary>
-public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? commands = null) : OsqueryAreaModuleBase(runner)
+public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? commands = null, bool includeWifiAndIpConfig = false) : OsqueryAreaModuleBase(runner)
 {
     public const string StatsScript =
         "$ErrorActionPreference='SilentlyContinue';" +
@@ -74,7 +74,7 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
     public const string ModuleName = "Network";
     public const string Sql = "SELECT * FROM interface_details;";
     public override string Name => ModuleName;
-    public override string DisplayName => "Network adapters";
+    public override string DisplayName => includeWifiAndIpConfig ? "Network & Wi-Fi" : "Network adapters";
     protected override string FailedMessage => "Couldn't read network adapter details on this PC.";
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
@@ -94,7 +94,28 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
                 catch (FormatException ex) { Log($"{Name}: adapter statistics unreadable: {ex.Message}"); }
             }
         }
-        return Build(adapters);
+        var baseReport = Build(adapters);
+        if (!includeWifiAndIpConfig || commands is null)
+            return baseReport;
+
+        var wlanTask = commands.RunAsync(WifiConfigModule.Netsh, ["wlan", "show", "interfaces"], ct);
+        var ipTask = commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", WifiConfigModule.IpConfigScript], ct);
+        await Task.WhenAll(wlanTask, ipTask).ConfigureAwait(false);
+        var wlanRes = await wlanTask.ConfigureAwait(false);
+        var ipRes = await ipTask.ConfigureAwait(false);
+        var wlanOk = wlanRes is { ExitCode: 0 };
+        var ipOk = ipRes is { ExitCode: 0 };
+        if (!wlanOk && !ipOk)
+            return baseReport;
+
+        var wifiRep = WifiConfigModule.Build(
+            wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null,
+            wlanOk,
+            ipOk ? WifiConfigModule.ParseIpSnapshot(ipRes!.StdOut) : null);
+        var combinedCards = wifiRep.Cards.Concat(baseReport.Cards).ToList();
+        var combinedStatus = AreaReport.Worst(combinedCards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));
+        var combinedSummary = $"{wifiRep.Summary} · {baseReport.Summary}";
+        return new(combinedCards, combinedSummary, combinedStatus);
     }
 
     /// <summary>Fills blank counters from Get-NetAdapterStatistics rows (matched on adapter name = connection name).</summary>

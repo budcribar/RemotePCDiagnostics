@@ -1,26 +1,90 @@
 @page "/history"
+@using RemotePCDiagnostics.Core.Areas
 @using RemotePCDiagnostics.Core.History
+@using RemotePCDiagnostics.Core.Memory
 @implements IDisposable
 @inject IHistoryStore History
-@* Past test results from the Windows Event Log (event 1100; in Remote mode the technician sees the bench PC's history). *@
+@inject IServiceProvider Sp
+@* Past test results and automated fix impact summary from the Windows Event Log and current session. *@
 @{
     var all = _result?.Entries ?? [];
-    var rows = HistoryQuery.Sort(HistoryQuery.Filter(all, _module, _outcome, _range, DateTimeOffset.UtcNow), _sort.Col, _sort.Desc);
-    var tests = HistoryNames.FilterOptions(all, Diagnostics.Modules);
+    var diagEntries = all.Where(e => !HistorySummary.IsFixEntry(e)).ToList();
+    var remSvc = Sp.GetService(typeof(RemediationService)) as RemediationService;
+    var memSvc = Sp.GetService(typeof(MemorySuggestionService)) as MemorySuggestionService;
+    var svcAct = Sp.GetService(typeof(ServiceActionService)) as ServiceActionService;
+    var impact = HistorySummary.Build(all, remSvc, memSvc, svcAct, _range, DateTimeOffset.UtcNow);
+    var rows = HistoryQuery.Sort(HistoryQuery.Filter(diagEntries, _module, _outcome, _range, DateTimeOffset.UtcNow), _sort.Col, _sort.Desc);
+    var tests = HistoryNames.FilterOptions(diagEntries, Diagnostics.Modules);
     var trends = tests.Where(t => HistoryQuery.TrendKey(t.Module) is not null && (_module.Length == 0 || string.Equals(_module, t.Module, StringComparison.OrdinalIgnoreCase)))
-        .Select(t => (t.Test, Key: HistoryQuery.TrendKey(t.Module)!.Value, Points: HistoryQuery.Trend(all, t.Module))).Where(t => t.Points.Count > 0).ToList();
+        .Select(t => (t.Test, Key: HistoryQuery.TrendKey(t.Module)!.Value, Points: HistoryQuery.Trend(diagEntries, t.Module))).Where(t => t.Points.Count > 0).ToList();
 }
 <div class="toolbar toolbar-grouped">
     <span class="icon-badge page-icon"><Icon Name="hist" Size="20" /></span><h1 data-testid="history-title">History</h1>
     <button data-testid="history-refresh" disabled="@_loading" @onclick="Load">@(_loading ? "Loading…" : "Refresh")</button>
 </div>
-<p class="meta" data-testid="history-source">Past check and test results on this PC, newest first. History comes from the Windows Event Log (Application, source RemotePCDiagnostics). Retention follows the Event Log size settings.</p>
+<p class="meta" data-testid="history-source">Summary of automated fixes (disk space reclaimed, system memory saved, updates and settings applied) and past check/test results from the Windows Event Log.</p>
+
+@if (_result is not null)
+{
+    <div class="cards" data-testid="history-summary-cards" style="margin-bottom: 16px;">
+        <div class="card" data-testid="history-summary-disk">
+            <div class="card-head"><span class="icon-badge"><Icon Name="disk" /></span><strong>Disk space reclaimed</strong></div>
+            <div class="headline">@impact.DiskHeadline</div>
+            <div class="meta">@impact.DiskMeta</div>
+        </div>
+        <div class="card" data-testid="history-summary-memory">
+            <div class="card-head"><span class="icon-badge"><Icon Name="mem" /></span><strong>System memory saved</strong></div>
+            <div class="headline">@impact.MemoryHeadline</div>
+            <div class="meta">@impact.MemoryMeta</div>
+        </div>
+        <div class="card" data-testid="history-summary-fixes">
+            <div class="card-head"><span class="icon-badge"><Icon Name="svc" /></span><strong>Automated fixes</strong></div>
+            <div class="headline">@impact.FixesHeadline</div>
+            <div class="meta">@impact.FixesMeta</div>
+        </div>
+        <div class="card" data-testid="history-summary-runs">
+            <div class="card-head"><span class="icon-badge"><Icon Name="health" /></span><strong>Checks &amp; test runs</strong></div>
+            <div class="headline">@impact.RunsHeadline</div>
+            <div class="meta">@impact.RunsMeta</div>
+        </div>
+    </div>
+
+    @if (impact.Fixes.Count > 0)
+    {
+        <h2 class="section-title">Automated fixes &amp; optimizations</h2>
+        <table class="detail grid sticky-head history-table" data-testid="history-fixes-table" style="margin-bottom: 18px;">
+            <tr>
+                <th>Time</th>
+                <th>Area</th>
+                <th>Triggered by</th>
+                <th>Result</th>
+                <th>What changed</th>
+            </tr>
+            @foreach (var fx in impact.Fixes)
+            {
+                <tr data-testid="history-fix-row">
+                    <td>@fx.TimeUtc.ToLocalTime().ToString("g")</td>
+                    <td>@fx.Category</td>
+                    <td>@fx.Actor</td>
+                    <td>
+                        <span class="dot dot-@(fx.Success ? "ok" : "warning")"></span>@(fx.Success ? "Applied" : "Failed")
+                        @if (fx.ImpactBadge is { } badge)
+                        {
+                            <span class="chip chip-ok" style="margin-left: 6px;">@badge</span>
+                        }
+                    </td>
+                    <td class="summary">@fx.Summary</td>
+                </tr>
+            }
+        </table>
+    }
+}
 
 @if (_result is null)
 {
     <p class="status-line" data-testid="history-loading">Loading history…</p>
 }
-else if (all.Count == 0 && _range == HistoryRange.All)
+else if (diagEntries.Count == 0 && _range == HistoryRange.All)
 {
     <p class="status-line" data-testid="history-empty">@(_result.Available
         ? "No results yet. Results appear here after a check or test finishes."
@@ -45,7 +109,7 @@ else
             <option value="Last30Days">Last 30 days</option>
             <option value="All">All</option>
         </select>
-        <span class="meta">@rows.Count of @all.Count</span>
+        <span class="meta">@rows.Count of @diagEntries.Count</span>
     </div>
 
     @if (trends.Count > 0)

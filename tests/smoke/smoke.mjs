@@ -72,7 +72,7 @@ try {
   await page.screenshot({ path: `${outDir}/checks.png`, fullPage: true });
 
   // Resource hogs: "Ways to use less memory" renders (suggestions, or the empty/error state). Actions are never clicked here.
-  await page.locator('a[href="module/resourcehogs"]').click();
+  await page.getByTestId('checks-row-resourcehogs').click();
   await page.getByTestId('mem-suggest-title').waitFor({ state: 'visible', timeout: 60_000 });
   await page.locator('[data-testid^="mem-sug-"], [data-testid="mem-empty"], [data-testid="mem-error"]').first().waitFor({ state: 'visible', timeout: 120_000 });
   console.log(`Memory suggestions: ${await page.locator('[data-testid^="mem-sug-"]').count()} card(s); ${await page.getByTestId('mem-summary').innerText().catch(() => 'no summary')}`);

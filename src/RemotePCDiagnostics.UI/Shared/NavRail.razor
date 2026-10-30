@@ -3,21 +3,4 @@
     <NavLink href="" Match="NavLinkMatch.All"><Icon Name="dash" /><span class="nav-text">Dashboard</span></NavLink>
     <NavLink href="checks" data-testid="nav-checks"><Icon Name="play" /><span class="nav-text">Checks &amp; tests</span></NavLink>
     <NavLink href="history" data-testid="nav-history"><Icon Name="hist" /><span class="nav-text">History</span></NavLink>
-    @foreach (var group in new[] { ("Checks", Diagnostics.Modules.Where(m => m.IncludeInRunAll).ToList()), ("Tests", Diagnostics.Modules.Where(m => !m.IncludeInRunAll).ToList()) })
-    {
-        if (group.Item2.Count == 0) continue;
-        <div class="rail-section" role="presentation">@group.Item1</div>
-        @foreach (var m in group.Item2)
-        {
-            var st = Store.Get(m.Name).Status;
-            <NavLink href="@($"module/{m.Name.ToLowerInvariant()}")"><Icon Name="@Icon.ForModule(m.Name)" /><span class="nav-text">@NavName(m)</span><span class="@DotClass(st)" role="img" aria-label="@StatusChip.Label(st)" title="@StatusChip.Label(st)"></span></NavLink>
-        }
-    }
 </nav>
-@code {
-    // Shorter labels where the module name is long (matches the approved mockup). Page headings use the same text.
-    static string NavName(IDiagnosticModule m) => m.Name switch
-    {
-        "DiskSpeed" => "Disk speed test", "GpuStress" => "GPU stress test", "NetworkTest" => "Network test", _ => m.DisplayName,
-    };
-}

@@ -1,4 +1,5 @@
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.History;
 using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Tests;
@@ -90,7 +91,7 @@ public class RemediationTests
         // Ending chrome.exe succeeds
         var endChrome = await svc.ExecuteAsync(chromeRow.Actions!.Single());
         Assert.True(endChrome.Success);
-        Assert.Equal("Closed chrome.exe.", endChrome.Message);
+        Assert.StartsWith("Closed chrome.exe", endChrome.Message);
     }
 
     [Fact]
@@ -141,6 +142,8 @@ public class RemediationTests
         Assert.True(cleanRes.Success);
         Assert.Contains("42 temporary file(s)", cleanRes.Message);
         Assert.Contains("500 MB freed", cleanRes.Message);
+        Assert.Equal(524_288_000, cleanRes.FreedDiskBytes);
+        Assert.Equal(42, cleanRes.RemovedFiles);
 
         var trimRes = await svc.ExecuteAsync(card.Actions!.Single(a => a.Kind == RemediationKind.OptimizeSsd));
         Assert.True(trimRes.Success);
@@ -210,5 +213,51 @@ public class RemediationTests
         var res = await svc.ExecuteAsync(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", "C; Stop-Computer", "SSD"));
         Assert.False(res.Success);
         Assert.Empty(launcher.Calls);
+    }
+
+    [Fact]
+    public async Task HistorySummary_AggregatesDiskReclaimed_MemorySaved_Fixes_And_DiagnosticRuns()
+    {
+        const string cleanJson = """{"RemovedFiles":18,"FreedBytes":1073741824}""";
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(cleanJson));
+        var remSvc = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Local));
+        await remSvc.ExecuteAsync(new(RemediationKind.CleanTempFiles, "Clean temporary files"));
+
+        var now = DateTimeOffset.UtcNow;
+        var memRecord = new RemediationRecord(
+            now.LocalDateTime,
+            ServiceActor.Remote,
+            RemediationKind.EndProcessGroup,
+            "chrome.exe",
+            true,
+            "Closed chrome.exe (freed about 750 MB of RAM).",
+            FreedMemoryBytes: 750L * 1024 * 1024);
+        var formattedMemEvent = HistorySummary.FormatRemediationEvent(memRecord, "PC-1", "1.0.0");
+        var parsedMemEntry = HistoryEventParser.Parse(formattedMemEvent, now);
+        Assert.NotNull(parsedMemEntry);
+        Assert.True(HistorySummary.IsFixEntry(parsedMemEntry!));
+
+        var diagEntry1 = new HistoryEntry(now, "DriveHealth", "Drive health", "OK", "2 healthy drive(s)", 1.2, null, [], "PC-1", "1.0.0");
+        var diagEntry2 = new HistoryEntry(now, "Crashes", "Crashes & unexpected restarts", "Warning", "1 BSOD", 0.8, null, [], "PC-1", "1.0.0");
+
+        var summary = HistorySummary.Build([parsedMemEntry!, diagEntry1, diagEntry2], remSvc, null, null, HistoryRange.All, now);
+
+        Assert.Equal(1_073_741_824L, summary.DiskReclaimedBytes);
+        Assert.Equal(18, summary.TempFilesCleaned);
+        Assert.Equal("1 GB", summary.DiskHeadline);
+        Assert.Contains("18 temp file(s)", summary.DiskMeta);
+
+        Assert.Equal(750L * 1024 * 1024, summary.MemorySavedBytes);
+        Assert.Equal(1, summary.MemoryFixesCount);
+        Assert.Equal("750 MB", summary.MemoryHeadline);
+
+        Assert.Equal(2, summary.TotalFixesCount);
+        Assert.Equal(2, summary.SuccessfulFixesCount);
+        Assert.Equal(2, summary.Fixes.Count);
+
+        Assert.Equal(2, summary.TotalRunsCount);
+        Assert.Equal(1, summary.PassedRunsCount);
+        Assert.Equal(1, summary.WarningRunsCount);
+        Assert.Equal(0, summary.CriticalRunsCount);
     }
 }

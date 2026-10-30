@@ -61,14 +61,14 @@ public partial class MainWindow : Window
         services.AddSingleton(sp => new ServiceActionService(new WindowsServiceControlBackend(), sp.GetRequiredService<ISessionContext>(), App.Log));
         services.AddSingleton(sp => new RemediationService(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), App.Log));
         services.AddSingleton<IDiagnosticModule, ProgramsModule>(sp => new ProgramsModule(sp.GetRequiredService<OsqueryRunner>()));
-        services.AddSingleton<IDiagnosticModule, NetworkModule>(sp => new NetworkModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
-        services.AddSingleton<IDiagnosticModule, EventLogModule>();
-        services.AddSingleton<IDiagnosticModule, CrashesModule>();
+        services.AddSingleton<IDiagnosticModule, NetworkModule>(sp => new NetworkModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>(), includeWifiAndIpConfig: true));
+        services.AddSingleton<IDiagnosticModule>(sp => new EventLogModule(sp.GetRequiredService<SystemCommandRunner>(), excludeCrashEvents: true));
+        services.AddSingleton<IDiagnosticModule>(sp => new CrashesModule(sp.GetRequiredService<SystemCommandRunner>(), includeSystemCrashes: true));
         services.AddSingleton<IDiagnosticModule>(sp => new ResourceHogsModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
         services.AddSingleton<IDiagnosticModule>(sp => new DeviceDriversModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
-        services.AddSingleton<IDiagnosticModule, BsodHistoryModule>();
+
         services.AddSingleton<IDiagnosticModule>(sp => new BatteryPowerModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
-        services.AddSingleton<IDiagnosticModule, WifiConfigModule>();
+
         // On-demand only (Start button on its page): not in AutoRun below and excluded from Run All (IncludeInRunAll=false).
         services.AddSingleton<IDiagnosticModule>(new SecurityAuditModule(new SecurityAuditOptions { Log = App.Log }));
         services.AddSingleton<DiagnosticsService>();
@@ -93,20 +93,22 @@ public partial class MainWindow : Window
         // Tell the person at this PC when a remote technician starts/stops/restarts a service (non-blocking).
         provider.GetRequiredService<ServiceActionService>().ActionCompleted += rec =>
         {
-            if (rec.Actor != ServiceActor.Remote) return;
-            Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"The remote technician used the Services page: {rec.Message.TrimEnd('.')}.", "Remote PC Diagnostics", MessageBoxButton.OK, MessageBoxImage.Information));
+
+            _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.TestResult, rec.Success ? RemotePCDiagnostics.Core.Logging.LogLevel.Information : RemotePCDiagnostics.Core.Logging.LogLevel.Warning, RemotePCDiagnostics.Core.History.HistorySummary.FormatServiceEvent(rec, _machine.Value, eventContext.AppVersion)));
+            if (rec.Actor == ServiceActor.Remote) Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"The remote technician used the Services page: {rec.Message.TrimEnd('.')}.", "Remote PC Diagnostics", MessageBoxButton.OK, MessageBoxImage.Information));
         };
         provider.GetRequiredService<RemediationService>().ActionCompleted += rec =>
         {
-            if (rec.Actor != ServiceActor.Remote) return;
-            Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"The remote technician ran an automated fix: {rec.Message.TrimEnd('.')}.", "Remote PC Diagnostics", MessageBoxButton.OK, MessageBoxImage.Information));
+
+            _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.TestResult, rec.Success ? RemotePCDiagnostics.Core.Logging.LogLevel.Information : RemotePCDiagnostics.Core.Logging.LogLevel.Warning, RemotePCDiagnostics.Core.History.HistorySummary.FormatRemediationEvent(rec, _machine.Value, eventContext.AppVersion)));
+            if (rec.Actor == ServiceActor.Remote) Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"The remote technician ran an automated fix: {rec.Message.TrimEnd('.')}.", "Remote PC Diagnostics", MessageBoxButton.OK, MessageBoxImage.Information));
         };
 
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
         // Results flow through ResultStore to the Dashboard / Hardware inventory page. Disable with REMOTEPC_AUTORUN=0.
         AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Log, "Osquery", LibreHardwareMonitorModule.ModuleName,
             DriveHealthModule.ModuleName, ServicesModule.ModuleName, ProgramsModule.ModuleName, NetworkModule.ModuleName, EventLogModule.ModuleName, CrashesModule.ModuleName,
-            ResourceHogsModule.ModuleName, DeviceDriversModule.ModuleName, BsodHistoryModule.ModuleName, BatteryPowerModule.ModuleName, WifiConfigModule.ModuleName);
+            ResourceHogsModule.ModuleName, DeviceDriversModule.ModuleName, BatteryPowerModule.ModuleName);
 
         InitializeComponent();
         App.Log($"MainWindow initialized, mode={mode} server={launch.ServerUri}");
