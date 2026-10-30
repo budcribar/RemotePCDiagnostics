@@ -465,3 +465,8 @@ tr.history-day td { font-weight: 700; color: var(--text-strong); background: var
 .bench-actions { flex-wrap: wrap; gap: 8px; }
 .bench-overall { margin: 12px 0; }
 .bench-table td { vertical-align: top; }
+
+/* Undo all changes */
+.undo-panel { margin: 12px 0; }
+.undo-panel .card-head { justify-content: space-between; }
+.undo-list { margin: 6px 0; padding-left: 18px; }

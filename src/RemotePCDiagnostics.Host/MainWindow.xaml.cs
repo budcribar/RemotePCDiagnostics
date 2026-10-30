@@ -60,9 +60,15 @@ public partial class MainWindow : Window
         services.AddSingleton<IDiagnosticModule, DriveHealthModule>();
         services.AddSingleton<ServicesModule>();
         services.AddSingleton<IDiagnosticModule>(sp => sp.GetRequiredService<ServicesModule>());
-        services.AddSingleton(sp => new ServiceActionService(new WindowsServiceControlBackend(), sp.GetRequiredService<ISessionContext>(), App.Log));
+        // Reversible changes (with their "before" values) for "Undo all changes" / --undo-all; survives restarts.
+        services.AddSingleton<RemotePCDiagnostics.Core.Changes.IChangeJournal>(_ => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(), App.Log));
+        services.AddSingleton(sp => new ServiceActionService(new WindowsServiceControlBackend(), sp.GetRequiredService<ISessionContext>(), App.Log,
+            journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
         services.AddSingleton(sp => new RebootResumeCoordinator(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<OsqueryRunner>(), RebootResumeCoordinator.DefaultStateFilePath(), log: App.Log));
-        services.AddSingleton(sp => new RemediationService(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), App.Log, sp.GetRequiredService<RebootResumeCoordinator>()));
+        services.AddSingleton(sp => new RemediationService(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), App.Log, sp.GetRequiredService<RebootResumeCoordinator>(),
+            sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
+        services.AddSingleton(sp => App.CreateUndoService(sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(), sp.GetRequiredService<SystemCommandRunner>(),
+            new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), App.Log)));
         services.AddSingleton<IDiagnosticModule, ProgramsModule>(sp => new ProgramsModule(sp.GetRequiredService<OsqueryRunner>()));
         services.AddSingleton<IDiagnosticModule, NetworkModule>(sp => new NetworkModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>(), includeWifiAndIpConfig: true));
         services.AddSingleton<IDiagnosticModule>(sp => new EventLogModule(sp.GetRequiredService<SystemCommandRunner>(), excludeCrashEvents: true));
@@ -79,7 +85,7 @@ public partial class MainWindow : Window
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Memory.MemorySuggestionService(
             new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), App.Log), sp.GetRequiredService<ServicesModule>(), sp.GetRequiredService<ServiceActionService>(),
             sp.GetRequiredService<ISessionContext>(), (level, text) => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.MemorySuggestion, level, text), App.Log,
-            remediation: sp.GetRequiredService<RemediationService>()));
+            remediation: sp.GetRequiredService<RemediationService>(), journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
         // Before/after performance benchmarks (state saved so the "before" survives a restart; event 1500).
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Benchmarks.BenchmarkService(
             new RemotePCDiagnostics.Core.Benchmarks.BenchmarkRunner(new WindowsBenchmarkProbes(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISensorProvider>(), App.Log), App.Log),

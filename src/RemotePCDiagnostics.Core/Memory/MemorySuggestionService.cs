@@ -1,4 +1,5 @@
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Session;
 
@@ -56,6 +57,10 @@ public interface IMemorySystem
     void SetTransparency(bool on) => throw new NotSupportedException();
     /// <summary>Switches the page file to "managed by Windows" (admin; effective after restart).</summary>
     Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
+    /// <summary>Current custom page file settings (opaque, for undo), or null when Windows manages it / unknown.</summary>
+    Task<string?> ReadPageFileSettingsAsync(CancellationToken ct) => Task.FromResult<string?>(null);
+    /// <summary>Puts back custom page file settings saved by <see cref="ReadPageFileSettingsAsync"/> (admin; after restart).</summary>
+    Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
 }
 
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);
@@ -68,8 +73,19 @@ public sealed record SuggestionResult(string SuggestionId, bool Success, string 
 /// </summary>
 public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? services = null, ServiceActionService? serviceActions = null,
     ISessionContext? session = null, Action<LogLevel, string>? events = null, Action<string>? log = null, TimeSpan? settle = null, Func<DateTime>? now = null,
-    RemediationService? remediation = null)
+    RemediationService? remediation = null, IChangeJournal? journal = null)
 {
+    private void Journal(ChangeKind kind, string target, string? previous, string label, bool restart = false)
+    {
+        try { journal?.Add(ChangeRecord.New(kind, target, previous, label, Actor, restart)); } catch (Exception ex) { Log("journal: " + ex.Message); }
+    }
+
+    private static ChangeKind? JournalKind(MemoryActionType t) => t switch
+    {
+        MemoryActionType.DisableStartup => ChangeKind.StartupApp, MemoryActionType.EnableBrowserMemorySaver => ChangeKind.BrowserSettings,
+        MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled => ChangeKind.ServiceStartType,
+        MemoryActionType.DisableTransparency => ChangeKind.Transparency, _ => null,
+    };
     public static readonly string[] StartTypes = ["Automatic", "AutomaticDelayed", "Manual", "Disabled"];
     private readonly TimeSpan _settle = settle ?? TimeSpan.FromSeconds(2.5);
     private readonly object _gate = new();
@@ -184,7 +200,11 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             Log($"Undo {u.Type} '{u.Target}' failed: {ex}");
             outcome = new(false, "Windows didn't allow undoing that change.");
         }
-        if (outcome.Success) lock (_gate) _undo.Remove(u);
+        if (outcome.Success)
+        {
+            lock (_gate) _undo.Remove(u);
+            if (JournalKind(u.Type) is { } jk) try { journal?.RemoveLatest(jk, u.Target); } catch { }
+        }
         Event(outcome.Success ? LogLevel.Information : LogLevel.Warning, $"Memory suggestion undone\r\nActor: {Actor}\r\nAction: {u.Type}\r\nTarget: {u.Target}\r\nResult: {(outcome.Success ? "Success" : "Failed")}\r\nMessage: {outcome.Message}");
         var r = new SuggestionResult(u.Id, outcome.Success, (outcome.Success ? "Undone: " : "") + outcome.Message, DateTime.Now);
         lock (_gate) { _results[u.Id] = r; _recent.Insert(0, r); }
@@ -230,6 +250,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 var prev = sys.GetStartupApproved(entry.Name);
                 sys.SetStartupApproved(entry.Name, StartupParsing.DisabledValue((now ?? (() => DateTime.UtcNow))()));
                 AddUndo(new(s.Id, MemoryText.FriendlyAppName(entry.ExeName), a.Type, entry.Name, null, prev));
+                Journal(ChangeKind.StartupApp, entry.Name, prev is null ? null : Convert.ToBase64String(prev), $"{MemoryText.FriendlyAppName(entry.ExeName)} won't start with Windows");
                 return new(true, $"{MemoryText.FriendlyAppName(entry.ExeName)} won't start with Windows (your account only).");
 
             case MemoryActionType.EnableBrowserMemorySaver:
@@ -240,6 +261,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 if (updated is null) return new(false, $"Couldn't find the {BrowserPrefs.FeatureName(kind)} setting; use {BrowserPrefs.Label(kind)}'s settings page.");
                 sys.WriteBrowserLocalState(kind, updated);
                 AddUndo(new(s.Id, BrowserPrefs.Label(kind), a.Type, a.Target, json));
+                Journal(ChangeKind.BrowserSettings, a.Target, json, $"{BrowserPrefs.FeatureName(kind)} turned on in {BrowserPrefs.Label(kind)}");
                 return new(true, $"{BrowserPrefs.FeatureName(kind)} turned on for {BrowserPrefs.Label(kind)}.");
 
             case MemoryActionType.OpenSettings:
@@ -256,12 +278,14 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 {
                     if (serviceActions is null) return new(false, "Service control isn't available.");
                     var r = await serviceActions.ExecuteAsync(info, ServiceAction.Stop, ct).ConfigureAwait(false);
+                    if (r.Success) Journal(ChangeKind.ServiceRunning, info.Name, "Running", $"{info.Label} stopped");
                     return new(r.Success, r.Success ? $"{info.Label} stopped until the next restart." : r.Message);
                 }
                 var target = a.Type == MemoryActionType.SetServiceManual ? "Manual" : "Disabled";
                 var original = sys.GetServiceStartType(info.Name);
                 sys.SetServiceStartType(info.Name, target);
                 AddUndo(new(s.Id, info.Label, a.Type, info.Name, original));
+                Journal(ChangeKind.ServiceStartType, info.Name, original, $"{info.Label} set to {target}");
                 return new(true, $"{info.Label} set to {target} (was {original}).");
 
             case MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup:
@@ -276,10 +300,14 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 if (before == false) return new(true, "Transparency effects are already off.");
                 sys.SetTransparency(false);
                 AddUndo(new(s.Id, "Transparency effects", a.Type, "", before == false ? "0" : "1"));
+                Journal(ChangeKind.Transparency, "", before == false ? "0" : "1", "Transparency effects turned off");
                 return new(true, "Transparency effects turned off (this account).");
 
             case MemoryActionType.AutoManagePageFile:
-                return await sys.EnableAutoPageFileAsync(ct).ConfigureAwait(false);
+                var pageFileBefore = await sys.ReadPageFileSettingsAsync(ct).ConfigureAwait(false);
+                var pf = await sys.EnableAutoPageFileAsync(ct).ConfigureAwait(false);
+                if (pf.Success && pageFileBefore is not null) Journal(ChangeKind.PageFile, "", pageFileBefore, "Page file managed by Windows", restart: true);
+                return pf;
         }
         return new(false, "Unknown action.");
     }

@@ -69,7 +69,8 @@ public sealed class RemediationService(
     SystemCommandRunner commands,
     ISessionContext? session = null,
     Action<string>? log = null,
-    RebootResumeCoordinator? rebootResume = null)
+    RebootResumeCoordinator? rebootResume = null,
+    Changes.IChangeJournal? journal = null)
 {
     public const int MaxRecent = 50;
     public const string BalancedPlanGuid = "381b4222-f694-41f0-9685-ff5bb260df2e";
@@ -273,7 +274,9 @@ public sealed class RemediationService(
         {
             try
             {
+                var before = await CaptureBeforeAsync(action, ct).ConfigureAwait(false);
                 result = await RunActionAsync(action, ct).ConfigureAwait(false);
+                if (result.Success && before is not null) try { journal?.Add(before); } catch (Exception ex) { Log($"journal: {ex.Message}"); }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -596,6 +599,7 @@ public sealed class RemediationService(
             var root = doc.RootElement;
             var count = root.TryGetProperty("RemovedFiles", out var c) && c.TryGetInt32(out var ci) ? ci : 0;
             var bytes = root.TryGetProperty("FreedBytes", out var b) && b.TryGetInt64(out var bi) ? bi : 0L;
+            if (bytes > 0) try { journal?.Add(Changes.ChangeRecord.New(Changes.ChangeKind.TempFiles, Guid.NewGuid().ToString("N"), $"{count}:{bytes}", $"Temporary files cleaned ({HardwareInventory.FormatBytes(bytes)})", Actor)); } catch { }
             return new(
                 true,
                 $"Cleaned {count} temporary file(s) ({HardwareInventory.FormatBytes(bytes)} freed) and emptied the Recycle Bin.",
@@ -606,5 +610,48 @@ public sealed class RemediationService(
         {
             return new(true, "Cleaned temporary files and emptied the Recycle Bin.");
         }
+    }
+
+    // ---- Undo support: what a setting was before a reversible fix changes it ----
+
+    public const string ReadFastStartupScript = "(Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power' -Name HiberbootEnabled -ErrorAction SilentlyContinue).HiberbootEnabled";
+    public const string ReadProxyScript = "(Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name ProxyEnable -ErrorAction SilentlyContinue).ProxyEnable";
+
+    /// <summary>Static DNS servers set on the adapter ("" = automatic), from the adapter's Tcpip NameServer value.</summary>
+    public static string ReadDnsScript(string alias) =>
+        $"$a=Get-NetAdapter -Name '{EscapeSingleQuotes(alias)}' -ErrorAction Stop; (Get-ItemProperty -Path \"HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\$($a.InterfaceGuid)\" -Name NameServer -ErrorAction SilentlyContinue).NameServer";
+
+    private async Task<string?> ReadPsAsync(string script, CancellationToken ct)
+    {
+        var pr = await commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], ct).ConfigureAwait(false);
+        return pr is { ExitCode: 0 } ? pr.StdOut.Trim() : null;
+    }
+
+    private async Task<Changes.ChangeRecord?> CaptureBeforeAsync(AreaAction action, CancellationToken ct)
+    {
+        if (journal is null) return null;
+        try
+        {
+            Changes.ChangeRecord Rec(Changes.ChangeKind k, string target, string? prev, string label, bool restart = false) => Changes.ChangeRecord.New(k, target, prev, label, Actor, restart);
+            switch (action.Kind)
+            {
+                case RemediationKind.SetBalancedPowerPlan:
+                    var pr = await commands.RunAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/getactivescheme"], ct).ConfigureAwait(false);
+                    return Changes.UndoService.ParseSchemeGuid(pr?.StdOut) is { } g && !g.Equals(BalancedPlanGuid, StringComparison.OrdinalIgnoreCase)
+                        ? Rec(Changes.ChangeKind.PowerPlan, "", g, "Power plan switched to Balanced") : null;
+                case RemediationKind.DisableFastStartup:
+                    return await ReadPsAsync(ReadFastStartupScript, ct).ConfigureAwait(false) is "1"
+                        ? Rec(Changes.ChangeKind.FastStartup, "", "1", "Fast Startup turned off", restart: true) : null;
+                case RemediationKind.DisableSystemProxy:
+                    return await ReadPsAsync(ReadProxyScript, ct).ConfigureAwait(false) is "1"
+                        ? Rec(Changes.ChangeKind.SystemProxy, "", "1", "System proxy turned off") : null;
+                case RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns when !string.IsNullOrWhiteSpace(action.Target):
+                    var dns = await ReadPsAsync(ReadDnsScript(action.Target), ct).ConfigureAwait(false);
+                    return dns is null ? null : Rec(Changes.ChangeKind.AdapterDns, action.Target, dns.Replace(' ', ','),
+                        action.Kind == RemediationKind.SetPublicDns ? $"Public DNS set on {Display(action)}" : $"DNS reset to automatic on {Display(action)}");
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Couldn't record the previous setting for {action.Kind}: {ex.Message}"); }
+        return null;
     }
 }

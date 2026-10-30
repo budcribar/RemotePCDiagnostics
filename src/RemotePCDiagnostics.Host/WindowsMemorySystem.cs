@@ -120,6 +120,32 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
             : new(false, "Couldn't change the page file setting (administrator rights required).");
     }
 
+    private const string ReadPageFileScript =
+        "$ErrorActionPreference='SilentlyContinue';$s=@(Get-CimInstance Win32_PageFileSetting | Select-Object Name,InitialSize,MaximumSize);" +
+        "if($s.Count -gt 0){[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $s -Compress)))}";
+
+    public async Task<string?> ReadPageFileSettingsAsync(CancellationToken ct)
+    {
+        var r = await RunPowerShellAsync(ReadPageFileScript, ct).ConfigureAwait(false);
+        var b64 = r.Output.Trim();
+        return r.ExitCode == 0 && b64.Length > 0 ? b64 : null;
+    }
+
+    public async Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct)
+    {
+        if (settings.Length == 0 || settings.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '+' or '/' or '='))) return new(false, "The saved page file settings are unreadable.");
+        var script =
+            "$ErrorActionPreference='Stop';" +
+            $"$j=@([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{settings}')) | ConvertFrom-Json);" +
+            "$c=Get-CimInstance Win32_ComputerSystem; Set-CimInstance -InputObject $c -Property @{AutomaticManagedPagefile=$false};" +
+            "foreach($p in $j){ $e=Get-CimInstance Win32_PageFileSetting | Where-Object { $_.Name -eq $p.Name };" +
+            " if($e){ Set-CimInstance -InputObject $e -Property @{InitialSize=[uint32]$p.InitialSize;MaximumSize=[uint32]$p.MaximumSize} }" +
+            " else { New-CimInstance -ClassName Win32_PageFileSetting -Property @{Name=$p.Name;InitialSize=[uint32]$p.InitialSize;MaximumSize=[uint32]$p.MaximumSize} | Out-Null } }";
+        var r = await RunPowerShellAsync(script, ct).ConfigureAwait(false);
+        Log($"Restore page file: exit={r.ExitCode} err={r.Error.Trim()}");
+        return r.ExitCode == 0 ? new(true, "Custom page file size restored (takes effect after a restart).") : new(false, "Couldn't restore the page file setting (administrator rights required).");
+    }
+
     /// <summary>Runs one of this class's fixed PowerShell scripts (never user input) and returns its output.</summary>
     private async Task<(int ExitCode, string Output, string Error)> RunPowerShellAsync(string script, CancellationToken ct)
     {

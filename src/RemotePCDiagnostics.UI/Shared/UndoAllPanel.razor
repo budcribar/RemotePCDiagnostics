@@ -1,0 +1,53 @@
+@using RemotePCDiagnostics.Core.Areas
+@using RemotePCDiagnostics.Core.Changes
+@implements IDisposable
+@inject UndoService Undo
+@inject IChangeJournal Journal
+@inject ISessionContext Session
+@* "Undo all changes": puts back every reversible change this app made (also available as --undo-all on the command line). *@
+@{
+    var pending = Journal.All.OrderByDescending(c => c.TimeUtc).ToList();
+}
+<section class="card undo-panel" data-testid="undo-panel">
+    <div class="card-head"><strong>Undo changes</strong>
+        <span class="meta" data-testid="undo-count">@(pending.Count == 0 ? "Nothing to undo" : $"{pending.Count} change{(pending.Count == 1 ? "" : "s")} can be undone")</span></div>
+    @if (pending.Count > 0)
+    {
+        <details>
+            <summary class="meta">Show what will be put back</summary>
+            <ul class="undo-list" data-testid="undo-list">
+                @foreach (var c in pending) { <li>@c.Label <span class="meta">· @c.TimeUtc.ToLocalTime().ToString("g") · @c.Actor@(c.NeedsRestart ? " · needs a restart" : "")</span></li> }
+            </ul>
+        </details>
+        <div class="svc-actions">
+            @if (_confirm)
+            {
+                <span>Undo all @pending.Count change@(pending.Count == 1 ? "" : "s")?</span>
+                <button class="btn btn-stop" data-testid="undo-confirm" disabled="@_busy" @onclick="UndoAll">@(_busy ? "Undoing…" : "Yes, undo all")</button>
+                <button class="btn-small" disabled="@_busy" @onclick="() => _confirm = false">Cancel</button>
+            }
+            else { <button class="btn btn-outline" data-testid="undo-all" @onclick="() => _confirm = true">Undo all changes</button> }
+        </div>
+    }
+    @if (_result is { } r)
+    {
+        <p class="@(r.Failed > 0 ? "notice" : "meta")" data-testid="undo-result">@r.Summary</p>
+        @if (r.Failed > 0) { <ul class="undo-list">@foreach (var i in r.Items.Where(x => !x.Success)) { <li>@i.Change.Label: @i.Message</li> }</ul> }
+    }
+    <p class="meta">@UndoService.NotUndoableNote Command line: <code>RemotePCDiagnostics.Host.exe --undo-all [--restart]</code></p>
+</section>
+
+@code {
+    private bool _confirm, _busy;
+    private UndoAllResult? _result;
+    protected override void OnInitialized() => Journal.Changed += OnChanged;
+    private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
+    public void Dispose() => Journal.Changed -= OnChanged;
+
+    private async Task UndoAll()
+    {
+        _busy = true;
+        try { _result = await Undo.UndoAllAsync(ServiceActor.From(Session)); }
+        finally { _busy = false; _confirm = false; }
+    }
+}

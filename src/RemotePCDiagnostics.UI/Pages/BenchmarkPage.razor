@@ -58,6 +58,8 @@
     else if (before is not null) { <button class="btn-small" data-testid="bench-clear" @onclick="Bench.Clear">Start over</button> }
 </div>
 
+@if (before is not null && !running) { <UndoAllPanel /> }
+
 @if (running)
 {
     <p class="status-line" data-testid="bench-progress"><span class="dot dot-running"></span>@(Bench.Running == BenchmarkPhase.Before ? "Before" : "After"): @(Bench.Progress ?? "Starting…")</p>

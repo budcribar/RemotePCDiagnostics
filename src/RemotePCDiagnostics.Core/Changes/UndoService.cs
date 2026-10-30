@@ -1,0 +1,176 @@
+using System.Text.RegularExpressions;
+using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Logging;
+using RemotePCDiagnostics.Core.Memory;
+
+namespace RemotePCDiagnostics.Core.Changes;
+
+public sealed record UndoItemResult(ChangeRecord Change, bool Success, string Message);
+
+public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
+{
+    public int Succeeded => Items.Count(i => i.Success);
+    public int Failed => Items.Count(i => !i.Success);
+    public bool NeedsRestart => Items.Any(i => i.Success && i.Change.NeedsRestart);
+    public string Summary => Items.Count == 0 ? "Nothing to undo."
+        : $"Undid {Succeeded} of {Items.Count} change{(Items.Count == 1 ? "" : "s")}" + (Failed > 0 ? $"; {Failed} couldn't be undone" : "") + (NeedsRestart ? ". Restart to finish (Fast Startup / page file)." : ".");
+}
+
+/// <summary>
+/// Reverts the journaled changes, newest first. Only puts back settings this app changed; things that can't be reversed
+/// (deleted temp files, closed apps, installed updates) are never journaled.
+/// </summary>
+public sealed class UndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem? memory = null, IServiceControlBackend? services = null,
+    Action<LogLevel, string>? events = null, Action<string>? log = null)
+{
+    public const string NotUndoableNote = "Deleted temporary files, closed apps and installed updates can't be put back.";
+    private void Log(string m) { try { log?.Invoke("[undo] " + m); } catch { } }
+
+    public IReadOnlyList<ChangeRecord> Pending => journal.All;
+
+    public async Task<UndoAllResult> UndoAllAsync(string actor, CancellationToken ct = default)
+    {
+        var results = new List<UndoItemResult>();
+        foreach (var c in journal.All.OrderByDescending(x => x.TimeUtc).ToList())
+        {
+            ct.ThrowIfCancellationRequested();
+            UndoItemResult r;
+            try { r = await UndoOneAsync(c, ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log($"{c.Kind} '{c.Target}' failed: {ex}");
+                r = new(c, false, "Windows didn't allow undoing it.");
+            }
+            if (r.Success) journal.Remove(c.Id);
+            results.Add(r);
+            Log($"{c.Kind} '{c.Target}': {(r.Success ? "undone" : "failed")} — {r.Message}");
+        }
+        var all = new UndoAllResult(results);
+        try
+        {
+            events?.Invoke(all.Failed > 0 ? LogLevel.Warning : LogLevel.Information,
+                $"Undo all changes\r\nActor: {actor}\r\nResult: {all.Summary}\r\n" + string.Join("\r\n", results.Select(i => $"  {(i.Success ? "OK" : "FAILED")}: {i.Change.Label} — {i.Message}")));
+        }
+        catch { }
+        return all;
+    }
+
+    private async Task<UndoItemResult> UndoOneAsync(ChangeRecord c, CancellationToken ct)
+    {
+        UndoItemResult Ok(string m) => new(c, true, m);
+        UndoItemResult Fail(string m) => new(c, false, m);
+        switch (c.Kind)
+        {
+            case ChangeKind.StartupApp:
+                if (memory is null) return Fail("Not available.");
+                memory.SetStartupApproved(c.Target, c.Previous is null ? null : Convert.FromBase64String(c.Previous));
+                return Ok("Starts with Windows again.");
+
+            case ChangeKind.ServiceStartType:
+                if (memory is null || !MemorySuggestionService.StartTypes.Contains(c.Previous)) return Fail("The original setting wasn't recorded.");
+                memory.SetServiceStartType(c.Target, c.Previous!);
+                return Ok($"Start-up type restored to {c.Previous}.");
+
+            case ChangeKind.ServiceRunning:
+                if (services is null) return Fail("Service control isn't available.");
+                if (c.Previous == "Running") services.Start(c.Target); else services.Stop(c.Target);
+                var target = c.Previous == "Running" ? ServiceState.Running : ServiceState.Stopped;
+                return await services.WaitForStateAsync(c.Target, target, TimeSpan.FromSeconds(30), ct).ConfigureAwait(false)
+                    ? Ok(c.Previous == "Running" ? "Started again." : "Stopped again.") : Fail("Windows didn't confirm the service changed in time.");
+
+            case ChangeKind.BrowserSettings:
+                if (memory is null || c.Previous is null) return Fail("The original setting wasn't recorded.");
+                var kind = Enum.Parse<BrowserKind>(c.Target);
+                if (memory.IsBrowserRunning(kind)) return Fail($"Close {BrowserPrefs.Label(kind)} first, then undo.");
+                memory.WriteBrowserLocalState(kind, c.Previous);
+                return Ok("Browser setting restored.");
+
+            case ChangeKind.Transparency:
+                if (memory is null) return Fail("Not available.");
+                memory.SetTransparency(c.Previous != "0");
+                return Ok(c.Previous != "0" ? "Transparency effects back on." : "Transparency effects left off.");
+
+            case ChangeKind.FastStartup:
+                return await Ps($"$ErrorActionPreference='Stop'; Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power' -Name HiberbootEnabled -Value {Dword(c.Previous)} -Type DWord",
+                    c, "Fast Startup setting restored (full effect after the next restart).", ct).ConfigureAwait(false);
+
+            case ChangeKind.PowerPlan:
+                if (c.Previous is null || !Guid.TryParse(c.Previous, out var g)) return Fail("The original power plan wasn't recorded.");
+                var pr = await commands.RunAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/setactive", g.ToString()], ct).ConfigureAwait(false);
+                return pr is { ExitCode: 0 } ? Ok("Previous power plan active again.") : Fail("Couldn't switch the power plan back.");
+
+            case ChangeKind.SystemProxy:
+                return await Ps($"$ErrorActionPreference='Stop'; Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name ProxyEnable -Value {Dword(c.Previous)} -Type DWord",
+                    c, "System proxy setting restored.", ct).ConfigureAwait(false);
+
+            case ChangeKind.AdapterDns:
+                var alias = c.Target.Replace("'", "''");
+                var servers = (c.Previous ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(IsIp).ToList();
+                var script = servers.Count == 0
+                    ? $"$ErrorActionPreference='Stop'; Set-DnsClientServerAddress -InterfaceAlias '{alias}' -ResetServerAddresses"
+                    : $"$ErrorActionPreference='Stop'; Set-DnsClientServerAddress -InterfaceAlias '{alias}' -ServerAddresses @({string.Join(",", servers.Select(s => $"'{s}'"))})";
+                return await Ps(script, c, servers.Count == 0 ? "DNS back to automatic." : $"DNS back to {string.Join(", ", servers)}.", ct).ConfigureAwait(false);
+
+            case ChangeKind.TempFiles:
+                var (files, bytes) = ParseTempFiles(c.Previous);
+                if (bytes <= 0) return Fail("The amount removed wasn't recorded.");
+                var made = await Task.Run(() => CreatePlaceholders(TempFolder ?? Path.GetTempPath(), files, bytes), ct).ConfigureAwait(false);
+                return Ok($"Recreated {made} placeholder temp file{(made == 1 ? "" : "s")} ({Osquery.HardwareInventory.FormatBytes(bytes)}); the next cleanup removes them again. Recycle Bin items can't be recreated.");
+
+            case ChangeKind.PageFile:
+                if (memory is null || c.Previous is null) return Fail("The original page file size wasn't recorded.");
+                var o = await memory.RestorePageFileAsync(c.Previous, ct).ConfigureAwait(false);
+                return new(c, o.Success, o.Message);
+        }
+        return Fail("Unknown change.");
+    }
+
+    /// <summary>Where placeholder temp files go (null = the current user's %TEMP%); tests point it elsewhere.</summary>
+    public string? TempFolder { get; init; }
+    public const int MaxPlaceholderFiles = 500;
+    public const string PlaceholderPrefix = "rpd-placeholder-";
+
+    public static (int Files, long Bytes) ParseTempFiles(string? v)
+    {
+        var p = (v ?? "").Split(':');
+        return p.Length == 2 && int.TryParse(p[0], out var f) && long.TryParse(p[1], out var b) ? (Math.Max(1, f), b) : (0, 0);
+    }
+
+    /// <summary>
+    /// Writes about the same number of files and bytes the cleanup removed (at most <see cref="MaxPlaceholderFiles"/> files),
+    /// dated 2 days back so the cleanup's "older than 24 hours" rule deletes them again. Space is allocated, not sparse.
+    /// </summary>
+    public static int CreatePlaceholders(string folder, int files, long bytes)
+    {
+        var n = (int)Math.Clamp(files, 1, MaxPlaceholderFiles);
+        var each = Math.Max(1, bytes / n);
+        var stamp = DateTime.Now.AddDays(-2);
+        var buffer = new byte[Math.Min(each, 1 << 20)];
+        Random.Shared.NextBytes(buffer); // real data: compressible zeros could take less space on compressed volumes
+        for (var i = 0; i < n; i++)
+        {
+            var size = i == n - 1 ? bytes - each * (n - 1) : each;
+            var path = Path.Combine(folder, $"{PlaceholderPrefix}{Guid.NewGuid():N}.tmp");
+            using (var fs = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16))
+                for (long left = size; left > 0; left -= buffer.Length) fs.Write(buffer, 0, (int)Math.Min(buffer.Length, left));
+            File.SetLastWriteTime(path, stamp);
+            File.SetCreationTime(path, stamp);
+        }
+        return n;
+    }
+
+    private static int Dword(string? v) => int.TryParse(v, out var i) && i is >= 0 and <= 1 ? i : 1;
+    private static bool IsIp(string s) => System.Net.IPAddress.TryParse(s, out _);
+
+    private async Task<UndoItemResult> Ps(string script, ChangeRecord c, string ok, CancellationToken ct)
+    {
+        var pr = await commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], ct).ConfigureAwait(false);
+        return pr is { ExitCode: 0 } ? new(c, true, ok) : new(c, false, "Couldn't put it back (administrator rights required).");
+    }
+
+    // ---- helpers used when recording "before" values ----
+
+    /// <summary>Scheme GUID from "powercfg /getactivescheme" output.</summary>
+    public static string? ParseSchemeGuid(string? output) =>
+        output is null ? null : Regex.Match(output, "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}") is { Success: true } m ? m.Value : null;
+}

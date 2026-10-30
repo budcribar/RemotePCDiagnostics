@@ -83,7 +83,8 @@ public sealed record ServiceActionResult(bool Success, string Message, ServiceSt
 public sealed record ServiceActionPlan(ServiceAction Action, string Title, string WhatItIs, string WhatWillHappen, IReadOnlyList<DependentService> Dependents, string? Warning, bool Allowed);
 
 /// <summary>Plans, runs and audits start/stop/restart of Windows services. All user-facing text is plain; detail goes to the log.</summary>
-public sealed class ServiceActionService(IServiceControlBackend backend, ISessionContext? session = null, Action<string>? log = null, TimeSpan? timeout = null)
+public sealed class ServiceActionService(IServiceControlBackend backend, ISessionContext? session = null, Action<string>? log = null, TimeSpan? timeout = null,
+    Changes.IChangeJournal? journal = null)
 {
     public const int MaxRecent = 20;
     public TimeSpan Timeout { get; } = timeout ?? TimeSpan.FromSeconds(30);
@@ -156,6 +157,8 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         {
             result = await RunAsync(s, action, ct).ConfigureAwait(false);
         }
+        if (result.Success && action is ServiceAction.Start or ServiceAction.Stop)
+            try { journal?.Add(Changes.ChangeRecord.New(Changes.ChangeKind.ServiceRunning, s.Name, action == ServiceAction.Stop ? "Running" : "Stopped", $"{s.Label} {(action == ServiceAction.Stop ? "stopped" : "started")}", actor)); } catch { }
         var rec = new ServiceActionRecord(DateTime.Now, actor, action, s.Name, s.Label, result.Success, result.Message);
         lock (_gate)
         {
