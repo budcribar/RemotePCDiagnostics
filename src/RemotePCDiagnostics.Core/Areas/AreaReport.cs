@@ -40,8 +40,10 @@ public sealed record AreaRow(
     IReadOnlyList<string> Values,
     IReadOnlyList<string?>? SortKeys = null,
     string? Key = null,
-    IReadOnlyList<AreaAction>? Actions = null);
-/// <remarks><see cref="AreaRow.Key"/> is an optional stable id (e.g. the service name) used for row actions.</remarks>
+    IReadOnlyList<AreaAction>? Actions = null,
+    string? Detail = null);
+/// <remarks><see cref="AreaRow.Key"/> is an optional stable id (e.g. the service name) used for row actions.
+/// <see cref="AreaRow.Detail"/> is optional longer text (full message, occurrences) shown when the row is expanded.</remarks>
 
 /// <summary>A summary card plus its drill-down drawer content. Text here is shown to the user; technical detail goes to the log.</summary>
 public sealed record AreaCard(

@@ -35,6 +35,13 @@ public sealed record SystemUptimeInfo(long TotalSeconds, int Days, int Hours, in
 /// Top resource hogs (memory, CPU time, disk I/O) and system uptime via osquery <c>uptime</c> and <c>processes</c>,
 /// plus Windows Fast Startup (<c>HiberbootEnabled</c>) via PowerShell.
 /// </summary>
+/// <summary>Physical memory: what Windows can use and what's free right now.</summary>
+public sealed record MemoryUse(long TotalBytes, long AvailableBytes)
+{
+    public long UsedBytes => Math.Max(0, TotalBytes - AvailableBytes);
+    public int UsedPercent => TotalBytes > 0 ? (int)Math.Round(100.0 * UsedBytes / TotalBytes) : 0;
+}
+
 public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner? commands = null) : OsqueryAreaModuleBase(runner)
 {
     public const string ModuleName = "ResourceHogs";
@@ -43,7 +50,11 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
     public const string FastStartupScript =
         "$ErrorActionPreference='SilentlyContinue';" +
         "$v=(Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power' -Name HiberbootEnabled).HiberbootEnabled;" +
-        "[pscustomobject]@{FastStartup=[string]$v} | ConvertTo-Json -Compress";
+        "$o=Get-CimInstance Win32_OperatingSystem;" +
+        "[pscustomobject]@{FastStartup=[string]$v;TotalBytes=[string]([int64]$o.TotalVisibleMemorySize*1024);FreeBytes=[string]([int64]$o.FreePhysicalMemory*1024)} | ConvertTo-Json -Compress";
+
+    /// <summary>RAM in use at or above this percentage makes the check a warning (matches the "Memory is almost full" suggestion).</summary>
+    public const int HighMemoryPercent = 85;
 
     public const int LongUptimeDays = 14;
     public const long HighSingleAppMemoryBytes = 4L * 1024 * 1024 * 1024;
@@ -61,6 +72,7 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
         if (!upQ.Success && !procQ.Success) return AreaReport.Failed(FailedMessage);
 
         bool? fastStartup = null;
+        MemoryUse? memory = null;
         if (commands is not null)
         {
             var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
@@ -71,6 +83,7 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
                 {
                     var row = OsqueryJson.ParseRows("[" + pr.StdOut.Trim().TrimStart('[').TrimEnd(']') + "]").FirstOrDefault();
                     fastStartup = row?.Str("FastStartup") switch { "1" => true, "0" => false, _ => null };
+                    if (row?.Long("TotalBytes") is long total && total > 0 && row.Long("FreeBytes") is long free && free >= 0) memory = new MemoryUse(total, free);
                 }
                 catch (FormatException) { }
             }
@@ -78,7 +91,7 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
 
         var uptime = upQ.Success && upQ.Rows!.Count > 0 ? SystemUptimeInfo.FromRow(upQ.Rows[0], fastStartup) : null;
         var procs = procQ.Success ? procQ.Rows!.Select(ProcessResourceRow.FromRow).ToList() : null;
-        return Build(uptime, procs);
+        return Build(uptime, procs, memory);
     }
 
     public static List<ProcessGroupUsage> GroupProcesses(IEnumerable<ProcessResourceRow> rows) =>
@@ -98,11 +111,30 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
 
     private static string NumKey(long v) => v.ToString(CultureInfo.InvariantCulture);
 
-    public static AreaReport Build(SystemUptimeInfo? uptime, IReadOnlyList<ProcessResourceRow>? processes)
+    public static AreaReport Build(SystemUptimeInfo? uptime, IReadOnlyList<ProcessResourceRow>? processes, MemoryUse? memory = null)
     {
         if (uptime is null && processes is null) return AreaReport.Failed("Couldn't read running processes and uptime on this PC.");
         var cards = new List<AreaCard>();
         var parts = new List<string>();
+
+        if (memory is { } mu)
+        {
+            var high = mu.UsedPercent >= HighMemoryPercent;
+            cards.Add(new("ram", "Memory in use", high ? AreaLevel.Warning : AreaLevel.Ok,
+                $"{mu.UsedPercent}% in use",
+                $"{HardwareInventory.FormatBytes(mu.AvailableBytes)} free of {HardwareInventory.FormatBytes(mu.TotalBytes)} usable",
+                ["Detail", "Value"],
+                [
+                    new(AreaLevel.Neutral, ["In use", $"{HardwareInventory.FormatBytes(mu.UsedBytes)} ({mu.UsedPercent}%)"]),
+                    new(AreaLevel.Neutral, ["Free", HardwareInventory.FormatBytes(mu.AvailableBytes)]),
+                    new(AreaLevel.Neutral, ["Usable by Windows", HardwareInventory.FormatBytes(mu.TotalBytes)]),
+                    new(high ? AreaLevel.Warning : AreaLevel.Neutral, ["What this means", high
+                        ? "Memory is almost full, so Windows is using the much slower page file. Closing apps you don't need helps (see the suggestions below)."
+                        : "There's enough free memory."]),
+                ],
+                Note: "\"Usable\" can be less than the installed memory: Windows sets some aside, for example for built-in graphics."));
+            parts.Add($"RAM {mu.UsedPercent}% in use");
+        }
 
         if (uptime is null)
             cards.Add(AreaCard.Failed("uptime", "System uptime", "Couldn't read system uptime."));

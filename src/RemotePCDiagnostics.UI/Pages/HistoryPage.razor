@@ -12,8 +12,13 @@
     var remSvc = Sp.GetService(typeof(RemediationService)) as RemediationService;
     var memSvc = Sp.GetService(typeof(MemorySuggestionService)) as MemorySuggestionService;
     var svcAct = Sp.GetService(typeof(ServiceActionService)) as ServiceActionService;
-    var impact = HistorySummary.Build(all, remSvc, memSvc, svcAct, _range, DateTimeOffset.UtcNow);
     var rows = HistoryQuery.Sort(HistoryQuery.Filter(diagEntries, _module, _outcome, _range, DateTimeOffset.UtcNow), _sort.Col, _sort.Desc);
+    // Tiles follow the filters: fixes as before, runs = the rows listed below.
+    var impact = HistorySummary.Build(all.Where(HistorySummary.IsFixEntry).Concat(rows).ToList(), remSvc, memSvc, svcAct, _range, DateTimeOffset.UtcNow);
+    var shown = rows.Take(_shown).ToList();
+    var byDay = _sort.Col == HistoryColumn.Time;
+    var localNow = DateTimeOffset.Now;
+    string? lastDay = null;
     var tests = HistoryNames.FilterOptions(diagEntries, Diagnostics.Modules);
     var trends = tests.Where(t => HistoryQuery.TrendKey(t.Module) is not null && (_module.Length == 0 || string.Equals(_module, t.Module, StringComparison.OrdinalIgnoreCase)))
         .Select(t => (t.Test, Key: HistoryQuery.TrendKey(t.Module)!.Value, Points: HistoryQuery.Trend(diagEntries, t.Module))).Where(t => t.Points.Count > 0).ToList();
@@ -95,11 +100,11 @@ else
     @if (!_result.Available) { <p class="notice" data-testid="history-partial">Some history couldn't be read from the Windows Event Log.</p> }
 
     <div class="toolbar audit-filters">
-        <select data-testid="history-filter-test" aria-label="Filter by test" @bind="_module">
+        <select data-testid="history-filter-test" aria-label="Filter by test" @bind="_module" @bind:after="ResetPaging">
             <option value="">All tests</option>
             @foreach (var t in tests) { <option value="@t.Module">@t.Test</option> }
         </select>
-        <select data-testid="history-filter-outcome" aria-label="Filter by result" @bind="_outcome">
+        <select data-testid="history-filter-outcome" aria-label="Filter by result" @bind="_outcome" @bind:after="ResetPaging">
             <option value="">All results</option>
             @foreach (var o in HistoryQuery.Outcomes) { <option value="@o">@o</option> }
         </select>
@@ -138,18 +143,23 @@ else
             @foreach (var (col, title) in HistoryQuery.Columns)
             {
                 var c = col;
-                <th @key="c" class="sortable-th" role="button" tabindex="0" aria-sort="@(_sort.Col == c ? (_sort.Desc ? "descending" : "ascending") : "none")"
-                    data-testid="history-th-@c.ToString().ToLowerInvariant()" @onclick="() => _sort = HistoryQuery.Toggle(_sort, c)"
-                    @onkeydown='e => { if (e.Key is "Enter" or " ") _sort = HistoryQuery.Toggle(_sort, c); }'>@title<span class="sort-arrow">@(_sort.Col == c ? (_sort.Desc ? " ▼" : " ▲") : "")</span></th>
+                <th @key="c" class="sortable-th" scope="col" aria-sort="@(_sort.Col == c ? (_sort.Desc ? "descending" : "ascending") : "none")"
+                    data-testid="history-th-@c.ToString().ToLowerInvariant()"><button type="button" class="th-btn" @onclick="() => _sort = HistoryQuery.Toggle(_sort, c)">@title<span class="sort-arrow" aria-hidden="true">@(_sort.Col == c ? (_sort.Desc ? " ▼" : " ▲") : "")</span></button></th>
             }
         </tr>
-        @foreach (var e in rows)
+        @foreach (var e in shown)
         {
             var entry = e;
             var open = ReferenceEquals(_open, entry);
+            var day = byDay ? HistoryQuery.DayLabel(entry.LocalTime, localNow) : null;
+            @if (day is not null && day != lastDay)
+            {
+                lastDay = day;
+                <tr class="history-day" data-testid="history-day"><td colspan="5">@day</td></tr>
+            }
             <tr class="clickable" role="button" tabindex="0" aria-expanded="@(open ? "true" : "false")" data-testid="history-row"
                 @onclick="() => _open = open ? null : entry" @onkeydown='k => { if (k.Key is "Enter" or " ") _open = open ? null : entry; }'>
-                <td title="@entry.TimeUtc.ToString("u")">@entry.LocalTime.ToString("g")</td>
+                <td title="@entry.LocalTime.ToString("g")">@(byDay ? entry.LocalTime.ToString("t") : entry.LocalTime.ToString("g"))</td>
                 <td>@entry.Test</td>
                 <td><span class="dot dot-@Dot(entry.Outcome)"></span>@entry.Outcome</td>
                 <td class="summary">@entry.Summary</td>
@@ -159,21 +169,25 @@ else
             {
                 <tr class="history-details" data-testid="history-details"><td colspan="5">
                     <div class="meta">@(entry.Suite is { } s ? $"Part of the stress tests ({s}). " : "")Machine: @entry.Machine · App version @entry.AppVersion</div>
-                    @if (entry.Measurements.Count > 0)
+                    @if (entry.Measurements.Any(x => !HistoryLabels.IsHidden(x.Name)))
                     {
                         <div class="meta"><strong>Measurements</strong></div>
-                        <ul>@foreach (var m in entry.Measurements) { <li>@m.Name: @m.Value</li> }</ul>
+                        <ul>@foreach (var m in entry.Measurements.Where(x => !HistoryLabels.IsHidden(x.Name))) { <li>@HistoryLabels.Measurement(m.Name): @m.Value</li> }</ul>
                     }
                     @if (entry.Details is { Count: > 0 } det)
                     {
                         <div class="meta"><strong>Details</strong></div>
                         <ul data-testid="history-details-lines">@foreach (var line in det) { <li>@line</li> }</ul>
                     }
-                    @if (entry.Measurements.Count == 0 && entry.Details is not { Count: > 0 }) { <div class="meta">No measurements were recorded for this result.</div> }
+                    @if (!entry.Measurements.Any(x => !HistoryLabels.IsHidden(x.Name)) && entry.Details is not { Count: > 0 }) { <div class="meta">No measurements were recorded for this result.</div> }
                 </td></tr>
             }
         }
     </table>
+    @if (rows.Count > shown.Count)
+    {
+        <div class="history-more"><button data-testid="history-more" @onclick="() => _shown += HistoryQuery.PageSize">Show @Math.Min(HistoryQuery.PageSize, rows.Count - shown.Count) more (@shown.Count of @rows.Count shown)</button></div>
+    }
     @if (rows.Count == 0) { <p class="meta" data-testid="history-nomatch">No results match these filters.</p> }
 }
 
@@ -184,6 +198,7 @@ else
     private HistoryRange _range = HistoryRange.All;
     private static (HistoryColumn Col, bool Desc) _sort = HistoryQuery.DefaultSort;
     private HistoryEntry? _open;
+    private int _shown = HistoryQuery.PageSize;
     private HistoryReadResult? _result;
     private bool _loading, _disposed;
     private int _reloadPending;
@@ -203,15 +218,19 @@ else
             var within = HistoryQuery.RangeSpan(_range);
             // Event Log reads can take a moment: never on the render thread.
             var read = await Task.Run(() => History.Read(within));
-            _result = read with { Entries = HistoryNames.Normalize(read.Entries, Diagnostics.Modules) };
+            // Cancelled runs produced no result: they're left out of history entirely.
+            _result = read with { Entries = HistoryQuery.WithoutCancelled(HistoryNames.Normalize(read.Entries, Diagnostics.Modules)) };
             if (_open is not null && !_result.Entries.Contains(_open)) _open = null;
         }
         catch { _result = new HistoryReadResult([], false); }
         finally { _loading = false; }
     }
 
+    private void ResetPaging() => _shown = HistoryQuery.PageSize;
+
     private async Task SetRange(ChangeEventArgs e)
     {
+        ResetPaging();
         _range = Enum.TryParse<HistoryRange>(e.Value?.ToString(), out var r) ? r : HistoryRange.All;
         await Load();
     }

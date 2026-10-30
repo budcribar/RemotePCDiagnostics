@@ -94,9 +94,18 @@ public static class MemoryText
         ["OUTLOOK"] = "Outlook", ["olk"] = "Outlook", ["WINWORD"] = "Word", ["EXCEL"] = "Excel", ["POWERPNT"] = "PowerPoint",
         ["MsMpEng"] = "Microsoft Defender", ["VBCSCompiler"] = "C# compiler server", ["MSBuild"] = "MSBuild",
         ["Memory Compression"] = "Memory compression", ["Zoom"] = "Zoom", ["steam"] = "Steam", ["OneDrive"] = "OneDrive",
+        ["claude"] = "Claude", ["PhoneExperienceHost"] = "Phone Link", ["msedgewebview2"] = "Edge WebView2",
+        ["Grok Bot"] = "Grok", ["notepad"] = "Notepad", ["explorer"] = "File Explorer",
     };
 
-    public static string FriendlyAppName(string processName) => Friendly.TryGetValue(processName, out var f) ? f : processName;
+    /// <summary>Known apps get their product name; other all-lowercase process names are capitalized ("claude" → "Claude").</summary>
+    public static string FriendlyAppName(string processName)
+    {
+        if (string.IsNullOrEmpty(processName)) return processName;
+        if (Friendly.TryGetValue(processName, out var f)) return f;
+        return processName.All(c => !char.IsLetter(c) || char.IsLower(c)) && char.IsLetter(processName[0])
+            ? char.ToUpperInvariant(processName[0]) + processName[1..] : processName;
+    }
 }
 
 public static class StartupParsing

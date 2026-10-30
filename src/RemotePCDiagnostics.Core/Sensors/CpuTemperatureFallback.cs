@@ -11,6 +11,7 @@ public static class CpuTemperatureFallback
     public const string ApuSensorName = "Chip temperature (approximate, from built-in graphics)";
     public const string ApuFriendlyLabel = "CPU temperature (approximate, from built-in graphics)";
     public const string DriverMissingNote = "CPU temperature needs a sensor driver that isn't available on this PC.";
+    public const string ApproximateNote = "This PC doesn't expose the processor's own temperature sensor, so the CPU temperature shown is an estimate from Windows (on this chip the graphics share the same die, so CPU and GPU read the same).";
 
     public static bool HasRealCpuTemp(IEnumerable<SensorReading> list) =>
         list.Any(r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Cpu && r.IsLive && !r.IsApproximate);
@@ -35,5 +36,7 @@ public static class CpuTemperatureFallback
     /// registered but still no reading, it is blocked or unsupported, which is "not available" to the user as well.
     /// </summary>
     public static string? Note(IReadOnlyList<SensorReading> readings, bool sensorDriverRegistered) =>
-        HasRealCpuTemp(readings) ? null : DriverMissingNote;
+        HasRealCpuTemp(readings) ? null
+        : readings.Any(r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Cpu && r.IsLive && r.IsApproximate) ? ApproximateNote
+        : DriverMissingNote;
 }

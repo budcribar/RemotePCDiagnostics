@@ -82,9 +82,23 @@ public sealed class WindowsEventLog(SystemCommandRunner commands)
                 if (d.Attribute("Name")?.Value is { Length: > 0 } n) named[n] = d.Value.Trim();
             }
             var ch = El(sys, "Channel")?.Value;
-            list.Add(new WinEvent(time, !string.IsNullOrEmpty(ch) ? ch : channel, provider, id, level, El(render, "Message")?.Value?.Trim() ?? "", data, named));
+            list.Add(new WinEvent(time, !string.IsNullOrEmpty(ch) ? ch : channel, provider, id, level, CleanMessage(El(render, "Message")?.Value), data, named));
         }
         return list.OrderByDescending(x => x.Time).ToList();
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex BidiArtifact =
+        new(@"(?<=^|[\s/(\-.:])\?(?=\d)", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Removes invisible direction marks Windows puts around dates in messages (U+200E etc.). When wevtutil's console
+    /// output lost them they arrive as '?' right before a digit ("on ?10/?29/?2026"); those are removed too.
+    /// </summary>
+    public static string CleanMessage(string? message)
+    {
+        if (string.IsNullOrEmpty(message)) return "";
+        var s = new string(message.Where(c => c is not ('\u200E' or '\u200F' or >= '\u202A' and <= '\u202E' or >= '\u2066' and <= '\u2069')).ToArray());
+        return BidiArtifact.Replace(s, "").Trim();
     }
 
     /// <summary>Friendly time, e.g. "Oct 29, 2:15 PM" (year added when not this year).</summary>

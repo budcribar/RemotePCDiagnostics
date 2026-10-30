@@ -42,7 +42,7 @@
                 else
                 {
                     <div class="headline">Hottest @(g.Hottest is { } h ? $"{h:0.0}°C" : "—")</div>
-                    @if (g.Readings.Any(x => x.Reading.IsApproximate)) { <div class="meta" data-testid="lhm-approx">Approximate (from Windows)</div> }
+                    @if (g.Readings.Any(x => x.Reading.IsApproximate)) { <div class="meta" data-testid="lhm-approx">Estimate (from Windows)</div> }
                     @if (g.Readings.Any(x => x.Reading.IsFromWindows)) { <div class="meta" data-testid="lhm-from-windows">From Windows (GPU driver)</div> }
                     <div class="meta">@g.Readings.Count sensor(s) · @string.Join(", ", g.Readings.Select(x => x.Reading.HardwareName).Distinct().Take(2))</div>
                 }

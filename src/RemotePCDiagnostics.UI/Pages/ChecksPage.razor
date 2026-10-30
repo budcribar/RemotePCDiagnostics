@@ -3,6 +3,7 @@
 @inherits StoreAwareComponent
 @inject ChecksScreenState Screen
 @inject IJSRuntime JS
+@inject RemotePCDiagnostics.Core.History.IHistoryStore History
 @* Checks & Tests: two groups (system checks / stress & deep scans) on the left, the selected test's real page on the right. *@
 @{
     var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message); }), Diagnostics.LastStressSuiteProgress);
@@ -44,7 +45,22 @@
         base.OnInitialized();
         Screen.Changed += OnScreenChanged;
         Screen.SelectedModule ??= Screen.ChecksModules.FirstOrDefault()?.Name;
+        _ = LoadLastRunsAsync();
     }
+
+    // Results from earlier sessions (Event Log), shown for tests not run yet in this session. Read once, off the render thread.
+    private IReadOnlyDictionary<string, RemotePCDiagnostics.Core.History.HistoryEntry> _lastRuns = new Dictionary<string, RemotePCDiagnostics.Core.History.HistoryEntry>();
+    private async Task LoadLastRunsAsync()
+    {
+        try
+        {
+            var read = await Task.Run(() => History.Read(TimeSpan.FromDays(30)));
+            _lastRuns = RemotePCDiagnostics.Core.History.HistoryQuery.LatestByModule(RemotePCDiagnostics.Core.History.HistoryNames.Normalize(read.Entries, Diagnostics.Modules));
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { /* no history source: rows just say "Not run yet" */ }
+    }
+    private RemotePCDiagnostics.Core.History.HistoryEntry? LastRun(IDiagnosticModule m) => _lastRuns.GetValueOrDefault(m.Name);
 
     private void OnScreenChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
 
@@ -57,7 +73,23 @@
     public override void Dispose() { Screen.Changed -= OnScreenChanged; base.Dispose(); }
 
     private void Select(IDiagnosticModule m) { Screen.SelectedModule = m.Name; }
-    private void RowKey(KeyboardEventArgs e, IDiagnosticModule m) { if (e.Key is "Enter" or " ") Select(m); }
+    private readonly Dictionary<string, ElementReference> _rowRefs = new(StringComparer.OrdinalIgnoreCase);
+    private static bool HasOwnStart(IDiagnosticModule m) => m is IStressSuiteModule || m.Name == RemotePCDiagnostics.Core.Security.SecurityAuditModule.ModuleName;
+
+    /// <summary>Enter/Space selects; ↑/↓ move to the previous/next visible test (and select it).</summary>
+    private async Task RowKey(KeyboardEventArgs e, IDiagnosticModule m)
+    {
+        if (e.Key is "Enter" or " ") { Select(m); return; }
+        if (e.Key is not ("ArrowDown" or "ArrowUp")) return;
+        var visible = new[] { CheckGroup.Checks, CheckGroup.Stress }.Where(g => !Screen.IsCollapsed(g)).SelectMany(Screen.Modules).ToList();
+        var i = visible.FindIndex(x => string.Equals(x.Name, m.Name, StringComparison.OrdinalIgnoreCase));
+        var next = i < 0 ? -1 : e.Key == "ArrowDown" ? i + 1 : i - 1;
+        if (next < 0 || next >= visible.Count) return;
+        Select(visible[next]);
+        StateHasChanged();
+        await Task.Yield();
+        if (_rowRefs.TryGetValue(visible[next].Name, out var el)) { try { await el.FocusAsync(); } catch { } }
+    }
 
     private string RunLabel(IDiagnosticModule m) => Screen.RunLabel(m.Name) ?? "";
 
@@ -87,7 +119,7 @@
                     {
                         <div class="theme-switch" role="group" aria-label="Stress test length" data-testid="checks-mode">
                             <button class="@(Screen.Mode == StressSuiteMode.Short ? "on" : "")" aria-pressed="@(Screen.Mode == StressSuiteMode.Short ? "true" : "false")" disabled="@running"
-                                    data-testid="checks-mode-quick" @onclick="() => Screen.Mode = StressSuiteMode.Short">Quick (~1 min each)</button>
+                                    data-testid="checks-mode-quick" @onclick="() => Screen.Mode = StressSuiteMode.Short">Short (~1 min each)</button>
                             <button class="@(Screen.Mode == StressSuiteMode.Extended ? "on" : "")" aria-pressed="@(Screen.Mode == StressSuiteMode.Extended ? "true" : "false")" disabled="@running"
                                     data-testid="checks-mode-extended" @onclick="() => Screen.Mode = StressSuiteMode.Extended">Extended (~5 min each)</button>
                         </div>
@@ -110,8 +142,9 @@
                         var kind = CheckRows.KindOf(r);
                         var label = CheckRows.Label(kind, RunLabel(m));
                         var isSel = string.Equals(Screen.SelectedModule, m.Name, StringComparison.OrdinalIgnoreCase);
-                        var line = kind == RowKind.NotRun ? "Not run yet" : r.Message;
-                        <div class="ct-row @(isSel ? "selected" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")"
+                        var prev = kind == RowKind.NotRun ? LastRun(m) : null;
+                        var line = kind == RowKind.NotRun ? (prev is { } pv ? $"Last run {pv.LocalTime:g}: {pv.Outcome} · {pv.Summary}" : "Not run yet") : kind == RowKind.Running ? "In progress" : r.Message;
+                        <div class="ct-row @(isSel ? "selected" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
                              data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => Select(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
                             <button class="ct-check" role="checkbox" aria-checked="@(Screen.IsSelected(m.Name) ? "true" : "false")" aria-label="Include @m.DisplayName"
                                     data-testid="checks-select-@m.Name.ToLowerInvariant()" @onclick="() => Screen.SetSelected(mod.Name, !Screen.IsSelected(mod.Name))" @onclick:stopPropagation="true">@(Screen.IsSelected(m.Name) ? "✓" : "")</button>
@@ -151,8 +184,9 @@
                 <div class="ct-group-line"><h2 data-testid="checks-detail-title">@m.DisplayName</h2>
                     <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-detail-status">@CheckRows.Label(kind, RunLabel(m))</span></div>
                 <div class="meta" data-testid="checks-detail-sub">
-                    @if (kind == RowKind.NotRun) { <span>Not run yet in this session.</span> }
-                    else if (kind == RowKind.Running) { <span>Running…</span> }
+                    @if (kind == RowKind.NotRun && LastRun(m) is { } lr) { <span data-testid="checks-detail-lastrun">Not run in this session · last run @lr.LocalTime.ToString("g"): @lr.Outcome · @lr.Summary (details on the History page)</span> }
+                    else if (kind == RowKind.NotRun) { <span>Not run yet in this session.</span> }
+                    else if (kind == RowKind.Running) { <span>Started @r.Timestamp.ToLocalTime().ToString("t")</span> }
                     else { <span>@r.Message · @r.Timestamp.ToLocalTime().ToString("g")</span> }
                 </div>
                 @if (last is { } l)
@@ -161,7 +195,11 @@
                 }
                 else if (kind == RowKind.Cancelled) { <div class="meta">Earlier results are on the History page.</div> }
             </div>
-            <button class="btn btn-outline ct-run-one" data-testid="checks-run-one" disabled="@(!canRun)" @onclick="() => { _ = Screen.RunSingleAsync(m); }"><Icon Name="play" Size="12" /> Run just this</button>
+            @* Stress tests and the security audit have their own Start/Stop (with length) below, so no second start button here. *@
+            @if (!HasOwnStart(m))
+            {
+                <button class="btn btn-outline ct-run-one" data-testid="checks-run-one" disabled="@(!canRun)" @onclick="() => { _ = Screen.RunSingleAsync(m); }"><Icon Name="play" Size="12" /> Run just this</button>
+            }
         </div>
         <div class="ct-detail-body" @key="m.Name">
             <DynamicComponent Type="PageFor(m)" Parameters="ParamsFor(m)" />

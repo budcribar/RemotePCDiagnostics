@@ -26,9 +26,17 @@ public static class AreaSort
         return idx.Select(p => p.r).ToList();
     }
 
+    /// <summary>First click on a column: amounts, counts and times start largest/newest first; text starts A→Z.</summary>
+    public static bool FirstClickDescending(string column) => column is
+        "Times" or "Count" or "Crashes" or "Freezes" or "Instances" or "Memory" or "CPU time" or "Disk I/O" or "Size"
+        or "When" or "Last seen" or "Last time" or "Installed";
+
     /// <summary>Default: newest first when a table is pre-sorted by time ("When"/"Last seen"/"Last time", or Windows updates "Installed"), else original order.</summary>
     public static (int Col, bool Desc) Default(IReadOnlyList<string> columns)
     {
+        // Frequency tables ("Most frequent", "Most affected apps"): most first.
+        for (var i = 0; i < columns.Count; i++)
+            if (columns[i] is "Times" or "Count") return (i, true);
         for (var i = 0; i < columns.Count; i++)
             if (columns[i] is "When" or "Last seen" or "Last time" || (columns[i] == "Installed" && columns[0] == "Update")) return (i, true);
         return (-1, false);

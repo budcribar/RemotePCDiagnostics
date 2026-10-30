@@ -24,10 +24,12 @@
     var last = all.Where(r => r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running)).Select(r => (DateTimeOffset?)r.Timestamp).Max();
     var bannerKind = checking ? "run" : problems == 0 ? "ok" : summary.HasError ? "err" : "warn";
     var shownProblems = showAllProblems || problems <= MaxProblems ? summary.Problems : summary.Problems.Take(MaxProblems - 1).ToList();
+    // Same list as the banner: a test the user stopped isn't a problem.
+    var problemNames = summary.Problems.Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
     var attentionModules = Diagnostics.Modules
-        .Where(m => m.Name is not ("Osquery" or LibreHardwareMonitorModule.ModuleName))
-        .Where(m => Store.Get(m.Name).Status is DiagnosticStatus.Warning or DiagnosticStatus.Error)
+        .Where(m => m.Name is not ("Osquery" or LibreHardwareMonitorModule.ModuleName) && problemNames.Contains(m.Name))
         .ToList();
+    var now = DateTimeOffset.Now;
 }
 <div class="toolbar"><h1 data-testid="dashboard-title">Dashboard</h1></div>
 
@@ -52,12 +54,12 @@
                 }
             }
         </div>
-        <div class="banner-sub" data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {l.ToLocalTime():g}" : "Not checked yet")</div>
+        <div class="banner-sub" data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {RemotePCDiagnostics.Core.History.TimeText.Ago(l, now)}" : "Not checked yet")</div>
         @if (summary.NotRunNote is { } note)
         {
             <div class="banner-note" data-testid="dashboard-notrun-note">
                 <span>@note</span>
-                @if (summary.NotRunHint is { } hint) { <span class="banner-hint">· @hint</span> }
+                @if (summary.NotRunHint is { } hint) { <span class="banner-hint"> · @hint</span> }
             </div>
         }
     </div>
@@ -65,9 +67,9 @@
         <button class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || stressBusy)" @onclick="RunAll">
             <Icon Name="@(checking ? "refresh" : "play")" Size="14" />@(checking ? "Checking…" : "Run all tests")</button>
         <button class="btn btn-outline" data-testid="dashboard-runall-stress-short" disabled="@(checking || stressBusy)" @onclick="() => RunSuite(StressSuiteMode.Short)">
-            <Icon Name="play" Size="12" />Run all + stress tests (short, about 5 min)</button>
+            <Icon Name="play" Size="12" />Run all + stress tests (short, ~1 min each, about 5 min)</button>
         <button class="btn btn-outline" data-testid="dashboard-runall-stress-extended" disabled="@(checking || stressBusy)" @onclick="() => RunSuite(StressSuiteMode.Extended)">
-            <Icon Name="play" Size="12" />Run all + stress tests (extended, about 25 min)</button>
+            <Icon Name="play" Size="12" />Run all + stress tests (extended, ~5 min each, about 25 min)</button>
     </div>
 </section>
 
@@ -113,12 +115,12 @@
          @onclick='() => Open("Osquery")' @onkeydown='e => Key(e, "Osquery")'>
         <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(hw.Status)"><Icon Name="@Icon.ForModule("Osquery")" /></span><strong>Hardware inventory</strong>
             <StatusChip Status="@(querying ? DiagnosticStatus.Running : hw.Status)" Text="@(querying ? "Checking…" : null)" /></div>
-        <div data-testid="dashboard-status" class="@(hw.Status == DiagnosticStatus.Error ? "card-msg error-text" : "card-msg")">
+        <div data-testid="dashboard-status" class="@(hw.Status == DiagnosticStatus.Error ? "card-msg error-text" : "card-msg card-msg-full")">
             @if (querying) { <span>Querying hardware…</span> }
             else if (hw.Status == DiagnosticStatus.Error || inv is null) { <span>@hw.Message</span> }
             else { <span>@inv.FriendlySummary()</span> }
         </div>
-        @if (!querying) { <div class="meta">Updated @hw.Timestamp.ToLocalTime().ToString("g")</div> }
+        @if (!querying) { <div class="meta updated-ago" title="@hw.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(hw.Timestamp, now)</div> }
     </div>
 
     @foreach (var m in attentionModules)
@@ -130,7 +132,7 @@
             <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(r.Status)"><Icon Name="@Icon.ForModule(m.Name)" /></span><strong title="@m.DisplayName">@m.DisplayName</strong>
                 <StatusChip Status="@r.Status" /></div>
             <div class="card-msg">@r.Message</div>
-            <div class="meta">Updated @r.Timestamp.ToLocalTime().ToString("g")</div>
+            <div class="meta updated-ago" title="@r.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(r.Timestamp, now)</div>
         </div>
     }
 
@@ -162,9 +164,17 @@
         base.OnInitialized();
         suite = Diagnostics.LastStressSuiteProgress;
         Diagnostics.StressSuiteProgressChanged += OnSuite;
+        // Keep "Updated 3 min ago" current without any user action.
+        _tick = new System.Threading.Timer(_ => { try { _ = InvokeAsync(StateHasChanged); } catch { } }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
+    private System.Threading.Timer? _tick;
     private void OnSuite(object? s, StressSuiteProgress p) { suite = p; if (p.Finished) cancelling = false; _ = InvokeAsync(StateHasChanged); }
-    public ValueTask DisposeAsync() { Diagnostics.StressSuiteProgressChanged -= OnSuite; Dispose(); return ValueTask.CompletedTask; }
+    public async ValueTask DisposeAsync()
+    {
+        Diagnostics.StressSuiteProgressChanged -= OnSuite;
+        if (_tick is not null) await _tick.DisposeAsync();
+        Dispose();
+    }
 
     private async Task RunSuite(StressSuiteMode mode)
     {

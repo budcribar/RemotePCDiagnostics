@@ -1,0 +1,6 @@
+<Project>
+  <!-- One version for every assembly (shown in History details and written to the Event Log). Bump on release. -->
+  <PropertyGroup>
+    <Version>1.1.0</Version>
+  </PropertyGroup>
+</Project>

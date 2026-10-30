@@ -51,9 +51,12 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
             return s.IsElevated ? "No temperature or fan sensors found" : "No sensors found. Try running the app as administrator.";
         string T(string id) => report.Groups.First(g => g.Id == id).Hottest is { } v ? $"{v:0}°C" : "—";
         var fans = s.Readings.Count(r => r.SensorType == SensorKind.Fan);
-        var text = $"CPU {T("cpu")} · GPU {T("gpu")} · Storage {T("storage")} · {fans} fan(s)";
+        var text = $"CPU {T("cpu")} · GPU {T("gpu")} · Storage {T("storage")} · {FansText(fans)}";
         return s.IsElevated ? text : text + " (some sensors need administrator rights)";
     }
+
+    /// <summary>"fan speed not reported" (many laptops don't expose fans), "1 fan", "3 fans".</summary>
+    public static string FansText(int fans) => fans switch { 0 => "fan speed not reported", 1 => "1 fan", _ => $"{fans} fans" };
 
     internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);
 }

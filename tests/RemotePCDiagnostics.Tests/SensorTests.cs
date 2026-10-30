@@ -75,7 +75,7 @@ public class LibreHardwareMonitorModuleTests
         Assert.Equal(SensorLevel.Neutral, g["fans"].Level);
         Assert.Equal(2, g["fans"].Readings.Count);
         Assert.Contains("CPU 55°C", r.Message);
-        Assert.Contains("2 fan(s)", r.Message);
+        Assert.Contains("2 fans", r.Message);
     }
 
     [Fact]

@@ -101,7 +101,7 @@ public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner
 
             cards.Add(new("battery", "Battery health", level, headline, string.Join(" · ", metaParts), ["Detail", "Value"], rows,
                 Note: worn ? "A battery below 70% health holds significantly less charge than when new and may need replacement." : null));
-            parts.Add(health is { } h2 ? $"Battery health {h2}%" + (b.PercentRemaining is { } pr ? $" ({pr}%)" : "") : "Battery present");
+            parts.Add(health is { } h2 ? $"Battery health {h2}%" + (b.PercentRemaining is { } pr ? $" · {pr}% charged" : "") : "Battery present");
         }
 
         var planName = string.IsNullOrWhiteSpace(powerPlan) ? "Not reported" : powerPlan.Trim();

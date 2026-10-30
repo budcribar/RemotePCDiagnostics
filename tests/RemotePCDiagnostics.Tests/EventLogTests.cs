@@ -87,7 +87,11 @@ public class EventLogTests
         var rep = EventLogModule.Build([.. Errs("A", 4), .. Errs("B", 2)], []);
         Assert.Equal(DiagnosticStatus.Ok, rep.Status);
         Assert.Equal(AreaLevel.Ok, rep.Cards.Single(c => c.Id == "system").Level);
-        Assert.Equal(6, rep.Cards.Single(c => c.Id == "system").Rows.Count);
+        // Identical errors are grouped: one row per source/message, with the count in "Times".
+        var sys = rep.Cards.Single(c => c.Id == "system");
+        Assert.Equal(2, sys.Rows.Count);
+        Assert.Equal(["4", "2"], sys.Rows.Select(r => r.Values[3]).OrderByDescending(x => x));
+        Assert.Equal("6 errors", sys.Headline);
     }
 
     [Fact]

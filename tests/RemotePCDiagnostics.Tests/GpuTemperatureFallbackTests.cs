@@ -171,7 +171,8 @@ public class CpuTemperatureFallbackTests
     public void DriverNote_OnlyWithoutRealCpuTemp()
     {
         Assert.Equal(CpuTemperatureFallback.DriverMissingNote, CpuTemperatureFallback.Note([Cpu(0)], false));
-        Assert.Equal(CpuTemperatureFallback.DriverMissingNote, CpuTemperatureFallback.Note(CpuTemperatureFallback.ApplyApuDie([WinGpu(50)], Apu), true));
+        // An approximate CPU reading exists (APU shared die): say it's an estimate instead of "not available".
+        Assert.Equal(CpuTemperatureFallback.ApproximateNote, CpuTemperatureFallback.Note(CpuTemperatureFallback.ApplyApuDie([WinGpu(50)], Apu), true));
         Assert.Null(CpuTemperatureFallback.Note([Cpu(55)], false));
         Assert.DoesNotContain("PawnIO", CpuTemperatureFallback.DriverMissingNote);
     }

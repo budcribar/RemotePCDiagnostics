@@ -10,7 +10,7 @@
     {
         var potential = MemorySuggestionEngine.PotentialCloseSavings(Svc.Suggestions);
         <p class="meta" data-testid="mem-summary">
-            RAM: @MemoryText.Gb(m.UsedBytes) of @MemoryText.Gb(m.TotalBytes) GB in use (@m.UsedPercent%) · @MemoryText.Gb(m.AvailableBytes) GB available
+            RAM: @MemoryText.Gb(m.UsedBytes) of @MemoryText.Gb(m.TotalBytes) GB usable in use (@m.UsedPercent%) · @MemoryText.Gb(m.AvailableBytes) GB available
             @if (potential > 0) { <span> · Potential savings: about @MemoryText.Size(potential) if you close the suggested apps</span> }
         </p>
     }

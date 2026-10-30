@@ -422,3 +422,36 @@ body.ct-resizing { user-select: none; cursor: col-resize; }
 .ms-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
 .ms-actions > button { width: auto; flex: 0 0 auto; }
 .ms-undo { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+
+/* ---- UI review fixes (Oct 2026) ---- */
+/* Level/Type badges never break inside the word ("Er/ro/r"). */
+.badge { white-space: nowrap; }
+table.sortable td:has(> .badge) { white-space: nowrap; width: 1%; }
+/* Sortable headers: the button fills the header cell, the th keeps its column-header role. */
+th.sortable-th > .th-btn { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; font: inherit; text-transform: inherit; letter-spacing: inherit; }
+th.sortable-th > .th-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+/* Expandable drawer rows (full message, occurrences, source drill-down). */
+tr.row-expandable { cursor: pointer; }
+tr.row-expandable:hover td { background: var(--accent-soft); }
+tr.row-expandable:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+tr.row-detail td { white-space: pre-wrap; font-size: 13px; color: var(--text); background: var(--surface-active, transparent); }
+.row-caret { display: inline-block; width: 1em; color: var(--text-faint); }
+/* Drawer gets focus when it opens (Esc closes it); no outline on the panel itself. */
+.drawer:focus { outline: none; }
+/* Dashboard cards: show the whole hardware line. */
+.card-msg.card-msg-full { -webkit-line-clamp: unset; display: block; }
+/* Checks & tests: the selected test's title and actions stay visible while its details scroll. */
+.ct-detail-head { position: sticky; top: 0; z-index: 3; background: var(--bg); background-image: var(--grid-bg); background-size: 28px 28px; padding-top: 4px; }
+/* Short windows (laptops, remote viewers): one page scroll instead of two nested scroll panes. */
+@media (max-height: 760px) and (min-width: 901px) {
+  .ct-page { height: auto; }
+  .ct-workspace { align-items: flex-start; }
+  .ct-list { overflow: visible; }
+  .ct-detail { overflow: visible; }
+}
+/* Visible focus ring on clickable cards and rows. */
+.card-click:focus-visible, .ct-row:focus-visible, tr.clickable:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* History: day headings and "show more". */
+tr.history-day td { font-weight: 700; color: var(--text-strong); background: var(--surface); padding-top: 14px; border-bottom: 1px solid var(--border); }
+.history-more { margin: 12px 0; }
+.updated-ago { white-space: nowrap; }

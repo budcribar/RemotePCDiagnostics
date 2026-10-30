@@ -33,7 +33,8 @@ else
         <div class="cards">
             @foreach (var c in rep.Cards)
             {
-                <SummaryCard Id="@c.Id" Title="@c.Title" OnOpen="Open" ErrorText="@c.ErrorText" EmptyText="@c.EmptyText" Dot="@Dot(c.Level)">
+                @* EmptyText describes an empty drawer; only show it on the card when there really is nothing in it. *@
+                <SummaryCard Id="@c.Id" Title="@c.Title" OnOpen="Open" ErrorText="@c.ErrorText" EmptyText="@(c.Rows.Count == 0 ? c.EmptyText : null)" Dot="@Dot(c.Level)">
                     <div class="headline">@c.Headline</div>
                     @if (c.Meta.Length > 0) { <div class="meta">@c.Meta</div> }
                     @if (remActions is not null && c.Actions is { Count: > 0 })
@@ -57,7 +58,7 @@ else
             var hasRowRemActions = remActions is not null && open.Rows.Any(rw => rw.Actions is { Count: > 0 });
             var isKeyValue = open.Columns is ["Detail", "Value"] && svcActions is null && !hasRowRemActions;
             <div class="drawer-backdrop" @onclick="Close"></div>
-            <aside class="drawer" role="dialog" aria-modal="true" aria-label="@open.Title" tabindex="-1" @onkeydown="DrawerKey" data-testid="area-drawer-@open.Id">
+            <aside class="drawer" role="dialog" aria-modal="true" aria-label="@open.Title" tabindex="-1" @ref="_drawer" @onkeydown="DrawerKey" data-testid="area-drawer-@open.Id">
                 <div class="drawer-head"><strong title="@open.Title">@open.Title</strong><button data-testid="area-drawer-close" @onclick="Close">Close</button></div>
                 @if (open.Note is { } note) { <p class="meta">@note</p> }
                 @if (open.Id == "memory" && memSvc is not null) { <p><button class="linklike" data-testid="mem-suggest-link" @onclick="ShowSuggestions">See ways to use less memory</button></p> }
@@ -93,9 +94,8 @@ else
                             @for (var hi = 0; hi < open.Columns.Count; hi++)
                             {
                                 var col = hi;
-                                <th @key="col" class="sortable-th" role="button" tabindex="0" aria-sort="@(sc == col ? (sd ? "descending" : "ascending") : "none")"
-                                    data-testid="area-th-@col" @onclick="() => ToggleSort(m.Name, open, col)"
-                                    @onkeydown="e => SortKey(e, m.Name, open, col)">@open.Columns[col]<span class="sort-arrow">@(sc == col ? (sd ? " ▼" : " ▲") : "")</span></th>
+                                <th @key="col" class="sortable-th" scope="col" aria-sort="@(sc == col ? (sd ? "descending" : "ascending") : "none")" data-testid="area-th-@col">
+                                    <button type="button" class="th-btn" @onclick="() => ToggleSort(m.Name, open, col)">@open.Columns[col]<span class="sort-arrow" aria-hidden="true">@(sc == col ? (sd ? " ▼" : " ▲") : "")</span></button></th>
                             }
                             @if (svcActions is not null || hasRowRemActions) { <th>Actions</th> }
                         </tr>
@@ -103,16 +103,21 @@ else
                         {
                             var svc = SvcInfo(svcModule, row);
                             var level = svc is not null && _svcStatus.ContainsKey(svc.Name) ? (svc.IsRunning ? AreaLevel.Ok : svc.IsAutomatic ? AreaLevel.Warning : AreaLevel.Neutral) : row.Level;
-                            <tr @key="row" data-testid="@(row.Key is null ? null : "svc-row-" + row.Key)">
+                            var rowRef = row;
+                            var expandable = row.Detail is not null;
+                            var expanded = expandable && ReferenceEquals(_expanded, row) || expandable && _expandedKey is not null && _expandedKey == RowId(row);
+                            <tr @key="row" data-testid="@(row.Key is null ? null : "svc-row-" + row.Key)" class="@(expandable ? "row-expandable" : null)"
+                                tabindex="@(expandable ? "0" : null)" aria-expanded="@(expandable ? (expanded ? "true" : "false") : null)"
+                                @onclick="() => ToggleRow(rowRef)" @onkeydown="e => RowKey(e, rowRef)">
                                 @for (var i = 0; i < row.Values.Count; i++)
                                 {
                                     var col = open.Columns.Count > i ? open.Columns[i] : "";
-                                    <td>@if (i == 0) { <span class="dot dot-@Dot(level)"></span> }
+                                    <td>@if (i == 0) { @if (expandable) { <span class="row-caret" aria-hidden="true">@(expanded ? "▾" : "▸")</span> } <span class="dot dot-@Dot(level)"></span> }
                                         @if (col is "Type" or "Level") { <span class="badge badge-@row.Values[i].ToLowerInvariant()">@row.Values[i]</span> } else if (svc is not null && i == 1 && _svcStatus.ContainsKey(svc.Name)) { @svc.FriendlyStatus } else { @row.Values[i] }</td>
                                 }
                                 @if (svcActions is not null)
                                 {
-                                    <td class="svc-actions">
+                                    <td class="svc-actions" @onclick:stopPropagation="true">
                                         @if (svc is not null)
                                         {
                                             var o = svcActions.OptionsFor(svc);
@@ -125,7 +130,7 @@ else
                                 }
                                 else if (hasRowRemActions)
                                 {
-                                    <td class="svc-actions">
+                                    <td class="svc-actions" @onclick:stopPropagation="true">
                                         @if (row.Actions is { Count: > 0 })
                                         {
                                             @foreach (var act in row.Actions)
@@ -137,6 +142,10 @@ else
                                     </td>
                                 }
                             </tr>
+                            @if (expanded)
+                            {
+                                <tr class="row-detail" data-testid="area-row-detail"><td colspan="@(open.Columns.Count + (svcActions is not null || hasRowRemActions ? 1 : 0))">@row.Detail</td></tr>
+                            }
                         }
                     </table>
                 }
@@ -150,8 +159,29 @@ else
 @code {
     [Parameter] public string Slug { get; set; } = "";
     private string? _open;
-    private void Open(string id) => _open = id;
-    private void Close() => _open = null;
+    private void Open(string id) { _open = id; _expanded = null; _expandedKey = null; _focusDrawer = true; }
+    private void Close() { _open = null; _expanded = null; _expandedKey = null; }
+    private ElementReference _drawer;
+    private bool _focusDrawer;
+    // The row whose details are open; matched by content too, so an auto-refresh (new row objects) keeps it open.
+    private AreaRow? _expanded;
+    private string? _expandedKey;
+    private static string RowId(AreaRow r) => r.Key ?? string.Join("\u001f", r.Values);
+    private void ToggleRow(AreaRow r)
+    {
+        if (r.Detail is null) return;
+        var open = ReferenceEquals(_expanded, r) || _expandedKey == RowId(r);
+        _expanded = open ? null : r;
+        _expandedKey = open ? null : RowId(r);
+    }
+    private void RowKey(KeyboardEventArgs e, AreaRow r) { if (e.Key is "Enter" or " ") ToggleRow(r); }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_focusDrawer || _open is null) return;
+        _focusDrawer = false;
+        try { await _drawer.FocusAsync(); } catch { /* drawer not rendered (no card) */ }
+    }
     private MemorySuggestionsPanel? _memPanel;
     private async Task ShowSuggestions()
     {
@@ -161,7 +191,6 @@ else
         if (_memPanel is not null) await _memPanel.FocusAsync();
     }
     private void DrawerKey(KeyboardEventArgs e) { if (e.Key == "Escape") Close(); }
-    private static void SortKey(KeyboardEventArgs e, string module, AreaCard c, int col) { if (e.Key is "Enter" or " ") ToggleSort(module, c, col); }
     protected override void OnParametersSet() => _open = null;
     // Sort choice per page+card; static so it survives auto-refresh and navigation.
     private static readonly Dictionary<string, (int Col, bool Desc)> _sorts = new();
@@ -170,7 +199,7 @@ else
     private static void ToggleSort(string module, AreaCard c, int col)
     {
         var (cur, desc) = SortFor(module, c);
-        _sorts[module + "/" + c.Id] = cur == col ? (col, !desc) : (col, false);
+        _sorts[module + "/" + c.Id] = cur == col ? (col, !desc) : (col, col < c.Columns.Count && AreaSort.FirstClickDescending(c.Columns[col]));
     }
 
     // Services: live status per service after a Start/Stop/Restart, so only that row updates (no full re-check).

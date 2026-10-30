@@ -41,7 +41,7 @@
         <div class="card" data-testid="nettest-live-latency">
             <div class="card-head"><span class="dot dot-neutral"></span><strong>Delay right now</strong></div>
             <div class="headline">@NetworkTestReport.Ms(p?.Samples.LastOrDefault()?.InternetMs)</div>
-            <div class="meta">Average @NetworkTestReport.Ms(live?.AverageMs) · lost @NetworkTestReport.Pct(live?.LossPercent)</div>
+            <div class="meta">Average @NetworkTestReport.Ms(live?.AverageMs) · @LostText(live?.LossPercent)</div>
         </div>
         <div class="card" data-testid="nettest-live-temp">
             <div class="card-head"><span class="dot dot-neutral"></span><strong>CPU temperature</strong></div>
@@ -146,4 +146,5 @@ else if (report is not null)
         Diagnostics.StressSuiteProgressChanged -= OnSuite;
         base.Dispose();
     }
+    private static string LostText(double? pct) => NetworkTestReport.Pct(pct) switch { "None" => "no replies lost", "—" => "loss not measured yet", var p => $"{p} of replies lost" };
 }

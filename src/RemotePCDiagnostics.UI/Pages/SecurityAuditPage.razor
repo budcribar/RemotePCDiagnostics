@@ -60,9 +60,8 @@ else
                 @foreach (var (col, title) in AuditSort.Columns)
                 {
                     var c = col;
-                    <th @key="c" class="sortable-th" role="button" tabindex="0" aria-sort="@(_sort.Col == c ? (_sort.Desc ? "descending" : "ascending") : "none")"
-                        data-testid="audit-th-@c.ToString().ToLowerInvariant()" @onclick="() => _sort = AuditSort.Toggle(_sort, c)"
-                        @onkeydown="e => SortKey(e, c)">@title<span class="sort-arrow">@(_sort.Col == c ? (_sort.Desc ? " ▼" : " ▲") : "")</span></th>
+                    <th @key="c" class="sortable-th" scope="col" aria-sort="@(_sort.Col == c ? (_sort.Desc ? "descending" : "ascending") : "none")"
+                        data-testid="audit-th-@c.ToString().ToLowerInvariant()"><button type="button" class="th-btn" @onclick="() => _sort = AuditSort.Toggle(_sort, c)">@title<span class="sort-arrow" aria-hidden="true">@(_sort.Col == c ? (_sort.Desc ? " ▼" : " ▲") : "")</span></button></th>
                 }
             </tr>
             @foreach (var f in rows)
@@ -142,7 +141,6 @@ else
     }
 
     private void ClearFilters() { _outcome = null; _category = ""; _text = ""; }
-    private void SortKey(KeyboardEventArgs e, AuditColumn c) { if (e.Key is "Enter" or " ") _sort = AuditSort.Toggle(_sort, c); }
 
     private IEnumerable<AuditFinding> Filtered(SecurityAuditReport rep) => AuditSort.Sort(rep.Findings
         .Where(f => _outcome is null || f.Outcome == _outcome)

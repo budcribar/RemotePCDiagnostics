@@ -36,11 +36,19 @@ public sealed record SecurityAuditReport(IReadOnlyList<AuditFinding> Findings, s
     public int Failed => Findings.Count(f => f.Outcome == AuditOutcome.Failed);
     public int NotChecked => Findings.Count(f => f.Outcome == AuditOutcome.NotChecked);
 
-    public DiagnosticStatus Status => Failed > 0 ? DiagnosticStatus.Error : Warnings > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
+    /// <summary>Failed checks the baseline rates High: the ones that make this PC clearly less safe.</summary>
+    public int HighRisk => Findings.Count(f => f.Outcome == AuditOutcome.Failed && f.Severity.Equals("High", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Critical only for high-risk failures. The baseline is strict (enterprise hardening), so a typical home PC fails
+    /// many medium checks; those are a warning to review, not an alarm.
+    /// </summary>
+    public DiagnosticStatus Status => HighRisk > 0 ? DiagnosticStatus.Error : Failed > 0 || Warnings > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
 
     public string Summary => Findings.Count == 0
         ? "The audit finished but returned no results."
-        : $"{Failed} failed, {Warnings} {(Warnings == 1 ? "warning" : "warnings")}, {Passed} passed" + (NotChecked > 0 ? $", {NotChecked} not checked" : "");
+        : (HighRisk > 0 ? $"{HighRisk} high-risk · " : "")
+          + $"{Failed} failed, {Warnings} {(Warnings == 1 ? "warning" : "warnings")}, {Passed} passed" + (NotChecked > 0 ? $", {NotChecked} not checked" : "");
 }
 
 /// <summary>Parses the HardeningKitty report CSV (Export-Csv: ID,Category,Name,Severity,Result,Recommended,TestResult,SeverityFinding,DefaultValue,Filter).</summary>

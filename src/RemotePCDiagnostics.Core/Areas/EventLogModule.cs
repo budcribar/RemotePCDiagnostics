@@ -26,8 +26,47 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
     }
 
     private static readonly string[] Cols = ["When", "Source", "Level", "What happened"];
+    private static readonly string[] GroupedCols = ["When", "Source", "Level", "Times", "What happened"];
+    public const int MaxDetailChars = 2000, MaxListedTimes = 20;
     private static AreaRow Row(WinEvent e) => new(e.Level == 1 ? AreaLevel.Error : AreaLevel.Warning, [WindowsEventLog.FormatTime(e.Time), e.Source, e.Level == 1 ? "Critical" : "Error", e.ShortMessage],
-        [AreaSort.TimeKey(e.Time), null, e.Level == 1 ? "2" : "1", null]);
+        [AreaSort.TimeKey(e.Time), null, e.Level == 1 ? "2" : "1", null], Detail: FullMessage(e));
+
+    /// <summary>Full message for the expanded row, or null when the table cell already shows all of it.</summary>
+    public static string? FullMessage(WinEvent e)
+    {
+        var m = e.Message.Trim();
+        if (m.Length == 0 || m == e.ShortMessage) return null;
+        return m.Length > MaxDetailChars ? m[..MaxDetailChars] + "…" : m;
+    }
+
+    /// <summary>
+    /// Identical events (same source, level and message) collapse into one row with a count; expanding it shows when each
+    /// happened (newest first) and the full message. Rows stay newest first.
+    /// </summary>
+    public static IReadOnlyList<AreaRow> GroupedRows(IEnumerable<WinEvent> events) =>
+        events.GroupBy(e => (Source: e.Source.ToUpperInvariant(), e.Level, e.ShortMessage))
+            .Select(g =>
+            {
+                var list = g.OrderByDescending(e => e.Time).ToList();
+                var e = list[0];
+                var times = list.Count > 1
+                    ? "Happened " + list.Count + " times: " + string.Join(", ", list.Take(MaxListedTimes).Select(x => WindowsEventLog.FormatTime(x.Time))) + (list.Count > MaxListedTimes ? ", …" : "")
+                    : null;
+                var detail = string.Join("\n\n", new[] { times, FullMessage(e) }.Where(x => x is not null));
+                return new AreaRow(e.Level == 1 ? AreaLevel.Error : AreaLevel.Warning,
+                    [WindowsEventLog.FormatTime(e.Time), e.Source, e.Level == 1 ? "Critical" : "Error", list.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), e.ShortMessage],
+                    [AreaSort.TimeKey(e.Time), null, e.Level == 1 ? "2" : "1", list.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), null],
+                    Detail: detail.Length > 0 ? detail : null);
+            })
+            .OrderByDescending(r => r.SortKeys![0], StringComparer.Ordinal).ToList();
+
+    public const int MaxSourceMessages = 5;
+
+    /// <summary>The distinct messages a source logged (most frequent first, with counts), for the "Most frequent" drill-down.</summary>
+    public static string SourceDetail(IEnumerable<WinEvent> events) =>
+        string.Join("\n", events.GroupBy(e => e.ShortMessage).OrderByDescending(m => m.Count()).ThenByDescending(m => m.Max(e => e.Time))
+            .Take(MaxSourceMessages)
+            .Select(m => $"{m.Count()}× (last {WindowsEventLog.FormatTime(m.Max(e => e.Time))}): {m.Key}"));
 
     public static AreaReport Build(IReadOnlyList<WinEvent>? system, IReadOnlyList<WinEvent>? app)
     {
@@ -49,8 +88,8 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
             ? AreaCard.Failed(id, title, $"Couldn't read {what}.")
             : new(id, title, events.Any(e => e.Level == 2 && repeated.Contains(Key(e))) ? AreaLevel.Warning : AreaLevel.Ok,
                 events.Count == 0 ? "No errors" : AreaModuleBase.Plural(events.Count, "error") + (events.Count >= MaxPerLog ? " or more" : ""),
-                $"In the last {Days} days", Cols, events.Select(Row).ToList(),
-                Note: "Most PCs log some errors; they only matter if they repeat or match a problem you're seeing.");
+                $"In the last {Days} days", GroupedCols, GroupedRows(events),
+                Note: "Most PCs log some errors; they only matter if they repeat or match a problem you're seeing. Identical errors are grouped; click a row for the full message.");
         cards.Add(LogCard("system", "Windows errors", system, "Windows' own error list"));
         cards.Add(LogCard("apps", "App errors", app, "the app error list"));
 
@@ -61,7 +100,9 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
             ["Source", "Where", "Times", "Last seen"],
             groups.Select(g => new AreaRow(g.Any(e => e.Level == 1) ? AreaLevel.Error : AreaLevel.Warning,
                 [g.First().Source, string.Equals(g.First().Channel, "System", StringComparison.OrdinalIgnoreCase) ? "Windows" : "Apps", g.Count().ToString(), WindowsEventLog.FormatTime(g.Max(e => e.Time))],
-                [null, null, null, AreaSort.TimeKey(g.Max(e => e.Time))])).ToList()));
+                [null, null, null, AreaSort.TimeKey(g.Max(e => e.Time))],
+                Detail: SourceDetail(g))).ToList(),
+            Note: "Click a source to see what it reported."));
 
         var summary = all.Count == 0 && critical.Count == 0
             ? $"No errors in the last {Days} days"

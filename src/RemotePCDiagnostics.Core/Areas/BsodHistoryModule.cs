@@ -63,7 +63,9 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
 
         bool Recent(DateTimeOffset t) => t >= cutoff;
         var recentBsods = bsods.Count(e => Recent(e.Time));
-        var recentPower = powerLosses.Count(e => Recent(e.Time));
+        // One bad shutdown logs both Event 41 (at the next boot) and Event 6008: count incidents, not events.
+        var incidents = PowerLossIncidents(powerLosses);
+        var recentPower = incidents.Count(t => Recent(t));
 
         var bsodLevel = recentBsods >= 2 ? AreaLevel.Error : recentBsods == 1 ? AreaLevel.Warning : bsods.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
         var powerLevel = recentPower > 0 ? AreaLevel.Warning : powerLosses.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok;
@@ -81,7 +83,7 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
                 EmptyText: $"No blue screen crashes were recorded in the last {Days} days."),
 
             new("power", "Unexpected power losses & resets", powerLevel,
-                powerLosses.Count == 0 ? "None" : Plural(powerLosses.Count, "unexpected restart"),
+                incidents.Count == 0 ? "None" : Plural(incidents.Count, "unexpected restart"),
                 powerLosses.FirstOrDefault() is { } p ? $"Latest: {WindowsEventLog.FormatTime(p.Time)}" : $"In the last {Days} days",
                 eventCols,
                 powerLosses.Select(e => new AreaRow(Recent(e.Time) ? AreaLevel.Warning : AreaLevel.Neutral,
@@ -107,7 +109,7 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
         {
             var parts = new List<string>();
             if (bsods.Count > 0) parts.Add(Plural(bsods.Count, "blue screen"));
-            if (powerLosses.Count > 0) parts.Add(Plural(powerLosses.Count, "unexpected restart"));
+            if (incidents.Count > 0) parts.Add(Plural(incidents.Count, "unexpected restart"));
             summary = $"{string.Join(", ", parts)} in the last {Days} days" + (recentBsods == 0 && recentPower == 0 ? $" (none in the last {RecentDays} days)" : "");
         }
 
@@ -115,5 +117,17 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
             : (bsodLevel == AreaLevel.Warning || powerLevel == AreaLevel.Warning) ? DiagnosticStatus.Warning
             : DiagnosticStatus.Ok;
         return new(cards, summary, status);
+    }
+
+    /// <summary>Events logged within this window of each other belong to the same unexpected shutdown.</summary>
+    public static readonly TimeSpan IncidentWindow = TimeSpan.FromMinutes(10);
+
+    /// <summary>Times of distinct unexpected-shutdown incidents (newest first): Event 41 and 6008 from the same boot are one incident.</summary>
+    public static IReadOnlyList<DateTimeOffset> PowerLossIncidents(IEnumerable<WinEvent> powerLossEvents)
+    {
+        var result = new List<DateTimeOffset>();
+        foreach (var t in powerLossEvents.Select(e => e.Time).OrderByDescending(t => t))
+            if (result.Count == 0 || result[^1] - t > IncidentWindow) result.Add(t);
+        return result;
     }
 }

@@ -133,7 +133,6 @@ public static class MemorySuggestionEngine
     {
         var list = new List<MemorySuggestion>();
         var startup = s.Startup ?? [];
-        StartupEntry? StartupFor(string proc) => startup.FirstOrDefault(e => e.Enabled && e.ExeName.Equals(proc, StringComparison.OrdinalIgnoreCase));
 
         // Browsers: memory saver / sleeping tabs.
         foreach (var b in s.Browsers ?? [])

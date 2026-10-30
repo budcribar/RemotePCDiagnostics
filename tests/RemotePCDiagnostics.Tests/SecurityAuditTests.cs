@@ -92,7 +92,7 @@ public sealed class SecurityAuditTests : IDisposable
         var rep = Assert.IsType<SecurityAuditReport>(r.Payload);
         Assert.Equal((1, 1, 2, 1), (rep.Passed, rep.Warnings, rep.Failed, rep.NotChecked));
         Assert.Equal(DiagnosticStatus.Error, r.Status);
-        Assert.Equal("2 failed, 1 warning, 1 passed, 1 not checked", r.Message);
+        Assert.Equal("1 high-risk · 2 failed, 1 warning, 1 passed, 1 not checked", r.Message);
         Assert.Null(rep.Notice);
         Assert.Contains(_log, l => l.Contains("stdout_head"));
     }

@@ -138,12 +138,28 @@ public static class HistoryNames
         return m is null || string.IsNullOrWhiteSpace(m.DisplayName) ? module : m.DisplayName;
     }
 
-    /// <summary>Replaces Test with the display name where the event had none (Test equals the module ID).</summary>
+    /// <summary>Modules that were merged into another one: their old results count as the new module's.</summary>
+    public static readonly IReadOnlyDictionary<string, string> ModuleAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["BsodHistory"] = "Crashes",   // "Blue screens & unexpected restarts" + "App crashes" → "Crashes & unexpected restarts"
+        ["WifiConfig"] = "Network",    // "Wi-Fi & network config" + "Network adapters" → "Network & Wi-Fi"
+    };
+
+    /// <summary>
+    /// Maps merged modules to their current ID, and gives every known module its current display name (so a renamed
+    /// test isn't listed twice). Unknown modules keep the name they were logged with.
+    /// </summary>
     public static IReadOnlyList<HistoryEntry> Normalize(IEnumerable<HistoryEntry> entries, IEnumerable<IDiagnosticModule> modules)
     {
         var mods = modules.ToList();
-        return entries.Select(e => string.IsNullOrWhiteSpace(e.Test) || string.Equals(e.Test, e.Module, StringComparison.OrdinalIgnoreCase)
-            ? e with { Test = DisplayName(e.Module, mods) } : e).ToList();
+        return entries.Select(e =>
+        {
+            var module = ModuleAliases.TryGetValue(e.Module, out var to) ? to : e.Module;
+            var known = mods.Any(m => string.Equals(m.Name, module, StringComparison.OrdinalIgnoreCase));
+            var test = known ? DisplayName(module, mods)
+                : string.IsNullOrWhiteSpace(e.Test) || string.Equals(e.Test, e.Module, StringComparison.OrdinalIgnoreCase) ? DisplayName(module, mods) : e.Test;
+            return e with { Module = module, Test = test };
+        }).ToList();
     }
 
     /// <summary>Test filter options (module ID, name): every module present in the data, once, sorted by name.</summary>
@@ -165,7 +181,29 @@ public static class HistoryQuery
     public static readonly (HistoryColumn Col, bool Desc) DefaultSort = (HistoryColumn.Time, true);
     public static readonly IReadOnlyList<(HistoryColumn Col, string Title)> Columns =
         [(HistoryColumn.Time, "Time"), (HistoryColumn.Test, "Test"), (HistoryColumn.Result, "Result"), (HistoryColumn.Summary, "Summary"), (HistoryColumn.Duration, "Duration")];
-    public static readonly IReadOnlyList<string> Outcomes = ["OK", "Warning", "Critical", "Cancelled", "Unavailable"];
+    /// <summary>Result filter choices. Cancelled runs aren't part of history (see <see cref="WithoutCancelled"/>).</summary>
+    public static readonly IReadOnlyList<string> Outcomes = ["OK", "Warning", "Critical", "Unavailable"];
+
+    /// <summary>A cancelled run didn't produce a result, so history ignores it (lists, counts and trends).</summary>
+    public static IReadOnlyList<HistoryEntry> WithoutCancelled(IEnumerable<HistoryEntry> entries) =>
+        entries.Where(e => !string.Equals(e.Outcome, "Cancelled", StringComparison.OrdinalIgnoreCase)).ToList();
+
+    /// <summary>Day heading for the history list: "Today", "Yesterday", "Tuesday, Oct 27" (year added when not this year).</summary>
+    public static string DayLabel(DateTimeOffset localTime, DateTimeOffset localNow)
+    {
+        var d = localTime.Date; var today = localNow.Date;
+        if (d == today) return "Today";
+        if (d == today.AddDays(-1)) return "Yesterday";
+        return localTime.ToString(d.Year == today.Year ? "dddd, MMM d" : "dddd, MMM d yyyy", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Newest result per module (cancelled runs ignored), for "last run" on tests not run in this session.</summary>
+    public static IReadOnlyDictionary<string, HistoryEntry> LatestByModule(IEnumerable<HistoryEntry> entries) =>
+        WithoutCancelled(entries).GroupBy(e => e.Module, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.MaxBy(e => e.TimeUtc)!, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Rows shown at first (and added per "Show more").</summary>
+    public const int PageSize = 100;
 
     public static TimeSpan? RangeSpan(HistoryRange r) => r switch
     {
@@ -253,3 +291,46 @@ public static class HistoryQuery
         return sb.ToString();
     }
 }
+
+/// <summary>Friendly names for the measurements stored with each result (the raw names are for the log).</summary>
+public static class HistoryLabels
+{
+    private static readonly Dictionary<string, string> Known = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["MaxCpuTemperatureC"] = "Peak CPU temperature (°C)", ["MaxGpuTemperatureC"] = "Peak GPU temperature (°C)",
+        ["MaxDriveTemperatureC"] = "Peak drive temperature (°C)", ["SequentialReadMBps"] = "Read speed (MB/s)",
+        ["SequentialWriteMBps"] = "Write speed (MB/s)", ["RandomReadIops"] = "Random reads per second",
+        ["RandomWriteIops"] = "Random writes per second", ["DownloadMbps"] = "Download speed (Mbps)", ["UploadMbps"] = "Upload speed (Mbps)",
+        ["Ran"] = "Ran for", ["Requested"] = "Planned length", ["Threads"] = "Processor threads used", ["Errors"] = "Errors found",
+        ["ChunksDone"] = "Work units completed", ["TestBytes"] = "Memory tested", ["Passes"] = "Test passes",
+    };
+
+    /// <summary>Measurements not worth showing to a person (already shown elsewhere on the row).</summary>
+    public static bool IsHidden(string name) => name.Equals("Outcome", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Known label, otherwise the raw name split into words ("EarlyThroughput" → "Early throughput").</summary>
+    public static string Measurement(string name)
+    {
+        if (Known.TryGetValue(name, out var k)) return k;
+        var words = System.Text.RegularExpressions.Regex.Split(name, "(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+            .Where(w => w.Length > 0).ToList();
+        if (words.Count == 0) return name;
+        return string.Join(' ', words.Select((w, i) => i == 0 ? char.ToUpperInvariant(w[0]) + w[1..] : w.All(char.IsUpper) && w.Length > 1 ? w : w.ToLowerInvariant()));
+    }
+}
+
+/// <summary>Relative times for "Updated …" lines.</summary>
+public static class TimeText
+{
+    /// <summary>"just now", "5 min ago", "3 h ago", "yesterday", else the date/time.</summary>
+    public static string Ago(DateTimeOffset t, DateTimeOffset now)
+    {
+        var d = now - t;
+        if (d < TimeSpan.FromMinutes(1)) return "just now";
+        if (d < TimeSpan.FromHours(1)) return $"{(int)d.TotalMinutes} min ago";
+        if (d < TimeSpan.FromHours(24) && t.ToLocalTime().Date == now.ToLocalTime().Date) return $"{(int)d.TotalHours} h ago";
+        if (t.ToLocalTime().Date == now.ToLocalTime().Date.AddDays(-1)) return "yesterday " + t.ToLocalTime().ToString("h:mm tt", CultureInfo.InvariantCulture);
+        return t.ToLocalTime().ToString("g", CultureInfo.InvariantCulture);
+    }
+}
+
