@@ -191,11 +191,12 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, Action<string>? log
         {
             ulong x = 0x9E3779B97F4A7C15UL ^ (ulong)(t + 1);
             long units = 0;
-            while (sw.Elapsed < duration && !ct.IsCancellationRequested)
+            do // at least one unit per thread, so a very short run never scores 0
             {
                 for (var i = 0; i < 20_000; i++) { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x *= 0x2545F4914F6CDD1DUL; }
                 units++;
             }
+            while (sw.Elapsed < duration && !ct.IsCancellationRequested);
             counts[t * 8] = units + (long)(x & 0); // keep x alive
         }) { IsBackground = true, Priority = ThreadPriority.Normal }).ToList();
         workers.ForEach(w => w.Start());

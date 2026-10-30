@@ -106,7 +106,7 @@ public class BenchmarkTests
 
     private static readonly BenchmarkSettings Fast = new()
     {
-        Runs = 2, IdleSample = TimeSpan.Zero, CpuSingleRun = TimeSpan.FromMilliseconds(30), CpuMultiRun = TimeSpan.FromMilliseconds(30), DiskRun = TimeSpan.Zero,
+        Runs = 2, IdleSample = TimeSpan.Zero, CpuSingleRun = TimeSpan.FromMilliseconds(100), CpuMultiRun = TimeSpan.FromMilliseconds(100), DiskRun = TimeSpan.Zero,
     };
 
     private static Task Resolve(string name, CancellationToken ct) => name.StartsWith("rpd-") ? Task.CompletedTask : throw new InvalidOperationException();
@@ -117,7 +117,7 @@ public class BenchmarkTests
         var probes = new FakeProbes();
         var progress = new List<string>();
         var run = await new BenchmarkRunner(probes, resolve: Resolve).RunAsync(BenchmarkPhase.Before, Fast, null, new SyncProgress(progress.Add), default);
-        Assert.True(run.Completed);
+        Assert.True(run.Completed, "run stopped early");
         Assert.Contains(progress, p => p.StartsWith("Measuring disk"));
         Assert.Equal(Enum.GetValues<BenchmarkKind>().Length, run.Measurements.Count);
         Assert.Equal(3.5, run.Get(BenchmarkKind.IdleCpu)!.Median);
@@ -125,7 +125,7 @@ public class BenchmarkTests
         Assert.Equal(35, run.Get(BenchmarkKind.BootTime)!.Median);
         Assert.Equal(100, run.Get(BenchmarkKind.ProgramStart)!.Median);
         Assert.Equal(0.125, run.Get(BenchmarkKind.DiskLatency)!.Median);    // 1000 / 8000 IOPS
-        Assert.True(run.Get(BenchmarkKind.CpuMulti)!.Median > 0);
+        Assert.True(run.Get(BenchmarkKind.CpuMulti)!.Median > 0, "multi-core score");
         Assert.Equal(2, run.Get(BenchmarkKind.DnsLookup)!.Samples.Count);
         Assert.Equal(BuiltInPrograms.All.Count * 2, probes.Started.Count);
         Assert.All(BuiltInPrograms.All, p => Assert.DoesNotContain(':', p.FileName)); // System32-relative: Windows' own programs only
