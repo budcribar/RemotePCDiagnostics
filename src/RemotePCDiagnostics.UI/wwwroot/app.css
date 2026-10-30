@@ -455,3 +455,13 @@ tr.row-detail td { white-space: pre-wrap; font-size: 13px; color: var(--text); b
 tr.history-day td { font-weight: 700; color: var(--text-strong); background: var(--surface); padding-top: 14px; border-bottom: 1px solid var(--border); }
 .history-more { margin: 12px 0; }
 .updated-ago { white-space: nowrap; }
+
+/* Performance benchmark page */
+.bench-settings { margin-bottom: 12px; }
+.bench-settings .card-head { justify-content: space-between; }
+.bench-kinds { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 16px; margin: 10px 0; }
+.bench-kind { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.bench-options { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; }
+.bench-actions { flex-wrap: wrap; gap: 8px; }
+.bench-overall { margin: 12px 0; }
+.bench-table td { vertical-align: top; }

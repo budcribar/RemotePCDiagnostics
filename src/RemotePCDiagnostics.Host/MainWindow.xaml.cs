@@ -80,6 +80,12 @@ public partial class MainWindow : Window
             new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), App.Log), sp.GetRequiredService<ServicesModule>(), sp.GetRequiredService<ServiceActionService>(),
             sp.GetRequiredService<ISessionContext>(), (level, text) => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.MemorySuggestion, level, text), App.Log,
             remediation: sp.GetRequiredService<RemediationService>()));
+        // Before/after performance benchmarks (state saved so the "before" survives a restart; event 1500).
+        services.AddSingleton(sp => new RemotePCDiagnostics.Core.Benchmarks.BenchmarkService(
+            new RemotePCDiagnostics.Core.Benchmarks.BenchmarkRunner(new WindowsBenchmarkProbes(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISensorProvider>(), App.Log), App.Log),
+            new RemotePCDiagnostics.Core.Benchmarks.FileBenchmarkStore(RemotePCDiagnostics.Core.Benchmarks.FileBenchmarkStore.DefaultPath(), App.Log),
+            sp.GetRequiredService<RemediationService>(), sp.GetRequiredService<ISessionContext>(),
+            (level, text) => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.Benchmark, level, text), App.Log));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(App.Log));
         var provider = _provider = services.BuildServiceProvider();
@@ -114,6 +120,9 @@ public partial class MainWindow : Window
             DriveHealthModule.ModuleName, ServicesModule.ModuleName, ProgramsModule.ModuleName, NetworkModule.ModuleName, EventLogModule.ModuleName, CrashesModule.ModuleName,
             ResourceHogsModule.ModuleName, DeviceDriversModule.ModuleName, BatteryPowerModule.ModuleName);
         _ = Task.Run(async () => { try { await provider.GetRequiredService<RebootResumeCoordinator>().CompletePostRebootIfPendingAsync(provider.GetRequiredService<RemediationService>(), provider.GetRequiredService<DiagnosticsService>(), launch.PostReboot); } catch (Exception ex) { App.Log($"Post-reboot check failed: {ex.Message}"); } });
+
+        // An "after" benchmark requested before a restart runs by itself once start-up has settled.
+        _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>().ResumeAfterRestartAsync(); } catch (Exception ex) { App.Log($"Benchmark resume failed: {ex.Message}"); } });
 
         InitializeComponent();
         App.Log($"MainWindow initialized, mode={mode} server={launch.ServerUri}");

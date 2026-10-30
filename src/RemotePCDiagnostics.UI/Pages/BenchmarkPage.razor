@@ -1,0 +1,159 @@
+@page "/benchmark"
+@using RemotePCDiagnostics.Core.Benchmarks
+@implements IDisposable
+@inject BenchmarkService Bench
+@* Before/after performance benchmarks for a service call: shows the client what the fixes actually changed. *@
+@{
+    var s = Bench.Settings;
+    var running = Bench.Running is not null;
+    var cmp = Bench.Comparison;
+    var before = Bench.Before;
+    var after = Bench.After;
+}
+<div class="toolbar">
+    <span class="icon-badge page-icon"><Icon Name="health" Size="20" /></span><h1 data-testid="bench-title">Performance benchmark</h1>
+</div>
+<p class="meta">Measures what the client feels (start-up, how fast programs open, background load, processor and disk speed, website lookups)
+    before and after the fixes, so the difference can be shown with numbers. Only Windows' own programs are opened, and closed again.
+    Run both passes under the same conditions (plugged in, nothing else running).</p>
+
+<section class="card bench-settings" data-testid="bench-settings">
+    <div class="card-head"><strong>What to measure</strong><span class="meta">about @Minutes(s.EstimatedSeconds()) per pass</span></div>
+    <div class="bench-kinds">
+        @foreach (var info in Benchmarks.All)
+        {
+            var k = info.Kind;
+            <label class="bench-kind" title="@info.ClientMeaning">
+                <input type="checkbox" data-testid="bench-kind-@k.ToString().ToLowerInvariant()" checked="@s.IsEnabled(k)" disabled="@running"
+                       @onchange="e => Toggle(k, e.Value is true)" /> @info.Title
+            </label>
+        }
+    </div>
+    <div class="bench-options">
+        <label class="meta">Runs per test
+            <select data-testid="bench-runs" disabled="@running" @onchange="SetRuns">
+                @foreach (var n in BenchmarkSettings.RunChoices) { <option value="@n" selected="@(n == s.Runs)">@n</option> }
+            </select>
+        </label>
+        <label class="meta"><input type="checkbox" data-testid="bench-restart" checked="@s.RestartBeforeAfter" disabled="@running"
+                                   @onchange="e => Bench.UpdateSettings(s with { RestartBeforeAfter = e.Value is true })" />
+            Restart the PC before the after benchmark (needed for start-up time)</label>
+    </div>
+</section>
+
+<div class="toolbar bench-actions">
+    <button class="btn btn-primary" data-testid="bench-run-before" disabled="@(running || s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)">
+        <Icon Name="play" Size="12" /> @(before is null ? "Run before benchmark" : "Run before benchmark again")</button>
+    @if (s.RestartBeforeAfter)
+    {
+        <button class="btn btn-outline" data-testid="bench-restart-after" disabled="@(running || before is null || Bench.AfterPendingRestart)" @onclick="RestartThenAfter">
+            <Icon Name="refresh" Size="12" /> Restart, then run after benchmark</button>
+        <button class="btn-small" data-testid="bench-run-after" disabled="@(running || before is null)" @onclick="() => Run(BenchmarkPhase.After)" title="Without restarting: start-up time won't be compared">Run after now (no restart)</button>
+    }
+    else
+    {
+        <button class="btn btn-outline" data-testid="bench-run-after" disabled="@(running || before is null)" @onclick="() => Run(BenchmarkPhase.After)"><Icon Name="play" Size="12" /> Run after benchmark</button>
+    }
+    @if (running) { <button class="btn btn-stop" data-testid="bench-stop" @onclick="Bench.Stop">Stop</button> }
+    else if (before is not null) { <button class="btn-small" data-testid="bench-clear" @onclick="Bench.Clear">Start over</button> }
+</div>
+
+@if (running)
+{
+    <p class="status-line" data-testid="bench-progress"><span class="dot dot-running"></span>@(Bench.Running == BenchmarkPhase.Before ? "Before" : "After"): @(Bench.Progress ?? "Starting…")</p>
+}
+@if (Bench.Message is { } msg) { <p class="notice" data-testid="bench-message">@msg</p> }
+
+@if (before is not null && after is not null)
+{
+    var kind = cmp.OverallPercent switch { >= 2 => "ok", <= -2 => "err", _ => "na" };
+    <section class="banner banner-@(kind == "ok" ? "ok" : kind == "err" ? "warn" : "run") bench-overall" data-testid="bench-overall">
+        <span class="banner-icon"><Icon Name="health" Size="24" /></span>
+        <div class="banner-text">
+            <div class="banner-title">@cmp.OverallText</div>
+            <div class="banner-sub">@cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.Better) better · @cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.NoChange) unchanged · @cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.Worse) worse
+                — weighted across the tests below; changes smaller than the run-to-run variation count as unchanged.</div>
+        </div>
+    </section>
+    @foreach (var w in cmp.Warnings) { <p class="notice" data-testid="bench-warning">@w</p> }
+}
+
+@if (before is not null)
+{
+    <table class="detail grid bench-table" data-testid="bench-table">
+        <tr><th scope="col">Test</th><th scope="col">Before</th><th scope="col">After</th><th scope="col">Change</th></tr>
+        @foreach (var info in Benchmarks.All)
+        {
+            var b = before.Get(info.Kind);
+            var a = after?.Get(info.Kind);
+            if (b is null && a is null) continue;
+            var d = cmp.Deltas.FirstOrDefault(x => x.Info.Kind == info.Kind);
+            <tr data-testid="bench-row-@info.Kind.ToString().ToLowerInvariant()">
+                <td><strong>@info.Title</strong><div class="meta">@info.ClientMeaning</div></td>
+                <td>@Cell(info, b)</td>
+                <td>@(after is null ? "—" : Cell(info, a))</td>
+                <td>
+                    @if (d is null || after is null) { <span class="meta">—</span> }
+                    else
+                    {
+                        <span class="chip chip-@(d.Verdict switch { BenchmarkVerdict.Better => "ok", BenchmarkVerdict.Worse => "err", _ => "na" })">
+                            @(d.Verdict switch
+                            {
+                                BenchmarkVerdict.Better => $"{Math.Abs(d.ImprovementPercent!.Value):0}% {info.BetterWord}",
+                                BenchmarkVerdict.Worse => $"{Math.Abs(d.ImprovementPercent!.Value):0}% {info.WorseWord}",
+                                BenchmarkVerdict.NoChange => "No real change",
+                                _ => "Not compared",
+                            })</span>
+                        @if (d.Note is { } n) { <div class="meta">@n</div> }
+                    }
+                </td>
+            </tr>
+        }
+    </table>
+    <p class="meta" data-testid="bench-conditions">@RunLine("Before", before)
+        @if (after is not null) { <br />@RunLine("After", after) }</p>
+}
+else if (!running)
+{
+    <p class="status-line" data-testid="bench-empty">No benchmark yet. Run the before benchmark first, then make the fixes, then run the after benchmark.</p>
+}
+
+@code {
+    protected override void OnInitialized() => Bench.Changed += OnChanged;
+    private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
+    public void Dispose() => Bench.Changed -= OnChanged;
+
+    private void Toggle(BenchmarkKind k, bool on)
+    {
+        var set = Bench.Settings.Enabled.ToList();
+        if (on && !set.Contains(k)) set.Add(k);
+        if (!on) set.Remove(k);
+        Bench.UpdateSettings(Bench.Settings with { Enabled = Enum.GetValues<BenchmarkKind>().Where(set.Contains).ToList() });
+    }
+
+    private void SetRuns(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var n)) Bench.UpdateSettings(Bench.Settings with { Runs = n });
+    }
+
+    private void Run(BenchmarkPhase phase) => _ = Bench.RunAsync(phase);
+    private async Task RestartThenAfter() => await Bench.RestartThenRunAfterAsync();
+
+    private static string Minutes(int seconds) => seconds < 90 ? $"{seconds} s" : $"{Math.Round(seconds / 60.0, 1):0.#} min";
+
+    private static RenderFragment Cell(BenchmarkInfo info, BenchmarkMeasurement? m) => __builder =>
+    {
+        if (m?.Median is { } v)
+        {
+            <span>@info.Show(v)</span>
+            @if (m.Samples.Count > 1) { <div class="meta" title="@string.Join(", ", m.Samples.Select(x => info.Show(x)))">@m.Samples.Count runs · ±@((m.Spread * 50).ToString("0"))%</div> }
+        }
+        else { <span class="meta">@(m?.Note ?? "—")</span> }
+    };
+
+    private static string RunLine(string label, BenchmarkRun r) =>
+        $"{label}: {r.TimeUtc.ToLocalTime():g}{Conditions(r.Conditions)}{(r.Completed ? "" : " · stopped early")}";
+
+    private static string Conditions(BenchmarkConditions c) =>
+        (c.OnBattery is { } b ? (b ? " · on battery" : " · plugged in") : "") + (c.CpuTemperatureC is { } t ? $" · CPU {t:0}°C" : "") + (c.PowerPlan is { } p ? $" · {p} plan" : "");
+}

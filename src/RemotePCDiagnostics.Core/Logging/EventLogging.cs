@@ -18,6 +18,7 @@ public static class LogEventIds
     public const int FanDiagnostic = 1200;
     public const int SensorDriver = 1300;
     public const int MemorySuggestion = 1400;
+    public const int Benchmark = 1500;
     public const int Error = 1900;
 }
 
