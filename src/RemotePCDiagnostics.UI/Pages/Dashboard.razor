@@ -21,10 +21,11 @@
     var tests = Diagnostics.Modules.Where(m => !m.IncludeInRunAll).ToList();
     var all = Diagnostics.Modules.Select(m => Store.Get(m.Name)).ToList();
     var checking = checks.Any(m => Store.Get(m.Name).Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun);
-    var problems = all.Count(r => r.Status is DiagnosticStatus.Warning or DiagnosticStatus.Error);
-    var notRun = tests.Count(m => Store.Get(m.Name).Status == DiagnosticStatus.NotRun);
+    var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message); }), suite);
+    var problems = summary.Problems.Count;
     var last = all.Where(r => r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running)).Select(r => (DateTimeOffset?)r.Timestamp).Max();
-    var bannerKind = checking ? "run" : problems == 0 ? "ok" : all.Any(r => r.Status == DiagnosticStatus.Error) ? "err" : "warn";
+    var bannerKind = checking ? "run" : problems == 0 ? "ok" : summary.HasError ? "err" : "warn";
+    var shownProblems = showAllProblems || problems <= MaxProblems ? summary.Problems : summary.Problems.Take(MaxProblems - 1).ToList();
 }
 <div class="toolbar"><h1 data-testid="dashboard-title">Dashboard</h1></div>
 
@@ -34,12 +35,29 @@
         <div class="banner-title" data-testid="dashboard-health">
             @if (checking) { <span>Checking your PC…</span> }
             else if (problems == 0) { <span>Your PC looks healthy</span> }
-            else { <span>@problems @(problems == 1 ? "thing" : "things") to look at</span> }
+            else
+            {
+                <span>@summary.TitleLead: </span>
+                @for (var i = 0; i < shownProblems.Count; i++)
+                {
+                    var p = shownProblems[i];
+                    <a href="" class="banner-problem banner-problem-@(p.IsError ? "err" : "warn")" data-testid="dashboard-problem-@p.Name.ToLowerInvariant()"
+                       @onclick="() => Open(p.Name)" @onclick:preventDefault>@p.DisplayName</a>@(i < shownProblems.Count - 1 ? ", " : "")
+                }
+                @if (shownProblems.Count < problems)
+                {
+                    <span>, </span><button class="banner-more" data-testid="dashboard-problems-more" @onclick="() => showAllProblems = true">+@(problems - shownProblems.Count) more</button>
+                }
+            }
         </div>
-        <div class="banner-sub">
-            @(last is { } l ? $"Last checked {l.ToLocalTime():g}" : "Not checked yet")
-            @if (notRun > 0) { <span> · @notRun @(notRun == 1 ? "test" : "tests") not run yet</span> }
-        </div>
+        <div class="banner-sub" data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {l.ToLocalTime():g}" : "Not checked yet")</div>
+        @if (summary.NotRunNote is { } note)
+        {
+            <div class="banner-note" data-testid="dashboard-notrun-note">
+                <span>@note</span>
+                @if (summary.NotRunHint is { } hint) { <span class="banner-hint">· @hint</span> }
+            </div>
+        }
     </div>
     <div class="banner-actions">
         <button class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || suiteBusy)" @onclick="RunAll">
@@ -155,6 +173,8 @@
     private StressSuiteProgress? suite;
     private bool suiteBusy => Diagnostics.IsStressSuiteRunning;
     private bool cancelling;
+    private bool showAllProblems;
+    private const int MaxProblems = 4;
 
     protected override void OnInitialized()
     {

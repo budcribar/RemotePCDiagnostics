@@ -170,6 +170,12 @@ svg.chart { background: var(--chart-bg); border: 1px solid var(--border); border
 .banner-text { flex: 1; min-width: 0; }
 .banner-title { font-size: 20px; font-weight: 700; color: var(--text-strong); }
 .banner-sub { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+.banner-title { overflow-wrap: anywhere; line-height: 1.3; }
+.banner-problem { font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.banner-problem-warn { color: var(--warn-text); } .banner-problem-err { color: var(--error-fg); }
+.banner-more { background: none; border: 0; padding: 0; font: inherit; font-size: 15px; color: var(--text-muted); text-decoration: underline; cursor: pointer; }
+.banner-note { font-size: 12px; color: var(--text-muted); margin-top: 6px; max-width: 60ch; }
+.banner-hint { font-style: italic; }
 .dash-grid { display: grid; grid-template-columns: minmax(190px, 1.15fr) repeat(3, minmax(0, 1fr)); gap: 14px; }
 .dash-card { min-height: 140px; display: flex; flex-direction: column; }
 .gauge-card { grid-row: span 2; align-items: stretch; justify-content: space-between; }
