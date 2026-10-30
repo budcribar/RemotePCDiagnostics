@@ -43,18 +43,24 @@ public sealed class ServicesModule(OsqueryRunner runner) : OsqueryAreaModuleBase
     public override string DisplayName => "Services";
     protected override string FailedMessage => "Couldn't read the list of services on this PC.";
 
+    /// <summary>Services from the last successful check, by service name (used by the row Start/Stop/Restart controls).</summary>
+    public IReadOnlyDictionary<string, ServiceInfo> Latest { get; private set; } = new Dictionary<string, ServiceInfo>();
+
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         progress?.Report("Checking services…");
         var q = await QueryAsync(Sql, ct).ConfigureAwait(false);
-        return q.Success ? Build(q.Rows!.Select(ServiceInfo.FromRow).ToList()) : AreaReport.Failed(FailedMessage);
+        if (!q.Success) return AreaReport.Failed(FailedMessage);
+        var list = q.Rows!.Select(ServiceInfo.FromRow).ToList();
+        Latest = list.GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        return Build(list);
     }
 
     public static AreaReport Build(IReadOnlyList<ServiceInfo> all)
     {
         if (all.Count == 0) return new([], "No services were found on this PC.", DiagnosticStatus.Warning);
         string[] cols = ["Service", "Status", "Starts", "Runs as"];
-        AreaRow Row(ServiceInfo s, AreaLevel l) => new(l, [s.Label, s.FriendlyStatus, s.FriendlyStartType, s.FriendlyAccount]);
+        AreaRow Row(ServiceInfo s, AreaLevel l) => new(l, [s.Label, s.FriendlyStatus, s.FriendlyStartType, s.FriendlyAccount], Key: s.Name);
         var byName = all.OrderBy(s => s.Label, StringComparer.CurrentCultureIgnoreCase).ToList();
 
         var stoppedAuto = byName.Where(s => s.IsAutomatic && !s.IsRunning).ToList();

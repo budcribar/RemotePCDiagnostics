@@ -45,7 +45,9 @@ public partial class MainWindow : Window
         });
         services.AddSingleton<IDiagnosticModule>(sp => new GpuStressModule(new RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory(App.Log), sp.GetRequiredService<ISensorProvider>(), App.Log));
         services.AddSingleton<IDiagnosticModule, DriveHealthModule>();
-        services.AddSingleton<IDiagnosticModule, ServicesModule>();
+        services.AddSingleton<ServicesModule>();
+        services.AddSingleton<IDiagnosticModule>(sp => sp.GetRequiredService<ServicesModule>());
+        services.AddSingleton(sp => new ServiceActionService(new WindowsServiceControlBackend(), sp.GetRequiredService<ISessionContext>(), App.Log));
         services.AddSingleton<IDiagnosticModule, ProgramsModule>(sp => new ProgramsModule(sp.GetRequiredService<OsqueryRunner>()));
         services.AddSingleton<IDiagnosticModule, NetworkModule>(sp => new NetworkModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
         services.AddSingleton<IDiagnosticModule, EventLogModule>();
@@ -55,6 +57,12 @@ public partial class MainWindow : Window
         services.AddSingleton<DiagnosticsService>();
         var provider = services.BuildServiceProvider();
         Resources.Add("services", provider);
+        // Tell the person at this PC when a remote technician starts/stops/restarts a service (non-blocking).
+        provider.GetRequiredService<ServiceActionService>().ActionCompleted += rec =>
+        {
+            if (rec.Actor != ServiceActor.Remote) return;
+            Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"The remote technician used the Services page: {rec.Message.TrimEnd('.')}.", "Remote PC Diagnostics", MessageBoxButton.OK, MessageBoxImage.Information));
+        };
 
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
         // Results flow through ResultStore to the Dashboard / Hardware inventory page. Disable with REMOTEPC_AUTORUN=0.

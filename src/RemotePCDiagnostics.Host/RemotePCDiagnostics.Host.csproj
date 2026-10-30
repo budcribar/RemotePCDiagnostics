@@ -17,6 +17,8 @@
     <!-- GPU stress test: Direct3D 11 compute via Vortice (MIT, managed only; uses the d3d11/dxgi/d3dcompiler_47 DLLs that ship with Windows, so no native binaries to copy). -->
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+    <!-- Start/stop/restart from the Services page (WindowsServiceControlBackend). -->
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.14" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />

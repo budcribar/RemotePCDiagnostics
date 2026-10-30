@@ -38,6 +38,21 @@ Planned components are used under their own licenses and need to be confirmed be
 
 Running diagnostics on a customer's PC remotely needs the customer's consent, a clear audit log and read-only operations by default.
 
+## Starting, stopping and restarting services
+
+On the **Services** page, open any services list: each row has **Start** (when stopped) or **Stop** / **Restart** (when running).
+A confirmation dialog explains what the service is (name and description) and what will happen, and names any running services
+that depend on it and will also be stopped. Actions run through `ServiceActionService` (Core) over an injectable `IServiceControlBackend`
+(Host: `WindowsServiceControlBackend`, System.ServiceProcess.ServiceController), wait up to 30 s with a Cancel button, then update only that row.
+Results are plain ("Print Spooler restarted", "Couldn't stop Windows Update: it didn't respond in time."); technical detail and an
+audit line (who/what/when/result) go to the log (RPD_LOG_FILE). A "Recent actions" list (last 20) is shown on the page.
+
+Critical services (RPC, DCOM, LSM/SAM/LSA, Event Log, WMI, crypto, firewall/BFE, Defender/Security Center, DHCP/DNS client, NLA, NSI,
+Power, Plug and Play, profiles, user manager, Group Policy, Task Scheduler, TrustedInstaller, Remote Desktop and others — see
+`ServiceProtection.Protected`), drivers, and the app's own remote-session components show a lock and "Protected by Windows" with no
+Stop/Restart; a stopped protected service may still be started. In Remote mode actions are attributed to "Remote technician" and the
+person at the PC gets a pop-up notice; the app cannot tell whether a specific click came from the local window or the remote browser.
+
 ## Status
 
 Idea stage. This repository currently holds only this README.

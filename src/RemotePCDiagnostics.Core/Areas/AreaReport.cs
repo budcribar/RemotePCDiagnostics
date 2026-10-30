@@ -4,7 +4,8 @@ namespace RemotePCDiagnostics.Core.Areas;
 public enum AreaLevel { Neutral, Ok, Warning, Error }
 
 /// <summary>One drawer table row; <see cref="Values"/> line up with <see cref="AreaCard.Columns"/>. All text is end-user friendly.</summary>
-public sealed record AreaRow(AreaLevel Level, IReadOnlyList<string> Values, IReadOnlyList<string?>? SortKeys = null);
+public sealed record AreaRow(AreaLevel Level, IReadOnlyList<string> Values, IReadOnlyList<string?>? SortKeys = null, string? Key = null);
+/// <remarks><see cref="AreaRow.Key"/> is an optional stable id (e.g. the service name) used for row actions.</remarks>
 
 /// <summary>A summary card plus its drill-down drawer content. Text here is shown to the user; technical detail goes to the log.</summary>
 public sealed record AreaCard(

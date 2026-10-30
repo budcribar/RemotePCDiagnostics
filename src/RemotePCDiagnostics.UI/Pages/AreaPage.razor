@@ -1,6 +1,7 @@
 @page "/module/{Slug}"
 @using RemotePCDiagnostics.Core.Areas
 @inherits StoreAwareComponent
+@inject IServiceProvider Sp
 @* Generic card + drill-down page for area modules (drive health, services, programs, network, events, crashes). *@
 @{
     var m = Diagnostics.Modules.FirstOrDefault(x => string.Equals(x.Name, Slug, StringComparison.OrdinalIgnoreCase));
@@ -14,6 +15,8 @@ else
     var r = Store.Get(m.Name);
     var rep = r.Payload as AreaReport;
     var busy = r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
+    var svcModule = m as ServicesModule;
+    var svcActions = svcModule is null ? null : Sp.GetService(typeof(ServiceActionService)) as ServiceActionService;
     <div class="toolbar"><h1 data-testid="area-title">@m.DisplayName</h1></div>
     <p data-testid="area-status" class="@(r.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
         <span class="@DotClass(r.Status)"></span>
@@ -53,15 +56,31 @@ else
                                 <th @key="col" class="sortable-th" role="button" tabindex="0" aria-sort="@(sc == col ? (sd ? "descending" : "ascending") : "none")"
                                     data-testid="area-th-@col" @onclick="() => ToggleSort(m.Name, open, col)">@open.Columns[col]<span class="sort-arrow">@(sc == col ? (sd ? " ▼" : " ▲") : "")</span></th>
                             }
+                            @if (svcActions is not null) { <th>Actions</th> }
                         </tr>
                         @foreach (var row in AreaSort.Sort(open.Rows, sc, sd))
                         {
-                            <tr @key="row">
+                            var svc = SvcInfo(svcModule, row);
+                            var level = svc is not null && _svcStatus.ContainsKey(svc.Name) ? (svc.IsRunning ? AreaLevel.Ok : svc.IsAutomatic ? AreaLevel.Warning : AreaLevel.Neutral) : row.Level;
+                            <tr @key="row" data-testid="@(row.Key is null ? null : "svc-row-" + row.Key)">
                                 @for (var i = 0; i < row.Values.Count; i++)
                                 {
                                     var col = open.Columns.Count > i ? open.Columns[i] : "";
-                                    <td>@if (i == 0) { <span class="dot dot-@Dot(row.Level)"></span> }
-                                        @if (col is "Type" or "Level") { <span class="badge badge-@row.Values[i].ToLowerInvariant()">@row.Values[i]</span> } else { @row.Values[i] }</td>
+                                    <td>@if (i == 0) { <span class="dot dot-@Dot(level)"></span> }
+                                        @if (col is "Type" or "Level") { <span class="badge badge-@row.Values[i].ToLowerInvariant()">@row.Values[i]</span> } else if (svc is not null && i == 1 && _svcStatus.ContainsKey(svc.Name)) { @svc.FriendlyStatus } else { @row.Values[i] }</td>
+                                }
+                                @if (svcActions is not null)
+                                {
+                                    <td class="svc-actions">
+                                        @if (svc is not null)
+                                        {
+                                            var o = svcActions.OptionsFor(svc);
+                                            @if (o.CanStart) { <button data-testid="svc-start" @onclick="() => _svcUi!.Ask(svc, ServiceAction.Start)">Start</button> }
+                                            @if (o.CanStop) { <button data-testid="svc-stop" @onclick="() => _svcUi!.Ask(svc, ServiceAction.Stop)">Stop</button> }
+                                            @if (o.CanRestart) { <button data-testid="svc-restart" @onclick="() => _svcUi!.Ask(svc, ServiceAction.Restart)">Restart</button> }
+                                            @if (o.IsProtected) { <span class="svc-lock" title="This service is needed by Windows and can't be stopped from here.">🔒 @o.ProtectedText</span> }
+                                        }
+                                    </td>
                                 }
                             </tr>
                         }
@@ -70,6 +89,7 @@ else
             </aside>
         }
     }
+    @if (svcActions is not null) { <ServiceActions @ref="_svcUi" Actions="svcActions" OnRowChanged="RowChanged" /> }
 }
 
 @code {
@@ -87,6 +107,19 @@ else
         var (cur, desc) = SortFor(module, c);
         _sorts[module + "/" + c.Id] = cur == col ? (col, !desc) : (col, false);
     }
+
+    // Services: live status per service after a Start/Stop/Restart, so only that row updates (no full re-check).
+    private ServiceActions? _svcUi;
+    private readonly Dictionary<string, string> _svcStatus = new(StringComparer.OrdinalIgnoreCase);
+    private object? _svcSeen;
+    private ServiceInfo? SvcInfo(ServicesModule? sm, AreaRow row)
+    {
+        if (sm is null || row.Key is null) return null;
+        if (!ReferenceEquals(sm.Latest, _svcSeen)) { _svcSeen = sm.Latest; _svcStatus.Clear(); } // fresh check replaces live overrides
+        if (!sm.Latest.TryGetValue(row.Key, out var s)) return null;
+        return _svcStatus.TryGetValue(s.Name, out var st) ? s with { Status = st } : s;
+    }
+    private void RowChanged((string Name, string Status) c) => _svcStatus[c.Name] = c.Status;
     private static string Dot(AreaLevel l) => l switch
     {
         AreaLevel.Ok => "ok", AreaLevel.Warning => "warning", AreaLevel.Error => "error", _ => "neutral",
