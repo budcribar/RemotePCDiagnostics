@@ -25,11 +25,28 @@ public static class MemoryCommandAllowlist
     public sealed record Command(string FileName, IReadOnlyList<string> Arguments);
     public static readonly Command BuildServerShutdown = new("dotnet", ["build-server", "shutdown"]);
 
-    public static bool IsAllowed(string fileName, IReadOnlyList<string> args)
+    public static bool IsAllowed(string fileName, IReadOnlyList<string> args) =>
+        IsTrustedDotnet(fileName ?? "") && args.Count == 2 && args[0] == "build-server" && args[1] == "shutdown";
+
+    /// <summary>"dotnet"/"dotnet.exe" (resolved from PATH), or exactly dotnet.exe in an SDK folder under Program Files.
+    /// Any other path (relative, UNC, another folder, "..") is refused.</summary>
+    private static bool IsTrustedDotnet(string fileName)
     {
-        var f = (fileName ?? "").Replace('/', '\\').Split('\\').Last();
-        return (f.Equals("dotnet", StringComparison.OrdinalIgnoreCase) || f.Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase))
-               && args.Count == 2 && args[0] == "build-server" && args[1] == "shutdown";
+        if (fileName.Equals("dotnet", StringComparison.OrdinalIgnoreCase) || fileName.Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase))
+            return true;
+        var f = fileName.Replace('/', '\\');
+        if (f.Contains("..", StringComparison.Ordinal) || f.StartsWith(@"\\", StringComparison.Ordinal)) return false;
+        return TrustedDotnetPaths().Contains(f, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<string> TrustedDotnetPaths()
+    {
+        string?[] roots =
+        [
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetEnvironmentVariable("ProgramW6432"), @"C:\Program Files", @"C:\Program Files (x86)",
+        ];
+        return roots.Where(r => !string.IsNullOrWhiteSpace(r)).Select(r => r!.Replace('/', '\\').TrimEnd('\\') + @"\dotnet\dotnet.exe").Distinct(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>Settings pages an "Open settings" button may launch.</summary>

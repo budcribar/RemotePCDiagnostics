@@ -415,14 +415,15 @@ public sealed class RemediationService(
                "$dl = $s.CreateUpdateDownloader(); $dl.Updates = $toDownload; $dlRes = $dl.Download(); " +
                "$toInstall = New-Object -ComObject Microsoft.Update.UpdateColl; " +
                "foreach ($u in $res.Updates) { if ($u.IsDownloaded) { [void]$toInstall.Add($u) } }; " +
-               "$installed = 0; " +
+               "$installed = 0; $installResult = -1; " +
                "if ($toInstall.Count -gt 0) { " +
                "  $inst = $s.CreateUpdateInstaller(); $inst.Updates = $toInstall; $instRes = $inst.Install(); " +
-               "  if ($instRes.ResultCode -eq 2 -or $instRes.ResultCode -eq 3) { $installed = $toInstall.Count } " +
+               "  $installResult = [int]$instRes.ResultCode; " +
+               "  if ($installResult -eq 2 -or $installResult -eq 3) { $installed = $toInstall.Count } " +
                "} else { " +
                "  Start-Process 'UsoClient.exe' -ArgumentList 'StartInteractiveScan' -WindowStyle Hidden -ErrorAction SilentlyContinue " +
                "} " +
-               "[pscustomobject]@{ Count = $titles.Count; Installed = $installed; Titles = $titles } | ConvertTo-Json -Compress";
+               "[pscustomobject]@{ Count = $titles.Count; Installed = $installed; InstallResult = $installResult; Titles = $titles } | ConvertTo-Json -Compress";
     }
 
     private async Task<RemediationResult> RunWindowsUpdateAsync(bool driversOnly, CancellationToken ct)
@@ -439,6 +440,8 @@ public sealed class RemediationService(
             var root = doc.RootElement;
             var count = root.TryGetProperty("Count", out var c) && c.TryGetInt32(out var ci) ? ci : 0;
             var installed = root.TryGetProperty("Installed", out var ins) && ins.TryGetInt32(out var ii) ? ii : 0;
+            // IUpdateInstaller ResultCode: 2 succeeded, 3 succeeded with errors, 4 failed, 5 aborted; -1/absent = no install attempted.
+            var installResult = root.TryGetProperty("InstallResult", out var ir) && ir.TryGetInt32(out var iri) ? iri : -1;
             var titles = new List<string>();
             if (root.TryGetProperty("Titles", out var tEl))
             {
@@ -460,6 +463,8 @@ public sealed class RemediationService(
             if (titles.Count > 2) sample += $" (+{titles.Count - 2} more)";
             if (installed > 0)
                 return new(true, $"Installed {installed} of {count} {kindWord} update(s): {sample}.");
+            if (installResult is 4 or 5)
+                return new(false, $"Found {count} {kindWord} update(s) ({sample}) but Windows couldn't install them. Try again from Settings > Windows Update.");
             return new(true, $"Found {count} available {kindWord} update(s) ({sample}) and triggered Windows Update scan/download.");
         }
         catch

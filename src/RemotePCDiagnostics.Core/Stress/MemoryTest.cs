@@ -37,6 +37,7 @@ public sealed class MemoryTest(IMemoryInfo memory, IMemTestHelperLauncher launch
         int stop = StopNone, pass = 0; double frac = 0; long errors = 0, tested = bytes;
         MemTestMessage.Done? done = null; string? fail = null;
         double? temp = null, fan = null, maxT = null;
+        var badOffsets = new HashSet<long>(); // only touched by the reader task
         using (proc)
         {
             var reader = Task.Run(async () =>
@@ -47,7 +48,11 @@ public sealed class MemoryTest(IMemoryInfo memory, IMemTestHelperLauncher launch
                     {
                         case MemTestMessage.Allocated a: Interlocked.Exchange(ref tested, a.Bytes); break;
                         case MemTestMessage.Progress p: Volatile.Write(ref pass, p.Pass); Volatile.Write(ref frac, p.Fraction); Interlocked.Exchange(ref errors, Math.Max(Interlocked.Read(ref errors), p.Errors)); break;
-                        case MemTestMessage.BadWord b: log?.Invoke($"Memory test: bad word at offset {b.Offset} expected {b.Expected:X16} got {b.Actual:X16}"); break;
+                        case MemTestMessage.BadWord b:
+                            log?.Invoke($"Memory test: bad word at offset {b.Offset} expected {b.Expected:X16} got {b.Actual:X16}");
+                            // Count it now: the helper may die before its next PROGRESS/DONE carries the total.
+                            if (badOffsets.Add(b.Offset)) Interlocked.Exchange(ref errors, Math.Max(Interlocked.Read(ref errors), badOffsets.Count));
+                            break;
                         case MemTestMessage.Done d: Volatile.Write(ref done, d); Interlocked.Exchange(ref errors, Math.Max(Interlocked.Read(ref errors), d.Errors)); break;
                         case MemTestMessage.Fail f: Volatile.Write(ref fail, f.Reason); log?.Invoke($"Memory test: helper failed: {f.Reason}"); break;
                         default: log?.Invoke($"Memory test helper: {line}"); break;
