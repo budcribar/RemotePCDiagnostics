@@ -26,8 +26,8 @@ public sealed class DashboardSummary
             if (NotRun.Count == 0) return null;
             var parts = new List<string>();
             var stress = NotRun.Where(m => m.IsStress).ToList();
-            if (stress.Count > 0)
-                parts.Add(stress.Count > 1 && stress.Count == stressTotal ? "stress tests" : JoinList(stress.Select(m => Lower(m.DisplayName))));
+            if (stress.Count > 1 && stress.Count == stressTotal) parts.Add("stress tests");
+            else parts.AddRange(stress.Select(m => Lower(m.DisplayName)));
             parts.AddRange(NotRun.Where(m => !m.IsStress).Select(m => Lower(m.DisplayName)));
             return $"On-demand tests not run: {NotRun.Count} ({JoinList(parts)})";
         }
