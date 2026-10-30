@@ -6,11 +6,11 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// <summary>One physical drive's health (Windows Storage: MSFT_PhysicalDisk + storage reliability counters). Strings as reported.</summary>
 public sealed record DriveHealth(
     string Name, string Serial, string MediaType, string BusType, string Health, string Operational,
-    long? SizeBytes, int? TemperatureC, int? Wear, long? ReadErrors, long? WriteErrors, long? PowerOnHours)
+    long? SizeBytes, int? TemperatureC, int? Wear, long? ReadErrors, long? WriteErrors, long? PowerOnHours, string Letters = "")
 {
     public static DriveHealth FromRow(IReadOnlyDictionary<string, string> r) => new(
         r.Str("Name"), r.Str("Serial"), r.Str("MediaType"), r.Str("BusType"), r.Str("Health"), r.Str("Operational"),
-        r.Long("Size"), r.Int("Temperature"), r.Int("Wear"), r.Long("ReadErrors"), r.Long("WriteErrors"), r.Long("PowerOnHours"));
+        r.Long("Size"), r.Int("Temperature"), r.Int("Wear"), r.Long("ReadErrors"), r.Long("WriteErrors"), r.Long("PowerOnHours"), r.Str("Letters"));
 
     public const int HotC = 60, WornPercent = 90;
 
@@ -62,7 +62,9 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
 
     public const string Script =
         "$ErrorActionPreference='SilentlyContinue';" +
-        "$d=@(Get-PhysicalDisk | ForEach-Object { $r=$_ | Get-StorageReliabilityCounter; [pscustomobject]@{" +
+        "$d=@(Get-PhysicalDisk | ForEach-Object { $r=$_ | Get-StorageReliabilityCounter;" +
+        "$l=(@(Get-Partition -DiskNumber $_.DeviceId | Where-Object { $_.DriveLetter } | ForEach-Object { [string]$_.DriveLetter }) -join '');" +
+        "[pscustomobject]@{Letters=$l;" +
         "Name=[string]$_.FriendlyName;Serial=[string]$_.SerialNumber;MediaType=[string]$_.MediaType;BusType=[string]$_.BusType;" +
         "Health=[string]$_.HealthStatus;Operational=[string]($_.OperationalStatus -join ', ');Size=[string]$_.Size;" +
         "Temperature=[string]$r.Temperature;Wear=[string]$r.Wear;ReadErrors=[string]$r.ReadErrorsUncorrected;" +
@@ -119,8 +121,8 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             var actions = new List<AreaAction>();
             if (i == 0)
                 actions.Add(new(RemediationKind.CleanTempFiles, "Clean up temporary files", "", "Temporary files & Recycle Bin"));
-            if (d.Kind == "SSD")
-                actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", "C", d.Name.Length > 0 ? d.Name : "SSD"));
+            if (d.Kind == "SSD" && RemediationService.DriveLetters(d.Letters) is { Length: > 0 } letters)
+                actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", letters, d.Name.Length > 0 ? d.Name : "SSD"));
             return new AreaCard($"drive{i}", d.Name.Length > 0 ? d.Name : $"Drive {i + 1}", d.Level, d.Verdict, meta, cols, rows,
                 Actions: actions.Count > 0 ? actions : null);
         }).ToList();

@@ -27,6 +27,8 @@ public static class ProcessProtection
         if (ProtectedNames.Contains(trimmed)) return true;
         var noExt = Path.GetFileNameWithoutExtension(trimmed);
         if (ProtectedNames.Contains(noExt)) return true;
+        // Same list the Memory page uses ("this app and its web view", security, shell), so End task can't kill them either.
+        if (Memory.ProtectedProcesses.Names.Contains(trimmed) || Memory.ProtectedProcesses.Names.Contains(noExt)) return true;
         return ServiceProtection.IsSelfComponent(trimmed);
     }
 }
@@ -217,9 +219,9 @@ public sealed class RemediationService(
                 action,
                 $"Optimize / Retrim {label}?",
                 "Sends TRIM / ReTrim optimization commands to the solid-state drive so it can maintain peak write speeds.",
-                "Runs 'Optimize-Volume -DriveLetter C -ReTrim'.",
-                "Requires administrator privileges.",
-                true),
+                DriveLetters(action.Target) is { Length: > 0 } dl ? $"Runs 'Optimize-Volume -DriveLetter {string.Join(",", dl.ToCharArray())} -ReTrim'." : "Nothing will run.",
+                DriveLetters(action.Target).Length > 0 ? "Requires administrator privileges." : "This drive has no drive letter to optimize.",
+                DriveLetters(action.Target).Length > 0),
 
             _ => new(action, action.ButtonText, "", "", null, true),
         };
@@ -356,7 +358,7 @@ public sealed class RemediationService(
         RemediationKind.CleanTempFiles => await RunCleanTempFilesAsync(ct).ConfigureAwait(false),
 
         RemediationKind.OptimizeSsd => await RunPowerShellAsync(
-            "$ErrorActionPreference='Stop'; Optimize-Volume -DriveLetter C -ReTrim",
+            $"$ErrorActionPreference='Stop'; Optimize-Volume -DriveLetter {string.Join(",", DriveLetters(action.Target).ToCharArray())} -ReTrim",
             $"Optimized / Retrimmed {Display(action)}.",
             $"Couldn't optimize {Display(action)} (administrator rights required).",
             ct).ConfigureAwait(false),
@@ -368,6 +370,13 @@ public sealed class RemediationService(
         !string.IsNullOrWhiteSpace(a.TargetLabel) ? a.TargetLabel : !string.IsNullOrWhiteSpace(a.Target) ? a.Target : "item";
 
     private static string EscapeSingleQuotes(string s) => s.Replace("'", "''");
+
+    /// <summary>Volume letters of an OptimizeSsd target ("C", "DE", "C:"), upper-cased and de-duplicated; empty when anything else is in it.</summary>
+    public static string DriveLetters(string? target)
+    {
+        var t = (target ?? "").Replace(":", "").Replace(",", "").Trim().ToUpperInvariant();
+        return t.Length > 0 && t.All(c => c is >= 'A' and <= 'Z') ? new string(t.Distinct().ToArray()) : "";
+    }
 
     private async Task<RemediationResult> RunSimpleAsync(string exe, IReadOnlyList<string> args, string okMsg, string failMsg, CancellationToken ct)
     {
@@ -449,14 +458,15 @@ public sealed class RemediationService(
                "$dl = $s.CreateUpdateDownloader(); $dl.Updates = $toDownload; $dlRes = $dl.Download(); " +
                "$toInstall = New-Object -ComObject Microsoft.Update.UpdateColl; " +
                "foreach ($u in $res.Updates) { if ($u.IsDownloaded) { [void]$toInstall.Add($u) } }; " +
-               "$installed = 0; " +
+               "$installed = 0; $installResult = -1; " +
                "if ($toInstall.Count -gt 0) { " +
                "  $inst = $s.CreateUpdateInstaller(); $inst.Updates = $toInstall; $instRes = $inst.Install(); " +
-               "  if ($instRes.ResultCode -eq 2 -or $instRes.ResultCode -eq 3) { $installed = $toInstall.Count } " +
+               "  $installResult = [int]$instRes.ResultCode; " +
+               "  if ($installResult -eq 2 -or $installResult -eq 3) { $installed = $toInstall.Count } " +
                "} else { " +
                "  Start-Process 'UsoClient.exe' -ArgumentList 'StartInteractiveScan' -WindowStyle Hidden -ErrorAction SilentlyContinue " +
                "} " +
-               "[pscustomobject]@{ Count = $titles.Count; Installed = $installed; Titles = $titles } | ConvertTo-Json -Compress";
+               "[pscustomobject]@{ Count = $titles.Count; Installed = $installed; InstallResult = $installResult; Titles = $titles } | ConvertTo-Json -Compress";
     }
 
     private async Task<RemediationResult> RunWindowsUpdateAsync(bool driversOnly, CancellationToken ct)
@@ -473,6 +483,8 @@ public sealed class RemediationService(
             var root = doc.RootElement;
             var count = root.TryGetProperty("Count", out var c) && c.TryGetInt32(out var ci) ? ci : 0;
             var installed = root.TryGetProperty("Installed", out var ins) && ins.TryGetInt32(out var ii) ? ii : 0;
+            // IUpdateInstaller ResultCode: 2 succeeded, 3 succeeded with errors, 4 failed, 5 aborted; -1/absent = no install attempted.
+            var installResult = root.TryGetProperty("InstallResult", out var ir) && ir.TryGetInt32(out var iri) ? iri : -1;
             var titles = new List<string>();
             if (root.TryGetProperty("Titles", out var tEl))
             {
@@ -494,6 +506,8 @@ public sealed class RemediationService(
             if (titles.Count > 2) sample += $" (+{titles.Count - 2} more)";
             if (installed > 0)
                 return new(true, $"Installed {installed} of {count} {kindWord} update(s): {sample}.", UpdatesInstalled: installed);
+            if (installResult is 4 or 5)
+                return new(false, $"Found {count} {kindWord} update(s) ({sample}) but Windows couldn't install them. Try again from Settings > Windows Update.");
             return new(true, $"Found {count} available {kindWord} update(s) ({sample}) and triggered Windows Update scan/download.");
         }
         catch

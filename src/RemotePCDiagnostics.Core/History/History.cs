@@ -233,13 +233,13 @@ public static class HistoryQuery
             .Where(x => x.V is not null).OrderBy(x => x.TimeUtc).TakeLast(max).Select(x => (x.TimeUtc, x.V!.Value)).ToList();
     }
 
-    public static string FormatDuration(double? seconds) => seconds switch
+    public static string FormatDuration(double? seconds)
     {
-        null => "—",
-        < 60 => $"{seconds.Value:0} s",
-        < 3600 => $"{(int)(seconds.Value / 60)} min {(int)(seconds.Value % 60)} s",
-        _ => $"{(int)(seconds.Value / 3600)} h {(int)(seconds.Value % 3600 / 60)} min",
-    };
+        if (seconds is not { } raw || double.IsNaN(raw)) return "—";
+        // Round once, then split, so 59.6 s reads "1 min 0 s" (not "60 s") and 3599.6 s reads "1 h 0 min".
+        var s = (long)Math.Round(Math.Max(0, raw), MidpointRounding.AwayFromZero);
+        return s < 60 ? $"{s} s" : s < 3600 ? $"{s / 60} min {s % 60} s" : $"{s / 3600} h {s % 3600 / 60} min";
+    }
 
     /// <summary>CSV export (invariant, RFC 4180 quoting).</summary>
     public static string ToCsv(IEnumerable<HistoryEntry> entries)
