@@ -80,6 +80,22 @@ jobs:
       - name: Unit tests
         run: dotnet test RemotePCDiagnostics.sln -c Release --no-build --logger "trx;LogFileName=unit.trx" --results-directory artifacts/test-results
 
+      - name: Report failed tests as annotations
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem artifacts/test-results -Recurse -Filter *.trx | ForEach-Object {
+            [xml]$x = Get-Content $_.FullName
+            $c = $x.TestRun.ResultSummary.Counters
+            Write-Output "::notice title=Unit tests::total=$($c.total) passed=$($c.passed) failed=$($c.failed)"
+            $x.TestRun.Results.UnitTestResult | Where-Object { $_.outcome -ne 'Passed' } | Select-Object -First 40 | ForEach-Object {
+              $m = ([string]$_.Output.ErrorInfo.Message) -replace '\r?\n', ' '
+              if ($m.Length -gt 300) { $m = $m.Substring(0, 300) }
+              $t = ([string]$_.testName).Replace('%', '%25').Replace(':', '%3A').Replace(',', '%2C')
+              Write-Output "::error title=$t::$($m.Replace('%', '%25'))"
+            }
+          }
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
