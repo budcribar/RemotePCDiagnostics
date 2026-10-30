@@ -50,6 +50,27 @@ try {
   await page.waitForFunction(() => document.documentElement.getAttribute('data-theme-choice') === 'system', null, { timeout: 10_000 });
   console.log(`Theme system: data-theme=${await attr('data-theme')}`);
 
+  // Checks & tests screen: loads, groups expand/collapse, a row opens the detail pane, Run buttons enable correctly. Stress tests are never started here.
+  await page.getByTestId('nav-checks').click();
+  await page.getByTestId('checks-title').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('checks-collapse-all').click();
+  await page.locator('[data-testid^="checks-row-"]').first().waitFor({ state: 'detached', timeout: 10_000 });
+  await page.getByTestId('checks-expand-all').click();
+  const firstRow = page.locator('[data-testid="checks-group-checks"] [data-testid^="checks-row-"]').first();
+  await firstRow.waitFor({ state: 'visible', timeout: 10_000 });
+  await firstRow.click();
+  await page.getByTestId('checks-detail-title').waitFor({ state: 'visible', timeout: 10_000 });
+  console.log('Checks detail:', await page.getByTestId('checks-detail-title').innerText());
+  // Any startup checks must finish first; then both Run buttons are enabled (nothing running, items selected).
+  await page.waitForFunction(() => !document.querySelector('[data-testid="checks-run-checks"]')?.disabled, null, { timeout: 180_000 });
+  if (await page.getByTestId('checks-run-stress').isDisabled()) throw new Error('Run selected (stress) should be enabled when idle');
+  if (await page.getByTestId('checks-run-one').isDisabled()) throw new Error('Run just this should be enabled when idle');
+  // Clearing the stress selection disables its Run button (tri-state: some -> all -> none).
+  for (let i = 0; i < 2 && !(await page.getByTestId('checks-run-stress').isDisabled()); i++) await page.getByTestId('checks-selectall-stress').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="checks-run-stress"]')?.disabled === true, null, { timeout: 10_000 });
+  console.log('Checks page: run buttons OK');
+  await page.screenshot({ path: `${outDir}/checks.png`, fullPage: true });
+
   // History page (reads the Windows Event Log): shows the results table, or the friendly empty/unavailable state when the source has no events.
   await page.getByTestId('nav-history').click();
   await page.getByTestId('history-title').waitFor({ state: 'visible', timeout: 15_000 });
