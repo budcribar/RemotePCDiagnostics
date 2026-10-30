@@ -95,7 +95,8 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
 
         var uptime = upQ.Success && upQ.Rows!.Count > 0 ? SystemUptimeInfo.FromRow(upQ.Rows[0], fastStartup) : null;
         var procs = procQ.Success ? procQ.Rows!.Select(ProcessResourceRow.FromRow).ToList() : null;
-        return Build(uptime, procs, memory);
+        var restartPending = RebootResumeCoordinator.TryReadPendingStateFile() is not null;
+        return Build(uptime, procs, memory, restartPending);
     }
 
     public static List<ProcessGroupUsage> GroupProcesses(IEnumerable<ProcessResourceRow> rows) =>
@@ -129,7 +130,7 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
 
     private static string NumKey(long v) => v.ToString(CultureInfo.InvariantCulture);
 
-    public static AreaReport Build(SystemUptimeInfo? uptime, IReadOnlyList<ProcessResourceRow>? processes, MemoryUse? memory = null)
+    public static AreaReport Build(SystemUptimeInfo? uptime, IReadOnlyList<ProcessResourceRow>? processes, MemoryUse? memory = null, bool restartPending = false)
     {
         if (uptime is null && processes is null) return AreaReport.Failed("Couldn't read running processes and uptime on this PC.");
         var cards = new List<AreaCard>();
@@ -185,11 +186,13 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
             var uptimeActions = new List<AreaAction>();
             if (uptime.FastStartupEnabled == true)
                 uptimeActions.Add(new(RemediationKind.DisableFastStartup, "Turn off Fast Startup"));
-            if (recommendRestart)
+            if (restartPending) uptimeActions.Add(new(RemediationKind.CancelScheduledRestart, "Cancel restart"));
+            else if (recommendRestart) uptimeActions.Add(new(RemediationKind.ScheduleCleanRestart, "Restart PC in 60s", ResourceBaselineSnapshot.FromOsquery(uptime, processes).Encode(), "Clean PC restart"));
+            else if (recommendRestart)
             {
                 var baseline = ResourceBaselineSnapshot.FromOsquery(uptime, processes);
-                uptimeActions.Add(new(RemediationKind.ScheduleCleanRestart, "Restart PC in 60s", baseline.Encode(), "Clean PC restart"));
-                uptimeActions.Add(new(RemediationKind.CancelScheduledRestart, "Cancel restart"));
+
+
             }
             cards.Add(new("uptime", "System uptime", level, $"Up {uptime.FriendlyDuration}", meta, ["Detail", "Value"], rows,
                 Actions: uptimeActions.Count > 0 ? uptimeActions : null));

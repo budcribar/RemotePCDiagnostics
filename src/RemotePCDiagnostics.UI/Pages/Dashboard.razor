@@ -147,7 +147,7 @@
 @code {
     private void Open(string module)
     {
-        Screen.SelectedModule = module;
+        Screen.FocusModule(module);
         Nav.NavigateTo("checks");
     }
     private void Key(KeyboardEventArgs e, string module) { if (e.Key is "Enter" or " ") Open(module); }

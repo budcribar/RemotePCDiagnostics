@@ -178,7 +178,11 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
                 foreach (var ide in Directory.EnumerateDirectories(vsRoot, "IDE", new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 4, IgnoreInaccessible = true }))
                     if (Directory.Exists(Path.Combine(ide, @"Extensions\Microsoft\LiveShare"))) liveShare = true;
             }
-            return new(liveShare, exts);
+            var deduped = exts
+                .GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(x => x.SizeBytes).First())
+                .ToList();
+            return new(liveShare, deduped);
         }
         catch (Exception ex) { Log("Visual Studio probe failed: " + ex.Message); return null; }
     }

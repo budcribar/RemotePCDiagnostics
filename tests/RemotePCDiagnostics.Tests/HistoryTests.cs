@@ -69,8 +69,13 @@ public sealed class HistoryTests
     [Fact]
     public void XPath_FiltersProviderIdAndRange()
     {
-        Assert.Equal("*[System[Provider[@Name='RemotePCDiagnostics'] and (EventID=1100)]]", EventLogHistoryStore.BuildXPath(null));
-        Assert.Equal("*[System[Provider[@Name='RemotePCDiagnostics'] and (EventID=1100) and TimeCreated[timediff(@SystemTime) <= 86400000]]]", EventLogHistoryStore.BuildXPath(TimeSpan.FromHours(24)));
+        Assert.Equal("*[System[Provider[@Name='RemotePCDiagnostics'] and (EventID=1100 or EventID=1400)]]", EventLogHistoryStore.BuildXPath(null));
+        Assert.Equal("*[System[Provider[@Name='RemotePCDiagnostics'] and (EventID=1100 or EventID=1400) and TimeCreated[timediff(@SystemTime) <= 86400000]]]", EventLogHistoryStore.BuildXPath(TimeSpan.FromHours(24)));
+        var memEvt = HistoryEventParser.Parse("Memory suggestion applied\r\nActor: Remote technician\r\nSuggestion: close-chrome\r\nAction: CloseApp\r\nTarget: chrome\r\nResult: Success\r\nMessage: Done: Closed Chrome. Freed about 640 MB. Available RAM 4.0 → 4.6 GB.", DateTimeOffset.UtcNow)!;
+        Assert.Equal(HistorySummary.MemoryFixModuleId, memEvt.Module);
+        Assert.Equal("OK", memEvt.Outcome);
+        Assert.Equal((640L * 1024 * 1024).ToString(), memEvt.Measurement("FreedMemoryBytes"));
+        Assert.Equal("Remote technician", memEvt.Measurement("Actor"));
     }
 
     [Fact]

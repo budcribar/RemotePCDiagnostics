@@ -34,7 +34,7 @@ else
             @foreach (var c in rep.Cards)
             {
                 @* EmptyText describes an empty drawer; only show it on the card when there really is nothing in it. *@
-                <SummaryCard Id="@c.Id" Title="@c.Title" OnOpen="Open" ErrorText="@c.ErrorText" EmptyText="@(c.Rows.Count == 0 ? c.EmptyText : null)" Dot="@Dot(c.Level)">
+                <SummaryCard Id="@c.Id" Title="@c.Title" OnOpen="Open" ErrorText="@c.ErrorText" EmptyText="@(c.Rows.Count == 0 && string.IsNullOrEmpty(c.Headline) ? c.EmptyText : null)" Dot="@Dot(c.Level)">
                     <div class="headline">@c.Headline</div>
                     @if (c.Meta.Length > 0) { <div class="meta">@c.Meta</div> }
                     @if (remActions is not null && c.Actions is { Count: > 0 })

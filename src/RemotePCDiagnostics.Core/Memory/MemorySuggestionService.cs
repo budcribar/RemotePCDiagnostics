@@ -89,7 +89,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
     public SuggestionResult? ResultFor(string id) { lock (_gate) return _results.GetValueOrDefault(id); }
     public UndoEntry? UndoFor(string id) { lock (_gate) return _undo.LastOrDefault(u => u.Id == id); }
 
-    private string Actor => ServiceActor.From(session);
+    public string Actor => ServiceActor.From(session);
     private void Log(string m) => log?.Invoke("[memory] " + m);
     private void Raise() { try { Changed?.Invoke(); } catch (Exception ex) { Log("Changed handler failed: " + ex.Message); } }
 
