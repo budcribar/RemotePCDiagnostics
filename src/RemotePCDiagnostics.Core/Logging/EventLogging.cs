@@ -81,8 +81,7 @@ public sealed class ResultEventLogger
         {
             if (r.Status == DiagnosticStatus.NotRun) return;
             if (r.Status == DiagnosticStatus.Running) { _started[r.ModuleName] = r.Timestamp; return; }
-            var prev = _last.TryGetValue(r.ModuleName, out var p) ? p : default((DateTimeOffset, DiagnosticStatus, string)?);
-            if (prev is { } x)
+            if (_last.TryGetValue(r.ModuleName, out var x))
             {
                 if (x.Stamp == r.Timestamp && x.Status == r.Status && x.Message == r.Message) return; // same result stored again
                 if (r.ModuleName == LibreHardwareMonitorModule.ModuleName && x.Status == r.Status && r.Timestamp - x.Stamp < SensorsThrottle) return;
