@@ -39,6 +39,16 @@ jobs:
           & $osq --json "SELECT hardware_vendor, hardware_model, physical_memory FROM system_info;"
           if ($LASTEXITCODE -ne 0) { throw "osqueryi.exe exited $LASTEXITCODE" }
 
+      - name: Verify memory test helper in Host output
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem src/RemotePCDiagnostics.Host/bin/Release -Recurse -Filter RemotePCDiagnostics.Host.exe | Select-Object -First 1
+          $mt = Join-Path $exe.DirectoryName 'RemotePCDiagnostics.MemTest.exe'
+          if (-not (Test-Path $mt)) { throw "RemotePCDiagnostics.MemTest.exe missing from Host output: $mt" }
+          $out = & $mt --bytes 67108864 --seconds 2
+          $out | Select-Object -Last 2
+          if (-not ($out -match '^MT DONE 67108864 \d+ 0$')) { throw "memory test helper did not report a clean DONE" }
+
       - name: Unit tests
         run: dotnet test RemotePCDiagnostics.sln -c Release --no-build --logger "trx;LogFileName=unit.trx" --results-directory artifacts/test-results
 
