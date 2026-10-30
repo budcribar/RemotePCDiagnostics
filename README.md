@@ -71,6 +71,7 @@ tests/
   - Remote mode: start a RemoteWebViewService (`dotnet tool update -g PeakSWC.RemoteWebViewService --version 10.*-*`, then `RemoteWebViewService`), and run
     `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`. The window shows a link for the technician's browser.
 - osquery: `osqueryi.exe` 5.24.0 is bundled from `third_party/osquery/` and copied to the Host output as `tools\osquery\osqueryi.exe` (override with `RPD_OSQUERYI_PATH`). Without it the Osquery module reports a clear "not found" error.
+- HardeningKitty: PowerShell module 0.9.4 (MIT) is bundled from `third_party/HardeningKitty/module/` and copied to the Host output as `tools\HardeningKitty\` (override with `RPD_HARDENINGKITTY_PATH`); version/hashes in `third_party/HardeningKitty/README.md`. There is no installer yet — "installed" means it ships inside the Host build/publish folder. The **Security audit** page runs it on demand only (Start/Cancel, 5-minute timeout, not auto-run, not in Run All), in read-only `Audit` mode via `powershell.exe -NoProfile -ExecutionPolicy Bypass` for that process only. A complete audit needs administrator rights (the app manifest requests them).
 
 ### Local vs Remote mode
 

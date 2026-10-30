@@ -39,6 +39,34 @@ jobs:
           & $osq --json "SELECT hardware_vendor, hardware_model, physical_memory FROM system_info;"
           if ($LASTEXITCODE -ne 0) { throw "osqueryi.exe exited $LASTEXITCODE" }
 
+      - name: Verify bundled HardeningKitty in Host output and run an audit
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem src/RemotePCDiagnostics.Host/bin/Release -Recurse -Filter RemotePCDiagnostics.Host.exe | Select-Object -First 1
+          $hk = Join-Path $exe.DirectoryName 'tools/HardeningKitty'
+          $psd1 = Join-Path $hk 'HardeningKitty.psd1'
+          if (-not (Test-Path $psd1)) { throw "HardeningKitty missing from Host output: $psd1" }
+          (Get-FileHash (Join-Path $hk 'HardeningKitty.psm1') -Algorithm SHA256).Hash
+          (Get-AuthenticodeSignature (Join-Path $hk 'HardeningKitty.psm1')) | Format-List Status, SignerCertificate
+          "{0:N1} MB bundled" -f ((Get-ChildItem $hk -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
+          $csv = Join-Path $env:RUNNER_TEMP 'hk-ci/report.csv'
+          New-Item -ItemType Directory -Force (Split-Path $csv) | Out-Null
+          # Same command line as SecurityAuditModule.BuildArguments (Windows PowerShell 5.1, policy bypass for this process only).
+          $cmd = "`$ErrorActionPreference='Stop';`$ProgressPreference='SilentlyContinue';Import-Module -Name '$psd1' -Force;Invoke-HardeningKitty -Mode Audit -Report -ReportFile '$csv' -SkipMachineInformation -SkipLanguageWarning | Out-Null"
+          $ps = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $job = Start-Job { param($ps, $cmd) & $ps -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $cmd 2>&1 | Select-Object -Last 20; "exit=$LASTEXITCODE" } -ArgumentList $ps, $cmd
+          if (-not (Wait-Job $job -Timeout 600)) { Stop-Job $job; throw 'HardeningKitty audit exceeded 10 minutes' }
+          Receive-Job $job
+          "elapsed=$($sw.Elapsed)"
+          if (-not (Test-Path $csv)) { throw 'No HardeningKitty report produced' }
+          $rows = Import-Csv $csv
+          "rows=$($rows.Count)"; $rows | Group-Object TestResult | Format-Table Name, Count
+          $rows | Select-Object -First 5 | Format-Table ID, Category, Name, Severity, Result, Recommended, TestResult
+          if ($rows.Count -lt 10) { throw "Too few audit rows: $($rows.Count)" }
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Copy-Item $csv artifacts/hardeningkitty-ci-report.csv
+
       - name: Verify memory test helper in Host output
         shell: pwsh
         run: |
