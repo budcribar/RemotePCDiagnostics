@@ -147,7 +147,7 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
         try
         {
             var snap = sensors.Read();
-            var temps = snap.Readings.Where(r => r.SensorType == SensorKind.Temperature && r.HasData).ToList();
+            var temps = snap.Readings.Where(r => r.SensorType == SensorKind.Temperature && r.IsLive).ToList();
             var gpuTemps = temps.Where(r => r.HardwareType == HardwareKind.Gpu).ToList();
             double? gpu = gpuTemps.Count == 0 ? null : gpuTemps.Max(r => r.Value);
             var fans = snap.Readings.Where(r => r.SensorType == SensorKind.Fan && r.HasData).ToList();
