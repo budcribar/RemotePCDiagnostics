@@ -4,7 +4,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 public sealed class EventLogModule(SystemCommandRunner commands) : AreaModuleBase(commands.Log)
 {
     public const string ModuleName = "EventLog";
-    public const int Days = 7, MaxPerLog = 300;
+    public const int Days = 7, MaxPerLog = 300, RepeatErrors = 5;
     public override string Name => ModuleName;
     public override string DisplayName => "Windows error log";
     protected override string FailedMessage => "Couldn't read the Windows error log on this PC.";
@@ -28,6 +28,8 @@ public sealed class EventLogModule(SystemCommandRunner commands) : AreaModuleBas
         if (system is null && app is null) return AreaReport.Failed("Couldn't read the Windows error log on this PC.");
         var all = (system ?? []).Concat(app ?? []).OrderByDescending(e => e.Time).ToList();
         var critical = all.Where(e => e.Level == 1).ToList();
+        // Yellow only for critical problems or 5+ errors from the same source; routine/isolated errors stay green but listed.
+        var repeated = all.Where(e => e.Level == 2).GroupBy(e => (e.Source, e.Channel)).Where(g => g.Count() >= RepeatErrors).Select(g => g.Key).ToHashSet();
         var cards = new List<AreaCard>
         {
             new("critical", "Critical problems", critical.Count > 0 ? AreaLevel.Error : AreaLevel.Ok,
@@ -38,7 +40,7 @@ public sealed class EventLogModule(SystemCommandRunner commands) : AreaModuleBas
         };
         AreaCard LogCard(string id, string title, IReadOnlyList<WinEvent>? events, string what) => events is null
             ? AreaCard.Failed(id, title, $"Couldn't read {what}.")
-            : new(id, title, events.Count > 0 ? AreaLevel.Warning : AreaLevel.Ok,
+            : new(id, title, events.Any(e => e.Level == 2 && repeated.Contains((e.Source, e.Channel))) ? AreaLevel.Warning : AreaLevel.Ok,
                 events.Count == 0 ? "No errors" : AreaModuleBase.Plural(events.Count, "error") + (events.Count >= MaxPerLog ? " or more" : ""),
                 $"In the last {Days} days", Cols, events.Select(Row).ToList(),
                 Note: "Most PCs log some errors; they only matter if they repeat or match a problem you're seeing.");
@@ -61,7 +63,7 @@ public sealed class EventLogModule(SystemCommandRunner commands) : AreaModuleBas
                 system is not null ? $"{system.Count(e => e.Level == 2)} Windows errors" : null,
                 app is not null ? $"{app.Count(e => e.Level == 2)} app errors" : null,
             }.Where(x => x is not null));
-        var status = critical.Count > 0 || system is null || app is null ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
+        var status = critical.Count > 0 || repeated.Count > 0 || system is null || app is null ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
         return new(cards, summary, status);
     }
 }
