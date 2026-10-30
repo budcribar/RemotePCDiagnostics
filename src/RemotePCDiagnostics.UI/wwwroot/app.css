@@ -400,6 +400,7 @@ body.ct-resizing { user-select: none; cursor: col-resize; }
 .ct-detail-title .meta { margin: 4px 0 0; }
 .ct-run-one { width: auto; flex: none; }
 .ct-detail-body .toolbar > h1, .ct-detail-body .toolbar > .page-icon { display: none; }
+.ct-detail-body > .toolbar:not(:has(button, select, input, label)), .ct-detail-body > .status-line { display: none; }
 @media (max-width: 900px) {
   .ct-page { height: auto; }
   .ct-workspace { flex-direction: column; }

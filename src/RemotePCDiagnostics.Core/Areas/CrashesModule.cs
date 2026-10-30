@@ -4,12 +4,12 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// App crashes ("Application Error", event 1000) and freezes ("Application Hang", event 1002) from the Windows
 /// Application log over the last 30 days, via <see cref="WindowsEventLog"/>.
 /// </summary>
-public sealed class CrashesModule(SystemCommandRunner commands) : AreaModuleBase(commands.Log)
+public sealed class CrashesModule(SystemCommandRunner commands, bool includeSystemCrashes = false, Func<IReadOnlyList<MinidumpFile>>? minidumpReader = null) : AreaModuleBase(commands.Log)
 {
     public const string ModuleName = "Crashes";
     public const int Days = 30, Max = 500, RecentDays = 7, RepeatCrashes = 3;
     public override string Name => ModuleName;
-    public override string DisplayName => "App crashes";
+    public override string DisplayName => includeSystemCrashes ? "Crashes & unexpected restarts" : "App crashes";
     protected override string FailedMessage => "Couldn't read app crash reports on this PC.";
     private readonly WindowsEventLog _log = new(commands);
 
@@ -21,7 +21,21 @@ public sealed class CrashesModule(SystemCommandRunner commands) : AreaModuleBase
         progress?.Report("Looking for app crashes…");
         var events = await _log.QueryAsync("Application", Query, Max, ct).ConfigureAwait(false);
         Log($"{Name}: source=wevtutil Application log (Application Error 1000 / Application Hang 1002) events={events?.Count.ToString() ?? "failed"}");
-        return events is null ? AreaReport.Failed(FailedMessage) : Build(events);
+        var appReport = events is null ? AreaReport.Failed(FailedMessage) : Build(events);
+        if (!includeSystemCrashes || events is null)
+            return appReport;
+
+        var sysEvents = await _log.QueryAsync("System", BsodHistoryModule.Query, BsodHistoryModule.MaxEvents, ct).ConfigureAwait(false);
+        if (sysEvents is null)
+            return appReport;
+
+        IReadOnlyList<MinidumpFile> dumps = [];
+        try { dumps = (minidumpReader ?? BsodHistoryModule.ReadSystemMinidumps)(); } catch { }
+        var bsodReport = BsodHistoryModule.Build(sysEvents, dumps);
+        var combinedCards = bsodReport.Cards.Concat(appReport.Cards).ToList();
+        var combinedStatus = (DiagnosticStatus)Math.Max((int)bsodReport.Status, (int)appReport.Status);
+        var combinedSummary = $"{bsodReport.Summary} · {appReport.Summary}";
+        return new(combinedCards, combinedSummary, combinedStatus);
     }
 
     public sealed record Incident(DateTimeOffset Time, string App, string Version, bool IsCrash, string Part, string Message);

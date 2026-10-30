@@ -3,6 +3,7 @@
 @using RemotePCDiagnostics.Core.Sensors
 @inherits StoreAwareComponent
 @inject NavigationManager Nav
+@inject ChecksScreenState Screen
 @inject RemotePCDiagnostics.Core.Session.ISessionContext Session
 @implements IAsyncDisposable
 @{
@@ -13,12 +14,8 @@
     var sensors = th.Payload as SensorReport;
     var cpuGroup = sensors?.Groups.FirstOrDefault(g => g.Id == "cpu");
     var cpuTemp = cpuGroup?.Hottest;
-    var driveGroup = sensors?.Groups.FirstOrDefault(g => g.Id == "storage");
-    var fanGroup = sensors?.Groups.FirstOrDefault(g => g.Id == "fans");
-    var rpm = fanGroup?.Readings.Select(x => x.Reading.Value).Where(x => x is > 0).DefaultIfEmpty().Max();
     var querying = hw.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
     var checks = Diagnostics.Modules.Where(m => m.IncludeInRunAll).ToList();
-    var tests = Diagnostics.Modules.Where(m => !m.IncludeInRunAll).ToList();
     var all = Diagnostics.Modules.Select(m => Store.Get(m.Name)).ToList();
     var checking = checks.Any(m => Store.Get(m.Name).Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun);
     var stressBusy = suiteBusy || Diagnostics.IsAnyStressRunning;
@@ -27,6 +24,10 @@
     var last = all.Where(r => r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running)).Select(r => (DateTimeOffset?)r.Timestamp).Max();
     var bannerKind = checking ? "run" : problems == 0 ? "ok" : summary.HasError ? "err" : "warn";
     var shownProblems = showAllProblems || problems <= MaxProblems ? summary.Problems : summary.Problems.Take(MaxProblems - 1).ToList();
+    var attentionModules = Diagnostics.Modules
+        .Where(m => m.Name is not ("Osquery" or LibreHardwareMonitorModule.ModuleName))
+        .Where(m => Store.Get(m.Name).Status is DiagnosticStatus.Warning or DiagnosticStatus.Error)
+        .ToList();
 }
 <div class="toolbar"><h1 data-testid="dashboard-title">Dashboard</h1></div>
 
@@ -92,7 +93,7 @@
 <div class="dash-grid">
     <div class="card dash-card gauge-card card-click" data-testid="dashboard-card-sensors" role="link" tabindex="0"
          @onclick='() => Open(LibreHardwareMonitorModule.ModuleName)' @onkeydown='e => Key(e, LibreHardwareMonitorModule.ModuleName)'>
-        <div class="card-head"><span class="icon-badge"><Icon Name="temp" /></span><strong>CPU temp</strong>
+        <div class="card-head"><span class="icon-badge"><Icon Name="temp" /></span><strong>Temperatures &amp; fans</strong>
             <StatusChip Status="@(cpuTemp is null && !thBusy ? DiagnosticStatus.NotRun : th.Status)" Text="@(cpuTemp is null && !thBusy ? "No reading" : null)" /></div>
         <div class="gauge gauge-@Level(cpuGroup)" data-testid="dashboard-cpu-gauge">
             <svg viewBox="0 0 120 120" role="img" aria-label="@(cpuTemp is { } a ? $"CPU temperature {a:0} degrees" : "No CPU temperature reading")">
@@ -102,74 +103,51 @@
                     <circle class="gauge-fill" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="@($"{Math.Clamp(t, 0, 100) * 0.75:0.#} 100")" transform="rotate(135 60 60)" />
                 }
                 <text class="gauge-num" x="60" y="62" text-anchor="middle">@(cpuTemp is { } v ? $"{v:0}°C" : "—")</text>
-                <text class="gauge-sub" x="60" y="80" text-anchor="middle">@(cpuTemp is null ? (thBusy ? "Checking…" : "No reading") : "of 100°C")</text>
+                <text class="gauge-sub" x="60" y="80" text-anchor="middle">@(cpuTemp is null ? (thBusy ? "Checking…" : "No reading") : "CPU temp")</text>
             </svg>
         </div>
         <div class="desc center" data-testid="dashboard-thermal">@(thBusy ? "Checking temperatures…" : th.Message)</div>
     </div>
 
-    @if (sensors is not null)
-    {
-        <div class="card dash-card card-click" data-testid="dashboard-card-drivetemp" role="link" tabindex="0"
-             @onclick='() => Open(LibreHardwareMonitorModule.ModuleName)' @onkeydown='e => Key(e, LibreHardwareMonitorModule.ModuleName)'>
-            <div class="card-head"><span class="icon-badge"><Icon Name="temp" /></span><strong>Drive temp</strong><StatusChip Status="@ToStatus(driveGroup)" Text="@(driveGroup?.Hottest is null ? "No reading" : null)" /></div>
-            <div class="val">@(driveGroup?.Hottest is { } d ? $"{d:0}°C" : "—")</div>
-            <div class="desc">@(driveGroup?.Hottest is null ? "Not reported by this PC" : Level(driveGroup) == "ok" ? "Normal range" : "Running warm")</div>
+    <div class="card dash-card card-click" data-testid="dashboard-card-osquery" role="link" tabindex="0"
+         @onclick='() => Open("Osquery")' @onkeydown='e => Key(e, "Osquery")'>
+        <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(hw.Status)"><Icon Name="@Icon.ForModule("Osquery")" /></span><strong>Hardware inventory</strong>
+            <StatusChip Status="@(querying ? DiagnosticStatus.Running : hw.Status)" Text="@(querying ? "Checking…" : null)" /></div>
+        <div data-testid="dashboard-status" class="@(hw.Status == DiagnosticStatus.Error ? "card-msg error-text" : "card-msg")">
+            @if (querying) { <span>Querying hardware…</span> }
+            else if (hw.Status == DiagnosticStatus.Error || inv is null) { <span>@hw.Message</span> }
+            else { <span>@inv.FriendlySummary()</span> }
         </div>
-        @if (fanGroup is { Readings.Count: > 0 })
-        {
-        <div class="card dash-card card-click" data-testid="dashboard-card-fans" role="link" tabindex="0"
-             @onclick='() => Open(LibreHardwareMonitorModule.ModuleName)' @onkeydown='e => Key(e, LibreHardwareMonitorModule.ModuleName)'>
-            <div class="card-head"><span class="icon-badge"><Icon Name="fan" /></span><strong>Fans</strong><StatusChip Status="@ToStatus(fanGroup)" /></div>
-            <div class="val">@(rpm is { } f ? $"{f:0} RPM" : "—")</div>
-            <div class="desc">@fanGroup.Readings.Count fan(s) reported</div>
-        </div>
-        }
-    }
+        @if (!querying) { <div class="meta">Updated @hw.Timestamp.ToLocalTime().ToString("g")</div> }
+    </div>
 
-    @foreach (var m in checks.Where(m => m.Name != LibreHardwareMonitorModule.ModuleName))
+    @foreach (var m in attentionModules)
     {
         var r = Store.Get(m.Name);
-        var busy = r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
         var name = m.Name;
         <div class="card dash-card card-click" data-testid="dashboard-card-@m.Name.ToLowerInvariant()" role="link" tabindex="0"
              @onclick="() => Open(name)" @onkeydown="e => Key(e, name)">
             <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(r.Status)"><Icon Name="@Icon.ForModule(m.Name)" /></span><strong title="@m.DisplayName">@m.DisplayName</strong>
-                <StatusChip Status="@(busy ? DiagnosticStatus.Running : r.Status)" Text="@(busy ? "Checking…" : null)" /></div>
-            @if (m.Name == "Osquery")
-            {
-                <div data-testid="dashboard-status" class="@(hw.Status == DiagnosticStatus.Error ? "card-msg error-text" : "card-msg")">
-                    @if (querying) { <span>Querying hardware…</span> }
-                    else if (hw.Status == DiagnosticStatus.Error || inv is null) { <span>@hw.Message</span> }
-                    else { <span>@inv.FriendlySummary()</span> }
-                </div>
-            }
-            else { <div class="card-msg">@(busy ? "Checking…" : r.Message)</div> }
-            @if (!busy) { <div class="meta">Updated @r.Timestamp.ToLocalTime().ToString("g")</div> }
+                <StatusChip Status="@r.Status" /></div>
+            <div class="card-msg">@r.Message</div>
+            <div class="meta">Updated @r.Timestamp.ToLocalTime().ToString("g")</div>
         </div>
     }
-</div>
 
-<h2 class="section-title">Tests</h2>
-<div class="test-grid">
-    @foreach (var m in tests)
-    {
-        var r = Store.Get(m.Name);
-        var name = m.Name;
-        <div class="card test-card" data-testid="dashboard-card-@m.Name.ToLowerInvariant()">
-            <span class="icon-badge icon-@StatusChip.Kind(r.Status)"><Icon Name="@Icon.ForModule(m.Name)" /></span>
-            <div>
-                <strong class="test-name" title="@TestName(m)">@TestName(m)</strong>
-                <div class="desc" data-testid="dashboard-@TestId(m.Name)"><span class="@DotClass(r.Status)"></span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run yet", DiagnosticStatus.Running => "Running…", _ => r.Message })@(Diagnostics.StressRunLabel(m.Name) is { } lbl && r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running) ? $" ({lbl})" : "")</div>
-            </div>
-            <button class="btn btn-outline" data-testid="dashboard-start-@m.Name.ToLowerInvariant()" @onclick="() => Open(name)">
-                <Icon Name="play" Size="12" />@(r.Status == DiagnosticStatus.Running ? "View" : r.Status == DiagnosticStatus.NotRun ? "Start" : "Run again")</button>
-        </div>
-    }
+    <div class="card dash-card card-click" data-testid="dashboard-open-checks" role="link" tabindex="0"
+         @onclick='() => Nav.NavigateTo("checks")' @onkeydown='e => { if (e.Key is "Enter" or " ") Nav.NavigateTo("checks"); }'>
+        <div class="card-head"><span class="icon-badge"><Icon Name="play" /></span><strong>Checks &amp; tests workspace</strong></div>
+        <div class="card-msg">Inspect all @checks.Count system checks and run hardware stress tests or deep scans.</div>
+        <div class="meta">Open Checks &amp; tests →</div>
+    </div>
 </div>
 
 @code {
-    private void Open(string module) => Nav.NavigateTo($"module/{module.ToLowerInvariant()}");
+    private void Open(string module)
+    {
+        Screen.SelectedModule = module;
+        Nav.NavigateTo("checks");
+    }
     private void Key(KeyboardEventArgs e, string module) { if (e.Key is "Enter" or " ") Open(module); }
     private void RunAll() => _ = Diagnostics.RunAllAsync();
 
@@ -188,7 +166,6 @@
     private void OnSuite(object? s, StressSuiteProgress p) { suite = p; if (p.Finished) cancelling = false; _ = InvokeAsync(StateHasChanged); }
     public ValueTask DisposeAsync() { Diagnostics.StressSuiteProgressChanged -= OnSuite; Dispose(); return ValueTask.CompletedTask; }
 
-    // One click, no confirmation (also in Remote mode: the user already let the technician in).
     private async Task RunSuite(StressSuiteMode mode)
     {
         if (Diagnostics.IsStressSuiteRunning) return;
@@ -218,9 +195,5 @@
         _ => "Not run",
     };
 
-    // Previous dashboard test ids for the stress status lines.
-    private static string TestId(string module) => module switch { "MemoryTest" => "memorytest", "NetworkTest" => "networktest", _ => module.ToLowerInvariant() };
-    private static string TestName(IDiagnosticModule m) => m.Name switch { "DiskSpeed" => "Disk speed test", "NetworkTest" => "Network test", "GpuStress" => "GPU stress test", _ => m.DisplayName };
     private static string Level(SensorGroup? g) => g is null || g.Readings.Count == 0 ? "na" : g.Level switch { SensorLevel.Critical => "err", SensorLevel.Warning => "warn", _ => "ok" };
-    private static DiagnosticStatus ToStatus(SensorGroup? g) => Level(g) switch { "err" => DiagnosticStatus.Error, "warn" => DiagnosticStatus.Warning, "ok" => DiagnosticStatus.Ok, _ => DiagnosticStatus.NotRun };
 }

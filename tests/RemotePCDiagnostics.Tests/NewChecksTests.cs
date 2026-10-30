@@ -175,4 +175,36 @@ public class NewChecksTests
         Assert.Equal(AreaLevel.Warning, rep.Cards.Single(c => c.Id == "wifi").Level);
         Assert.Equal(AreaLevel.Ok, rep.Cards.Single(c => c.Id == "ipdns").Level);
     }
+
+    [Fact]
+    public async Task ConsolidatedModules_MergeCards_And_AvoidDuplicateEventFlags()
+    {
+        var kernelPowerXml = EventLogTests.Ev("Microsoft-Windows-Kernel-Power", 41, 1, DateTimeOffset.UtcNow.AddDays(-1).ToString("O"),
+            "The system has rebooted without cleanly shutting down first.", "System");
+        var appCrashXml = EventLogTests.Ev("Application Error", 1000, 2, DateTimeOffset.UtcNow.AddDays(-1).ToString("O"),
+            "Faulting application name: app.exe", "Application", "<Data Name='AppName'>app.exe</Data><Data Name='AppVersion'>1.0</Data>");
+
+        var launcher = new ScriptedLauncher((file, args) =>
+        {
+            if (args.Count > 1 && args[1] == "System")
+                return ScriptedLauncher.Ok(kernelPowerXml);
+            if (args.Count > 1 && args[1] == "Application")
+                return ScriptedLauncher.Ok(appCrashXml);
+            return ScriptedLauncher.Ok("");
+        });
+
+        // EventLogModule with excludeCrashEvents: true ignores Kernel-Power 41 and Application Error 1000
+        var evMod = new EventLogModule(new SystemCommandRunner(launcher), excludeCrashEvents: true);
+        var evRes = await evMod.RefreshAsync(null);
+        Assert.Equal(DiagnosticStatus.Ok, evRes.Status);
+
+        // CrashesModule with includeSystemCrashes: true includes both BSOD/power cards and app crash cards
+        var crashMod = new CrashesModule(new SystemCommandRunner(launcher), includeSystemCrashes: true, minidumpReader: () => []);
+        Assert.Equal("Crashes & unexpected restarts", crashMod.DisplayName);
+        var crashRes = await crashMod.RefreshAsync(null);
+        var crashRep = Assert.IsType<AreaReport>(crashRes.Payload);
+        Assert.Contains(crashRep.Cards, c => c.Id == "bsods");
+        Assert.Contains(crashRep.Cards, c => c.Id == "power");
+        Assert.Contains(crashRep.Cards, c => c.Id == "crashes");
+    }
 }

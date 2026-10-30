@@ -39,7 +39,13 @@ public sealed record RemediationPlan(
     string? Warning,
     bool Allowed);
 
-public sealed record RemediationResult(bool Success, string Message);
+public sealed record RemediationResult(
+    bool Success,
+    string Message,
+    long FreedDiskBytes = 0,
+    int RemovedFiles = 0,
+    long FreedMemoryBytes = 0,
+    int UpdatesInstalled = 0);
 
 public sealed record RemediationRecord(
     DateTime When,
@@ -47,7 +53,11 @@ public sealed record RemediationRecord(
     RemediationKind Kind,
     string Target,
     bool Success,
-    string Message);
+    string Message,
+    long FreedDiskBytes = 0,
+    int RemovedFiles = 0,
+    long FreedMemoryBytes = 0,
+    int UpdatesInstalled = 0);
 
 /// <summary>
 /// Plans, executes, and audits one-click automated fixes across the 4 diagnostic remediation areas:
@@ -58,7 +68,7 @@ public sealed class RemediationService(
     ISessionContext? session = null,
     Action<string>? log = null)
 {
-    public const int MaxRecent = 20;
+    public const int MaxRecent = 50;
     public const string BalancedPlanGuid = "381b4222-f694-41f0-9685-ff5bb260df2e";
 
     private readonly List<RemediationRecord> _recent = [];
@@ -265,13 +275,23 @@ public sealed class RemediationService(
             }
         }
 
-        var rec = new RemediationRecord(DateTime.Now, actor, action.Kind, action.TargetLabel.Length > 0 ? action.TargetLabel : action.Target, result.Success, result.Message);
+        var rec = new RemediationRecord(
+            DateTime.Now,
+            actor,
+            action.Kind,
+            action.TargetLabel.Length > 0 ? action.TargetLabel : action.Target,
+            result.Success,
+            result.Message,
+            result.FreedDiskBytes,
+            result.RemovedFiles,
+            result.FreedMemoryBytes,
+            result.UpdatesInstalled);
         lock (_gate)
         {
             _recent.Insert(0, rec);
             if (_recent.Count > MaxRecent) _recent.RemoveAt(_recent.Count - 1);
         }
-        Log($"AUDIT when={rec.When:O} actor='{actor}' kind={action.Kind} target='{action.Target}' success={result.Success} message='{result.Message}'");
+        Log($"AUDIT when={rec.When:O} actor='{actor}' kind={action.Kind} target='{action.Target}' success={result.Success} freedDisk={result.FreedDiskBytes} freedMem={result.FreedMemoryBytes} message='{result.Message}'");
         try { ActionCompleted?.Invoke(rec); } catch (Exception ex) { Log($"ActionCompleted handler failed: {ex}"); }
         return result;
     }
@@ -374,8 +394,31 @@ public sealed class RemediationService(
             return new(false, $"{Display(action)} is protected by Windows and cannot be stopped.");
 
         var procName = Path.GetFileNameWithoutExtension(action.Target.Trim());
-        var script = $"$ErrorActionPreference='Stop'; Stop-Process -Name '{EscapeSingleQuotes(procName)}' -Force";
-        return await RunPowerShellAsync(script, $"Closed {Display(action)}.", $"Couldn't close {Display(action)} (it may have already exited or requires administrator rights).", ct).ConfigureAwait(false);
+        var escaped = EscapeSingleQuotes(procName);
+        var script = $"$ErrorActionPreference='Stop'; " +
+                     $"$mem = [int64]((Get-Process -Name '{escaped}' -ErrorAction SilentlyContinue | Measure-Object WorkingSet64 -Sum).Sum); " +
+                     $"Stop-Process -Name '{escaped}' -Force; " +
+                     $"[pscustomobject]@{{ FreedMemoryBytes = $mem }} | ConvertTo-Json -Compress";
+        var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
+            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], ct).ConfigureAwait(false);
+        if (pr is not { ExitCode: 0 })
+            return new(false, $"Couldn't close {Display(action)} (it may have already exited or requires administrator rights).");
+
+        long freedMem = 0;
+        if (!string.IsNullOrWhiteSpace(pr.StdOut))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(pr.StdOut);
+                if (doc.RootElement.TryGetProperty("FreedMemoryBytes", out var m) && m.TryGetInt64(out var mb))
+                    freedMem = Math.Max(0, mb);
+            }
+            catch { }
+        }
+        var msg = freedMem > 0
+            ? $"Closed {Display(action)} ({HardwareInventory.FormatBytes(freedMem)} RAM freed)."
+            : $"Closed {Display(action)}.";
+        return new(true, msg, FreedMemoryBytes: freedMem);
     }
 
     private async Task<RemediationResult> RunFlushAndRenewAsync(CancellationToken ct)
@@ -450,7 +493,7 @@ public sealed class RemediationService(
             var sample = string.Join(", ", titles.Take(2));
             if (titles.Count > 2) sample += $" (+{titles.Count - 2} more)";
             if (installed > 0)
-                return new(true, $"Installed {installed} of {count} {kindWord} update(s): {sample}.");
+                return new(true, $"Installed {installed} of {count} {kindWord} update(s): {sample}.", UpdatesInstalled: installed);
             return new(true, $"Found {count} available {kindWord} update(s) ({sample}) and triggered Windows Update scan/download.");
         }
         catch
@@ -486,7 +529,11 @@ public sealed class RemediationService(
             var root = doc.RootElement;
             var count = root.TryGetProperty("RemovedFiles", out var c) && c.TryGetInt32(out var ci) ? ci : 0;
             var bytes = root.TryGetProperty("FreedBytes", out var b) && b.TryGetInt64(out var bi) ? bi : 0L;
-            return new(true, $"Cleaned {count} temporary file(s) ({HardwareInventory.FormatBytes(bytes)} freed) and emptied the Recycle Bin.");
+            return new(
+                true,
+                $"Cleaned {count} temporary file(s) ({HardwareInventory.FormatBytes(bytes)} freed) and emptied the Recycle Bin.",
+                FreedDiskBytes: Math.Max(0, bytes),
+                RemovedFiles: Math.Max(0, count));
         }
         catch
         {

@@ -1,7 +1,7 @@
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>Critical events and errors from the Windows System and Application logs over the last week (via <see cref="WindowsEventLog"/>).</summary>
-public sealed class EventLogModule(SystemCommandRunner commands) : AreaModuleBase(commands.Log)
+public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCrashEvents = false) : AreaModuleBase(commands.Log)
 {
     public const string ModuleName = "EventLog";
     public const int Days = 7, MaxPerLog = 300, RepeatErrors = 5;
@@ -17,6 +17,11 @@ public sealed class EventLogModule(SystemCommandRunner commands) : AreaModuleBas
         var system = await _log.QueryAsync("System", q, MaxPerLog, ct).ConfigureAwait(false);
         var app = await _log.QueryAsync("Application", q, MaxPerLog, ct).ConfigureAwait(false);
         Log($"{Name}: source=wevtutil (windows_events needs the osquery event subscriber) system={system?.Count.ToString() ?? "failed"} application={app?.Count.ToString() ?? "failed"}");
+        if (excludeCrashEvents)
+        {
+            system = system?.Where(e => !BsodHistoryModule.IsBugCheckEvent(e) && !BsodHistoryModule.IsPowerLossEvent(e)).ToList();
+            app = app?.Where(e => !(e.EventId is 1000 or 1002 && (e.Provider.Contains("Application Error", StringComparison.OrdinalIgnoreCase) || e.Provider.Contains("Application Hang", StringComparison.OrdinalIgnoreCase)))).ToList();
+        }
         return Build(system, app);
     }
 
