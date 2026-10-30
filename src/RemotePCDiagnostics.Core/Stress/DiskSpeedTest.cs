@@ -279,7 +279,7 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
         try
         {
             var snap = sensors.Read();
-            var temps = snap.Readings.Where(r => r.SensorType == SensorKind.Temperature && r.HasData).ToList();
+            var temps = snap.Readings.Where(r => r.SensorType == SensorKind.Temperature && r.IsLive).ToList();
             var drive = temps.Where(r => r.HardwareType == HardwareKind.Storage).Select(r => r.Value).DefaultIfEmpty().Max();
             var fan = snap.Readings.Where(r => r.SensorType == SensorKind.Fan && r.HasData).Select(r => r.Value).DefaultIfEmpty().Max();
             var crit = temps.FirstOrDefault(r => SensorThresholds.Evaluate(r) == SensorLevel.Critical);

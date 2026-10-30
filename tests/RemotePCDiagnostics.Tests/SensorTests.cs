@@ -171,3 +171,46 @@ public class SensorNoDataTests
         Assert.Equal(5, rep.VisibleGroups.Count);
     }
 }
+
+public class SensorFriendlyNameTests
+{
+    private static SensorReading D(string n, double v) => new("SAMSUNG MZAL8512HDLU-00BL2", HardwareKind.Storage, n, SensorKind.Temperature, v, v, v, "°C");
+
+    [Theory]
+    [InlineData("Composite Temperature", "Drive temperature (overall)")]
+    [InlineData("Temperature #1", "Drive temperature, sensor 1")]
+    [InlineData("Temperature #2", "Drive temperature, sensor 2")]
+    [InlineData("Warning Temperature", "Drive warning limit")]
+    [InlineData("Critical Temperature", "Drive critical limit")]
+    public void StorageNames_AreFriendly(string raw, string friendly) => Assert.Equal(friendly, D(raw, 50).FriendlyName);
+
+    [Fact]
+    public void DeviceLabel_IncludesType() => Assert.Equal("Drive: SAMSUNG MZAL8512HDLU-00BL2", D("Composite Temperature", 50).FriendlyDevice);
+
+    [Fact]
+    public void DriveLimits_ExcludedFromHottestAndStatus()
+    {
+        var rep = LibreHardwareMonitorModule.BuildReport(new SensorSnapshot(
+            [D("Composite Temperature", 50), D("Temperature #1", 48), D("Warning Temperature", 82), D("Critical Temperature", 84)], IsElevated: true));
+        var g = rep.Groups.First(x => x.Id == "storage");
+        Assert.Equal(50, g.Hottest);
+        Assert.True(D("Critical Temperature", 84).IsLimit);
+        Assert.False(D("Critical Temperature", 84).IsLive);
+        Assert.All(g.Readings.Where(r => r.Reading.IsLimit), r => Assert.Equal(SensorLevel.Neutral, r.Level));
+        Assert.NotEqual(SensorLevel.Critical, rep.Level);
+    }
+}
+
+public class SensorSignatureTests
+{
+    private static SensorReport R(double v) => LibreHardwareMonitorModule.BuildReport(new SensorSnapshot(
+        [new("CPU", HardwareKind.Cpu, "Core (Tctl/Tdie)", SensorKind.Temperature, v, v, v, "°C")], IsElevated: true));
+
+    [Fact]
+    public void Signature_SameValues_Equal_ChangedValue_Differs()
+    {
+        Assert.Equal(SensorReport.Signature("Ok", "m", R(50)), SensorReport.Signature("Ok", "m", R(50)));
+        Assert.NotEqual(SensorReport.Signature("Ok", "m", R(50)), SensorReport.Signature("Ok", "m", R(51)));
+        Assert.NotEqual(SensorReport.Signature("Ok", "m", R(50)), SensorReport.Signature("Warning", "m", R(50)));
+    }
+}

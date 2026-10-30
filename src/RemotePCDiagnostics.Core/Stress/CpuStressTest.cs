@@ -110,7 +110,7 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
         try
         {
             var snap = sensors.Read();
-            var cpu = snap.Readings.Where(r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Cpu && r.HasData).ToList();
+            var cpu = snap.Readings.Where(r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Cpu && r.IsLive).ToList();
             var hottest = cpu.OrderByDescending(r => r.Value).FirstOrDefault();
             var fan = snap.Readings.Where(r => r.SensorType == SensorKind.Fan && r.HasData).Select(r => r.Value).DefaultIfEmpty().Max();
             var level = cpu.Count == 0 ? SensorLevel.Neutral : cpu.Max(SensorThresholds.Evaluate);
