@@ -68,13 +68,16 @@ public sealed record RemediationRecord(
 public sealed class RemediationService(
     SystemCommandRunner commands,
     ISessionContext? session = null,
-    Action<string>? log = null)
+    Action<string>? log = null,
+    RebootResumeCoordinator? rebootResume = null)
 {
     public const int MaxRecent = 50;
     public const string BalancedPlanGuid = "381b4222-f694-41f0-9685-ff5bb260df2e";
 
     private readonly List<RemediationRecord> _recent = [];
     private readonly object _gate = new();
+
+    public RebootResumeCoordinator RebootResume { get; } = rebootResume ?? new RebootResumeCoordinator(commands, log: log);
 
     public event Action<RemediationRecord>? ActionCompleted;
 
@@ -155,17 +158,23 @@ public sealed class RemediationService(
 
             RemediationKind.ScheduleCleanRestart => new(
                 action,
-                "Schedule a clean PC restart in 60 seconds?",
-                "This PC has been running for an extended period without a full reboot.",
-                "Windows will warn the signed-in user and restart the PC in 60 seconds (you can cancel it anytime before the timer expires).",
-                "Make sure any unsaved documents are saved before restarting.",
+                session?.Mode == SessionMode.Remote
+                    ? "Schedule a clean PC restart in 60 seconds (and auto-resume this remote session)?"
+                    : "Schedule a clean PC restart in 60 seconds?",
+                "Records current memory and process usage, registers a Windows RunOnce entry to relaunch Remote PC Diagnostics into the same session after sign-in, and restarts the PC in 60 seconds.",
+                session?.Mode == SessionMode.Remote
+                    ? "After the PC reboots and signs back in, Remote PC Diagnostics will automatically reconnect to this exact remote session link, re-measure running resources, and log the RAM/process reduction in History."
+                    : "After the PC reboots and signs back in, Remote PC Diagnostics will automatically relaunch, re-measure running resources, and log the RAM/process reduction in History.",
+                session?.Mode == SessionMode.Remote
+                    ? "Remote mode: the connection will pause while Windows restarts and automatically resume once the user signs back in. Make sure any unsaved documents are saved."
+                    : "Make sure any unsaved documents are saved before restarting.",
                 true),
 
             RemediationKind.CancelScheduledRestart => new(
                 action,
                 "Cancel scheduled restart?",
-                "Aborts a pending timed Windows shutdown or restart.",
-                "Runs 'shutdown /a' so the PC stays on.",
+                "Aborts a pending timed Windows shutdown or restart and clears the post-reboot auto-resume entry.",
+                "Runs 'shutdown /a' and removes the pending RunOnce startup entry so the PC stays on.",
                 null,
                 true),
 
@@ -277,8 +286,7 @@ public sealed class RemediationService(
             }
         }
 
-        var rec = new RemediationRecord(
-            DateTime.Now,
+        RecordCompleted(
             actor,
             action.Kind,
             action.TargetLabel.Length > 0 ? action.TargetLabel : action.Target,
@@ -288,14 +296,40 @@ public sealed class RemediationService(
             result.RemovedFiles,
             result.FreedMemoryBytes,
             result.UpdatesInstalled);
+        return result;
+    }
+
+    /// <summary>Records a completed remediation (including post-reboot verification) and notifies <see cref="ActionCompleted"/> listeners.</summary>
+    public RemediationRecord RecordCompleted(
+        string actor,
+        RemediationKind kind,
+        string target,
+        bool success,
+        string message,
+        long freedDiskBytes = 0,
+        int removedFiles = 0,
+        long freedMemoryBytes = 0,
+        int updatesInstalled = 0)
+    {
+        var rec = new RemediationRecord(
+            DateTime.Now,
+            actor,
+            kind,
+            target,
+            success,
+            message,
+            freedDiskBytes,
+            removedFiles,
+            freedMemoryBytes,
+            updatesInstalled);
         lock (_gate)
         {
             _recent.Insert(0, rec);
             if (_recent.Count > MaxRecent) _recent.RemoveAt(_recent.Count - 1);
         }
-        Log($"AUDIT when={rec.When:O} actor='{actor}' kind={action.Kind} target='{action.Target}' success={result.Success} freedDisk={result.FreedDiskBytes} freedMem={result.FreedMemoryBytes} message='{result.Message}'");
+        Log($"AUDIT when={rec.When:O} actor='{actor}' kind={kind} target='{target}' success={success} freedDisk={freedDiskBytes} freedMem={freedMemoryBytes} message='{message}'");
         try { ActionCompleted?.Invoke(rec); } catch (Exception ex) { Log($"ActionCompleted handler failed: {ex}"); }
-        return result;
+        return rec;
     }
 
     private async Task<RemediationResult> RunActionAsync(AreaAction action, CancellationToken ct) => action.Kind switch
@@ -319,19 +353,9 @@ public sealed class RemediationService(
             "Couldn't turn off Fast Startup (administrator rights required).",
             ct).ConfigureAwait(false),
 
-        RemediationKind.ScheduleCleanRestart => await RunSimpleAsync(
-            SystemCommandRunner.SystemTool("shutdown.exe"),
-            ["/r", "/t", "60", "/c", "Remote PC Diagnostics: clean restart scheduled in 60 seconds. Save your work."],
-            "Clean restart scheduled for 60 seconds from now.",
-            "Couldn't schedule a restart.",
-            ct).ConfigureAwait(false),
+        RemediationKind.ScheduleCleanRestart => await RunScheduleCleanRestartAsync(action, ct).ConfigureAwait(false),
 
-        RemediationKind.CancelScheduledRestart => await RunSimpleAsync(
-            SystemCommandRunner.SystemTool("shutdown.exe"),
-            ["/a"],
-            "Cancelled the scheduled restart.",
-            "No scheduled restart was active to cancel.",
-            ct).ConfigureAwait(false),
+        RemediationKind.CancelScheduledRestart => await RunCancelScheduledRestartAsync(ct).ConfigureAwait(false),
 
         RemediationKind.EndProcessGroup => await RunEndProcessAsync(action, ct).ConfigureAwait(false),
 
@@ -365,6 +389,35 @@ public sealed class RemediationService(
 
         _ => new(false, "Unsupported action."),
     };
+
+    private async Task<RemediationResult> RunScheduleCleanRestartAsync(AreaAction action, CancellationToken ct)
+    {
+        var state = await RebootResume.PrepareForRebootAsync(Actor, session, action.Target, ct).ConfigureAwait(false);
+        var pr = await commands.RunAsync(
+            SystemCommandRunner.SystemTool("shutdown.exe"),
+            ["/r", "/t", "60", "/c", "Remote PC Diagnostics: clean restart scheduled in 60 seconds. Session will automatically resume after sign-in."],
+            ct).ConfigureAwait(false);
+
+        if (pr is not { ExitCode: 0 })
+        {
+            await RebootResume.CancelPendingRebootAsync(ct).ConfigureAwait(false);
+            return new(false, "Couldn't schedule a restart.");
+        }
+
+        var baselineNote = state.PreUsedMemoryBytes > 0
+            ? $" Recorded pre-reboot baseline ({HardwareInventory.FormatBytes(state.PreUsedMemoryBytes)} across {state.PreProcessCount} processes); Remote PC Diagnostics will automatically relaunch after sign-in and log the resource reduction in History."
+            : " Remote PC Diagnostics will automatically relaunch onto the same session after sign-in and log the resource reduction in History.";
+        return new(true, "Clean restart scheduled for 60 seconds from now." + baselineNote);
+    }
+
+    private async Task<RemediationResult> RunCancelScheduledRestartAsync(CancellationToken ct)
+    {
+        var pr = await commands.RunAsync(SystemCommandRunner.SystemTool("shutdown.exe"), ["/a"], ct).ConfigureAwait(false);
+        await RebootResume.CancelPendingRebootAsync(ct).ConfigureAwait(false);
+        return pr is { ExitCode: 0 }
+            ? new(true, "Cancelled the scheduled restart and cleared the post-reboot auto-resume entry.")
+            : new(false, "No scheduled restart was active to cancel.");
+    }
 
     private static string Display(AreaAction a) =>
         !string.IsNullOrWhiteSpace(a.TargetLabel) ? a.TargetLabel : !string.IsNullOrWhiteSpace(a.Target) ? a.Target : "item";
