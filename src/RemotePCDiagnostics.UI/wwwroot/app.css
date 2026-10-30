@@ -18,8 +18,10 @@ body { margin: 0; font-family: "Segoe UI", sans-serif; background: #f5f6f8; colo
 .error-text { color: #b91c1c; }
 .notice { padding: 10px 12px; border-radius: 6px; margin: 8px 0; } .notice-error { background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; }
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); }
-.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 90vw); background: #fff; box-shadow: -4px 0 16px rgba(0,0,0,.15); padding: 16px; overflow: auto; }
-.drawer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 90vw); background: #fff; box-shadow: -4px 0 16px rgba(0,0,0,.15); padding: 0 16px 16px; overflow: auto; }
+.drawer-head { display: flex; justify-content: space-between; align-items: center; margin: 0 -16px 8px; padding: 16px 16px 8px; position: sticky; top: 0; z-index: 2; background: #fff; border-bottom: 1px solid #eee; height: 32px; }
+/* Column header row stays visible under the sticky drawer header (all drawers share these classes). */
+.drawer table.sticky-head tr:first-child th { position: sticky; top: 65px; z-index: 1; background: #fff; }
 table.detail { border-collapse: collapse; width: 100%; margin-bottom: 12px; font-size: 13px; }
 table.detail th { text-align: left; width: 40%; color: #555; font-weight: 600; } table.detail th, table.detail td { border-bottom: 1px solid #eee; padding: 4px 6px; vertical-align: top; }
 .status-line { font-size: 15px; } .error-text { color: #b91c1c; } .warn-text { color: #b45309; }

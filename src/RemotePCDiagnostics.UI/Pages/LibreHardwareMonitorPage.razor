@@ -64,7 +64,7 @@
             @if (open.Readings.Count == 0) { <p class="meta">Nothing to show here.</p> }
             else
             {
-                <table class="detail">
+                <table class="detail grid sticky-head">
                     <tr><th>Device</th><th>Reading</th><th>Value</th><th>Min</th><th>Max</th><th>Warning / critical</th></tr>
                     @foreach (var e in open.Readings)
                     {
