@@ -62,6 +62,27 @@ person at the PC gets a pop-up notice; the app cannot tell whether a specific cl
 
 Each group has a select-all box, "N of M selected", status pills and a **Run selected** button that turns into **Stop** while running. The stress group has a **Quick / Extended** switch (about 1 min / 5 min per test); tests run one at a time and stop automatically if the PC gets too hot or a test fails. Clicking a row (or Enter/Space) opens its details on the right, with **Run just this**. Stopping a run never hides the previous result, and labels show which mode a result came from, e.g. "Passed (short run)". The divider between the list and the details can be dragged or moved with the arrow keys; its position is remembered. Below about 900 px the details stack under the list. Results are still written to the Windows Event Log and appear in History as before.
 
+## Ways to use less memory
+
+On **Resource hogs & uptime** (and via "See ways to use less memory" in the *Top memory consumers* drawer) the app lists suggestions based on what is actually running and installed, sorted by estimated saving, with RAM in use, a "Potential savings" total (only the Close-app suggestions) and "Total freed this session".
+
+| Suggestion | Kind |
+|---|---|
+| Close a large user app (grouped by name, instance count; one inline confirm; "Force close" only offered after a graceful close fails) | One click |
+| Shut down idle .NET build servers (`dotnet build-server shutdown`, the only command allowed) | One click |
+| Stop a heavy/Electron app from starting with Windows (HKCU Run / StartupApproved, your account only) | One click + Undo |
+| Turn on Chrome Memory Saver / Edge sleeping tabs: browser closed → flips the existing setting in its Local State (Undo restores the file); browser open → opens its settings page | One click or Steps |
+| Optional services (Print Spooler w/o printer, Fax, Search indexing, SysMain, DiagTrack, Xbox, Bluetooth w/o devices, Remote Registry, Biometric w/o reader, Geolocation, Retail Demo, Phone, Maps, Lenovo/Adobe/Google/Edge/VS updaters, TeamViewer/AnyDesk, Hyper-V/WSL/Docker when unused): Stop now, Don't start automatically (Manual), Disable — via the existing service control path, protected list enforced, original start-up type recorded for Undo | One click + Undo |
+| Restart Visual Studio (over 1.5 GB or open 8+ hours), turn off Live Share, turn off unused extensions | Steps |
+| Restart (not Shut down) when Fast Startup is on and the PC has run 4+ hours, or any 3+ days | Steps |
+| Defender exclusions for code/build folders (only with dev tools running) | Steps |
+| Transparency effects, Widgets | Steps |
+| Memory almost full, page-file pressure, memory compression | Info |
+
+After every action the app waits ~2.5 s and shows the measured change ("Freed about 1.0 GB. Available RAM 5.2 → 6.2 GB (used 62% → 52%)"), says so honestly when nothing changed, and says "Takes effect next launch or after a restart" for settings. Nothing is ever applied automatically; every change needs a click (local user or remote technician) and is logged as Event 1400. Protected processes (Windows core, security, shell, this app and its WebView2) and protected services are never offered.
+
+**Not yet verified on real hardware:** the Chrome/Edge Local State key names (`performance_tuning.high_efficiency_mode.state`, `performance_tuning.sleeping_tabs.enabled`) — if the key isn't present, only the settings page is offered; Visual Studio extension/Live Share detection paths; printer/Bluetooth/fingerprint detection; graceful close of every app; service start-type changes via the registry (take effect on next boot); the before/after numbers.
+
 ## Status
 
 Idea stage. This repository currently holds only this README.
@@ -225,6 +246,7 @@ Results also go to the Windows Event Log: **Event Viewer > Windows Logs > Applic
 | 1110 / 1111 | Stress suite started / finished (outcome and per-test states) |
 | 1200 | Fan diagnostic (EC fan, IdeaPad 82R4) lines |
 | 1300 | Sensor driver lines (PawnIO / LibreHardwareMonitor) |
+| 1400 | Memory suggestion applied / undone (actor, action, target, result, before/after memory) |
 | 1900 | Unhandled errors |
 
 Levels: Information, Warning (warning, cancelled, unavailable), Error (critical). The live sensor page refreshes every 5 s,
