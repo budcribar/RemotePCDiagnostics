@@ -190,6 +190,28 @@ approximate) on the Temperatures GPU card and used by the GPU stress test; alert
 when the installed driver fills in the temperature (i.e. when Task Manager shows one). Each source and its result are logged
 once to the `RPD_LOG_FILE` log.
 
+### Windows Event Log
+
+Results also go to the Windows Event Log: **Event Viewer > Windows Logs > Application**, filter by source
+**RemotePCDiagnostics**. PowerShell:
+`Get-WinEvent -FilterHashtable @{LogName='Application';ProviderName='RemotePCDiagnostics'} -MaxEvents 50 | Format-List TimeCreated,Id,LevelDisplayName,Message`
+
+| ID | Content |
+|----|---------|
+| 1000 / 1001 | App start (version, machine model, admin yes/no, Local/Remote mode) / app exit |
+| 1100 | One event per finished test (every module and stress test): outcome OK/Warning/Critical/Cancelled/Unavailable, summary, duration, key measurements; security audit lists only failed/warning item IDs and titles (max 25) |
+| 1110 / 1111 | Stress suite started / finished (outcome and per-test states) |
+| 1200 | Fan diagnostic (EC fan, IdeaPad 82R4) lines |
+| 1300 | Sensor driver lines (PawnIO / LibreHardwareMonitor) |
+| 1900 | Unhandled errors |
+
+Levels: Information, Warning (warning, cancelled, unavailable), Error (critical). The live sensor page refreshes every 5 s,
+so its result is logged at most every 10 minutes unless its status changes. The source is created on first run **as
+administrator** (Windows requires admin to register an event source); if it can't be created or a write fails, event
+logging switches off silently for that run (one note in the file log). Writes run on a background queue and never block the
+UI; messages are truncated to 31,000 characters. No server URLs, session ids or raw audit output are written.
+`RPD_LOG_FILE` file logging is unchanged and still contains everything (event lines are mirrored as `[event N] ...`).
+
 ### Laptop fan from the embedded controller (Lenovo IdeaPad 1 15ALC7 only, experimental)
 
 On **one** model, Lenovo IdeaPad 1 15ALC7 (`Win32_ComputerSystemProduct.Name` = `82R4`), and only when PawnIO is installed,

@@ -68,6 +68,10 @@ public partial class MainWindow : Window
         Resources.Add("services", provider);
         Closed += (_, _) => { try { provider.GetService<IEcFanSource>()?.Dispose(); } catch { } }; // release the PawnIO EC module handle
         provider.GetRequiredService<DiagnosticsService>().Log = App.Log;
+        // One Windows Event Log entry per finished test (every module and run path), see ResultEventLogger.
+        var diag = provider.GetRequiredService<DiagnosticsService>();
+        _ = new RemotePCDiagnostics.Core.Logging.ResultEventLogger(provider.GetRequiredService<ResultStore>(), App.Events, _ => diag.CurrentSuiteLabel);
+        _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.AppStart, RemotePCDiagnostics.Core.Logging.LogLevel.Information, AppStartText(mode.ToString())));
         // Tell the person at this PC when a remote technician starts/stops/restarts a service (non-blocking).
         provider.GetRequiredService<ServiceActionService>().ActionCompleted += rec =>
         {
@@ -184,5 +188,23 @@ public partial class MainWindow : Window
         if (_technicianUrl is null) return;
         try { Clipboard.SetText(_technicianUrl.ToString()); CopyLinkButton.Content = "Copied"; }
         catch (Exception ex) { App.Log($"Copy link failed: {ex}"); }
+    }
+
+    /// <summary>App start event text: version, machine model, admin, mode (no server URL or session id).</summary>
+    private static string AppStartText(string mode)
+    {
+        string model = "unknown";
+        try
+        {
+            using var q = new System.Management.ManagementObjectSearcher("SELECT Manufacturer, Model FROM Win32_ComputerSystem");
+            foreach (var o in q.Get()) using (o) model = $"{o["Manufacturer"]} {o["Model"]}".Trim();
+            using var p = new System.Management.ManagementObjectSearcher("SELECT Name FROM Win32_ComputerSystemProduct");
+            foreach (var o in p.Get()) using (o) model += $" ({o["Name"]})";
+        }
+        catch (Exception ex) { model = $"unknown ({ex.GetType().Name})"; }
+        bool admin = false;
+        try { using var id = System.Security.Principal.WindowsIdentity.GetCurrent(); admin = new System.Security.Principal.WindowsPrincipal(id).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator); } catch { }
+        var version = typeof(MainWindow).Assembly.GetName().Version?.ToString() ?? "?";
+        return $"Remote PC Diagnostics started.{Environment.NewLine}Version: {version}{Environment.NewLine}Machine: {model}{Environment.NewLine}Running as administrator: {(admin ? "yes" : "no")}{Environment.NewLine}Mode: {mode}{Environment.NewLine}OS: {Environment.OSVersion.VersionString}";
     }
 }

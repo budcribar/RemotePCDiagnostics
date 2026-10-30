@@ -1,0 +1,179 @@
+using System.Collections;
+using System.Collections.Concurrent;
+using System.Globalization;
+using System.Reflection;
+using System.Text;
+using RemotePCDiagnostics.Core.Security;
+using RemotePCDiagnostics.Core.Sensors;
+
+namespace RemotePCDiagnostics.Core.Logging;
+
+public enum LogLevel { Information, Warning, Error }
+
+/// <summary>Stable Windows Event Log IDs per category (see README "Windows Event Log").</summary>
+public static class LogEventIds
+{
+    public const int AppStart = 1000, AppExit = 1001;
+    public const int TestResult = 1100, SuiteStarted = 1110, SuiteFinished = 1111;
+    public const int FanDiagnostic = 1200;
+    public const int SensorDriver = 1300;
+    public const int Error = 1900;
+}
+
+public sealed record LogEntry(int EventId, LogLevel Level, string Message);
+
+/// <summary>Structured log destination (Host: Windows Event Log). Implementations must be cheap, thread-safe and never throw.</summary>
+public interface ILogSink
+{
+    void Write(LogEntry entry);
+}
+
+public static class LogText
+{
+    /// <summary>Event Log message limit is 31,839 chars; keep a margin.</summary>
+    public const int MaxMessageLength = 31000;
+    public const string TruncatedSuffix = "… [truncated]";
+
+    public static string Truncate(string? s) => s is null ? "" :
+        s.Length <= MaxMessageLength ? s : s[..(MaxMessageLength - TruncatedSuffix.Length)] + TruncatedSuffix;
+
+    /// <summary>Which existing App.Log lines also go to the event log (null = file only).</summary>
+    public static LogEntry? Route(string message)
+    {
+        if (string.IsNullOrEmpty(message)) return null;
+        if (message.StartsWith("Fan diagnostic", StringComparison.Ordinal))
+            return new(LogEventIds.FanDiagnostic, message.Contains("failed", StringComparison.OrdinalIgnoreCase) || message.Contains("error", StringComparison.OrdinalIgnoreCase) || message.Contains("backing off", StringComparison.Ordinal) ? LogLevel.Warning : LogLevel.Information, message);
+        if (message.StartsWith("CPU sensor driver", StringComparison.Ordinal) || message.StartsWith("LibreHardwareMonitor: no usable CPU temperature", StringComparison.Ordinal))
+            return new(LogEventIds.SensorDriver, LogLevel.Information, message);
+        if (message.StartsWith("LibreHardwareMonitor open failed", StringComparison.Ordinal))
+            return new(LogEventIds.SensorDriver, LogLevel.Error, message);
+        if (message.StartsWith("Stress suite (", StringComparison.Ordinal))
+            return new(message.Contains(" started", StringComparison.Ordinal) ? LogEventIds.SuiteStarted : LogEventIds.SuiteFinished, LogLevel.Information, message);
+        if (message.StartsWith("Unhandled:", StringComparison.Ordinal) || message.StartsWith("Fatal:", StringComparison.Ordinal))
+            return new(LogEventIds.Error, LogLevel.Error, message);
+        return null;
+    }
+}
+
+/// <summary>
+/// Writes one event per finished diagnostic (every module, every run path) by watching <see cref="ResultStore"/>.
+/// Skips NotRun/Running, repeated store updates of the same result, and throttles the live sensor page (refreshes every 5 s)
+/// to one event per 10 minutes unless its status changes. A failing sink never affects a run.
+/// </summary>
+public sealed class ResultEventLogger
+{
+    public static readonly TimeSpan SensorsThrottle = TimeSpan.FromMinutes(10);
+    public const int MaxAuditItems = 25;
+    private readonly ILogSink _sink;
+    private readonly Func<string, string?>? _suiteLabel;
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _started = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (DateTimeOffset Stamp, DiagnosticStatus Status, string Message)> _last = new(StringComparer.OrdinalIgnoreCase);
+
+    public ResultEventLogger(ResultStore store, ILogSink sink, Func<string, string?>? suiteLabel = null)
+    {
+        _sink = sink; _suiteLabel = suiteLabel;
+        store.Changed += (_, r) => OnChanged(r);
+    }
+
+    public void OnChanged(DiagnosticResult r)
+    {
+        try
+        {
+            if (r.Status == DiagnosticStatus.NotRun) return;
+            if (r.Status == DiagnosticStatus.Running) { _started[r.ModuleName] = r.Timestamp; return; }
+            var prev = _last.TryGetValue(r.ModuleName, out var p) ? p : default((DateTimeOffset, DiagnosticStatus, string)?);
+            if (prev is { } x)
+            {
+                if (x.Stamp == r.Timestamp && x.Status == r.Status && x.Message == r.Message) return; // same result stored again
+                if (r.ModuleName == LibreHardwareMonitorModule.ModuleName && x.Status == r.Status && r.Timestamp - x.Stamp < SensorsThrottle) return;
+            }
+            _last[r.ModuleName] = (r.Timestamp, r.Status, r.Message);
+            TimeSpan? duration = _started.TryRemove(r.ModuleName, out var s) && r.Timestamp >= s ? r.Timestamp - s : null;
+            string? label = null;
+            try { label = _suiteLabel?.Invoke(r.ModuleName); } catch { }
+            _sink.Write(new LogEntry(LogEventIds.TestResult, LevelFor(r), LogText.Truncate(Format(r, duration, label))));
+        }
+        catch { /* logging must never affect diagnostics */ }
+    }
+
+    public static bool IsCancelled(DiagnosticResult r) =>
+        r.Message.StartsWith("Cancelled", StringComparison.OrdinalIgnoreCase) || r.Message.Contains("stopped by", StringComparison.OrdinalIgnoreCase) ||
+        (r.Payload is not null && r.Payload.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() is "StoppedByUser" or "Cancelled");
+
+    public static string Outcome(DiagnosticResult r) => r.Payload is ModuleAvailability || r.Payload?.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() == "NoGpu" ? "Unavailable"
+        : IsCancelled(r) ? "Cancelled"
+        : r.Status switch { DiagnosticStatus.Ok => "OK", DiagnosticStatus.Warning => "Warning", DiagnosticStatus.Error => "Critical", _ => r.Status.ToString() };
+
+    public static LogLevel LevelFor(DiagnosticResult r) => Outcome(r) switch
+    {
+        "Critical" => LogLevel.Error,
+        "Warning" or "Cancelled" or "Unavailable" => LogLevel.Warning,
+        _ => LogLevel.Information,
+    };
+
+    public static string Format(DiagnosticResult r, TimeSpan? duration, string? suiteLabel = null)
+    {
+        var sb = new StringBuilder();
+        sb.Append("Test result: ").Append(r.ModuleName).AppendLine();
+        sb.Append("Outcome: ").Append(Outcome(r)).AppendLine();
+        sb.Append("Summary: ").Append(r.Message).AppendLine();
+        if (duration is { } d) sb.Append("Duration: ").Append(d.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)).AppendLine(" s");
+        if (suiteLabel is not null) sb.Append("Stress suite: ").Append(suiteLabel).AppendLine();
+        sb.Append("Finished: ").Append(r.Timestamp.ToString("O", CultureInfo.InvariantCulture)).AppendLine();
+        var details = Details(r.Payload);
+        if (details.Length > 0) sb.Append("Details:").AppendLine().Append(details);
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>Key measurements only: numbers/bools/enums/durations from the payload (no free text, so no serials,
+    /// paths or tokens), plus special cases for sensors and the security audit (failed/warning item IDs and titles only).</summary>
+    public static string Details(object? payload)
+    {
+        var sb = new StringBuilder();
+        switch (payload)
+        {
+            case null: break;
+            case Exception ex: sb.Append("  Error: ").Append(ex.GetType().Name).Append(": ").AppendLine(ex.Message); break;
+            case ModuleAvailability a: sb.Append("  Unavailable: ").AppendLine(a.Reason); break;
+            case SecurityAuditReport sec:
+                sb.AppendLine($"  Failed={sec.Failed} Warnings={sec.Warnings} Passed={sec.Passed} NotChecked={sec.NotChecked}");
+                var bad = sec.Findings.Where(f => f.Outcome is AuditOutcome.Failed or AuditOutcome.Warning).ToList();
+                foreach (var f in bad.Take(MaxAuditItems)) sb.AppendLine($"  {f.OutcomeText}: {f.Id} {f.Name}");
+                if (bad.Count > MaxAuditItems) sb.AppendLine($"  … and {bad.Count - MaxAuditItems} more");
+                break;
+            case SensorReport rep:
+                foreach (var g in rep.Groups.Where(g => g.Readings.Count > 0))
+                    sb.AppendLine($"  {g.Title}: " + string.Join("; ", g.Readings.Select(e => $"{e.Reading.FriendlyName}={e.Reading.Value?.ToString("0.#", CultureInfo.InvariantCulture)} {e.Reading.Unit}{(e.Reading.Max is { } mx ? $" (max {mx.ToString("0.#", CultureInfo.InvariantCulture)})" : "")}").Take(12)));
+                break;
+            default: AppendScalars(sb, payload); break;
+        }
+        return sb.ToString();
+    }
+
+    private static void AppendScalars(StringBuilder sb, object payload)
+    {
+        var n = 0;
+        foreach (var p in payload.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (n >= 40 || p.GetIndexParameters().Length > 0) continue;
+            object? v;
+            try { v = p.GetValue(payload); } catch { continue; }
+            string? text = v switch
+            {
+                null => null,
+                double dv => dv.ToString("0.###", CultureInfo.InvariantCulture),
+                float fv => fv.ToString("0.###", CultureInfo.InvariantCulture),
+                decimal or int or long or short or byte or uint or ulong => Convert.ToString(v, CultureInfo.InvariantCulture),
+                bool b => b ? "yes" : "no",
+                Enum e => e.ToString(),
+                TimeSpan ts => ts.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s",
+                string s when p.Name is "Headline" or "Summary" or "Notice" => s,
+                ICollection c when v is not string => $"{c.Count} item(s)",
+                _ => null,
+            };
+            if (text is null) continue;
+            sb.Append("  ").Append(p.Name).Append(": ").AppendLine(text);
+            n++;
+        }
+    }
+}

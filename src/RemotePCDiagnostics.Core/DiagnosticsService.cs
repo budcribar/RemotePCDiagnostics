@@ -22,6 +22,9 @@ public sealed class DiagnosticsService
     public string? StressRunLabel(string moduleName) =>
         _suiteLabels.TryGetValue(moduleName, out var l) && _store.Get(moduleName).Timestamp == l.Stamp ? l.Label : null;
 
+    /// <summary>"short run"/"extended run" while a stress suite is running; otherwise null (for result logging).</summary>
+    public string? CurrentSuiteLabel { get; private set; }
+
     /// <summary>Cancels a running stress suite (stops the current test and ends the sequence).</summary>
     public void CancelStressSuite() => _suiteCts?.Cancel();
 
@@ -95,7 +98,7 @@ public sealed class DiagnosticsService
             var availability = await module.CheckAvailabilityAsync(ct).ConfigureAwait(false);
             result = availability.IsAvailable
                 ? await module.RefreshAsync(progress, ct).ConfigureAwait(false)
-                : new DiagnosticResult(module.Name, DiagnosticStatus.Error, availability.Reason ?? "Unavailable", DateTimeOffset.Now);
+                : new DiagnosticResult(module.Name, DiagnosticStatus.Error, availability.Reason ?? "Unavailable", DateTimeOffset.Now, availability);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -137,11 +140,13 @@ public sealed class DiagnosticsService
                 if (steps[j].State is StressSuiteStepState.Pending or StressSuiteStepState.Running)
                     steps[j] = steps[j] with { State = StressSuiteStepState.NotRun, Message = "Not run" };
             Report(steps.Length, true, message);
-            Log?.Invoke($"Stress suite ({label}) finished: {outcome}");
+            CurrentSuiteLabel = null;
+            Log?.Invoke($"Stress suite ({label}) finished: {outcome} - {message} Steps: {string.Join("; ", steps.Select(s => $"{s.DisplayName}={s.State}"))}");
             return new StressSuiteResult(mode, outcome, steps.ToArray(), message);
         }
         try
         {
+            CurrentSuiteLabel = label;
             Log?.Invoke($"Stress suite ({label}) started");
             Report(0, false, null);
             await RunAllAsync(cts.Token).ConfigureAwait(false);

@@ -1,16 +1,37 @@
 using System.IO;
 using System.Windows;
+using RemotePCDiagnostics.Core.Logging;
 
 namespace RemotePCDiagnostics.Host;
 
 public partial class App : Application
 {
-    /// <summary>Optional file log, enabled by setting RPD_LOG_FILE (used by CI).</summary>
+    private static readonly Lazy<EventLogSink> _events = new(() => new EventLogSink(LogFileOnly));
+
+    /// <summary>Windows Event Log (Application, source RemotePCDiagnostics); never throws or blocks.</summary>
+    public static ILogSink Events => _events.Value;
+
+    /// <summary>Optional file log, enabled by setting RPD_LOG_FILE (used by CI). Selected lines (fan diagnostic,
+    /// sensor driver, stress suite, crashes) also go to the Windows Event Log.</summary>
     public static void Log(string message)
+    {
+        LogFileOnly(message);
+        try { if (LogText.Route(message) is { } e) Events.Write(e); } catch { }
+    }
+
+    /// <summary>Writes an event (and the same text to the file log).</summary>
+    public static void Event(int id, LogLevel level, string message)
+    {
+        LogFileOnly($"[event {id}] {message.Replace(Environment.NewLine, " | ")}");
+        try { Events.Write(new LogEntry(id, level, message)); } catch { }
+    }
+
+    private static readonly object _fileGate = new();
+    private static void LogFileOnly(string message)
     {
         var path = Environment.GetEnvironmentVariable("RPD_LOG_FILE");
         if (string.IsNullOrEmpty(path)) return;
-        try { File.AppendAllText(path, $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}"); } catch { }
+        try { lock (_fileGate) File.AppendAllText(path, $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}"); } catch { }
     }
 
     protected override void OnStartup(StartupEventArgs e)
@@ -24,6 +45,8 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         Log($"Exit code={e.ApplicationExitCode}");
+        Event(LogEventIds.AppExit, LogLevel.Information, $"Remote PC Diagnostics exited (code {e.ApplicationExitCode}).");
+        try { _events.Value.Flush(TimeSpan.FromSeconds(1)); _events.Value.Dispose(); } catch { }
         base.OnExit(e);
     }
 }
