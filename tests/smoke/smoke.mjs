@@ -50,7 +50,7 @@ try {
   await page.waitForFunction(() => document.documentElement.getAttribute('data-theme-choice') === 'system', null, { timeout: 10_000 });
   console.log(`Theme system: data-theme=${await attr('data-theme')}`);
 
-  // History page: loads from the nav and shows either the empty state or the results table.
+  // History page (reads the Windows Event Log): shows the results table, or the friendly empty/unavailable state when the source has no events.
   await page.getByTestId('nav-history').click();
   await page.getByTestId('history-title').waitFor({ state: 'visible', timeout: 15_000 });
   await page.locator('[data-testid="history-empty"], [data-testid="history-table"]').first().waitFor({ state: 'visible', timeout: 15_000 });

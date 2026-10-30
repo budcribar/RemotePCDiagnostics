@@ -4,133 +4,109 @@ using RemotePCDiagnostics.Core.Logging;
 
 namespace RemotePCDiagnostics.Tests;
 
-public sealed class HistoryTests : IDisposable
+public sealed class HistoryTests
 {
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "rpd-hist-" + Guid.NewGuid().ToString("N"));
-    private string FilePath => Path.Combine(_dir, "history.jsonl");
-    public void Dispose() { try { Directory.Delete(_dir, true); } catch { } }
 
     private static HistoryEntry E(DateTimeOffset t, string module = "CpuStress", string outcome = "OK", double? dur = 60, (string, string)[]? m = null) =>
         new(t, module, module + " test", outcome, "summary", dur, null, (m ?? []).Select(x => new HistoryMeasurement(x.Item1, x.Item2)).ToList(), "PC1", "1.0");
 
-    [Fact]
-    public void RoundTrip_PersistsAcrossInstances()
-    {
-        var now = DateTimeOffset.UtcNow;
-        var s = new JsonLinesHistoryStore(FilePath);
-        s.Append(E(now.AddMinutes(-1), m: [("MaxCpuTemperatureC", "81.5")]));
-        s.Append(E(now, "DiskSpeed", "Warning", null));
-        Assert.True(s.Flush(TimeSpan.FromSeconds(5)));
-        var s2 = new JsonLinesHistoryStore(FilePath);
-        var all = s2.ReadAll();
-        Assert.Equal(2, all.Count);
-        Assert.Equal("81.5", all[0].Measurement("MaxCpuTemperatureC"));
-        Assert.Equal("Warning", all[1].Outcome);
-        Assert.Null(all[1].DurationSeconds);
-        Assert.Equal(now, all[1].TimeUtc);
-    }
+    private const string OldFormat = "Test result: CpuStress\r\nOutcome: OK\r\nSummary: Passed: no errors\r\nDuration: 61.2 s\r\nStress suite: short run\r\nFinished: 2026-10-30T08:10:00.0000000-06:00\r\nDetails:\r\n  Outcome: Passed\r\n  Ran: 60.0 s\r\n  MaxCpuTemperatureC: 81.5\r\n  SensorsAvailable: yes\r\n  Headline: Passed with flying colours";
 
     [Fact]
-    public void Retention_PrunesOldAndCapsCount()
+    public void Parser_CurrentFormat_RoundTripsFromWriter()
     {
-        var now = DateTimeOffset.UtcNow;
-        Directory.CreateDirectory(_dir);
-        var lines = new List<string> { System.Text.Json.JsonSerializer.Serialize(E(now.AddDays(-100))) };
-        for (var i = 0; i < JsonLinesHistoryStore.MaxEntries + 10; i++) lines.Add(System.Text.Json.JsonSerializer.Serialize(E(now.AddMinutes(-i))));
-        File.WriteAllLines(FilePath, lines);
-        var s = new JsonLinesHistoryStore(FilePath, () => now);
-        var all = s.ReadAll();
-        Assert.Equal(JsonLinesHistoryStore.MaxEntries, all.Count);
-        Assert.All(all, e => Assert.True(e.TimeUtc >= now.AddDays(-90)));
-        Assert.Equal(now, all[^1].TimeUtc); // newest kept
-        s.Flush(TimeSpan.FromSeconds(10));
-        Assert.Equal(JsonLinesHistoryStore.MaxEntries, File.ReadAllLines(FilePath).Length); // file rewritten
-    }
-
-    [Fact]
-    public void DailyPrune_OnAppend()
-    {
-        var now = DateTimeOffset.UtcNow;
-        var clock = now;
-        var s = new JsonLinesHistoryStore(FilePath, () => clock);
-        s.Append(E(now));
-        clock = now.AddDays(91);
-        s.Append(E(clock));
-        Assert.Single(s.ReadAll());
-    }
-
-    [Fact]
-    public void CorruptLines_AreSkipped()
-    {
-        Directory.CreateDirectory(_dir);
-        var s0 = new JsonLinesHistoryStore(FilePath);
-        s0.Append(E(DateTimeOffset.UtcNow));
-        s0.Flush(TimeSpan.FromSeconds(5));
-        File.AppendAllText(FilePath, "{not json\n\n{\"Foo\":1}\n" + "garbage\n");
-        var logs = new List<string>();
-        var s = new JsonLinesHistoryStore(FilePath, log: logs.Add);
-        Assert.Single(s.ReadAll());
-        Assert.Equal(3, s.CorruptLinesSkipped);
-        Assert.Contains(logs, l => l.Contains("unreadable"));
-    }
-
-    [Fact]
-    public void Clear_RemovesFileAndEntries()
-    {
-        var s = new JsonLinesHistoryStore(FilePath);
-        var changed = 0; s.Changed += () => changed++;
-        s.Append(E(DateTimeOffset.UtcNow));
-        s.Flush(TimeSpan.FromSeconds(5));
-        s.Clear();
-        s.Flush(TimeSpan.FromSeconds(5));
-        Assert.Empty(s.ReadAll());
-        Assert.False(File.Exists(FilePath));
-        Assert.Equal(2, changed);
-    }
-
-    [Fact]
-    public void UnwritablePath_DoesNotThrow()
-    {
-        var bad = Path.Combine(_dir, "file-not-dir");
-        Directory.CreateDirectory(_dir); File.WriteAllText(bad, "x");
-        var s = new JsonLinesHistoryStore(Path.Combine(bad, "history.jsonl"));
-        s.Append(E(DateTimeOffset.UtcNow));
-        s.Flush(TimeSpan.FromSeconds(5));
-        Assert.Single(s.ReadAll()); // kept in memory
-    }
-
-    private sealed class ThrowingStore : IHistoryStore
-    {
-        public void Append(HistoryEntry entry) => throw new IOException("disk full");
-        public IReadOnlyList<HistoryEntry> ReadAll() => [];
-        public void Clear() { }
-        public event Action? Changed { add { } remove { } }
-    }
-
-    [Fact]
-    public async Task Recorder_LogsOncePerResult_ThrottlesSensors_AndStoreFailureDoesNotAffectRuns()
-    {
-        var store = new ResultStore();
-        var hist = new JsonLinesHistoryStore(FilePath);
-        var rec = new HistoryRecorder(hist, n => n == "A" ? "Test A" : n, () => "PC1 (Lenovo 82R4)", "9.9");
-        _ = new ResultEventLogger(store, new RecordingSink(), null, rec.Record);
-        _ = new ResultEventLogger(store, new RecordingSink(), null, new HistoryRecorder(new ThrowingStore(), n => n, () => "x", "1").Record);
-        var svc = new DiagnosticsService(store, [new FakeModule("A", _ => Task.FromResult(new DiagnosticResult("A", DiagnosticStatus.Ok, "fine", DateTimeOffset.Now, new { Peak = 70.5, Note = "C:\\secret\\path" })))]);
-        var r = await svc.RunAsync("A");
-        Assert.Equal(DiagnosticStatus.Ok, r.Status);
-        store.Set(r); // same result again
-        var e = Assert.Single(hist.ReadAll());
-        Assert.Equal("Test A", e.Test);
+        var r = new DiagnosticResult("CpuStress", DiagnosticStatus.Ok, "Passed", new DateTimeOffset(2026, 10, 30, 8, 0, 0, TimeSpan.FromHours(-6)),
+            new { Outcome = RemotePCDiagnostics.Core.Stress.CpuStressOutcome.Passed, MaxCpuTemperatureC = 81.5, Note = "C:\\x" });
+        var msg = ResultEventLogger.Format(r, TimeSpan.FromSeconds(60), "extended run", new ResultEventContext(_ => "CPU stress test", () => "PC1 (LENOVO 82R4)", "1.2.3"));
+        Assert.Contains("Format: 2", msg);
+        var e = HistoryEventParser.Parse(msg, DateTimeOffset.Now)!;
+        Assert.Equal("CpuStress", e.Module);
+        Assert.Equal("CPU stress test", e.Test);
         Assert.Equal("OK", e.Outcome);
-        Assert.Equal("70.5", e.Measurement("Peak"));
+        Assert.Equal("Passed", e.Summary);
+        Assert.Equal(60, e.DurationSeconds);
+        Assert.Equal("extended run", e.Suite);
+        Assert.Equal("PC1 (LENOVO 82R4)", e.Machine);
+        Assert.Equal("1.2.3", e.AppVersion);
+        Assert.Equal(r.Timestamp.UtcDateTime, e.TimeUtc.UtcDateTime);
+        Assert.Equal("81.5", e.Measurement("MaxCpuTemperatureC"));
         Assert.Null(e.Measurement("Note"));
-        Assert.Equal("PC1 (Lenovo 82R4)", e.Machine);
-        Assert.NotNull(e.DurationSeconds);
+    }
 
-        var name = RemotePCDiagnostics.Core.Sensors.LibreHardwareMonitorModule.ModuleName;
-        var t0 = DateTimeOffset.Now;
-        for (var i = 0; i < 10; i++) store.Set(new DiagnosticResult(name, DiagnosticStatus.Ok, $"CPU {40 + i}°C", t0.AddSeconds(5 * i)));
-        Assert.Equal(2, hist.ReadAll().Count);
+    [Fact]
+    public void Parser_OldFormat_BestEffort()
+    {
+        var e = HistoryEventParser.Parse(OldFormat, DateTimeOffset.Now)!;
+        Assert.Equal("CpuStress", e.Module);
+        Assert.Equal("CpuStress", e.Test);
+        Assert.Equal("Passed: no errors", e.Summary);
+        Assert.Equal(61.2, e.DurationSeconds);
+        Assert.Equal("short run", e.Suite);
+        Assert.Equal("81.5", e.Measurement("MaxCpuTemperatureC"));
+        Assert.Equal("Passed", e.Measurement("Outcome"));
+        Assert.Null(e.Measurement("Headline")); // free text dropped
+        Assert.Equal("", e.Machine);
+        Assert.Equal(new DateTimeOffset(2026, 10, 30, 14, 10, 0, TimeSpan.Zero), e.TimeUtc);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("garbage")]
+    [InlineData("Outcome: OK\nSummary: no module line")]
+    [InlineData("Test result: X\nSummary: no outcome")]
+    public void Parser_SkipsUnparseable(string? msg) => Assert.Null(HistoryEventParser.Parse(msg, DateTimeOffset.Now));
+
+    [Fact]
+    public void Parser_BadFinished_FallsBackToEventTime()
+    {
+        var t = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
+        var e = HistoryEventParser.Parse("Test result: X\nOutcome: Warning\nFinished: not a date\nDuration: ?? s", t)!;
+        Assert.Equal(t, e.TimeUtc);
+        Assert.Null(e.DurationSeconds);
+    }
+
+    [Fact]
+    public void XPath_FiltersProviderIdAndRange()
+    {
+        Assert.Equal("*[System[Provider[@Name='RemotePCDiagnostics'] and (EventID=1100)]]", EventLogHistoryStore.BuildXPath(null));
+        Assert.Equal("*[System[Provider[@Name='RemotePCDiagnostics'] and (EventID=1100) and TimeCreated[timediff(@SystemTime) <= 86400000]]]", EventLogHistoryStore.BuildXPath(TimeSpan.FromHours(24)));
+    }
+
+    [Fact]
+    public void Store_ParsesNewestFirst_SkipsCorrupt_PassesQuery()
+    {
+        string? xp = null; int max = 0;
+        var logs = new List<string>();
+        var store = new EventLogHistoryStore((x, m) => { xp = x; max = m; return [new(DateTimeOffset.Now.AddHours(-2), OldFormat), new(DateTimeOffset.Now, "junk"),
+            new(DateTimeOffset.Now, "Test result: DiskSpeed\nOutcome: Critical\nFinished: 2026-10-30T15:00:00Z\nFormat: 2")]; }, logs.Add);
+        var r = store.Read(TimeSpan.FromDays(7));
+        Assert.True(r.Available);
+        Assert.Equal(new[] { "DiskSpeed", "CpuStress" }, r.Entries.Select(e => e.Module));
+        Assert.Contains("timediff", xp);
+        Assert.Equal(EventLogHistoryStore.MaxEvents, max);
+        Assert.Contains(logs, l => l.Contains("skipped 1"));
+    }
+
+    [Fact]
+    public void Store_ReaderThrows_IsUnavailable_NotAnError()
+    {
+        var logs = new List<string>();
+        var r = new EventLogHistoryStore((_, _) => throw new UnauthorizedAccessException("denied"), logs.Add).Read(null);
+        Assert.False(r.Available);
+        Assert.Empty(r.Entries);
+        Assert.Contains("denied", r.Problem);
+        Assert.Contains(logs, l => l.Contains("read failed"));
+        Assert.False(new NullHistoryStore().Read(null).Available);
+    }
+
+    [Fact]
+    public void Store_ReaderThrowsMidway_KeepsWhatWasRead()
+    {
+        static IEnumerable<RawHistoryEvent> Src() { yield return new(DateTimeOffset.Now, OldFormat); throw new InvalidOperationException("log cleared"); }
+        var r = new EventLogHistoryStore((_, _) => Src()).Read(null);
+        Assert.Single(r.Entries);
+        Assert.True(r.Available);
     }
 
     [Fact]

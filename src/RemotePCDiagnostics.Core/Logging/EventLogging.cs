@@ -20,6 +20,9 @@ public static class LogEventIds
     public const int Error = 1900;
 }
 
+/// <summary>Extra fields written into each 1100 event (test display name, machine, app version).</summary>
+public sealed record ResultEventContext(Func<string, string>? DisplayName, Func<string>? Machine, string? AppVersion);
+
 public sealed record LogEntry(int EventId, LogLevel Level, string Message);
 
 /// <summary>Structured log destination (Host: Windows Event Log). Implementations must be cheap, thread-safe and never throw.</summary>
@@ -72,9 +75,11 @@ public sealed class ResultEventLogger
     private readonly Action<DiagnosticResult, TimeSpan?, string?>? _recorded;
 
     /// <param name="recorded">Called once per logged result (after dedup/throttle), e.g. to append to the history store.</param>
-    public ResultEventLogger(ResultStore store, ILogSink sink, Func<string, string?>? suiteLabel = null, Action<DiagnosticResult, TimeSpan?, string?>? recorded = null)
+    private readonly ResultEventContext? _ctx;
+
+    public ResultEventLogger(ResultStore store, ILogSink sink, Func<string, string?>? suiteLabel = null, Action<DiagnosticResult, TimeSpan?, string?>? recorded = null, ResultEventContext? context = null)
     {
-        _sink = sink; _suiteLabel = suiteLabel; _recorded = recorded;
+        _sink = sink; _suiteLabel = suiteLabel; _recorded = recorded; _ctx = context;
         store.Changed += (_, r) => OnChanged(r);
     }
 
@@ -93,7 +98,7 @@ public sealed class ResultEventLogger
             TimeSpan? duration = _started.TryRemove(r.ModuleName, out var s) && r.Timestamp >= s ? r.Timestamp - s : null;
             string? label = null;
             try { label = _suiteLabel?.Invoke(r.ModuleName); } catch { }
-            try { _sink.Write(new LogEntry(LogEventIds.TestResult, LevelFor(r), LogText.Truncate(Format(r, duration, label)))); } catch { }
+            try { _sink.Write(new LogEntry(LogEventIds.TestResult, LevelFor(r), LogText.Truncate(Format(r, duration, label, _ctx)))); } catch { }
             try { _recorded?.Invoke(r, duration, label); } catch { }
         }
         catch { /* logging must never affect diagnostics */ }
@@ -114,15 +119,30 @@ public sealed class ResultEventLogger
         _ => LogLevel.Information,
     };
 
-    public static string Format(DiagnosticResult r, TimeSpan? duration, string? suiteLabel = null)
+    /// <summary>Message format version written in "Format:" (parsed back by <see cref="History.HistoryEventParser"/>).</summary>
+    public const int FormatVersion = 2;
+
+    /// <summary>Stable "Key: value" lines (one per line), then "Measurements:" ("  Name=value") and human "Details:".</summary>
+    public static string Format(DiagnosticResult r, TimeSpan? duration, string? suiteLabel = null, ResultEventContext? ctx = null)
     {
+        static string One(string? s) => (s ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
         var sb = new StringBuilder();
         sb.Append("Test result: ").Append(r.ModuleName).AppendLine();
+        if (ctx?.DisplayName is { } dn) { string? t = null; try { t = dn(r.ModuleName); } catch { } if (!string.IsNullOrEmpty(t)) sb.Append("Test: ").Append(One(t)).AppendLine(); }
         sb.Append("Outcome: ").Append(Outcome(r)).AppendLine();
-        sb.Append("Summary: ").Append(r.Message).AppendLine();
+        sb.Append("Summary: ").Append(One(r.Message)).AppendLine();
         if (duration is { } d) sb.Append("Duration: ").Append(d.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)).AppendLine(" s");
         if (suiteLabel is not null) sb.Append("Stress suite: ").Append(suiteLabel).AppendLine();
         sb.Append("Finished: ").Append(r.Timestamp.ToString("O", CultureInfo.InvariantCulture)).AppendLine();
+        if (ctx?.Machine is { } mf) { string? m = null; try { m = mf(); } catch { } if (!string.IsNullOrEmpty(m)) sb.Append("Machine: ").Append(One(m)).AppendLine(); }
+        if (!string.IsNullOrEmpty(ctx?.AppVersion)) sb.Append("App version: ").Append(ctx!.AppVersion).AppendLine();
+        sb.Append("Format: ").Append(FormatVersion).AppendLine();
+        var ms = Measurements(r.Payload);
+        if (ms.Count > 0)
+        {
+            sb.AppendLine("Measurements:");
+            foreach (var (n, v) in ms) sb.Append("  ").Append(n).Append('=').AppendLine(One(v));
+        }
         var details = Details(r.Payload);
         if (details.Length > 0) sb.Append("Details:").AppendLine().Append(details);
         return sb.ToString().TrimEnd();

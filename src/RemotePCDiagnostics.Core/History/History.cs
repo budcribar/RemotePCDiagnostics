@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.Json;
 using RemotePCDiagnostics.Core.Logging;
 
 namespace RemotePCDiagnostics.Core.History;
@@ -15,167 +14,115 @@ public sealed record HistoryEntry(
     public string? Measurement(string name) => Measurements.FirstOrDefault(m => m.Name == name)?.Value;
 }
 
-/// <summary>Persistent result history. Implementations never throw from Append and never block callers.</summary>
+/// <summary>Result of reading history. Available=false when the source can't be read (Problem has the technical reason, log only).</summary>
+public sealed record HistoryReadResult(IReadOnlyList<HistoryEntry> Entries, bool Available, string? Problem = null);
+
+/// <summary>Read-only result history (Host: Windows Event Log, Application, source RemotePCDiagnostics, event 1100).</summary>
 public interface IHistoryStore
 {
-    void Append(HistoryEntry entry);
-    /// <summary>All kept entries, oldest first.</summary>
-    IReadOnlyList<HistoryEntry> ReadAll();
-    void Clear();
-    event Action? Changed;
+    /// <summary>Entries newest first, limited to <paramref name="within"/> (null = all). Never throws.</summary>
+    HistoryReadResult Read(TimeSpan? within);
 }
 
-/// <summary>Used when no history is kept (tests, failures).</summary>
+/// <summary>Used where no history source exists (non-Windows, tests).</summary>
 public sealed class NullHistoryStore : IHistoryStore
 {
-    public void Append(HistoryEntry entry) { }
-    public IReadOnlyList<HistoryEntry> ReadAll() => [];
-    public void Clear() { }
-    public event Action? Changed { add { } remove { } }
+    public HistoryReadResult Read(TimeSpan? within) => new([], false, "no history source");
 }
+
+/// <summary>Raw event as read from the log: time created and rendered message.</summary>
+public sealed record RawHistoryEvent(DateTimeOffset TimeCreated, string? Message);
 
 /// <summary>
-/// JSON Lines history file (Host: %LOCALAPPDATA%\RemotePCDiagnostics\history\history.jsonl). Entries are kept in memory
-/// and appended to the file on a background task. Retention: last <see cref="MaxAge"/> and at most <see cref="MaxEntries"/>,
-/// pruned on load and at most once a day. Corrupt or unreadable lines are skipped.
+/// History from raw Event Log events: builds the query, parses each 1100 message (current and older formats; unparseable
+/// ones are skipped) and turns any reader failure (no source, access denied, not Windows) into Available=false.
 /// </summary>
-public sealed class JsonLinesHistoryStore : IHistoryStore
+public sealed class EventLogHistoryStore(Func<string, int, IEnumerable<RawHistoryEvent>> query, Action<string>? log = null) : IHistoryStore
 {
-    public static readonly TimeSpan MaxAge = TimeSpan.FromDays(90);
-    public const int MaxEntries = 5000;
-    private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
-    private readonly string _path;
-    private readonly Func<DateTimeOffset> _now;
-    private readonly Action<string>? _log;
-    private readonly object _gate = new();
-    private readonly List<HistoryEntry> _entries = [];
-    private Task _io = Task.CompletedTask;
-    private DateTimeOffset _lastPrune;
-    private bool _logged;
+    public const string ProviderName = "RemotePCDiagnostics";
+    public const string LogName = "Application";
+    public const int MaxEvents = 5000;
 
-    public event Action? Changed;
-
-    public JsonLinesHistoryStore(string path, Func<DateTimeOffset>? now = null, Action<string>? log = null)
+    /// <summary>XPath for 1100 events of our provider, optionally within the last <paramref name="within"/>.</summary>
+    public static string BuildXPath(TimeSpan? within)
     {
-        _path = path; _now = now ?? (() => DateTimeOffset.UtcNow); _log = log;
-        try { Load(); } catch (Exception ex) { Note($"History: load failed: {ex.Message}"); }
+        var time = within is { } w ? $" and TimeCreated[timediff(@SystemTime) <= {(long)Math.Max(0, w.TotalMilliseconds)}]" : "";
+        return $"*[System[Provider[@Name='{ProviderName}'] and (EventID={LogEventIds.TestResult}){time}]]";
     }
 
-    public string FilePath => _path;
-    public int CorruptLinesSkipped { get; private set; }
-
-    private void Load()
+    public HistoryReadResult Read(TimeSpan? within)
     {
-        if (!File.Exists(_path)) { _lastPrune = _now(); return; }
-        foreach (var line in File.ReadLines(_path))
-        {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            try
-            {
-                var e = JsonSerializer.Deserialize<HistoryEntry>(line, Json);
-                if (e is null || string.IsNullOrEmpty(e.Module)) { CorruptLinesSkipped++; continue; }
-                _entries.Add(e with { Measurements = e.Measurements ?? [], Summary = e.Summary ?? "", Test = e.Test ?? e.Module, Outcome = e.Outcome ?? "" });
-            }
-            catch { CorruptLinesSkipped++; }
-        }
-        _entries.Sort((a, b) => a.TimeUtc.CompareTo(b.TimeUtc));
-        if (PruneLocked() || CorruptLinesSkipped > 0) Enqueue(RewriteSnapshot());
-        if (CorruptLinesSkipped > 0) Note($"History: skipped {CorruptLinesSkipped} unreadable line(s)");
-    }
-
-    /// <summary>Drops entries beyond retention; true when something was removed.</summary>
-    private bool PruneLocked()
-    {
-        _lastPrune = _now();
-        var cutoff = _now() - MaxAge;
-        var before = _entries.Count;
-        _entries.RemoveAll(e => e.TimeUtc < cutoff);
-        if (_entries.Count > MaxEntries) _entries.RemoveRange(0, _entries.Count - MaxEntries);
-        return _entries.Count != before;
-    }
-
-    public void Append(HistoryEntry entry)
-    {
+        var list = new List<HistoryEntry>();
+        var skipped = 0;
         try
         {
-            lock (_gate)
+            foreach (var raw in query(BuildXPath(within), MaxEvents))
             {
-                _entries.Add(entry);
-                if (_now() - _lastPrune > TimeSpan.FromDays(1) || _entries.Count > MaxEntries)
-                {
-                    PruneLocked();
-                    Enqueue(RewriteSnapshot());
-                }
-                else
-                {
-                    var line = JsonSerializer.Serialize(entry, Json);
-                    Enqueue(() => { EnsureDir(); File.AppendAllText(_path, line + Environment.NewLine); });
-                }
+                if (list.Count >= MaxEvents) break;
+                if (HistoryEventParser.Parse(raw.Message, raw.TimeCreated) is { } e) list.Add(e); else skipped++;
             }
-            RaiseChanged();
         }
-        catch (Exception ex) { Note($"History: append failed: {ex.Message}"); }
-    }
-
-    public IReadOnlyList<HistoryEntry> ReadAll() { lock (_gate) return _entries.ToList(); }
-
-    public void Clear()
-    {
-        try
+        catch (Exception ex)
         {
-            lock (_gate) { _entries.Clear(); Enqueue(() => { if (File.Exists(_path)) File.Delete(_path); }); }
-            RaiseChanged();
+            try { log?.Invoke($"History: Event Log read failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            return new(list.OrderByDescending(e => e.TimeUtc).ToList(), list.Count > 0, $"{ex.GetType().Name}: {ex.Message}");
         }
-        catch (Exception ex) { Note($"History: clear failed: {ex.Message}"); }
-    }
-
-    /// <summary>Waits for pending file writes (tests, app exit).</summary>
-    public bool Flush(TimeSpan timeout) { Task t; lock (_gate) t = _io; try { return t.Wait(timeout); } catch { return false; } }
-
-    private Action RewriteSnapshot()
-    {
-        var lines = _entries.Select(e => JsonSerializer.Serialize(e, Json)).ToList();
-        return () =>
-        {
-            EnsureDir();
-            var tmp = _path + ".tmp";
-            File.WriteAllLines(tmp, lines);
-            File.Move(tmp, _path, true);
-        };
-    }
-
-    private void Enqueue(Action write) =>
-        _io = _io.ContinueWith(_ => { try { write(); } catch (Exception ex) { Note($"History: write failed: {ex.Message}"); } }, TaskScheduler.Default);
-
-    private void EnsureDir() { var d = Path.GetDirectoryName(_path); if (!string.IsNullOrEmpty(d)) Directory.CreateDirectory(d); }
-
-    private void RaiseChanged() { try { Changed?.Invoke(); } catch { } }
-
-    private void Note(string m)
-    {
-        if (_logged && m.StartsWith("History: write", StringComparison.Ordinal)) return;
-        if (m.StartsWith("History: write", StringComparison.Ordinal)) _logged = true;
-        try { _log?.Invoke(m); } catch { }
+        if (skipped > 0) try { log?.Invoke($"History: skipped {skipped} unparseable event(s)"); } catch { }
+        return new(list.OrderByDescending(e => e.TimeUtc).ToList(), true);
     }
 }
 
-/// <summary>Builds history entries from finished results (called by <see cref="ResultEventLogger"/> after its dedup/throttle).</summary>
-public sealed class HistoryRecorder(IHistoryStore store, Func<string, string> displayName, Func<string> machine, string appVersion)
+/// <summary>Parses the 1100 "Test result" message. Format 2 (current): "Key: value" lines + "Measurements:" ("  Name=value").
+/// Older messages (no Format line): measurements taken from numeric "  Name: value" lines under "Details:".</summary>
+public static class HistoryEventParser
 {
-    public void Record(DiagnosticResult r, TimeSpan? duration, string? suite)
+    public static HistoryEntry? Parse(string? message, DateTimeOffset timeCreated)
     {
         try
         {
-            store.Append(new HistoryEntry(r.Timestamp.ToUniversalTime(), r.ModuleName, SafeName(r.ModuleName), ResultEventLogger.Outcome(r), r.Message,
-                duration is { } d ? Math.Round(d.TotalSeconds, 1) : null, suite,
-                ResultEventLogger.Measurements(r.Payload).Select(m => new HistoryMeasurement(m.Name, m.Value)).ToList(), SafeMachine(), appVersion));
+            if (string.IsNullOrWhiteSpace(message)) return null;
+            var lines = message.Replace("\r\n", "\n").Split('\n');
+            var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var measurements = new List<HistoryMeasurement>();
+            var oldDetails = new List<HistoryMeasurement>();
+            string? section = null;
+            foreach (var raw in lines)
+            {
+                if (raw.Length == 0) continue;
+                if (raw[0] == ' ')
+                {
+                    var t = raw.Trim();
+                    if (section == "Measurements") { var i = t.IndexOf('='); if (i > 0) measurements.Add(new(t[..i].Trim(), t[(i + 1)..].Trim())); }
+                    else if (section == "Details") { var i = t.IndexOf(": ", StringComparison.Ordinal); if (i > 0 && IsSimpleValue(t[(i + 2)..])) oldDetails.Add(new(t[..i].Trim(), t[(i + 2)..].Trim())); }
+                    continue;
+                }
+                var c = raw.IndexOf(':');
+                if (c <= 0) continue;
+                var key = raw[..c].Trim();
+                var value = raw[(c + 1)..].Trim();
+                if (value.Length == 0 && key is "Measurements" or "Details") { section = key; continue; }
+                section = null;
+                fields.TryAdd(key, value);
+            }
+            if (!fields.TryGetValue("Test result", out var module) || module.Length == 0) return null;
+            if (!fields.TryGetValue("Outcome", out var outcome) || outcome.Length == 0) return null;
+            var time = fields.TryGetValue("Finished", out var f) && DateTimeOffset.TryParse(f, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var ft) ? ft : timeCreated;
+            double? dur = fields.TryGetValue("Duration", out var d) && double.TryParse(d.Replace(" s", ""), NumberStyles.Float, CultureInfo.InvariantCulture, out var dv) ? dv : null;
+            return new HistoryEntry(time.ToUniversalTime(), module, fields.GetValueOrDefault("Test") is { Length: > 0 } t2 ? t2 : module, outcome,
+                fields.GetValueOrDefault("Summary") ?? "", dur, fields.GetValueOrDefault("Stress suite"),
+                fields.ContainsKey("Format") ? measurements : oldDetails,
+                fields.GetValueOrDefault("Machine") ?? "", fields.GetValueOrDefault("App version") ?? "");
         }
-        catch { /* history must never affect a run */ }
+        catch { return null; }
     }
 
-    private string SafeMachine() { try { return machine(); } catch { return Environment.MachineName; } }
-
-    private string SafeName(string module) { try { return displayName(module); } catch { return module; } }
+    /// <summary>Old Details lines: keep numbers, durations, yes/no and single-word enum values only.</summary>
+    private static bool IsSimpleValue(string v)
+    {
+        v = v.Trim();
+        if (v.EndsWith(" s", StringComparison.Ordinal)) v = v[..^2];
+        return double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out _) || v is "yes" or "no" || (v.Length is > 0 and < 40 && v.All(char.IsLetterOrDigit));
+    }
 }
 
 public enum HistoryColumn { Time, Test, Result, Summary, Duration }

@@ -197,11 +197,11 @@ Duration. Filter by test, result and time range (24 hours / 7 days / 30 days / a
 measurements (and suite mode, machine, app version). Stress tests with a key measurement (peak CPU/GPU temperature, disk
 read speed, download speed) get a small trend of the last 12 runs. In Remote mode the technician sees the bench PC's history.
 
-Data: `%LOCALAPPDATA%\RemotePCDiagnostics\history\history.jsonl` (one JSON object per line, per Windows user). The same
-results as event 1100 are recorded (same de-duplication; the live sensor page at most every 10 minutes unless its status
-changes); only numeric measurements, no free text. Retention: 90 days and at most 5,000 entries, pruned on startup and
-daily; unreadable lines are skipped. Writes happen in the background and never affect a test. Clear it with **Clear
-history** (asks to confirm) or by deleting the file while the app is closed.
+History is read from the **Windows Event Log** (Application, source RemotePCDiagnostics, event 1100; newest first, at most
+5,000 events, XPath time filter for the chosen range) with `EventLogReader`; nothing is stored elsewhere. Retention follows
+the Application log's size settings (Event Viewer > Application > Properties). The app never clears the log. If the log
+can't be read or the source isn't registered yet, the page says so ("run the app once as administrator so it can register
+the event source"). Events written by older builds are parsed as far as possible; unparseable ones are skipped.
 
 ### Windows Event Log
 
@@ -212,7 +212,7 @@ Results also go to the Windows Event Log: **Event Viewer > Windows Logs > Applic
 | ID | Content |
 |----|---------|
 | 1000 / 1001 | App start (version, machine model, admin yes/no, Local/Remote mode) / app exit |
-| 1100 | One event per finished test (every module and stress test): outcome OK/Warning/Critical/Cancelled/Unavailable, summary, duration, key measurements; security audit lists only failed/warning item IDs and titles (max 25) |
+| 1100 | One event per finished test (every module and stress test), stable `Key: value` lines: `Test result` (module), `Test`, `Outcome` (OK/Warning/Critical/Cancelled/Unavailable), `Summary`, `Duration`, `Stress suite`, `Finished` (ISO 8601), `Machine`, `App version`, `Format: 2`, then `Measurements:` (`  Name=value`, numbers only) and human-readable `Details:`; security audit lists only failed/warning item IDs and titles (max 25). The History page reads these back. |
 | 1110 / 1111 | Stress suite started / finished (outcome and per-test states) |
 | 1200 | Fan diagnostic (EC fan, IdeaPad 82R4) lines |
 | 1300 | Sensor driver lines (PawnIO / LibreHardwareMonitor) |

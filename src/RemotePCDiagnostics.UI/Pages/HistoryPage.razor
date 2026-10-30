@@ -2,35 +2,34 @@
 @using RemotePCDiagnostics.Core.History
 @implements IDisposable
 @inject IHistoryStore History
-@* Past test results (kept on this PC; in Remote mode the technician sees the bench PC's history). *@
+@* Past test results from the Windows Event Log (event 1100; in Remote mode the technician sees the bench PC's history). *@
 @{
-    var all = History.ReadAll();
+    var all = _result?.Entries ?? [];
     var rows = HistoryQuery.Sort(HistoryQuery.Filter(all, _module, _outcome, _range, DateTimeOffset.UtcNow), _sort.Col, _sort.Desc);
-    var tests = all.GroupBy(e => e.Module).Select(g => (Module: g.Key, Test: g.Last().Test)).OrderBy(t => t.Test).ToList();
+    var tests = all.GroupBy(e => e.Module).Select(g => (Module: g.Key, Test: g.First().Test)).OrderBy(t => t.Test).ToList();
     var trends = tests.Where(t => HistoryQuery.TrendKey(t.Module) is not null && (_module.Length == 0 || _module == t.Module))
         .Select(t => (t.Test, Key: HistoryQuery.TrendKey(t.Module)!.Value, Points: HistoryQuery.Trend(all, t.Module))).Where(t => t.Points.Count > 0).ToList();
 }
 <div class="toolbar toolbar-grouped">
     <span class="icon-badge page-icon"><Icon Name="hist" Size="20" /></span><h1 data-testid="history-title">History</h1>
-    @if (all.Count > 0)
-    {
-        @if (_confirm)
-        {
-            <span class="meta">Delete all saved results?</span>
-            <button data-testid="history-clear-confirm" @onclick="Clear">Yes, clear history</button>
-            <button data-testid="history-clear-cancel" @onclick="() => _confirm = false">Keep</button>
-        }
-        else { <button data-testid="history-clear" @onclick="() => _confirm = true">Clear history</button> }
-    }
+    <button data-testid="history-refresh" disabled="@_loading" @onclick="Load">@(_loading ? "Loading…" : "Refresh")</button>
 </div>
-<p class="meta">Results of past checks and tests on this PC, newest first. Results are kept for 90 days.</p>
+<p class="meta" data-testid="history-source">Past check and test results on this PC, newest first. History comes from the Windows Event Log (Application, source RemotePCDiagnostics). Retention follows the Event Log size settings.</p>
 
-@if (all.Count == 0)
+@if (_result is null)
 {
-    <p class="status-line" data-testid="history-empty">No results yet. Results appear here after a check or test finishes.</p>
+    <p class="status-line" data-testid="history-loading">Loading history…</p>
+}
+else if (all.Count == 0 && _range == HistoryRange.All)
+{
+    <p class="status-line" data-testid="history-empty">@(_result.Available
+        ? "No results yet. Results appear here after a check or test finishes."
+        : "Windows Event Log isn't available or has no results yet; run the app once as administrator so it can register the event source.")</p>
 }
 else
 {
+    @if (!_result.Available) { <p class="notice" data-testid="history-partial">Some history couldn't be read from the Windows Event Log.</p> }
+
     <div class="toolbar audit-filters">
         <select data-testid="history-filter-test" aria-label="Filter by test" value="@_module" @onchange="e => _module = e.Value?.ToString() ?? string.Empty">
             <option value="">All tests</option>
@@ -40,7 +39,7 @@ else
             <option value="">All results</option>
             @foreach (var o in HistoryQuery.Outcomes) { <option value="@o">@o</option> }
         </select>
-        <select data-testid="history-filter-range" aria-label="Time range" value="@_range.ToString()" @onchange="e => _range = Enum.TryParse<HistoryRange>(e.Value?.ToString(), out var r) ? r : HistoryRange.All">
+        <select data-testid="history-filter-range" aria-label="Time range" value="@_range.ToString()" @onchange="SetRange">
             <option value="Last24Hours">Last 24 hours</option>
             <option value="Last7Days">Last 7 days</option>
             <option value="Last30Days">Last 30 days</option>
@@ -109,16 +108,56 @@ else
 }
 
 @code {
+    [Inject] private ResultStore Store { get; set; } = default!;
     private string _module = "", _outcome = "";
     private HistoryRange _range = HistoryRange.All;
     private static (HistoryColumn Col, bool Desc) _sort = HistoryQuery.DefaultSort;
     private HistoryEntry? _open;
-    private bool _confirm;
+    private HistoryReadResult? _result;
+    private bool _loading, _disposed;
+    private int _reloadPending;
 
-    protected override void OnInitialized() => History.Changed += OnChanged;
-    private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
-    private void Clear() { _confirm = false; _open = null; History.Clear(); }
-    public void Dispose() => History.Changed -= OnChanged;
+    protected override async Task OnInitializedAsync()
+    {
+        Store.Changed += OnResult;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        if (_loading) return;
+        _loading = true;
+        try
+        {
+            var within = HistoryQuery.RangeSpan(_range);
+            // Event Log reads can take a moment: never on the render thread.
+            _result = await Task.Run(() => History.Read(within));
+            if (_open is not null && !_result.Entries.Contains(_open)) _open = null;
+        }
+        catch { _result = new HistoryReadResult([], false); }
+        finally { _loading = false; }
+    }
+
+    private async Task SetRange(ChangeEventArgs e)
+    {
+        _range = Enum.TryParse<HistoryRange>(e.Value?.ToString(), out var r) ? r : HistoryRange.All;
+        await Load();
+    }
+
+    // A test finished: its event is written in the background, so re-read shortly after.
+    private void OnResult(object? sender, DiagnosticResult r)
+    {
+        if (r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun || System.Threading.Interlocked.Exchange(ref _reloadPending, 1) == 1) return;
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(2000);
+            System.Threading.Interlocked.Exchange(ref _reloadPending, 0);
+            if (_disposed) return;
+            try { await InvokeAsync(async () => { await Load(); StateHasChanged(); }); } catch { }
+        });
+    }
+
+    public void Dispose() { _disposed = true; Store.Changed -= OnResult; }
 
     private static string Dot(string outcome) => outcome switch
     {
