@@ -20,7 +20,7 @@ RemotePCDiagnostics is a single Windows desktop application (a WPF or WinForms h
 | Network adapter errors | Per-adapter errors and drops, DHCP and DNS settings | osquery |
 | System errors | Recent System event log errors | osquery |
 | Application crashes | Crash records with exception codes and stack traces | osquery |
-| Live temperatures and fans | CPU/GPU temperatures, fan speeds, voltages | LibreHardwareMonitor |
+| Live temperatures and fans | CPU/GPU temperatures, fan speeds, voltages | LibreHardwareMonitor (+ Windows GPU temperature fallback) |
 | Security baseline audit (optional) | Windows hardening checks against published baselines | HardeningKitty |
 
 ## Architecture (intended)
@@ -151,7 +151,7 @@ Safety and edge cases:
   some Remote Desktop / VM sessions) the result is "No graphics chip could be tested" (warning), never a pass. The test also
   refuses a software device as defense in depth. No adapter at all gives the same headline with a different explanation.
 - **Temperatures:** uses the shared sensor provider; shows the GPU temperature when reported (0/missing = no data, common on
-  integrated GPUs) and the GPU fan, else any fan. Stops automatically when any live temperature reaches the red level
+  integrated GPUs; if LibreHardwareMonitor has none, the "GPU temperature (from Windows)" fallback below is used) and the GPU fan, else any fan. Stops automatically when any live temperature reaches the red level
   (`SensorLevel.Critical`), like the other stress modules.
 - Technical details (adapters, vendor IDs, feature level, HRESULTs, dispatch timings) go only to the log (`RPD_LOG_FILE`).
 
@@ -165,3 +165,12 @@ The top bar has a **Dark / System / Light** switch (default **System**, which fo
 ### CI
 
 `.github/workflows/ci.yml` runs on `windows-latest` for push, pull request and manual dispatch: it builds the solution in Release with .NET 10, runs the unit tests, then launches the WPF Host with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` and uses Playwright (`tests/smoke/smoke.mjs`, `connectOverCDP`) to check the app stays up and the Dashboard renders. A screenshot, `host.log` (written when `RPD_LOG_FILE` is set) and test results are uploaded as the `ci-artifacts` artifact. Run locally on Windows: build, start the Host with that env var, then `cd tests/smoke && npm install && node smoke.mjs`.
+
+### GPU temperature fallback (from Windows)
+
+When LibreHardwareMonitor reports no valid GPU temperature (0/missing, e.g. AMD Ryzen APU integrated graphics), the app asks
+Windows for it the same way Task Manager does: `D3DKMTQueryAdapterInfo(KMTQAITYPE_ADAPTERPERFDATA)` (gdi32, WDDM 2.7+,
+Windows 10 2004+/11). The value comes from the GPU driver, so it is shown as "GPU temperature (from Windows)" (not
+approximate) on the Temperatures GPU card and used by the GPU stress test; alerts use a conservative 85/95 °C. It only works
+when the installed driver fills in the temperature (i.e. when Task Manager shows one). Each source and its result are logged
+once to the `RPD_LOG_FILE` log.

@@ -33,6 +33,9 @@ public sealed record SensorReading(
     /// <summary>True for the ACPI thermal-zone fallback reading (not a real CPU sensor).</summary>
     public bool IsApproximate => HardwareName == ThermalZoneFallback.HardwareName && SensorName == ThermalZoneFallback.SensorName;
 
+    /// <summary>True for the GPU temperature read through Windows (driver value, not approximate) when LHM had none.</summary>
+    public bool IsFromWindows => HardwareType == HardwareKind.Gpu && SensorName == GpuTemperatureFallback.SensorName;
+
     public string DeviceType => HardwareType switch
     {
         HardwareKind.Cpu => "CPU", HardwareKind.Gpu => "Graphics", HardwareKind.Storage => "Drive", HardwareKind.Memory => "Memory",
@@ -49,6 +52,7 @@ public sealed record SensorReading(
         {
             var n = SensorName.Trim();
             if (IsApproximate) return ThermalZoneFallback.FriendlyLabel;
+            if (IsFromWindows) return GpuTemperatureFallback.SensorName;
             var num = System.Text.RegularExpressions.Regex.Match(n, @"#\s*(\d+)");
             if (SensorType == SensorKind.Fan) return num.Success ? $"Fan {num.Groups[1].Value} speed" : n.Contains("fan", StringComparison.OrdinalIgnoreCase) ? n + " speed" : $"Fan speed ({n})";
             switch (HardwareType)
