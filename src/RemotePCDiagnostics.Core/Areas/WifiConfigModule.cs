@@ -188,8 +188,20 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
                 string.IsNullOrWhiteSpace(a.Gateway) ? "None" : a.Gateway,
                 string.IsNullOrWhiteSpace(a.Dns) ? "None" : a.Dns,
                 a.Description
-            ]));
+            ],
+            Key: a.Alias,
+            Actions: a.Alias.Length > 0
+                ? [
+                    new(RemediationKind.SetPublicDns, "Use 1.1.1.1 / 8.8.8.8 DNS", a.Alias, a.Alias),
+                    new(RemediationKind.ResetDhcpDns, "Reset DNS to DHCP", a.Alias, a.Alias),
+                ]
+                : null));
         }
+
+        var cardActions = new List<AreaAction>();
+        if (snap.ProxyEnabled)
+            cardActions.Add(new(RemediationKind.DisableSystemProxy, "Disable system proxy"));
+        cardActions.Add(new(RemediationKind.FlushDnsAndRenewIp, "Flush DNS & renew IP"));
 
         var noteParts = new List<string>();
         if (snap.ProxyEnabled)
@@ -200,7 +212,8 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         return new("ipdns", "IP, gateway, DNS & proxy", level, headline, meta,
             ["Interface", "IPv4 address", "Gateway", "DNS servers", "Adapter"], rows,
             EmptyText: snap.Adapters.Count == 0 ? "No active IP configurations." : null,
-            Note: noteParts.Count > 0 ? string.Join(" ", noteParts) : null);
+            Note: noteParts.Count > 0 ? string.Join(" ", noteParts) : null,
+            Actions: cardActions);
     }
 
     private static bool IsLikelyVpn(ActiveAdapterIp a)

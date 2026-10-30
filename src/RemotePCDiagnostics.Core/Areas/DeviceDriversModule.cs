@@ -112,11 +112,21 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
                 : string.Join(", ", problems.Take(2).Select(p => $"{p.Name} ({p.FriendlyError})"));
 
             var rows = problems.OrderBy(p => p.IsDisabledOnly).ThenBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase)
-                .Select(p => new AreaRow(p.IsDisabledOnly ? AreaLevel.Neutral : AreaLevel.Warning,
-                    [p.Name, p.Class.Length > 0 ? p.Class : "Other", p.FriendlyError])).ToList();
+                .Select(p => new AreaRow(
+                    p.IsDisabledOnly ? AreaLevel.Neutral : AreaLevel.Warning,
+                    [p.Name, p.Class.Length > 0 ? p.Class : "Other", p.FriendlyError],
+                    Actions: p.DeviceId.Length > 0
+                        ? [new AreaAction(p.IsDisabledOnly ? RemediationKind.EnableDevice : RemediationKind.RestartDevice,
+                            p.IsDisabledOnly ? "Enable device" : "Restart device", p.DeviceId, p.Name)]
+                        : null)).ToList();
             cards.Add(new("problems", "Device Manager problems", level, headline, meta,
                 ["Device", "Category", "Problem"], rows,
-                EmptyText: "No devices with problems were reported by Windows."));
+                EmptyText: "No devices with problems were reported by Windows.",
+                Actions:
+                [
+                    new(RemediationKind.CheckAndInstallDriverUpdates, "Check & install driver updates"),
+                    new(RemediationKind.ScanHardwareChanges, "Scan for hardware changes"),
+                ]));
 
             parts.Add(problems.Count == 0 ? "All devices working"
                 : faulting.Count > 0 ? $"{Plural(faulting.Count, "device problem")}"
@@ -142,7 +152,8 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
                 distinct.Select(d => new AreaRow(d.Signed ? AreaLevel.Neutral : AreaLevel.Warning,
                     [d.DeviceName, d.Class, d.Provider, d.Version, ProgramsModule.FormatDate(d.Date)],
                     [null, null, null, null, ProgramsModule.DateKey(d.Date)])).ToList(),
-                EmptyText: "No drivers were reported."));
+                EmptyText: "No drivers were reported.",
+                Actions: [new(RemediationKind.CheckAndInstallDriverUpdates, "Check & install driver updates")]));
 
             parts.Add(Plural(distinct.Count, "driver") + (unsigned.Count > 0 ? $" ({unsigned.Count} unsigned)" : ""));
         }

@@ -2,7 +2,7 @@
 @using RemotePCDiagnostics.Core.Areas
 @inherits StoreAwareComponent
 @inject IServiceProvider Sp
-@* Generic card + drill-down page for area modules (drive health, services, programs, network, events, crashes). *@
+@* Generic card + drill-down page for area modules (drive health, services, programs, network, events, crashes, and new checks). *@
 @{
     var m = Diagnostics.Modules.FirstOrDefault(x => string.Equals(x.Name, Slug, StringComparison.OrdinalIgnoreCase));
 }
@@ -18,6 +18,8 @@ else
     var svcModule = m as ServicesModule;
     var svcActions = svcModule is null ? null : Sp.GetService(typeof(ServiceActionService)) as ServiceActionService;
     var memSvc = m is ResourceHogsModule ? Sp.GetService(typeof(RemotePCDiagnostics.Core.Memory.MemorySuggestionService)) as RemotePCDiagnostics.Core.Memory.MemorySuggestionService : null;
+    var remActions = Sp.GetService(typeof(RemediationService)) as RemediationService;
+    var hasRemActions = remActions is not null && rep is not null && rep.Cards.Any(c => c.Actions is { Count: > 0 } || c.Rows.Any(rw => rw.Actions is { Count: > 0 }));
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="@m.Name" Size="20" /></span><h1 data-testid="area-title">@m.DisplayName</h1></div>
     <p data-testid="area-status" class="@(r.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
         <span class="@DotClass(r.Status)"></span>
@@ -34,6 +36,16 @@ else
                 <SummaryCard Id="@c.Id" Title="@c.Title" OnOpen="Open" ErrorText="@c.ErrorText" EmptyText="@c.EmptyText" Dot="@Dot(c.Level)">
                     <div class="headline">@c.Headline</div>
                     @if (c.Meta.Length > 0) { <div class="meta">@c.Meta</div> }
+                    @if (remActions is not null && c.Actions is { Count: > 0 })
+                    {
+                        <div class="svc-actions" style="margin-top:0.5rem" @onclick:stopPropagation="true">
+                            @foreach (var act in c.Actions)
+                            {
+                                var a = act;
+                                <button class="btn-small" data-testid="remediation-card-@c.Id-@a.Kind" @onclick="() => _remUi?.Ask(a)">@a.ButtonText</button>
+                            }
+                        </div>
+                    }
                 </SummaryCard>
             }
         </div>
@@ -42,12 +54,23 @@ else
 
         @if (_open is not null && rep.Cards.FirstOrDefault(c => c.Id == _open) is { } open)
         {
-            var isKeyValue = open.Columns is ["Detail", "Value"] && svcActions is null;
+            var hasRowRemActions = remActions is not null && open.Rows.Any(rw => rw.Actions is { Count: > 0 });
+            var isKeyValue = open.Columns is ["Detail", "Value"] && svcActions is null && !hasRowRemActions;
             <div class="drawer-backdrop" @onclick="Close"></div>
             <aside class="drawer" role="dialog" aria-modal="true" aria-label="@open.Title" tabindex="-1" @onkeydown="DrawerKey" data-testid="area-drawer-@open.Id">
                 <div class="drawer-head"><strong title="@open.Title">@open.Title</strong><button data-testid="area-drawer-close" @onclick="Close">Close</button></div>
                 @if (open.Note is { } note) { <p class="meta">@note</p> }
                 @if (open.Id == "memory" && memSvc is not null) { <p><button class="linklike" data-testid="mem-suggest-link" @onclick="ShowSuggestions">See ways to use less memory</button></p> }
+                @if (remActions is not null && open.Actions is { Count: > 0 })
+                {
+                    <div class="svc-actions" style="margin-bottom:0.6rem">
+                        @foreach (var act in open.Actions)
+                        {
+                            var a = act;
+                            <button class="btn-small" data-testid="remediation-drawer-@open.Id-@a.Kind" @onclick="() => _remUi?.Ask(a)">@a.ButtonText</button>
+                        }
+                    </div>
+                }
                 @if (open.ErrorText is not null) { <div class="notice notice-error" data-testid="detail-error">@open.ErrorText</div> }
                 else if (open.Rows.Count == 0) { <p class="meta" data-testid="detail-empty">@(open.EmptyText ?? "Nothing to show here.")</p> }
                 else if (isKeyValue)
@@ -74,7 +97,7 @@ else
                                     data-testid="area-th-@col" @onclick="() => ToggleSort(m.Name, open, col)"
                                     @onkeydown="e => SortKey(e, m.Name, open, col)">@open.Columns[col]<span class="sort-arrow">@(sc == col ? (sd ? " ▼" : " ▲") : "")</span></th>
                             }
-                            @if (svcActions is not null) { <th>Actions</th> }
+                            @if (svcActions is not null || hasRowRemActions) { <th>Actions</th> }
                         </tr>
                         @foreach (var row in AreaSort.Sort(open.Rows, sc, sd))
                         {
@@ -100,6 +123,19 @@ else
                                         }
                                     </td>
                                 }
+                                else if (hasRowRemActions)
+                                {
+                                    <td class="svc-actions">
+                                        @if (row.Actions is { Count: > 0 })
+                                        {
+                                            @foreach (var act in row.Actions)
+                                            {
+                                                var a = act;
+                                                <button data-testid="remediation-row-@a.Kind" @onclick="() => _remUi?.Ask(a)">@a.ButtonText</button>
+                                            }
+                                        }
+                                    </td>
+                                }
                             </tr>
                         }
                     </table>
@@ -108,6 +144,7 @@ else
         }
     }
     @if (svcActions is not null) { <ServiceActions @ref="_svcUi" Actions="svcActions" OnRowChanged="RowChanged" /> }
+    @if (hasRemActions) { <RemediationActions @ref="_remUi" Actions="remActions" OnCompleted="() => Diagnostics.RunAsync(m.Name)" /> }
 }
 
 @code {
@@ -138,6 +175,7 @@ else
 
     // Services: live status per service after a Start/Stop/Restart, so only that row updates (no full re-check).
     private ServiceActions? _svcUi;
+    private RemediationActions? _remUi;
     private readonly Dictionary<string, string> _svcStatus = new(StringComparer.OrdinalIgnoreCase);
     private object? _svcSeen;
     private ServiceInfo? SvcInfo(ServicesModule? sm, AreaRow row)

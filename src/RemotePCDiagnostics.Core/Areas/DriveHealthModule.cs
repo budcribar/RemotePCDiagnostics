@@ -116,7 +116,13 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             Add("Uncorrected write errors", d.WriteErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported", d.WriteErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Hours powered on", d.PowerOnHours is >= 0 ? d.PowerOnHours.Value.ToString("N0", CultureInfo.InvariantCulture) : "Not reported");
             Add("Serial number", d.Serial);
-            return new AreaCard($"drive{i}", d.Name.Length > 0 ? d.Name : $"Drive {i + 1}", d.Level, d.Verdict, meta, cols, rows);
+            var actions = new List<AreaAction>();
+            if (i == 0)
+                actions.Add(new(RemediationKind.CleanTempFiles, "Clean up temporary files", "", "Temporary files & Recycle Bin"));
+            if (d.Kind == "SSD")
+                actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", "C", d.Name.Length > 0 ? d.Name : "SSD"));
+            return new AreaCard($"drive{i}", d.Name.Length > 0 ? d.Name : $"Drive {i + 1}", d.Level, d.Verdict, meta, cols, rows,
+                Actions: actions.Count > 0 ? actions : null);
         }).ToList();
 
         var bad = drives.Count(d => d.Level is AreaLevel.Warning or AreaLevel.Error);

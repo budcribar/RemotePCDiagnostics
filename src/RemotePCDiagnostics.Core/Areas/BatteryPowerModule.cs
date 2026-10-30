@@ -113,7 +113,8 @@ public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner
             [
                 new(planLevel, ["Active power plan", planName]),
                 new(AreaLevel.Neutral, ["Impact", isSaver ? "Power saver caps processor clock speeds and can make the PC feel slow." : "Normal processor speed scaling enabled."]),
-            ]));
+            ],
+            Actions: isSaver ? [new(RemediationKind.SetBalancedPowerPlan, "Switch to Balanced plan", RemediationService.BalancedPlanGuid, "Balanced power plan")] : null));
         if (!string.IsNullOrWhiteSpace(powerPlan)) parts.Add($"{planName} plan");
 
         var status = AreaReport.Worst(cards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));

@@ -1,0 +1,94 @@
+@using RemotePCDiagnostics.Core.Areas
+@implements IDisposable
+@* Confirmation modal, progress with Cancel, result banner, and recent audit list for one-click remediations. *@
+@if (_plan is not null)
+{
+    <div class="svc-modal-backdrop" @onclick="() => { if (!_busy) CloseDialog(); }"></div>
+    <div class="svc-modal" role="dialog" aria-modal="true" aria-label="@_plan.Title" tabindex="-1"
+         @onkeydown='e => { if (e.Key == "Escape" && !_busy) CloseDialog(); }' data-testid="remediation-confirm">
+        <strong>@_plan.Title</strong>
+        @if (_plan.WhatItIs.Length > 0) { <p>@_plan.WhatItIs</p> }
+        @if (_plan.WhatWillHappen.Length > 0) { <p>@_plan.WhatWillHappen</p> }
+        @if (_plan.Warning is { } w) { <p class="svc-warn" data-testid="remediation-warning">@w</p> }
+        @if (_busy)
+        {
+            <p class="meta" data-testid="remediation-working">Working… please wait.</p>
+            <div class="buttons"><button data-testid="remediation-cancel" @onclick="CancelRun">Cancel</button></div>
+        }
+        else
+        {
+            <div class="buttons">
+                <button data-testid="remediation-cancel" @onclick="CloseDialog">Cancel</button>
+                @if (_plan.Allowed) { <button data-testid="remediation-confirm-go" @onclick="Run">@_plan.Action.ButtonText</button> }
+            </div>
+        }
+    </div>
+}
+@if (_lastMessage is { } msg)
+{
+    <div class="notice @(_lastOk ? "svc-result-ok" : "notice-error")" data-testid="remediation-result">@msg</div>
+}
+@if (Actions is not null && Actions.Recent.Count > 0)
+{
+    <div class="svc-recent" data-testid="remediation-recent">
+        <strong>Recent automated fixes</strong>
+        <ul>
+            @foreach (var a in Actions.Recent)
+            {
+                <li>@a.When.ToString("t") · @a.Actor · @a.Message</li>
+            }
+        </ul>
+    </div>
+}
+
+@code {
+    [Parameter] public RemediationService? Actions { get; set; }
+    [Parameter] public EventCallback OnCompleted { get; set; }
+
+    private RemediationPlan? _plan;
+    private bool _busy;
+    private CancellationTokenSource? _cts;
+    private string? _lastMessage;
+    private bool _lastOk;
+
+    public void Ask(AreaAction action)
+    {
+        if (Actions is null || _busy) return;
+        _plan = Actions.Plan(action);
+        StateHasChanged();
+    }
+
+    private void CloseDialog() => _plan = null;
+    private void CancelRun() => _cts?.Cancel();
+
+    private async Task Run()
+    {
+        if (Actions is null || _plan is null) return;
+        _busy = true;
+        _cts = new CancellationTokenSource();
+        var act = _plan.Action;
+        try
+        {
+            var r = await Task.Run(() => Actions.ExecuteAsync(act, _cts.Token));
+            if (_disposed) return;
+            _lastOk = r.Success;
+            _lastMessage = r.Message;
+            if (r.Success && OnCompleted.HasDelegate)
+                await OnCompleted.InvokeAsync();
+        }
+        finally
+        {
+            _busy = false;
+            _cts?.Dispose();
+            _cts = null;
+            _plan = null;
+        }
+    }
+
+    private bool _disposed;
+    public void Dispose()
+    {
+        _disposed = true;
+        try { _cts?.Cancel(); } catch (ObjectDisposedException) { }
+    }
+}

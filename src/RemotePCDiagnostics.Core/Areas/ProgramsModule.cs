@@ -103,7 +103,8 @@ public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today =
                 .Select(u => new AreaRow(AreaLevel.Neutral, [u.Id, u.Description, u.InstalledOn is null ? "Unknown" : FormatDate(u.InstalledOn)],
                     [null, null, DateKey(u.InstalledOn)])).ToList();
             cards.Add(new("updates", "Windows updates", level, headline, meta, ["Update", "Type", "Installed"], rows,
-                Note: "Windows lists the main updates here; some feature and driver updates aren't included."));
+                Note: "Windows lists the main updates here; some feature and driver updates aren't included.",
+                Actions: [new(RemediationKind.CheckAndInstallWindowsUpdates, "Check & install updates")]));
             parts.Add(updates.Count == 0 ? "no updates found" : latest is null ? AreaModuleBase.Plural(updates.Count, "update") : $"last update {Ago(age!.Value)}");
         }
 

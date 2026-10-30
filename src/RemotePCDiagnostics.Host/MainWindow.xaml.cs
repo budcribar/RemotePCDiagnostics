@@ -59,6 +59,7 @@ public partial class MainWindow : Window
         services.AddSingleton<ServicesModule>();
         services.AddSingleton<IDiagnosticModule>(sp => sp.GetRequiredService<ServicesModule>());
         services.AddSingleton(sp => new ServiceActionService(new WindowsServiceControlBackend(), sp.GetRequiredService<ISessionContext>(), App.Log));
+        services.AddSingleton(sp => new RemediationService(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), App.Log));
         services.AddSingleton<IDiagnosticModule, ProgramsModule>(sp => new ProgramsModule(sp.GetRequiredService<OsqueryRunner>()));
         services.AddSingleton<IDiagnosticModule, NetworkModule>(sp => new NetworkModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
         services.AddSingleton<IDiagnosticModule, EventLogModule>();
@@ -94,6 +95,11 @@ public partial class MainWindow : Window
         {
             if (rec.Actor != ServiceActor.Remote) return;
             Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"The remote technician used the Services page: {rec.Message.TrimEnd('.')}.", "Remote PC Diagnostics", MessageBoxButton.OK, MessageBoxImage.Information));
+        };
+        provider.GetRequiredService<RemediationService>().ActionCompleted += rec =>
+        {
+            if (rec.Actor != ServiceActor.Remote) return;
+            Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"The remote technician ran an automated fix: {rec.Message.TrimEnd('.')}.", "Remote PC Diagnostics", MessageBoxButton.OK, MessageBoxImage.Information));
         };
 
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).

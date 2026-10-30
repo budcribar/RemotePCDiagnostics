@@ -120,7 +120,16 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
             };
             if (longUp)
                 rows.Add(new(AreaLevel.Warning, ["Recommendation", $"This PC hasn't been restarted in {uptime.Days} days. Restarting clears stuck background processes and applies pending updates."]));
-            cards.Add(new("uptime", "System uptime", level, $"Up {uptime.FriendlyDuration}", meta, ["Detail", "Value"], rows));
+            var uptimeActions = new List<AreaAction>();
+            if (uptime.FastStartupEnabled == true)
+                uptimeActions.Add(new(RemediationKind.DisableFastStartup, "Turn off Fast Startup"));
+            if (longUp)
+            {
+                uptimeActions.Add(new(RemediationKind.ScheduleCleanRestart, "Restart PC in 60s"));
+                uptimeActions.Add(new(RemediationKind.CancelScheduledRestart, "Cancel restart"));
+            }
+            cards.Add(new("uptime", "System uptime", level, $"Up {uptime.FriendlyDuration}", meta, ["Detail", "Value"], rows,
+                Actions: uptimeActions.Count > 0 ? uptimeActions : null));
             parts.Add($"Up {uptime.FriendlyDuration}" + (longUp ? " (needs restart)" : ""));
         }
 
@@ -140,7 +149,9 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
             AreaRow Row(ProcessGroupUsage g, bool warnHighMem = false) => new(
                 warnHighMem && g.MemoryBytes >= HighSingleAppMemoryBytes ? AreaLevel.Warning : AreaLevel.Neutral,
                 [g.Name, g.Instances.ToString(CultureInfo.InvariantCulture), HardwareInventory.FormatBytes(g.MemoryBytes), FormatCpuTime(g.CpuTimeMs), HardwareInventory.FormatBytes(g.DiskBytes)],
-                [null, NumKey(g.Instances), NumKey(g.MemoryBytes), NumKey(g.CpuTimeMs), NumKey(g.DiskBytes)]);
+                [null, NumKey(g.Instances), NumKey(g.MemoryBytes), NumKey(g.CpuTimeMs), NumKey(g.DiskBytes)],
+                Key: g.Name,
+                Actions: ProcessProtection.IsProtected(g.Name) ? null : [new(RemediationKind.EndProcessGroup, "End task", g.Name, g.DisplayName)]);
 
             cards.Add(new("memory", "Top memory consumers", memWarn ? AreaLevel.Warning : AreaLevel.Ok,
                 topMem is null ? "No apps" : $"{topMem.Name} ({HardwareInventory.FormatBytes(topMem.MemoryBytes)})",
