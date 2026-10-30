@@ -1,0 +1,26 @@
+@using RemotePCDiagnostics.Core.Stress
+@* Latency over time: blue = internet, grey = router; red marks = no reply (lost). *@
+@{
+    const double W = 600, H = 120, Pad = 4;
+    var total = Duration > TimeSpan.Zero ? Duration.TotalSeconds : 1;
+    var max = Math.Max(50, Samples.SelectMany(s => new[] { s.InternetMs, s.GatewayMs }).Where(v => v.HasValue).Select(v => v!.Value).DefaultIfEmpty(0).Max() * 1.1);
+    double X(NetworkSample s) => Pad + (W - 2 * Pad) * Math.Clamp(s.At.TotalSeconds / total, 0, 1);
+    double Y(double ms) => H - Pad - (H - 2 * Pad) * Math.Min(ms, max) / max;
+    string Line(Func<NetworkSample, double?> f) => string.Join(" ", Samples.Where(s => f(s).HasValue).Select(s => $"{X(s):0.#},{Y(f(s)!.Value):0.#}"));
+}
+<svg data-testid="@TestId" viewBox="0 0 @W @H" style="width:100%;max-width:600px;height:auto;background:#fff;border:1px solid #ddd;border-radius:8px" role="img" aria-label="Connection delay over time">
+    <line x1="@Pad" y1="@Y(max / 2)" x2="@(W - Pad)" y2="@Y(max / 2)" stroke="#eee" />
+    <text x="@(W - Pad)" y="@(Y(max / 2) - 2)" font-size="9" fill="#999" text-anchor="end">@($"{max / 2:0} ms")</text>
+    @foreach (var s in Samples.Where(s => s.InternetLost))
+    {
+        <line x1="@X(s).ToString("0.#")" y1="@Pad" x2="@X(s).ToString("0.#")" y2="@(H - Pad)" stroke="#dc2626" stroke-width="2" opacity="0.7" />
+    }
+    <polyline points="@Line(s => s.GatewayMs)" fill="none" stroke="#9ca3af" stroke-width="1" />
+    <polyline points="@Line(s => s.InternetMs)" fill="none" stroke="#2563eb" stroke-width="1.5" />
+</svg>
+<div class="meta"><span style="color:#2563eb">■</span> Internet delay · <span style="color:#9ca3af">■</span> Router delay · <span style="color:#dc2626">■</span> No reply</div>
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<NetworkSample> Samples { get; set; } = [];
+    [Parameter, EditorRequired] public TimeSpan Duration { get; set; }
+    [Parameter] public string TestId { get; set; } = "latency-chart";
+}

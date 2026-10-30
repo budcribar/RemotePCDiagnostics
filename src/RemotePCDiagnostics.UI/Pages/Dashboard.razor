@@ -6,6 +6,7 @@
     var inv = hw.Payload as HardwareInventory;
     var th = Store.Get(RemotePCDiagnostics.Core.Sensors.LibreHardwareMonitorModule.ModuleName);
     var thBusy = th.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
+    var net = Store.Get(RemotePCDiagnostics.Core.Stress.NetworkTestModule.ModuleName);
     var mem = Store.Get(RemotePCDiagnostics.Core.Stress.MemoryTestModule.ModuleName);
     var disk = Store.Get(RemotePCDiagnostics.Core.Stress.DiskSpeedModule.ModuleName);
     var cpu = Store.Get(RemotePCDiagnostics.Core.Stress.CpuStressModule.ModuleName);
@@ -33,6 +34,10 @@
 <p data-testid="dashboard-memorytest" class="status-line">
     <span class="@DotClass(mem.Status)"></span>
     <span>Memory test: @(mem.Status switch { DiagnosticStatus.NotRun => "Not run yet", DiagnosticStatus.Running => "Running…", _ => mem.Message })</span>
+</p>
+<p data-testid="dashboard-networktest" class="status-line">
+    <span class="@DotClass(net.Status)"></span>
+    <span>Network stability test: @(net.Status switch { DiagnosticStatus.NotRun => "Not run yet", DiagnosticStatus.Running => "Running…", _ => net.Message })</span>
 </p>
 <div class="cards">
     @foreach (var m in Diagnostics.Modules)

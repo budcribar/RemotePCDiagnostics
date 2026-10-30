@@ -1,0 +1,137 @@
+@page "/module/networktest"
+@using RemotePCDiagnostics.Core.Stress
+@inherits StoreAwareComponent
+@implements IAsyncDisposable
+@{
+    var r = Store.Get(NetworkTestModule.ModuleName);
+    var running = r.Status == DiagnosticStatus.Running;
+    var report = r.Payload as NetworkTestReport;
+    var p = running ? Module?.LastProgress : null;
+}
+<div class="toolbar">
+    <h1 data-testid="nettest-title">Network stability test</h1>
+    <label class="meta">Run for
+        <select data-testid="nettest-duration" disabled="@running" @onchange="SetDuration">
+            @foreach (var d in NetworkTestOptions.DurationChoices)
+            {
+                <option value="@d.TotalMinutes" selected="@(d == _duration)">@(d.TotalMinutes == 1 ? "1 minute" : $"{d.TotalMinutes:0} minutes")</option>
+            }
+        </select>
+    </label>
+    <button data-testid="nettest-start" @onclick="Start" disabled="@(running || Module is null)">Start</button>
+    <button data-testid="nettest-stop" @onclick="Stop" disabled="@(!running)">Stop</button>
+</div>
+<p class="meta">Checks how steady your connection is by contacting your router and the internet every second, measures your download and upload speed once (using a limited amount of data), and looks for new network errors. Video calls or downloads may be a little slower while it runs.</p>
+
+<p data-testid="nettest-status" class="status-line">
+    <span class="@DotClass(r.Status)"></span>
+    @(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
+</p>
+
+@if (running)
+{
+    var live = p is null ? null : PingStats.From(p.Samples.Select(s => s.InternetMs));
+    <div class="progress" data-testid="nettest-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
+    <div class="cards">
+        <div class="card" data-testid="nettest-live-progress">
+            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+            <div class="headline">@(p is null ? "Getting ready…" : $"{p.Step}…")</div>
+            <div class="meta">@(p is null ? "" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
+        </div>
+        <div class="card" data-testid="nettest-live-latency">
+            <div class="card-head"><span class="dot dot-neutral"></span><strong>Delay right now</strong></div>
+            <div class="headline">@NetworkTestReport.Ms(p?.Samples.LastOrDefault()?.InternetMs)</div>
+            <div class="meta">Average @NetworkTestReport.Ms(live?.AverageMs) · lost @NetworkTestReport.Pct(live?.LossPercent)</div>
+        </div>
+        <div class="card" data-testid="nettest-live-temp">
+            <div class="card-head"><span class="dot dot-neutral"></span><strong>CPU temperature</strong></div>
+            <div class="headline">@(p?.CpuTemperatureC is { } t ? $"{t:0}°C" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
+            <div class="meta">Fan @(p?.FanRpm is > 0 ? $"{p.FanRpm:0} RPM" : "—") · stops by itself if anything gets too hot</div>
+        </div>
+    </div>
+    @if (p is { Samples.Count: > 0 })
+    {
+        <h3>Connection over time</h3>
+        <LatencyChart Samples="p.Samples" Duration="p.Duration" TestId="nettest-live-chart" />
+    }
+}
+else if (report is not null)
+{
+    <div class="cards">
+        <div class="card" data-testid="nettest-result">
+            <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
+            <div class="headline">@report.Explanation</div>
+            <div class="meta">Ran for @Clock(report.Ran) · finished @r.Timestamp.ToLocalTime().ToString("g")</div>
+        </div>
+    </div>
+    @if (report.Samples.Count > 0)
+    {
+        <div class="cards" style="margin-top:12px">
+            <div class="card" data-testid="nettest-card-latency">
+                <div class="card-head"><span class="@Dot(report.Internet.AverageMs is null ? null : report.Internet.AverageMs < 100)"></span><strong>Latency</strong></div>
+                <div class="headline">@NetworkTestReport.Ms(report.Internet.AverageMs) average</div>
+                <div class="meta">Slowest @NetworkTestReport.Ms(report.Internet.WorstMs)@(report.HasGateway ? $" · router {NetworkTestReport.Ms(report.Gateway.AverageMs)}" : "")</div>
+            </div>
+            <div class="card" data-testid="nettest-card-loss">
+                <div class="card-head"><span class="@Dot(report.Internet.LossPercent is null || report.Internet.Received == 0 ? null : report.Internet.LossPercent < 0.5)"></span><strong>Loss</strong></div>
+                <div class="headline">@(report.Internet.Received == 0 ? "No replies" : NetworkTestReport.Pct(report.Internet.LossPercent))</div>
+                <div class="meta">@(report.Internet.Sent - report.Internet.Received) of @report.Internet.Sent checks got no reply</div>
+            </div>
+            <div class="card" data-testid="nettest-card-jitter">
+                <div class="card-head"><span class="@Dot(report.Internet.JitterMs is null ? null : report.Internet.JitterMs < 30)"></span><strong>Jitter</strong></div>
+                <div class="headline">@NetworkTestReport.Ms(report.Internet.JitterMs)</div>
+                <div class="meta">How much the delay jumps around</div>
+            </div>
+            <div class="card" data-testid="nettest-card-speed">
+                <div class="card-head"><span class="@Dot(report.DownloadMbps is null ? null : true)"></span><strong>Speed</strong></div>
+                <div class="headline">↓ @NetworkTestReport.Speed(report.DownloadMbps) · ↑ @NetworkTestReport.Speed(report.UploadMbps)</div>
+                <div class="meta">@(report.DownloadMbps is null ? "Speed couldn't be measured" : "Download · upload")</div>
+            </div>
+            <div class="card" data-testid="nettest-card-adapter">
+                <div class="card-head"><span class="@Dot(report.NewAdapterErrors is null ? null : report.NewAdapterErrors == 0 && report.NewAdapterDrops == 0)"></span><strong>Adapter errors</strong></div>
+                <div class="headline">@(report.NewAdapterErrors is null ? "Not reported" : report.NewAdapterErrors == 0 && report.NewAdapterDrops == 0 ? "No new errors" : $"{report.NewAdapterErrors:N0} new errors · {report.NewAdapterDrops:N0} dropped")</div>
+                <div class="meta">Problems counted by your network adapter during the test</div>
+            </div>
+        </div>
+        <h3>Connection over time</h3>
+        <LatencyChart Samples="report.Samples" Duration="report.Ran" TestId="nettest-chart" />
+    }
+}
+
+@code {
+    private NetworkTestModule? Module => Diagnostics.Modules.OfType<NetworkTestModule>().FirstOrDefault();
+    private TimeSpan _duration = TimeSpan.FromMinutes(1);
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        if (Module is not { } m) return;
+        _duration = m.Duration;
+        m.ProgressChanged += OnProgress;
+    }
+
+    private void OnProgress(object? s, NetworkTestProgress p) => _ = InvokeAsync(StateHasChanged);
+
+    private void SetDuration(ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out var min)) _duration = TimeSpan.FromMinutes(min);
+    }
+
+    private void Start()
+    {
+        if (Module is not { } m || Diagnostics.IsRunning(m.Name)) return;
+        m.Duration = _duration;
+        _ = Diagnostics.RunAsync(m.Name);
+    }
+
+    private void Stop() => Module?.Stop();
+    private static string Dot(bool? good) => good switch { null => "dot dot-neutral", true => "dot dot-ok", false => "dot dot-warning" };
+    private static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
+
+    public ValueTask DisposeAsync()
+    {
+        if (Module is { } m) m.ProgressChanged -= OnProgress;
+        Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

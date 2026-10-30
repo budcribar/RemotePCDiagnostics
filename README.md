@@ -98,6 +98,18 @@ The top bar badge shows Local or Remote. Consent prompt and audit log for remote
 
 The Host's `app.manifest` sets `requestedExecutionLevel level="requireAdministrator"`, so Windows prompts for elevation (UAC) at launch. Event-log and sensor modules will need it.
 
+### Network stability test
+
+On-demand only (never auto-run, not part of Run All). It pings the default gateway and public hosts
+(`1.1.1.1`, `8.8.8.8`; `NetworkTestSettings.DefaultPublicHosts`) every second for the chosen time limit
+(1/2/5/10 min), runs one capped HTTPS download (25 MB) and upload (10 MB) against
+`https://speed.cloudflare.com` (`/__down?bytes=N`, `/__up`), and compares Windows adapter error/drop
+counters (`Get-NetAdapterStatistics`) before and after. Each transfer is limited to 20 s and to its byte cap.
+
+To use your own speed server instead, set `REMOTEPC_SPEEDTEST_URL` to a base URL that implements the same two
+endpoints (`GET {base}/__down?bytes=N` returns N bytes; `POST {base}/__up` accepts the body). No iperf3 is required.
+Unit tests use fakes only; CI does not need internet access.
+
 ### CI
 
 `.github/workflows/ci.yml` runs on `windows-latest` for push, pull request and manual dispatch: it builds the solution in Release with .NET 10, runs the unit tests, then launches the WPF Host with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` and uses Playwright (`tests/smoke/smoke.mjs`, `connectOverCDP`) to check the app stays up and the Dashboard renders. A screenshot, `host.log` (written when `RPD_LOG_FILE` is set) and test results are uploaded as the `ci-artifacts` artifact. Run locally on Windows: build, start the Host with that env var, then `cd tests/smoke && npm install && node smoke.mjs`.
