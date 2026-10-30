@@ -260,4 +260,80 @@ public class RemediationTests
         Assert.Equal(1, summary.WarningRunsCount);
         Assert.Equal(0, summary.CriticalRunsCount);
     }
+
+    [Fact]
+    public async Task RemoteReboot_RegistersRunOnceWithSameSessionStream_AndLogsPostRebootResourceReductionInHistory()
+    {
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var runner = new SystemCommandRunner(launcher);
+        var serverUri = new Uri("https://remoteblazor.pagetomovie.com:34544");
+        var sessionId = Guid.Parse("bfdffa8b-70ac-4740-bdb1-c7f62a0b598f");
+        var session = new SessionContext(SessionMode.Remote, serverUri, sessionId);
+        var coordinator = new RebootResumeCoordinator(runner, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe");
+        var remSvc = new RemediationService(runner, session, rebootResume: coordinator);
+
+        // 1. Even with 1 day uptime, high process memory (>= 6 GB) recommends a clean restart with pre-reboot baseline attached
+        var preProcs = new List<ProcessResourceRow>
+        {
+            new("chrome.exe", 101, 5L * 1024 * 1024 * 1024, 50_000, 0),
+            new("devenv.exe", 202, 3L * 1024 * 1024 * 1024, 40_000, 0),
+        };
+        var hogsRep = ResourceHogsModule.Build(new SystemUptimeInfo(90_000, 1, 1, 0, FastStartupEnabled: true), preProcs);
+        var upCard = hogsRep.Cards.Single(c => c.Id == "uptime");
+        var restartAction = upCard.Actions!.Single(a => a.Kind == RemediationKind.ScheduleCleanRestart);
+
+        // 2. Remote technician triggers ScheduleCleanRestart
+        var schedRes = await remSvc.ExecuteAsync(restartAction);
+        Assert.True(schedRes.Success);
+        Assert.Contains("8 GB across 2 processes", schedRes.Message);
+
+        // Verify RunOnce command line keeps the exact same remote server and session GUID
+        Assert.NotNull(coordinator.LastRegisteredCommandLine);
+        Assert.Equal(
+            "\"C:\\App\\RemotePCDiagnostics.Host.exe\" -u=https://remoteblazor.pagetomovie.com:34544 -i=bfdffa8b-70ac-4740-bdb1-c7f62a0b598f --post-reboot",
+            coordinator.LastRegisteredCommandLine);
+        Assert.Contains(launcher.Calls, c => c.File.EndsWith("reg.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains(RebootResumeCoordinator.RunOnceValueName));
+
+        // Verify SessionLaunchOptions.Resolve parses the RunOnce arguments back into the identical Remote session stream
+        var relaunchOpts = SessionLaunchOptions.Resolve(
+            ["-u=https://remoteblazor.pagetomovie.com:34544", $"-i={sessionId}", "--post-reboot"],
+            _ => null);
+        Assert.Equal(SessionMode.Remote, relaunchOpts.Mode);
+        Assert.Equal(serverUri, relaunchOpts.ServerUri);
+        Assert.Equal(sessionId, relaunchOpts.Id);
+        Assert.True(relaunchOpts.PostReboot);
+
+        // 3. Simulate post-reboot startup: uptime reset to 120s, memory dropped from 8 GB to 3 GB (5 GB freed), processes from 2 to 1
+        var postBaseline = new ResourceBaselineSnapshot(
+            UptimeSeconds: 120,
+            UsedMemoryBytes: 3L * 1024 * 1024 * 1024,
+            ProcessCount: 1,
+            TopProcesses: "explorer.exe (120 MB)");
+        var comparison = await coordinator.CompletePostRebootIfPendingAsync(
+            remSvc,
+            diagnostics: null,
+            postRebootArgPresent: true,
+            postBaselineOverride: postBaseline);
+
+        Assert.NotNull(comparison);
+        Assert.Equal(5L * 1024 * 1024 * 1024, comparison!.FreedMemoryBytes);
+        Assert.Equal(1, comparison.ReducedProcesses);
+        Assert.Contains("freed about 5 GB of RAM", comparison.SummaryMessage);
+        Assert.Contains("1 fewer background processes", comparison.SummaryMessage);
+        Assert.Null(coordinator.LoadPendingState()); // Pending state cleaned up after completion
+
+        // 4. Verify HistorySummary logs the post-reboot memory reduction in System memory saved and Automated fixes
+        var now = DateTimeOffset.UtcNow;
+        var formattedRebootEvent = HistorySummary.FormatRemediationEvent(comparison.Record, "PC-1", "1.0.0");
+        var parsedRebootEntry = HistoryEventParser.Parse(formattedRebootEvent, now);
+        Assert.NotNull(parsedRebootEntry);
+
+        var summary = HistorySummary.Build([parsedRebootEntry!], remediation: null, memory: null, services: null, HistoryRange.All, now);
+        Assert.Equal(5L * 1024 * 1024 * 1024, summary.MemorySavedBytes);
+        Assert.Equal("5 GB", summary.MemoryHeadline);
+        Assert.Equal(1, summary.MemoryFixesCount);
+        Assert.Single(summary.Fixes);
+        Assert.Equal("+5 GB RAM", summary.Fixes[0].ImpactBadge);
+        Assert.Equal("Remote technician", summary.Fixes[0].Actor);
+    }
 }

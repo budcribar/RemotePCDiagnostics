@@ -57,7 +57,11 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
     public const int HighMemoryPercent = 85;
 
     public const int LongUptimeDays = 14;
+    public const int RecommendedRestartDays = 3;
+    public const long FastStartupRestartSeconds = 4 * 3600;
     public const long HighSingleAppMemoryBytes = 4L * 1024 * 1024 * 1024;
+    public const long HighTotalProcessMemoryBytes = 6L * 1024 * 1024 * 1024;
+    public const int HighProcessCount = 150;
     public const int TopCount = 15;
 
     public override string Name => ModuleName;
@@ -100,6 +104,20 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
             .Select(g => new ProcessGroupUsage(g.First().Name, g.Count(), g.Sum(x => x.ResidentBytes), g.Sum(x => x.CpuTimeMs), g.Sum(x => x.DiskBytes)))
             .ToList();
 
+    /// <summary>True when a clean restart makes sense to reduce memory/process usage (extended uptime, Fast Startup kernel hibernation, or heavy process footprint).</summary>
+    public static bool ShouldRecommendRestart(SystemUptimeInfo uptime, IReadOnlyList<ProcessResourceRow>? processes)
+    {
+        if (uptime.Days >= RecommendedRestartDays) return true;
+        if (uptime.FastStartupEnabled == true && uptime.TotalSeconds >= FastStartupRestartSeconds) return true;
+        if (processes is not null)
+        {
+            var totalMem = processes.Sum(p => Math.Max(0, p.ResidentBytes));
+            if (totalMem >= HighTotalProcessMemoryBytes || processes.Count >= HighProcessCount)
+                return true;
+        }
+        return false;
+    }
+
     public static string FormatCpuTime(long ms)
     {
         if (ms <= 0) return "0 s";
@@ -141,6 +159,7 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
         else
         {
             var longUp = uptime.Days >= LongUptimeDays;
+            var recommendRestart = ShouldRecommendRestart(uptime, processes);
             var level = longUp ? AreaLevel.Warning : AreaLevel.Ok;
             var meta = uptime.FastStartupEnabled == true
                 ? (longUp ? "Fast Startup is on — Shut Down hibernates the kernel; use Restart for a clean reboot" : "Fast Startup is enabled")
@@ -151,13 +170,25 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
                 new(AreaLevel.Neutral, ["Fast Startup", uptime.FastStartupEnabled switch { true => "Enabled (Shut Down does not fully reset the kernel)", false => "Disabled", _ => "Not reported" }]),
             };
             if (longUp)
+            {
                 rows.Add(new(AreaLevel.Warning, ["Recommendation", $"This PC hasn't been restarted in {uptime.Days} days. Restarting clears stuck background processes and applies pending updates."]));
+            }
+            else if (recommendRestart)
+            {
+                var baseline = ResourceBaselineSnapshot.FromOsquery(uptime, processes);
+                var usageDetail = baseline.UsedMemoryBytes > 0
+                    ? $" ({HardwareInventory.FormatBytes(baseline.UsedMemoryBytes)} across {baseline.ProcessCount} processes)"
+                    : "";
+                rows.Add(new(AreaLevel.Neutral, ["Recommendation", $"A clean restart will clear accumulated background processes{usageDetail} and automatically resume this session after sign-in."]));
+            }
+
             var uptimeActions = new List<AreaAction>();
             if (uptime.FastStartupEnabled == true)
                 uptimeActions.Add(new(RemediationKind.DisableFastStartup, "Turn off Fast Startup"));
-            if (longUp)
+            if (recommendRestart)
             {
-                uptimeActions.Add(new(RemediationKind.ScheduleCleanRestart, "Restart PC in 60s"));
+                var baseline = ResourceBaselineSnapshot.FromOsquery(uptime, processes);
+                uptimeActions.Add(new(RemediationKind.ScheduleCleanRestart, "Restart PC in 60s", baseline.Encode(), "Clean PC restart"));
                 uptimeActions.Add(new(RemediationKind.CancelScheduledRestart, "Cancel restart"));
             }
             cards.Add(new("uptime", "System uptime", level, $"Up {uptime.FriendlyDuration}", meta, ["Detail", "Value"], rows,
