@@ -44,14 +44,24 @@ else
                 else if (open.Rows.Count == 0) { <p class="meta" data-testid="detail-empty">@(open.EmptyText ?? "Nothing to show here.")</p> }
                 else
                 {
-                    <table class="detail grid sticky-head">
-                        <tr>@foreach (var h in open.Columns) { <th>@h</th> }</tr>
-                        @foreach (var row in open.Rows)
+                    var (sc, sd) = SortFor(m.Name, open);
+                    <table class="detail grid sticky-head sortable" data-testid="area-table">
+                        <tr>
+                            @for (var hi = 0; hi < open.Columns.Count; hi++)
+                            {
+                                var col = hi;
+                                <th @key="col" class="sortable-th" role="button" tabindex="0" aria-sort="@(sc == col ? (sd ? "descending" : "ascending") : "none")"
+                                    data-testid="area-th-@col" @onclick="() => ToggleSort(m.Name, open, col)">@open.Columns[col]<span class="sort-arrow">@(sc == col ? (sd ? " ▼" : " ▲") : "")</span></th>
+                            }
+                        </tr>
+                        @foreach (var row in AreaSort.Sort(open.Rows, sc, sd))
                         {
-                            <tr>
+                            <tr @key="row">
                                 @for (var i = 0; i < row.Values.Count; i++)
                                 {
-                                    <td>@if (i == 0) { <span class="dot dot-@Dot(row.Level)"></span> }@row.Values[i]</td>
+                                    var col = open.Columns.Count > i ? open.Columns[i] : "";
+                                    <td>@if (i == 0) { <span class="dot dot-@Dot(row.Level)"></span> }
+                                        @if (col is "Type" or "Level") { <span class="badge badge-@row.Values[i].ToLowerInvariant()">@row.Values[i]</span> } else { @row.Values[i] }</td>
                                 }
                             </tr>
                         }
@@ -68,6 +78,15 @@ else
     private void Open(string id) => _open = id;
     private void Close() => _open = null;
     protected override void OnParametersSet() => _open = null;
+    // Sort choice per page+card; static so it survives auto-refresh and navigation.
+    private static readonly Dictionary<string, (int Col, bool Desc)> _sorts = new();
+    private static (int, bool) SortFor(string module, AreaCard c) =>
+        _sorts.TryGetValue(module + "/" + c.Id, out var v) ? v : AreaSort.Default(c.Columns);
+    private static void ToggleSort(string module, AreaCard c, int col)
+    {
+        var (cur, desc) = SortFor(module, c);
+        _sorts[module + "/" + c.Id] = cur == col ? (col, !desc) : (col, false);
+    }
     private static string Dot(AreaLevel l) => l switch
     {
         AreaLevel.Ok => "ok", AreaLevel.Warning => "warning", AreaLevel.Error => "error", _ => "neutral",

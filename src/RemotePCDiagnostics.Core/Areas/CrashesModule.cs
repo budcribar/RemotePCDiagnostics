@@ -46,9 +46,10 @@ public sealed class CrashesModule(SystemCommandRunner commands) : AreaModuleBase
         var repeatApp = recent.Where(i => i.IsCrash).GroupBy(i => i.App, StringComparer.OrdinalIgnoreCase).FirstOrDefault(g => g.Count() >= RepeatCrashes);
         var crashes = all.Where(i => i.IsCrash).ToList();
         var hangs = all.Where(i => !i.IsCrash).ToList();
-        string[] cols = ["When", "App", "Version", "Details"];
+        string[] cols = ["When", "App", "Type", "Version", "Details"];
         AreaRow Row(Incident i) => new(i.IsCrash && Recent(i) ? AreaLevel.Warning : AreaLevel.Neutral,
-            [WindowsEventLog.FormatTime(i.Time), i.App, i.Version, i.IsCrash ? (i.Part.Length > 0 ? $"Closed unexpectedly (problem in {i.Part})" : "Closed unexpectedly") : "Stopped responding"]);
+            [WindowsEventLog.FormatTime(i.Time), i.App, i.IsCrash ? "Crash" : "Freeze", i.Version, i.IsCrash ? (i.Part.Length > 0 ? $"Closed unexpectedly (problem in {i.Part})" : "Closed unexpectedly") : "Stopped responding"],
+            [AreaSort.TimeKey(i.Time), null, null, null, null]);
 
         var byApp = all.GroupBy(i => i.App, StringComparer.OrdinalIgnoreCase)
             .OrderByDescending(g => g.Count()).ThenByDescending(g => g.Max(i => i.Time)).ToList();
@@ -66,7 +67,8 @@ public sealed class CrashesModule(SystemCommandRunner commands) : AreaModuleBase
             new("apps", "Most affected apps", top is null ? AreaLevel.Ok : AreaLevel.Neutral,
                 top is null ? "No problems recorded" : top.Key, top is null ? $"In the last {Days} days" : $"{AreaModuleBase.Plural(top.Count(), "problem")} in the last {Days} days",
                 ["App", "Crashes", "Stopped responding", "Last time"],
-                byApp.Select(g => new AreaRow(AreaLevel.Neutral, [g.Key, g.Count(i => i.IsCrash).ToString(), g.Count(i => !i.IsCrash).ToString(), WindowsEventLog.FormatTime(g.Max(i => i.Time))])).ToList()),
+                byApp.Select(g => new AreaRow(AreaLevel.Neutral, [g.Key, g.Count(i => i.IsCrash).ToString(), g.Count(i => !i.IsCrash).ToString(), WindowsEventLog.FormatTime(g.Max(i => i.Time))],
+                    [null, null, null, AreaSort.TimeKey(g.Max(i => i.Time))])).ToList()),
         };
         var summary = all.Count == 0 ? $"No app crashes in the last {Days} days"
             : recent.Count == 0 ? $"No crashes in the last {RecentDays} days ({older} older)"
