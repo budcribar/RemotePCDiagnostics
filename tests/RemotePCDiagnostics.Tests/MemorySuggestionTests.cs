@@ -89,7 +89,8 @@ public class MemorySuggestionTests
     public void VisualStudio_Rules()
     {
         var dev = new AppUsage("devenv", 1, 2 * Gb, HasWindow: true, RunningFor: TimeSpan.FromHours(9));
-        var list = Build(Snap(dev) with { VisualStudio = new(true, [new("ReSharper", 300 * Mb), new("Tiny", 1 * Mb)]) });
+        var list = Build(Snap(dev) with { VisualStudio = new(true, [new("ReSharper", 300 * Mb), new("ReSharper", 250 * Mb), new("Tiny", 1 * Mb)]) });
+        Assert.Contains(list, x => x.Id == "vs-extensions" && x.Why.StartsWith("2 extensions installed."));
         Assert.Contains(list, x => x.Id == "vs-restart" && x.Why.Contains("9 hours"));
         Assert.Contains(list, x => x.Id == "vs-liveshare" && x.Kind == SuggestionKind.Guided && x.Actions.Count == 0);
         Assert.Contains(list, x => x.Id == "vs-extensions" && x.Why.Contains("ReSharper"));
@@ -182,7 +183,7 @@ public class MemorySuggestionTests
             [
                 new(Svc("Spooler"), 30 * Mb), new(Svc("bthserv"), 20 * Mb, 4), new(Svc("DiagTrack"), 40 * Mb),
                 new(Svc("WinDefend"), 200 * Mb), new(Svc("EventLog"), 50 * Mb), new(Svc("Fax", "STOPPED"), 5 * Mb),
-                new(Svc("LenovoVantageService"), 80 * Mb), new(Svc("WbioSrvc"), 10 * Mb), new(Svc("vmcompute"), 10 * Mb),
+                new(Svc("LenovoVantageService"), 80 * Mb), new(new ServiceInfo("LenovoFnAndFunctionKeys", "Lenovo Fn and function keys service", "RUNNING", "AUTO_START", "LocalSystem", ""), 14 * Mb), new(Svc("WbioSrvc"), 10 * Mb), new(Svc("vmcompute"), 10 * Mb),
             ],
         };
         var list = Build(snap);
@@ -190,6 +191,7 @@ public class MemorySuggestionTests
         Assert.Contains("svc-spooler", ids);
         Assert.Contains("svc-diagtrack", ids);
         Assert.Contains("svc-lenovovantageservice", ids);
+        Assert.DoesNotContain("svc-lenovofnandfunctionkeys", ids); // hardware hotkey service excluded
         Assert.DoesNotContain("svc-bthserv", ids);   // has BT devices
         Assert.DoesNotContain("svc-wbiosrvc", ids);  // fingerprint unknown → not suggested
         Assert.DoesNotContain("svc-windefend", ids); // protected

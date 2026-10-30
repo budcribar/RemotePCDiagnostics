@@ -47,7 +47,7 @@ public sealed class EventLogHistoryStore(Func<string, int, IEnumerable<RawHistor
     public static string BuildXPath(TimeSpan? within)
     {
         var time = within is { } w ? $" and TimeCreated[timediff(@SystemTime) <= {(long)Math.Max(0, w.TotalMilliseconds)}]" : "";
-        return $"*[System[Provider[@Name='{ProviderName}'] and (EventID={LogEventIds.TestResult}){time}]]";
+        return $"*[System[Provider[@Name='{ProviderName}'] and (EventID={LogEventIds.TestResult} or EventID={LogEventIds.MemorySuggestion}){time}]]";
     }
 
     public HistoryReadResult Read(TimeSpan? within)
@@ -106,6 +106,18 @@ public static class HistoryEventParser
                 if (value.Length == 0 && key is "Measurements" or "Details") { section = key; continue; }
                 section = null;
                 fields.TryAdd(key, value);
+            }
+            if (lines[0].Trim().Equals("Memory suggestion applied", StringComparison.OrdinalIgnoreCase) && fields.TryGetValue("Result", out var memRes) && fields.TryGetValue("Message", out var memMsg))
+            {
+                var memOk = string.Equals(memRes, "Success", StringComparison.OrdinalIgnoreCase) ? "OK" : "Warning";
+                var memMeas = new List<HistoryMeasurement>
+                {
+                    new("Actor", fields.GetValueOrDefault("Actor") ?? "Local user"),
+                    new("Kind", fields.GetValueOrDefault("Action") ?? HistorySummary.MemoryFixModuleId),
+                };
+                var freed = HistorySummary.ParseFreedBytesFromText(memMsg);
+                if (freed > 0) memMeas.Add(new("FreedMemoryBytes", freed.ToString(CultureInfo.InvariantCulture)));
+                return new HistoryEntry(timeCreated.ToUniversalTime(), HistorySummary.MemoryFixModuleId, "Memory optimization", memOk, memMsg, null, null, memMeas, "", "");
             }
             if (!fields.TryGetValue("Test result", out var module) || module.Length == 0) return null;
             if (!fields.TryGetValue("Outcome", out var outcome) || outcome.Length == 0) return null;

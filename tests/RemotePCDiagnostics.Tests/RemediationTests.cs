@@ -74,6 +74,9 @@ public class RemediationTests
         var upCard = hogsRep.Cards.Single(c => c.Id == "uptime");
         Assert.Contains(upCard.Actions!, a => a.Kind == RemediationKind.DisableFastStartup);
         Assert.Contains(upCard.Actions!, a => a.Kind == RemediationKind.ScheduleCleanRestart);
+        Assert.DoesNotContain(upCard.Actions!, a => a.Kind == RemediationKind.CancelScheduledRestart);
+        var pendingRep = ResourceHogsModule.Build(new SystemUptimeInfo(1_500_000, 17, 6, 0, FastStartupEnabled: true), [], restartPending: true);
+        Assert.Contains(pendingRep.Cards.Single(c => c.Id == "uptime").Actions!, a => a.Kind == RemediationKind.CancelScheduledRestart);
 
         var memCard = hogsRep.Cards.Single(c => c.Id == "memory");
         var chromeRow = memCard.Rows.Single(r => r.Values[0] == "chrome.exe");

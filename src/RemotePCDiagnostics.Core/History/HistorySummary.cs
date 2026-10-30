@@ -185,7 +185,7 @@ public static class HistorySummary
                 memBytes += freed;
 
                 var badge = freed > 0 ? $"+{HardwareInventory.FormatBytes(freed)} RAM" : null;
-                fixList.Add(new(tUtc, "Memory optimization", "Local user", m.Success, m.Message, badge));
+                fixList.Add(new(tUtc, "Memory optimization", memory.Actor, m.Success, m.Message, badge));
             }
             if (memory.TotalFreedBytes > parsedMemFromRecent)
                 memBytes += memory.TotalFreedBytes - parsedMemFromRecent;

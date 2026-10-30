@@ -54,6 +54,12 @@ public class ChecksScreenTests
     {
         var (_, _, s, _) = Build();
         Assert.True(s.AllSelected(CheckGroup.Checks));
+        s.FocusModule("B");
+        Assert.Equal("B", s.SelectedModule);
+        Assert.False(s.CollapsedChecks);
+        s.FocusModule("CpuStress");
+        Assert.Equal("CpuStress", s.SelectedModule);
+        Assert.False(s.CollapsedStress);
         Assert.Equal(2, s.SelectedCount(CheckGroup.Stress));
         s.SetSelected("A", false);
         Assert.Null(s.AllSelected(CheckGroup.Checks));
@@ -62,6 +68,12 @@ public class ChecksScreenTests
         Assert.False(s.AllSelected(CheckGroup.Checks));
         s.SelectAll(CheckGroup.Checks, true);
         Assert.True(s.AllSelected(CheckGroup.Checks));
+        s.FocusModule("B");
+        Assert.Equal("B", s.SelectedModule);
+        Assert.False(s.CollapsedChecks);
+        s.FocusModule("CpuStress");
+        Assert.Equal("CpuStress", s.SelectedModule);
+        Assert.False(s.CollapsedStress);
     }
 
     [Fact]

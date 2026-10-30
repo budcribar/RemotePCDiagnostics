@@ -108,7 +108,8 @@ public static class MemorySuggestionEngine
     /// <summary>Vendor updater/telemetry helper services matched by name fragment.</summary>
     public static readonly IReadOnlyList<(string Fragment, string What)> VendorServiceFragments =
     [
-        ("Lenovo", "a Lenovo Vantage / Lenovo helper service"),
+        ("LenovoVantage", "a Lenovo Vantage helper service"),
+        ("ImController", "a Lenovo Vantage system interface helper"),
         ("AdobeARMservice", "Adobe's updater"),
         ("AdobeUpdateService", "Adobe's updater"),
         ("gupdate", "Google's updater"),
@@ -118,9 +119,17 @@ public static class MemorySuggestionEngine
         ("VSInstallerElevationService", "the Visual Studio installer helper"),
     ];
 
+    /// <summary>Hardware hotkey, power, or thermal services that should never be flagged by vendor name matching.</summary>
+    public static readonly IReadOnlyList<string> HardwareHelperFragments =
+    [
+        "FnAndFunctionKeys", "function keys", "Hotkey", "PMService", "LITSSvc", "PowerMgr", "Thermal",
+    ];
+
     public static ServiceCandidate? CandidateFor(ServiceInfo s)
     {
         if (ServiceProtection.IsProtected(s.Name) || ServiceProtection.IsSelfComponent(s.Name)) return null;
+        if (HardwareHelperFragments.Any(f => s.Name.Contains(f, StringComparison.OrdinalIgnoreCase) || s.DisplayName.Contains(f, StringComparison.OrdinalIgnoreCase)))
+            return null;
         if (ServiceCandidates.TryGetValue(s.Name, out var c)) return c;
         if (s.Name.StartsWith("TeamViewer", StringComparison.OrdinalIgnoreCase)) return ServiceCandidates["TeamViewer"];
         foreach (var (frag, what) in VendorServiceFragments)
@@ -165,10 +174,14 @@ public static class MemorySuggestionEngine
                 list.Add(new("vs-liveshare", "Turn off Live Share in Visual Studio", "Live Share is installed and loads its own background services when Visual Studio starts. If you don't co-edit with others, you don't need it.",
                     null, SuggestionRisk.Low, SuggestionKind.Guided,
                     ["In Visual Studio, open Extensions > Manage Extensions > Installed", "Find \"Live Share\" and click Disable", "Restart Visual Studio"], [], "Visual Studio"));
-            var heavy = vs.Extensions.OrderByDescending(e => e.SizeBytes).Take(5).ToList();
+            var uniqueExts = vs.Extensions
+                .GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(x => x.SizeBytes).First())
+                .ToList();
+            var heavy = uniqueExts.OrderByDescending(e => e.SizeBytes).Take(5).ToList();
             if (heavy.Count > 0)
                 list.Add(new("vs-extensions", "Turn off Visual Studio extensions you don't use",
-                    $"{MemoryText.Plural(vs.Extensions.Count, "extension")} installed. Largest: {string.Join(", ", heavy.Select(e => $"{e.Name} ({MemoryText.Size(e.SizeBytes)})"))}. Each enabled extension loads into Visual Studio's memory.",
+                    $"{MemoryText.Plural(uniqueExts.Count, "extension")} installed. Largest: {string.Join(", ", heavy.Select(e => $"{e.Name} ({MemoryText.Size(e.SizeBytes)})"))}. Each enabled extension loads into Visual Studio's memory.",
                     null, SuggestionRisk.Low, SuggestionKind.Guided,
                     ["In Visual Studio, open Extensions > Manage Extensions > Installed", "Click Disable on extensions you don't use (Disable is reversible; avoid Uninstall)", "Restart Visual Studio"], [], "Visual Studio"));
         }
@@ -219,8 +232,8 @@ public static class MemorySuggestionEngine
                 : "";
             list.Add(new("restart", "Restart the PC (Restart, not Shut down)", $"Windows has been running for {(hours >= 48 ? $"{hours / 24} days" : $"{hours} hours")}.{fs} A restart clears leaked memory and leftover background processes.",
                 null, SuggestionRisk.Low, SuggestionKind.Guided,
-                ["Save your work and close your apps", "Start > Power > Restart"], [], "Windows",
-                s.FastStartup == true ? "Turning Fast Startup off changes a PC-wide power setting, so it's left to you: Control Panel > Power Options > Choose what the power buttons do." : null));
+                ["Save your work and close your apps", "Click \"Restart PC in 60s\" on the System uptime card above (or use Start > Power > Restart)"], [], "Windows",
+                s.FastStartup == true ? "You can also click \"Turn off Fast Startup\" on the System uptime card above so future shutdowns perform a full reset." : null));
         }
 
         // Defender scanning build folders.

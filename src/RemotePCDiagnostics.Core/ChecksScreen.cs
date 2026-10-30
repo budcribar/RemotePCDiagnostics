@@ -103,6 +103,17 @@ public sealed class ChecksScreenState
     public StressSuiteMode Mode { get; set; } = StressSuiteMode.Short;
     public string? SelectedModule { get; set; }
 
+    /// <summary>Selects <paramref name="module"/> and expands the group containing it so the row is visible in the left pane.</summary>
+    public void FocusModule(string module)
+    {
+        SelectedModule = module;
+        if (ChecksModules.Any(m => string.Equals(m.Name, module, StringComparison.OrdinalIgnoreCase)))
+            CollapsedChecks = false;
+        else if (StressModules.Any(m => string.Equals(m.Name, module, StringComparison.OrdinalIgnoreCase)))
+            CollapsedStress = false;
+        Raise();
+    }
+
     public bool IsSelected(string module) { lock (_gate) return _selected.Contains(module); }
     public void SetSelected(string module, bool on) { lock (_gate) { if (on) _selected.Add(module); else _selected.Remove(module); } Raise(); }
     public int SelectedCount(CheckGroup g) { lock (_gate) return Modules(g).Count(m => _selected.Contains(m.Name)); }

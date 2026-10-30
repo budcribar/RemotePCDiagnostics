@@ -366,7 +366,7 @@ table.sortable .sort-arrow { color: var(--text-muted); }
 .ct-banner .banner-title { font-size: 16px; }
 .ct-workspace { --ct-split: 55%; display: flex; flex: 1; min-height: 0; }
 .ct-list { width: var(--ct-split); flex: none; overflow: auto; padding: 2px 10px 12px 2px; display: flex; flex-direction: column; gap: 12px; }
-.ct-detail { flex: 1; min-width: 0; overflow: auto; padding: 2px 2px 12px 14px; }
+.ct-detail { flex: 1; min-width: 0; overflow: auto; padding: 0 2px 12px 14px; }
 .ct-splitter { flex: none; width: 10px; cursor: col-resize; display: flex; align-items: center; justify-content: center; border-radius: 6px; }
 .ct-splitter:hover, .ct-splitter.active { background: var(--accent-soft); }
 .ct-splitter:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
@@ -441,13 +441,13 @@ tr.row-detail td { white-space: pre-wrap; font-size: 13px; color: var(--text); b
 /* Dashboard cards: show the whole hardware line. */
 .card-msg.card-msg-full { -webkit-line-clamp: unset; display: block; }
 /* Checks & tests: the selected test's title and actions stay visible while its details scroll. */
-.ct-detail-head { position: sticky; top: 0; z-index: 3; background: var(--bg); background-image: var(--grid-bg); background-size: 28px 28px; padding-top: 4px; }
+.ct-detail-head { position: sticky; top: 0; z-index: 3; background: var(--bg); background-image: var(--grid-bg); background-size: 28px 28px; padding-top: 6px; }
 /* Short windows (laptops, remote viewers): one page scroll instead of two nested scroll panes. */
 @media (max-height: 760px) and (min-width: 901px) {
   .ct-page { height: auto; }
   .ct-workspace { align-items: flex-start; }
   .ct-list { overflow: visible; }
-  .ct-detail { overflow: visible; }
+  .ct-detail { overflow: visible; position: sticky; top: 0; }
 }
 /* Visible focus ring on clickable cards and rows. */
 .card-click:focus-visible, .ct-row:focus-visible, tr.clickable:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
