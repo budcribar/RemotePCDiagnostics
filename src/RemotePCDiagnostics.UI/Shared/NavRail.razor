@@ -1,6 +1,7 @@
 @inherits StoreAwareComponent
 <nav class="rail" aria-label="Main">
     <NavLink href="" Match="NavLinkMatch.All"><Icon Name="dash" /><span class="nav-text">Dashboard</span></NavLink>
+    <NavLink href="history" data-testid="nav-history"><Icon Name="hist" /><span class="nav-text">History</span></NavLink>
     @foreach (var group in new[] { ("Checks", Diagnostics.Modules.Where(m => m.IncludeInRunAll).ToList()), ("Tests", Diagnostics.Modules.Where(m => !m.IncludeInRunAll).ToList()) })
     {
         if (group.Item2.Count == 0) continue;

@@ -66,13 +66,19 @@ public partial class MainWindow : Window
         // On-demand only (Start button on its page): not in AutoRun below and excluded from Run All (IncludeInRunAll=false).
         services.AddSingleton<IDiagnosticModule>(new SecurityAuditModule(new SecurityAuditOptions { Log = App.Log }));
         services.AddSingleton<DiagnosticsService>();
+        // Persistent result history (History page); background JSON Lines writes, see JsonLinesHistoryStore.
+        services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => CreateHistoryStore());
         var provider = _provider = services.BuildServiceProvider();
         Resources.Add("services", provider);
-        Closed += (_, _) => { try { provider.GetService<IEcFanSource>()?.Dispose(); } catch { } }; // release the PawnIO EC module handle
+        Closed += (_, _) => { try { provider.GetService<IEcFanSource>()?.Dispose(); } catch { } };
+        Closed += (_, _) => { try { (provider.GetService<RemotePCDiagnostics.Core.History.IHistoryStore>() as RemotePCDiagnostics.Core.History.JsonLinesHistoryStore)?.Flush(TimeSpan.FromSeconds(2)); } catch { } }; // release the PawnIO EC module handle
         provider.GetRequiredService<DiagnosticsService>().Log = App.Log;
         // One Windows Event Log entry per finished test (every module and run path), see ResultEventLogger.
         var diag = provider.GetRequiredService<DiagnosticsService>();
-        _ = new RemotePCDiagnostics.Core.Logging.ResultEventLogger(provider.GetRequiredService<ResultStore>(), App.Events, _ => diag.CurrentSuiteLabel);
+        var history = new RemotePCDiagnostics.Core.History.HistoryRecorder(provider.GetRequiredService<RemotePCDiagnostics.Core.History.IHistoryStore>(),
+            n => diag.Modules.FirstOrDefault(m => string.Equals(m.Name, n, StringComparison.OrdinalIgnoreCase))?.DisplayName ?? n,
+            () => _machine.Value, typeof(MainWindow).Assembly.GetName().Version?.ToString() ?? "?");
+        _ = new RemotePCDiagnostics.Core.Logging.ResultEventLogger(provider.GetRequiredService<ResultStore>(), App.Events, _ => diag.CurrentSuiteLabel, history.Record);
         _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.AppStart, RemotePCDiagnostics.Core.Logging.LogLevel.Information, AppStartText(mode.ToString())));
         // Tell the person at this PC when a remote technician starts/stops/restarts a service (non-blocking).
         provider.GetRequiredService<ServiceActionService>().ActionCompleted += rec =>
@@ -235,5 +241,29 @@ public partial class MainWindow : Window
             _provider.Dispose();
         }
         catch (Exception ex) { App.Log($"Shutdown cleanup failed: {ex.Message}"); }
+    }
+
+    private static readonly Lazy<string> _machine = new(() =>
+    {
+        var model = "";
+        try
+        {
+            using var q = new System.Management.ManagementObjectSearcher("SELECT Manufacturer, Model FROM Win32_ComputerSystem");
+            foreach (var o in q.Get()) using (o) model = $"{o["Manufacturer"]} {o["Model"]}".Trim();
+        }
+        catch { }
+        return model.Length > 0 ? $"{Environment.MachineName} ({model})" : Environment.MachineName;
+    });
+
+    private static RemotePCDiagnostics.Core.History.IHistoryStore CreateHistoryStore()
+    {
+        try
+        {
+            var dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RemotePCDiagnostics", "history");
+            var store = new RemotePCDiagnostics.Core.History.JsonLinesHistoryStore(System.IO.Path.Combine(dir, "history.jsonl"), log: App.Log);
+            App.Log($"History: file={store.FilePath} entries={store.ReadAll().Count}");
+            return store;
+        }
+        catch (Exception ex) { App.Log($"History: disabled: {ex.Message}"); return new RemotePCDiagnostics.Core.History.NullHistoryStore(); }
     }
 }

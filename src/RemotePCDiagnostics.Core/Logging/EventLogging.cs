@@ -69,9 +69,12 @@ public sealed class ResultEventLogger
     private readonly ConcurrentDictionary<string, DateTimeOffset> _started = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, (DateTimeOffset Stamp, DiagnosticStatus Status, string Message)> _last = new(StringComparer.OrdinalIgnoreCase);
 
-    public ResultEventLogger(ResultStore store, ILogSink sink, Func<string, string?>? suiteLabel = null)
+    private readonly Action<DiagnosticResult, TimeSpan?, string?>? _recorded;
+
+    /// <param name="recorded">Called once per logged result (after dedup/throttle), e.g. to append to the history store.</param>
+    public ResultEventLogger(ResultStore store, ILogSink sink, Func<string, string?>? suiteLabel = null, Action<DiagnosticResult, TimeSpan?, string?>? recorded = null)
     {
-        _sink = sink; _suiteLabel = suiteLabel;
+        _sink = sink; _suiteLabel = suiteLabel; _recorded = recorded;
         store.Changed += (_, r) => OnChanged(r);
     }
 
@@ -90,7 +93,8 @@ public sealed class ResultEventLogger
             TimeSpan? duration = _started.TryRemove(r.ModuleName, out var s) && r.Timestamp >= s ? r.Timestamp - s : null;
             string? label = null;
             try { label = _suiteLabel?.Invoke(r.ModuleName); } catch { }
-            _sink.Write(new LogEntry(LogEventIds.TestResult, LevelFor(r), LogText.Truncate(Format(r, duration, label))));
+            try { _sink.Write(new LogEntry(LogEventIds.TestResult, LevelFor(r), LogText.Truncate(Format(r, duration, label)))); } catch { }
+            try { _recorded?.Invoke(r, duration, label); } catch { }
         }
         catch { /* logging must never affect diagnostics */ }
     }
@@ -151,10 +155,30 @@ public sealed class ResultEventLogger
 
     private static void AppendScalars(StringBuilder sb, object payload)
     {
-        var n = 0;
+        foreach (var (name, value) in Measurements(payload)) sb.Append("  ").Append(name).Append(": ").AppendLine(value);
+    }
+
+    /// <summary>Key numeric measurements of a payload (name, invariant text). Same data as event 1100; no free text.</summary>
+    public static IReadOnlyList<(string Name, string Value)> Measurements(object? payload)
+    {
+        var list = new List<(string, string)>();
+        switch (payload)
+        {
+            case null or Exception or ModuleAvailability: return list;
+            case SecurityAuditReport sec:
+                list.Add(("Failed", sec.Failed.ToString(CultureInfo.InvariantCulture))); list.Add(("Warnings", sec.Warnings.ToString(CultureInfo.InvariantCulture)));
+                list.Add(("Passed", sec.Passed.ToString(CultureInfo.InvariantCulture))); list.Add(("NotChecked", sec.NotChecked.ToString(CultureInfo.InvariantCulture)));
+                return list;
+            case SensorReport rep:
+                foreach (var g in rep.Groups.Where(g => g.Readings.Count > 0 && g.Id != "fans"))
+                    if (g.Hottest is { } h) list.Add(($"Hottest {g.Title}", h.ToString("0.#", CultureInfo.InvariantCulture)));
+                var fans = rep.Groups.FirstOrDefault(g => g.Id == "fans")?.Readings.Count ?? 0;
+                list.Add(("Fans", fans.ToString(CultureInfo.InvariantCulture)));
+                return list;
+        }
         foreach (var p in payload.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
-            if (n >= 40 || p.GetIndexParameters().Length > 0) continue;
+            if (list.Count >= 40 || p.GetIndexParameters().Length > 0) continue;
             object? v;
             try { v = p.GetValue(payload); } catch { continue; }
             string? text = v switch
@@ -170,9 +194,8 @@ public sealed class ResultEventLogger
                 ICollection c when v is not string => $"{c.Count} item(s)",
                 _ => null,
             };
-            if (text is null) continue;
-            sb.Append("  ").Append(p.Name).Append(": ").AppendLine(text);
-            n++;
+            if (text is not null) list.Add((p.Name, text));
         }
+        return list;
     }
 }

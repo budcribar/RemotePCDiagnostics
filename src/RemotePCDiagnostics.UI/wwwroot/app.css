@@ -352,3 +352,10 @@ table.sortable .sort-arrow { color: var(--text-muted); }
 .svc-result-ok { background: var(--ok-bg); color: var(--chip-ok); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .svc-recent { margin-top: 18px; }
 .svc-recent h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 0 0 8px; }
+
+/* History page */
+.history-table td.summary { max-width: 520px; white-space: normal; }
+.history-details td { background: var(--surface-2); }
+.history-details ul { margin: 4px 0; padding-left: 18px; columns: 2 260px; }
+.trend { display: flex; align-items: flex-end; gap: 3px; height: 40px; margin: 8px 0 4px; }
+.trend span { display: block; width: 14px; background: var(--accent); border-radius: 3px 3px 0 0; opacity: .8; min-height: 2px; }

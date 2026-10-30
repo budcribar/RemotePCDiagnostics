@@ -190,6 +190,19 @@ approximate) on the Temperatures GPU card and used by the GPU stress test; alert
 when the installed driver fills in the temperature (i.e. when Task Manager shows one). Each source and its result are logged
 once to the `RPD_LOG_FILE` log.
 
+### History
+
+The **History** page (sidebar, right under Dashboard) lists past results newest first: Time, Test, Result, Summary,
+Duration. Filter by test, result and time range (24 hours / 7 days / 30 days / all), sort by any column, click a row for
+measurements (and suite mode, machine, app version). Stress tests with a key measurement (peak CPU/GPU temperature, disk
+read speed, download speed) get a small trend of the last 12 runs. In Remote mode the technician sees the bench PC's history.
+
+Data: `%LOCALAPPDATA%\RemotePCDiagnostics\history\history.jsonl` (one JSON object per line, per Windows user). The same
+results as event 1100 are recorded (same de-duplication; the live sensor page at most every 10 minutes unless its status
+changes); only numeric measurements, no free text. Retention: 90 days and at most 5,000 entries, pruned on startup and
+daily; unreadable lines are skipped. Writes happen in the background and never affect a test. Clear it with **Clear
+history** (asks to confirm) or by deleting the file while the app is closed.
+
 ### Windows Event Log
 
 Results also go to the Windows Event Log: **Event Viewer > Windows Logs > Application**, filter by source
