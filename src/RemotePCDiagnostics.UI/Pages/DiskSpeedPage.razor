@@ -1,0 +1,143 @@
+@page "/module/diskspeed"
+@using RemotePCDiagnostics.Core.Stress
+@using RemotePCDiagnostics.Core.Osquery
+@inherits StoreAwareComponent
+@implements IAsyncDisposable
+@{
+    var r = Store.Get(DiskSpeedModule.ModuleName);
+    var running = r.Status == DiagnosticStatus.Running;
+    var report = r.Payload as DiskSpeedReport;
+    var p = running ? Module?.LastProgress : null;
+    var health = Store.Get(RemotePCDiagnostics.Core.Areas.DriveHealthModule.ModuleName);
+}
+<div class="toolbar">
+    <h1 data-testid="diskspeed-title">Disk speed test</h1>
+    <label class="meta">Drive
+        <select data-testid="diskspeed-drive" disabled="@running" @onchange="SetDrive">
+            @foreach (var d in _drives)
+            {
+                <option value="@d.Root" selected="@(d.Root == _drive)">@d.DisplayName · @HardwareInventory.FormatBytes(d.FreeBytes) free</option>
+            }
+        </select>
+    </label>
+    <label class="meta">Test size
+        <select data-testid="diskspeed-size" disabled="@running" @onchange="SetSize">
+            @foreach (var s in DiskSpeedOptions.SizeChoices)
+            {
+                <option value="@s" selected="@(s == _size)">@HardwareInventory.FormatBytes(s)</option>
+            }
+        </select>
+    </label>
+    <label class="meta">Run for at most
+        <select data-testid="diskspeed-duration" disabled="@running" @onchange="SetDuration">
+            @foreach (var d in DiskSpeedOptions.DurationChoices)
+            {
+                <option value="@d.TotalMinutes" selected="@(d == _duration)">@(d.TotalMinutes == 1 ? "1 minute" : $"{d.TotalMinutes:0} minutes")</option>
+            }
+        </select>
+    </label>
+    <button data-testid="diskspeed-start" @onclick="Start" disabled="@(running || Module is null || _drives.Count == 0)">Start</button>
+    <button data-testid="diskspeed-stop" @onclick="Stop" disabled="@(!running)">Stop</button>
+</div>
+<p class="meta">Measures how fast the drive reads and writes, and checks that data comes back exactly as it was written. It uses a temporary test file that is removed afterwards; your own files are never touched. If the drive is nearly full, a smaller test is used or the test is skipped.</p>
+@if (_drives.Count == 0)
+{
+    <div class="notice notice-error">No drives that can be tested were found.</div>
+}
+
+<p data-testid="diskspeed-status" class="status-line">
+    <span class="@DotClass(r.Status)"></span>
+    @(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
+</p>
+@if (health.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error)
+{
+    <p data-testid="diskspeed-health" class="status-line"><span class="@DotClass(health.Status)"></span>Drive health check: @health.Message</p>
+}
+
+@if (running)
+{
+    <div class="progress" data-testid="diskspeed-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
+    <div class="cards">
+        <div class="card" data-testid="diskspeed-live-step">
+            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+            <div class="headline">@(p?.PhaseText ?? "Getting ready")…</div>
+            <div class="meta">@(p is null ? "" : $"{Clock(p.Elapsed)} so far · at most {Clock(p.Duration)}")</div>
+        </div>
+        <div class="card" data-testid="diskspeed-live-temp">
+            <div class="card-head"><span class="dot dot-neutral"></span><strong>Drive temperature</strong></div>
+            <div class="headline">@(p?.DriveTemperatureC is { } t ? $"{t:0}°C" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
+            <div class="meta">The test stops by itself if anything gets too hot</div>
+        </div>
+        <div class="card" data-testid="diskspeed-live-fan">
+            <div class="card-head"><span class="dot dot-neutral"></span><strong>Fan speed</strong></div>
+            <div class="headline">@(p?.FanRpm is > 0 ? $"{p.FanRpm:0} RPM" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
+        </div>
+    </div>
+}
+else if (report is not null)
+{
+    <div class="cards">
+        <div class="card" data-testid="diskspeed-result">
+            <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
+            <div class="headline">@report.Explanation</div>
+            <div class="meta">@report.Drive@(report.TestBytes > 0 ? $" · tested with {HardwareInventory.FormatBytes(report.TestBytes)}" : "")@(report.MaxDriveTemperatureC is { } mt ? $" · hottest {mt:0}°C" : "")</div>
+            <div class="meta">Finished @r.Timestamp.ToLocalTime().ToString("g")</div>
+        </div>
+        @if (report.TestBytes > 0)
+        {
+            <div class="card" data-testid="diskspeed-speeds">
+                <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>Speeds</strong></div>
+                <table class="detail">
+                    <tr><th>Reading large files</th><td>@DiskSpeedReport.Speed(report.SequentialReadMBps)</td></tr>
+                    <tr><th>Writing large files</th><td>@DiskSpeedReport.Speed(report.SequentialWriteMBps)</td></tr>
+                    <tr><th>Reading small pieces</th><td>@DiskSpeedReport.Ops(report.RandomReadIops)</td></tr>
+                    <tr><th>Writing small pieces</th><td>@DiskSpeedReport.Ops(report.RandomWriteIops)</td></tr>
+                    <tr><th>Data checked</th><td>@(report.DataErrors > 0 ? $"{report.DataErrors:N0} mismatch(es) found" : report.BlocksVerified > 0 ? "All data matched" : "—")</td></tr>
+                </table>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private DiskSpeedModule? Module => Diagnostics.Modules.OfType<DiskSpeedModule>().FirstOrDefault();
+    private IReadOnlyList<TestDrive> _drives = [];
+    private string? _drive;
+    private long _size = DiskSpeedOptions.GB;
+    private TimeSpan _duration = TimeSpan.FromMinutes(1);
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        if (Module is not { } m) return;
+        _drives = m.ListDrives();
+        _drive = m.DriveRoot is { } d && _drives.Any(x => x.Root == d) ? d : _drives.FirstOrDefault(x => x.IsSystem)?.Root ?? _drives.FirstOrDefault()?.Root;
+        _size = m.SizeBytes; _duration = m.Duration;
+        m.ProgressChanged += OnProgress;
+    }
+
+    private void OnProgress(object? s, DiskSpeedProgress p) => _ = InvokeAsync(StateHasChanged);
+    private void SetDrive(ChangeEventArgs e) => _drive = e.Value?.ToString();
+    private void SetSize(ChangeEventArgs e) { if (long.TryParse(e.Value?.ToString(), out var v)) _size = v; }
+    private void SetDuration(ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out var min)) _duration = TimeSpan.FromMinutes(min);
+    }
+
+    private void Start()
+    {
+        if (Module is not { } m || Diagnostics.IsRunning(m.Name)) return;
+        m.DriveRoot = _drive; m.SizeBytes = _size; m.Duration = _duration;
+        _ = Diagnostics.RunAsync(m.Name);
+    }
+
+    private void Stop() => Module?.Stop();
+    private static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
+
+    public ValueTask DisposeAsync()
+    {
+        if (Module is { } m) m.ProgressChanged -= OnProgress;
+        Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

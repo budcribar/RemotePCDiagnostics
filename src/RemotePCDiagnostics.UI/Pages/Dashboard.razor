@@ -6,6 +6,7 @@
     var inv = hw.Payload as HardwareInventory;
     var th = Store.Get(RemotePCDiagnostics.Core.Sensors.LibreHardwareMonitorModule.ModuleName);
     var thBusy = th.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
+    var disk = Store.Get(RemotePCDiagnostics.Core.Stress.DiskSpeedModule.ModuleName);
     var cpu = Store.Get(RemotePCDiagnostics.Core.Stress.CpuStressModule.ModuleName);
     var querying = hw.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
 }
@@ -23,6 +24,10 @@
 <p data-testid="dashboard-cpustress" class="status-line">
     <span class="@DotClass(cpu.Status)"></span>
     <span>CPU stress test: @(cpu.Status switch { DiagnosticStatus.NotRun => "Not run yet", DiagnosticStatus.Running => "Running…", _ => cpu.Message })</span>
+</p>
+<p data-testid="dashboard-diskspeed" class="status-line">
+    <span class="@DotClass(disk.Status)"></span>
+    <span>Disk speed test: @(disk.Status switch { DiagnosticStatus.NotRun => "Not run yet", DiagnosticStatus.Running => "Running…", _ => disk.Message })</span>
 </p>
 <div class="cards">
     @foreach (var m in Diagnostics.Modules)
