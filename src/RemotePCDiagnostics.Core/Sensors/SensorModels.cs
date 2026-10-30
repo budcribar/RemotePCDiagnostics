@@ -99,6 +99,17 @@ public sealed record SensorGroup(string Id, string Title, IReadOnlyList<Evaluate
 
 public sealed record SensorReport(SensorSnapshot Snapshot, IReadOnlyList<SensorGroup> Groups)
 {
+    /// <summary>Compact fingerprint of what the page shows; equal fingerprints mean nothing visible changed.</summary>
+    public static string Signature(string status, string? message, SensorReport? report)
+    {
+        var sb = new System.Text.StringBuilder(status).Append('|').Append(message);
+        if (report is not null)
+            foreach (var r in report.Snapshot.Readings)
+                sb.Append('|').Append(r.HardwareName).Append('/').Append(r.SensorName).Append('=')
+                  .Append(r.Value?.ToString("0.0")).Append(',').Append(r.Min?.ToString("0.0")).Append(',').Append(r.Max?.ToString("0.0"));
+        return sb.ToString();
+    }
+
     /// <summary>Groups with at least one reading; empty groups are hidden on the page.</summary>
     public IReadOnlyList<SensorGroup> VisibleGroups => Groups.Where(g => g.Readings.Count > 0).ToList();
 

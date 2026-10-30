@@ -3,12 +3,12 @@
 @inherits StoreAwareComponent
 @implements IAsyncDisposable
 @{
-    var r = Store.Get(LibreHardwareMonitorModule.ModuleName);
+    var r = Shown();
     var report = r.Payload as SensorReport;
 }
 <div class="toolbar">
     <h1 data-testid="lhm-title">Temperatures &amp; fans</h1>
-    <button data-testid="lhm-refresh" @onclick="Refresh" disabled="@(r.Status == DiagnosticStatus.Running)">Refresh</button>
+    <button data-testid="lhm-refresh" @onclick="Refresh" disabled="@_busy">Refresh</button>
     <label class="meta"><input type="checkbox" data-testid="lhm-auto" checked="@_auto" @onchange="ToggleAuto" /> Auto-refresh every 5 s</label>
 </div>
 <p data-testid="lhm-status"><span class="@DotClass(r.Status)"></span> @r.Status: @r.Message</p>
@@ -27,7 +27,7 @@
     <div class="cards">
         @foreach (var g in report.VisibleGroups)
         {
-            <div class="card card-click" data-testid="lhm-card-@g.Id" role="button" tabindex="0"
+            <div @key="g.Id" class="card card-click" data-testid="lhm-card-@g.Id" role="button" tabindex="0"
                  @onclick="() => _open = g.Id" @onkeydown='e => { if (e.Key is "Enter" or " ") _open = g.Id; }'>
                 <div class="card-head"><span class="@LevelClass(g.Level)"></span><strong>@g.Title</strong></div>
                 @if (g.Readings.Count == 0) { <div class="headline">No sensors</div> }
@@ -67,7 +67,7 @@
                     <tr><th>Device</th><th>Reading</th><th>Value</th><th>Min</th><th>Max</th><th>Warning / critical</th></tr>
                     @foreach (var e in open.Readings)
                     {
-                        <tr>
+                        <tr @key="(e.Reading.HardwareName, e.Reading.SensorName)">
                             <td>@e.Reading.FriendlyDevice</td>
                             <td><span class="@LevelClass(e.Level)"></span>@e.Reading.FriendlyName
                                 @if (e.Reading.FriendlyName != e.Reading.SensorName) { <div class="meta">@e.Reading.SensorName</div> }</td>
@@ -84,16 +84,49 @@
 }
 
 @code {
-    private string? _open;
-    private bool _auto;
+    private string? _openId;
+    private string? _open { get => _openId; set { _openId = value; _uiDirty = true; } }
+    private bool _auto = true; // on by default; checkbox turns it off
+    private bool _busy;        // a read is in flight; no overlap
+    private bool _uiDirty = true;
+    private string? _lastSig;
+    private DiagnosticResult? _lastDone;
+
+    /// <summary>Latest finished result; while a read runs, keep showing the previous data (no flashing/loading state).</summary>
+    private DiagnosticResult Shown()
+    {
+        var cur = Store.Get(LibreHardwareMonitorModule.ModuleName);
+        if (cur.Status != DiagnosticStatus.Running) { _lastDone = cur; return cur; }
+        return _lastDone ?? cur;
+    }
+
+    protected override bool ShouldRender()
+    {
+        var shown = Shown();
+        var sig = SensorReport.Signature(shown.Status.ToString(), shown.Message, shown.Payload as SensorReport) + "|" + _busy;
+        if (!_uiDirty && sig == _lastSig) return false;
+        _uiDirty = false; _lastSig = sig;
+        return true;
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender && _auto) _ = RunTimer();
+    }
     private PeriodicTimer? _timer;
     private CancellationTokenSource? _cts;
 
-    private Task Refresh() => Diagnostics.RunAsync(LibreHardwareMonitorModule.ModuleName);
+    private async Task Refresh()
+    {
+        if (_busy) return;
+        _busy = true;
+        try { await Diagnostics.RunAsync(LibreHardwareMonitorModule.ModuleName); }
+        finally { _busy = false; }
+    }
 
     private void ToggleAuto(ChangeEventArgs e)
     {
-        _auto = e.Value is true;
+        _auto = e.Value is true; _uiDirty = true;
         StopTimer();
         if (_auto) _ = RunTimer();
     }
@@ -107,14 +140,14 @@
         {
             await Refresh();
             while (await _timer.WaitForNextTickAsync(ct))
-                if (Store.Get(LibreHardwareMonitorModule.ModuleName).Status != DiagnosticStatus.Running) await Refresh();
+                if (!_busy && Store.Get(LibreHardwareMonitorModule.ModuleName).Status != DiagnosticStatus.Running) await Refresh();
         }
         catch (OperationCanceledException) { }
     }
 
     private void StopTimer() { _cts?.Cancel(); _timer?.Dispose(); _timer = null; _cts = null; }
 
-    public ValueTask DisposeAsync() { StopTimer(); Dispose(); return ValueTask.CompletedTask; }
+    public ValueTask DisposeAsync() { _auto = false; StopTimer(); Dispose(); return ValueTask.CompletedTask; }
 
     private static string LevelClass(SensorLevel l) => l switch
     {

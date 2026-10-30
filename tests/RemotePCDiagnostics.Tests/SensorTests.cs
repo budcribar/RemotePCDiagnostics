@@ -200,3 +200,17 @@ public class SensorFriendlyNameTests
         Assert.NotEqual(SensorLevel.Critical, rep.Level);
     }
 }
+
+public class SensorSignatureTests
+{
+    private static SensorReport R(double v) => LibreHardwareMonitorModule.BuildReport(new SensorSnapshot(
+        [new("CPU", HardwareKind.Cpu, "Core (Tctl/Tdie)", SensorKind.Temperature, v, v, v, "°C")], IsElevated: true));
+
+    [Fact]
+    public void Signature_SameValues_Equal_ChangedValue_Differs()
+    {
+        Assert.Equal(SensorReport.Signature("Ok", "m", R(50)), SensorReport.Signature("Ok", "m", R(50)));
+        Assert.NotEqual(SensorReport.Signature("Ok", "m", R(50)), SensorReport.Signature("Ok", "m", R(51)));
+        Assert.NotEqual(SensorReport.Signature("Ok", "m", R(50)), SensorReport.Signature("Warning", "m", R(50)));
+    }
+}
