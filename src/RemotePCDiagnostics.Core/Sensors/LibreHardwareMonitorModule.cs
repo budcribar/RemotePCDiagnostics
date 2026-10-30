@@ -19,18 +19,22 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
         return new DiagnosticResult<SensorReport>(Name, ToStatus(report, snap), Summarize(report), DateTimeOffset.Now, report);
     }
 
-    public static readonly (string Id, string Title, Func<SensorReading, bool> Match)[] GroupDefs =
+    public static readonly (string Id, string Title, string MissingLabel, Func<SensorReading, bool> Match)[] GroupDefs =
     [
-        ("cpu", "CPU temps", r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Cpu),
-        ("gpu", "GPU temps", r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Gpu),
-        ("storage", "Storage temps", r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Storage),
-        ("board", "Board & memory temps", r => r.SensorType == SensorKind.Temperature && r.HardwareType is HardwareKind.Motherboard or HardwareKind.Memory or HardwareKind.Controller or HardwareKind.Other),
-        ("fans", "Fans", r => r.SensorType == SensorKind.Fan),
+        ("cpu", "CPU temps", "CPU temperatures", r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Cpu),
+        ("gpu", "GPU temps", "GPU temperatures", r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Gpu),
+        ("storage", "Storage temps", "storage temperatures", r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Storage),
+        ("board", "Board & memory temps", "board and memory temperatures", r => r.SensorType == SensorKind.Temperature && r.HardwareType is HardwareKind.Motherboard or HardwareKind.Memory or HardwareKind.Controller or HardwareKind.Other),
+        ("fans", "Fans", "fans", r => r.SensorType == SensorKind.Fan),
     ];
 
-    public static SensorReport BuildReport(SensorSnapshot snap) => new(snap,
-        GroupDefs.Select(g => new SensorGroup(g.Id, g.Title,
-            snap.Readings.Where(g.Match).Select(r => new EvaluatedReading(r, SensorThresholds.Evaluate(r), SensorThresholds.For(r))).ToList())).ToList());
+    public static SensorReport BuildReport(SensorSnapshot snap)
+    {
+        snap = snap with { Readings = SensorReading.OnlyWithData(snap.Readings) };
+        return new(snap, GroupDefs.Select(g => new SensorGroup(g.Id, g.Title,
+            snap.Readings.Where(g.Match).Select(r => new EvaluatedReading(r, SensorThresholds.Evaluate(r), SensorThresholds.For(r))).ToList(),
+            g.MissingLabel)).ToList());
+    }
 
     public static DiagnosticStatus ToStatus(SensorReport report, SensorSnapshot snap) => report.Level switch
     {
@@ -42,7 +46,7 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
 
     public static string Summarize(SensorReport report)
     {
-        var s = report.Snapshot;
+        var s = report.Snapshot; // already filtered to readings with data by BuildReport
         if (s.Readings.Count == 0)
             return s.IsElevated ? "No temperature or fan sensors found" : "No sensors found. Try running the app as administrator.";
         string T(string id) => report.Groups.First(g => g.Id == id).Hottest is { } v ? $"{v:0}°C" : "—";

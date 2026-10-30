@@ -11,6 +11,7 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
     private readonly object _gate = new();
     private Computer? _computer;
     private string? _openError;
+    private bool _loggedRead;
 
     public ModuleAvailability CheckAvailability()
     {
@@ -29,6 +30,7 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
             if (_computer is null) throw new InvalidOperationException("Temperature monitoring couldn't start on this PC.");
             var list = new List<SensorReading>();
             foreach (var hw in _computer.Hardware) Collect(hw, list);
+            if (!_loggedRead) { _loggedRead = true; LogInventory(_computer, "first read"); }
             var elevated = IsElevated();
             return new SensorSnapshot(list, elevated, elevated ? null : "Some readings need administrator rights and may be missing.");
         }
@@ -46,6 +48,7 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
             };
             c.Open();
             _computer = c;
+            LogInventory(c, "opened");
         }
         catch (Exception ex) { _openError = ex.Message; App.Log($"LibreHardwareMonitor open failed: {ex}"); }
     }
@@ -58,9 +61,29 @@ public sealed class LhmSensorProvider : ISensorProvider, IDisposable
         {
             SensorKind? sk = s.SensorType switch { SensorType.Temperature => SensorKind.Temperature, SensorType.Fan => SensorKind.Fan, _ => null };
             if (sk is null) continue;
-            list.Add(new SensorReading(hw.Name, kind, s.Name, sk.Value, s.Value, s.Min, s.Max, SensorReading.UnitFor(sk.Value)));
+            var reading = new SensorReading(hw.Name, kind, s.Name, sk.Value, s.Value, s.Min, s.Max, SensorReading.UnitFor(sk.Value));
+            if (reading.HasData) list.Add(reading); // 0 °C / null = sensor not really supported here
+
         }
         foreach (var sub in hw.SubHardware) Collect(sub, list);
+    }
+
+    /// <summary>Log-only dump of everything the library exposes (never shown in the UI).</summary>
+    private static void LogInventory(Computer c, string when)
+    {
+        try
+        {
+            var sb = new System.Text.StringBuilder($"LibreHardwareMonitor devices ({when}):");
+            void Dump(IHardware hw, string indent)
+            {
+                sb.Append($"\n{indent}{hw.Name} [{hw.HardwareType}] sensors={hw.Sensors.Length}");
+                foreach (var s in hw.Sensors) sb.Append($"\n{indent}  {s.Name} [{s.SensorType}] = {(s.Value?.ToString("0.##") ?? "null")}");
+                foreach (var sub in hw.SubHardware) Dump(sub, indent + "  ");
+            }
+            foreach (var hw in c.Hardware) Dump(hw, "  ");
+            App.Log(sb.ToString());
+        }
+        catch (Exception ex) { App.Log($"LibreHardwareMonitor inventory log failed: {ex.Message}"); }
     }
 
     private static HardwareKind Map(HardwareType t) => t switch

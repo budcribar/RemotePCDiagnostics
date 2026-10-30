@@ -119,3 +119,55 @@ public class LibreHardwareMonitorModuleTests
         Assert.True(back.IsElevated);
     }
 }
+
+public class SensorNoDataTests
+{
+    private static SensorReading T(HardwareKind k, string n, double? v) => new("HW", k, n, SensorKind.Temperature, v, v, v, "°C");
+
+    [Theory]
+    [InlineData(0.0, false)]
+    [InlineData(-5.0, false)]
+    [InlineData(double.NaN, false)]
+    [InlineData(45.0, true)]
+    public void Temperature_ZeroOrInvalid_IsNoData(double v, bool expected) => Assert.Equal(expected, T(HardwareKind.Cpu, "Core", v).HasData);
+
+    [Fact]
+    public void Fan_ZeroRpm_IsData_NullIsNot()
+    {
+        Assert.True(new SensorReading("EC", HardwareKind.Controller, "Fan", SensorKind.Fan, 0, 0, 0, "RPM").HasData);
+        Assert.False(new SensorReading("EC", HardwareKind.Controller, "Fan", SensorKind.Fan, null, null, null, "RPM").HasData);
+    }
+
+    [Fact]
+    public async Task ZeroCpuTemp_ExcludedAndEmptyGroupsListedAsMissing()
+    {
+        var snap = new SensorSnapshot([T(HardwareKind.Cpu, "Core (Tctl/Tdie)", 0), T(HardwareKind.Storage, "Temperature", 40)], IsElevated: true);
+        var m = new LibreHardwareMonitorModule(new FakeSensorProvider(snap));
+        var r = Assert.IsType<DiagnosticResult<SensorReport>>(await m.RefreshAsync(null));
+        var rep = r.Data!;
+        Assert.Null(rep.Groups.First(g => g.Id == "cpu").Hottest);
+        Assert.Contains("CPU —", r.Message);
+        Assert.DoesNotContain("0°C", r.Message);
+        Assert.Equal(["storage"], rep.VisibleGroups.Select(g => g.Id));
+        Assert.Equal("Not reported by this PC: CPU temperatures, GPU temperatures, board and memory temperatures, fans", rep.MissingText);
+    }
+
+    [Fact]
+    public void AllEmpty_NoMissingLine_FriendlyMessage()
+    {
+        var rep = LibreHardwareMonitorModule.BuildReport(new SensorSnapshot([T(HardwareKind.Cpu, "Core", 0)], IsElevated: true));
+        Assert.Empty(rep.VisibleGroups);
+        Assert.Null(rep.MissingText);
+        Assert.Equal("No temperature or fan sensors found", LibreHardwareMonitorModule.Summarize(rep));
+    }
+
+    [Fact]
+    public void NothingMissing_NoMissingLine()
+    {
+        var rep = LibreHardwareMonitorModule.BuildReport(new SensorSnapshot([
+            T(HardwareKind.Cpu, "a", 50), T(HardwareKind.Gpu, "b", 50), T(HardwareKind.Storage, "c", 40), T(HardwareKind.Motherboard, "d", 40),
+            new("EC", HardwareKind.Controller, "Fan", SensorKind.Fan, 0, 0, 0, "RPM")], IsElevated: true));
+        Assert.Null(rep.MissingText);
+        Assert.Equal(5, rep.VisibleGroups.Count);
+    }
+}
