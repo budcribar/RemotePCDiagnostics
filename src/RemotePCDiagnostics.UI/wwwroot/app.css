@@ -242,3 +242,93 @@ table.sortable td:first-child { white-space: nowrap; }
 .suite-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .suite-steps { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; }
 .suite-steps li { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ======================================================================
+   Polish layer (remote technician review): density, layout, contrast.
+   ====================================================================== */
+/* Contrast: helper/faint text >= 4.5:1 on surfaces in both themes. */
+:root:not([data-theme="dark"]) { --text-faint: #687384; --warn-text: #92400e; --chip-warn: #b45309; --chip-na: #586272; }
+[data-theme="dark"] { --text-faint: #8a9cab; --text-muted: #9fb2c1; }
+
+/* Responsive scale: the whole UI is authored in px, so scale the shell on wide windows. */
+:root { --ui-zoom: 1; }
+@media (min-width: 1440px) { :root { --ui-zoom: 1.1; } }
+@media (min-width: 1700px) { :root { --ui-zoom: 1.2; } }
+@media (min-width: 2200px) { :root { --ui-zoom: 1.35; } }
+.app { zoom: var(--ui-zoom); height: calc(100vh / var(--ui-zoom)); }
+body { font-size: 15px; }
+.app { grid-template-columns: 240px 1fr; }
+.content { padding: 22px 28px 36px; }
+.content > * { max-width: 1680px; }
+h1 { font-size: 26px; }
+
+/* Sidebar: larger text/dots and Checks / Tests section labels. */
+.rail a { font-size: 14px; min-height: 36px; }
+.rail a .dot { width: 9px; height: 9px; }
+.rail-section { font-size: 11.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--text-muted); padding: 14px 12px 4px; }
+.rail-section:first-of-type { border-top: 1px solid var(--border); margin-top: 8px; }
+[data-theme="dark"] .rail-section { color: var(--accent); font-family: var(--font-num); opacity: .85; }
+
+/* Buttons & form controls: larger, clearer, disabled still legible. */
+button { font-size: 14px; min-height: 36px; padding: 6px 16px; }
+input, select { min-height: 36px; padding: 6px 10px; font-size: 14px; }
+button:disabled { opacity: 1; color: var(--text-muted); background: var(--surface-2); border-style: dashed; border-color: var(--border-strong); }
+.btn { height: auto; min-height: 40px; padding: 8px 18px; }
+[data-theme="light"] .btn-outline { background: #fff; color: #1d4ed8; border: 1px solid #93b4f5; }
+[data-theme="light"] .btn-outline:hover:not(:disabled) { background: #eef3ff; border-color: #1d4ed8; color: #1d4ed8; }
+[data-theme="dark"] .btn-outline { color: var(--accent); border-color: rgba(0,229,255,.6); }
+.btn-small { min-height: 30px; padding: 4px 12px; font-size: 13px; border-radius: 8px; background: var(--surface); color: var(--accent); border: 1px solid var(--border-strong); }
+[data-theme="light"] .btn-small { color: #1d4ed8; }
+.status-line .status-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.status-line .status-action { margin-left: auto; flex: none; }
+
+/* Toolbars on test pages: controls wrap as labelled groups. */
+.toolbar { gap: 12px 14px; row-gap: 10px; }
+.toolbar h1 { margin-right: auto; min-width: 0; }
+.toolbar label.meta { font-size: 14px; font-weight: 600; color: var(--text-muted); gap: 8px; }
+.toolbar select { max-width: 100%; }
+.toolbar-grouped h1 { margin-right: 8px; }
+.toolbar-grouped { justify-content: flex-start; }
+p.meta, .content > .meta { max-width: 75ch; font-size: 14px; line-height: 1.55; }
+.status-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 14.5px; }
+.meta { font-size: 13.5px; }
+
+/* Cards: fill width, equal heights per row, titles wrap instead of truncating. */
+.cards { grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); align-items: stretch; gap: 16px; }
+.cards > .card { display: flex; flex-direction: column; }
+.cards > .card > .meta:last-child { margin-top: auto; padding-top: 6px; margin-bottom: 0; }
+.card-head { font-size: 15px; align-items: flex-start; }
+.card-head .dot { margin-top: 6px; }
+.card-head .icon-badge, .card-head .chip { margin-top: 0; }
+.card-head strong { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.35; }
+.card-head:has(.icon-badge) { align-items: center; }
+.headline { font-size: 20px; }
+.card .meta, .card .desc, .card-msg { overflow-wrap: anywhere; word-break: break-word; }
+.deeper-text { margin: 8px 0 12px; font-size: 14.5px; line-height: 1.55; color: var(--text); max-width: 80ch; }
+
+/* Dashboard */
+.banner { flex-wrap: wrap; gap: 16px 20px; padding: 18px 22px; }
+.banner-text { flex: 1 1 420px; }
+.banner-title { font-size: 22px; }
+.banner-sub { font-size: 14px; }
+.banner-note { font-size: 13.5px; max-width: none; }
+.banner-actions { flex: 0 1 auto; display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; align-items: center; }
+.banner-actions .btn-primary { min-height: 44px; font-size: 15px; padding: 8px 22px; }
+.banner-actions .btn-outline { min-height: 40px; }
+@media (max-width: 1300px) { .banner-actions { flex-basis: 100%; justify-content: flex-start; } }
+.dash-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; align-items: stretch; }
+.gauge-card { grid-row: auto; }
+.gauge { padding: 0; }
+.gauge svg { width: 124px; height: 124px; }
+.dash-card { min-height: 160px; }
+.dash-card > .meta:last-child { margin-top: auto; }
+.card-msg { font-size: 14.5px; }
+.desc { font-size: 13.5px; }
+.test-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
+.test-name { font-size: 15px; }
+.section-title { font-size: 13px; color: var(--text-muted); }
+.chip { font-size: 12px; }
+table.detail { font-size: 14px; }
+table.sortable .sort-arrow { color: var(--text-muted); }
+.gauge-sub { fill: var(--text-muted); }
+.drawer { width: min(680px, 92vw); }

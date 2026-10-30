@@ -1,13 +1,18 @@
 @inherits StoreAwareComponent
 <nav class="rail" aria-label="Main">
     <NavLink href="" Match="NavLinkMatch.All"><Icon Name="dash" /><span class="nav-text">Dashboard</span></NavLink>
-    @foreach (var m in Diagnostics.Modules)
+    @foreach (var group in new[] { ("Checks", Diagnostics.Modules.Where(m => m.IncludeInRunAll).ToList()), ("Tests", Diagnostics.Modules.Where(m => !m.IncludeInRunAll).ToList()) })
     {
-        <NavLink href="@($"module/{m.Name.ToLowerInvariant()}")"><Icon Name="@Icon.ForModule(m.Name)" /><span class="nav-text">@NavName(m)</span><span class="@DotClass(Store.Get(m.Name).Status)" title="@StatusChip.Label(Store.Get(m.Name).Status)"></span></NavLink>
+        if (group.Item2.Count == 0) continue;
+        <div class="rail-section" role="presentation">@group.Item1</div>
+        @foreach (var m in group.Item2)
+        {
+            <NavLink href="@($"module/{m.Name.ToLowerInvariant()}")"><Icon Name="@Icon.ForModule(m.Name)" /><span class="nav-text">@NavName(m)</span><span class="@DotClass(Store.Get(m.Name).Status)" title="@StatusChip.Label(Store.Get(m.Name).Status)"></span></NavLink>
+        }
     }
 </nav>
 @code {
-    // Shorter labels where the module name is long (matches the approved mockup).
+    // Shorter labels where the module name is long (matches the approved mockup). Page headings use the same text.
     static string NavName(IDiagnosticModule m) => m.Name switch
     {
         "DiskSpeed" => "Disk speed test", "GpuStress" => "GPU stress test", "NetworkTest" => "Network test", _ => m.DisplayName,

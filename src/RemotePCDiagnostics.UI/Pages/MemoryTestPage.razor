@@ -79,12 +79,12 @@ else if (report is not null)
 
 <div class="card" data-testid="memtest-deeper" style="margin-top:16px">
     <div class="card-head"><span class="dot dot-neutral"></span><strong>Want a deeper check?</strong></div>
-    <div class="headline">Windows has its own memory test that runs while the PC restarts, before Windows starts. It can check memory this app can't reach while Windows is running.</div>
+    <div class="deeper-text">Windows has its own memory test that runs while the PC restarts, before Windows starts. It can check memory this app can't reach while Windows is running.</div>
     @if (Module?.CanLaunchWindowsDiagnostic == true)
     {
         @if (!_confirm)
         {
-            <button data-testid="memtest-mdsched" @onclick="() => { _confirm = true; _launchMessage = null; }" disabled="@running">Open Windows Memory Diagnostic…</button>
+            <button class="btn" data-testid="memtest-mdsched" @onclick="() => { _confirm = true; _launchMessage = null; }" disabled="@running">Open Windows Memory Diagnostic…</button>
         }
         else
         {

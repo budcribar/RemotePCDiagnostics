@@ -1,7 +1,7 @@
 @* Clickable summary card. Error/empty states use friendly text supplied by the page. *@
 <div class="card card-click" data-testid="osquery-card-@Id" role="button" tabindex="0"
      @onclick="() => OnOpen.InvokeAsync(Id)" @onkeydown='e => { if (e.Key is "Enter" or " ") OnOpen.InvokeAsync(Id); }'>
-    <div class="card-head"><span class="@DotCss"></span><strong>@Title</strong></div>
+    <div class="card-head"><span class="@DotCss"></span><strong title="@Title">@Title</strong></div>
     @if (ErrorText is not null) { <div class="headline error-text" data-testid="osquery-card-@Id-error">@ErrorText</div> }
     else if (EmptyText is not null) { <div class="headline warn-text" data-testid="osquery-card-@Id-empty">@EmptyText</div> }
     else { @ChildContent }

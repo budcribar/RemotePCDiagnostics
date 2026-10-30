@@ -13,7 +13,7 @@
     <span class="@DotClass(r.Status)"></span>
     @if (busy) { <span>Querying hardware…</span> }
     else { <span>@r.Message</span> }
-    @if (!busy && Runner.Exists) { <button class="linklike" data-testid="osquery-requery" @onclick='() => Diagnostics.RunAsync("Osquery")'>Check again</button> }
+    @if (!busy && Runner.Exists) { <button class="btn-small status-action" data-testid="osquery-requery" @onclick='() => Diagnostics.RunAsync("Osquery")'>Check again</button> }
 </p>
 
 @if (inv is not null)
