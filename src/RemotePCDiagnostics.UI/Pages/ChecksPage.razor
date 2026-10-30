@@ -1,0 +1,180 @@
+@page "/checks"
+@using Microsoft.JSInterop
+@inherits StoreAwareComponent
+@inject ChecksScreenState Screen
+@inject IJSRuntime JS
+@* Checks & Tests: two groups (system checks / stress & deep scans) on the left, the selected test's real page on the right. *@
+@{
+    var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message); }), Diagnostics.LastStressSuiteProgress);
+    var anyResult = Diagnostics.Modules.Any(m => Store.Get(m.Name).Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running));
+    var banner = ChecksBanner.Build(summary, Screen.Progress, anyResult);
+    var selected = Diagnostics.Modules.FirstOrDefault(m => string.Equals(m.Name, Screen.SelectedModule, StringComparison.OrdinalIgnoreCase))
+        ?? Screen.ChecksModules.FirstOrDefault();
+}
+<div class="ct-page">
+    <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="dash" Size="20" /></span><h1 data-testid="checks-title">Checks &amp; tests</h1>
+        <button class="btn-small" data-testid="checks-expand-all" @onclick="() => Screen.SetAllCollapsed(false)">Expand all</button>
+        <button class="btn-small" data-testid="checks-collapse-all" @onclick="() => Screen.SetAllCollapsed(true)">Collapse all</button>
+    </div>
+    <section class="banner banner-@banner.Kind ct-banner" data-testid="checks-banner">
+        <span class="banner-icon"><Icon Name="@(banner.Kind is "warn" or "err" ? "crash" : "sec")" Size="22" /></span>
+        <div class="banner-text">
+            <div class="banner-title" data-testid="checks-banner-title">@banner.Title</div>
+            @if (Screen.Progress is null && summary.NotRunNote is { } note) { <div class="banner-note">@note</div> }
+            else if (Screen.Progress is null) { <div class="banner-sub">Expand a group or click a test to see its full results on the right.</div> }
+        </div>
+    </section>
+
+    <div class="ct-workspace" data-testid="checks-workspace">
+        <section class="ct-list" aria-label="Checks and tests">
+            @Group(CheckGroup.Checks, "System checks", "Quick, read-only checks of Windows logs, drives, services, programs and hardware.")
+            @Group(CheckGroup.Stress, "Hardware stress & deep scans", "Run one at a time · stop automatically if the PC gets too hot.")
+        </section>
+        <div class="ct-splitter" role="separator" aria-orientation="vertical" aria-label="Resize panes" tabindex="0" data-testid="checks-splitter"
+             aria-valuemin="28" aria-valuemax="75"><span class="ct-grip"></span></div>
+        <section class="ct-detail" aria-label="Details" data-testid="checks-detail">
+            @if (selected is not null) { @Detail(selected) }
+        </section>
+    </div>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        Screen.Changed += OnScreenChanged;
+        Screen.SelectedModule ??= Screen.ChecksModules.FirstOrDefault()?.Name;
+    }
+
+    private void OnScreenChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try { await JS.InvokeVoidAsync("rpdSplit.init"); } catch { /* no JS helper (older host page): fixed 55% split */ }
+    }
+
+    public override void Dispose() { Screen.Changed -= OnScreenChanged; base.Dispose(); }
+
+    private void Select(IDiagnosticModule m) { Screen.SelectedModule = m.Name; }
+    private void RowKey(KeyboardEventArgs e, IDiagnosticModule m) { if (e.Key is "Enter" or " ") Select(m); }
+
+    private string RunLabel(IDiagnosticModule m) => Screen.RunLabel(m.Name) ?? "";
+
+    private RenderFragment Group(CheckGroup g, string title, string sub) => __builder =>
+    {
+        var mods = Screen.Modules(g);
+        var collapsed = Screen.IsCollapsed(g);
+        var count = Screen.SelectedCount(g);
+        var all = Screen.AllSelected(g);
+        var running = Screen.RunningGroup == g;
+        var otherBusy = Screen.IsBusy && !running || Diagnostics.IsStressSuiteRunning && !running || (g == CheckGroup.Stress && !running && Diagnostics.IsAnyStressRunning);
+        var id = g.ToString().ToLowerInvariant();
+        var pills = CheckRows.Pills(mods.Select(m => CheckRows.KindOf(Store.Get(m.Name))));
+        <div class="card ct-group" data-testid="checks-group-@id">
+            <div class="ct-group-head">
+                <button class="ct-chevron" aria-expanded="@(collapsed ? "false" : "true")" aria-label="@(collapsed ? "Expand" : "Collapse") @title"
+                        data-testid="checks-chevron-@id" @onclick="() => Screen.ToggleCollapsed(g)">@(collapsed ? "▸" : "▾")</button>
+                <button class="ct-check" role="checkbox" aria-checked="@(all is null ? "mixed" : all.Value ? "true" : "false")" aria-label="Select all @title"
+                        data-testid="checks-selectall-@id" @onclick="() => Screen.SelectAll(g, all != true)">@(all is null ? "–" : all.Value ? "✓" : "")</button>
+                <div class="ct-group-title" @onclick="() => Screen.ToggleCollapsed(g)">
+                    <div class="ct-group-line"><strong>@title</strong><span class="meta" data-testid="checks-count-@id">@count of @mods.Count selected</span>
+                        @foreach (var p in pills) { <span class="chip chip-@p.Kind">@p.Text</span> }</div>
+                    <div class="meta">@sub</div>
+                </div>
+                <div class="ct-group-actions">
+                    @if (g == CheckGroup.Stress)
+                    {
+                        <div class="theme-switch" role="group" aria-label="Stress test length" data-testid="checks-mode">
+                            <button class="@(Screen.Mode == StressSuiteMode.Short ? "on" : "")" aria-pressed="@(Screen.Mode == StressSuiteMode.Short ? "true" : "false")" disabled="@running"
+                                    data-testid="checks-mode-quick" @onclick="() => Screen.Mode = StressSuiteMode.Short">Quick (~1 min each)</button>
+                            <button class="@(Screen.Mode == StressSuiteMode.Extended ? "on" : "")" aria-pressed="@(Screen.Mode == StressSuiteMode.Extended ? "true" : "false")" disabled="@running"
+                                    data-testid="checks-mode-extended" @onclick="() => Screen.Mode = StressSuiteMode.Extended">Extended (~5 min each)</button>
+                        </div>
+                    }
+                    @if (running) { <button class="btn btn-stop" data-testid="checks-run-@id" @onclick="Screen.Stop">Stop</button> }
+                    else
+                    {
+                        <button class="btn btn-primary" data-testid="checks-run-@id" disabled="@(count == 0 || otherBusy)"
+                                @onclick="() => { _ = Screen.RunGroupAsync(g); }"><Icon Name="play" Size="12" /> Run selected (@count)</button>
+                    }
+                </div>
+            </div>
+            @if (!collapsed)
+            {
+                <div class="ct-rows">
+                    @foreach (var m in mods)
+                    {
+                        var mod = m;
+                        var r = Store.Get(m.Name);
+                        var kind = CheckRows.KindOf(r);
+                        var label = CheckRows.Label(kind, RunLabel(m));
+                        var isSel = string.Equals(Screen.SelectedModule, m.Name, StringComparison.OrdinalIgnoreCase);
+                        var line = kind == RowKind.NotRun ? "Not run yet" : r.Message;
+                        <div class="ct-row @(isSel ? "selected" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")"
+                             data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => Select(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
+                            <button class="ct-check" role="checkbox" aria-checked="@(Screen.IsSelected(m.Name) ? "true" : "false")" aria-label="Include @m.DisplayName"
+                                    data-testid="checks-select-@m.Name.ToLowerInvariant()" @onclick="() => Screen.SetSelected(mod.Name, !Screen.IsSelected(mod.Name))" @onclick:stopPropagation="true">@(Screen.IsSelected(m.Name) ? "✓" : "")</button>
+                            <span class="dot dot-@CheckRows.DotKind(kind)"></span>
+                            <div class="ct-row-text">
+                                <div class="ct-row-name">@m.DisplayName</div>
+                                <div class="ct-row-summary meta" title="@line">@line</div>
+                            </div>
+                            <div class="ct-row-side">
+                                <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-status-@m.Name.ToLowerInvariant()">@label</span>
+                                <span class="meta">@SideText(m, r, kind)</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    };
+
+    private string SideText(IDiagnosticModule m, DiagnosticResult r, RowKind kind)
+    {
+        if (kind is RowKind.Running) return "";
+        if (kind is RowKind.NotRun)
+            return m is IStressSuiteModule ? (Screen.Mode == StressSuiteMode.Extended ? "~5 min" : "~1 min") : "";
+        return r.Timestamp.ToLocalTime().ToString("t");
+    }
+
+    private RenderFragment Detail(IDiagnosticModule m) => __builder =>
+    {
+        var r = Store.Get(m.Name);
+        var kind = CheckRows.KindOf(r);
+        var last = kind == RowKind.Cancelled ? Screen.LastCompleted(m.Name) : null;
+        var canRun = Screen.CanRunSingle(m);
+        <div class="ct-detail-head">
+            <span class="icon-badge"><Icon Name="@Icon.ForModule(m.Name)" /></span>
+            <div class="ct-detail-title">
+                <div class="ct-group-line"><h2 data-testid="checks-detail-title">@m.DisplayName</h2>
+                    <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-detail-status">@CheckRows.Label(kind, RunLabel(m))</span></div>
+                <div class="meta" data-testid="checks-detail-sub">
+                    @if (kind == RowKind.NotRun) { <span>Not run yet in this session.</span> }
+                    else if (kind == RowKind.Running) { <span>Running…</span> }
+                    else { <span>@r.Message · @r.Timestamp.ToLocalTime().ToString("g")</span> }
+                </div>
+                @if (last is { } l)
+                {
+                    <div class="meta" data-testid="checks-detail-last">Last result before it was cancelled: @CheckRows.Label(CheckRows.KindOf(l.Result), l.RunLabel) · @l.Result.Message · @l.Result.Timestamp.ToLocalTime().ToString("g")</div>
+                }
+                else if (kind == RowKind.Cancelled) { <div class="meta">Earlier results are on the History page.</div> }
+            </div>
+            <button class="btn btn-outline ct-run-one" data-testid="checks-run-one" disabled="@(!canRun)" @onclick="() => { _ = Screen.RunSingleAsync(m); }"><Icon Name="play" Size="12" /> Run just this</button>
+        </div>
+        <div class="ct-detail-body" @key="m.Name">
+            <DynamicComponent Type="PageFor(m)" Parameters="ParamsFor(m)" />
+        </div>
+    };
+
+    private static Type PageFor(IDiagnosticModule m) => m.Name switch
+    {
+        "Osquery" => typeof(OsqueryPage), "Sensors" => typeof(LibreHardwareMonitorPage), "CpuStress" => typeof(CpuStressPage),
+        "MemoryTest" => typeof(MemoryTestPage), "DiskSpeed" => typeof(DiskSpeedPage), "GpuStress" => typeof(GpuStressPage),
+        "NetworkTest" => typeof(NetworkTestPage), "SecurityAudit" => typeof(SecurityAuditPage), _ => typeof(AreaPage),
+    };
+
+    private static IDictionary<string, object>? ParamsFor(IDiagnosticModule m) =>
+        PageFor(m) == typeof(AreaPage) ? new Dictionary<string, object> { ["Slug"] = m.Name.ToLowerInvariant() } : null;
+}

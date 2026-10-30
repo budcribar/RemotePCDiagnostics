@@ -23,6 +23,32 @@
             apply();
         })();
     </script>
+    <script>
+        // Checks & tests splitter: drag or arrow keys, clamped 28-75%, kept in localStorage.
+        window.rpdSplit = (function () {
+            var KEY = 'rpd-split', MIN = 28, MAX = 75;
+            function read() { try { var v = parseFloat(localStorage.getItem(KEY)); return isNaN(v) ? 55 : v; } catch (e) { return 55; } }
+            function clamp(v) { return Math.max(MIN, Math.min(MAX, v)); }
+            function apply(ws, v) { v = clamp(v); ws.style.setProperty('--ct-split', v + '%'); var sp = ws.querySelector('.ct-splitter'); if (sp) sp.setAttribute('aria-valuenow', Math.round(v)); return v; }
+            function save(v) { try { localStorage.setItem(KEY, String(v)); } catch (e) { } }
+            function init() {
+                var ws = document.querySelector('.ct-workspace'); if (!ws) return;
+                var cur = apply(ws, read());
+                var sp = ws.querySelector('.ct-splitter'); if (!sp || sp.dataset.bound) return; sp.dataset.bound = '1';
+                sp.addEventListener('pointerdown', function (e) {
+                    e.preventDefault(); sp.setPointerCapture(e.pointerId); sp.classList.add('active'); document.body.classList.add('ct-resizing');
+                    function move(ev) { var r = ws.getBoundingClientRect(); cur = apply(ws, (ev.clientX - r.left) / r.width * 100); }
+                    function up() { sp.removeEventListener('pointermove', move); sp.removeEventListener('pointerup', up); sp.removeEventListener('pointercancel', up); sp.classList.remove('active'); document.body.classList.remove('ct-resizing'); save(cur); }
+                    sp.addEventListener('pointermove', move); sp.addEventListener('pointerup', up); sp.addEventListener('pointercancel', up);
+                });
+                sp.addEventListener('keydown', function (e) {
+                    var d = e.key === 'ArrowLeft' ? -2 : e.key === 'ArrowRight' ? 2 : e.key === 'Home' ? -100 : e.key === 'End' ? 100 : 0;
+                    if (!d) return; e.preventDefault(); cur = apply(ws, cur + d); save(cur);
+                });
+            }
+            return { init: init };
+        })();
+    </script>
     <link href="_content/RemotePCDiagnostics.UI/app.css" rel="stylesheet" />
 </head>
 <body>

@@ -66,12 +66,14 @@ public partial class MainWindow : Window
         // On-demand only (Start button on its page): not in AutoRun below and excluded from Run All (IncludeInRunAll=false).
         services.AddSingleton<IDiagnosticModule>(new SecurityAuditModule(new SecurityAuditOptions { Log = App.Log }));
         services.AddSingleton<DiagnosticsService>();
+        services.AddSingleton<ChecksScreenState>();
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(App.Log));
         var provider = _provider = services.BuildServiceProvider();
         Resources.Add("services", provider);
         Closed += (_, _) => { try { provider.GetService<IEcFanSource>()?.Dispose(); } catch { } }; // release the PawnIO EC module handle
         provider.GetRequiredService<DiagnosticsService>().Log = App.Log;
+        provider.GetRequiredService<ChecksScreenState>(); // start tracking results (run mode labels, last completed) from launch
         // One Windows Event Log entry per finished test (every module and run path), see ResultEventLogger.
         var diag = provider.GetRequiredService<DiagnosticsService>();
         var eventContext = new RemotePCDiagnostics.Core.Logging.ResultEventContext(
