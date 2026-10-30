@@ -407,3 +407,17 @@ body.ct-resizing { user-select: none; cursor: col-resize; }
   .ct-splitter { display: none; }
   .ct-detail { overflow: visible; padding: 14px 2px 0; }
 }
+
+/* Ways to use less memory (Resource hogs page) — layout only; colors/fonts come from existing classes. */
+.ms-panel { margin-top: 8px; }
+.ms-head { display: flex; align-items: center; gap: 12px; }
+.ms-head .section-title { flex: 1; }
+.ms-list { display: grid; gap: 10px; }
+.ms-card { display: grid; gap: 6px; }
+.ms-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ms-title { flex: 1 1 auto; min-width: 0; }
+.ms-saving { font-weight: 700; white-space: nowrap; }
+.ms-steps { margin: 0; padding-left: 18px; }
+.ms-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: flex-start; }
+.ms-actions > button { width: auto; flex: 0 0 auto; }
+.ms-undo { display: flex; align-items: center; gap: 10px; justify-content: space-between; }

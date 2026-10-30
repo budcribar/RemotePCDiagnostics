@@ -1,0 +1,119 @@
+@using RemotePCDiagnostics.Core.Memory
+@implements IDisposable
+@* "Ways to use less memory" on the Resource hogs page. All actions run on the host PC and only from an explicit click. *@
+<section class="ms-panel" data-testid="mem-suggest">
+    <div class="ms-head">
+        <h2 class="section-title" tabindex="-1" @ref="_heading" data-testid="mem-suggest-title">Ways to use less memory</h2>
+        <button class="btn-small" data-testid="mem-rescan" disabled="@(Svc.Scanning || Svc.Busy is not null)" @onclick="() => Svc.ScanAsync()">@(Svc.Scanning ? "Checking…" : "Check again")</button>
+    </div>
+    @if (Svc.Snapshot?.Memory is { TotalBytes: > 0 } m)
+    {
+        var potential = MemorySuggestionEngine.PotentialCloseSavings(Svc.Suggestions);
+        <p class="meta" data-testid="mem-summary">
+            RAM: @MemoryText.Gb(m.UsedBytes) of @MemoryText.Gb(m.TotalBytes) GB in use (@m.UsedPercent%) · @MemoryText.Gb(m.AvailableBytes) GB available
+            @if (potential > 0) { <span> · Potential savings: about @MemoryText.Size(potential) if you close the suggested apps</span> }
+        </p>
+    }
+    @if (Svc.TotalFreedBytes > 0 || Svc.Recent.Count > 0)
+    {
+        <p class="meta" data-testid="mem-total-freed">Total freed this session: about @MemoryText.Size(Svc.TotalFreedBytes)</p>
+    }
+    @if (Svc.ScanError is { } err) { <div class="notice notice-error" data-testid="mem-error">@err</div> }
+    else if (Svc.Snapshot is null) { <p class="meta">Looking at what's using memory…</p> }
+    else if (Svc.Suggestions.Count == 0) { <p class="meta" data-testid="mem-empty">Nothing to suggest right now. Memory use looks reasonable.</p> }
+
+    @foreach (var u in Svc.Undos.Where(u => Svc.Suggestions.All(s => s.Id != u.Id)))
+    {
+        <div class="notice ms-undo" data-testid="mem-undo-orphan">
+            <span>Changed: @u.Label (@Friendly(u.Type))</span>
+            <button class="btn-small" disabled="@(Svc.Busy is not null)" @onclick="() => Svc.UndoAsync(u)">Undo</button>
+        </div>
+    }
+
+    <div class="ms-list">
+        @foreach (var s in Svc.Suggestions)
+        {
+            var res = Svc.ResultFor(s.Id);
+            var undo = Svc.UndoFor(s.Id);
+            <div class="card ms-card" @key="s.Id" data-testid="mem-sug-@s.Id">
+                <div class="ms-card-head">
+                    <strong class="ms-title">@s.Title</strong>
+                    <span class="chip @(s.Kind == SuggestionKind.Automated ? "chip-ok" : "chip-na")">@(s.Kind switch { SuggestionKind.Automated => "One click", SuggestionKind.Guided => "Steps", _ => "Info" })</span>
+                    @if (s.Risk != SuggestionRisk.Low) { <span class="chip chip-warn">Check first</span> }
+                    @if (s.SavingBytes is > 0) { <span class="ms-saving" data-testid="mem-saving">~@MemoryText.Size(s.SavingBytes.Value)</span> }
+                </div>
+                <div class="desc">@s.Why</div>
+                @if (s.Note is { } note) { <div class="meta">@note</div> }
+                @if (s.Steps.Count > 0)
+                {
+                    <ol class="ms-steps meta">@foreach (var st in s.Steps) { <li>@st</li> }</ol>
+                }
+                @if (s.Actions.Count > 0 || res?.CanForceClose == true || undo is not null)
+                {
+                    <div class="ms-actions">
+                        @if (_confirm is { } c && c.Id == s.Id)
+                        {
+                            <span class="svc-warn" data-testid="mem-confirm">@c.Action.Confirm</span>
+                            <button class="btn-small btn-primary" data-testid="mem-confirm-yes" @onclick="() => Run(s, c.Action)">Yes</button>
+                            <button class="btn-small" data-testid="mem-confirm-no" @onclick="() => _confirm = null">Cancel</button>
+                        }
+                        else
+                        {
+                            @foreach (var a in s.Actions)
+                            {
+                                <button class="btn-small @(a == s.Actions[0] ? "btn-outline" : "")" data-testid="mem-act-@a.Type" disabled="@(Svc.Busy is not null || Svc.Scanning)"
+                                        @onclick="() => Click(s, a)">@(Svc.Busy == s.Id ? "Working…" : a.Label)</button>
+                            }
+                            @if (res?.CanForceClose == true && s.Actions.FirstOrDefault(a => a.Type == MemoryActionType.CloseApp) is { } ca)
+                            {
+                                var force = new MemoryAction(MemoryActionType.ForceCloseApp, ca.Target, "Force close", $"Force close {MemoryText.FriendlyAppName(ca.Target)}? Unsaved work in it WILL be lost.");
+                                <button class="btn-small btn-stop" data-testid="mem-force" disabled="@(Svc.Busy is not null)" @onclick="() => Click(s, force)">Force close</button>
+                            }
+                            @if (undo is not null) { <button class="btn-small" data-testid="mem-undo" disabled="@(Svc.Busy is not null)" @onclick="() => Svc.UndoAsync(undo)">Undo</button> }
+                        }
+                    </div>
+                }
+                @if (res is not null) { <div class="@(res.Success ? "svc-result-ok" : "error-text")" data-testid="mem-result">@res.Message</div> }
+            </div>
+        }
+    </div>
+    @foreach (var r in Svc.Recent.Where(r => Svc.Suggestions.All(s => s.Id != r.SuggestionId)).Take(5))
+    {
+        <div class="meta" data-testid="mem-recent">@r.When.ToString("HH:mm") · @r.Message</div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public MemorySuggestionService Svc { get; set; } = default!;
+    private ElementReference _heading;
+    private (string Id, MemoryAction Action)? _confirm;
+
+    public ValueTask FocusAsync() => _heading.FocusAsync();
+
+    protected override void OnInitialized()
+    {
+        Svc.Changed += OnChanged;
+        if (Svc.Snapshot is null && !Svc.Scanning) _ = Svc.ScanAsync();
+    }
+
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+    public void Dispose() => Svc.Changed -= OnChanged;
+
+    private Task Click(MemorySuggestion s, MemoryAction a)
+    {
+        if (a.Confirm is not null) { _confirm = (s.Id, a); return Task.CompletedTask; }
+        return Run(s, a);
+    }
+
+    private async Task Run(MemorySuggestion s, MemoryAction a)
+    {
+        _confirm = null;
+        await Svc.ApplyAsync(s, a);
+    }
+
+    private static string Friendly(MemoryActionType t) => t switch
+    {
+        MemoryActionType.DisableStartup => "won't start with Windows", MemoryActionType.EnableBrowserMemorySaver => "memory saver turned on",
+        MemoryActionType.SetServiceManual => "set to Manual", MemoryActionType.SetServiceDisabled => "disabled", _ => t.ToString(),
+    };
+}

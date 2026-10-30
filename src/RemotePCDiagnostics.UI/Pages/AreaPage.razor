@@ -17,6 +17,7 @@ else
     var busy = r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
     var svcModule = m as ServicesModule;
     var svcActions = svcModule is null ? null : Sp.GetService(typeof(ServiceActionService)) as ServiceActionService;
+    var memSvc = m is ResourceHogsModule ? Sp.GetService(typeof(RemotePCDiagnostics.Core.Memory.MemorySuggestionService)) as RemotePCDiagnostics.Core.Memory.MemorySuggestionService : null;
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="@m.Name" Size="20" /></span><h1 data-testid="area-title">@m.DisplayName</h1></div>
     <p data-testid="area-status" class="@(r.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
         <span class="@DotClass(r.Status)"></span>
@@ -37,6 +38,8 @@ else
             }
         </div>
 
+        @if (memSvc is not null) { <MemorySuggestionsPanel @ref="_memPanel" Svc="memSvc" /> }
+
         @if (_open is not null && rep.Cards.FirstOrDefault(c => c.Id == _open) is { } open)
         {
             var isKeyValue = open.Columns is ["Detail", "Value"] && svcActions is null;
@@ -44,6 +47,7 @@ else
             <aside class="drawer" role="dialog" aria-modal="true" aria-label="@open.Title" tabindex="-1" @onkeydown="DrawerKey" data-testid="area-drawer-@open.Id">
                 <div class="drawer-head"><strong title="@open.Title">@open.Title</strong><button data-testid="area-drawer-close" @onclick="Close">Close</button></div>
                 @if (open.Note is { } note) { <p class="meta">@note</p> }
+                @if (open.Id == "memory" && memSvc is not null) { <p><button class="linklike" data-testid="mem-suggest-link" @onclick="ShowSuggestions">See ways to use less memory</button></p> }
                 @if (open.ErrorText is not null) { <div class="notice notice-error" data-testid="detail-error">@open.ErrorText</div> }
                 else if (open.Rows.Count == 0) { <p class="meta" data-testid="detail-empty">@(open.EmptyText ?? "Nothing to show here.")</p> }
                 else if (isKeyValue)
@@ -111,6 +115,14 @@ else
     private string? _open;
     private void Open(string id) => _open = id;
     private void Close() => _open = null;
+    private MemorySuggestionsPanel? _memPanel;
+    private async Task ShowSuggestions()
+    {
+        _open = null;
+        StateHasChanged();
+        await Task.Yield();
+        if (_memPanel is not null) await _memPanel.FocusAsync();
+    }
     private void DrawerKey(KeyboardEventArgs e) { if (e.Key == "Escape") Close(); }
     private static void SortKey(KeyboardEventArgs e, string module, AreaCard c, int col) { if (e.Key is "Enter" or " ") ToggleSort(module, c, col); }
     protected override void OnParametersSet() => _open = null;
