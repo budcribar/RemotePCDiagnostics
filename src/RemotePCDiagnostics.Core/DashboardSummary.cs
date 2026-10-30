@@ -41,7 +41,10 @@ public sealed class DashboardSummary
     /// <summary>Messages that mean the user cancelled the module, not that something is wrong.</summary>
     public static bool IsCancelled(BannerModule m) =>
         m.Status == DiagnosticStatus.Warning && m.Message is { } msg
-        && (msg.Trim().Equals("Cancelled", StringComparison.OrdinalIgnoreCase) || msg == Security.SecurityAuditModule.CancelledMessage);
+        && (msg.Trim().Equals("Cancelled", StringComparison.OrdinalIgnoreCase)
+            || msg.Trim().Equals("Stopped", StringComparison.OrdinalIgnoreCase)
+            || msg.Trim().Equals("Stopped by you", StringComparison.OrdinalIgnoreCase)
+            || msg == Security.SecurityAuditModule.CancelledMessage);
 
     /// <param name="modules">Modules in Dashboard order.</param>
     /// <param name="suite">Last stress suite progress; finished steps marked Skipped (not available on this PC) are not counted as not run.</param>

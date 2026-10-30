@@ -40,8 +40,10 @@ public sealed class SystemProcessLauncher : IProcessLauncher
         catch (OperationCanceledException)
         {
             try { p.Kill(entireProcessTree: true); } catch { /* already exited */ }
+            _ = SafeRead(stdout);
+            var err = await SafeRead(stderr).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            return new ProcessResult(-1, "", await SafeRead(stderr).ConfigureAwait(false), TimedOut: true);
+            return new ProcessResult(-1, "", err, TimedOut: true);
         }
         return new ProcessResult(p.ExitCode, await stdout.ConfigureAwait(false), await stderr.ConfigureAwait(false));
     }

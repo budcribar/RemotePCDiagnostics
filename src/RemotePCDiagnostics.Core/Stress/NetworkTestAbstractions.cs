@@ -100,9 +100,12 @@ public sealed class SystemGatewayResolver : IGatewayResolver
 }
 
 /// <summary>HTTPS download/upload against a Cloudflare-style speed endpoint, with hard byte caps.</summary>
-public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? client = null, Action<string>? log = null) : ISpeedTester
+public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? client = null, Action<string>? log = null) : ISpeedTester, IDisposable
 {
+    private readonly bool _ownsClient = client is null;
     private readonly HttpClient _http = client ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+
+    public void Dispose() { if (_ownsClient) _http.Dispose(); }
 
     public async Task<TransferResult> DownloadAsync(long maxBytes, TimeSpan timeout, CancellationToken cancellationToken)
     {
@@ -141,13 +144,14 @@ public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? cl
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(timeout);
-        var sw = Stopwatch.StartNew();
+        var sw = new Stopwatch();
         try
         {
             var payload = new byte[bytes];
             Random.Shared.NextBytes(payload);
             using var content = new ByteArrayContent(payload);
             content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            sw.Restart();
             using var resp = await _http.PostAsync(settings.UploadUrl, content, cts.Token).ConfigureAwait(false);
             resp.EnsureSuccessStatusCode();
             return new TransferResult(bytes, sw.Elapsed);

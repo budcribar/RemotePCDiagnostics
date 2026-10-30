@@ -2,10 +2,10 @@
 @using RemotePCDiagnostics.Core.Stress
 @using RemotePCDiagnostics.Core.Osquery
 @inherits StoreAwareComponent
-@implements IAsyncDisposable
 @{
     var r = Store.Get(DiskSpeedModule.ModuleName);
     var running = r.Status == DiagnosticStatus.Running;
+    var otherBusy = Diagnostics.IsAnyStressRunning && !running;
     var report = r.Payload as DiskSpeedReport;
     var p = running ? Module?.LastProgress : null;
     var health = Store.Get(RemotePCDiagnostics.Core.Areas.DriveHealthModule.ModuleName);
@@ -13,7 +13,7 @@
 <div class="toolbar">
     <span class="icon-badge page-icon"><Icon Name="disk" Size="20" /></span><h1 data-testid="diskspeed-title">Disk speed test</h1>
     <label class="meta">Drive
-        <select data-testid="diskspeed-drive" disabled="@running" @onchange="SetDrive">
+        <select data-testid="diskspeed-drive" disabled="@(running || otherBusy)" @onchange="SetDrive">
             @foreach (var d in _drives)
             {
                 <option value="@d.Root" selected="@(d.Root == _drive)">@d.DisplayName · @HardwareInventory.FormatBytes(d.FreeBytes) free</option>
@@ -21,7 +21,7 @@
         </select>
     </label>
     <label class="meta">Test size
-        <select data-testid="diskspeed-size" disabled="@running" @onchange="SetSize">
+        <select data-testid="diskspeed-size" disabled="@(running || otherBusy)" @onchange="SetSize">
             @foreach (var s in DiskSpeedOptions.SizeChoices)
             {
                 <option value="@s" selected="@(s == _size)">@HardwareInventory.FormatBytes(s)</option>
@@ -29,15 +29,15 @@
         </select>
     </label>
     <label class="meta">Run for at most
-        <select data-testid="diskspeed-duration" disabled="@running" @onchange="SetDuration">
+        <select data-testid="diskspeed-duration" disabled="@(running || otherBusy)" @onchange="SetDuration">
             @foreach (var d in DiskSpeedOptions.DurationChoices)
             {
                 <option value="@d.TotalMinutes" selected="@(d == _duration)">@(d.TotalMinutes == 1 ? "1 minute" : $"{d.TotalMinutes:0} minutes")</option>
             }
         </select>
     </label>
-    <button data-testid="diskspeed-start" @onclick="Start" disabled="@(running || Module is null || _drives.Count == 0)">Start</button>
-    <button data-testid="diskspeed-stop" @onclick="Stop" disabled="@(!running)">Stop</button>
+    <button data-testid="diskspeed-start" @onclick="Start" disabled="@(running || otherBusy || Module is null || _drives.Count == 0)">Start</button>
+    <button data-testid="diskspeed-stop" @onclick="Stop" disabled="@(!running && !Diagnostics.IsStressSuiteRunning)">Stop</button>
 </div>
 <p class="meta">Measures how fast the drive reads and writes, and checks that data comes back exactly as it was written. It uses a temporary test file that is removed afterwards; your own files are never touched. If the drive is nearly full, a smaller test is used or the test is skipped.</p>
 @if (_drives.Count == 0)
@@ -117,9 +117,15 @@ else if (report is not null)
         _drive = m.DriveRoot is { } d && _drives.Any(x => x.Root == d) ? d : _drives.FirstOrDefault(x => x.IsSystem)?.Root ?? _drives.FirstOrDefault()?.Root;
         _size = m.SizeBytes; _duration = m.Duration;
         m.ProgressChanged += OnProgress;
+        Diagnostics.StressSuiteProgressChanged += OnSuite;
     }
 
     private void OnProgress(object? s, DiskSpeedProgress p) => _ = InvokeAsync(StateHasChanged);
+    private void OnSuite(object? s, StressSuiteProgress p)
+    {
+        if (p.Finished && Module is { } m) _duration = m.Duration;
+        _ = InvokeAsync(StateHasChanged);
+    }
     private void SetDrive(ChangeEventArgs e) => _drive = e.Value?.ToString();
     private void SetSize(ChangeEventArgs e) { if (long.TryParse(e.Value?.ToString(), out var v)) _size = v; }
     private void SetDuration(ChangeEventArgs e)
@@ -129,18 +135,22 @@ else if (report is not null)
 
     private void Start()
     {
-        if (Module is not { } m || Diagnostics.IsRunning(m.Name)) return;
+        if (Module is not { } m || Diagnostics.IsRunning(m.Name) || Diagnostics.IsAnyStressRunning) return;
         m.DriveRoot = _drive; m.SizeBytes = _size; m.Duration = _duration;
         _ = Diagnostics.RunAsync(m.Name);
     }
 
-    private void Stop() => Module?.Stop();
+    private void Stop()
+    {
+        if (Diagnostics.IsStressSuiteRunning) Diagnostics.CancelStressSuite();
+        Module?.Stop();
+    }
     private static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
 
-    public ValueTask DisposeAsync()
+    public override void Dispose()
     {
         if (Module is { } m) m.ProgressChanged -= OnProgress;
-        Dispose();
-        return ValueTask.CompletedTask;
+        Diagnostics.StressSuiteProgressChanged -= OnSuite;
+        base.Dispose();
     }
 }

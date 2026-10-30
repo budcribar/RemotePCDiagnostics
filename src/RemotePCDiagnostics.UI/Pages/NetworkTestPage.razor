@@ -1,25 +1,25 @@
 @page "/module/networktest"
 @using RemotePCDiagnostics.Core.Stress
 @inherits StoreAwareComponent
-@implements IAsyncDisposable
 @{
     var r = Store.Get(NetworkTestModule.ModuleName);
     var running = r.Status == DiagnosticStatus.Running;
+    var otherBusy = Diagnostics.IsAnyStressRunning && !running;
     var report = r.Payload as NetworkTestReport;
     var p = running ? Module?.LastProgress : null;
 }
 <div class="toolbar">
     <span class="icon-badge page-icon"><Icon Name="net" Size="20" /></span><h1 data-testid="nettest-title">Network test</h1>
     <label class="meta">Run for
-        <select data-testid="nettest-duration" disabled="@running" @onchange="SetDuration">
+        <select data-testid="nettest-duration" disabled="@(running || otherBusy)" @onchange="SetDuration">
             @foreach (var d in NetworkTestOptions.DurationChoices)
             {
                 <option value="@d.TotalMinutes" selected="@(d == _duration)">@(d.TotalMinutes == 1 ? "1 minute" : $"{d.TotalMinutes:0} minutes")</option>
             }
         </select>
     </label>
-    <button data-testid="nettest-start" @onclick="Start" disabled="@(running || Module is null)">Start</button>
-    <button data-testid="nettest-stop" @onclick="Stop" disabled="@(!running)">Stop</button>
+    <button data-testid="nettest-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
+    <button data-testid="nettest-stop" @onclick="Stop" disabled="@(!running && !Diagnostics.IsStressSuiteRunning)">Stop</button>
 </div>
 <p class="meta">Checks how steady your connection is by contacting your router and the internet every second, measures your download and upload speed once (using a limited amount of data), and looks for new network errors. Video calls or downloads may be a little slower while it runs.</p>
 
@@ -105,12 +105,20 @@ else if (report is not null)
     protected override void OnInitialized()
     {
         base.OnInitialized();
-        if (Module is not { } m) return;
-        _duration = m.Duration;
-        m.ProgressChanged += OnProgress;
+        if (Module is { } m)
+        {
+            _duration = m.Duration;
+            m.ProgressChanged += OnProgress;
+        }
+        Diagnostics.StressSuiteProgressChanged += OnSuite;
     }
 
     private void OnProgress(object? s, NetworkTestProgress p) => _ = InvokeAsync(StateHasChanged);
+    private void OnSuite(object? s, StressSuiteProgress p)
+    {
+        if (p.Finished && Module is { } m) _duration = m.Duration;
+        _ = InvokeAsync(StateHasChanged);
+    }
 
     private void SetDuration(ChangeEventArgs e)
     {
@@ -119,19 +127,23 @@ else if (report is not null)
 
     private void Start()
     {
-        if (Module is not { } m || Diagnostics.IsRunning(m.Name)) return;
+        if (Module is not { } m || Diagnostics.IsRunning(m.Name) || Diagnostics.IsAnyStressRunning) return;
         m.Duration = _duration;
         _ = Diagnostics.RunAsync(m.Name);
     }
 
-    private void Stop() => Module?.Stop();
+    private void Stop()
+    {
+        if (Diagnostics.IsStressSuiteRunning) Diagnostics.CancelStressSuite();
+        Module?.Stop();
+    }
     private static string Dot(bool? good) => good switch { null => "dot dot-neutral", true => "dot dot-ok", false => "dot dot-warning" };
     private static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
 
-    public ValueTask DisposeAsync()
+    public override void Dispose()
     {
         if (Module is { } m) m.ProgressChanged -= OnProgress;
-        Dispose();
-        return ValueTask.CompletedTask;
+        Diagnostics.StressSuiteProgressChanged -= OnSuite;
+        base.Dispose();
     }
 }

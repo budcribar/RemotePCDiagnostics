@@ -21,6 +21,7 @@
     var tests = Diagnostics.Modules.Where(m => !m.IncludeInRunAll).ToList();
     var all = Diagnostics.Modules.Select(m => Store.Get(m.Name)).ToList();
     var checking = checks.Any(m => Store.Get(m.Name).Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun);
+    var stressBusy = suiteBusy || Diagnostics.IsAnyStressRunning;
     var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message); }), suite);
     var problems = summary.Problems.Count;
     var last = all.Where(r => r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running)).Select(r => (DateTimeOffset?)r.Timestamp).Max();
@@ -60,11 +61,11 @@
         }
     </div>
     <div class="banner-actions">
-        <button class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || suiteBusy)" @onclick="RunAll">
+        <button class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || stressBusy)" @onclick="RunAll">
             <Icon Name="@(checking ? "refresh" : "play")" Size="14" />@(checking ? "Checking…" : "Run all tests")</button>
-        <button class="btn btn-outline" data-testid="dashboard-runall-stress-short" disabled="@(checking || suiteBusy)" @onclick="() => RunSuite(StressSuiteMode.Short)">
+        <button class="btn btn-outline" data-testid="dashboard-runall-stress-short" disabled="@(checking || stressBusy)" @onclick="() => RunSuite(StressSuiteMode.Short)">
             <Icon Name="play" Size="12" />Run all + stress tests (short, about 5 min)</button>
-        <button class="btn btn-outline" data-testid="dashboard-runall-stress-extended" disabled="@(checking || suiteBusy)" @onclick="() => RunSuite(StressSuiteMode.Extended)">
+        <button class="btn btn-outline" data-testid="dashboard-runall-stress-extended" disabled="@(checking || stressBusy)" @onclick="() => RunSuite(StressSuiteMode.Extended)">
             <Icon Name="play" Size="12" />Run all + stress tests (extended, about 25 min)</button>
     </div>
 </section>
@@ -109,14 +110,16 @@
 
     @if (sensors is not null)
     {
-        <div class="card dash-card card-click" data-testid="dashboard-card-drivetemp" role="link" tabindex="0" @onclick='() => Open(LibreHardwareMonitorModule.ModuleName)'>
+        <div class="card dash-card card-click" data-testid="dashboard-card-drivetemp" role="link" tabindex="0"
+             @onclick='() => Open(LibreHardwareMonitorModule.ModuleName)' @onkeydown='e => Key(e, LibreHardwareMonitorModule.ModuleName)'>
             <div class="card-head"><span class="icon-badge"><Icon Name="temp" /></span><strong>Drive temp</strong><StatusChip Status="@ToStatus(driveGroup)" Text="@(driveGroup?.Hottest is null ? "No reading" : null)" /></div>
             <div class="val">@(driveGroup?.Hottest is { } d ? $"{d:0}°C" : "—")</div>
             <div class="desc">@(driveGroup?.Hottest is null ? "Not reported by this PC" : Level(driveGroup) == "ok" ? "Normal range" : "Running warm")</div>
         </div>
         @if (fanGroup is { Readings.Count: > 0 })
         {
-        <div class="card dash-card card-click" data-testid="dashboard-card-fans" role="link" tabindex="0" @onclick='() => Open(LibreHardwareMonitorModule.ModuleName)'>
+        <div class="card dash-card card-click" data-testid="dashboard-card-fans" role="link" tabindex="0"
+             @onclick='() => Open(LibreHardwareMonitorModule.ModuleName)' @onkeydown='e => Key(e, LibreHardwareMonitorModule.ModuleName)'>
             <div class="card-head"><span class="icon-badge"><Icon Name="fan" /></span><strong>Fans</strong><StatusChip Status="@ToStatus(fanGroup)" /></div>
             <div class="val">@(rpm is { } f ? $"{f:0} RPM" : "—")</div>
             <div class="desc">@fanGroup.Readings.Count fan(s) reported</div>
@@ -217,7 +220,7 @@
 
     // Previous dashboard test ids for the stress status lines.
     private static string TestId(string module) => module switch { "MemoryTest" => "memorytest", "NetworkTest" => "networktest", _ => module.ToLowerInvariant() };
-    private static string TestName(IDiagnosticModule m) => m.Name switch { "DiskSpeed" => "Disk speed", "NetworkTest" => "Network test", "GpuStress" => "GPU stress test", _ => m.DisplayName };
+    private static string TestName(IDiagnosticModule m) => m.Name switch { "DiskSpeed" => "Disk speed test", "NetworkTest" => "Network test", "GpuStress" => "GPU stress test", _ => m.DisplayName };
     private static string Level(SensorGroup? g) => g is null || g.Readings.Count == 0 ? "na" : g.Level switch { SensorLevel.Critical => "err", SensorLevel.Warning => "warn", _ => "ok" };
     private static DiagnosticStatus ToStatus(SensorGroup? g) => Level(g) switch { "err" => DiagnosticStatus.Error, "warn" => DiagnosticStatus.Warning, "ok" => DiagnosticStatus.Ok, _ => DiagnosticStatus.NotRun };
 }

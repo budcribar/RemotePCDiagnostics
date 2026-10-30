@@ -141,6 +141,12 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         ServiceActionResult result;
         var opts = OptionsFor(s);
         var allowed = action == ServiceAction.Start ? opts.CanStart : action == ServiceAction.Stop ? opts.CanStop : opts.CanRestart;
+        if (!allowed && !opts.IsProtected && StatusText(SafeState(s.Name)) is { Length: > 0 } live && live != s.Status)
+        {
+            s = s with { Status = live };
+            opts = OptionsFor(s);
+            allowed = action == ServiceAction.Start ? opts.CanStart : action == ServiceAction.Stop ? opts.CanStop : opts.CanRestart;
+        }
         if (!allowed)
         {
             Log($"Refused {action} of '{s.Name}': protected={opts.IsProtected} status={s.Status} startType={s.StartType}");

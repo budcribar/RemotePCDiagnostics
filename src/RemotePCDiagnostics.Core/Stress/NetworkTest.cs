@@ -64,17 +64,17 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
                     {
                         speedTask = Task.Run(async () =>
                         {
-                            step = "Measuring download speed";
+                            Volatile.Write(ref step, "Measuring download speed");
                             down = await speed.DownloadAsync(_s.DownloadBytes, limit, speedCts.Token).ConfigureAwait(false);
-                            step = "Measuring upload speed";
+                            Volatile.Write(ref step, "Measuring upload speed");
                             up = await speed.UploadAsync(_s.UploadBytes, limit, speedCts.Token).ConfigureAwait(false);
-                            step = "Checking your connection";
+                            Volatile.Write(ref step, "Checking your connection");
                             log?.Invoke($"Network test: download {down.Bytes} B in {down.Elapsed} ({down.Mbps:0.0} Mbps, err={down.Error}); upload {up.Bytes} B in {up.Elapsed} ({up.Mbps:0.0} Mbps, err={up.Error})");
                         }, CancellationToken.None);
                     }
                 }
 
-                progress?.Report(new NetworkTestProgress(elapsed, duration, step, samples.ToList(), temp, fan, sensorsOk));
+                progress?.Report(new NetworkTestProgress(elapsed, duration, Volatile.Read(ref step), samples.ToList(), temp, fan, sensorsOk));
                 try { await clk.DelayAsync(o.Interval, cancellationToken).ConfigureAwait(false); }
                 catch (OperationCanceledException) { stopped = true; break; }
             }

@@ -19,9 +19,11 @@ namespace RemotePCDiagnostics.Host;
 public partial class MainWindow : Window
 {
     private const string HostPage = @"wwwroot\index.html";
+    private readonly ServiceProvider _provider;
     private Uri? _serverUri;
     private Uri? _technicianUrl;
     private DispatcherTimer? _readyTimer;
+    private DispatcherTimer? _copyResetTimer;
     public MainWindow()
     {
         // Local (default) or Remote. Remote when started with -u=<server uri> (RemoteBlazorWebViewTutorial convention)
@@ -64,7 +66,7 @@ public partial class MainWindow : Window
         // On-demand only (Start button on its page): not in AutoRun below and excluded from Run All (IncludeInRunAll=false).
         services.AddSingleton<IDiagnosticModule>(new SecurityAuditModule(new SecurityAuditOptions { Log = App.Log }));
         services.AddSingleton<DiagnosticsService>();
-        var provider = services.BuildServiceProvider();
+        var provider = _provider = services.BuildServiceProvider();
         Resources.Add("services", provider);
         Closed += (_, _) => { try { provider.GetService<IEcFanSource>()?.Dispose(); } catch { } }; // release the PawnIO EC module handle
         provider.GetRequiredService<DiagnosticsService>().Log = App.Log;
@@ -118,7 +120,7 @@ public partial class MainWindow : Window
         RemotePanel.Visibility = Visibility.Visible;
         SetRemoteState(RemoteSessionState.Connecting);
 
-        RemoteBlazorWebView.ReadyToConnect += (s, e) =>
+        RemoteBlazorWebView.ReadyToConnect += (s, e) => Dispatcher.BeginInvoke(() =>
         {
             _readyTimer?.Stop();
             _technicianUrl = RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id);
@@ -128,19 +130,20 @@ public partial class MainWindow : Window
             RemoteLinkRow.Visibility = Visibility.Visible;
             SetRemoteState(RemoteSessionState.Ready);
             // Fallback: same link inside the web view, as the tutorial does (overlay is primary).
-            try { (s as IBlazorWebView)?.NavigateToString($"<a href='{_technicianUrl}' target='_blank'>{_technicianUrl}</a>"); }
+            var encoded = System.Net.WebUtility.HtmlEncode(_technicianUrl.ToString());
+            try { (s as IBlazorWebView)?.NavigateToString($"<a href='{encoded}' target='_blank'>{encoded}</a>"); }
             catch (Exception ex) { App.Log($"NavigateToString fallback failed: {ex}"); }
-        };
-        RemoteBlazorWebView.Connected += (_, e) =>
+        });
+        RemoteBlazorWebView.Connected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
             App.Log($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User}");
             SetRemoteState(RemoteSessionState.TechnicianConnected);
-        };
-        RemoteBlazorWebView.Disconnected += (_, e) =>
+        });
+        RemoteBlazorWebView.Disconnected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
             App.Log($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
             SetRemoteState(_technicianUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected);
-        };
+        });
         RemoteBlazorWebView.Refreshed += (_, e) => App.Log($"Remote Refreshed {e}");
 
         _readyTimer = new DispatcherTimer { Interval = RemoteLinkInfo.ReadyTimeout };
@@ -186,7 +189,15 @@ public partial class MainWindow : Window
     private void CopyLinkButton_Click(object sender, RoutedEventArgs e)
     {
         if (_technicianUrl is null) return;
-        try { Clipboard.SetText(_technicianUrl.ToString()); CopyLinkButton.Content = "Copied"; }
+        try
+        {
+            Clipboard.SetText(_technicianUrl.ToString());
+            CopyLinkButton.Content = "Copied";
+            _copyResetTimer?.Stop();
+            _copyResetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            _copyResetTimer.Tick += (_, _) => { _copyResetTimer.Stop(); CopyLinkButton.Content = "Copy link"; };
+            _copyResetTimer.Start();
+        }
         catch (Exception ex) { App.Log($"Copy link failed: {ex}"); }
     }
 
@@ -206,5 +217,23 @@ public partial class MainWindow : Window
         try { using var id = System.Security.Principal.WindowsIdentity.GetCurrent(); admin = new System.Security.Principal.WindowsPrincipal(id).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator); } catch { }
         var version = typeof(MainWindow).Assembly.GetName().Version?.ToString() ?? "?";
         return $"Remote PC Diagnostics started.{Environment.NewLine}Version: {version}{Environment.NewLine}Machine: {model}{Environment.NewLine}Running as administrator: {(admin ? "yes" : "no")}{Environment.NewLine}Mode: {mode}{Environment.NewLine}OS: {Environment.OSVersion.VersionString}";
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e); // raise Closed first so handlers (EC fan release) run before the provider is disposed
+        _readyTimer?.Stop();
+        _copyResetTimer?.Stop();
+        try
+        {
+            _provider.GetService<DiagnosticsService>()?.CancelStressSuite();
+            foreach (var m in _provider.GetServices<IDiagnosticModule>())
+            {
+                if (m is IStressSuiteModule sm) sm.Stop();
+                else if (m is SecurityAuditModule sa) sa.Cancel();
+            }
+            _provider.Dispose();
+        }
+        catch (Exception ex) { App.Log($"Shutdown cleanup failed: {ex.Message}"); }
     }
 }

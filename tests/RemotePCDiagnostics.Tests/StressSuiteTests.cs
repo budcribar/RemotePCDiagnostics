@@ -40,6 +40,7 @@ internal sealed class FakeStressModule(string name, string suiteName, Func<FakeS
     }
     bool IStressSuiteModule.IsUnavailableResult(DiagnosticResult r) => Unavailable;
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => Hot && r.Status == DiagnosticStatus.Error;
+    bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Status == DiagnosticStatus.Warning && r.Message == "Stopped";
     public void Push(DiagnosticResult r) => Updated?.Invoke(this, r);
 }
 
@@ -171,6 +172,21 @@ public class StressSuiteTests
         Assert.All(mods, m => Assert.Equal(TimeSpan.FromMinutes(3), m.Duration));
         Assert.Equal(StressSuiteStepState.NotRun, r.Steps[4].State);
         Assert.False(svc.IsStressSuiteRunning);
+    }
+
+    [Fact]
+    public async Task ModuleStop_WhileSuiteRunning_CancelsRemainingSuite()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (svc, _, mods, _) = Build(n => n == "MemoryTest" ? async (_, ct) => { started.TrySetResult(); await Task.Delay(Timeout.Infinite, ct); return FakeModule.Ok(n); } : null);
+        var run = svc.RunStressSuiteAsync(StressSuiteMode.Short, null);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        mods[1].Stop();
+        var r = await run.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(StressSuiteOutcome.Cancelled, r.Outcome);
+        Assert.Empty(mods[2].DurationsSeen);
+        Assert.Empty(mods[3].DurationsSeen);
+        Assert.Empty(mods[4].DurationsSeen);
     }
 
     [Fact]

@@ -12,6 +12,7 @@ public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log
     public event EventHandler<DiagnosticResult>? Updated;
     string IStressSuiteModule.SuiteName => "CPU";
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is CpuStressReport { Outcome: CpuStressOutcome.Overheated };
+    bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is CpuStressReport { Outcome: CpuStressOutcome.StoppedByUser };
 
     /// <summary>Raised with live progress while a run is in progress.</summary>
     public event EventHandler<CpuStressProgress>? ProgressChanged;
@@ -22,16 +23,20 @@ public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log
     public CpuStressProgress? LastProgress { get; private set; }
 
     private CancellationTokenSource? _stop;
+    private readonly object _gate = new();
 
     public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
 
     /// <summary>Asks a running test to stop (the user pressed Stop).</summary>
-    public void Stop() => _stop?.Cancel();
+    public void Stop()
+    {
+        lock (_gate) { try { _stop?.Cancel(); } catch (ObjectDisposedException) { } }
+    }
 
     public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _stop = stop;
+        lock (_gate) _stop = stop;
         try { ecFan?.SetStressLogging(true); } catch { /* log-only diagnostic */ }
         try
         {
@@ -44,7 +49,7 @@ public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log
         }
         finally
         {
-            _stop = null;
+            lock (_gate) _stop = null;
             try { ecFan?.SetStressLogging(false); } catch { /* log-only diagnostic */ }
         }
     }

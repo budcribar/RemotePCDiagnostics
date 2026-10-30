@@ -50,6 +50,8 @@ public class DashboardSummaryTests
     {
         var sum = DashboardSummary.Build([
             Stress("CpuStress", "CPU stress test", DiagnosticStatus.Warning, "Cancelled"),
+            Stress("MemoryTest", "Memory test", DiagnosticStatus.Warning, "Stopped"),
+            Stress("DiskSpeed", "Disk speed test", DiagnosticStatus.Warning, "Stopped by you"),
             Audit(DiagnosticStatus.Warning, SecurityAuditModule.CancelledMessage),
             Check("EventLog", "Windows error log", DiagnosticStatus.Warning, "3 errors")], null);
         Assert.Equal("EventLog", Assert.Single(sum.Problems).Name);

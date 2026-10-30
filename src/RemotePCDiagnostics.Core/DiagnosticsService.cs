@@ -13,6 +13,8 @@ public sealed class DiagnosticsService
 
     /// <summary>True while a stress suite is running (both dashboard run buttons are disabled).</summary>
     public bool IsStressSuiteRunning => Volatile.Read(ref _suiteRunning) == 1;
+    /// <summary>True while a stress suite or any individual stress test module is running.</summary>
+    public bool IsAnyStressRunning => IsStressSuiteRunning || StressSuite.Order.Any(IsRunning);
     /// <summary>Latest suite progress, so a page opened mid-run can show it.</summary>
     public StressSuiteProgress? LastStressSuiteProgress { get; private set; }
     /// <summary>Raised on every suite progress change.</summary>
@@ -26,7 +28,10 @@ public sealed class DiagnosticsService
     public string? CurrentSuiteLabel { get; private set; }
 
     /// <summary>Cancels a running stress suite (stops the current test and ends the sequence).</summary>
-    public void CancelStressSuite() => _suiteCts?.Cancel();
+    public void CancelStressSuite()
+    {
+        lock (_gate) { try { _suiteCts?.Cancel(); } catch (ObjectDisposedException) { } }
+    }
 
     private readonly List<IDiagnosticModule> _modules = new();
     private readonly ResultStore _store;
@@ -74,20 +79,25 @@ public sealed class DiagnosticsService
     /// <summary>Starts a run unless one is already in progress, in which case the in-flight task is returned (no double-runs).</summary>
     private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct)
     {
+        Task<DiagnosticResult> task;
         lock (_gate)
         {
-            if (_inFlight.TryGetValue(module.Name, out var existing)) return existing;
-            MarkRunning(module);
-            var tcs = new TaskCompletionSource<DiagnosticResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-            _inFlight[module.Name] = tcs.Task;
-            _ = Task.Run(async () =>
+            if (!_inFlight.TryGetValue(module.Name, out var existing))
             {
-                try { tcs.SetResult(await RunCoreAsync(module, progress, ct).ConfigureAwait(false)); }
-                catch (Exception ex) { tcs.SetException(ex); }
-                finally { _inFlight.TryRemove(module.Name, out _); }
-            }, CancellationToken.None);
-            return tcs.Task;
+                MarkRunning(module);
+                var tcs = new TaskCompletionSource<DiagnosticResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _inFlight[module.Name] = existing = tcs.Task;
+                _ = Task.Run(async () =>
+                {
+                    try { tcs.SetResult(await RunCoreAsync(module, progress, ct).ConfigureAwait(false)); }
+                    catch (Exception ex) { tcs.SetException(ex); }
+                    finally { _inFlight.TryRemove(module.Name, out _); }
+                }, CancellationToken.None);
+                return existing;
+            }
+            task = existing;
         }
+        return ct.CanBeCanceled ? task.WaitAsync(ct) : task;
     }
 
     private async Task<DiagnosticResult> RunCoreAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct)
@@ -121,7 +131,7 @@ public sealed class DiagnosticsService
         if (Interlocked.CompareExchange(ref _suiteRunning, 1, 0) != 0)
             throw new InvalidOperationException("A stress test run is already in progress.");
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        _suiteCts = cts;
+        lock (_gate) _suiteCts = cts;
         var modules = StressSuite.Order
             .Select(n => _modules.FirstOrDefault(m => string.Equals(m.Name, n, StringComparison.OrdinalIgnoreCase)) as IStressSuiteModule)
             .Where(m => m is not null).Cast<IStressSuiteModule>().ToList();
@@ -179,7 +189,7 @@ public sealed class DiagnosticsService
                     try { m.RestoreSuiteSettings(saved); } catch (Exception ex) { Log?.Invoke($"Stress suite: restoring {m.Name} settings failed: {ex.Message}"); }
                 }
                 _suiteLabels[m.Name] = (r.Timestamp, label);
-                if (cts.IsCancellationRequested)
+                if (cts.IsCancellationRequested || m.IsStoppedByUserResult(r))
                 {
                     steps[i] = steps[i] with { State = StressSuiteStepState.NotRun, Message = "Stopped" };
                     return Finish(StressSuiteOutcome.Cancelled, "Stress tests cancelled.", i + 1);
@@ -207,7 +217,7 @@ public sealed class DiagnosticsService
         }
         finally
         {
-            _suiteCts = null;
+            lock (_gate) _suiteCts = null;
             Volatile.Write(ref _suiteRunning, 0);
         }
     }

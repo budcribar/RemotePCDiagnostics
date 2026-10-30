@@ -118,6 +118,17 @@ public class GpuTemperatureFallbackTests
         var r = await new GpuStressTest(FakeGpuFactory.With(new FakeGpuDevice()), sensors, new FakeStressClock()).RunAsync(Opts());
         Assert.NotEqual(GpuStressOutcome.Overheated, r.Outcome);
     }
+
+    [Fact]
+    public void TimeoutGpuTemperatureSource_ClearsFaultedPendingTask_AndRecovers()
+    {
+        int calls = 0;
+        var inner = new FakeGpuTempSource("flaky", () => ++calls == 1 ? throw new InvalidOperationException("transient") : [new(Radeon, 58)]);
+        var wrapped = new TimeoutGpuTemperatureSource(inner, TimeSpan.FromSeconds(2));
+        Assert.Throws<AggregateException>(() => _ = wrapped.Read());
+        var res = wrapped.Read();
+        Assert.Equal(58, Assert.Single(res).Celsius);
+    }
 }
 
 public class CpuTemperatureFallbackTests

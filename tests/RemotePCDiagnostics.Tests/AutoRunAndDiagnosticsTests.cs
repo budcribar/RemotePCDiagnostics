@@ -24,10 +24,9 @@ public class AutoRunTests
         var store = new ResultStore();
         var svc = new DiagnosticsService(store, [m]);
         var tasks = AutoRun.Start(svc, _ => null, null, "Osquery");
-        Assert.Single(tasks);
         Assert.Equal(DiagnosticStatus.Running, store.Get("Osquery").Status);
         gate.SetResult();
-        var r = await tasks[0].WaitAsync(Wait);
+        var r = await Assert.Single(tasks).WaitAsync(Wait);
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
         Assert.Equal(DiagnosticStatus.Ok, store.Get("Osquery").Status);
     }

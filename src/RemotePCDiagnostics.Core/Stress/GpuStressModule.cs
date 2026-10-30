@@ -13,6 +13,7 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
     string IStressSuiteModule.SuiteName => "GPU";
     bool IStressSuiteModule.IsUnavailableResult(DiagnosticResult r) => r.Payload is GpuStressReport { Outcome: GpuStressOutcome.NoGpu };
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is GpuStressReport { Outcome: GpuStressOutcome.Overheated };
+    bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is GpuStressReport { Outcome: GpuStressOutcome.StoppedByUser };
     public event EventHandler<GpuStressProgress>? ProgressChanged;
 
     public TimeSpan Duration { get; set; } = TimeSpan.FromMinutes(1);
@@ -20,15 +21,19 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
     public GpuStressProgress? LastProgress { get; private set; }
 
     private CancellationTokenSource? _stop;
+    private readonly object _gate = new();
 
     public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
 
-    public void Stop() => _stop?.Cancel();
+    public void Stop()
+    {
+        lock (_gate) { try { _stop?.Cancel(); } catch (ObjectDisposedException) { } }
+    }
 
     public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _stop = stop;
+        lock (_gate) _stop = stop;
         try
         {
             LastProgress = null;
@@ -37,7 +42,7 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
             var report = await test.RunAsync(opts, new P(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); }), stop.Token).ConfigureAwait(false);
             return new DiagnosticResult<GpuStressReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
         }
-        finally { _stop = null; }
+        finally { lock (_gate) _stop = null; }
     }
 
     public static DiagnosticStatus ToStatus(GpuStressOutcome o) => o switch

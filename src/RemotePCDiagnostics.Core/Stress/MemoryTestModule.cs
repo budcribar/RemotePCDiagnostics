@@ -21,6 +21,7 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
         Duration = StressSuite.PerTestDuration(mode);
     }
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is MemoryTestReport { Outcome: MemoryTestOutcome.Overheated };
+    bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is MemoryTestReport { Outcome: MemoryTestOutcome.StoppedByUser };
     public event EventHandler<MemoryTestProgress>? ProgressChanged;
 
     public MemoryTestMode Mode { get; set; } = MemoryTestMode.Quick;
@@ -30,6 +31,7 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
     public bool CanLaunchWindowsDiagnostic => windowsDiagnostic is not null;
 
     private CancellationTokenSource? _stop;
+    private readonly object _gate = new();
 
     /// <summary>Planned test size for a mode right now (null = not enough free memory).</summary>
     public long? PlannedBytes(MemoryTestMode mode)
@@ -43,12 +45,15 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
 
     public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
 
-    public void Stop() => _stop?.Cancel();
+    public void Stop()
+    {
+        lock (_gate) { try { _stop?.Cancel(); } catch (ObjectDisposedException) { } }
+    }
 
     public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _stop = stop;
+        lock (_gate) _stop = stop;
         try
         {
             LastProgress = null;
@@ -57,7 +62,7 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
             var report = await test.RunAsync(opts, new P(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); }), stop.Token).ConfigureAwait(false);
             return new DiagnosticResult<MemoryTestReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
         }
-        finally { _stop = null; }
+        finally { lock (_gate) _stop = null; }
     }
 
     public static DiagnosticStatus ToStatus(MemoryTestOutcome o) => o switch

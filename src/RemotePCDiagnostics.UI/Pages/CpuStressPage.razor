@@ -1,25 +1,25 @@
 @page "/module/cpustress"
 @using RemotePCDiagnostics.Core.Stress
 @inherits StoreAwareComponent
-@implements IAsyncDisposable
 @{
     var r = Store.Get(CpuStressModule.ModuleName);
     var running = r.Status == DiagnosticStatus.Running;
+    var otherBusy = Diagnostics.IsAnyStressRunning && !running;
     var report = r.Payload as CpuStressReport;
     var p = running ? Module?.LastProgress : null;
 }
 <div class="toolbar">
     <span class="icon-badge page-icon"><Icon Name="cpu" Size="20" /></span><h1 data-testid="cpustress-title">CPU stress test</h1>
     <label class="meta">Run for
-        <select data-testid="cpustress-duration" disabled="@running" @onchange="SetDuration">
+        <select data-testid="cpustress-duration" disabled="@(running || otherBusy)" @onchange="SetDuration">
             @foreach (var d in CpuStressOptions.DurationChoices)
             {
                 <option value="@d.TotalMinutes" selected="@(d == _duration)">@Minutes(d)</option>
             }
         </select>
     </label>
-    <button data-testid="cpustress-start" @onclick="Start" disabled="@(running || Module is null)">Start</button>
-    <button data-testid="cpustress-stop" @onclick="Stop" disabled="@(!running)">Stop</button>
+    <button data-testid="cpustress-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
+    <button data-testid="cpustress-stop" @onclick="Stop" disabled="@(!running && !Diagnostics.IsStressSuiteRunning)">Stop</button>
 </div>
 <p class="meta">Puts every processor core under full load to check that it works correctly and stays cool. Your PC may get loud and slow while the test runs. The test stops by itself if the processor gets too hot.</p>
 
@@ -70,9 +70,15 @@ else if (report is not null)
     {
         base.OnInitialized();
         if (Module is { } m) { _duration = m.Duration; m.ProgressChanged += OnProgress; }
+        Diagnostics.StressSuiteProgressChanged += OnSuite;
     }
 
     private void OnProgress(object? s, CpuStressProgress p) => _ = InvokeAsync(StateHasChanged);
+    private void OnSuite(object? s, StressSuiteProgress p)
+    {
+        if (p.Finished && Module is { } m) _duration = m.Duration;
+        _ = InvokeAsync(StateHasChanged);
+    }
 
     private void SetDuration(ChangeEventArgs e)
     {
@@ -81,22 +87,26 @@ else if (report is not null)
 
     private void Start()
     {
-        if (Module is not { } m || Diagnostics.IsRunning(m.Name)) return;
+        if (Module is not { } m || Diagnostics.IsRunning(m.Name) || Diagnostics.IsAnyStressRunning) return;
         m.Duration = _duration;
         _ = Diagnostics.RunAsync(m.Name);
     }
 
-    private void Stop() => Module?.Stop();
+    private void Stop()
+    {
+        if (Diagnostics.IsStressSuiteRunning) Diagnostics.CancelStressSuite();
+        Module?.Stop();
+    }
 
     private static string Minutes(TimeSpan d) => d.TotalMinutes == 1 ? "1 minute" : $"{d.TotalMinutes:0} minutes";
     private static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
     private static string TempDot(CpuStressProgress? p) => p?.CpuTemperatureC is not { } t ? "dot dot-neutral"
         : p.CpuCriticalC is { } c && t >= c - 8 ? "dot dot-warning" : "dot dot-ok";
 
-    public ValueTask DisposeAsync()
+    public override void Dispose()
     {
         if (Module is { } m) m.ProgressChanged -= OnProgress;
-        Dispose();
-        return ValueTask.CompletedTask;
+        Diagnostics.StressSuiteProgressChanged -= OnSuite;
+        base.Dispose();
     }
 }

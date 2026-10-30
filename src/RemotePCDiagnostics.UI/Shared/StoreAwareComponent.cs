@@ -11,7 +11,7 @@ public abstract class StoreAwareComponent : ComponentBase, IDisposable
 
     protected override void OnInitialized() => Store.Changed += OnChanged;
     private void OnChanged(object? s, DiagnosticResult r) => _ = InvokeAsync(StateHasChanged);
-    public void Dispose() => Store.Changed -= OnChanged;
+    public virtual void Dispose() => Store.Changed -= OnChanged;
 
     protected static string DotClass(DiagnosticStatus s) => "dot dot-" + s.ToString().ToLowerInvariant();
 }

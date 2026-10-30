@@ -33,11 +33,19 @@ public sealed class WindowsServiceControlBackend : IServiceControlBackend
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         void Walk(ServiceController s)
         {
-            foreach (var d in s.DependentServices)
+            var deps = s.DependentServices;
+            try
             {
-                if (!seen.Add(d.ServiceName)) continue;
-                if (d.Status != ServiceControllerStatus.Stopped) result.Add(new(d.ServiceName, d.DisplayName));
-                Walk(d);
+                foreach (var d in deps)
+                {
+                    if (!seen.Add(d.ServiceName)) continue;
+                    if (d.Status != ServiceControllerStatus.Stopped) result.Add(new(d.ServiceName, d.DisplayName));
+                    Walk(d);
+                }
+            }
+            finally
+            {
+                foreach (var d in deps) d.Dispose();
             }
         }
         Walk(sc);

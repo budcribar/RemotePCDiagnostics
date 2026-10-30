@@ -12,6 +12,7 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
     public event EventHandler<DiagnosticResult>? Updated;
     string IStressSuiteModule.SuiteName => "Disk";
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.Overheated };
+    bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.StoppedByUser };
     public event EventHandler<DiskSpeedProgress>? ProgressChanged;
 
     public TimeSpan Duration { get; set; } = TimeSpan.FromMinutes(1);
@@ -22,6 +23,7 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
     public DiskSpeedProgress? LastProgress { get; private set; }
 
     private CancellationTokenSource? _stop;
+    private readonly object _gate = new();
 
     public IReadOnlyList<TestDrive> ListDrives()
     {
@@ -31,12 +33,15 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
 
     public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
 
-    public void Stop() => _stop?.Cancel();
+    public void Stop()
+    {
+        lock (_gate) { try { _stop?.Cancel(); } catch (ObjectDisposedException) { } }
+    }
 
     public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _stop = stop;
+        lock (_gate) _stop = stop;
         try
         {
             LastProgress = null;
@@ -45,7 +50,7 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
             var report = await test.RunAsync(opts, new P(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); }), stop.Token).ConfigureAwait(false);
             return new DiagnosticResult<DiskSpeedReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
         }
-        finally { _stop = null; }
+        finally { lock (_gate) _stop = null; }
     }
 
     public static DiagnosticStatus ToStatus(DiskSpeedOutcome o) => o switch

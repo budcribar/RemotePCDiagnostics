@@ -10,6 +10,7 @@ internal sealed class FakeStressClock : IStressClock
     private long _ticks;
     public TimeSpan Elapsed => TimeSpan.FromTicks(Interlocked.Read(ref _ticks));
     public int Delays;
+    public void Advance(TimeSpan delta) => Interlocked.Add(ref _ticks, delta.Ticks);
     public async Task DelayAsync(TimeSpan delay, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();

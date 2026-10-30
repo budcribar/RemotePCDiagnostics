@@ -99,20 +99,3 @@ public sealed class D3dkmtGpuTemperatureSource : IGpuTemperatureSource
         finally { Marshal.FreeHGlobal(p); }
     }
 }
-
-/// <summary>Runs another source with a short timeout; after a timeout the source is skipped for the rest of the session.</summary>
-public sealed class TimeoutGpuTemperatureSource(IGpuTemperatureSource inner, TimeSpan timeout) : IGpuTemperatureSource
-{
-    private Task<IReadOnlyList<GpuTemperatureSample>>? _pending;
-    private bool _disabled;
-    public string Name => inner.Name;
-
-    public IReadOnlyList<GpuTemperatureSample> Read()
-    {
-        if (_disabled) throw new TimeoutException("disabled after an earlier timeout");
-        var t = _pending ??= Task.Run(inner.Read);
-        if (!t.Wait(timeout)) { _disabled = true; throw new TimeoutException($"no answer within {timeout.TotalMilliseconds:0} ms"); }
-        _pending = null;
-        return t.Result;
-    }
-}

@@ -30,7 +30,8 @@ public sealed class EventLogModule(SystemCommandRunner commands) : AreaModuleBas
         var all = (system ?? []).Concat(app ?? []).OrderByDescending(e => e.Time).ToList();
         var critical = all.Where(e => e.Level == 1).ToList();
         // Yellow only for critical problems or 5+ errors from the same source; routine/isolated errors stay green but listed.
-        var repeated = all.Where(e => e.Level == 2).GroupBy(e => (e.Source, e.Channel)).Where(g => g.Count() >= RepeatErrors).Select(g => g.Key).ToHashSet();
+        static (string Source, string Channel) Key(WinEvent e) => (e.Source.ToUpperInvariant(), e.Channel.ToUpperInvariant());
+        var repeated = all.Where(e => e.Level == 2).GroupBy(Key).Where(g => g.Count() >= RepeatErrors).Select(g => g.Key).ToHashSet();
         var cards = new List<AreaCard>
         {
             new("critical", "Critical problems", critical.Count > 0 ? AreaLevel.Error : AreaLevel.Ok,
@@ -41,20 +42,20 @@ public sealed class EventLogModule(SystemCommandRunner commands) : AreaModuleBas
         };
         AreaCard LogCard(string id, string title, IReadOnlyList<WinEvent>? events, string what) => events is null
             ? AreaCard.Failed(id, title, $"Couldn't read {what}.")
-            : new(id, title, events.Any(e => e.Level == 2 && repeated.Contains((e.Source, e.Channel))) ? AreaLevel.Warning : AreaLevel.Ok,
+            : new(id, title, events.Any(e => e.Level == 2 && repeated.Contains(Key(e))) ? AreaLevel.Warning : AreaLevel.Ok,
                 events.Count == 0 ? "No errors" : AreaModuleBase.Plural(events.Count, "error") + (events.Count >= MaxPerLog ? " or more" : ""),
                 $"In the last {Days} days", Cols, events.Select(Row).ToList(),
                 Note: "Most PCs log some errors; they only matter if they repeat or match a problem you're seeing.");
         cards.Add(LogCard("system", "Windows errors", system, "Windows' own error list"));
         cards.Add(LogCard("apps", "App errors", app, "the app error list"));
 
-        var groups = all.GroupBy(e => (e.Source, e.Channel)).OrderByDescending(g => g.Count()).ThenByDescending(g => g.Max(e => e.Time)).ToList();
+        var groups = all.GroupBy(Key).OrderByDescending(g => g.Count()).ThenByDescending(g => g.Max(e => e.Time)).ToList();
         var top = groups.FirstOrDefault();
         cards.Add(new("sources", "Most frequent", top is null ? AreaLevel.Ok : AreaLevel.Neutral,
-            top is null ? "Nothing repeated" : top.Key.Source, top is null ? "" : $"{AreaModuleBase.Plural(top.Count(), "time")} in the last {Days} days",
+            top is null ? "Nothing repeated" : top.First().Source, top is null ? "" : $"{AreaModuleBase.Plural(top.Count(), "time")} in the last {Days} days",
             ["Source", "Where", "Times", "Last seen"],
             groups.Select(g => new AreaRow(g.Any(e => e.Level == 1) ? AreaLevel.Error : AreaLevel.Warning,
-                [g.Key.Source, g.Key.Channel == "System" ? "Windows" : "Apps", g.Count().ToString(), WindowsEventLog.FormatTime(g.Max(e => e.Time))],
+                [g.First().Source, string.Equals(g.First().Channel, "System", StringComparison.OrdinalIgnoreCase) ? "Windows" : "Apps", g.Count().ToString(), WindowsEventLog.FormatTime(g.Max(e => e.Time))],
                 [null, null, null, AreaSort.TimeKey(g.Max(e => e.Time))])).ToList()));
 
         var summary = all.Count == 0 && critical.Count == 0

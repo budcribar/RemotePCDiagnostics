@@ -163,9 +163,14 @@ svg.chart { background: var(--chart-bg); border: 1px solid var(--border); border
 .banner-icon { display: inline-grid; place-items: center; color: var(--chip-ok); }
 [data-theme="light"] .banner-icon { width: 44px; height: 44px; border-radius: 50%; background: #d6f2e0; }
 [data-theme="dark"] .banner-icon { color: var(--accent); }
-.banner-warn .banner-icon, .banner-err .banner-icon { color: var(--chip-warn); }
-[data-theme="light"] .banner-warn .banner-icon, [data-theme="light"] .banner-err .banner-icon { background: #fdf0d0; }
-[data-theme="light"] .banner-warn, [data-theme="light"] .banner-err { background: linear-gradient(90deg, #fdf5e2 0%, #fffdf8 45%, #fff 100%); }
+.banner-warn .banner-icon { color: var(--chip-warn); }
+.banner-err .banner-icon { color: var(--chip-err); }
+[data-theme="light"] .banner-warn .banner-icon { background: #fdf0d0; }
+[data-theme="light"] .banner-err .banner-icon { background: #fde4e4; }
+[data-theme="light"] .banner-warn { background: linear-gradient(90deg, #fdf5e2 0%, #fffdf8 45%, #fff 100%); }
+[data-theme="light"] .banner-err { background: linear-gradient(90deg, #fef2f2 0%, #fffafa 45%, #fff 100%); }
+[data-theme="dark"] .banner-warn { border-color: var(--warn-border); }
+[data-theme="dark"] .banner-err { border-color: var(--error-border); }
 .banner-run .banner-icon { color: var(--dot-running); }
 .banner-text { flex: 1; min-width: 0; }
 .banner-title { font-size: 20px; font-weight: 700; color: var(--text-strong); }
@@ -206,7 +211,8 @@ svg.chart { background: var(--chart-bg); border: 1px solid var(--border); border
 .drawer-backdrop { position: fixed; inset: 0; background: var(--backdrop); animation: fade .15s ease-out; }
 .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(580px, 90vw); background: var(--surface); color: var(--text); border-left: 1px solid var(--border); box-shadow: var(--shadow-lg); padding: 0 18px 18px; overflow: auto; animation: slide-in .2s ease-out; }
 [data-theme="dark"] .drawer { box-shadow: -8px 0 32px rgba(0,0,0,.6), var(--glow-soft); }
-.drawer-head { display: flex; justify-content: space-between; align-items: center; margin: 0 -18px 10px; padding: 16px 18px 8px; position: sticky; top: 0; z-index: 2; background: var(--surface); border-bottom: 1px solid var(--border); height: 32px; box-sizing: content-box; }
+.drawer-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 -18px 10px; padding: 16px 18px 8px; position: sticky; top: 0; z-index: 2; background: var(--surface); border-bottom: 1px solid var(--border); height: 32px; box-sizing: content-box; }
+.drawer-head strong { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .drawer-head h2, .drawer-head h3 { margin: 0; }
 @keyframes slide-in { from { transform: translateX(24px); opacity: 0; } }
 @keyframes fade { from { opacity: 0; } }
@@ -332,3 +338,17 @@ table.detail { font-size: 14px; }
 table.sortable .sort-arrow { color: var(--text-muted); }
 .gauge-sub { fill: var(--text-muted); }
 .drawer { width: min(680px, 92vw); }
+
+/* Service actions (Services drawer & recent changes) */
+.svc-actions { display: inline-flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
+.svc-actions button { min-height: 28px; padding: 3px 9px; font-size: 12px; }
+.svc-lock { color: var(--text-faint); font-size: 12px; white-space: nowrap; }
+.svc-modal-backdrop { position: fixed; inset: 0; background: var(--backdrop); z-index: 20; display: grid; place-items: center; animation: fade .12s ease-out; }
+.svc-modal { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 18px 20px; width: min(460px, 92vw); }
+.svc-modal h3 { margin: 0 0 8px; font-size: 16px; color: var(--text-strong); }
+.svc-modal p { margin: 6px 0; font-size: 13.5px; line-height: 1.45; }
+.svc-modal .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.svc-warn { background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; }
+.svc-result-ok { background: var(--ok-bg); color: var(--chip-ok); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.svc-recent { margin-top: 18px; }
+.svc-recent h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 0 0 8px; }

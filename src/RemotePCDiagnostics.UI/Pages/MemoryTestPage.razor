@@ -2,10 +2,10 @@
 @using RemotePCDiagnostics.Core.Stress
 @using RemotePCDiagnostics.Core.Osquery
 @inherits StoreAwareComponent
-@implements IAsyncDisposable
 @{
     var r = Store.Get(MemoryTestModule.ModuleName);
     var running = r.Status == DiagnosticStatus.Running;
+    var otherBusy = Diagnostics.IsAnyStressRunning && !running;
     var report = r.Payload as MemoryTestReport;
     var p = running ? Module?.LastProgress : null;
     var planned = running ? null : Module?.PlannedBytes(_mode);
@@ -13,21 +13,21 @@
 <div class="toolbar">
     <span class="icon-badge page-icon"><Icon Name="mem" Size="20" /></span><h1 data-testid="memtest-title">Memory test</h1>
     <label class="meta">Test
-        <select data-testid="memtest-mode" disabled="@running" @onchange="SetMode">
+        <select data-testid="memtest-mode" disabled="@(running || otherBusy)" @onchange="SetMode">
             <option value="Quick" selected="@(_mode == MemoryTestMode.Quick)">Quick (a small part of memory)</option>
             <option value="Full" selected="@(_mode == MemoryTestMode.Full)">Full (as much memory as is safe)</option>
         </select>
     </label>
     <label class="meta">Run for
-        <select data-testid="memtest-duration" disabled="@running" @onchange="SetDuration">
+        <select data-testid="memtest-duration" disabled="@(running || otherBusy)" @onchange="SetDuration">
             @foreach (var d in MemoryTestOptions.DurationChoices)
             {
                 <option value="@d.TotalMinutes" selected="@(d == _duration)">@(d.TotalMinutes == 1 ? "1 minute" : $"{d.TotalMinutes:0} minutes")</option>
             }
         </select>
     </label>
-    <button data-testid="memtest-start" @onclick="Start" disabled="@(running || Module is null)">Start</button>
-    <button data-testid="memtest-stop" @onclick="Stop" disabled="@(!running)">Stop</button>
+    <button data-testid="memtest-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
+    <button data-testid="memtest-stop" @onclick="Stop" disabled="@(!running && !Diagnostics.IsStressSuiteRunning)">Stop</button>
 </div>
 <p class="meta">Writes test patterns into your PC's memory and reads them back to find faulty spots. Your PC may feel slower while it runs; other programs keep working, and enough memory is always left free for them.
     @if (!running) { <span data-testid="memtest-plan">@(planned is { } pb ? $"This test will check about {HardwareInventory.FormatBytes(pb)} of memory." : "There isn't enough free memory to run this test right now. Close some programs and try again.")</span> }
@@ -108,12 +108,20 @@ else if (report is not null)
     protected override void OnInitialized()
     {
         base.OnInitialized();
-        if (Module is not { } m) return;
-        _mode = m.Mode; _duration = m.Duration;
-        m.ProgressChanged += OnProgress;
+        if (Module is { } m)
+        {
+            _mode = m.Mode; _duration = m.Duration;
+            m.ProgressChanged += OnProgress;
+        }
+        Diagnostics.StressSuiteProgressChanged += OnSuite;
     }
 
     private void OnProgress(object? s, MemoryTestProgress p) => _ = InvokeAsync(StateHasChanged);
+    private void OnSuite(object? s, StressSuiteProgress p)
+    {
+        if (p.Finished && Module is { } m) { _mode = m.Mode; _duration = m.Duration; }
+        _ = InvokeAsync(StateHasChanged);
+    }
 
     private void SetMode(ChangeEventArgs e)
     {
@@ -127,12 +135,16 @@ else if (report is not null)
 
     private void Start()
     {
-        if (Module is not { } m || Diagnostics.IsRunning(m.Name)) return;
+        if (Module is not { } m || Diagnostics.IsRunning(m.Name) || Diagnostics.IsAnyStressRunning) return;
         m.Mode = _mode; m.Duration = _duration;
         _ = Diagnostics.RunAsync(m.Name);
     }
 
-    private void Stop() => Module?.Stop();
+    private void Stop()
+    {
+        if (Diagnostics.IsStressSuiteRunning) Diagnostics.CancelStressSuite();
+        Module?.Stop();
+    }
 
     private void LaunchMdsched()
     {
@@ -144,10 +156,10 @@ else if (report is not null)
 
     private static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
 
-    public ValueTask DisposeAsync()
+    public override void Dispose()
     {
         if (Module is { } m) m.ProgressChanged -= OnProgress;
-        Dispose();
-        return ValueTask.CompletedTask;
+        Diagnostics.StressSuiteProgressChanged -= OnSuite;
+        base.Dispose();
     }
 }

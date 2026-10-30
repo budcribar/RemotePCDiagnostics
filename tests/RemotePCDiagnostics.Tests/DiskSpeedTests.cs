@@ -234,6 +234,29 @@ public class DiskSpeedTests
     }
 
     [Fact]
+    public async Task SlowSequentialWrite_ReservesTimeForVerification()
+    {
+        var clock = new FakeStressClock();
+        var fs = new FakeDiskFs();
+        fs.Wrap = s => new SlowWriteStream(s, () => clock.Advance(TimeSpan.FromSeconds(20)));
+        var r = await new DiskSpeedTest(fs, NoSensors(), clock).RunAsync(Opts(1));
+        Assert.True(r.BlocksVerified > 0);
+        AssertCleaned(fs, r);
+    }
+
+    private sealed class SlowWriteStream(Stream inner, Action onWrite) : Stream
+    {
+        public override bool CanRead => true; public override bool CanSeek => true; public override bool CanWrite => true;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() => inner.Flush();
+        public override long Seek(long o, SeekOrigin s) => inner.Seek(o, s);
+        public override void SetLength(long v) => inner.SetLength(v);
+        public override int Read(byte[] b, int o, int c) => inner.Read(b, o, c);
+        public override void Write(byte[] b, int o, int c) { onWrite(); inner.Write(b, o, c); }
+    }
+
+    [Fact]
     public async Task Module_IsExcludedFromRunAll_AndUsesChosenDrive()
     {
         var fs = new FakeDiskFs();

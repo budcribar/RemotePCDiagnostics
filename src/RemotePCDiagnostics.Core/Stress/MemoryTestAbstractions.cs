@@ -88,9 +88,9 @@ public sealed class ProcessMemTestHelperLauncher(string? directory = null, Actio
     private sealed class Proc(Process p) : IMemTestHelperProcess
     {
         public Task<string?> ReadLineAsync(CancellationToken ct) => p.StandardOutput.ReadLineAsync(ct).AsTask();
-        public void Kill() { try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } }
-        public int? ExitCode => p.HasExited ? p.ExitCode : null;
-        public void Dispose() { Kill(); p.Dispose(); }
+        public void Kill() { try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch (Exception) { } }
+        public int? ExitCode { get { try { return p.HasExited ? p.ExitCode : null; } catch (Exception) { return null; } } }
+        public void Dispose() { try { Kill(); } finally { p.Dispose(); } }
     }
 }
 

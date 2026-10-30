@@ -81,7 +81,8 @@ public sealed class WindowsEventLog(SystemCommandRunner commands)
                 data.Add(d.Value.Trim());
                 if (d.Attribute("Name")?.Value is { Length: > 0 } n) named[n] = d.Value.Trim();
             }
-            list.Add(new WinEvent(time, El(sys, "Channel")?.Value ?? channel, provider, id, level, El(render, "Message")?.Value?.Trim() ?? "", data, named));
+            var ch = El(sys, "Channel")?.Value;
+            list.Add(new WinEvent(time, !string.IsNullOrEmpty(ch) ? ch : channel, provider, id, level, El(render, "Message")?.Value?.Trim() ?? "", data, named));
         }
         return list.OrderByDescending(x => x.Time).ToList();
     }

@@ -9,7 +9,11 @@
 <div class="toolbar">
     <span class="icon-badge page-icon"><Icon Name="temp" Size="20" /></span><h1 data-testid="lhm-title">Temperatures &amp; fans</h1>
 </div>
-<p data-testid="lhm-status"><span class="@DotClass(r.Status)"></span> @r.Status: @r.Message</p>
+<p data-testid="lhm-status" class="status-line">
+    <span class="@DotClass(r.Status)"></span>
+    <span class="status-text">@(r.Status is DiagnosticStatus.NotRun or DiagnosticStatus.Running && report is null ? "Checking temperatures and fan speeds…" : r.Message)</span>
+    @if (report is not null) { <button class="btn-small status-action" data-testid="lhm-requery" disabled="@_busy" @onclick="Refresh">Check again</button> }
+</p>
 
 @if (report is null && r.Status != DiagnosticStatus.Running)
 {
@@ -62,8 +66,8 @@
     @if (_open is not null && report.Groups.FirstOrDefault(g => g.Id == _open) is { } open)
     {
         <div class="drawer-backdrop" @onclick="() => _open = null"></div>
-        <aside class="drawer" data-testid="lhm-drawer-@open.Id">
-            <div class="drawer-head"><strong>@open.Title</strong><button data-testid="lhm-drawer-close" @onclick="() => _open = null">Close</button></div>
+        <aside class="drawer" role="dialog" aria-modal="true" aria-label="@open.Title" tabindex="-1" @onkeydown='e => { if (e.Key == "Escape") _open = null; }' data-testid="lhm-drawer-@open.Id">
+            <div class="drawer-head"><strong title="@open.Title">@open.Title</strong><button data-testid="lhm-drawer-close" @onclick="() => _open = null">Close</button></div>
             @if (open.Readings.Count == 0) { <p class="meta">Nothing to show here.</p> }
             else
             {
@@ -106,7 +110,7 @@
     protected override bool ShouldRender()
     {
         var shown = Shown();
-        var sig = SensorReport.Signature(shown.Status.ToString(), shown.Message, shown.Payload as SensorReport) + "|" + _busy;
+        var sig = SensorReport.Signature(shown.Status.ToString(), shown.Message, shown.Payload as SensorReport);
         if (!_uiDirty && sig == _lastSig) return false;
         _uiDirty = false; _lastSig = sig;
         return true;
@@ -139,6 +143,7 @@
                 if (!_busy && Store.Get(LibreHardwareMonitorModule.ModuleName).Status != DiagnosticStatus.Running) await Refresh();
         }
         catch (OperationCanceledException) { }
+        catch (Exception ex) { Diagnostics.Log?.Invoke($"Sensor page timer error: {ex.Message}"); }
     }
 
     private void StopTimer() { _cts?.Cancel(); _timer?.Dispose(); _timer = null; _cts = null; }

@@ -50,8 +50,8 @@
     @if (_open is not null)
     {
         <div class="drawer-backdrop" @onclick="Close"></div>
-        <aside class="drawer" data-testid="osquery-drawer-@_open">
-            <div class="drawer-head"><strong>@Titles[_open]</strong><button data-testid="osquery-drawer-close" @onclick="Close">Close</button></div>
+        <aside class="drawer" role="dialog" aria-modal="true" aria-label="@Titles[_open]" tabindex="-1" @onkeydown='e => { if (e.Key == "Escape") Close(); }' data-testid="osquery-drawer-@_open">
+            <div class="drawer-head"><strong title="@Titles[_open]">@Titles[_open]</strong><button data-testid="osquery-drawer-close" @onclick="Close">Close</button></div>
             @switch (_open)
             {
                 case "system": <DetailTable Section="inv.System" Columns="SystemCols" ErrorText="Couldn't read computer details on this PC." EmptyText="Computer details aren't available on this PC." />; break;

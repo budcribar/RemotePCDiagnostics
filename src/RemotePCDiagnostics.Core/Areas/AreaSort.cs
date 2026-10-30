@@ -26,11 +26,11 @@ public static class AreaSort
         return idx.Select(p => p.r).ToList();
     }
 
-    /// <summary>Default: newest first when the first column is a time ("When"/"Last seen"/"Last time"), else original order.</summary>
+    /// <summary>Default: newest first when a table is pre-sorted by time ("When"/"Last seen"/"Last time", or Windows updates "Installed"), else original order.</summary>
     public static (int Col, bool Desc) Default(IReadOnlyList<string> columns)
     {
         for (var i = 0; i < columns.Count; i++)
-            if (columns[i] is "When" or "Last seen" or "Last time") return (i, true);
+            if (columns[i] is "When" or "Last seen" or "Last time" || (columns[i] == "Installed" && columns[0] == "Update")) return (i, true);
         return (-1, false);
     }
 

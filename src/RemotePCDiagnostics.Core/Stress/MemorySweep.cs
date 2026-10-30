@@ -24,10 +24,13 @@ public sealed unsafe class NativeMemoryBlock : IMemoryBlock
     {
         _words = checked((int)(bytes / sizeof(ulong)));
         _p = NativeMemory.AlignedAlloc((nuint)bytes, 4096);
-        new Span<ulong>(_p, _words).Clear();
+        try { new Span<ulong>(_p, _words).Clear(); }
+        catch { NativeMemory.AlignedFree(_p); _p = null; throw; }
     }
+    ~NativeMemoryBlock() => Free();
     public Span<ulong> Words => new(_p, _words);
-    public void Dispose() { if (_p != null) { NativeMemory.AlignedFree(_p); _p = null; } }
+    public void Dispose() { Free(); GC.SuppressFinalize(this); }
+    private void Free() { if (_p != null) { NativeMemory.AlignedFree(_p); _p = null; } }
 }
 
 /// <summary>

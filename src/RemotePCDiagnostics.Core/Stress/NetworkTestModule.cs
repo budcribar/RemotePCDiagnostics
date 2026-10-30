@@ -13,6 +13,7 @@ public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, 
     public event EventHandler<DiagnosticResult>? Updated;
     string IStressSuiteModule.SuiteName => "Network";
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.Overheated };
+    bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.StoppedByUser };
     public event EventHandler<NetworkTestProgress>? ProgressChanged;
 
     public TimeSpan Duration { get; set; } = TimeSpan.FromMinutes(1);
@@ -20,15 +21,19 @@ public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, 
     public NetworkTestProgress? LastProgress { get; private set; }
 
     private CancellationTokenSource? _stop;
+    private readonly object _gate = new();
 
     public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
 
-    public void Stop() => _stop?.Cancel();
+    public void Stop()
+    {
+        lock (_gate) { try { _stop?.Cancel(); } catch (ObjectDisposedException) { } }
+    }
 
     public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _stop = stop;
+        lock (_gate) _stop = stop;
         try
         {
             LastProgress = null;
@@ -37,7 +42,7 @@ public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, 
             var report = await test.RunAsync(opts, new P(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); }), stop.Token).ConfigureAwait(false);
             return new DiagnosticResult<NetworkTestReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
         }
-        finally { _stop = null; }
+        finally { lock (_gate) _stop = null; }
     }
 
     public static DiagnosticStatus ToStatus(NetworkTestOutcome o) => o switch

@@ -7,7 +7,8 @@
         <div class="rail-section" role="presentation">@group.Item1</div>
         @foreach (var m in group.Item2)
         {
-            <NavLink href="@($"module/{m.Name.ToLowerInvariant()}")"><Icon Name="@Icon.ForModule(m.Name)" /><span class="nav-text">@NavName(m)</span><span class="@DotClass(Store.Get(m.Name).Status)" title="@StatusChip.Label(Store.Get(m.Name).Status)"></span></NavLink>
+            var st = Store.Get(m.Name).Status;
+            <NavLink href="@($"module/{m.Name.ToLowerInvariant()}")"><Icon Name="@Icon.ForModule(m.Name)" /><span class="nav-text">@NavName(m)</span><span class="@DotClass(st)" role="img" aria-label="@StatusChip.Label(st)" title="@StatusChip.Label(st)"></span></NavLink>
         }
     }
 </nav>

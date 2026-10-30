@@ -58,10 +58,25 @@ public class ProgramsTests
 
     [Theory]
     [InlineData("20260115", 2026, 1, 15)]
+    [InlineData(" 20260115 ", 2026, 1, 15)]
     [InlineData("10/14/2026", 2026, 10, 14)]
     [InlineData("2026-03-02", 2026, 3, 2)]
     [InlineData("1792619134", 2026, 10, 21)]
     public void ParseDate_Formats(string s, int y, int m, int d) => Assert.Equal(new DateOnly(y, m, d), ProgramsModule.ParseDate(s));
+
+    [Fact]
+    public void InstalledColumn_SortsChronologically_NotAlphabetically()
+    {
+        var rep = ProgramsModule.Build(null, true, [],
+        [
+            new("AppA", "1.0", "Pub", new DateOnly(2026, 10, 9)),
+            new("AppB", "1.0", "Pub", new DateOnly(2026, 9, 25)),
+            new("AppC", "1.0", "Pub", new DateOnly(2025, 12, 31)),
+        ], Today);
+        var progs = rep.Cards.Single(c => c.Id == "programs");
+        var newestFirst = AreaSort.Sort(progs.Rows, 3, true).Select(r => r.Values[0]).ToArray();
+        Assert.Equal(["AppA", "AppB", "AppC"], newestFirst);
+    }
 
     [Fact]
     public void ParseDate_Garbage_IsNull() => Assert.Null(ProgramsModule.ParseDate("not a date"));

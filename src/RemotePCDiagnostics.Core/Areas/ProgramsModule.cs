@@ -46,7 +46,8 @@ public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today =
     public static DateOnly? ParseDate(string s)
     {
         if (string.IsNullOrWhiteSpace(s)) return null;
-        if (DateTime.TryParseExact(s.Trim(), DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)) return DateOnly.FromDateTime(d);
+        s = s.Trim();
+        if (DateTime.TryParseExact(s, DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d)) return DateOnly.FromDateTime(d);
         // os_version.install_date is Unix seconds.
         if (s.Length is 9 or 10 && long.TryParse(s, NumberStyles.None, CultureInfo.InvariantCulture, out var unix))
             return DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime);
@@ -59,6 +60,7 @@ public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today =
     }
 
     public static string FormatDate(DateOnly? d) => d?.ToString("d MMM yyyy", CultureInfo.InvariantCulture) ?? "";
+    public static string DateKey(DateOnly? d) => d?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "";
 
     public static AreaReport Build(IReadOnlyDictionary<string, string>? os, bool osOk, IReadOnlyList<InstalledUpdate>? updates, IReadOnlyList<InstalledProgram>? programs, DateOnly today)
     {
@@ -98,7 +100,8 @@ public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today =
             var meta = updates.Count == 0 ? "Run Windows Update to get the latest fixes"
                 : (age > StaleUpdateDays ? $"No updates for over {StaleUpdateDays} days – run Windows Update · " : "") + AreaModuleBase.Plural(updates.Count, "update") + " installed";
             var rows = updates.OrderByDescending(u => u.InstalledOn ?? DateOnly.MinValue)
-                .Select(u => new AreaRow(AreaLevel.Neutral, [u.Id, u.Description, u.InstalledOn is null ? "Unknown" : FormatDate(u.InstalledOn)])).ToList();
+                .Select(u => new AreaRow(AreaLevel.Neutral, [u.Id, u.Description, u.InstalledOn is null ? "Unknown" : FormatDate(u.InstalledOn)],
+                    [null, null, DateKey(u.InstalledOn)])).ToList();
             cards.Add(new("updates", "Windows updates", level, headline, meta, ["Update", "Type", "Installed"], rows,
                 Note: "Windows lists the main updates here; some feature and driver updates aren't included."));
             parts.Add(updates.Count == 0 ? "no updates found" : latest is null ? AreaModuleBase.Plural(updates.Count, "update") : $"last update {Ago(age!.Value)}");
@@ -115,7 +118,8 @@ public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today =
             cards.Add(new("programs", "Installed programs", AreaLevel.Ok, AreaModuleBase.Plural(list.Count, "program"),
                 recent.Count > 0 ? $"{recent.Count} installed or updated in the last 30 days" : "None installed in the last 30 days",
                 ["Program", "Version", "Publisher", "Installed"],
-                list.Select(p => new AreaRow(AreaLevel.Neutral, [p.Name, p.Version, p.Publisher, FormatDate(p.InstalledOn)])).ToList(),
+                list.Select(p => new AreaRow(AreaLevel.Neutral, [p.Name, p.Version, p.Publisher, FormatDate(p.InstalledOn)],
+                    [null, null, null, DateKey(p.InstalledOn)])).ToList(),
                 EmptyText: list.Count == 0 ? "No installed programs were found." : null));
             parts.Add(AreaModuleBase.Plural(list.Count, "program"));
         }

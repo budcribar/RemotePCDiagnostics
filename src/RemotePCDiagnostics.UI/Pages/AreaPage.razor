@@ -39,12 +39,25 @@ else
 
         @if (_open is not null && rep.Cards.FirstOrDefault(c => c.Id == _open) is { } open)
         {
+            var isKeyValue = open.Columns is ["Detail", "Value"] && svcActions is null;
             <div class="drawer-backdrop" @onclick="Close"></div>
-            <aside class="drawer" data-testid="area-drawer-@open.Id">
-                <div class="drawer-head"><strong>@open.Title</strong><button data-testid="area-drawer-close" @onclick="Close">Close</button></div>
+            <aside class="drawer" role="dialog" aria-modal="true" aria-label="@open.Title" tabindex="-1" @onkeydown="DrawerKey" data-testid="area-drawer-@open.Id">
+                <div class="drawer-head"><strong title="@open.Title">@open.Title</strong><button data-testid="area-drawer-close" @onclick="Close">Close</button></div>
                 @if (open.Note is { } note) { <p class="meta">@note</p> }
                 @if (open.ErrorText is not null) { <div class="notice notice-error" data-testid="detail-error">@open.ErrorText</div> }
                 else if (open.Rows.Count == 0) { <p class="meta" data-testid="detail-empty">@(open.EmptyText ?? "Nothing to show here.")</p> }
+                else if (isKeyValue)
+                {
+                    <table class="detail" data-testid="area-table">
+                        @foreach (var row in open.Rows)
+                        {
+                            <tr @key="row">
+                                <th>@(row.Values.Count > 0 ? row.Values[0] : "")</th>
+                                <td>@(row.Values.Count > 1 ? row.Values[1] : "")</td>
+                            </tr>
+                        }
+                    </table>
+                }
                 else
                 {
                     var (sc, sd) = SortFor(m.Name, open);
@@ -54,7 +67,8 @@ else
                             {
                                 var col = hi;
                                 <th @key="col" class="sortable-th" role="button" tabindex="0" aria-sort="@(sc == col ? (sd ? "descending" : "ascending") : "none")"
-                                    data-testid="area-th-@col" @onclick="() => ToggleSort(m.Name, open, col)">@open.Columns[col]<span class="sort-arrow">@(sc == col ? (sd ? " ▼" : " ▲") : "")</span></th>
+                                    data-testid="area-th-@col" @onclick="() => ToggleSort(m.Name, open, col)"
+                                    @onkeydown="e => SortKey(e, m.Name, open, col)">@open.Columns[col]<span class="sort-arrow">@(sc == col ? (sd ? " ▼" : " ▲") : "")</span></th>
                             }
                             @if (svcActions is not null) { <th>Actions</th> }
                         </tr>
@@ -97,6 +111,8 @@ else
     private string? _open;
     private void Open(string id) => _open = id;
     private void Close() => _open = null;
+    private void DrawerKey(KeyboardEventArgs e) { if (e.Key == "Escape") Close(); }
+    private static void SortKey(KeyboardEventArgs e, string module, AreaCard c, int col) { if (e.Key is "Enter" or " ") ToggleSort(module, c, col); }
     protected override void OnParametersSet() => _open = null;
     // Sort choice per page+card; static so it survives auto-refresh and navigation.
     private static readonly Dictionary<string, (int Col, bool Desc)> _sorts = new();

@@ -32,6 +32,7 @@ public class AreaSortTests
     {
         Assert.Equal((0, true), AreaSort.Default(["When", "App"]));
         Assert.Equal((3, true), AreaSort.Default(["App", "Crashes", "Stopped responding", "Last time"]));
+        Assert.Equal((2, true), AreaSort.Default(["Update", "Kind", "Installed"]));
         Assert.Equal((-1, false), AreaSort.Default(["Name", "State"]));
     }
 

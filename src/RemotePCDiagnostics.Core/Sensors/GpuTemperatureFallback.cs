@@ -48,3 +48,39 @@ public static class GpuTemperatureFallback
         return list;
     }
 }
+
+/// <summary>Runs another source with a short timeout; after a timeout the source is skipped for the rest of the session.</summary>
+public sealed class TimeoutGpuTemperatureSource(IGpuTemperatureSource inner, TimeSpan timeout) : IGpuTemperatureSource
+{
+    private readonly object _gate = new();
+    private Task<IReadOnlyList<GpuTemperatureSample>>? _pending;
+    private bool _disabled;
+    public string Name => inner.Name;
+
+    public IReadOnlyList<GpuTemperatureSample> Read()
+    {
+        Task<IReadOnlyList<GpuTemperatureSample>> t;
+        lock (_gate)
+        {
+            if (_disabled) throw new TimeoutException("disabled after an earlier timeout");
+            t = _pending ??= Task.Run(inner.Read);
+        }
+        bool completed;
+        try { completed = t.Wait(timeout); }
+        catch
+        {
+            lock (_gate) { if (ReferenceEquals(_pending, t)) _pending = null; }
+            throw;
+        }
+        lock (_gate)
+        {
+            if (!completed)
+            {
+                _disabled = true;
+                throw new TimeoutException($"no answer within {timeout.TotalMilliseconds:0} ms");
+            }
+            if (ReferenceEquals(_pending, t)) _pending = null;
+        }
+        return t.GetAwaiter().GetResult();
+    }
+}

@@ -111,7 +111,7 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
             : st.Stop == StopHot ? DiskSpeedOutcome.Overheated
             : st.Stop == StopUser || cancellationToken.IsCancellationRequested ? DiskSpeedOutcome.StoppedByUser
             : failed ? DiskSpeedOutcome.Failed
-            : IsSlow(o, sw, sr, rr) ? DiskSpeedOutcome.SlowDrive
+            : verified == 0 || IsSlow(o, sw, sr, rr) ? DiskSpeedOutcome.SlowDrive
             : DiskSpeedOutcome.Passed;
         var report = new DiskSpeedReport(outcome, drive.DisplayName, size, clk.Elapsed - start, sw, sr, rw, rr, verified, errors, st.MaxDriveTemp, cleaned);
         log?.Invoke($"Disk speed: done outcome={outcome} seqW={sw:0.0}MB/s seqR={sr:0.0}MB/s randW={rw:0}IOPS randR={rr:0}IOPS verified={verified} errors={errors} cleaned={cleaned}");
@@ -144,10 +144,10 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
 
         using var stream = fs.OpenTestFile(path, size);
 
-        // Sequential write.
+        // Sequential write (reserve half the time budget after the first block so sequential read-back can verify).
         st.Phase = DiskSpeedPhase.SequentialWrite;
-        long written = 0; var tw = TimeSpan.Zero;
-        for (long off = 0; off < size && !Halt(); off += block)
+        long written = 0; var tw = TimeSpan.Zero; var writeLimit = duration / 2;
+        for (long off = 0; off < size && !Halt() && (off == 0 || clk.Elapsed - start < writeLimit); off += block)
         {
             for (int p = 0; p < pagesPerBlock; p++) FillPage(buf.Span.Slice(p * PageBytes, PageBytes), runSeed, off / PageBytes + p, 0);
             var t0 = clk.Elapsed;

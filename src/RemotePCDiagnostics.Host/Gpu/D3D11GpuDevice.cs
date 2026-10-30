@@ -62,6 +62,7 @@ internal sealed class D3D11GpuDevice : IGpuComputeDevice
     private readonly ID3D11ComputeShader _shader;
     private readonly ID3D11Buffer _output, _staging, _params;
     private readonly ID3D11UnorderedAccessView _uav;
+    private readonly int[] _raw;
     private readonly Action<string>? _log;
 
     public GpuAdapterInfo Adapter { get; }
@@ -71,23 +72,32 @@ internal sealed class D3D11GpuDevice : IGpuComputeDevice
     {
         Adapter = info; _log = log;
         ThreadCount = Math.Max(GpuStressKernel.GroupSize, threadCount / GpuStressKernel.GroupSize * GpuStressKernel.GroupSize);
+        _raw = new int[ThreadCount];
         // Adapter given => driver type must be Unknown.
         D3D11.D3D11CreateDevice(adapter, DriverType.Unknown, DeviceCreationFlags.None, Levels, out _device!, out var level, out _context!).CheckError();
         log?.Invoke($"GPU stress: D3D11 device created, feature level {level}");
 
-        var bytecode = Compiler.Compile(GpuStressKernel.Hlsl, "main", "GpuStressKernel.hlsl", "cs_5_0");
-        _shader = _device.CreateComputeShader(bytecode.Span);
-
-        uint bytes = (uint)(ThreadCount * sizeof(uint));
-        _output = _device.CreateBuffer(new BufferDescription(bytes, BindFlags.UnorderedAccess, ResourceUsage.Default, CpuAccessFlags.None, ResourceOptionFlags.BufferStructured, sizeof(uint)));
-        _staging = _device.CreateBuffer(new BufferDescription(bytes, BindFlags.None, ResourceUsage.Staging, CpuAccessFlags.Read, ResourceOptionFlags.None, 0));
-        _params = _device.CreateBuffer(new BufferDescription(16, BindFlags.ConstantBuffer, ResourceUsage.Default, CpuAccessFlags.None, ResourceOptionFlags.None, 0));
-        _uav = _device.CreateUnorderedAccessView(_output, new UnorderedAccessViewDescription
+        try
         {
-            Format = Format.Unknown,
-            ViewDimension = UnorderedAccessViewDimension.Buffer,
-            Buffer = new BufferUnorderedAccessView { FirstElement = 0, NumElements = (uint)ThreadCount },
-        });
+            var bytecode = Compiler.Compile(GpuStressKernel.Hlsl, "main", "GpuStressKernel.hlsl", "cs_5_0");
+            _shader = _device.CreateComputeShader(bytecode.Span);
+
+            uint bytes = (uint)(ThreadCount * sizeof(uint));
+            _output = _device.CreateBuffer(new BufferDescription(bytes, BindFlags.UnorderedAccess, ResourceUsage.Default, CpuAccessFlags.None, ResourceOptionFlags.BufferStructured, sizeof(uint)));
+            _staging = _device.CreateBuffer(new BufferDescription(bytes, BindFlags.None, ResourceUsage.Staging, CpuAccessFlags.Read, ResourceOptionFlags.None, 0));
+            _params = _device.CreateBuffer(new BufferDescription(16, BindFlags.ConstantBuffer, ResourceUsage.Default, CpuAccessFlags.None, ResourceOptionFlags.None, 0));
+            _uav = _device.CreateUnorderedAccessView(_output, new UnorderedAccessViewDescription
+            {
+                Format = Format.Unknown,
+                ViewDimension = UnorderedAccessViewDimension.Buffer,
+                Buffer = new BufferUnorderedAccessView { FirstElement = 0, NumElements = (uint)ThreadCount },
+            });
+        }
+        catch
+        {
+            Dispose();
+            throw;
+        }
     }
 
     public GpuBatchResult RunBatch(uint seed, uint iterations)
@@ -103,12 +113,11 @@ internal sealed class D3D11GpuDevice : IGpuComputeDevice
             _context.Dispatch((uint)(ThreadCount / GpuStressKernel.GroupSize), 1, 1);
             _context.CopyResource(_staging, _output);
             var map = _context.Map(_staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None); // waits for the GPU
-            var raw = new int[ThreadCount];
-            try { Marshal.Copy(map.DataPointer, raw, 0, ThreadCount); }
+            try { Marshal.Copy(map.DataPointer, _raw, 0, ThreadCount); }
             finally { _context.Unmap(_staging, 0); }
             sw.Stop();
             var result = new uint[ThreadCount];
-            Buffer.BlockCopy(raw, 0, result, 0, ThreadCount * sizeof(uint));
+            Buffer.BlockCopy(_raw, 0, result, 0, ThreadCount * sizeof(uint));
             ThrowIfRemoved();
             return new GpuBatchResult(result, sw.Elapsed);
         }
@@ -130,8 +139,8 @@ internal sealed class D3D11GpuDevice : IGpuComputeDevice
     public void Dispose()
     {
         _log?.Invoke("GPU stress: releasing D3D11 device");
-        _context.ClearState();
-        _uav.Dispose(); _params.Dispose(); _staging.Dispose(); _output.Dispose(); _shader.Dispose();
-        _context.Dispose(); _device.Dispose();
+        try { _context?.ClearState(); } catch { }
+        _uav?.Dispose(); _params?.Dispose(); _staging?.Dispose(); _output?.Dispose(); _shader?.Dispose();
+        _context?.Dispose(); _device?.Dispose();
     }
 }

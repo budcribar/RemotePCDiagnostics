@@ -45,11 +45,11 @@ public sealed class MemoryTest(IMemoryInfo memory, IMemTestHelperLauncher launch
                 {
                     switch (MemTestMessage.Parse(line))
                     {
-                        case MemTestMessage.Allocated a: tested = a.Bytes; break;
-                        case MemTestMessage.Progress p: pass = p.Pass; frac = p.Fraction; Interlocked.Exchange(ref errors, Math.Max(Interlocked.Read(ref errors), p.Errors)); break;
+                        case MemTestMessage.Allocated a: Interlocked.Exchange(ref tested, a.Bytes); break;
+                        case MemTestMessage.Progress p: Volatile.Write(ref pass, p.Pass); Volatile.Write(ref frac, p.Fraction); Interlocked.Exchange(ref errors, Math.Max(Interlocked.Read(ref errors), p.Errors)); break;
                         case MemTestMessage.BadWord b: log?.Invoke($"Memory test: bad word at offset {b.Offset} expected {b.Expected:X16} got {b.Actual:X16}"); break;
-                        case MemTestMessage.Done d: done = d; Interlocked.Exchange(ref errors, Math.Max(Interlocked.Read(ref errors), d.Errors)); break;
-                        case MemTestMessage.Fail f: fail = f.Reason; log?.Invoke($"Memory test: helper failed: {f.Reason}"); break;
+                        case MemTestMessage.Done d: Volatile.Write(ref done, d); Interlocked.Exchange(ref errors, Math.Max(Interlocked.Read(ref errors), d.Errors)); break;
+                        case MemTestMessage.Fail f: Volatile.Write(ref fail, f.Reason); log?.Invoke($"Memory test: helper failed: {f.Reason}"); break;
                         default: log?.Invoke($"Memory test helper: {line}"); break;
                     }
                 }
@@ -67,7 +67,7 @@ public sealed class MemoryTest(IMemoryInfo memory, IMemTestHelperLauncher launch
                 var elapsed = clk.Elapsed - start;
                 if (cancellationToken.IsCancellationRequested && stop == StopNone) { stop = StopUser; proc.Kill(); }
                 if (elapsed > duration + o.Grace && stop == StopNone) { stop = StopTimeout; log?.Invoke("Memory test: helper overran the time limit; killing it"); proc.Kill(); }
-                progress?.Report(new MemoryTestProgress(elapsed > duration ? duration : elapsed, duration, tested, pass, frac, Interlocked.Read(ref errors), temp, fan, sensorsOk));
+                progress?.Report(new MemoryTestProgress(elapsed > duration ? duration : elapsed, duration, Interlocked.Read(ref tested), Volatile.Read(ref pass), Volatile.Read(ref frac), Interlocked.Read(ref errors), temp, fan, sensorsOk));
                 if (stop != StopNone) break;
                 await Task.WhenAny(reader, clk.DelayAsync(o.SampleInterval, CancellationToken.None)).ConfigureAwait(false);
             }
