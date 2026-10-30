@@ -121,8 +121,11 @@ jobs:
           $env:CDP_PORT = '9222'
           $env:ARTIFACT_DIR = $art
           Push-Location tests/smoke
-          try { node smoke.mjs; $code = $LASTEXITCODE } finally { Pop-Location }
+          try { node smoke.mjs 2>&1 | Tee-Object -FilePath (Join-Path $art 'smoke.txt'); $code = $LASTEXITCODE } finally { Pop-Location }
           if ($code -ne 0) {
+            # Surface the failure as annotations (readable without downloading logs).
+            Get-Content (Join-Path $art 'smoke.txt') -Tail 12 -ErrorAction SilentlyContinue | ForEach-Object { "::error title=smoke::" + ([string]$_).Replace('%', '%25') }
+            Get-Content (Join-Path $art 'host.log') -ErrorAction SilentlyContinue | Select-String -Pattern 'error|exception|fail' | Select-Object -Last 8 | ForEach-Object { "::warning title=host.log::" + ([string]$_).Replace('%', '%25') }
             Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Select-Object ProcessId, CommandLine | Format-List | Out-File (Join-Path $art 'webview2-processes.txt')
             netstat -ano | Select-String ':9222' | Out-File (Join-Path $art 'netstat-9222.txt')
             Get-Content (Join-Path $art 'host.log') -ErrorAction SilentlyContinue
