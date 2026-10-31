@@ -470,3 +470,21 @@ tr.history-day td { font-weight: 700; color: var(--text-strong); background: var
 .undo-panel { margin: 12px 0; }
 .undo-panel .card-head { justify-content: space-between; }
 .undo-list { margin: 6px 0; padding-left: 18px; }
+
+/* Service workflow */
+.wf-steps { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 12px 0; counter-reset: wf; }
+.wf-step { counter-increment: wf; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--border); font-size: 13px; color: var(--text-faint); }
+.wf-step::before { content: counter(wf) ". "; }
+.wf-step.wf-now { border-color: var(--accent); color: var(--accent); font-weight: 600; box-shadow: var(--glow-soft); }
+.wf-step.wf-done { color: var(--text); background: var(--accent-soft); }
+.wf-section { margin: 12px 0; }
+.wf-section .card-head { justify-content: space-between; }
+.wf-area { font-size: 14px; margin: 12px 0 4px; }
+.wf-fix { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+.wf-fix input { margin-top: 4px; }
+.wf-fix .chip { margin-left: 6px; }
+.wf-why { display: block; }
+.wf-field { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+.wf-field input { width: min(320px, 70vw); }
+.wf-report { width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+.wf-log { margin-top: 16px; }

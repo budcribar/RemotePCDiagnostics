@@ -19,11 +19,14 @@ public sealed class SystemCommandRunner(IProcessLauncher? launcher = null, Actio
     public static string PowerShell => SystemTool(Path.Combine("WindowsPowerShell", "v1.0", "powershell.exe"));
 
     /// <summary>Returns the result, or null when the process couldn't start / timed out (details logged).</summary>
-    public async Task<ProcessResult?> RunAsync(string fileName, IReadOnlyList<string> arguments, CancellationToken ct)
+    public Task<ProcessResult?> RunAsync(string fileName, IReadOnlyList<string> arguments, CancellationToken ct) => RunAsync(fileName, arguments, null, ct);
+
+    /// <summary>Same, with a longer limit for slow work (cleanup, updates); null = <see cref="Timeout"/>.</summary>
+    public async Task<ProcessResult?> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan? timeout, CancellationToken ct)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         ProcessResult pr;
-        try { pr = await _launcher.RunAsync(fileName, arguments, Timeout, ct).ConfigureAwait(false); }
+        try { pr = await _launcher.RunAsync(fileName, arguments, timeout ?? Timeout, ct).ConfigureAwait(false); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {

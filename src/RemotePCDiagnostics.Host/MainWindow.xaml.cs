@@ -92,6 +92,14 @@ public partial class MainWindow : Window
             new RemotePCDiagnostics.Core.Benchmarks.FileBenchmarkStore(RemotePCDiagnostics.Core.Benchmarks.FileBenchmarkStore.DefaultPath(), App.Log),
             sp.GetRequiredService<RemediationService>(), sp.GetRequiredService<ISessionContext>(),
             (level, text) => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.Benchmark, level, text), App.Log));
+        // Service workflow: checks → tech review → restart → before benchmark → fixes → restart → after benchmark → report.
+        services.AddSingleton(sp => new RemotePCDiagnostics.Core.Workflow.WorkflowService(
+            sp.GetRequiredService<DiagnosticsService>(), sp.GetRequiredService<ResultStore>(), sp.GetRequiredService<RemediationService>(),
+            sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>(),
+            new WindowsWorkflowSystem(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), App.Log),
+            new RemotePCDiagnostics.Core.Workflow.FileWorkflowStore(RemotePCDiagnostics.Core.Workflow.FileWorkflowStore.DefaultPath(), App.Log),
+            sp.GetRequiredService<RemotePCDiagnostics.Core.Memory.MemorySuggestionService>(), sp.GetRequiredService<ISessionContext>(),
+            (level, text) => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.Workflow, level, text), App.Log));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(App.Log));
         var provider = _provider = services.BuildServiceProvider();
@@ -127,6 +135,8 @@ public partial class MainWindow : Window
             ResourceHogsModule.ModuleName, DeviceDriversModule.ModuleName, BatteryPowerModule.ModuleName);
         _ = Task.Run(async () => { try { await provider.GetRequiredService<RebootResumeCoordinator>().CompletePostRebootIfPendingAsync(provider.GetRequiredService<RemediationService>(), provider.GetRequiredService<DiagnosticsService>(), launch.PostReboot); } catch (Exception ex) { App.Log($"Post-reboot check failed: {ex.Message}"); } });
 
+        // A service workflow waiting for this restart carries on by itself.
+        _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Workflow.WorkflowService>().ResumeAsync(); } catch (Exception ex) { App.Log($"Workflow resume failed: {ex.Message}"); } });
         // An "after" benchmark requested before a restart runs by itself once start-up has settled.
         _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>().ResumeAfterRestartAsync(); } catch (Exception ex) { App.Log($"Benchmark resume failed: {ex.Message}"); } });
 

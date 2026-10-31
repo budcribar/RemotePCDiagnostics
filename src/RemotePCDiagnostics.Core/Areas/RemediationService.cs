@@ -388,7 +388,7 @@ public sealed class RemediationService(
             $"$ErrorActionPreference='Stop'; Optimize-Volume -DriveLetter {string.Join(",", DriveLetters(action.Target).ToCharArray())} -ReTrim",
             $"Optimized / Retrimmed {Display(action)}.",
             $"Couldn't optimize {Display(action)} (administrator rights required).",
-            ct).ConfigureAwait(false),
+            ct, OptimizeTimeout).ConfigureAwait(false),
 
         _ => new(false, "Unsupported action."),
     };
@@ -446,10 +446,13 @@ public sealed class RemediationService(
         return pr is { ExitCode: 0 } ? new(true, okMsg) : new(false, failMsg);
     }
 
-    private async Task<RemediationResult> RunPowerShellAsync(string script, string okMsg, string failMsg, CancellationToken ct)
+    /// <summary>Time limits for fixes that legitimately take minutes (the default limit is 60 s).</summary>
+    public static readonly TimeSpan CleanupTimeout = TimeSpan.FromMinutes(10), UpdateTimeout = TimeSpan.FromMinutes(45), OptimizeTimeout = TimeSpan.FromMinutes(15);
+
+    private async Task<RemediationResult> RunPowerShellAsync(string script, string okMsg, string failMsg, CancellationToken ct, TimeSpan? timeout = null)
     {
         var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
-            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], ct).ConfigureAwait(false);
+            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], timeout, ct).ConfigureAwait(false);
         return pr is { ExitCode: 0 } ? new(true, okMsg) : new(false, failMsg);
     }
 
@@ -529,7 +532,7 @@ public sealed class RemediationService(
     {
         var kindWord = driversOnly ? "driver" : "Windows";
         var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
-            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", BuildWindowsUpdateScript(driversOnly)], ct).ConfigureAwait(false);
+            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", BuildWindowsUpdateScript(driversOnly)], UpdateTimeout, ct).ConfigureAwait(false);
         if (pr is not { ExitCode: 0 } || string.IsNullOrWhiteSpace(pr.StdOut))
             return new(false, $"Couldn't check Windows Update for {kindWord} updates.");
 
@@ -589,7 +592,7 @@ public sealed class RemediationService(
     private async Task<RemediationResult> RunCleanTempFilesAsync(CancellationToken ct)
     {
         var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
-            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", CleanTempScript], ct).ConfigureAwait(false);
+            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", CleanTempScript], CleanupTimeout, ct).ConfigureAwait(false);
         if (pr is not { ExitCode: 0 } || string.IsNullOrWhiteSpace(pr.StdOut))
             return new(false, "Couldn't clean temporary files.");
 

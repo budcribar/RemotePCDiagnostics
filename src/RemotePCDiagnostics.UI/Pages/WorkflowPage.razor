@@ -1,0 +1,178 @@
+@page "/workflow"
+@using RemotePCDiagnostics.Core.Workflow
+@using RemotePCDiagnostics.Core.Benchmarks
+@using RemotePCDiagnostics.Core.Memory
+@implements IDisposable
+@inject WorkflowService Flow
+@inject BenchmarkService Bench
+@* Service workflow: the tech reviews once; the rest (restarts, benchmarks, fixes, report) runs by itself. *@
+@{
+    var s = Flow.State;
+    var approved = s.Fixes.Count(f => s.IsApproved(f.Id));
+}
+<div class="toolbar">
+    <span class="icon-badge page-icon"><Icon Name="play" Size="20" /></span><h1 data-testid="wf-title">Service workflow</h1>
+</div>
+<p class="meta">Runs every check, lets you choose the fixes once, then does the rest by itself: restart → before benchmark → apply the fixes →
+    restart → after benchmark → client report. Plan on 20–40 minutes, mostly waiting for restarts and updates.</p>
+
+<ol class="wf-steps" data-testid="wf-steps">
+    @foreach (var (label, stages) in Steps)
+    {
+        var state = StepState(s.Stage, stages);
+        <li class="wf-step wf-@state">@label</li>
+    }
+</ol>
+
+@if (Flow.Status is { } st && s.Stage is not (WorkflowStage.Idle or WorkflowStage.Review)) { <p class="status-line" data-testid="wf-status"><span class="dot dot-@(s.IsRunning || Flow.Busy ? "running" : "ok")"></span>@st</p> }
+@if (s.Error is { } err) { <p class="notice notice-error" data-testid="wf-error">@err</p> }
+@if (_message is { } m) { <p class="notice" data-testid="wf-message">@m</p> }
+
+@switch (s.Stage)
+{
+    case WorkflowStage.Idle or WorkflowStage.Cancelled or WorkflowStage.Failed:
+        <button class="btn btn-primary" data-testid="wf-start-checks" disabled="@Flow.Busy" @onclick="RunChecks"><Icon Name="play" Size="12" /> Start: run all checks</button>
+        break;
+
+    case WorkflowStage.Checking:
+        <p class="status-line"><span class="dot dot-running"></span>@(Flow.Status ?? "Running checks…")</p>
+        break;
+
+    case WorkflowStage.Review:
+        @if (s.Findings.Count > 0)
+        {
+            <section class="card wf-section"><div class="card-head"><strong>What the checks found</strong></div>
+                <ul>@foreach (var f in s.Findings) { <li>@f</li> }</ul></section>
+        }
+        <section class="card wf-section" data-testid="wf-fixes">
+            <div class="card-head"><strong>Fixes to apply (@approved of @s.Fixes.Count)</strong>
+                <span class="svc-actions"><button class="btn-small" @onclick="() => Flow.SetAllApproved(true)">Select all</button><button class="btn-small" @onclick="() => Flow.SetAllApproved(false)">Select none</button></span></div>
+            @if (s.Fixes.Count == 0) { <p class="meta">The checks didn't find anything to fix automatically.</p> }
+            @foreach (var g in s.Fixes.GroupBy(f => f.Area))
+            {
+                <h3 class="wf-area">@g.Key</h3>
+                @foreach (var f in g)
+                {
+                    var id = f.Id;
+                    <label class="wf-fix" data-testid="wf-fix">
+                        <input type="checkbox" checked="@s.IsApproved(id)" @onchange="e => Flow.SetApproved(id, e.Value is true)" />
+                        <span><strong>@f.Title</strong>@if (f.Risk != SuggestionRisk.Low) { <span class="chip chip-warn">@f.Risk risk</span> }@if (f.Slow) { <span class="chip chip-na">can take a while</span> }
+                            <span class="meta wf-why">@f.Why</span></span>
+                    </label>
+                }
+            }
+            <p class="meta">@FixCatalog.NotNeededNote</p>
+        </section>
+        @if (s.Recommendations.Count > 0)
+        {
+            <section class="card wf-section"><div class="card-head"><strong>For the client to do (goes in the report)</strong></div>
+                <ul>@foreach (var r in s.Recommendations) { <li>@r</li> }</ul></section>
+        }
+        <section class="card wf-section" data-testid="wf-signin">
+            <div class="card-head"><strong>Signing in after each restart</strong></div>
+            @if (_logon is { AlreadyAutomatic: true }) { <p>This PC already signs in by itself, so nothing is needed.</p> }
+            else if (_logon is { BlockedByWindowsHello: true }) { <p class="notice">@_logon.Note</p><label><input type="checkbox" @bind="_clientSignsIn" /> The client will sign in after each restart</label> }
+            else
+            {
+                <p class="meta">The workflow restarts the PC twice. To carry on without anyone at the PC, Windows can sign in automatically for exactly those two restarts.
+                    The password is checked first, stored only the way Windows' own automatic sign-in stores it, and removed when the workflow ends or is cancelled.</p>
+                <label class="wf-field">Account <input data-testid="wf-user" @bind="_user" placeholder="user name" /></label>
+                <label class="wf-field">Password <input type="password" data-testid="wf-password" @bind="_password" autocomplete="off" /></label>
+                <p class="meta">Microsoft account? Use the account's email address and its password (not the PIN).</p>
+                <label><input type="checkbox" @bind="_clientSignsIn" /> Skip: the client will sign in after each restart</label>
+            }
+        </section>
+        <div class="toolbar">
+            <button class="btn btn-primary" data-testid="wf-go" disabled="@(_starting || !CanStart)" @onclick="Start"><Icon Name="play" Size="12" /> @(_starting ? "Starting…" : $"Start: restart, benchmark, apply {approved} fix{(approved == 1 ? "" : "es")}, report")</button>
+            <button class="btn-small" @onclick="Flow.Reset">Start over</button>
+        </div>
+        break;
+
+    case WorkflowStage.Done:
+        @if (Bench.Before is not null && Bench.After is not null) { <section class="banner banner-ok"><div class="banner-text"><div class="banner-title">@Bench.Comparison.OverallText</div></div></section> }
+        <p class="meta" data-testid="wf-report-path">@(s.ReportPath is { } p ? $"Report saved on this PC: {p}" : "The report couldn't be saved as a file; it's shown below.")</p>
+        <iframe class="wf-report" data-testid="wf-report" sandbox="" title="Client report" srcdoc="@ClientReport.Build(s, Bench.Before, Bench.After, Bench.Comparison, s.FinishedUtc?.ToLocalTime() ?? DateTimeOffset.Now)"></iframe>
+        <div class="toolbar"><button class="btn-small" data-testid="wf-new" @onclick="Flow.Reset">New workflow</button></div>
+        break;
+
+    default:
+        <div class="toolbar">
+            @if (s.Stage is WorkflowStage.RestartBefore or WorkflowStage.RestartAfter) { <button class="btn btn-outline" data-testid="wf-restart-now" @onclick="RestartNow">Restart now</button> }
+            <button class="btn btn-stop" data-testid="wf-cancel" @onclick="Cancel">Cancel workflow</button>
+        </div>
+        @if (s.Outcomes.Count > 0)
+        {
+            <table class="detail grid"><tr><th scope="col">Fix</th><th scope="col">Result</th></tr>
+                @foreach (var o in s.Outcomes) { <tr><td>@o.Title</td><td><span class="dot dot-@(o.Success ? "ok" : o.Skipped ? "neutral" : "warning")"></span>@o.Message</td></tr> }
+            </table>
+        }
+        break;
+}
+
+@if (s.Log.Count > 0)
+{
+    <details class="wf-log"><summary class="meta">Workflow log</summary><ul>@foreach (var l in s.Log.Reverse()) { <li class="meta">@l</li> }</ul></details>
+}
+
+@code {
+    private static readonly (string Label, WorkflowStage[] Stages)[] Steps =
+    [
+        ("Checks", [WorkflowStage.Checking]), ("Review", [WorkflowStage.Review]), ("Restart", [WorkflowStage.RestartBefore]),
+        ("Before benchmark", [WorkflowStage.BeforeBenchmark]), ("Apply fixes", [WorkflowStage.Applying]), ("Restart", [WorkflowStage.RestartAfter]),
+        ("After benchmark", [WorkflowStage.AfterBenchmark]), ("Report", [WorkflowStage.Reporting, WorkflowStage.Done]),
+    ];
+
+    private static string StepState(WorkflowStage current, WorkflowStage[] stages)
+    {
+        if (current is WorkflowStage.Idle or WorkflowStage.Cancelled or WorkflowStage.Failed) return "todo";
+        var order = Steps.Select(x => x.Stages).ToList();
+        int Index(WorkflowStage st) => order.FindIndex(a => a.Contains(st));
+        var mine = Index(stages[0]); var cur = Index(current);
+        return current == WorkflowStage.Done || mine < cur ? "done" : mine == cur ? "now" : "todo";
+    }
+
+    private AutoLogonStatus? _logon;
+    private string _user = "", _password = "";
+    private bool _clientSignsIn, _starting;
+    private string? _message;
+
+    private bool CanStart => _logon is { AlreadyAutomatic: true } || _clientSignsIn || (_user.Length > 0 && _password.Length > 0);
+
+    protected override void OnInitialized()
+    {
+        Flow.Changed += OnChanged;
+        LoadLogon();
+    }
+
+    private void LoadLogon()
+    {
+        try { _logon = Flow.AutoLogonStatus(); _user = _logon.UserName; } catch { _logon = null; }
+    }
+
+    private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
+    public void Dispose() { Flow.Changed -= OnChanged; _password = ""; }
+
+    private void RunChecks() { _message = null; _ = Flow.RunChecksAsync(); }
+
+    private async Task Start()
+    {
+        _starting = true; _message = null;
+        try
+        {
+            AutoLogonRequest? req = null;
+            if (_logon is { CanUse: true } && !_clientSignsIn)
+            {
+                // "user@outlook.com" = Microsoft account; otherwise a local or domain account on this PC's domain.
+                var user = _user.Trim();
+                var domain = user.Contains('@') ? "MicrosoftAccount" : user.Contains('\\') ? user[..user.IndexOf('\\')] : _logon.Domain;
+                if (user.Contains('\\')) user = user[(user.IndexOf('\\') + 1)..];
+                req = new AutoLogonRequest(user, domain, _password);
+            }
+            _message = await Flow.StartAsync(req);
+        }
+        finally { _password = ""; _starting = false; }
+    }
+
+    private async Task RestartNow() => _message = await Flow.RestartNowAsync();
+    private async Task Cancel() => await Flow.CancelAsync();
+}

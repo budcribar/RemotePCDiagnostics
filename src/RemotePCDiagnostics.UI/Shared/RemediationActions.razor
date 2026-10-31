@@ -28,7 +28,7 @@
 {
     <div class="notice @(_lastOk ? "svc-result-ok" : "notice-error")" data-testid="remediation-result">@msg</div>
 }
-@if (Actions is not null && Actions.Recent.Count > 0)
+@if (ShowRecent && Actions is not null && Actions.Recent.Count > 0)
 {
     <div class="svc-recent" data-testid="remediation-recent">
         <strong>Recent automated fixes</strong>
@@ -44,6 +44,7 @@
 @code {
     [Parameter] public RemediationService? Actions { get; set; }
     [Parameter] public EventCallback OnCompleted { get; set; }
+    [Parameter] public bool ShowRecent { get; set; } = true;
 
     private RemediationPlan? _plan;
     private bool _busy;

@@ -1,0 +1,220 @@
+using RemotePCDiagnostics.Core;
+using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Benchmarks;
+using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Session;
+using RemotePCDiagnostics.Core.Workflow;
+
+namespace RemotePCDiagnostics.Tests;
+
+public class WorkflowTests
+{
+    // ---- fakes ----
+    private sealed class AreaModule(string name, AreaReport report) : IDiagnosticModule
+    {
+        public string Name => name;
+        public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
+        public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
+        public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default) =>
+            Task.FromResult(new DiagnosticResult(name, report.Status, report.Summary, DateTimeOffset.Now, report));
+    }
+
+    private sealed class Sys : IWorkflowSystem
+    {
+        public List<string> Calls = [];
+        public bool PasswordOk = true, RegisterOk = true;
+        public TimeSpan Uptime { get; set; } = TimeSpan.FromDays(3);
+        public string? Report;
+        public Task<bool> RegisterResumeAsync(CancellationToken ct) { Calls.Add("register"); return Task.FromResult(RegisterOk); }
+        public Task RemoveResumeAsync(CancellationToken ct) { Calls.Add("unregister"); return Task.CompletedTask; }
+        public Task<bool> RestartAsync(TimeSpan d, string m, CancellationToken ct) { Calls.Add("restart"); return Task.FromResult(true); }
+        public Task AbortRestartAsync(CancellationToken ct) { Calls.Add("abort"); return Task.CompletedTask; }
+        public AutoLogonStatus GetAutoLogonStatus() => new("bud", "PC1", false, false);
+        public bool ValidateCredentials(string u, string d, string p) { Calls.Add($"validate:{d}\\{u}"); return PasswordOk; }
+        public AutoLogonBackup EnableAutoLogon(string u, string d, string p, int n) { Calls.Add($"autologon-on:{n}"); return new("0", "old", "PC1", null); }
+        public void DisableAutoLogon(AutoLogonBackup? b) => Calls.Add("autologon-off:" + b?.DefaultUserName);
+        public string SaveReport(string html, DateTimeOffset when) { Report = html; Calls.Add("report"); return @"C:\Users\Public\Documents\Remote PC Diagnostics\Service report.html"; }
+    }
+
+    private sealed class Probes : IBenchmarkProbes
+    {
+        public double ProgramMs = 300;
+        public BenchmarkConditions ReadConditions() => new(false, 50, "Balanced");
+        public Task<IdleSample?> SampleIdleAsync(TimeSpan d, CancellationToken ct) => Task.FromResult<IdleSample?>(new(5, 50));
+        public Task<double?> StartProgramAsync(BuiltInProgram p, CancellationToken ct) => Task.FromResult<double?>(ProgramMs);
+        public Task<double?> DiskRandomReadIopsAsync(TimeSpan d, CancellationToken ct) => Task.FromResult<double?>(5000);
+        public Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<WinEvent>>([]);
+    }
+
+    private sealed class MemFlowStore : IWorkflowStore
+    {
+        public WorkflowState? State;
+        public WorkflowState? Load() => State is null ? null : WorkflowState.FromJson(State.ToJson());
+        public void Save(WorkflowState s) => State = s;
+    }
+
+    private sealed class MemBenchStore : IBenchmarkStore
+    {
+        public BenchmarkState? State;
+        public BenchmarkState? Load() => State;
+        public void Save(BenchmarkState s) => State = s;
+    }
+
+    private static AreaReport Report(params AreaAction[] actions) =>
+        new([new AreaCard("c", "Card", AreaLevel.Warning, "Headline", "", [], [], Actions: actions)], "1 thing", DiagnosticStatus.Warning);
+
+    private static readonly AreaAction PowerPlan = new(RemediationKind.SetBalancedPowerPlan, "Switch to Balanced");
+    private static readonly AreaAction Clean = new(RemediationKind.CleanTempFiles, "Clean up temporary files", "", "Temporary files");
+    private static readonly AreaAction Updates = new(RemediationKind.CheckAndInstallWindowsUpdates, "Check & install updates");
+
+    private static (WorkflowService Flow, Sys Sys, MemFlowStore Store, List<TimeSpan> Delays, ScriptedLauncher Launcher, Probes Probes) Make()
+    {
+        var results = new ResultStore();
+        var diag = new DiagnosticsService(results, [
+            new AreaModule("ResourceHogs", Report(PowerPlan, new(RemediationKind.ScheduleCleanRestart, "Restart"), new(RemediationKind.EndProcessGroup, "End task", "chrome.exe"))),
+            new AreaModule("DriveHealth", Report(Clean, PowerPlan)),
+            new AreaModule("Programs", Report(Updates)),
+        ]);
+        var launcher = new ScriptedLauncher((file, args) => ScriptedLauncher.Ok(args.Any(a => a.Contains("RemovedFiles")) ? """{"RemovedFiles":42,"FreedBytes":524288000}""" : """{"Count":0}"""));
+        var rem = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Remote));
+        var probes = new Probes();
+        var bench = new BenchmarkService(new BenchmarkRunner(probes, resolve: (_, _) => Task.CompletedTask), new MemBenchStore());
+        bench.UpdateSettings(new BenchmarkSettings { Runs = 1, IdleSample = TimeSpan.Zero, CpuSingleRun = TimeSpan.FromMilliseconds(50), CpuMultiRun = TimeSpan.FromMilliseconds(50), DiskRun = TimeSpan.Zero });
+        var sys = new Sys();
+        var store = new MemFlowStore();
+        var delays = new List<TimeSpan>();
+        var flow = new WorkflowService(diag, results, rem, bench, sys, store, session: new SessionContext(SessionMode.Remote),
+            delay: (d, _) => { delays.Add(d); return Task.CompletedTask; });
+        return (flow, sys, store, delays, launcher, probes);
+    }
+
+    // ---- catalog ----
+    [Fact]
+    public async Task Checks_BuildDeduplicatedReviewList_AllTicked_RestartsAndEndTaskLeftOut()
+    {
+        var (flow, _, _, _, _, _) = Make();
+        await flow.RunChecksAsync();
+        var s = flow.State;
+        Assert.Equal(WorkflowStage.Review, s.Stage);
+        Assert.Equal(3, s.Fixes.Count);                                          // power plan listed once
+        Assert.DoesNotContain(s.Fixes, f => f.Remediation?.Kind is RemediationKind.ScheduleCleanRestart or RemediationKind.EndProcessGroup);
+        Assert.Equal(s.Fixes.Select(f => f.Id), s.Approved);                     // everything starts ticked
+        Assert.Equal(RemediationKind.CheckAndInstallWindowsUpdates, s.Fixes[^1].Remediation!.Kind); // slow ones last
+        Assert.True(s.Fixes[^1].Slow);
+        Assert.Equal(3, s.Findings.Count);
+    }
+
+    [Fact]
+    public void Catalog_MemorySuggestions_UnattendedOnly_FastStartupOnce()
+    {
+        MemorySuggestion Sug(string id, SuggestionKind k, params MemoryAction[] a) => new(id, id, "why", null, SuggestionRisk.Low, k, [], a);
+        var fixes = FixCatalog.Build(
+            [new DiagnosticResult("ResourceHogs", DiagnosticStatus.Warning, "", DateTimeOffset.Now, Report(new(RemediationKind.DisableFastStartup, "Turn off Fast Startup")))],
+            [
+                Sug("svc-wsearch", SuggestionKind.Automated, new(MemoryActionType.StopService, "WSearch", "Stop now"), new(MemoryActionType.SetServiceManual, "WSearch", "Manual")),
+                Sug("close-chrome", SuggestionKind.Automated, new(MemoryActionType.CloseApp, "chrome", "Close")),
+                Sug("restart", SuggestionKind.Automated, new(MemoryActionType.RestartPc, "", "Restart"), new(MemoryActionType.DisableFastStartup, "", "Fast Startup")),
+                Sug("defender", SuggestionKind.Guided, new(MemoryActionType.OpenSettings, "windowsdefender://", "Open")),
+            ]);
+        Assert.Equal(2, fixes.Count);
+        Assert.Contains(fixes, f => f.MemoryAction == MemoryActionType.SetServiceManual && f.MemoryTarget == "WSearch");
+        Assert.Single(fixes, f => f.Id.Contains("disablefaststartup"));
+        Assert.Equal(["defender: why"], FixCatalog.Recommendations([Sug("defender", SuggestionKind.Guided)]));
+    }
+
+    // ---- the whole run ----
+    [Fact]
+    public async Task FullRun_OneDecision_ThenRestartBenchmarkApplyRestartBenchmarkReport()
+    {
+        var (flow, sys, store, delays, launcher, probes) = Make();
+        await flow.RunChecksAsync();
+        var powerPlanId = flow.State.Fixes.Single(f => f.Remediation?.Kind == RemediationKind.SetBalancedPowerPlan).Id;
+        flow.SetApproved(powerPlanId, false);
+
+        Assert.Null(await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "secret")));
+        Assert.Equal(WorkflowStage.RestartBefore, flow.State.Stage);
+        Assert.Equal(["validate:PC1\\bud", "autologon-on:2", "register", "restart"], sys.Calls);
+        Assert.DoesNotContain("secret", store.State!.ToJson());                  // password never saved
+
+        // First restart: Windows booted after the request.
+        sys.Uptime = TimeSpan.Zero;
+        await flow.ResumeAsync();
+        Assert.Equal(WorkflowStage.RestartAfter, flow.State.Stage);
+        Assert.Single(delays);                                                     // settled before benchmarking
+        Assert.Equal(2, sys.Calls.Count(c => c == "restart"));
+        Assert.Equal(2, flow.State.Outcomes.Count);                                // clean + updates (power plan unticked)
+        Assert.All(flow.State.Outcomes, o => Assert.True(o.Success, o.Message));
+        Assert.DoesNotContain(launcher.Calls, c => c.Args.Contains("/setactive"));
+
+        // Second restart.
+        probes.ProgramMs = 200;
+        await flow.ResumeAsync();
+        var s = flow.State;
+        Assert.Equal(WorkflowStage.Done, s.Stage);
+        Assert.NotNull(s.ReportPath);
+        Assert.Contains("unregister", sys.Calls);
+        Assert.Contains("autologon-off:old", sys.Calls);                          // previous settings restored
+        Assert.False(s.AutoLogonEnabled);
+        Assert.Contains("Program start time", sys.Report);
+        Assert.Contains("Left as they were, by choice", sys.Report);
+    }
+
+    [Fact]
+    public async Task Resume_WithoutARealRestart_Waits()
+    {
+        var (flow, sys, _, delays, _, _) = Make();
+        await flow.RunChecksAsync();
+        await flow.StartAsync(null);
+        sys.Uptime = TimeSpan.FromDays(3); // booted long before the request: the restart didn't happen
+        await flow.ResumeAsync();
+        Assert.Equal(WorkflowStage.RestartBefore, flow.State.Stage);
+        Assert.Empty(delays);
+        Assert.Contains("Waiting for the restart", flow.Status);
+    }
+
+    [Fact]
+    public async Task WrongPassword_ChangesNothing()
+    {
+        var (flow, sys, _, _, _, _) = Make();
+        await flow.RunChecksAsync();
+        sys.PasswordOk = false;
+        Assert.Contains("didn't work", await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "nope")));
+        Assert.Equal(WorkflowStage.Review, flow.State.Stage);
+        Assert.DoesNotContain(sys.Calls, c => c.StartsWith("autologon-on") || c == "restart");
+    }
+
+    [Fact]
+    public async Task ResumeTaskFails_AutoLogonRolledBack()
+    {
+        var (flow, sys, _, _, _, _) = Make();
+        await flow.RunChecksAsync();
+        sys.RegisterOk = false;
+        Assert.NotNull(await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "pw")));
+        Assert.Contains("autologon-off:old", sys.Calls);
+        Assert.DoesNotContain("restart", sys.Calls);
+    }
+
+    [Fact]
+    public async Task Cancel_RemovesAutoLogonAndTask_AbortsRestart()
+    {
+        var (flow, sys, _, _, _, _) = Make();
+        await flow.RunChecksAsync();
+        await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "pw"));
+        await flow.CancelAsync();
+        Assert.Equal(WorkflowStage.Cancelled, flow.State.Stage);
+        Assert.Contains("abort", sys.Calls);
+        Assert.Contains("unregister", sys.Calls);
+        Assert.Contains("autologon-off:old", sys.Calls);
+    }
+
+    [Fact]
+    public void Report_EncodesText()
+    {
+        var s = new WorkflowState { Machine = "PC<1>", Findings = ["<script>x</script>"], Outcomes = [new("a", "Fix & go", true, "ok")] };
+        var html = ClientReport.Build(s, null, null, BenchmarkComparison.Build(null, null), DateTimeOffset.Now);
+        Assert.DoesNotContain("<script>x", html);
+        Assert.Contains("&lt;script&gt;", html);
+        Assert.Contains("Fix &amp; go", html);
+        Assert.Contains("PC&lt;1&gt;", html);
+    }
+}

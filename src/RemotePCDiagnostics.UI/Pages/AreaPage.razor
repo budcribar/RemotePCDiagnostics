@@ -27,6 +27,8 @@ else
         @if (!busy) { <button class="btn-small status-action" data-testid="area-requery" @onclick="() => Diagnostics.RunAsync(m.Name)">Check again</button> }
     </p>
     @if (!busy && rep?.Notice is { } notice) { <p class="meta" data-testid="area-notice">@notice</p> }
+    @* Always mounted (even while the check re-runs after a fix), so the fix's result message stays visible near the top. *@
+    @if (remActions is not null) { <RemediationActions @ref="_remUi" Actions="remActions" ShowRecent="hasRemActions" OnCompleted="() => Diagnostics.RunAsync(m.Name)" /> }
 
     @if (rep is not null && rep.Cards.Count > 0)
     {
@@ -153,7 +155,6 @@ else
         }
     }
     @if (svcActions is not null) { <ServiceActions @ref="_svcUi" Actions="svcActions" OnRowChanged="RowChanged" /> }
-    @if (hasRemActions) { <RemediationActions @ref="_remUi" Actions="remActions" OnCompleted="() => Diagnostics.RunAsync(m.Name)" /> }
 }
 
 @code {
