@@ -80,6 +80,18 @@ jobs:
       - name: Unit tests
         run: dotnet test RemotePCDiagnostics.sln -c Release --no-build --logger "trx;LogFileName=unit.trx" --results-directory artifacts/test-results
 
+      - name: Publish OutlookBenchmark (single exe)
+        shell: pwsh
+        run: |
+          dotnet publish src/OutlookBenchmark/OutlookBenchmark.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts/OutlookBenchmark
+          $exe = 'artifacts/OutlookBenchmark/OutlookBenchmark.exe'
+          if (-not (Test-Path $exe)) { throw 'OutlookBenchmark.exe was not published' }
+          # Smoke run on the runner (no Outlook there): inventory only, must exit 0 and write results.
+          & $exe --skip-start-test --no-reference --yes --out artifacts/OutlookBenchmark/smoke-results
+          if ($LASTEXITCODE -ne 0) { throw "OutlookBenchmark exited $LASTEXITCODE" }
+          if (-not (Test-Path artifacts/OutlookBenchmark/smoke-results/results.csv)) { throw 'results.csv missing' }
+          Get-Content artifacts/OutlookBenchmark/smoke-results/results.csv
+
       - name: Report failed tests as annotations
         if: failure()
         shell: pwsh

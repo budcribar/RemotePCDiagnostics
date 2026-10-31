@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Standalone Outlook benchmark: copy OutlookBenchmark.exe to any PC, run it, collect the results files.
+       Published as a single self-contained exe by CI (see .github/workflows/ci.yml, "Publish OutlookBenchmark"). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>OutlookBenchmark</AssemblyName>
+    <RootNamespace>OutlookBenchmark</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
+  </ItemGroup>
+</Project>
