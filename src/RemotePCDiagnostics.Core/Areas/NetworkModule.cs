@@ -60,7 +60,7 @@ public sealed record NetworkAdapter(
 /// Network adapters via osquery <c>interface_details</c>. osquery 5.24 on Windows leaves the packet/error counters
 /// blank, so when none are reported they are filled from Windows' Get-NetAdapterStatistics (matched by adapter name).
 /// </summary>
-public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? commands = null, bool includeWifiAndIpConfig = false) : OsqueryAreaModuleBase(runner)
+public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? commands = null, bool includeWifiAndIpConfig = false, DnsSpeedTest? dnsTest = null) : OsqueryAreaModuleBase(runner)
 {
     public const string StatsScript =
         "$ErrorActionPreference='SilentlyContinue';" +
@@ -108,10 +108,19 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
         if (!wlanOk && !ipOk)
             return baseReport;
 
+        var ipSnap = ipOk ? WifiConfigModule.ParseIpSnapshot(ipRes!.StdOut) : null;
+        // Measure the current DNS against Cloudflare/Google (a few seconds; nothing changed) so switching is only suggested when it's faster.
+        DnsComparison? dns = null;
+        if (ipSnap is not null && WifiConfigModule.PrimaryAdapter(ipSnap) is { } primary && !DnsSpeedTest.IsPublicAlready(primary.Dns))
+        {
+            progress?.Report("Comparing DNS speed…");
+            try { dns = await (dnsTest ?? new DnsSpeedTest(log: commands.Log)).CompareAsync(primary.Dns, ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { commands.Log?.Invoke($"DNS speed test failed: {ex.Message}"); }
+        }
         var wifiRep = WifiConfigModule.Build(
             wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null,
             wlanOk,
-            ipOk ? WifiConfigModule.ParseIpSnapshot(ipRes!.StdOut) : null);
+            ipSnap, dns);
         var combinedCards = wifiRep.Cards.Concat(baseReport.Cards).ToList();
         var combinedStatus = AreaReport.Worst(combinedCards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));
         var combinedSummary = $"{wifiRep.Summary} · {baseReport.Summary}";

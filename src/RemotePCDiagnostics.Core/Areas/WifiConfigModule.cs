@@ -20,7 +20,9 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         "Description = [string]$_.InterfaceDescription; " +
         "IPv4 = [string]($_.IPv4Address | Select-Object -First 1 -ExpandProperty IPAddress); " +
         "Gateway = [string]($_.IPv4DefaultGateway | Select-Object -First 1 -ExpandProperty NextHop); " +
-        "Dns = [string](($_.DnsServer | Where-Object AddressFamily -eq 2 | Select-Object -ExpandProperty ServerAddresses) -join ', ') " +
+        "Dns = [string](($_.DnsServer | Where-Object AddressFamily -eq 2 | Select-Object -ExpandProperty ServerAddresses) -join ', '); " +
+        // NameServer under the adapter's Tcpip key is only set when DNS was entered by hand (empty = automatic from DHCP).
+        "DnsManual = [string](Get-ItemProperty -Path ('HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\' + $_.NetAdapter.InterfaceGuid) -Name NameServer -ErrorAction SilentlyContinue).NameServer " +
         "} }); " +
         "$p = Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue; " +
         "$proxyOn = ($null -ne $p -and $p.ProxyEnable -eq 1); " +
@@ -53,12 +55,12 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         return Build(wifi, wlanOk, ipSnap);
     }
 
-    public static AreaReport Build(WifiInterfaceInfo? wifi, bool wlanOk, IpConfigSnapshot? ipSnap)
+    public static AreaReport Build(WifiInterfaceInfo? wifi, bool wlanOk, IpConfigSnapshot? ipSnap, DnsComparison? dns = null)
     {
         if (!wlanOk && ipSnap is null)
             return AreaReport.Failed("Couldn't read Wi-Fi and IP network configuration on this PC.");
 
-        var cards = new List<AreaCard> { BuildWifiCard(wifi, wlanOk), BuildIpDnsCard(ipSnap) };
+        var cards = new List<AreaCard> { BuildWifiCard(wifi, wlanOk), BuildIpDnsCard(ipSnap, dns) };
         string summary;
         if (wifi is { Connected: true })
         {
@@ -133,7 +135,11 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
             Note: weak ? "Signal below 50% can cause packet drops, high latency, and reduced throughput." : null);
     }
 
-    private static AreaCard BuildIpDnsCard(IpConfigSnapshot? snap)
+    /// <summary>The adapter whose DNS gets compared: the one with a gateway (normally the one in use).</summary>
+    public static ActiveAdapterIp? PrimaryAdapter(IpConfigSnapshot snap) =>
+        snap.Adapters.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.Gateway)) ?? snap.Adapters.FirstOrDefault();
+
+    private static AreaCard BuildIpDnsCard(IpConfigSnapshot? snap, DnsComparison? dns)
     {
         if (snap is null)
             return AreaCard.Failed("ipdns", "IP, gateway, DNS & proxy", "Couldn't read IP and DNS configuration.");
@@ -190,12 +196,7 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
                 a.Description
             ],
             Key: a.Alias,
-            Actions: a.Alias.Length > 0
-                ? [
-                    new(RemediationKind.SetPublicDns, "Use 1.1.1.1 / 8.8.8.8 DNS", a.Alias, a.Alias),
-                    new(RemediationKind.ResetDhcpDns, "Reset DNS to DHCP", a.Alias, a.Alias),
-                ]
-                : null));
+            Actions: a.Alias.Length > 0 && DnsActions(a, a == primary ? dns : null) is { Count: > 0 } acts ? acts : null));
         }
 
         var cardActions = new List<AreaAction>();
@@ -204,6 +205,7 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         cardActions.Add(new(RemediationKind.FlushDnsAndRenewIp, "Flush DNS & renew IP"));
 
         var noteParts = new List<string>();
+        if (dns is not null) noteParts.Add(dns.Text);
         if (snap.ProxyEnabled)
             noteParts.Add($"System HTTP proxy is ON ({(string.IsNullOrWhiteSpace(snap.ProxyServer) ? "no address set" : snap.ProxyServer)}) — can block internet access if unexpected.");
         if (vpnAdapter is not null)
@@ -214,6 +216,20 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
             EmptyText: snap.Adapters.Count == 0 ? "No active IP configurations." : null,
             Note: noteParts.Count > 0 ? string.Join(" ", noteParts) : null,
             Actions: cardActions);
+    }
+
+    /// <summary>
+    /// Public DNS is only offered when it measured clearly faster than this adapter's current DNS (never untested, and not when the
+    /// adapter already uses it); "Reset DNS to automatic" only when the DNS servers were set by hand.
+    /// </summary>
+    private static IReadOnlyList<AreaAction> DnsActions(ActiveAdapterIp a, DnsComparison? dns)
+    {
+        var list = new List<AreaAction>();
+        if (dns is { PublicIsFaster: true } d && !DnsSpeedTest.IsPublicAlready(a.Dns))
+            list.Add(new(RemediationKind.SetPublicDns, $"Use Cloudflare & Google DNS ({d.Best!.MedianMs:0} ms vs {d.Current.MedianMs:0} ms now)", a.Alias, a.Alias));
+        // Only useful when DNS was set by hand; on automatic there's nothing to reset.
+        if (a.DnsManual == true) list.Add(new(RemediationKind.ResetDhcpDns, "Reset DNS to automatic", a.Alias, a.Alias));
+        return list;
     }
 
     private static bool IsLikelyVpn(ActiveAdapterIp a)
@@ -345,7 +361,8 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         Str(el, "Description"),
         Str(el, "IPv4"),
         Str(el, "Gateway"),
-        Str(el, "Dns"));
+        Str(el, "Dns"),
+        el.TryGetProperty("DnsManual", out _) ? Str(el, "DnsManual").Length > 0 : null);
 
     private static string Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()?.Trim() ?? "" : "";
@@ -364,6 +381,7 @@ public sealed record WifiInterfaceInfo(
     string TransmitRateMbps,
     int? SignalPercent);
 
-public sealed record ActiveAdapterIp(string Alias, string Description, string IPv4, string Gateway, string Dns);
+/// <param name="DnsManual">True = DNS servers entered by hand; false = automatic (DHCP); null = unknown.</param>
+public sealed record ActiveAdapterIp(string Alias, string Description, string IPv4, string Gateway, string Dns, bool? DnsManual = null);
 
 public sealed record IpConfigSnapshot(IReadOnlyList<ActiveAdapterIp> Adapters, bool ProxyEnabled, string ProxyServer);

@@ -106,7 +106,8 @@ public class RemediationTests
         var wifiRep = WifiConfigModule.Build(
             null,
             wlanOk: true,
-            new IpConfigSnapshot([new("Wi-Fi", "Intel Wi-Fi", "192.168.1.20", "192.168.1.1", "192.168.1.1")], ProxyEnabled: true, ProxyServer: "127.0.0.1:8888"));
+            new IpConfigSnapshot([new("Wi-Fi", "Intel Wi-Fi", "192.168.1.20", "192.168.1.1", "192.168.1.1", DnsManual: true)], ProxyEnabled: true, ProxyServer: "127.0.0.1:8888"),
+            new DnsComparison(new("Your DNS", "192.168.1.1", 30, 12, 12), new("Cloudflare", "1.1.1.1", 10, 12, 12), new("Google", "8.8.8.8", 14, 12, 12)));
 
         var ipCard = wifiRep.Cards.Single(c => c.Id == "ipdns");
         Assert.Contains(ipCard.Actions!, a => a.Kind == RemediationKind.DisableSystemProxy);
