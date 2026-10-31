@@ -71,7 +71,7 @@ public class WorkflowTests
     {
         var results = new ResultStore();
         var diag = new DiagnosticsService(results, [
-            new AreaModule("ResourceHogs", Report(PowerPlan, new(RemediationKind.ScheduleCleanRestart, "Restart"), new(RemediationKind.EndProcessGroup, "End task", "chrome.exe"))),
+            new AreaModule("ResourceHogs", Report(PowerPlan, new AreaAction(RemediationKind.ScheduleCleanRestart, "Restart"), new AreaAction(RemediationKind.EndProcessGroup, "End task", "chrome.exe"))),
             new AreaModule("DriveHealth", Report(Clean, PowerPlan)),
             new AreaModule("Programs", Report(Updates)),
         ]);
@@ -109,12 +109,12 @@ public class WorkflowTests
     {
         MemorySuggestion Sug(string id, SuggestionKind k, params MemoryAction[] a) => new(id, id, "why", null, SuggestionRisk.Low, k, [], a);
         var fixes = FixCatalog.Build(
-            [new DiagnosticResult("ResourceHogs", DiagnosticStatus.Warning, "", DateTimeOffset.Now, Report(new(RemediationKind.DisableFastStartup, "Turn off Fast Startup")))],
+            [new DiagnosticResult("ResourceHogs", DiagnosticStatus.Warning, "", DateTimeOffset.Now, Report(new AreaAction(RemediationKind.DisableFastStartup, "Turn off Fast Startup")))],
             [
-                Sug("svc-wsearch", SuggestionKind.Automated, new(MemoryActionType.StopService, "WSearch", "Stop now"), new(MemoryActionType.SetServiceManual, "WSearch", "Manual")),
-                Sug("close-chrome", SuggestionKind.Automated, new(MemoryActionType.CloseApp, "chrome", "Close")),
-                Sug("restart", SuggestionKind.Automated, new(MemoryActionType.RestartPc, "", "Restart"), new(MemoryActionType.DisableFastStartup, "", "Fast Startup")),
-                Sug("defender", SuggestionKind.Guided, new(MemoryActionType.OpenSettings, "windowsdefender://", "Open")),
+                Sug("svc-wsearch", SuggestionKind.Automated, new MemoryAction(MemoryActionType.StopService, "WSearch", "Stop now"), new MemoryAction(MemoryActionType.SetServiceManual, "WSearch", "Manual")),
+                Sug("close-chrome", SuggestionKind.Automated, new MemoryAction(MemoryActionType.CloseApp, "chrome", "Close")),
+                Sug("restart", SuggestionKind.Automated, new MemoryAction(MemoryActionType.RestartPc, "", "Restart"), new MemoryAction(MemoryActionType.DisableFastStartup, "", "Fast Startup")),
+                Sug("defender", SuggestionKind.Guided, new MemoryAction(MemoryActionType.OpenSettings, "windowsdefender://", "Open")),
             ]);
         Assert.Equal(2, fixes.Count);
         Assert.Contains(fixes, f => f.MemoryAction == MemoryActionType.SetServiceManual && f.MemoryTarget == "WSearch");
