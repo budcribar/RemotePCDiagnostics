@@ -278,7 +278,8 @@ public sealed class RemediationService(
                 result = await RunActionAsync(action, ct).ConfigureAwait(false);
                 if (result.Success && before is not null) try { journal?.Add(before); } catch (Exception ex) { Log($"journal: {ex.Message}"); }
                 // Permanent changes are journaled too, so "Undo all" can say what it left as is. Update checks that installed nothing changed nothing.
-                var permanent = Changes.Undoability.Of(action.Kind) == Changes.UndoSupport.None
+                // Temp cleanup writes its own TempFiles record (with the amount freed), so it isn't recorded twice.
+                var permanent = Changes.Undoability.Of(action.Kind) == Changes.UndoSupport.None && action.Kind != RemediationKind.CleanTempFiles
                     && (action.Kind is not (RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.CheckAndInstallDriverUpdates) || result.UpdatesInstalled > 0);
                 if (result.Success && permanent)
                     try { journal?.Add(Changes.Undoability.Permanent($"{action.Kind}:{action.Target}:{Guid.NewGuid():N}", $"{plan.Title.TrimEnd('?')}: {result.Message}", actor)); }

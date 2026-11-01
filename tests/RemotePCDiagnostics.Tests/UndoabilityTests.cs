@@ -75,6 +75,16 @@ public class UndoabilityTests
     }
 
     [Fact]
+    public async Task TempCleanup_IsJournaledOnce()
+    {
+        var j = new MemoryChangeJournal();
+        var svc = new RemediationService(new SystemCommandRunner(new ScriptedLauncher((_, _) => ScriptedLauncher.Ok("""{"RemovedFiles":42,"FreedBytes":524288000}"""))),
+            new SessionContext(SessionMode.Remote), journal: j);
+        Assert.True((await svc.ExecuteAsync(new(RemediationKind.CleanTempFiles, "Clean"))).Success);
+        Assert.Equal(ChangeKind.TempFiles, Assert.Single(j.All).Kind);
+    }
+
+    [Fact]
     public async Task StorageCleanupCache_ReusesRecentScan_RefreshAndExpiry()
     {
         var now = DateTimeOffset.UtcNow;
