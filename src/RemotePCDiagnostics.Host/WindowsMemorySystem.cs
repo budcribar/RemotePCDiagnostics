@@ -90,7 +90,8 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
 
         var pidCounts = svcPid.Values.GroupBy(v => v).ToDictionary(g => g.Key, g => g.Count());
         var svcUsage = services.Where(s => s.IsRunning).Select(s =>
-            svcPid.TryGetValue(s.Name, out var pid) ? new ServiceUsage(s, byPid.TryGetValue(pid, out var b) ? b : null, pidCounts[pid]) : new ServiceUsage(s, null)).ToList();
+            svcPid.TryGetValue(s.Name, out var pid) ? new ServiceUsage(s, byPid.TryGetValue(pid, out var b) ? b : null, pidCounts[pid]) : new ServiceUsage(s, null))
+            .Select(u => AiVmServices.Is(u.Info.Name) ? u with { UsersCanStart = ReadUsersCanStart(u.Info.Name) } : u).ToList();
 
         var browsers = new List<BrowserInfo>();
         foreach (var k in new[] { BrowserKind.Chrome, BrowserKind.Edge })
@@ -657,9 +658,56 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
 
     private static void Dispose(Process[] ps) { foreach (var p in ps) p.Dispose(); }
 
+    private const uint SC_MANAGER_CONNECT = 0x0001, READ_CONTROL = 0x00020000, DACL_SECURITY_INFORMATION = 0x4;
+    [DllImport("advapi32.dll", EntryPoint = "OpenSCManagerW", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr OpenSCManager(string? machineName, string? databaseName, uint access);
+    [DllImport("advapi32.dll", EntryPoint = "OpenServiceW", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr OpenService(IntPtr scManager, string serviceName, uint access);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool QueryServiceObjectSecurity(IntPtr service, uint securityInformation, byte[]? descriptor, uint bufferSize, out uint bytesNeeded);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool CloseServiceHandle(IntPtr handle);
+
+    /// <summary>
+    /// #14: whether the service's DACL lets a signed-in, non-admin user start it (so Claude / Codex can start it again after it's set to
+    /// Manual). One SCM call (QueryServiceObjectSecurity), no PowerShell. Null = couldn't read.
+    /// </summary>
+    private bool? ReadUsersCanStart(string serviceName)
+    {
+        IntPtr scm = IntPtr.Zero, svc = IntPtr.Zero;
+        try
+        {
+            scm = OpenSCManager(null, null, SC_MANAGER_CONNECT);
+            if (scm == IntPtr.Zero) return null;
+            svc = OpenService(scm, serviceName, READ_CONTROL);
+            if (svc == IntPtr.Zero) return null;
+            QueryServiceObjectSecurity(svc, DACL_SECURITY_INFORMATION, null, 0, out var needed);
+            if (needed is 0 or > 64 * 1024) return null;
+            var buf = new byte[needed];
+            if (!QueryServiceObjectSecurity(svc, DACL_SECURITY_INFORMATION, buf, needed, out _)) return null;
+            var r = ServiceSecurity.UsersCanStart(buf);
+            Log($"Service '{serviceName}' users can start: {r?.ToString() ?? "unknown"}");
+            return r;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { Log($"Service '{serviceName}' security read failed: {ex.Message}"); return null; }
+        finally
+        {
+            if (svc != IntPtr.Zero) CloseServiceHandle(svc);
+            if (scm != IntPtr.Zero) CloseServiceHandle(scm);
+        }
+    }
+
+    public IReadOnlyList<string>? RunningProcessNames()
+    {
+        var procs = Process.GetProcesses();
+        try { return procs.Select(p => { try { return p.ProcessName; } catch (InvalidOperationException) { return ""; } }).Where(n => n.Length > 0).ToList(); }
+        finally { Dispose(procs); }
+    }
+
     public async Task<ActionOutcome> RunCommandAsync(string fileName, IReadOnlyList<string> args, CancellationToken ct)
     {
         if (!MemoryCommandAllowlist.IsAllowed(fileName, args)) return new(false, "Not allowed.");
+        var wsl = MemoryCommandAllowlist.IsWslShutdown(fileName, args);
         var psi = new ProcessStartInfo(fileName) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var a in args) psi.ArgumentList.Add(a);
         try
@@ -668,9 +716,17 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
             var output = await p.StandardOutput.ReadToEndAsync(ct).ConfigureAwait(false);
             await p.WaitForExitAsync(ct).ConfigureAwait(false);
             Log($"{fileName} {string.Join(' ', args)} exit={p.ExitCode} out={output.Trim()}");
+            if (wsl)
+                return p.ExitCode == 0
+                    ? new(true, "WSL shut down: every Linux distribution was closed. Linux starts again the next time it's used.")
+                    : new(false, "WSL didn't shut down (it may not be installed or is busy).");
             return p.ExitCode == 0 ? new(true, "Build servers shut down (they start again on your next build).") : new(false, "The build servers didn't shut down.");
         }
-        catch (System.ComponentModel.Win32Exception ex) { Log("dotnet not found: " + ex.Message); return new(false, "The .NET SDK (dotnet) wasn't found on this PC."); }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            Log($"{fileName} not found: {ex.Message}");
+            return new(false, wsl ? "WSL (wsl.exe) wasn't found on this PC." : "The .NET SDK (dotnet) wasn't found on this PC.");
+        }
     }
 
     public byte[]? GetStartupApproved(string name)

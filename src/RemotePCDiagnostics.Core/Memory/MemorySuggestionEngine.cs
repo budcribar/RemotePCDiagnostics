@@ -25,8 +25,21 @@ public static class MemoryCommandAllowlist
     public sealed record Command(string FileName, IReadOnlyList<string> Arguments);
     public static readonly Command BuildServerShutdown = new("dotnet", ["build-server", "shutdown"]);
 
+    /// <summary>#14: only %SystemRoot%\System32\wsl.exe --shutdown (never "wsl" from PATH, never other arguments).</summary>
+    public static readonly Command WslShutdown = new(WslPath(), ["--shutdown"]);
+
+    public static string WslPath()
+    {
+        var win = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        if (string.IsNullOrWhiteSpace(win)) win = @"C:\Windows";
+        return win.Replace('/', '\\').TrimEnd('\\') + @"\System32\wsl.exe";
+    }
+
+    public static bool IsWslShutdown(string? fileName, IReadOnlyList<string> args) =>
+        string.Equals(fileName, WslShutdown.FileName, StringComparison.OrdinalIgnoreCase) && args.Count == 1 && args[0] == "--shutdown";
+
     public static bool IsAllowed(string fileName, IReadOnlyList<string> args) =>
-        IsTrustedDotnet(fileName ?? "") && args.Count == 2 && args[0] == "build-server" && args[1] == "shutdown";
+        (IsTrustedDotnet(fileName ?? "") && args.Count == 2 && args[0] == "build-server" && args[1] == "shutdown") || IsWslShutdown(fileName, args);
 
     /// <summary>"dotnet"/"dotnet.exe" (resolved from PATH), or exactly dotnet.exe in an SDK folder under Program Files.
     /// Any other path (relative, UNC, another folder, "..") is refused.</summary>
@@ -144,7 +157,8 @@ public static class MemorySuggestionEngine
         ["LxssManager"] = new("Windows Subsystem for Linux (older WSL).", "Linux (WSL) until it starts again.", NeededWhen: s => Running(s, "wsl", "vmmemWSL", "Docker Desktop")),
         ["com.docker.service"] = new("Docker Desktop's background service.", "Docker containers.", NeededWhen: s => Running(s, "Docker Desktop", "com.docker.backend")),
         ["UDCService"] = new("Lenovo Universal Device Client (NotifyMe) sends device telemetry and promotional notifications.", "Lenovo promotional notifications and telemetry.", OfferDisable: true),
-        ["CoworkVMService"] = new("Claude Desktop's virtual machine service boots a background Linux VM.", "Claude's sandbox VM starts on demand when Claude needs it instead of at Windows sign-in.", NeededWhen: s => Running(s, "claude")),
+        // #14: offered through AiVmServices (Manual only, when a signed-in user may start it so Claude can start it itself).
+        [AiVmServices.ClaudeService] = AiVmServices.Candidate(AiVmServices.ClaudeService),
         ["BrYNSvc"] = new("Brother status monitor background service.", "Automatic printer ink/toner pop-up alerts (printing still works normally)."),
         ["USBAppControl"] = new("Brother iPrint&Scan USB monitor.", "Pushing the physical scan button on a USB-connected Brother scanner."),
         ["WorkflowAppControl"] = new("Brother iPrint&Scan workflow monitor.", "Brother iPrint&Scan background workflow triggers."),
@@ -185,6 +199,7 @@ public static class MemorySuggestionEngine
         if (ServiceProtection.IsProtected(s.Name) || ServiceProtection.IsSelfComponent(s.Name)) return null;
         if (HardwareHelperFragments.Any(f => s.Name.Contains(f, StringComparison.OrdinalIgnoreCase) || s.DisplayName.Contains(f, StringComparison.OrdinalIgnoreCase)))
             return null;
+        if (AiVmServices.Is(s.Name)) return AiVmServices.Candidate(s.Name);
         if (ServiceCandidates.TryGetValue(s.Name, out var c)) return c;
         if (IsVisualStudioCollector(s.Name))
             return new("Visual Studio's diagnostics collector supports profiling and diagnostic data collection.",
@@ -446,10 +461,19 @@ public static class MemorySuggestionEngine
                 "Office", "Takes effect the next time Word, Excel or PowerPoint opens."));
         }
 
+        // #14 idle WSL 2 VM (live page only; not in the service workflow).
+        if (WslShutdown.Suggest(s) is { } wsl) list.Add(wsl);
+
         // Services.
         foreach (var su in s.Services ?? [])
         {
             var svc = su.Info;
+            // #14 Claude / Codex VM services: their own card, Manual only (no "Stop now": it would cut off a running Claude or Codex task).
+            if (AiVmServices.Is(svc.Name))
+            {
+                if (CandidateFor(svc) is not null && AiVmServices.Suggest(su, s) is { } ai) list.Add(ai);
+                continue;
+            }
             if (IsVisualStudioCollector(svc.Name))
             {
                 if (!svc.IsAutomatic || CandidateFor(svc) is not { } collector) continue;

@@ -88,7 +88,7 @@ public static class FixCatalog
             var id = MemoryId(s.Id, a.Type, a.Target);
             if (!seen.Add(id)) continue;
             var order = a.Type switch { MemoryActionType.DisableStartup => 20, MemoryActionType.SetServiceManual => 22, MemoryActionType.AutoManagePageFile => 12, _ => 15 };
-            list.Add(new(id, a.Type == MemoryActionType.SetServiceManual && !MemorySuggestionEngine.IsVisualStudioCollector(a.Target) ? $"{s.Title}: start only when needed" : s.Title, s.Why, s.Category, s.Risk, FixSource.Memory, order,
+            list.Add(new(id, a.Type == MemoryActionType.SetServiceManual && !MemorySuggestionEngine.IsVisualStudioCollector(a.Target) && !AiVmServices.Is(a.Target) ? $"{s.Title}: start only when needed" : s.Title, s.Why, s.Category, s.Risk, FixSource.Memory, order,
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
                 NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
                     or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile,
@@ -121,7 +121,7 @@ public static class FixCatalog
         foreach (var s in suggestions)
         {
             if (s.Kind != SuggestionKind.Automated || s.Actions.Any(x => UnattendedMemoryActions.Contains(x.Type))) continue;
-            if (s.Actions.Any(a => a.Type is MemoryActionType.CloseApp or MemoryActionType.ShutdownBuildServers or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup))
+            if (s.Actions.Any(a => a.Type is MemoryActionType.CloseApp or MemoryActionType.ShutdownBuildServers or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.ShutdownWsl))
                 Add($"{s.Title}: not needed, the restart closes apps and ends tasks.");
         }
         return list;
@@ -134,7 +134,7 @@ public static class FixCatalog
     /// </remarks>
     public static IReadOnlyList<string> Recommendations(IEnumerable<MemorySuggestion> suggestions) =>
         suggestions.Where(s => s.Kind is SuggestionKind.Guided or SuggestionKind.Info || (s.Kind == SuggestionKind.Automated && !s.Actions.Any(CanRunUnattended)
-                && !s.Actions.Any(a => a.Type is MemoryActionType.CloseApp or MemoryActionType.ShutdownBuildServers or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup)
+                && !s.Actions.Any(a => a.Type is MemoryActionType.CloseApp or MemoryActionType.ShutdownBuildServers or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.ShutdownWsl)
                 && !IsStopOnly(s)))
             .Select(s => $"{s.Title}: {s.Why}").ToList();
 
