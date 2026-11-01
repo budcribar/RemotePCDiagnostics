@@ -47,8 +47,7 @@ public static class FixCatalog
     public static string RemediationId(AreaAction a) => $"rem:{a.Kind}:{a.Target}".ToLowerInvariant();
     public static string MemoryId(string suggestionId, MemoryActionType t, string target) => $"mem:{suggestionId}:{t}:{target}".ToLowerInvariant();
 
-    private static bool CanRunUnattended(MemoryAction action) => UnattendedMemoryActions.Contains(action.Type) ||
-        (action.Type == MemoryActionType.StopService && MemorySuggestionEngine.IsVisualStudioCollector(action.Target));
+    private static bool CanRunUnattended(MemoryAction action) => UnattendedMemoryActions.Contains(action.Type);
 
     public static IReadOnlyList<WorkflowFix> Build(IEnumerable<DiagnosticResult> results, IEnumerable<MemorySuggestion> suggestions, RemediationService? plans = null)
     {
@@ -82,13 +81,12 @@ public static class FixCatalog
         {
             if (s.Kind != SuggestionKind.Automated) continue;
             // One action per suggestion: the first unattended one (e.g. "Don't start automatically" rather than "Stop now").
-            var a = s.Actions.FirstOrDefault(x => UnattendedMemoryActions.Contains(x.Type))
-                ?? s.Actions.FirstOrDefault(CanRunUnattended);
+            var a = s.Actions.FirstOrDefault(CanRunUnattended);
             if (a is null) continue;
             var id = MemoryId(s.Id, a.Type, a.Target);
             if (!seen.Add(id)) continue;
             var order = a.Type switch { MemoryActionType.DisableStartup => 20, MemoryActionType.SetServiceManual => 22, MemoryActionType.AutoManagePageFile => 12, _ => 15 };
-            list.Add(new(id, a.Type == MemoryActionType.SetServiceManual ? $"{s.Title}: start only when needed" : s.Title, s.Why, s.Category, s.Risk, FixSource.Memory, order,
+            list.Add(new(id, a.Type == MemoryActionType.SetServiceManual && !MemorySuggestionEngine.IsVisualStudioCollector(a.Target) ? $"{s.Title}: start only when needed" : s.Title, s.Why, s.Category, s.Risk, FixSource.Memory, order,
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
                 NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions,
                 Undo: Changes.Undoability.Of(a.Type), DefaultOn: s.DefaultOn));

@@ -9,6 +9,7 @@
 @{
     var s = Flow.State;
     var approved = s.Fixes.Count(f => s.IsApproved(f.Id));
+    var status = Flow.Status ?? (s.Stage == WorkflowStage.Checking ? "Running checks…" : null);
 }
 <div class="toolbar">
     <span class="icon-badge page-icon"><Icon Name="play" Size="20" /></span><h1 data-testid="wf-title">Service workflow</h1>
@@ -24,7 +25,7 @@
     }
 </ol>
 
-@if (Flow.Status is { } st && s.Stage is not (WorkflowStage.Idle or WorkflowStage.Review)) { <p class="status-line" data-testid="wf-status"><span class="dot dot-@(s.IsRunning || Flow.Busy ? "running" : "ok")"></span>@st</p> }
+@if (status is { } st && s.Stage is not (WorkflowStage.Idle or WorkflowStage.Review)) { <p class="status-line" data-testid="wf-status"><span class="dot dot-@(s.IsRunning || Flow.Busy ? "running" : "ok")"></span>@st</p> }
 @if (s.Error is { } err) { <p class="notice notice-error" data-testid="wf-error">@err</p> }
 @if (_message is { } m) { <p class="notice" data-testid="wf-message">@m</p> }
 
@@ -35,7 +36,6 @@
         break;
 
     case WorkflowStage.Checking:
-        <p class="status-line"><span class="dot dot-running"></span>@(Flow.Status ?? "Running checks…")</p>
         break;
 
     case WorkflowStage.Review:

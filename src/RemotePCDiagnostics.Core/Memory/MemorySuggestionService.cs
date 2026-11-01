@@ -306,6 +306,8 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                     return new(false, $"{info.Label} is protected and can't be changed from here.");
                 if (a.Type == MemoryActionType.StopService)
                 {
+                    if (MemorySuggestionEngine.IsVisualStudioCollector(info.Name))
+                        return new(false, "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector.");
                     if (serviceActions is null) return new(false, "Service control isn't available.");
                     var r = await serviceActions.ExecuteAsync(info, ServiceAction.Stop, ct).ConfigureAwait(false);
                     if (r.Success) Journal(ChangeKind.ServiceRunning, info.Name, "Running", $"{info.Label} stopped");
