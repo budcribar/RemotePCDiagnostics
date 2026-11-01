@@ -138,7 +138,6 @@ public static class MemorySuggestionEngine
         ("gupdate", "Google's updater"),
         ("GoogleUpdater", "Google's updater"),
         ("edgeupdate", "Microsoft Edge's updater"),
-        ("VSStandardCollectorService", "Visual Studio's diagnostics collector"),
         ("VSInstallerElevationService", "the Visual Studio installer helper"),
     ];
 
@@ -154,6 +153,10 @@ public static class MemorySuggestionEngine
         if (HardwareHelperFragments.Any(f => s.Name.Contains(f, StringComparison.OrdinalIgnoreCase) || s.DisplayName.Contains(f, StringComparison.OrdinalIgnoreCase)))
             return null;
         if (ServiceCandidates.TryGetValue(s.Name, out var c)) return c;
+        if (IsVisualStudioCollector(s.Name))
+            return new("Visual Studio's diagnostics collector supports profiling and diagnostic data collection.",
+                "Profiling or diagnostic collection may be interrupted. The service can be started again when needed; stopping it does not disable it.",
+                NeededWhen: snapshot => Running(snapshot, "devenv", "VSPerf", "VSPerfCmd", "VSDiagnostics"));
         if (s.Name.StartsWith("TeamViewer", StringComparison.OrdinalIgnoreCase)) return ServiceCandidates["TeamViewer"];
         foreach (var (frag, what) in VendorServiceFragments)
             if (s.Name.Contains(frag, StringComparison.OrdinalIgnoreCase))
@@ -165,6 +168,9 @@ public static class MemorySuggestionEngine
             }
         return null;
     }
+
+    public static bool IsVisualStudioCollector(string name) =>
+        name.StartsWith("VSStandardCollectorService", StringComparison.OrdinalIgnoreCase);
 
     public static IReadOnlyList<MemorySuggestion> Build(MemorySnapshot s)
     {

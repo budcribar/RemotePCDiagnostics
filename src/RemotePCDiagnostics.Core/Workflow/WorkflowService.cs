@@ -23,7 +23,7 @@ public sealed class WorkflowService(
     public static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(30);
 
     private readonly object _gate = new();
-    public const int CurrentReviewRulesVersion = 2;
+    public const int CurrentReviewRulesVersion = 3;
     private WorkflowState _state = LoadState(store);
 
     private static WorkflowState LoadState(IWorkflowStore store)
