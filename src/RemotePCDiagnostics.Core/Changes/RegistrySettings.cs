@@ -39,8 +39,13 @@ public static class RegistryAllowlist
     /// <summary>Same for PowerPoint (opens straight to a blank presentation).</summary>
     public static readonly RegistrySetting PowerPointStartScreen = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Office\16.0\PowerPoint\Options", "DisableBootToOfficeStart");
 
+    /// <summary>Edge Startup Boost machine policy (#19): 0 = Edge doesn't start in the background at sign-in or keep running after it's closed.
+    /// Only written when Edge isn't the default browser. Like any Edge policy, Edge then shows "Managed by your organization".</summary>
+    public static readonly RegistrySetting EdgeStartupBoostPolicy = new(RegistryRoot.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "StartupBoostEnabled");
+
     public static readonly IReadOnlyList<RegistrySetting> All =
-        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen];
+        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen,
+         EdgeStartupBoostPolicy];
 
     /// <summary>The allowlisted setting with this target (case-insensitive), or null.</summary>
     public static RegistrySetting? Find(string? target) =>

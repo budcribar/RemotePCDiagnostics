@@ -18,6 +18,7 @@ public static class FixCatalog
         MemoryActionType.AddDefenderExclusions,
         MemoryActionType.DisableWidgets, MemoryActionType.DisableSearchHighlights, MemoryActionType.ReduceHibernateFile,
         MemoryActionType.SkipOfficeStartScreen,
+        MemoryActionType.StopBrowserBackground,
     };
 
     public const string NotNeededNote = "Closing apps, ending tasks and restarting aren't listed: the workflow restarts the PC itself, which does the same.";
@@ -91,7 +92,8 @@ public static class FixCatalog
             list.Add(new(id, a.Type == MemoryActionType.SetServiceManual && !MemorySuggestionEngine.IsVisualStudioCollector(a.Target) ? $"{s.Title}: start only when needed" : s.Title, s.Why, s.Category, s.Risk, FixSource.Memory, order,
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
                 NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
-                    or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile,
+                    or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile
+                    || (a.Type == MemoryActionType.StopBrowserBackground && a.Target == nameof(BrowserKind.Edge)),
                 Undo: Changes.Undoability.Of(a.Type), DefaultOn: s.DefaultOn));
         }
 

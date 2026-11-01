@@ -93,6 +93,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
             svcPid.TryGetValue(s.Name, out var pid) ? new ServiceUsage(s, byPid.TryGetValue(pid, out var b) ? b : null, pidCounts[pid]) : new ServiceUsage(s, null)).ToList();
 
         var browsers = new List<BrowserInfo>();
+        var backgrounds = new List<BrowserBackgroundInfo>();
         foreach (var k in new[] { BrowserKind.Chrome, BrowserKind.Edge })
         {
             var path = LocalStatePath(k);
@@ -100,13 +101,14 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
             string? json = null;
             try { json = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false); } catch (IOException ex) { Log($"Read {k} Local State failed: {ex.Message}"); }
             browsers.Add(new(k, true, IsBrowserRunning(k), BrowserPrefs.ReadMemorySaver(json, k), json is not null && BrowserPrefs.EnableMemorySaver(json, k) is not null));
+            backgrounds.Add(ReadBrowserBackground(k, json));
         }
 
         var probe = await RunPowerShellAsync(MemoryProbe.Script, ct).ConfigureAwait(false);
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
         var defender = apps.Any(a => a.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase)) ? await ReadDefenderAsync(ct).ConfigureAwait(false) : null;
         return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
-            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart());
+            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart(), backgrounds);
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -195,6 +197,37 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
             return new(apps);
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { Log("Office start screen read failed: " + ex.Message); return null; }
+    }
+
+    /// <summary>
+    /// #19: background_mode.enabled from the Local State JSON already read for the memory saver card, the BackgroundModeEnabled policy
+    /// (HKLM, else HKCU) and, for Edge, the StartupBoostEnabled policy in HKLM and HKCU. Registry reads only.
+    /// </summary>
+    private BrowserBackgroundInfo ReadBrowserBackground(BrowserKind kind, string? localState)
+    {
+        var ok = BrowserBackground.TryReadBackgroundMode(localState, out var pref);
+        var policyKey = kind == BrowserKind.Chrome ? @"SOFTWARE\Policies\Google\Chrome" : @"SOFTWARE\Policies\Microsoft\Edge";
+        var bgPolicy = PolicyDword(Registry.LocalMachine, policyKey, "BackgroundModeEnabled") ?? PolicyDword(Registry.CurrentUser, policyKey, "BackgroundModeEnabled");
+        int? boostLm = null, boostCu = null;
+        if (kind == BrowserKind.Edge)
+        {
+            boostLm = PolicyDword(Registry.LocalMachine, policyKey, "StartupBoostEnabled");
+            boostCu = PolicyDword(Registry.CurrentUser, policyKey, "StartupBoostEnabled");
+        }
+        return new(kind, ok, pref, bgPolicy, boostLm, boostCu);
+    }
+
+    /// <summary>A browser policy value (read only). A value that exists but isn't a DWORD, or can't be read, counts as set (-1), so nothing is changed.</summary>
+    private int? PolicyDword(RegistryKey root, string key, string name)
+    {
+        try
+        {
+            using var k = root.OpenSubKey(key);
+            if (k?.GetValue(name) is not { } v) return null;
+            return k.GetValueKind(name) == RegistryValueKind.DWord && v is int i ? i : -1;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+        { Log($"Read {key}\\{name} failed: {ex.Message}"); return -1; }
     }
 
     private static bool IsOffice16AppInstalled(string app)
@@ -735,6 +768,33 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
     {
         var ps = Process.GetProcessesByName(BrowserPrefs.ProcessName(kind));
         var any = ps.Length > 0; Dispose(ps); return any;
+    }
+
+    public async Task<ActionOutcome> EndBrowserBackgroundAsync(BrowserKind kind, CancellationToken ct)
+    {
+        var name = BrowserPrefs.Label(kind);
+        int session;
+        using (var me = Process.GetCurrentProcess()) session = me.SessionId;
+        var all = Process.GetProcessesByName(BrowserPrefs.ProcessName(kind));
+        var procs = all.Where(p => { try { return p.SessionId == session; } catch { return false; } }).ToArray(); // never another person's session
+        try
+        {
+            if (procs.Length == 0) return new(true, $"{name} isn't running.");
+            if (procs.Any(p => { try { return !p.HasExited && p.MainWindowHandle != IntPtr.Zero; } catch { return true; } }))
+                return new(false, $"{name} has a window open, so it was left running.");
+            foreach (var p in procs)
+                try { p.Kill(entireProcessTree: true); }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { Log($"Kill {kind}/{p.Id}: {ex.Message}"); }
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < deadline && procs.Any(p => { try { return !p.HasExited; } catch { return false; } }))
+                await Task.Delay(200, ct).ConfigureAwait(false);
+        }
+        finally { Dispose(all); }
+        var left = Process.GetProcessesByName(BrowserPrefs.ProcessName(kind));
+        var n = left.Count(p => { try { return p.SessionId == session; } catch { return false; } });
+        Dispose(left);
+        Log($"End {kind} background processes: {n} left");
+        return n == 0 ? new(true, $"Ended {name}'s background processes.") : new(false, $"Couldn't end every {name} background process.");
     }
 
     public string? ReadBrowserLocalState(BrowserKind kind) { var p = LocalStatePath(kind); return File.Exists(p) ? File.ReadAllText(p) : null; }

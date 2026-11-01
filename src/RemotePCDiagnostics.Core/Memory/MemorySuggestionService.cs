@@ -78,6 +78,11 @@ public interface IMemorySystem
     void WriteDword(RegistrySetting setting, int value) => throw new NotSupportedException();
     /// <summary>Deletes a value on <see cref="RegistryAllowlist"/> (no error when it's already absent).</summary>
     void DeleteDword(RegistrySetting setting) => throw new NotSupportedException();
+    /// <summary>
+    /// #19: ends the browser's processes in this Windows session, only when none of them has a window (it's only running in the background).
+    /// Never closes a window: fails instead. Success = none of its processes is left in this session.
+    /// </summary>
+    Task<ActionOutcome> EndBrowserBackgroundAsync(BrowserKind kind, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
 }
 
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);
@@ -216,6 +221,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                     break;
                 case MemoryActionType.SkipOfficeStartScreen:
                     outcome = UndoRegistry(u, $"The start screen is back in {u.Target}. Takes effect the next time each app opens.");
+                    break;
+                case MemoryActionType.StopBrowserBackground:
+                    outcome = await UndoBrowserBackgroundAsync(u, ct).ConfigureAwait(false);
                     break;
                 case MemoryActionType.ReduceHibernateFile:
                     var full = await sys.SetHibernateTypeAsync(false, ct).ConfigureAwait(false);
@@ -359,6 +367,101 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             + " Takes effect the next time each app opens.");
     }
 
+    /// <summary>
+    /// #19: for the non-default browser only. Ends its windowless background processes (never a window), then turns off
+    /// background_mode.enabled in its Local State (read back), then for Edge sets the Startup Boost policy (read back).
+    /// Each value that sticks is journaled with its old value; if a browser window is open, nothing is changed.
+    /// </summary>
+    private async Task<ActionOutcome> StopBrowserBackgroundAsync(MemorySuggestion s, MemoryAction a, CancellationToken ct)
+    {
+        if (!Enum.TryParse<BrowserKind>(a.Target, out var kind) || Snapshot is not { } snap || BrowserBackground.Secondary(snap) != kind
+            || BrowserBackground.For(snap, kind) is not { } info)
+            return new(false, "That browser is your default browser now (or couldn't be checked), so it was left as is.");
+        var name = BrowserPrefs.Label(kind);
+        var doPref = BrowserBackground.BackgroundModeOn(info);
+        var doBoost = BrowserBackground.StartupBoostChangeable(info);
+        if (!doPref && !doBoost) return new(false, $"{name} is already set not to run in the background.");
+
+        var ended = false;
+        if (sys.IsBrowserRunning(kind))
+        {
+            var end = await sys.EndBrowserBackgroundAsync(kind, ct).ConfigureAwait(false);
+            ended = end.Success && !sys.IsBrowserRunning(kind);
+            if (!ended && doPref) return new(false, $"{name} is open (or couldn't be closed in the background). Close its windows and try again. Nothing was changed.");
+        }
+
+        string? prefPrevious = null;
+        var prefChanged = false;
+        if (doPref)
+        {
+            var json = sys.ReadBrowserLocalState(kind);
+            if (!BrowserBackground.TryReadBackgroundMode(json, out var before) || BrowserBackground.SetBackgroundMode(json, false) is not { } updated)
+                return new(false, $"Couldn't read {name}'s settings file. Nothing was changed.");
+            if (before != false)
+            {
+                sys.WriteBrowserLocalState(kind, updated);
+                if (!BrowserBackground.TryReadBackgroundMode(sys.ReadBrowserLocalState(kind), out var after) || after != false)
+                {
+                    Log($"{kind} background_mode.enabled = false didn't stick");
+                    return new(false, $"{name} didn't keep the setting. Nothing was changed.");
+                }
+                prefPrevious = BrowserBackground.Encode(before);
+                prefChanged = true;
+                Journal(ChangeKind.BrowserLocalStateValue, BrowserBackground.Target(kind), prefPrevious,
+                    $"{name} no longer runs background apps when it's closed (\"Continue running background apps\" {BrowserBackground.Describe(before)})");
+            }
+        }
+
+        var registry = new List<RegistryUndo.Item>();
+        var boostFailed = false;
+        if (doBoost)
+        {
+            var w = SetDword(BrowserBackground.StartupBoostSetting, 0, was => $"Microsoft Edge Startup Boost turned off for everyone on this PC (policy was {was})", restart: false);
+            if (!w.Ok) boostFailed = true;
+            else if (w.Changed) registry.Add(new(w.Target, w.Previous));
+        }
+
+        if (!prefChanged && registry.Count == 0)
+            return boostFailed
+                ? new(false, "Windows didn't keep the Startup Boost policy " + PolicyRefused)
+                : new(false, $"{name} is already set not to run in the background.");
+        AddUndo(new(s.Id, name, MemoryActionType.StopBrowserBackground, kind.ToString(), BrowserBackground.EncodeUndo(new(prefChanged, prefPrevious, registry))));
+        var parts = new List<string>();
+        if (prefChanged) parts.Add("background apps off");
+        if (registry.Count > 0) parts.Add("Startup Boost off for everyone on this PC (Edge will say \"managed by your organization\")");
+        return new(true, $"{name} won't run in the background: {string.Join("; ", parts)}."
+            + (ended ? $" Its background processes were ended." : "")
+            + (boostFailed ? " Startup Boost couldn't be turned off (administrator rights needed, or your organization manages Edge)." : "")
+            + " Takes full effect the next time you sign in.");
+    }
+
+    /// <summary>#19 per-item undo: puts back the Local State value and the Startup Boost policy this click changed, and drops their journal records.</summary>
+    private async Task<ActionOutcome> UndoBrowserBackgroundAsync(UndoEntry u, CancellationToken ct)
+    {
+        if (!Enum.TryParse<BrowserKind>(u.Target, out var kind) || BrowserBackground.DecodeUndo(u.Previous) is not { } undo)
+            return new(false, "The original setting wasn't recorded.");
+        var name = BrowserPrefs.Label(kind);
+        var failed = new List<string>();
+        foreach (var item in undo.Registry ?? [])
+        {
+            bool ok;
+            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous).Ok; }
+            catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
+            if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
+            else failed.Add("Startup Boost");
+        }
+        if (undo.LocalStateChanged)
+        {
+            var target = BrowserBackground.Target(kind);
+            var (ok, message) = await BrowserBackground.RestoreAsync(sys, target, undo.LocalStatePrevious, ct).ConfigureAwait(false);
+            if (ok) { try { journal?.RemoveLatest(ChangeKind.BrowserLocalStateValue, target); } catch { } }
+            else return new(false, message + (failed.Count > 0 ? " Startup Boost couldn't be turned back on either (administrator rights needed)." : ""));
+        }
+        return failed.Count == 0
+            ? new(true, $"{name} may run in the background again" + (undo.Registry?.Count > 0 ? " (Startup Boost policy removed; Edge is no longer \"managed\")" : "") + ". Takes full effect the next time you sign in.")
+            : new(false, "Windows didn't allow turning Startup Boost back on (administrator rights needed).");
+    }
+
     /// <summary>Per-item undo: restores every value this click changed (allowlisted only) and drops their journal records.</summary>
     private ActionOutcome UndoRegistry(UndoEntry u, string? done = null)
     {
@@ -485,6 +588,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
 
             case MemoryActionType.SkipOfficeStartScreen:
                 return SkipOfficeStartScreen(s);
+
+            case MemoryActionType.StopBrowserBackground:
+                return await StopBrowserBackgroundAsync(s, a, ct).ConfigureAwait(false);
 
             case MemoryActionType.AutoManagePageFile:
                 var pageFileBefore = await sys.ReadPageFileSettingsAsync(ct).ConfigureAwait(false);
