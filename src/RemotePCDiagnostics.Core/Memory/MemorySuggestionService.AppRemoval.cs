@@ -14,7 +14,7 @@ public sealed partial class MemorySuggestionService
     private async Task<ActionOutcome> RemoveAppAsync(MemorySuggestion s, MemoryAction a, CancellationToken ct)
     {
         if (Snapshot is not { } snap) return new(false, "Scan the PC first.");
-        if (AppRemoval.PackageById(a.Target) is { Group: not AppGroup.Xbox } pkg)
+        if (AppRemoval.PackageById(a.Target) is { Group: not (AppGroup.Xbox or AppGroup.Narrator) } pkg)
         {
             if (AppRemoval.FoundPackages(snap).FirstOrDefault(f => f.App == pkg) is not { } found) return new(false, $"{pkg.Label} is no longer installed.");
             var left = await sys.RemoveAppxPackagesAsync([pkg], ct).ConfigureAwait(false);
@@ -140,6 +140,32 @@ public sealed partial class MemorySuggestionService
         return new(removed.Count > 0, string.Join(" ", parts));
     }
 
+    /// <summary>#3: Narrator's Office add-ons (permanent) and the accidental Win+Ctrl+Enter shortcut off (undoable). Only while Narrator isn't used.</summary>
+    private async Task<ActionOutcome> RemoveNarratorAddonsAsync(MemorySuggestion s, CancellationToken ct)
+    {
+        if (Snapshot is not { } snap) return new(false, "Scan the PC first.");
+        var found = AppRemoval.FoundNarrator(snap);
+        if (found.Count == 0) return new(false, "Narrator's add-ons are no longer installed, or Narrator is in use.");
+        var left = await sys.RemoveAppxPackagesAsync(found.Select(f => f.App).ToList(), ct).ConfigureAwait(false);
+        var removed = left is null ? new List<AppRemoval.FoundPackage>() : found.Where(f => !left.Contains(f.App.FamilyName, StringComparer.OrdinalIgnoreCase)).ToList();
+        foreach (var f in removed) JournalPermanent("appx|" + f.App.FamilyName, AppRemoval.RemovedLabel(f.App, f.Installed.SizeBytes));
+
+        var registry = new List<RegistryUndo.Item>();
+        var w = SetDword(RegistryAllowlist.NarratorWinEnterLaunch, 0, was => $"Win+Ctrl+Enter Narrator shortcut turned off for this account (was {was})", restart: false);
+        if (w.Changed) registry.Add(new(w.Target, w.Previous));
+        var undo = new AppRemoval.Undo(registry, [], []);
+        if (!undo.IsEmpty) AddUndo(new(s.Id, "The Win+Ctrl+Enter Narrator shortcut", MemoryActionType.RemoveNarratorAddons, "", undo.Encode()));
+
+        if (removed.Count == 0 && undo.IsEmpty)
+            return new(false, "Windows didn't allow removing Narrator's add-ons (administrator rights needed, or Windows protects them). Nothing was changed.");
+        var freed = removed.Sum(f => f.Installed.SizeBytes ?? 0);
+        var parts = new List<string>();
+        if (removed.Count > 0) parts.Add($"Removed {string.Join(", ", removed.Select(f => f.App.Label))}" + (freed > 0 ? $" (about {MemoryText.Size(freed)} freed)" : "") + $"; this can't be undone — {AppRemoval.StoreReinstall}.");
+        if (removed.Count < found.Count) parts.Add($"{MemoryText.Plural(found.Count - removed.Count, "add-on")} couldn't be removed ({string.Join(", ", found.Except(removed).Select(f => f.App.Label))}).");
+        if (w.Changed) parts.Add("The Win+Ctrl+Enter shortcut no longer starts Narrator; undo turns it back on.");
+        return new(removed.Count > 0, string.Join(" ", parts));
+    }
+
     private static readonly IReadOnlyDictionary<string, string> ContentDeliveryNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
         [RegistryAllowlist.SilentInstalledApps.Target] = "Silent installs of promoted apps",
@@ -199,7 +225,12 @@ public sealed partial class MemorySuggestionService
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo task {t}: {ex.Message}"); failed++; }
         }
-        var apps = u.Type == MemoryActionType.RemoveXboxApps ? $" The removed Xbox apps can't be put back — {AppRemoval.StoreReinstall}." : " The uninstalled app itself can't be put back.";
+        var apps = u.Type switch
+        {
+            MemoryActionType.RemoveXboxApps => $" The removed Xbox apps can't be put back — {AppRemoval.StoreReinstall}.",
+            MemoryActionType.RemoveNarratorAddons => $" The removed Narrator add-ons can't be put back — {AppRemoval.StoreReinstall}.",
+            _ => " The uninstalled app itself can't be put back.",
+        };
         return failed == 0
             ? new(true, $"{u.Label} turned back on.{apps}")
             : new(false, $"Windows didn't allow turning everything back on (administrator rights needed).{apps}");

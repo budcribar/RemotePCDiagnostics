@@ -7,7 +7,7 @@ namespace RemotePCDiagnostics.Core.Memory;
 /// #3 / #8 / #10: which pre-installed apps this app may remove, and how. Ticked: retired Microsoft apps, Journal on a PC without a pen,
 /// and the Lenovo Now / Brother PowerENGAGE promoters. Opt-in: consumer apps (one card each) and the Xbox apps (one card for the group).
 /// </summary>
-public enum AppGroup { Retired, Consumer, Xbox, Vendor }
+public enum AppGroup { Retired, Consumer, Xbox, Vendor, Narrator }
 
 /// <summary>
 /// One Store (Appx) package on the removal allowlist. <see cref="Name"/> + <see cref="PublisherId"/> = the package family name; both must
@@ -68,11 +68,13 @@ public sealed record UninstallEntry(string Hive, string KeyName, string DisplayN
 /// <summary>Everything the app-removal rules look at. Built by the Host (registry reads + cached folder sizes); null fields = couldn't read.</summary>
 /// <param name="Settings">Allowlisted DWORDs (ContentDeliveryManager, GameDVR) by journal target; value null = absent. Missing key = unreadable.</param>
 /// <param name="ScheduledTasks">Allowlisted task paths that exist on this PC.</param>
+/// <param name="NarratorInUse">Narrator is running or set to start at sign-in / on the sign-in screen; null = couldn't tell (treated as in use).</param>
 public sealed record AppRemovalInfo(
     IReadOnlyList<InstalledAppx> Packages,
     IReadOnlyList<UninstallEntry> Programs,
     IReadOnlyDictionary<string, int?> Settings,
-    IReadOnlyList<string> ScheduledTasks)
+    IReadOnlyList<string> ScheduledTasks,
+    bool? NarratorInUse = null)
 {
     public static readonly AppRemovalInfo Empty = new([], [], new Dictionary<string, int?>(), []);
 }
@@ -139,6 +141,8 @@ public static class ScheduledTaskAllowlist
 public static class AppRemoval
 {
     public const string MicrosoftPublisherId = "8wekyb3d8bbwe";
+    /// <summary>Publisher id of Windows' own system packages (MicrosoftWindows.*).</summary>
+    public const string WindowsPublisherId = "cw5n1h2txyewy";
     public const string StoreReinstall = "reinstall from the Microsoft Store if needed";
 
     private static RemovableAppx Ms(string id, string name, string label, AppGroup g, string what, string lose) => new(id, name, MicrosoftPublisherId, label, g, what, lose);
@@ -182,6 +186,19 @@ public static class AppRemoval
             "Feedback Hub sends feedback and bug reports to Microsoft.", "Sending feedback to Microsoft from this PC."),
         Ms("solitaire", "Microsoft.MicrosoftSolitaireCollection", "Solitaire Collection", AppGroup.Consumer,
             "Microsoft Solitaire Collection: card games with ads.", "The Solitaire games (and their saved progress on this PC)."),
+        new("dropbox-oem", "C27EB4BA.DropboxOEM", "xbfy0k16fey96", "Dropbox promotion", AppGroup.Consumer,
+            "A Dropbox sign-up offer the PC maker pre-installed (not the Dropbox app itself).", "The pre-installed Dropbox offer. The real Dropbox app, if installed separately, isn't touched."),
+        // Ticked when Narrator isn't used: Narrator's add-ons for Office and Outlook on the web (one group). Narrator itself stays.
+        new("narrator-word", "MicrosoftWindows.NarratorExtension-Word", WindowsPublisherId, "Narrator for Word", AppGroup.Narrator,
+            "Narrator's add-on for reading Word documents.", "Narrator's Word support."),
+        new("narrator-ppt", "MicrosoftWindows.NarratorExtension-ppt", WindowsPublisherId, "Narrator for PowerPoint", AppGroup.Narrator,
+            "Narrator's add-on for PowerPoint.", "Narrator's PowerPoint support."),
+        new("narrator-owa", "MicrosoftWindows.NarratorExtension-OutlookWebApp", WindowsPublisherId, "Narrator for Outlook on the web", AppGroup.Narrator,
+            "Narrator's add-on for Outlook on the web.", "Narrator's Outlook on the web support."),
+        new("narrator-excel", "MicrosoftWindows.NarratorScript.Excel", WindowsPublisherId, "Narrator for Excel", AppGroup.Narrator,
+            "Narrator's script for Excel.", "Narrator's Excel support."),
+        new("narrator-outlook", "MicrosoftWindows.NarratorScript.Outlook", WindowsPublisherId, "Narrator for Outlook", AppGroup.Narrator,
+            "Narrator's script for Outlook.", "Narrator's Outlook support."),
         // Opt-in: the Xbox apps, as one group.
         Ms("xbox-app", "Microsoft.GamingApp", "Xbox app", AppGroup.Xbox, "The Xbox app (Game Pass, Xbox store).", "The Xbox app."),
         Ms("xbox-gamebar", "Microsoft.XboxGamingOverlay", "Xbox Game Bar", AppGroup.Xbox, "Xbox Game Bar (Win+G overlay, recording).", "Win+G Game Bar and game clip recording."),
@@ -286,6 +303,31 @@ public static class AppRemoval
         return list;
     }
 
+    /// <summary>Narrator add-ons present, offered only when Narrator is known not to be in use (not running, not set to start).</summary>
+    public static IReadOnlyList<FoundPackage> FoundNarrator(MemorySnapshot s) =>
+        s.RemovableApps is { NarratorInUse: false } && s.App("Narrator") is null
+            ? FoundPackages(s).Where(f => f.App.Group == AppGroup.Narrator).ToList() : [];
+
+    public static MemorySuggestion? NarratorCard(MemorySnapshot s)
+    {
+        var found = FoundNarrator(s);
+        if (found.Count == 0) return null;
+        var bytes = found.All(x => x.Installed.SizeBytes is null) ? (long?)null : found.Sum(x => x.Installed.SizeBytes ?? 0);
+        var names = string.Join(", ", found.Select(x => x.App.Label));
+        return new MemorySuggestion("remove-narrator-addons", "Remove Narrator's Office add-ons",
+            $"Windows includes {MemoryText.Plural(found.Count, "add-on")} that let the Narrator screen reader read Office and Outlook ({names}). Narrator isn't used on this PC. "
+            + $"{(bytes is > 0 ? $"Together they take {MemoryText.Size(bytes.Value)}." : "Their size couldn't be measured.")} Removing them can't be undone — {StoreReinstall}.",
+            null, SuggestionRisk.Low, SuggestionKind.Automated,
+            [$"Removes {names} for every account on this PC. Narrator itself stays and still works.",
+             "Turns off the Win+Ctrl+Enter shortcut that starts Narrator by accident (this account). Narrator can still be started from Settings > Accessibility.",
+             "You lose: Narrator's extra support for Word, Excel, PowerPoint and Outlook.",
+             Frees(bytes),
+             $"The add-ons can't be put back by undo — {StoreReinstall}. Undo turns the Win+Ctrl+Enter shortcut back on."],
+            [new(MemoryActionType.RemoveNarratorAddons, "", "Remove Narrator's add-ons",
+                $"Remove Narrator's Office add-ons? Narrator stays, but loses its Office support. This can't be undone — {StoreReinstall}. Needs administrator rights.")],
+            Category, "The add-ons can't be put back by undo.", DefaultOn: true);
+    }
+
     public static bool OfferContentDelivery(MemorySnapshot s) =>
         s.RemovableApps is { } info && ContentDeliverySettings.Any(r => info.Settings.TryGetValue(r.Target, out var v) && v != 0);
 
@@ -297,7 +339,7 @@ public static class AppRemoval
     /// <summary>App-removal cards: one per app (ticked or opt-in), one for the Xbox group, and the ContentDeliveryManager settings.</summary>
     public static IEnumerable<MemorySuggestion> Suggestions(MemorySnapshot s)
     {
-        foreach (var f in FoundPackages(s).Where(f => f.App.Group != AppGroup.Xbox))
+        foreach (var f in FoundPackages(s).Where(f => f.App.Group is not (AppGroup.Xbox or AppGroup.Narrator)))
         {
             var a = f.App;
             var retired = a.Group == AppGroup.Retired;
@@ -312,6 +354,8 @@ public static class AppRemoval
                     $"Remove {a.Label}? This can't be undone — {StoreReinstall}. Needs administrator rights.")],
                 Category, "Can't be undone.", DefaultOn: retired);
         }
+
+        if (NarratorCard(s) is { } narrator) yield return narrator;
 
         var xbox = FoundPackages(s).Where(f => f.App.Group == AppGroup.Xbox).ToList();
         if (xbox.Count > 0)

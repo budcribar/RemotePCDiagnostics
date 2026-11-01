@@ -39,9 +39,11 @@ public class AppRemovalTests
         public MemoryReading ReadMemory() => new(16L << 30, 8L << 30);
         public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> s, CancellationToken ct) =>
             Task.FromResult(new MemorySnapshot(ReadMemory(), [], Devices: new DeviceFacts(HasPenDigitizer: HasPen), RemovableApps: ReadRemovableApps()));
+        public bool? NarratorInUse = false;
         public AppRemovalInfo? ReadRemovableApps() => new(Packages.ToList(), Programs.ToList(),
-            AppRemoval.ContentDeliverySettings.Concat(AppRemoval.XboxSettings).ToDictionary(r => r.Target, r => Reg.TryGetValue(r.Target, out var v) ? (int?)v : null),
-            Tasks.Keys.ToList());
+            AppRemoval.ContentDeliverySettings.Concat(AppRemoval.XboxSettings).Append(RegistryAllowlist.NarratorWinEnterLaunch)
+                .ToDictionary(r => r.Target, r => Reg.TryGetValue(r.Target, out var v) ? (int?)v : null),
+            Tasks.Keys.ToList(), NarratorInUse);
         public Task<IReadOnlyList<string>?> RemoveAppxPackagesAsync(IReadOnlyList<RemovableAppx> apps, CancellationToken ct)
         {
             Calls.Add("appx:" + string.Join(",", apps.Select(a => a.FamilyName)));
@@ -109,7 +111,10 @@ public class AppRemovalTests
             "Microsoft.Windows.DevHome_8wekyb3d8bbwe", "Microsoft.MixedReality.Portal_8wekyb3d8bbwe", "Microsoft.MicrosoftJournal_8wekyb3d8bbwe",
             "Clipchamp.Clipchamp_yxz26nhyzhsrt", "Microsoft.PowerAutomateDesktop_8wekyb3d8bbwe", "Microsoft.BingNews_8wekyb3d8bbwe",
             "Microsoft.BingWeather_8wekyb3d8bbwe", "Microsoft.Todos_8wekyb3d8bbwe", "Microsoft.GetHelp_8wekyb3d8bbwe", "Microsoft.WindowsFeedbackHub_8wekyb3d8bbwe",
-            "Microsoft.MicrosoftSolitaireCollection_8wekyb3d8bbwe", "Microsoft.GamingApp_8wekyb3d8bbwe", "Microsoft.XboxGamingOverlay_8wekyb3d8bbwe",
+            "Microsoft.MicrosoftSolitaireCollection_8wekyb3d8bbwe", "C27EB4BA.DropboxOEM_xbfy0k16fey96",
+            "MicrosoftWindows.NarratorExtension-Word_cw5n1h2txyewy", "MicrosoftWindows.NarratorExtension-ppt_cw5n1h2txyewy",
+            "MicrosoftWindows.NarratorExtension-OutlookWebApp_cw5n1h2txyewy", "MicrosoftWindows.NarratorScript.Excel_cw5n1h2txyewy",
+            "MicrosoftWindows.NarratorScript.Outlook_cw5n1h2txyewy", "Microsoft.GamingApp_8wekyb3d8bbwe", "Microsoft.XboxGamingOverlay_8wekyb3d8bbwe",
             "Microsoft.XboxGameOverlay_8wekyb3d8bbwe", "Microsoft.XboxSpeechToTextOverlay_8wekyb3d8bbwe", "Microsoft.Xbox.TCUI_8wekyb3d8bbwe",
             "Microsoft.XboxIdentityProvider_8wekyb3d8bbwe",
         };
@@ -122,7 +127,7 @@ public class AppRemovalTests
             Assert.Contains(never, AppRemoval.NeverRemove);
             Assert.Null(AppRemoval.FindPackage(never, Ms));
         }
-        Assert.DoesNotContain(AppRemoval.Packages, p => p.Name.Contains("Dropbox")); // publisher id not verified: left out
+        Assert.Equal("xbfy0k16fey96", AppRemoval.Packages.Single(p => p.Name.Contains("Dropbox")).PublisherId); // seen on a real PC (BUDSLAPTOP)
         // Same name, another publisher: not ours.
         Assert.Null(AppRemoval.FindPackage("Microsoft.BingNews", "aaaaaaaaaaaaa"));
         Assert.NotNull(AppRemoval.FindPackage("MICROSOFT.BINGNEWS", Ms));
@@ -203,6 +208,70 @@ public class AppRemovalTests
         Assert.Contains("334 MB", x.Why);
         Assert.Contains("can't be undone — reinstall from the Microsoft Store if needed", x.Why);
         Assert.DoesNotContain(list, s => s.Id.StartsWith("remove-app-xbox"));
+    }
+
+    private const string Win = AppRemoval.WindowsPublisherId;
+    private static readonly string[] NarratorPackages =
+    [
+        "MicrosoftWindows.NarratorExtension-Word", "MicrosoftWindows.NarratorExtension-ppt", "MicrosoftWindows.NarratorExtension-OutlookWebApp",
+        "MicrosoftWindows.NarratorScript.Excel", "MicrosoftWindows.NarratorScript.Outlook",
+    ];
+    private static Sys NarratorPc() { var sys = new Sys { Packages = NarratorPackages.Select(n => Pkg(n, Win, 2L << 20, user: true, prov: true)).ToList() }; AllCdmOff(sys); return sys; }
+
+    [Fact]
+    public void Narrator_OneTickedCard_OnlyWhenNarratorIsntUsed()
+    {
+        var card = Build(NarratorPc()).Single(x => x.Id == "remove-narrator-addons");
+        Assert.True(card.DefaultOn);
+        Assert.Equal(MemoryActionType.RemoveNarratorAddons, Assert.Single(card.Actions).Type);
+        Assert.Contains("5 add-ons", card.Why);
+        Assert.Contains("10 MB", card.Why);
+        Assert.Contains(card.Steps, x => x.Contains("Win+Ctrl+Enter"));
+        Assert.DoesNotContain(Build(NarratorPc()), x => x.Id.StartsWith("remove-app-narrator"));
+
+        var inUse = NarratorPc(); inUse.NarratorInUse = true;
+        Assert.DoesNotContain(Build(inUse), x => x.Id == "remove-narrator-addons");
+        var unknown = NarratorPc(); unknown.NarratorInUse = null;
+        Assert.DoesNotContain(Build(unknown), x => x.Id == "remove-narrator-addons");
+        var running = NarratorPc();
+        Assert.DoesNotContain(MemorySuggestionEngine.Build(Snap(running) with { Apps = [new("Narrator", 1, 20L << 20, HasWindow: true)] }), x => x.Id == "remove-narrator-addons");
+        // Same names from another publisher are never matched.
+        Assert.DoesNotContain(Build(new Sys { Packages = NarratorPackages.Select(n => Pkg(n, Ms)).ToList() }), x => x.Id == "remove-narrator-addons");
+    }
+
+    [Fact]
+    public async Task Narrator_RemovesAddons_Permanent_ShortcutOff_UndoRestoresShortcutOnly()
+    {
+        var sys = NarratorPc();
+        sys.Stubborn.Add("MicrosoftWindows.NarratorScript.Outlook_" + Win);
+        var (j, svc) = Make(sys);
+        await svc.ScanAsync();
+        var card = svc.Suggestions.Single(x => x.Id == "remove-narrator-addons");
+        var r = await svc.ApplyAsync(card, card.Actions[0]);
+        Assert.True(r.Success, r.Message);
+        Assert.Contains("1 add-on couldn't be removed (Narrator for Outlook)", r.Message);
+        Assert.Equal(4, j.All.Count(c => c.Kind == ChangeKind.NotUndoable));
+        Assert.Equal(0, sys.Reg[RegistryAllowlist.NarratorWinEnterLaunch.Target]);
+        Assert.Single(j.All, c => c.Kind == ChangeKind.RegistryValue && c.Target == RegistryAllowlist.NarratorWinEnterLaunch.Target && c.Previous == null);
+
+        Assert.True((await svc.UndoAsync(svc.UndoFor("remove-narrator-addons")!)).Success);
+        Assert.False(sys.Reg.ContainsKey(RegistryAllowlist.NarratorWinEnterLaunch.Target)); // was absent: deleted
+        Assert.Equal(4, j.All.Count(c => c.Kind == ChangeKind.NotUndoable)); // the add-ons stay removed
+        Assert.DoesNotContain(sys.Packages, p => p.Name == "MicrosoftWindows.NarratorExtension-Word");
+    }
+
+    [Fact]
+    public void Narrator_InWorkflow_TickedAdminPermanent_AndDropboxOemOptIn()
+    {
+        var sys = NarratorPc();
+        sys.Packages.Add(Pkg("C27EB4BA.DropboxOEM", "xbfy0k16fey96", 60L << 20));
+        var fixes = FixCatalog.Build([], Build(sys));
+        var n = fixes.Single(f => f.MemoryAction == MemoryActionType.RemoveNarratorAddons);
+        Assert.True(n.DefaultOn);
+        Assert.True(n.NeedsAdmin);
+        Assert.Equal(UndoSupport.None, n.Undo);
+        Assert.False(fixes.Single(f => f.SuggestionId == "remove-app-dropbox-oem").DefaultOn);
+        Assert.Contains(MemoryActionType.RemoveNarratorAddons, FixCatalog.UnattendedMemoryActions);
     }
 
     [Fact]

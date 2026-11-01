@@ -29,7 +29,7 @@ public static class MemoryFeedback
         or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile
         or MemoryActionType.AddDefenderExclusions or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights
         or MemoryActionType.ReduceHibernateFile or MemoryActionType.SkipOfficeStartScreen or MemoryActionType.SetPdfDefaultPrinter or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension
-        or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.StopSilentAppInstalls; // disk space / later installs, not memory
+        or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.StopSilentAppInstalls or MemoryActionType.RemoveNarratorAddons; // disk space / later installs, not memory
 }
 
 /// <param name="Skipped">Nothing was attempted on purpose (e.g. the app whose cache it is was open); the workflow lists it as skipped.</param>
@@ -328,7 +328,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                 case MemoryActionType.StopSilentAppInstalls:
                     outcome = UndoRegistry(u, "Windows may install promoted apps and show suggestions again.");
                     break;
-                case MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps:
+                case MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.RemoveNarratorAddons:
                     outcome = await UndoAppRemovalAsync(u, ct).ConfigureAwait(false);
                     break;
                 case MemoryActionType.DisableTransparency:
@@ -851,6 +851,9 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
 
             case MemoryActionType.RemoveXboxApps:
                 return await RemoveXboxAppsAsync(s, ct).ConfigureAwait(false);
+
+            case MemoryActionType.RemoveNarratorAddons:
+                return await RemoveNarratorAddonsAsync(s, ct).ConfigureAwait(false);
 
             case MemoryActionType.StopSilentAppInstalls:
                 return StopSilentAppInstalls(s);

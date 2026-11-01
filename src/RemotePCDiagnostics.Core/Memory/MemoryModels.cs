@@ -168,7 +168,7 @@ public enum MemoryActionType
     ShutdownWsl,
     BlockBrowserExtension,
     StopBrowserBackground,
-    RemoveApp, RemoveXboxApps, StopSilentAppInstalls,
+    RemoveApp, RemoveXboxApps, StopSilentAppInstalls, RemoveNarratorAddons,
     /// <summary>Deletes one storage cleanup category (Target = its id in <see cref="Storage.StorageCleanupCatalog"/>). Permanent.</summary>
     CleanStorage,
 }

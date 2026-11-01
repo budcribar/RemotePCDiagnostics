@@ -22,7 +22,7 @@ public static class FixCatalog
         MemoryActionType.DisableOfficeOptionalExperiences,
         MemoryActionType.BlockBrowserExtension,
         MemoryActionType.StopBrowserBackground,
-        MemoryActionType.RemoveApp, MemoryActionType.RemoveXboxApps, MemoryActionType.StopSilentAppInstalls,
+        MemoryActionType.RemoveApp, MemoryActionType.RemoveXboxApps, MemoryActionType.StopSilentAppInstalls, MemoryActionType.RemoveNarratorAddons,
         MemoryActionType.CleanStorage,
     };
 
@@ -98,7 +98,7 @@ public static class FixCatalog
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
                 NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
                     or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension
-                    or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps
+                    or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.RemoveNarratorAddons
                     || (a.Type == MemoryActionType.StopBrowserBackground && a.Target == nameof(BrowserKind.Edge)),
                 Undo: Changes.Undoability.Of(a.Type), DefaultOn: s.DefaultOn));
         }

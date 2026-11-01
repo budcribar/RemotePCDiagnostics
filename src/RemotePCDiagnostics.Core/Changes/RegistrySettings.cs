@@ -69,8 +69,11 @@ public static class RegistryAllowlist
     /// <summary>#8 (per account): 0 = no background game capture.</summary>
     public static readonly RegistrySetting AppCaptureEnabled = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\GameDVR", "AppCaptureEnabled");
 
+    /// <summary>#3 Narrator (per account): 0 = Win+Ctrl+Enter no longer starts Narrator by accident.</summary>
+    public static readonly RegistrySetting NarratorWinEnterLaunch = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Narrator\NoRoam", "WinEnterLaunchEnabled");
+
     public static readonly IReadOnlyList<RegistrySetting> All =
-        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen, LegacyDefaultPrinterMode, OfficeOptionalConnectedExperiences, EdgeStartupBoostPolicy, SilentInstalledApps, OemPreInstalledApps, PreInstalledApps, SoftLanding, SystemPaneSuggestions, GameDvrEnabled, AppCaptureEnabled];
+        [NarratorWinEnterLaunch, WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen, LegacyDefaultPrinterMode, OfficeOptionalConnectedExperiences, EdgeStartupBoostPolicy, SilentInstalledApps, OemPreInstalledApps, PreInstalledApps, SoftLanding, SystemPaneSuggestions, GameDvrEnabled, AppCaptureEnabled];
 
     /// <summary>The allowlisted setting with this target (case-insensitive), or null.</summary>
     public static RegistrySetting? Find(string? target) =>

@@ -49,7 +49,7 @@ public sealed partial class WindowsMemorySystem
             var packages = found.Values.Select(f => new InstalledAppx(f.App.Name, f.App.PublisherId, f.User, f.Prov,
                 s_packageSizes.GetOrAdd(string.Join("|", f.FullNames), _ => PackageSize(f.App, f.Folders)))).ToList();
 
-            return new(packages, ReadRemovablePrograms(), ReadAppRemovalSettings(), ReadAllowlistedTasks());
+            return new(packages, ReadRemovablePrograms(), ReadAppRemovalSettings(), ReadAllowlistedTasks(), ReadNarratorInUse());
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { Log("App removal read failed: " + ex.Message); return null; }
     }
@@ -102,10 +102,28 @@ public sealed partial class WindowsMemorySystem
         return list;
     }
 
+    /// <summary>
+    /// Narrator running, or listed in the Accessibility "Configuration" value (start at sign-in for this account, HKCU; on the sign-in
+    /// screen, HKLM). Null when it couldn't be read.
+    /// </summary>
+    private bool? ReadNarratorInUse()
+    {
+        try
+        {
+            if (Process.GetProcessesByName("Narrator") is { Length: > 0 } running) { foreach (var p in running) p.Dispose(); return true; }
+            const string acc = @"Software\Microsoft\Windows NT\CurrentVersion\Accessibility";
+            using var hkcu = Registry.CurrentUser.OpenSubKey(acc);
+            using var hklm = Registry.LocalMachine.OpenSubKey(acc);
+            bool Listed(RegistryKey? k) => (k?.GetValue("Configuration") as string ?? "").Split(',', StringSplitOptions.TrimEntries).Any(x => x.Equals("narrator", StringComparison.OrdinalIgnoreCase));
+            return Listed(hkcu) || Listed(hklm);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { Log("Narrator state: " + ex.Message); return null; }
+    }
+
     private Dictionary<string, int?> ReadAppRemovalSettings()
     {
         var d = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var s in AppRemoval.ContentDeliverySettings.Concat(AppRemoval.XboxSettings))
+        foreach (var s in AppRemoval.ContentDeliverySettings.Concat(AppRemoval.XboxSettings).Append(RegistryAllowlist.NarratorWinEnterLaunch))
             try { d[s.Target] = ReadDword(s); }
             catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or System.Security.SecurityException or IOException) { Log($"{s.Target}: {ex.Message}"); }
         return d;
