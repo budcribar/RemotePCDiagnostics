@@ -5,10 +5,12 @@
 @implements IDisposable
 @inject WorkflowService Flow
 @inject BenchmarkService Bench
+@inject DiagnosticsService Diagnostics
 @* Service workflow: the tech reviews once; the rest (restarts, benchmarks, fixes, report) runs by itself. *@
 @{
     var s = Flow.State;
     var approved = s.Fixes.Count(f => s.IsApproved(f.Id));
+    var checkCount = Diagnostics.Modules.Count(m => m.IncludeInRunAll); // the same checks as Checks & tests > Run all
     var status = Flow.Status ?? (s.Stage == WorkflowStage.Checking ? "Running checks…" : null);
 }
 <div class="toolbar">
@@ -48,18 +50,18 @@
         break;
 
     case WorkflowStage.Review:
-        @if (s.Findings.Count > 0)
-        {
-            <section class="card wf-section"><div class="card-head"><strong>What the checks found</strong></div>
-                <ul>@foreach (var f in s.Findings) { <li>@f</li> }</ul></section>
-        }
+        <section class="card wf-section" data-testid="wf-findings"><div class="card-head"><strong>What the checks found</strong>
+                <span class="meta" data-testid="wf-check-count">Ran @checkCount checks · @(s.Findings.Count == 0 ? "nothing wrong found" : $"{s.Findings.Count} found something")</span></div>
+            @if (s.Findings.Count > 0) { <ul>@foreach (var f in s.Findings) { <li>@f</li> }</ul> }
+        </section>
         <section class="card wf-section" data-testid="wf-fixes">
-            <div class="card-head"><strong>Fixes to apply (@approved of @s.Fixes.Count)</strong>
+            <div class="card-head"><strong>Fixes to apply (@approved of @s.Fixes.Count ticked)</strong>
                 <span class="svc-actions"><button class="btn-small" @onclick="() => Flow.SetAllApproved(true)">Select all</button><button class="btn-small" @onclick="() => Flow.SetAllApproved(false)">Select none</button></span></div>
             @if (s.Fixes.Count == 0) { <p class="meta">The checks didn't find anything to fix automatically.</p> }
+            else { <p class="meta" data-testid="wf-fixes-note">Suggested by the @checkCount checks plus the memory, storage and app scans. One check can suggest several fixes (each startup app, service or cache is its own line).</p> }
             @foreach (var g in s.Fixes.GroupBy(f => f.Area))
             {
-                <h3 class="wf-area">@g.Key</h3>
+                <h3 class="wf-area">@g.Key <span class="meta">(@g.Count(f => s.IsApproved(f.Id)) of @g.Count() ticked)</span></h3>
                 @foreach (var f in g)
                 {
                     var id = f.Id;
