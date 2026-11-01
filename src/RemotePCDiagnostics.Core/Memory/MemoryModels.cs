@@ -182,7 +182,7 @@ public static class MemoryText
     private static readonly Dictionary<string, string> Friendly = new(StringComparer.OrdinalIgnoreCase)
     {
         ["chrome"] = "Chrome", ["msedge"] = "Microsoft Edge", ["firefox"] = "Firefox", ["devenv"] = "Visual Studio",
-        ["Code"] = "VS Code", ["slack"] = "Slack", ["ms-teams"] = "Microsoft Teams", ["Teams"] = "Microsoft Teams",
+        ["Code"] = "VS Code", ["slack"] = "Slack", ["ms-teams"] = "Microsoft Teams", ["msteams"] = "Microsoft Teams (free)", ["Teams"] = "Microsoft Teams (classic)",
         ["Discord"] = "Discord", ["Spotify"] = "Spotify", ["ChatGPT"] = "ChatGPT", ["Grok"] = "Grok", ["Antigravity"] = "Antigravity",
         ["OUTLOOK"] = "Outlook", ["olk"] = "Outlook", ["WINWORD"] = "Word", ["EXCEL"] = "Excel", ["POWERPNT"] = "PowerPoint",
         ["MsMpEng"] = "Microsoft Defender", ["VBCSCompiler"] = "C# compiler server", ["MSBuild"] = "MSBuild",
@@ -193,6 +193,8 @@ public static class MemoryText
         ["Codex"] = "OpenAI Codex", ["LenovoUtility"] = "Lenovo Hotkeys Utility", ["MicrosoftOfficeHub"] = "Microsoft 365 Copilot App",
         ["BrStMonW"] = "Brother Status Monitor", ["BrCcBoot"] = "Brother ControlCenter4",
         ["LenovoVantage"] = "Lenovo Vantage",
+        ["AGCInvokerUtility"] = "Adobe GC Invoker Utility", ["acrotray"] = "Adobe AcroTray",
+        ["UpdaterStartupUtility"] = "Adobe Updater Startup Utility",
     };
 
     /// <summary>Known apps get their product name; other all-lowercase process names are capitalized ("claude" → "Claude").</summary>
@@ -207,8 +209,21 @@ public static class MemoryText
 
 public static class StartupParsing
 {
-    /// <summary>Executable file name (without extension) from a Run-key command line, e.g. "\"C:\\x\\Slack.exe\" --startup" → "Slack".</summary>
+    /// <summary>Executable file name (without extension) from a Run-key command line, e.g. "\"C:\\x\\Slack.exe\" --startup" → "Slack".
+    /// Squirrel launchers ("...\\Update.exe --processStart \"Teams.exe\"", used by classic Teams, Discord, older Slack) give the app they start.</summary>
     public static string ExeName(string command)
+    {
+        var exe = RawExeName(command);
+        if (!exe.Equals("Update", StringComparison.OrdinalIgnoreCase)) return exe;
+        var c = command.Trim();
+        var at = c.IndexOf("--processStart", StringComparison.OrdinalIgnoreCase);
+        if (at < 0) return exe;
+        var rest = c[(at + "--processStart".Length)..].TrimStart(' ', '=');
+        var started = RawExeName(rest);
+        return started.Length > 0 ? started : exe;
+    }
+
+    private static string RawExeName(string command)
     {
         var c = (command ?? "").Trim();
         if (c.Length == 0) return "";
@@ -248,7 +263,11 @@ public static class StartupParsing
         if (s.Contains("OpenAI.Codex", StringComparison.OrdinalIgnoreCase)) return "Codex";
         if (s.Contains("LenovoUtility", StringComparison.OrdinalIgnoreCase)) return "LenovoUtility";
         if (s.Contains("MicrosoftOfficeHub", StringComparison.OrdinalIgnoreCase)) return "MicrosoftOfficeHub";
-        if (s.Contains("MSTeams", StringComparison.OrdinalIgnoreCase) || s.Contains("Teams", StringComparison.OrdinalIgnoreCase)) return "ms-teams";
+        // New Teams (work or school, and personal accounts since 2024): MSTeams_8wekyb3d8bbwe\TeamsTfwStartupTask, process ms-teams.exe.
+        if (s.Contains("MSTeams", StringComparison.OrdinalIgnoreCase)) return "ms-teams";
+        // Teams (free) / Windows 11 Chat: MicrosoftTeams_8wekyb3d8bbwe\TeamsStartupTask, process msteams.exe.
+        if (s.Contains("MicrosoftTeams", StringComparison.OrdinalIgnoreCase)) return "msteams";
+        if (s.Contains("Teams", StringComparison.OrdinalIgnoreCase)) return "ms-teams";
         if (s.Contains("Spotify", StringComparison.OrdinalIgnoreCase)) return "Spotify";
         if (s.Contains("Discord", StringComparison.OrdinalIgnoreCase)) return "Discord";
         var prefix = s.Split('_', '\\', '/')[0];

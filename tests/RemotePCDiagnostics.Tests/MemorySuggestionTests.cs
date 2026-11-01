@@ -192,6 +192,9 @@ public class MemorySuggestionTests
     [InlineData("\"C:\\Users\\b\\AppData\\Local\\slack\\slack.exe\" --process-start-args --startup", "slack")]
     [InlineData("C:\\Program Files\\Spotify\\Spotify.exe /minimized", "Spotify")]
     [InlineData("Discord.exe", "Discord")]
+    [InlineData("\"C:\\Users\\b\\AppData\\Local\\Microsoft\\Teams\\Update.exe\" --processStart \"Teams.exe\" --process-start-args \"--profile=AAD\"", "Teams")]
+    [InlineData("C:\\Users\\b\\AppData\\Local\\Discord\\Update.exe --processStart Discord.exe", "Discord")]
+    [InlineData("\"C:\\Tools\\Update.exe\" /silent", "Update")]
     [InlineData("", "")]
     public void Startup_ExeName(string cmd, string exe) => Assert.Equal(exe, StartupParsing.ExeName(cmd));
 
@@ -246,6 +249,106 @@ public class MemorySuggestionTests
         Assert.Contains("web browser", slack.Why);
         Assert.True(MemorySuggestionEngine.AlwaysOfferStartup("Spotify"));
         Assert.False(MemorySuggestionEngine.AlwaysOfferStartup("notepad"));
+    }
+
+    // New Teams (packaged task), Teams (free) (packaged task) and classic Teams (squirrel Run value).
+    public static TheoryData<string, string, string, StartupScope> TeamsStartupEntries => new()
+    {
+        { @"uwp:MSTeams_8wekyb3d8bbwe\TeamsTfwStartupTask", @"MSTeams_8wekyb3d8bbwe\TeamsTfwStartupTask", "Microsoft Teams", StartupScope.PackagedUwp },
+        { @"uwp:MicrosoftTeams_8wekyb3d8bbwe\TeamsStartupTask", @"MicrosoftTeams_8wekyb3d8bbwe\TeamsStartupTask", "Microsoft Teams (free)", StartupScope.PackagedUwp },
+        { "com.squirrel.Teams.Teams", @"C:\Users\b\AppData\Local\Microsoft\Teams\Update.exe --processStart ""Teams.exe"" --process-start-args ""--system-initiated""", "Microsoft Teams (classic)", StartupScope.CurrentUser },
+    };
+
+    [Theory]
+    [MemberData(nameof(TeamsStartupEntries))]
+    public void Teams_EachVariant_OfferedAtStartup_WithFriendlyName_AndOptIn(string name, string command, string friendly, StartupScope scope)
+    {
+        var entry = new StartupEntry(name, command, true, scope);
+        Assert.Contains(entry.ExeName, MemorySuggestionEngine.TeamsApps);
+        Assert.True(MemorySuggestionEngine.AlwaysOfferStartup(entry.ExeName));
+        Assert.Equal(friendly, MemoryText.FriendlyAppName(entry.ExeName));
+
+        // Not running at scan time: still offered.
+        var sug = Build(Snap() with { Startup = [entry] }).Single(x => x.Id == $"startup-{name}".ToLowerInvariant());
+        Assert.Equal($"Stop {friendly} from starting with Windows", sug.Title);
+        Assert.False(sug.DefaultOn);                                                   // opt-in in the service workflow
+        Assert.Contains("450–850 MB", sug.Why);
+        Assert.Contains("chat or call notifications until you open Teams", sug.Why);
+        Assert.Contains("Undo turns it back on", sug.Why);
+        Assert.DoesNotContain("web browser", sug.Why);
+        var action = Assert.Single(sug.Actions);
+        Assert.Equal(MemoryActionType.DisableStartup, action.Type);
+        Assert.Equal(name, action.Target);
+        var fix = Assert.Single(RemotePCDiagnostics.Core.Workflow.FixCatalog.Build([], [sug]));
+        Assert.False(fix.DefaultOn);
+        Assert.Equal(RemotePCDiagnostics.Core.Changes.UndoSupport.Full, fix.Undo);
+
+        // Disabled already: nothing to offer.
+        Assert.DoesNotContain(Build(Snap() with { Startup = [entry with { Enabled = false }] }), x => x.Id.StartsWith("startup-"));
+    }
+
+    [Fact]
+    public void Teams_RunningAtSignIn_ShowsItsMemory_OtherStartupAppsStayTicked()
+    {
+        var teams = new StartupEntry(@"uwp:MSTeams_8wekyb3d8bbwe\TeamsTfwStartupTask", @"MSTeams_8wekyb3d8bbwe\TeamsTfwStartupTask", true, StartupScope.PackagedUwp);
+        var spotify = new StartupEntry("Spotify", "\"C:\\s\\Spotify.exe\" /minimized", true);
+        var list = Build(Snap(new AppUsage("ms-teams", 6, 700 * Mb)) with { Startup = [teams, spotify] });
+        var t = list.Single(x => x.Id == @"startup-uwp:msteams_8wekyb3d8bbwe\teamstfwstartuptask");
+        Assert.Contains("Microsoft Teams starts every time you sign in and is using 700 MB", t.Why);
+        Assert.Equal(700 * Mb, t.SavingBytes);
+        Assert.False(t.DefaultOn);
+        Assert.True(list.Single(x => x.Id == "startup-spotify").DefaultOn);
+    }
+
+    [Theory]
+    [InlineData("AdobeARMservice", "Acrobat")]
+    [InlineData("AGSService", "licens")]
+    [InlineData("AGMService", "licens")]
+    [InlineData("AdobeUpdateService", "Creative Cloud")]
+    public void Adobe_Services_UseRealServiceNames_AndOfferManualWhenAutomatic(string name, string about)
+    {
+        Assert.True(MemorySuggestionEngine.ServiceCandidates.ContainsKey(name));
+        Assert.False(MemorySuggestionEngine.ServiceCandidates.ContainsKey("ArmsSvc"));   // armsvc.exe is the exe; the service is AdobeARMservice
+
+        var auto = Build(Snap() with { Services = [new(Svc(name), 6 * Mb)] }).Single(x => x.Id == $"svc-{name}".ToLowerInvariant());
+        Assert.Contains(about, auto.Why);
+        Assert.DoesNotContain("is Adobe's updater", auto.Why);                           // its own text, not the generic vendor wording
+        Assert.True(auto.DefaultOn);
+        Assert.Contains(auto.Actions, a => a.Type == MemoryActionType.SetServiceManual && a.Target == name);
+        var fix = Assert.Single(RemotePCDiagnostics.Core.Workflow.FixCatalog.Build([], [auto]));
+        Assert.Equal(MemoryActionType.SetServiceManual, fix.MemoryAction);
+        Assert.Equal(name, fix.MemoryTarget);
+        Assert.True(fix.DefaultOn);
+
+        // Already Manual: only "Stop now", which the service workflow intentionally doesn't list.
+        var manual = Build(Snap() with { Services = [new(Svc(name, start: "DEMAND_START"), 6 * Mb)] }).Single(x => x.Id == $"svc-{name}".ToLowerInvariant());
+        Assert.Equal(MemoryActionType.StopService, Assert.Single(manual.Actions).Type);
+        Assert.Empty(RemotePCDiagnostics.Core.Workflow.FixCatalog.Build([], [manual]));
+    }
+
+    [Fact]
+    public void Adobe_AcrobatAndLicensingText_SaysWhatStillHappens()
+    {
+        Assert.Contains("still check for and install updates when they're opened", MemorySuggestionEngine.ServiceCandidates["AdobeARMservice"].Lose);
+        Assert.Contains("when an Adobe app starts", MemorySuggestionEngine.ServiceCandidates["AGSService"].Lose);
+        Assert.Contains("when an Adobe app starts", MemorySuggestionEngine.ServiceCandidates["AGMService"].Lose);
+    }
+
+    [Theory]
+    [InlineData("hklm32:AdobeGCInvoker-1.0", @"""C:\Program Files (x86)\Common Files\Adobe\AdobeGCClient\AGCInvokerUtility.exe""", StartupScope.LocalMachine32, "Adobe GC Invoker Utility")]
+    [InlineData("hklm32:Acrobat Assistant 8.0", @"""C:\Program Files (x86)\Adobe\Acrobat DC\Acrobat\Acrotray.exe""", StartupScope.LocalMachine32, "Adobe AcroTray")]
+    [InlineData("hklm32:AdobeAAMUpdater-1.0", @"""C:\Program Files (x86)\Common Files\Adobe\OOBE\PDApp\UWA\UpdaterStartupUtility.exe""", StartupScope.LocalMachine32, "Adobe Updater Startup Utility")]
+    public void Adobe_TrayHelpers_OfferedAtStartup_WithoutBrowserWording(string name, string command, StartupScope scope, string friendly)
+    {
+        var entry = new StartupEntry(name, command, true, scope);
+        Assert.Contains(entry.ExeName, MemorySuggestionEngine.StartupTrayHelpers);
+        Assert.DoesNotContain(entry.ExeName, MemorySuggestionEngine.ElectronApps);
+        Assert.Equal(friendly, MemoryText.FriendlyAppName(entry.ExeName));
+        var sug = Build(Snap() with { Startup = [entry] }).Single(x => x.Id == $"startup-{name}".ToLowerInvariant());
+        Assert.Equal($"Stop {friendly} from starting with Windows", sug.Title);
+        Assert.Contains("vendor helper", sug.Why);
+        Assert.DoesNotContain("browser", sug.Why);
+        Assert.True(sug.DefaultOn);
     }
 
     [Fact]
