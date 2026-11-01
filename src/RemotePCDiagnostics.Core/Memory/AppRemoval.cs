@@ -206,6 +206,8 @@ public static class AppRemoval
         Ms("xbox-speech", "Microsoft.XboxSpeechToTextOverlay", "Xbox speech-to-text overlay", AppGroup.Xbox, "Xbox party chat speech-to-text.", "Speech-to-text in Xbox party chat."),
         Ms("xbox-tcui", "Microsoft.Xbox.TCUI", "Xbox TCUI", AppGroup.Xbox, "Xbox sign-in and friends pop-ups used by games.", "Xbox friends and profile pop-ups in games."),
         Ms("xbox-identity", "Microsoft.XboxIdentityProvider", "Xbox Identity Provider", AppGroup.Xbox, "Xbox Live sign-in for games.", "Signing in to Xbox Live from PC games."),
+        Ms("xbox-edge-gameassist", "Microsoft.Edge.GameAssist", "Edge Game Assist", AppGroup.Xbox,
+            "Edge Game Assist: an in-game browser widget Microsoft promotes inside Game Bar.", "The Edge browser widget inside Game Bar (Edge itself isn't touched)."),
     ];
 
     /// <summary>The only desktop programs this app uninstalls (#10).</summary>

@@ -116,7 +116,7 @@ public class AppRemovalTests
             "MicrosoftWindows.NarratorExtension-OutlookWebApp_cw5n1h2txyewy", "MicrosoftWindows.NarratorScript.Excel_cw5n1h2txyewy",
             "MicrosoftWindows.NarratorScript.Outlook_cw5n1h2txyewy", "Microsoft.GamingApp_8wekyb3d8bbwe", "Microsoft.XboxGamingOverlay_8wekyb3d8bbwe",
             "Microsoft.XboxGameOverlay_8wekyb3d8bbwe", "Microsoft.XboxSpeechToTextOverlay_8wekyb3d8bbwe", "Microsoft.Xbox.TCUI_8wekyb3d8bbwe",
-            "Microsoft.XboxIdentityProvider_8wekyb3d8bbwe",
+            "Microsoft.XboxIdentityProvider_8wekyb3d8bbwe", "Microsoft.Edge.GameAssist_8wekyb3d8bbwe",
         };
         Assert.Equal(expected, AppRemoval.Packages.Select(p => p.FamilyName));
         Assert.Equal(AppRemoval.Packages.Count, AppRemoval.Packages.Select(p => p.Id).Distinct().Count());
@@ -272,6 +272,19 @@ public class AppRemovalTests
         Assert.Equal(UndoSupport.None, n.Undo);
         Assert.False(fixes.Single(f => f.SuggestionId == "remove-app-dropbox-oem").DefaultOn);
         Assert.Contains(MemoryActionType.RemoveNarratorAddons, FixCatalog.UnattendedMemoryActions);
+    }
+
+    [Fact]
+    public void EdgeGameAssist_IsPartOfTheOptInXboxGroup_NotEdge()
+    {
+        var sys = new Sys { Packages = [Pkg("Microsoft.Edge.GameAssist", size: 3L << 20), Pkg("Microsoft.MicrosoftEdge.Stable", size: 400L << 20)] };
+        AllCdmOff(sys);
+        var list = Build(sys);
+        var x = list.Single(s => s.Id == "remove-xbox");
+        Assert.False(x.DefaultOn);
+        Assert.Contains("Edge Game Assist", x.Why);
+        Assert.DoesNotContain(list, s => s.Id == "remove-app-xbox-edge-gameassist");
+        Assert.Null(AppRemoval.FindPackage("Microsoft.MicrosoftEdge.Stable", Ms)); // Edge itself is never removed
     }
 
     [Fact]
