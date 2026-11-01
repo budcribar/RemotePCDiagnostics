@@ -151,8 +151,8 @@ public class BrowserExtensionsTests
     [Fact]
     public void IdsInPreferences_UnionOfBothFiles_NullWhenNeitherListsExtensions()
     {
-        var secure = $$"""{"extensions":{"settings":{"{{Honey}}":{"state":1}}}}""";
-        var prefs = $$"""{"extensions":{"settings":{"{{Msn}}":{}}}}""";
+        var secure = """{"extensions":{"settings":{"ID":{"state":1}}}}""".Replace("ID", Honey);
+        var prefs = """{"extensions":{"settings":{"ID":{}}}}""".Replace("ID", Msn);
         var ids = BrowserExtensions.IdsInPreferences(secure, prefs)!;
         Assert.Contains(Honey, ids);
         Assert.Contains(Msn, ids);
