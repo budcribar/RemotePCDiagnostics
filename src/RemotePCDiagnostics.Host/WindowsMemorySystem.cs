@@ -106,7 +106,55 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
         var defender = apps.Any(a => a.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase)) ? await ReadDefenderAsync(ct).ConfigureAwait(false) : null;
         return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
-            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds());
+            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate());
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SYSTEM_POWER_STATUS { public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag; public int BatteryLifeTime, BatteryFullLifeTime; }
+    [DllImport("kernel32.dll")] private static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS s);
+
+    /// <summary>Hibernation type, custom size, hiberfil.sys size, Fast Startup and whether the PC has a battery. Null = couldn't read.</summary>
+    public HibernateInfo? ReadHibernate()
+    {
+        try
+        {
+            using var k = Registry.LocalMachine.OpenSubKey(Hibernation.PowerKey);
+            if (k is null) return null;
+            var path = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory) ?? @"C:", "hiberfil.sys");
+            long? bytes = null;
+            try { var fi = new FileInfo(path); if (fi.Exists) bytes = fi.Length; } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            var enabled = k.GetValue("HibernateEnabled") is int e ? e != 0 && bytes is > 0 : bytes is > 0;
+            bool? battery = null;
+            try { if (GetSystemPowerStatus(out var ps)) battery = ps.BatteryFlag switch { 128 => false, 255 => null, _ => true }; } catch (Exception ex) { Log("power status: " + ex.Message); }
+            return new(enabled, Hibernation.IsReduced(k.GetValue("HiberFileType") as int?, bytes, ReadMemory().TotalBytes),
+                Hibernation.IsCustomSize(k.GetValue("HiberFileSizePercent") as int?), bytes, ReadFastStartup(), battery);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { Log("Hibernation read failed: " + ex.Message); return null; }
+    }
+
+    /// <summary>Only ever runs System32\powercfg.exe /h /type reduced|full.</summary>
+    public async Task<ActionOutcome> SetHibernateTypeAsync(bool reduced, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "powercfg.exe"))
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in new[] { "/h", "/type", reduced ? "reduced" : "full" }) psi.ArgumentList.Add(a);
+        try
+        {
+            using var p = Process.Start(psi)!;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(60));
+            var err = p.StandardError.ReadToEndAsync(timeout.Token);
+            var output = p.StandardOutput.ReadToEndAsync(timeout.Token);
+            await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            if (p.ExitCode == 0) return new(true, reduced ? "Hibernation file reduced." : "Hibernation file full size.");
+            Log($"powercfg /h /type failed ({p.ExitCode}): {(await err.ConfigureAwait(false)).Trim()} {(await output.ConfigureAwait(false)).Trim()}");
+            return new(false, "Windows didn't allow changing the hibernation file (a custom size may be set, or administrator rights are missing).");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            Log("powercfg failed: " + ex.Message);
+            return new(false, "Couldn't run powercfg.");
+        }
     }
 
     private const string PackagesKey = @"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";

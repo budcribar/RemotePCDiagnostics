@@ -359,6 +359,24 @@ public static class MemorySuggestionEngine
                 null, SuggestionRisk.Low, SuggestionKind.Automated, ["Same as Settings > Personalization > Colors > Transparency effects: Off (this account only). Undo turns it back on."],
                 [new(MemoryActionType.DisableTransparency, "", "Turn off transparency"),
                  new(MemoryActionType.OpenSettings, "ms-settings:personalization-colors", "Open Colors settings")], "Windows extras"));
+        // Hibernation file: Fast Startup needs only about half of a full hiberfil.sys.
+        if (s.Hibernate is { OfferReduce: true } hib)
+        {
+            var laptop = hib.HasBattery != false;
+            var steps = new List<string>
+            {
+                "Runs \"powercfg /h /type reduced\": hiberfil.sys keeps only what Fast Startup needs (about 20% of RAM instead of about 40%).",
+                "Fast Startup keeps working. Hibernate (and hybrid sleep) is no longer available.",
+            };
+            if (laptop) steps.Add("On a laptop: when the battery runs critically low Windows shuts down instead of hibernating, so unsaved work is lost, and it won't switch from sleep to hibernate to save battery.");
+            steps.Add("Undo makes it full size again (powercfg /h /type full).");
+            list.Add(new("hiberfile-reduced", "Shrink the hibernation file (hiberfil.sys)",
+                $"Windows keeps {MemoryText.Size(hib.FileBytes!.Value)} on the system drive for hibernation. Fast Startup only needs about half of that, so about {MemoryText.Size(hib.EstimatedSavingBytes!.Value)} of disk space can be freed.",
+                null, laptop ? SuggestionRisk.Medium : SuggestionRisk.Low, SuggestionKind.Automated, steps,
+                [new(MemoryActionType.ReduceHibernateFile, "", "Shrink hiberfil.sys",
+                    "Shrink hiberfil.sys? Hibernate won't be available until you undo this. Needs administrator rights.")],
+                "Storage", "Frees the space right away.", hib.DefaultOn));
+        }
         if (WindowsFeeds.OfferWidgets(s))
         {
             var running = WindowsFeeds.RunningWidgets(s);
