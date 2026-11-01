@@ -26,8 +26,9 @@ public sealed class WorkflowService(
     public static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(30);
 
     private readonly object _gate = new();
-    /// <summary>7: Windows Search only on small, nearly-full PCs without classic Outlook, and opt-in (unticked); Widgets and Search highlights fixes.</summary>
-    public const int CurrentReviewRulesVersion = 7;
+    /// <summary>7: Windows Search only on small, nearly-full PCs without classic Outlook, and opt-in (unticked); Widgets and Search highlights fixes.
+    /// 8: Microsoft Teams startup is opt-in (unticked).</summary>
+    public const int CurrentReviewRulesVersion = 8;
     private WorkflowState _state = LoadState(store);
 
     private static WorkflowState LoadState(IWorkflowStore store)

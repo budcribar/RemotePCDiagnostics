@@ -234,6 +234,65 @@ public class WorkflowTests
         Assert.DoesNotContain(wsearch.Id, flow.State.Approved);
     }
 
+    /// <summary>Any memory snapshot, for workflow tests of individual rules.</summary>
+    private sealed class SnapMem(MemorySnapshot snap) : IMemorySystem
+    {
+        public MemoryReading ReadMemory() => snap.Memory;
+        public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> s, CancellationToken ct) => Task.FromResult(snap);
+        public Task<ActionOutcome> CloseAppAsync(string p, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public Task<ActionOutcome> ForceCloseAppAsync(string p, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public Task<ActionOutcome> RunCommandAsync(string f, IReadOnlyList<string> a, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public byte[]? GetStartupApproved(string n) => null;
+        public void SetStartupApproved(string n, byte[]? v) { }
+        public bool IsBrowserRunning(BrowserKind k) => false;
+        public string? ReadBrowserLocalState(BrowserKind k) => null;
+        public void WriteBrowserLocalState(BrowserKind k, string json) { }
+        public void OpenUri(string uri) { }
+        public string GetServiceStartType(string n) => "Automatic";
+        public void SetServiceStartType(string n, string t) { }
+    }
+
+    [Fact]
+    public async Task Teams_StartupIsOptIn_AdobeServicesTickedWhenAutomatic_AndLeftOutWhenManual()
+    {
+        static ServiceInfo Svc(string name, string start) => new(name, name + " display", "RUNNING", start, "LocalSystem", "");
+        var snap = new MemorySnapshot(new(16L << 30, 8L << 30), [],
+            Services: [new(Svc("AdobeARMservice", "AUTO_START"), 6L << 20), new(Svc("AGSService", "AUTO_START"), 12L << 20), new(Svc("AGMService", "DEMAND_START"), 9L << 20)],
+            Startup:
+            [
+                new(@"uwp:MSTeams_8wekyb3d8bbwe\TeamsTfwStartupTask", @"MSTeams_8wekyb3d8bbwe\TeamsTfwStartupTask", true, StartupScope.PackagedUwp),
+                new(@"uwp:MicrosoftTeams_8wekyb3d8bbwe\TeamsStartupTask", @"MicrosoftTeams_8wekyb3d8bbwe\TeamsStartupTask", true, StartupScope.PackagedUwp),
+                new("com.squirrel.Teams.Teams", @"C:\Users\b\AppData\Local\Microsoft\Teams\Update.exe --processStart ""Teams.exe""", true),
+                new("Spotify", "\"C:\\s\\Spotify.exe\" /minimized", true),
+            ],
+            TransparencyOn: false);
+        var flow = MakeWithMemory(new SnapMem(snap));
+        await flow.RunChecksAsync();
+        var s = flow.State;
+        Assert.Equal(WorkflowStage.Review, s.Stage);
+
+        var teams = s.Fixes.Where(f => f.MemoryAction == MemoryActionType.DisableStartup && f.Title.Contains("Microsoft Teams")).ToList();
+        Assert.Equal(3, teams.Count);
+        Assert.Contains(teams, f => f.Title == "Stop Microsoft Teams from starting with Windows");
+        Assert.Contains(teams, f => f.Title == "Stop Microsoft Teams (free) from starting with Windows");
+        Assert.Contains(teams, f => f.Title == "Stop Microsoft Teams (classic) from starting with Windows");
+        Assert.All(teams, f => { Assert.False(f.DefaultOn); Assert.DoesNotContain(f.Id, s.Approved); });   // opt-in: unticked
+        Assert.Contains(s.Fixes, f => f.MemoryTarget == "Spotify" && f.DefaultOn && s.Approved.Contains(f.Id));
+
+        foreach (var name in new[] { "AdobeARMservice", "AGSService" })
+        {
+            var fix = s.Fixes.Single(f => f.MemoryTarget == name);
+            Assert.Equal(MemoryActionType.SetServiceManual, fix.MemoryAction);
+            Assert.True(fix.DefaultOn);
+            Assert.Contains(fix.Id, s.Approved);
+        }
+        Assert.DoesNotContain(s.Fixes, f => f.MemoryTarget == "AGMService");                // already Manual: Stop-now only, not in the workflow
+
+        // Still tickable by hand.
+        flow.SetApproved(teams[0].Id, true);
+        Assert.Contains(teams[0].Id, flow.State.Approved);
+    }
+
     [Fact]
     public void Catalog_CarriesDefaultOn_FromSuggestion()
     {

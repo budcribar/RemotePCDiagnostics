@@ -73,15 +73,27 @@ public static class MemorySuggestionEngine
 
     /// <summary>Electron/web-wrapper chat and media apps; each runs its own copy of Chromium.</summary>
     public static readonly IReadOnlySet<string> ElectronApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        { "ChatGPT", "Grok", "Antigravity", "slack", "ms-teams", "Teams", "Discord", "Spotify", "Code", "Notion", "WhatsApp", "Codex", "MicrosoftOfficeHub" };
+        { "ChatGPT", "Grok", "Antigravity", "slack", "ms-teams", "msteams", "Teams", "Discord", "Spotify", "Code", "Notion", "WhatsApp", "Codex", "MicrosoftOfficeHub" };
 
     /// <summary>
     /// Vendor tray helpers that start at sign-in but aren't needed for the device to work (graphics settings/overlay, printer
     /// status pop-ups, scan-button and vendor update helpers). Offered for "don't start with Windows" even when small or not running.
     /// Not Electron: their suggestions never talk about a built-in browser.
+    /// Adobe: AdobeGCInvoker-1.0 (AGCInvokerUtility.exe, licensing check), Acrobat Assistant 8.0 (acrotray.exe, Acrobat's PDF-printer
+    /// tray helper) and AdobeAAMUpdater-1.0 (UpdaterStartupUtility.exe, the old Creative Cloud updater).
     /// </summary>
     public static readonly IReadOnlySet<string> StartupTrayHelpers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        { "RadeonSoftware", "BrStMonW", "BrCcBoot", "LenovoVantage" };
+        { "RadeonSoftware", "BrStMonW", "BrCcBoot", "LenovoVantage", "AGCInvokerUtility", "acrotray", "UpdaterStartupUtility" };
+
+    /// <summary>
+    /// Microsoft Teams startup entries: new Teams (ms-teams, packaged task MSTeams_8wekyb3d8bbwe\TeamsTfwStartupTask), Teams (free)
+    /// (msteams, MicrosoftTeams_8wekyb3d8bbwe\TeamsStartupTask) and classic Teams (Teams, Run value com.squirrel.Teams.Teams).
+    /// Offered, but opt-in in the service workflow: people who rely on Teams chats and calls would miss them until they open Teams.
+    /// </summary>
+    public static readonly IReadOnlySet<string> TeamsApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ms-teams", "msteams", "Teams" };
+
+    /// <summary>Typical sign-in memory of Teams that this saves, for the card text.</summary>
+    public const string TeamsStartupSaving = "about 450–850 MB";
 
     /// <summary>Startup apps offered regardless of their memory use.</summary>
     public static bool AlwaysOfferStartup(string exeName) => ElectronApps.Contains(exeName) || StartupTrayHelpers.Contains(exeName);
@@ -138,9 +150,15 @@ public static class MemorySuggestionEngine
         ["WorkflowAppControl"] = new("Brother iPrint&Scan workflow monitor.", "Brother iPrint&Scan background workflow triggers."),
         ["BrLogRx"] = new("Brother diagnostic log receiver telemetry service.", "Brother background diagnostic log collection.", OfferDisable: true),
         ["SQLWriter"] = new("SQL Server VSS Writer (installed with Visual Studio LocalDB).", "Volume shadow copy backups of live SQL Server databases."),
-        ["ArmsSvc"] = new("Adobe Acrobat Update Service.", "Background Adobe Acrobat update checks (Acrobat still updates when opened)."),
-        ["AGSService"] = new("Adobe Genuine Software Integrity Service.", "Background Adobe license telemetry checks."),
-        ["AGMService"] = new("Adobe Genuine Monitor Service.", "Background Adobe license telemetry checks."),
+        // Adobe: service names, not exe names (Acrobat's updater runs armsvc.exe but the service is AdobeARMservice).
+        ["AdobeARMservice"] = new("Adobe Acrobat Update Service checks for Acrobat and Reader updates in the background.",
+            "Background update checks only: Acrobat and Reader still check for and install updates when they're opened."),
+        ["AGSService"] = new("Adobe Genuine Software Integrity Service checks in the background that installed Adobe apps are licensed.",
+            "Nothing you'll notice: the licensing check happens when an Adobe app starts instead."),
+        ["AGMService"] = new("Adobe Genuine Monitor Service watches installed Adobe apps for licensing in the background.",
+            "Nothing you'll notice: the licensing check happens when an Adobe app starts instead."),
+        ["AdobeUpdateService"] = new("Adobe Update Service installs Creative Cloud app updates in the background.",
+            "Automatic Creative Cloud app updates until the Creative Cloud app is opened (it still updates apps from there)."),
     };
 
     /// <summary>Vendor updater/telemetry helper services matched by name fragment.</summary>
@@ -150,8 +168,6 @@ public static class MemorySuggestionEngine
         ("ImController", "a Lenovo Vantage system interface helper"),
         ("CodexSandboxService", "the OpenAI Codex background sandbox VM service"),
         ("SoftwareUpdateNotification", "Brother's background software update checker"),
-        ("AdobeARMservice", "Adobe's updater"),
-        ("AdobeUpdateService", "Adobe's updater"),
         ("gupdate", "Google's updater"),
         ("GoogleUpdater", "Google's updater"),
         ("edgeupdate", "Microsoft Edge's updater"),
@@ -268,10 +284,14 @@ public static class MemorySuggestionEngine
             if (!AlwaysOfferStartup(e.ExeName) && (app is null || app.MemoryBytes < 150 * Mb)) continue;
             var label = MemoryText.FriendlyAppName(e.ExeName);
             var helper = StartupTrayHelpers.Contains(e.ExeName) ? $" It's a vendor helper that sits in the tray; the device works without it, and opening {label} still works." : "";
+            var teams = TeamsApps.Contains(e.ExeName);
+            if (teams)
+                helper = $" For people who only open Teams to join meetings, not starting it at sign-in saves {TeamsStartupSaving} of memory."
+                    + " You won't get Teams chat or call notifications until you open Teams. Undo turns it back on.";
             list.Add(new($"startup-{e.Name}".ToLowerInvariant(), $"Stop {label} from starting with Windows",
                 (app is null ? $"{label} is set to start every time you sign in." : $"{label} starts every time you sign in and is using {MemoryText.Size(app.MemoryBytes)} right now.") + helper,
                 app?.MemoryBytes, SuggestionRisk.Low, SuggestionKind.Automated, ["Same as Task Manager > Startup apps > Disable. Undo turns it back on."],
-                [new(MemoryActionType.DisableStartup, e.Name, "Don't start with Windows")], "Startup apps", "Takes effect the next time you sign in."));
+                [new(MemoryActionType.DisableStartup, e.Name, "Don't start with Windows")], "Startup apps", "Takes effect the next time you sign in.", DefaultOn: !teams));
         }
 
         // Fast Startup / uptime.
