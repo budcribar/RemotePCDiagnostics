@@ -23,8 +23,8 @@ public sealed class WorkflowService(
     public static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(30);
 
     private readonly object _gate = new();
-    /// <summary>2: Windows Search only on small, nearly-full PCs without classic Outlook, and opt-in (unticked).</summary>
-    public const int CurrentReviewRulesVersion = 2;
+    /// <summary>4: Windows Search only on small, nearly-full PCs without classic Outlook, and opt-in (unticked).</summary>
+    public const int CurrentReviewRulesVersion = 4;
     private WorkflowState _state = LoadState(store);
 
     private static WorkflowState LoadState(IWorkflowStore store)

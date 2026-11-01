@@ -7,6 +7,25 @@ namespace RemotePCDiagnostics.Tests;
 
 public class MemorySuggestionTests
 {
+    [Theory]
+    [InlineData("DEMAND_START", MemoryActionType.StopService)]
+    [InlineData("AUTO_START", MemoryActionType.SetServiceManual)]
+    public void VisualStudioCollectorIsAWorkflowFixWithAccurateDiagnosticsDescription(string start, MemoryActionType expected)
+    {
+        var service = new ServiceInfo("VSStandardCollectorService150", "Visual Studio Standard Collector Service 150", "RUNNING", start, "LocalSystem", "");
+        var snapshot = new MemorySnapshot(Ram, [], Services: [new(service, 171 * Mb)]);
+        var suggestions = Build(snapshot);
+        var suggestion = Assert.Single(suggestions);
+        Assert.Contains("profiling", suggestion.Why, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("updates", suggestion.Why, StringComparison.OrdinalIgnoreCase);
+        var fix = Assert.Single(RemotePCDiagnostics.Core.Workflow.FixCatalog.Build([], suggestions));
+        Assert.Equal(expected, fix.MemoryAction);
+        Assert.True(fix.NeedsAdmin);
+        Assert.Equal(RemotePCDiagnostics.Core.Changes.UndoSupport.Full, fix.Undo);
+        Assert.Empty(RemotePCDiagnostics.Core.Workflow.FixCatalog.Recommendations(suggestions));
+        Assert.Empty(Build(snapshot with { Apps = [new AppUsage("devenv", 1, 100 * Mb)] }));
+    }
+
     private const long Mb = 1L << 20, Gb = 1L << 30;
     private static readonly MemoryReading Ram = new(16 * Gb, 6 * Gb);
 
