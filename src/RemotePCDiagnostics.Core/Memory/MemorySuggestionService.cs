@@ -28,7 +28,7 @@ public static class MemoryFeedback
         or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings
         or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile
         or MemoryActionType.AddDefenderExclusions or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights
-        or MemoryActionType.ReduceHibernateFile or MemoryActionType.SkipOfficeStartScreen or MemoryActionType.SetPdfDefaultPrinter or MemoryActionType.DisableOfficeOptionalExperiences;
+        or MemoryActionType.ReduceHibernateFile or MemoryActionType.SkipOfficeStartScreen or MemoryActionType.SetPdfDefaultPrinter or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension;
 }
 
 public sealed record ActionOutcome(bool Success, string Message);
@@ -86,6 +86,12 @@ public interface IMemorySystem
     ActionOutcome SetDefaultPrinter(string name) => new(false, "Not supported on this PC.");
     /// <summary>Names (without .exe) of the processes running right now, for a last check just before acting; null = not available.</summary>
     IReadOnlyList<string>? RunningProcessNames() => null;
+    /// <summary>#22: the values under the browser's HKLM ExtensionInstallBlocklist policy key (empty = key absent; null = couldn't read).</summary>
+    IReadOnlyList<BlocklistEntry>? ReadExtensionBlocklist(BrowserKind browser) => null;
+    /// <summary>Adds one REG_SZ entry (admin). Refuses IDs not on <see cref="BrowserExtensions.Allowlist"/> and names that already exist.</summary>
+    void AddExtensionBlock(BrowserKind browser, string valueName, string extensionId) => throw new NotSupportedException();
+    /// <summary>Deletes one entry, only when it still holds <paramref name="extensionId"/> (admin). Refuses IDs not on the allowlist.</summary>
+    void RemoveExtensionBlock(BrowserKind browser, string valueName, string extensionId) => throw new NotSupportedException();
 }
 
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);
@@ -230,6 +236,11 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                     break;
                 case MemoryActionType.DisableOfficeOptionalExperiences:
                     outcome = UndoRegistry(u, "Office's optional online extras are back for this account. Takes effect the next time each Office app opens.");
+                    break;
+                case MemoryActionType.BlockBrowserExtension:
+                    var (extOk, extMessage) = BrowserExtensions.RemoveBlock(sys, u.Target, u.Previous);
+                    if (extOk) try { journal?.RemoveLatest(ChangeKind.ExtensionBlock, u.Target); } catch { }
+                    outcome = new(extOk, extMessage);
                     break;
                 case MemoryActionType.ReduceHibernateFile:
                     var full = await sys.SetHibernateTypeAsync(false, ct).ConfigureAwait(false);
@@ -476,6 +487,42 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
         return new(true, "Office's optional online extras are off for this account (online pictures, Smart Lookup, Outlook weather, the Office Store for add-ins). OneDrive, SharePoint and co-authoring keep working. Takes effect the next time each Office app opens.");
     }
 
+    /// <summary>
+    /// #22: adds one allowlisted extension ID to the browser's machine blocklist as the next numbered entry, reads it back, and
+    /// journals the value name it added. Nothing else in the list is touched; nothing is journaled when it doesn't stick.
+    /// </summary>
+    private ActionOutcome BlockBrowserExtension(MemoryAction a)
+    {
+        if (!BrowserExtensions.TryParseTarget(a.Target, out var browser, out var id) || BrowserExtensions.Known(browser, id) is not { } known)
+            return new(false, "That extension isn't one this app may block.");
+        var label = BrowserPrefs.Label(browser);
+        try
+        {
+            if (sys.ReadExtensionBlocklist(browser) is not { } list) return new(false, $"Couldn't read {label}'s extension blocklist; nothing was changed.");
+            if (BrowserExtensions.IsBlocked(list, id)) return new(true, $"{known.Name} is already blocked in {label}.");
+            if (BrowserExtensions.NextName(list) is not { } name)
+                return new(false, $"{label}'s extension blocklist isn't numbered 1, 2, 3… (your organization may manage it), so it was left as is.");
+            sys.AddExtensionBlock(browser, name, id);
+            var after = sys.ReadExtensionBlocklist(browser);
+            if (after?.FirstOrDefault(e => e.Name == name)?.Data?.Trim().Equals(id, StringComparison.OrdinalIgnoreCase) != true)
+            {
+                Log($"{label} blocklist {name} = {id} didn't stick");
+                // Best effort: the name was free before, and the Host deletes it only if it holds this ID.
+                try { sys.RemoveExtensionBlock(browser, name, id); } catch (Exception ex) when (ex is not OperationCanceledException) { Log("cleanup: " + ex.Message); }
+                return new(false, $"Windows didn't keep {known.Name} on {label}'s blocklist " + PolicyRefused);
+            }
+            var target = BrowserExtensions.Target(browser, id);
+            Journal(ChangeKind.ExtensionBlock, target, name, $"{known.Name} turned off in {label} for everyone on this PC (blocklist entry {name} added; was not blocked)");
+            AddUndo(new(BrowserExtensions.SuggestionId(browser, id), $"{known.Name} ({label})", MemoryActionType.BlockBrowserExtension, target, name));
+            return new(true, $"{known.Name} is turned off in {label} for everyone on this PC and can't be turned back on or reinstalled until you undo this. {label} now shows \"Managed by your organization\".");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log($"Block {a.Target} failed: {ex.Message}");
+            return new(false, $"Windows didn't allow blocking {known.Name} in {label} " + PolicyRefused);
+        }
+    }
+
     /// <summary>Per-item undo: restores every value this click changed (allowlisted only) and drops their journal records.</summary>
     private ActionOutcome UndoRegistry(UndoEntry u, string? done = null)
     {
@@ -612,6 +659,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
 
             case MemoryActionType.DisableOfficeOptionalExperiences:
                 return DisableOfficeOptionalExperiences(s);
+
+            case MemoryActionType.BlockBrowserExtension:
+                return BlockBrowserExtension(a);
 
             case MemoryActionType.AutoManagePageFile:
                 var pageFileBefore = await sys.ReadPageFileSettingsAsync(ct).ConfigureAwait(false);

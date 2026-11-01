@@ -93,6 +93,11 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 var (prOk, prMessage) = DefaultPrinter.Restore(memory, c.Target, c.Previous);
                 return new(c, prOk, prMessage);
 
+            case ChangeKind.ExtensionBlock:
+                if (memory is null) return Fail("Not available.");
+                var (extOk, extMessage) = BrowserExtensions.RemoveBlock(memory, c.Target, c.Previous);
+                return new(c, extOk, extMessage);
+
             case ChangeKind.StartupApp:
                 if (memory is null) return Fail("Not available.");
                 memory.SetStartupApproved(c.Target, c.Previous is null ? null : Convert.FromBase64String(c.Previous));

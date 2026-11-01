@@ -107,7 +107,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
         var defender = apps.Any(a => a.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase)) ? await ReadDefenderAsync(ct).ConfigureAwait(false) : null;
         return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
-            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart(), ReadDefaultPrinter(), ReadOfficePrivacy());
+            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart(), ReadDefaultPrinter(), ReadOfficePrivacy(), ReadExtensions(ct));
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -288,6 +288,116 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         if (SetDefaultPrinterNative(name)) { Log($"Default printer set to {name}"); return new(true, $"{name} is the default printer."); }
         Log($"SetDefaultPrinter({name}) failed: Win32 error {Marshal.GetLastWin32Error()}");
         return new(false, "Windows didn't allow changing the default printer.");
+    }
+
+    private static string UserDataDir(BrowserKind k) => Path.Combine(LocalAppData, k == BrowserKind.Chrome ? @"Google\Chrome\User Data" : @"Microsoft\Edge\User Data");
+
+    /// <summary>Reads a profile file the browser may have open (it replaces files atomically, so sharing is enough). Null = unreadable.</summary>
+    private string? ReadShared(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return null;
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var r = new StreamReader(fs);
+            return r.ReadToEnd();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log($"Read {path} failed: {ex.Message}"); return null; }
+    }
+
+    private static long FolderBytes(string path)
+    {
+        long sum = 0;
+        foreach (var f in Directory.EnumerateFiles(path, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
+            try { sum += new FileInfo(f).Length; } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return sum;
+    }
+
+    /// <summary>
+    /// #22: allowlisted extensions installed in any Chrome / Edge profile of this account (folders with a Preferences file:
+    /// Default, Profile 1, …), plus both machine blocklists. File reads only. An extension counts when its
+    /// <c>Extensions\&lt;id&gt;\&lt;version&gt;</c> folder exists and, when the profile's (Secure) Preferences lists extensions,
+    /// it's registered there too (a leftover folder after an uninstall doesn't count). Null = couldn't read.
+    /// </summary>
+    private BrowserExtensionsInfo? ReadExtensions(CancellationToken ct)
+    {
+        try
+        {
+            var found = new List<FoundExtension>();
+            foreach (var k in new[] { BrowserKind.Chrome, BrowserKind.Edge })
+            {
+                var userData = UserDataDir(k);
+                if (!Directory.Exists(userData)) continue;
+                var names = BrowserExtensions.ProfileNames(ReadShared(Path.Combine(userData, "Local State")));
+                var byId = new Dictionary<string, (List<string> Profiles, long Bytes)>(StringComparer.OrdinalIgnoreCase);
+                foreach (var dir in Directory.EnumerateDirectories(userData))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (!File.Exists(Path.Combine(dir, "Preferences"))) continue;
+                    var known = BrowserExtensions.KnownFor(k).Where(e => HasVersionFolder(Path.Combine(dir, "Extensions", e.Id))).ToList();
+                    if (known.Count == 0) continue;
+                    var registered = BrowserExtensions.IdsInPreferences(ReadShared(Path.Combine(dir, "Secure Preferences")), ReadShared(Path.Combine(dir, "Preferences")));
+                    var folder = Path.GetFileName(dir);
+                    foreach (var e in known)
+                    {
+                        if (registered is not null && !registered.Contains(e.Id)) continue;
+                        if (!byId.TryGetValue(e.Id, out var acc)) acc = ([], 0);
+                        acc.Profiles.Add(names.GetValueOrDefault(folder, folder));
+                        try { acc.Bytes += FolderBytes(Path.Combine(dir, "Extensions", e.Id)); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                        byId[e.Id] = acc;
+                    }
+                }
+                found.AddRange(byId.Select(kv => new FoundExtension(k, kv.Key, kv.Value.Profiles, kv.Value.Bytes > 0 ? kv.Value.Bytes : null)));
+            }
+            return new(found, SafeBlocklist(BrowserKind.Chrome), SafeBlocklist(BrowserKind.Edge));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Browser extensions read failed: " + ex.Message); return null; }
+    }
+
+    private static bool HasVersionFolder(string extensionDir)
+    {
+        try { return Directory.Exists(extensionDir) && Directory.EnumerateDirectories(extensionDir).Any(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    private IReadOnlyList<BlocklistEntry>? SafeBlocklist(BrowserKind k)
+    {
+        try { return ReadExtensionBlocklist(k); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log($"{k} extension blocklist read failed: {ex.Message}"); return null; }
+    }
+
+    private static RegistryKey Hklm64() => RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+
+    public IReadOnlyList<BlocklistEntry>? ReadExtensionBlocklist(BrowserKind browser)
+    {
+        using var hklm = Hklm64();
+        using var key = hklm.OpenSubKey(BrowserExtensions.BlocklistKey(browser));
+        if (key is null) return [];
+        return key.GetValueNames().Select(n => new BlocklistEntry(n, key.GetValueKind(n) == RegistryValueKind.String ? key.GetValue(n) as string : null)).ToList();
+    }
+
+    /// <summary>Only allowlisted IDs, only as a new numbered value; never overwrites an existing value.</summary>
+    public void AddExtensionBlock(BrowserKind browser, string valueName, string extensionId)
+    {
+        if (BrowserExtensions.Known(browser, extensionId) is not { } known) throw new InvalidOperationException($"{extensionId} isn't an extension this app may block.");
+        if (!BrowserExtensions.IsEntryName(valueName)) throw new InvalidOperationException($"'{valueName}' isn't a blocklist entry name.");
+        using var hklm = Hklm64();
+        using var key = hklm.CreateSubKey(BrowserExtensions.BlocklistKey(browser), writable: true) ?? throw new UnauthorizedAccessException("Can't open the blocklist key.");
+        if (key.GetValue(valueName) is not null) throw new InvalidOperationException($"Blocklist entry {valueName} already exists.");
+        key.SetValue(valueName, known.Id, RegistryValueKind.String);
+        Log($"HKLM\\{BrowserExtensions.BlocklistKey(browser)}\\{valueName} = {known.Id} ({known.Name})");
+    }
+
+    /// <summary>Deletes the value only while it still holds this allowlisted ID; other entries are never touched or renumbered.</summary>
+    public void RemoveExtensionBlock(BrowserKind browser, string valueName, string extensionId)
+    {
+        if (BrowserExtensions.Known(browser, extensionId) is not { } known) throw new InvalidOperationException($"{extensionId} isn't an extension this app may block.");
+        if (!BrowserExtensions.IsEntryName(valueName)) throw new InvalidOperationException($"'{valueName}' isn't a blocklist entry name.");
+        using var hklm = Hklm64();
+        using var key = hklm.OpenSubKey(BrowserExtensions.BlocklistKey(browser), writable: true);
+        if (key?.GetValue(valueName) is not string data || !data.Trim().Equals(known.Id, StringComparison.OrdinalIgnoreCase)) return;
+        key.DeleteValue(valueName, throwOnMissingValue: false);
+        Log($"HKLM\\{BrowserExtensions.BlocklistKey(browser)}\\{valueName} ({known.Name}) deleted");
     }
 
     /// <summary>Only values on <see cref="RegistryAllowlist"/>; the allowlisted entry's own key and name are used, never the caller's.</summary>
