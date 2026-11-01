@@ -145,22 +145,56 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
         await new WindowsEventLog(commands).QueryAsync(BootRecord.Channel, BootRecord.Query, 20, ct).ConfigureAwait(false)
         ?? throw new InvalidOperationException("Diagnostics-Performance log unavailable (administrator rights needed)");
 
-    // ---- resource & bloatware inventory snapshot ----
-    public async Task<SystemResourceSnapshot?> ReadResourceSnapshotAsync(CancellationToken ct)
+    // ---- idle resources: memory in use + background processes (sampled several times) ----
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct PROCESSENTRY32W
     {
-        var memSys = new WindowsMemorySystem(null, log);
+        public uint dwSize, cntUsage, th32ProcessID; public IntPtr th32DefaultHeapID; public uint th32ModuleID, cntThreads, th32ParentProcessID;
+        public int pcPriClassBase; public uint dwFlags; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szExeFile;
+    }
+    private const uint TH32CS_SNAPPROCESS = 0x2;
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool Process32FirstW(IntPtr snapshot, ref PROCESSENTRY32W entry);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool Process32NextW(IntPtr snapshot, ref PROCESSENTRY32W entry);
+    [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
+
+    /// <summary>Every process with its parent (Toolhelp snapshot: no access rights needed, unlike reading each process).</summary>
+    private static List<ProcessRow> ReadProcessRows()
+    {
+        var snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap == new IntPtr(-1)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        try
+        {
+            var rows = new List<ProcessRow>();
+            var e = new PROCESSENTRY32W { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32W>() };
+            for (var ok = Process32FirstW(snap, ref e); ok; ok = Process32NextW(snap, ref e))
+                rows.Add(new((int)e.th32ProcessID, (int)e.th32ParentProcessID, e.szExeFile ?? ""));
+            return rows;
+        }
+        finally { CloseHandle(snap); }
+    }
+
+    public Task<IdleResourceSample?> ReadIdleResourcesAsync(CancellationToken ct)
+    {
         double? memUsedMb = null;
-        try { memUsedMb = Math.Round(memSys.ReadMemory().UsedBytes / (double)(1L << 20), 0); } catch (Exception ex) { Log("memUsed: " + ex.Message); }
+        try { memUsedMb = Math.Round(new WindowsMemorySystem(null, log).ReadMemory().UsedBytes / (double)(1L << 20), 0); } catch (Exception ex) { Log("memUsed: " + ex.Message); }
 
         int? bgProcs = null;
         try
         {
-            var ps = Process.GetProcesses();
-            bgProcs = ps.Length;
-            foreach (var p in ps) p.Dispose();
+            var rows = ReadProcessRows();
+            bgProcs = BackgroundProcessCount.Count(rows, Environment.ProcessId);
+            Log($"bgProcs: {bgProcs} of {rows.Count} running (this app, its child processes and the benchmark's own programs not counted)");
         }
         catch (Exception ex) { Log("bgProcs: " + ex.Message); }
 
+        return Task.FromResult<IdleResourceSample?>(memUsedMb is null && bgProcs is null ? null : new(memUsedMb, bgProcs));
+    }
+
+    // ---- disk space & bloatware inventory snapshot ----
+    public async Task<SystemResourceSnapshot?> ReadResourceSnapshotAsync(CancellationToken ct)
+    {
+        var memSys = new WindowsMemorySystem(null, log);
         double? diskFreeGb = null;
         try
         {
@@ -186,6 +220,6 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { Log("inventory script: " + ex.Message); }
 
-        return new(memUsedMb, bgProcs, diskFreeGb, startupCount, autoSvcCount, taskCount, bloatCount);
+        return new(diskFreeGb, startupCount, autoSvcCount, taskCount, bloatCount);
     }
 }
