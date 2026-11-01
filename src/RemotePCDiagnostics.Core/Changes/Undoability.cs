@@ -35,6 +35,7 @@ public static class Undoability
             or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile or MemoryActionType.DisableFastStartup
             or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile
             or MemoryActionType.SkipOfficeStartScreen => UndoSupport.Full,
+        MemoryActionType.CleanStorage => UndoSupport.None, // deleted caches don't come back
         _ => UndoSupport.NothingToUndo, // closing apps, ending build servers, restarting, opening Settings
     };
 

@@ -694,6 +694,78 @@ public class WorkflowTests
         Assert.Equal(UndoSupport.None, Undoability.Of(Undoability.Permanent("t", "Installed updates", "x")));
     }
 
+    // ---- storage cleanups (#1, #2, #5, #6, #13): one permanent fix per measured category ----
+
+    private sealed class StorageMem : IMemorySystem
+    {
+        public readonly List<string> Cleaned = [];
+        public bool VsCodeOpen = true;
+        public readonly IReadOnlyList<StorageCleanupItem> Items =
+        [
+            new("storage-nuget", "NuGet", "d", 4L << 30, AutoCheckedByDefault: true),
+            new("storage-vscode", "VS Code", "d", 3L << 30, AutoCheckedByDefault: true),
+            new("storage-playwright", "Playwright", "d", 2L << 30, AutoCheckedByDefault: false),
+            new("storage-temp", "Temp", "d", 5L << 30, AutoCheckedByDefault: true),
+            new("storage-grok-worktrees", "Worktrees", "d", 7L << 30, AutoCheckedByDefault: false, Category: "Review"),
+        ];
+        public MemoryReading ReadMemory() => new(16L << 30, 8L << 30);
+        public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> s, CancellationToken ct) => Task.FromResult(new MemorySnapshot(ReadMemory(), []));
+        public Task<ActionOutcome> CloseAppAsync(string p, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public Task<ActionOutcome> ForceCloseAppAsync(string p, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public Task<ActionOutcome> RunCommandAsync(string f, IReadOnlyList<string> a, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public byte[]? GetStartupApproved(string n) => null;
+        public void SetStartupApproved(string n, byte[]? v) { }
+        public bool IsBrowserRunning(BrowserKind k) => false;
+        public string? ReadBrowserLocalState(BrowserKind k) => null;
+        public void WriteBrowserLocalState(BrowserKind k, string json) { }
+        public void OpenUri(string uri) { }
+        public string GetServiceStartType(string n) => "Automatic";
+        public void SetServiceStartType(string n, string t) { }
+        public Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<StorageCleanupItem>>(Items.Where(i => !Cleaned.Contains(i.Id)).ToList());
+        public Task<RemotePCDiagnostics.Core.Storage.StorageCleanResult> CleanStorageAsync(string id, CancellationToken ct)
+        {
+            Cleaned.Add(id);
+            return Task.FromResult(id == "storage-vscode" && VsCodeOpen
+                ? new RemotePCDiagnostics.Core.Storage.StorageCleanResult(id, false, 0, 0, 0, "Skipped: VS Code is open, so nothing was deleted. Close it and run this again.", ["Code"])
+                : new RemotePCDiagnostics.Core.Storage.StorageCleanResult(id, true, 1234, 4L << 30, 0, "Freed 4.0 GB (1,234 files deleted)."));
+        }
+    }
+
+    [Fact]
+    public async Task StorageCleanups_OneFixPerCategory_DefaultsFromScan_RunAfterRestart_JournaledAsPermanent()
+    {
+        var journal = new MemoryChangeJournal();
+        var mem = new StorageMem();
+        var (flow, sys, _, _, _, _) = Make(null, journal, mem, DefaultModules());
+        await flow.RunChecksAsync();
+        var storage = flow.State.Fixes.Where(f => f.MemoryAction == MemoryActionType.CleanStorage).ToList();
+        Assert.Equal(["storage-nuget", "storage-playwright", "storage-vscode"], storage.Select(f => f.MemoryTarget).OrderBy(x => x));
+        Assert.All(storage, f => { Assert.Equal(UndoSupport.None, f.Undo); Assert.Equal("Storage", f.Area); Assert.False(f.NeedsAdmin); });
+        Assert.Contains(Id(flow, f => f.MemoryTarget == "storage-nuget"), flow.State.Approved);
+        Assert.DoesNotContain(Id(flow, f => f.MemoryTarget == "storage-playwright"), flow.State.Approved); // opt-in
+        Assert.Empty(mem.Cleaned); // nothing is deleted before the tech starts the run
+
+        Assert.Null(await flow.StartAsync(null));
+        sys.Uptime = TimeSpan.Zero;
+        await flow.ResumeAsync();
+        await flow.ResumeAsync();
+        var s = flow.State;
+        Assert.Equal(WorkflowStage.Done, s.Stage);
+        Assert.Equal(["storage-nuget", "storage-vscode"], mem.Cleaned.OrderBy(x => x));
+        var nuget = s.Outcomes.Single(o => o.FixId == Id(flow, f => f.MemoryTarget == "storage-nuget"));
+        Assert.True(nuget.Success);
+        Assert.Contains("Freed 4.0 GB", nuget.Message);
+        var change = Assert.Single(nuget.Changes!);
+        Assert.Equal(UndoSupport.None, change.Undo);
+        Assert.Contains("4.0 GB freed", change.Text);
+        var vscode = s.Outcomes.Single(o => o.FixId == Id(flow, f => f.MemoryTarget == "storage-vscode"));
+        Assert.True(vscode.Skipped);
+        Assert.Empty(vscode.Changes!);
+        Assert.Single(journal.All, c => c.Kind == ChangeKind.NotUndoable && c.Label.Contains("4.0 GB freed"));
+        Assert.Contains("Freed 4.0 GB", sys.Report!);
+    }
+
     private static string E(string s) => System.Net.WebUtility.HtmlEncode(s);
     private static int CountOf(string text, string part) { var n = 0; for (var i = text.IndexOf(part, StringComparison.Ordinal); i >= 0; i = text.IndexOf(part, i + part.Length, StringComparison.Ordinal)) n++; return n; }
 }

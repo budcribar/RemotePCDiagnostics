@@ -30,7 +30,7 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
 public sealed class UndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem? memory = null, IServiceControlBackend? services = null,
     Action<LogLevel, string>? events = null, Action<string>? log = null)
 {
-    public const string NotUndoableNote = "Installed updates, removed apps, and deleted temporary or Recycle Bin files can't be put back; undo lists them as left as is.";
+    public const string NotUndoableNote = "Installed updates, removed apps, and deleted temporary files, caches or Recycle Bin items can't be put back; undo lists them as left as is.";
     private void Log(string m) { try { log?.Invoke("[undo] " + m); } catch { } }
 
     public IReadOnlyList<ChangeRecord> Pending => journal.All;

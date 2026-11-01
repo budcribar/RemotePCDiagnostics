@@ -77,7 +77,7 @@
             </div>
         }
     </div>
-    @foreach (var r in Svc.Recent.Where(r => Svc.Suggestions.All(s => s.Id != r.SuggestionId)).Take(5))
+    @foreach (var r in Svc.Recent.Where(r => Svc.Suggestions.All(s => s.Id != r.SuggestionId) && RemotePCDiagnostics.Core.Storage.StorageCleanupCatalog.Find(r.SuggestionId) is null).Take(5))
     {
         <div class="meta" data-testid="mem-recent">@r.When.ToString("HH:mm") · @r.Message</div>
     }

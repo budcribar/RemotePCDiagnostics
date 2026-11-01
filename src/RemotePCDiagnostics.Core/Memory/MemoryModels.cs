@@ -161,6 +161,8 @@ public enum MemoryActionType
     RestartPc, DisableFastStartup, DisableTransparency, AutoManagePageFile,
     AddDefenderExclusions, DisableWidgets, DisableSearchHighlights, ReduceHibernateFile,
     SkipOfficeStartScreen,
+    /// <summary>Deletes one storage cleanup category (Target = its id in <see cref="Storage.StorageCleanupCatalog"/>). Permanent.</summary>
+    CleanStorage,
 }
 
 /// <summary>One button on a suggestion card. <see cref="Confirm"/> non-null = ask once inline before running.</summary>
