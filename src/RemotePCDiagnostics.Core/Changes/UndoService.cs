@@ -20,7 +20,7 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
         : (Attempted == 0 ? "Nothing that can be undone"
             : $"Undid {Succeeded} of {Attempted} change{(Attempted == 1 ? "" : "s")}" + (Failed > 0 ? $"; {Failed} couldn't be undone" : ""))
           + (Skipped > 0 ? $"; {Skipped} permanent change{(Skipped == 1 ? " was" : "s were")} left as is (can't be reversed)" : "")
-          + (NeedsRestart ? ". Restart to finish (Fast Startup / page file)." : ".");
+          + (NeedsRestart ? ". Restart to finish (Fast Startup, page file, Widgets, Search highlights)." : ".");
 }
 
 /// <summary>
@@ -78,6 +78,11 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 var (kindD, value) = (c.Target[..sep], c.Target[(sep + 1)..]);
                 var removeScript = kindD == "process" ? DefenderProbe.RemoveScript([], [value]) : DefenderProbe.RemoveScript([value], []);
                 return await Ps(removeScript, c, $"Defender scans {(kindD == "process" ? "files opened by " + Path.GetFileName(value) : value)} again.", ct).ConfigureAwait(false);
+
+            case ChangeKind.RegistryValue:
+                if (memory is null) return Fail("Not available.");
+                var (regOk, regMessage) = RegistryAllowlist.Restore(memory, c.Target, c.Previous);
+                return new(c, regOk, regMessage);
 
             case ChangeKind.StartupApp:
                 if (memory is null) return Fail("Not available.");

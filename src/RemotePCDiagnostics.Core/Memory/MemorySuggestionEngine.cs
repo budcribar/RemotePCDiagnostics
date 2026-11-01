@@ -326,10 +326,38 @@ public static class MemorySuggestionEngine
                 null, SuggestionRisk.Low, SuggestionKind.Automated, ["Same as Settings > Personalization > Colors > Transparency effects: Off (this account only). Undo turns it back on."],
                 [new(MemoryActionType.DisableTransparency, "", "Turn off transparency"),
                  new(MemoryActionType.OpenSettings, "ms-settings:personalization-colors", "Open Colors settings")], "Windows extras"));
-        if (s.App("Widgets") is { } w)
+        if (WindowsFeeds.OfferWidgets(s))
+        {
+            var running = WindowsFeeds.RunningWidgets(s);
+            var bytes = running.Sum(x => x.MemoryBytes);
+            var now = running.Count > 0 ? $" Right now its processes use {MemoryText.Size(bytes)}, plus the hidden web views they run." : "";
+            list.Add(new("widgets", "Turn off Widgets",
+                $"The Widgets board on the taskbar (weather, news and the Microsoft Start feed) keeps running in the background even if it's never opened.{now}",
+                running.Count > 0 ? bytes : null, SuggestionRisk.Low, SuggestionKind.Automated,
+                ["Turns off the Widgets board on the taskbar for everyone on this PC (a Windows policy). You lose the weather and news panel and Win+W.",
+                 "Ends the running Widgets processes, so their memory is freed now.",
+                 "Undo turns it back on. Takes full effect after a restart."],
+                [new(MemoryActionType.DisableWidgets, "", "Turn off Widgets",
+                    "Turn off Widgets for everyone on this PC? The weather and news board leaves the taskbar (fully after a restart). Needs administrator rights.")],
+                "Windows extras", "Takes full effect after a restart."));
+        }
+        else if (s.Feeds is null && s.App("Widgets") is { } w)
             list.Add(new("widgets", "Turn off Widgets", $"Widgets is running and using {MemoryText.Size(w.MemoryBytes)}.", w.MemoryBytes, SuggestionRisk.Low, SuggestionKind.Guided,
                 ["Settings > Personalization > Taskbar", "Turn off Widgets (and Copilot if you don't use it)"],
                 [new(MemoryActionType.OpenSettings, "ms-settings:taskbar", "Open Taskbar settings")], "Windows extras"));
+        if (WindowsFeeds.OfferHighlights(s))
+        {
+            var host = s.App("SearchHost") is { } sh ? $" The Search box (SearchHost) is using {MemoryText.Size(sh.MemoryBytes)} right now." : "";
+            list.Add(new("search-highlights", "Turn off Search highlights",
+                $"The Search box downloads Bing pictures and trending searches every day and shows them in the taskbar and the Search window.{host}",
+                null, SuggestionRisk.Low, SuggestionKind.Automated,
+                ["Removes the Bing pictures and trending searches from the Search box (a Windows policy for everyone on this PC, plus this account's Settings toggle).",
+                 "Searching still works, including web results; only the daily highlights go away.",
+                 "Undo turns it back on. Takes full effect after a restart."],
+                [new(MemoryActionType.DisableSearchHighlights, "", "Turn off Search highlights",
+                    "Turn off Search highlights for everyone on this PC? Bing pictures and trending searches leave the Search box. Needs administrator rights.")],
+                "Windows extras", "Takes full effect after a restart."));
+        }
 
         // Services.
         foreach (var su in s.Services ?? [])

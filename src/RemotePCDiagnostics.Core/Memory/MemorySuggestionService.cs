@@ -27,7 +27,7 @@ public static class MemoryFeedback
     public static bool IsDeferred(MemoryActionType t) => t is MemoryActionType.DisableStartup or MemoryActionType.EnableBrowserMemorySaver
         or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings
         or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile
-        or MemoryActionType.AddDefenderExclusions;
+        or MemoryActionType.AddDefenderExclusions or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights;
 }
 
 public sealed record ActionOutcome(bool Success, string Message);
@@ -67,6 +67,12 @@ public interface IMemorySystem
     Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct) => Task.FromResult<IReadOnlyList<StorageCleanupItem>>([]);
     /// <summary>Runs a Defender PowerShell script built by <see cref="DefenderProbe"/> (admin). Output = its stdout.</summary>
     Task<(bool Ok, string? Output)> RunDefenderScriptAsync(string script, CancellationToken ct) => Task.FromResult<(bool, string?)>((false, null));
+    /// <summary>A DWORD on <see cref="RegistryAllowlist"/> (null = absent). Throws for a value that exists but isn't a DWORD.</summary>
+    int? ReadDword(RegistrySetting setting) => null;
+    /// <summary>Writes a DWORD on <see cref="RegistryAllowlist"/> (HKLM needs admin). Refuses anything else.</summary>
+    void WriteDword(RegistrySetting setting, int value) => throw new NotSupportedException();
+    /// <summary>Deletes a value on <see cref="RegistryAllowlist"/> (no error when it's already absent).</summary>
+    void DeleteDword(RegistrySetting setting) => throw new NotSupportedException();
 }
 
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);
@@ -200,6 +206,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                             try { journal?.RemoveLatest(ChangeKind.DefenderExclusion, t); } catch { }
                     outcome = ok ? new(true, "Defender scans those folders and build tools again.") : new(false, "Windows didn't allow removing the exclusions.");
                     break;
+                case MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights:
+                    outcome = UndoRegistry(u);
+                    break;
                 case MemoryActionType.DisableTransparency:
                     sys.SetTransparency(u.Previous != "0");
                     outcome = new(true, u.Previous != "0" ? "Transparency effects turned back on." : "Transparency effects left off (they were off before).");
@@ -240,6 +249,81 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
         if (folders.Count + procs.Count == 0) return new(false, "Defender didn't keep the exclusions; your organization's policy probably controls them.");
         return new(true, $"Defender no longer scans {MemoryText.Plural(folders.Count, "folder", "folders")} and {MemoryText.Plural(procs.Count, "build tool", "build tools")}."
             + (missed > 0 ? $" {missed} weren't kept (organization policy)." : "") + " Builds speed up from the next one.");
+    }
+
+    /// <summary>Result of one allowlisted DWORD write. <see cref="Changed"/> = written (and journaled); false when it was already that value.</summary>
+    private sealed record DwordWrite(bool Ok, bool Changed, string Target, string? Previous);
+
+    /// <summary>
+    /// Sets an allowlisted DWORD, reads it back, and journals the old value (null = absent) only when the new value stuck.
+    /// Never throws: access denied, UCPD or an organization policy is reported as not Ok, with nothing journaled.
+    /// </summary>
+    private DwordWrite SetDword(RegistrySetting setting, int value, Func<string, string> label)
+    {
+        if (RegistryAllowlist.Find(setting.Target) is not { } r) return new(false, false, setting.Target, null);
+        try
+        {
+            var before = sys.ReadDword(r);
+            if (before == value) return new(true, false, r.Target, RegistryAllowlist.Encode(before));
+            sys.WriteDword(r, value);
+            if (sys.ReadDword(r) != value) { Log($"{r.Target} = {value} didn't stick"); return new(false, false, r.Target, null); }
+            var previous = RegistryAllowlist.Encode(before);
+            Journal(ChangeKind.RegistryValue, r.Target, previous, label(RegistryAllowlist.Describe(before)), restart: true);
+            return new(true, true, r.Target, previous);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log($"{r.Target} = {value} failed: {ex.Message}");
+            return new(false, false, r.Target, null);
+        }
+    }
+
+    private const string PolicyRefused = "(administrator rights needed, or your organization manages this setting). Nothing was changed.";
+
+    /// <summary>#16: the Widgets machine policy (HKCU TaskbarDa is blocked by UCPD, so it's never written), then ends the Widgets processes.</summary>
+    private async Task<ActionOutcome> DisableWidgetsAsync(MemorySuggestion s, CancellationToken ct)
+    {
+        var w = SetDword(RegistryAllowlist.WidgetsPolicy, 0, was => $"Widgets turned off for everyone on this PC (policy was {was})");
+        if (!w.Ok) return new(false, "Windows didn't keep the Widgets policy " + PolicyRefused);
+        if (w.Changed) AddUndo(new(s.Id, "Widgets", MemoryActionType.DisableWidgets, "", RegistryUndo.Encode([new RegistryUndo.Item(w.Target, w.Previous)])));
+        var ended = 0;
+        foreach (var name in WindowsFeeds.WidgetProcesses)
+        {
+            if (Snapshot?.App(name) is null) continue;
+            try { if ((await sys.ForceCloseAppAsync(name, ct).ConfigureAwait(false)).Success) ended++; }
+            catch (Exception ex) when (ex is not OperationCanceledException) { Log($"End {name}: {ex.Message}"); }
+        }
+        return new(true, "Widgets turned off for everyone on this PC" + (ended > 0 ? " and its background processes ended" : "") + ". Takes full effect after a restart.");
+    }
+
+    /// <summary>#17: the Search highlights policy (must stick), plus this account's Settings toggle (best effort). Never DisableSearchBoxSuggestions.</summary>
+    private ActionOutcome DisableSearchHighlights(MemorySuggestion s)
+    {
+        var policy = SetDword(RegistryAllowlist.SearchHighlightsPolicy, 0, was => $"Search highlights turned off for everyone on this PC (policy was {was})");
+        if (!policy.Ok) return new(false, "Windows didn't keep the Search highlights policy " + PolicyRefused);
+        var toggle = SetDword(RegistryAllowlist.SearchHighlightsToggle, 0, was => $"Search highlights setting turned off for this account (was {was})");
+        var changed = new[] { policy, toggle }.Where(x => x.Changed).Select(x => new RegistryUndo.Item(x.Target, x.Previous)).ToList();
+        if (changed.Count > 0) AddUndo(new(s.Id, "Search highlights", MemoryActionType.DisableSearchHighlights, "", RegistryUndo.Encode(changed)));
+        return new(true, "Search highlights turned off" + (toggle.Ok ? "" : " (this account's Settings toggle couldn't be changed; the policy still applies)") + ". Takes full effect after a restart.");
+    }
+
+    /// <summary>Per-item undo: restores every value this click changed (allowlisted only) and drops their journal records.</summary>
+    private ActionOutcome UndoRegistry(UndoEntry u)
+    {
+        var items = RegistryUndo.Decode(u.Previous);
+        if (items.Count == 0) return new(false, "The original setting wasn't recorded.");
+        var failed = new List<string>();
+        foreach (var item in items)
+        {
+            bool ok;
+            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous).Ok; }
+            catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
+            if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
+            else failed.Add(item.Target);
+        }
+        return failed.Count == 0
+            ? new(true, $"{u.Label} turned back on. Takes full effect after a restart.")
+            : new(false, $"Windows didn't allow turning {u.Label} back on (administrator rights needed).");
     }
 
     private SuggestionResult Record(string id, ActionOutcome o, MemoryAction a, UndoEntry? _, bool canForce = false)
@@ -335,6 +419,12 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
 
             case MemoryActionType.AddDefenderExclusions:
                 return await AddDefenderExclusionsAsync(s, ct).ConfigureAwait(false);
+
+            case MemoryActionType.DisableWidgets:
+                return await DisableWidgetsAsync(s, ct).ConfigureAwait(false);
+
+            case MemoryActionType.DisableSearchHighlights:
+                return DisableSearchHighlights(s);
 
             case MemoryActionType.AutoManagePageFile:
                 var pageFileBefore = await sys.ReadPageFileSettingsAsync(ct).ConfigureAwait(false);

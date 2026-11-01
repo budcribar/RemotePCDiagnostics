@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Xml.Linq;
 using Microsoft.Win32;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Memory;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Projects;
@@ -105,7 +106,60 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
         var defender = apps.Any(a => a.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase)) ? await ReadDefenderAsync(ct).ConfigureAwait(false) : null;
         return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
-            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender);
+            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds());
+    }
+
+    private const string PackagesKey = @"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
+    private const string WidgetsPackage = "MicrosoftWindows.Client.WebExperience_";
+
+    /// <summary>Widgets / Search highlights state: registry reads only. Null when it couldn't be read (nothing is offered then).</summary>
+    private WindowsFeedsInfo? ReadFeeds()
+    {
+        try
+        {
+            bool installed = false;
+            using (var pk = Registry.CurrentUser.OpenSubKey(PackagesKey))
+                installed = pk?.GetSubKeyNames().Any(n => n.StartsWith(WidgetsPackage, StringComparison.OrdinalIgnoreCase)) == true;
+            int? taskbarDa = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "TaskbarDa", null) as int?;
+            return new(Environment.OSVersion.Version.Build, ReadDword(RegistryAllowlist.WidgetsPolicy), installed, taskbarDa,
+                ReadDword(RegistryAllowlist.SearchHighlightsPolicy), ReadDword(RegistryAllowlist.SearchHighlightsToggle));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Widgets/Search highlights read failed: " + ex.Message); return null; }
+    }
+
+    /// <summary>Only values on <see cref="RegistryAllowlist"/>; the allowlisted entry's own key and name are used, never the caller's.</summary>
+    private static RegistrySetting Allowed(RegistrySetting setting) =>
+        RegistryAllowlist.Find(setting.Target) ?? throw new InvalidOperationException($"{setting.Target} isn't a registry value this app may change.");
+
+    private static RegistryKey OpenBase(RegistrySetting s) => RegistryKey.OpenBaseKey(
+        s.Root == RegistryRoot.LocalMachine ? Microsoft.Win32.RegistryHive.LocalMachine : Microsoft.Win32.RegistryHive.CurrentUser, RegistryView.Registry64);
+
+    public int? ReadDword(RegistrySetting setting)
+    {
+        var s = Allowed(setting);
+        using var root = OpenBase(s);
+        using var k = root.OpenSubKey(s.Key);
+        if (k?.GetValue(s.Name) is not { } v) return null;
+        if (k.GetValueKind(s.Name) != RegistryValueKind.DWord || v is not int i) throw new InvalidOperationException($"{s.Target} isn't a DWORD.");
+        return i;
+    }
+
+    public void WriteDword(RegistrySetting setting, int value)
+    {
+        var s = Allowed(setting);
+        using var root = OpenBase(s);
+        using var k = root.CreateSubKey(s.Key, writable: true) ?? throw new UnauthorizedAccessException($"Can't open {s.Key}.");
+        k.SetValue(s.Name, value, RegistryValueKind.DWord);
+        Log($"{s.Target} set to {value}");
+    }
+
+    public void DeleteDword(RegistrySetting setting)
+    {
+        var s = Allowed(setting);
+        using var root = OpenBase(s);
+        using var k = root.OpenSubKey(s.Key, writable: true);
+        k?.DeleteValue(s.Name, throwOnMissingValue: false);
+        Log($"{s.Target} deleted");
     }
 
     /// <summary>Defender status + which code folders, package cache and build tools aren't excluded yet. Null = couldn't tell.</summary>
