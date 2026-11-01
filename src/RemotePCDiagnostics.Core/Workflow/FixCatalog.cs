@@ -47,6 +47,8 @@ public static class FixCatalog
     public static string RemediationId(AreaAction a) => $"rem:{a.Kind}:{a.Target}".ToLowerInvariant();
     public static string MemoryId(string suggestionId, MemoryActionType t, string target) => $"mem:{suggestionId}:{t}:{target}".ToLowerInvariant();
 
+    private static bool CanRunUnattended(MemoryAction action) => UnattendedMemoryActions.Contains(action.Type);
+
     public static IReadOnlyList<WorkflowFix> Build(IEnumerable<DiagnosticResult> results, IEnumerable<MemorySuggestion> suggestions, RemediationService? plans = null)
     {
         var list = new List<WorkflowFix>();
@@ -79,14 +81,14 @@ public static class FixCatalog
         {
             if (s.Kind != SuggestionKind.Automated) continue;
             // One action per suggestion: the first unattended one (e.g. "Don't start automatically" rather than "Stop now").
-            var a = s.Actions.FirstOrDefault(x => UnattendedMemoryActions.Contains(x.Type));
+            var a = s.Actions.FirstOrDefault(CanRunUnattended);
             if (a is null) continue;
             var id = MemoryId(s.Id, a.Type, a.Target);
             if (!seen.Add(id)) continue;
             var order = a.Type switch { MemoryActionType.DisableStartup => 20, MemoryActionType.SetServiceManual => 22, MemoryActionType.AutoManagePageFile => 12, _ => 15 };
-            list.Add(new(id, a.Type == MemoryActionType.SetServiceManual ? $"{s.Title}: start only when needed" : s.Title, s.Why, s.Category, s.Risk, FixSource.Memory, order,
+            list.Add(new(id, a.Type == MemoryActionType.SetServiceManual && !MemorySuggestionEngine.IsVisualStudioCollector(a.Target) ? $"{s.Title}: start only when needed" : s.Title, s.Why, s.Category, s.Risk, FixSource.Memory, order,
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
-                NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.AddDefenderExclusions,
+                NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions,
                 Undo: Changes.Undoability.Of(a.Type)));
         }
 
@@ -124,6 +126,6 @@ public static class FixCatalog
 
     /// <summary>Things worth telling the client that need a person (not applied by the workflow).</summary>
     public static IReadOnlyList<string> Recommendations(IEnumerable<MemorySuggestion> suggestions) =>
-        suggestions.Where(s => s.Kind is SuggestionKind.Guided or SuggestionKind.Info || (s.Kind == SuggestionKind.Automated && !s.Actions.Any(a => UnattendedMemoryActions.Contains(a.Type)) && !s.Actions.Any(a => a.Type is MemoryActionType.CloseApp or MemoryActionType.ShutdownBuildServers or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup)))
+        suggestions.Where(s => s.Kind is SuggestionKind.Guided or SuggestionKind.Info || (s.Kind == SuggestionKind.Automated && !s.Actions.Any(CanRunUnattended) && !s.Actions.Any(a => a.Type is MemoryActionType.CloseApp or MemoryActionType.ShutdownBuildServers or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup)))
             .Select(s => $"{s.Title}: {s.Why}").ToList();
 }

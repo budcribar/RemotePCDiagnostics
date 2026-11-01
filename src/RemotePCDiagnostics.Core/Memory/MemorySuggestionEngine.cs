@@ -138,7 +138,6 @@ public static class MemorySuggestionEngine
         ("gupdate", "Google's updater"),
         ("GoogleUpdater", "Google's updater"),
         ("edgeupdate", "Microsoft Edge's updater"),
-        ("VSStandardCollectorService", "Visual Studio's diagnostics collector"),
         ("VSInstallerElevationService", "the Visual Studio installer helper"),
     ];
 
@@ -154,6 +153,9 @@ public static class MemorySuggestionEngine
         if (HardwareHelperFragments.Any(f => s.Name.Contains(f, StringComparison.OrdinalIgnoreCase) || s.DisplayName.Contains(f, StringComparison.OrdinalIgnoreCase)))
             return null;
         if (ServiceCandidates.TryGetValue(s.Name, out var c)) return c;
+        if (IsVisualStudioCollector(s.Name))
+            return new("Visual Studio's diagnostics collector supports profiling and diagnostic data collection.",
+                "It will not start automatically at Windows startup. Manual permits on-demand starts; diagnostic tools may require you to start it. Its current running state is unchanged.");
         if (s.Name.StartsWith("TeamViewer", StringComparison.OrdinalIgnoreCase)) return ServiceCandidates["TeamViewer"];
         foreach (var (frag, what) in VendorServiceFragments)
             if (s.Name.Contains(frag, StringComparison.OrdinalIgnoreCase))
@@ -165,6 +167,9 @@ public static class MemorySuggestionEngine
             }
         return null;
     }
+
+    public static bool IsVisualStudioCollector(string name) =>
+        name.StartsWith("VSStandardCollectorService", StringComparison.OrdinalIgnoreCase);
 
     public static IReadOnlyList<MemorySuggestion> Build(MemorySnapshot s)
     {
@@ -335,6 +340,15 @@ public static class MemorySuggestionEngine
         foreach (var su in s.Services ?? [])
         {
             var svc = su.Info;
+            if (IsVisualStudioCollector(svc.Name))
+            {
+                if (!svc.IsAutomatic || CandidateFor(svc) is not { } collector) continue;
+                list.Add(new($"svc-{svc.Name}".ToLowerInvariant(), $"Set \"{svc.Label}\" to Manual",
+                    $"{collector.What} {collector.Lose}", null, SuggestionRisk.Medium, SuggestionKind.Automated,
+                    ["Changes startup type only; does not stop or restart the service. Undo restores the previous startup type."],
+                    [new(MemoryActionType.SetServiceManual, svc.Name, "Set to Manual")], "Services"));
+                continue;
+            }
             if (!svc.IsRunning || CandidateFor(svc) is not { } c || c.NeededWhen?.Invoke(s) == true) continue;
             var mem = su.ProcessMemoryBytes is not { } pm ? "Its memory use couldn't be read."
                 : su.Shared ? $"It runs in a shared process with {MemoryText.Plural(su.ServicesInProcess - 1, "other service")} ({MemoryText.Size(pm)} together), so its own share can't be measured exactly."

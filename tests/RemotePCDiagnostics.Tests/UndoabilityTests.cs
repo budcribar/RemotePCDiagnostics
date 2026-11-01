@@ -17,7 +17,7 @@ public class UndoabilityTests
     {
         Assert.Equal(UndoSupport.None, Undoability.Of(RemediationKind.CheckAndInstallWindowsUpdates));
         Assert.Equal(UndoSupport.None, Undoability.Of(RemediationKind.CheckAndInstallDriverUpdates));
-        Assert.Equal(UndoSupport.PlaceholdersOnly, Undoability.Of(RemediationKind.CleanTempFiles));
+        Assert.Equal(UndoSupport.None, Undoability.Of(RemediationKind.CleanTempFiles));
         Assert.Equal(UndoSupport.Full, Undoability.Of(RemediationKind.SetPublicDns));
         Assert.Equal(UndoSupport.NothingToUndo, Undoability.Of(RemediationKind.FlushDnsAndRenewIp));
         Assert.Equal(UndoSupport.Full, Undoability.Of(MemoryActionType.SetServiceManual));
@@ -33,7 +33,7 @@ public class UndoabilityTests
         var report = new AreaReport([new AreaCard("c", "Card", AreaLevel.Warning, "Headline", "", [], [], Actions: actions)], "3 things", DiagnosticStatus.Warning);
         var fixes = FixCatalog.Build([new DiagnosticResult("Programs", DiagnosticStatus.Warning, "", DateTimeOffset.Now, report)], []);
         Assert.Equal(UndoSupport.None, fixes.Single(f => f.Remediation!.Kind == RemediationKind.CheckAndInstallWindowsUpdates).Undo);
-        Assert.Equal(UndoSupport.PlaceholdersOnly, fixes.Single(f => f.Remediation!.Kind == RemediationKind.CleanTempFiles).Undo);
+        Assert.Equal(UndoSupport.None, fixes.Single(f => f.Remediation!.Kind == RemediationKind.CleanTempFiles).Undo);
         Assert.Equal(UndoSupport.Full, fixes.Single(f => f.Remediation!.Kind == RemediationKind.SetBalancedPowerPlan).Undo);
     }
 

@@ -118,20 +118,20 @@ public class UndoTests
     }
 
     [Fact]
-    public async Task Undo_TempFiles_RecreatesPlaceholdersTheNextCleanupDeletes()
+    public async Task Undo_TempFiles_IsSkippedWithoutCreatingFilesOrRunningCommands()
     {
-        var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "rpd-ph-" + Guid.NewGuid().ToString("N"))).FullName;
         var j = new MemoryChangeJournal();
         j.Add(Rec(ChangeKind.TempFiles, "run1", "3:3000000", 1));
-        var r = await new UndoService(j, new SystemCommandRunner(new ScriptedLauncher((_, _) => ScriptedLauncher.Ok("")))) { TempFolder = dir }.UndoAllAsync("x");
-        Assert.True(r.Items.Single().Success);
-        var files = Directory.GetFiles(dir, UndoService.PlaceholderPrefix + "*");
-        Assert.Equal(3, files.Length);
-        Assert.Equal(3_000_000, files.Sum(f => new FileInfo(f).Length));
-        Assert.All(files, f => Assert.True(File.GetLastWriteTime(f) < DateTime.Now.AddHours(-24)));
-        Directory.Delete(dir, true);
-        Assert.Equal((500, 10L), UndoService.ParseTempFiles("500:10"));
-        Assert.Equal((0, 0L), UndoService.ParseTempFiles("junk"));
+        var launcher = new ScriptedLauncher((_, _) => throw new Exception("Undo must not run commands"));
+        var r = await new UndoService(j, new SystemCommandRunner(launcher)).UndoAllAsync("x");
+        var item = Assert.Single(r.Items);
+        Assert.True(item.Skipped);
+        Assert.False(item.Success);
+        Assert.Equal(0, r.Failed);
+        Assert.Equal(0, r.Succeeded);
+        Assert.Contains("cannot be restored", item.Message);
+        Assert.Empty(launcher.Calls);
+        Assert.Empty(j.All);
     }
 
     // ---- recording ----
