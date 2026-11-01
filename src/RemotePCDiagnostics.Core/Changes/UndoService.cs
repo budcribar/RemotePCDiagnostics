@@ -25,12 +25,12 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
 
 /// <summary>
 /// Reverts the journaled changes, newest first. Only puts back settings this app changed. Permanent changes (installed updates,
-/// removed apps) are journaled as <see cref="ChangeKind.NotUndoable"/> so this reports them as skipped; temp file cleanups get placeholders.
+/// removed apps) and deleted temporary files are reported as skipped; deleted files are never recreated.
 /// </summary>
 public sealed class UndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem? memory = null, IServiceControlBackend? services = null,
     Action<LogLevel, string>? events = null, Action<string>? log = null)
 {
-    public const string NotUndoableNote = "Installed updates and removed apps can't be put back; undo lists them as left as is. Deleted temp files come back only as placeholder files of the same size.";
+    public const string NotUndoableNote = "Installed updates, removed apps, and deleted temporary or Recycle Bin files can't be put back; undo lists them as left as is.";
     private void Log(string m) { try { log?.Invoke("[undo] " + m); } catch { } }
 
     public IReadOnlyList<ChangeRecord> Pending => journal.All;
@@ -130,10 +130,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 return await Ps(script, c, servers.Count == 0 ? "DNS back to automatic." : $"DNS back to {string.Join(", ", servers)}.", ct).ConfigureAwait(false);
 
             case ChangeKind.TempFiles:
-                var (files, bytes) = ParseTempFiles(c.Previous);
-                if (bytes <= 0) return Fail("The amount removed wasn't recorded.");
-                var made = await Task.Run(() => CreatePlaceholders(TempFolder ?? Path.GetTempPath(), files, bytes), ct).ConfigureAwait(false);
-                return Ok($"Recreated {made} placeholder temp file{(made == 1 ? "" : "s")} ({Osquery.HardwareInventory.FormatBytes(bytes)}); the next cleanup removes them again. Recycle Bin items can't be recreated.");
+                return new(c, false, "Deleted temporary files and emptied Recycle Bin items cannot be restored.", Skipped: true);
 
             case ChangeKind.PageFile:
                 if (memory is null || c.Previous is null) return Fail("The original page file size wasn't recorded.");
@@ -141,40 +138,6 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 return new(c, o.Success, o.Message);
         }
         return Fail("Unknown change.");
-    }
-
-    /// <summary>Where placeholder temp files go (null = the current user's %TEMP%); tests point it elsewhere.</summary>
-    public string? TempFolder { get; init; }
-    public const int MaxPlaceholderFiles = 500;
-    public const string PlaceholderPrefix = "rpd-placeholder-";
-
-    public static (int Files, long Bytes) ParseTempFiles(string? v)
-    {
-        var p = (v ?? "").Split(':');
-        return p.Length == 2 && int.TryParse(p[0], out var f) && long.TryParse(p[1], out var b) ? (Math.Max(1, f), b) : (0, 0);
-    }
-
-    /// <summary>
-    /// Writes about the same number of files and bytes the cleanup removed (at most <see cref="MaxPlaceholderFiles"/> files),
-    /// dated 2 days back so the cleanup's "older than 24 hours" rule deletes them again. Space is allocated, not sparse.
-    /// </summary>
-    public static int CreatePlaceholders(string folder, int files, long bytes)
-    {
-        var n = (int)Math.Clamp(files, 1, MaxPlaceholderFiles);
-        var each = Math.Max(1, bytes / n);
-        var stamp = DateTime.Now.AddDays(-2);
-        var buffer = new byte[Math.Min(each, 1 << 20)];
-        Random.Shared.NextBytes(buffer); // real data: compressible zeros could take less space on compressed volumes
-        for (var i = 0; i < n; i++)
-        {
-            var size = i == n - 1 ? bytes - each * (n - 1) : each;
-            var path = Path.Combine(folder, $"{PlaceholderPrefix}{Guid.NewGuid():N}.tmp");
-            using (var fs = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16))
-                for (long left = size; left > 0; left -= buffer.Length) fs.Write(buffer, 0, (int)Math.Min(buffer.Length, left));
-            File.SetLastWriteTime(path, stamp);
-            File.SetCreationTime(path, stamp);
-        }
-        return n;
     }
 
     private static int Dword(string? v) => int.TryParse(v, out var i) && i is >= 0 and <= 1 ? i : 1;

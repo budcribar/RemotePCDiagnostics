@@ -351,7 +351,7 @@ The models and several detectors are implemented. Phase 2 is not complete: the c
 * **Defender (#12) is one click:** adds the found code folders (3+ repos in one folder collapse to that folder), `~\.nuget\packages`, and Visual Studio's `devenv.exe`, `MSBuild.exe`, `VBCSCompiler.exe` (not `dotnet.exe`, which runs every .NET app). Only when Defender is the active antivirus and exclusions are readable; read back after adding (organization policy can ignore local exclusions); each exclusion is journaled and undone with `Remove-MpPreference`.
 
 ### Undo rules for new fixes
-* Every fix declares its [`UndoSupport`](../src/RemotePCDiagnostics.Core/Changes/Undoability.cs): `Full` (previous setting journaled and restored), `NothingToUndo`, `PlaceholdersOnly` (deleted files: undo recreates same-size placeholders for benchmark testing), or `None` (permanent).
+* Every fix declares its [`UndoSupport`](../src/RemotePCDiagnostics.Core/Changes/Undoability.cs): `Full` (previous setting journaled and restored), `NothingToUndo`, or `None` (permanent, including deleted temporary files and emptied Recycle Bin items). Cleanup undo never creates replacement files. The legacy `PlaceholdersOnly` serialized value is retained for compatibility and displayed as permanent.
 * `None` covers `Remove-AppxPackage` / `Remove-AppxProvisionedPackage`, program uninstalls, installed updates, and cache/package deletions. These are journaled as `ChangeKind.NotUndoable`; the workflow shows a **"can't be undone"** chip, and "Undo all" / `--undo-all` lists them as *left as is* instead of failing.
 * The storage scan (`ScanStorageCleanupsAsync`) is not part of the memory snapshot; it runs on demand and is cached for 5 minutes.
 

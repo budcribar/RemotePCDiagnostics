@@ -10,7 +10,7 @@ public enum UndoSupport
     Full,
     /// <summary>Leaves no lasting change (flush DNS, re-trim, rescan devices), so there's nothing to put back.</summary>
     NothingToUndo,
-    /// <summary>Deleted files can't come back; undo recreates placeholder files of the same total size (for testing the benchmarks).</summary>
+    /// <summary>Legacy serialized value retained for compatibility; treated as permanent.</summary>
     PlaceholdersOnly,
     /// <summary>Permanent: installed updates, removed apps, uninstalled programs. Journaled so "Undo all" reports it as skipped.</summary>
     None,
@@ -22,7 +22,7 @@ public static class Undoability
     {
         RemediationKind.SetBalancedPowerPlan or RemediationKind.DisableFastStartup or RemediationKind.DisableSystemProxy
             or RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns => UndoSupport.Full,
-        RemediationKind.CleanTempFiles => UndoSupport.PlaceholdersOnly,
+        RemediationKind.CleanTempFiles => UndoSupport.None,
         RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.EnableDevice => UndoSupport.None,
         _ => UndoSupport.NothingToUndo,
     };
@@ -40,7 +40,7 @@ public static class Undoability
     public static string? Chip(UndoSupport u) => u switch
     {
         UndoSupport.None => "can't be undone",
-        UndoSupport.PlaceholdersOnly => "undo leaves placeholder files",
+        UndoSupport.PlaceholdersOnly => "can't be undone",
         _ => null,
     };
 
