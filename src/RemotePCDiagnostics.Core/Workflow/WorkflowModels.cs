@@ -33,6 +33,8 @@ public sealed record AutoLogonStatus(string UserName, string Domain, bool Alread
 /// <summary>Everything the workflow keeps across restarts (%LOCALAPPDATA%\RemotePCDiagnostics\workflow.json). No passwords.</summary>
 public sealed record WorkflowState
 {
+    /// <summary>Recommendation rules used to produce this review; zero denotes a legacy saved review.</summary>
+    public int ReviewRulesVersion { get; init; }
     public WorkflowStage Stage { get; init; } = WorkflowStage.Idle;
     public IReadOnlyList<WorkflowFix> Fixes { get; init; } = [];
     public IReadOnlyList<string> Approved { get; init; } = [];

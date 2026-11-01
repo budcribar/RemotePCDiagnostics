@@ -23,7 +23,17 @@ public sealed class WorkflowService(
     public static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(30);
 
     private readonly object _gate = new();
-    private WorkflowState _state = store.Load() ?? new WorkflowState();
+    public const int CurrentReviewRulesVersion = 1;
+    private WorkflowState _state = LoadState(store);
+
+    private static WorkflowState LoadState(IWorkflowStore store)
+    {
+        var saved = store.Load();
+        // Old approvals may include recommendations that current rules deliberately suppress.
+        // Never invalidate an in-progress workflow: its resume and cleanup state must survive.
+        return saved is { Stage: WorkflowStage.Review } && saved.ReviewRulesVersion != CurrentReviewRulesVersion
+            ? new WorkflowState() : saved ?? new WorkflowState();
+    }
     private CancellationTokenSource? _cts;
 
     public event Action? Changed;
@@ -77,7 +87,8 @@ public sealed class WorkflowService(
             var hw = results.Get("Osquery").Payload is HardwareInventory inv ? inv.FriendlySummary() : "";
             Save(s => s with
             {
-                Stage = WorkflowStage.Review, Fixes = fixes, Approved = fixes.Select(f => f.Id).ToList(), // everything starts ticked
+                Stage = WorkflowStage.Review, ReviewRulesVersion = CurrentReviewRulesVersion,
+                Fixes = fixes, Approved = fixes.Select(f => f.Id).ToList(), // everything starts ticked
                 Findings = findings, Recommendations = FixCatalog.Recommendations(suggestions), Machine = session?.MachineName ?? Environment.MachineName, HardwareSummary = hw,
             });
             Note($"Checks finished: {fixes.Count} fix{(fixes.Count == 1 ? "" : "es")} to review.");
