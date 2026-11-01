@@ -141,6 +141,15 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
             case ChangeKind.TempFiles:
                 return new(c, false, "Deleted temporary files and emptied Recycle Bin items cannot be restored.", Skipped: true);
 
+            case ChangeKind.ScheduledTask:
+                if (memory is null) return Fail("Not available.");
+                if (!ScheduledTaskAllowlist.IsAllowed(c.Target)) return Fail("That scheduled task isn't one this app changes, so it was left as is.");
+                var taskState = await memory.GetScheduledTaskStateAsync(c.Target, ct).ConfigureAwait(false);
+                if (taskState == ScheduledTaskAllowlist.Missing) return Ok("The task no longer exists (it was removed with its app); nothing to turn back on.");
+                if (ScheduledTaskAllowlist.IsEnabledState(taskState)) return Ok("The task is already on.");
+                return ScheduledTaskAllowlist.IsEnabledState(await memory.SetScheduledTaskEnabledAsync(c.Target, true, ct).ConfigureAwait(false))
+                    ? Ok("Scheduled task turned back on.") : Fail("Windows didn't allow turning the task back on (administrator rights needed).");
+
             case ChangeKind.PageFile:
                 if (memory is null || c.Previous is null) return Fail("The original page file size wasn't recorded.");
                 var o = await memory.RestorePageFileAsync(c.Previous, ct).ConfigureAwait(false);

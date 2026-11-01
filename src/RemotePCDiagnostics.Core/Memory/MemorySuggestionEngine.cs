@@ -472,6 +472,9 @@ public static class MemorySuggestionEngine
                 actions, "Services", su.Shared ? "Shared process: stopping it may show little or no change in free memory." : null, c.DefaultOn));
         }
 
+        // #3 / #8 / #10: app removal (permanent) and promoted-app installs (reversible).
+        list.AddRange(AppRemoval.Suggestions(s));
+
         return list.OrderByDescending(x => x.SavingBytes ?? -1).ThenBy(x => x.Kind).ThenBy(x => x.Title, StringComparer.Ordinal).ToList();
     }
 

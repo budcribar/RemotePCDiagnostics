@@ -39,8 +39,26 @@ public static class RegistryAllowlist
     /// <summary>Same for PowerPoint (opens straight to a blank presentation).</summary>
     public static readonly RegistrySetting PowerPointStartScreen = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Office\16.0\PowerPoint\Options", "DisableBootToOfficeStart");
 
+    private const string ContentDeliveryKey = @"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager";
+
+    /// <summary>#3 (per account): 0 = Windows stops silently installing promoted Store apps and games.</summary>
+    public static readonly RegistrySetting SilentInstalledApps = new(RegistryRoot.CurrentUser, ContentDeliveryKey, "SilentInstalledAppsEnabled");
+    /// <summary>#3: 0 = no PC-maker (OEM) pre-installed app suggestions.</summary>
+    public static readonly RegistrySetting OemPreInstalledApps = new(RegistryRoot.CurrentUser, ContentDeliveryKey, "OemPreInstalledAppsEnabled");
+    /// <summary>#3: 0 = no Microsoft pre-installed app suggestions.</summary>
+    public static readonly RegistrySetting PreInstalledApps = new(RegistryRoot.CurrentUser, ContentDeliveryKey, "PreInstalledAppsEnabled");
+    /// <summary>#3: 0 = no "tips, tricks and suggestions" pop-ups.</summary>
+    public static readonly RegistrySetting SoftLanding = new(RegistryRoot.CurrentUser, ContentDeliveryKey, "SoftLandingEnabled");
+    /// <summary>#3: 0 = no suggested apps in Start.</summary>
+    public static readonly RegistrySetting SystemPaneSuggestions = new(RegistryRoot.CurrentUser, ContentDeliveryKey, "SystemPaneSuggestionsEnabled");
+    /// <summary>#8 (per account): 0 = Game DVR off.</summary>
+    public static readonly RegistrySetting GameDvrEnabled = new(RegistryRoot.CurrentUser, @"System\GameConfigStore", "GameDVR_Enabled");
+    /// <summary>#8 (per account): 0 = no background game capture.</summary>
+    public static readonly RegistrySetting AppCaptureEnabled = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\GameDVR", "AppCaptureEnabled");
+
     public static readonly IReadOnlyList<RegistrySetting> All =
-        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen];
+        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen,
+         SilentInstalledApps, OemPreInstalledApps, PreInstalledApps, SoftLanding, SystemPaneSuggestions, GameDvrEnabled, AppCaptureEnabled];
 
     /// <summary>The allowlisted setting with this target (case-insensitive), or null.</summary>
     public static RegistrySetting? Find(string? target) =>

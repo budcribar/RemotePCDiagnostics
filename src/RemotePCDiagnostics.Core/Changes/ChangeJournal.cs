@@ -21,6 +21,7 @@ public enum ChangeKind
     HiberFileType,       // Previous = "full": hiberfil.sys was shrunk with powercfg /h /type reduced; undo runs /type full
     RegistryValue,       // Target = "HKLM\SOFTWARE\Policies\Microsoft\Dsh|AllowNewsAndInterests" (must be on RegistryAllowlist); Previous = old DWORD or null (absent: undo deletes it)
     NotUndoable,         // A permanent change (installed updates, removed apps); "Undo all" reports it as skipped, then forgets it
+    ScheduledTask,       // Target = task path on ScheduledTaskAllowlist ("\Microsoft\XblGameSave\XblGameSaveTask"); Previous = "Enabled"; undo enables it again
 }
 
 /// <param name="Label">Friendly, e.g. "Spotify won't start with Windows".</param>

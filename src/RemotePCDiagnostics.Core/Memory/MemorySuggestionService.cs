@@ -28,7 +28,8 @@ public static class MemoryFeedback
         or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings
         or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile
         or MemoryActionType.AddDefenderExclusions or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights
-        or MemoryActionType.ReduceHibernateFile or MemoryActionType.SkipOfficeStartScreen;
+        or MemoryActionType.ReduceHibernateFile or MemoryActionType.SkipOfficeStartScreen
+        or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.StopSilentAppInstalls; // disk space / later installs, not memory
 }
 
 public sealed record ActionOutcome(bool Success, string Message);
@@ -78,6 +79,16 @@ public interface IMemorySystem
     void WriteDword(RegistrySetting setting, int value) => throw new NotSupportedException();
     /// <summary>Deletes a value on <see cref="RegistryAllowlist"/> (no error when it's already absent).</summary>
     void DeleteDword(RegistrySetting setting) => throw new NotSupportedException();
+    /// <summary>#3/#8/#10: allowlisted Store packages, Uninstall entries, settings and scheduled tasks present on this PC (registry reads; sizes cached). Null = couldn't read.</summary>
+    AppRemovalInfo? ReadRemovableApps() => null;
+    /// <summary>Removes allowlisted packages for all users plus their provisioned copies (admin), then reads back. Returns the family names still present; null = couldn't run.</summary>
+    Task<IReadOnlyList<string>?> RemoveAppxPackagesAsync(IReadOnlyList<RemovableAppx> apps, CancellationToken ct) => Task.FromResult<IReadOnlyList<string>?>(null);
+    /// <summary>Runs a validated vendor uninstaller (<see cref="AppRemoval.IsAllowedCommand"/>) and waits for it to finish (admin).</summary>
+    Task<ActionOutcome> RunUninstallerAsync(UninstallCommand command, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
+    /// <summary>State of an allowlisted scheduled task ("Ready", "Disabled", …, or <see cref="ScheduledTaskAllowlist.Missing"/>); null = couldn't read.</summary>
+    Task<string?> GetScheduledTaskStateAsync(string path, CancellationToken ct) => Task.FromResult<string?>(null);
+    /// <summary>Enables or disables an allowlisted scheduled task (admin) and returns its state read back (null = couldn't read).</summary>
+    Task<string?> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct) => Task.FromResult<string?>(null);
 }
 
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);
@@ -88,7 +99,7 @@ public sealed record SuggestionResult(string SuggestionId, bool Success, string 
 /// Scans, shows and applies memory suggestions. Every change runs only from an explicit click; each is logged to the Event Log (1400)
 /// with the actor (Local/Remote technician) and, where possible, can be undone.
 /// </summary>
-public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? services = null, ServiceActionService? serviceActions = null,
+public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesModule? services = null, ServiceActionService? serviceActions = null,
     ISessionContext? session = null, Action<LogLevel, string>? events = null, Action<string>? log = null, TimeSpan? settle = null, Func<DateTime>? now = null,
     RemediationService? remediation = null, IChangeJournal? journal = null)
 {
@@ -220,6 +231,12 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 case MemoryActionType.ReduceHibernateFile:
                     var full = await sys.SetHibernateTypeAsync(false, ct).ConfigureAwait(false);
                     outcome = full.Success ? new(true, "The hibernation file is full size again; Hibernate is back in the power menu.") : full;
+                    break;
+                case MemoryActionType.StopSilentAppInstalls:
+                    outcome = UndoRegistry(u, "Windows may install promoted apps and show suggestions again.");
+                    break;
+                case MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps:
+                    outcome = await UndoAppRemovalAsync(u, ct).ConfigureAwait(false);
                     break;
                 case MemoryActionType.DisableTransparency:
                     sys.SetTransparency(u.Previous != "0");
@@ -485,6 +502,15 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
 
             case MemoryActionType.SkipOfficeStartScreen:
                 return SkipOfficeStartScreen(s);
+
+            case MemoryActionType.RemoveApp:
+                return await RemoveAppAsync(s, a, ct).ConfigureAwait(false);
+
+            case MemoryActionType.RemoveXboxApps:
+                return await RemoveXboxAppsAsync(s, ct).ConfigureAwait(false);
+
+            case MemoryActionType.StopSilentAppInstalls:
+                return StopSilentAppInstalls(s);
 
             case MemoryActionType.AutoManagePageFile:
                 var pageFileBefore = await sys.ReadPageFileSettingsAsync(ct).ConfigureAwait(false);
