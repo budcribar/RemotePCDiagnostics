@@ -18,6 +18,7 @@ public enum ChangeKind
     PageFile,            // Previous = base64 JSON of the custom page file settings
     TempFiles,           // Previous = "files:bytes" removed by the cleanup; permanent; undo reports it as skipped
     DefenderExclusion,   // Target = "path|C:\src\app" or "process|C:\...\MSBuild.exe"; added by this app, undo removes it
+    RegistryValue,       // Target = "HKLM\SOFTWARE\Policies\Microsoft\Dsh|AllowNewsAndInterests" (must be on RegistryAllowlist); Previous = old DWORD or null (absent: undo deletes it)
     NotUndoable,         // A permanent change (installed updates, removed apps); "Undo all" reports it as skipped, then forgets it
 }
 
