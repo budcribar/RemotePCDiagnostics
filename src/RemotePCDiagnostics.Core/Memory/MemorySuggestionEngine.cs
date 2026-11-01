@@ -445,6 +445,22 @@ public static class MemorySuggestionEngine
                     $"Skip the start screen in {apps}? They'll open straight to a blank document. Undo brings the start screen back.")],
                 "Office", "Takes effect the next time Word, Excel or PowerPoint opens."));
         }
+        // #24 Default printer: a network/WSD default makes Word and Excel wait for it on launch. Opt-in: it changes where Ctrl+P prints.
+        if (s.DefaultPrinter is { Offer: true } dp)
+        {
+            var manages = dp.WindowsManages ? " Windows is also set to manage the default printer, so it keeps switching back to the last printer used." : "";
+            list.Add(new("default-printer-pdf", "Make Microsoft Print to PDF the default printer",
+                $"The default printer, \"{dp.CurrentName}\", is a network printer. Word and Excel check the default printer when they open, so when it's asleep or off the network they can stall for 2–10 seconds.{manages}",
+                null, SuggestionRisk.Low, SuggestionKind.Automated,
+                [$"Makes {DefaultPrinter.PdfPrinter} (a printer built into Windows that saves a PDF file) the default for this account, and turns off \"Let Windows manage my default printer\" so it stays that way.",
+                 $"Print dialogs will start on {DefaultPrinter.PdfPrinter}: choose \"{dp.CurrentName}\" from the printer list when you want paper. Ctrl+P > Print without choosing saves a PDF instead of printing.",
+                 $"\"{dp.CurrentName}\" stays installed and works as before.",
+                 "Applies to the Windows account this app runs as. Takes effect the next time Word or Excel opens.",
+                 $"Undo makes \"{dp.CurrentName}\" the default again and puts \"Let Windows manage my default printer\" back as it was."],
+                [new(MemoryActionType.SetPdfDefaultPrinter, "", "Make Print to PDF the default",
+                    $"Make {DefaultPrinter.PdfPrinter} the default printer? You'll need to pick \"{dp.CurrentName}\" in the print dialog to print on paper. Undo switches it back.")],
+                "Office", "Takes effect the next time Word or Excel opens.", DefaultOn: false));
+        }
 
         // Services.
         foreach (var su in s.Services ?? [])

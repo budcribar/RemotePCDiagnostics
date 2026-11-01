@@ -88,6 +88,11 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 var (regOk, regMessage) = RegistryAllowlist.Restore(memory, c.Target, c.Previous);
                 return new(c, regOk, regMessage);
 
+            case ChangeKind.DefaultPrinter:
+                if (memory is null) return Fail("Not available.");
+                var (prOk, prMessage) = DefaultPrinter.Restore(memory, c.Target, c.Previous);
+                return new(c, prOk, prMessage);
+
             case ChangeKind.StartupApp:
                 if (memory is null) return Fail("Not available.");
                 memory.SetStartupApproved(c.Target, c.Previous is null ? null : Convert.FromBase64String(c.Previous));

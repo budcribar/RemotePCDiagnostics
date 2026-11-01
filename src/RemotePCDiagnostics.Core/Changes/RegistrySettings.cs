@@ -39,8 +39,12 @@ public static class RegistryAllowlist
     /// <summary>Same for PowerPoint (opens straight to a blank presentation).</summary>
     public static readonly RegistrySetting PowerPointStartScreen = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Office\16.0\PowerPoint\Options", "DisableBootToOfficeStart");
 
+    /// <summary>Default printer (#24), per account: 1 = the user picks the default printer; 0 or absent = "Let Windows manage my default printer"
+    /// (Settings > Bluetooth &amp; devices > Printers &amp; scanners), which keeps switching it to the last printer used.</summary>
+    public static readonly RegistrySetting LegacyDefaultPrinterMode = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Windows NT\CurrentVersion\Windows", "LegacyDefaultPrinterMode");
+
     public static readonly IReadOnlyList<RegistrySetting> All =
-        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen];
+        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen, LegacyDefaultPrinterMode];
 
     /// <summary>The allowlisted setting with this target (case-insensitive), or null.</summary>
     public static RegistrySetting? Find(string? target) =>

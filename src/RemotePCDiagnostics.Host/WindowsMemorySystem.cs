@@ -106,7 +106,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
         var defender = apps.Any(a => a.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase)) ? await ReadDefenderAsync(ct).ConfigureAwait(false) : null;
         return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
-            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart());
+            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart(), ReadDefaultPrinter());
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -212,6 +212,59 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
                 return true;
         }
         return false;
+    }
+
+    [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "SetDefaultPrinterW")]
+    private static extern bool SetDefaultPrinterNative(string pszPrinter);
+
+    /// <summary>
+    /// #24: this account's default printer (HKCU ...\Windows NT\CurrentVersion\Windows\Device = "name,winspool,port"), its real port from
+    /// HKLM ...\Print\Printers\&lt;name&gt;\Port (the Device value's port is a placeholder like "Ne01:"), LegacyDefaultPrinterMode, and whether
+    /// Microsoft Print to PDF is installed. Registry only. Null = couldn't read (nothing is offered then).
+    /// </summary>
+    public DefaultPrinterInfo? ReadDefaultPrinter()
+    {
+        try
+        {
+            using var w = Registry.CurrentUser.OpenSubKey(DefaultPrinter.WindowsKey);
+            var name = DefaultPrinter.ParseDevice(w?.GetValue("Device") as string);
+            int? mode = null;
+            try { mode = ReadDword(RegistryAllowlist.LegacyDefaultPrinterMode); }
+            catch (InvalidOperationException ex) { Log("LegacyDefaultPrinterMode: " + ex.Message); return null; } // not a DWORD: leave it alone
+            using var printers = Registry.LocalMachine.OpenSubKey(DefaultPrinter.PrintersKey);
+            string? port = null;
+            if (name is not null && !name.Contains('\\') && printers is not null)
+            {
+                using var pk = printers.OpenSubKey(name);
+                port = pk?.GetValue("Port") as string;
+            }
+            bool pdf;
+            using (var pdfKey = printers?.OpenSubKey(DefaultPrinter.PdfPrinter)) pdf = pdfKey is not null;
+            return new(name, port, mode, pdf);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Default printer read failed: " + ex.Message); return null; }
+    }
+
+    /// <summary>An installed local printer (HKLM Print\Printers subkey) or a \\server\printer connection (HKCU Printers\Connections). Only safe names.</summary>
+    public bool PrinterExists(string name)
+    {
+        if (!DefaultPrinter.IsSafeName(name)) return false;
+        if (DefaultPrinter.IsConnectionName(name))
+        {
+            using var c = Registry.CurrentUser.OpenSubKey(DefaultPrinter.ConnectionsKey);
+            if (c?.GetSubKeyNames().Any(n => n.Equals(DefaultPrinter.ConnectionKeyName(name), StringComparison.OrdinalIgnoreCase)) == true) return true;
+        }
+        using var p = Registry.LocalMachine.OpenSubKey(DefaultPrinter.PrintersKey);
+        return p?.GetSubKeyNames().Any(n => n.Equals(name, StringComparison.OrdinalIgnoreCase)) == true;
+    }
+
+    /// <summary>winspool SetDefaultPrinter for this account, only for an installed printer with a safe name (Microsoft Print to PDF, or the journaled previous default).</summary>
+    public ActionOutcome SetDefaultPrinter(string name)
+    {
+        if (!PrinterExists(name)) return new(false, $"\"{name}\" isn't installed on this PC.");
+        if (SetDefaultPrinterNative(name)) { Log($"Default printer set to {name}"); return new(true, $"{name} is the default printer."); }
+        Log($"SetDefaultPrinter({name}) failed: Win32 error {Marshal.GetLastWin32Error()}");
+        return new(false, "Windows didn't allow changing the default printer.");
     }
 
     /// <summary>Only values on <see cref="RegistryAllowlist"/>; the allowlisted entry's own key and name are used, never the caller's.</summary>

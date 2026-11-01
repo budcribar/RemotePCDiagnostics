@@ -20,6 +20,7 @@ public enum ChangeKind
     DefenderExclusion,   // Target = "path|C:\src\app" or "process|C:\...\MSBuild.exe"; added by this app, undo removes it
     HiberFileType,       // Previous = "full": hiberfil.sys was shrunk with powercfg /h /type reduced; undo runs /type full
     RegistryValue,       // Target = "HKLM\SOFTWARE\Policies\Microsoft\Dsh|AllowNewsAndInterests" (must be on RegistryAllowlist); Previous = old DWORD or null (absent: undo deletes it)
+    DefaultPrinter,      // Target = "HKCU|DefaultPrinter" (DefaultPrinter.JournalTarget only); Previous = the old default printer's name (must pass DefaultPrinter.IsSafeName)
     NotUndoable,         // A permanent change (installed updates, removed apps); "Undo all" reports it as skipped, then forgets it
 }
 

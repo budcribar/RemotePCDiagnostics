@@ -116,6 +116,6 @@
         MemoryActionType.DisableStartup => "won't start with Windows", MemoryActionType.EnableBrowserMemorySaver => "memory saver turned on",
         MemoryActionType.SetServiceManual => "set to Manual", MemoryActionType.SetServiceDisabled => "disabled",
         MemoryActionType.DisableTransparency or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights
-            or MemoryActionType.SkipOfficeStartScreen => "turned off", _ => t.ToString(),
+            or MemoryActionType.SkipOfficeStartScreen => "turned off", MemoryActionType.SetPdfDefaultPrinter => "default printer changed", _ => t.ToString(),
     };
 }

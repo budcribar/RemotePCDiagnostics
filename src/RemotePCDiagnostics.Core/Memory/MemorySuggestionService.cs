@@ -28,7 +28,7 @@ public static class MemoryFeedback
         or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings
         or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile
         or MemoryActionType.AddDefenderExclusions or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights
-        or MemoryActionType.ReduceHibernateFile or MemoryActionType.SkipOfficeStartScreen;
+        or MemoryActionType.ReduceHibernateFile or MemoryActionType.SkipOfficeStartScreen or MemoryActionType.SetPdfDefaultPrinter;
 }
 
 public sealed record ActionOutcome(bool Success, string Message);
@@ -78,6 +78,12 @@ public interface IMemorySystem
     void WriteDword(RegistrySetting setting, int value) => throw new NotSupportedException();
     /// <summary>Deletes a value on <see cref="RegistryAllowlist"/> (no error when it's already absent).</summary>
     void DeleteDword(RegistrySetting setting) => throw new NotSupportedException();
+    /// <summary>#24: this account's default printer, its port, LegacyDefaultPrinterMode and whether Print to PDF exists (registry only); null = couldn't read.</summary>
+    DefaultPrinterInfo? ReadDefaultPrinter() => null;
+    /// <summary>The printer is installed (local printer or \\server\printer connection). Only names that pass <see cref="DefaultPrinter.IsSafeName"/>.</summary>
+    bool PrinterExists(string name) => false;
+    /// <summary>Makes an installed printer this account's default (winspool SetDefaultPrinter).</summary>
+    ActionOutcome SetDefaultPrinter(string name) => new(false, "Not supported on this PC.");
 }
 
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);
@@ -216,6 +222,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                     break;
                 case MemoryActionType.SkipOfficeStartScreen:
                     outcome = UndoRegistry(u, $"The start screen is back in {u.Target}. Takes effect the next time each app opens.");
+                    break;
+                case MemoryActionType.SetPdfDefaultPrinter:
+                    outcome = UndoPdfDefaultPrinter(u);
                     break;
                 case MemoryActionType.ReduceHibernateFile:
                     var full = await sys.SetHibernateTypeAsync(false, ct).ConfigureAwait(false);
@@ -359,6 +368,63 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             + " Takes effect the next time each app opens.");
     }
 
+    /// <summary>
+    /// #24: LegacyDefaultPrinterMode = 1 (so Windows stops switching the default), then Microsoft Print to PDF as this account's default,
+    /// read back. Journals the old mode (RegistryValue) and the old printer's name (DefaultPrinter). If the printer doesn't change,
+    /// the mode is put back and nothing is journaled.
+    /// </summary>
+    private ActionOutcome SetPdfDefaultPrinter(MemorySuggestion s)
+    {
+        var live = sys.ReadDefaultPrinter();
+        if (live is not { Offer: true } || !DefaultPrinter.IsSafeName(live.CurrentName))
+            return new(false, live is { HasPrintToPdf: false } ? $"{DefaultPrinter.PdfPrinter} isn't installed on this PC." : "The default printer isn't a network printer any more; nothing was changed.");
+        var old = live.CurrentName!;
+        var mode = SetDword(RegistryAllowlist.LegacyDefaultPrinterMode, 1,
+            was => $"\"Let Windows manage my default printer\" turned off for this account (LegacyDefaultPrinterMode was {was})", restart: false);
+        if (!mode.Ok) return new(false, "Windows didn't keep the default printer setting (your organization may manage printers). Nothing was changed.");
+        ActionOutcome set;
+        try { set = sys.SetDefaultPrinter(DefaultPrinter.PdfPrinter); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log("SetDefaultPrinter: " + ex.Message); set = new(false, "Windows didn't allow changing the default printer."); }
+        string? now = null;
+        if (set.Success) try { now = sys.ReadDefaultPrinter()?.CurrentName; } catch (Exception ex) when (ex is not OperationCanceledException) { Log("default printer read back: " + ex.Message); }
+        if (!set.Success || !DefaultPrinter.IsPdf(now))
+        {
+            if (mode.Changed)
+            {
+                try { if (RegistryAllowlist.Restore(sys, mode.Target, mode.Previous).Ok) journal?.RemoveLatest(ChangeKind.RegistryValue, mode.Target); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { Log("LegacyDefaultPrinterMode rollback: " + ex.Message); }
+            }
+            return new(false, $"Windows didn't make {DefaultPrinter.PdfPrinter} the default printer (your organization may manage printers). Nothing was changed.");
+        }
+        Journal(ChangeKind.DefaultPrinter, DefaultPrinter.JournalTarget, old, $"Default printer for this account set to {DefaultPrinter.PdfPrinter} (was \"{old}\")");
+        AddUndo(new(s.Id, "Default printer", MemoryActionType.SetPdfDefaultPrinter, old,
+            RegistryUndo.Encode(mode.Changed ? new List<RegistryUndo.Item> { new(mode.Target, mode.Previous) } : new List<RegistryUndo.Item>())));
+        return new(true, $"{DefaultPrinter.PdfPrinter} is now the default printer for this account (was \"{old}\"). When you print, pick \"{old}\" in the print dialog."
+            + " Word and Excel no longer wait for the network printer when they open.");
+    }
+
+    /// <summary>Per-item undo for #24: the old default printer (if still installed), then the old LegacyDefaultPrinterMode.</summary>
+    private ActionOutcome UndoPdfDefaultPrinter(UndoEntry u)
+    {
+        (bool Ok, string Message) printer;
+        try { printer = DefaultPrinter.Restore(sys, DefaultPrinter.JournalTarget, u.Target); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Undo default printer: " + ex.Message); printer = (false, "Windows didn't allow changing the default printer back."); }
+        if (printer.Ok) try { journal?.RemoveLatest(ChangeKind.DefaultPrinter, DefaultPrinter.JournalTarget); } catch { }
+        var modeOk = true;
+        foreach (var item in RegistryUndo.Decode(u.Previous))
+        {
+            bool ok;
+            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous).Ok; }
+            catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
+            if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
+            else modeOk = false;
+        }
+        if (!printer.Ok) return new(false, printer.Message + (modeOk ? "" : " The \"Let Windows manage my default printer\" setting couldn't be put back either."));
+        return modeOk
+            ? new(true, printer.Message + " The \"Let Windows manage my default printer\" setting is back as it was.")
+            : new(false, printer.Message + " But the \"Let Windows manage my default printer\" setting couldn't be put back.");
+    }
+
     /// <summary>Per-item undo: restores every value this click changed (allowlisted only) and drops their journal records.</summary>
     private ActionOutcome UndoRegistry(UndoEntry u, string? done = null)
     {
@@ -485,6 +551,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
 
             case MemoryActionType.SkipOfficeStartScreen:
                 return SkipOfficeStartScreen(s);
+
+            case MemoryActionType.SetPdfDefaultPrinter:
+                return SetPdfDefaultPrinter(s);
 
             case MemoryActionType.AutoManagePageFile:
                 var pageFileBefore = await sys.ReadPageFileSettingsAsync(ct).ConfigureAwait(false);
