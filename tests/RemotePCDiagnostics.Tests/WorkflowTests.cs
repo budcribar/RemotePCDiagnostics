@@ -322,7 +322,7 @@ public class WorkflowTests
         var proxy = s.Outcomes.Single(o => o.FixId == Id(flow, f => f.Remediation?.Kind == RemediationKind.DisableSystemProxy));
         Assert.False(proxy.Success);
         Assert.Empty(proxy.Changes!);                                                  // nothing journaled for a failed change
-        Assert.Contains("Couldn&#39;t be applied", html);
+        Assert.Contains("Couldn't be applied", html);
         Assert.Contains("Couldn&#39;t disable the system proxy.", html);
         var transparency = s.Outcomes.Single(o => o.FixId == Id(flow, f => f.MemoryAction == MemoryActionType.DisableTransparency));
         Assert.True(transparency.Skipped);
@@ -357,7 +357,7 @@ public class WorkflowTests
         Assert.Contains(recorded, c => c.Undo == UndoSupport.PlaceholdersOnly);
         Assert.Contains("Undoing changes", html);
         Assert.Contains("Can be put back exactly as it was", html);
-        Assert.Contains("Permanent (can&#39;t be undone", html);
+        Assert.Contains("Permanent (can't be undone", html);
         Assert.Contains("placeholder files", html);
         Assert.Contains("--undo-all", html);
         Assert.Contains("Undo all changes", html);
@@ -403,7 +403,7 @@ public class WorkflowTests
         await flow.ResumeAsync();
         Assert.False(flow.State.ResumeTaskRemoved);
         Assert.Contains("A scheduled task was left behind.", sys.Report);
-        Assert.Contains("Automatic sign-in wasn&#39;t used", sys.Report);
+        Assert.Contains("Automatic sign-in wasn't used", sys.Report);
     }
 
     [Fact]
@@ -440,7 +440,7 @@ public class WorkflowTests
         var html = ClientReport.Build(s, null, null, BenchmarkComparison.Build(null, null), DateTimeOffset.Now);
         Assert.DoesNotContain("What the service itself did", html);
         Assert.Contains("Undo: nothing lasting to undo.", html);
-        Assert.Contains("Undo: permanent, can&#39;t be undone.", html);       // no journal to read: go by the fix
+        Assert.Contains("Undo: permanent, can't be undone.", html);       // no journal to read: go by the fix
         Assert.Contains("The before measurement couldn&#39;t be taken", html);
     }
 
