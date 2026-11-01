@@ -179,7 +179,8 @@ public sealed record MemoryAction(MemoryActionType Type, string Target, string L
 /// <param name="DefaultOn">False = opt-in: the service workflow lists its fix unticked.</param>
 public sealed record MemorySuggestion(
     string Id, string Title, string Why, long? SavingBytes, SuggestionRisk Risk, SuggestionKind Kind,
-    IReadOnlyList<string> Steps, IReadOnlyList<MemoryAction> Actions, string Category = "General", string? Note = null, bool DefaultOn = true);
+    IReadOnlyList<string> Steps, IReadOnlyList<MemoryAction> Actions, string Category = "General", string? Note = null, bool DefaultOn = true,
+    string? UndoChip = null);
 
 public static class MemoryText
 {

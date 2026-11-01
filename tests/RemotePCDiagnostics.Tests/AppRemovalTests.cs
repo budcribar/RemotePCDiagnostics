@@ -164,8 +164,10 @@ public class AppRemovalTests
         Assert.Equal(MemoryActionType.RemoveApp, Assert.Single(mail.Actions).Type);
         Assert.Equal("mail-calendar", mail.Actions[0].Target);
         Assert.Contains("206 MB", mail.Why);
-        Assert.Contains("can't be undone — reinstall from the Microsoft Store if needed", mail.Why);
-        Assert.Contains("can't be undone", mail.Actions[0].Confirm);
+        Assert.Contains("To get it back, reinstall it from the Microsoft Store.", mail.Why);
+        Assert.DoesNotContain("can't be undone", mail.Why);
+        Assert.Equal("reinstall from Store", mail.UndoChip);
+        Assert.Contains("reinstall it from the Microsoft Store", mail.Actions[0].Confirm);
         Assert.Contains("Frees about 206 MB", string.Join(" ", mail.Steps));
         Assert.True(list.Single(x => x.Id == "remove-app-maps").DefaultOn); // provisioned only still counts
         var clip = list.Single(x => x.Id == "remove-app-clipchamp");
@@ -206,7 +208,7 @@ public class AppRemovalTests
         Assert.Equal(MemoryActionType.RemoveXboxApps, Assert.Single(x.Actions).Type);
         Assert.Contains("3 Xbox apps", x.Why);
         Assert.Contains("334 MB", x.Why);
-        Assert.Contains("can't be undone — reinstall from the Microsoft Store if needed", x.Why);
+        Assert.Contains("To get them back, reinstall them from the Microsoft Store.", x.Why);
         Assert.DoesNotContain(list, s => s.Id.StartsWith("remove-app-xbox"));
     }
 
@@ -296,7 +298,8 @@ public class AppRemovalTests
         var lenovo = list.Single(x => x.Id == "remove-app-lenovo-now");
         Assert.True(lenovo.DefaultOn);
         Assert.Contains("441 MB", lenovo.Why);
-        Assert.Contains("reinstall from Lenovo if needed", lenovo.Why);
+        Assert.Contains("To get it back, reinstall it from Lenovo.", lenovo.Why);
+        Assert.Equal("reinstall from Lenovo", lenovo.UndoChip);
         Assert.Contains($"\"{LenovoUninstaller}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART", lenovo.Steps[0]); // our arguments, not the registry's
         Assert.Contains(@"\Lenovo\LenovoNowTask", lenovo.Steps[0]);
         var pe = list.Single(x => x.Id == "remove-app-powerengage");
@@ -348,12 +351,12 @@ public class AppRemovalTests
         Assert.True(r.Success, r.Message);
         Assert.Contains("Mail and Calendar removed for every account", r.Message);
         Assert.Contains("Freed about 206 MB", r.Message);
-        Assert.Contains("can't be undone", r.Message);
+        Assert.Contains("reinstall it from the Microsoft Store", r.Message);
         Assert.Equal(["appx:microsoft.windowscommunicationsapps_8wekyb3d8bbwe"], sys.Calls);
         var c = Assert.Single(j.All);
         Assert.Equal(ChangeKind.NotUndoable, c.Kind);
         Assert.StartsWith("appx|microsoft.windowscommunicationsapps_8wekyb3d8bbwe|", c.Target);
-        Assert.Equal("Mail and Calendar removed (microsoft.windowscommunicationsapps, 206 MB) — can't be undone; reinstall from the Microsoft Store if needed", c.Label);
+        Assert.Equal("Mail and Calendar removed (microsoft.windowscommunicationsapps, 206 MB) — reinstall from the Microsoft Store to get it back", c.Label);
         Assert.Equal(UndoSupport.None, Undoability.Of(c));
         Assert.Null(svc.UndoFor(s.Id));
         Assert.DoesNotContain(svc.Suggestions, x => x.Id == s.Id);
@@ -390,10 +393,10 @@ public class AppRemovalTests
         var r = await svc.ApplyAsync(s, s.Actions[0]);
         Assert.True(r.Success, r.Message);
         Assert.Contains("Lenovo Now uninstalled", r.Message);
-        Assert.Contains("reinstall from Lenovo if needed", r.Message);
+        Assert.Contains("reinstall it from Lenovo", r.Message);
         Assert.Contains($"uninstall:\"{LenovoUninstaller}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART", sys.Calls);
         var gone = j.All.Single(c => c.Kind == ChangeKind.NotUndoable);
-        Assert.Equal("Lenovo Now 4.8.0.54 uninstalled (441 MB) — can't be undone; reinstall from Lenovo if needed", gone.Label);
+        Assert.Equal("Lenovo Now 4.8.0.54 uninstalled (441 MB) — reinstall from Lenovo to get it back", gone.Label);
         var task = j.All.Single(c => c.Kind == ChangeKind.ScheduledTask);
         Assert.Equal(@"\Lenovo\LenovoNowTask", task.Target); // the one already off isn't touched
         Assert.Equal("Enabled", task.Previous);
@@ -402,7 +405,7 @@ public class AppRemovalTests
         var u = svc.UndoFor(s.Id)!;
         var undone = await svc.UndoAsync(u);
         Assert.True(undone.Success, undone.Message);
-        Assert.Contains("can't be put back", undone.Message);
+        Assert.Contains("stays uninstalled", undone.Message);
         Assert.Equal("Ready", sys.Tasks[@"\Lenovo\LenovoNowTask"]);
         Assert.Equal(ChangeKind.NotUndoable, Assert.Single(j.All).Kind);
     }
@@ -450,7 +453,7 @@ public class AppRemovalTests
 
         var undone = await svc.UndoAsync(svc.UndoFor(s.Id)!);
         Assert.True(undone.Success, undone.Message);
-        Assert.Contains("removed Xbox apps can't be put back", undone.Message);
+        Assert.Contains("removed Xbox apps stay removed", undone.Message);
         Assert.Equal(1, sys.Reg[RegistryAllowlist.GameDvrEnabled.Target]);
         Assert.False(sys.Reg.ContainsKey(RegistryAllowlist.AppCaptureEnabled.Target));
         Assert.Equal(("Automatic", "AutomaticDelayed", "Manual"), (sys.Services["XblGameSave"], sys.Services["XboxGipSvc"], sys.Services["XblAuthManager"]));
@@ -538,7 +541,8 @@ public class AppRemovalTests
         Assert.True(people.NeedsAdmin);
         Assert.Equal(UndoSupport.None, people.Undo);
         Assert.Equal("can't be undone", Undoability.Chip(people.Undo));
-        Assert.Contains("can't be undone — reinstall from the Microsoft Store if needed", people.Why);
+        Assert.Contains("reinstall it from the Microsoft Store", people.Why);
+        Assert.Equal("reinstall from Store", fixes.Single(f => f.SuggestionId == people.SuggestionId).UndoChip);
         Assert.False(fixes.Single(f => f.SuggestionId == "remove-app-bing-weather").DefaultOn);
         var xbox = fixes.Single(f => f.SuggestionId == "remove-xbox");
         Assert.False(xbox.DefaultOn);

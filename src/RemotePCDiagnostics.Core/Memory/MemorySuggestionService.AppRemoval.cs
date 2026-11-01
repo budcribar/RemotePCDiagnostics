@@ -24,7 +24,7 @@ public sealed partial class MemorySuggestionService
             JournalPermanent("appx|" + pkg.FamilyName, AppRemoval.RemovedLabel(pkg, found.Installed.SizeBytes));
             return new(true, $"{pkg.Label} removed for every account on this PC."
                 + (found.Installed.SizeBytes is > 0 ? $" Freed about {MemoryText.Size(found.Installed.SizeBytes.Value)}." : "")
-                + $" This can't be undone — {AppRemoval.StoreReinstall}.");
+                + $" {AppRemoval.StoreGetBack}");
         }
         if (AppRemoval.ProgramById(a.Target) is { } prog)
             return await UninstallProgramAsync(s, snap, prog, ct).ConfigureAwait(false);
@@ -59,7 +59,7 @@ public sealed partial class MemorySuggestionService
             if (await DisableTaskAsync(t, ct).ConfigureAwait(false)) tasks.Add(t);
         if (tasks.Count > 0) AddUndo(new(s.Id, $"{prog.Label} scheduled tasks", MemoryActionType.RemoveApp, prog.Id, new AppRemoval.Undo([], [], tasks).Encode()));
 
-        var reinstall = $"reinstall from {prog.ReinstallFrom} if needed";
+        var reinstall = AppRemoval.VendorGetBack(prog.ReinstallFrom);
         var freed = removed.Sum(e => e.SizeBytes ?? 0);
         var taskText = tasks.Count > 0 ? $" Turned off {MemoryText.Plural(tasks.Count, "scheduled task")} ({string.Join(", ", tasks)}); undo turns them back on." : "";
         if (removed.Count == 0)
@@ -67,7 +67,7 @@ public sealed partial class MemorySuggestionService
         return new(true, $"{string.Join(" and ", removed.Select(e => e.DisplayName).Distinct(StringComparer.OrdinalIgnoreCase))} uninstalled."
             + (freed > 0 ? $" Freed about {MemoryText.Size(freed)}." : "")
             + (failed.Count > 0 ? $" {string.Join(", ", failed)} couldn't be uninstalled." : "")
-            + taskText + $" This can't be undone — {reinstall}.");
+            + taskText + $" {reinstall}");
     }
 
     /// <summary>Disables an allowlisted task that's on, reads it back, journals it. False when it's missing, already off, unreadable or didn't stick.</summary>
@@ -129,7 +129,7 @@ public sealed partial class MemorySuggestionService
         var freed = removed.Sum(f => f.Installed.SizeBytes ?? 0);
         var notRemoved = found.Count - removed.Count;
         var parts = new List<string>();
-        if (removed.Count > 0) parts.Add($"Removed {string.Join(", ", removed.Select(f => f.App.Label))}" + (freed > 0 ? $" (about {MemoryText.Size(freed)} freed)" : "") + $"; this can't be undone — {AppRemoval.StoreReinstall}.");
+        if (removed.Count > 0) parts.Add($"Removed {string.Join(", ", removed.Select(f => f.App.Label))}" + (freed > 0 ? $" (about {MemoryText.Size(freed)} freed)" : "") + $"; {AppRemoval.StoreGetBackMany}");
         if (notRemoved > 0) parts.Add($"{MemoryText.Plural(notRemoved, "Xbox app")} couldn't be removed ({string.Join(", ", found.Except(removed).Select(f => f.App.Label))}).");
         if (registry.Count > 0) parts.Add("Game DVR and background recording turned off.");
         if (services.Count > 0) parts.Add($"{string.Join(", ", services.Select(x => x.Target))} set to start only when needed.");
@@ -160,7 +160,7 @@ public sealed partial class MemorySuggestionService
             return new(false, "Windows didn't allow removing Narrator's add-ons (administrator rights needed, or Windows protects them). Nothing was changed.");
         var freed = removed.Sum(f => f.Installed.SizeBytes ?? 0);
         var parts = new List<string>();
-        if (removed.Count > 0) parts.Add($"Removed {string.Join(", ", removed.Select(f => f.App.Label))}" + (freed > 0 ? $" (about {MemoryText.Size(freed)} freed)" : "") + $"; this can't be undone — {AppRemoval.StoreReinstall}.");
+        if (removed.Count > 0) parts.Add($"Removed {string.Join(", ", removed.Select(f => f.App.Label))}" + (freed > 0 ? $" (about {MemoryText.Size(freed)} freed)" : "") + $"; {AppRemoval.StoreGetBackMany}");
         if (removed.Count < found.Count) parts.Add($"{MemoryText.Plural(found.Count - removed.Count, "add-on")} couldn't be removed ({string.Join(", ", found.Except(removed).Select(f => f.App.Label))}).");
         if (w.Changed) parts.Add("The Win+Ctrl+Enter shortcut no longer starts Narrator; undo turns it back on.");
         return new(removed.Count > 0, string.Join(" ", parts));
@@ -227,9 +227,9 @@ public sealed partial class MemorySuggestionService
         }
         var apps = u.Type switch
         {
-            MemoryActionType.RemoveXboxApps => $" The removed Xbox apps can't be put back — {AppRemoval.StoreReinstall}.",
-            MemoryActionType.RemoveNarratorAddons => $" The removed Narrator add-ons can't be put back — {AppRemoval.StoreReinstall}.",
-            _ => " The uninstalled app itself can't be put back.",
+            MemoryActionType.RemoveXboxApps => $" The removed Xbox apps stay removed. {AppRemoval.StoreGetBackMany}",
+            MemoryActionType.RemoveNarratorAddons => $" The removed Narrator add-ons stay removed. {AppRemoval.StoreGetBackMany}",
+            _ => " The uninstalled app stays uninstalled; reinstall it from its maker to get it back.",
         };
         return failed == 0
             ? new(true, $"{u.Label} turned back on.{apps}")

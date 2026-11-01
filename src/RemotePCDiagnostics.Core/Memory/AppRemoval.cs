@@ -144,6 +144,13 @@ public static class AppRemoval
     /// <summary>Publisher id of Windows' own system packages (MicrosoftWindows.*).</summary>
     public const string WindowsPublisherId = "cw5n1h2txyewy";
     public const string StoreReinstall = "reinstall from the Microsoft Store if needed";
+    /// <summary>Card / report wording for removed Store apps: how to get them back (instead of "can't be undone").</summary>
+    public const string StoreGetBack = "To get it back, reinstall it from the Microsoft Store.";
+    public const string StoreGetBackMany = "To get them back, reinstall them from the Microsoft Store.";
+    /// <summary>Workflow chip for removed apps (replaces the generic "can't be undone").</summary>
+    public const string StoreChip = "reinstall from Store";
+    public static string VendorGetBack(string vendor) => $"To get it back, reinstall it from {vendor}.";
+    public static string VendorChip(string vendor) => $"reinstall from {vendor}";
 
     private static RemovableAppx Ms(string id, string name, string label, AppGroup g, string what, string lose) => new(id, name, MicrosoftPublisherId, label, g, what, lose);
 
@@ -318,16 +325,16 @@ public static class AppRemoval
         var names = string.Join(", ", found.Select(x => x.App.Label));
         return new MemorySuggestion("remove-narrator-addons", "Remove Narrator's Office add-ons",
             $"Windows includes {MemoryText.Plural(found.Count, "add-on")} that let the Narrator screen reader read Office and Outlook ({names}). Narrator isn't used on this PC. "
-            + $"{(bytes is > 0 ? $"Together they take {MemoryText.Size(bytes.Value)}." : "Their size couldn't be measured.")} Removing them can't be undone — {StoreReinstall}.",
+            + $"{(bytes is > 0 ? $"Together they take {MemoryText.Size(bytes.Value)}." : "Their size couldn't be measured.")} {StoreGetBackMany}",
             null, SuggestionRisk.Low, SuggestionKind.Automated,
             [$"Removes {names} for every account on this PC. Narrator itself stays and still works.",
              "Turns off the Win+Ctrl+Enter shortcut that starts Narrator by accident (this account). Narrator can still be started from Settings > Accessibility.",
              "You lose: Narrator's extra support for Word, Excel, PowerPoint and Outlook.",
              Frees(bytes),
-             $"The add-ons can't be put back by undo — {StoreReinstall}. Undo turns the Win+Ctrl+Enter shortcut back on."],
+             $"{StoreGetBackMany} Undo turns the Win+Ctrl+Enter shortcut back on."],
             [new(MemoryActionType.RemoveNarratorAddons, "", "Remove Narrator's add-ons",
-                $"Remove Narrator's Office add-ons? Narrator stays, but loses its Office support. This can't be undone — {StoreReinstall}. Needs administrator rights.")],
-            Category, "The add-ons can't be put back by undo.", DefaultOn: true);
+                $"Remove Narrator's Office add-ons? Narrator stays, but loses its Office support. {StoreGetBackMany} Needs administrator rights.")],
+            Category, StoreGetBackMany, DefaultOn: true, UndoChip: StoreChip);
     }
 
     public static bool OfferContentDelivery(MemorySnapshot s) =>
@@ -346,15 +353,15 @@ public static class AppRemoval
             var a = f.App;
             var retired = a.Group == AppGroup.Retired;
             yield return new MemorySuggestion($"remove-app-{a.Id}", $"Remove {a.Label}",
-                $"{a.What} {SizeText(f.Installed.SizeBytes)} Removing it can't be undone — {StoreReinstall}.",
+                $"{a.What} {SizeText(f.Installed.SizeBytes)} {StoreGetBack}",
                 null, retired ? SuggestionRisk.Low : SuggestionRisk.Medium, SuggestionKind.Automated,
                 [$"Removes {a.Label} ({a.Name}) for every account on this PC and stops Windows adding it for new accounts.",
                  $"You lose: {a.Lose}",
                  Frees(f.Installed.SizeBytes),
-                 $"Can't be undone — {StoreReinstall}."],
+                 StoreGetBack],
                 [new(MemoryActionType.RemoveApp, a.Id, $"Remove {a.Label}",
-                    $"Remove {a.Label}? This can't be undone — {StoreReinstall}. Needs administrator rights.")],
-                Category, "Can't be undone.", DefaultOn: retired);
+                    $"Remove {a.Label}? {StoreGetBack} Needs administrator rights.")],
+                Category, StoreGetBack, DefaultOn: retired, UndoChip: StoreChip);
         }
 
         if (NarratorCard(s) is { } narrator) yield return narrator;
@@ -366,32 +373,32 @@ public static class AppRemoval
             var names = string.Join(", ", xbox.Select(x => x.App.Label));
             yield return new MemorySuggestion("remove-xbox", "Remove the Xbox apps and turn off Game DVR",
                 $"Windows comes with {MemoryText.Plural(xbox.Count, "Xbox app")} ({names}) and background game recording, which matter only for Xbox and Game Pass games. "
-                + $"{(bytes is > 0 ? $"Together they take {MemoryText.Size(bytes.Value)}." : "Their size couldn't be measured.")} Removing the apps can't be undone — {StoreReinstall}.",
+                + $"{(bytes is > 0 ? $"Together they take {MemoryText.Size(bytes.Value)}." : "Their size couldn't be measured.")} {StoreGetBackMany}",
                 null, SuggestionRisk.Medium, SuggestionKind.Automated,
                 [$"Removes {names} for every account on this PC.",
                  "Turns off Game DVR and background recording (this account), sets the Xbox services to start only when needed, and turns off the Xbox cloud-save task.",
                  "You lose: Game Pass and Xbox games, Win+G Game Bar, game clips, Xbox sign-in and cloud saves in PC games. Ordinary (non-Xbox) games still work.",
                  Frees(bytes),
-                 $"The apps can't be put back by undo — {StoreReinstall}. Undo turns Game DVR, the services and the task back on."],
+                 $"{StoreGetBackMany} Undo turns Game DVR, the services and the task back on."],
                 [new(MemoryActionType.RemoveXboxApps, "", "Remove the Xbox apps",
-                    $"Remove the Xbox apps? Xbox and Game Pass games stop working. This can't be undone — {StoreReinstall}. Needs administrator rights.")],
-                Category, "The apps can't be put back by undo.", DefaultOn: false);
+                    $"Remove the Xbox apps? Xbox and Game Pass games stop working. {StoreGetBackMany} Needs administrator rights.")],
+                Category, StoreGetBackMany, DefaultOn: false, UndoChip: StoreChip);
         }
 
         foreach (var p in FoundPrograms(s))
         {
-            var reinstall = $"reinstall from {p.App.ReinstallFrom} if needed";
+            var getBack = VendorGetBack(p.App.ReinstallFrom);
             var tasks = p.Tasks.Count > 0 ? $" Also turns off its scheduled {(p.Tasks.Count == 1 ? "task" : "tasks")} ({string.Join(", ", p.Tasks)}); undo turns {(p.Tasks.Count == 1 ? "it" : "them")} back on if {(p.Tasks.Count == 1 ? "it's" : "they're")} still there." : "";
             yield return new MemorySuggestion($"remove-app-{p.App.Id}", $"Uninstall {p.App.Label}",
-                $"{p.App.What} {SizeText(p.SizeBytes)} Uninstalling can't be undone — {reinstall}.",
+                $"{p.App.What} {SizeText(p.SizeBytes)} {getBack}",
                 null, SuggestionRisk.Low, SuggestionKind.Automated,
                 [$"Runs {p.App.Label}'s own uninstaller silently ({string.Join("; ", p.Entries.Select(e => CommandFor(p.App, e)!.Display))}).{tasks}",
                  $"You lose: {p.App.Lose}",
                  Frees(p.SizeBytes),
-                 $"Can't be undone — {reinstall}."],
+                 getBack],
                 [new(MemoryActionType.RemoveApp, p.App.Id, $"Uninstall {p.App.Label}",
-                    $"Uninstall {p.App.Label}? This can't be undone — {reinstall}. Needs administrator rights.")],
-                Category, "Can't be undone.", DefaultOn: true);
+                    $"Uninstall {p.App.Label}? {getBack} Needs administrator rights.")],
+                Category, getBack, DefaultOn: true, UndoChip: VendorChip(p.App.ReinstallFrom));
         }
 
         if (OfferContentDelivery(s))
@@ -509,10 +516,10 @@ public static class AppRemoval
     // ---- journal labels and undo ----
 
     public static string RemovedLabel(RemovableAppx a, long? bytes) =>
-        $"{a.Label} removed ({a.Name}{(bytes is > 0 ? ", " + MemoryText.Size(bytes.Value) : "")}) — can't be undone; {StoreReinstall}";
+        $"{a.Label} removed ({a.Name}{(bytes is > 0 ? ", " + MemoryText.Size(bytes.Value) : "")}) — reinstall from the Microsoft Store to get it back";
 
     public static string UninstalledLabel(RemovableProgram p, UninstallEntry e) =>
-        $"{e.DisplayName}{(e.Version is { Length: > 0 } v ? " " + v : "")} uninstalled{(e.SizeBytes is > 0 ? $" ({MemoryText.Size(e.SizeBytes.Value)})" : "")} — can't be undone; reinstall from {p.ReinstallFrom} if needed";
+        $"{e.DisplayName}{(e.Version is { Length: > 0 } v ? " " + v : "")} uninstalled{(e.SizeBytes is > 0 ? $" ({MemoryText.Size(e.SizeBytes.Value)})" : "")} — reinstall from {p.ReinstallFrom} to get it back";
 
     /// <summary>What one click changed that undo can put back: registry values, service start types and scheduled tasks.</summary>
     public sealed record Undo(IReadOnlyList<RegistryUndo.Item> Registry, IReadOnlyList<RegistryUndo.Item> Services, IReadOnlyList<string> Tasks)
