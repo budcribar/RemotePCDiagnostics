@@ -157,10 +157,10 @@ public class MemorySuggestionTests
         Assert.Equal("PhoneExperienceHost", uwp.ExeName);
         Assert.Equal("RadeonSoftware", amd.ExeName);
 
-        // Paired CrossDevice phone suppresses automatic Phone Link startup suggestion; unpaired offers it.
+        // Phone Link is offered even with a paired phone: it only stops the automatic start; opening Phone Link starts it as usual.
         var pairedSnap = Snap(new AppUsage("PhoneExperienceHost", 1, 390 * Mb)) with { Startup = [uwp, amd], Devices = new(HasPairedCrossDevice: true, HasPenDigitizer: false) };
         var pairedIds = Build(pairedSnap).Select(x => x.Id).ToList();
-        Assert.DoesNotContain(pairedIds, id => id.Contains("yourphone"));
+        Assert.Contains(pairedIds, id => id.Contains("yourphone"));
         Assert.Contains(pairedIds, id => id.Contains("amdradeonsoftware"));
 
         var unpairedSnap = pairedSnap with { Devices = new(HasPairedCrossDevice: false, HasPenDigitizer: false) };

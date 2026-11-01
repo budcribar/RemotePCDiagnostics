@@ -226,7 +226,6 @@ public static class MemorySuggestionEngine
         // Startup apps (Win32 Run keys + Packaged UWP StartupTasks).
         foreach (var e in startup.Where(e => e.Enabled))
         {
-            if (e.ExeName is "PhoneExperienceHost" or "CrossDeviceService" && s.Devices?.HasPairedCrossDevice == true) continue;
             var app = s.App(e.ExeName);
             if (app is null ? !ElectronApps.Contains(e.ExeName) : app.MemoryBytes < 150 * Mb && !ElectronApps.Contains(e.ExeName)) continue;
             var label = MemoryText.FriendlyAppName(e.ExeName);
