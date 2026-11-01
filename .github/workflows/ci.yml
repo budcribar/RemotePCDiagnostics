@@ -122,6 +122,18 @@ jobs:
           if (-not (Test-Path artifacts/OutlookBenchmark/smoke-results/results.csv)) { throw 'results.csv missing' }
           Get-Content artifacts/OutlookBenchmark/smoke-results/results.csv
 
+      - name: Publish network history prototype and test demo export
+        shell: pwsh
+        run: |
+          dotnet publish src/NetworkUsagePrototype/NetworkUsagePrototype.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts/NetworkUsagePrototype
+          if ($LASTEXITCODE -ne 0) { throw 'Network usage prototype publish failed' }
+          Copy-Item docs/network-usage-prototype.md artifacts/NetworkUsagePrototype/README.md
+          & artifacts/NetworkUsagePrototype/NetworkUsagePrototype.exe --demo --out artifacts/network-demo
+          if ($LASTEXITCODE -ne 0) { throw 'Network usage demo export failed' }
+          $report = Get-Content artifacts/network-demo/network-usage.json -Raw | ConvertFrom-Json
+          if ($report.Entries.Count -ne 1 -or $report.Source -notlike 'DEMO*') { throw 'Unexpected demo report' }
+          if (-not (Test-Path artifacts/network-demo/network-usage.html)) { throw 'HTML report missing' }
+
       - name: Report failed tests as annotations
         if: failure()
         shell: pwsh
