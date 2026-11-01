@@ -26,7 +26,8 @@ public static class MemoryFeedback
     /// <summary>Whether an action's effect should show right away (closing/stopping) or only later (settings).</summary>
     public static bool IsDeferred(MemoryActionType t) => t is MemoryActionType.DisableStartup or MemoryActionType.EnableBrowserMemorySaver
         or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings
-        or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile;
+        or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile
+        or MemoryActionType.AddDefenderExclusions;
 }
 
 public sealed record ActionOutcome(bool Success, string Message);
@@ -64,6 +65,8 @@ public interface IMemorySystem
     /// <summary>Removable caches and leftovers with their measured size. Expensive (sizes big folders), so it isn't part of
     /// <see cref="CaptureAsync"/>; the Host caches the result for a few minutes unless <paramref name="refresh"/> is set.</summary>
     Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct) => Task.FromResult<IReadOnlyList<StorageCleanupItem>>([]);
+    /// <summary>Runs a Defender PowerShell script built by <see cref="DefenderProbe"/> (admin). Output = its stdout.</summary>
+    Task<(bool Ok, string? Output)> RunDefenderScriptAsync(string script, CancellationToken ct) => Task.FromResult<(bool, string?)>((false, null));
 }
 
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);
@@ -189,6 +192,14 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                     sys.SetServiceStartType(u.Target, u.Previous!);
                     outcome = new(true, $"{u.Label} start-up setting restored to {u.Previous}.");
                     break;
+                case MemoryActionType.AddDefenderExclusions:
+                    var (df, dp) = DefenderProbe.Decode(u.Previous);
+                    var (ok, _) = await sys.RunDefenderScriptAsync(DefenderProbe.RemoveScript(df, dp), ct).ConfigureAwait(false);
+                    if (ok)
+                        foreach (var t in df.Select(f => "path|" + f).Concat(dp.Select(x => "process|" + x)))
+                            try { journal?.RemoveLatest(ChangeKind.DefenderExclusion, t); } catch { }
+                    outcome = ok ? new(true, "Defender scans those folders and build tools again.") : new(false, "Windows didn't allow removing the exclusions.");
+                    break;
                 case MemoryActionType.DisableTransparency:
                     sys.SetTransparency(u.Previous != "0");
                     outcome = new(true, u.Previous != "0" ? "Transparency effects turned back on." : "Transparency effects left off (they were off before).");
@@ -213,6 +224,22 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
         lock (_gate) { _results[u.Id] = r; _recent.Insert(0, r); }
         await ScanAsync(ct).ConfigureAwait(false);
         return r;
+    }
+
+    /// <summary>Adds only the missing exclusions, confirms them by reading back, journals each one for Undo all.</summary>
+    private async Task<ActionOutcome> AddDefenderExclusionsAsync(MemorySuggestion s, CancellationToken ct)
+    {
+        if (Snapshot?.Defender is not { HasWork: true } d) return new(false, "Nothing left to exclude.");
+        var (ok, output) = await sys.RunDefenderScriptAsync(DefenderProbe.AddScript(d.MissingFolders, d.MissingProcesses), ct).ConfigureAwait(false);
+        if (!ok) return new(false, "Windows didn't allow adding Defender exclusions (administrator rights needed, or your organization manages Defender).");
+        var (folders, procs) = DefenderProbe.Confirmed(output, d.MissingFolders, d.MissingProcesses);
+        foreach (var f in folders) Journal(ChangeKind.DefenderExclusion, "path|" + f, null, $"Defender no longer scans {f}");
+        foreach (var p in procs) Journal(ChangeKind.DefenderExclusion, "process|" + p, null, $"Defender no longer scans files opened by {Path.GetFileName(p)} ({p})");
+        if (folders.Count + procs.Count > 0) AddUndo(new(s.Id, "Defender exclusions", MemoryActionType.AddDefenderExclusions, "", DefenderProbe.Encode(folders, procs)));
+        var missed = d.MissingFolders.Count + d.MissingProcesses.Count - folders.Count - procs.Count;
+        if (folders.Count + procs.Count == 0) return new(false, "Defender didn't keep the exclusions; your organization's policy probably controls them.");
+        return new(true, $"Defender no longer scans {MemoryText.Plural(folders.Count, "folder", "folders")} and {MemoryText.Plural(procs.Count, "build tool", "build tools")}."
+            + (missed > 0 ? $" {missed} weren't kept (organization policy)." : "") + " Builds speed up from the next one.");
     }
 
     private SuggestionResult Record(string id, ActionOutcome o, MemoryAction a, UndoEntry? _, bool canForce = false)
@@ -305,6 +332,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 AddUndo(new(s.Id, "Transparency effects", a.Type, "", before == false ? "0" : "1"));
                 Journal(ChangeKind.Transparency, "", before == false ? "0" : "1", "Transparency effects turned off");
                 return new(true, "Transparency effects turned off (this account).");
+
+            case MemoryActionType.AddDefenderExclusions:
+                return await AddDefenderExclusionsAsync(s, ct).ConfigureAwait(false);
 
             case MemoryActionType.AutoManagePageFile:
                 var pageFileBefore = await sys.ReadPageFileSettingsAsync(ct).ConfigureAwait(false);

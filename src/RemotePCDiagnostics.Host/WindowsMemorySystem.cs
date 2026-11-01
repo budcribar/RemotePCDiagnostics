@@ -6,6 +6,7 @@ using Microsoft.Win32;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Memory;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Projects;
 
 namespace RemotePCDiagnostics.Host;
 
@@ -102,8 +103,33 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
 
         var probe = await RunPowerShellAsync(MemoryProbe.Script, ct).ConfigureAwait(false);
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
+        var defender = apps.Any(a => a.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase)) ? await ReadDefenderAsync(ct).ConfigureAwait(false) : null;
         return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
-            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser());
+            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender);
+    }
+
+    /// <summary>Defender status + which code folders, package cache and build tools aren't excluded yet. Null = couldn't tell.</summary>
+    private async Task<DefenderInfo?> ReadDefenderAsync(CancellationToken ct)
+    {
+        try
+        {
+            var r = await RunPowerShellAsync(DefenderProbe.Script, ct).ConfigureAwait(false);
+            if (DefenderProbe.Parse(r.ExitCode == 0 ? r.Output : null) is not { } status) return null;
+            if (!status.Active) return new(false, [], [], []);
+            var p = ProjectLocatorPaths.Current();
+            var roots = await DevProjects.FindAsync(log, ct).ConfigureAwait(false);
+            var folders = ProjectLocator.CollapseSiblings(roots.Select(x => x.Path), p);
+            var nuget = Path.Combine(p.UserProfile, ".nuget", "packages");
+            return DefenderProbe.Plan(status, folders, Directory.Exists(nuget) ? nuget : null, DevProjects.BuildTools());
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Defender read failed: " + ex.Message); return null; }
+    }
+
+    public async Task<(bool Ok, string? Output)> RunDefenderScriptAsync(string script, CancellationToken ct)
+    {
+        var r = await RunPowerShellAsync(script, ct).ConfigureAwait(false);
+        if (r.ExitCode != 0) Log("Defender script failed: " + r.Error);
+        return (r.ExitCode == 0, r.Output);
     }
 
     // One cache for the whole app: several WindowsMemorySystem instances exist (memory page, benchmarks, --undo-all).
@@ -113,7 +139,11 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
     public Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct)
     {
         StorageCleanupCache cache;
-        lock (s_cleanupGate) cache = s_cleanupCache ??= new(c => Task.Run(() => ScanStorageCleanups(ReadDevices(), Log, c), c));
+        lock (s_cleanupGate) cache = s_cleanupCache ??= new(async c =>
+        {
+            var roots = (await DevProjects.FindAsync(log, c).ConfigureAwait(false)).Select(r => r.Path).ToList();
+            return await Task.Run(() => ScanStorageCleanups(ReadDevices(), Log, c, roots), c).ConfigureAwait(false);
+        });
         return cache.GetAsync(refresh, ct);
     }
 
@@ -329,7 +359,8 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         return new(printer, bt, bio, pen, crossDevice, netPrinter, pdfPrinter);
     }
 
-    public static IReadOnlyList<StorageCleanupItem> ScanStorageCleanups(DeviceFacts? devices = null, Action<string>? scanLog = null, CancellationToken ct = default)
+    public static IReadOnlyList<StorageCleanupItem> ScanStorageCleanups(DeviceFacts? devices = null, Action<string>? scanLog = null, CancellationToken ct = default,
+        IReadOnlyList<string>? projectRoots = null)
     {
         var items = new List<StorageCleanupItem>();
         var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -367,11 +398,11 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         long nugetSuperseded = 0;
         var nugetPkgs = Path.Combine(userProfile, @".nuget\packages");
         foreach (var oldVer in NuGetCleanupScanner.FindSupersededVersions(nugetPkgs,
-            Path.Combine(userProfile, "source", "repos"), scanLog, ct))
+            projectRoots ?? [Path.Combine(userProfile, "source", "repos")], scanLog, ct))
             nugetSuperseded += DirSize(oldVer);
         if (nugetHttp + nugetSuperseded > 10L << 20)
             items.Add(new("storage-nuget", "NuGet HTTP cache & superseded package versions",
-                "Clears %LOCALAPPDATA%\\NuGet\\v3-cache and identifies superseded package versions, keeping the highest NuGet version and all versions referenced by project.assets.json under ~/source/repos. Package pruning is skipped if the reference scan is incomplete.",
+                "Clears %LOCALAPPDATA%\\NuGet\\v3-cache and removes older package versions downloaded from nuget.org more than 45 days ago that no project on this PC uses (projects found from Visual Studio, VS Code, Rider and Windows Search). The newest version of each package is kept, and anything from a company feed or local folder is never touched. A build that still needs a removed version downloads it again.",
                 nugetHttp + nugetSuperseded, AutoCheckedByDefault: true));
 
         // 2. ~/.grok stale worktrees, sessions, downloads (>30d)

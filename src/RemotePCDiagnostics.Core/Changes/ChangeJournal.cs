@@ -17,6 +17,7 @@ public enum ChangeKind
     AdapterDns,          // Target = adapter alias; Previous = "" (automatic/DHCP) or "1.1.1.1,8.8.8.8"
     PageFile,            // Previous = base64 JSON of the custom page file settings
     TempFiles,           // Previous = "files:bytes" removed by the cleanup; undo recreates placeholder files (testing)
+    DefenderExclusion,   // Target = "path|C:\src\app" or "process|C:\...\MSBuild.exe"; added by this app, undo removes it
     NotUndoable,         // A permanent change (installed updates, removed apps); "Undo all" reports it as skipped, then forgets it
 }
 

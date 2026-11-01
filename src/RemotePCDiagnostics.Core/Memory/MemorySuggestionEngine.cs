@@ -257,8 +257,25 @@ public static class MemorySuggestionEngine
                 s.FastStartup == true ? "Turning off Fast Startup is a PC-wide power setting; Restart alone already clears memory." : null));
         }
 
-        // Defender scanning build folders.
-        if (s.App("MsMpEng") is { } def && def.MemoryBytes >= 250 * Mb && Running(s, "devenv", "MSBuild", "VBCSCompiler", "Code"))
+        // Defender scanning code and build folders: one click when we found the folders and can read Defender's exclusions.
+        if (s.Defender is { HasWork: true } dfn)
+        {
+            var shown = dfn.MissingFolders.Take(6).ToList();
+            var more = dfn.MissingFolders.Count - shown.Count;
+            var hog = s.App("MsMpEng") is { } msmp && msmp.MemoryBytes >= 250 * Mb ? $" Defender is using {MemoryText.Size(msmp.MemoryBytes)} right now." : "";
+            var steps = new List<string>();
+            if (dfn.MissingFolders.Count > 0) steps.Add("Folders: " + string.Join("; ", shown) + (more > 0 ? $" (+{more} more)" : ""));
+            if (dfn.MissingProcesses.Count > 0) steps.Add("Build tools: " + string.Join(", ", dfn.MissingProcesses.Select(Path.GetFileName).Distinct(StringComparer.OrdinalIgnoreCase)));
+            steps.Add("Only code folders found from Visual Studio, VS Code, Rider and Windows Search, plus the NuGet package cache. Never Downloads, Desktop, Documents or a whole drive.");
+            steps.Add("Undo removes exactly these exclusions.");
+            list.Add(new("defender-exclusions", "Stop Defender rescanning code and build folders",
+                $"Microsoft Defender scans every file a build writes. Excluding {MemoryText.Plural(dfn.ProjectFolders.Count, "code folder", "code folders")}, the NuGet package cache and the build tools makes builds noticeably faster.{hog}",
+                null, SuggestionRisk.Medium, SuggestionKind.Automated, steps,
+                [new(MemoryActionType.AddDefenderExclusions, "", "Add exclusions",
+                    "Add these Defender exclusions? Files in these folders and files opened by these build tools won't be scanned for malware. Needs administrator rights.")],
+                "Windows", "Applies right away."));
+        }
+        else if (s.Defender is null && s.App("MsMpEng") is { } def && def.MemoryBytes >= 250 * Mb && Running(s, "devenv", "MSBuild", "VBCSCompiler", "Code"))
             list.Add(new("defender-exclusions", "Exclude your code and build folders from Defender scanning",
                 $"Microsoft Defender is using {MemoryText.Size(def.MemoryBytes)} while developer tools are running. Builds create lots of files it rescans.",
                 null, SuggestionRisk.Medium, SuggestionKind.Guided,

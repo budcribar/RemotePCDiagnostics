@@ -72,6 +72,13 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
             case ChangeKind.NotUndoable:
                 return new(c, false, "Permanent change; Windows has no way to put it back.", Skipped: true);
 
+            case ChangeKind.DefenderExclusion:
+                var sep = c.Target.IndexOf('|');
+                if (sep <= 0) return Fail("The exclusion wasn't recorded.");
+                var (kindD, value) = (c.Target[..sep], c.Target[(sep + 1)..]);
+                var removeScript = kindD == "process" ? DefenderProbe.RemoveScript([], [value]) : DefenderProbe.RemoveScript([value], []);
+                return await Ps(removeScript, c, $"Defender scans {(kindD == "process" ? "files opened by " + Path.GetFileName(value) : value)} again.", ct).ConfigureAwait(false);
+
             case ChangeKind.StartupApp:
                 if (memory is null) return Fail("Not available.");
                 memory.SetStartupApproved(c.Target, c.Previous is null ? null : Convert.FromBase64String(c.Previous));

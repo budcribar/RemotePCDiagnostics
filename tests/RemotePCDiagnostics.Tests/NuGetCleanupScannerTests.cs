@@ -15,7 +15,18 @@ public sealed class NuGetCleanupScannerTests : IDisposable
         Directory.CreateDirectory(Projects);
     }
 
-    private string Package(string version, string name = "example") => Directory.CreateDirectory(Path.Combine(Packages, name, version)).FullName;
+    /// <summary>A version folder as NuGet leaves it: .nupkg.metadata with its source, downloaded <paramref name="daysAgo"/> days ago.</summary>
+    private string Package(string version, string name = "example", string? source = "https://api.nuget.org/v3/index.json", int daysAgo = 400)
+    {
+        var dir = Directory.CreateDirectory(Path.Combine(Packages, name, version)).FullName;
+        if (source is not null)
+        {
+            var meta = Path.Combine(dir, ".nupkg.metadata");
+            File.WriteAllText(meta, JsonSerializer.Serialize(new { version = 2, contentHash = "x", source }));
+            File.SetLastWriteTimeUtc(meta, DateTime.UtcNow.AddDays(-daysAgo));
+        }
+        return dir;
+    }
     private void Assets(string relative, params string[] identities)
     {
         var dir = Directory.CreateDirectory(Path.Combine(Projects, relative));
@@ -98,6 +109,46 @@ public sealed class NuGetCleanupScannerTests : IDisposable
         Assets("web/node_modules/pkg", "Example/1.0.0"); // ignored: not a .NET project folder
         Assert.Equal([old], NuGetCleanupScanner.FindSupersededVersions(Packages, Projects));
     }
+
+    [Fact]
+    public void KeepsVersionsFromOtherFeeds_LocalFolders_AndWithoutMetadata()
+    {
+        Package("3.0.0");
+        var fromOrg = Package("1.0.0");
+        Package("1.1.0", source: "https://pkgs.dev.azure.com/contoso/_packaging/feed/nuget/v3/index.json");
+        Package("1.2.0", source: @"C:\LocalFeed");
+        Package("1.3.0", source: "http://api.nuget.org/v3/index.json"); // not https: keep
+        Package("1.4.0", source: null);
+        Assert.Equal([fromOrg], NuGetCleanupScanner.FindSupersededVersions(Packages, Projects));
+    }
+
+    [Fact]
+    public void KeepsRecentlyDownloadedVersions()
+    {
+        Package("2.0.0");
+        var old = Package("1.0.0", daysAgo: 100);
+        Package("1.5.0", daysAgo: 10); // a project we didn't find may have just restored it
+        Assert.Equal([old], NuGetCleanupScanner.FindSupersededVersions(Packages, Projects));
+    }
+
+    [Fact]
+    public void ReferencesFromEveryProjectRootAreKept_MissingRootsIgnored()
+    {
+        Package("3.0.0");
+        Package("1.0.0");
+        var unused = Package("2.0.0");
+        var other = Directory.CreateDirectory(Path.Combine(root, "D-work", "app", "obj")).FullName;
+        File.WriteAllText(Path.Combine(other, "project.assets.json"), JsonSerializer.Serialize(new { libraries = new Dictionary<string, object> { ["Example/1.0.0"] = new { type = "package" } } }));
+        Assert.Equal([unused], NuGetCleanupScanner.FindSupersededVersions(Packages, [Projects, Path.Combine(root, "D-work"), Path.Combine(root, "gone")]));
+        Assert.Empty(NuGetCleanupScanner.FindSupersededVersions(Packages, [Path.Combine(root, "gone")]));
+    }
+
+    [Theory]
+    [InlineData("https://api.nuget.org/v3/index.json", true)]
+    [InlineData("https://www.nuget.org/api/v2/", true)]
+    [InlineData("https://nuget.pkg.github.com/acme/index.json", false)]
+    [InlineData(@"C:\feed", false)]
+    public void IsNuGetOrg(string source, bool expected) => Assert.Equal(expected, NuGetCleanupScanner.IsNuGetOrg(source));
 
     public void Dispose() => Directory.Delete(root, recursive: true);
 }
