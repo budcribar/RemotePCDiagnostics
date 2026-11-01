@@ -24,6 +24,7 @@ public enum ChangeKind
     NotUndoable,         // A permanent change (installed updates, removed apps); "Undo all" reports it as skipped, then forgets it
     ExtensionBlock,      // Target = "Chrome|<extension id>" (must be on BrowserExtensions.Allowlist); Previous = the blocklist value name this app added ("3"); undo deletes only that value
     BrowserLocalStateValue, // Target = "Edge|background_mode.enabled" (BrowserBackground.Target only); Previous = "true" | "false" | null (not set: undo removes it)
+    ScheduledTask,       // Target = task path on ScheduledTaskAllowlist ("\Microsoft\XblGameSave\XblGameSaveTask"); Previous = "Enabled"; undo enables it again
 }
 
 /// <param name="Label">Friendly, e.g. "Spotify won't start with Windows".</param>

@@ -15,7 +15,7 @@ namespace RemotePCDiagnostics.Host;
 /// Windows probes and actions for memory suggestions. Per-user changes only (HKCU startup, the user's browser profile),
 /// except service start-up type, which the user explicitly clicks and can undo. Nothing here runs without a UI click.
 /// </summary>
-public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? log = null) : IMemorySystem
+public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? log = null) : IMemorySystem
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string Run32Key = @"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run";
@@ -109,7 +109,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
         var defender = apps.Any(a => a.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase)) ? await ReadDefenderAsync(ct).ConfigureAwait(false) : null;
         return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
-            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart(), ReadDefaultPrinter(), ReadOfficePrivacy(), ReadExtensions(ct), backgrounds);
+            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart(), ReadDefaultPrinter(), ReadOfficePrivacy(), ReadExtensions(ct), backgrounds, ReadRemovableApps());
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -554,7 +554,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
     }
 
     /// <summary>Runs one of this class's fixed PowerShell scripts (never user input) and returns its output.</summary>
-    private async Task<(int ExitCode, string Output, string Error)> RunPowerShellAsync(string script, CancellationToken ct)
+    private async Task<(int ExitCode, string Output, string Error)> RunPowerShellAsync(string script, CancellationToken ct, TimeSpan? limit = null)
     {
         var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"))
         { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -563,7 +563,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         {
             using var p = Process.Start(psi)!;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            timeout.CancelAfter(limit ?? TimeSpan.FromSeconds(30));
             var outTask = p.StandardOutput.ReadToEndAsync(timeout.Token);
             var errTask = p.StandardError.ReadToEndAsync(timeout.Token);
             await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
