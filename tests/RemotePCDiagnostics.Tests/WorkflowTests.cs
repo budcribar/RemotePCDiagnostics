@@ -156,6 +156,78 @@ public class WorkflowTests
         Assert.Equal(["defender: why"], FixCatalog.Recommendations([Sug("defender", SuggestionKind.Guided)]));
     }
 
+    // ---- opt-in fixes (DefaultOn = false) ----
+
+    /// <summary>A small PC (8 GB, 90% in use, no classic Outlook) running Windows Search (opt-in) and DiagTrack (ticked by default).</summary>
+    private sealed class SmallPcMem : IMemorySystem
+    {
+        private static ServiceInfo Svc(string name) => new(name, name + " display", "RUNNING", "AUTO_START", "LocalSystem", "");
+        public MemoryReading ReadMemory() => new(8L << 30, (long)(0.8 * (1L << 30)));
+        public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> s, CancellationToken ct) =>
+            Task.FromResult(new MemorySnapshot(ReadMemory(), [], Services: [new(Svc("WSearch"), 40L << 20), new(Svc("DiagTrack"), 30L << 20)],
+                Devices: new(HasClassicOutlook: false), TransparencyOn: false));
+        public Task<ActionOutcome> CloseAppAsync(string p, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public Task<ActionOutcome> ForceCloseAppAsync(string p, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public Task<ActionOutcome> RunCommandAsync(string f, IReadOnlyList<string> a, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public byte[]? GetStartupApproved(string n) => null;
+        public void SetStartupApproved(string n, byte[]? v) { }
+        public bool IsBrowserRunning(BrowserKind k) => false;
+        public string? ReadBrowserLocalState(BrowserKind k) => null;
+        public void WriteBrowserLocalState(BrowserKind k, string json) { }
+        public void OpenUri(string uri) { }
+        public string GetServiceStartType(string n) => "Automatic";
+        public void SetServiceStartType(string n, string t) { }
+    }
+
+    private static WorkflowService MakeWithMemory(IMemorySystem mem)
+    {
+        var results = new ResultStore();
+        var diag = new DiagnosticsService(results, [new AreaModule("ResourceHogs", Report(PowerPlan))]);
+        var rem = new RemediationService(new SystemCommandRunner(new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""))), new SessionContext(SessionMode.Remote));
+        var bench = new BenchmarkService(new BenchmarkRunner(new Probes(), resolve: (_, _) => Task.CompletedTask), new MemBenchStore());
+        var memory = new MemorySuggestionService(mem, session: new SessionContext(SessionMode.Remote), settle: TimeSpan.Zero);
+        return new WorkflowService(diag, results, rem, bench, new Sys(), new MemFlowStore(), memory, session: new SessionContext(SessionMode.Remote),
+            delay: (_, _) => Task.CompletedTask);
+    }
+
+    [Fact]
+    public async Task WindowsSearch_IsOptIn_ListedUnticked_OthersTicked_CanBeTickedByHand_ReportListsItWhenLeft()
+    {
+        var flow = MakeWithMemory(new SmallPcMem());
+        await flow.RunChecksAsync();
+        var s = flow.State;
+        Assert.Equal(WorkflowStage.Review, s.Stage);
+        var wsearch = s.Fixes.Single(f => f.MemoryAction == MemoryActionType.SetServiceManual && f.MemoryTarget == "WSearch");
+        Assert.False(wsearch.DefaultOn);
+        Assert.DoesNotContain(wsearch.Id, s.Approved);                                    // opt-in: starts unticked
+        var others = s.Fixes.Where(f => f.Id != wsearch.Id).ToList();
+        Assert.Contains(others, f => f.MemoryTarget == "DiagTrack");
+        Assert.Contains(others, f => f.Remediation?.Kind == RemediationKind.SetBalancedPowerPlan);
+        Assert.All(others, f => { Assert.True(f.DefaultOn); Assert.Contains(f.Id, s.Approved); }); // everything else still ticked
+
+        // Left unticked: the client report lists it under "Left as they were, by choice".
+        var html = ClientReport.Build(s, null, null, BenchmarkComparison.Build(null, null), DateTimeOffset.Now);
+        Assert.Contains("Left as they were, by choice", html);
+        Assert.Contains(System.Net.WebUtility.HtmlEncode(wsearch.Title), html);
+
+        // The tech can tick it by hand.
+        flow.SetApproved(wsearch.Id, true);
+        Assert.Contains(wsearch.Id, flow.State.Approved);
+        Assert.Equal(s.Fixes.Count, flow.State.Approved.Count);
+        flow.SetApproved(wsearch.Id, false);
+        Assert.DoesNotContain(wsearch.Id, flow.State.Approved);
+    }
+
+    [Fact]
+    public void Catalog_CarriesDefaultOn_FromSuggestion()
+    {
+        MemorySuggestion Sug(string id, bool on) => new(id, id, "why", null, SuggestionRisk.Low, SuggestionKind.Automated, [],
+            [new MemoryAction(MemoryActionType.SetServiceManual, id, "Manual")], DefaultOn: on);
+        var fixes = FixCatalog.Build([], [Sug("svc-a", true), Sug("svc-b", false)]);
+        Assert.True(fixes.Single(f => f.SuggestionId == "svc-a").DefaultOn);
+        Assert.False(fixes.Single(f => f.SuggestionId == "svc-b").DefaultOn);
+    }
+
     // ---- the whole run ----
     [Fact]
     public async Task FullRun_OneDecision_ThenRestartBenchmarkApplyRestartBenchmarkReport()

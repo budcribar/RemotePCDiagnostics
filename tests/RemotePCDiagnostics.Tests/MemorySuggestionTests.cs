@@ -278,6 +278,54 @@ public class MemorySuggestionTests
         Assert.Contains("shared process", shared.Why);
     }
 
+    // ---- Windows Search: only on small, nearly-full PCs without classic Outlook; opt-in
+    private static MemorySnapshot SearchSnap(long totalGb, int usedPercent, bool? outlook, params AppUsage[] apps) =>
+        new(new(totalGb * Gb, totalGb * Gb * (100 - usedPercent) / 100), apps, Services: [new(Svc("WSearch"), 40 * Mb)], Devices: new(HasClassicOutlook: outlook));
+
+    [Fact]
+    public void WindowsSearch_OfferedOnSmallFullPcWithoutOutlook_OptIn()
+    {
+        var s = Build(SearchSnap(8, 90, false)).Single(x => x.Id == "svc-wsearch");
+        Assert.False(s.DefaultOn);
+        Assert.Contains(s.Actions, a => a.Type == MemoryActionType.SetServiceManual);
+        Assert.Contains("tens of MB", s.Why);                                 // what it saves: small
+        Assert.Contains("File Explorer searches get slower", s.Why);          // what the client loses
+        Assert.Contains("Outlook", s.Why);
+        Assert.Contains("previous start type", s.Why);                        // undo
+        Assert.Contains(Build(SearchSnap(8, 85, false)), x => x.Id == "svc-wsearch");
+        Assert.True(Build(Snap() with { Services = [new(Svc("DiagTrack"), 40 * Mb)] }).Single(x => x.Id == "svc-diagtrack").DefaultOn);
+    }
+
+    [Theory]
+    [InlineData(16, 90, false)]   // plenty of RAM
+    [InlineData(8, 70, false)]    // memory not nearly full
+    [InlineData(8, 84, false)]
+    [InlineData(8, 90, true)]     // classic Outlook installed
+    [InlineData(8, 90, null)]     // couldn't tell: Outlook may be installed
+    public void WindowsSearch_NotOffered(int totalGb, int usedPercent, bool? outlook) =>
+        Assert.DoesNotContain(Build(SearchSnap(totalGb, usedPercent, outlook)), x => x.Id == "svc-wsearch");
+
+    [Fact]
+    public void WindowsSearch_NotOffered_WhileOutlookRunning_OrDevicesUnknown()
+    {
+        Assert.DoesNotContain(Build(SearchSnap(8, 90, false, new AppUsage("OUTLOOK", 1, 300 * Mb, HasWindow: true))), x => x.Id == "svc-wsearch");
+        Assert.DoesNotContain(Build(SearchSnap(8, 90, false) with { Devices = null }), x => x.Id == "svc-wsearch");
+        Assert.Contains(Build(SearchSnap(8, 90, false, new AppUsage("olk", 1, 300 * Mb, HasWindow: true))), x => x.Id == "svc-wsearch"); // new Outlook doesn't use the index
+    }
+
+    [Fact]
+    public void ClassicOutlook_ClickToRunProducts()
+    {
+        string? None(string _) => null;
+        Assert.True(ClassicOutlook.InClickToRun("O365ProPlusRetail", None));
+        Assert.True(ClassicOutlook.InClickToRun("HomeBusiness2019Retail", None));
+        Assert.True(ClassicOutlook.InClickToRun("VisioProRetail, OutlookRetail", None));
+        Assert.False(ClassicOutlook.InClickToRun("HomeStudent2019Retail,VisioProRetail", None));
+        Assert.False(ClassicOutlook.InClickToRun("O365ProPlusRetail", id => "groove,lync,Outlook"));   // Outlook excluded
+        Assert.False(ClassicOutlook.InClickToRun(null, None));
+        Assert.False(ClassicOutlook.InClickToRun("", None));
+    }
+
     [Fact]
     public void Services_NothingProtectedEverSuggested()
     {

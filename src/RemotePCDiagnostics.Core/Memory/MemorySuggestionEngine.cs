@@ -56,7 +56,8 @@ public static class MemoryCommandAllowlist
 }
 
 /// <summary>A service that's often safe to stop on a laptop, with what it does and what you lose.</summary>
-public sealed record ServiceCandidate(string What, string Lose, bool OfferDisable = false, Func<MemorySnapshot, bool>? NeededWhen = null);
+/// <param name="DefaultOn">False = opt-in: the service workflow lists the fix unticked (the tech ticks it by hand).</param>
+public sealed record ServiceCandidate(string What, string Lose, bool OfferDisable = false, Func<MemorySnapshot, bool>? NeededWhen = null, bool DefaultOn = true);
 
 /// <summary>Pure rules: snapshot in, suggestions out (sorted by estimated saving).</summary>
 public static class MemorySuggestionEngine
@@ -88,11 +89,26 @@ public static class MemorySuggestionEngine
 
     private static bool Running(MemorySnapshot s, params string[] names) => names.Any(n => s.App(n) is not null);
 
+    /// <summary>Windows Search is only worth setting to Manual on a small PC whose memory is nearly full.</summary>
+    public const long WSearchMaxRamBytes = 8 * Gb;
+    public const int WSearchMinUsedPercent = 85;
+
+    /// <summary>
+    /// The indexer uses only tens of MB once the first index is built, while Manual slows Start-menu and File Explorer search and
+    /// makes classic Outlook's instant search slow or incomplete (it uses the index). So: needed unless RAM ≤ 8 GB, ≥ 85% in use, classic
+    /// Outlook known not to be installed (unknown counts as installed) and not running.
+    /// </summary>
+    public static bool WSearchNeeded(MemorySnapshot s) =>
+        !(s.Memory.TotalBytes is > 0 and <= WSearchMaxRamBytes && s.Memory.UsedPercent >= WSearchMinUsedPercent
+          && s.Devices?.HasClassicOutlook == false && !Running(s, "OUTLOOK"));
+
     public static readonly IReadOnlyDictionary<string, ServiceCandidate> ServiceCandidates = new Dictionary<string, ServiceCandidate>(StringComparer.OrdinalIgnoreCase)
     {
         ["Spooler"] = new("Print Spooler handles printing.", "You can't print until it's started again.", NeededWhen: s => s.Devices?.HasPrinter != false),
         ["Fax"] = new("Fax sends and receives faxes.", "Faxing from this PC.", OfferDisable: true),
-        ["WSearch"] = new("Windows Search keeps an index of your files so searches are fast.", "Start-menu and File Explorer searches get slower; Outlook search may be affected."),
+        ["WSearch"] = new("Windows Search keeps an index of your files so Start-menu and File Explorer searches are fast. Offered only because this PC has 8 GB of memory or less and it's nearly full; once its index is built it usually uses only tens of MB, so the saving is small.",
+            "Start-menu and File Explorer searches get slower, and if classic Outlook is used on this PC later, its search becomes slow or incomplete (Outlook warns about it). Undo sets it back to its previous start type.",
+            NeededWhen: WSearchNeeded, DefaultOn: false),
         ["SysMain"] = new("SysMain (Superfetch) preloads apps you use often into memory.", "Apps may open a little slower right after startup."),
         ["DiagTrack"] = new("Connected User Experiences and Telemetry sends usage data to Microsoft.", "Nothing you'll notice.", OfferDisable: true),
         ["XblAuthManager"] = new("Xbox Live sign-in for games.", "Xbox sign-in in games until it starts again.", OfferDisable: true, NeededWhen: s => Running(s, "XboxPcApp", "GamingServices")),
@@ -345,7 +361,7 @@ public static class MemorySuggestionEngine
             list.Add(new($"svc-{svc.Name}".ToLowerInvariant(), $"Stop \"{svc.Label}\"", $"{c.What} {mem} You lose: {c.Lose}",
                 su.Shared ? null : su.ProcessMemoryBytes, SuggestionRisk.Medium, SuggestionKind.Automated,
                 ["Stop now lasts until the next restart (Start it again from Services).", "\"Don't start automatically\" / Disable can be undone here; the original setting is remembered."],
-                actions, "Services", su.Shared ? "Shared process: stopping it may show little or no change in free memory." : null));
+                actions, "Services", su.Shared ? "Shared process: stopping it may show little or no change in free memory." : null, c.DefaultOn));
         }
 
         return list.OrderByDescending(x => x.SavingBytes ?? -1).ThenBy(x => x.Kind).ThenBy(x => x.Title, StringComparer.Ordinal).ToList();

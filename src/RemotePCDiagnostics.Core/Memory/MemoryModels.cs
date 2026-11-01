@@ -46,6 +46,7 @@ public sealed record ServiceUsage(ServiceInfo Info, long? ProcessMemoryBytes, in
 }
 
 /// <summary>Hardware facts used to decide whether a service or app is needed (null = unknown, so the service isn't suggested).</summary>
+/// <param name="HasClassicOutlook">Classic Outlook (OUTLOOK.EXE, which searches through the Windows Search index) is installed. New Outlook (olk.exe) doesn't count.</param>
 public sealed record DeviceFacts(
     bool? HasPrinter = null,
     bool? HasBluetoothDevices = null,
@@ -53,7 +54,25 @@ public sealed record DeviceFacts(
     bool? HasPenDigitizer = null,
     bool? HasPairedCrossDevice = null,
     bool? HasNetworkOrWsdPrinter = null,
-    bool? HasLocalPdfPrinter = null);
+    bool? HasLocalPdfPrinter = null,
+    bool? HasClassicOutlook = null);
+
+/// <summary>Reads Office Click-to-Run's product list (registry values, read by the Host) to tell whether classic Outlook is part of it.</summary>
+public static class ClassicOutlook
+{
+    /// <summary>Click-to-Run products that never include Outlook (single apps, Visio, Project, Home &amp; Student, language packs).</summary>
+    private static readonly string[] NoOutlookProducts =
+        ["HomeStudent", "Visio", "Project", "Word", "Excel", "PowerPoint", "OneNote", "Access", "Publisher", "Language", "Proofing", "SkypeForBusiness", "Lync", "Teams", "OneDrive", "Groove"];
+
+    /// <summary>
+    /// <paramref name="productReleaseIds"/> = <c>ClickToRun\Configuration\ProductReleaseIds</c> (comma list, e.g. "O365ProPlusRetail,VisioProRetail");
+    /// <paramref name="excludedApps"/> = that product's <c>&lt;id&gt;.ExcludedApps</c> value. Unknown products count as including Outlook.
+    /// </summary>
+    public static bool InClickToRun(string? productReleaseIds, Func<string, string?> excludedApps) =>
+        (productReleaseIds ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(id =>
+            (id.Contains("Outlook", StringComparison.OrdinalIgnoreCase) || !NoOutlookProducts.Any(n => id.Contains(n, StringComparison.OrdinalIgnoreCase)))
+            && !(excludedApps(id) ?? "").Split(',', StringSplitOptions.TrimEntries).Contains("outlook", StringComparer.OrdinalIgnoreCase));
+}
 
 /// <summary>A removable cache or bloatware item discovered on disk with its exact measured byte size.</summary>
 public sealed record StorageCleanupItem(string Id, string Title, string Description, long SizeBytes, bool AutoCheckedByDefault = true, string Category = "Storage");
@@ -143,9 +162,10 @@ public enum MemoryActionType
 /// <summary>One button on a suggestion card. <see cref="Confirm"/> non-null = ask once inline before running.</summary>
 public sealed record MemoryAction(MemoryActionType Type, string Target, string Label, string? Confirm = null);
 
+/// <param name="DefaultOn">False = opt-in: the service workflow lists its fix unticked.</param>
 public sealed record MemorySuggestion(
     string Id, string Title, string Why, long? SavingBytes, SuggestionRisk Risk, SuggestionKind Kind,
-    IReadOnlyList<string> Steps, IReadOnlyList<MemoryAction> Actions, string Category = "General", string? Note = null);
+    IReadOnlyList<string> Steps, IReadOnlyList<MemoryAction> Actions, string Category = "General", string? Note = null, bool DefaultOn = true);
 
 public static class MemoryText
 {
