@@ -368,15 +368,15 @@ public class MemorySuggestionTests
         var unpairedSnap = pairedSnap with { Devices = new(HasPairedCrossDevice: false, HasPenDigitizer: false) };
         Assert.Contains(Build(unpairedSnap).Select(x => x.Id), id => id.Contains("yourphone"));
 
-        // UDCService, BrYNSvc, CoworkVMService, CodexSandboxService are flagged when running.
+        // UDCService, BrYNSvc are flagged when running; CoworkVMService, CodexSandboxService when a signed-in user may start them (#14).
         var svcSnap = Snap() with
         {
             Services =
             [
                 new(Svc("UDCService"), 35 * Mb),
                 new(Svc("BrYNSvc"), 14 * Mb),
-                new(Svc("CoworkVMService"), 26 * Mb),
-                new(Svc("CodexSandboxService.OpenAI.Codex_2p2nqf0c97628"), 8 * Mb),
+                new(Svc("CoworkVMService"), 26 * Mb, 1, UsersCanStart: true),
+                new(Svc("CodexSandboxService.OpenAI.Codex_2p2nqf0c97628"), 8 * Mb, 1, UsersCanStart: true),
             ],
         };
         var svcIds = Build(svcSnap).Select(x => x.Id).ToList();

@@ -84,6 +84,8 @@ public interface IMemorySystem
     bool PrinterExists(string name) => false;
     /// <summary>Makes an installed printer this account's default (winspool SetDefaultPrinter).</summary>
     ActionOutcome SetDefaultPrinter(string name) => new(false, "Not supported on this PC.");
+    /// <summary>Names (without .exe) of the processes running right now, for a last check just before acting; null = not available.</summary>
+    IReadOnlyList<string>? RunningProcessNames() => null;
 }
 
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);
@@ -273,6 +275,39 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
         if (folders.Count + procs.Count == 0) return new(false, "Defender didn't keep the exclusions; your organization's policy probably controls them.");
         return new(true, $"Defender no longer scans {MemoryText.Plural(folders.Count, "folder", "folders")} and {MemoryText.Plural(procs.Count, "build tool", "build tools")}."
             + (missed > 0 ? $" {missed} weren't kept (organization policy)." : "") + " Builds speed up from the next one.");
+    }
+
+    /// <summary>
+    /// #14: Claude / Codex VM service to Manual. Only from Automatic; read back, and journaled (with the old start type) only when Manual stuck.
+    /// </summary>
+    private ActionOutcome SetAiVmServiceManual(MemorySuggestion s, MemoryAction a, ServiceInfo info, string original)
+    {
+        if (a.Type != MemoryActionType.SetServiceManual) return new(false, "Only \"start only when needed\" (Manual) is offered for this service.");
+        if (original is not ("Automatic" or "AutomaticDelayed")) return new(true, $"{info.Label} already starts only when needed ({original}).");
+        sys.SetServiceStartType(info.Name, "Manual");
+        string after;
+        try { after = sys.GetServiceStartType(info.Name); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Read back {info.Name}: {ex.Message}"); after = "unknown"; }
+        if (after != "Manual") return new(false, $"Windows didn't keep {info.Label} on Manual (it's {after}). Nothing was changed.");
+        AddUndo(new(s.Id, info.Label, a.Type, info.Name, original));
+        Journal(ChangeKind.ServiceStartType, info.Name, original, $"{info.Label} set to start only when {AiVmServices.AppName(info.Name)} needs it (Manual; was {original})");
+        return new(true, $"{info.Label} now starts only when {AiVmServices.AppName(info.Name)} needs it (was {original}). Takes effect after the next restart.");
+    }
+
+    /// <summary>
+    /// #14: wsl --shutdown (allowlisted path and argument only). Re-checks just before running that Linux still looks idle, since the
+    /// card may be minutes old. Nothing is journaled: there's nothing to undo (Linux starts again when it's used).
+    /// </summary>
+    private async Task<ActionOutcome> ShutdownWslAsync(CancellationToken ct)
+    {
+        if (Snapshot is not { } snap || WslShutdown.IdleVm(snap) is null) return new(false, "WSL isn't running, or Linux is in use now.");
+        IReadOnlyList<string>? names = null;
+        try { names = sys.RunningProcessNames(); } catch (Exception ex) when (ex is not OperationCanceledException) { Log("process list: " + ex.Message); }
+        var busy = (names ?? []).Where(WslShutdown.IsBusyName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (busy.Count > 0) return new(false, $"Linux is in use now ({string.Join(", ", busy)}), so WSL was left running.");
+        var cmd = MemoryCommandAllowlist.WslShutdown;
+        if (!MemoryCommandAllowlist.IsAllowed(cmd.FileName, cmd.Arguments)) return new(false, "Not allowed.");
+        return await sys.RunCommandAsync(cmd.FileName, cmd.Arguments, ct).ConfigureAwait(false);
     }
 
     /// <summary>Result of one allowlisted DWORD write. <see cref="Changed"/> = written (and journaled); false when it was already that value.</summary>
@@ -493,6 +528,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 if (!MemoryCommandAllowlist.IsAllowed(cmd.FileName, cmd.Arguments)) return new(false, "Not allowed.");
                 return await sys.RunCommandAsync(cmd.FileName, cmd.Arguments, ct).ConfigureAwait(false);
 
+            case MemoryActionType.ShutdownWsl:
+                return await ShutdownWslAsync(ct).ConfigureAwait(false);
+
             case MemoryActionType.DisableStartup:
                 if (Snapshot?.Startup?.FirstOrDefault(e => e.Name == a.Target) is not { } entry) return new(false, "That startup app is no longer listed.");
                 var prev = sys.GetStartupApproved(entry.Name);
@@ -533,6 +571,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 }
                 var target = a.Type == MemoryActionType.SetServiceManual ? "Manual" : "Disabled";
                 var original = sys.GetServiceStartType(info.Name);
+                if (AiVmServices.Is(info.Name)) return SetAiVmServiceManual(s, a, info, original);
                 sys.SetServiceStartType(info.Name, target);
                 AddUndo(new(s.Id, info.Label, a.Type, info.Name, original));
                 Journal(ChangeKind.ServiceStartType, info.Name, original, $"{info.Label} set to {target}");

@@ -294,6 +294,32 @@ public class WorkflowTests
     }
 
     [Fact]
+    public async Task AiVmServices_TickedWhenAutomatic_WslShutdownNotListed()
+    {
+        // #14: Claude / Codex VM services to Manual are ticked; the idle WSL VM shutdown stays on the live page (the workflow restarts the PC).
+        static ServiceUsage Use(string name, string start) => new(new(name, name + " display", "RUNNING", start, "LocalSystem", ""), 26L << 20, 1, UsersCanStart: true);
+        var snap = new MemorySnapshot(new(16L << 30, 8L << 30), [new AppUsage("vmmemWSL", 1, 2L << 30)],
+            Services: [Use("CoworkVMService", "AUTO_START"), Use("CodexSandboxService.OpenAI.Codex_2p2nqf0c97628", "AUTO_START")], TransparencyOn: false);
+        var flow = MakeWithMemory(new SnapMem(snap));
+        await flow.RunChecksAsync();
+        var s = flow.State;
+        foreach (var name in new[] { "CoworkVMService", "CodexSandboxService.OpenAI.Codex_2p2nqf0c97628" })
+        {
+            var fix = s.Fixes.Single(f => f.MemoryTarget == name);
+            Assert.Equal(MemoryActionType.SetServiceManual, fix.MemoryAction);
+            Assert.True(fix.DefaultOn);
+            Assert.Contains(fix.Id, s.Approved);
+        }
+        Assert.DoesNotContain(s.Fixes, f => f.MemoryAction == MemoryActionType.ShutdownWsl);
+
+        // Already Manual: nothing to do, not listed.
+        var manual = snap with { Services = [Use("CoworkVMService", "DEMAND_START")] };
+        var flow2 = MakeWithMemory(new SnapMem(manual));
+        await flow2.RunChecksAsync();
+        Assert.DoesNotContain(flow2.State.Fixes, f => f.MemoryTarget == "CoworkVMService");
+    }
+
+    [Fact]
     public void Catalog_CarriesDefaultOn_FromSuggestion()
     {
         MemorySuggestion Sug(string id, bool on) => new(id, id, "why", null, SuggestionRisk.Low, SuggestionKind.Automated, [],

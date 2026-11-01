@@ -40,7 +40,9 @@ public sealed record StartupEntry(string Name, string Command, bool Enabled, Sta
 /// <summary>A running service with the memory of its hosting process.</summary>
 /// <param name="ProcessMemoryBytes">Working set of the hosting process (null = unknown).</param>
 /// <param name="ServicesInProcess">How many services share that process (svchost groups); &gt;1 means memory can't be attributed exactly.</param>
-public sealed record ServiceUsage(ServiceInfo Info, long? ProcessMemoryBytes, int ServicesInProcess = 1)
+/// <param name="UsersCanStart">The service's security descriptor lets a signed-in, non-admin user start it (null = not read / unknown).
+/// Read by the Host only for <see cref="AiVmServices"/>.</param>
+public sealed record ServiceUsage(ServiceInfo Info, long? ProcessMemoryBytes, int ServicesInProcess = 1, bool? UsersCanStart = null)
 {
     public bool Shared => ServicesInProcess > 1;
 }
@@ -163,6 +165,7 @@ public enum MemoryActionType
     SkipOfficeStartScreen,
     SetPdfDefaultPrinter,
     DisableOfficeOptionalExperiences,
+    ShutdownWsl,
 }
 
 /// <summary>One button on a suggestion card. <see cref="Confirm"/> non-null = ask once inline before running.</summary>
