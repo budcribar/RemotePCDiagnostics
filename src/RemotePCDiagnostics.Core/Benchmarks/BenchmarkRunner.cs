@@ -7,9 +7,11 @@ namespace RemotePCDiagnostics.Core.Benchmarks;
 /// <summary>Idle sample: average processor use and memory paging rate over a quiet period.</summary>
 public sealed record IdleSample(double CpuPercent, double PagesPerSec);
 
+/// <summary>One reading of what wanders at idle: memory in use and the background-process count (see <see cref="BackgroundProcessCount"/>).</summary>
+public sealed record IdleResourceSample(double? MemoryUsedMb, int? BackgroundProcesses);
+
+/// <summary>Inventory read once per run.</summary>
 public sealed record SystemResourceSnapshot(
-    double? MemoryUsedMb = null,
-    int? BackgroundProcesses = null,
     double? DiskFreeGb = null,
     int? EnabledStartupApps = null,
     int? AutoVendorServices = null,
@@ -27,6 +29,8 @@ public interface IBenchmarkProbes
     Task<double?> DiskRandomReadIopsAsync(TimeSpan duration, CancellationToken ct);
     /// <summary>Windows' own boot-performance events (Diagnostics-Performance, event 100), newest first.</summary>
     Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct);
+    /// <summary>Cheap; called <see cref="BenchmarkSettings.ResourceSamples"/> times per run.</summary>
+    Task<IdleResourceSample?> ReadIdleResourcesAsync(CancellationToken ct) => Task.FromResult<IdleResourceSample?>(null);
     Task<SystemResourceSnapshot?> ReadResourceSnapshotAsync(CancellationToken ct) => Task.FromResult<SystemResourceSnapshot?>(null);
 }
 
@@ -45,8 +49,10 @@ public sealed record BootRecord(DateTimeOffset Time, double BootSeconds, double?
 }
 
 /// <summary>Runs the enabled benchmarks in a fixed order (quiet measurements first) and returns one run.</summary>
-public sealed class BenchmarkRunner(IBenchmarkProbes probes, Action<string>? log = null, Func<string, CancellationToken, Task>? resolve = null)
+public sealed class BenchmarkRunner(IBenchmarkProbes probes, Action<string>? log = null, Func<string, CancellationToken, Task>? resolve = null,
+    Func<TimeSpan, CancellationToken, Task>? delay = null)
 {
+    private readonly Func<TimeSpan, CancellationToken, Task> wait = delay ?? new Func<TimeSpan, CancellationToken, Task>(Task.Delay);
     public const int BootsBefore = 3;
     public static readonly string[] LookupDomains =
         ["microsoft.com", "google.com", "amazon.com", "wikipedia.org", "apple.com", "cloudflare.com", "github.com", "bing.com", "yahoo.com", "netflix.com"];
@@ -82,8 +88,17 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, Action<string>? log
                     if (settings.IsEnabled(BenchmarkKind.Paging)) list.Add(new(BenchmarkKind.Paging, idle is null ? [] : [idle.PagesPerSec], idle is null ? note ?? "not available" : null));
                 });
 
+            // Right after the quiet idle sample and before anything this app starts (inventory queries, programs) adds to memory use.
+            if (Benchmarks.IdleResourceKinds.Any(settings.IsEnabled))
+                await Step($"Measuring memory in use and background processes ({settings.ResourceSampleSeconds:0} s)…", async () =>
+                {
+                    var (memory, processes, note) = await SampleIdleResourcesAsync(settings, ct).ConfigureAwait(false);
+                    if (settings.IsEnabled(BenchmarkKind.MemoryUsedMb)) list.Add(new(BenchmarkKind.MemoryUsedMb, memory, memory.Count == 0 ? note : null));
+                    if (settings.IsEnabled(BenchmarkKind.BackgroundProcesses)) list.Add(new(BenchmarkKind.BackgroundProcesses, processes, processes.Count == 0 ? note : null));
+                });
+
             if (Benchmarks.ResourceSnapshotKinds.Any(settings.IsEnabled))
-                await Step("Measuring memory, disk space and background inventory…", async () =>
+                await Step("Measuring disk space and background inventory…", async () =>
                 {
                     SystemResourceSnapshot? snap = null; string? note = null;
                     try { snap = await probes.ReadResourceSnapshotAsync(ct).ConfigureAwait(false); }
@@ -92,8 +107,6 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, Action<string>? log
                     {
                         if (settings.IsEnabled(k)) list.Add(new(k, val is { } v ? [v] : [], val is null ? note ?? "not available" : null));
                     }
-                    AddSnap(BenchmarkKind.MemoryUsedMb, snap?.MemoryUsedMb);
-                    AddSnap(BenchmarkKind.BackgroundProcesses, snap?.BackgroundProcesses);
                     AddSnap(BenchmarkKind.DiskFreeGb, snap?.DiskFreeGb);
                     AddSnap(BenchmarkKind.EnabledStartupApps, snap?.EnabledStartupApps);
                     AddSnap(BenchmarkKind.AutoVendorServices, snap?.AutoVendorServices);
@@ -135,6 +148,27 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, Action<string>? log
         var run = new BenchmarkRun(phase, started, conditions, list, completed);
         Log($"{phase} done: " + string.Join(" ", list.Select(m => $"{m.Kind}={m.Median?.ToString("0.###", CultureInfo.InvariantCulture) ?? "n/a"}")));
         return run;
+    }
+
+    /// <summary>
+    /// Several readings <see cref="BenchmarkSettings.ResourceSampleInterval"/> apart; every reading is kept so the comparison uses
+    /// their median and spread. Stops at once if the first reading has nothing (probe not available) instead of waiting for nothing.
+    /// </summary>
+    private async Task<(List<double> Memory, List<double> Processes, string Note)> SampleIdleResourcesAsync(BenchmarkSettings settings, CancellationToken ct)
+    {
+        var memory = new List<double>(); var processes = new List<double>();
+        var note = "not available";
+        for (var i = 0; i < Math.Max(1, settings.ResourceSamples); i++)
+        {
+            if (i > 0) await wait(settings.ResourceSampleInterval, ct).ConfigureAwait(false);
+            IdleResourceSample? r = null;
+            try { r = await probes.ReadIdleResourcesAsync(ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { Log("idle resources: " + ex.Message); note = "couldn't read memory use or the process list"; }
+            if (r?.MemoryUsedMb is { } mb) memory.Add(mb);
+            if (r?.BackgroundProcesses is { } n) processes.Add(n);
+            if (i == 0 && memory.Count == 0 && processes.Count == 0) break;
+        }
+        return (memory, processes, note);
     }
 
     private static async Task<IReadOnlyList<double>> RepeatAsync(int runs, Func<Task<double?>> once)

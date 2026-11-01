@@ -30,8 +30,11 @@ public static class Benchmarks
     [
         new(BenchmarkKind.BootTime, "Start-up time", "How long Windows takes to start until the desktop is ready", "s", true, 0.08, 2, 2.0, "0.0"),
         new(BenchmarkKind.ProgramStart, "Program start time", "How quickly programs open (Windows' own programs, timed)", "ms", true, 0.08, 15, 2.0, "0"),
-        new(BenchmarkKind.MemoryUsedMb, "Memory in use at idle", "RAM in use after Windows finishes starting up", "MB", true, 0.03, 100, 1.5, "0", "less", "more"),
-        new(BenchmarkKind.BackgroundProcesses, "Background processes", "Processes running in the background at idle", "processes", true, 0.03, 3, 0.5, "0", "fewer", "more"),
+        // Memory and process count are the median of several idle samples (see BenchmarkSettings.ResourceSamples). Memory in use drifts by a
+        // few hundred MB between restarts on its own, so it needs 5% and 200 MB to count and carries little weight; the process count is an
+        // inventory figure ("N fewer"), like start-up apps, and doesn't move the overall score.
+        new(BenchmarkKind.MemoryUsedMb, "Memory in use at idle", "RAM in use after Windows finishes starting up", "MB", true, 0.05, 200, 0.5, "0", "less", "more"),
+        new(BenchmarkKind.BackgroundProcesses, "Background processes", "Processes running in the background at idle (not counting this app and what it starts)", "processes", true, 0.03, 5, 0.0, "0", "fewer", "more"),
         new(BenchmarkKind.DiskFreeGb, "Free disk space", "Available storage space on the system drive", "GB", false, 0.005, 0.2, 0.0, "0.0", "more", "less"),
         new(BenchmarkKind.IdleCpu, "Background processor use", "Processor busy with background work while nobody is using the PC", "%", true, 0.15, 1.5, 1.0, "0.0", "lower", "higher"),
         new(BenchmarkKind.Paging, "Memory swapping to disk", "How often Windows has to swap memory to the much slower disk", "pages/s", true, 0.20, 20, 1.0, "0", "less", "more"),
@@ -45,10 +48,13 @@ public static class Benchmarks
         new(BenchmarkKind.InstalledBloatwareApps, "Pre-installed bloatware apps", "Unsupported or unneeded pre-installed apps on the PC", "apps", true, 0.01, 1, 0.0, "0", "fewer", "more"),
     ];
 
+    /// <summary>Read several times over the idle sampling window (they wander from second to second).</summary>
+    public static readonly IReadOnlyList<BenchmarkKind> IdleResourceKinds = [BenchmarkKind.MemoryUsedMb, BenchmarkKind.BackgroundProcesses];
+
+    /// <summary>Read once (they only change when something is installed, removed or switched off).</summary>
     public static readonly IReadOnlyList<BenchmarkKind> ResourceSnapshotKinds =
     [
-        BenchmarkKind.MemoryUsedMb, BenchmarkKind.BackgroundProcesses, BenchmarkKind.DiskFreeGb,
-        BenchmarkKind.EnabledStartupApps, BenchmarkKind.AutoVendorServices, BenchmarkKind.ActiveScheduledTasks, BenchmarkKind.InstalledBloatwareApps,
+        BenchmarkKind.DiskFreeGb, BenchmarkKind.EnabledStartupApps, BenchmarkKind.AutoVendorServices, BenchmarkKind.ActiveScheduledTasks, BenchmarkKind.InstalledBloatwareApps,
     ];
 
     public static BenchmarkInfo Info(BenchmarkKind k) => All.First(i => i.Kind == k);
@@ -66,8 +72,14 @@ public sealed record BenchmarkSettings
     public TimeSpan CpuSingleRun { get; init; } = TimeSpan.FromSeconds(4);
     public TimeSpan CpuMultiRun { get; init; } = TimeSpan.FromSeconds(8);
     public TimeSpan DiskRun { get; init; } = TimeSpan.FromSeconds(12);
+    /// <summary>Memory in use and the background-process count are read this many times, <see cref="ResourceSampleInterval"/> apart (median used).</summary>
+    public int ResourceSamples { get; init; } = 5;
+    public TimeSpan ResourceSampleInterval { get; init; } = TimeSpan.FromSeconds(5);
     /// <summary>After a restart, wait this long before benchmarking so start-up work has settled.</summary>
     public TimeSpan SettleAfterRestart { get; init; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>Time spent between the first and last idle resource sample.</summary>
+    public double ResourceSampleSeconds => Math.Max(0, ResourceSamples - 1) * ResourceSampleInterval.TotalSeconds;
 
     public static readonly int[] RunChoices = [1, 3, 5];
     public bool IsEnabled(BenchmarkKind k) => Enabled.Contains(k);
@@ -77,6 +89,7 @@ public sealed record BenchmarkSettings
     {
         double s = 0;
         if (IsEnabled(BenchmarkKind.IdleCpu) || IsEnabled(BenchmarkKind.Paging)) s += IdleSample.TotalSeconds;
+        if (Benchmarks.IdleResourceKinds.Any(IsEnabled)) s += ResourceSampleSeconds;
         if (IsEnabled(BenchmarkKind.ProgramStart)) s += Runs * BuiltInPrograms.All.Count * 1.5;
         if (IsEnabled(BenchmarkKind.CpuSingle)) s += Runs * CpuSingleRun.TotalSeconds;
         if (IsEnabled(BenchmarkKind.CpuMulti)) s += Runs * CpuMultiRun.TotalSeconds;

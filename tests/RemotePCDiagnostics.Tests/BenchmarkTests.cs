@@ -96,6 +96,8 @@ public class BenchmarkTests
     {
         public List<string> Started = [];
         public bool FailDisk;
+        public Queue<IdleResourceSample?> IdleResources = new();
+        public Task<IdleResourceSample?> ReadIdleResourcesAsync(CancellationToken ct) => Task.FromResult(IdleResources.Count > 0 ? IdleResources.Dequeue() : null);
         public BenchmarkConditions ReadConditions() => Plugged;
         public Task<IdleSample?> SampleIdleAsync(TimeSpan d, CancellationToken ct) => Task.FromResult<IdleSample?>(new(3.5, 42));
         public Task<double?> StartProgramAsync(BuiltInProgram p, CancellationToken ct) { Started.Add(p.Name); return Task.FromResult<double?>(100); }
@@ -107,6 +109,7 @@ public class BenchmarkTests
     private static readonly BenchmarkSettings Fast = new()
     {
         Runs = 2, IdleSample = TimeSpan.Zero, CpuSingleRun = TimeSpan.FromMilliseconds(100), CpuMultiRun = TimeSpan.FromMilliseconds(100), DiskRun = TimeSpan.Zero,
+        ResourceSampleInterval = TimeSpan.Zero,
     };
 
     private static Task Resolve(string name, CancellationToken ct) => name.StartsWith("rpd-") ? Task.CompletedTask : throw new InvalidOperationException();
@@ -257,5 +260,91 @@ public class BenchmarkTests
         Assert.Equal("9 fewer", startup.ChangeSummary);
         Assert.Equal("12 fewer", tasks.ChangeSummary);
         Assert.Equal("10 fewer", bloat.ChangeSummary);
+    }
+
+    // ---- idle resources: background-process filtering, sampling, weights ----
+    [Fact]
+    public void BackgroundProcesses_ExcludeThisAppItsChildrenBenchmarkToolsAndPseudoProcesses()
+    {
+        const int Own = 5000;
+        ProcessRow[] rows =
+        [
+            new(0, 0, "[System Process]"), new(4, 0, "System"), new(120, 4, "Registry"), new(2400, 4, "Memory Compression"),
+            new(700, 600, "services.exe"), new(900, 700, "svchost.exe"), new(901, 700, "svchost.exe"), new(3000, 2900, "explorer.exe"),
+            new(3100, 3000, "OneDrive.exe"),                                                  // a real background program: counted
+            new(Own, 3000, "RemotePCDiagnostics.Host.exe"),
+            new(5100, Own, "msedgewebview2.exe"), new(5101, 5100, "msedgewebview2.exe"),     // WebView2 tree under the app
+            new(5200, Own, "powershell.exe"), new(5201, 5200, "conhost.exe"),                 // inventory query and its console
+            new(5300, Own, "osqueryi.exe"),
+            new(6000, 4242, "charmap.exe"), new(6100, 1, "powercfg.exe"), new(6101, 6100, "conhost.exe"), // benchmark programs, orphaned
+            new(7000, 7000, "weird-self-parent.exe"),                                         // self-parent doesn't loop
+        ];
+        Assert.Equal(6, BackgroundProcessCount.Count(rows, Own)); // services, 2× svchost, explorer, OneDrive, weird
+        Assert.Equal(6, BackgroundProcessCount.Count(rows.Where(r => r.Pid != Own), Own)); // children still found if the app's own row is missing
+        // Seen from another process: the app, its two WebView2 processes and osqueryi now count; benchmark tools and their consoles still don't.
+        Assert.Equal(10, BackgroundProcessCount.Count(rows, ownPid: 99999));
+        Assert.Equal("cmd", BackgroundProcessCount.Stem(@"C:\Windows\System32\cmd.EXE"));
+        Assert.Contains("powershell", BackgroundProcessCount.BenchmarkTools);
+    }
+
+    [Fact]
+    public async Task Runner_SamplesIdleResourcesSeveralTimes_KeepsEverySample_MedianWins()
+    {
+        var probes = new FakeProbes();
+        foreach (var (mb, n) in new[] { (8000.0, 150), (9500.0, 171), (8100.0, 152), (8050.0, 151), (7980.0, 149) }) // one start-up spike
+            probes.IdleResources.Enqueue(new(mb, n));
+        var waits = new List<TimeSpan>();
+        var settings = Fast with { ResourceSamples = 5, ResourceSampleInterval = TimeSpan.FromSeconds(5), Enabled = [BenchmarkKind.MemoryUsedMb, BenchmarkKind.BackgroundProcesses, BenchmarkKind.DiskFreeGb] };
+        var run = await new BenchmarkRunner(probes, delay: (d, _) => { waits.Add(d); return Task.CompletedTask; }).RunAsync(BenchmarkPhase.Before, settings, null, null, default);
+
+        Assert.Equal(Enumerable.Repeat(TimeSpan.FromSeconds(5), 4), waits); // 5 samples, 4 gaps = 20 s
+        var mem = run.Get(BenchmarkKind.MemoryUsedMb)!;
+        Assert.Equal([8000.0, 9500, 8100, 8050, 7980], mem.Samples);
+        Assert.Equal(8050, mem.Median);
+        Assert.Equal(151, run.Get(BenchmarkKind.BackgroundProcesses)!.Median);
+        Assert.Equal(5, run.Get(BenchmarkKind.BackgroundProcesses)!.Samples.Count);
+        Assert.Equal("not available", run.Get(BenchmarkKind.DiskFreeGb)!.Note); // inventory still read once (fake has none)
+        Assert.Equal(20, settings.ResourceSampleSeconds);
+    }
+
+    [Fact]
+    public async Task Runner_IdleResourcesUnavailable_DoesntWait()
+    {
+        var waits = new List<TimeSpan>();
+        var run = await new BenchmarkRunner(new FakeProbes(), delay: (d, _) => { waits.Add(d); return Task.CompletedTask; })
+            .RunAsync(BenchmarkPhase.Before, Fast with { Enabled = [BenchmarkKind.MemoryUsedMb] }, null, null, default);
+        Assert.Empty(waits);
+        Assert.Empty(run.Get(BenchmarkKind.MemoryUsedMb)!.Samples);
+        Assert.Equal("not available", run.Get(BenchmarkKind.MemoryUsedMb)!.Note);
+    }
+
+    [Fact]
+    public void Settings_Default_PassStaysWithinThreeMinutes() =>
+        Assert.InRange(new BenchmarkSettings().EstimatedSeconds(), 140, 180);
+
+    [Fact]
+    public void Comparison_MemoryAndProcessNoise_DontSwingOverall()
+    {
+        Assert.Equal(0.5, Benchmarks.Info(BenchmarkKind.MemoryUsedMb).Weight);
+        Assert.Equal(0.0, Benchmarks.Info(BenchmarkKind.BackgroundProcesses).Weight);
+
+        // Idle memory wandering ~150 MB between restarts, and a few on-demand processes: not a change, overall unaffected.
+        var c = BenchmarkComparison.Build(
+            Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 30, 30, 30), M(BenchmarkKind.MemoryUsedMb, 8000, 8020, 7990, 8010, 8005), M(BenchmarkKind.BackgroundProcesses, 150, 151, 150, 152, 150)),
+            Run(BenchmarkPhase.After, M(BenchmarkKind.BootTime, 30, 30, 30), M(BenchmarkKind.MemoryUsedMb, 7850, 7860, 7840, 7855, 7850), M(BenchmarkKind.BackgroundProcesses, 147, 147, 148, 146, 147)));
+        Assert.Equal(BenchmarkVerdict.NoChange, c.Deltas.Single(d => d.Info.Kind == BenchmarkKind.MemoryUsedMb).Verdict);
+        Assert.Equal(BenchmarkVerdict.NoChange, c.Deltas.Single(d => d.Info.Kind == BenchmarkKind.BackgroundProcesses).Verdict);
+        Assert.Equal(0, c.OverallPercent!.Value, 6);
+
+        // A real 10% memory saving is reported, but with start-up time unchanged it moves the headline only ~2%, not ~5% as at weight 1.5;
+        // 40 fewer processes is reported as a count and doesn't move it at all.
+        var real = BenchmarkComparison.Build(
+            Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 30), M(BenchmarkKind.MemoryUsedMb, 8000), M(BenchmarkKind.BackgroundProcesses, 190)),
+            Run(BenchmarkPhase.After, M(BenchmarkKind.BootTime, 30), M(BenchmarkKind.MemoryUsedMb, 7200), M(BenchmarkKind.BackgroundProcesses, 150)));
+        Assert.Equal(BenchmarkVerdict.Better, real.Deltas.Single(d => d.Info.Kind == BenchmarkKind.MemoryUsedMb).Verdict);
+        var procs = real.Deltas.Single(d => d.Info.Kind == BenchmarkKind.BackgroundProcesses);
+        Assert.Equal(BenchmarkVerdict.Better, procs.Verdict);
+        Assert.Equal("40 fewer", procs.ChangeSummary);
+        Assert.Equal(2.1, Math.Round(real.OverallPercent!.Value, 1)); // (8000/7200)^(0.5/2.5) − 1
     }
 }
