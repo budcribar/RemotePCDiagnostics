@@ -144,4 +144,57 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
     public async Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct) =>
         await new WindowsEventLog(commands).QueryAsync(BootRecord.Channel, BootRecord.Query, 20, ct).ConfigureAwait(false)
         ?? throw new InvalidOperationException("Diagnostics-Performance log unavailable (administrator rights needed)");
+
+    // ---- resource & bloatware inventory snapshot ----
+    public async Task<SystemResourceSnapshot?> ReadResourceSnapshotAsync(CancellationToken ct)
+    {
+        var memSys = new WindowsMemorySystem(null, log);
+        double? memUsedMb = null;
+        try { memUsedMb = Math.Round(memSys.ReadMemory().UsedBytes / (double)(1L << 20), 0); } catch (Exception ex) { Log("memUsed: " + ex.Message); }
+
+        int? bgProcs = null;
+        try
+        {
+            var ps = Process.GetProcesses();
+            bgProcs = ps.Length;
+            foreach (var p in ps) p.Dispose();
+        }
+        catch (Exception ex) { Log("bgProcs: " + ex.Message); }
+
+        double? diskFreeGb = null;
+        try
+        {
+            var root = Path.GetPathRoot(Environment.SystemDirectory) ?? @"C:\";
+            diskFreeGb = Math.Round(new DriveInfo(root).AvailableFreeSpace / (double)(1L << 30), 1);
+        }
+        catch (Exception ex) { Log("diskFree: " + ex.Message); }
+
+        int? startupCount = null, autoSvcCount = null, taskCount = null, bloatCount = null;
+        try
+        {
+            var snap = await memSys.CaptureAsync([], ct).ConfigureAwait(false);
+            startupCount = snap.Startup?.Count(e => e.Enabled);
+        }
+        catch (Exception ex) { Log("startupCount: " + ex.Message); }
+
+        try
+        {
+            const string script =
+                "$ErrorActionPreference='SilentlyContinue';" +
+                "$tasks=(Get-ScheduledTask | Where-Object { $_.TaskPath -notlike '\\Microsoft\\Windows\\*' -and $_.State -ne 'Disabled' }).Count;" +
+                "$svcs=(Get-CimInstance Win32_Service | Where-Object { $_.StartMode -eq 'Auto' -and $_.PathName -notmatch 'C:\\\\Windows\\\\' }).Count;" +
+                "$bloat=(Get-AppxPackage | Where-Object { $_.Name -match 'Clipchamp|PowerAutomateDesktop|MicrosoftJournal|SolitaireCollection|WindowsMaps|windowscommunicationsapps|MixedReality\\.Portal|Windows\\.DevHome|Microsoft\\.People|DropboxOEM|BingNews|BingWeather|NarratorExtension|NarratorScript' }).Count;" +
+                "\"$svcs|$tasks|$bloat\"";
+            var r = await commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], ct).ConfigureAwait(false);
+            if (r is { ExitCode: 0 } && r.StdOut.Trim().Split('|') is { Length: 3 } parts)
+            {
+                if (int.TryParse(parts[0], out var s)) autoSvcCount = s;
+                if (int.TryParse(parts[1], out var t)) taskCount = t;
+                if (int.TryParse(parts[2], out var b)) bloatCount = b;
+            }
+        }
+        catch (Exception ex) { Log("inventory script: " + ex.Message); }
+
+        return new(memUsedMb, bgProcs, diskFreeGb, startupCount, autoSvcCount, taskCount, bloatCount);
+    }
 }

@@ -50,13 +50,13 @@ public static class ClientReport
             sb.Append("<h2>Before and after</h2><table><tr><th>What we measured</th><th>Before</th><th>After</th><th>Result</th></tr>");
             foreach (var d in cmp.Deltas)
             {
-                var (cls, text) = d.Verdict switch
+                var cls = d.Verdict switch
                 {
-                    BenchmarkVerdict.Better => ("better", $"{Math.Abs(d.ImprovementPercent!.Value):0}% {d.Info.BetterWord}"),
-                    BenchmarkVerdict.Worse => ("worse", $"{Math.Abs(d.ImprovementPercent!.Value):0}% {d.Info.WorseWord}"),
-                    BenchmarkVerdict.NoChange => ("same", "No real change"),
-                    _ => ("same", "Not compared"),
+                    BenchmarkVerdict.Better => "better",
+                    BenchmarkVerdict.Worse => "worse",
+                    _ => "same",
                 };
+                var text = d.ChangeSummary;
                 sb.Append("<tr><td><strong>").Append(E(d.Info.Title)).Append("</strong><div class=\"meta\">").Append(E(d.Info.ClientMeaning)).Append("</div></td><td>")
                   .Append(d.Before is { } b ? E(d.Info.Show(b)) : "—").Append("</td><td>").Append(d.After is { } v ? E(d.Info.Show(v)) : "—")
                   .Append("</td><td class=\"").Append(cls).Append("\">").Append(E(text)).Append(d.Note is { } n ? $"<div class=\"meta\">{E(n)}</div>" : "").Append("</td></tr>");

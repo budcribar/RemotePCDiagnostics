@@ -16,7 +16,13 @@ namespace RemotePCDiagnostics.Host;
 public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? log = null) : IMemorySystem
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string Run32Key = @"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run";
     private const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+    private const string Approved32Key = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32";
+    private const string UwpStartupKey = @"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData";
+    private const int SM_DIGITIZER = 94;
+    private const int NID_INTEGRATED_PEN = 0x04, NID_EXTERNAL_PEN = 0x08;
+    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int nIndex);
     private void Log(string m) => log?.Invoke("[memory] " + m);
 
     [StructLayout(LayoutKind.Sequential)]
@@ -96,8 +102,10 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
 
         var probe = await RunPowerShellAsync(MemoryProbe.Script, ct).ConfigureAwait(false);
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
-        return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
-            GetTransparency(), autoPageFile, slots);
+        var devices = ReadDevices();
+        var cleanups = await Task.Run(() => ScanStorageCleanups(devices), ct).ConfigureAwait(false);
+        return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, devices,
+            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), cleanups);
     }
 
     private const string PersonalizeKey = @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
@@ -224,30 +232,203 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         var list = new List<StartupEntry>();
         try
         {
-            using var run = Registry.CurrentUser.OpenSubKey(RunKey);
-            if (run is null) return list;
-            foreach (var n in run.GetValueNames())
-                if (run.GetValue(n) is string cmd) list.Add(new(n, cmd, StartupParsing.IsEnabled(GetStartupApproved(n))));
+            using (var run = Registry.CurrentUser.OpenSubKey(RunKey))
+                if (run is not null)
+                    foreach (var n in run.GetValueNames())
+                        if (run.GetValue(n) is string cmd)
+                            list.Add(new(n, cmd, StartupParsing.IsEnabled(GetStartupApproved(n)), StartupScope.CurrentUser));
+
+            using (var runLm = Registry.LocalMachine.OpenSubKey(RunKey))
+            using (var appLm = Registry.LocalMachine.OpenSubKey(ApprovedKey))
+                if (runLm is not null)
+                    foreach (var n in runLm.GetValueNames())
+                        if (runLm.GetValue(n) is string cmd && !n.Equals("SecurityHealth", StringComparison.OrdinalIgnoreCase))
+                            list.Add(new($"hklm:{n}", cmd, StartupParsing.IsEnabled(appLm?.GetValue(n) as byte[]), StartupScope.LocalMachine));
+
+            using (var run32 = Registry.LocalMachine.OpenSubKey(Run32Key))
+            using (var app32 = Registry.LocalMachine.OpenSubKey(Approved32Key))
+                if (run32 is not null)
+                    foreach (var n in run32.GetValueNames())
+                        if (run32.GetValue(n) is string cmd)
+                            list.Add(new($"hklm32:{n}", cmd, StartupParsing.IsEnabled(app32?.GetValue(n) as byte[]), StartupScope.LocalMachine32));
+
+            using (var uwpRoot = Registry.CurrentUser.OpenSubKey(UwpStartupKey))
+                if (uwpRoot is not null)
+                    foreach (var pkg in uwpRoot.GetSubKeyNames())
+                    {
+                        using var pkgKey = uwpRoot.OpenSubKey(pkg);
+                        if (pkgKey is null) continue;
+                        foreach (var task in pkgKey.GetSubKeyNames())
+                        {
+                            using var taskKey = pkgKey.OpenSubKey(task);
+                            if (taskKey?.GetValue("State") is int state && state is 1 or 2)
+                                list.Add(new($"uwp:{pkg}\\{task}", $"{pkg}\\{task}", state == 2, StartupScope.PackagedUwp));
+                        }
+                    }
         }
         catch (Exception ex) { Log("Startup read failed: " + ex.Message); }
         return list;
     }
 
+    private BrowserKind? ReadDefaultBrowser()
+    {
+        try
+        {
+            using var k = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice");
+            var progId = k?.GetValue("ProgId") as string;
+            if (progId is not null)
+            {
+                if (progId.Contains("Chrome", StringComparison.OrdinalIgnoreCase)) return BrowserKind.Chrome;
+                if (progId.Contains("MSEdge", StringComparison.OrdinalIgnoreCase)) return BrowserKind.Edge;
+            }
+        }
+        catch (Exception ex) { Log("Default browser read failed: " + ex.Message); }
+        return null;
+    }
+
     private DeviceFacts ReadDevices()
     {
-        bool? printer = null, bt = null, bio = null;
+        bool? printer = null, bt = null, bio = null, pen = null, crossDevice = null, netPrinter = null, pdfPrinter = null;
         try
         {
             using var p = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Print\Printers");
-            if (p is not null) printer = p.GetSubKeyNames().Any(n => !n.Contains("PDF", StringComparison.OrdinalIgnoreCase) && !n.Contains("XPS", StringComparison.OrdinalIgnoreCase)
-                && !n.Contains("OneNote", StringComparison.OrdinalIgnoreCase) && !n.Equals("Fax", StringComparison.OrdinalIgnoreCase));
+            if (p is not null)
+            {
+                var names = p.GetSubKeyNames();
+                printer = names.Any(n => !n.Contains("PDF", StringComparison.OrdinalIgnoreCase) && !n.Contains("XPS", StringComparison.OrdinalIgnoreCase)
+                    && !n.Contains("OneNote", StringComparison.OrdinalIgnoreCase) && !n.Equals("Fax", StringComparison.OrdinalIgnoreCase));
+                pdfPrinter = names.Any(n => n.Contains("Microsoft Print to PDF", StringComparison.OrdinalIgnoreCase) || n.Contains("XPS", StringComparison.OrdinalIgnoreCase));
+                netPrinter = names.Any(n =>
+                {
+                    using var pk = p.OpenSubKey(n);
+                    var port = pk?.GetValue("Port") as string ?? "";
+                    return port.StartsWith("WSD", StringComparison.OrdinalIgnoreCase) || port.StartsWith("IP_", StringComparison.OrdinalIgnoreCase) || port.StartsWith(@"\\", StringComparison.Ordinal);
+                });
+            }
             using var b = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices");
             bt = b is not null && b.SubKeyCount > 0;
             using var f = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Class\{53D29EF7-377C-4D14-864B-EB3A85769359}");
             bio = f is not null && f.GetSubKeyNames().Any(n => int.TryParse(n, out _));
+            var dig = GetSystemMetrics(SM_DIGITIZER);
+            pen = (dig & (NID_INTEGRATED_PEN | NID_EXTERNAL_PEN)) != 0;
+            var cdDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "CrossDevice");
+            crossDevice = Directory.Exists(cdDir) && Directory.EnumerateDirectories(cdDir).Any();
         }
         catch (Exception ex) { Log("Device probe failed: " + ex.Message); }
-        return new(printer, bt, bio);
+        return new(printer, bt, bio, pen, crossDevice, netPrinter, pdfPrinter);
+    }
+
+    public static IReadOnlyList<StorageCleanupItem> ScanStorageCleanups(DeviceFacts? devices = null)
+    {
+        var items = new List<StorageCleanupItem>();
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
+        static long DirSize(string path, DateTime? olderThanUtc = null)
+        {
+            if (!Directory.Exists(path)) return 0;
+            long sum = 0;
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(path, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
+                {
+                    try
+                    {
+                        var fi = new FileInfo(f);
+                        if (olderThanUtc is null || fi.LastWriteTimeUtc < olderThanUtc.Value) sum += fi.Length;
+                    }
+                    catch (IOException) { }
+                }
+            }
+            catch (IOException) { }
+            return sum;
+        }
+
+        var cut30 = DateTime.UtcNow.AddDays(-30);
+        var cut60 = DateTime.UtcNow.AddDays(-60);
+        var cut1 = DateTime.UtcNow.AddHours(-24);
+
+        // 1. NuGet Tier 1 (v3-cache) + Tier 2 (superseded versions in ~/.nuget/packages)
+        var nugetHttp = DirSize(Path.Combine(LocalAppData, @"NuGet\v3-cache"));
+        long nugetSuperseded = 0;
+        var nugetPkgs = Path.Combine(userProfile, @".nuget\packages");
+        if (Directory.Exists(nugetPkgs))
+        {
+            try
+            {
+                foreach (var pkgDir in Directory.EnumerateDirectories(nugetPkgs))
+                {
+                    var vers = Directory.GetDirectories(pkgDir);
+                    if (vers.Length <= 1) continue;
+                    foreach (var oldVer in vers.OrderByDescending(Directory.GetCreationTimeUtc).Skip(1))
+                        nugetSuperseded += DirSize(oldVer);
+                }
+            }
+            catch (IOException) { }
+        }
+        if (nugetHttp + nugetSuperseded > 10L << 20)
+            items.Add(new("storage-nuget", "NuGet HTTP cache & superseded package versions",
+                "Clears %LOCALAPPDATA%\\NuGet\\v3-cache and removes older superseded package versions in ~/.nuget/packages (keeping the newest version of each package).",
+                nugetHttp + nugetSuperseded, AutoCheckedByDefault: true));
+
+        // 2. ~/.grok stale worktrees, sessions, downloads (>30d)
+        var grokRoot = Path.Combine(userProfile, ".grok");
+        var grokBytes = DirSize(Path.Combine(grokRoot, "worktrees"), cut30) + DirSize(Path.Combine(grokRoot, "sessions"), cut30) + DirSize(Path.Combine(grokRoot, "downloads"), cut30);
+        if (grokBytes > 10L << 20)
+            items.Add(new("storage-grok", "Stale Grok CLI worktrees, sessions & downloads (>30 days)",
+                "Removes orphaned worktrees, old sessions, and cached downloads in ~/.grok older than 30 days.", grokBytes, AutoCheckedByDefault: true));
+
+        // 3. %LOCALAPPDATA%\Temp (>24h)
+        var tempBytes = DirSize(Path.GetTempPath(), cut1);
+        if (tempBytes > 10L << 20)
+            items.Add(new("storage-temp", "Temporary files (%TEMP% older than 24 hours)",
+                "Deletes leftover temporary installer and application files in %LOCALAPPDATA%\\Temp.", tempBytes, AutoCheckedByDefault: true));
+
+        // 4. Old VS Code commit versions + CachedExtensionVSIXs + duplicate ~/.vscode/extensions
+        long vscCommits = 0;
+        var vscRoot = Path.Combine(LocalAppData, @"Programs\Microsoft VS Code");
+        if (Directory.Exists(vscRoot))
+        {
+            var commitDirs = Directory.GetDirectories(vscRoot).Where(d => Path.GetFileName(d).Length == 10 && Path.GetFileName(d).All(Uri.IsHexDigit)).OrderByDescending(Directory.GetCreationTimeUtc).Skip(1);
+            foreach (var d in commitDirs) vscCommits += DirSize(d);
+        }
+        var vscVsix = DirSize(Path.Combine(appData, @"Code\CachedExtensionVSIXs")) + DirSize(Path.Combine(appData, @"Code\Crashpad"));
+        long vscDupExts = 0;
+        var vscExtRoot = Path.Combine(userProfile, @".vscode\extensions");
+        if (Directory.Exists(vscExtRoot))
+        {
+            foreach (var d in Directory.GetDirectories(vscExtRoot))
+                if (Path.GetFileName(d).StartsWith('.')) vscDupExts += DirSize(d, DateTime.UtcNow.AddDays(-7));
+        }
+        if (vscCommits + vscVsix + vscDupExts > 10L << 20)
+            items.Add(new("storage-vscode", "Old VS Code versions, VSIX installer cache & staging folders",
+                "Removes superseded VS Code commit folders, extracted CachedExtensionVSIXs, and failed .guid extension staging folders.",
+                vscCommits + vscVsix + vscDupExts, AutoCheckedByDefault: true));
+
+        // 5. Chrome & Edge Service Worker CacheStorage & Code Cache (>60d)
+        var browserCache =
+            DirSize(Path.Combine(LocalAppData, @"Google\Chrome\User Data\Default\Service Worker\CacheStorage"), cut60) +
+            DirSize(Path.Combine(LocalAppData, @"Google\Chrome\User Data\Default\Code Cache"), cut60) +
+            DirSize(Path.Combine(LocalAppData, @"Microsoft\Edge\User Data\Default\Service Worker\CacheStorage"), cut60) +
+            DirSize(Path.Combine(LocalAppData, @"Microsoft\Edge\User Data\Default\Code Cache"), cut60);
+        if (browserCache > 10L << 20)
+            items.Add(new("storage-browser-sw", "Stale Chrome & Edge Service Worker & Code Cache (>60 days)",
+                "Prunes offline Service Worker caches and bytecode caches untouched for over 60 days without touching logins, cookies, or history.",
+                browserCache, AutoCheckedByDefault: true));
+
+        // 6. Office SolutionPackages (>60d)
+        var solPkg = DirSize(Path.Combine(LocalAppData, @"Microsoft\Office\SolutionPackages"), cut60);
+        if (solPkg > 10L << 20)
+            items.Add(new("storage-office-solpkg", "Orphaned Office SolutionPackages (>60 days)",
+                "Removes outdated Microsoft Office web add-in solution bundles untouched for over 60 days.", solPkg, AutoCheckedByDefault: true));
+
+        // 7. Playwright browsers (Opt-in)
+        var pwBytes = DirSize(Path.Combine(LocalAppData, "ms-playwright"));
+        if (pwBytes > 10L << 20)
+            items.Add(new("storage-playwright", "Playwright test browser binaries (%LOCALAPPDATA%\\ms-playwright)",
+                "Removes downloaded Chromium/Firefox/WebKit test browsers used by Playwright.", pwBytes, AutoCheckedByDefault: false));
+
+        return items.OrderByDescending(i => i.SizeBytes).ToList();
     }
 
     public async Task<ActionOutcome> CloseAppAsync(string processName, CancellationToken ct)
@@ -297,12 +478,55 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
 
     public byte[]? GetStartupApproved(string name)
     {
+        if (name.StartsWith("uwp:", StringComparison.OrdinalIgnoreCase))
+        {
+            using var uwp = Registry.CurrentUser.OpenSubKey(UwpStartupKey + @"\" + name[4..]);
+            return uwp?.GetValue("State") is int st ? BitConverter.GetBytes(st) : null;
+        }
+        if (name.StartsWith("hklm32:", StringComparison.OrdinalIgnoreCase))
+        {
+            using var k32 = Registry.LocalMachine.OpenSubKey(Approved32Key);
+            return k32?.GetValue(name[7..]) as byte[];
+        }
+        if (name.StartsWith("hklm:", StringComparison.OrdinalIgnoreCase))
+        {
+            using var klm = Registry.LocalMachine.OpenSubKey(ApprovedKey);
+            return klm?.GetValue(name[5..]) as byte[];
+        }
         using var k = Registry.CurrentUser.OpenSubKey(ApprovedKey);
         return k?.GetValue(name) as byte[];
     }
 
     public void SetStartupApproved(string name, byte[]? value)
     {
+        if (name.StartsWith("uwp:", StringComparison.OrdinalIgnoreCase))
+        {
+            using var uwp = Registry.CurrentUser.OpenSubKey(UwpStartupKey + @"\" + name[4..], writable: true)
+                ?? throw new InvalidOperationException("Not a UWP startup task");
+            var state = value is null || value.Length == 0 ? 2 : (value.Length == 4 ? BitConverter.ToInt32(value, 0) : (StartupParsing.IsEnabled(value) ? 2 : 1));
+            uwp.SetValue("State", state, RegistryValueKind.DWord);
+            return;
+        }
+        if (name.StartsWith("hklm32:", StringComparison.OrdinalIgnoreCase))
+        {
+            var raw = name[7..];
+            using var run32 = Registry.LocalMachine.OpenSubKey(Run32Key);
+            if (run32?.GetValue(raw) is null) throw new InvalidOperationException("Not a 32-bit machine startup entry");
+            using var k32 = Registry.LocalMachine.CreateSubKey(Approved32Key);
+            if (value is null) k32.DeleteValue(raw, throwOnMissingValue: false);
+            else k32.SetValue(raw, value, RegistryValueKind.Binary);
+            return;
+        }
+        if (name.StartsWith("hklm:", StringComparison.OrdinalIgnoreCase))
+        {
+            var raw = name[5..];
+            using var runLm = Registry.LocalMachine.OpenSubKey(RunKey);
+            if (runLm?.GetValue(raw) is null) throw new InvalidOperationException("Not a machine startup entry");
+            using var klm = Registry.LocalMachine.CreateSubKey(ApprovedKey);
+            if (value is null) klm.DeleteValue(raw, throwOnMissingValue: false);
+            else klm.SetValue(raw, value, RegistryValueKind.Binary);
+            return;
+        }
         using var run = Registry.CurrentUser.OpenSubKey(RunKey);
         if (run?.GetValue(name) is null) throw new InvalidOperationException("Not a per-user startup entry");
         using var k = Registry.CurrentUser.CreateSubKey(ApprovedKey);

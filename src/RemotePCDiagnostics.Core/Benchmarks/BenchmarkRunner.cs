@@ -7,6 +7,15 @@ namespace RemotePCDiagnostics.Core.Benchmarks;
 /// <summary>Idle sample: average processor use and memory paging rate over a quiet period.</summary>
 public sealed record IdleSample(double CpuPercent, double PagesPerSec);
 
+public sealed record SystemResourceSnapshot(
+    double? MemoryUsedMb = null,
+    int? BackgroundProcesses = null,
+    double? DiskFreeGb = null,
+    int? EnabledStartupApps = null,
+    int? AutoVendorServices = null,
+    int? ActiveScheduledTasks = null,
+    int? InstalledBloatwareApps = null);
+
 /// <summary>Windows-specific measurements (Host implementation; fakes in tests). Methods may throw; the runner records a note.</summary>
 public interface IBenchmarkProbes
 {
@@ -18,6 +27,7 @@ public interface IBenchmarkProbes
     Task<double?> DiskRandomReadIopsAsync(TimeSpan duration, CancellationToken ct);
     /// <summary>Windows' own boot-performance events (Diagnostics-Performance, event 100), newest first.</summary>
     Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct);
+    Task<SystemResourceSnapshot?> ReadResourceSnapshotAsync(CancellationToken ct) => Task.FromResult<SystemResourceSnapshot?>(null);
 }
 
 /// <summary>One recorded Windows start: total boot time until the desktop was ready.</summary>
@@ -70,6 +80,25 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, Action<string>? log
                     catch (Exception ex) when (ex is not OperationCanceledException) { Log("idle: " + ex); note = "couldn't read Windows' performance counters"; }
                     if (settings.IsEnabled(BenchmarkKind.IdleCpu)) list.Add(new(BenchmarkKind.IdleCpu, idle is null ? [] : [idle.CpuPercent], idle is null ? note ?? "not available" : null));
                     if (settings.IsEnabled(BenchmarkKind.Paging)) list.Add(new(BenchmarkKind.Paging, idle is null ? [] : [idle.PagesPerSec], idle is null ? note ?? "not available" : null));
+                });
+
+            if (Benchmarks.ResourceSnapshotKinds.Any(settings.IsEnabled))
+                await Step("Measuring memory, disk space and background inventory…", async () =>
+                {
+                    SystemResourceSnapshot? snap = null; string? note = null;
+                    try { snap = await probes.ReadResourceSnapshotAsync(ct).ConfigureAwait(false); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { Log("resources: " + ex.Message); note = "couldn't read system inventory"; }
+                    void AddSnap(BenchmarkKind k, double? val)
+                    {
+                        if (settings.IsEnabled(k)) list.Add(new(k, val is { } v ? [v] : [], val is null ? note ?? "not available" : null));
+                    }
+                    AddSnap(BenchmarkKind.MemoryUsedMb, snap?.MemoryUsedMb);
+                    AddSnap(BenchmarkKind.BackgroundProcesses, snap?.BackgroundProcesses);
+                    AddSnap(BenchmarkKind.DiskFreeGb, snap?.DiskFreeGb);
+                    AddSnap(BenchmarkKind.EnabledStartupApps, snap?.EnabledStartupApps);
+                    AddSnap(BenchmarkKind.AutoVendorServices, snap?.AutoVendorServices);
+                    AddSnap(BenchmarkKind.ActiveScheduledTasks, snap?.ActiveScheduledTasks);
+                    AddSnap(BenchmarkKind.InstalledBloatwareApps, snap?.InstalledBloatwareApps);
                 });
 
             if (settings.IsEnabled(BenchmarkKind.BootTime))

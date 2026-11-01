@@ -149,6 +149,41 @@ public class MemorySuggestionTests
         Assert.DoesNotContain("startup-spotify", ids);
     }
 
+    [Fact]
+    public void Startup_PackagedUwp_AndCrossDeviceGuard_AndNewServices()
+    {
+        var uwp = new StartupEntry("uwp:Microsoft.YourPhone_8wekyb3d8bbwe\\YourPhone.Start", "Microsoft.YourPhone_8wekyb3d8bbwe\\YourPhone.Start", true, StartupScope.PackagedUwp);
+        var amd = new StartupEntry("uwp:AdvancedMicroDevicesInc-2.AMDRadeonSoftware_0a9344xs7nr4m\\launcherrsxruntimeTask", "AdvancedMicroDevicesInc-2.AMDRadeonSoftware_0a9344xs7nr4m\\launcherrsxruntimeTask", true, StartupScope.PackagedUwp);
+        Assert.Equal("PhoneExperienceHost", uwp.ExeName);
+        Assert.Equal("RadeonSoftware", amd.ExeName);
+
+        // Paired CrossDevice phone suppresses automatic Phone Link startup suggestion; unpaired offers it.
+        var pairedSnap = Snap(new AppUsage("PhoneExperienceHost", 1, 390 * Mb)) with { Startup = [uwp, amd], Devices = new(HasPairedCrossDevice: true, HasPenDigitizer: false) };
+        var pairedIds = Build(pairedSnap).Select(x => x.Id).ToList();
+        Assert.DoesNotContain(pairedIds, id => id.Contains("yourphone"));
+        Assert.Contains(pairedIds, id => id.Contains("amdradeonsoftware"));
+
+        var unpairedSnap = pairedSnap with { Devices = new(HasPairedCrossDevice: false, HasPenDigitizer: false) };
+        Assert.Contains(Build(unpairedSnap).Select(x => x.Id), id => id.Contains("yourphone"));
+
+        // UDCService, BrYNSvc, CoworkVMService, CodexSandboxService are flagged when running.
+        var svcSnap = Snap() with
+        {
+            Services =
+            [
+                new(Svc("UDCService"), 35 * Mb),
+                new(Svc("BrYNSvc"), 14 * Mb),
+                new(Svc("CoworkVMService"), 26 * Mb),
+                new(Svc("CodexSandboxService.OpenAI.Codex_2p2nqf0c97628"), 8 * Mb),
+            ],
+        };
+        var svcIds = Build(svcSnap).Select(x => x.Id).ToList();
+        Assert.Contains("svc-udcservice", svcIds);
+        Assert.Contains("svc-brynsvc", svcIds);
+        Assert.Contains("svc-coworkvmservice", svcIds);
+        Assert.Contains("svc-codexsandboxservice.openai.codex_2p2nqf0c97628", svcIds);
+    }
+
     // ---- Windows / info
     [Fact]
     public void FastStartup_Uptime_AndInfoRules()

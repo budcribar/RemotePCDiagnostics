@@ -5,7 +5,11 @@ using System.Text.Json.Serialization;
 namespace RemotePCDiagnostics.Core.Benchmarks;
 
 /// <summary>What each benchmark measures. Chosen for things a client feels, and that the fixes this app makes actually move.</summary>
-public enum BenchmarkKind { BootTime, ProgramStart, IdleCpu, Paging, CpuSingle, CpuMulti, DiskLatency, DnsLookup }
+public enum BenchmarkKind
+{
+    BootTime, ProgramStart, IdleCpu, Paging, CpuSingle, CpuMulti, DiskLatency, DnsLookup,
+    MemoryUsedMb, BackgroundProcesses, DiskFreeGb, EnabledStartupApps, AutoVendorServices, ActiveScheduledTasks, InstalledBloatwareApps,
+}
 
 public enum BenchmarkPhase { Before, After }
 
@@ -26,12 +30,25 @@ public static class Benchmarks
     [
         new(BenchmarkKind.BootTime, "Start-up time", "How long Windows takes to start until the desktop is ready", "s", true, 0.08, 2, 2.0, "0.0"),
         new(BenchmarkKind.ProgramStart, "Program start time", "How quickly programs open (Windows' own programs, timed)", "ms", true, 0.08, 15, 2.0, "0"),
+        new(BenchmarkKind.MemoryUsedMb, "Memory in use at idle", "RAM in use after Windows finishes starting up", "MB", true, 0.03, 100, 1.5, "0", "less", "more"),
+        new(BenchmarkKind.BackgroundProcesses, "Background processes", "Processes running in the background at idle", "processes", true, 0.03, 3, 0.5, "0", "fewer", "more"),
+        new(BenchmarkKind.DiskFreeGb, "Free disk space", "Available storage space on the system drive", "GB", false, 0.005, 0.2, 0.0, "0.0", "more", "less"),
         new(BenchmarkKind.IdleCpu, "Background processor use", "Processor busy with background work while nobody is using the PC", "%", true, 0.15, 1.5, 1.0, "0.0", "lower", "higher"),
         new(BenchmarkKind.Paging, "Memory swapping to disk", "How often Windows has to swap memory to the much slower disk", "pages/s", true, 0.20, 20, 1.0, "0", "less", "more"),
         new(BenchmarkKind.CpuSingle, "Processor speed (one core)", "Speed of everyday single-threaded work, like opening a web page", "points", false, 0.05, 0, 1.0, "0"),
         new(BenchmarkKind.CpuMulti, "Processor speed (all cores)", "Speed of heavy work that uses every core", "points", false, 0.05, 0, 1.5, "0"),
         new(BenchmarkKind.DiskLatency, "Disk response time", "How fast the drive answers small reads (opening files, searching)", "ms", true, 0.10, 0.02, 1.5, "0.00"),
         new(BenchmarkKind.DnsLookup, "Website lookup time", "How long it takes to find a website before it starts loading", "ms", true, 0.15, 5, 0.5, "0"),
+        new(BenchmarkKind.EnabledStartupApps, "Enabled start-up apps", "Apps and tasks set to launch automatically when you sign in", "apps", true, 0.01, 1, 0.0, "0", "fewer", "more"),
+        new(BenchmarkKind.AutoVendorServices, "Automatic background services", "Non-Windows background services set to start automatically", "services", true, 0.01, 1, 0.0, "0", "fewer", "more"),
+        new(BenchmarkKind.ActiveScheduledTasks, "Active background tasks", "Non-Windows scheduled tasks enabled to run in the background", "tasks", true, 0.01, 1, 0.0, "0", "fewer", "more"),
+        new(BenchmarkKind.InstalledBloatwareApps, "Pre-installed bloatware apps", "Unsupported or unneeded pre-installed apps on the PC", "apps", true, 0.01, 1, 0.0, "0", "fewer", "more"),
+    ];
+
+    public static readonly IReadOnlyList<BenchmarkKind> ResourceSnapshotKinds =
+    [
+        BenchmarkKind.MemoryUsedMb, BenchmarkKind.BackgroundProcesses, BenchmarkKind.DiskFreeGb,
+        BenchmarkKind.EnabledStartupApps, BenchmarkKind.AutoVendorServices, BenchmarkKind.ActiveScheduledTasks, BenchmarkKind.InstalledBloatwareApps,
     ];
 
     public static BenchmarkInfo Info(BenchmarkKind k) => All.First(i => i.Kind == k);
@@ -156,12 +173,27 @@ public enum BenchmarkVerdict { Better, Worse, NoChange, NotMeasured }
 
 public sealed record BenchmarkDelta(BenchmarkInfo Info, double? Before, double? After, BenchmarkVerdict Verdict, double? ImprovementPercent, string? Note)
 {
+    public double? AbsoluteChange => Before is { } b && After is { } a ? (Info.LowerIsBetter ? b - a : a - b) : null;
+
+    public string ChangeSummary => Verdict switch
+    {
+        BenchmarkVerdict.NotMeasured => "Not compared",
+        BenchmarkVerdict.NoChange => "No real change",
+        _ when Info.Kind == BenchmarkKind.DiskFreeGb && AbsoluteChange is { } gb =>
+            string.Create(CultureInfo.InvariantCulture, $"{(Verdict == BenchmarkVerdict.Better ? "+" : "-")}{Math.Abs(gb):0.0} GB {(Verdict == BenchmarkVerdict.Better ? "freed" : "used")}"),
+        _ when Info.Kind == BenchmarkKind.MemoryUsedMb && AbsoluteChange is { } mb =>
+            string.Create(CultureInfo.InvariantCulture, $"{Math.Abs(mb):0} MB {(Verdict == BenchmarkVerdict.Better ? "freed" : "more")} ({Math.Abs(ImprovementPercent!.Value):0}% {(Verdict == BenchmarkVerdict.Better ? Info.BetterWord : Info.WorseWord)})"),
+        _ when Info.Weight == 0 && AbsoluteChange is { } n =>
+            string.Create(CultureInfo.InvariantCulture, $"{Math.Abs(n):0} {(Verdict == BenchmarkVerdict.Better ? Info.BetterWord : Info.WorseWord)}"),
+        _ => string.Create(CultureInfo.InvariantCulture, $"{Math.Abs(ImprovementPercent!.Value):0}% {(Verdict == BenchmarkVerdict.Better ? Info.BetterWord : Info.WorseWord)}"),
+    };
+
     /// <summary>Plain-language line for the client, e.g. "Start-up time: 41.2 s → 29.8 s (28% faster)".</summary>
     public string Sentence => Verdict switch
     {
         BenchmarkVerdict.NotMeasured => $"{Info.Title}: not measured{(Note is null ? "" : " (" + Note + ")")}",
         BenchmarkVerdict.NoChange => $"{Info.Title}: {Info.Show(Before!.Value)} → {Info.Show(After!.Value)} (no measurable change)",
-        _ => $"{Info.Title}: {Info.Show(Before!.Value)} → {Info.Show(After!.Value)} ({Math.Abs(ImprovementPercent!.Value):0}% {(Verdict == BenchmarkVerdict.Better ? Info.BetterWord : Info.WorseWord)})",
+        _ => $"{Info.Title}: {Info.Show(Before!.Value)} → {Info.Show(After!.Value)} ({ChangeSummary})",
     };
 }
 

@@ -29,10 +29,12 @@ public sealed record VsExtension(string Name, long SizeBytes);
 
 public sealed record VisualStudioInfo(bool LiveShareInstalled, IReadOnlyList<VsExtension> Extensions);
 
-/// <summary>A per-user Run-key startup app (HKCU\...\Run) and its Task Manager enabled state (StartupApproved).</summary>
-public sealed record StartupEntry(string Name, string Command, bool Enabled)
+public enum StartupScope { CurrentUser, LocalMachine, LocalMachine32, PackagedUwp }
+
+/// <summary>A startup app (HKCU/HKLM/WOW6432Node Run key or packaged UWP StartupTask) and its enabled state.</summary>
+public sealed record StartupEntry(string Name, string Command, bool Enabled, StartupScope Scope = StartupScope.CurrentUser)
 {
-    public string ExeName => StartupParsing.ExeName(Command);
+    public string ExeName => Scope == StartupScope.PackagedUwp ? StartupParsing.UwpAppName(Name, Command) : StartupParsing.ExeName(Command);
 }
 
 /// <summary>A running service with the memory of its hosting process.</summary>
@@ -43,8 +45,18 @@ public sealed record ServiceUsage(ServiceInfo Info, long? ProcessMemoryBytes, in
     public bool Shared => ServicesInProcess > 1;
 }
 
-/// <summary>Hardware facts used to decide whether a service is needed (null = unknown, so the service isn't suggested).</summary>
-public sealed record DeviceFacts(bool? HasPrinter = null, bool? HasBluetoothDevices = null, bool? HasFingerprintReader = null);
+/// <summary>Hardware facts used to decide whether a service or app is needed (null = unknown, so the service isn't suggested).</summary>
+public sealed record DeviceFacts(
+    bool? HasPrinter = null,
+    bool? HasBluetoothDevices = null,
+    bool? HasFingerprintReader = null,
+    bool? HasPenDigitizer = null,
+    bool? HasPairedCrossDevice = null,
+    bool? HasNetworkOrWsdPrinter = null,
+    bool? HasLocalPdfPrinter = null);
+
+/// <summary>A removable cache or bloatware item discovered on disk with its exact measured byte size.</summary>
+public sealed record StorageCleanupItem(string Id, string Title, string Description, long SizeBytes, bool AutoCheckedByDefault = true, string Category = "Storage");
 
 /// <summary>Everything the suggestion engine looks at. Built by the Host; tests build it by hand.</summary>
 public sealed record MemorySnapshot(
@@ -59,7 +71,9 @@ public sealed record MemorySnapshot(
     DeviceFacts? Devices = null,
     bool? TransparencyOn = null,
     bool? AutoPageFile = null,
-    MemorySlots? Slots = null)
+    MemorySlots? Slots = null,
+    BrowserKind? DefaultBrowser = null,
+    IReadOnlyList<StorageCleanupItem>? StorageCleanups = null)
 {
     public AppUsage? App(string name) => Apps.FirstOrDefault(a => a.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 }
@@ -152,6 +166,10 @@ public static class MemoryText
         ["Memory Compression"] = "Memory compression", ["Zoom"] = "Zoom", ["steam"] = "Steam", ["OneDrive"] = "OneDrive",
         ["claude"] = "Claude", ["PhoneExperienceHost"] = "Phone Link", ["msedgewebview2"] = "Edge WebView2",
         ["Grok Bot"] = "Grok", ["notepad"] = "Notepad", ["explorer"] = "File Explorer",
+        ["CrossDeviceService"] = "Cross Device Experience", ["RadeonSoftware"] = "AMD Radeon Software",
+        ["Codex"] = "OpenAI Codex", ["LenovoUtility"] = "Lenovo Hotkeys Utility", ["MicrosoftOfficeHub"] = "Microsoft 365 Copilot App",
+        ["BrStMonW"] = "Brother Status Monitor", ["BrCcBoot"] = "Brother ControlCenter4",
+        ["LenovoVantage"] = "Lenovo Vantage",
     };
 
     /// <summary>Known apps get their product name; other all-lowercase process names are capitalized ("claude" → "Claude").</summary>
@@ -196,5 +214,22 @@ public static class StartupParsing
         v[0] = 3;
         BitConverter.GetBytes(utcNow.ToFileTimeUtc()).CopyTo(v, 4);
         return v;
+    }
+
+    public static string UwpAppName(string name, string packageFamilyOrTask)
+    {
+        var s = packageFamilyOrTask.Length > 0 ? packageFamilyOrTask : name;
+        if (s.Contains("YourPhone", StringComparison.OrdinalIgnoreCase)) return "PhoneExperienceHost";
+        if (s.Contains("CrossDevice", StringComparison.OrdinalIgnoreCase)) return "CrossDeviceService";
+        if (s.Contains("AMDRadeonSoftware", StringComparison.OrdinalIgnoreCase)) return "RadeonSoftware";
+        if (s.Contains("OpenAI.Codex", StringComparison.OrdinalIgnoreCase)) return "Codex";
+        if (s.Contains("LenovoUtility", StringComparison.OrdinalIgnoreCase)) return "LenovoUtility";
+        if (s.Contains("MicrosoftOfficeHub", StringComparison.OrdinalIgnoreCase)) return "MicrosoftOfficeHub";
+        if (s.Contains("MSTeams", StringComparison.OrdinalIgnoreCase) || s.Contains("Teams", StringComparison.OrdinalIgnoreCase)) return "ms-teams";
+        if (s.Contains("Spotify", StringComparison.OrdinalIgnoreCase)) return "Spotify";
+        if (s.Contains("Discord", StringComparison.OrdinalIgnoreCase)) return "Discord";
+        var prefix = s.Split('_', '\\', '/')[0];
+        var dot = prefix.LastIndexOf('.');
+        return dot >= 0 && dot + 1 < prefix.Length ? prefix[(dot + 1)..] : prefix;
     }
 }

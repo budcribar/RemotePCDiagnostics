@@ -71,7 +71,7 @@ public static class MemorySuggestionEngine
 
     /// <summary>Electron/web-wrapper chat and media apps; each runs its own copy of Chromium.</summary>
     public static readonly IReadOnlySet<string> ElectronApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        { "ChatGPT", "Grok", "Antigravity", "slack", "ms-teams", "Teams", "Discord", "Spotify", "Code", "Notion", "WhatsApp" };
+        { "ChatGPT", "Grok", "Antigravity", "slack", "ms-teams", "Teams", "Discord", "Spotify", "Code", "Notion", "WhatsApp", "Codex", "MicrosoftOfficeHub", "RadeonSoftware", "BrStMonW", "BrCcBoot", "LenovoVantage" };
 
     public static readonly IReadOnlyList<string> BuildServerProcesses = ["VBCSCompiler", "MSBuild", "MSBuildTaskHost"];
 
@@ -103,6 +103,16 @@ public static class MemorySuggestionEngine
         ["WSLService"] = new("Windows Subsystem for Linux.", "Linux (WSL) until it starts again.", NeededWhen: s => Running(s, "wsl", "vmmemWSL", "Docker Desktop")),
         ["LxssManager"] = new("Windows Subsystem for Linux (older WSL).", "Linux (WSL) until it starts again.", NeededWhen: s => Running(s, "wsl", "vmmemWSL", "Docker Desktop")),
         ["com.docker.service"] = new("Docker Desktop's background service.", "Docker containers.", NeededWhen: s => Running(s, "Docker Desktop", "com.docker.backend")),
+        ["UDCService"] = new("Lenovo Universal Device Client (NotifyMe) sends device telemetry and promotional notifications.", "Lenovo promotional notifications and telemetry.", OfferDisable: true),
+        ["CoworkVMService"] = new("Claude Desktop's virtual machine service boots a background Linux VM.", "Claude's sandbox VM starts on demand when Claude needs it instead of at Windows sign-in.", NeededWhen: s => Running(s, "claude")),
+        ["BrYNSvc"] = new("Brother status monitor background service.", "Automatic printer ink/toner pop-up alerts (printing still works normally)."),
+        ["USBAppControl"] = new("Brother iPrint&Scan USB monitor.", "Pushing the physical scan button on a USB-connected Brother scanner."),
+        ["WorkflowAppControl"] = new("Brother iPrint&Scan workflow monitor.", "Brother iPrint&Scan background workflow triggers."),
+        ["BrLogRx"] = new("Brother diagnostic log receiver telemetry service.", "Brother background diagnostic log collection.", OfferDisable: true),
+        ["SQLWriter"] = new("SQL Server VSS Writer (installed with Visual Studio LocalDB).", "Volume shadow copy backups of live SQL Server databases."),
+        ["ArmsSvc"] = new("Adobe Acrobat Update Service.", "Background Adobe Acrobat update checks (Acrobat still updates when opened)."),
+        ["AGSService"] = new("Adobe Genuine Software Integrity Service.", "Background Adobe license telemetry checks."),
+        ["AGMService"] = new("Adobe Genuine Monitor Service.", "Background Adobe license telemetry checks."),
     };
 
     /// <summary>Vendor updater/telemetry helper services matched by name fragment.</summary>
@@ -110,6 +120,8 @@ public static class MemorySuggestionEngine
     [
         ("LenovoVantage", "a Lenovo Vantage helper service"),
         ("ImController", "a Lenovo Vantage system interface helper"),
+        ("CodexSandboxService", "the OpenAI Codex background sandbox VM service"),
+        ("SoftwareUpdateNotification", "Brother's background software update checker"),
         ("AdobeARMservice", "Adobe's updater"),
         ("AdobeUpdateService", "Adobe's updater"),
         ("gupdate", "Google's updater"),
@@ -211,15 +223,16 @@ public static class MemorySuggestionEngine
                 [new(MemoryActionType.CloseApp, a.Name, $"Close {a.Label}", $"Close {a.Label}? Unsaved work in it may be lost.")], "Close apps"));
         }
 
-        // Startup apps (per-user only).
+        // Startup apps (Win32 Run keys + Packaged UWP StartupTasks).
         foreach (var e in startup.Where(e => e.Enabled))
         {
+            if (e.ExeName is "PhoneExperienceHost" or "CrossDeviceService" && s.Devices?.HasPairedCrossDevice == true) continue;
             var app = s.App(e.ExeName);
             if (app is null ? !ElectronApps.Contains(e.ExeName) : app.MemoryBytes < 150 * Mb && !ElectronApps.Contains(e.ExeName)) continue;
             var label = MemoryText.FriendlyAppName(e.ExeName);
             list.Add(new($"startup-{e.Name}".ToLowerInvariant(), $"Stop {label} from starting with Windows",
                 app is null ? $"{label} is set to start every time you sign in." : $"{label} starts every time you sign in and is using {MemoryText.Size(app.MemoryBytes)} right now.",
-                null, SuggestionRisk.Low, SuggestionKind.Automated, ["Same as Task Manager > Startup apps > Disable, for your account only. Undo turns it back on."],
+                app?.MemoryBytes, SuggestionRisk.Low, SuggestionKind.Automated, ["Same as Task Manager > Startup apps > Disable. Undo turns it back on."],
                 [new(MemoryActionType.DisableStartup, e.Name, "Don't start with Windows")], "Startup apps", "Takes effect the next time you sign in."));
         }
 

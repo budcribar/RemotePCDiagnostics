@@ -229,4 +229,33 @@ public class BenchmarkTests
         Assert.True(back.RunAfterOnStartup);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
+
+    [Fact]
+    public void Comparison_ResourceAndInventoryMetrics_ShowAbsoluteSavingsWithoutSkewingWeightZero()
+    {
+        var before = Run(BenchmarkPhase.Before,
+            M(BenchmarkKind.MemoryUsedMb, 9400),
+            M(BenchmarkKind.DiskFreeGb, 120.0),
+            M(BenchmarkKind.EnabledStartupApps, 14),
+            M(BenchmarkKind.ActiveScheduledTasks, 28),
+            M(BenchmarkKind.InstalledBloatwareApps, 12));
+        var after = Run(BenchmarkPhase.After,
+            M(BenchmarkKind.MemoryUsedMb, 7400),
+            M(BenchmarkKind.DiskFreeGb, 161.2),
+            M(BenchmarkKind.EnabledStartupApps, 5),
+            M(BenchmarkKind.ActiveScheduledTasks, 16),
+            M(BenchmarkKind.InstalledBloatwareApps, 2));
+        var c = BenchmarkComparison.Build(before, after);
+        var mem = c.Deltas.Single(d => d.Info.Kind == BenchmarkKind.MemoryUsedMb);
+        var disk = c.Deltas.Single(d => d.Info.Kind == BenchmarkKind.DiskFreeGb);
+        var startup = c.Deltas.Single(d => d.Info.Kind == BenchmarkKind.EnabledStartupApps);
+        var tasks = c.Deltas.Single(d => d.Info.Kind == BenchmarkKind.ActiveScheduledTasks);
+        var bloat = c.Deltas.Single(d => d.Info.Kind == BenchmarkKind.InstalledBloatwareApps);
+
+        Assert.Equal("2000 MB freed (21% less)", mem.ChangeSummary);
+        Assert.Equal("+41.2 GB freed", disk.ChangeSummary);
+        Assert.Equal("9 fewer", startup.ChangeSummary);
+        Assert.Equal("12 fewer", tasks.ChangeSummary);
+        Assert.Equal("10 fewer", bloat.ChangeSummary);
+    }
 }
