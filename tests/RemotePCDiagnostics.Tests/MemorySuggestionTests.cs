@@ -150,6 +150,34 @@ public class MemorySuggestionTests
     }
 
     [Fact]
+    public void TrayHelpers_OfferedAtStartup_ButNeverDescribedAsABrowser()
+    {
+        Assert.Empty(MemorySuggestionEngine.ElectronApps.Intersect(MemorySuggestionEngine.StartupTrayHelpers));
+        foreach (var helper in new[] { "RadeonSoftware", "BrStMonW", "BrCcBoot", "LenovoVantage" })
+        {
+            Assert.DoesNotContain(helper, MemorySuggestionEngine.ElectronApps);
+            Assert.True(MemorySuggestionEngine.AlwaysOfferStartup(helper));
+        }
+
+        // Not running: still offered at startup, with the vendor-helper reason and no browser talk.
+        var cc4 = new StartupEntry("hklm32:ControlCenter4", @"""C:\Program Files (x86)\ControlCenter4\BrCcBoot.exe"" /autorun", true, StartupScope.LocalMachine32);
+        var sug = Build(Snap() with { Startup = [cc4] }).Single(x => x.Id == "startup-hklm32:controlcenter4");
+        Assert.Contains("vendor helper", sug.Why);
+        Assert.DoesNotContain("browser", sug.Why);
+
+        // A big window of a tray helper offered as "Close app" doesn't claim a built-in browser either.
+        var close = Build(Snap(new AppUsage("RadeonSoftware", 1, 900 * Mb, HasWindow: true))).Single(x => x.Id == "close-radeonsoftware");
+        Assert.DoesNotContain("web browser", close.Why);
+        Assert.DoesNotContain(close.Steps, st => st.Contains("Hardware acceleration"));
+
+        // Real Electron apps keep both behaviours.
+        var slack = Build(Snap(new AppUsage("slack", 3, 900 * Mb, HasWindow: true))).Single(x => x.Id == "close-slack");
+        Assert.Contains("web browser", slack.Why);
+        Assert.True(MemorySuggestionEngine.AlwaysOfferStartup("Spotify"));
+        Assert.False(MemorySuggestionEngine.AlwaysOfferStartup("notepad"));
+    }
+
+    [Fact]
     public void Startup_PackagedUwp_AndCrossDeviceGuard_AndNewServices()
     {
         var uwp = new StartupEntry("uwp:Microsoft.YourPhone_8wekyb3d8bbwe\\YourPhone.Start", "Microsoft.YourPhone_8wekyb3d8bbwe\\YourPhone.Start", true, StartupScope.PackagedUwp);

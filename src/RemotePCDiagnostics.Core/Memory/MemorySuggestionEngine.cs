@@ -71,7 +71,18 @@ public static class MemorySuggestionEngine
 
     /// <summary>Electron/web-wrapper chat and media apps; each runs its own copy of Chromium.</summary>
     public static readonly IReadOnlySet<string> ElectronApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        { "ChatGPT", "Grok", "Antigravity", "slack", "ms-teams", "Teams", "Discord", "Spotify", "Code", "Notion", "WhatsApp", "Codex", "MicrosoftOfficeHub", "RadeonSoftware", "BrStMonW", "BrCcBoot", "LenovoVantage" };
+        { "ChatGPT", "Grok", "Antigravity", "slack", "ms-teams", "Teams", "Discord", "Spotify", "Code", "Notion", "WhatsApp", "Codex", "MicrosoftOfficeHub" };
+
+    /// <summary>
+    /// Vendor tray helpers that start at sign-in but aren't needed for the device to work (graphics settings/overlay, printer
+    /// status pop-ups, scan-button and vendor update helpers). Offered for "don't start with Windows" even when small or not running.
+    /// Not Electron: their suggestions never talk about a built-in browser.
+    /// </summary>
+    public static readonly IReadOnlySet<string> StartupTrayHelpers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "RadeonSoftware", "BrStMonW", "BrCcBoot", "LenovoVantage" };
+
+    /// <summary>Startup apps offered regardless of their memory use.</summary>
+    public static bool AlwaysOfferStartup(string exeName) => ElectronApps.Contains(exeName) || StartupTrayHelpers.Contains(exeName);
 
     public static readonly IReadOnlyList<string> BuildServerProcesses = ["VBCSCompiler", "MSBuild", "MSBuildTaskHost"];
 
@@ -227,10 +238,11 @@ public static class MemorySuggestionEngine
         foreach (var e in startup.Where(e => e.Enabled))
         {
             var app = s.App(e.ExeName);
-            if (app is null ? !ElectronApps.Contains(e.ExeName) : app.MemoryBytes < 150 * Mb && !ElectronApps.Contains(e.ExeName)) continue;
+            if (!AlwaysOfferStartup(e.ExeName) && (app is null || app.MemoryBytes < 150 * Mb)) continue;
             var label = MemoryText.FriendlyAppName(e.ExeName);
+            var helper = StartupTrayHelpers.Contains(e.ExeName) ? $" It's a vendor helper that sits in the tray; the device works without it, and opening {label} still works." : "";
             list.Add(new($"startup-{e.Name}".ToLowerInvariant(), $"Stop {label} from starting with Windows",
-                app is null ? $"{label} is set to start every time you sign in." : $"{label} starts every time you sign in and is using {MemoryText.Size(app.MemoryBytes)} right now.",
+                (app is null ? $"{label} is set to start every time you sign in." : $"{label} starts every time you sign in and is using {MemoryText.Size(app.MemoryBytes)} right now.") + helper,
                 app?.MemoryBytes, SuggestionRisk.Low, SuggestionKind.Automated, ["Same as Task Manager > Startup apps > Disable. Undo turns it back on."],
                 [new(MemoryActionType.DisableStartup, e.Name, "Don't start with Windows")], "Startup apps", "Takes effect the next time you sign in."));
         }
