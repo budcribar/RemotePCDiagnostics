@@ -34,7 +34,8 @@ public static class Undoability
             or MemoryActionType.SetServiceDisabled or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
             or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile or MemoryActionType.DisableFastStartup
             or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile
-            or MemoryActionType.SkipOfficeStartScreen => UndoSupport.Full,
+            or MemoryActionType.SkipOfficeStartScreen
+            or MemoryActionType.DisableOfficeOptionalExperiences => UndoSupport.Full,
         _ => UndoSupport.NothingToUndo, // closing apps, ending build servers, restarting, opening Settings
     };
 

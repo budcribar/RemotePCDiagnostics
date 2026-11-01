@@ -28,7 +28,8 @@ public static class MemoryFeedback
         or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings
         or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile
         or MemoryActionType.AddDefenderExclusions or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights
-        or MemoryActionType.ReduceHibernateFile or MemoryActionType.SkipOfficeStartScreen;
+        or MemoryActionType.ReduceHibernateFile or MemoryActionType.SkipOfficeStartScreen
+        or MemoryActionType.DisableOfficeOptionalExperiences;
 }
 
 public sealed record ActionOutcome(bool Success, string Message);
@@ -217,6 +218,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 case MemoryActionType.SkipOfficeStartScreen:
                     outcome = UndoRegistry(u, $"The start screen is back in {u.Target}. Takes effect the next time each app opens.");
                     break;
+                case MemoryActionType.DisableOfficeOptionalExperiences:
+                    outcome = UndoRegistry(u, "Office's optional online extras are back for this account. Takes effect the next time each Office app opens.");
+                    break;
                 case MemoryActionType.ReduceHibernateFile:
                     var full = await sys.SetHibernateTypeAsync(false, ct).ConfigureAwait(false);
                     outcome = full.Success ? new(true, "The hibernation file is full size again; Hibernate is back in the power menu.") : full;
@@ -359,6 +363,19 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             + " Takes effect the next time each app opens.");
     }
 
+    /// <summary>
+    /// #18: ControllerConnectedServicesEnabled = 2 (the Office policy "Allow the use of additional optional connected experiences in Office"
+    /// set to disabled) for this account. Read back and journaled with its old value; nothing is journaled when it doesn't stick.
+    /// </summary>
+    private ActionOutcome DisableOfficeOptionalExperiences(MemorySuggestion s)
+    {
+        if (Snapshot is { } snap && !OfficePrivacy.Offer(snap)) return new(false, "Office's optional online extras are already off or managed by your organization.");
+        var w = SetDword(OfficePrivacy.Setting, OfficePrivacy.Disabled, was => $"Office optional connected experiences turned off for this account (policy was {was})", restart: false);
+        if (!w.Ok) return new(false, "Windows didn't keep the Office setting (administrator rights needed, or your organization manages Office settings). Nothing was changed.");
+        if (w.Changed) AddUndo(new(s.Id, "Office optional online extras", MemoryActionType.DisableOfficeOptionalExperiences, "", RegistryUndo.Encode([new(w.Target, w.Previous)])));
+        return new(true, "Office's optional online extras are off for this account (online pictures, Smart Lookup, Outlook weather, the Office Store for add-ins). OneDrive, SharePoint and co-authoring keep working. Takes effect the next time each Office app opens.");
+    }
+
     /// <summary>Per-item undo: restores every value this click changed (allowlisted only) and drops their journal records.</summary>
     private ActionOutcome UndoRegistry(UndoEntry u, string? done = null)
     {
@@ -485,6 +502,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
 
             case MemoryActionType.SkipOfficeStartScreen:
                 return SkipOfficeStartScreen(s);
+
+            case MemoryActionType.DisableOfficeOptionalExperiences:
+                return DisableOfficeOptionalExperiences(s);
 
             case MemoryActionType.AutoManagePageFile:
                 var pageFileBefore = await sys.ReadPageFileSettingsAsync(ct).ConfigureAwait(false);

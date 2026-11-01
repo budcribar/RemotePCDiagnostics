@@ -39,8 +39,14 @@ public static class RegistryAllowlist
     /// <summary>Same for PowerPoint (opens straight to a blank presentation).</summary>
     public static readonly RegistrySetting PowerPointStartScreen = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Office\16.0\PowerPoint\Options", "DisableBootToOfficeStart");
 
+    /// <summary>Office policy "Allow the use of additional optional connected experiences in Office" (#18), per account: 2 = disabled.
+    /// Documented in Microsoft's "Use policy settings to manage privacy controls for Microsoft 365 Apps for enterprise". Never
+    /// DisconnectedState (that policy turns off all connected experiences, including co-authoring and OneDrive/SharePoint files).</summary>
+    public static readonly RegistrySetting OfficeOptionalConnectedExperiences = new(RegistryRoot.CurrentUser, @"Software\Policies\Microsoft\Office\16.0\Common\Privacy", "ControllerConnectedServicesEnabled");
+
     public static readonly IReadOnlyList<RegistrySetting> All =
-        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen];
+        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen,
+         OfficeOptionalConnectedExperiences];
 
     /// <summary>The allowlisted setting with this target (case-insensitive), or null.</summary>
     public static RegistrySetting? Find(string? target) =>

@@ -445,6 +445,23 @@ public static class MemorySuggestionEngine
                     $"Skip the start screen in {apps}? They'll open straight to a blank document. Undo brings the start screen back.")],
                 "Office", "Takes effect the next time Word, Excel or PowerPoint opens."));
         }
+        // #18 Office optional connected experiences: per-account Office policy, opt-in (unticked). Copilot is deliberately not touched:
+        // Microsoft documents no per-user setting that only turns Copilot off (see docs item #18).
+        if (OfficePrivacy.Offer(s))
+        {
+            list.Add(new("office-optional-experiences", "Turn off Office's optional online extras",
+                "Office has \"optional connected experiences\": extras that fetch content from Microsoft or Bing, such as online pictures and 3D models, Smart Lookup and Researcher, 3D Maps and map charts in Excel, and the weather in Outlook. Turning them off means fewer of these online panes load, so Office may use a little less memory while Office apps are open.",
+                null, SuggestionRisk.Low, SuggestionKind.Automated,
+                ["Turns off Office's \"optional connected experiences\" for this account (Microsoft's Office privacy policy \"Allow the use of additional optional connected experiences in Office\").",
+                 "What goes away: inserting online pictures, online videos and 3D models, Smart Lookup and Researcher, 3D Maps and map charts in Excel, PowerPoint QuickStarter, the weather in Outlook's calendar, and getting add-ins from the Office Store (add-ins from the Store may stop working). Their buttons are grayed out or show a message.",
+                 "What keeps working: opening and saving files on OneDrive and SharePoint, co-authoring with others, Outlook email, Designer, Dictate, Translator and spell check. Copilot isn't changed by this.",
+                 "Office's privacy settings (File > Account > Account Privacy) may show this option as managed by your organization; that's this setting.",
+                 "Applies to the Windows account this app runs as. Takes effect the next time each Office app opens.",
+                 "Undo brings them back."],
+                [new(MemoryActionType.DisableOfficeOptionalExperiences, "", "Turn off optional online extras",
+                    "Turn off Office's optional online extras for this account? Online pictures, Smart Lookup, the Outlook weather and the Office Store for add-ins go away; OneDrive, SharePoint and co-authoring keep working. Undo brings them back. Needs administrator rights.")],
+                "Office", "Takes effect the next time each Office app opens.", DefaultOn: false));
+        }
 
         // Services.
         foreach (var su in s.Services ?? [])
