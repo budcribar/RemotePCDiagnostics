@@ -149,11 +149,21 @@ Historical estimates below are not a current scan. Tier 1 excludes worktrees. Ti
 * **Automated Remediation:** Run `Remove-AppxPackage -AllUsers` and `Remove-AppxProvisionedPackage -Online` for selected packages, set `MapsBroker` to `Disabled`, disable `\Microsoft\Windows\Maps\MapsToastTask`, set `WinEnterLaunchEnabled = 0`, delete `Lenovo\UserGuide` and `McAfee\WPS`, and set `ContentDeliveryManager` flags (`SilentInstalledAppsEnabled`, `OemPreInstalledAppsEnabled`, `PreInstalledAppsEnabled`, `SoftLandingEnabled`, `SystemPaneSuggestionsEnabled`) to `0`.
 * **Undo Support:** Restore `ContentDeliveryManager`, `Narrator`, and `MapsBroker` settings via [`ChangeJournal`](../src/RemotePCDiagnostics.Core/Changes/ChangeJournal.cs).
 
-#### 4. Shrink or Disable `C:\hiberfil.sys` (`5.67 GB` on `BUDSLAPTOP`) When Fast Startup / Hibernate Is Not Used
+#### 4. Shrink (`reduced`) or Disable (`off`) `C:\hiberfil.sys` (`5.67 GB` on `BUDSLAPTOP`)
 * **Disk Space Saved:** **`2.84 GB – 5.67 GB`**
+<<<<<<< HEAD
 * **Problem:** `C:\hiberfil.sys` reserves **`5,672.6 MB` (`5.67 GB`)** on `C:\`. If the user disables Fast Startup (or only uses Sleep `S0 Modern Standby` and never uses Hibernate), that `5.67 GB` remains locked on the SSD.
 * **Automated Remediation (Opt-In):** Run `powercfg /h /type reduced` (saves **`~2.84 GB`**) or `powercfg /h off` (saves the full **`5.67 GB`**).
 * **Undo Support:** Run `powercfg /h on` / `powercfg /h /type full` via [`ChangeJournal`](../src/RemotePCDiagnostics.Core/Changes/ChangeJournal.cs).
+=======
+* **Problem & Why Fast Startup Stays Enabled During the Service Workflow:**
+  * `C:\hiberfil.sys` reserves **`5,672.6 MB` (`5.67 GB`)** on `C:\` (`40%` of RAM) by default so Windows can support full-memory Hibernate (`S4`) in addition to Fast Startup.
+  * Note that the Service Workflow **does not turn off Fast Startup (`HiberbootEnabled`)**: `shutdown.exe /r` (Restart) **always** bypasses Fast Startup and performs a 100% clean kernel reboot (`uptime` → `0`), so the user gets a clean kernel reset without sacrificing their 3–10s faster cold boots from `Shut Down`.
+* **Automated Remediation (Opt-In):**
+  * **Recommended (`reduced` — Saves `~2.84 GB` while KEEPING Fast Startup enabled):** Run `powercfg /h /type reduced`, which shrinks `C:\hiberfil.sys` in half (`40%` → `20%` of RAM) while preserving Windows Fast Startup.
+  * **Full removal (`off` — Saves `5.67 GB`):** Run `powercfg /h off` if the user wants the full `5.67 GB` reclaimed and does not use Hibernate or Fast Startup.
+* **Undo Support:** Run `powercfg /h on` and `powercfg /h /type full` via [`ChangeJournal`](file:///c:/Users/budcr/source/repos/gemini/RemotePCDiagnostics/src/RemotePCDiagnostics.Core/Changes/ChangeJournal.cs).
+>>>>>>> 80d927d (Keep Fast Startup in workflow; quote service names and clarify 'Critical' vendor services)
 
 #### 5. Speed Up VS Code Startup by Pruning Duplicate Old Extensions & `.guid` Staging Folders in `~/.vscode/extensions` (`1.27 GB`)
 * **Disk Space Saved:** **`1.27 GB`** (`1,266.6 MB`) | **Speed Gain:** Faster VS Code startup extension scan

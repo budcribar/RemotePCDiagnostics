@@ -255,6 +255,12 @@ public class MemorySuggestionTests
         Assert.Contains("svc-spooler", ids);
         Assert.Contains("svc-diagtrack", ids);
         Assert.Contains("svc-lenovovantageservice", ids);
+        var lenovo = list.Single(x => x.Id == "svc-lenovovantageservice");
+        Assert.Equal("Stop \"LenovoVantageService display\"", lenovo.Title);
+        var critSnap = Snap() with { Services = [new(new ServiceInfo("LenovoVantageServices", "Critical Service for Lenovo Vantage", "RUNNING", "AUTO_START", "LocalSystem", ""), 38 * Mb)] };
+        var crit = Build(critSnap).Single(x => x.Id == "svc-lenovovantageservices");
+        Assert.Equal("Stop \"Critical Service for Lenovo Vantage\"", crit.Title);
+        Assert.Contains("Despite \"Critical\" in its name, Windows and your hardware do not need it", crit.Why);
         Assert.DoesNotContain("svc-lenovofnandfunctionkeys", ids); // hardware hotkey service excluded
         Assert.DoesNotContain("svc-bthserv", ids);   // has BT devices
         Assert.DoesNotContain("svc-wbiosrvc", ids);  // fingerprint unknown → not suggested

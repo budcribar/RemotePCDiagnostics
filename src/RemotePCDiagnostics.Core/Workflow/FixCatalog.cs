@@ -6,15 +6,15 @@ namespace RemotePCDiagnostics.Core.Workflow;
 /// <summary>Turns check results and memory suggestions into one de-duplicated, ordered list of fixes the workflow can apply unattended.</summary>
 public static class FixCatalog
 {
-    /// <summary>Not offered: the workflow restarts the PC anyway (which closes apps and ends processes) and runs its own restarts.</summary>
+    /// <summary>Not offered: the workflow restarts the PC anyway (which closes apps, ends processes, and forces a full clean kernel reboot regardless of Fast Startup).</summary>
     public static readonly IReadOnlySet<RemediationKind> SkippedRemediation = new HashSet<RemediationKind>
-        { RemediationKind.ScheduleCleanRestart, RemediationKind.CancelScheduledRestart, RemediationKind.EndProcessGroup };
+        { RemediationKind.ScheduleCleanRestart, RemediationKind.CancelScheduledRestart, RemediationKind.EndProcessGroup, RemediationKind.DisableFastStartup };
 
     /// <summary>Memory actions that persist across a restart and need nobody at the keyboard.</summary>
     public static readonly IReadOnlySet<MemoryActionType> UnattendedMemoryActions = new HashSet<MemoryActionType>
     {
         MemoryActionType.DisableStartup, MemoryActionType.EnableBrowserMemorySaver, MemoryActionType.SetServiceManual,
-        MemoryActionType.DisableTransparency, MemoryActionType.AutoManagePageFile, MemoryActionType.DisableFastStartup,
+        MemoryActionType.DisableTransparency, MemoryActionType.AutoManagePageFile,
         MemoryActionType.AddDefenderExclusions,
     };
 
@@ -81,14 +81,12 @@ public static class FixCatalog
             // One action per suggestion: the first unattended one (e.g. "Don't start automatically" rather than "Stop now").
             var a = s.Actions.FirstOrDefault(x => UnattendedMemoryActions.Contains(x.Type));
             if (a is null) continue;
-            // Fast Startup is also a Remediation fix: list it once.
-            if (a.Type == MemoryActionType.DisableFastStartup && seen.Contains(RemediationId(new AreaAction(RemediationKind.DisableFastStartup, "")))) continue;
-            var id = a.Type == MemoryActionType.DisableFastStartup ? RemediationId(new AreaAction(RemediationKind.DisableFastStartup, "")) : MemoryId(s.Id, a.Type, a.Target);
+            var id = MemoryId(s.Id, a.Type, a.Target);
             if (!seen.Add(id)) continue;
             var order = a.Type switch { MemoryActionType.DisableStartup => 20, MemoryActionType.SetServiceManual => 22, MemoryActionType.AutoManagePageFile => 12, _ => 15 };
             list.Add(new(id, a.Type == MemoryActionType.SetServiceManual ? $"{s.Title}: start only when needed" : s.Title, s.Why, s.Category, s.Risk, FixSource.Memory, order,
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
-                NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.DisableFastStartup or MemoryActionType.AddDefenderExclusions,
+                NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.AddDefenderExclusions,
                 Undo: Changes.Undoability.Of(a.Type)));
         }
 
@@ -97,6 +95,6 @@ public static class FixCatalog
 
     /// <summary>Things worth telling the client that need a person (not applied by the workflow).</summary>
     public static IReadOnlyList<string> Recommendations(IEnumerable<MemorySuggestion> suggestions) =>
-        suggestions.Where(s => s.Kind is SuggestionKind.Guided or SuggestionKind.Info || (s.Kind == SuggestionKind.Automated && !s.Actions.Any(a => UnattendedMemoryActions.Contains(a.Type)) && !s.Actions.Any(a => a.Type is MemoryActionType.CloseApp or MemoryActionType.ShutdownBuildServers or MemoryActionType.RestartPc)))
+        suggestions.Where(s => s.Kind is SuggestionKind.Guided or SuggestionKind.Info || (s.Kind == SuggestionKind.Automated && !s.Actions.Any(a => UnattendedMemoryActions.Contains(a.Type)) && !s.Actions.Any(a => a.Type is MemoryActionType.CloseApp or MemoryActionType.ShutdownBuildServers or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup)))
             .Select(s => $"{s.Title}: {s.Why}").ToList();
 }

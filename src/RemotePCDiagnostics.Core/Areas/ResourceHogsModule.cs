@@ -184,16 +184,10 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
             }
 
             var uptimeActions = new List<AreaAction>();
-            if (uptime.FastStartupEnabled == true)
+            if (longUp && uptime.FastStartupEnabled == true)
                 uptimeActions.Add(new(RemediationKind.DisableFastStartup, "Turn off Fast Startup"));
             if (restartPending) uptimeActions.Add(new(RemediationKind.CancelScheduledRestart, "Cancel restart"));
             else if (recommendRestart) uptimeActions.Add(new(RemediationKind.ScheduleCleanRestart, "Restart PC in 60s", ResourceBaselineSnapshot.FromOsquery(uptime, processes).Encode(), "Clean PC restart"));
-            else if (recommendRestart)
-            {
-                var baseline = ResourceBaselineSnapshot.FromOsquery(uptime, processes);
-
-
-            }
             cards.Add(new("uptime", "System uptime", level, $"Up {uptime.FriendlyDuration}", meta, ["Detail", "Value"], rows,
                 Actions: uptimeActions.Count > 0 ? uptimeActions : null));
             parts.Add($"Up {uptime.FriendlyDuration}" + (longUp ? " (needs restart)" : ""));

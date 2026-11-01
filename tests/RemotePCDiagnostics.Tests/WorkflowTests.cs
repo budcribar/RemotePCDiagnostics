@@ -105,7 +105,7 @@ public class WorkflowTests
     }
 
     [Fact]
-    public void Catalog_MemorySuggestions_UnattendedOnly_FastStartupOnce()
+    public void Catalog_MemorySuggestions_UnattendedOnly_SkipsFastStartupAndRestart()
     {
         MemorySuggestion Sug(string id, SuggestionKind k, params MemoryAction[] a) => new(id, id, "why", null, SuggestionRisk.Low, k, [], a);
         var fixes = FixCatalog.Build(
@@ -116,9 +116,9 @@ public class WorkflowTests
                 Sug("restart", SuggestionKind.Automated, new MemoryAction(MemoryActionType.RestartPc, "", "Restart"), new MemoryAction(MemoryActionType.DisableFastStartup, "", "Fast Startup")),
                 Sug("defender", SuggestionKind.Guided, new MemoryAction(MemoryActionType.OpenSettings, "windowsdefender://", "Open")),
             ]);
-        Assert.Equal(2, fixes.Count);
+        Assert.Single(fixes);
         Assert.Contains(fixes, f => f.MemoryAction == MemoryActionType.SetServiceManual && f.MemoryTarget == "WSearch");
-        Assert.Single(fixes, f => f.Id.Contains("disablefaststartup"));
+        Assert.DoesNotContain(fixes, f => f.Id.Contains("disablefaststartup"));
         Assert.Equal(["defender: why"], FixCatalog.Recommendations([Sug("defender", SuggestionKind.Guided)]));
     }
 
