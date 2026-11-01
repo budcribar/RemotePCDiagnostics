@@ -329,7 +329,7 @@ public class WorkflowTests
         return ScriptedLauncher.Ok("");
     }
 
-    private static (WorkflowService Flow, Sys Sys, MemFlowStore Store, MemSys Mem, MemoryChangeJournal Journal) MakeFull()
+    private static (WorkflowService Flow, Sys Sys, IWorkflowStore Store, MemSys Mem, MemoryChangeJournal Journal) MakeFull()
     {
         var journal = new MemoryChangeJournal();
         var mem = new MemSys();
