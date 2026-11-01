@@ -7,6 +7,43 @@ namespace RemotePCDiagnostics.Tests;
 
 public class MemorySuggestionTests
 {
+    [Fact]
+    public void LowMemoryListsFiveLargestOpenUserAppsAndAnAction()
+    {
+        var apps = Enumerable.Range(1, 6).Select(i => new AppUsage("app" + i, 1, i * 100 * Mb, HasWindow: true)).ToList();
+        apps.Add(new("MsMpEng", 1, 2 * Gb, HasWindow: true));
+        apps.Add(new("service", 1, 2 * Gb, HasWindow: true, IsService: true));
+        apps.Add(new("background", 1, 2 * Gb));
+        var snapshot = new MemorySnapshot(new(16 * Gb, 500 * Mb), apps);
+        var why = Build(snapshot).Single(s => s.Id == "low-ram").Why;
+        Assert.DoesNotContain("App1:", why);
+        Assert.DoesNotContain("MsMpEng", why);
+        Assert.DoesNotContain("service:", why);
+        Assert.DoesNotContain("background:", why);
+        for (var i = 6; i >= 2; i--)
+        {
+            Assert.Contains($"App{i}: {i * 100} MB", why);
+            if (i > 2) Assert.True(why.IndexOf($"App{i}:", StringComparison.Ordinal) < why.IndexOf($"App{i - 1}:", StringComparison.Ordinal));
+        }
+        Assert.Contains("Save your work", why);
+        Assert.Contains("Task Manager", Build(snapshot with { Apps = [] }).Single(s => s.Id == "low-ram").Why);
+    }
+
+    [Fact]
+    public void LowMemoryFlagsOnlyMatchingEnabledStartupEntries()
+    {
+        var snapshot = new MemorySnapshot(new(16 * Gb, 500 * Mb),
+            [new("chrome", 5, 900 * Mb, true), new("slack", 2, 600 * Mb, true)],
+            Startup: [new("Chrome", "chrome.exe", true), new("Slack", "slack.exe", false)]);
+        var why = Build(snapshot).Single(s => s.Id == "low-ram").Why;
+        Assert.Contains("Chrome: 900 MB (starts with Windows)", why);
+        Assert.Contains("Slack: 600 MB", why);
+        Assert.DoesNotContain("Slack: 600 MB (starts with Windows)", why);
+        Assert.Contains("next sign-in", why);
+        Assert.Contains("Closing an app does not change its startup setting", why);
+        Assert.DoesNotContain("(starts with Windows)", Build(snapshot with { Startup = null }).Single(s => s.Id == "low-ram").Why);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

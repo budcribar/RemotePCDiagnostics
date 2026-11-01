@@ -307,9 +307,20 @@ public static class MemorySuggestionEngine
         // Info: memory pressure.
         var m = s.Memory;
         if (m.TotalBytes > 0 && m.UsedPercent >= 85)
-            list.Add(new("low-ram", "Memory is almost full", $"{m.UsedPercent}% of {MemoryText.Size(m.TotalBytes)} is in use; only {MemoryText.Size(m.AvailableBytes)} is available. Windows starts using the much slower page file."
+        {
+            var topApps = s.Apps.Where(a => a.HasWindow && !a.IsService && a.MemoryBytes > 0 && !ProtectedProcesses.IsProtected(a.Name))
+                .OrderByDescending(a => a.MemoryBytes).ThenBy(a => a.Label, StringComparer.OrdinalIgnoreCase).Take(5).ToList();
+            bool StartsWithWindows(AppUsage app) => startup.Any(e => e.Enabled && e.ExeName.Equals(app.Name, StringComparison.OrdinalIgnoreCase));
+            var appText = topApps.Count > 0
+                ? " Largest open apps by current RAM use: " + string.Join("; ", topApps.Select(a => $"{a.Label}: {MemoryText.Size(a.MemoryBytes)}" + (StartsWithWindows(a) ? " (starts with Windows)" : ""))) + ". Save your work, then close apps you aren't using."
+                    + (topApps.Any(StartsWithWindows) ? " Apps marked 'starts with Windows' may return at the next sign-in unless you disable their startup entry. Closing an app does not change its startup setting." : "")
+                    + " Startup flags reflect detected enabled entries; other app restart mechanisms may not be detected."
+                : " Save your work and use Task Manager to review memory use; no open user apps could be identified in this scan.";
+            list.Add(new("low-ram", "Memory is almost full", $"{m.UsedPercent}% of {MemoryText.Size(m.TotalBytes)} is in use; only {MemoryText.Size(m.AvailableBytes)} is available. Memory pressure can cause Windows to use the slower page file."
+                    + appText
                     + (s.Slots is { Total: > 0 } slots ? " " + slots.Text : ""),
                 null, SuggestionRisk.Low, SuggestionKind.Info, [], [], "Windows"));
+        }
         if (m.CommitBytes is { } cb && m.CommitLimitBytes is > 0 and var cl && cb >= cl * 0.8)
         {
             // A fixed-size page file can be switched to Windows-managed (grows as needed) with one click; already managed = info only.
