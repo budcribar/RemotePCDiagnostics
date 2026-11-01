@@ -441,11 +441,11 @@ public class WorkflowTests
         Assert.Equal(fromRun.Select(c => c.Id).OrderBy(x => x), recorded.Select(c => c.JournalId).OrderBy(x => x));
         foreach (var c in recorded) Assert.Contains(E(c.Text), html);
         Assert.Contains(recorded, c => c.Undo == UndoSupport.None && c.Text.Contains("KB5001"));
-        Assert.Contains(recorded, c => c.Undo == UndoSupport.PlaceholdersOnly);
+        Assert.Contains(recorded, c => c.Undo == UndoSupport.None && c.Text.Contains("Temporary files"));
         Assert.Contains("Undoing changes", html);
         Assert.Contains("Can be put back exactly as it was", html);
         Assert.Contains("Permanent (can't be undone", html);
-        Assert.Contains("placeholder files", html);
+        Assert.DoesNotContain("placeholder", html);
         Assert.Contains("--undo-all", html);
         Assert.Contains("Undo all changes", html);
         Assert.Equal(1, s.EarlierChanges);

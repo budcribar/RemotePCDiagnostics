@@ -48,7 +48,7 @@ public static class Undoability
     public static UndoSupport Of(ChangeRecord c) => c.Kind switch
     {
         ChangeKind.NotUndoable => UndoSupport.None,
-        ChangeKind.TempFiles => UndoSupport.PlaceholdersOnly,
+        ChangeKind.TempFiles => UndoSupport.None, // deleted files can't come back
         _ => UndoSupport.Full,
     };
 

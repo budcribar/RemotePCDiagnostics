@@ -184,31 +184,24 @@ public static class ClientReport
         }
 
         // Undo: what can be put back, what's permanent, and how.
-        var undoable = new List<string>(); var permanent = new List<string>(); var placeholders = new List<string>();
+        var undoable = new List<string>(); var permanent = new List<string>();
         foreach (var o in s.Outcomes.Where(o => !o.Skipped))
         {
             if (o.Changes is { Count: > 0 } ch)
-                foreach (var c in ch) (c.Undo switch { Changes.UndoSupport.None => permanent, Changes.UndoSupport.PlaceholdersOnly => placeholders, _ => undoable }).Add(c.Text);
+                foreach (var c in ch) (c.Undo is Changes.UndoSupport.None or Changes.UndoSupport.PlaceholdersOnly ? permanent : undoable).Add(c.Text);
             else if (o.Success)
                 switch (UndoOf(o))
                 {
                     case Changes.UndoSupport.Full: undoable.Add(o.Title); break;
-                    case Changes.UndoSupport.PlaceholdersOnly: placeholders.Add(o.Title); break;
-                    case Changes.UndoSupport.None when !s.ChangesTracked: permanent.Add(o.Title); break;
+                    case Changes.UndoSupport.None or Changes.UndoSupport.PlaceholdersOnly when !s.ChangesTracked: permanent.Add(o.Title); break;
                 }
         }
         sb.Append("<h2>Undoing changes</h2>");
-        if (undoable.Count + permanent.Count + placeholders.Count == 0) sb.Append("<p>Nothing lasting was changed, so there's nothing to undo.</p>");
+        if (undoable.Count + permanent.Count == 0) sb.Append("<p>Nothing lasting was changed, so there's nothing to undo.</p>");
         else
         {
             if (undoable.Count > 0) { sb.Append("<p>Can be put back exactly as it was:</p><ul>"); foreach (var x in undoable) sb.Append("<li>").Append(E(x)).Append("</li>"); sb.Append("</ul>"); }
-            if (permanent.Count > 0) { sb.Append("<p>Permanent (can't be undone; for example, installed updates stay installed):</p><ul>"); foreach (var x in permanent) sb.Append("<li>").Append(E(x)).Append("</li>"); sb.Append("</ul>"); }
-            if (placeholders.Count > 0)
-            {
-                sb.Append("<p>Deleted files can't be recovered, and Recycle Bin items are gone. Undo only recreates placeholder files of the same total size:</p><ul>");
-                foreach (var x in placeholders) sb.Append("<li>").Append(E(x)).Append("</li>");
-                sb.Append("</ul>");
-            }
+            if (permanent.Count > 0) { sb.Append("<p>Permanent (can't be undone; for example, installed updates stay installed and deleted files can't be recovered):</p><ul>"); foreach (var x in permanent) sb.Append("<li>").Append(E(x)).Append("</li>"); sb.Append("</ul>"); }
             sb.Append("<p>To put changes back, your technician opens Remote PC Diagnostics and clicks \"Undo all changes\" (History page), or runs <code>RemotePCDiagnostics.Host.exe --undo-all</code> as administrator (add <code>--restart</code> to restart afterwards). Permanent changes are left as they are.</p>");
         }
         if (s.EarlierChanges > 0)
@@ -231,8 +224,7 @@ public static class ClientReport
                 foreach (var c in ch)
                     sb.Append("<li>").Append(E(c.Text)).Append(" <span class=\"meta\">(").Append(c.Undo switch
                     {
-                        Changes.UndoSupport.None => "permanent",
-                        Changes.UndoSupport.PlaceholdersOnly => "files can't be recovered",
+                        Changes.UndoSupport.None or Changes.UndoSupport.PlaceholdersOnly => "permanent",
                         _ => "can be undone",
                     }).Append(")</span></li>");
                 sb.Append("</ul>");
