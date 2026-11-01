@@ -74,26 +74,32 @@ public class WorkflowTests
     private static readonly AreaAction Clean = new(RemediationKind.CleanTempFiles, "Clean up temporary files", "", "Temporary files");
     private static readonly AreaAction Updates = new(RemediationKind.CheckAndInstallWindowsUpdates, "Check & install updates");
 
-    private static (WorkflowService Flow, Sys Sys, MemFlowStore Store, List<TimeSpan> Delays, ScriptedLauncher Launcher, Probes Probes) Make() =>
-        Make(null, null, null, [
+    private static IDiagnosticModule[] DefaultModules() =>
+    [
             new AreaModule("ResourceHogs", Report(PowerPlan, new AreaAction(RemediationKind.ScheduleCleanRestart, "Restart"), new AreaAction(RemediationKind.EndProcessGroup, "End task", "chrome.exe"))),
             new AreaModule("DriveHealth", Report(Clean, PowerPlan)),
             new AreaModule("Programs", Report(Updates)),
-        ]);
+    ];
 
-    private static (WorkflowService Flow, Sys Sys, MemFlowStore Store, List<TimeSpan> Delays, ScriptedLauncher Launcher, Probes Probes) Make(
-        Func<string, IReadOnlyList<string>, ProcessResult>? run, IChangeJournal? journal, IMemorySystem? memorySystem, IDiagnosticModule[] modules)
+    private static (WorkflowService Flow, Sys Sys, IWorkflowStore Store, List<TimeSpan> Delays, ScriptedLauncher Launcher, Probes Probes) Make(
+        IWorkflowStore? flowStore = null, IBenchmarkStore? benchmarkStore = null, Sys? system = null, Probes? benchmarkProbes = null) =>
+        Make(null, null, null, DefaultModules(), flowStore, benchmarkStore, system, benchmarkProbes);
+
+    private static (WorkflowService Flow, Sys Sys, IWorkflowStore Store, List<TimeSpan> Delays, ScriptedLauncher Launcher, Probes Probes) Make(
+        Func<string, IReadOnlyList<string>, ProcessResult>? run, IChangeJournal? journal, IMemorySystem? memorySystem, IDiagnosticModule[] modules,
+        IWorkflowStore? flowStore = null, IBenchmarkStore? benchmarkStore = null, Sys? system = null, Probes? benchmarkProbes = null)
     {
         var results = new ResultStore();
         var diag = new DiagnosticsService(results, modules);
         var launcher = new ScriptedLauncher(run ?? ((file, args) => ScriptedLauncher.Ok(args.Any(a => a.Contains("RemovedFiles")) ? """{"RemovedFiles":42,"FreedBytes":524288000}""" : """{"Count":0}""")));
         var rem = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Remote), journal: journal);
         var memory = memorySystem is null ? null : new MemorySuggestionService(memorySystem, session: new SessionContext(SessionMode.Remote), settle: TimeSpan.Zero, remediation: rem, journal: journal);
-        var probes = new Probes();
-        var bench = new BenchmarkService(new BenchmarkRunner(probes, resolve: (_, _) => Task.CompletedTask), new MemBenchStore());
-        bench.UpdateSettings(new BenchmarkSettings { Runs = 1, IdleSample = TimeSpan.Zero, CpuSingleRun = TimeSpan.FromMilliseconds(50), CpuMultiRun = TimeSpan.FromMilliseconds(50), DiskRun = TimeSpan.Zero });
-        var sys = new Sys();
-        var store = new MemFlowStore();
+        var probes = benchmarkProbes ?? new Probes();
+        var bench = new BenchmarkService(new BenchmarkRunner(probes, resolve: (_, _) => Task.CompletedTask), benchmarkStore ?? new MemBenchStore());
+        if (benchmarkStore?.Load() is null)
+            bench.UpdateSettings(new BenchmarkSettings { Runs = 1, IdleSample = TimeSpan.Zero, CpuSingleRun = TimeSpan.FromMilliseconds(50), CpuMultiRun = TimeSpan.FromMilliseconds(50), DiskRun = TimeSpan.Zero });
+        var sys = system ?? new Sys();
+        var store = flowStore ?? new MemFlowStore();
         var delays = new List<TimeSpan>();
         var flow = new WorkflowService(diag, results, rem, bench, sys, store, memory, session: new SessionContext(SessionMode.Remote),
             delay: (d, _) => { delays.Add(d); return Task.CompletedTask; }, journal: journal);
@@ -117,7 +123,7 @@ public class WorkflowTests
     }
 
     [Fact]
-    public void Catalog_MemorySuggestions_UnattendedOnly_FastStartupOnce()
+    public void Catalog_MemorySuggestions_UnattendedOnly_SkipsFastStartupAndRestart()
     {
         MemorySuggestion Sug(string id, SuggestionKind k, params MemoryAction[] a) => new(id, id, "why", null, SuggestionRisk.Low, k, [], a);
         var fixes = FixCatalog.Build(
@@ -128,9 +134,9 @@ public class WorkflowTests
                 Sug("restart", SuggestionKind.Automated, new MemoryAction(MemoryActionType.RestartPc, "", "Restart"), new MemoryAction(MemoryActionType.DisableFastStartup, "", "Fast Startup")),
                 Sug("defender", SuggestionKind.Guided, new MemoryAction(MemoryActionType.OpenSettings, "windowsdefender://", "Open")),
             ]);
-        Assert.Equal(2, fixes.Count);
+        Assert.Single(fixes);
         Assert.Contains(fixes, f => f.MemoryAction == MemoryActionType.SetServiceManual && f.MemoryTarget == "WSearch");
-        Assert.Single(fixes, f => f.Id.Contains("disablefaststartup"));
+        Assert.DoesNotContain(fixes, f => f.Id.Contains("disablefaststartup"));
         Assert.Equal(["defender: why"], FixCatalog.Recommendations([Sug("defender", SuggestionKind.Guided)]));
     }
 
@@ -146,7 +152,7 @@ public class WorkflowTests
         Assert.Null(await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "secret")));
         Assert.Equal(WorkflowStage.RestartBefore, flow.State.Stage);
         Assert.Equal(["validate:PC1\\bud", "autologon-on:2", "register", "restart"], sys.Calls);
-        Assert.DoesNotContain("secret", store.State!.ToJson());                  // password never saved
+        Assert.DoesNotContain("secret", store.Load()!.ToJson());                  // password never saved
 
         // First restart: Windows booted after the request.
         sys.Uptime = TimeSpan.Zero;
@@ -169,6 +175,55 @@ public class WorkflowTests
         Assert.False(s.AutoLogonEnabled);
         Assert.Contains("Program start time", sys.Report);
         Assert.Contains("Left as they were, by choice", sys.Report);
+    }
+
+    [Fact]
+    public async Task FullRun_ReloadsFromDiskAfterEachRestart_AndDoesNotReplayCompletedFixes()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "rpd-workflow-ci-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var workflowPath = Path.Combine(folder, "workflow.json");
+            var benchmarkPath = Path.Combine(folder, "benchmarks.json");
+            var first = Make(new FileWorkflowStore(workflowPath), new FileBenchmarkStore(benchmarkPath));
+            await first.Flow.RunChecksAsync();
+            var skipped = first.Flow.State.Fixes.Single(f => f.Remediation?.Kind == RemediationKind.SetBalancedPowerPlan).Id;
+            first.Flow.SetApproved(skipped, false);
+            Assert.Null(await first.Flow.StartAsync(new AutoLogonRequest("bud", "PC1", "test-secret")));
+            Assert.DoesNotContain("test-secret", File.ReadAllText(workflowPath));
+
+            var second = Make(new FileWorkflowStore(workflowPath), new FileBenchmarkStore(benchmarkPath), first.Sys);
+            Assert.Equal(WorkflowStage.RestartBefore, second.Flow.State.Stage);
+            second.Sys.Uptime = TimeSpan.Zero;
+            await second.Flow.ResumeAsync();
+            Assert.Equal(WorkflowStage.RestartAfter, second.Flow.State.Stage);
+            Assert.Equal(2, second.Flow.State.Outcomes.Count);
+            Assert.All(second.Flow.State.Outcomes, o => Assert.True(o.Success, o.Message));
+            Assert.NotNull(new FileBenchmarkStore(benchmarkPath).Load()!.Before);
+
+            var third = Make(new FileWorkflowStore(workflowPath), new FileBenchmarkStore(benchmarkPath), first.Sys,
+                new Probes { ProgramMs = 200 });
+            await third.Flow.ResumeAsync();
+            Assert.Equal(WorkflowStage.Done, third.Flow.State.Stage);
+            Assert.Empty(third.Launcher.Calls); // completed fixes were not applied a second time
+            Assert.DoesNotContain(second.Launcher.Calls, c => c.Args.Contains("/setactive"));
+            var benchmarks = new FileBenchmarkStore(benchmarkPath).Load()!;
+            Assert.Equal(300, benchmarks.Before!.Get(BenchmarkKind.ProgramStart)!.Median);
+            Assert.Equal(200, benchmarks.After!.Get(BenchmarkKind.ProgramStart)!.Median);
+            Assert.Contains("Program start time", third.Sys.Report);
+            Assert.Contains("Left as they were, by choice", third.Sys.Report);
+            Assert.False(third.Flow.State.AutoLogonEnabled);
+            Assert.Contains("autologon-off:old", third.Sys.Calls);
+            Assert.Contains("unregister", third.Sys.Calls);
+
+            var finished = Make(new FileWorkflowStore(workflowPath), new FileBenchmarkStore(benchmarkPath), first.Sys);
+            var calls = first.Sys.Calls.Count;
+            await finished.Flow.ResumeAsync();
+            Assert.Equal(calls, first.Sys.Calls.Count);
+            Assert.Empty(finished.Launcher.Calls);
+        }
+        finally { Directory.Delete(folder, recursive: true); }
     }
 
     [Fact]
@@ -309,7 +364,7 @@ public class WorkflowTests
         Assert.Equal(WorkflowStage.Done, s.Stage);
         var html = sys.Report!;
         Assert.Equal(html, s.ReportHtml);                                             // page shows exactly the saved file
-        Assert.DoesNotContain("secret", store.State!.ToJson());
+        Assert.DoesNotContain("secret", store.Load()!.ToJson());
 
         // Each approved fix with its real result.
         Assert.Contains(s.Outcomes, o => o.Success && o.Message.Contains("Installed 3 of 3 Windows update(s): KB5001 Security update, KB5002 .NET update, KB5003 Defender update"));

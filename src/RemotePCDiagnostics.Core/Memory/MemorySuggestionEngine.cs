@@ -157,7 +157,12 @@ public static class MemorySuggestionEngine
         if (s.Name.StartsWith("TeamViewer", StringComparison.OrdinalIgnoreCase)) return ServiceCandidates["TeamViewer"];
         foreach (var (frag, what) in VendorServiceFragments)
             if (s.Name.Contains(frag, StringComparison.OrdinalIgnoreCase))
-                return new($"{s.Label} is {what}. It checks for updates or sends usage data in the background.", "Automatic updates for that app until it's started again (the app can still update itself when opened).");
+            {
+                var needed = s.Label.Contains("Critical", StringComparison.OrdinalIgnoreCase)
+                    ? " Despite \"Critical\" in its name, Windows and your hardware do not need it — only that vendor's app uses it, and it starts on demand when you open the app."
+                    : " Windows does not need it running in the background; it starts on demand when the app is opened.";
+                return new($"\"{s.Label}\" is {what}.{needed} It checks for updates or sends usage data in the background.", "Automatic updates for that app until it's started again (the app can still update itself when opened).");
+            }
         return null;
     }
 
@@ -334,10 +339,10 @@ public static class MemorySuggestionEngine
             var mem = su.ProcessMemoryBytes is not { } pm ? "Its memory use couldn't be read."
                 : su.Shared ? $"It runs in a shared process with {MemoryText.Plural(su.ServicesInProcess - 1, "other service")} ({MemoryText.Size(pm)} together), so its own share can't be measured exactly."
                 : $"It's using {MemoryText.Size(pm)}.";
-            var actions = new List<MemoryAction> { new(MemoryActionType.StopService, svc.Name, "Stop now", $"Stop {svc.Label} until the next restart?") };
-            if (svc.IsAutomatic) actions.Add(new(MemoryActionType.SetServiceManual, svc.Name, "Don't start automatically", $"Set {svc.Label} to start only when needed (Manual)?"));
-            if (c.OfferDisable && !svc.IsDisabled) actions.Add(new(MemoryActionType.SetServiceDisabled, svc.Name, "Disable", $"Disable {svc.Label}? It won't run until you undo this."));
-            list.Add(new($"svc-{svc.Name}".ToLowerInvariant(), $"Stop {svc.Label}", $"{c.What} {mem} You lose: {c.Lose}",
+            var actions = new List<MemoryAction> { new(MemoryActionType.StopService, svc.Name, "Stop now", $"Stop \"{svc.Label}\" until the next restart?") };
+            if (svc.IsAutomatic) actions.Add(new(MemoryActionType.SetServiceManual, svc.Name, "Don't start automatically", $"Set \"{svc.Label}\" to start only when needed (Manual)?"));
+            if (c.OfferDisable && !svc.IsDisabled) actions.Add(new(MemoryActionType.SetServiceDisabled, svc.Name, "Disable", $"Disable \"{svc.Label}\"? It won't run until you undo this."));
+            list.Add(new($"svc-{svc.Name}".ToLowerInvariant(), $"Stop \"{svc.Label}\"", $"{c.What} {mem} You lose: {c.Lose}",
                 su.Shared ? null : su.ProcessMemoryBytes, SuggestionRisk.Medium, SuggestionKind.Automated,
                 ["Stop now lasts until the next restart (Start it again from Services).", "\"Don't start automatically\" / Disable can be undone here; the original setting is remembered."],
                 actions, "Services", su.Shared ? "Shared process: stopping it may show little or no change in free memory." : null));

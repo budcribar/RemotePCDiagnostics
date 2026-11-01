@@ -90,4 +90,19 @@ public class DnsSpeedTests
     public void Card_ExplainsTheMeasurement() =>
         Assert.Contains("isn't suggested", WifiConfigModule.Build(null, true, new IpConfigSnapshot([new("Wi-Fi", "", "1", "2", "192.168.1.1")], false, ""), Slower)
             .Cards.Single(c => c.Id == "ipdns").Note);
+
+    [Theory]
+    [InlineData("\"\"", false)]
+    [InlineData("\"   \"", false)]
+    [InlineData("null", false)]
+    [InlineData("\"9.9.9.9\"", true)]
+    public async Task AutomaticDnsDoesNotEnterWorkflowReview(string manualValue, bool expectReset)
+    {
+        var json = "{\"Adapters\":[{\"Alias\":\"Wi-Fi\",\"Description\":\"Wi-Fi\",\"IPv4\":\"192.168.1.50\",\"Gateway\":\"192.168.1.1\",\"Dns\":\"192.168.1.1\",\"DnsManual\":" + manualValue + "}],\"ProxyEnabled\":false}";
+        var launcher = new ScriptedLauncher((file, _) => ScriptedLauncher.Ok(file == "netsh.exe" ? "" : json));
+        var module = new WifiConfigModule(new SystemCommandRunner(launcher));
+        var result = await module.RefreshAsync(null);
+        var fixes = RemotePCDiagnostics.Core.Workflow.FixCatalog.Build([result], []);
+        Assert.Equal(expectReset, fixes.Any(f => f.Remediation?.Kind == RemediationKind.ResetDhcpDns));
+    }
 }

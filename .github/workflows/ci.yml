@@ -9,6 +9,36 @@ permissions:
   contents: read
 
 jobs:
+  service-workflow:
+    name: Service workflow (simulated restarts)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Test workflow, saved-state resume, and client reports
+        run: dotnet test tests/RemotePCDiagnostics.Tests/RemotePCDiagnostics.Tests.csproj -c Release --filter "FullyQualifiedName~RemotePCDiagnostics.Tests.WorkflowTests" --logger "trx;LogFileName=workflow.trx" --results-directory artifacts/workflow-tests
+      - name: Verify workflow tests ran
+        shell: pwsh
+        run: |
+          [xml]$results = Get-Content artifacts/workflow-tests/workflow.trx
+          $counts = $results.TestRun.ResultSummary.Counters
+          if ([int]$counts.executed -lt 1) { throw 'No service workflow tests executed' }
+          if ([int]$counts.failed -gt 0) { throw 'Service workflow tests failed' }
+          "Service workflow tests: $($counts.passed) passed"
+      - name: Upload workflow test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-workflow-results
+          path: artifacts/workflow-tests/
+          if-no-files-found: warn
+
   build-test-smoke:
     runs-on: windows-latest
     timeout-minutes: 30
