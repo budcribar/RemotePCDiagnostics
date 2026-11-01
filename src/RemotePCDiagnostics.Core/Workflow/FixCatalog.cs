@@ -95,6 +95,34 @@ public static class FixCatalog
         return list.OrderBy(f => f.Order).ThenBy(f => f.Area).ThenBy(f => f.Title, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    /// <summary>
+    /// Fixes the checks found that the workflow leaves out, each with the reason (for the report): restarts and ending tasks
+    /// (the workflow restarts the PC itself), changes this app isn't allowed to make, and memory fixes that only close apps.
+    /// </summary>
+    public static IReadOnlyList<string> NotOffered(IEnumerable<DiagnosticResult> results, IEnumerable<MemorySuggestion> suggestions, RemediationService? plans = null)
+    {
+        var list = new List<string>();
+        void Add(string line) { if (!list.Contains(line)) list.Add(line); }
+        foreach (var r in results)
+        {
+            if (r.Payload is not AreaReport rep) continue;
+            foreach (var a in rep.Cards.SelectMany(c => (c.Actions ?? []).Concat(c.Rows.SelectMany(row => row.Actions ?? []))))
+            {
+                var what = string.IsNullOrWhiteSpace(a.TargetLabel) ? string.IsNullOrWhiteSpace(a.Target) ? a.ButtonText : $"{a.ButtonText} ({a.Target})" : $"{a.ButtonText} ({a.TargetLabel})";
+                if (a.Kind is RemediationKind.ScheduleCleanRestart or RemediationKind.CancelScheduledRestart) Add($"{what}: not needed, the service restarts the PC itself.");
+                else if (a.Kind == RemediationKind.EndProcessGroup) Add($"{what}: not needed, the restart closes it.");
+                else if (plans?.Plan(a) is { Allowed: false } plan) Add($"{plan.Title.TrimEnd('?')}: {plan.Warning ?? "not allowed from here."}");
+            }
+        }
+        foreach (var s in suggestions)
+        {
+            if (s.Kind != SuggestionKind.Automated || s.Actions.Any(x => UnattendedMemoryActions.Contains(x.Type))) continue;
+            if (s.Actions.Any(a => a.Type is MemoryActionType.CloseApp or MemoryActionType.ShutdownBuildServers or MemoryActionType.RestartPc))
+                Add($"{s.Title}: not needed, the restart closes apps and ends tasks.");
+        }
+        return list;
+    }
+
     /// <summary>Things worth telling the client that need a person (not applied by the workflow).</summary>
     public static IReadOnlyList<string> Recommendations(IEnumerable<MemorySuggestion> suggestions) =>
         suggestions.Where(s => s.Kind is SuggestionKind.Guided or SuggestionKind.Info || (s.Kind == SuggestionKind.Automated && !s.Actions.Any(a => UnattendedMemoryActions.Contains(a.Type)) && !s.Actions.Any(a => a.Type is MemoryActionType.CloseApp or MemoryActionType.ShutdownBuildServers or MemoryActionType.RestartPc)))

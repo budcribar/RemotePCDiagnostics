@@ -567,8 +567,10 @@ public sealed class RemediationService(
             if (count == 0)
                 return new(true, driversOnly ? "All drivers are up to date (no pending driver updates found)." : "Windows is up to date (no pending updates found).");
 
-            var sample = string.Join(", ", titles.Take(2));
-            if (titles.Count > 2) sample += $" (+{titles.Count - 2} more)";
+            // Installed updates are permanent, so name them all (up to 10) for the record; otherwise a short sample.
+            var shown = installed > 0 ? 10 : 2;
+            var sample = string.Join(", ", titles.Take(shown));
+            if (titles.Count > shown) sample += $" (+{titles.Count - shown} more)";
             if (installed > 0)
                 return new(true, $"Installed {installed} of {count} {kindWord} update(s): {sample}.", UpdatesInstalled: installed);
             if (installResult is 4 or 5)

@@ -13,7 +13,7 @@ namespace RemotePCDiagnostics.Host;
 /// </summary>
 public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISessionContext session, Action<string>? log = null) : IWorkflowSystem
 {
-    public const string TaskName = "Remote PC Diagnostics - continue service workflow";
+    public const string TaskName = WorkflowService.ResumeTaskName;
     private const string WinlogonKey = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon";
     private const string PasswordLessKey = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device";
     private void Log(string m) { try { log?.Invoke("[workflow] " + m); } catch { } }
@@ -45,8 +45,10 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
         return PsAsync(script, ct);
     }
 
-    public Task RemoveResumeAsync(CancellationToken ct) =>
-        PsAsync($"Unregister-ScheduledTask -TaskName '{Q(TaskName)}' -Confirm:$false -ErrorAction SilentlyContinue", ct);
+    /// <summary>Removes the task (a missing task is fine) and fails only when it's still registered afterwards.</summary>
+    public Task<bool> RemoveResumeAsync(CancellationToken ct) =>
+        PsAsync($"Unregister-ScheduledTask -TaskName '{Q(TaskName)}' -Confirm:$false -ErrorAction SilentlyContinue; " +
+                $"if (Get-ScheduledTask -TaskName '{Q(TaskName)}' -ErrorAction SilentlyContinue) {{ exit 1 }}", ct);
 
     // ---- restart ----
     public async Task<bool> RestartAsync(TimeSpan delay, string message, CancellationToken ct)
@@ -153,12 +155,12 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
     }
 
     // ---- report ----
-    public string SaveReport(string html, DateTimeOffset when)
+    public string ReportFile(DateTimeOffset when) =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments), "Remote PC Diagnostics", $"Service report {when.LocalDateTime:yyyy-MM-dd HHmm}.html");
+
+    public void SaveReport(string path, string html)
     {
-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments), "Remote PC Diagnostics");
-        Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, $"Service report {when.LocalDateTime:yyyy-MM-dd HHmm}.html");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, html);
-        return path;
     }
 }

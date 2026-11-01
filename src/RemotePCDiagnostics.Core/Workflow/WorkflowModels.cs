@@ -19,7 +19,14 @@ public sealed record WorkflowFix(
     AreaAction? Remediation = null, string? SuggestionId = null, MemoryActionType? MemoryAction = null, string? MemoryTarget = null,
     bool NeedsAdmin = false, bool Slow = false, Changes.UndoSupport Undo = Changes.UndoSupport.Full);
 
-public sealed record FixOutcome(string FixId, string Title, bool Success, string Message, bool Skipped = false);
+/// <param name="Changes">What the fix recorded in the undo journal while it ran (one line per setting, with its old value where known).</param>
+public sealed record FixOutcome(string FixId, string Title, bool Success, string Message, bool Skipped = false, IReadOnlyList<FixChange>? Changes = null);
+
+/// <summary>One undo-journal entry written while a fix ran, so the report can say exactly what changed and whether undo puts it back.</summary>
+public sealed record FixChange(Guid JournalId, string Text, Changes.UndoSupport Undo);
+
+/// <summary>A restart the workflow asked Windows for. <paramref name="BootedUtc"/> is filled in once the app is running again on the new boot.</summary>
+public sealed record WorkflowRestart(string Why, DateTimeOffset RequestedUtc, bool Accepted, DateTimeOffset? BootedUtc = null);
 
 /// <summary>Winlogon values before the workflow turned on automatic sign-in (restored at the end). Never contains a password.</summary>
 public sealed record AutoLogonBackup(string? AutoAdminLogon, string? DefaultUserName, string? DefaultDomainName, string? AutoLogonCount);
@@ -48,7 +55,29 @@ public sealed record WorkflowState
     public DateTimeOffset? RestartRequestedUtc { get; init; }
     public bool AutoLogonEnabled { get; init; }
     public AutoLogonBackup? AutoLogonBackup { get; init; }
+    /// <summary>The workflow turned automatic sign-in on (for <see cref="AutoLogonUser"/>), whether or not it's off again.</summary>
+    public bool AutoLogonUsed { get; init; }
+    public string? AutoLogonUser { get; init; }
+    /// <summary>The PC already signed in by itself before the workflow (nothing was changed).</summary>
+    public bool AutoLogonAlreadyOn { get; init; }
+    public DateTimeOffset? AutoLogonRestoredUtc { get; init; }
+    /// <summary>Set when turning automatic sign-in off again failed: the PC may still sign in without a password.</summary>
+    public string? AutoLogonRestoreError { get; init; }
+    /// <summary>The "continue after sign-in" scheduled task was created; <see cref="ResumeTaskRemoved"/> = whether it's gone again (null = not tried yet).</summary>
+    public bool ResumeTaskCreated { get; init; }
+    public bool? ResumeTaskRemoved { get; init; }
+    public IReadOnlyList<WorkflowRestart> Restarts { get; init; } = [];
+    /// <summary>A pending restart was called off when the workflow was cancelled.</summary>
+    public bool RestartAborted { get; init; }
+    /// <summary>Fixes the checks found that the workflow doesn't offer, with the reason.</summary>
+    public IReadOnlyList<string> NotOffered { get; init; } = [];
+    /// <summary>Whether this run had an undo journal to read (so "no journal entries" really means nothing lasting changed).</summary>
+    public bool ChangesTracked { get; init; }
+    /// <summary>Undo-journal entries from before this run that "Undo all" would also put back.</summary>
+    public int EarlierChanges { get; init; }
     public string? ReportPath { get; init; }
+    /// <summary>The report exactly as saved, so the page shows the same thing as the file.</summary>
+    public string? ReportHtml { get; init; }
     public string? Error { get; init; }
     public IReadOnlyList<string> Log { get; init; } = [];
 
@@ -100,7 +129,8 @@ public interface IWorkflowSystem
 {
     /// <summary>Start this app elevated at the next sign-in (Task Scheduler, highest privileges), reconnecting to the same session.</summary>
     Task<bool> RegisterResumeAsync(CancellationToken ct);
-    Task RemoveResumeAsync(CancellationToken ct);
+    /// <summary>Removes the task again; false when it's still there afterwards.</summary>
+    Task<bool> RemoveResumeAsync(CancellationToken ct);
     Task<bool> RestartAsync(TimeSpan delay, string message, CancellationToken ct);
     Task AbortRestartAsync(CancellationToken ct);
     /// <summary>Time since Windows started.</summary>
@@ -111,6 +141,8 @@ public interface IWorkflowSystem
     AutoLogonBackup EnableAutoLogon(string user, string domain, string password, int logons);
     /// <summary>Turns automatic sign-in off again, removes the stored password and restores the previous settings.</summary>
     void DisableAutoLogon(AutoLogonBackup? backup);
-    /// <summary>Saves the client report; returns the full path.</summary>
-    string SaveReport(string html, DateTimeOffset when);
+    /// <summary>Where the client report for <paramref name="when"/> is saved (full path).</summary>
+    string ReportFile(DateTimeOffset when);
+    /// <summary>Saves the client report to <paramref name="path"/> (from <see cref="ReportFile"/>).</summary>
+    void SaveReport(string path, string html);
 }

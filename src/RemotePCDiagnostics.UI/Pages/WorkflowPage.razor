@@ -28,9 +28,18 @@
 @if (s.Error is { } err) { <p class="notice notice-error" data-testid="wf-error">@err</p> }
 @if (_message is { } m) { <p class="notice" data-testid="wf-message">@m</p> }
 
+@if (s.AutoLogonRestoreError is not null) { <p class="notice notice-error" data-testid="wf-autologon-left-on">Automatic sign-in could NOT be turned off: this PC may still sign in without a password. Turn it off by hand (netplwiz, or Sysinternals Autologon &gt; Disable).</p> }
+@if (s.ResumeTaskRemoved == false) { <p class="notice notice-error" data-testid="wf-task-left">The scheduled task "@WorkflowService.ResumeTaskName" couldn't be removed. Delete it in Task Scheduler.</p> }
+
 @switch (s.Stage)
 {
     case WorkflowStage.Idle or WorkflowStage.Cancelled or WorkflowStage.Failed:
+        @if (s.Stage != WorkflowStage.Idle && s.StartedUtc is not null)
+        {
+            @* What the stopped run already did to the PC: same report as the saved file. *@
+            <p class="meta" data-testid="wf-report-path">@(s.ReportPath is { } sp ? $"Report saved on this PC: {sp}" : "The report couldn't be saved as a file; it's shown below.")</p>
+            <iframe class="wf-report" data-testid="wf-report" sandbox="" title="Client report" srcdoc="@ReportHtml(s)"></iframe>
+        }
         <button class="btn btn-primary" data-testid="wf-start-checks" disabled="@Flow.Busy" @onclick="RunChecks"><Icon Name="play" Size="12" /> Start: run all checks</button>
         break;
 
@@ -91,7 +100,7 @@
     case WorkflowStage.Done:
         @if (Bench.Before is not null && Bench.After is not null) { <section class="banner banner-ok"><div class="banner-text"><div class="banner-title">@Bench.Comparison.OverallText</div></div></section> }
         <p class="meta" data-testid="wf-report-path">@(s.ReportPath is { } p ? $"Report saved on this PC: {p}" : "The report couldn't be saved as a file; it's shown below.")</p>
-        <iframe class="wf-report" data-testid="wf-report" sandbox="" title="Client report" srcdoc="@ClientReport.Build(s, Bench.Before, Bench.After, Bench.Comparison, s.FinishedUtc?.ToLocalTime() ?? DateTimeOffset.Now)"></iframe>
+        <iframe class="wf-report" data-testid="wf-report" sandbox="" title="Client report" srcdoc="@ReportHtml(s)"></iframe>
         <div class="toolbar"><button class="btn-small" data-testid="wf-new" @onclick="Flow.Reset">New workflow</button></div>
         break;
 
@@ -130,6 +139,10 @@
         var mine = Index(stages[0]); var cur = Index(current);
         return current == WorkflowStage.Done || mine < cur ? "done" : mine == cur ? "now" : "todo";
     }
+
+    /// <summary>The report exactly as it was saved (so page and file agree); rebuilt only for runs saved by an older version.</summary>
+    private string ReportHtml(WorkflowState s) =>
+        s.ReportHtml ?? ClientReport.Build(s, Bench.Before, Bench.After, Bench.Comparison, s.FinishedUtc?.ToLocalTime() ?? DateTimeOffset.Now);
 
     private AutoLogonStatus? _logon;
     private string _user = "", _password = "";

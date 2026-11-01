@@ -99,7 +99,8 @@ public partial class MainWindow : Window
             new WindowsWorkflowSystem(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), App.Log),
             new RemotePCDiagnostics.Core.Workflow.FileWorkflowStore(RemotePCDiagnostics.Core.Workflow.FileWorkflowStore.DefaultPath(), App.Log),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Memory.MemorySuggestionService>(), sp.GetRequiredService<ISessionContext>(),
-            (level, text) => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.Workflow, level, text), App.Log));
+            (level, text) => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.Workflow, level, text), App.Log,
+            journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(App.Log));
         var provider = _provider = services.BuildServiceProvider();

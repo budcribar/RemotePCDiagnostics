@@ -44,6 +44,40 @@ public static class Undoability
         _ => null,
     };
 
+    /// <summary>What undo does for one journaled change (for the client report).</summary>
+    public static UndoSupport Of(ChangeRecord c) => c.Kind switch
+    {
+        ChangeKind.NotUndoable => UndoSupport.None,
+        ChangeKind.TempFiles => UndoSupport.PlaceholdersOnly,
+        _ => UndoSupport.Full,
+    };
+
+    /// <summary>The journal label plus, where the journal keeps it in readable form, what the setting was before ("DNS … (was automatic)").</summary>
+    public static string Describe(ChangeRecord c)
+    {
+        var was = c.Kind switch
+        {
+            ChangeKind.PowerPlan => PlanName(c.Previous),
+            ChangeKind.AdapterDns => string.IsNullOrWhiteSpace(c.Previous) ? "automatic" : string.Join(", ", c.Previous.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)),
+            ChangeKind.ServiceStartType => c.Previous,
+            ChangeKind.ServiceRunning => c.Previous?.ToLowerInvariant(),
+            ChangeKind.FastStartup or ChangeKind.SystemProxy or ChangeKind.Transparency => c.Previous == "0" ? "off" : "on",
+            ChangeKind.PageFile => "a custom size",
+            _ => null,
+        };
+        return string.IsNullOrWhiteSpace(was) || c.Label.Contains("(was ", StringComparison.Ordinal) ? c.Label : $"{c.Label} (was {was})";
+    }
+
+    private static string PlanName(string? guid) => guid?.ToLowerInvariant() switch
+    {
+        null or "" => "",
+        "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c" => "High performance",
+        "a1841308-3bce-4d0d-9ff0-5c3e3b8f1b4b" => "Power saver",
+        "e9a42b02-d5df-448d-aa00-03f14749eb61" => "Ultimate Performance",
+        "381b4222-f694-41f0-9685-ff5bb260df2e" => "Balanced",
+        _ => "a custom power plan",
+    };
+
     /// <summary>Journal record for a permanent change, so "Undo all" lists it as skipped instead of silently ignoring it.</summary>
     public static ChangeRecord Permanent(string target, string label, string actor) =>
         ChangeRecord.New(ChangeKind.NotUndoable, target, null, label, actor);
