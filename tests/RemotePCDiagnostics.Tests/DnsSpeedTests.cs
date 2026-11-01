@@ -23,7 +23,8 @@ public class DnsSpeedTests
     [Fact]
     public async Task PublicClearlyFaster_IsSuggested_WithNumbers()
     {
-        var t = new FakeTransport(new() { ["192.168.1.1"] = 120, ["1.1.1.1"] = 5, ["8.8.8.8"] = 15 });
+        // Delays several Windows timer ticks (~15.6 ms) apart, so Task.Delay rounding can't make Cloudflare and Google tie.
+        var t = new FakeTransport(new() { ["192.168.1.1"] = 150, ["1.1.1.1"] = 10, ["8.8.8.8"] = 60 });
         var c = (await new DnsSpeedTest(t).CompareAsync("192.168.1.1, fe80::1", default))!;
         Assert.True(c.PublicIsFaster);
         Assert.Equal("Cloudflare", c.Best!.Name);
