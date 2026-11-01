@@ -21,6 +21,7 @@ public enum ChangeKind
     HiberFileType,       // Previous = "full": hiberfil.sys was shrunk with powercfg /h /type reduced; undo runs /type full
     RegistryValue,       // Target = "HKLM\SOFTWARE\Policies\Microsoft\Dsh|AllowNewsAndInterests" (must be on RegistryAllowlist); Previous = old DWORD or null (absent: undo deletes it)
     NotUndoable,         // A permanent change (installed updates, removed apps); "Undo all" reports it as skipped, then forgets it
+    ExtensionBlock,      // Target = "Chrome|<extension id>" (must be on BrowserExtensions.Allowlist); Previous = the blocklist value name this app added ("3"); undo deletes only that value
 }
 
 /// <param name="Label">Friendly, e.g. "Spotify won't start with Windows".</param>

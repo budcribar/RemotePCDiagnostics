@@ -445,6 +445,23 @@ public static class MemorySuggestionEngine
                     $"Skip the start screen in {apps}? They'll open straight to a blank document. Undo brings the start screen back.")],
                 "Office", "Takes effect the next time Word, Excel or PowerPoint opens."));
         }
+        // #22 Junk / discontinued browser extensions: one opt-in card per allowlisted extension found, per browser (HKLM policy, admin).
+        foreach (var (found, known) in BrowserExtensions.Offer(s))
+        {
+            var browser = BrowserPrefs.Label(found.Browser);
+            var where = found.Profiles.Count == 1 ? $"the {browser} profile \"{found.Profiles[0]}\"" : $"{found.Profiles.Count} {browser} profiles ({OfficeStartScreen.Join(found.Profiles)})";
+            var size = found.SizeBytes is > 0 and var b ? $" It takes {MemoryText.Size(b)} on disk." : "";
+            list.Add(new(BrowserExtensions.SuggestionId(found.Browser, found.Id), $"Turn off {known.Name} in {browser}",
+                $"{known.Name} is installed in {where}. {known.Why} Each running extension typically uses tens of MB of memory while {browser} is open.{size}",
+                null, SuggestionRisk.Low, SuggestionKind.Automated,
+                [$"Adds {known.Name} to {browser}'s extension blocklist (a browser policy for everyone on this PC). {browser} turns it off in every profile, and it can't be turned back on or reinstalled until you undo this.",
+                 $"You lose {known.Loses}.",
+                 $"{browser} will show \"Managed by your organization\" in its menu and settings. That's this blocklist; nothing else about {browser} is managed.",
+                 $"Undo removes the blocklist entry and {browser} turns {known.Name} back on by itself (if it doesn't, reinstall it from the store)."],
+                [new(MemoryActionType.BlockBrowserExtension, BrowserExtensions.Target(found.Browser, found.Id), $"Turn off {known.Name}",
+                    $"Turn off {known.Name} in {browser} for everyone on this PC? It can't be reinstalled until you undo this, and {browser} will show \"Managed by your organization\". Needs administrator rights.")],
+                "Browser", $"Takes effect within a minute or the next time {browser} starts.", DefaultOn: false));
+        }
 
         // Services.
         foreach (var su in s.Services ?? [])
