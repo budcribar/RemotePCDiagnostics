@@ -151,6 +151,11 @@ Historical estimates below are not a current scan. Tier 1 excludes worktrees. Ti
 
 #### 4. Shrink (`reduced`) or Disable (`off`) `C:\hiberfil.sys` (`5.67 GB` on `BUDSLAPTOP`)
 * **Disk Space Saved:** **`2.84 GB – 5.67 GB`**
+* **Status:** `reduced` Implemented ✅ (one-click admin fix "Shrink the hibernation file", in the service workflow, full undo). `off` is not offered.
+  * **What it does:** [`MemorySuggestionService`](../src/RemotePCDiagnostics.Core/Memory/MemorySuggestionService.cs) runs `powercfg /h /type reduced`, reads the state back, and journals `ChangeKind.HiberFileType`; undo (per item or Undo all) runs `powercfg /h /type full`.
+  * **When it's offered** ([`Hibernation.cs`](../src/RemotePCDiagnostics.Core/Memory/Hibernation.cs), read by `WindowsMemorySystem.ReadHibernate` from `HKLM\SYSTEM\CurrentControlSet\Control\Power` and the size of `hiberfil.sys`): hibernation is on, the file is full size (`HiberFileType = 2`, or about 40% of RAM when that value is missing), no custom size is set (`HiberFileSizePercent` other than 40 makes Windows refuse `/type reduced`), and Fast Startup is on.
+  * **Desktops vs laptops:** ticked on PCs without a battery. On laptops (or when the battery can't be read) it's opt-in: with Hibernate gone, Windows shuts down instead of hibernating at critical battery (unsaved work is lost) and won't switch from sleep to hibernate to save battery. The card says so.
+  * **Benchmarks:** shows up as free disk space ("+2.8 GB freed").
 * **Problem & Why Fast Startup Stays Enabled During the Service Workflow:**
   * `C:\hiberfil.sys` reserves **`5,672.6 MB` (`5.67 GB`)** on `C:\` (`40%` of RAM) by default so Windows can support full-memory Hibernate (`S4`) in addition to Fast Startup.
   * Note that the Service Workflow **does not turn off Fast Startup (`HiberbootEnabled`)**: `shutdown.exe /r` (Restart) **always** bypasses Fast Startup and performs a 100% clean kernel reboot (`uptime` → `0`), so the user gets a clean kernel reset without sacrificing their 3–10s faster cold boots from `Shut Down`.

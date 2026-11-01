@@ -27,7 +27,8 @@ public static class MemoryFeedback
     public static bool IsDeferred(MemoryActionType t) => t is MemoryActionType.DisableStartup or MemoryActionType.EnableBrowserMemorySaver
         or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings
         or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile
-        or MemoryActionType.AddDefenderExclusions or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights;
+        or MemoryActionType.AddDefenderExclusions or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights
+        or MemoryActionType.ReduceHibernateFile;
 }
 
 public sealed record ActionOutcome(bool Success, string Message);
@@ -64,6 +65,10 @@ public interface IMemorySystem
     Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
     /// <summary>Removable caches and leftovers with their measured size. Expensive (sizes big folders), so it isn't part of
     /// <see cref="CaptureAsync"/>; the Host caches the result for a few minutes unless <paramref name="refresh"/> is set.</summary>
+    /// <summary>Current hibernation file state (registry + hiberfil.sys size); null = couldn't read.</summary>
+    HibernateInfo? ReadHibernate() => null;
+    /// <summary>Runs powercfg /h /type reduced (or full) with administrator rights.</summary>
+    Task<ActionOutcome> SetHibernateTypeAsync(bool reduced, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
     Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct) => Task.FromResult<IReadOnlyList<StorageCleanupItem>>([]);
     /// <summary>Runs a Defender PowerShell script built by <see cref="DefenderProbe"/> (admin). Output = its stdout.</summary>
     Task<(bool Ok, string? Output)> RunDefenderScriptAsync(string script, CancellationToken ct) => Task.FromResult<(bool, string?)>((false, null));
@@ -96,7 +101,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
     {
         MemoryActionType.DisableStartup => ChangeKind.StartupApp, MemoryActionType.EnableBrowserMemorySaver => ChangeKind.BrowserSettings,
         MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled => ChangeKind.ServiceStartType,
-        MemoryActionType.DisableTransparency => ChangeKind.Transparency, _ => null,
+        MemoryActionType.DisableTransparency => ChangeKind.Transparency, MemoryActionType.ReduceHibernateFile => ChangeKind.HiberFileType, _ => null,
     };
     public static readonly string[] StartTypes = ["Automatic", "AutomaticDelayed", "Manual", "Disabled"];
     private readonly TimeSpan _settle = settle ?? TimeSpan.FromSeconds(2.5);
@@ -209,6 +214,10 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 case MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights:
                     outcome = UndoRegistry(u);
                     break;
+                case MemoryActionType.ReduceHibernateFile:
+                    var full = await sys.SetHibernateTypeAsync(false, ct).ConfigureAwait(false);
+                    outcome = full.Success ? new(true, "The hibernation file is full size again; Hibernate is back in the power menu.") : full;
+                    break;
                 case MemoryActionType.DisableTransparency:
                     sys.SetTransparency(u.Previous != "0");
                     outcome = new(true, u.Previous != "0" ? "Transparency effects turned back on." : "Transparency effects left off (they were off before).");
@@ -281,6 +290,20 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
     private const string PolicyRefused = "(administrator rights needed, or your organization manages this setting). Nothing was changed.";
 
     /// <summary>#16: the Widgets machine policy (HKCU TaskbarDa is blocked by UCPD, so it's never written), then ends the Widgets processes.</summary>
+    /// <summary>powercfg /h /type reduced, then reads it back. Journals "full" so Undo all can put the full file back.</summary>
+    private async Task<ActionOutcome> ReduceHibernateFileAsync(MemorySuggestion s, CancellationToken ct)
+    {
+        if (Snapshot?.Hibernate is not { OfferReduce: true } before) return new(false, "The hibernation file is already reduced or turned off.");
+        var r = await sys.SetHibernateTypeAsync(true, ct).ConfigureAwait(false);
+        if (!r.Success) return r;
+        var after = sys.ReadHibernate();
+        if (after?.Reduced == false) return new(false, "Windows didn't shrink the hibernation file; nothing was changed.");
+        AddUndo(new(s.Id, "Hibernation file", MemoryActionType.ReduceHibernateFile, "", "full"));
+        Journal(ChangeKind.HiberFileType, "", "full", "Hibernation file (hiberfil.sys) shrunk to the Fast Startup size (was full size)");
+        var freed = before.FileBytes is { } b && after?.FileBytes is { } a && b > a ? $" Freed {MemoryText.Size(b - a)} on the system drive." : "";
+        return new(true, "hiberfil.sys now holds only what Fast Startup needs." + freed + " Fast Startup still works; Hibernate is no longer in the power menu.");
+    }
+
     private async Task<ActionOutcome> DisableWidgetsAsync(MemorySuggestion s, CancellationToken ct)
     {
         var w = SetDword(RegistryAllowlist.WidgetsPolicy, 0, was => $"Widgets turned off for everyone on this PC (policy was {was})");
@@ -424,6 +447,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
 
             case MemoryActionType.DisableWidgets:
                 return await DisableWidgetsAsync(s, ct).ConfigureAwait(false);
+
+            case MemoryActionType.ReduceHibernateFile:
+                return await ReduceHibernateFileAsync(s, ct).ConfigureAwait(false);
 
             case MemoryActionType.DisableSearchHighlights:
                 return DisableSearchHighlights(s);

@@ -79,6 +79,10 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 var removeScript = kindD == "process" ? DefenderProbe.RemoveScript([], [value]) : DefenderProbe.RemoveScript([value], []);
                 return await Ps(removeScript, c, $"Defender scans {(kindD == "process" ? "files opened by " + Path.GetFileName(value) : value)} again.", ct).ConfigureAwait(false);
 
+            case ChangeKind.HiberFileType:
+                var hr = await commands.RunAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/h", "/type", "full"], ct).ConfigureAwait(false);
+                return hr is { ExitCode: 0 } ? Ok("Hibernation file back to full size; Hibernate is available again.") : Fail("Windows didn't allow changing the hibernation file back.");
+
             case ChangeKind.RegistryValue:
                 if (memory is null) return Fail("Not available.");
                 var (regOk, regMessage) = RegistryAllowlist.Restore(memory, c.Target, c.Previous);
