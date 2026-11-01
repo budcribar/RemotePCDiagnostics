@@ -127,7 +127,16 @@ public static class FixCatalog
     }
 
     /// <summary>Things worth telling the client that need a person (not applied by the workflow).</summary>
+    /// <remarks>
+    /// Leaves out what a person can't usefully do either: closing apps, ending tasks and restarting (the service restarts the PC),
+    /// and services that only offer "Stop now" (already started only when needed; stopping lasts until the next restart).
+    /// </remarks>
     public static IReadOnlyList<string> Recommendations(IEnumerable<MemorySuggestion> suggestions) =>
-        suggestions.Where(s => s.Kind is SuggestionKind.Guided or SuggestionKind.Info || (s.Kind == SuggestionKind.Automated && !s.Actions.Any(CanRunUnattended) && !s.Actions.Any(a => a.Type is MemoryActionType.CloseApp or MemoryActionType.ShutdownBuildServers or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup)))
+        suggestions.Where(s => s.Kind is SuggestionKind.Guided or SuggestionKind.Info || (s.Kind == SuggestionKind.Automated && !s.Actions.Any(CanRunUnattended)
+                && !s.Actions.Any(a => a.Type is MemoryActionType.CloseApp or MemoryActionType.ShutdownBuildServers or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup)
+                && !IsStopOnly(s)))
             .Select(s => $"{s.Title}: {s.Why}").ToList();
+
+    /// <summary>A service suggestion whose only action is "Stop now": temporary, so the workflow neither applies nor mentions it.</summary>
+    public static bool IsStopOnly(MemorySuggestion s) => s.Actions.Count > 0 && s.Actions.All(a => a.Type == MemoryActionType.StopService);
 }

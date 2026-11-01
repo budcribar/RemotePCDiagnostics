@@ -379,6 +379,25 @@ public class WorkflowTests
     }
 
     [Fact]
+    public void Catalog_StopOnlyServices_AreNeitherFixesNorRecommendations()
+    {
+        MemorySuggestion Svc(string name, params MemoryActionType[] types) => new($"svc-{name}".ToLowerInvariant(), $"Stop \"{name}\"", "why", 17L << 20,
+            SuggestionRisk.Medium, SuggestionKind.Automated, [], types.Select(t => new MemoryAction(t, name, t.ToString())).ToList(), "Services");
+        var suggestions = new[]
+        {
+            Svc("PhoneSvc", MemoryActionType.StopService),                                   // Manual already: Stop now only
+            Svc("lfsvc", MemoryActionType.StopService),
+            Svc("WSearch", MemoryActionType.StopService, MemoryActionType.SetServiceManual),   // Automatic: a lasting change exists
+            new MemorySuggestion("defender", "Exclude folders", "why", null, SuggestionRisk.Low, SuggestionKind.Guided, [], []),
+        };
+        var fixes = FixCatalog.Build([], suggestions);
+        Assert.DoesNotContain(fixes, f => f.MemoryTarget is "PhoneSvc" or "lfsvc");
+        Assert.Contains(fixes, f => f.MemoryTarget == "WSearch" && f.MemoryAction == MemoryActionType.SetServiceManual);
+        Assert.Equal(["Exclude folders: why"], FixCatalog.Recommendations(suggestions));
+        Assert.Empty(FixCatalog.NotOffered([], suggestions));
+    }
+
+    [Fact]
     public void Report_EncodesText()
     {
         var s = new WorkflowState { Machine = "PC<1>", Findings = ["<script>x</script>"], Outcomes = [new("a", "Fix & go", true, "ok")] };
