@@ -17,6 +17,7 @@ public static class FixCatalog
         MemoryActionType.DisableTransparency, MemoryActionType.AutoManagePageFile,
         MemoryActionType.AddDefenderExclusions,
         MemoryActionType.DisableWidgets, MemoryActionType.DisableSearchHighlights, MemoryActionType.ReduceHibernateFile,
+        MemoryActionType.SkipOfficeStartScreen,
     };
 
     public const string NotNeededNote = "Closing apps, ending tasks and restarting aren't listed: the workflow restarts the PC itself, which does the same.";

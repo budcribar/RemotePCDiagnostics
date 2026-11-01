@@ -33,7 +33,8 @@ public static class Undoability
         MemoryActionType.DisableStartup or MemoryActionType.EnableBrowserMemorySaver or MemoryActionType.SetServiceManual
             or MemoryActionType.SetServiceDisabled or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
             or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile or MemoryActionType.DisableFastStartup
-            or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile => UndoSupport.Full,
+            or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile
+            or MemoryActionType.SkipOfficeStartScreen => UndoSupport.Full,
         _ => UndoSupport.NothingToUndo, // closing apps, ending build servers, restarting, opening Settings
     };
 

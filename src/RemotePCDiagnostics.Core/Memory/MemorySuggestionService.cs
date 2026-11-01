@@ -28,7 +28,7 @@ public static class MemoryFeedback
         or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings
         or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile
         or MemoryActionType.AddDefenderExclusions or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights
-        or MemoryActionType.ReduceHibernateFile;
+        or MemoryActionType.ReduceHibernateFile or MemoryActionType.SkipOfficeStartScreen;
 }
 
 public sealed record ActionOutcome(bool Success, string Message);
@@ -214,6 +214,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 case MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights:
                     outcome = UndoRegistry(u);
                     break;
+                case MemoryActionType.SkipOfficeStartScreen:
+                    outcome = UndoRegistry(u, $"The start screen is back in {u.Target}. Takes effect the next time each app opens.");
+                    break;
                 case MemoryActionType.ReduceHibernateFile:
                     var full = await sys.SetHibernateTypeAsync(false, ct).ConfigureAwait(false);
                     outcome = full.Success ? new(true, "The hibernation file is full size again; Hibernate is back in the power menu.") : full;
@@ -267,7 +270,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
     /// Sets an allowlisted DWORD, reads it back, and journals the old value (null = absent) only when the new value stuck.
     /// Never throws: access denied, UCPD or an organization policy is reported as not Ok, with nothing journaled.
     /// </summary>
-    private DwordWrite SetDword(RegistrySetting setting, int value, Func<string, string> label)
+    private DwordWrite SetDword(RegistrySetting setting, int value, Func<string, string> label, bool restart = true)
     {
         if (RegistryAllowlist.Find(setting.Target) is not { } r) return new(false, false, setting.Target, null);
         try
@@ -277,7 +280,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             sys.WriteDword(r, value);
             if (sys.ReadDword(r) != value) { Log($"{r.Target} = {value} didn't stick"); return new(false, false, r.Target, null); }
             var previous = RegistryAllowlist.Encode(before);
-            Journal(ChangeKind.RegistryValue, r.Target, previous, label(RegistryAllowlist.Describe(before)), restart: true);
+            Journal(ChangeKind.RegistryValue, r.Target, previous, label(RegistryAllowlist.Describe(before)), restart);
             return new(true, true, r.Target, previous);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -330,8 +333,34 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
         return new(true, "Search highlights turned off" + (toggle.Ok ? "" : " (this account's Settings toggle couldn't be changed; the policy still applies)") + ". Takes full effect after a restart.");
     }
 
+    /// <summary>
+    /// #23: DisableBootToOfficeStart = 1 for each installed Office 16 app whose start screen is still on (HKCU: the account this app runs as).
+    /// Each value that reads back is journaled with its old value; one that doesn't stick is left out (nothing journaled for it).
+    /// </summary>
+    private ActionOutcome SkipOfficeStartScreen(MemorySuggestion s)
+    {
+        IReadOnlyList<OfficeStartApp> apps = Snapshot is { } snap ? OfficeStartScreen.StillOn(snap) : [];
+        if (apps.Count == 0) return new(false, "The Office start screen is already off.");
+        var done = new List<string>();
+        var failed = new List<string>();
+        var changed = new List<RegistryUndo.Item>();
+        foreach (var app in apps)
+        {
+            if (OfficeStartScreen.Setting(app.App) is not { } setting) continue;
+            var w = SetDword(setting, 1, was => $"{app.App} start screen turned off for this account (was {was})", restart: false);
+            if (!w.Ok) { failed.Add(app.App); continue; }
+            done.Add(app.App);
+            if (w.Changed) changed.Add(new(w.Target, w.Previous));
+        }
+        if (done.Count == 0) return new(false, $"Windows didn't keep the start screen setting for {OfficeStartScreen.Join(failed)} (your organization may manage Office settings). Nothing was changed.");
+        if (changed.Count > 0) AddUndo(new(s.Id, "Office start screen", MemoryActionType.SkipOfficeStartScreen, OfficeStartScreen.Join(done), RegistryUndo.Encode(changed)));
+        return new(true, $"{OfficeStartScreen.Join(done)} will open straight to a blank document (this account)."
+            + (failed.Count > 0 ? $" {OfficeStartScreen.Join(failed)} couldn't be changed (your organization may manage Office settings)." : "")
+            + " Takes effect the next time each app opens.");
+    }
+
     /// <summary>Per-item undo: restores every value this click changed (allowlisted only) and drops their journal records.</summary>
-    private ActionOutcome UndoRegistry(UndoEntry u)
+    private ActionOutcome UndoRegistry(UndoEntry u, string? done = null)
     {
         var items = RegistryUndo.Decode(u.Previous);
         if (items.Count == 0) return new(false, "The original setting wasn't recorded.");
@@ -345,7 +374,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             else failed.Add(item.Target);
         }
         return failed.Count == 0
-            ? new(true, $"{u.Label} turned back on. Takes full effect after a restart.")
+            ? new(true, done ?? $"{u.Label} turned back on. Takes full effect after a restart.")
             : new(false, $"Windows didn't allow turning {u.Label} back on (administrator rights needed).");
     }
 
@@ -453,6 +482,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
 
             case MemoryActionType.DisableSearchHighlights:
                 return DisableSearchHighlights(s);
+
+            case MemoryActionType.SkipOfficeStartScreen:
+                return SkipOfficeStartScreen(s);
 
             case MemoryActionType.AutoManagePageFile:
                 var pageFileBefore = await sys.ReadPageFileSettingsAsync(ct).ConfigureAwait(false);

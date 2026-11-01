@@ -106,7 +106,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
         var defender = apps.Any(a => a.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase)) ? await ReadDefenderAsync(ct).ConfigureAwait(false) : null;
         return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
-            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate());
+            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart());
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -173,6 +173,45 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
                 ReadDword(RegistryAllowlist.SearchHighlightsPolicy), ReadDword(RegistryAllowlist.SearchHighlightsToggle));
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { Log("Widgets/Search highlights read failed: " + ex.Message); return null; }
+    }
+
+    /// <summary>
+    /// #23: the installed Office 16.x apps (Word, Excel, PowerPoint) and this account's start screen setting, from the registry only.
+    /// An app counts as installed when its App Paths entry points into an Office16 folder, its MSI 16.0 InstallRoot is set, or a
+    /// 16.x Click-to-Run product includes it (64- and 32-bit views). Null = couldn't read (nothing is offered then).
+    /// </summary>
+    private OfficeStartInfo? ReadOfficeStart()
+    {
+        try
+        {
+            var apps = new List<OfficeStartApp>();
+            foreach (var app in OfficeStartScreen.AppNames)
+            {
+                if (!IsOffice16AppInstalled(app) || OfficeStartScreen.Setting(app) is not { } setting) continue;
+                try { apps.Add(new(app, ReadDword(setting))); }
+                catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or System.Security.SecurityException or IOException)
+                { Log($"{app} start screen setting read failed: {ex.Message}"); } // not a DWORD or unreadable: leave this app alone
+            }
+            return new(apps);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Office start screen read failed: " + ex.Message); return null; }
+    }
+
+    private static bool IsOffice16AppInstalled(string app)
+    {
+        foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        {
+            using var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+            using (var appPath = hklm.OpenSubKey($@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{OfficeStartScreen.Exe(app)}"))
+                if (OfficeStartScreen.IsOffice16Path(appPath?.GetValue(null) as string ?? appPath?.GetValue("Path") as string)) return true;
+            using (var msi = hklm.OpenSubKey($@"SOFTWARE\Microsoft\Office\16.0\{app}\InstallRoot"))
+                if (msi?.GetValue("Path") is string p && p.Length > 0) return true;
+            using var c2r = hklm.OpenSubKey(@"SOFTWARE\Microsoft\Office\ClickToRun\Configuration");
+            if (c2r is not null && OfficeStartScreen.IsOffice16Version(c2r.GetValue("VersionToReport") as string)
+                && OfficeStartScreen.InClickToRun(app, c2r.GetValue("ProductReleaseIds") as string, id => c2r.GetValue(id + ".ExcludedApps") as string))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>Only values on <see cref="RegistryAllowlist"/>; the allowlisted entry's own key and name are used, never the caller's.</summary>

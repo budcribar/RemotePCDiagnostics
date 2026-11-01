@@ -409,6 +409,22 @@ public static class MemorySuggestionEngine
                     "Turn off Search highlights for everyone on this PC? Bing pictures and trending searches leave the Search box. Needs administrator rights.")],
                 "Windows extras", "Takes full effect after a restart."));
         }
+        // #23 Office start screen: per account (HKCU), only the installed Office 16 apps where it's still on.
+        if (OfficeStartScreen.Offer(s))
+        {
+            var on = OfficeStartScreen.StillOn(s);
+            var apps = OfficeStartScreen.Join(on.Select(x => x.App).ToList());
+            list.Add(new("office-start-screen", "Skip the Office start screen",
+                $"{apps} {(on.Count == 1 ? "opens" : "open")} to a Start screen (templates and recent files) before you can start typing. Skipping it opens a blank document, workbook or presentation right away: about 0.5–1.5 seconds sooner, and a little less memory.",
+                null, SuggestionRisk.Low, SuggestionKind.Automated,
+                [$"{apps} will open straight to a blank document, workbook or presentation (the \"Show the Start screen when this application starts\" option is turned off).",
+                 "You lose the Start screen's templates and recent-files list; recent files are still under File > Open, and templates under File > New.",
+                 "Applies to the Windows account this app runs as. Takes effect the next time each app opens.",
+                 "Undo brings the start screen back."],
+                [new(MemoryActionType.SkipOfficeStartScreen, "", "Skip the Office start screen",
+                    $"Skip the start screen in {apps}? They'll open straight to a blank document. Undo brings the start screen back.")],
+                "Office", "Takes effect the next time Word, Excel or PowerPoint opens."));
+        }
 
         // Services.
         foreach (var su in s.Services ?? [])

@@ -29,7 +29,18 @@ public static class RegistryAllowlist
     /// <summary>The per-account Settings toggle for Search highlights (Settings > Privacy & security > Search permissions).</summary>
     public static readonly RegistrySetting SearchHighlightsToggle = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\SearchSettings", "IsDynamicSearchBoxEnabled");
 
-    public static readonly IReadOnlyList<RegistrySetting> All = [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle];
+    /// <summary>Office start screen (#23), per account: 1 = Word opens straight to a blank document. The value its Options checkbox
+    /// ("Show the Start screen when this application starts") writes; never the Group Policy key under Software\Policies, which would lock it.</summary>
+    public static readonly RegistrySetting WordStartScreen = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Office\16.0\Word\Options", "DisableBootToOfficeStart");
+
+    /// <summary>Same for Excel (opens straight to a blank workbook).</summary>
+    public static readonly RegistrySetting ExcelStartScreen = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Office\16.0\Excel\Options", "DisableBootToOfficeStart");
+
+    /// <summary>Same for PowerPoint (opens straight to a blank presentation).</summary>
+    public static readonly RegistrySetting PowerPointStartScreen = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Office\16.0\PowerPoint\Options", "DisableBootToOfficeStart");
+
+    public static readonly IReadOnlyList<RegistrySetting> All =
+        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen];
 
     /// <summary>The allowlisted setting with this target (case-insensitive), or null.</summary>
     public static RegistrySetting? Find(string? target) =>

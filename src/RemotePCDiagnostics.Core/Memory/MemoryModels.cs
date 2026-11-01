@@ -94,7 +94,8 @@ public sealed record MemorySnapshot(
     BrowserKind? DefaultBrowser = null,
     DefenderInfo? Defender = null,
     WindowsFeedsInfo? Feeds = null,
-    HibernateInfo? Hibernate = null)
+    HibernateInfo? Hibernate = null,
+    OfficeStartInfo? OfficeStart = null)
 {
     public AppUsage? App(string name) => Apps.FirstOrDefault(a => a.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 }
@@ -159,6 +160,7 @@ public enum MemoryActionType
     StopService, SetServiceManual, SetServiceDisabled,
     RestartPc, DisableFastStartup, DisableTransparency, AutoManagePageFile,
     AddDefenderExclusions, DisableWidgets, DisableSearchHighlights, ReduceHibernateFile,
+    SkipOfficeStartScreen,
 }
 
 /// <summary>One button on a suggestion card. <see cref="Confirm"/> non-null = ask once inline before running.</summary>
