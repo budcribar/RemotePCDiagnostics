@@ -108,6 +108,38 @@ public class WorkflowTests
 
     // ---- catalog ----
     [Fact]
+    public async Task LegacyReviewRequiresFreshChecksInsteadOfRestoringStaleDnsApprovals()
+    {
+        var stale = new WorkflowFix("dns", "Reset DNS", "old recommendation", "Network", SuggestionRisk.Medium,
+            FixSource.Remediation, 60, Remediation: new(RemediationKind.ResetDhcpDns, "Reset DNS to DHCP", "Wi-Fi"));
+        var store = new MemFlowStore { State = new WorkflowState { Stage = WorkflowStage.Review, Fixes = [stale], Approved = [stale.Id] } };
+        var (flow, sys, _, _, _, _) = Make(store);
+        Assert.Equal(WorkflowStage.Idle, flow.State.Stage);
+        Assert.Empty(flow.State.Fixes);
+        Assert.Empty(flow.State.Approved);
+        Assert.NotNull(await flow.StartAsync(null));
+        Assert.Empty(sys.Calls);
+        await flow.RunChecksAsync();
+        Assert.Equal(WorkflowService.CurrentReviewRulesVersion, flow.State.ReviewRulesVersion);
+        Assert.Equal(WorkflowStage.Review, Make(store).Flow.State.Stage);
+    }
+
+    [Theory]
+    [InlineData(WorkflowStage.RestartBefore)]
+    [InlineData(WorkflowStage.Applying)]
+    [InlineData(WorkflowStage.RestartAfter)]
+    [InlineData(WorkflowStage.Reporting)]
+    public void LegacyRunningWorkflowKeepsResumeAndCleanupState(WorkflowStage stage)
+    {
+        var backup = new AutoLogonBackup("0", "old", "PC1", null);
+        var store = new MemFlowStore { State = new WorkflowState { Stage = stage, AutoLogonEnabled = true, AutoLogonBackup = backup } };
+        var flow = Make(store).Flow;
+        Assert.Equal(stage, flow.State.Stage);
+        Assert.True(flow.State.AutoLogonEnabled);
+        Assert.Equal(backup, flow.State.AutoLogonBackup);
+    }
+
+    [Fact]
     public async Task Checks_BuildDeduplicatedReviewList_AllTicked_RestartsAndEndTaskLeftOut()
     {
         var (flow, _, _, _, _, _) = Make();
