@@ -106,6 +106,19 @@ public class MemorySuggestionTests
     }
 
     // ---- VS / build servers
+    [Theory]
+    [InlineData(7, false)]
+    [InlineData(99, false)]
+    [InlineData(100, true)]
+    public void SmallVisualStudioExtensionsDoNotProduceRecommendations(int sizeMb, bool expected)
+    {
+        var snapshot = Snap(new AppUsage("devenv", 1, 500 * Mb)) with
+        {
+            VisualStudio = new(false, [new("Markdown Editor v2", sizeMb * Mb)])
+        };
+        Assert.Equal(expected, Build(snapshot).Any(s => s.Id == "vs-extensions"));
+    }
+
     [Fact]
     public void VisualStudio_Rules()
     {
