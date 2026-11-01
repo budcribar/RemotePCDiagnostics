@@ -106,7 +106,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
         var defender = apps.Any(a => a.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase)) ? await ReadDefenderAsync(ct).ConfigureAwait(false) : null;
         return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
-            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart(), ReadDefaultPrinter());
+            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart(), ReadDefaultPrinter(), ReadOfficePrivacy());
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -195,6 +195,28 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
             return new(apps);
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { Log("Office start screen read failed: " + ex.Message); return null; }
+    }
+
+    /// <summary>
+    /// #18: whether Office 16.x (Word, Excel or PowerPoint) is installed, and this account's Office privacy policy values, from the registry only.
+    /// DisconnectedState is only read here (it's not on the allowlist). Null = couldn't read or not DWORDs (nothing is offered then).
+    /// </summary>
+    private OfficePrivacyInfo? ReadOfficePrivacy()
+    {
+        try
+        {
+            var installed = OfficeStartScreen.AppNames.Any(IsOffice16AppInstalled);
+            if (!installed) return new(false, null, null);
+            int? disconnected = null;
+            using (var k = Registry.CurrentUser.OpenSubKey(OfficePrivacy.PolicyKey))
+                if (k?.GetValue(OfficePrivacy.DisconnectedStateName) is { } v)
+                {
+                    if (k.GetValueKind(OfficePrivacy.DisconnectedStateName) != RegistryValueKind.DWord || v is not int i) return null;
+                    disconnected = i;
+                }
+            return new(true, ReadDword(OfficePrivacy.Setting), disconnected);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Office privacy policy read failed: " + ex.Message); return null; }
     }
 
     private static bool IsOffice16AppInstalled(string app)

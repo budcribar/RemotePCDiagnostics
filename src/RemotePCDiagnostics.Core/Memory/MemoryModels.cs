@@ -95,8 +95,7 @@ public sealed record MemorySnapshot(
     DefenderInfo? Defender = null,
     WindowsFeedsInfo? Feeds = null,
     HibernateInfo? Hibernate = null,
-    OfficeStartInfo? OfficeStart = null,
-    DefaultPrinterInfo? DefaultPrinter = null)
+    OfficeStartInfo? OfficeStart = null, DefaultPrinterInfo? DefaultPrinter = null, OfficePrivacyInfo? OfficePrivacy = null)
 {
     public AppUsage? App(string name) => Apps.FirstOrDefault(a => a.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 }
@@ -163,6 +162,7 @@ public enum MemoryActionType
     AddDefenderExclusions, DisableWidgets, DisableSearchHighlights, ReduceHibernateFile,
     SkipOfficeStartScreen,
     SetPdfDefaultPrinter,
+    DisableOfficeOptionalExperiences,
 }
 
 /// <summary>One button on a suggestion card. <see cref="Confirm"/> non-null = ask once inline before running.</summary>

@@ -43,8 +43,13 @@ public static class RegistryAllowlist
     /// (Settings > Bluetooth &amp; devices > Printers &amp; scanners), which keeps switching it to the last printer used.</summary>
     public static readonly RegistrySetting LegacyDefaultPrinterMode = new(RegistryRoot.CurrentUser, @"Software\Microsoft\Windows NT\CurrentVersion\Windows", "LegacyDefaultPrinterMode");
 
+    /// <summary>Office policy "Allow the use of additional optional connected experiences in Office" (#18), per account: 2 = disabled.
+    /// Documented in Microsoft's "Use policy settings to manage privacy controls for Microsoft 365 Apps for enterprise". Never
+    /// DisconnectedState (that policy turns off all connected experiences, including co-authoring and OneDrive/SharePoint files).</summary>
+    public static readonly RegistrySetting OfficeOptionalConnectedExperiences = new(RegistryRoot.CurrentUser, @"Software\Policies\Microsoft\Office\16.0\Common\Privacy", "ControllerConnectedServicesEnabled");
+
     public static readonly IReadOnlyList<RegistrySetting> All =
-        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen, LegacyDefaultPrinterMode];
+        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen, LegacyDefaultPrinterMode, OfficeOptionalConnectedExperiences];
 
     /// <summary>The allowlisted setting with this target (case-insensitive), or null.</summary>
     public static RegistrySetting? Find(string? target) =>
