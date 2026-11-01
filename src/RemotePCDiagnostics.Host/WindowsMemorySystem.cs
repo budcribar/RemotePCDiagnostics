@@ -103,7 +103,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         var probe = await RunPowerShellAsync(MemoryProbe.Script, ct).ConfigureAwait(false);
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
         var devices = ReadDevices();
-        var cleanups = await Task.Run(() => ScanStorageCleanups(devices), ct).ConfigureAwait(false);
+        var cleanups = await Task.Run(() => ScanStorageCleanups(devices, Log), ct).ConfigureAwait(false);
         return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, devices,
             GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), cleanups);
     }
@@ -227,7 +227,9 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         catch (Exception) { return null; }
     }
 
-    private List<StartupEntry> ReadStartup()
+    public int? ReadEnabledStartupCount() => ReadStartup()?.Count(e => e.Enabled);
+
+    private List<StartupEntry>? ReadStartup()
     {
         var list = new List<StartupEntry>();
         try
@@ -266,7 +268,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
                         }
                     }
         }
-        catch (Exception ex) { Log("Startup read failed: " + ex.Message); }
+        catch (Exception ex) { Log("Startup read failed: " + ex.Message); return null; }
         return list;
     }
 
@@ -318,7 +320,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         return new(printer, bt, bio, pen, crossDevice, netPrinter, pdfPrinter);
     }
 
-    public static IReadOnlyList<StorageCleanupItem> ScanStorageCleanups(DeviceFacts? devices = null)
+    public static IReadOnlyList<StorageCleanupItem> ScanStorageCleanups(DeviceFacts? devices = null, Action<string>? scanLog = null)
     {
         var items = new List<StorageCleanupItem>();
         var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -352,23 +354,12 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         var nugetHttp = DirSize(Path.Combine(LocalAppData, @"NuGet\v3-cache"));
         long nugetSuperseded = 0;
         var nugetPkgs = Path.Combine(userProfile, @".nuget\packages");
-        if (Directory.Exists(nugetPkgs))
-        {
-            try
-            {
-                foreach (var pkgDir in Directory.EnumerateDirectories(nugetPkgs))
-                {
-                    var vers = Directory.GetDirectories(pkgDir);
-                    if (vers.Length <= 1) continue;
-                    foreach (var oldVer in vers.OrderByDescending(Directory.GetCreationTimeUtc).Skip(1))
-                        nugetSuperseded += DirSize(oldVer);
-                }
-            }
-            catch (IOException) { }
-        }
+        foreach (var oldVer in NuGetCleanupScanner.FindSupersededVersions(nugetPkgs,
+            Path.Combine(userProfile, "source", "repos"), scanLog))
+            nugetSuperseded += DirSize(oldVer);
         if (nugetHttp + nugetSuperseded > 10L << 20)
             items.Add(new("storage-nuget", "NuGet HTTP cache & superseded package versions",
-                "Clears %LOCALAPPDATA%\\NuGet\\v3-cache and removes older superseded package versions in ~/.nuget/packages (keeping the newest version of each package).",
+                "Clears %LOCALAPPDATA%\\NuGet\\v3-cache and identifies superseded package versions, keeping the highest NuGet version and all versions referenced by project.assets.json under ~/source/repos. Package pruning is skipped if the reference scan is incomplete.",
                 nugetHttp + nugetSuperseded, AutoCheckedByDefault: true));
 
         // 2. ~/.grok stale worktrees, sessions, downloads (>30d)
@@ -416,13 +407,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
                 "Prunes offline Service Worker caches and bytecode caches untouched for over 60 days without touching logins, cookies, or history.",
                 browserCache, AutoCheckedByDefault: true));
 
-        // 6. Office SolutionPackages (>60d)
-        var solPkg = DirSize(Path.Combine(LocalAppData, @"Microsoft\Office\SolutionPackages"), cut60);
-        if (solPkg > 10L << 20)
-            items.Add(new("storage-office-solpkg", "Orphaned Office SolutionPackages (>60 days)",
-                "Removes outdated Microsoft Office web add-in solution bundles untouched for over 60 days.", solPkg, AutoCheckedByDefault: true));
-
-        // 7. Playwright browsers (Opt-in)
+        // 6. Playwright browsers (Opt-in)
         var pwBytes = DirSize(Path.Combine(LocalAppData, "ms-playwright"));
         if (pwBytes > 10L << 20)
             items.Add(new("storage-playwright", "Playwright test browser binaries (%LOCALAPPDATA%\\ms-playwright)",

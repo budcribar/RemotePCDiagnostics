@@ -172,28 +172,19 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
         int? startupCount = null, autoSvcCount = null, taskCount = null, bloatCount = null;
         try
         {
-            var snap = await memSys.CaptureAsync([], ct).ConfigureAwait(false);
-            startupCount = snap.Startup?.Count(e => e.Enabled);
+            ct.ThrowIfCancellationRequested();
+            startupCount = memSys.ReadEnabledStartupCount();
         }
-        catch (Exception ex) { Log("startupCount: " + ex.Message); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log("startupCount: " + ex.Message); }
 
         try
         {
-            const string script =
-                "$ErrorActionPreference='SilentlyContinue';" +
-                "$tasks=(Get-ScheduledTask | Where-Object { $_.TaskPath -notlike '\\Microsoft\\Windows\\*' -and $_.State -ne 'Disabled' }).Count;" +
-                "$svcs=(Get-CimInstance Win32_Service | Where-Object { $_.StartMode -eq 'Auto' -and $_.PathName -notmatch 'C:\\\\Windows\\\\' }).Count;" +
-                "$bloat=(Get-AppxPackage | Where-Object { $_.Name -match 'Clipchamp|PowerAutomateDesktop|MicrosoftJournal|SolitaireCollection|WindowsMaps|windowscommunicationsapps|MixedReality\\.Portal|Windows\\.DevHome|Microsoft\\.People|DropboxOEM|BingNews|BingWeather|NarratorExtension|NarratorScript' }).Count;" +
-                "\"$svcs|$tasks|$bloat\"";
-            var r = await commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], ct).ConfigureAwait(false);
-            if (r is { ExitCode: 0 } && r.StdOut.Trim().Split('|') is { Length: 3 } parts)
-            {
-                if (int.TryParse(parts[0], out var s)) autoSvcCount = s;
-                if (int.TryParse(parts[1], out var t)) taskCount = t;
-                if (int.TryParse(parts[2], out var b)) bloatCount = b;
-            }
+            var inventory = await InventoryProbe.ReadAsync(commands, ct).ConfigureAwait(false);
+            autoSvcCount = inventory.AutoVendorServices;
+            taskCount = inventory.ActiveScheduledTasks;
+            bloatCount = inventory.InstalledBloatwareApps;
         }
-        catch (Exception ex) { Log("inventory script: " + ex.Message); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log("inventory script: " + ex.Message); }
 
         return new(memUsedMb, bgProcs, diskFreeGb, startupCount, autoSvcCount, taskCount, bloatCount);
     }
