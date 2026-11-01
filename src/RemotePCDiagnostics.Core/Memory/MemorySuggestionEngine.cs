@@ -65,6 +65,7 @@ public static class MemorySuggestionEngine
     public const long CloseAppMin = 300 * Mb;
     public const int MaxCloseSuggestions = 6;
     public const long VsRestartBytes = 1536 * Mb;
+    public const long VsExtensionMinBytes = 100 * Mb;
     public static readonly TimeSpan VsLongRun = TimeSpan.FromHours(8);
     public static readonly TimeSpan FastStartupUptime = TimeSpan.FromHours(4);
     public static readonly TimeSpan LongUptime = TimeSpan.FromDays(3);
@@ -211,10 +212,10 @@ public static class MemorySuggestionEngine
                 .GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.OrderByDescending(x => x.SizeBytes).First())
                 .ToList();
-            var heavy = uniqueExts.OrderByDescending(e => e.SizeBytes).Take(5).ToList();
+            var heavy = uniqueExts.Where(e => e.SizeBytes >= VsExtensionMinBytes).OrderByDescending(e => e.SizeBytes).Take(5).ToList();
             if (heavy.Count > 0)
                 list.Add(new("vs-extensions", "Turn off Visual Studio extensions you don't use",
-                    $"{MemoryText.Plural(uniqueExts.Count, "extension")} installed. Largest: {string.Join(", ", heavy.Select(e => $"{e.Name} ({MemoryText.Size(e.SizeBytes)})"))}. Each enabled extension loads into Visual Studio's memory.",
+                    $"{MemoryText.Plural(uniqueExts.Count, "extension")} installed. Largest on disk: {string.Join(", ", heavy.Select(e => $"{e.Name} ({MemoryText.Size(e.SizeBytes)})"))}. Review large extensions you don't use; installed size does not measure their memory use.",
                     null, SuggestionRisk.Low, SuggestionKind.Guided,
                     ["In Visual Studio, open Extensions > Manage Extensions > Installed", "Click Disable on extensions you don't use (Disable is reversible; avoid Uninstall)", "Restart Visual Studio"], [], "Visual Studio"));
         }
