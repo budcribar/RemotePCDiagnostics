@@ -91,7 +91,7 @@ public static class FixCatalog
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
                 NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
                     or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights,
-                Undo: Changes.Undoability.Of(a.Type)));
+                Undo: Changes.Undoability.Of(a.Type), DefaultOn: s.DefaultOn));
         }
 
         return list.OrderBy(f => f.Order).ThenBy(f => f.Area).ThenBy(f => f.Title, StringComparer.OrdinalIgnoreCase).ToList();

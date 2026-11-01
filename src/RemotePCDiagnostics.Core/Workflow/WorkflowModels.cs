@@ -14,10 +14,11 @@ public enum WorkflowStage { Idle, Checking, Review, RestartBefore, BeforeBenchma
 public enum FixSource { Remediation, Memory }
 
 /// <summary>A fix the tech can approve. Remediation fixes replay their <see cref="AreaAction"/>; memory fixes are matched again after the restart.</summary>
+/// <param name="DefaultOn">Ticked when the review opens. False = opt-in (e.g. Windows Search): listed unticked; the tech ticks it by hand.</param>
 public sealed record WorkflowFix(
     string Id, string Title, string Why, string Area, SuggestionRisk Risk, FixSource Source, int Order,
     AreaAction? Remediation = null, string? SuggestionId = null, MemoryActionType? MemoryAction = null, string? MemoryTarget = null,
-    bool NeedsAdmin = false, bool Slow = false, Changes.UndoSupport Undo = Changes.UndoSupport.Full);
+    bool NeedsAdmin = false, bool Slow = false, Changes.UndoSupport Undo = Changes.UndoSupport.Full, bool DefaultOn = true);
 
 /// <param name="Changes">What the fix recorded in the undo journal while it ran (one line per setting, with its old value where known).</param>
 public sealed record FixOutcome(string FixId, string Title, bool Success, string Message, bool Skipped = false, IReadOnlyList<FixChange>? Changes = null);

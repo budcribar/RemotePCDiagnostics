@@ -410,7 +410,35 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
             crossDevice = Directory.Exists(cdDir) && Directory.EnumerateDirectories(cdDir).Any();
         }
         catch (Exception ex) { Log("Device probe failed: " + ex.Message); }
-        return new(printer, bt, bio, pen, crossDevice, netPrinter, pdfPrinter);
+        return new(printer, bt, bio, pen, crossDevice, netPrinter, pdfPrinter, ReadClassicOutlook());
+    }
+
+    /// <summary>
+    /// Classic Outlook (OUTLOOK.EXE) installed, from the registry only: its App Paths entry, an MSI Office Outlook InstallRoot, or a
+    /// Click-to-Run product that includes Outlook (64- and 32-bit views). New Outlook (olk.exe) doesn't use the Windows Search index,
+    /// so it doesn't count. Null = couldn't read (treated as "may be installed").
+    /// </summary>
+    private bool? ReadClassicOutlook()
+    {
+        try
+        {
+            foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+            {
+                using var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                using var appPath = hklm.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE");
+                if (appPath is not null) return true;
+                foreach (var ver in new[] { "16.0", "15.0", "14.0" })
+                {
+                    using var msi = hklm.OpenSubKey($@"SOFTWARE\Microsoft\Office\{ver}\Outlook\InstallRoot");
+                    if (msi?.GetValue("Path") is string p && p.Length > 0) return true;
+                }
+                using var c2r = hklm.OpenSubKey(@"SOFTWARE\Microsoft\Office\ClickToRun\Configuration");
+                if (c2r is not null && ClassicOutlook.InClickToRun(c2r.GetValue("ProductReleaseIds") as string, id => c2r.GetValue(id + ".ExcludedApps") as string))
+                    return true;
+            }
+            return false;
+        }
+        catch (Exception ex) { Log("Outlook probe failed: " + ex.Message); return null; }
     }
 
     public static IReadOnlyList<StorageCleanupItem> ScanStorageCleanups(DeviceFacts? devices = null, Action<string>? scanLog = null, CancellationToken ct = default,

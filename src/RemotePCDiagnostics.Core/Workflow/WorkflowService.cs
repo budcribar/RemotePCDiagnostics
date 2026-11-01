@@ -26,7 +26,8 @@ public sealed class WorkflowService(
     public static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(30);
 
     private readonly object _gate = new();
-    public const int CurrentReviewRulesVersion = 6;
+    /// <summary>7: Windows Search only on small, nearly-full PCs without classic Outlook, and opt-in (unticked); Widgets and Search highlights fixes.</summary>
+    public const int CurrentReviewRulesVersion = 7;
     private WorkflowState _state = LoadState(store);
 
     private static WorkflowState LoadState(IWorkflowStore store)
@@ -93,7 +94,7 @@ public sealed class WorkflowService(
             Save(s => s with
             {
                 Stage = WorkflowStage.Review, ReviewRulesVersion = CurrentReviewRulesVersion,
-                Fixes = fixes, Approved = fixes.Select(f => f.Id).ToList(), // everything starts ticked
+                Fixes = fixes, Approved = fixes.Where(f => f.DefaultOn).Select(f => f.Id).ToList(), // everything starts ticked except opt-in fixes
                 Findings = findings, NotOffered = notOffered, Recommendations = FixCatalog.Recommendations(suggestions), Machine = session?.MachineName ?? Environment.MachineName, HardwareSummary = hw,
             });
             Note($"Checks finished: {fixes.Count} fix{(fixes.Count == 1 ? "" : "es")} to review.");

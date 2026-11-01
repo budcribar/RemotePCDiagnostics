@@ -151,11 +151,6 @@ Historical estimates below are not a current scan. Tier 1 excludes worktrees. Ti
 
 #### 4. Shrink (`reduced`) or Disable (`off`) `C:\hiberfil.sys` (`5.67 GB` on `BUDSLAPTOP`)
 * **Disk Space Saved:** **`2.84 GB – 5.67 GB`**
-<<<<<<< HEAD
-* **Problem:** `C:\hiberfil.sys` reserves **`5,672.6 MB` (`5.67 GB`)** on `C:\`. If the user disables Fast Startup (or only uses Sleep `S0 Modern Standby` and never uses Hibernate), that `5.67 GB` remains locked on the SSD.
-* **Automated Remediation (Opt-In):** Run `powercfg /h /type reduced` (saves **`~2.84 GB`**) or `powercfg /h off` (saves the full **`5.67 GB`**).
-* **Undo Support:** Run `powercfg /h on` / `powercfg /h /type full` via [`ChangeJournal`](../src/RemotePCDiagnostics.Core/Changes/ChangeJournal.cs).
-=======
 * **Problem & Why Fast Startup Stays Enabled During the Service Workflow:**
   * `C:\hiberfil.sys` reserves **`5,672.6 MB` (`5.67 GB`)** on `C:\` (`40%` of RAM) by default so Windows can support full-memory Hibernate (`S4`) in addition to Fast Startup.
   * Note that the Service Workflow **does not turn off Fast Startup (`HiberbootEnabled`)**: `shutdown.exe /r` (Restart) **always** bypasses Fast Startup and performs a 100% clean kernel reboot (`uptime` → `0`), so the user gets a clean kernel reset without sacrificing their 3–10s faster cold boots from `Shut Down`.
@@ -163,7 +158,6 @@ Historical estimates below are not a current scan. Tier 1 excludes worktrees. Ti
   * **Recommended (`reduced` — Saves `~2.84 GB` while KEEPING Fast Startup enabled):** Run `powercfg /h /type reduced`, which shrinks `C:\hiberfil.sys` in half (`40%` → `20%` of RAM) while preserving Windows Fast Startup.
   * **Full removal (`off` — Saves `5.67 GB`):** Run `powercfg /h off` if the user wants the full `5.67 GB` reclaimed and does not use Hibernate or Fast Startup.
 * **Undo Support:** Run `powercfg /h on` and `powercfg /h /type full` via [`ChangeJournal`](../src/RemotePCDiagnostics.Core/Changes/ChangeJournal.cs).
->>>>>>> 80d927d (Keep Fast Startup in workflow; quote service names and clarify 'Critical' vendor services)
 
 #### 5. Speed Up VS Code Startup by Pruning Duplicate Old Extensions & `.guid` Staging Folders in `~/.vscode/extensions` (`1.27 GB`)
 * **Disk Space Saved:** **`1.27 GB`** (`1,266.6 MB`) | **Speed Gain:** Faster VS Code startup extension scan
@@ -355,6 +349,11 @@ The models and several detectors are implemented. Phase 2 is not complete: the c
 * `None` covers `Remove-AppxPackage` / `Remove-AppxProvisionedPackage`, program uninstalls, installed updates, and cache/package deletions. These are journaled as `ChangeKind.NotUndoable`; the workflow shows a **"can't be undone"** chip, and "Undo all" / `--undo-all` lists them as *left as is* instead of failing.
 * The storage scan (`ScanStorageCleanupsAsync`) is not part of the memory snapshot; it runs on demand and is cached for 5 minutes.
 * **Registry values use one generic journal kind, `ChangeKind.RegistryValue`:** Target = `"HKLM\SOFTWARE\Policies\Microsoft\Dsh|AllowNewsAndInterests"`, Previous = the old DWORD as text, or null when the value was absent (undo deletes it). Every write, delete and restore goes through [`RegistryAllowlist`](../src/RemotePCDiagnostics.Core/Changes/RegistrySettings.cs), the exact values this app may change; a journal record whose target isn't listed is refused, never written. Read back after writing: if the value didn't stick (access denied, UCPD, organization policy), report failure and journal nothing. Labels include the old value (*"… (policy was not set)"*). New registry fixes add their value to the allowlist and reuse this kind.
+
+### Opt-in (default-off) fixes and Windows Search *(Implemented ✅)*
+* **Per-fix default:** a fix can be marked opt-in with `DefaultOn: false` on its [`ServiceCandidate`](../src/RemotePCDiagnostics.Core/Memory/MemorySuggestionEngine.cs) (or directly on a [`MemorySuggestion`](../src/RemotePCDiagnostics.Core/Memory/MemoryModels.cs)). [`FixCatalog.Build`](../src/RemotePCDiagnostics.Core/Workflow/FixCatalog.cs) copies it to [`WorkflowFix.DefaultOn`](../src/RemotePCDiagnostics.Core/Workflow/WorkflowModels.cs), and [`WorkflowService.RunChecksAsync`](../src/RemotePCDiagnostics.Core/Workflow/WorkflowService.cs) ticks only fixes with `DefaultOn = true` (the default, so every other fix still starts ticked). The review page shows opt-in fixes unticked with an **opt-in** chip; the tech can tick them by hand (or with Select all). Left unticked, they appear in the client report under *Left as they were, by choice*. Reuse this for future opt-in fixes.
+* **Windows Search (`WSearch`) to Manual** is offered only when total RAM is **≤ 8 GB**, memory in use is **≥ 85%**, and **classic Outlook is known not to be installed and isn't running** — and it's opt-in. Once its first index is built the indexer uses only tens of MB, while Manual makes Start-menu and File Explorer search slow, makes classic Outlook's instant search slow or incomplete (it relies on the Windows Search index), and cuts off the index hits [`ProjectLocator`](../src/RemotePCDiagnostics.Core/Projects/ProjectLocator.cs) uses to find code folders. Classic Outlook is detected from the registry only (no PowerShell) in [`WindowsMemorySystem`](../src/RemotePCDiagnostics.Host/WindowsMemorySystem.cs): `App Paths\OUTLOOK.EXE`, MSI `Office\<ver>\Outlook\InstallRoot`, or a Click-to-Run product that includes Outlook and doesn't exclude it (64- and 32-bit views). If the registry can't be read, Outlook counts as possibly installed and the fix isn't offered. New Outlook (`olk.exe`) doesn't use the index and doesn't block it. Undo sets the service back to its previous start type.
+* Saved reviews from before this rule (`ReviewRulesVersion` 4 or older, where Windows Search was ticked on every PC) are discarded; the checks run again.
 
 ### ⏳ Phase 3 — Unattended Fix Executors & Undo Support *(Next Step)*
 * **Worktree cleanup (item 1a):** Split worktree detection from auto-checked Grok cache cleanup; add an unchecked review item, unchecked per-folder selection, and a separate explicit deletion approval. Preserve the approved paths and findings across restarts, invalidate approval when findings change, and prevent Select all from bypassing approval. Implement linked-worktree and standalone-checkout handling separately, with truthful irreversible-deletion reporting.
