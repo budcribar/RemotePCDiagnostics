@@ -480,6 +480,9 @@ tr.history-day td { font-weight: 700; color: var(--text-strong); background: var
 .wf-section { margin: 12px 0; }
 .wf-section .card-head { justify-content: space-between; }
 .wf-area { font-size: 14px; margin: 12px 0 4px; }
+.wf-area-toggle { background: none; border: 0; padding: 2px 0; font: inherit; color: inherit; cursor: pointer; display: inline-flex; gap: 6px; align-items: baseline; }
+.wf-area-toggle:focus-visible { outline: 2px solid var(--accent, #3b82f6); outline-offset: 2px; border-radius: 4px; }
+.wf-caret { display: inline-block; width: 1em; }
 .wf-fix { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
 .wf-fix input { margin-top: 4px; }
 .wf-fix .chip { margin-left: 6px; }
