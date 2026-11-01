@@ -97,7 +97,9 @@ public static class FixCatalog
             list.Add(new(id, a.Type == MemoryActionType.SetServiceManual && !MemorySuggestionEngine.IsVisualStudioCollector(a.Target) && !AiVmServices.Is(a.Target) ? $"{s.Title}: start only when needed" : s.Title, s.Why, s.Category, s.Risk, FixSource.Memory, order,
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
                 NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
-                    or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension || (a.Type == MemoryActionType.StopBrowserBackground && a.Target == nameof(BrowserKind.Edge)) or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps,
+                    or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension
+                    or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps
+                    || (a.Type == MemoryActionType.StopBrowserBackground && a.Target == nameof(BrowserKind.Edge)),
                 Undo: Changes.Undoability.Of(a.Type), DefaultOn: s.DefaultOn));
         }
 
