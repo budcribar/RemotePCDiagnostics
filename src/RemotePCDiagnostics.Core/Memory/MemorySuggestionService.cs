@@ -61,6 +61,9 @@ public interface IMemorySystem
     Task<string?> ReadPageFileSettingsAsync(CancellationToken ct) => Task.FromResult<string?>(null);
     /// <summary>Puts back custom page file settings saved by <see cref="ReadPageFileSettingsAsync"/> (admin; after restart).</summary>
     Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
+    /// <summary>Removable caches and leftovers with their measured size. Expensive (sizes big folders), so it isn't part of
+    /// <see cref="CaptureAsync"/>; the Host caches the result for a few minutes unless <paramref name="refresh"/> is set.</summary>
+    Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct) => Task.FromResult<IReadOnlyList<StorageCleanupItem>>([]);
 }
 
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);

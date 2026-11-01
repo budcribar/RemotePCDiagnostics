@@ -17,7 +17,7 @@ public enum FixSource { Remediation, Memory }
 public sealed record WorkflowFix(
     string Id, string Title, string Why, string Area, SuggestionRisk Risk, FixSource Source, int Order,
     AreaAction? Remediation = null, string? SuggestionId = null, MemoryActionType? MemoryAction = null, string? MemoryTarget = null,
-    bool NeedsAdmin = false, bool Slow = false);
+    bool NeedsAdmin = false, bool Slow = false, Changes.UndoSupport Undo = Changes.UndoSupport.Full);
 
 public sealed record FixOutcome(string FixId, string Title, bool Success, string Message, bool Skipped = false);
 

@@ -88,7 +88,7 @@ public partial class App : Application
             var undo = CreateUndoService(new FileChangeJournal(FileChangeJournal.DefaultPath(), Log), commands, new WindowsMemorySystem(null, Log));
             var result = Task.Run(() => undo.UndoAllAsync("Command line (--undo-all)")).GetAwaiter().GetResult();
             Log("--undo-all: " + result.Summary);
-            foreach (var i in result.Items) Log($"--undo-all: {(i.Success ? "OK" : "FAILED")} {i.Change.Kind} '{i.Change.Target}': {i.Message}");
+            foreach (var i in result.Items) Log($"--undo-all: {(i.Success ? "OK" : i.Skipped ? "LEFT AS IS (permanent)" : "FAILED")} {i.Change.Kind} '{i.Change.Target}': {i.Message}");
             if (restart)
             {
                 Log("--undo-all: restarting in 10 seconds");

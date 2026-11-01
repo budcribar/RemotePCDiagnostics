@@ -102,10 +102,19 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
 
         var probe = await RunPowerShellAsync(MemoryProbe.Script, ct).ConfigureAwait(false);
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
-        var devices = ReadDevices();
-        var cleanups = await Task.Run(() => ScanStorageCleanups(devices, Log), ct).ConfigureAwait(false);
-        return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, devices,
-            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), cleanups);
+        return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
+            GetTransparency(), autoPageFile, slots, ReadDefaultBrowser());
+    }
+
+    // One cache for the whole app: several WindowsMemorySystem instances exist (memory page, benchmarks, --undo-all).
+    private static StorageCleanupCache? s_cleanupCache;
+    private static readonly object s_cleanupGate = new();
+
+    public Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct)
+    {
+        StorageCleanupCache cache;
+        lock (s_cleanupGate) cache = s_cleanupCache ??= new(c => Task.Run(() => ScanStorageCleanups(ReadDevices(), Log, c), c));
+        return cache.GetAsync(refresh, ct);
     }
 
     private const string PersonalizeKey = @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
@@ -320,20 +329,23 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         return new(printer, bt, bio, pen, crossDevice, netPrinter, pdfPrinter);
     }
 
-    public static IReadOnlyList<StorageCleanupItem> ScanStorageCleanups(DeviceFacts? devices = null, Action<string>? scanLog = null)
+    public static IReadOnlyList<StorageCleanupItem> ScanStorageCleanups(DeviceFacts? devices = null, Action<string>? scanLog = null, CancellationToken ct = default)
     {
         var items = new List<StorageCleanupItem>();
         var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
 
-        static long DirSize(string path, DateTime? olderThanUtc = null)
+        long DirSize(string path, DateTime? olderThanUtc = null)
         {
+            ct.ThrowIfCancellationRequested();
             if (!Directory.Exists(path)) return 0;
             long sum = 0;
             try
             {
+                var n = 0;
                 foreach (var f in Directory.EnumerateFiles(path, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
                 {
+                    if ((++n & 1023) == 0) ct.ThrowIfCancellationRequested();
                     try
                     {
                         var fi = new FileInfo(f);
@@ -355,7 +367,7 @@ public sealed class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? 
         long nugetSuperseded = 0;
         var nugetPkgs = Path.Combine(userProfile, @".nuget\packages");
         foreach (var oldVer in NuGetCleanupScanner.FindSupersededVersions(nugetPkgs,
-            Path.Combine(userProfile, "source", "repos"), scanLog))
+            Path.Combine(userProfile, "source", "repos"), scanLog, ct))
             nugetSuperseded += DirSize(oldVer);
         if (nugetHttp + nugetSuperseded > 10L << 20)
             items.Add(new("storage-nuget", "NuGet HTTP cache & superseded package versions",

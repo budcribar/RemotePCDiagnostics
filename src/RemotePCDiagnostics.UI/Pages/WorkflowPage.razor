@@ -56,7 +56,7 @@
                     var id = f.Id;
                     <label class="wf-fix" data-testid="wf-fix">
                         <input type="checkbox" checked="@s.IsApproved(id)" @onchange="e => Flow.SetApproved(id, e.Value is true)" />
-                        <span><strong>@f.Title</strong>@if (f.Risk != SuggestionRisk.Low) { <span class="chip chip-warn">@f.Risk risk</span> }@if (f.Slow) { <span class="chip chip-na">can take a while</span> }
+                        <span><strong>@f.Title</strong>@if (f.Risk != SuggestionRisk.Low) { <span class="chip chip-warn">@f.Risk risk</span> }@if (f.Slow) { <span class="chip chip-na">can take a while</span> }@if (RemotePCDiagnostics.Core.Changes.Undoability.Chip(f.Undo) is { } undoChip) { <span class="chip @(f.Undo == RemotePCDiagnostics.Core.Changes.UndoSupport.None ? "chip-warn" : "chip-na")" data-testid="wf-fix-undo">@undoChip</span> }
                             <span class="meta wf-why">@f.Why</span></span>
                     </label>
                 }

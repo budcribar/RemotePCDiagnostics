@@ -277,6 +277,12 @@ public sealed class RemediationService(
                 var before = await CaptureBeforeAsync(action, ct).ConfigureAwait(false);
                 result = await RunActionAsync(action, ct).ConfigureAwait(false);
                 if (result.Success && before is not null) try { journal?.Add(before); } catch (Exception ex) { Log($"journal: {ex.Message}"); }
+                // Permanent changes are journaled too, so "Undo all" can say what it left as is. Update checks that installed nothing changed nothing.
+                var permanent = Changes.Undoability.Of(action.Kind) == Changes.UndoSupport.None
+                    && (action.Kind is not (RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.CheckAndInstallDriverUpdates) || result.UpdatesInstalled > 0);
+                if (result.Success && permanent)
+                    try { journal?.Add(Changes.Undoability.Permanent($"{action.Kind}:{action.Target}:{Guid.NewGuid():N}", $"{plan.Title.TrimEnd('?')}: {result.Message}", actor)); }
+                    catch (Exception ex) { Log($"journal: {ex.Message}"); }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {

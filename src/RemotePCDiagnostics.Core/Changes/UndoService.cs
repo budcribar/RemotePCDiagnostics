@@ -5,25 +5,32 @@ using RemotePCDiagnostics.Core.Memory;
 
 namespace RemotePCDiagnostics.Core.Changes;
 
-public sealed record UndoItemResult(ChangeRecord Change, bool Success, string Message);
+/// <param name="Skipped">A permanent change (installed updates, removed apps): reported, not attempted, not a failure.</param>
+public sealed record UndoItemResult(ChangeRecord Change, bool Success, string Message, bool Skipped = false);
 
 public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
 {
     public int Succeeded => Items.Count(i => i.Success);
-    public int Failed => Items.Count(i => !i.Success);
+    public int Failed => Items.Count(i => !i.Success && !i.Skipped);
+    public int Skipped => Items.Count(i => i.Skipped);
+    public IEnumerable<UndoItemResult> Permanent => Items.Where(i => i.Skipped);
     public bool NeedsRestart => Items.Any(i => i.Success && i.Change.NeedsRestart);
+    private int Attempted => Items.Count - Skipped;
     public string Summary => Items.Count == 0 ? "Nothing to undo."
-        : $"Undid {Succeeded} of {Items.Count} change{(Items.Count == 1 ? "" : "s")}" + (Failed > 0 ? $"; {Failed} couldn't be undone" : "") + (NeedsRestart ? ". Restart to finish (Fast Startup / page file)." : ".");
+        : (Attempted == 0 ? "Nothing that can be undone"
+            : $"Undid {Succeeded} of {Attempted} change{(Attempted == 1 ? "" : "s")}" + (Failed > 0 ? $"; {Failed} couldn't be undone" : ""))
+          + (Skipped > 0 ? $"; {Skipped} permanent change{(Skipped == 1 ? " was" : "s were")} left as is (can't be reversed)" : "")
+          + (NeedsRestart ? ". Restart to finish (Fast Startup / page file)." : ".");
 }
 
 /// <summary>
-/// Reverts the journaled changes, newest first. Only puts back settings this app changed; things that can't be reversed
-/// (deleted temp files, closed apps, installed updates) are never journaled.
+/// Reverts the journaled changes, newest first. Only puts back settings this app changed. Permanent changes (installed updates,
+/// removed apps) are journaled as <see cref="ChangeKind.NotUndoable"/> so this reports them as skipped; temp file cleanups get placeholders.
 /// </summary>
 public sealed class UndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem? memory = null, IServiceControlBackend? services = null,
     Action<LogLevel, string>? events = null, Action<string>? log = null)
 {
-    public const string NotUndoableNote = "Deleted temporary files, closed apps and installed updates can't be put back.";
+    public const string NotUndoableNote = "Installed updates and removed apps can't be put back; undo lists them as left as is. Deleted temp files come back only as placeholder files of the same size.";
     private void Log(string m) { try { log?.Invoke("[undo] " + m); } catch { } }
 
     public IReadOnlyList<ChangeRecord> Pending => journal.All;
@@ -41,15 +48,16 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 Log($"{c.Kind} '{c.Target}' failed: {ex}");
                 r = new(c, false, "Windows didn't allow undoing it.");
             }
-            if (r.Success) journal.Remove(c.Id);
+            // Permanent changes are reported once, then forgotten (there's nothing to retry).
+            if (r.Success || r.Skipped) journal.Remove(c.Id);
             results.Add(r);
-            Log($"{c.Kind} '{c.Target}': {(r.Success ? "undone" : "failed")} — {r.Message}");
+            Log($"{c.Kind} '{c.Target}': {(r.Success ? "undone" : r.Skipped ? "permanent, skipped" : "failed")} — {r.Message}");
         }
         var all = new UndoAllResult(results);
         try
         {
             events?.Invoke(all.Failed > 0 ? LogLevel.Warning : LogLevel.Information,
-                $"Undo all changes\r\nActor: {actor}\r\nResult: {all.Summary}\r\n" + string.Join("\r\n", results.Select(i => $"  {(i.Success ? "OK" : "FAILED")}: {i.Change.Label} — {i.Message}")));
+                $"Undo all changes\r\nActor: {actor}\r\nResult: {all.Summary}\r\n" + string.Join("\r\n", results.Select(i => $"  {(i.Success ? "OK" : i.Skipped ? "LEFT AS IS" : "FAILED")}: {i.Change.Label} — {i.Message}")));
         }
         catch { }
         return all;
@@ -61,6 +69,9 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
         UndoItemResult Fail(string m) => new(c, false, m);
         switch (c.Kind)
         {
+            case ChangeKind.NotUndoable:
+                return new(c, false, "Permanent change; Windows has no way to put it back.", Skipped: true);
+
             case ChangeKind.StartupApp:
                 if (memory is null) return Fail("Not available.");
                 memory.SetStartupApproved(c.Target, c.Previous is null ? null : Convert.FromBase64String(c.Previous));

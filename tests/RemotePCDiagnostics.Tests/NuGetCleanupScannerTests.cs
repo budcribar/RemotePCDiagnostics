@@ -88,5 +88,16 @@ public sealed class NuGetCleanupScannerTests : IDisposable
         Assert.Throws<OperationCanceledException>(() => NuGetCleanupScanner.FindSupersededVersions(Packages, Projects, ct: cts.Token));
     }
 
+    [Fact]
+    public void SkipsNodeModulesWithoutTreatingItsLinksAsAnIncompleteScan()
+    {
+        Package("2.0.0");
+        var old = Package("1.0.0");
+        var nm = Directory.CreateDirectory(Path.Combine(Projects, "web", "node_modules", "pkg")).FullName;
+        try { Directory.CreateSymbolicLink(Path.Combine(nm, "linked"), Projects); } catch (Exception) { /* no symlink rights: still checks the skip */ }
+        Assets("web/node_modules/pkg", "Example/1.0.0"); // ignored: not a .NET project folder
+        Assert.Equal([old], NuGetCleanupScanner.FindSupersededVersions(Packages, Projects));
+    }
+
     public void Dispose() => Directory.Delete(root, recursive: true);
 }

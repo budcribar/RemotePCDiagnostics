@@ -59,6 +59,8 @@ public static class NuGetCleanupScanner
         }
     }
 
+    private static readonly HashSet<string> SkippedFolders = new(StringComparer.OrdinalIgnoreCase) { ".git", "node_modules" };
+
     private static string Identity(string package, NuGetVersion version) =>
         package + "/" + version.ToNormalizedString().Split('+')[0];
 
@@ -76,7 +78,8 @@ public static class NuGetCleanupScanner
             yield return dir;
             foreach (var child in Directory.EnumerateDirectories(dir))
             {
-                if (Path.GetFileName(child).Equals(".git", StringComparison.OrdinalIgnoreCase)) continue;
+                // Never holds .NET project assets; node_modules is huge and pnpm fills it with links that would abort the scan.
+                if (SkippedFolders.Contains(Path.GetFileName(child))) continue;
                 pending.Push(child);
             }
         }

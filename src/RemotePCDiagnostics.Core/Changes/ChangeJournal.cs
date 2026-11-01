@@ -17,6 +17,7 @@ public enum ChangeKind
     AdapterDns,          // Target = adapter alias; Previous = "" (automatic/DHCP) or "1.1.1.1,8.8.8.8"
     PageFile,            // Previous = base64 JSON of the custom page file settings
     TempFiles,           // Previous = "files:bytes" removed by the cleanup; undo recreates placeholder files (testing)
+    NotUndoable,         // A permanent change (installed updates, removed apps); "Undo all" reports it as skipped, then forgets it
 }
 
 /// <param name="Label">Friendly, e.g. "Spotify won't start with Windows".</param>

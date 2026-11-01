@@ -72,8 +72,7 @@ public sealed record MemorySnapshot(
     bool? TransparencyOn = null,
     bool? AutoPageFile = null,
     MemorySlots? Slots = null,
-    BrowserKind? DefaultBrowser = null,
-    IReadOnlyList<StorageCleanupItem>? StorageCleanups = null)
+    BrowserKind? DefaultBrowser = null)
 {
     public AppUsage? App(string name) => Apps.FirstOrDefault(a => a.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 }

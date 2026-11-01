@@ -68,7 +68,8 @@ public static class FixCatalog
                     var title = plan?.Title.TrimEnd('?') ?? a.ButtonText;
                     list.Add(new(id, title, plan?.WhatItIs ?? card.Headline, area, RiskOf(a.Kind), FixSource.Remediation, OrderOf(a.Kind), Remediation: a,
                         NeedsAdmin: plan?.Warning?.Contains("administrator", StringComparison.OrdinalIgnoreCase) == true,
-                        Slow: a.Kind is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates));
+                        Slow: a.Kind is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates,
+                        Undo: Changes.Undoability.Of(a.Kind)));
                 }
             }
         }
@@ -86,7 +87,8 @@ public static class FixCatalog
             var order = a.Type switch { MemoryActionType.DisableStartup => 20, MemoryActionType.SetServiceManual => 22, MemoryActionType.AutoManagePageFile => 12, _ => 15 };
             list.Add(new(id, a.Type == MemoryActionType.SetServiceManual ? $"{s.Title}: start only when needed" : s.Title, s.Why, s.Category, s.Risk, FixSource.Memory, order,
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
-                NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.DisableFastStartup));
+                NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.DisableFastStartup,
+                Undo: Changes.Undoability.Of(a.Type)));
         }
 
         return list.OrderBy(f => f.Order).ThenBy(f => f.Area).ThenBy(f => f.Title, StringComparer.OrdinalIgnoreCase).ToList();
