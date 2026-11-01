@@ -78,6 +78,14 @@ public sealed class StorageCleanupTests : IDisposable
         catch (Exception) { return false; }
     }
 
+    /// <summary>On Windows a link must be made (junctions need no privileges), so these tests never pass by skipping there.</summary>
+    private static bool CanLink(string link, string target)
+    {
+        var ok = TryLink(link, target);
+        if (OperatingSystem.IsWindows()) Assert.True(ok, "couldn't create a symlink or junction at " + link);
+        return ok;
+    }
+
     // ---- catalog ----
 
     [Fact]
@@ -586,7 +594,7 @@ public sealed class StorageCleanupTests : IDisposable
         var precious = Make(P(outside, "precious.txt"), 1000, 400);
         var root = L("npm-cache", "_cacache");
         var old = Make(P(root, "old"), 1000, 400);
-        if (!TryLink(P(root, "link"), outside)) return;
+        if (!CanLink(P(root, "link"), outside)) return;
         Assert.Equal((1L, 1000L), StorageCleanupEngine.Measure(StorageTarget.Contents(root, Now.AddDays(-30))));
 
         var r = Clean("storage-npm");
@@ -619,7 +627,7 @@ public sealed class StorageCleanupTests : IDisposable
         var elsewhere = P(_tmp, "elsewhere");
         var file = Make(P(elsewhere, "old"), 1000, 400);
         Directory.CreateDirectory(L("npm-cache"));
-        if (!TryLink(L("npm-cache", "_cacache"), elsewhere)) return;
+        if (!CanLink(L("npm-cache", "_cacache"), elsewhere)) return;
         var r = Clean("storage-npm");
         Assert.Equal((0L, 1), (r.FilesRemoved, r.Refused));
         Assert.True(File.Exists(file));
@@ -630,7 +638,7 @@ public sealed class StorageCleanupTests : IDisposable
         var od = Clean("storage-onedrive-logs");
         Assert.Equal(1, od.Refused);
         Assert.True(File.Exists(log));
-        Assert.Empty(Scan().Where(i => i.Id is "storage-npm" or "storage-onedrive-logs"));
+        Assert.DoesNotContain(Scan(), i => i.Id is "storage-npm" or "storage-onedrive-logs");
     }
 
     [Fact]
@@ -888,6 +896,6 @@ public sealed class StorageCleanupTests : IDisposable
         Assert.Equal((0, 0, 1), (r.Succeeded, r.Failed, r.Skipped));
         Assert.Contains("left as is", r.Summary);
         Assert.Empty(j.All);
-        Assert.Empty(sys.Cleaned.Skip(1)); // undo never re-runs or reverses a cleanup
+        Assert.Single(sys.Cleaned); // undo never re-runs or reverses a cleanup
     }
 }
