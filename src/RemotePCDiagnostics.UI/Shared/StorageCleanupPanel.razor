@@ -1,0 +1,71 @@
+@using RemotePCDiagnostics.Core.Memory
+@using RemotePCDiagnostics.Core.Storage
+@implements IDisposable
+@* "Caches and leftovers you can delete" on the Storage page. Measured only when asked (it sizes big folders); deleting is permanent and runs only from a click (or the service workflow). *@
+<section class="ms-panel" data-testid="storage-cleanup">
+    <div class="ms-head">
+        <h2 class="section-title" data-testid="storage-cleanup-title">Caches and leftovers you can delete</h2>
+        <button class="btn-small" data-testid="storage-scan" disabled="@(Svc.ScanningStorage || Svc.Busy is not null)" @onclick="() => Svc.ScanStorageAsync(refresh: Svc.StorageScanned)">
+            @(Svc.ScanningStorage ? "Measuring…" : Svc.StorageScanned ? "Measure again" : "Find space to free up")
+        </button>
+    </div>
+    <p class="meta">Old caches, logs and leftover copies that apps rebuild or download again when needed. Deleting them can't be undone. Each one is skipped while its app is open.</p>
+    @if (Svc.StorageFreedBytes > 0) { <p class="meta" data-testid="storage-freed">Freed this session: @StorageCleanupEngine.SizeText(Svc.StorageFreedBytes)</p> }
+    @if (Svc.StorageError is { } err) { <div class="notice notice-error" data-testid="storage-error">@err</div> }
+    else if (Svc.ScanningStorage) { <p class="meta">Measuring caches and leftovers (this can take a minute)…</p> }
+    else if (Svc.StorageScanned && Svc.StorageSuggestions.Count == 0) { <p class="meta" data-testid="storage-empty">Nothing worth deleting right now.</p> }
+
+    <div class="ms-list">
+        @foreach (var s in Svc.StorageSuggestions)
+        {
+            var res = Svc.ResultFor(s.Id);
+            var item = Svc.StorageItems.FirstOrDefault(i => i.Id == s.Id);
+            <div class="card ms-card" @key="s.Id" data-testid="storage-sug-@s.Id">
+                <div class="ms-card-head">
+                    <strong class="ms-title">@s.Title</strong>
+                    <span class="chip chip-warn" data-testid="storage-permanent">can't be undone</span>
+                    @if (!s.DefaultOn) { <span class="chip chip-na" title="Not ticked in the service workflow by default.">opt-in</span> }
+                    @if (item is not null) { <span class="ms-saving" data-testid="storage-size">~@StorageCleanupEngine.SizeText(item.SizeBytes)</span> }
+                </div>
+                <div class="desc">@s.Why</div>
+                @if (s.Note is { } note) { <div class="meta">@note</div> }
+                <div class="ms-actions">
+                    @if (_confirm == s.Id)
+                    {
+                        <span class="svc-warn" data-testid="storage-confirm">@s.Actions[0].Confirm</span>
+                        <button class="btn-small btn-primary" data-testid="storage-confirm-yes" @onclick="() => Run(s)">Yes, delete</button>
+                        <button class="btn-small" data-testid="storage-confirm-no" @onclick="() => _confirm = null">Cancel</button>
+                    }
+                    else
+                    {
+                        <button class="btn-small btn-outline" data-testid="storage-delete" disabled="@(Svc.Busy is not null || Svc.ScanningStorage)" @onclick="() => _confirm = s.Id">@(Svc.Busy == s.Id ? "Deleting…" : "Delete")</button>
+                    }
+                </div>
+                @if (res is not null) { <div class="@(res.Success ? "svc-result-ok" : "error-text")" data-testid="storage-result">@res.Message</div> }
+            </div>
+        }
+    </div>
+    @foreach (var i in Svc.StorageItems.Where(x => x.Category == StorageCleanupCatalog.ReviewCategory))
+    {
+        <p class="meta" data-testid="storage-review-@i.Id">@i.Title: ~@StorageCleanupEngine.SizeText(i.SizeBytes). @i.Description</p>
+    }
+    @foreach (var r in Svc.Recent.Where(x => StorageCleanupCatalog.Find(x.SuggestionId) is not null && Svc.StorageSuggestions.All(s => s.Id != x.SuggestionId)).Take(5))
+    {
+        <div class="meta" data-testid="storage-recent">@r.When.ToString("HH:mm") · @(StorageCleanupCatalog.Find(r.SuggestionId)!.Title): @r.Message</div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public MemorySuggestionService Svc { get; set; } = default!;
+    private string? _confirm;
+
+    protected override void OnInitialized() => Svc.Changed += OnChanged;
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+    public void Dispose() => Svc.Changed -= OnChanged;
+
+    private async Task Run(MemorySuggestion s)
+    {
+        _confirm = null;
+        await Svc.ApplyAsync(s, s.Actions[0]);
+    }
+}

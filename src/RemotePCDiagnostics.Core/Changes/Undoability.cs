@@ -37,6 +37,7 @@ public static class Undoability
             or MemoryActionType.SkipOfficeStartScreen or MemoryActionType.SetPdfDefaultPrinter or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension or MemoryActionType.StopBrowserBackground or MemoryActionType.StopSilentAppInstalls => UndoSupport.Full,
         // Removed apps can't be put back (their scheduled tasks, Game DVR and Xbox service settings can; undo restores those).
         MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps => UndoSupport.None,
+        MemoryActionType.CleanStorage => UndoSupport.None, // deleted caches don't come back
         _ => UndoSupport.NothingToUndo, // closing apps, ending build servers, restarting, opening Settings
     };
 

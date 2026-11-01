@@ -18,6 +18,7 @@ else
     var svcModule = m as ServicesModule;
     var svcActions = svcModule is null ? null : Sp.GetService(typeof(ServiceActionService)) as ServiceActionService;
     var memSvc = m is ResourceHogsModule ? Sp.GetService(typeof(RemotePCDiagnostics.Core.Memory.MemorySuggestionService)) as RemotePCDiagnostics.Core.Memory.MemorySuggestionService : null;
+    var storageSvc = m is DriveHealthModule ? Sp.GetService(typeof(RemotePCDiagnostics.Core.Memory.MemorySuggestionService)) as RemotePCDiagnostics.Core.Memory.MemorySuggestionService : null;
     var remActions = Sp.GetService(typeof(RemediationService)) as RemediationService;
     var hasRemActions = remActions is not null && rep is not null && rep.Cards.Any(c => c.Actions is { Count: > 0 } || c.Rows.Any(rw => rw.Actions is { Count: > 0 }));
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="@m.Name" Size="20" /></span><h1 data-testid="area-title">@m.DisplayName</h1></div>
@@ -54,6 +55,7 @@ else
         </div>
 
         @if (memSvc is not null) { <MemorySuggestionsPanel @ref="_memPanel" Svc="memSvc" /> }
+        @if (storageSvc is not null) { <StorageCleanupPanel Svc="storageSvc" /> }
 
         @if (_open is not null && rep.Cards.FirstOrDefault(c => c.Id == _open) is { } open)
         {

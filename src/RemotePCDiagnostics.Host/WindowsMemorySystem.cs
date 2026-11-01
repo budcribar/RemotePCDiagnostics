@@ -8,6 +8,7 @@ using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Memory;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Projects;
+using RemotePCDiagnostics.Core.Storage;
 
 namespace RemotePCDiagnostics.Host;
 
@@ -747,104 +748,40 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
         catch (Exception ex) { Log("Outlook probe failed: " + ex.Message); return null; }
     }
 
+    /// <summary>
+    /// Measures every <see cref="StorageCleanupCatalog"/> category with exactly the rules and folders its cleanup uses, the review-only
+    /// Grok worktree estimate (#1a, never deleted here), and %TEMP% (cleaned by the "Clean up temporary files" fix).
+    /// </summary>
     public static IReadOnlyList<StorageCleanupItem> ScanStorageCleanups(DeviceFacts? devices = null, Action<string>? scanLog = null, CancellationToken ct = default,
         IReadOnlyList<string>? projectRoots = null)
     {
-        var items = new List<StorageCleanupItem>();
-        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var roots = StorageRoots.Current();
+        var ctx = new StorageScanContext(roots, projectRoots ?? [Path.Combine(roots.UserProfile, "source", "repos")], DateTime.UtcNow, scanLog);
+        var items = StorageCleanupCatalog.Scan(ctx, ct).ToList();
 
-        long DirSize(string path, DateTime? olderThanUtc = null)
+        // %LOCALAPPDATA%\Temp (>24h): measured only; RemediationKind.CleanTempFiles deletes it.
+        var temp = Path.GetTempPath();
+        if (Directory.Exists(temp))
         {
-            ct.ThrowIfCancellationRequested();
-            if (!Directory.Exists(path)) return 0;
-            long sum = 0;
-            try
-            {
-                var n = 0;
-                foreach (var f in Directory.EnumerateFiles(path, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
-                {
-                    if ((++n & 1023) == 0) ct.ThrowIfCancellationRequested();
-                    try
-                    {
-                        var fi = new FileInfo(f);
-                        if (olderThanUtc is null || fi.LastWriteTimeUtc < olderThanUtc.Value) sum += fi.Length;
-                    }
-                    catch (IOException) { }
-                }
-            }
-            catch (IOException) { }
-            return sum;
+            var tempBytes = StorageCleanupEngine.Measure(StorageTarget.Contents(temp, DateTime.UtcNow.AddHours(-24)), ct).Bytes;
+            if (tempBytes > 10L << 20)
+                items.Add(new(StorageCleanupCatalog.TempId, "Temporary files (%TEMP% older than 24 hours)",
+                    "Deletes leftover temporary installer and application files in %LOCALAPPDATA%\\Temp (the \"Clean up temporary files\" fix on the Storage checks).",
+                    tempBytes, AutoCheckedByDefault: true));
         }
-
-        var cut30 = DateTime.UtcNow.AddDays(-30);
-        var cut60 = DateTime.UtcNow.AddDays(-60);
-        var cut1 = DateTime.UtcNow.AddHours(-24);
-
-        // 1. NuGet Tier 1 (v3-cache) + Tier 2 (superseded versions in ~/.nuget/packages)
-        var nugetHttp = DirSize(Path.Combine(LocalAppData, @"NuGet\v3-cache"));
-        long nugetSuperseded = 0;
-        var nugetPkgs = Path.Combine(userProfile, @".nuget\packages");
-        foreach (var oldVer in NuGetCleanupScanner.FindSupersededVersions(nugetPkgs,
-            projectRoots ?? [Path.Combine(userProfile, "source", "repos")], scanLog, ct))
-            nugetSuperseded += DirSize(oldVer);
-        if (nugetHttp + nugetSuperseded > 10L << 20)
-            items.Add(new("storage-nuget", "NuGet HTTP cache & superseded package versions",
-                "Clears %LOCALAPPDATA%\\NuGet\\v3-cache and removes older package versions downloaded from nuget.org more than 45 days ago that no project on this PC uses (projects found from Visual Studio, VS Code, Rider and Windows Search). The newest version of each package is kept, and anything from a company feed or local folder is never touched. A build that still needs a removed version downloads it again.",
-                nugetHttp + nugetSuperseded, AutoCheckedByDefault: true));
-
-        // 2. ~/.grok stale worktrees, sessions, downloads (>30d)
-        var grokRoot = Path.Combine(userProfile, ".grok");
-        var grokBytes = DirSize(Path.Combine(grokRoot, "worktrees"), cut30) + DirSize(Path.Combine(grokRoot, "sessions"), cut30) + DirSize(Path.Combine(grokRoot, "downloads"), cut30);
-        if (grokBytes > 10L << 20)
-            items.Add(new("storage-grok", "Stale Grok CLI worktrees, sessions & downloads (>30 days)",
-                "Removes orphaned worktrees, old sessions, and cached downloads in ~/.grok older than 30 days.", grokBytes, AutoCheckedByDefault: true));
-
-        // 3. %LOCALAPPDATA%\Temp (>24h)
-        var tempBytes = DirSize(Path.GetTempPath(), cut1);
-        if (tempBytes > 10L << 20)
-            items.Add(new("storage-temp", "Temporary files (%TEMP% older than 24 hours)",
-                "Deletes leftover temporary installer and application files in %LOCALAPPDATA%\\Temp.", tempBytes, AutoCheckedByDefault: true));
-
-        // 4. Old VS Code commit versions + CachedExtensionVSIXs + duplicate ~/.vscode/extensions
-        long vscCommits = 0;
-        var vscRoot = Path.Combine(LocalAppData, @"Programs\Microsoft VS Code");
-        if (Directory.Exists(vscRoot))
-        {
-            var commitDirs = Directory.GetDirectories(vscRoot).Where(d => Path.GetFileName(d).Length == 10 && Path.GetFileName(d).All(Uri.IsHexDigit)).OrderByDescending(Directory.GetCreationTimeUtc).Skip(1);
-            foreach (var d in commitDirs) vscCommits += DirSize(d);
-        }
-        var vscVsix = DirSize(Path.Combine(appData, @"Code\CachedExtensionVSIXs")) + DirSize(Path.Combine(appData, @"Code\Crashpad"));
-        long vscDupExts = 0;
-        var vscExtRoot = Path.Combine(userProfile, @".vscode\extensions");
-        if (Directory.Exists(vscExtRoot))
-        {
-            foreach (var d in Directory.GetDirectories(vscExtRoot))
-                if (Path.GetFileName(d).StartsWith('.')) vscDupExts += DirSize(d, DateTime.UtcNow.AddDays(-7));
-        }
-        if (vscCommits + vscVsix + vscDupExts > 10L << 20)
-            items.Add(new("storage-vscode", "Old VS Code versions, VSIX installer cache & staging folders",
-                "Removes superseded VS Code commit folders, extracted CachedExtensionVSIXs, and failed .guid extension staging folders.",
-                vscCommits + vscVsix + vscDupExts, AutoCheckedByDefault: true));
-
-        // 5. Chrome & Edge Service Worker CacheStorage & Code Cache (>60d)
-        var browserCache =
-            DirSize(Path.Combine(LocalAppData, @"Google\Chrome\User Data\Default\Service Worker\CacheStorage"), cut60) +
-            DirSize(Path.Combine(LocalAppData, @"Google\Chrome\User Data\Default\Code Cache"), cut60) +
-            DirSize(Path.Combine(LocalAppData, @"Microsoft\Edge\User Data\Default\Service Worker\CacheStorage"), cut60) +
-            DirSize(Path.Combine(LocalAppData, @"Microsoft\Edge\User Data\Default\Code Cache"), cut60);
-        if (browserCache > 10L << 20)
-            items.Add(new("storage-browser-sw", "Stale Chrome & Edge Service Worker & Code Cache (>60 days)",
-                "Prunes offline Service Worker caches and bytecode caches untouched for over 60 days without touching logins, cookies, or history.",
-                browserCache, AutoCheckedByDefault: true));
-
-        // 6. Playwright browsers (Opt-in)
-        var pwBytes = DirSize(Path.Combine(LocalAppData, "ms-playwright"));
-        if (pwBytes > 10L << 20)
-            items.Add(new("storage-playwright", "Playwright test browser binaries (%LOCALAPPDATA%\\ms-playwright)",
-                "Removes downloaded Chromium/Firefox/WebKit test browsers used by Playwright.", pwBytes, AutoCheckedByDefault: false));
-
         return items.OrderByDescending(i => i.SizeBytes).ToList();
+    }
+
+    /// <summary>Deletes one storage cleanup category (by id only), then forgets the cached scan so the next view measures again.</summary>
+    public async Task<StorageCleanResult> CleanStorageAsync(string id, CancellationToken ct)
+    {
+        try { return await StorageCleaner.CleanAsync(id, Log, ct).ConfigureAwait(false); }
+        finally
+        {
+            StorageCleanupCache? cache;
+            lock (s_cleanupGate) cache = s_cleanupCache;
+            cache?.Invalidate();
+        }
     }
 
     public async Task<ActionOutcome> CloseAppAsync(string processName, CancellationToken ct)

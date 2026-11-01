@@ -32,7 +32,8 @@ public static class MemoryFeedback
         or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.StopSilentAppInstalls; // disk space / later installs, not memory
 }
 
-public sealed record ActionOutcome(bool Success, string Message);
+/// <param name="Skipped">Nothing was attempted on purpose (e.g. the app whose cache it is was open); the workflow lists it as skipped.</param>
+public sealed record ActionOutcome(bool Success, string Message, bool Skipped = false);
 
 /// <summary>Host-side probes and actions (Windows implementation in the Host; fakes in tests). Methods may throw.</summary>
 public interface IMemorySystem
@@ -71,6 +72,11 @@ public interface IMemorySystem
     /// <summary>Runs powercfg /h /type reduced (or full) with administrator rights.</summary>
     Task<ActionOutcome> SetHibernateTypeAsync(bool reduced, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
     Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct) => Task.FromResult<IReadOnlyList<StorageCleanupItem>>([]);
+    /// <summary>
+    /// Deletes one <see cref="Storage.StorageCleanupCatalog"/> category: re-evaluates its rule on disk, deletes only inside its allowlisted folders,
+    /// skips it entirely while its app is open. Permanent.
+    /// </summary>
+    Task<Storage.StorageCleanResult> CleanStorageAsync(string id, CancellationToken ct) => Task.FromResult(Storage.StorageCleanResult.NotRun(id, "Not supported on this PC."));
     /// <summary>Runs a Defender PowerShell script built by <see cref="DefenderProbe"/> (admin). Output = its stdout.</summary>
     Task<(bool Ok, string? Output)> RunDefenderScriptAsync(string script, CancellationToken ct) => Task.FromResult<(bool, string?)>((false, null));
     /// <summary>A DWORD on <see cref="RegistryAllowlist"/> (null = absent). Throws for a value that exists but isn't a DWORD.</summary>
@@ -112,7 +118,7 @@ public interface IMemorySystem
 
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);
 
-public sealed record SuggestionResult(string SuggestionId, bool Success, string Message, DateTime When, bool CanForceClose = false);
+public sealed record SuggestionResult(string SuggestionId, bool Success, string Message, DateTime When, bool CanForceClose = false, bool Skipped = false);
 
 /// <summary>
 /// Scans, shows and applies memory suggestions. Every change runs only from an explicit click; each is logged to the Event Log (1400)
@@ -147,6 +153,16 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
     public string? Busy { get; private set; }
     public string? ScanError { get; private set; }
     public long TotalFreedBytes { get; private set; }
+    /// <summary>Last storage scan (<see cref="ScanStorageAsync"/>); not part of the memory scan because it sizes big folders.</summary>
+    public IReadOnlyList<StorageCleanupItem> StorageItems { get; private set; } = [];
+    /// <summary>One "Delete" suggestion per storage cleanup category found (kept apart from the memory suggestions).</summary>
+    public IReadOnlyList<MemorySuggestion> StorageSuggestions { get; private set; } = [];
+    public bool ScanningStorage { get; private set; }
+    public bool StorageScanned { get; private set; }
+    public string? StorageError { get; private set; }
+    /// <summary>Disk space freed by storage cleanups this session.</summary>
+    public long StorageFreedBytes { get; private set; }
+    private readonly SemaphoreSlim _storageGate = new(1, 1);
     public IReadOnlyList<UndoEntry> Undos { get { lock (_gate) return _undo.ToList(); } }
     public IReadOnlyList<SuggestionResult> Recent { get { lock (_gate) return _recent.ToList(); } }
     public SuggestionResult? ResultFor(string id) { lock (_gate) return _results.GetValueOrDefault(id); }
@@ -174,6 +190,50 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         finally { Scanning = false; Raise(); }
     }
 
+    /// <summary>Measures the storage cleanups (cached by the Host for a few minutes unless <paramref name="refresh"/>). Never throws.</summary>
+    public async Task ScanStorageAsync(bool refresh = false, CancellationToken ct = default)
+    {
+        await _storageGate.WaitAsync(ct).ConfigureAwait(false);
+        ScanningStorage = true; StorageError = null; Raise();
+        try
+        {
+            SetStorage(await sys.ScanStorageCleanupsAsync(refresh, ct).ConfigureAwait(false));
+            StorageScanned = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log("Storage scan failed: " + ex);
+            StorageError = "Couldn't measure the caches and leftovers on this PC.";
+        }
+        finally { ScanningStorage = false; _storageGate.Release(); Raise(); }
+    }
+
+    private void SetStorage(IReadOnlyList<StorageCleanupItem> items)
+    {
+        StorageItems = items;
+        StorageSuggestions = Storage.StorageCleanupCatalog.Suggestions(items);
+    }
+
+    /// <summary>
+    /// Runs one storage cleanup category by id (never a path). Journals one permanent (NotUndoable) record with what was deleted and how much
+    /// space it freed, only when something really was deleted.
+    /// </summary>
+    private async Task<ActionOutcome> CleanStorageAsync(MemoryAction a, CancellationToken ct)
+    {
+        if (Storage.StorageCleanupCatalog.Find(a.Target) is not { } c) return new(false, "That cleanup isn't one this app may run.");
+        var r = await sys.CleanStorageAsync(c.Id, ct).ConfigureAwait(false);
+        if (!r.Ran) return new(false, r.Message, Skipped: r.RunningApps is { Count: > 0 });
+        if (r.FilesRemoved > 0)
+        {
+            var size = Storage.StorageCleanupEngine.SizeText(r.BytesFreed);
+            Journal(ChangeKind.NotUndoable, $"{c.Id}:{Guid.NewGuid():N}", null,
+                $"{c.Title}: {MemoryText.Plural((int)Math.Min(r.FilesRemoved, int.MaxValue), "file")} deleted, {size} freed (can't be undone)");
+            lock (_gate) StorageFreedBytes += r.BytesFreed;
+        }
+        SetStorage(StorageItems.Where(i => i.Id != c.Id).ToList()); // what's left is in use or newer than the rule allows
+        return new(r.FilesRemoved > 0 || r.FilesSkipped == 0, r.Message);
+    }
+
     private MemoryReading? SafeRead() { try { return sys.ReadMemory(); } catch (Exception ex) { Log("ReadMemory failed: " + ex.Message); return null; } }
 
     /// <summary>Runs one action of one suggestion (explicit UI click only), measures memory before/after, logs 1400, rescans.</summary>
@@ -193,7 +253,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                 outcome = new(false, "Windows didn't allow that change.");
             }
             string text = outcome.Message;
-            if (outcome.Success && a.Type != MemoryActionType.OpenSettings)
+            if (outcome.Success && a.Type is not (MemoryActionType.OpenSettings or MemoryActionType.CleanStorage)) // disk, not memory
             {
                 var deferred = MemoryFeedback.IsDeferred(a.Type);
                 MemoryReading? after = null;
@@ -204,7 +264,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
             }
             var canForce = !outcome.Success && a.Type == MemoryActionType.CloseApp;
             var r = Record(s.Id, outcome with { Message = text }, a, null, canForce);
-            if (a.Type != MemoryActionType.OpenSettings) await ScanAsync(ct).ConfigureAwait(false);
+            if (a.Type is not (MemoryActionType.OpenSettings or MemoryActionType.CleanStorage)) await ScanAsync(ct).ConfigureAwait(false);
             return r;
         }
         finally { Busy = null; Raise(); }
@@ -664,7 +724,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
 
     private SuggestionResult Record(string id, ActionOutcome o, MemoryAction a, UndoEntry? _, bool canForce = false)
     {
-        var r = new SuggestionResult(id, o.Success, (o.Success ? "Done: " : "") + o.Message, DateTime.Now, canForce);
+        var r = new SuggestionResult(id, o.Success, (o.Success && !o.Skipped ? "Done: " : "") + o.Message, DateTime.Now, canForce, o.Skipped);
         lock (_gate)
         {
             _results[id] = r;
@@ -794,6 +854,9 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
 
             case MemoryActionType.StopSilentAppInstalls:
                 return StopSilentAppInstalls(s);
+
+            case MemoryActionType.CleanStorage:
+                return await CleanStorageAsync(a, ct).ConfigureAwait(false);
 
             case MemoryActionType.AutoManagePageFile:
                 var pageFileBefore = await sys.ReadPageFileSettingsAsync(ct).ConfigureAwait(false);

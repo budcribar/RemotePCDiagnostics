@@ -23,6 +23,7 @@ public static class FixCatalog
         MemoryActionType.BlockBrowserExtension,
         MemoryActionType.StopBrowserBackground,
         MemoryActionType.RemoveApp, MemoryActionType.RemoveXboxApps, MemoryActionType.StopSilentAppInstalls,
+        MemoryActionType.CleanStorage,
     };
 
     public const string NotNeededNote = "Closing apps, ending tasks and restarting aren't listed: the workflow restarts the PC itself, which does the same.";
@@ -92,7 +93,7 @@ public static class FixCatalog
             if (a is null) continue;
             var id = MemoryId(s.Id, a.Type, a.Target);
             if (!seen.Add(id)) continue;
-            var order = a.Type switch { MemoryActionType.DisableStartup => 20, MemoryActionType.SetServiceManual => 22, MemoryActionType.AutoManagePageFile => 12, _ => 15 };
+            var order = a.Type switch { MemoryActionType.DisableStartup => 20, MemoryActionType.SetServiceManual => 22, MemoryActionType.AutoManagePageFile => 12, MemoryActionType.CleanStorage => 40, _ => 15 };
             list.Add(new(id, a.Type == MemoryActionType.SetServiceManual && !MemorySuggestionEngine.IsVisualStudioCollector(a.Target) && !AiVmServices.Is(a.Target) ? $"{s.Title}: start only when needed" : s.Title, s.Why, s.Category, s.Risk, FixSource.Memory, order,
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
                 NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions

@@ -84,7 +84,9 @@ public sealed class WorkflowService(
             {
                 Note("Looking for ways to use less memory…");
                 await memory.ScanAsync(ct).ConfigureAwait(false);
-                suggestions = memory.Suggestions;
+                Note("Measuring caches and leftovers that can be deleted…");
+                await memory.ScanStorageAsync(refresh: true, ct).ConfigureAwait(false);
+                suggestions = [.. memory.Suggestions, .. memory.StorageSuggestions];
             }
             var snapshot = results.Snapshot.Values.ToList();
             var fixes = FixCatalog.Build(snapshot, suggestions, remediation);
@@ -264,7 +266,9 @@ public sealed class WorkflowService(
         if (memory is not null && approved.Any(f => f.Source == FixSource.Memory))
         {
             await memory.ScanAsync(ct).ConfigureAwait(false); // suggestions are matched again on the fresh boot
-            fresh = memory.Suggestions;
+            // Storage cleanups are measured again too; each one re-checks its rules on disk again right before deleting.
+            if (approved.Any(f => f.MemoryAction == MemoryActionType.CleanStorage)) await memory.ScanStorageAsync(refresh: true, ct).ConfigureAwait(false);
+            fresh = [.. memory.Suggestions, .. memory.StorageSuggestions];
         }
         var outcomes = new List<FixOutcome>();
         for (var i = 0; i < approved.Count; i++)
@@ -318,7 +322,7 @@ public sealed class WorkflowService(
             var action = s?.Actions.FirstOrDefault(x => x.Type == t && x.Target == f.MemoryTarget);
             if (s is null || action is null) return new(f.Id, f.Title, true, "Not needed any more after the restart.", Skipped: true);
             var r = await memory.ApplyAsync(s, action, ct).ConfigureAwait(false);
-            return new(f.Id, f.Title, r.Success, r.Message);
+            return new(f.Id, f.Title, r.Success, r.Message, Skipped: r.Skipped);
         }
         return new(f.Id, f.Title, false, "Skipped: this fix couldn't be run here (the part of the app that applies it isn't available).", Skipped: true);
     }
