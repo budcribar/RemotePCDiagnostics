@@ -219,6 +219,35 @@ public static class MemorySuggestionEngine
     public static bool IsVisualStudioCollector(string name) =>
         name.StartsWith("VSStandardCollectorService", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>#19: one card for the non-default browser: background apps off (Local State), plus Startup Boost off (policy) for Edge.</summary>
+    private static MemorySuggestion BrowserBackgroundSuggestion(MemorySnapshot s, BrowserKind kind)
+    {
+        var b = BrowserBackground.For(s, kind)!;
+        var name = BrowserPrefs.Label(kind);
+        var main = BrowserPrefs.Label(s.DefaultBrowser!.Value);
+        var usage = BrowserBackground.RunningInBackground(s, kind) ? s.App(BrowserPrefs.ProcessName(kind)) : null;
+        var bg = BrowserBackground.BackgroundModeOn(b);
+        var boost = BrowserBackground.StartupBoostChangeable(b);
+        var setting = kind == BrowserKind.Chrome
+            ? "\"Continue running background apps when Google Chrome is closed\" (Chrome settings > System)"
+            : "\"Continue running background extensions and apps when Microsoft Edge is closed\" (Edge settings > System and performance)";
+        var steps = new List<string>();
+        if (bg) steps.Add($"Turns off {setting}, for this Windows account.");
+        if (boost)
+            steps.Add("Turns off Startup Boost for everyone on this PC (a Microsoft Edge policy), so Edge no longer starts in the background when you sign in. "
+                + "Because it's a policy, Edge will say \"Your browser is managed by your organization\" in its menu and settings; that's only this setting, nothing else is controlled.");
+        steps.Add($"Ends {name}'s background processes now, if it's running with no window open. An open {name} window is never closed; if one is open, close it and try again.");
+        steps.Add($"{name} still works normally when you open it; it may take a second or two longer to open. Its extensions stop running once its windows are closed.");
+        steps.Add("Undo turns " + (bg && boost ? "both" : "it") + " back on.");
+        var now = usage is null ? "" : $" Right now it's using {MemoryText.Size(usage.MemoryBytes)} across {MemoryText.Plural(usage.Instances, "process", "processes")} with no window open.";
+        return new($"browser-background-{kind}".ToLowerInvariant(), $"Stop {name} from running in the background",
+            $"{main} is your default browser, but {name} keeps running in the background{(boost ? " (Startup Boost" + (bg ? " and background apps)" : ")") : "")} even though you don't use it.{now}",
+            usage?.MemoryBytes, SuggestionRisk.Low, SuggestionKind.Automated, steps,
+            [new(MemoryActionType.StopBrowserBackground, kind.ToString(), $"Stop {name} running in the background",
+                $"Stop {name} from running in the background? It still opens normally when you start it." + (boost ? " Needs administrator rights; Edge will show \"managed by your organization\"." : ""))],
+            "Browsers", "Takes full effect the next time you sign in.");
+    }
+
     public static IReadOnlyList<MemorySuggestion> Build(MemorySnapshot s)
     {
         var list = new List<MemorySuggestion>();
@@ -295,6 +324,7 @@ public static class MemorySuggestionEngine
         // Startup apps (Win32 Run keys + Packaged UWP StartupTasks).
         foreach (var e in startup.Where(e => e.Enabled))
         {
+            if (BrowserBackground.IsAutoLaunch(e)) continue; // a browser's own background launcher: offered below, only for the non-default browser (#19)
             var app = s.App(e.ExeName);
             if (!AlwaysOfferStartup(e.ExeName) && (app is null || app.MemoryBytes < 150 * Mb)) continue;
             var label = MemoryText.FriendlyAppName(e.ExeName);
@@ -512,6 +542,21 @@ public static class MemorySuggestionEngine
                 [new(MemoryActionType.BlockBrowserExtension, BrowserExtensions.Target(found.Browser, found.Id), $"Turn off {known.Name}",
                     $"Turn off {known.Name} in {browser} for everyone on this PC? It can't be reinstalled until you undo this, and {browser} will show \"Managed by your organization\". Needs administrator rights.")],
                 "Browser", $"Takes effect within a minute or the next time {browser} starts.", DefaultOn: false));
+        }
+
+        // #19 The browser the person doesn't use (not the default) running in the background.
+        if (BrowserBackground.Offer(s))
+            list.Add(BrowserBackgroundSuggestion(s, BrowserBackground.Secondary(s)!.Value));
+        foreach (var e in BrowserBackground.AutoLaunchEntries(s))
+        {
+            var kind = BrowserBackground.Secondary(s)!.Value;
+            var name = BrowserPrefs.Label(kind);
+            list.Add(new($"startup-{e.Name}".ToLowerInvariant(), $"Stop {name} from starting in the background with Windows",
+                $"{BrowserPrefs.Label(s.DefaultBrowser!.Value)} is your default browser, but {name} starts in the background (with no window) every time you sign in.",
+                null, SuggestionRisk.Low, SuggestionKind.Automated,
+                ["Same as Task Manager > Startup apps > Disable for this entry. No window was opening anyway; it only started " + name + " in the background.",
+                 $"{name} still opens normally when you start it.", "Undo turns it back on."],
+                [new(MemoryActionType.DisableStartup, e.Name, "Don't start with Windows")], "Browsers", "Takes effect the next time you sign in."));
         }
 
         // Services.

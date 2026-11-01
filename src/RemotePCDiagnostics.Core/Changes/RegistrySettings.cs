@@ -48,8 +48,12 @@ public static class RegistryAllowlist
     /// DisconnectedState (that policy turns off all connected experiences, including co-authoring and OneDrive/SharePoint files).</summary>
     public static readonly RegistrySetting OfficeOptionalConnectedExperiences = new(RegistryRoot.CurrentUser, @"Software\Policies\Microsoft\Office\16.0\Common\Privacy", "ControllerConnectedServicesEnabled");
 
+    /// <summary>Edge Startup Boost machine policy (#19): 0 = Edge doesn't start in the background at sign-in or keep running after it's closed.
+    /// Only written when Edge isn't the default browser. Like any Edge policy, Edge then shows "Managed by your organization".</summary>
+    public static readonly RegistrySetting EdgeStartupBoostPolicy = new(RegistryRoot.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "StartupBoostEnabled");
+
     public static readonly IReadOnlyList<RegistrySetting> All =
-        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen, LegacyDefaultPrinterMode, OfficeOptionalConnectedExperiences];
+        [WidgetsPolicy, SearchHighlightsPolicy, SearchHighlightsToggle, WordStartScreen, ExcelStartScreen, PowerPointStartScreen, LegacyDefaultPrinterMode, OfficeOptionalConnectedExperiences, EdgeStartupBoostPolicy];
 
     /// <summary>The allowlisted setting with this target (case-insensitive), or null.</summary>
     public static RegistrySetting? Find(string? target) =>

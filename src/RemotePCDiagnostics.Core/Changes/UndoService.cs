@@ -122,6 +122,11 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 memory.WriteBrowserLocalState(kind, c.Previous);
                 return Ok("Browser setting restored.");
 
+            case ChangeKind.BrowserLocalStateValue:
+                if (memory is null) return Fail("Not available.");
+                var (bgOk, bgMessage) = await BrowserBackground.RestoreAsync(memory, c.Target, c.Previous, ct).ConfigureAwait(false);
+                return new(c, bgOk, bgMessage);
+
             case ChangeKind.Transparency:
                 if (memory is null) return Fail("Not available.");
                 memory.SetTransparency(c.Previous != "0");

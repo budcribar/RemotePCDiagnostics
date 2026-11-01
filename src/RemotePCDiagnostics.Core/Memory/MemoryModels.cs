@@ -97,7 +97,7 @@ public sealed record MemorySnapshot(
     DefenderInfo? Defender = null,
     WindowsFeedsInfo? Feeds = null,
     HibernateInfo? Hibernate = null,
-    OfficeStartInfo? OfficeStart = null, DefaultPrinterInfo? DefaultPrinter = null, OfficePrivacyInfo? OfficePrivacy = null, BrowserExtensionsInfo? Extensions = null)
+    OfficeStartInfo? OfficeStart = null, DefaultPrinterInfo? DefaultPrinter = null, OfficePrivacyInfo? OfficePrivacy = null, BrowserExtensionsInfo? Extensions = null, IReadOnlyList<BrowserBackgroundInfo>? BrowserBackground = null)
 {
     public AppUsage? App(string name) => Apps.FirstOrDefault(a => a.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 }
@@ -167,6 +167,7 @@ public enum MemoryActionType
     DisableOfficeOptionalExperiences,
     ShutdownWsl,
     BlockBrowserExtension,
+    StopBrowserBackground,
 }
 
 /// <summary>One button on a suggestion card. <see cref="Confirm"/> non-null = ask once inline before running.</summary>
