@@ -140,7 +140,8 @@ public sealed class WorkflowService(
         var alreadyOn = false;
         if (signIn is not null)
         {
-            if (!sys.ValidateCredentials(signIn.User, signIn.Domain, signIn.Password)) return "That password didn't work for this account. Nothing was changed.";
+            var helloOnly = false; try { helloOnly = sys.GetAutoLogonStatus().BlockedByWindowsHello; } catch { }
+            if (!sys.ValidateCredentials(signIn.User, signIn.Domain, signIn.Password)) return helloOnly ? "That password didn't work for this account (on a Windows Hello-only PC where you've never signed in with your password, Windows may not have the password cached locally — tick Skip below so the client signs in with their PIN). Nothing was changed." : "That password didn't work for this account. Nothing was changed.";
             try { backup = sys.EnableAutoLogon(signIn.User, signIn.Domain, signIn.Password, RestartsInWorkflow); }
             catch (Exception ex)
             {

@@ -31,12 +31,12 @@ public sealed record FixChange(Guid JournalId, string Text, Changes.UndoSupport 
 public sealed record WorkflowRestart(string Why, DateTimeOffset RequestedUtc, bool Accepted, DateTimeOffset? BootedUtc = null);
 
 /// <summary>Winlogon values before the workflow turned on automatic sign-in (restored at the end). Never contains a password.</summary>
-public sealed record AutoLogonBackup(string? AutoAdminLogon, string? DefaultUserName, string? DefaultDomainName, string? AutoLogonCount);
+public sealed record AutoLogonBackup(string? AutoAdminLogon, string? DefaultUserName, string? DefaultDomainName, string? AutoLogonCount, int? PasswordLessBuildVersion = null);
 
 /// <summary>Whether this PC can sign in automatically for the workflow's restarts.</summary>
 public sealed record AutoLogonStatus(string UserName, string Domain, bool AlreadyAutomatic, bool BlockedByWindowsHello, string? Note = null)
 {
-    public bool CanUse => !AlreadyAutomatic && !BlockedByWindowsHello;
+    public bool CanUse => !AlreadyAutomatic;
 }
 
 /// <summary>Everything the workflow keeps across restarts (%LOCALAPPDATA%\RemotePCDiagnostics\workflow.json). No passwords.</summary>
