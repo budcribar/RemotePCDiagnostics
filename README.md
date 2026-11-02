@@ -24,6 +24,7 @@ RemotePCDiagnostics is a single Windows desktop application (a WPF or WinForms h
 | Security baseline audit (optional) | Windows hardening checks against published baselines | HardeningKitty |
 | Speaker to microphone test (optional) | Plays a test tone and checks the speaker output and the microphone heard it | NAudio (WASAPI) |
 | Microphone to speaker test (optional) | Plays the microphone through the speaker, mic level, "I heard it" answer | NAudio (WASAPI) |
+| Webcam test (optional) | Opens the camera for a few seconds: frame rate, stalls, brightness, black/frozen/overexposed frames | Windows.Media.Capture (WinRT, part of Windows) |
 
 ## Architecture (intended)
 
@@ -219,6 +220,33 @@ test it plays the tone twice and records the speaker output and the microphone o
 (`AUDCLNT_STREAMOPTIONS_RAW`, to skip echo cancellation and noise suppression) is requested and dropped quietly if the driver refuses.
 No speaker or no microphone gives a "Skipped" warning, never a crash; CI machines have no audio devices, so unit tests use fakes and
 synthetic signals. Real behaviour (levels, raw mode, feedback brake) still needs checking on hardware.
+
+### Webcam test
+
+On-demand, in the Checks & tests screen after the audio tests; same rules as the audio tests (never auto-run, not in Run All, not part of
+the stress run, runs on its own after it when ticked, not ticked by default, no confirmation prompt, Stop/Cancel and app close cancel it).
+Camera access is behind `IWebcamIo` (Core); the Windows implementation is `MediaCaptureWebcamIo` in the Host (`MediaCapture` +
+`MediaFrameReader` from the Windows SDK projection the Host already targets, so no new package). The page lists the cameras
+(built-in / USB marked where Windows reports it; built-in first and preselected) and captures for 3, 5 (default) or 10 s, hard-capped at 30 s.
+The camera is opened at the largest format up to 1280×720 and 30 fps; each frame is reduced to a 160-pixel-wide luma thumbnail and only
+running totals plus the previous thumbnail are kept. **No frame or image is saved, shown or sent** (no preview); the camera is always closed.
+
+| Result | Status |
+| --- | --- |
+| No camera | Skipped (warning) |
+| Windows camera privacy blocks it (ConsentStore `webcam`, or access denied) | Error: "Camera access is blocked by Windows privacy settings…" |
+| Camera in use by another app (and shared read-only also fails) | Error: close the other app |
+| Opened but no frames | Fail |
+| ≥ 90 % black frames | Warning: covered lens or privacy shutter closed |
+| ≥ 90 % identical consecutive frames | Fail: frozen picture |
+| Effective frame rate < 10 fps | Warning |
+| A gap of more than 1 s between frames | Warning: stall |
+| ≥ 50 % of frames mostly blown out / mean brightness < 40 | Warning: overexposed / too dark |
+| Otherwise | Pass |
+
+Caveats: thresholds are first guesses and need checking on real cameras (IR/Windows Hello cameras, virtual cameras and some drivers
+may behave differently). If another app holds the camera, the test reads it in shared mode at that app's format and says so.
+A camera in a very dark room can count as "black". CI has no camera, so unit tests use synthetic frames.
 
 ### GPU stress test
 

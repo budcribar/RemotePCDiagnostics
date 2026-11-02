@@ -211,7 +211,7 @@
         "Osquery" => typeof(OsqueryPage), "Sensors" => typeof(LibreHardwareMonitorPage), "CpuStress" => typeof(CpuStressPage),
         "MemoryTest" => typeof(MemoryTestPage), "DiskSpeed" => typeof(DiskSpeedPage), "GpuStress" => typeof(GpuStressPage),
         "NetworkTest" => typeof(NetworkTestPage), "SecurityAudit" => typeof(SecurityAuditPage),
-        "SpeakerToMic" => typeof(SpeakerToMicPage), "MicToSpeaker" => typeof(MicToSpeakerPage), _ => typeof(AreaPage),
+        "SpeakerToMic" => typeof(SpeakerToMicPage), "MicToSpeaker" => typeof(MicToSpeakerPage), "Webcam" => typeof(WebcamTestPage), _ => typeof(AreaPage),
     };
 
     private static IDictionary<string, object>? ParamsFor(IDiagnosticModule m) =>

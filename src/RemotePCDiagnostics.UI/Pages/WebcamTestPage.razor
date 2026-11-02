@@ -1,0 +1,76 @@
+@page "/module/webcam"
+@using RemotePCDiagnostics.Core.Webcam
+@inherits StoreAwareComponent
+@* On-demand webcam test: opens the camera for a few seconds and checks the frames in memory (nothing is saved, shown or sent). *@
+@{
+    var m = Diagnostics.Modules.OfType<WebcamTestModule>().FirstOrDefault();
+}
+@if (m is null)
+{
+    <p class="meta" data-testid="area-missing">This page isn't available.</p>
+}
+else
+{
+    var r = Store.Get(m.Name);
+    var rep = r.Payload as WebcamReport;
+    var running = r.Status == DiagnosticStatus.Running;
+    var suiteBusy = Diagnostics.IsStressSuiteRunning;
+    <div class="toolbar toolbar-grouped">
+        <span class="icon-badge page-icon"><Icon Name="camera" Size="20" /></span><h1 data-testid="cam-title">@m.DisplayName</h1>
+        @if (running) { <button data-testid="cam-cancel" @onclick="m.Cancel">Cancel</button> }
+        else { <button data-testid="cam-start" disabled="@suiteBusy" @onclick="() => Start(m)">@(r.Status == DiagnosticStatus.NotRun ? "Start" : "Run again")</button> }
+    </div>
+    <p class="meta" data-testid="cam-intro">Opens the camera for a few seconds (at most 1280×720, 30 fps) and checks the picture automatically: frame rate, stalls, brightness, contrast, black or frozen frames and overexposure. Frames are only analysed in memory; no picture is saved, shown or sent. The camera light will turn on briefly.</p>
+    <div class="toolbar">
+        <label class="meta">Camera
+            <select data-testid="cam-device" disabled="@running" @onchange="e => m.DeviceId = e.Value?.ToString() is { Length: > 0 } v ? v : null">
+                @if (_devices.Count == 0) { <option value="">None found</option> }
+                else { foreach (var d in _devices) { <option value="@d.Id" selected="@(d.Id == m.DeviceId)">@d.Label</option> } }
+            </select>
+        </label>
+        <label class="meta">Length
+            <select data-testid="cam-duration" disabled="@running" @onchange="e => { if (int.TryParse(e.Value?.ToString(), out var s)) m.Duration = TimeSpan.FromSeconds(s); }">
+                @foreach (var d in WebcamTestModule.DurationChoices) { <option value="@((int)d.TotalSeconds)" selected="@(d == m.Duration)">@((int)d.TotalSeconds) s</option> }
+            </select>
+        </label>
+        <button class="btn-small" data-testid="cam-refresh-devices" disabled="@running" @onclick="() => _devices = m.Devices()">Refresh devices</button>
+    </div>
+    <p data-testid="cam-status" class="@(running ? "status-line is-running" : r.Status == DiagnosticStatus.Error && rep is null ? "status-line error-text" : "status-line")">
+        <span class="@DotClass(r.Status)"></span>
+        <span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start to begin.", DiagnosticStatus.Running => "Capturing from the camera…", _ => r.Message })</span>
+        @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
+    </p>
+    @if (running) { <div class="run-progress run-progress-indeterminate" data-testid="cam-run-progress" aria-hidden="true"><div></div></div> }
+    @if (!running && rep?.Notice is { } notice) { <p class="notice" data-testid="cam-notice">@notice</p> }
+    @if (!running && rep is not null && rep.Stats.Frames > 0)
+    {
+        var s = rep.Stats;
+        <table class="detail" data-testid="cam-table">
+            <tr><th>Camera</th><td>@rep.Device@(rep.Bus switch { WebcamBus.BuiltIn => " (built-in)", WebcamBus.Usb => " (USB)", _ => "" })</td></tr>
+            <tr><th>Resolution</th><td>@rep.Width × @rep.Height@(rep.Format is { } f ? $" ({f})" : "")@(rep.RequestedFps > 0 ? $", {rep.RequestedFps:0.#} fps requested" : "")</td></tr>
+            <tr><th>Frames</th><td>@s.Frames in @rep.Duration.TotalSeconds.ToString("0") s · @s.Fps.ToString("0.#") fps</td></tr>
+            <tr><th>Stalls / dropped</th><td>@s.Stalls stall(s) · about @s.EstimatedDropped frame(s) dropped · longest gap @s.LongestGap.TotalMilliseconds.ToString("0") ms</td></tr>
+            <tr><th>Brightness / contrast</th><td>@s.MeanBrightness.ToString("0") / @s.MeanContrast.ToString("0.0") (0–255)</td></tr>
+            <tr><th>Black / frozen / overexposed</th><td>@Pct(s.BlackFraction) / @Pct(s.FrozenFraction) / @Pct(s.OverexposedFraction)</td></tr>
+            <tr><th>Sharpness</th><td>@s.Sharpness.ToString("0.0")</td></tr>
+        </table>
+    }
+}
+
+@code {
+    private IReadOnlyList<WebcamDevice> _devices = [];
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        if (Diagnostics.Modules.OfType<WebcamTestModule>().FirstOrDefault() is { } m) _devices = m.Devices();
+    }
+
+    private void Start(WebcamTestModule m)
+    {
+        if (Diagnostics.IsStressSuiteRunning) return;
+        _ = Diagnostics.RunAsync(m.Name);
+    }
+
+    private static string Pct(double v) => (v * 100).ToString("0") + " %";
+}
