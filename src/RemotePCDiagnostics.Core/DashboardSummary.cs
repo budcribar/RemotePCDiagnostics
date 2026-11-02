@@ -1,7 +1,7 @@
 namespace RemotePCDiagnostics.Core;
 
 /// <summary>One module as seen by the Dashboard banner.</summary>
-public sealed record BannerModule(string Name, string DisplayName, bool OnDemand, bool IsStress, DiagnosticStatus Status, string? Message = null);
+public sealed record BannerModule(string Name, string DisplayName, bool OnDemand, bool IsStress, DiagnosticStatus Status, string? Message = null, bool Cancelled = false);
 
 /// <summary>A module that needs a look, in the banner title.</summary>
 public sealed record BannerProblem(string Name, string DisplayName, bool IsError);
@@ -39,12 +39,7 @@ public sealed class DashboardSummary
     private int stressTotal;
 
     /// <summary>Messages that mean the user cancelled the module, not that something is wrong.</summary>
-    public static bool IsCancelled(BannerModule m) =>
-        m.Status == DiagnosticStatus.Warning && m.Message is { } msg
-        && (msg.Trim().Equals("Cancelled", StringComparison.OrdinalIgnoreCase)
-            || msg.Trim().Equals("Stopped", StringComparison.OrdinalIgnoreCase)
-            || msg.Trim().Equals("Stopped by you", StringComparison.OrdinalIgnoreCase)
-            || msg == Security.SecurityAuditModule.CancelledMessage);
+    public static bool IsCancelled(BannerModule m) => m.Cancelled || Cancellation.IsLegacyCancelledText(m.Status, m.Message);
 
     /// <param name="modules">Modules in Dashboard order.</param>
     /// <param name="suite">Last stress suite progress; finished steps marked Skipped (not available on this PC) are not counted as not run.</param>

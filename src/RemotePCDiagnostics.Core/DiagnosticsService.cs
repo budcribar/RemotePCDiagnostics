@@ -112,12 +112,14 @@ public sealed class DiagnosticsService
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            result = new DiagnosticResult(module.Name, DiagnosticStatus.Warning, "Cancelled", DateTimeOffset.Now);
+            result = new DiagnosticResult(module.Name, DiagnosticStatus.Warning, "Cancelled", DateTimeOffset.Now) { Cancelled = true };
         }
         catch (Exception ex)
         {
             result = new DiagnosticResult(module.Name, DiagnosticStatus.Error, ex.Message, DateTimeOffset.Now, ex);
         }
+        // Stress tests know from their own report (not the message) when the user stopped them.
+        if (!result.Cancelled && module is IStressSuiteModule stress && stress.IsStoppedByUserResult(result)) result = result with { Cancelled = true };
         _store.Set(result);
         return result;
     }

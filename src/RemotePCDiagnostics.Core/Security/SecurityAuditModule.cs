@@ -112,7 +112,7 @@ public sealed class SecurityAuditModule : IDiagnosticModule
             catch (OperationCanceledException) when (cts.IsCancellationRequested)
             {
                 Log($"SecurityAudit: cancelled after {sw.ElapsedMilliseconds} ms (process tree killed)");
-                return Result(DiagnosticStatus.Warning, CancelledMessage, null);
+                return Result(DiagnosticStatus.Warning, CancelledMessage, null) with { Cancelled = true };
             }
             catch (Exception ex)
             {

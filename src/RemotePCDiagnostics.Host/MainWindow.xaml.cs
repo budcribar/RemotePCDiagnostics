@@ -189,10 +189,9 @@ public partial class MainWindow : Window
             RemoteHyperlink.NavigateUri = _technicianUrl;
             RemoteLinkRow.Visibility = Visibility.Visible;
             SetRemoteState(RemoteSessionState.Ready);
-            // Fallback: same link inside the web view, as the tutorial does (overlay is primary).
-            var encoded = System.Net.WebUtility.HtmlEncode(_technicianUrl.ToString());
-            try { (s as IBlazorWebView)?.NavigateToString($"<a href='{encoded}' target='_blank'>{encoded}</a>"); }
-            catch (Exception ex) { App.Log($"NavigateToString fallback failed: {ex}"); }
+            // The app runs in the technician's browser; this window only needs to say so (the link is in the panel above, not repeated).
+            try { (s as IBlazorWebView)?.NavigateToString(RemoteLinkInfo.LocalPlaceholderHtml); }
+            catch (Exception ex) { App.Log($"NavigateToString placeholder failed: {ex}"); }
         });
         RemoteBlazorWebView.Connected += (_, e) => Dispatcher.BeginInvoke(() =>
         {

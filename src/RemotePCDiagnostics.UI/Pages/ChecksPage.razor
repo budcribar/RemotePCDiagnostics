@@ -6,7 +6,7 @@
 @inject RemotePCDiagnostics.Core.History.IHistoryStore History
 @* Checks & Tests: two groups (system checks / stress & deep scans) on the left, the selected test's real page on the right. *@
 @{
-    var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message); }), Diagnostics.LastStressSuiteProgress);
+    var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled); }), Diagnostics.LastStressSuiteProgress);
     var anyResult = Diagnostics.Modules.Any(m => Store.Get(m.Name).Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running));
     var banner = ChecksBanner.Build(summary, Screen.Progress, anyResult);
     var selected = Diagnostics.Modules.FirstOrDefault(m => string.Equals(m.Name, Screen.SelectedModule, StringComparison.OrdinalIgnoreCase))

@@ -19,7 +19,12 @@ public sealed record WorkflowFix(
     string Id, string Title, string Why, string Area, SuggestionRisk Risk, FixSource Source, int Order,
     AreaAction? Remediation = null, string? SuggestionId = null, MemoryActionType? MemoryAction = null, string? MemoryTarget = null,
     bool NeedsAdmin = false, bool Slow = false, Changes.UndoSupport Undo = Changes.UndoSupport.Full, bool DefaultOn = true,
-    string? UndoChip = null);
+    string? UndoChip = null, string? AreaKey = null)
+{
+    /// <summary>Stable key for the area (grouping, remembered open areas). Always the untranslated name from the code, even if
+    /// <see cref="Area"/> is ever shown translated.</summary>
+    public string GroupKey => AreaKey ?? Area;
+}
 
 /// <param name="Changes">What the fix recorded in the undo journal while it ran (one line per setting, with its old value where known).</param>
 public sealed record FixOutcome(string FixId, string Title, bool Success, string Message, bool Skipped = false, IReadOnlyList<FixChange>? Changes = null);

@@ -19,7 +19,7 @@
     var all = Diagnostics.Modules.Select(m => Store.Get(m.Name)).ToList();
     var checking = checks.Any(m => Store.Get(m.Name).Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun);
     var stressBusy = suiteBusy || Diagnostics.IsAnyStressRunning;
-    var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message); }), suite);
+    var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled); }), suite);
     var problems = summary.Problems.Count;
     var last = all.Where(r => r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running)).Select(r => (DateTimeOffset?)r.Timestamp).Max();
     var bannerKind = checking ? "run" : problems == 0 ? "ok" : summary.HasError ? "err" : "warn";

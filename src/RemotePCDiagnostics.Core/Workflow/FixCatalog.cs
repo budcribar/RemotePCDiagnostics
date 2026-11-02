@@ -52,8 +52,9 @@ public static class FixCatalog
         _ => SuggestionRisk.Low,
     };
 
-    public static string RemediationId(AreaAction a) => $"rem:{a.Kind}:{a.Target}".ToLowerInvariant();
-    public static string MemoryId(string suggestionId, MemoryActionType t, string target) => $"mem:{suggestionId}:{t}:{target}".ToLowerInvariant();
+    /// <summary>Stable fix ids (remembered ticks use them): fixed type keys from <see cref="FixKeys"/>, never display text.</summary>
+    public static string RemediationId(AreaAction a) => $"rem:{FixKeys.Of(a.Kind)}:{a.Target}".ToLowerInvariant();
+    public static string MemoryId(string suggestionId, MemoryActionType t, string target) => $"mem:{suggestionId}:{FixKeys.Of(t)}:{target}".ToLowerInvariant();
 
     private static bool CanRunUnattended(MemoryAction action) => UnattendedMemoryActions.Contains(action.Type);
 
@@ -80,7 +81,7 @@ public static class FixCatalog
                     list.Add(new(id, title, plan?.WhatItIs ?? card.Headline, area, RiskOf(a.Kind), FixSource.Remediation, OrderOf(a.Kind), Remediation: a,
                         NeedsAdmin: plan?.Warning?.Contains("administrator", StringComparison.OrdinalIgnoreCase) == true,
                         Slow: a.Kind is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates,
-                        Undo: Changes.Undoability.Of(a.Kind)));
+                        Undo: Changes.Undoability.Of(a.Kind), AreaKey: area));
                 }
             }
         }
@@ -100,7 +101,7 @@ public static class FixCatalog
                     or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension
                     or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.RemoveNarratorAddons
                     || (a.Type == MemoryActionType.StopBrowserBackground && a.Target == nameof(BrowserKind.Edge)),
-                Undo: Changes.Undoability.Of(a.Type), DefaultOn: s.DefaultOn, UndoChip: s.UndoChip));
+                Undo: Changes.Undoability.Of(a.Type), DefaultOn: s.DefaultOn, UndoChip: s.UndoChip, AreaKey: s.Category));
         }
 
         return list.OrderBy(f => f.Order).ThenBy(f => f.Area).ThenBy(f => f.Title, StringComparer.OrdinalIgnoreCase).ToList();

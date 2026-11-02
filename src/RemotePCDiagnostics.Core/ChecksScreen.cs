@@ -20,8 +20,7 @@ public static class CheckRows
         },
     };
 
-    private static bool IsCancelled(DiagnosticResult r) => ResultEventLogger.IsCancelled(r) ||
-        DashboardSummary.IsCancelled(new BannerModule(r.ModuleName, r.ModuleName, false, false, r.Status, r.Message));
+    private static bool IsCancelled(DiagnosticResult r) => ResultEventLogger.IsCancelled(r) || Cancellation.IsCancelled(r);
 
     public static string Text(RowKind k) => k switch
     {

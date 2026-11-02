@@ -91,7 +91,7 @@ public sealed class WorkflowService(
             var snapshot = results.Snapshot.Values.ToList();
             var fixes = FixCatalog.Build(snapshot, suggestions, remediation);
             var notOffered = FixCatalog.NotOffered(snapshot, suggestions, remediation);
-            var findings = snapshot.Where(r => r.Status is DiagnosticStatus.Warning or DiagnosticStatus.Error && !DashboardSummary.IsCancelled(new BannerModule(r.ModuleName, r.ModuleName, false, false, r.Status, r.Message)))
+            var findings = snapshot.Where(r => r.Status is DiagnosticStatus.Warning or DiagnosticStatus.Error && !Cancellation.IsCancelled(r))
                 .Select(r => $"{diag.Modules.FirstOrDefault(m => m.Name == r.ModuleName)?.DisplayName ?? r.ModuleName}: {r.Message}").ToList();
             var hw = results.Get("Osquery").Payload is HardwareInventory inv ? inv.FriendlySummary() : "";
             Save(s => s with

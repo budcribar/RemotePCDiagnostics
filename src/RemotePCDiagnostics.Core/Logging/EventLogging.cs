@@ -108,7 +108,7 @@ public sealed class ResultEventLogger
         catch { /* logging must never affect diagnostics */ }
     }
 
-    public static bool IsCancelled(DiagnosticResult r) =>
+    public static bool IsCancelled(DiagnosticResult r) => r.Cancelled ||
         r.Message.StartsWith("Cancelled", StringComparison.OrdinalIgnoreCase) || r.Message.Contains("stopped by", StringComparison.OrdinalIgnoreCase) ||
         (r.Payload is not null && r.Payload.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() is "StoppedByUser" or "Cancelled");
 

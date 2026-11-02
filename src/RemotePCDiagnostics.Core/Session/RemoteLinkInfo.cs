@@ -19,6 +19,18 @@ public static class RemoteLinkInfo
         return new Uri(b.Uri, $"app/{id}");
     }
 
+    /// <summary>
+    /// What the local window shows in remote mode, under the native panel (which has the link and Copy link): a short note for
+    /// the person at the PC, styled like the panel. Never the link again.
+    /// </summary>
+    public const string LocalPlaceholderHtml =
+        "<!DOCTYPE html><html><head><meta charset='utf-8'><style>" +
+        "html,body{margin:0;height:100%;background:#1f2329;color:#d0d5dd;font:15px 'Segoe UI',system-ui,sans-serif}" +
+        "main{max-width:560px;margin:72px auto;padding:0 24px;line-height:1.5}h1{font-size:18px;font-weight:600;color:#f2f4f7;margin:0 0 8px}" +
+        "</style></head><body><main><h1>Your technician is working on this PC</h1>" +
+        "<p>The diagnostics run in the technician's browser. Keep this window open (you can minimize it). " +
+        "Closing it ends the session.</p></main></body></html>";
+
     /// <summary>"host:port" for display (port always shown, e.g. remoteblazor.pagetomovie.com:34544 or example.com:443).</summary>
     public static string HostAndPort(Uri serverUri) => $"{serverUri.Host}:{serverUri.Port}";
 
