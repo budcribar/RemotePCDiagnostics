@@ -275,7 +275,7 @@ public class RemediationTests
     {
         var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
         var runner = new SystemCommandRunner(launcher);
-        var serverUri = new Uri("https://remoteblazor.pagetomovie.com:34544");
+        var serverUri = new Uri("https://remoteblazorwebview.com:34544");
         var sessionId = Guid.Parse("bfdffa8b-70ac-4740-bdb1-c7f62a0b598f");
         var session = new SessionContext(SessionMode.Remote, serverUri, sessionId);
         var coordinator = new RebootResumeCoordinator(runner, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe");
@@ -299,13 +299,13 @@ public class RemediationTests
         // Verify RunOnce command line keeps the exact same remote server and session GUID
         Assert.NotNull(coordinator.LastRegisteredCommandLine);
         Assert.Equal(
-            "\"C:\\App\\RemotePCDiagnostics.Host.exe\" -u=https://remoteblazor.pagetomovie.com:34544 -i=bfdffa8b-70ac-4740-bdb1-c7f62a0b598f --post-reboot",
+            "\"C:\\App\\RemotePCDiagnostics.Host.exe\" -u=https://remoteblazorwebview.com:34544 -i=bfdffa8b-70ac-4740-bdb1-c7f62a0b598f --post-reboot",
             coordinator.LastRegisteredCommandLine);
         Assert.Contains(launcher.Calls, c => c.File.EndsWith("reg.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains(RebootResumeCoordinator.RunOnceValueName));
 
         // Verify SessionLaunchOptions.Resolve parses the RunOnce arguments back into the identical Remote session stream
         var relaunchOpts = SessionLaunchOptions.Resolve(
-            ["-u=https://remoteblazor.pagetomovie.com:34544", $"-i={sessionId}", "--post-reboot"],
+            ["-u=https://remoteblazorwebview.com:34544", $"-i={sessionId}", "--post-reboot"],
             _ => null);
         Assert.Equal(SessionMode.Remote, relaunchOpts.Mode);
         Assert.Equal(serverUri, relaunchOpts.ServerUri);

@@ -10,7 +10,7 @@
       "commandName": "Project",
       "environmentVariables": {
         "REMOTEPC_MODE": "Remote",
-        "REMOTEPC_SERVER_URL": "https://remoteblazor.pagetomovie.com:34544"
+        "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544"
       }
     }
   }

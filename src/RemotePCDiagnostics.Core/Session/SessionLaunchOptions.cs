@@ -13,7 +13,7 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     public const string IdVariable = "REMOTEPC_ID";
     public const string PostRebootArg = "--post-reboot";
     /// <summary>Default relay (PeakSWC.RemoteWebViewService on Railway) used when Remote mode has no explicit URL.</summary>
-    public const string DefaultServerUrl = "https://remoteblazor.pagetomovie.com:34544";
+    public const string DefaultServerUrl = "https://remoteblazorwebview.com:34544";
 
     public static SessionLaunchOptions Resolve(IEnumerable<string> args, Func<string, string?> env, PendingRebootState? pendingReboot = null)
     {

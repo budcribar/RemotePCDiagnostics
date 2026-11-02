@@ -8,8 +8,8 @@ public class RemoteLinkInfoTests
     private static readonly Guid Id = Guid.Parse("11111111-2222-3333-4444-555555555555");
 
     [Theory]
-    [InlineData("https://remoteblazor.pagetomovie.com:34544", "https://remoteblazor.pagetomovie.com:34544/app/11111111-2222-3333-4444-555555555555")]
-    [InlineData("https://remoteblazor.pagetomovie.com:34544/", "https://remoteblazor.pagetomovie.com:34544/app/11111111-2222-3333-4444-555555555555")]
+    [InlineData("https://remoteblazorwebview.com:34544", "https://remoteblazorwebview.com:34544/app/11111111-2222-3333-4444-555555555555")]
+    [InlineData("https://remoteblazorwebview.com:34544/", "https://remoteblazorwebview.com:34544/app/11111111-2222-3333-4444-555555555555")]
     [InlineData("https://localhost:5001", "https://localhost:5001/app/11111111-2222-3333-4444-555555555555")]
     [InlineData("http://example.com/relay", "http://example.com/relay/app/11111111-2222-3333-4444-555555555555")]
     [InlineData("http://example.com/relay/?x=1", "http://example.com/relay/app/11111111-2222-3333-4444-555555555555")]
@@ -27,12 +27,12 @@ public class RemoteLinkInfoTests
     [Fact]
     public void StatusTexts()
     {
-        var s = new Uri("https://remoteblazor.pagetomovie.com:34544");
+        var s = new Uri("https://remoteblazorwebview.com:34544");
         Assert.Equal("Connecting to server…", RemoteLinkInfo.StatusText(RemoteSessionState.Connecting, s));
         Assert.Equal("Ready. Share this link with the technician:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s));
         Assert.Equal("Technician connected", RemoteLinkInfo.StatusText(RemoteSessionState.TechnicianConnected, s));
         var warn = RemoteLinkInfo.StatusText(RemoteSessionState.Unreachable, s);
-        Assert.Equal("Couldn't reach the server yet: remoteblazor.pagetomovie.com:34544. Check your internet connection; still trying…", warn);
+        Assert.Equal("Couldn't reach the server yet: remoteblazorwebview.com:34544. Check your internet connection; still trying…", warn);
         Assert.True(RemoteLinkInfo.IsWarning(RemoteSessionState.Unreachable));
         Assert.False(RemoteLinkInfo.IsWarning(RemoteSessionState.Ready));
         Assert.Equal(TimeSpan.FromSeconds(15), RemoteLinkInfo.ReadyTimeout);

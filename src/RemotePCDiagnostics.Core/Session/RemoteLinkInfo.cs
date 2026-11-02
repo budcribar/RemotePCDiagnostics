@@ -31,7 +31,7 @@ public static class RemoteLinkInfo
         "<p>The diagnostics run in the technician's browser. Keep this window open (you can minimize it). " +
         "Closing it ends the session.</p></main></body></html>";
 
-    /// <summary>"host:port" for display (port always shown, e.g. remoteblazor.pagetomovie.com:34544 or example.com:443).</summary>
+    /// <summary>"host:port" for display (port always shown, e.g. remoteblazorwebview.com:34544 or example.com:443).</summary>
     public static string HostAndPort(Uri serverUri) => $"{serverUri.Host}:{serverUri.Port}";
 
     public static string StatusText(RemoteSessionState state, Uri serverUri) => state switch

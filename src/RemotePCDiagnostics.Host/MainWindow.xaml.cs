@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         // Local (default) or Remote. Remote when started with -u=<server uri> (RemoteBlazorWebViewTutorial convention)
-        // or REMOTEPC_MODE=Remote (+ optional REMOTEPC_SERVER_URL, default https://remoteblazor.pagetomovie.com:34544).
+        // or REMOTEPC_MODE=Remote (+ optional REMOTEPC_SERVER_URL, default https://remoteblazorwebview.com:34544).
         // See Properties/launchSettings.json for the "Local" and "Remote (Railway)" Visual Studio profiles.
         var pendingReboot = RebootResumeCoordinator.TryReadPendingStateFile();
         var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, pendingReboot);

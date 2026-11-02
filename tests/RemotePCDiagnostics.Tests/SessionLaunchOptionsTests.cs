@@ -21,7 +21,7 @@ public class SessionLaunchOptionsTests
     {
         var o = SessionLaunchOptions.Resolve([], Env(("REMOTEPC_MODE", "remote")));
         Assert.Equal(SessionMode.Remote, o.Mode);
-        Assert.Equal(new Uri("https://remoteblazor.pagetomovie.com:34544"), o.ServerUri);
+        Assert.Equal(new Uri("https://remoteblazorwebview.com:34544"), o.ServerUri);
     }
 
     [Fact]
@@ -55,7 +55,7 @@ public class SessionLaunchOptionsTests
     {
         // Even if Remote mode was originally started without -i= (so SessionContext generated a SessionId),
         // that SessionId is saved to PendingRebootState and restored on restart even if launched without args.
-        var initialCtx = new SessionContext(SessionMode.Remote, new Uri("https://remoteblazor.pagetomovie.com:34544"));
+        var initialCtx = new SessionContext(SessionMode.Remote, new Uri("https://remoteblazorwebview.com:34544"));
         Assert.NotEqual(Guid.Empty, initialCtx.SessionId);
 
         var pending = new PendingRebootState(
@@ -80,13 +80,13 @@ public class SessionLaunchOptionsTests
     public void RestartArguments_KeepServerAndSession_AndMarkTheRestart()
     {
         var id = Guid.Parse("7e57c0de-0000-4000-8000-000000000001");
-        var args = SessionLaunchOptions.RestartArguments(new Uri("https://remoteblazor.pagetomovie.com:34544/"), id);
-        Assert.Equal(["-u=https://remoteblazor.pagetomovie.com:34544", "-i=7e57c0de-0000-4000-8000-000000000001", "--restarted"], args);
+        var args = SessionLaunchOptions.RestartArguments(new Uri("https://remoteblazorwebview.com:34544/"), id);
+        Assert.Equal(["-u=https://remoteblazorwebview.com:34544", "-i=7e57c0de-0000-4000-8000-000000000001", "--restarted"], args);
         Assert.True(SessionLaunchOptions.IsRestarted(args));
         var resolved = SessionLaunchOptions.Resolve(args, _ => null);
         Assert.Equal(SessionMode.Remote, resolved.Mode);
         Assert.Equal(id, resolved.Id);
-        Assert.Equal(new Uri("https://remoteblazor.pagetomovie.com:34544"), resolved.ServerUri);
+        Assert.Equal(new Uri("https://remoteblazorwebview.com:34544"), resolved.ServerUri);
     }
 
     [Fact]
