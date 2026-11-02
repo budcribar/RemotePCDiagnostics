@@ -23,16 +23,17 @@
 </div>
 <p class="meta">Works your graphics chip as hard as it can and checks that every answer it gives is correct. Works with built-in and separate graphics. The PC may get warm, the fan may speed up and the screen may feel slower while it runs. It stops by itself if anything gets too hot.</p>
 
-<p data-testid="gpustress-status" class="status-line">
+<p data-testid="gpustress-status" class="status-line @(running ? "is-running" : "")">
     <span class="@DotClass(r.Status)"></span>
     @(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
+    @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
 </p>
 
 @if (running)
 {
-    <div class="progress" data-testid="gpustress-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
+    <div class="progress run-progress" data-testid="gpustress-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
     <div class="cards">
-        <div class="card" data-testid="gpustress-live-progress">
+        <div class="card is-running" data-testid="gpustress-live-progress">
             <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
             <div class="headline">@(p is null ? "Getting ready…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
             <div class="meta">@(p?.AdapterName ?? "")</div>

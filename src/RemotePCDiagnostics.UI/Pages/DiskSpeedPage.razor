@@ -45,9 +45,10 @@
     <div class="notice notice-error">No drives that can be tested were found.</div>
 }
 
-<p data-testid="diskspeed-status" class="status-line">
+<p data-testid="diskspeed-status" class="status-line @(running ? "is-running" : "")">
     <span class="@DotClass(r.Status)"></span>
     @(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
+    @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
 </p>
 @if (health.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error)
 {
@@ -56,9 +57,9 @@
 
 @if (running)
 {
-    <div class="progress" data-testid="diskspeed-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
+    <div class="progress run-progress" data-testid="diskspeed-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
     <div class="cards">
-        <div class="card" data-testid="diskspeed-live-step">
+        <div class="card is-running" data-testid="diskspeed-live-step">
             <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
             <div class="headline">@(p?.PhaseText ?? "Getting ready")…</div>
             <div class="meta">@(p is null ? "" : $"{Clock(p.Elapsed)} so far · at most {Clock(p.Duration)}")</div>

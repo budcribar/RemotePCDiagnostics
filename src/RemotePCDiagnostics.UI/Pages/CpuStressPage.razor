@@ -23,16 +23,17 @@
 </div>
 <p class="meta">Puts every processor core under full load to check that it works correctly and stays cool. Your PC may get loud and slow while the test runs. The test stops by itself if the processor gets too hot.</p>
 
-<p data-testid="cpustress-status" class="status-line">
+<p data-testid="cpustress-status" class="status-line @(running ? "is-running" : "")">
     <span class="@DotClass(r.Status)"></span>
     @(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
+    @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
 </p>
 
 @if (running)
 {
-    <div class="progress" data-testid="cpustress-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
+    <div class="progress run-progress" data-testid="cpustress-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
     <div class="cards">
-        <div class="card" data-testid="cpustress-live-time">
+        <div class="card is-running" data-testid="cpustress-live-time">
             <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
             <div class="headline">@(p is null ? "Starting…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
         </div>

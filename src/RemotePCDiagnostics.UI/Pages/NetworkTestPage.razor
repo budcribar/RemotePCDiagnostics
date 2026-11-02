@@ -23,17 +23,18 @@
 </div>
 <p class="meta">Checks how steady your connection is by contacting your router and the internet every second, measures your download and upload speed once (using a limited amount of data), and looks for new network errors. Video calls or downloads may be a little slower while it runs.</p>
 
-<p data-testid="nettest-status" class="status-line">
+<p data-testid="nettest-status" class="status-line @(running ? "is-running" : "")">
     <span class="@DotClass(r.Status)"></span>
     @(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
+    @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
 </p>
 
 @if (running)
 {
     var live = p is null ? null : PingStats.From(p.Samples.Select(s => s.InternetMs));
-    <div class="progress" data-testid="nettest-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
+    <div class="progress run-progress" data-testid="nettest-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
     <div class="cards">
-        <div class="card" data-testid="nettest-live-progress">
+        <div class="card is-running" data-testid="nettest-live-progress">
             <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
             <div class="headline">@(p is null ? "Getting ready…" : $"{p.Step}…")</div>
             <div class="meta">@(p is null ? "" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>

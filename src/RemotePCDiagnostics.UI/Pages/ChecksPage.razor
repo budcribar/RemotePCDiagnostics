@@ -144,7 +144,7 @@
                         var isSel = string.Equals(Screen.SelectedModule, m.Name, StringComparison.OrdinalIgnoreCase);
                         var prev = kind == RowKind.NotRun ? LastRun(m) : null;
                         var line = kind == RowKind.NotRun ? (prev is { } pv ? $"Last run {pv.LocalTime:g}: {pv.Outcome} · {pv.Summary}" : "Not run yet") : kind == RowKind.Running ? "In progress" : r.Message;
-                        <div class="ct-row @(isSel ? "selected" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
+                        <div class="ct-row @(isSel ? "selected" : "") @(kind == RowKind.Running ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
                              data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => Select(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
                             <button class="ct-check" role="checkbox" aria-checked="@(Screen.IsSelected(m.Name) ? "true" : "false")" aria-label="Include @m.DisplayName"
                                     data-testid="checks-select-@m.Name.ToLowerInvariant()" @onclick="() => Screen.SetSelected(mod.Name, !Screen.IsSelected(mod.Name))" @onclick:stopPropagation="true">@(Screen.IsSelected(m.Name) ? "✓" : "")</button>

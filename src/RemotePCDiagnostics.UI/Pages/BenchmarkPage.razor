@@ -62,7 +62,8 @@
 
 @if (running)
 {
-    <p class="status-line" data-testid="bench-progress"><span class="dot dot-running"></span>@(Bench.Running == BenchmarkPhase.Before ? "Before" : "After"): @(Bench.Progress ?? "Starting…")</p>
+    <p class="status-line is-running" data-testid="bench-progress"><span class="dot dot-running"></span>@(Bench.Running == BenchmarkPhase.Before ? "Before" : "After"): @(Bench.Progress ?? "Starting…")<span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span></p>
+    <div class="run-progress run-progress-indeterminate" data-testid="bench-run-progress" aria-hidden="true"><div></div></div>
 }
 @if (Bench.Message is { } msg) { <p class="notice" data-testid="bench-message">@msg</p> }
 

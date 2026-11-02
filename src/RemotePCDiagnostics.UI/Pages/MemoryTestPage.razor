@@ -33,16 +33,17 @@
     @if (!running) { <span data-testid="memtest-plan">@(planned is { } pb ? $"This test will check about {HardwareInventory.FormatBytes(pb)} of memory." : "There isn't enough free memory to run this test right now. Close some programs and try again.")</span> }
 </p>
 
-<p data-testid="memtest-status" class="status-line">
+<p data-testid="memtest-status" class="status-line @(running ? "is-running" : "")">
     <span class="@DotClass(r.Status)"></span>
     @(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
+    @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
 </p>
 
 @if (running)
 {
-    <div class="progress" data-testid="memtest-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
+    <div class="progress run-progress" data-testid="memtest-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
     <div class="cards">
-        <div class="card" data-testid="memtest-live-progress">
+        <div class="card is-running" data-testid="memtest-live-progress">
             <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
             <div class="headline">@(p is null ? "Getting ready…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
             @if (p is not null)

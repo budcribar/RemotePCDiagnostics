@@ -519,3 +519,32 @@ tr.history-day td { font-weight: 700; color: var(--text-strong); background: var
   .drawer-head { margin-left: -12px; margin-right: -12px; padding-left: 12px; padding-right: 12px; }
   .svc-modal { width: calc(100vw - 24px); }
 }
+
+/* ---- Running-state animations (shared by all test pages). Plain CSS; only opacity/transform animate. ---- */
+.running-badge { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); white-space: nowrap; }
+.running-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: run-dot 1.4s ease-in-out infinite; }
+@keyframes run-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+.status-line.is-running, .card.is-running, .ct-row.is-running { position: relative; }
+.status-line.is-running::after, .card.is-running::after, .ct-row.is-running::after {
+    content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+    box-shadow: 0 0 0 1px var(--accent), 0 0 12px var(--accent); opacity: .15; animation: run-ring 2.4s ease-in-out infinite; }
+@keyframes run-ring { 50% { opacity: .55; } }
+/* Thin accent run-time bar. Timed pages keep the existing width binding (Fraction); unknown-duration pages use the indeterminate variant. */
+.progress.run-progress { height: 4px; }
+.progress.run-progress > div { background: var(--accent); }
+.run-progress-indeterminate { height: 4px; max-width: 520px; margin: 12px 0; border-radius: 99px; overflow: hidden; background: var(--progress-track); }
+.run-progress-indeterminate > div { height: 100%; width: 35%; border-radius: 99px; background: var(--accent); animation: run-indeterminate 1.6s ease-in-out infinite; }
+@keyframes run-indeterminate { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+/* About page: gentle fade-in and a slowly shimmering accent line under the title */
+.about-card { animation: about-in .5s ease-out both; }
+.about-card:nth-of-type(2) { animation-delay: .08s; } .about-card:nth-of-type(3) { animation-delay: .16s; }
+@keyframes about-in { from { opacity: 0; transform: translateY(6px); } }
+.about-accent-line { height: 2px; max-width: 320px; margin: -4px 0 14px; border-radius: 99px; overflow: hidden; background: var(--accent); opacity: .6; position: relative; }
+.about-accent-line::after { content: ""; position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, var(--accent-soft), transparent); animation: about-shimmer 4s ease-in-out infinite; }
+@keyframes about-shimmer { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@media (prefers-reduced-motion: reduce) {
+    .running-badge-dot, .status-line.is-running::after, .card.is-running::after, .ct-row.is-running::after, .run-progress-indeterminate > div, .about-card, .about-accent-line::after { animation: none !important; }
+    .status-line.is-running::after, .card.is-running::after, .ct-row.is-running::after { opacity: .4; }
+    .run-progress-indeterminate > div { width: 100%; opacity: .5; transform: none; }
+    .about-accent-line::after { display: none; }
+}
