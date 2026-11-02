@@ -66,8 +66,8 @@ public class StableKeysTests
         var translated = new DiagnosticResult("CpuStress", DiagnosticStatus.Warning, "Abgebrochen", DateTimeOffset.Now) { Cancelled = true };
         Assert.True(Cancellation.IsCancelled(translated));
         Assert.Empty(DashboardSummary.Build([new BannerModule("CpuStress", "CPU", true, true, translated.Status, translated.Message, translated.Cancelled)], null).Problems);
-        // Results saved before the flag existed are still recognised.
-        Assert.True(Cancellation.IsCancelled(new DiagnosticResult("X", DiagnosticStatus.Warning, "Stopped by you", DateTimeOffset.Now)));
+        // The message alone never decides it.
+        Assert.False(Cancellation.IsCancelled(new DiagnosticResult("X", DiagnosticStatus.Warning, "Stopped by you", DateTimeOffset.Now)));
         Assert.False(Cancellation.IsCancelled(new DiagnosticResult("X", DiagnosticStatus.Warning, "Disk is 92% full", DateTimeOffset.Now)));
         Assert.True((translated with { Message = "x" }).Cancelled); // copies keep it
     }

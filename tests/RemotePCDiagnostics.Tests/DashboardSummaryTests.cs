@@ -6,8 +6,8 @@ namespace RemotePCDiagnostics.Tests;
 public class DashboardSummaryTests
 {
     private static BannerModule Check(string name, string display, DiagnosticStatus s, string? msg = null) => new(name, display, false, false, s, msg);
-    private static BannerModule Stress(string name, string display, DiagnosticStatus s = DiagnosticStatus.NotRun, string? msg = null) => new(name, display, true, true, s, msg);
-    private static BannerModule Audit(DiagnosticStatus s = DiagnosticStatus.NotRun, string? msg = null) => new(SecurityAuditModule.ModuleName, "Security audit", true, false, s, msg);
+    private static BannerModule Stress(string name, string display, DiagnosticStatus s = DiagnosticStatus.NotRun, string? msg = null, bool cancelled = false) => new(name, display, true, true, s, msg, cancelled);
+    private static BannerModule Audit(DiagnosticStatus s = DiagnosticStatus.NotRun, string? msg = null, bool cancelled = false) => new(SecurityAuditModule.ModuleName, "Security audit", true, false, s, msg, cancelled);
 
     private static List<BannerModule> AllStress(DiagnosticStatus s = DiagnosticStatus.NotRun) =>
         [Stress("CpuStress", "CPU stress test", s), Stress("MemoryTest", "Memory test", s), Stress("GpuStress", "Graphics (GPU) stress test", s)];
@@ -49,12 +49,13 @@ public class DashboardSummaryTests
     public void CancelledWarnings_AreNotProblems()
     {
         var sum = DashboardSummary.Build([
-            Stress("CpuStress", "CPU stress test", DiagnosticStatus.Warning, "Cancelled"),
-            Stress("MemoryTest", "Memory test", DiagnosticStatus.Warning, "Stopped"),
-            Stress("DiskSpeed", "Disk speed test", DiagnosticStatus.Warning, "Stopped by you"),
-            Audit(DiagnosticStatus.Warning, SecurityAuditModule.CancelledMessage),
+            Stress("CpuStress", "CPU stress test", DiagnosticStatus.Warning, "Cancelled", cancelled: true),
+            Stress("MemoryTest", "Memory test", DiagnosticStatus.Warning, "Stopped", cancelled: true),
+            Stress("DiskSpeed", "Disk speed test", DiagnosticStatus.Warning, "Stopped by you", cancelled: true),
+            Audit(DiagnosticStatus.Warning, SecurityAuditModule.CancelledMessage, cancelled: true),
+            Stress("GpuStress", "GPU stress test", DiagnosticStatus.Warning, "Stopped"),   // same text without the flag: a real warning
             Check("EventLog", "Windows error log", DiagnosticStatus.Warning, "3 errors")], null);
-        Assert.Equal("EventLog", Assert.Single(sum.Problems).Name);
+        Assert.Equal(["GpuStress", "EventLog"], sum.Problems.Select(p => p.Name));
     }
 
     [Fact]

@@ -109,7 +109,6 @@ public sealed class ResultEventLogger
     }
 
     public static bool IsCancelled(DiagnosticResult r) => r.Cancelled ||
-        r.Message.StartsWith("Cancelled", StringComparison.OrdinalIgnoreCase) || r.Message.Contains("stopped by", StringComparison.OrdinalIgnoreCase) ||
         (r.Payload is not null && r.Payload.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() is "StoppedByUser" or "Cancelled");
 
     public static string Outcome(DiagnosticResult r) => r.Payload is ModuleAvailability || r.Payload?.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() == "NoGpu" ? "Unavailable"

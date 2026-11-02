@@ -108,7 +108,7 @@ public class EventLoggingTests
     [InlineData(DiagnosticStatus.Warning, "Cancelled", "Cancelled", LogLevel.Warning)]
     public void LevelMapping(DiagnosticStatus status, string msg, string outcome, LogLevel level)
     {
-        var r = new DiagnosticResult("M", status, msg, DateTimeOffset.Now);
+        var r = new DiagnosticResult("M", status, msg, DateTimeOffset.Now) { Cancelled = outcome == "Cancelled" };
         Assert.Equal(outcome, ResultEventLogger.Outcome(r));
         Assert.Equal(level, ResultEventLogger.LevelFor(r));
     }

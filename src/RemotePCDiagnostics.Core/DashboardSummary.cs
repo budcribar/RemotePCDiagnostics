@@ -39,7 +39,7 @@ public sealed class DashboardSummary
     private int stressTotal;
 
     /// <summary>Messages that mean the user cancelled the module, not that something is wrong.</summary>
-    public static bool IsCancelled(BannerModule m) => m.Cancelled || Cancellation.IsLegacyCancelledText(m.Status, m.Message);
+    public static bool IsCancelled(BannerModule m) => m.Cancelled;
 
     /// <param name="modules">Modules in Dashboard order.</param>
     /// <param name="suite">Last stress suite progress; finished steps marked Skipped (not available on this PC) are not counted as not run.</param>

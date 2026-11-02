@@ -39,11 +39,7 @@ public interface IStressSuiteModule : IDiagnosticModule
     /// <summary>True when a result means the test stopped because the PC got too hot.</summary>
     bool IsOverheatedResult(DiagnosticResult result) => false;
     /// <summary>True when a result means the user stopped the test before it finished.</summary>
-    bool IsStoppedByUserResult(DiagnosticResult result) =>
-        result.Status == DiagnosticStatus.Warning && result.Message is { } msg
-        && (msg.Equals("Stopped", StringComparison.OrdinalIgnoreCase)
-            || msg.Equals("Stopped by you", StringComparison.OrdinalIgnoreCase)
-            || msg.Equals("Cancelled", StringComparison.OrdinalIgnoreCase));
+    bool IsStoppedByUserResult(DiagnosticResult result) => result.Cancelled;
 }
 
 public static class StressSuite

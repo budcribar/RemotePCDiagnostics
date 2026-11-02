@@ -51,9 +51,13 @@ public sealed class DiagnosticsService
         if (_modules.Any(m => string.Equals(m.Name, module.Name, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException($"Module '{module.Name}' already registered.");
         _modules.Add(module);
-        module.Updated += (_, r) => _store.Set(r);
+        module.Updated += (_, r) => _store.Set(MarkStopped(module, r));
         _store.Set(DiagnosticResult.NotRun(module.Name));
     }
+
+    /// <summary>Stress tests know from their own report (not the message) when the user stopped them: flag it as cancelled.</summary>
+    private static DiagnosticResult MarkStopped(IDiagnosticModule module, DiagnosticResult r) =>
+        !r.Cancelled && module is IStressSuiteModule stress && stress.IsStoppedByUserResult(r) ? r with { Cancelled = true } : r;
 
     public async Task<DiagnosticResult> RunAsync(string moduleName, IProgress<string>? progress = null, CancellationToken ct = default)
     {
@@ -118,8 +122,7 @@ public sealed class DiagnosticsService
         {
             result = new DiagnosticResult(module.Name, DiagnosticStatus.Error, ex.Message, DateTimeOffset.Now, ex);
         }
-        // Stress tests know from their own report (not the message) when the user stopped them.
-        if (!result.Cancelled && module is IStressSuiteModule stress && stress.IsStoppedByUserResult(result)) result = result with { Cancelled = true };
+        result = MarkStopped(module, result);
         _store.Set(result);
         return result;
     }
