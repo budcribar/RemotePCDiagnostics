@@ -1,0 +1,109 @@
+@page "/module/mictospeaker"
+@using RemotePCDiagnostics.Core.Audio
+@inherits StoreAwareComponent
+@* On-demand microphone → speaker test: live monitoring with a capped gain and a feedback brake; the audible part is a person's judgement. *@
+@{
+    var m = Diagnostics.Modules.OfType<MicToSpeakerModule>().FirstOrDefault();
+}
+@if (m is null)
+{
+    <p class="meta" data-testid="area-missing">This page isn't available.</p>
+}
+else
+{
+    var r = Store.Get(m.Name);
+    var rep = r.Payload as MicToSpeakerReport;
+    var running = r.Status == DiagnosticStatus.Running;
+    var suiteBusy = Diagnostics.IsStressSuiteRunning;
+    <div class="toolbar toolbar-grouped">
+        <span class="icon-badge page-icon"><Icon Name="audio" Size="20" /></span><h1 data-testid="m2s-title">@m.DisplayName</h1>
+        @if (running) { <button data-testid="m2s-cancel" @onclick="m.Cancel">Cancel</button> }
+        else { <button data-testid="m2s-start" disabled="@suiteBusy" @onclick="() => Start(m)">@(r.Status == DiagnosticStatus.NotRun ? "Start" : "Run again")</button> }
+    </div>
+    <p class="meta" data-testid="m2s-intro">Plays the microphone through the speaker so someone at the PC can speak and hear themselves. The volume is capped and the test stops by itself if it starts to howl. The app measures the microphone level; whether it was heard is up to the person at the PC. Over a remote session you can't hear the PC, so ask the person there.</p>
+    <div class="toolbar">
+        <label class="meta">Speaker
+            <select data-testid="m2s-output" disabled="@running" @onchange="e => m.Settings.OutputId = Id(e)">
+                @DeviceOptions(_outputs, m.Settings.OutputId)
+            </select>
+        </label>
+        <label class="meta">Microphone
+            <select data-testid="m2s-input" disabled="@running" @onchange="e => m.Settings.InputId = Id(e)">
+                @DeviceOptions(_inputs, m.Settings.InputId)
+            </select>
+        </label>
+        <label class="meta">Run for
+            <select data-testid="m2s-duration" disabled="@running" @onchange="e => { if (int.TryParse(e.Value?.ToString(), out var s)) m.Duration = TimeSpan.FromSeconds(s); }">
+                @foreach (var d in MicToSpeakerModule.DurationChoices)
+                {
+                    <option value="@d.TotalSeconds" selected="@(d == m.Duration)">@d.TotalSeconds seconds</option>
+                }
+            </select>
+        </label>
+        <label class="meta" title="Records first, then plays the recording back. Can't howl."><input type="checkbox" data-testid="m2s-halfduplex" checked="@m.Settings.HalfDuplex" disabled="@running"
+            @onchange="e => m.Settings.HalfDuplex = e.Value is true" /> Half-duplex (play, then record)</label>
+        <button class="btn-small" data-testid="m2s-refresh-devices" disabled="@running" @onclick="() => LoadDevices(m)">Refresh devices</button>
+    </div>
+    <p data-testid="m2s-status" class="@(running ? "status-line is-running" : r.Status == DiagnosticStatus.Error && rep is null ? "status-line error-text" : "status-line")">
+        <span class="@DotClass(r.Status)"></span>
+        <span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start to begin.", DiagnosticStatus.Running => m.Settings.HalfDuplex ? "Recording, then playing it back… speak now." : "Playing the microphone through the speaker… speak now.", _ => r.Message })</span>
+        @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
+    </p>
+    @if (running) { <div class="run-progress run-progress-indeterminate" data-testid="m2s-run-progress" aria-hidden="true"><div></div></div> }
+    @if (!running && rep?.Notice is { } notice) { <p class="notice" data-testid="m2s-notice">@notice</p> }
+    @if (!running && rep is { OfferHalfDuplex: true, HalfDuplex: false })
+    {
+        <p class="notice" data-testid="m2s-offer-halfduplex">Feedback was detected. <button class="btn-small" @onclick="() => { m.Settings.HalfDuplex = true; Start(m); }">Run again in half-duplex</button></p>
+    }
+    @if (!running && rep is not null && rep.Notice != AudioVerdicts.PrivacyMessage && rep.Input != "None found" && rep.Output != "None found")
+    {
+        <div class="cards">
+            <div class="card" data-testid="m2s-card-level">
+                <div class="card-head"><span class="dot dot-@(rep.MicHeardSomething ? "ok" : "error")"></span><strong>Microphone level</strong></div>
+                <div class="headline">@Db(rep.MicPeakDbfs) peak</div>
+                <div class="meta">RMS @Db(rep.MicRmsDbfs) · @rep.Input</div>
+                <div class="meta">@(rep.FeedbackDetected ? "Stopped: feedback detected" : rep.GainReduced ? "Volume was turned down automatically to avoid feedback" : "")</div>
+            </div>
+        </div>
+        @if (rep.MicHeardSomething && !rep.FeedbackDetected)
+        {
+            <p class="meta">Did the person at the PC hear the microphone through @rep.Output?</p>
+            <div class="toolbar">
+                <button data-testid="m2s-heard" class="@(rep.HeardByTechnician == true ? "on" : "")" @onclick="() => m.Confirm(r, true)">I heard it</button>
+                <button data-testid="m2s-not-heard" class="@(rep.HeardByTechnician == false ? "on" : "")" @onclick="() => m.Confirm(r, false)">I didn't hear it</button>
+            </div>
+        }
+    }
+}
+
+@code {
+    private IReadOnlyList<AudioDevice> _outputs = [], _inputs = [];
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        if (Diagnostics.Modules.OfType<MicToSpeakerModule>().FirstOrDefault() is { } m) LoadDevices(m);
+    }
+
+    private void LoadDevices(MicToSpeakerModule m) { _outputs = m.Devices(AudioFlow.Output); _inputs = m.Devices(AudioFlow.Input); }
+
+    private void Start(MicToSpeakerModule m)
+    {
+        if (Diagnostics.IsStressSuiteRunning) return;
+        _ = Diagnostics.RunAsync(m.Name);
+    }
+
+    private static string? Id(ChangeEventArgs e) => e.Value?.ToString() is { Length: > 0 } v ? v : null;
+
+    private static RenderFragment DeviceOptions(IReadOnlyList<AudioDevice> devices, string? selected) => __builder =>
+    {
+        if (devices.Count == 0) { <option value="">None found</option> }
+        else
+        {
+            <option value="" selected="@(selected is null)">Windows default</option>
+            foreach (var d in devices) { <option value="@d.Id" selected="@(d.Id == selected)">@d.Label</option> }
+        }
+    };
+
+    private static string Db(double v) => v <= AudioMath.SilenceDbfs ? "silent" : $"{v:0.0} dBFS";
+}

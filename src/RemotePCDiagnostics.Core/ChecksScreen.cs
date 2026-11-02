@@ -87,7 +87,7 @@ public sealed class ChecksScreenState
         else
         {
             foreach (var m in ChecksModules) _selected.Add(m.Name);
-            foreach (var m in StressModules.Where(m => m.Name != SecurityAuditModule.ModuleName)) _selected.Add(m.Name);
+            foreach (var m in StressModules.Where(m => !IsSeparateStep(m))) _selected.Add(m.Name);
         }
         if (saved?.ChecksCollapsed is { } cc) _collapsedChecks = cc;
         if (saved?.StressCollapsed is { } sc) _collapsedStress = sc;
@@ -98,10 +98,14 @@ public sealed class ChecksScreenState
 
     public IReadOnlyList<IDiagnosticModule> ChecksModules => _diag.Modules.Where(m => m.IncludeInRunAll).ToList();
 
-    /// <summary>Stress tests in suite order, then the security audit (runs on its own after them when selected).</summary>
+    /// <summary>Stress tests in suite order, then the security audit and the audio tests (separate steps that run on their own after them when selected).</summary>
     public IReadOnlyList<IDiagnosticModule> StressModules =>
         StressSuite.Order.Select(n => _diag.Modules.FirstOrDefault(m => string.Equals(m.Name, n, StringComparison.OrdinalIgnoreCase))).OfType<IDiagnosticModule>()
-            .Concat(_diag.Modules.Where(m => m.Name == SecurityAuditModule.ModuleName)).ToList();
+            .Concat(_diag.Modules.Where(m => m.Name == SecurityAuditModule.ModuleName))
+            .Concat(_diag.Modules.OfType<Audio.IAudioTestModule>()).ToList();
+
+    /// <summary>Security audit and audio tests: listed with the stress tests but never part of the stress run, and not ticked by default.</summary>
+    public static bool IsSeparateStep(IDiagnosticModule m) => m.Name == SecurityAuditModule.ModuleName || m is Audio.IAudioTestModule;
 
     public IReadOnlyList<IDiagnosticModule> Modules(CheckGroup g) => g == CheckGroup.Checks ? ChecksModules : StressModules;
 
@@ -201,9 +205,9 @@ public sealed class ChecksScreenState
             }
             else
             {
-                var stress = selected.Where(m => m.Name != SecurityAuditModule.ModuleName).Select(m => m.Name).ToList();
-                var audit = selected.FirstOrDefault(m => m.Name == SecurityAuditModule.ModuleName);
-                var total = stress.Count + (audit is null ? 0 : 1);
+                var stress = selected.Where(m => !IsSeparateStep(m)).Select(m => m.Name).ToList();
+                var separate = selected.Where(IsSeparateStep).ToList();
+                var total = stress.Count + separate.Count;
                 if (stress.Count > 0)
                 {
                     var p = new InlineProgress(sp =>
@@ -214,10 +218,10 @@ public sealed class ChecksScreenState
                     });
                     try { await _diag.RunStressSuiteAsync(Mode, p, cts.Token, stress, runQuickChecks: false).ConfigureAwait(false); } catch (Exception) { }
                 }
-                if (audit is not null && !cts.IsCancellationRequested)
+                for (var i = 0; i < separate.Count && !cts.IsCancellationRequested; i++)
                 {
-                    SetProgress(g, total, total, audit);
-                    try { await _diag.RunAsync(audit.Name, null, cts.Token).ConfigureAwait(false); } catch (Exception) { }
+                    SetProgress(g, stress.Count + i + 1, total, separate[i]);
+                    try { await _diag.RunAsync(separate[i].Name, null, cts.Token).ConfigureAwait(false); } catch (Exception) { }
                 }
             }
         }
@@ -237,6 +241,7 @@ public sealed class ChecksScreenState
         try { c?.Cancel(); } catch (ObjectDisposedException) { }
         try { _diag.CancelStressSuite(); } catch { }
         try { (_diag.Modules.FirstOrDefault(m => m.Name == SecurityAuditModule.ModuleName) as SecurityAuditModule)?.Cancel(); } catch { }
+        foreach (var a in _diag.Modules.OfType<Audio.IAudioTestModule>()) { try { a.Cancel(); } catch { } }
     }
 
     /// <summary>"Run just this" is allowed when no group run is active and (for stress tests) no stress test runs.</summary>

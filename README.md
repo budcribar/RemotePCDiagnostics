@@ -22,6 +22,8 @@ RemotePCDiagnostics is a single Windows desktop application (a WPF or WinForms h
 | Application crashes | Crash records with exception codes and stack traces | osquery |
 | Live temperatures and fans | CPU/GPU temperatures, fan speeds, voltages | LibreHardwareMonitor (+ Windows GPU temperature fallback) |
 | Security baseline audit (optional) | Windows hardening checks against published baselines | HardeningKitty |
+| Speaker to microphone test (optional) | Plays a test tone and checks the speaker output and the microphone heard it | NAudio (WASAPI) |
+| Microphone to speaker test (optional) | Plays the microphone through the speaker, mic level, "I heard it" answer | NAudio (WASAPI) |
 
 ## Architecture (intended)
 
@@ -32,7 +34,7 @@ RemotePCDiagnostics is a single Windows desktop application (a WPF or WinForms h
 
 ## Licensing notes
 
-Planned components are used under their own licenses and need to be confirmed before shipping: osquery (Apache-2.0 or GPL-2.0, used under Apache-2.0), LibreHardwareMonitor (MPL-2.0), HardeningKitty (MIT). This is not legal advice.
+Planned components are used under their own licenses and need to be confirmed before shipping: osquery (Apache-2.0 or GPL-2.0, used under Apache-2.0), LibreHardwareMonitor (MPL-2.0), HardeningKitty (MIT), NAudio (MIT). This is not legal advice.
 
 ## Safety
 
@@ -184,6 +186,39 @@ counters (`Get-NetAdapterStatistics`) before and after. Each transfer is limited
 To use your own speed server instead, set `REMOTEPC_SPEEDTEST_URL` to a base URL that implements the same two
 endpoints (`GET {base}/__down?bytes=N` returns N bytes; `POST {base}/__up` accepts the body). No iperf3 is required.
 Unit tests use fakes only; CI does not need internet access.
+
+### Audio tests (speaker and microphone)
+
+Two on-demand tests in the Checks & tests screen, listed after the security audit. Like the audit they are a separate step:
+never auto-run, not in Run All, not part of the stress run (when ticked there, they run on their own after it), and not ticked by default.
+No confirmation prompt; nothing needs a click at the PC (no Windows dialogs). Both pages list the speakers and microphones
+(Windows default preselected, USB/Bluetooth marked where Windows reports it), can be cancelled, and stop on a timeout.
+Audio access is behind `IAudioIo` (Core); the Windows implementation is `WasapiAudioIo` in the Host (NAudio.Wasapi, shared-mode WASAPI).
+
+- **Speaker to microphone test** plays a 3 s, 1 kHz tone (at most -12 dBFS, 200 ms fade in and out) while recording the microphone
+  and the speaker output (WASAPI loopback) at the same time. Each recording is checked for the tone (Goertzel, 50 ms blocks):
+  tone level, noise, SNR, peak and RMS in dBFS are shown. The tone counts as found at 10 dB SNR and -75 dBFS or more.
+
+  | Speaker output (loopback) | Microphone | Result |
+  | --- | --- | --- |
+  | tone | tone | Pass (Warning if the microphone clipped) |
+  | tone | no tone | Fail: speaker dead or muted, volume too low, or microphone muted / level too low |
+  | no tone | no tone | Fail: volume, mute, wrong output device or driver |
+  | no tone | tone | Pass (loopback could not confirm) |
+  | not available | tone / no tone | Pass / Fail (microphone only) |
+  | Windows privacy blocks the microphone | – | "Microphone access is blocked by Windows privacy settings (Settings > Privacy & security > Microphone)." |
+
+- **Microphone to speaker test** plays the microphone through the speaker live for 5–30 s (default 10 s) at a capped gain (-6 dB),
+  with a fade-in. It measures the microphone peak/RMS; no sound at all is a fail. Whether it was heard is up to the person at the PC:
+  "I heard it" / "I didn't hear it" sets Pass / Fail. Over a remote session the technician can't hear the PC.
+
+Caveats: full duplex can howl when the microphone hears the speaker. A brake stops the monitor when the peak stays above -3 dBFS for
+250 ms or a tone-like signal keeps growing, and turns the gain down as soon as a loud tone-like signal appears; the mic-to-speaker test
+then re-runs once in half-duplex (record, then play back). Both pages have a "Half-duplex (play, then record)" switch; for the speaker
+test it plays the tone twice and records the speaker output and the microphone one at a time. Raw microphone mode
+(`AUDCLNT_STREAMOPTIONS_RAW`, to skip echo cancellation and noise suppression) is requested and dropped quietly if the driver refuses.
+No speaker or no microphone gives a "Skipped" warning, never a crash; CI machines have no audio devices, so unit tests use fakes and
+synthetic signals. Real behaviour (levels, raw mode, feedback brake) still needs checking on hardware.
 
 ### GPU stress test
 

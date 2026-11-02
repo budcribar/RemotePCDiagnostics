@@ -74,7 +74,7 @@
 
     private void Select(IDiagnosticModule m) { Screen.SelectedModule = m.Name; }
     private readonly Dictionary<string, ElementReference> _rowRefs = new(StringComparer.OrdinalIgnoreCase);
-    private static bool HasOwnStart(IDiagnosticModule m) => m is IStressSuiteModule || m.Name == RemotePCDiagnostics.Core.Security.SecurityAuditModule.ModuleName;
+    private static bool HasOwnStart(IDiagnosticModule m) => m is IStressSuiteModule || ChecksScreenState.IsSeparateStep(m);
 
     /// <summary>Enter/Space selects; ↑/↓ move to the previous/next visible test (and select it).</summary>
     private async Task RowKey(KeyboardEventArgs e, IDiagnosticModule m)
@@ -195,7 +195,7 @@
                 }
                 else if (kind == RowKind.Cancelled) { <div class="meta">Earlier results are on the History page.</div> }
             </div>
-            @* Stress tests and the security audit have their own Start/Stop (with length) below, so no second start button here. *@
+            @* Stress tests, the security audit and the audio tests have their own Start/Stop (with length) below, so no second start button here. *@
             @if (!HasOwnStart(m))
             {
                 <button class="btn btn-outline ct-run-one" data-testid="checks-run-one" disabled="@(!canRun)" @onclick="() => { _ = Screen.RunSingleAsync(m); }"><Icon Name="play" Size="12" /> Run just this</button>
@@ -210,7 +210,8 @@
     {
         "Osquery" => typeof(OsqueryPage), "Sensors" => typeof(LibreHardwareMonitorPage), "CpuStress" => typeof(CpuStressPage),
         "MemoryTest" => typeof(MemoryTestPage), "DiskSpeed" => typeof(DiskSpeedPage), "GpuStress" => typeof(GpuStressPage),
-        "NetworkTest" => typeof(NetworkTestPage), "SecurityAudit" => typeof(SecurityAuditPage), _ => typeof(AreaPage),
+        "NetworkTest" => typeof(NetworkTestPage), "SecurityAudit" => typeof(SecurityAuditPage),
+        "SpeakerToMic" => typeof(SpeakerToMicPage), "MicToSpeaker" => typeof(MicToSpeakerPage), _ => typeof(AreaPage),
     };
 
     private static IDictionary<string, object>? ParamsFor(IDiagnosticModule m) =>

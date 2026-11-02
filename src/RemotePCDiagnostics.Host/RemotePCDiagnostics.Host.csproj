@@ -18,6 +18,7 @@
     <PackageReference Include="PeakSWC.RemoteBlazorWebView.Wpf" Version="10.0.13" />
     <!-- Live temperatures/fans. 0.9.6 = latest stable (Oct 2026); ships a net10.0 lib. MPL-2.0. -->
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
+    <PackageReference Include="NAudio.Wasapi" Version="3.3.0" />
     <!-- GPU stress test: Direct3D 11 compute via Vortice (MIT, managed only; uses the d3d11/dxgi/d3dcompiler_47 DLLs that ship with Windows, so no native binaries to copy). -->
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
