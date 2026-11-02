@@ -75,4 +75,24 @@ public class SessionLaunchOptionsTests
         Assert.Equal(initialCtx.SessionId, resumed.Id);
         Assert.True(resumed.PostReboot);
     }
+
+    [Fact]
+    public void RestartArguments_KeepServerAndSession_AndMarkTheRestart()
+    {
+        var id = Guid.Parse("7e57c0de-0000-4000-8000-000000000001");
+        var args = SessionLaunchOptions.RestartArguments(new Uri("https://remoteblazor.pagetomovie.com:34544/"), id);
+        Assert.Equal(["-u=https://remoteblazor.pagetomovie.com:34544", "-i=7e57c0de-0000-4000-8000-000000000001", "--restarted"], args);
+        Assert.True(SessionLaunchOptions.IsRestarted(args));
+        var resolved = SessionLaunchOptions.Resolve(args, _ => null);
+        Assert.Equal(SessionMode.Remote, resolved.Mode);
+        Assert.Equal(id, resolved.Id);
+        Assert.Equal(new Uri("https://remoteblazor.pagetomovie.com:34544"), resolved.ServerUri);
+    }
+
+    [Fact]
+    public void RestartArguments_NeedTheAssignedSessionId()
+    {
+        Assert.Throws<ArgumentException>(() => SessionLaunchOptions.RestartArguments(new Uri("https://x.example/"), Guid.Empty));
+        Assert.False(SessionLaunchOptions.IsRestarted(["-u=https://x.example"]));
+    }
 }

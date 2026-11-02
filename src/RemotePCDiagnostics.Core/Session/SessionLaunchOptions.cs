@@ -66,6 +66,26 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
         return launch with { Id = effectiveId, PostReboot = true };
     }
 
+    /// <summary>Marks a copy started by <see cref="RestartArguments"/>: it waits for the old copy to exit instead of leaving at once.</summary>
+    public const string RestartedArg = "--restarted";
+
+    /// <summary>How long a restarted copy waits for the old one to close before giving up.</summary>
+    public static readonly TimeSpan RestartWait = TimeSpan.FromSeconds(60);
+
+    public static bool IsRestarted(IEnumerable<string> args) =>
+        args.Any(a => string.Equals(a, RestartedArg, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Arguments for the copy started when the technician's browser refreshes the remote session (RemoteBlazorWebView's
+    /// Refreshed event; the library's own Restart() starts the same <c>-u=</c>/<c>-i=</c> pair). The same session id keeps the
+    /// technician's link working; <see cref="RestartedArg"/> lets the new copy wait for this one to release the one-copy lock.
+    /// </summary>
+    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId)
+    {
+        if (sessionId == Guid.Empty) throw new ArgumentException("A restart needs the session id the server assigned.", nameof(sessionId));
+        return [$"-u={serverUri.AbsoluteUri.TrimEnd('/')}", $"-i={sessionId:D}", RestartedArg];
+    }
+
     /// <summary>
     /// Builds the Windows <c>RunOnce</c> command line so that after a reboot, <c>RemotePCDiagnostics.Host</c> restarts
     /// into the exact same session mode, relay server, and remote session ID (<c>-i=&lt;guid&gt;</c>).

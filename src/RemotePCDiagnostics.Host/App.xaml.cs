@@ -88,6 +88,13 @@ public partial class App : Application
 
         // One instance per PC (local window and remote session share it); --undo-all also waits its turn.
         _instance = new Mutex(true, InstanceMutexName, out var first);
+        // Restarted after the technician's browser refreshed: the old copy is shutting down, so wait for it.
+        if (!first && RemotePCDiagnostics.Core.Session.SessionLaunchOptions.IsRestarted(e.Args))
+        {
+            Log("Restarted: waiting for the previous copy to exit");
+            try { first = _instance.WaitOne(RemotePCDiagnostics.Core.Session.SessionLaunchOptions.RestartWait); }
+            catch (AbandonedMutexException) { first = true; } // the old copy ended without releasing it: we own it now
+        }
         if (!first) { Log("Another instance is already running: exiting"); _instance.Dispose(); _instance = null; Shutdown(ExitAlreadyRunning); return; }
 
         if (e.Args.Any(a => a.Equals("--undo-all", StringComparison.OrdinalIgnoreCase)))
