@@ -103,10 +103,12 @@ public sealed class ChecksScreenState
         StressSuite.Order.Select(n => _diag.Modules.FirstOrDefault(m => string.Equals(m.Name, n, StringComparison.OrdinalIgnoreCase))).OfType<IDiagnosticModule>()
             .Concat(_diag.Modules.Where(m => m.Name == SecurityAuditModule.ModuleName))
             .Concat(_diag.Modules.OfType<Audio.IAudioTestModule>())
-            .Concat(_diag.Modules.OfType<Webcam.IWebcamTestModule>()).ToList();
+            .Concat(_diag.Modules.OfType<Webcam.IWebcamTestModule>())
+            .Concat(_diag.Modules.OfType<Npu.INpuTestModule>()).ToList();
 
     /// <summary>Security audit and audio tests: listed with the stress tests but never part of the stress run, and not ticked by default.</summary>
-    public static bool IsSeparateStep(IDiagnosticModule m) => m.Name == SecurityAuditModule.ModuleName || m is Audio.IAudioTestModule || m is Webcam.IWebcamTestModule;
+    public static bool IsSeparateStep(IDiagnosticModule m) => m.Name == SecurityAuditModule.ModuleName || m is Audio.IAudioTestModule || m is Webcam.IWebcamTestModule
+        || m is Npu.INpuTestModule;
 
     public IReadOnlyList<IDiagnosticModule> Modules(CheckGroup g) => g == CheckGroup.Checks ? ChecksModules : StressModules;
 
@@ -244,6 +246,7 @@ public sealed class ChecksScreenState
         try { (_diag.Modules.FirstOrDefault(m => m.Name == SecurityAuditModule.ModuleName) as SecurityAuditModule)?.Cancel(); } catch { }
         foreach (var a in _diag.Modules.OfType<Audio.IAudioTestModule>()) { try { a.Cancel(); } catch { } }
         foreach (var w in _diag.Modules.OfType<Webcam.IWebcamTestModule>()) { try { w.Cancel(); } catch { } }
+        foreach (var n in _diag.Modules.OfType<Npu.INpuTestModule>()) { try { n.Cancel(); } catch { } }
     }
 
     /// <summary>"Run just this" is allowed when no group run is active and (for stress tests) no stress test runs.</summary>

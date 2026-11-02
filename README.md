@@ -25,6 +25,7 @@ RemotePCDiagnostics is a single Windows desktop application (a WPF or WinForms h
 | Speaker to microphone test (optional) | Plays a test tone and checks the speaker output and the microphone heard it | NAudio (WASAPI) |
 | Microphone to speaker test (optional) | Plays the microphone through the speaker, mic level, "I heard it" answer | NAudio (WASAPI) |
 | Webcam test (optional) | Opens the camera for a few seconds: frame rate, stalls, brightness, black/frozen/overexposed frames | Windows.Media.Capture (WinRT, part of Windows) |
+| NPU test (optional) | Finds the NPU (AI accelerator), checks its driver, runs a short matrix-multiply on it vs the CPU | WMI, DXCore, Direct3D 12 (Vortice) |
 
 ## Architecture (intended)
 
@@ -35,7 +36,7 @@ RemotePCDiagnostics is a single Windows desktop application (a WPF or WinForms h
 
 ## Licensing notes
 
-Planned components are used under their own licenses and need to be confirmed before shipping: osquery (Apache-2.0 or GPL-2.0, used under Apache-2.0), LibreHardwareMonitor (MPL-2.0), HardeningKitty (MIT), NAudio (MIT). This is not legal advice.
+Planned components are used under their own licenses and need to be confirmed before shipping: osquery (Apache-2.0 or GPL-2.0, used under Apache-2.0), LibreHardwareMonitor (MPL-2.0), HardeningKitty (MIT), NAudio (MIT), Vortice.Direct3D12 (MIT; the NPU test). This is not legal advice.
 
 ## Safety
 
@@ -247,6 +248,35 @@ running totals plus the previous thumbnail are kept. **No frame or image is save
 Caveats: thresholds are first guesses and need checking on real cameras (IR/Windows Hello cameras, virtual cameras and some drivers
 may behave differently). If another app holds the camera, the test reads it in shared mode at that app's format and says so.
 A camera in a very dark room can count as "black". CI has no camera, so unit tests use synthetic frames.
+
+### NPU test
+
+On-demand, like the audio tests: listed after the security audit and the audio tests, never in Run All or the stress run (when ticked it
+runs on its own after it), not ticked by default, no prompts. Page: **NPU (AI accelerator) test**, length 5/10/30/60 s (default 10 s,
+capped at 60 s). Access is behind `INpuIo` (Core, `NullNpuIo` for CI); the Windows implementation is `WindowsNpuIo` in the Host.
+
+- **Detection**: `Win32_PnPEntity` devices in the `ComputeAccelerator` class or named like an NPU (Intel AI Boost, AMD IPU / NPU Compute
+  Accelerator, Qualcomm Hexagon NPU), with status, problem code and driver version (`Win32_PnPSignedDriver`), merged with DXCore adapters
+  (`dxcore.dll`, plain COM interop) that have the NPU hardware-type attribute (or, on older Windows, ML support without graphics).
+- **Workload**: Direct3D 12 on the NPU's own DXCore adapter. NPUs with "core compute" run a 256×256 float32 matrix-multiply compute shader;
+  the first result is compared with a CPU reference, then it repeats for the chosen length (GFLOPS, ms per run). ML-only NPUs
+  (feature level 1_0_GENERIC, no shaders) get a buffer copy on their compute queue, checked byte for byte: this proves the driver accepts and
+  completes work, but not the math. A watchdog (length + 15 s) abandons a hung driver call; Stop and closing the app cancel it.
+
+| Situation | Result |
+| --- | --- |
+| No NPU | Warning "Skipped: No NPU found." |
+| Driver problem code / status Error | Fail with the Device Manager problem text |
+| Listed but no DirectX adapter (compute driver not loaded) | Fail |
+| Workload throws, device removed, or times out | Fail |
+| Max error vs CPU > 0.01 | Fail |
+| More than 20× slower than one CPU core | Warning |
+| ML-only NPU, copy round-trip OK | Warning (driver healthy, math not checked) |
+| Matrix multiply matches, fast enough | Pass with GFLOPS |
+
+Caveats: ONNX Runtime / DirectML is not used (its C# API selects DXGI adapters only, which NPUs are not, and the package adds ~20 MB of native
+DLLs), so a real ML operator run on ML-only NPUs (Intel AI Boost is one) is not verified. Unit tests use fakes and synthetic matrices; the
+DXCore/D3D12 path still needs checking on NPU hardware.
 
 ### GPU stress test
 

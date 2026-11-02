@@ -88,6 +88,9 @@ public partial class MainWindow : Window
         services.AddSingleton<IDiagnosticModule>(sp => new RemotePCDiagnostics.Core.Audio.MicToSpeakerModule(sp.GetRequiredService<RemotePCDiagnostics.Core.Audio.IAudioIo>(), App.Log));
         // Webcam test: on-demand only, own page, not part of Run All or the stress run. Frames are analysed in memory only.
         services.AddSingleton<IDiagnosticModule>(new RemotePCDiagnostics.Core.Webcam.WebcamTestModule(new MediaCaptureWebcamIo(App.Log), App.Log));
+        // NPU test: on-demand only, own page, not part of Run All or the stress run.
+        services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(App.Log));
+        services.AddSingleton<IDiagnosticModule>(sp => new RemotePCDiagnostics.Core.Npu.NpuTestModule(sp.GetRequiredService<RemotePCDiagnostics.Core.Npu.INpuIo>(), App.Log));
         services.AddSingleton<DiagnosticsService>();
         services.AddSingleton(new RemotePCDiagnostics.Core.Preferences.PreferencesService(
             new RemotePCDiagnostics.Core.Preferences.FilePreferencesStore(RemotePCDiagnostics.Core.Preferences.FilePreferencesStore.DefaultPath(), App.Log)));
@@ -320,6 +323,7 @@ public partial class MainWindow : Window
                 else if (m is SecurityAuditModule sa) sa.Cancel();
                 else if (m is RemotePCDiagnostics.Core.Audio.IAudioTestModule am) am.Cancel();
                 else if (m is RemotePCDiagnostics.Core.Webcam.IWebcamTestModule wm) wm.Cancel();
+                else if (m is RemotePCDiagnostics.Core.Npu.INpuTestModule nm) nm.Cancel();
             }
             _provider.Dispose();
         }
