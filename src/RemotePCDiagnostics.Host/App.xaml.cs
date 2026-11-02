@@ -34,7 +34,7 @@ public partial class App : Application
     {
         var path = Environment.GetEnvironmentVariable("RPD_LOG_FILE");
         if (string.IsNullOrEmpty(path)) return;
-        try { lock (_fileGate) File.AppendAllText(path, $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}"); } catch { }
+        try { lock (_fileGate) File.AppendAllText(path, $"{DateTimeOffset.Now:O} [{RemotePCDiagnostics.Core.AppBuildInfo.LogStamp}] {message}{Environment.NewLine}"); } catch { }
     }
 
     /// <summary>Process exit codes (also used by --undo-all).</summary>
@@ -78,7 +78,7 @@ public partial class App : Application
             Shutdown(valid ? ExitOk : 1);
             return;
         }
-        Log($"Startup pid={Environment.ProcessId} args={string.Join(' ', e.Args)}");
+        Log($"Startup build={RemotePCDiagnostics.Core.AppBuildInfo.Version} pid={Environment.ProcessId} args={string.Join(' ', e.Args)}");
         DispatcherUnhandledException += (_, ex) => Log($"Unhandled: {ex.Exception}");
         AppDomain.CurrentDomain.UnhandledException += (_, ex) => Log($"Fatal: {ex.ExceptionObject}");
         base.OnStartup(e);

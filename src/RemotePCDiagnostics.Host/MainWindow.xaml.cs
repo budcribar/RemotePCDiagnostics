@@ -118,7 +118,7 @@ public partial class MainWindow : Window
         var diag = provider.GetRequiredService<DiagnosticsService>();
         var eventContext = new RemotePCDiagnostics.Core.Logging.ResultEventContext(
             n => diag.Modules.FirstOrDefault(m => string.Equals(m.Name, n, StringComparison.OrdinalIgnoreCase))?.DisplayName ?? n,
-            () => _machine.Value, typeof(MainWindow).Assembly.GetName().Version?.ToString() ?? "?");
+            () => _machine.Value, RemotePCDiagnostics.Core.AppBuildInfo.Version);
         _ = new RemotePCDiagnostics.Core.Logging.ResultEventLogger(provider.GetRequiredService<ResultStore>(), App.Events, _ => diag.CurrentSuiteLabel, context: eventContext);
         _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.AppStart, RemotePCDiagnostics.Core.Logging.LogLevel.Information, AppStartText(mode.ToString())));
         // Tell the person at this PC when a remote technician starts/stops/restarts a service (non-blocking).
@@ -296,7 +296,7 @@ public partial class MainWindow : Window
         catch (Exception ex) { model = $"unknown ({ex.GetType().Name})"; }
         bool admin = false;
         try { using var id = System.Security.Principal.WindowsIdentity.GetCurrent(); admin = new System.Security.Principal.WindowsPrincipal(id).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator); } catch { }
-        var version = typeof(MainWindow).Assembly.GetName().Version?.ToString() ?? "?";
+        var version = RemotePCDiagnostics.Core.AppBuildInfo.Version;
         return $"Remote PC Diagnostics started.{Environment.NewLine}Version: {version}{Environment.NewLine}Machine: {model}{Environment.NewLine}Running as administrator: {(admin ? "yes" : "no")}{Environment.NewLine}Mode: {mode}{Environment.NewLine}OS: {Environment.OSVersion.VersionString}";
     }
 

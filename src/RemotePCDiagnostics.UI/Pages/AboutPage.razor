@@ -1,0 +1,18 @@
+@page "/about"
+@inject ISessionContext Session
+
+<div class="toolbar"><span class="icon-badge page-icon"><Icon Name="pc" Size="20" /></span><h1 data-testid="about-title">About Remote PC Diagnostics</h1></div>
+<section class="card">
+    <h2>Version @AppBuildInfo.Release</h2>
+    <p>Use the full build version below when reporting a problem or comparing logs.</p>
+    <dl>
+        <dt>Build version</dt><dd data-testid="about-version" style="overflow-wrap:anywhere">@AppBuildInfo.Version</dd>
+        <dt>Git commit</dt><dd style="overflow-wrap:anywhere">@AppBuildInfo.Commit</dd>
+        <dt>Session</dt><dd>@Session.Mode</dd>
+        <dt>Computer</dt><dd>@Session.MachineName</dd>
+        <dt>Runtime</dt><dd>@System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription</dd>
+        <dt>Operating system</dt><dd>@System.Runtime.InteropServices.RuntimeInformation.OSDescription</dd>
+        <dt>Process architecture</dt><dd>@System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture</dd>
+    </dl>
+    <p class="meta">CI builds include a build number, attempt and Git revision. Local builds are marked local and may include uncommitted changes. Older logs retain the version information originally recorded.</p>
+</section>

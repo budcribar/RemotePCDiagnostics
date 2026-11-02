@@ -17,6 +17,7 @@ internal static class Program
         var interactive = args.Length == 0;
         string? output = null;
         var diagnostics = new List<string>();
+        diagnostics.Add("Build: " + RemotePCDiagnostics.Core.AppBuildInfo.Version);
         try
         {
             for (var i = 0; i < args.Length; i++)

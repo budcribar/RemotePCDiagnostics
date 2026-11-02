@@ -49,7 +49,7 @@ public sealed class EventLogSink : ILogSink, IDisposable
                 try
                 {
                     var type = e.Level switch { LogLevel.Error => EventLogEntryType.Error, LogLevel.Warning => EventLogEntryType.Warning, _ => EventLogEntryType.Information };
-                    log.WriteEntry(e.Message, type, e.EventId);
+                    log.WriteEntry(e.Message + Environment.NewLine + "Build: " + RemotePCDiagnostics.Core.AppBuildInfo.Version, type, e.EventId);
                 }
                 catch (Exception ex) { Fail($"write failed: {ex.GetType().Name}: {ex.Message}"); return; }
             }

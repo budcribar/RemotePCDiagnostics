@@ -84,6 +84,15 @@ try {
   await page.locator('[data-testid="history-empty"], [data-testid="history-table"]').first().waitFor({ state: 'visible', timeout: 15_000 });
   console.log('History page:', await page.getByTestId('history-empty').count() ? 'empty state' : `${await page.getByTestId('history-row').count()} row(s)`);
   await page.screenshot({ path: `${outDir}/history.png`, fullPage: true });
+
+  await page.getByTestId('nav-about').click();
+  await page.getByTestId('about-title').waitFor({ state: 'visible', timeout: 15_000 });
+  const buildVersion = await page.getByTestId('about-version').innerText();
+  if (!/^\d+\.\d+\.\d+-(local|ci\.)/.test(buildVersion)) throw new Error(`Missing build identity: ${buildVersion}`);
+  if (process.env.GITHUB_SHA && !buildVersion.includes(process.env.GITHUB_SHA)) throw new Error(`Wrong Git revision: ${buildVersion}`);
+  if (process.env.GITHUB_RUN_NUMBER && !buildVersion.includes(`-ci.${process.env.GITHUB_RUN_NUMBER}.${process.env.GITHUB_RUN_ATTEMPT}`)) throw new Error(`Wrong CI build: ${buildVersion}`);
+  console.log('About build:', buildVersion);
+  await page.screenshot({ path: `${outDir}/about.png`, fullPage: true });
 } catch (e) {
   await page.screenshot({ path: `${outDir}/failure.png`, fullPage: true }).catch(() => {});
   throw e;
