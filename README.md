@@ -89,6 +89,20 @@ Idea stage. This repository currently holds only this README.
 
 ## Scaffold (foundation)
 
+### Download a build for testing
+
+After a successful GitHub Actions **CI** run, download the **RemotePCDiagnostics-win-x64** artifact from the run's **Artifacts** section. Extract GitHub's ZIP and run `RemotePCDiagnostics.Host.exe`. This is a single self-contained executable for Windows x64: testers do not need the .NET SDK or runtime. The Microsoft Edge WebView2 runtime is still required, and Windows requests administrator permission at launch.
+
+The executable extracts its bundled runtime, helper programs, audit scripts and web assets to the .NET extraction cache on first launch. Keep the downloaded executable in a stable location while testing restart/resume workflows. CI verifies the bundled files and runs its UI smoke test against this published executable.
+
+To create the same build locally:
+
+```powershell
+dotnet publish src/RemotePCDiagnostics.Host/RemotePCDiagnostics.Host.csproj -c Release -r win-x64 --self-contained true -p:PublishProfile=Portable -p:DebugType=None -p:DebugSymbols=false -o artifacts/RemotePCDiagnostics-win-x64
+```
+
+`RemotePCDiagnostics.Host.exe --verify-package` checks the extracted helper and web files and runs a one-second, 1 MB helper self-test, then exits without opening the UI or running machine scans. Exit code 0 means the package check passed.
+
 > Stubs only. No real diagnostics yet, and no installer exists yet.
 
 ### Layout

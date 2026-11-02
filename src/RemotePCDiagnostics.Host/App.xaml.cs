@@ -53,6 +53,31 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // Packaging check: no window, machine scans, journal changes or instance mutex.
+        if (e.Args.Contains("--verify-package"))
+        {
+            var required = new[] { "tools/osquery/osqueryi.exe", "tools/HardeningKitty/HardeningKitty.psd1",
+                "tools/HardeningKitty/HardeningKitty.psm1", "RemotePCDiagnostics.MemTest.exe",
+                "RemotePCDiagnostics.MemTest.runtimeconfig.json", "wwwroot/index.html" };
+            var missing = required.Where(p => !File.Exists(Path.Combine(AppContext.BaseDirectory, p))).ToArray();
+            LogFileOnly($"Package base: {AppContext.BaseDirectory}; missing: {string.Join(", ", missing)}");
+            var valid = missing.Length == 0;
+            if (valid)
+            {
+                try
+                {
+                    var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.MemTest.exe"), "--bytes 1048576 --seconds 1")
+                    { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+                    using var helper = System.Diagnostics.Process.Start(start)!;
+                    var output = helper.StandardOutput.ReadToEndAsync();
+                    if (!helper.WaitForExit(15000)) { helper.Kill(); valid = false; }
+                    else valid = helper.ExitCode == 0 && output.GetAwaiter().GetResult().Contains("MT DONE 1048576 ");
+                }
+                catch (Exception ex) { LogFileOnly($"Package helper failed: {ex.Message}"); valid = false; }
+            }
+            Shutdown(valid ? ExitOk : 1);
+            return;
+        }
         Log($"Startup pid={Environment.ProcessId} args={string.Join(' ', e.Args)}");
         DispatcherUnhandledException += (_, ex) => Log($"Unhandled: {ex.Exception}");
         AppDomain.CurrentDomain.UnhandledException += (_, ex) => Log($"Fatal: {ex.ExceptionObject}");

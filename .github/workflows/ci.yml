@@ -110,6 +110,26 @@ jobs:
       - name: Unit tests
         run: dotnet test RemotePCDiagnostics.sln -c Release --no-build --logger "trx;LogFileName=unit.trx" --results-directory artifacts/test-results
 
+      - name: Publish portable diagnostics app (single self-contained exe)
+        shell: pwsh
+        run: |
+          dotnet publish src/RemotePCDiagnostics.Host/RemotePCDiagnostics.Host.csproj -c Release -r win-x64 --self-contained true -p:PublishProfile=Portable -p:DebugType=None -p:DebugSymbols=false -o artifacts/RemotePCDiagnostics-win-x64
+          if ($LASTEXITCODE -ne 0) { throw 'Portable publish failed' }
+          $files = @(Get-ChildItem artifacts/RemotePCDiagnostics-win-x64 -Recurse -File)
+          if ($files.Count -ne 1 -or $files[0].Name -ne 'RemotePCDiagnostics.Host.exe') { throw 'Portable output must contain exactly one executable' }
+          $env:RPD_LOG_FILE = Join-Path $env:GITHUB_WORKSPACE 'artifacts/package-check.log'
+          $check = Start-Process -FilePath $files[0].FullName -ArgumentList '--verify-package' -WindowStyle Hidden -PassThru
+          if (-not $check.WaitForExit(60000)) { Stop-Process -Id $check.Id -Force; throw 'Package verification timed out' }
+          if ($check.ExitCode -ne 0) { throw "Package verification failed: $($check.ExitCode)" }
+          Get-Content $env:RPD_LOG_FILE
+
+      - name: Upload portable diagnostics download
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemotePCDiagnostics-win-x64
+          path: artifacts/RemotePCDiagnostics-win-x64/RemotePCDiagnostics.Host.exe
+          if-no-files-found: error
+
       - name: Publish OutlookBenchmark (single exe)
         shell: pwsh
         run: |
@@ -164,12 +184,11 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $art = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
           New-Item -ItemType Directory -Force $art | Out-Null
-          $exe = Get-ChildItem src/RemotePCDiagnostics.Host/bin/Release -Recurse -Filter RemotePCDiagnostics.Host.exe | Select-Object -First 1
-          if (-not $exe) { throw 'Host exe not found' }
+          $exe = Get-Item artifacts/RemotePCDiagnostics-win-x64/RemotePCDiagnostics.Host.exe
           # Runners are already elevated, so the requireAdministrator manifest does not prompt.
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
           $env:RPD_LOG_FILE = Join-Path $art 'host.log'
-          $p = Start-Process -FilePath $exe.FullName -WorkingDirectory $exe.DirectoryName -PassThru
+          $p = Start-Process -FilePath $exe.FullName -WorkingDirectory $exe.DirectoryName -WindowStyle Hidden -PassThru
           "Host started, pid $($p.Id)"
           $env:APP_PID = $p.Id
           $env:CDP_PORT = '9222'
