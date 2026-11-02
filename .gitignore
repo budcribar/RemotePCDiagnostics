@@ -480,3 +480,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Shared portable CI publish profile
+!src/RemotePCDiagnostics.Host/Properties/PublishProfiles/Portable.pubxml
