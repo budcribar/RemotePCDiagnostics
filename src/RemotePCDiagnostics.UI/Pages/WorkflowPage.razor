@@ -56,11 +56,7 @@
         </section>
         <section class="card wf-section" data-testid="wf-fixes">
             <div class="card-head"><strong>Fixes to apply (@approved of @s.Fixes.Count ticked)</strong>
-<<<<<<< HEAD
-                <span class="svc-actions"><button class="btn-small" data-testid="wf-expand-all" @onclick="() => ToggleAllAreas(s)">@(AllOpen(s) ? "Collapse all" : "Expand all")</button><button class="btn-small" @onclick="() => Flow.SetAllApproved(true)">Select all</button><button class="btn-small" @onclick="() => Flow.SetAllApproved(false)">Select none</button></span></div>
-=======
-                <span class="svc-actions"><button class="btn-small" data-testid="wf-select-recommended" @onclick="Flow.SetRecommendedApproved">Select recommended</button><button class="btn-small" @onclick="() => Flow.SetAllApproved(true)">Select all</button><button class="btn-small" @onclick="() => Flow.SetAllApproved(false)">Select none</button></span></div>
->>>>>>> 11c3d3f (Fix 11 UI, workflow, benchmark, history, undo, and suggestion bugs)
+                <span class="svc-actions"><button class="btn-small" data-testid="wf-expand-all" @onclick="() => ToggleAllAreas(s)">@(AllOpen(s) ? "Collapse all" : "Expand all")</button><button class="btn-small" data-testid="wf-select-recommended" @onclick="Flow.SetRecommendedApproved">Select recommended</button><button class="btn-small" @onclick="() => Flow.SetAllApproved(true)">Select all</button><button class="btn-small" @onclick="() => Flow.SetAllApproved(false)">Select none</button></span></div>
             @if (s.Fixes.Count == 0) { <p class="meta">The checks didn't find anything to fix automatically.</p> }
             else { <p class="meta" data-testid="wf-fixes-note">Suggested by the @checkCount checks plus the memory, storage and app scans. One check can suggest several fixes (each startup app, service or cache is its own line).</p> }
             @foreach (var g in s.Fixes.GroupBy(f => f.Area))
