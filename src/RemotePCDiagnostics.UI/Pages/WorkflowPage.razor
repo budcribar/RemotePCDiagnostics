@@ -87,9 +87,9 @@
         <section class="card wf-section" data-testid="wf-signin">
             <div class="card-head"><strong>Signing in after each restart</strong></div>
             @if (_logon is { AlreadyAutomatic: true }) { <p>This PC already signs in by itself, so nothing is needed.</p> }
-            else if (_logon is { BlockedByWindowsHello: true }) { <p class="notice">@_logon.Note</p><label><input type="checkbox" @bind="_clientSignsIn" /> The client will sign in after each restart</label> }
             else
             {
+                @if (_logon is { BlockedByWindowsHello: true, Note: { } note }) { <p class="notice" data-testid="wf-hello-note">@note</p> }
                 <p class="meta">The workflow restarts the PC twice. To carry on without anyone at the PC, Windows can sign in automatically for exactly those two restarts.
                     The password is checked first, stored only the way Windows' own automatic sign-in stores it, and removed when the workflow ends or is cancelled.</p>
                 <label class="wf-field">Account <input data-testid="wf-user" @bind="_user" placeholder="user name" /></label>

@@ -24,19 +24,19 @@ public class WorkflowTests
     private sealed class Sys : IWorkflowSystem
     {
         public List<string> Calls = [];
-        public bool PasswordOk = true, RegisterOk = true, RemoveOk = true, DisableFails;
+        public bool PasswordOk = true, RegisterOk = true, RemoveOk = true, DisableFails, HelloOnly;
         public TimeSpan Uptime { get; set; } = TimeSpan.FromDays(3);
         public string? Report;
         public Task<bool> RegisterResumeAsync(CancellationToken ct) { Calls.Add("register"); return Task.FromResult(RegisterOk); }
         public Task<bool> RemoveResumeAsync(CancellationToken ct) { Calls.Add("unregister"); return Task.FromResult(RemoveOk); }
         public Task<bool> RestartAsync(TimeSpan d, string m, CancellationToken ct) { Calls.Add("restart"); return Task.FromResult(true); }
         public Task AbortRestartAsync(CancellationToken ct) { Calls.Add("abort"); return Task.CompletedTask; }
-        public AutoLogonStatus GetAutoLogonStatus() => new("bud", "PC1", false, false);
+        public AutoLogonStatus GetAutoLogonStatus() => new("bud", "PC1", false, HelloOnly);
         public bool ValidateCredentials(string u, string d, string p) { Calls.Add($"validate:{d}\\{u}"); return PasswordOk; }
-        public AutoLogonBackup EnableAutoLogon(string u, string d, string p, int n) { Calls.Add($"autologon-on:{n}"); return new("0", "old", "PC1", null); }
+        public AutoLogonBackup EnableAutoLogon(string u, string d, string p, int n) { Calls.Add($"autologon-on:{n}"); return new("0", "old", "PC1", null, HelloOnly ? 2 : null); }
         public void DisableAutoLogon(AutoLogonBackup? b)
         {
-            Calls.Add("autologon-off:" + b?.DefaultUserName);
+            Calls.Add("autologon-off:" + b?.DefaultUserName + (b?.PasswordLessBuildVersion is int pv ? $":pl={pv}" : ""));
             if (DisableFails) throw new UnauthorizedAccessException("Access to the Winlogon key was denied.");
         }
         public string ReportFile(DateTimeOffset when) => @"C:\Users\Public\Documents\Remote PC Diagnostics\Service report.html";
@@ -830,6 +830,32 @@ public class WorkflowTests
         Assert.Empty(vscode.Changes!);
         Assert.Single(journal.All, c => c.Kind == ChangeKind.NotUndoable && c.Label.Contains("4.0 GB freed"));
         Assert.Contains("Freed 4.0 GB", sys.Report!);
+    }
+
+    [Fact]
+    public async Task WindowsHelloOnly_AllowsAutoLogon_SavesAndRestoresPasswordLess_AndExplainsWhenPasswordNotCached()
+    {
+        var (flow, sys, store, _, _, _) = Make();
+        sys.HelloOnly = true;
+        Assert.True(flow.AutoLogonStatus().CanUse);
+        await flow.RunChecksAsync();
+
+        // If password isn't cached locally on a Windows Hello-only PC, message explains why and suggests Skip.
+        sys.PasswordOk = false;
+        var err = await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "wrong"));
+        Assert.Contains("Windows Hello-only PC", err);
+        Assert.Contains("tick Skip", err);
+
+        // Valid password enables auto sign-in, records PasswordLessBuildVersion = 2 in backup, and restores it on finish.
+        sys.PasswordOk = true;
+        Assert.Null(await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "secret")));
+        Assert.Equal(2, store.Load()!.AutoLogonBackup!.PasswordLessBuildVersion);
+        sys.Uptime = TimeSpan.Zero;
+        await flow.ResumeAsync();
+        await flow.ResumeAsync();
+        Assert.Equal(WorkflowStage.Done, flow.State.Stage);
+        Assert.Contains("autologon-off:old:pl=2", sys.Calls);
+        Assert.Contains("including \"Only allow Windows Hello sign-in\"", sys.Report!);
     }
 
     private static string E(string s) => System.Net.WebUtility.HtmlEncode(s);

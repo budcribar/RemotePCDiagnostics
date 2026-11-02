@@ -81,23 +81,54 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
 
     public bool ValidateCredentials(string user, string domain, string password)
     {
-        if (!LogonUser(user, domain, password, 2 /* interactive */, 0, out var token)) { Log($"credential check failed for {domain}\\{user}: {Marshal.GetLastWin32Error()}"); return false; }
-        CloseHandle(token);
-        return true;
+        int? restorePasswordLess = null;
+        try
+        {
+            using var pl = Registry.LocalMachine.OpenSubKey(PasswordLessKey, writable: true);
+            if (pl?.GetValue("DevicePasswordLessBuildVersion") is int v && v != 0)
+            {
+                restorePasswordLess = v;
+                pl.SetValue("DevicePasswordLessBuildVersion", 0, RegistryValueKind.DWord);
+            }
+        }
+        catch (Exception ex) { Log("passwordless check before validate: " + ex.Message); }
+        try
+        {
+            if (!LogonUser(user, domain, password, 2 /* interactive */, 0, out var token)) { Log($"credential check failed for {domain}\\{user}: {Marshal.GetLastWin32Error()}"); return false; }
+            CloseHandle(token);
+            return true;
+        }
+        finally
+        {
+            if (restorePasswordLess is int prev)
+            {
+                try { using var pl = Registry.LocalMachine.OpenSubKey(PasswordLessKey, writable: true); pl?.SetValue("DevicePasswordLessBuildVersion", prev, RegistryValueKind.DWord); }
+                catch (Exception ex) { Log("passwordless restore after validate: " + ex.Message); }
+            }
+        }
     }
 
     public AutoLogonBackup EnableAutoLogon(string user, string domain, string password, int logons)
     {
         using var wl = Registry.LocalMachine.OpenSubKey(WinlogonKey, writable: true) ?? throw new InvalidOperationException("Winlogon key missing");
+        int? passwordLess = null;
+        using (var pl = Registry.LocalMachine.OpenSubKey(PasswordLessKey, writable: true))
+        {
+            if (pl?.GetValue("DevicePasswordLessBuildVersion") is int v)
+            {
+                passwordLess = v;
+                if (v != 0) pl.SetValue("DevicePasswordLessBuildVersion", 0, RegistryValueKind.DWord);
+            }
+        }
         var backup = new AutoLogonBackup(wl.GetValue("AutoAdminLogon") as string, wl.GetValue("DefaultUserName") as string,
-            wl.GetValue("DefaultDomainName") as string, wl.GetValue("AutoLogonCount")?.ToString());
+            wl.GetValue("DefaultDomainName") as string, wl.GetValue("AutoLogonCount")?.ToString(), passwordLess);
         StoreSecret("DefaultPassword", password);
         wl.DeleteValue("DefaultPassword", throwOnMissingValue: false); // never a plain-text copy
         wl.SetValue("DefaultUserName", user, RegistryValueKind.String);
         wl.SetValue("DefaultDomainName", domain, RegistryValueKind.String);
         wl.SetValue("AutoLogonCount", logons, RegistryValueKind.DWord); // Windows turns it off by itself after this many sign-ins
         wl.SetValue("AutoAdminLogon", "1", RegistryValueKind.String);
-        Log($"automatic sign-in on for {domain}\\{user} ({logons} sign-ins)");
+        Log($"automatic sign-in on for {domain}\\{user} ({logons} sign-ins, passwordless was {passwordLess?.ToString() ?? "unset"})");
         return backup;
     }
 
@@ -105,13 +136,20 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
     {
         StoreSecret("DefaultPassword", null);
         using var wl = Registry.LocalMachine.OpenSubKey(WinlogonKey, writable: true);
-        if (wl is null) return;
-        void Restore(string name, string? value) { if (value is null) wl.DeleteValue(name, false); else wl.SetValue(name, value, RegistryValueKind.String); }
-        wl.SetValue("AutoAdminLogon", backup?.AutoAdminLogon ?? "0", RegistryValueKind.String);
-        Restore("DefaultUserName", backup?.DefaultUserName);
-        Restore("DefaultDomainName", backup?.DefaultDomainName);
-        if (backup?.AutoLogonCount is { } c && int.TryParse(c, out var n)) wl.SetValue("AutoLogonCount", n, RegistryValueKind.DWord); else wl.DeleteValue("AutoLogonCount", false);
-        Log("automatic sign-in off; stored password removed");
+        if (wl is not null)
+        {
+            void Restore(string name, string? value) { if (value is null) wl.DeleteValue(name, false); else wl.SetValue(name, value, RegistryValueKind.String); }
+            wl.SetValue("AutoAdminLogon", backup?.AutoAdminLogon ?? "0", RegistryValueKind.String);
+            Restore("DefaultUserName", backup?.DefaultUserName);
+            Restore("DefaultDomainName", backup?.DefaultDomainName);
+            if (backup?.AutoLogonCount is { } c && int.TryParse(c, out var n)) wl.SetValue("AutoLogonCount", n, RegistryValueKind.DWord); else wl.DeleteValue("AutoLogonCount", false);
+        }
+        if (backup?.PasswordLessBuildVersion is int pv)
+        {
+            using var pl = Registry.LocalMachine.OpenSubKey(PasswordLessKey, writable: true);
+            pl?.SetValue("DevicePasswordLessBuildVersion", pv, RegistryValueKind.DWord);
+        }
+        Log("automatic sign-in off; stored password removed and previous sign-in settings restored");
     }
 
     [StructLayout(LayoutKind.Sequential)]

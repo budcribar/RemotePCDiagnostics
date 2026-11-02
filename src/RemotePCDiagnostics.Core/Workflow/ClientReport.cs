@@ -168,7 +168,7 @@ public static class ClientReport
                 else
                     sb.Append("Turned on automatic sign-in").Append(who).Append(" so the PC could sign in by itself after the restarts, then turned it off again")
                       .Append(s.AutoLogonRestoredUtc is { } back ? $" at {E(T(back))}" : "")
-                      .Append(": the stored password was removed and the previous sign-in settings were put back.");
+                      .Append(": the stored password was removed and the previous sign-in settings").Append(s.AutoLogonBackup?.PasswordLessBuildVersion is 2 ? " (including \"Only allow Windows Hello sign-in\")" : "").Append(" were put back.");
                 sb.Append("</li>");
             }
             else if (s.AutoLogonAlreadyOn) sb.Append("<li>This PC already signed in by itself; the service didn't change that.</li>");
