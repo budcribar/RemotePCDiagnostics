@@ -23,8 +23,9 @@ public class BenchmarkTests
         var boot = Assert.Single(comparison.Deltas);
         Assert.Equal(BenchmarkVerdict.Uncertain, boot.Verdict);
         Assert.Equal(summary, boot.ChangeSummary);
-        Assert.Contains("Only one after measurement", boot.Note);
-        Assert.Contains("full run-to-run range", boot.Note);
+        Assert.Contains("one after measurement", boot.Note);
+        Assert.Contains("before runs varied by 53%", boot.Note);
+        Assert.DoesNotContain("after 0%", boot.Note);
         Assert.DoesNotContain("no measurable change", boot.Sentence);
         Assert.Equal(0d, comparison.OverallPercent);
     }
@@ -106,6 +107,54 @@ public class BenchmarkTests
         Assert.Empty(none.Samples);
         Assert.Contains("hasn't recorded", none.Note);
         Assert.Null(BootRecord.From(Boot(now, "0")));
+    }
+
+    private static WinEvent BootFull(DateTimeOffset t, int bootMs, int mainMs, int postMs, bool afterInstall = false) =>
+        new(t, BootRecord.Channel, "Microsoft-Windows-Diagnostics-Performance", 100, 2, "Windows has started up", [], new Dictionary<string, string>
+        {
+            ["BootTime"] = bootMs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["MainPathBootTime"] = mainMs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["BootPostBootTime"] = postMs.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["BootIsRebootAfterInstall"] = afterInstall ? "true" : "false",
+        });
+
+    [Fact]
+    public void Boot_BeforeWithWorkflowRestart_UsesOnlyThatStart()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var boots = new[] { BootFull(now.AddMinutes(-4), 60000, 30000, 30000), BootFull(now.AddDays(-1), 129400, 40000, 89400), BootFull(now.AddDays(-2), 81800, 30000, 51800) }
+            .Select(BootRecord.From).OfType<BootRecord>().ToList();
+        var before = BenchmarkRunner.SelectBoots(BenchmarkPhase.Before, boots, null, bootsSince: now.AddMinutes(-10));
+        Assert.Equal([60.0], before.Samples);
+        Assert.Equal("until the desktop 30.0 s + settling after sign-in 30.0 s", before.Detail);
+        var notYet = BenchmarkRunner.SelectBoots(BenchmarkPhase.Before, boots, null, bootsSince: now.AddMinutes(-1));
+        Assert.Empty(notYet.Samples);
+        Assert.Contains("hasn't recorded the start-up after the restart yet", notYet.Note);
+    }
+
+    [Fact]
+    public void Boot_StartsRightAfterUpdatesAreNeverUsed()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var boots = new[] { BootFull(now.AddMinutes(-5), 200000, 120000, 80000, afterInstall: true), BootFull(now.AddDays(-1), 41000, 20000, 21000),
+                            BootFull(now.AddDays(-2), 43000, 20000, 23000), BootFull(now.AddDays(-3), 40000, 20000, 20000) }
+            .Select(BootRecord.From).OfType<BootRecord>().ToList();
+        Assert.True(boots[0].AfterInstall);
+        Assert.Equal([41.0, 43.0, 40.0], BenchmarkRunner.SelectBoots(BenchmarkPhase.Before, boots, null).Samples);
+        var after = BenchmarkRunner.SelectBoots(BenchmarkPhase.After, boots, now.AddHours(-1));
+        Assert.Empty(after.Samples);
+        Assert.Contains("right after Windows installed updates", after.Note);
+    }
+
+    [Fact]
+    public void Comparison_ShowsTheStartUpBreakdown_AndOneSampleEachSideIsAFairComparison()
+    {
+        var comparison = BenchmarkComparison.Build(
+            Run(BenchmarkPhase.Before, new BenchmarkMeasurement(BenchmarkKind.BootTime, [90.2], null, "until the desktop 30.0 s + settling after sign-in 60.2 s")),
+            Run(BenchmarkPhase.After, new BenchmarkMeasurement(BenchmarkKind.BootTime, [47.5], null, "until the desktop 29.0 s + settling after sign-in 18.5 s")));
+        var boot = Assert.Single(comparison.Deltas);
+        Assert.Equal(BenchmarkVerdict.Better, boot.Verdict);
+        Assert.Equal("Before: until the desktop 30.0 s + settling after sign-in 60.2 s. After: until the desktop 29.0 s + settling after sign-in 18.5 s.", boot.Note);
     }
 
     // ---- runner with fake probes ----

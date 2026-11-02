@@ -116,7 +116,8 @@ public static class BuiltInPrograms
 }
 
 /// <summary>One benchmark's runs. The median is the result; the spread tells how noisy it was.</summary>
-public sealed record BenchmarkMeasurement(BenchmarkKind Kind, IReadOnlyList<double> Samples, string? Note = null)
+/// <param name="Detail">Extra breakdown shown with the comparison (start-up: time until the desktop + settling after sign-in).</param>
+public sealed record BenchmarkMeasurement(BenchmarkKind Kind, IReadOnlyList<double> Samples, string? Note = null, string? Detail = null)
 {
     public double? Median
     {
@@ -234,6 +235,14 @@ public sealed record BenchmarkComparison(IReadOnlyList<BenchmarkDelta> Deltas, d
         _ => "Overall about the same speed",
     };
 
+    /// <summary>Why a change isn't trusted yet; a side with one measurement has no range, so it says so instead of "0%".</summary>
+    public static string UncertainNote(BenchmarkMeasurement before, BenchmarkMeasurement after)
+    {
+        static string Range(string side, BenchmarkMeasurement m) =>
+            m.Samples.Count < 2 ? $"one {side} measurement" : $"{side} runs varied by {Math.Round(m.Spread * 100):0}%";
+        return $"The change is within how much the runs varied ({Range("before", before)}, {Range("after", after)}). Repeat under the same conditions to confirm.";
+    }
+
     public static BenchmarkComparison Build(BenchmarkRun? before, BenchmarkRun? after)
     {
         var deltas = new List<BenchmarkDelta>();
@@ -258,10 +267,9 @@ public sealed record BenchmarkComparison(IReadOnlyList<BenchmarkDelta> Deltas, d
                 : diff > 0 ? BenchmarkVerdict.Better : BenchmarkVerdict.Worse;
             // Improvement as "x% faster/less": for lower-is-better, relative to before (time saved).
             double pct = rel * 100;
-            var note = verdict == BenchmarkVerdict.Uncertain
-                ? $"Observed change is within the full run-to-run range (before {b.Spread:P0}, after {a.Spread:P0}). Repeat under the same conditions to confirm."
-                  + (a.Samples.Count == 1 ? " Only one after measurement is available." : "")
-                : null;
+            var note = verdict == BenchmarkVerdict.Uncertain ? UncertainNote(b, a) : null;
+            if (b.Detail is not null || a.Detail is not null)
+                note = (note is null ? "" : note + " ") + $"Before: {b.Detail ?? "no breakdown"}. After: {a.Detail ?? "no breakdown"}.";
             deltas.Add(new(info, bv, av, verdict, pct, note));
 
             var ratio = verdict is BenchmarkVerdict.NoChange or BenchmarkVerdict.Uncertain ? 1.0

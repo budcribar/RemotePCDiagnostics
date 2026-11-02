@@ -226,7 +226,9 @@ public sealed class WorkflowService(
                 Save(s => s with { Stage = WorkflowStage.BeforeBenchmark });
                 Note("Running the before benchmark…");
                 bench.Clear();
-                if (await bench.RunAsync(BenchmarkPhase.Before, token).ConfigureAwait(false) is null) throw new InvalidOperationException("before benchmark didn't start");
+                // Only the start-up after the workflow's own restart, so before and after are both a restart the app asked for.
+                var bootedBefore = State.Restarts.LastOrDefault(r => r.BootedUtc is not null)?.BootedUtc;
+                if (await bench.RunAsync(BenchmarkPhase.Before, token, bootedBefore?.AddSeconds(-30)).ConfigureAwait(false) is null) throw new InvalidOperationException("before benchmark didn't start");
                 stage = WorkflowStage.Applying;
                 Save(s => s with { Stage = WorkflowStage.Applying });
             }

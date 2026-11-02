@@ -59,7 +59,8 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
 
     public void Stop() { try { _cts?.Cancel(); } catch (ObjectDisposedException) { } }
 
-    public async Task<BenchmarkRun?> RunAsync(BenchmarkPhase phase, CancellationToken ct = default)
+    /// <param name="bootsSince">Before only: count just the start-ups after this time (the service workflow's restart before the baseline).</param>
+    public async Task<BenchmarkRun?> RunAsync(BenchmarkPhase phase, CancellationToken ct = default, DateTimeOffset? bootsSince = null)
     {
         lock (_gate)
         {
@@ -74,7 +75,8 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         {
             var settings = Settings;
             var prog = new Progress<string>(p => { Progress = p; Raise(); });
-            var run = await runner.RunAsync(phase, settings, phase == BenchmarkPhase.After ? Before?.TimeUtc : null, prog, cts.Token).ConfigureAwait(false);
+            var run = await runner.RunAsync(phase, settings, phase == BenchmarkPhase.After ? Before?.TimeUtc : null, prog, cts.Token,
+                phase == BenchmarkPhase.Before ? bootsSince : null).ConfigureAwait(false);
             Save(phase == BenchmarkPhase.Before ? _state with { Before = run, After = null } : _state with { After = run });
             Message = run.Completed ? null : "Stopped before every benchmark finished; the finished ones are kept.";
             WriteEvent(run);

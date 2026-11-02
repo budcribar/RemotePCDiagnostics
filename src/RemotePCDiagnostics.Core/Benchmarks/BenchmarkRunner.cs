@@ -34,8 +34,12 @@ public interface IBenchmarkProbes
     Task<SystemResourceSnapshot?> ReadResourceSnapshotAsync(CancellationToken ct) => Task.FromResult<SystemResourceSnapshot?>(null);
 }
 
-/// <summary>One recorded Windows start: total boot time until the desktop was ready.</summary>
-public sealed record BootRecord(DateTimeOffset Time, double BootSeconds, double? MainPathSeconds, double? PostBootSeconds)
+/// <summary>
+/// One recorded Windows start (Diagnostics-Performance event 100): total time until the desktop was ready, split into the main path
+/// (power-on to the desktop showing) and post-boot (after sign-in until the desktop goes quiet, which startup apps lengthen).
+/// <paramref name="AfterInstall"/>: the first start after Windows installed updates, which is much slower and isn't typical.
+/// </summary>
+public sealed record BootRecord(DateTimeOffset Time, double BootSeconds, double? MainPathSeconds, double? PostBootSeconds, bool AfterInstall = false)
 {
     public const string Channel = "Microsoft-Windows-Diagnostics-Performance/Operational";
     public const string Query = "*[System[(EventID=100)]]";
@@ -44,7 +48,18 @@ public sealed record BootRecord(DateTimeOffset Time, double BootSeconds, double?
     {
         if (e.EventId != 100) return null;
         static double? Ms(WinEvent e, string name) => e.NamedData.TryGetValue(name, out var v) && double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var ms) && ms > 0 ? ms / 1000 : null;
-        return Ms(e, "BootTime") is { } boot ? new(e.Time, boot, Ms(e, "MainPathBootTime"), Ms(e, "BootPostBootTime")) : null;
+        var afterInstall = e.NamedData.TryGetValue("BootIsRebootAfterInstall", out var ai) && (string.Equals(ai, "true", StringComparison.OrdinalIgnoreCase) || ai == "1");
+        return Ms(e, "BootTime") is { } boot ? new(e.Time, boot, Ms(e, "MainPathBootTime"), Ms(e, "BootPostBootTime"), afterInstall) : null;
+    }
+
+    /// <summary>"until the desktop 25.1 s + settling after sign-in 22.4 s" (medians), or null when Windows didn't record the split.</summary>
+    public static string? Breakdown(IReadOnlyList<BootRecord> boots)
+    {
+        var main = boots.Select(b => b.MainPathSeconds).OfType<double>().ToList();
+        var post = boots.Select(b => b.PostBootSeconds).OfType<double>().ToList();
+        if (main.Count == 0 || post.Count == 0) return null;
+        static double Med(List<double> v) { var s = v.OrderBy(x => x).ToList(); return s.Count % 2 == 1 ? s[s.Count / 2] : (s[s.Count / 2 - 1] + s[s.Count / 2]) / 2; }
+        return string.Create(CultureInfo.InvariantCulture, $"until the desktop {Med(main):0.0} s + settling after sign-in {Med(post):0.0} s");
     }
 }
 
@@ -60,7 +75,8 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, Action<string>? log
 
     private void Log(string m) { try { log?.Invoke("[benchmark] " + m); } catch { } }
 
-    public async Task<BenchmarkRun> RunAsync(BenchmarkPhase phase, BenchmarkSettings settings, DateTimeOffset? beforeTime, IProgress<string>? progress, CancellationToken ct)
+    public async Task<BenchmarkRun> RunAsync(BenchmarkPhase phase, BenchmarkSettings settings, DateTimeOffset? beforeTime, IProgress<string>? progress, CancellationToken ct,
+        DateTimeOffset? bootsSince = null)
     {
         var started = DateTimeOffset.UtcNow;
         var list = new List<BenchmarkMeasurement>();
@@ -115,7 +131,7 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, Action<string>? log
                 });
 
             if (settings.IsEnabled(BenchmarkKind.BootTime))
-                await Step("Reading Windows' start-up times…", async () => list.Add(await BootAsync(phase, beforeTime, ct).ConfigureAwait(false)));
+                await Step("Reading Windows' start-up times…", async () => list.Add(await BootAsync(phase, beforeTime, bootsSince, ct).ConfigureAwait(false)));
 
             if (settings.IsEnabled(BenchmarkKind.DnsLookup))
                 await Step("Timing website lookups…", async () => list.Add(await DnsAsync(settings.Runs, ct).ConfigureAwait(false)));
@@ -178,26 +194,43 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, Action<string>? log
         return r;
     }
 
-    private async Task<BenchmarkMeasurement> BootAsync(BenchmarkPhase phase, DateTimeOffset? beforeTime, CancellationToken ct)
+    private async Task<BenchmarkMeasurement> BootAsync(BenchmarkPhase phase, DateTimeOffset? beforeTime, DateTimeOffset? bootsSince, CancellationToken ct)
     {
         IReadOnlyList<WinEvent> events;
         try { events = await probes.ReadBootEventsAsync(ct).ConfigureAwait(false); }
         catch (Exception ex) when (ex is not OperationCanceledException) { Log("boot: " + ex.Message); return new(BenchmarkKind.BootTime, [], "Windows' start-up log couldn't be read (run as administrator)"); }
         var boots = events.Select(BootRecord.From).OfType<BootRecord>().OrderByDescending(b => b.Time).ToList();
-        return SelectBoots(phase, boots, beforeTime);
+        return SelectBoots(phase, boots, beforeTime, bootsSince);
     }
 
-    /// <summary>Before: the last few starts (typical start-up). After: starts recorded after the "before" run (i.e. after the restart).</summary>
-    public static BenchmarkMeasurement SelectBoots(BenchmarkPhase phase, IReadOnlyList<BootRecord> newestFirst, DateTimeOffset? beforeTime)
+    /// <summary>
+    /// Which recorded starts count. The first start after Windows installed updates is never used (it's far slower than usual).
+    /// Before, with <paramref name="bootsSince"/> (the service workflow's restart before the baseline): only the start(s) since then, so before and
+    /// after are each a start from a restart the app asked for. Before without it: the last <see cref="BootsBefore"/> starts (typical start-up).
+    /// After: starts recorded after the "before" run (i.e. after the restart).
+    /// </summary>
+    public static BenchmarkMeasurement SelectBoots(BenchmarkPhase phase, IReadOnlyList<BootRecord> newestFirst, DateTimeOffset? beforeTime, DateTimeOffset? bootsSince = null)
     {
+        var usable = newestFirst.Where(b => !b.AfterInstall).ToList();
+        var skippedInstall = newestFirst.Count - usable.Count;
+        List<BootRecord> chosen;
+        string? empty;
         if (phase == BenchmarkPhase.Before)
         {
-            var recent = newestFirst.Take(BootsBefore).Select(b => b.BootSeconds).ToList();
-            return new(BenchmarkKind.BootTime, recent, recent.Count == 0 ? "Windows hasn't recorded any start-up times on this PC" : null);
+            chosen = bootsSince is { } since ? usable.Where(b => b.Time > since).ToList() : usable.Take(BootsBefore).ToList();
+            empty = bootsSince is not null
+                ? "Windows hasn't recorded the start-up after the restart yet (it does a few minutes after sign-in)"
+                : newestFirst.Count == 0 ? "Windows hasn't recorded any start-up times on this PC" : "only start-ups right after Windows updates are recorded, and those aren't typical";
         }
-        var after = newestFirst.Where(b => beforeTime is null || b.Time > beforeTime).Select(b => b.BootSeconds).ToList();
-        return new(BenchmarkKind.BootTime, after, after.Count == 0
-            ? "no restart since the before benchmark, or Windows hasn't recorded it yet (it does a few minutes after sign-in)" : null);
+        else
+        {
+            chosen = usable.Where(b => beforeTime is null || b.Time > beforeTime).ToList();
+            empty = newestFirst.Any(b => b.AfterInstall && (beforeTime is null || b.Time > beforeTime))
+                ? "the only start-up since the before benchmark was right after Windows installed updates, which isn't comparable; restart once more"
+                : "no restart since the before benchmark, or Windows hasn't recorded it yet (it does a few minutes after sign-in)";
+        }
+        if (chosen.Count == 0) return new(BenchmarkKind.BootTime, [], empty);
+        return new(BenchmarkKind.BootTime, chosen.Select(b => b.BootSeconds).ToList(), null, BootRecord.Breakdown(chosen));
     }
 
     private async Task<BenchmarkMeasurement> ProgramsAsync(int runs, CancellationToken ct)
