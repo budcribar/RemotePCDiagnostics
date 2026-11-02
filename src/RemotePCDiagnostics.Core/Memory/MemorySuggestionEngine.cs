@@ -372,7 +372,7 @@ public static class MemorySuggestionEngine
             steps.Add("Only code folders found from Visual Studio, VS Code, Rider and Windows Search, plus the NuGet package cache. Never Downloads, Desktop, Documents or a whole drive.");
             steps.Add("Undo removes exactly these exclusions.");
             list.Add(new("defender-exclusions", "Stop Defender rescanning code and build folders",
-                $"Microsoft Defender scans every file a build writes. Excluding {MemoryText.Plural(dfn.ProjectFolders.Count, "code folder", "code folders")}, the NuGet package cache and the build tools makes builds noticeably faster.{hog}",
+                $"Microsoft Defender scans every file a build writes. Excluding {DefenderProbe.Describe(dfn.MissingFolders.Count, dfn.MissingProcesses.Count)} makes builds noticeably faster.{hog}",
                 null, SuggestionRisk.Medium, SuggestionKind.Automated, steps,
                 [new(MemoryActionType.AddDefenderExclusions, "", "Add exclusions",
                     "Add these Defender exclusions? Files in these folders and files opened by these build tools won't be scanned for malware. Needs administrator rights.")],

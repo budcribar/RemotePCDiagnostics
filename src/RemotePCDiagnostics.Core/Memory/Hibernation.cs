@@ -40,4 +40,37 @@ public static class Hibernation
 
     /// <summary>HiberFileSizePercent other than 0 / the 40% default means someone set a custom size.</summary>
     public static bool IsCustomSize(int? hiberFileSizePercent) => hiberFileSizePercent is > 0 and not 40;
+
+    /// <summary>
+    /// Values under <see cref="PowerKey"/> that powercfg /h /type writes. "powercfg /h /type full" on undo leaves HiberFileType=2 and HibernateEnabled=1
+    /// even where they didn't exist before (the defaults are the same), so undo deletes the ones that were absent.
+    /// </summary>
+    public static readonly IReadOnlyList<string> TrackedValues = ["HiberFileType", "HibernateEnabled"];
+
+    public static bool IsTracked(string? name) => name is not null && TrackedValues.Contains(name, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Recorded before "powercfg /h /type reduced" (journal form, <see cref="Changes.PreviousDwords"/>); null = couldn't read. Never throws.</summary>
+    public static string? RecordValues(IMemorySystem sys, Action<string>? log = null)
+    {
+        try
+        {
+            if (sys.ReadHibernateValues() is not { } values) return null;
+            return Changes.PreviousDwords.Encode(TrackedValues.ToDictionary(n => n, n => values.TryGetValue(n, out var v) ? v : null));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { log?.Invoke("Hibernation values read failed: " + ex.Message); return null; }
+    }
+
+    /// <summary>The tracked values that didn't exist before (undo deletes them after /type full). Empty when nothing was recorded.</summary>
+    public static IReadOnlyList<string> ValuesToDelete(string? previousExtra) =>
+        Changes.PreviousDwords.Decode(previousExtra) is { } d ? TrackedValues.Where(n => d.TryGetValue(n, out var v) && v is null).ToList() : [];
+
+    /// <summary>After "powercfg /h /type full" succeeded: deletes the values that were absent before. Never throws: failures are logged.</summary>
+    public static void RemoveAddedValues(IMemorySystem sys, string? previousExtra, Action<string>? log = null)
+    {
+        foreach (var name in ValuesToDelete(previousExtra))
+        {
+            try { sys.DeleteHibernateValue(name); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { log?.Invoke($"Couldn't remove {name}: {ex.Message}"); }
+        }
+    }
 }

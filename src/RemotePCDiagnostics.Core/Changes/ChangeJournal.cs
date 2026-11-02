@@ -30,10 +30,22 @@ public enum ChangeKind
 
 /// <param name="Label">Friendly, e.g. "Spotify won't start with Windows".</param>
 /// <param name="NeedsRestart">Undo fully applies only after a restart (Fast Startup, page file).</param>
-public sealed record ChangeRecord(Guid Id, DateTimeOffset TimeUtc, ChangeKind Kind, string Target, string? Previous, string Label, string Actor, bool NeedsRestart = false)
+/// <param name="CreatedKey">
+/// <see cref="ChangeKind.RegistryValue"/> / <see cref="ChangeKind.ExtensionBlock"/>: the topmost registry key in the value's path that didn't exist
+/// before this app wrote it (e.g. "SOFTWARE\Policies\Google" for the Chrome blocklist), so undo can remove the keys it created once they're empty
+/// (<see cref="RegistryKeyCleanup"/>). Null = every key already existed, or a journal written before this was recorded.
+/// </param>
+/// <param name="PreviousExtra">
+/// Other values the change touches as a side effect, as <see cref="PreviousDwords"/> JSON (a null value = it didn't exist), so undo puts them back
+/// exactly: DelayedAutostart for <see cref="ChangeKind.ServiceStartType"/>, HiberFileType / HibernateEnabled for <see cref="ChangeKind.HiberFileType"/>.
+/// Null = not recorded (older journal): undo leaves them as they are.
+/// </param>
+public sealed record ChangeRecord(Guid Id, DateTimeOffset TimeUtc, ChangeKind Kind, string Target, string? Previous, string Label, string Actor, bool NeedsRestart = false,
+    string? CreatedKey = null, string? PreviousExtra = null)
 {
-    public static ChangeRecord New(ChangeKind kind, string target, string? previous, string label, string actor, bool needsRestart = false) =>
-        new(Guid.NewGuid(), DateTimeOffset.UtcNow, kind, target, previous, label, actor, needsRestart);
+    public static ChangeRecord New(ChangeKind kind, string target, string? previous, string label, string actor, bool needsRestart = false,
+        string? createdKey = null, string? previousExtra = null) =>
+        new(Guid.NewGuid(), DateTimeOffset.UtcNow, kind, target, previous, label, actor, needsRestart, createdKey, previousExtra);
 }
 
 /// <summary>Changes made by this app that can be reverted, kept across restarts.</summary>

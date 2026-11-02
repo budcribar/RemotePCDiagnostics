@@ -74,6 +74,18 @@ public static class DefenderProbe
         return new(true, projectFolders, missing, procs);
     }
 
+    /// <summary>
+    /// "19 folders and 7 build tools": what the card offers (the missing exclusions) and what the result confirms, counted the same way.
+    /// Folders include the NuGet package cache when it's one of them.
+    /// </summary>
+    public static string Describe(int folders, int processes) => (folders, processes) switch
+    {
+        ( > 0, > 0) => $"{MemoryText.Plural(folders, "folder")} and {MemoryText.Plural(processes, "build tool")}",
+        ( > 0, _) => MemoryText.Plural(folders, "folder"),
+        (_, > 0) => MemoryText.Plural(processes, "build tool"),
+        _ => "nothing new",
+    };
+
     private static string Q(string s) => "'" + s.Replace("'", "''") + "'";
 
     /// <summary>Adds the exclusions, then reads them back: an organization's policy can make local exclusions ineffective.</summary>

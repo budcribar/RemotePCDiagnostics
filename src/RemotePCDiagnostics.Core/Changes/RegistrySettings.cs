@@ -99,21 +99,25 @@ public static class RegistryAllowlist
     /// Puts a journaled value back (writes the old DWORD, or deletes it when it was absent) and reads it back.
     /// Refuses targets that aren't on the allowlist. May throw (access denied).
     /// </summary>
-    public static (bool Ok, string Message) Restore(IMemorySystem sys, string target, string? previous)
+    /// <param name="createdKey">The topmost key the original write created (<see cref="ChangeRecord.CreatedKey"/>): once the value is gone, that key and
+    /// the ones below it are deleted again while they're empty (<see cref="RegistryKeyCleanup.Remove"/>; best effort, never fails the undo).</param>
+    public static (bool Ok, string Message) Restore(IMemorySystem sys, string target, string? previous, string? createdKey = null, Action<string>? log = null)
     {
         if (Find(target) is not { } s) return (false, "That registry value isn't one this app changes, so it was left as is.");
         if (!TryDecode(previous, out var v)) return (false, "The original value wasn't recorded.");
         if (v is { } old) sys.WriteDword(s, old); else sys.DeleteDword(s);
-        return sys.ReadDword(s) == v
-            ? (true, v is null ? "Setting removed again (back to the Windows default)." : $"Setting back to {v}.")
-            : (false, "Windows didn't keep the original value (administrator rights needed, or your organization manages it).");
+        if (sys.ReadDword(s) != v) return (false, "Windows didn't keep the original value (administrator rights needed, or your organization manages it).");
+        if (v is null) RegistryKeyCleanup.Remove(sys, s.Root, s.Key, createdKey, log);
+        return (true, v is null ? "Setting removed again (back to the Windows default)." : $"Setting back to {v}.");
     }
 }
 
 /// <summary>Several registry values changed by one click, saved with its per-item undo entry.</summary>
 public static class RegistryUndo
 {
-    public sealed record Item(string Target, string? Previous);
+    /// <param name="CreatedKey">Topmost key the write created (<see cref="ChangeRecord.CreatedKey"/>); null = none, or recorded before this existed.</param>
+    /// <param name="Extra">Side-effect values recorded before the change (<see cref="ChangeRecord.PreviousExtra"/>), e.g. a service's DelayedAutostart.</param>
+    public sealed record Item(string Target, string? Previous, string? CreatedKey = null, string? Extra = null);
 
     public static string Encode(IReadOnlyList<Item> items) => JsonSerializer.Serialize(items);
 

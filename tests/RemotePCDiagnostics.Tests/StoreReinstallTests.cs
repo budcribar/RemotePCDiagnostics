@@ -262,15 +262,17 @@ public class StoreReinstallTests
         Assert.Equal(UndoSupport.Reinstall, journal.Undo);
         var people = list.Single(x => x.Id == "remove-app-people");
         Assert.Null(people.Undo);
-        Assert.Equal(AppRemoval.StoreManualChip, people.UndoChip);
-        Assert.Contains(AppRemoval.StoreGetBack, people.Why);
+        Assert.Null(people.UndoChip); // retired: may not be in the Store any more, so no "reinstall from Store" chip
+        Assert.Contains(AppRemoval.RetiredGetBack, people.Why);
+        Assert.DoesNotContain(AppRemoval.StoreGetBack, people.Why);
         Assert.True(people.DefaultOn);
 
         var fixes = FixCatalog.Build([], list);
         Assert.Equal(UndoSupport.Reinstall, fixes.Single(f => f.SuggestionId == weather.Id).Undo);
         Assert.Equal("undo reinstalls from Store", fixes.Single(f => f.SuggestionId == weather.Id).UndoChip);
         Assert.Equal(UndoSupport.None, fixes.Single(f => f.SuggestionId == people.Id).Undo);
-        Assert.Equal("reinstall from Store", fixes.Single(f => f.SuggestionId == people.Id).UndoChip);
+        Assert.Null(fixes.Single(f => f.SuggestionId == people.Id).UndoChip);
+        Assert.Equal("can't be undone", Undoability.Chip(fixes.Single(f => f.SuggestionId == people.Id).Undo));
         Assert.True(fixes.Single(f => f.SuggestionId == weather.Id).NeedsAdmin);
     }
 

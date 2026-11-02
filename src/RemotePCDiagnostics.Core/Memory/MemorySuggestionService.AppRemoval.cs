@@ -36,7 +36,7 @@ public sealed partial class MemorySuggestionService
             if (reinstall) AddUndo(new(s.Id, pkg.Label, MemoryActionType.RemoveApp, pkg.Id, new AppRemoval.Undo([], [], [], [pkg.FamilyName]).Encode()));
             return new(true, $"{pkg.Label} removed for every account on this PC."
                 + (found.Installed.SizeBytes is > 0 ? $" Freed about {MemoryText.Size(found.Installed.SizeBytes.Value)}." : "")
-                + $" {(reinstall ? AppRemoval.StoreUndo : AppRemoval.StoreGetBack)}");
+                + $" {AppRemoval.GetBack(pkg)}");
         }
         if (AppRemoval.ProgramById(a.Target) is { } prog)
             return await UninstallProgramAsync(s, snap, prog, ct).ConfigureAwait(false);
@@ -115,7 +115,7 @@ public sealed partial class MemorySuggestionService
         foreach (var (setting, what) in new[] { (RegistryAllowlist.GameDvrEnabled, "Game DVR"), (RegistryAllowlist.AppCaptureEnabled, "Background game recording") })
         {
             var w = SetDword(setting, 0, was => $"{what} turned off for this account (was {was})", restart: false);
-            if (w.Changed) registry.Add(new(w.Target, w.Previous));
+            if (w.Changed) registry.Add(w.Item);
         }
 
         var services = new List<RegistryUndo.Item>();
@@ -125,10 +125,11 @@ public sealed partial class MemorySuggestionService
             {
                 var original = sys.GetServiceStartType(name);
                 if (original is not ("Automatic" or "AutomaticDelayed")) continue;
+                var delayed = ServiceDelayedStart.Record(sys, name, Log);
                 sys.SetServiceStartType(name, "Manual");
                 if (sys.GetServiceStartType(name) != "Manual") { Log($"{name} didn't stay Manual"); continue; }
-                Journal(ChangeKind.ServiceStartType, name, original, $"{name} set to Manual (was {original})");
-                services.Add(new(name, original));
+                Journal(ChangeKind.ServiceStartType, name, original, ServiceLabel(name, "Manual", original), extra: delayed);
+                services.Add(new(name, original, Extra: delayed));
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Service {name}: {ex.Message}"); } // not installed / protected
         }
@@ -168,7 +169,7 @@ public sealed partial class MemorySuggestionService
 
         var registry = new List<RegistryUndo.Item>();
         var w = SetDword(RegistryAllowlist.NarratorWinEnterLaunch, 0, was => $"Win+Ctrl+Enter Narrator shortcut turned off for this account (was {was})", restart: false);
-        if (w.Changed) registry.Add(new(w.Target, w.Previous));
+        if (w.Changed) registry.Add(w.Item);
         var undo = new AppRemoval.Undo(registry, [], [], reinstall && removed.Count > 0 ? removed.Select(f => f.App.FamilyName).ToList() : null);
         if (!undo.IsEmpty) AddUndo(new(s.Id, reinstall && removed.Count > 0 ? "Narrator's add-ons and the Win+Ctrl+Enter shortcut" : "The Win+Ctrl+Enter Narrator shortcut",
             MemoryActionType.RemoveNarratorAddons, "", undo.Encode()));
@@ -203,7 +204,7 @@ public sealed partial class MemorySuggestionService
             var w = SetDword(setting, 0, was => $"{name} turned off for this account (was {was})", restart: false);
             if (!w.Ok) continue;
             ok++;
-            if (w.Changed) changed.Add(new(w.Target, w.Previous));
+            if (w.Changed) changed.Add(w.Item);
         }
         if (ok == 0) return new(false, "Windows didn't keep these settings (your organization may manage them). Nothing was changed.");
         if (changed.Count > 0) AddUndo(new(s.Id, "Promoted app installs", MemoryActionType.StopSilentAppInstalls, "", RegistryUndo.Encode(changed)));
@@ -229,17 +230,22 @@ public sealed partial class MemorySuggestionService
             else { notReinstalled.Add(r.Message); failed++; }
         }
         var settings = undo.Registry.Count + undo.Services.Count + undo.Tasks.Count > 0;
-        foreach (var item in undo.Registry)
+        foreach (var item in Enumerable.Reverse(undo.Registry)) // last written first: the first write is the one that created any keys
         {
             bool ok;
-            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous).Ok; }
+            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Log).Ok; }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
             if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } } else failed++;
         }
         foreach (var svc in undo.Services)
         {
             if (!AppRemoval.XboxServices.Contains(svc.Target, StringComparer.OrdinalIgnoreCase) || !StartTypes.Contains(svc.Previous)) { failed++; continue; }
-            try { sys.SetServiceStartType(svc.Target, svc.Previous!); try { journal?.RemoveLatest(ChangeKind.ServiceStartType, svc.Target); } catch { } }
+            try
+            {
+                sys.SetServiceStartType(svc.Target, svc.Previous!);
+                ServiceDelayedStart.Restore(sys, svc.Target, svc.Extra, Log);
+                try { journal?.RemoveLatest(ChangeKind.ServiceStartType, svc.Target); } catch { }
+            }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {svc.Target}: {ex.Message}"); failed++; }
         }
         foreach (var t in undo.Tasks)

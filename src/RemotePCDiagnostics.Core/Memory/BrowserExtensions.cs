@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using RemotePCDiagnostics.Core.Changes;
 
 namespace RemotePCDiagnostics.Core.Memory;
 
@@ -174,9 +175,10 @@ public static class BrowserExtensions
     /// <summary>
     /// Removes the one blocklist entry this app added (<paramref name="valueName"/> holding the journaled ID) and reads it back.
     /// Never renumbers or touches other entries: if a later entry exists, or another entry (not ours) blocks the same ID,
-    /// it's left as is and reported. May throw (access denied).
+    /// it's left as is and reported. May throw (access denied). Once our entry is gone, the policy keys the block created
+    /// (<paramref name="createdKey"/>, e.g. "SOFTWARE\Policies\Google") are deleted again while empty, so the browser stops saying it's managed.
     /// </summary>
-    public static (bool Ok, string Message) RemoveBlock(IMemorySystem sys, string? target, string? valueName)
+    public static (bool Ok, string Message) RemoveBlock(IMemorySystem sys, string? target, string? valueName, string? createdKey = null, Action<string>? log = null)
     {
         if (!TryParseTarget(target, out var browser, out var id) || Known(browser, id) is not { } known)
             return (false, "That extension isn't one this app blocks, so the browser's list was left as is.");
@@ -187,13 +189,19 @@ public static class BrowserExtensions
         if (mine?.Data?.Trim().Equals(id, StringComparison.OrdinalIgnoreCase) != true)
             return IsBlocked(list, id)
                 ? (false, $"{known.Name} is still blocked in {label} by an entry this app didn't add (your organization may manage it); left as is.")
-                : (true, $"{known.Name} wasn't blocked in {label} any more.");
+                : Cleaned((true, $"{known.Name} wasn't blocked in {label} any more."));
         if (HasEntriesAfter(list, valueName!))
             return (false, $"Another extension was added to {label}'s blocklist after {known.Name}. Undo the extensions blocked later first; this app never renumbers the list.");
         sys.RemoveExtensionBlock(browser, valueName!, id);
         var after = sys.ReadExtensionBlocklist(browser);
         return after is not null && !after.Any(e => e.Name == valueName)
-            ? (true, $"{known.Name} is allowed in {label} again; the browser turns it back on by itself (if it doesn't, reinstall it from the store).")
+            ? Cleaned((true, $"{known.Name} is allowed in {label} again; the browser turns it back on by itself (if it doesn't, reinstall it from the store).")
             : (false, $"Windows didn't remove {known.Name} from {label}'s blocklist (administrator rights needed).");
+
+        (bool, string) Cleaned((bool, string) result)
+        {
+            RegistryKeyCleanup.Remove(sys, RegistryRoot.LocalMachine, BlocklistKey(browser), createdKey, log);
+            return result;
+        }
     }
 }

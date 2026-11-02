@@ -136,6 +136,22 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
         catch (Exception ex) when (ex is not OutOfMemoryException) { Log("Hibernation read failed: " + ex.Message); return null; }
     }
 
+    public IReadOnlyDictionary<string, int?>? ReadHibernateValues()
+    {
+        using var k = Registry.LocalMachine.OpenSubKey(Hibernation.PowerKey);
+        if (k is null) return null;
+        return Hibernation.TrackedValues.ToDictionary(n => n, n => k.GetValue(n) as int?);
+    }
+
+    /// <summary>Only HiberFileType / HibernateEnabled, after undo's powercfg /h /type full added them.</summary>
+    public void DeleteHibernateValue(string name)
+    {
+        if (!Hibernation.IsTracked(name)) throw new InvalidOperationException($"{name} isn't a hibernation value this app removes.");
+        using var k = Registry.LocalMachine.OpenSubKey(Hibernation.PowerKey, writable: true) ?? throw new InvalidOperationException("Power key missing");
+        k.DeleteValue(name, throwOnMissingValue: false);
+        Log($@"HKLM\{Hibernation.PowerKey}\{name} removed (it wasn't there before)");
+    }
+
     /// <summary>Only ever runs System32\powercfg.exe /h /type reduced|full.</summary>
     public async Task<ActionOutcome> SetHibernateTypeAsync(bool reduced, CancellationToken ct)
     {
@@ -174,9 +190,34 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
                 installed = pk?.GetSubKeyNames().Any(n => n.StartsWith(WidgetsPackage, StringComparison.OrdinalIgnoreCase)) == true;
             int? taskbarDa = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "TaskbarDa", null) as int?;
             return new(Environment.OSVersion.Version.Build, ReadDword(RegistryAllowlist.WidgetsPolicy), installed, taskbarDa,
-                ReadDword(RegistryAllowlist.SearchHighlightsPolicy), ReadDword(RegistryAllowlist.SearchHighlightsToggle));
+                ReadDword(RegistryAllowlist.SearchHighlightsPolicy), ReadDword(RegistryAllowlist.SearchHighlightsToggle), ReadUcpdBlocks());
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { Log("Widgets/Search highlights read failed: " + ex.Message); return null; }
+    }
+
+    /// <summary>The User Choice Protection Driver blocks the Widgets policy: its Start value (registry) and whether it's running (service manager).</summary>
+    private bool ReadUcpdBlocks()
+    {
+        int? start = null;
+        try
+        {
+            using var k = Registry.LocalMachine.OpenSubKey(WindowsFeeds.UcpdServiceKey);
+            start = k is null ? null : k.GetValue("Start") as int? ?? -1;
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException) { Log("UCPD Start read failed: " + ex.Message); start = -1; }
+        bool? running = null;
+        if (start is not null)
+        {
+            try
+            {
+                using var sc = new System.ServiceProcess.ServiceController(WindowsFeeds.UcpdService);
+                running = sc.Status == System.ServiceProcess.ServiceControllerStatus.Running;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { Log("UCPD state read failed: " + ex.Message); }
+        }
+        var blocked = WindowsFeeds.PolicyBlockedByUcpd(start, running);
+        if (blocked) Log($"UCPD is {(running == true ? "running" : "enabled")} (Start {start}): the Widgets policy isn't offered");
+        return blocked;
     }
 
     /// <summary>
@@ -415,11 +456,23 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
     {
         if (BrowserExtensions.Known(browser, extensionId) is not { } known) throw new InvalidOperationException($"{extensionId} isn't an extension this app may block.");
         if (!BrowserExtensions.IsEntryName(valueName)) throw new InvalidOperationException($"'{valueName}' isn't a blocklist entry name.");
+        var keyPath = BrowserExtensions.BlocklistKey(browser);
         using var hklm = Hklm64();
-        using var key = hklm.CreateSubKey(BrowserExtensions.BlocklistKey(browser), writable: true) ?? throw new UnauthorizedAccessException("Can't open the blocklist key.");
-        if (key.GetValue(valueName) is not null) throw new InvalidOperationException($"Blocklist entry {valueName} already exists.");
-        key.SetValue(valueName, known.Id, RegistryValueKind.String);
-        Log($"HKLM\\{BrowserExtensions.BlocklistKey(browser)}\\{valueName} = {known.Id} ({known.Name})");
+        var created = RegistryKeyCleanup.TopmostMissing(keyPath, path => KeyExists(hklm, path));
+        var key = hklm.CreateSubKey(keyPath, writable: true) ?? throw new UnauthorizedAccessException("Can't open the blocklist key.");
+        try
+        {
+            if (key.GetValue(valueName) is not null) throw new InvalidOperationException($"Blocklist entry {valueName} already exists.");
+            key.SetValue(valueName, known.Id, RegistryValueKind.String);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
+        {
+            key.Dispose();
+            RemoveCreatedKeys(hklm, RegistryRoot.LocalMachine, keyPath, created);
+            throw;
+        }
+        finally { key.Dispose(); }
+        Log($"HKLM\\{keyPath}\\{valueName} = {known.Id} ({known.Name})" + (created is null ? "" : $" (created {created})"));
     }
 
     /// <summary>Deletes the value only while it still holds this allowlisted ID; other entries are never touched or renumbered.</summary>
@@ -451,14 +504,80 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
         return i;
     }
 
+    /// <summary>
+    /// Creates the key if needed and writes the value. If the write fails (UCPD, access denied) the keys this call created are deleted again,
+    /// deepest first and only while empty, so a refused write leaves nothing behind; if Windows refuses that too, it's logged and the original error is thrown.
+    /// </summary>
     public void WriteDword(RegistrySetting setting, int value)
     {
         var s = Allowed(setting);
         using var root = OpenBase(s);
-        using var k = root.CreateSubKey(s.Key, writable: true) ?? throw new UnauthorizedAccessException($"Can't open {s.Key}.");
-        k.SetValue(s.Name, value, RegistryValueKind.DWord);
-        Log($"{s.Target} set to {value}");
+        var created = RegistryKeyCleanup.TopmostMissing(s.Key, path => KeyExists(root, path));
+        var k = root.CreateSubKey(s.Key, writable: true) ?? throw new UnauthorizedAccessException($"Can't open {s.Key}.");
+        try { k.SetValue(s.Name, value, RegistryValueKind.DWord); }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
+        {
+            k.Dispose();
+            RemoveCreatedKeys(root, s.Root, s.Key, created);
+            throw;
+        }
+        finally { k.Dispose(); }
+        Log($"{s.Target} set to {value}" + (created is null ? "" : $" (created {created})"));
     }
+
+    /// <summary>A key that can't be opened for reading counts as existing (never recorded as created, so never deleted).</summary>
+    private static bool KeyExists(RegistryKey root, string key)
+    {
+        try { using var k = root.OpenSubKey(key); return k is not null; }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException) { return true; }
+    }
+
+    /// <summary>After a failed write: deletes the keys this call created, deepest first, only while empty. Logs instead of throwing.</summary>
+    private void RemoveCreatedKeys(RegistryKey root, RegistryRoot hive, string key, string? created)
+    {
+        foreach (var k in RegistryKeyCleanup.DeleteOrder(key, created))
+        {
+            try { if (!DeleteKeyIfEmpty(root, hive, k)) break; }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException or InvalidOperationException or ArgumentException)
+            {
+                Log($"Couldn't remove the key {k} created by a refused write: {ex.Message}");
+                break;
+            }
+        }
+    }
+
+    public bool RegistryKeyExists(RegistryRoot root, string key)
+    {
+        using var b = OpenBase(root);
+        return KeyExists(b, key);
+    }
+
+    public bool DeleteRegistryKeyIfEmpty(RegistryRoot root, string key)
+    {
+        using var b = OpenBase(root);
+        return DeleteKeyIfEmpty(b, root, key);
+    }
+
+    /// <summary>Only keys <see cref="RegistryKeyCleanup.IsCleanupKey"/> allows; true = deleted or already gone, false = kept (values or subkeys).</summary>
+    private bool DeleteKeyIfEmpty(RegistryKey root, RegistryRoot hive, string key)
+    {
+        if (!RegistryKeyCleanup.IsCleanupKey(hive, key)) { Log($"{key} isn't a key this app may remove"); return false; }
+        var path = RegistryKeyCleanup.Chain(key)[^1];
+        using (var k = root.OpenSubKey(path))
+        {
+            if (k is null) return true;
+            if (k.SubKeyCount > 0 || k.ValueCount > 0) return false;
+        }
+        var cut = path.LastIndexOf('\\');
+        using var parent = root.OpenSubKey(path[..cut], writable: true);
+        if (parent is null) return true;
+        parent.DeleteSubKey(path[(cut + 1)..], throwOnMissingSubKey: false);
+        Log($"{(hive == RegistryRoot.LocalMachine ? "HKLM" : "HKCU")}\\{path} removed (empty; created by this app)");
+        return true;
+    }
+
+    private static RegistryKey OpenBase(RegistryRoot r) => RegistryKey.OpenBaseKey(
+        r == RegistryRoot.LocalMachine ? Microsoft.Win32.RegistryHive.LocalMachine : Microsoft.Win32.RegistryHive.CurrentUser, RegistryView.Registry64);
 
     public void DeleteDword(RegistrySetting setting)
     {
@@ -1010,8 +1129,30 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
         if (ServiceProtection.IsProtected(name) || ServiceProtection.IsSelfComponent(name)) throw new InvalidOperationException("Protected");
         using var k = Registry.LocalMachine.OpenSubKey(ServiceKey(name), writable: true) ?? throw new InvalidOperationException("Service not found");
         k.SetValue("Start", startType switch { "Automatic" or "AutomaticDelayed" => 2, "Disabled" => 4, _ => 3 }, RegistryValueKind.DWord);
-        if (startType == "AutomaticDelayed") k.SetValue("DelayedAutostart", 1, RegistryValueKind.DWord);
-        else if (startType == "Automatic") k.SetValue("DelayedAutostart", 0, RegistryValueKind.DWord);
+        if (startType == "AutomaticDelayed") k.SetValue(ServiceDelayedStart.ValueName, 1, RegistryValueKind.DWord);
+        // Only clear a delayed start that's there: many services have no DelayedAutostart at all, and undo must not leave a 0 behind.
+        else if (startType == "Automatic" && k.GetValue(ServiceDelayedStart.ValueName) is int d && d != 0) k.SetValue(ServiceDelayedStart.ValueName, 0, RegistryValueKind.DWord);
         Log($"Service '{name}' start type set to {startType}");
+    }
+
+    public (bool Known, int? Value) ReadServiceValue(string service, string name)
+    {
+        if (!name.Equals(ServiceDelayedStart.ValueName, StringComparison.OrdinalIgnoreCase)) return (false, null);
+        using var k = Registry.LocalMachine.OpenSubKey(ServiceKey(service));
+        if (k is null) return (false, null);
+        var v = k.GetValue(ServiceDelayedStart.ValueName);
+        if (v is null) return (true, null);
+        return k.GetValueKind(ServiceDelayedStart.ValueName) == RegistryValueKind.DWord && v is int i ? (true, i) : (false, null);
+    }
+
+    /// <summary>Only DelayedAutostart, only for services this app may change; null deletes it.</summary>
+    public void RestoreServiceValue(string service, string name, int? value)
+    {
+        if (!name.Equals(ServiceDelayedStart.ValueName, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException($"{name} isn't a service value this app restores.");
+        if (ServiceProtection.IsProtected(service) || ServiceProtection.IsSelfComponent(service)) throw new InvalidOperationException("Protected");
+        using var k = Registry.LocalMachine.OpenSubKey(ServiceKey(service), writable: true) ?? throw new InvalidOperationException("Service not found");
+        if (value is { } v) k.SetValue(ServiceDelayedStart.ValueName, v, RegistryValueKind.DWord);
+        else k.DeleteValue(ServiceDelayedStart.ValueName, throwOnMissingValue: false);
+        Log($"Service '{service}' {ServiceDelayedStart.ValueName} {(value is { } x ? $"set back to {x}" : "removed (it wasn't there before)")}");
     }
 }

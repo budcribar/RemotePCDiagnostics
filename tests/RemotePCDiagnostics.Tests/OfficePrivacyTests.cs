@@ -113,7 +113,8 @@ public class OfficePrivacyTests
         var r = await svc.ApplyAsync(s, s.Actions[0]);
         Assert.True(r.Success, r.Message);
         Assert.Contains("OneDrive, SharePoint and co-authoring keep working", r.Message);
-        Assert.Contains("Takes effect next launch", r.Message); // deferred: no memory delta claimed
+        Assert.Contains("Takes effect the next time each Office app opens.", r.Message);
+        Assert.DoesNotContain("Takes effect next launch", r.Message); // already says when: no repeated generic line, no memory delta claimed
         Assert.Equal(2, sys.Reg[Policy]);
         Assert.Equal([$"write:{Policy}=2"], sys.Calls);
         var c = Assert.Single(j.All);
