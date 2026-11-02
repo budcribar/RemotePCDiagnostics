@@ -462,7 +462,7 @@ public class StoreReinstallTests
             Assert.Equal(UndoSupport.Reinstall, Undoability.Of(back));
 
             var undo = new AppRemoval.Undo([], [], [], [rec.Target]);
-            Assert.Equal([rec.Target], AppRemoval.Undo.Decode(undo.Encode()).Reinstall);
+            Assert.Equal(new[] { rec.Target }, AppRemoval.Undo.Decode(undo.Encode()).Reinstall!);
             Assert.Null(AppRemoval.Undo.Decode("""{"Registry":[],"Services":[],"Tasks":["\\x"]}""").Reinstall); // saved before this change
         }
         finally { try { Directory.Delete(dir, true); } catch (IOException) { } }

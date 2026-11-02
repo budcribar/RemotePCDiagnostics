@@ -334,7 +334,7 @@ public static class AppRemoval
         if (found.Count == 0) return null;
         var bytes = found.All(x => x.Installed.SizeBytes is null) ? (long?)null : found.Sum(x => x.Installed.SizeBytes ?? 0);
         var names = string.Join(", ", found.Select(x => x.App.Label));
-        var reinstall = StoreReinstall.CanReinstallAll(found.Select(x => x.App));
+        var reinstall = global::RemotePCDiagnostics.Core.Memory.StoreReinstall.CanReinstallAll(found.Select(x => x.App));
         var getBack = reinstall ? StoreUndoMany : StoreGetBackMany;
         return new MemorySuggestion("remove-narrator-addons", "Remove Narrator's Office add-ons",
             $"Windows includes {MemoryText.Plural(found.Count, "add-on")} that let the Narrator screen reader read Office and Outlook ({names}). Narrator isn't used on this PC. "
@@ -366,7 +366,7 @@ public static class AppRemoval
         {
             var a = f.App;
             var retired = a.Group == AppGroup.Retired;
-            var reinstall = StoreReinstall.CanReinstall(a);
+            var reinstall = global::RemotePCDiagnostics.Core.Memory.StoreReinstall.CanReinstall(a);
             var getBack = reinstall ? StoreUndo : StoreGetBack;
             List<string> steps =
             [
@@ -392,7 +392,7 @@ public static class AppRemoval
         {
             var bytes = xbox.All(x => x.Installed.SizeBytes is null) ? (long?)null : xbox.Sum(x => x.Installed.SizeBytes ?? 0);
             var names = string.Join(", ", xbox.Select(x => x.App.Label));
-            var reinstall = StoreReinstall.CanReinstallAll(xbox.Select(x => x.App));
+            var reinstall = global::RemotePCDiagnostics.Core.Memory.StoreReinstall.CanReinstallAll(xbox.Select(x => x.App));
             var getBack = reinstall ? StoreUndoMany : StoreGetBackMany;
             yield return new MemorySuggestion("remove-xbox", "Remove the Xbox apps and turn off Game DVR",
                 $"Windows comes with {MemoryText.Plural(xbox.Count, "Xbox app")} ({names}) and background game recording, which matter only for Xbox and Game Pass games. "
