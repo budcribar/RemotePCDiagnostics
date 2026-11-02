@@ -22,6 +22,8 @@ public partial class MainWindow : Window
     private readonly ServiceProvider _provider;
     private Uri? _serverUri;
     private Uri? _technicianUrl;
+    private Guid _sessionId;
+    private bool _restarting;
     private DispatcherTimer? _readyTimer;
     private DispatcherTimer? _copyResetTimer;
     public MainWindow()
@@ -183,6 +185,7 @@ public partial class MainWindow : Window
         {
             _readyTimer?.Stop();
             if (_provider.GetService<ISessionContext>() is SessionContext sc && e.Id != Guid.Empty) sc.SessionId = e.Id;
+            if (e.Id != Guid.Empty) _sessionId = e.Id;
             _technicianUrl = RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id);
             App.Log($"ReadyToConnect url={e.Url} id={e.Id} link={_technicianUrl}");
             RemoteLinkText.Text = _technicianUrl.ToString();
@@ -203,7 +206,26 @@ public partial class MainWindow : Window
             App.Log($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
             SetRemoteState(_technicianUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected);
         });
-        RemoteBlazorWebView.Refreshed += (_, e) => App.Log($"Remote Refreshed {e}");
+        // The technician refreshed the browser (or pressed Restart on the "Locked" page): the server drops this client, so
+        // start a fresh copy on the same session id and close this one (RemoteBlazorWebViewTutorial does the same with Restart()).
+        RemoteBlazorWebView.Refreshed += (_, e) => Dispatcher.BeginInvoke(() =>
+        {
+            App.Log($"Remote Refreshed {e}");
+            if (_restarting) return;
+            var id = _sessionId != Guid.Empty ? _sessionId : RemoteBlazorWebView.Id;
+            var exe = Environment.ProcessPath;
+            if (id == Guid.Empty || exe is null) { App.Log("Refreshed: no session id or executable path, can't restart"); return; }
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
+                foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id)) psi.ArgumentList.Add(a);
+                System.Diagnostics.Process.Start(psi);
+                _restarting = true;
+                App.Log($"Refreshed: started a new copy for session {id}; closing this one");
+                System.Windows.Application.Current.Shutdown();
+            }
+            catch (Exception ex) { App.Log($"Refreshed: restart failed: {ex.Message}"); }
+        });
 
         _readyTimer = new DispatcherTimer { Interval = RemoteLinkInfo.ReadyTimeout };
         _readyTimer.Tick += (_, _) =>
