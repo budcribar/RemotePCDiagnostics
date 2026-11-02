@@ -93,7 +93,7 @@ public class TestFindingsFixesTests
             StartTypes[n] = t;
             if (t == "Automatic") Delayed[n] = 0; else if (t == "AutomaticDelayed") Delayed[n] = 1;
         }
-        public (bool Known, int? Value) ReadServiceValue(string service, string name) => (true, Delayed.TryGetValue(service, out var v) ? v : null);
+        public (bool Known, int? Value) ReadServiceValue(string service, string name) => (true, Delayed.TryGetValue(service, out var v) ? (int?)v : null);
         public void RestoreServiceValue(string service, string name, int? value)
         {
             Calls.Add($"delayed:{service}={(value is { } v ? v.ToString() : "deleted")}");

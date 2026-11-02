@@ -195,7 +195,7 @@ public static class BrowserExtensions
         sys.RemoveExtensionBlock(browser, valueName!, id);
         var after = sys.ReadExtensionBlocklist(browser);
         return after is not null && !after.Any(e => e.Name == valueName)
-            ? Cleaned((true, $"{known.Name} is allowed in {label} again; the browser turns it back on by itself (if it doesn't, reinstall it from the store).")
+            ? Cleaned((true, $"{known.Name} is allowed in {label} again; the browser turns it back on by itself (if it doesn't, reinstall it from the store)."))
             : (false, $"Windows didn't remove {known.Name} from {label}'s blocklist (administrator rights needed).");
 
         (bool, string) Cleaned((bool, string) result)

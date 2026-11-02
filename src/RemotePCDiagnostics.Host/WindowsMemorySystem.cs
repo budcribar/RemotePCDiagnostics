@@ -1142,7 +1142,8 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
         if (k is null) return (false, null);
         var v = k.GetValue(ServiceDelayedStart.ValueName);
         if (v is null) return (true, null);
-        return k.GetValueKind(ServiceDelayedStart.ValueName) == RegistryValueKind.DWord && v is int i ? (true, i) : (false, null);
+        if (k.GetValueKind(ServiceDelayedStart.ValueName) == RegistryValueKind.DWord && v is int i) return (true, i);
+        return (false, null);
     }
 
     /// <summary>Only DelayedAutostart, only for services this app may change; null deletes it.</summary>
@@ -1153,6 +1154,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
         using var k = Registry.LocalMachine.OpenSubKey(ServiceKey(service), writable: true) ?? throw new InvalidOperationException("Service not found");
         if (value is { } v) k.SetValue(ServiceDelayedStart.ValueName, v, RegistryValueKind.DWord);
         else k.DeleteValue(ServiceDelayedStart.ValueName, throwOnMissingValue: false);
-        Log($"Service '{service}' {ServiceDelayedStart.ValueName} {(value is { } x ? $"set back to {x}" : "removed (it wasn't there before)")}");
+        var what = value.HasValue ? "set back to " + value.Value : "removed (it wasn't there before)";
+        Log($"Service '{service}' {ServiceDelayedStart.ValueName} {what}");
     }
 }
