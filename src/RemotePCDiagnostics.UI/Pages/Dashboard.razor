@@ -62,7 +62,7 @@
                 @if (summary.NotRunHint is { } hint) { <span class="banner-hint"> Â· @hint</span> }
                 @if (summary.NotRun.Any(m => m.Name == "SecurityAudit"))
                 {
-                    <span> · Security audit is separate: </span><button class="banner-more" data-testid="dashboard-open-audit" @onclick='() => Open("SecurityAudit")'>Open security audit — Start audit</button>
+                    <span> Â· Security audit is separate: </span><button class="banner-more" data-testid="dashboard-open-audit" @onclick='() => Open("SecurityAudit")'>Open security audit â€” Start audit</button>
                 }
             </div>
         }

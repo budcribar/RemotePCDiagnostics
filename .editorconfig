@@ -1,0 +1,5 @@
+# Save source as UTF-8 (a stray Windows-1252 byte makes the compiler misread the whole file: "°" shows as "Â°").
+root = true
+
+[*.{cs,razor,cshtml,css,js,html,xaml,json,md}]
+charset = utf-8

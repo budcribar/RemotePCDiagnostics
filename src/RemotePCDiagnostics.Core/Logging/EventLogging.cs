@@ -195,7 +195,7 @@ public sealed class ResultEventLogger
                 {
                     var value = card.ErrorText ?? (string.IsNullOrWhiteSpace(card.Headline) ? card.EmptyText : card.Headline);
                     if (!string.IsNullOrWhiteSpace(value))
-                        list.Add((card.Title, value + (string.IsNullOrWhiteSpace(card.Meta) ? "" : " · " + card.Meta)));
+                        list.Add((card.Title, value + (string.IsNullOrWhiteSpace(card.Meta) ? "" : " Â· " + card.Meta)));
                 }
                 return list;
             case SecurityAuditReport sec:
