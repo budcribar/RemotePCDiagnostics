@@ -16,7 +16,8 @@ public class UndoTests
         public string? LocalState;
         public bool BrowserRunning;
         public MemoryReading ReadMemory() => new(16L << 30, 4L << 30); // 75% used: transparency suggested
-        public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> s, CancellationToken ct) => Task.FromResult(new MemorySnapshot(ReadMemory(), []));
+        public MemorySnapshot? CustomSnapshot;
+        public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> s, CancellationToken ct) => Task.FromResult(CustomSnapshot ?? new MemorySnapshot(ReadMemory(), []));
         public Task<ActionOutcome> CloseAppAsync(string p, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
         public Task<ActionOutcome> ForceCloseAppAsync(string p, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
         public Task<ActionOutcome> RunCommandAsync(string f, IReadOnlyList<string> a, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
@@ -181,4 +182,32 @@ public class UndoTests
     [InlineData("Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)", "381b4222-f694-41f0-9685-ff5bb260df2e")]
     [InlineData("nothing here", null)]
     public void SchemeGuid(string output, string? expected) => Assert.Equal(expected, UndoService.ParseSchemeGuid(output));
+
+    [Fact]
+    public async Task Journal_PrunesStaleServiceRunningEntries_OnLoadAndScan()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "rpd-undo-prune-" + Guid.NewGuid().ToString("N"), "changes.json");
+        var j = new FileChangeJournal(path);
+        var beforeBoot = FileChangeJournal.CurrentBootUtc().AddHours(-5);
+        j.Add(new ChangeRecord(Guid.NewGuid(), beforeBoot, ChangeKind.ServiceRunning, "SysMain", "Running", "SysMain stopped", "Local user"));
+        j.Add(new ChangeRecord(Guid.NewGuid(), beforeBoot, ChangeKind.ServiceStartType, "WSearch", "Automatic", "Windows Search set to Manual", "Local user"));
+
+        var reloaded = new FileChangeJournal(path);
+        Assert.Single(reloaded.All);
+        Assert.Equal(ChangeKind.ServiceStartType, reloaded.All[0].Kind);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+
+        var memJournal = new MemoryChangeJournal();
+        memJournal.Add(Rec(ChangeKind.ServiceRunning, "Spooler", "Running", 1));
+        memJournal.Add(Rec(ChangeKind.ServiceRunning, "Fax", "Running", 30));
+        var sys = new Sys
+        {
+            CustomSnapshot = new MemorySnapshot(new(16L << 30, 8L << 30), [],
+                Uptime: TimeSpan.FromMinutes(10),
+                Services: [new ServiceUsage(new ServiceInfo("Spooler", "Print Spooler", "RUNNING", "AUTO_START", "LocalSystem", ""), 10L << 20)])
+        };
+        var svc = new MemorySuggestionService(sys, session: new SessionContext(SessionMode.Local), settle: TimeSpan.Zero, journal: memJournal);
+        await svc.ScanAsync();
+        Assert.Empty(memJournal.All);
+    }
 }

@@ -758,6 +758,9 @@ public class MemorySuggestionTests
             [new(MemoryActionType.StopService, "WinDefend", "Stop"), new(MemoryActionType.SetServiceDisabled, "WinDefend", "Disable")]);
         Assert.False((await s.ApplyAsync(fake, fake.Actions[0])).Success);
         Assert.False((await s.ApplyAsync(fake, fake.Actions[1])).Success);
+        Assert.Equal("0 MB", MemoryText.Size(0));
+        Assert.Equal("< 1 MB", MemoryText.Size(450_000));
+        Assert.Equal("1 MB", MemoryText.Size(1L << 20));
         Assert.Empty(backend.Calls);
         Assert.Empty(sys.Calls);
     }

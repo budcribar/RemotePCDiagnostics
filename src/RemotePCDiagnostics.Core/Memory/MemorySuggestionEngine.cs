@@ -440,7 +440,7 @@ public static class MemorySuggestionEngine
                 null, laptop ? SuggestionRisk.Medium : SuggestionRisk.Low, SuggestionKind.Automated, steps,
                 [new(MemoryActionType.ReduceHibernateFile, "", "Shrink hiberfil.sys",
                     "Shrink hiberfil.sys? Hibernate won't be available until you undo this. Needs administrator rights.")],
-                "Storage", "Frees the space right away.", hib.DefaultOn));
+                "Storage", "Frees the space right away.", hib.DefaultOn, SavingText: $"~{MemoryText.Size(hib.EstimatedSavingBytes!.Value)} disk"));
         }
         if (WindowsFeeds.OfferWidgets(s))
         {

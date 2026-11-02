@@ -18,7 +18,7 @@
     Run both passes under the same conditions (plugged in, nothing else running).</p>
 
 <section class="card bench-settings" data-testid="bench-settings">
-    <div class="card-head"><strong>What to measure</strong><span class="meta">about @Minutes(s.EstimatedSeconds()) per pass</span></div>
+    <div class="card-head"><strong>What to measure</strong><span class="meta">about @Minutes(s.EstimatedSeconds()) per pass</span><span class="svc-actions"><button class="btn-small" data-testid="bench-select-all" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Enabled = [.. Enum.GetValues<BenchmarkKind>()] })">Select all</button><button class="btn-small" data-testid="bench-select-none" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Enabled = [] })">Select none</button></span></div>
     <div class="bench-kinds">
         @foreach (var info in Benchmarks.All)
         {
@@ -93,7 +93,7 @@
             <tr data-testid="bench-row-@info.Kind.ToString().ToLowerInvariant()">
                 <td><strong>@info.Title</strong><div class="meta">@info.ClientMeaning</div></td>
                 <td>@Cell(info, b)</td>
-                <td>@(after is null ? "—" : Cell(info, a))</td>
+                <td>@if (after is null) { <span class="meta">—</span> } else { @Cell(info, a) }</td>
                 <td>
                     @if (d is null || after is null) { <span class="meta">—</span> }
                     else

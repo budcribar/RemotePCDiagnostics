@@ -80,6 +80,7 @@ public class MemoryChangeJournal : IChangeJournal
         Raise();
     }
 
+    public static DateTimeOffset CurrentBootUtc() => DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
     protected virtual void Persist() { }
     private void Raise() { try { Changed?.Invoke(); } catch { } }
 }
@@ -99,7 +100,13 @@ public sealed class FileChangeJournal : MemoryChangeJournal
         _path = path; _log = log;
         try
         {
-            if (File.Exists(path) && JsonSerializer.Deserialize<List<ChangeRecord>>(File.ReadAllText(path), Json) is { } loaded) Items.AddRange(loaded);
+            if (File.Exists(path) && JsonSerializer.Deserialize<List<ChangeRecord>>(File.ReadAllText(path), Json) is { } loaded)
+            {
+                var bootCutoff = CurrentBootUtc().AddMinutes(-1);
+                var kept = loaded.Where(x => !(x.Kind == ChangeKind.ServiceRunning && x.TimeUtc < bootCutoff)).ToList();
+                Items.AddRange(kept);
+                if (kept.Count != loaded.Count) Persist();
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { log?.Invoke($"Change journal read failed: {ex.Message}"); }
     }

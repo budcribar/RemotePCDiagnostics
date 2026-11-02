@@ -165,6 +165,9 @@ public class AppRemovalTests
         Assert.Equal("mail-calendar", mail.Actions[0].Target);
         Assert.Contains("206 MB", mail.Why);
         Assert.Contains("To get it back, reinstall it from the Microsoft Store.", mail.Why);
+        Assert.Null(mail.Note);
+        Assert.DoesNotContain(mail.Steps, s => s.Contains("reinstall it from the Microsoft Store"));
+        Assert.Equal("~206 MB disk", mail.SavingText);
         Assert.DoesNotContain("can't be undone", mail.Why);
         Assert.Equal("reinstall from Store", mail.UndoChip);
         Assert.Contains("reinstall it from the Microsoft Store", mail.Actions[0].Confirm);
@@ -209,6 +212,9 @@ public class AppRemovalTests
         Assert.Contains("3 Xbox apps", x.Why);
         Assert.Contains("334 MB", x.Why);
         Assert.Contains("To get them back, reinstall them from the Microsoft Store.", x.Why);
+        Assert.Null(x.Note);
+        Assert.DoesNotContain(x.Steps, s => s.Contains("reinstall them from the Microsoft Store"));
+        Assert.Equal("~334 MB disk", x.SavingText);
         Assert.DoesNotContain(list, s => s.Id.StartsWith("remove-app-xbox"));
     }
 
@@ -228,6 +234,9 @@ public class AppRemovalTests
         Assert.Equal(MemoryActionType.RemoveNarratorAddons, Assert.Single(card.Actions).Type);
         Assert.Contains("5 add-ons", card.Why);
         Assert.Contains("10 MB", card.Why);
+        Assert.Null(card.Note);
+        Assert.DoesNotContain(card.Steps, s => s.Contains("reinstall them from the Microsoft Store"));
+        Assert.Equal("~10 MB disk", card.SavingText);
         Assert.Contains(card.Steps, x => x.Contains("Win+Ctrl+Enter"));
         Assert.DoesNotContain(Build(NarratorPc()), x => x.Id.StartsWith("remove-app-narrator"));
 
@@ -239,6 +248,19 @@ public class AppRemovalTests
         Assert.DoesNotContain(MemorySuggestionEngine.Build(Snap(running) with { Apps = [new("Narrator", 1, 20L << 20, HasWindow: true)] }), x => x.Id == "remove-narrator-addons");
         // Same names from another publisher are never matched.
         Assert.DoesNotContain(Build(new Sys { Packages = NarratorPackages.Select(n => Pkg(n, Ms)).ToList() }), x => x.Id == "remove-narrator-addons");
+
+        // Sub-1-MB add-ons never display "0 MB".
+        var small = new Sys { Packages = [Pkg("MicrosoftWindows.NarratorExtension-Word", Win, 500_000, user: true, prov: true), Pkg("Microsoft.People", Ms, 450_000)] };
+        AllCdmOff(small);
+        var smallNarrator = Build(small).Single(x => x.Id == "remove-narrator-addons");
+        Assert.DoesNotContain("0 MB", smallNarrator.Why);
+        Assert.DoesNotContain(smallNarrator.Steps, s => s.Contains("0 MB"));
+        Assert.Contains("< 1 MB", smallNarrator.Why);
+        Assert.Equal("~< 1 MB disk", smallNarrator.SavingText);
+        var smallPeople = Build(small).Single(x => x.Id == "remove-app-people");
+        Assert.DoesNotContain("0 MB", smallPeople.Why);
+        Assert.DoesNotContain(smallPeople.Steps, s => s.Contains("0 MB"));
+        Assert.Contains("< 1 MB", smallPeople.Why);
     }
 
     [Fact]
@@ -299,6 +321,9 @@ public class AppRemovalTests
         Assert.True(lenovo.DefaultOn);
         Assert.Contains("441 MB", lenovo.Why);
         Assert.Contains("To get it back, reinstall it from Lenovo.", lenovo.Why);
+        Assert.Null(lenovo.Note);
+        Assert.DoesNotContain(lenovo.Steps, s => s.Contains("reinstall it from Lenovo"));
+        Assert.Equal("~441 MB disk", lenovo.SavingText);
         Assert.Equal("reinstall from Lenovo", lenovo.UndoChip);
         Assert.Contains($"\"{LenovoUninstaller}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART", lenovo.Steps[0]); // our arguments, not the registry's
         Assert.Contains(@"\Lenovo\LenovoNowTask", lenovo.Steps[0]);

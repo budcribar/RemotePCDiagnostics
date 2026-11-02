@@ -12,7 +12,21 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     ISessionContext? session = null, Action<LogLevel, string>? events = null, Action<string>? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
 {
     private readonly object _gate = new();
-    private BenchmarkState _state = store.Load() ?? new BenchmarkState(new BenchmarkSettings());
+    private BenchmarkState _state = LoadState(store);
+
+    private static BenchmarkState LoadState(IBenchmarkStore store)
+    {
+        var state = store.Load();
+        if (state is null) return new BenchmarkState(new BenchmarkSettings());
+        if (state.Settings.SchemaVersion < BenchmarkSettings.CurrentSchemaVersion)
+        {
+            var added = Benchmarks.IdleResourceKinds.Concat(Benchmarks.ResourceSnapshotKinds);
+            var enabled = Enum.GetValues<BenchmarkKind>().Where(state.Settings.Enabled.Union(added).Contains).ToList();
+            state = state with { Settings = state.Settings with { SchemaVersion = BenchmarkSettings.CurrentSchemaVersion, Enabled = enabled } };
+            store.Save(state);
+        }
+        return state;
+    }
     private CancellationTokenSource? _cts;
 
     public event Action? Changed;

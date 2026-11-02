@@ -1,6 +1,8 @@
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.History;
+using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Logging;
+using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Tests;
 
@@ -206,5 +208,39 @@ public sealed class HistoryTests
         Assert.Equal("Line 0: value 0", e.Details[0]);
         var old = HistoryEventParser.Parse(OldFormat, DateTimeOffset.Now)!;
         Assert.Contains("Headline: Passed with flying colours", old.Details!);
+    }
+
+    private sealed class StubServiceBackend : IServiceControlBackend
+    {
+        public ServiceState State = ServiceState.Running;
+        public ServiceState GetState(string n) => State;
+        public bool IsDriver(string n) => false;
+        public IReadOnlyList<DependentService> GetRunningDependents(string n) => [];
+        public void Start(string n) => State = ServiceState.Running;
+        public void Stop(string n) => State = ServiceState.Stopped;
+        public Task<bool> WaitForStateAsync(string n, ServiceState t, TimeSpan to, CancellationToken ct) => Task.FromResult(true);
+    }
+
+    [Fact]
+    public async Task Summary_DeduplicatesServiceStop_TriggeredFromMemoryOptimization()
+    {
+        var svcActions = new ServiceActionService(new StubServiceBackend(), new SessionContext(SessionMode.Local));
+        var info = new ServiceInfo("SysMain", "SysMain", "RUNNING", "AUTO_START", "LocalSystem", "");
+        await svcActions.ExecuteAsync(info, ServiceAction.Stop);
+
+        var now = DateTimeOffset.UtcNow;
+        var persistedSvc = new HistoryEntry(now, HistorySummary.ServiceFixModuleId, "Service (Stop)", "OK",
+            "SysMain stopped", null, null, [new("Action", "Stop"), new("Actor", "Local user"), new("Service", "SysMain")], "PC1", "1.0");
+        var persistedMem = new HistoryEntry(now.AddSeconds(2), HistorySummary.MemoryFixModuleId, "Memory optimization", "OK",
+            "Done: SysMain stopped until the next restart. No measurable change. Available RAM 4.0 → 4.0 GB (used 75% → 75%).",
+            null, null, [new("Actor", "Local user")], "PC1", "1.0");
+
+        var summary = HistorySummary.Build([persistedSvc, persistedMem], services: svcActions, now: now);
+        Assert.Single(summary.Fixes);
+        Assert.Equal(1, summary.TotalFixesCount);
+        Assert.Equal(1, summary.SuccessfulFixesCount);
+        Assert.Equal(1, summary.MemoryFixesCount);
+        Assert.Equal(0, summary.ServicesAdjustedCount);
+        Assert.StartsWith("Done: SysMain stopped until the next restart.", summary.Fixes[0].Summary);
     }
 }

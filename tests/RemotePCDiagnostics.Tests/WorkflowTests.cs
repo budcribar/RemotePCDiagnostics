@@ -232,6 +232,15 @@ public class WorkflowTests
         Assert.Equal(s.Fixes.Count, flow.State.Approved.Count);
         flow.SetApproved(wsearch.Id, false);
         Assert.DoesNotContain(wsearch.Id, flow.State.Approved);
+
+        // Select all -> Select none -> Select recommended restores DefaultOn approvals (opt-in stays unticked).
+        flow.SetAllApproved(true);
+        Assert.Contains(wsearch.Id, flow.State.Approved);
+        flow.SetAllApproved(false);
+        Assert.Empty(flow.State.Approved);
+        flow.SetRecommendedApproved();
+        Assert.DoesNotContain(wsearch.Id, flow.State.Approved);
+        Assert.All(others, f => Assert.Contains(f.Id, flow.State.Approved));
     }
 
     /// <summary>Any memory snapshot, for workflow tests of individual rules.</summary>

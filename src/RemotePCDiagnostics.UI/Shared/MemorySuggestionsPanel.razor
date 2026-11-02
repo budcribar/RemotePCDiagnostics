@@ -39,8 +39,10 @@
                 <div class="ms-card-head">
                     <strong class="ms-title">@s.Title</strong>
                     <span class="chip @(s.Kind == SuggestionKind.Automated ? "chip-ok" : "chip-na")">@(s.Kind switch { SuggestionKind.Automated => "One click", SuggestionKind.Guided => "Steps", _ => "Info" })</span>
+                    @if (!string.IsNullOrEmpty(s.Category) && s.Category != "General") { <span class="chip chip-na">@s.Category</span> }
                     @if (s.Risk != SuggestionRisk.Low) { <span class="chip chip-warn">Check first</span> }
                     @if (s.SavingBytes is > 0) { <span class="ms-saving" data-testid="mem-saving">~@MemoryText.Size(s.SavingBytes.Value)</span> }
+                    else if (s.SavingText is { Length: > 0 } st) { <span class="ms-saving" data-testid="mem-saving">@st</span> }
                 </div>
                 <div class="desc">@s.Why</div>
                 @if (s.Note is { } note) { <div class="meta">@note</div> }

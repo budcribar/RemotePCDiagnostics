@@ -152,6 +152,11 @@ public class AiVmAndWslTests
         Assert.Equal("Start the Codex sandbox only when it's needed", codex.Title);
         Assert.Contains("OpenAI Codex starts the service itself", codex.Steps[1]);
         Assert.DoesNotContain("updates", codex.Why, StringComparison.OrdinalIgnoreCase); // not the generic vendor-updater text
+        Assert.Contains($"({Codex})", codex.Why);
+
+        var chatGptLabel = new ServiceUsage(new(Codex, "ChatGPT", "RUNNING", "AUTO_START", "LocalSystem", ""), 8 * Mb, 1, true);
+        var codexChatGpt = MemorySuggestionEngine.Build(Snap(chatGptLabel)).Single(x => x.Id == "svc-" + Codex.ToLowerInvariant());
+        Assert.Contains($"\"ChatGPT\" ({Codex}) is set to start automatically", codexChatGpt.Why);
     }
 
     [Fact]

@@ -110,6 +110,8 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
             case ChangeKind.ServiceRunning:
                 if (services is null) return Fail("Service control isn't available.");
+                var targetState = c.Previous == "Running" ? ServiceState.Running : ServiceState.Stopped;
+                if (services.GetState(c.Target) == targetState) return Ok(c.Previous == "Running" ? "Already running." : "Already stopped.");
                 if (c.Previous == "Running") services.Start(c.Target); else services.Stop(c.Target);
                 var target = c.Previous == "Running" ? ServiceState.Running : ServiceState.Stopped;
                 return await services.WaitForStateAsync(c.Target, target, TimeSpan.FromSeconds(30), ct).ConfigureAwait(false)

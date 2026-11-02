@@ -180,6 +180,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         {
             var svcList = services?.Latest.Values.ToList() ?? [];
             Snapshot = await sys.CaptureAsync(svcList, ct).ConfigureAwait(false);
+            PruneStaleServiceRunningEntries(Snapshot, svcList);
             Suggestions = MemorySuggestionEngine.Build(Snapshot);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -188,6 +189,23 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
             ScanError = "Couldn't read what's using memory on this PC.";
         }
         finally { Scanning = false; Raise(); }
+    }
+
+    private void PruneStaleServiceRunningEntries(MemorySnapshot snap, IReadOnlyList<ServiceInfo> svcList)
+    {
+        if (journal is null) return;
+        try
+        {
+            foreach (var c in journal.All.Where(c => c.Kind == ChangeKind.ServiceRunning && c.Previous == "Running"))
+            {
+                var runningInSnap = snap.Services?.Any(s => string.Equals(s.Info.Name, c.Target, StringComparison.OrdinalIgnoreCase) && s.Info.IsRunning) == true;
+                var runningInList = svcList.Any(s => string.Equals(s.Name, c.Target, StringComparison.OrdinalIgnoreCase) && s.IsRunning);
+                var beforeBoot = snap.Uptime is { } up && DateTimeOffset.UtcNow - up > c.TimeUtc.AddMinutes(1);
+                if (runningInSnap || runningInList || beforeBoot)
+                    journal.Remove(c.Id);
+            }
+        }
+        catch (Exception ex) { Log("journal prune: " + ex.Message); }
     }
 
     /// <summary>Measures the storage cleanups (cached by the Host for a few minutes unless <paramref name="refresh"/>). Never throws.</summary>

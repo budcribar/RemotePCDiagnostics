@@ -13,6 +13,8 @@ public class NewChecksTests
         [
           {"pid":"100","name":"chrome.exe","resident_size":"2684354560","user_time":"120000","system_time":"30000","disk_bytes_read":"10485760","disk_bytes_written":"5242880"},
           {"pid":"101","name":"chrome.exe","resident_size":"2147483648","user_time":"60000","system_time":"15000","disk_bytes_read":"1048576","disk_bytes_written":"0"},
+          {"pid":"150","name":"svchost.exe","resident_size":"5368709120","user_time":"900000","system_time":"300000","disk_bytes_read":"52428800","disk_bytes_written":"10485760"},
+          {"pid":"151","name":"svchost","resident_size":"1073741824","user_time":"100000","system_time":"50000","disk_bytes_read":"1048576","disk_bytes_written":"0"},
           {"pid":"200","name":"code.exe","resident_size":"536870912","user_time":"40000","system_time":"10000","disk_bytes_read":"2097152","disk_bytes_written":"1048576"}
         ]
         """;
@@ -43,6 +45,7 @@ public class NewChecksTests
         Assert.Equal(AreaLevel.Warning, memCard.Level); // 4.5 GB combined chrome.exe >= 4 GB threshold
         Assert.Equal("chrome.exe", memCard.Rows[0].Values[0]);
         Assert.Equal("2", memCard.Rows[0].Values[1]);
+        Assert.DoesNotContain(memCard.Rows, r => r.Values[0].StartsWith("svchost", StringComparison.OrdinalIgnoreCase));
 
         // Verify numeric SortKeys on Memory column (col 2)
         var sortedAsc = AreaSort.Sort(memCard.Rows, 2, descending: false);

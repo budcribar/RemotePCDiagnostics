@@ -43,7 +43,7 @@ public static class AiVmServices
         var mem = su.ProcessMemoryBytes is { } pm && !su.Shared ? $" The service itself is using {MemoryText.Size(pm)}." : "";
         var why = claude
             ? $"\"{svc.Label}\" (CoworkVMService) is set to start automatically, so Claude Desktop's background Linux virtual machine starts at every Windows sign-in, even on days nobody uses the Claude features that need it. While it runs, the VM shows as vmmem in Task Manager and can hold a GB or more of memory.{mem}"
-            : $"\"{svc.Label}\" is set to start automatically, so OpenAI Codex's background sandbox starts at every Windows sign-in, even on days nobody uses Codex.{mem}";
+            : $"\"{svc.Label}\" ({svc.Name}) is set to start automatically, so OpenAI Codex's background sandbox starts at every Windows sign-in, even on days nobody uses Codex.{mem}";
         var steps = new List<string>
         {
             "Sets the service to Manual (start only when needed). It doesn't stop the service or the VM now; the change takes effect after the next restart.",

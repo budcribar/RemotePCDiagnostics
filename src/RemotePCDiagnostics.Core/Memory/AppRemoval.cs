@@ -331,17 +331,17 @@ public static class AppRemoval
              "Turns off the Win+Ctrl+Enter shortcut that starts Narrator by accident (this account). Narrator can still be started from Settings > Accessibility.",
              "You lose: Narrator's extra support for Word, Excel, PowerPoint and Outlook.",
              Frees(bytes),
-             $"{StoreGetBackMany} Undo turns the Win+Ctrl+Enter shortcut back on."],
+             "Undo turns the Win+Ctrl+Enter shortcut back on."],
             [new(MemoryActionType.RemoveNarratorAddons, "", "Remove Narrator's add-ons",
                 $"Remove Narrator's Office add-ons? Narrator stays, but loses its Office support. {StoreGetBackMany} Needs administrator rights.")],
-            Category, StoreGetBackMany, DefaultOn: true, UndoChip: StoreChip);
+            Category, null, DefaultOn: true, UndoChip: StoreChip, SavingText: bytes is > 0 ? $"~{MemoryText.Size(bytes.Value)} disk" : null);
     }
 
     public static bool OfferContentDelivery(MemorySnapshot s) =>
         s.RemovableApps is { } info && ContentDeliverySettings.Any(r => info.Settings.TryGetValue(r.Target, out var v) && v != 0);
 
     private static string SizeText(long? bytes) => bytes is > 0 ? $"It takes {MemoryText.Size(bytes.Value)} on this PC." : "Its size couldn't be measured.";
-    private static string Frees(long? bytes) => bytes is > 0 ? $"Frees about {MemoryText.Size(bytes.Value)} of disk space." : "Frees its disk space (size couldn't be measured).";
+    private static string Frees(long? bytes) => bytes is not > 0 ? "Frees its disk space (size couldn't be measured)." : bytes < 1L << 20 ? "Frees less than 1 MB of disk space." : $"Frees about {MemoryText.Size(bytes.Value)} of disk space.";
 
     public const string Category = "Remove apps";
 
@@ -357,11 +357,11 @@ public static class AppRemoval
                 null, retired ? SuggestionRisk.Low : SuggestionRisk.Medium, SuggestionKind.Automated,
                 [$"Removes {a.Label} ({a.Name}) for every account on this PC and stops Windows adding it for new accounts.",
                  $"You lose: {a.Lose}",
-                 Frees(f.Installed.SizeBytes),
-                 StoreGetBack],
+                 Frees(f.Installed.SizeBytes)],
+
                 [new(MemoryActionType.RemoveApp, a.Id, $"Remove {a.Label}",
                     $"Remove {a.Label}? {StoreGetBack} Needs administrator rights.")],
-                Category, StoreGetBack, DefaultOn: retired, UndoChip: StoreChip);
+                Category, null, DefaultOn: retired, UndoChip: StoreChip, SavingText: f.Installed.SizeBytes is > 0 ? $"~{MemoryText.Size(f.Installed.SizeBytes.Value)} disk" : null);
         }
 
         if (NarratorCard(s) is { } narrator) yield return narrator;
@@ -379,10 +379,10 @@ public static class AppRemoval
                  "Turns off Game DVR and background recording (this account), sets the Xbox services to start only when needed, and turns off the Xbox cloud-save task.",
                  "You lose: Game Pass and Xbox games, Win+G Game Bar, game clips, Xbox sign-in and cloud saves in PC games. Ordinary (non-Xbox) games still work.",
                  Frees(bytes),
-                 $"{StoreGetBackMany} Undo turns Game DVR, the services and the task back on."],
+                 "Undo turns Game DVR, the services and the task back on."],
                 [new(MemoryActionType.RemoveXboxApps, "", "Remove the Xbox apps",
                     $"Remove the Xbox apps? Xbox and Game Pass games stop working. {StoreGetBackMany} Needs administrator rights.")],
-                Category, StoreGetBackMany, DefaultOn: false, UndoChip: StoreChip);
+                Category, null, DefaultOn: false, UndoChip: StoreChip, SavingText: bytes is > 0 ? $"~{MemoryText.Size(bytes.Value)} disk" : null);
         }
 
         foreach (var p in FoundPrograms(s))
@@ -394,11 +394,11 @@ public static class AppRemoval
                 null, SuggestionRisk.Low, SuggestionKind.Automated,
                 [$"Runs {p.App.Label}'s own uninstaller silently ({string.Join("; ", p.Entries.Select(e => CommandFor(p.App, e)!.Display))}).{tasks}",
                  $"You lose: {p.App.Lose}",
-                 Frees(p.SizeBytes),
-                 getBack],
+                 Frees(p.SizeBytes)],
+
                 [new(MemoryActionType.RemoveApp, p.App.Id, $"Uninstall {p.App.Label}",
                     $"Uninstall {p.App.Label}? {getBack} Needs administrator rights.")],
-                Category, getBack, DefaultOn: true, UndoChip: VendorChip(p.App.ReinstallFrom));
+                Category, null, DefaultOn: true, UndoChip: VendorChip(p.App.ReinstallFrom), SavingText: p.SizeBytes is > 0 ? $"~{MemoryText.Size(p.SizeBytes.Value)} disk" : null);
         }
 
         if (OfferContentDelivery(s))

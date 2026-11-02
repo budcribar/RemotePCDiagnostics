@@ -100,7 +100,7 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
     }
 
     public static List<ProcessGroupUsage> GroupProcesses(IEnumerable<ProcessResourceRow> rows) =>
-        rows.Where(p => p.Name.Length > 0 && !p.Name.Equals("[System Process]", StringComparison.OrdinalIgnoreCase) && !p.Name.Equals("System", StringComparison.OrdinalIgnoreCase))
+        rows.Where(p => p.Name.Length > 0 && !p.Name.Equals("[System Process]", StringComparison.OrdinalIgnoreCase) && !p.Name.Equals("System", StringComparison.OrdinalIgnoreCase) && !p.Name.Equals("svchost", StringComparison.OrdinalIgnoreCase) && !p.Name.Equals("svchost.exe", StringComparison.OrdinalIgnoreCase))
             .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
             .Select(g => new ProcessGroupUsage(g.First().Name, g.Count(), g.Sum(x => x.ResidentBytes), g.Sum(x => x.CpuTimeMs), g.Sum(x => x.DiskBytes)))
             .ToList();

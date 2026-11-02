@@ -63,6 +63,8 @@ public static class Benchmarks
 /// <summary>Which benchmarks run and how. Saved with the results so before/after use the same settings.</summary>
 public sealed record BenchmarkSettings
 {
+    public const int CurrentSchemaVersion = 2;
+    public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public IReadOnlyList<BenchmarkKind> Enabled { get; init; } = [.. Enum.GetValues<BenchmarkKind>()];
     /// <summary>Runs per benchmark; the middle value is used.</summary>
     public int Runs { get; init; } = 3;
@@ -146,7 +148,13 @@ public sealed record BenchmarkState(BenchmarkSettings Settings, BenchmarkRun? Be
     public static BenchmarkState? FromJson(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return null;
-        try { return JsonSerializer.Deserialize<BenchmarkState>(json, Json); }
+        try
+        {
+            var state = JsonSerializer.Deserialize<BenchmarkState>(json, Json);
+            if (state?.Settings is { } s && !json.Contains("\"SchemaVersion\"", StringComparison.Ordinal))
+                state = state with { Settings = s with { SchemaVersion = 1 } };
+            return state;
+        }
         catch (JsonException) { return null; }
     }
 }

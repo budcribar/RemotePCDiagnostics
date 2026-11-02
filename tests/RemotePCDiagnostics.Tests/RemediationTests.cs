@@ -80,7 +80,7 @@ public class RemediationTests
 
         var memCard = hogsRep.Cards.Single(c => c.Id == "memory");
         var chromeRow = memCard.Rows.Single(r => r.Values[0] == "chrome.exe");
-        var svchostRow = memCard.Rows.Single(r => r.Values[0] == "svchost.exe");
+        Assert.DoesNotContain(memCard.Rows, r => r.Values[0] == "svchost.exe"); var svchostRow = ResourceHogsModule.Build(new SystemUptimeInfo(1_500_000, 17, 6, 0, true), [new("dwm.exe", 800, 200_000_000, 5_000, 500)]).Cards.Single(c => c.Id == "memory").Rows.Single();
         Assert.NotNull(chromeRow.Actions);
         Assert.Null(svchostRow.Actions); // Protected Windows process has no End Task button
 

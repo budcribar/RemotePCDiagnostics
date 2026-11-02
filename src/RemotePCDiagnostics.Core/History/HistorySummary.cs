@@ -107,9 +107,48 @@ public static class HistorySummary
         var fixList = new List<FixHistoryItem>();
         var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        var memEntries = new List<(DateTimeOffset TimeUtc, string Summary)>();
+        foreach (var e in persistedFixEntries)
+        {
+            if (string.Equals(e.Module, MemoryFixModuleId, StringComparison.OrdinalIgnoreCase))
+                memEntries.Add((e.TimeUtc, e.Summary.Trim()));
+        }
+        if (memory is not null)
+        {
+            foreach (var m in memory.Recent)
+            {
+                var tUtc = new DateTimeOffset(m.When).ToUniversalTime();
+                if (InRange(tUtc))
+                    memEntries.Add((tUtc, m.Message.Trim()));
+            }
+        }
+
+        bool IsDuplicateOfMemoryFix(DateTimeOffset svcTime, string svcSummary)
+        {
+            var s = svcSummary.Trim();
+            if (s.Length == 0) return false;
+            var donePrefix = "Done: " + s + " until the next restart";
+            foreach (var (memTime, memSummary) in memEntries)
+            {
+                if (Math.Abs((memTime - svcTime).TotalSeconds) <= 15 &&
+                    (string.Equals(memSummary, s, StringComparison.OrdinalIgnoreCase) ||
+                     memSummary.StartsWith(donePrefix, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         // 1. Persisted fix entries from the Event Log
         foreach (var e in persistedFixEntries)
         {
+            if (string.Equals(e.Module, ServiceFixModuleId, StringComparison.OrdinalIgnoreCase) &&
+                IsDuplicateOfMemoryFix(e.TimeUtc, e.Summary))
+            {
+                continue;
+            }
+
             var ok = string.Equals(e.Outcome, "OK", StringComparison.OrdinalIgnoreCase);
             totalFixes++;
             if (ok) okFixes++;
@@ -198,6 +237,7 @@ public static class HistorySummary
             {
                 var tUtc = new DateTimeOffset(s.When).ToUniversalTime();
                 if (!InRange(tUtc)) continue;
+                if (IsDuplicateOfMemoryFix(tUtc, s.Message)) continue;
                 if (!seenKeys.Add(DedupKey(tUtc, s.Message))) continue;
 
                 totalFixes++;

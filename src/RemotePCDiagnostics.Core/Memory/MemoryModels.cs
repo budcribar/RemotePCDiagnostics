@@ -180,13 +180,13 @@ public sealed record MemoryAction(MemoryActionType Type, string Target, string L
 public sealed record MemorySuggestion(
     string Id, string Title, string Why, long? SavingBytes, SuggestionRisk Risk, SuggestionKind Kind,
     IReadOnlyList<string> Steps, IReadOnlyList<MemoryAction> Actions, string Category = "General", string? Note = null, bool DefaultOn = true,
-    string? UndoChip = null);
+    string? UndoChip = null, string? SavingText = null);
 
 public static class MemoryText
 {
     public static string Size(long bytes) => bytes >= 1L << 30
         ? (bytes / (double)(1L << 30)).ToString("0.0", CultureInfo.InvariantCulture) + " GB"
-        : Math.Max(0, bytes / (1L << 20)).ToString(CultureInfo.InvariantCulture) + " MB";
+        : bytes is > 0 and < 1L << 20 ? "< 1 MB" : Math.Max(0, bytes / (1L << 20)).ToString(CultureInfo.InvariantCulture) + " MB";
 
     public static string Gb(long bytes) => (bytes / (double)(1L << 30)).ToString("0.0", CultureInfo.InvariantCulture);
 

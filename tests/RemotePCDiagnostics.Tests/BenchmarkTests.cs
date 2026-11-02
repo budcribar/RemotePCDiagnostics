@@ -234,6 +234,30 @@ public class BenchmarkTests
     }
 
     [Fact]
+    public void Service_LegacySchemaVersion_UpgradesAndEnablesNewResourceAndSnapshotKinds()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "rpd-bench-legacy-" + Guid.NewGuid().ToString("N"), "benchmarks.json");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            // Simulate a pre-SchemaVersion benchmarks.json on disk with only 2 original benchmarks enabled and Runs = 1.
+            File.WriteAllText(path, """{"Settings":{"Enabled":["BootTime","ProgramStart"],"Runs":1,"RestartBeforeAfter":false}}""");
+            var store = new FileBenchmarkStore(path);
+            var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store);
+            Assert.Equal(BenchmarkSettings.CurrentSchemaVersion, svc.Settings.SchemaVersion);
+            Assert.Equal(1, svc.Settings.Runs);
+            Assert.False(svc.Settings.RestartBeforeAfter);
+            Assert.Contains(BenchmarkKind.BootTime, svc.Settings.Enabled);
+            Assert.Contains(BenchmarkKind.ProgramStart, svc.Settings.Enabled);
+            Assert.DoesNotContain(BenchmarkKind.CpuSingle, svc.Settings.Enabled);
+            Assert.All(Benchmarks.IdleResourceKinds, k => Assert.Contains(k, svc.Settings.Enabled));
+            Assert.All(Benchmarks.ResourceSnapshotKinds, k => Assert.Contains(k, svc.Settings.Enabled));
+            Assert.Equal(BenchmarkSettings.CurrentSchemaVersion, store.Load()!.Settings.SchemaVersion);
+        }
+        finally { Directory.Delete(Path.GetDirectoryName(path)!, true); }
+    }
+
+    [Fact]
     public void Comparison_ResourceAndInventoryMetrics_ShowAbsoluteSavingsWithoutSkewingWeightZero()
     {
         var before = Run(BenchmarkPhase.Before,

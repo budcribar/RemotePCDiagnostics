@@ -45,7 +45,7 @@
                 @for (var i = 0; i < shownProblems.Count; i++)
                 {
                     var p = shownProblems[i];
-                    <a href="" class="banner-problem banner-problem-@(p.IsError ? "err" : "warn")" data-testid="dashboard-problem-@p.Name.ToLowerInvariant()"
+                    <a href="checks" class="banner-problem banner-problem-@(p.IsError ? "err" : "warn")" data-testid="dashboard-problem-@p.Name.ToLowerInvariant()"
                        @onclick="() => Open(p.Name)" @onclick:preventDefault>@p.DisplayName</a>@(i < shownProblems.Count - 1 ? ", " : "")
                 }
                 @if (shownProblems.Count < problems)
