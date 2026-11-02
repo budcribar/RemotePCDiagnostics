@@ -63,8 +63,7 @@ public partial class MainWindow : Window
         // Reversible changes (with their "before" values) for "Undo all changes" / --undo-all; survives restarts.
         services.AddSingleton<RemotePCDiagnostics.Core.Changes.IChangeJournal>(_ => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(), App.Log));
         services.AddSingleton(sp => new ServiceActionService(new WindowsServiceControlBackend(), sp.GetRequiredService<ISessionContext>(), App.Log,
-            journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(),
-            prefs: sp.GetRequiredService<RemotePCDiagnostics.Core.Preferences.PreferencesService>()));
+            journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
         services.AddSingleton(sp => new RebootResumeCoordinator(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<OsqueryRunner>(), RebootResumeCoordinator.DefaultStateFilePath(), log: App.Log));
         services.AddSingleton(sp => new RemediationService(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), App.Log, sp.GetRequiredService<RebootResumeCoordinator>(),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
@@ -104,7 +103,8 @@ public partial class MainWindow : Window
             new RemotePCDiagnostics.Core.Workflow.FileWorkflowStore(RemotePCDiagnostics.Core.Workflow.FileWorkflowStore.DefaultPath(), App.Log),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Memory.MemorySuggestionService>(), sp.GetRequiredService<ISessionContext>(),
             (level, text) => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.Workflow, level, text), App.Log,
-            journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
+            journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(),
+            prefs: sp.GetRequiredService<RemotePCDiagnostics.Core.Preferences.PreferencesService>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(App.Log));
         var provider = _provider = services.BuildServiceProvider();
