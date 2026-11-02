@@ -164,13 +164,16 @@ public class AppRemovalTests
         Assert.Equal(MemoryActionType.RemoveApp, Assert.Single(mail.Actions).Type);
         Assert.Equal("mail-calendar", mail.Actions[0].Target);
         Assert.Contains("206 MB", mail.Why);
-        Assert.Contains("To get it back, reinstall it from the Microsoft Store.", mail.Why);
+        // Retired: Microsoft no longer offers it, so the card doesn't promise a Store reinstall.
+        Assert.Contains("Microsoft has retired it, so it may not be available to reinstall.", mail.Why);
+        Assert.DoesNotContain("reinstall it from the Microsoft Store", mail.Why);
         Assert.Null(mail.Note);
         Assert.DoesNotContain(mail.Steps, s => s.Contains("reinstall it from the Microsoft Store"));
         Assert.Equal("~206 MB disk", mail.SavingText);
         Assert.DoesNotContain("can't be undone", mail.Why);
-        Assert.Equal("reinstall from Store", mail.UndoChip);
-        Assert.Contains("reinstall it from the Microsoft Store", mail.Actions[0].Confirm);
+        Assert.Null(mail.UndoChip); // the fix list shows the plain "can't be undone"
+        Assert.Contains(AppRemoval.RetiredGetBack, mail.Actions[0].Confirm);
+        Assert.DoesNotContain("reinstall it from the Microsoft Store", mail.Actions[0].Confirm);
         Assert.Contains("Frees about 206 MB", string.Join(" ", mail.Steps));
         Assert.True(list.Single(x => x.Id == "remove-app-maps").DefaultOn); // provisioned only still counts
         var clip = list.Single(x => x.Id == "remove-app-clipchamp");
@@ -376,12 +379,13 @@ public class AppRemovalTests
         Assert.True(r.Success, r.Message);
         Assert.Contains("Mail and Calendar removed for every account", r.Message);
         Assert.Contains("Freed about 206 MB", r.Message);
-        Assert.Contains("reinstall it from the Microsoft Store", r.Message);
+        Assert.Contains(AppRemoval.RetiredGetBack, r.Message);
+        Assert.DoesNotContain("reinstall it from the Microsoft Store", r.Message);
         Assert.Equal(["appx:microsoft.windowscommunicationsapps_8wekyb3d8bbwe"], sys.Calls);
         var c = Assert.Single(j.All);
         Assert.Equal(ChangeKind.NotUndoable, c.Kind);
         Assert.StartsWith("appx|microsoft.windowscommunicationsapps_8wekyb3d8bbwe|", c.Target);
-        Assert.Equal("Mail and Calendar removed (microsoft.windowscommunicationsapps, 206 MB) — reinstall from the Microsoft Store to get it back", c.Label);
+        Assert.Equal("Mail and Calendar removed (microsoft.windowscommunicationsapps, 206 MB) — Microsoft has retired it, so it may not be available to reinstall", c.Label);
         Assert.Equal(UndoSupport.None, Undoability.Of(c));
         Assert.Null(svc.UndoFor(s.Id));
         Assert.DoesNotContain(svc.Suggestions, x => x.Id == s.Id);
@@ -567,8 +571,8 @@ public class AppRemovalTests
         Assert.True(people.NeedsAdmin);
         Assert.Equal(UndoSupport.None, people.Undo);
         Assert.Equal("can't be undone", Undoability.Chip(people.Undo));
-        Assert.Contains("reinstall it from the Microsoft Store", people.Why);
-        Assert.Equal("reinstall from Store", fixes.Single(f => f.SuggestionId == people.SuggestionId).UndoChip);
+        Assert.Contains(AppRemoval.RetiredGetBack, people.Why);
+        Assert.Null(fixes.Single(f => f.SuggestionId == people.SuggestionId).UndoChip); // retired: plain "can't be undone"
         var weather = fixes.Single(f => f.SuggestionId == "remove-app-bing-weather");
         Assert.False(weather.DefaultOn);
         Assert.Equal(SuggestionRisk.Medium, weather.Risk);

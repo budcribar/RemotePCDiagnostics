@@ -153,7 +153,8 @@ public class OfficeStartScreenTests
         var r = await svc.ApplyAsync(s, s.Actions[0]);
         Assert.True(r.Success, r.Message);
         Assert.Contains("Word and PowerPoint will open straight to a blank document", r.Message);
-        Assert.Contains("Takes effect next launch", r.Message); // deferred: no memory delta claimed
+        Assert.Contains("Takes effect the next time each app opens.", r.Message);
+        Assert.DoesNotContain("Takes effect next launch", r.Message); // already says when: no repeated generic line, no memory delta claimed
         Assert.Equal((1, 1, 1), (sys.Reg[Word], sys.Reg[Excel], sys.Reg[PowerPoint]));
         Assert.DoesNotContain(sys.Calls, c => c.Contains(Excel));
         Assert.Equal(2, j.All.Count);

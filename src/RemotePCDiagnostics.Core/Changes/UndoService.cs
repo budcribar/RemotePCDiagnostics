@@ -15,12 +15,35 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
     public int Skipped => Items.Count(i => i.Skipped);
     public IEnumerable<UndoItemResult> Permanent => Items.Where(i => i.Skipped);
     public bool NeedsRestart => Items.Any(i => i.Success && i.Change.NeedsRestart);
+    /// <summary>Short names of the undone changes that finish after a restart ("Widgets", "page file"), each once, in undo order.</summary>
+    public IReadOnlyList<string> RestartItems => Items.Where(i => i.Success && i.Change.NeedsRestart)
+        .Select(i => RestartName(i.Change)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     private int Attempted => Items.Count - Skipped;
     public string Summary => Items.Count == 0 ? "Nothing to undo."
         : (Attempted == 0 ? "Nothing that can be undone"
             : $"Undid {Succeeded} of {Attempted} change{(Attempted == 1 ? "" : "s")}" + (Failed > 0 ? $"; {Failed} couldn't be undone" : ""))
           + (Skipped > 0 ? $"; {Skipped} permanent change{(Skipped == 1 ? " was" : "s were")} left as is (can't be reversed)" : "")
-          + (NeedsRestart ? ". Restart to finish (Fast Startup, page file, Widgets, Search highlights)." : ".");
+          + (RestartItems.Count > 0 ? $". Restart to finish ({string.Join(", ", RestartItems)})." : ".");
+
+    /// <summary>What a restart finishes, in a few words, for the summary line.</summary>
+    public static string RestartName(ChangeRecord c)
+    {
+        switch (c.Kind)
+        {
+            case ChangeKind.FastStartup: return "Fast Startup";
+            case ChangeKind.PageFile: return "page file";
+            case ChangeKind.HiberFileType: return "hibernation file";
+            case ChangeKind.RegistryValue:
+                var t = RegistryAllowlist.Find(c.Target);
+                if (t == RegistryAllowlist.WidgetsPolicy) return "Widgets";
+                if (t == RegistryAllowlist.SearchHighlightsPolicy || t == RegistryAllowlist.SearchHighlightsToggle) return "Search highlights";
+                if (t == RegistryAllowlist.EdgeStartupBoostPolicy) return "Edge Startup Boost";
+                break;
+        }
+        var label = c.Label.Trim();
+        var cut = label.IndexOf(" (", StringComparison.Ordinal);
+        return cut > 0 ? label[..cut] : label;
+    }
 }
 
 /// <summary>
@@ -39,7 +62,8 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
     public async Task<UndoAllResult> UndoAllAsync(string actor, CancellationToken ct = default)
     {
         var results = new List<UndoItemResult>();
-        foreach (var c in journal.All.OrderByDescending(x => x.TimeUtc).ToList())
+        // Newest first; records from one click share a time, so the later-written goes first (the first write is the one that created any keys).
+        foreach (var c in journal.All.Select((x, i) => (x, i)).OrderByDescending(p => p.x.TimeUtc).ThenByDescending(p => p.i).Select(p => p.x).ToList())
         {
             ct.ThrowIfCancellationRequested();
             UndoItemResult r;
@@ -88,11 +112,13 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
             case ChangeKind.HiberFileType:
                 var hr = await commands.RunAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/h", "/type", "full"], ct).ConfigureAwait(false);
-                return hr is { ExitCode: 0 } ? Ok("Hibernation file back to full size; Hibernate is available again.") : Fail("Windows didn't allow changing the hibernation file back.");
+                if (hr is not { ExitCode: 0 }) return Fail("Windows didn't allow changing the hibernation file back.");
+                if (memory is not null) Hibernation.RemoveAddedValues(memory, c.PreviousExtra, Log);
+                return Ok("Hibernation file back to full size; Hibernate is available again.");
 
             case ChangeKind.RegistryValue:
                 if (memory is null) return Fail("Not available.");
-                var (regOk, regMessage) = RegistryAllowlist.Restore(memory, c.Target, c.Previous);
+                var (regOk, regMessage) = RegistryAllowlist.Restore(memory, c.Target, c.Previous, c.CreatedKey, Log);
                 return new(c, regOk, regMessage);
 
             case ChangeKind.DefaultPrinter:
@@ -102,7 +128,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
             case ChangeKind.ExtensionBlock:
                 if (memory is null) return Fail("Not available.");
-                var (extOk, extMessage) = BrowserExtensions.RemoveBlock(memory, c.Target, c.Previous);
+                var (extOk, extMessage) = BrowserExtensions.RemoveBlock(memory, c.Target, c.Previous, c.CreatedKey, Log);
                 return new(c, extOk, extMessage);
 
             case ChangeKind.StartupApp:
@@ -113,6 +139,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
             case ChangeKind.ServiceStartType:
                 if (memory is null || !MemorySuggestionService.StartTypes.Contains(c.Previous)) return Fail("The original setting wasn't recorded.");
                 memory.SetServiceStartType(c.Target, c.Previous!);
+                ServiceDelayedStart.Restore(memory, c.Target, c.PreviousExtra, Log);
                 return Ok($"Start-up type restored to {c.Previous}.");
 
             case ChangeKind.ServiceRunning:

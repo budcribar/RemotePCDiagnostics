@@ -23,6 +23,13 @@ public static class MemoryFeedback
         return $"No measurable change. {range}";
     }
 
+    /// <summary>
+    /// The result already says when it takes effect ("Takes effect after the next restart.", "Takes full effect the next time you sign in."),
+    /// so the generic deferred line from <see cref="Describe"/> would only repeat it.
+    /// </summary>
+    public static bool SaysWhen(string? message) =>
+        message is not null && System.Text.RegularExpressions.Regex.IsMatch(message, @"\btakes (full )?effect\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
     /// <summary>Whether an action's effect should show right away (closing/stopping) or only later (settings).</summary>
     public static bool IsDeferred(MemoryActionType t) => t is MemoryActionType.DisableStartup or MemoryActionType.EnableBrowserMemorySaver
         or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings
@@ -85,6 +92,22 @@ public interface IMemorySystem
     void WriteDword(RegistrySetting setting, int value) => throw new NotSupportedException();
     /// <summary>Deletes a value on <see cref="RegistryAllowlist"/> (no error when it's already absent).</summary>
     void DeleteDword(RegistrySetting setting) => throw new NotSupportedException();
+    /// <summary>The registry key exists (64-bit view). Used before a write to record which keys it creates (<see cref="RegistryKeyCleanup"/>).</summary>
+    bool RegistryKeyExists(RegistryRoot root, string key) => true;
+    /// <summary>
+    /// Deletes the key only if it has no values and no subkeys, and only keys <see cref="RegistryKeyCleanup.IsCleanupKey"/> allows.
+    /// True = deleted or already absent; false = kept (not empty, or not allowed). May throw (access denied).
+    /// </summary>
+    bool DeleteRegistryKeyIfEmpty(RegistryRoot root, string key) => false;
+    /// <summary>A DWORD under HKLM\SYSTEM\CurrentControlSet\Services\&lt;service&gt; (only <see cref="ServiceDelayedStart.ValueName"/>).
+    /// (true, null) = absent; (false, _) = couldn't read.</summary>
+    (bool Known, int? Value) ReadServiceValue(string service, string name) => (false, null);
+    /// <summary>Writes that DWORD back, or deletes it when <paramref name="value"/> is null (admin; protected services refused).</summary>
+    void RestoreServiceValue(string service, string name, int? value) => throw new NotSupportedException();
+    /// <summary><see cref="Hibernation.TrackedValues"/> under HKLM\SYSTEM\CurrentControlSet\Control\Power (a null value = absent); null = couldn't read.</summary>
+    IReadOnlyDictionary<string, int?>? ReadHibernateValues() => null;
+    /// <summary>Deletes one of <see cref="Hibernation.TrackedValues"/> (admin). Refuses any other name.</summary>
+    void DeleteHibernateValue(string name) => throw new NotSupportedException();
     /// <summary>#24: this account's default printer, its port, LegacyDefaultPrinterMode and whether Print to PDF exists (registry only); null = couldn't read.</summary>
     DefaultPrinterInfo? ReadDefaultPrinter() => null;
     /// <summary>The printer is installed (local printer or \\server\printer connection). Only names that pass <see cref="DefaultPrinter.IsSafeName"/>.</summary>
@@ -123,7 +146,10 @@ public interface IMemorySystem
     Task<bool?> IsStorePackageInstalledAsync(RemovableAppx app, CancellationToken ct) => Task.FromResult<bool?>(null);
 }
 
-public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);
+/// <param name="CreatedKey">Topmost registry key the change created (<see cref="ChangeRecord.CreatedKey"/>), removed again on undo while empty.</param>
+/// <param name="PreviousExtra">Side-effect values recorded before the change (<see cref="ChangeRecord.PreviousExtra"/>).</param>
+public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null,
+    string? CreatedKey = null, string? PreviousExtra = null);
 
 public sealed record SuggestionResult(string SuggestionId, bool Success, string Message, DateTime When, bool CanForceClose = false, bool Skipped = false);
 
@@ -135,9 +161,9 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
     ISessionContext? session = null, Action<LogLevel, string>? events = null, Action<string>? log = null, TimeSpan? settle = null, Func<DateTime>? now = null,
     RemediationService? remediation = null, IChangeJournal? journal = null)
 {
-    private void Journal(ChangeKind kind, string target, string? previous, string label, bool restart = false)
+    private void Journal(ChangeKind kind, string target, string? previous, string label, bool restart = false, string? createdKey = null, string? extra = null)
     {
-        try { journal?.Add(ChangeRecord.New(kind, target, previous, label, Actor, restart)); } catch (Exception ex) { Log("journal: " + ex.Message); }
+        try { journal?.Add(ChangeRecord.New(kind, target, previous, label, Actor, restart, createdKey, extra)); } catch (Exception ex) { Log("journal: " + ex.Message); }
     }
 
     private static ChangeKind? JournalKind(MemoryActionType t) => t switch
@@ -283,7 +309,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                 var deferred = MemoryFeedback.IsDeferred(a.Type);
                 MemoryReading? after = null;
                 if (!deferred) { await Task.Delay(_settle, ct).ConfigureAwait(false); after = SafeRead(); }
-                text += " " + MemoryFeedback.Describe(before, after, deferred);
+                if (!(deferred && MemoryFeedback.SaysWhen(text))) text += " " + MemoryFeedback.Describe(before, after, deferred);
                 if (!deferred && before is not null && after is not null)
                     lock (_gate) TotalFreedBytes += Math.Max(0, MemoryFeedback.Freed(before, after));
             }
@@ -316,6 +342,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                 case MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled:
                     if (!StartTypes.Contains(u.Previous)) { outcome = new(false, "The original setting wasn't recorded."); break; }
                     sys.SetServiceStartType(u.Target, u.Previous!);
+                    ServiceDelayedStart.Restore(sys, u.Target, u.PreviousExtra, Log);
                     outcome = new(true, $"{u.Label} start-up setting restored to {u.Previous}.");
                     break;
                 case MemoryActionType.AddDefenderExclusions:
@@ -339,7 +366,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                     outcome = UndoRegistry(u, "Office's optional online extras are back for this account. Takes effect the next time each Office app opens.");
                     break;
                 case MemoryActionType.BlockBrowserExtension:
-                    var (extOk, extMessage) = BrowserExtensions.RemoveBlock(sys, u.Target, u.Previous);
+                    var (extOk, extMessage) = BrowserExtensions.RemoveBlock(sys, u.Target, u.Previous, u.CreatedKey, Log);
                     if (extOk) try { journal?.RemoveLatest(ChangeKind.ExtensionBlock, u.Target); } catch { }
                     outcome = new(extOk, extMessage);
                     break;
@@ -348,6 +375,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                     break;
                 case MemoryActionType.ReduceHibernateFile:
                     var full = await sys.SetHibernateTypeAsync(false, ct).ConfigureAwait(false);
+                    if (full.Success) Hibernation.RemoveAddedValues(sys, u.PreviousExtra, Log);
                     outcome = full.Success ? new(true, "The hibernation file is full size again; Hibernate is back in the power menu.") : full;
                     break;
                 case MemoryActionType.StopSilentAppInstalls:
@@ -394,14 +422,14 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         if (folders.Count + procs.Count > 0) AddUndo(new(s.Id, "Defender exclusions", MemoryActionType.AddDefenderExclusions, "", DefenderProbe.Encode(folders, procs)));
         var missed = d.MissingFolders.Count + d.MissingProcesses.Count - folders.Count - procs.Count;
         if (folders.Count + procs.Count == 0) return new(false, "Defender didn't keep the exclusions; your organization's policy probably controls them.");
-        return new(true, $"Defender no longer scans {MemoryText.Plural(folders.Count, "folder", "folders")} and {MemoryText.Plural(procs.Count, "build tool", "build tools")}."
+        return new(true, $"Defender no longer scans {DefenderProbe.Describe(folders.Count, procs.Count)}."
             + (missed > 0 ? $" {missed} weren't kept (organization policy)." : "") + " Builds speed up from the next one.");
     }
 
     /// <summary>
     /// #14: Claude / Codex VM service to Manual. Only from Automatic; read back, and journaled (with the old start type) only when Manual stuck.
     /// </summary>
-    private ActionOutcome SetAiVmServiceManual(MemorySuggestion s, MemoryAction a, ServiceInfo info, string original)
+    private ActionOutcome SetAiVmServiceManual(MemorySuggestion s, MemoryAction a, ServiceInfo info, string original, string? delayed)
     {
         if (a.Type != MemoryActionType.SetServiceManual) return new(false, "Only \"start only when needed\" (Manual) is offered for this service.");
         if (original is not ("Automatic" or "AutomaticDelayed")) return new(true, $"{info.Label} already starts only when needed ({original}).");
@@ -410,8 +438,8 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         try { after = sys.GetServiceStartType(info.Name); }
         catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Read back {info.Name}: {ex.Message}"); after = "unknown"; }
         if (after != "Manual") return new(false, $"Windows didn't keep {info.Label} on Manual (it's {after}). Nothing was changed.");
-        AddUndo(new(s.Id, info.Label, a.Type, info.Name, original));
-        Journal(ChangeKind.ServiceStartType, info.Name, original, $"{info.Label} set to start only when {AiVmServices.AppName(info.Name)} needs it (Manual; was {original})");
+        AddUndo(new(s.Id, info.Label, a.Type, info.Name, original, PreviousExtra: delayed));
+        Journal(ChangeKind.ServiceStartType, info.Name, original, $"{ServiceLabel(info.Label, "Manual", original)}; starts only when {AiVmServices.AppName(info.Name)} needs it", extra: delayed);
         return new(true, $"{info.Label} now starts only when {AiVmServices.AppName(info.Name)} needs it (was {original}). Takes effect after the next restart.");
     }
 
@@ -431,8 +459,15 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         return await sys.RunCommandAsync(cmd.FileName, cmd.Arguments, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Result of one allowlisted DWORD write. <see cref="Changed"/> = written (and journaled); false when it was already that value.</summary>
-    private sealed record DwordWrite(bool Ok, bool Changed, string Target, string? Previous);
+    /// <summary>Result of one allowlisted DWORD write. <see cref="Changed"/> = written (and journaled); false when it was already that value.
+    /// <see cref="CreatedKey"/> = the topmost key the write created (journaled, so undo deletes it again while empty).</summary>
+    private sealed record DwordWrite(bool Ok, bool Changed, string Target, string? Previous, string? CreatedKey = null)
+    {
+        public RegistryUndo.Item Item => new(Target, Previous, CreatedKey);
+    }
+
+    /// <summary>Journal label for a service start-type change: "SysMain set to Manual (was Automatic)".</summary>
+    public static string ServiceLabel(string label, string target, string original) => $"{label} set to {target} (was {original})";
 
     /// <summary>
     /// Sets an allowlisted DWORD, reads it back, and journals the old value (null = absent) only when the new value stuck.
@@ -441,19 +476,28 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
     private DwordWrite SetDword(RegistrySetting setting, int value, Func<string, string> label, bool restart = true)
     {
         if (RegistryAllowlist.Find(setting.Target) is not { } r) return new(false, false, setting.Target, null);
+        string? created = null;
         try
         {
             var before = sys.ReadDword(r);
             if (before == value) return new(true, false, r.Target, RegistryAllowlist.Encode(before));
+            created = RegistryKeyCleanup.TopmostMissing(sys, r.Root, r.Key, Log);
             sys.WriteDword(r, value);
-            if (sys.ReadDword(r) != value) { Log($"{r.Target} = {value} didn't stick"); return new(false, false, r.Target, null); }
+            if (sys.ReadDword(r) != value)
+            {
+                Log($"{r.Target} = {value} didn't stick");
+                RegistryKeyCleanup.Remove(sys, r.Root, r.Key, created, Log);
+                return new(false, false, r.Target, null);
+            }
             var previous = RegistryAllowlist.Encode(before);
-            Journal(ChangeKind.RegistryValue, r.Target, previous, label(RegistryAllowlist.Describe(before)), restart);
-            return new(true, true, r.Target, previous);
+            Journal(ChangeKind.RegistryValue, r.Target, previous, label(RegistryAllowlist.Describe(before)), restart, created);
+            return new(true, true, r.Target, previous, created);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log($"{r.Target} = {value} failed: {ex.Message}");
+            // The Host already tries this when SetValue fails; again here for keys created before a later failure. Never throws.
+            RegistryKeyCleanup.Remove(sys, r.Root, r.Key, created, Log);
             return new(false, false, r.Target, null);
         }
     }
@@ -465,21 +509,24 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
     private async Task<ActionOutcome> ReduceHibernateFileAsync(MemorySuggestion s, CancellationToken ct)
     {
         if (Snapshot?.Hibernate is not { OfferReduce: true } before) return new(false, "The hibernation file is already reduced or turned off.");
+        var values = Hibernation.RecordValues(sys, Log); // HiberFileType / HibernateEnabled: undo removes the ones powercfg adds
         var r = await sys.SetHibernateTypeAsync(true, ct).ConfigureAwait(false);
         if (!r.Success) return r;
         var after = sys.ReadHibernate();
         if (after?.Reduced == false) return new(false, "Windows didn't shrink the hibernation file; nothing was changed.");
-        AddUndo(new(s.Id, "Hibernation file", MemoryActionType.ReduceHibernateFile, "", "full"));
-        Journal(ChangeKind.HiberFileType, "", "full", "Hibernation file (hiberfil.sys) shrunk to the Fast Startup size (was full size)");
+        AddUndo(new(s.Id, "Hibernation file", MemoryActionType.ReduceHibernateFile, "", "full", PreviousExtra: values));
+        Journal(ChangeKind.HiberFileType, "", "full", "Hibernation file (hiberfil.sys) shrunk to the Fast Startup size (was full size)", extra: values);
         var freed = before.FileBytes is { } b && after?.FileBytes is { } a && b > a ? $" Freed {MemoryText.Size(b - a)} on the system drive." : "";
         return new(true, "hiberfil.sys now holds only what Fast Startup needs." + freed + " Fast Startup still works; Hibernate is no longer in the power menu.");
     }
 
     private async Task<ActionOutcome> DisableWidgetsAsync(MemorySuggestion s, CancellationToken ct)
     {
+        if (Snapshot?.Feeds is { WidgetsPolicyBlocked: true })
+            return new(false, "This version of Windows blocks the Widgets policy (User Choice Protection), so nothing was changed. Hide Widgets from Settings > Personalization > Taskbar instead.");
         var w = SetDword(RegistryAllowlist.WidgetsPolicy, 0, was => $"Widgets turned off for everyone on this PC (policy was {was})");
         if (!w.Ok) return new(false, "Windows didn't keep the Widgets policy " + PolicyRefused);
-        if (w.Changed) AddUndo(new(s.Id, "Widgets", MemoryActionType.DisableWidgets, "", RegistryUndo.Encode([new RegistryUndo.Item(w.Target, w.Previous)])));
+        if (w.Changed) AddUndo(new(s.Id, "Widgets", MemoryActionType.DisableWidgets, "", RegistryUndo.Encode([w.Item])));
         var ended = 0;
         foreach (var name in WindowsFeeds.WidgetProcesses)
         {
@@ -496,7 +543,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         var policy = SetDword(RegistryAllowlist.SearchHighlightsPolicy, 0, was => $"Search highlights turned off for everyone on this PC (policy was {was})");
         if (!policy.Ok) return new(false, "Windows didn't keep the Search highlights policy " + PolicyRefused);
         var toggle = SetDword(RegistryAllowlist.SearchHighlightsToggle, 0, was => $"Search highlights setting turned off for this account (was {was})");
-        var changed = new[] { policy, toggle }.Where(x => x.Changed).Select(x => new RegistryUndo.Item(x.Target, x.Previous)).ToList();
+        var changed = new[] { policy, toggle }.Where(x => x.Changed).Select(x => x.Item).ToList();
         if (changed.Count > 0) AddUndo(new(s.Id, "Search highlights", MemoryActionType.DisableSearchHighlights, "", RegistryUndo.Encode(changed)));
         return new(true, "Search highlights turned off" + (toggle.Ok ? "" : " (this account's Settings toggle couldn't be changed; the policy still applies)") + ". Takes full effect after a restart.");
     }
@@ -518,7 +565,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
             var w = SetDword(setting, 1, was => $"{app.App} start screen turned off for this account (was {was})", restart: false);
             if (!w.Ok) { failed.Add(app.App); continue; }
             done.Add(app.App);
-            if (w.Changed) changed.Add(new(w.Target, w.Previous));
+            if (w.Changed) changed.Add(w.Item);
         }
         if (done.Count == 0) return new(false, $"Windows didn't keep the start screen setting for {OfficeStartScreen.Join(failed)} (your organization may manage Office settings). Nothing was changed.");
         if (changed.Count > 0) AddUndo(new(s.Id, "Office start screen", MemoryActionType.SkipOfficeStartScreen, OfficeStartScreen.Join(done), RegistryUndo.Encode(changed)));
@@ -550,14 +597,14 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         {
             if (mode.Changed)
             {
-                try { if (RegistryAllowlist.Restore(sys, mode.Target, mode.Previous).Ok) journal?.RemoveLatest(ChangeKind.RegistryValue, mode.Target); }
+                try { if (RegistryAllowlist.Restore(sys, mode.Target, mode.Previous, mode.CreatedKey, Log).Ok) journal?.RemoveLatest(ChangeKind.RegistryValue, mode.Target); }
                 catch (Exception ex) when (ex is not OperationCanceledException) { Log("LegacyDefaultPrinterMode rollback: " + ex.Message); }
             }
             return new(false, $"Windows didn't make {DefaultPrinter.PdfPrinter} the default printer (your organization may manage printers). Nothing was changed.");
         }
         Journal(ChangeKind.DefaultPrinter, DefaultPrinter.JournalTarget, old, $"Default printer for this account set to {DefaultPrinter.PdfPrinter} (was \"{old}\")");
         AddUndo(new(s.Id, "Default printer", MemoryActionType.SetPdfDefaultPrinter, old,
-            RegistryUndo.Encode(mode.Changed ? new List<RegistryUndo.Item> { new(mode.Target, mode.Previous) } : new List<RegistryUndo.Item>())));
+            RegistryUndo.Encode(mode.Changed ? new List<RegistryUndo.Item> { mode.Item } : new List<RegistryUndo.Item>())));
         return new(true, $"{DefaultPrinter.PdfPrinter} is now the default printer for this account (was \"{old}\"). When you print, pick \"{old}\" in the print dialog."
             + " Word and Excel no longer wait for the network printer when they open.");
     }
@@ -573,7 +620,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         foreach (var item in RegistryUndo.Decode(u.Previous))
         {
             bool ok;
-            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous).Ok; }
+            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Log).Ok; }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
             if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
             else modeOk = false;
@@ -593,7 +640,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         if (Snapshot is { } snap && !OfficePrivacy.Offer(snap)) return new(false, "Office's optional online extras are already off or managed by your organization.");
         var w = SetDword(OfficePrivacy.Setting, OfficePrivacy.Disabled, was => $"Office optional connected experiences turned off for this account (policy was {was})", restart: false);
         if (!w.Ok) return new(false, "Windows didn't keep the Office setting (administrator rights needed, or your organization manages Office settings). Nothing was changed.");
-        if (w.Changed) AddUndo(new(s.Id, "Office optional online extras", MemoryActionType.DisableOfficeOptionalExperiences, "", RegistryUndo.Encode([new(w.Target, w.Previous)])));
+        if (w.Changed) AddUndo(new(s.Id, "Office optional online extras", MemoryActionType.DisableOfficeOptionalExperiences, "", RegistryUndo.Encode([w.Item])));
         return new(true, "Office's optional online extras are off for this account (online pictures, Smart Lookup, Outlook weather, the Office Store for add-ins). OneDrive, SharePoint and co-authoring keep working. Takes effect the next time each Office app opens.");
     }
 
@@ -612,6 +659,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
             if (BrowserExtensions.IsBlocked(list, id)) return new(true, $"{known.Name} is already blocked in {label}.");
             if (BrowserExtensions.NextName(list) is not { } name)
                 return new(false, $"{label}'s extension blocklist isn't numbered 1, 2, 3… (your organization may manage it), so it was left as is.");
+            var created = RegistryKeyCleanup.TopmostMissing(sys, RegistryRoot.LocalMachine, BrowserExtensions.BlocklistKey(browser), Log);
             sys.AddExtensionBlock(browser, name, id);
             var after = sys.ReadExtensionBlocklist(browser);
             if (after?.FirstOrDefault(e => e.Name == name)?.Data?.Trim().Equals(id, StringComparison.OrdinalIgnoreCase) != true)
@@ -619,11 +667,12 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                 Log($"{label} blocklist {name} = {id} didn't stick");
                 // Best effort: the name was free before, and the Host deletes it only if it holds this ID.
                 try { sys.RemoveExtensionBlock(browser, name, id); } catch (Exception ex) when (ex is not OperationCanceledException) { Log("cleanup: " + ex.Message); }
+                RegistryKeyCleanup.Remove(sys, RegistryRoot.LocalMachine, BrowserExtensions.BlocklistKey(browser), created, Log);
                 return new(false, $"Windows didn't keep {known.Name} on {label}'s blocklist " + PolicyRefused);
             }
             var target = BrowserExtensions.Target(browser, id);
-            Journal(ChangeKind.ExtensionBlock, target, name, $"{known.Name} turned off in {label} for everyone on this PC (blocklist entry {name} added; was not blocked)");
-            AddUndo(new(BrowserExtensions.SuggestionId(browser, id), $"{known.Name} ({label})", MemoryActionType.BlockBrowserExtension, target, name));
+            Journal(ChangeKind.ExtensionBlock, target, name, $"{known.Name} turned off in {label} for everyone on this PC (blocklist entry {name} added; was not blocked)", createdKey: created);
+            AddUndo(new(BrowserExtensions.SuggestionId(browser, id), $"{known.Name} ({label})", MemoryActionType.BlockBrowserExtension, target, name, CreatedKey: created));
             return new(true, $"{known.Name} is turned off in {label} for everyone on this PC and can't be turned back on or reinstalled until you undo this. {label} now shows \"Managed by your organization\".");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -684,7 +733,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         {
             var w = SetDword(BrowserBackground.StartupBoostSetting, 0, was => $"Microsoft Edge Startup Boost turned off for everyone on this PC (policy was {was})", restart: false);
             if (!w.Ok) boostFailed = true;
-            else if (w.Changed) registry.Add(new(w.Target, w.Previous));
+            else if (w.Changed) registry.Add(w.Item);
         }
 
         if (!prefChanged && registry.Count == 0)
@@ -711,7 +760,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         foreach (var item in undo.Registry ?? [])
         {
             bool ok;
-            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous).Ok; }
+            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Log).Ok; }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
             if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
             else failed.Add("Startup Boost");
@@ -734,10 +783,10 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         var items = RegistryUndo.Decode(u.Previous);
         if (items.Count == 0) return new(false, "The original setting wasn't recorded.");
         var failed = new List<string>();
-        foreach (var item in items)
+        foreach (var item in Enumerable.Reverse(items)) // last written first: the first write is the one that created any keys
         {
             bool ok;
-            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous).Ok; }
+            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Log).Ok; }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
             if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
             else failed.Add(item.Target);
@@ -823,10 +872,11 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                 }
                 var target = a.Type == MemoryActionType.SetServiceManual ? "Manual" : "Disabled";
                 var original = sys.GetServiceStartType(info.Name);
-                if (AiVmServices.Is(info.Name)) return SetAiVmServiceManual(s, a, info, original);
+                var delayed = ServiceDelayedStart.Record(sys, info.Name, Log); // undo puts DelayedAutostart back exactly (absent stays absent)
+                if (AiVmServices.Is(info.Name)) return SetAiVmServiceManual(s, a, info, original, delayed);
                 sys.SetServiceStartType(info.Name, target);
-                AddUndo(new(s.Id, info.Label, a.Type, info.Name, original));
-                Journal(ChangeKind.ServiceStartType, info.Name, original, $"{info.Label} set to {target}");
+                AddUndo(new(s.Id, info.Label, a.Type, info.Name, original, PreviousExtra: delayed));
+                Journal(ChangeKind.ServiceStartType, info.Name, original, ServiceLabel(info.Label, target, original), extra: delayed);
                 return new(true, $"{info.Label} set to {target} (was {original}).");
 
             case MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup:

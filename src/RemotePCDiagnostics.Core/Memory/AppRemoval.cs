@@ -149,6 +149,17 @@ public static class AppRemoval
     /// <summary>Card / report wording for removed Store apps: how to get them back (instead of "can't be undone").</summary>
     public const string StoreGetBack = "To get it back, reinstall it from the Microsoft Store.";
     public const string StoreGetBackMany = "To get them back, reinstall them from the Microsoft Store.";
+    /// <summary>Card / confirm / result wording for retired apps (<see cref="AppGroup.Retired"/> without a Store id): there may be nothing to reinstall.</summary>
+    public const string RetiredGetBack = "Microsoft has retired it, so it may not be available to reinstall.";
+    /// <summary>Journal label ending for a removed retired app.</summary>
+    public const string RetiredLabel = "Microsoft has retired it, so it may not be available to reinstall";
+
+    /// <summary>A retired app (Mail and Calendar, Maps, People, Dev Home, Mixed Reality Portal) that undo can't reinstall: permanent, and the Store may not have it.</summary>
+    public static bool IsRetiredPermanent(RemovableAppx a) => a.Group == AppGroup.Retired && !global::RemotePCDiagnostics.Core.Memory.StoreReinstall.CanReinstall(a);
+
+    /// <summary>How to get a removed package back: undo reinstalls it, reinstall it from the Store, or (retired) it may not be available.</summary>
+    public static string GetBack(RemovableAppx a) =>
+        global::RemotePCDiagnostics.Core.Memory.StoreReinstall.CanReinstall(a) ? StoreUndo : IsRetiredPermanent(a) ? RetiredGetBack : StoreGetBack;
     /// <summary>Workflow chip for removed apps without a verified Store id (replaces the generic "can't be undone").</summary>
     public const string StoreManualChip = "reinstall from Store";
     /// <summary>Workflow chip for removed apps that undo reinstalls from the Microsoft Store (<see cref="StoreReinstall"/>).</summary>
@@ -367,7 +378,7 @@ public static class AppRemoval
             var a = f.App;
             var retired = a.Group == AppGroup.Retired;
             var reinstall = global::RemotePCDiagnostics.Core.Memory.StoreReinstall.CanReinstall(a);
-            var getBack = reinstall ? StoreUndo : StoreGetBack;
+            var getBack = GetBack(a);
             List<string> steps =
             [
                 $"Removes {a.Label} ({a.Name}) for every account on this PC and stops Windows adding it for new accounts.",
@@ -381,7 +392,8 @@ public static class AppRemoval
                 steps,
                 [new(MemoryActionType.RemoveApp, a.Id, $"Remove {a.Label}",
                     $"Remove {a.Label}? {getBack} Needs administrator rights.")],
-                Category, null, DefaultOn: retired, UndoChip: reinstall ? StoreChip : StoreManualChip, SavingText: f.Installed.SizeBytes is > 0 ? $"~{MemoryText.Size(f.Installed.SizeBytes.Value)} disk" : null,
+                // Retired apps: no chip of our own, so the fix list shows the plain "can't be undone" (they may not be in the Store any more).
+                Category, null, DefaultOn: retired, UndoChip: reinstall ? StoreChip : IsRetiredPermanent(a) ? null : StoreManualChip, SavingText: f.Installed.SizeBytes is > 0 ? $"~{MemoryText.Size(f.Installed.SizeBytes.Value)} disk" : null,
                 Undo: reinstall ? UndoSupport.Reinstall : null);
         }
 
@@ -542,7 +554,8 @@ public static class AppRemoval
     /// <param name="reinstall">Journaled as <see cref="ChangeKind.StoreReinstall"/>: undo reinstalls it from the Microsoft Store.</param>
     public static string RemovedLabel(RemovableAppx a, long? bytes, bool reinstall = false) =>
         $"{a.Label} removed ({a.Name}{(bytes is > 0 ? ", " + MemoryText.Size(bytes.Value) : "")}) — "
-        + (reinstall ? "undo reinstalls it from the Microsoft Store for the signed-in account; its settings and data aren't restored" : "reinstall from the Microsoft Store to get it back");
+        + (reinstall ? "undo reinstalls it from the Microsoft Store for the signed-in account; its settings and data aren't restored"
+            : IsRetiredPermanent(a) ? RetiredLabel : "reinstall from the Microsoft Store to get it back");
 
     public static string UninstalledLabel(RemovableProgram p, UninstallEntry e) =>
         $"{e.DisplayName}{(e.Version is { Length: > 0 } v ? " " + v : "")} uninstalled{(e.SizeBytes is > 0 ? $" ({MemoryText.Size(e.SizeBytes.Value)})" : "")} — reinstall from {p.ReinstallFrom} to get it back";
