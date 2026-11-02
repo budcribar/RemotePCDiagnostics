@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:blazor="clr-namespace:PeakSWC.RemoteBlazorWebView.Wpf;assembly=PeakSWC.RemoteBlazorWebView.Wpf"
         xmlns:ui="clr-namespace:RemotePCDiagnostics.UI;assembly=RemotePCDiagnostics.UI"
-        Title="RemotePCDiagnostics" Height="768" Width="1200">
+        Title="RemotePCDiagnostics" Icon="Assets/diagnostics.ico" Height="768" Width="1200">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

@@ -7,8 +7,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\diagnostics.ico</ApplicationIcon>
     <RootNamespace>RemotePCDiagnostics.Host</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\diagnostics.ico" />
+  </ItemGroup>
   <ItemGroup>
     <!-- Drop-in replacement for Microsoft.AspNetCore.Components.WebView.Wpf. 10.0.13 is the latest stable on nuget.org (Oct 2026). -->
     <PackageReference Include="PeakSWC.RemoteBlazorWebView.Wpf" Version="10.0.13" />

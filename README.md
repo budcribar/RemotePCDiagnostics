@@ -223,7 +223,7 @@ The top bar has a **Dark / System / Light** switch (default **System**, which fo
 
 ### CI
 
-An experimental [network usage history prototype](docs/network-usage-prototype.md) exports a top-five HTML report and raw CSV/JSON from Windows' existing history. CI publishes `NetworkUsagePrototype.exe` in `ci-artifacts/NetworkUsagePrototype` and smoke-tests it with explicitly synthetic demo data. Real history collection is run by the user on the target laptop; it is not part of automated optimizations or the final client report yet.
+An experimental [network usage history prototype](docs/network-usage-prototype.md) exports a top-25 HTML report and raw CSV/JSON from Windows' existing history. CI publishes `NetworkUsagePrototype.exe` in `ci-artifacts/NetworkUsagePrototype` and smoke-tests it with explicitly synthetic demo data. Real history collection is run by the user on the target laptop; it is not part of automated optimizations or the final client report yet.
 
 The dedicated **Service workflow (simulated restarts)** job runs `WorkflowTests` separately and uploads `service-workflow-results`. It checks review/approval, restart sequencing, saved workflow and benchmark JSON loaded into fresh service instances after each simulated restart, client reporting, cancellation, and sign-in cleanup. OS actions and measurements use fakes: this job does not reboot the runner, configure automatic sign-in, install updates, or delete user files. It does not validate the real Windows restart/resume task or registry integration.
 

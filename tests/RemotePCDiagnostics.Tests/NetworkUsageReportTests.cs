@@ -4,6 +4,19 @@ namespace RemotePCDiagnostics.Tests;
 
 public class NetworkUsageReportTests
 {
+    [Fact]
+    public void DefaultRankingIncludesTop25AndExportsKeepAllRecords()
+    {
+        var entries = Enumerable.Range(1, 30).Select(i => new NetworkUsageEntry(
+            $"app-{i}", $"Program {i}", "user", "adapter", null, 0, (ulong)i)).ToList();
+        var report = new NetworkUsageReport("test", End.AddDays(-7), End, entries, []);
+        Assert.Equal(25, report.TopApps().Count);
+        Assert.Equal("app-30", report.TopApps()[0].AppId);
+        Assert.Equal("app-6", report.TopApps()[24].AppId);
+        Assert.Contains("Top 25", report.ToHtml());
+        Assert.Contains("\"app-1\"", report.ToCsv());
+    }
+
     private static readonly DateTimeOffset End = DateTimeOffset.Parse("2026-11-01T00:00:00Z");
 
     [Fact]

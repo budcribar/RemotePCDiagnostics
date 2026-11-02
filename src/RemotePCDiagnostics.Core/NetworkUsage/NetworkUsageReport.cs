@@ -17,7 +17,7 @@ public sealed record NetworkUsageReport(string Source, DateTimeOffset StartUtc, 
 {
     public const string Limitation = "Historical recorded traffic, not live speed or request frequency. High usage does not prove waste or justify stopping an app. Coverage may be incomplete; absent entries do not prove zero usage. Traffic can include local network transfers and virtual adapters.";
 
-    public IReadOnlyList<NetworkUsageTotal> TopApps(int count = 5) => Entries
+    public IReadOnlyList<NetworkUsageTotal> TopApps(int count = 25) => Entries
         .GroupBy(e => (e.AppId, e.App, e.User))
         .Select(g => new NetworkUsageTotal(g.Key.AppId, g.Key.App, g.Key.User,
             g.Aggregate(0UL, (sum, e) => checked(sum + e.Uploaded)),
@@ -38,7 +38,7 @@ public sealed record NetworkUsageReport(string Source, DateTimeOffset StartUtc, 
         if (Entries.Count == 0) html.Append("<h2>No attributed records available</h2><p>This is not evidence of zero network usage. See warnings and diagnostics.json.</p>");
         else
         {
-            html.Append("<h2>Top five apps / attribution buckets</h2><table><tr><th>App / bucket</th><th>User</th><th>Downloaded</th><th>Uploaded</th><th>Total</th></tr>");
+            html.Append("<h2>Top 25 apps / attribution buckets</h2><table><tr><th>App / bucket</th><th>User</th><th>Downloaded</th><th>Uploaded</th><th>Total</th></tr>");
             foreach (var app in TopApps()) html.Append($"<tr><td>{H(app.App)}<br><small>{H(app.AppId)}</small></td><td>{H(app.User)}</td><td>{Size(app.Downloaded)}</td><td>{Size(app.Uploaded)}</td><td>{Size(app.Total)}</td></tr>");
             html.Append("</table><p>Review high-usage apps with the user. No apps or services were stopped and no startup settings were changed.</p>");
         }

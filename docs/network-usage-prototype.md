@@ -26,7 +26,8 @@ An existing database copy can be analyzed with `--srum-copy C:\Copies\SRUDB.dat`
 
 ## Interpretation
 
-- Reports rank the top five app identities or attribution buckets by total bytes and separate uploads from downloads. The CSV includes all returned records. Identical display names with different identities/users stay separate.
+- Reports rank the top 25 app identities or attribution buckets by total bytes and separate uploads from downloads. The CSV includes all returned records. Identical display names with different identities/users stay separate.
+- Program labels use local executable product/description metadata when available, plus friendly names for recognized Windows app packages. Device paths are mapped to local drive paths for lookup. Original identities remain in the HTML and exports; missing-file fallbacks are marked as name unavailable. No remote file paths are read to resolve names.
 - The requested period ends at the last completed UTC hour. This reduces trailing partial intervals but does not establish that every earlier record has been flushed or that the whole requested period is available.
 - API mode reports each connection profile separately in raw records. API user attribution is unavailable. Some identities are shared/system buckets; no aggregate reconciliation is attempted in this prototype.
 - SRUM mode retains user SIDs separately and displays raw interface LUIDs. It reads only the Network Data Usage provider table, not similarly named long-term tables, to avoid combining overlapping records. It reports observed record timestamps as context, not proof of continuous coverage or exact app execution times.

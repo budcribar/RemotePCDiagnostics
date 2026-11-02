@@ -71,6 +71,7 @@ internal static class Program
                 report = new(copy is not null || args.Contains("--srum") ? "SRUM read failed" : "Windows usage API failed", start, end, [],
                     [$"History unavailable: {ex.GetType().Name}: {ex.Message}", "Try --srum from an administrator terminal if API access is restricted. If SRUM acquisition/reading fails, keep diagnostics.json; the prototype does not repair the live database or stop its service."]);
             }
+            if (!args.Contains("--demo")) report = report with { Entries = ProgramNames.Resolve(report.Entries) };
             diagnostics.AddRange(report.Warnings);
             await File.WriteAllTextAsync(Path.Combine(output, "network-usage.html"), report.ToHtml(), Encoding.UTF8);
             await File.WriteAllTextAsync(Path.Combine(output, "network-usage.csv"), report.ToCsv(), Encoding.UTF8);
