@@ -76,11 +76,23 @@ public sealed class ChecksScreenState
 
     public event Action? Changed;
 
-    public ChecksScreenState(DiagnosticsService diag, ResultStore store)
+    private readonly Preferences.PreferencesService? _prefs;
+
+    public ChecksScreenState(DiagnosticsService diag, ResultStore store, Preferences.PreferencesService? prefs = null)
     {
         _diag = diag;
-        foreach (var m in ChecksModules) _selected.Add(m.Name);
-        foreach (var m in StressModules.Where(m => m.Name != SecurityAuditModule.ModuleName)) _selected.Add(m.Name);
+        _prefs = prefs;
+        var saved = prefs?.Current;
+        if (saved?.SelectedModules is { } sel)
+            foreach (var m in ChecksModules.Concat(StressModules).Where(m => sel.Contains(m.Name, StringComparer.OrdinalIgnoreCase))) _selected.Add(m.Name);
+        else
+        {
+            foreach (var m in ChecksModules) _selected.Add(m.Name);
+            foreach (var m in StressModules.Where(m => m.Name != SecurityAuditModule.ModuleName)) _selected.Add(m.Name);
+        }
+        if (saved?.ChecksCollapsed is { } cc) _collapsedChecks = cc;
+        if (saved?.StressCollapsed is { } sc) _collapsedStress = sc;
+        if (Enum.TryParse<StressSuiteMode>(saved?.StressMode, out var mode)) _mode = mode;
         store.Changed += (_, r) => OnResult(r);
         foreach (var r in store.Snapshot.Values) OnResult(r);
     }
@@ -94,13 +106,15 @@ public sealed class ChecksScreenState
 
     public IReadOnlyList<IDiagnosticModule> Modules(CheckGroup g) => g == CheckGroup.Checks ? ChecksModules : StressModules;
 
-    public bool CollapsedChecks { get; set; } = true;
-    public bool CollapsedStress { get; set; } = true;
+    private bool _collapsedChecks = true, _collapsedStress = true;
+    public bool CollapsedChecks { get => _collapsedChecks; set { _collapsedChecks = value; _prefs?.Update(p => p with { ChecksCollapsed = value }); } }
+    public bool CollapsedStress { get => _collapsedStress; set { _collapsedStress = value; _prefs?.Update(p => p with { StressCollapsed = value }); } }
     public bool IsCollapsed(CheckGroup g) => g == CheckGroup.Checks ? CollapsedChecks : CollapsedStress;
     public void ToggleCollapsed(CheckGroup g) { if (g == CheckGroup.Checks) CollapsedChecks = !CollapsedChecks; else CollapsedStress = !CollapsedStress; Raise(); }
     public void SetAllCollapsed(bool collapsed) { CollapsedChecks = CollapsedStress = collapsed; Raise(); }
 
-    public StressSuiteMode Mode { get; set; } = StressSuiteMode.Short;
+    private StressSuiteMode _mode = StressSuiteMode.Short;
+    public StressSuiteMode Mode { get => _mode; set { _mode = value; _prefs?.Update(p => p with { StressMode = value.ToString() }); } }
     public string? SelectedModule { get; set; }
 
     /// <summary>Selects <paramref name="module"/> and expands the group containing it so the row is visible in the left pane.</summary>
@@ -115,7 +129,14 @@ public sealed class ChecksScreenState
     }
 
     public bool IsSelected(string module) { lock (_gate) return _selected.Contains(module); }
-    public void SetSelected(string module, bool on) { lock (_gate) { if (on) _selected.Add(module); else _selected.Remove(module); } Raise(); }
+    public void SetSelected(string module, bool on) { lock (_gate) { if (on) _selected.Add(module); else _selected.Remove(module); } SaveSelection(); Raise(); }
+
+    private void SaveSelection()
+    {
+        if (_prefs is null) return;
+        List<string> sel; lock (_gate) sel = _selected.ToList();
+        _prefs.Update(p => p with { SelectedModules = sel });
+    }
     public int SelectedCount(CheckGroup g) { lock (_gate) return Modules(g).Count(m => _selected.Contains(m.Name)); }
 
     /// <summary>True = all, false = none, null = some (tri-state select-all).</summary>
@@ -125,7 +146,7 @@ public sealed class ChecksScreenState
         return n == 0 ? false : n == total ? true : null;
     }
 
-    public void SelectAll(CheckGroup g, bool on) { lock (_gate) foreach (var m in Modules(g)) { if (on) _selected.Add(m.Name); else _selected.Remove(m.Name); } Raise(); }
+    public void SelectAll(CheckGroup g, bool on) { lock (_gate) foreach (var m in Modules(g)) { if (on) _selected.Add(m.Name); else _selected.Remove(m.Name); } SaveSelection(); Raise(); }
 
     public CheckGroup? RunningGroup { get; private set; }
     public GroupRunProgress? Progress { get; private set; }

@@ -492,6 +492,37 @@ public class WorkflowTests
     }
 
     [Fact]
+    public async Task ReviewTicks_AreRememberedForTheNextRun_AndRecommendedResetsThem()
+    {
+        var prefs = new RemotePCDiagnostics.Core.Preferences.PreferencesService(new RemotePCDiagnostics.Core.Preferences.MemoryPreferencesStore());
+        WorkflowService Flow()
+        {
+            var results = new ResultStore();
+            var diag = new DiagnosticsService(results, DefaultModules());
+            var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok("""{"Count":0}"""));
+            var rem = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Remote));
+            var bench = new BenchmarkService(new BenchmarkRunner(new Probes(), resolve: (_, _) => Task.CompletedTask), new MemBenchStore());
+            return new WorkflowService(diag, results, rem, bench, new Sys(), new MemFlowStore(), session: new SessionContext(SessionMode.Remote),
+                delay: (_, _) => Task.CompletedTask, prefs: prefs);
+        }
+        var first = Flow();
+        await first.RunChecksAsync();
+        var plan = first.State.Fixes.Single(f => f.Remediation?.Kind == RemediationKind.SetBalancedPowerPlan).Id;
+        first.SetApproved(plan, false);
+
+        var second = Flow();                       // next client visit / app restart
+        await second.RunChecksAsync();
+        Assert.DoesNotContain(plan, second.State.Approved);
+        Assert.Contains(second.State.Approved, id => id != plan); // the others keep their defaults
+
+        second.SetRecommendedApproved();
+        Assert.Contains(plan, second.State.Approved);
+        var third = Flow();
+        await third.RunChecksAsync();
+        Assert.Contains(plan, third.State.Approved);
+    }
+
+    [Fact]
     public void Report_EncodesText()
     {
         var s = new WorkflowState { Machine = "PC<1>", Findings = ["<script>x</script>"], Outcomes = [new("a", "Fix & go", true, "ok")] };

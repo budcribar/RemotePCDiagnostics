@@ -18,7 +18,7 @@ public sealed record AutoLogonRequest(string User, string Domain, string Passwor
 public sealed class WorkflowService(
     DiagnosticsService diag, ResultStore results, RemediationService remediation, BenchmarkService bench, IWorkflowSystem sys, IWorkflowStore store,
     MemorySuggestionService? memory = null, ISessionContext? session = null, Action<LogLevel, string>? events = null, Action<string>? log = null,
-    Func<TimeSpan, CancellationToken, Task>? delay = null, IChangeJournal? journal = null)
+    Func<TimeSpan, CancellationToken, Task>? delay = null, IChangeJournal? journal = null, Preferences.PreferencesService? prefs = null)
 {
     public const int RestartsInWorkflow = 2;
     /// <summary>Task Scheduler task that starts the app again (elevated) after each restart; removed when the workflow ends.</summary>
@@ -97,7 +97,8 @@ public sealed class WorkflowService(
             Save(s => s with
             {
                 Stage = WorkflowStage.Review, ReviewRulesVersion = CurrentReviewRulesVersion,
-                Fixes = fixes, Approved = fixes.Where(f => f.DefaultOn).Select(f => f.Id).ToList(), // everything starts ticked except opt-in fixes
+                // Ticked: what the technician chose for this fix last time, otherwise its default (everything except opt-in fixes).
+                Fixes = fixes, Approved = fixes.Where(f => prefs?.IsTicked(f.Id, f.DefaultOn) ?? f.DefaultOn).Select(f => f.Id).ToList(),
                 Findings = findings, NotOffered = notOffered, Recommendations = FixCatalog.Recommendations(suggestions), Machine = session?.MachineName ?? Environment.MachineName, HardwareSummary = hw,
             });
             Note($"Checks finished: {fixes.Count} fix{(fixes.Count == 1 ? "" : "es")} to review.");
@@ -114,18 +115,21 @@ public sealed class WorkflowService(
     {
         if (State.Stage != WorkflowStage.Review) return;
         Save(s => s with { Approved = on ? s.Approved.Union([id]).ToList() : s.Approved.Where(x => x != id).ToList() });
+        prefs?.RememberFixChoices([(id, on)]);
     }
 
     public void SetAllApproved(bool on)
     {
         if (State.Stage != WorkflowStage.Review) return;
         Save(s => s with { Approved = on ? s.Fixes.Select(f => f.Id).ToList() : [] });
+        prefs?.RememberFixChoices(State.Fixes.Select(f => (f.Id, on)));
     }
 
     public void SetRecommendedApproved()
     {
         if (State.Stage != WorkflowStage.Review) return;
         Save(s => s with { Approved = s.Fixes.Where(f => f.DefaultOn).Select(f => f.Id).ToList() });
+        prefs?.ForgetFixChoices(State.Fixes.Select(f => f.Id).ToList()); // back to the defaults, also for next time
     }
 
     public AutoLogonStatus AutoLogonStatus() => sys.GetAutoLogonStatus();

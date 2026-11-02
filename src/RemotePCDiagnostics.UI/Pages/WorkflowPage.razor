@@ -6,6 +6,7 @@
 @inject WorkflowService Flow
 @inject BenchmarkService Bench
 @inject DiagnosticsService Diagnostics
+@inject IServiceProvider Services
 @* Service workflow: the tech reviews once; the rest (restarts, benchmarks, fixes, report) runs by itself. *@
 @{
     var s = Flow.State;
@@ -131,13 +132,18 @@
 
 @code {
     // Fix areas start collapsed: the review shows each area's ticked count; open only the ones worth checking.
+    // The areas the technician left open are remembered on this PC.
     private readonly HashSet<string> _openAreas = new(StringComparer.Ordinal);
-    private void ToggleArea(string area) { if (!_openAreas.Remove(area)) _openAreas.Add(area); }
+    private RemotePCDiagnostics.Core.Preferences.PreferencesService? Prefs =>
+        Services.GetService(typeof(RemotePCDiagnostics.Core.Preferences.PreferencesService)) as RemotePCDiagnostics.Core.Preferences.PreferencesService;
+    private void SaveOpenAreas() { var open = _openAreas.ToList(); Prefs?.Update(p => p with { WorkflowOpenAreas = open }); }
+    private void ToggleArea(string area) { if (!_openAreas.Remove(area)) _openAreas.Add(area); SaveOpenAreas(); }
     private bool AllOpen(WorkflowState s) => s.Fixes.Select(f => f.Area).Distinct().All(_openAreas.Contains);
     private void ToggleAllAreas(WorkflowState s)
     {
         if (AllOpen(s)) _openAreas.Clear();
         else foreach (var a in s.Fixes.Select(f => f.Area).Distinct()) _openAreas.Add(a);
+        SaveOpenAreas();
     }
 
     private static readonly (string Label, WorkflowStage[] Stages)[] Steps =
@@ -171,6 +177,7 @@
     {
         Flow.Changed += OnChanged;
         LoadLogon();
+        foreach (var a in Prefs?.Current.WorkflowOpenAreas ?? []) _openAreas.Add(a);
     }
 
     private void LoadLogon()
