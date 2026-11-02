@@ -86,7 +86,7 @@ public static class ClientReport
                   .Append(d.Before is { } b ? E(d.Info.Show(b)) : "—").Append("</td><td>").Append(d.After is { } v ? E(d.Info.Show(v)) : "—")
                   .Append("</td><td class=\"").Append(cls).Append("\">").Append(E(text)).Append(d.Note is { } n ? $"<div class=\"meta\">{E(n)}</div>" : "").Append("</td></tr>");
             }
-            sb.Append("</table><p class=\"meta\">Each test was run several times and the middle result used. Changes smaller than the normal run-to-run variation are shown as \"No real change\".</p>");
+            sb.Append("</table><p class=\"meta\">Results use the median of the available runs. Changes within the full run-to-run range need confirmation and count as neutral in the overall score.</p>");
             foreach (var w in cmp.Warnings) sb.Append("<div class=\"note\">").Append(E(w)).Append("</div>");
         }
         else

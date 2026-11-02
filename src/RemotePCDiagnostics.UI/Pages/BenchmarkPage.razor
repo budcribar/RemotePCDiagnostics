@@ -73,8 +73,8 @@
         <span class="banner-icon"><Icon Name="health" Size="24" /></span>
         <div class="banner-text">
             <div class="banner-title">@cmp.OverallText</div>
-            <div class="banner-sub">@cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.Better) better · @cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.NoChange) unchanged · @cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.Worse) worse
-                — weighted across the tests below; changes smaller than the run-to-run variation count as unchanged.</div>
+            <div class="banner-sub">@cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.Better) better · @cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.NoChange) unchanged · @cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.Worse) worse · @cmp.Deltas.Count(d => d.Verdict == BenchmarkVerdict.Uncertain) need confirmation
+                — weighted across the tests below; unconfirmed changes count as neutral in the overall score.</div>
         </div>
     </section>
     @foreach (var w in cmp.Warnings) { <p class="notice" data-testid="bench-warning">@w</p> }
@@ -142,7 +142,7 @@ else if (!running)
         if (m?.Median is { } v)
         {
             <span>@info.Show(v)</span>
-            @if (m.Samples.Count > 1) { <div class="meta" title="@string.Join(", ", m.Samples.Select(x => info.Show(x)))">@m.Samples.Count runs · ±@((m.Spread * 50).ToString("0"))%</div> }
+            @if (m.Samples.Count > 1) { <div class="meta" title="@string.Join(", ", m.Samples.Select(x => info.Show(x)))">@m.Samples.Count runs · @((m.Spread * 100).ToString("0"))% full range</div> }
         }
         else { <span class="meta">@(m?.Note ?? "—")</span> }
     };

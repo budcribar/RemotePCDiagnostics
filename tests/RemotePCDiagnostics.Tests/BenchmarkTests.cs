@@ -12,6 +12,23 @@ public class BenchmarkTests
     private static BenchmarkRun Run(BenchmarkPhase p, params BenchmarkMeasurement[] m) => new(p, DateTimeOffset.UtcNow, Plugged, m);
 
     // ---- comparison ----
+    [Theory]
+    [InlineData(47.5, "47% shorter; needs confirmation")]
+    [InlineData(132.9, "47% longer; needs confirmation")]
+    public void Comparison_LargeBootChangeWithinWideRangeIsUncertain(double afterSeconds, string summary)
+    {
+        var comparison = BenchmarkComparison.Build(
+            Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 129.4, 90.2, 81.8)),
+            Run(BenchmarkPhase.After, M(BenchmarkKind.BootTime, afterSeconds)));
+        var boot = Assert.Single(comparison.Deltas);
+        Assert.Equal(BenchmarkVerdict.Uncertain, boot.Verdict);
+        Assert.Equal(summary, boot.ChangeSummary);
+        Assert.Contains("Only one after measurement", boot.Note);
+        Assert.Contains("full run-to-run range", boot.Note);
+        Assert.DoesNotContain("no measurable change", boot.Sentence);
+        Assert.Equal(0d, comparison.OverallPercent);
+    }
+
     [Fact]
     public void Comparison_ImprovementsNoiseAndOverall()
     {

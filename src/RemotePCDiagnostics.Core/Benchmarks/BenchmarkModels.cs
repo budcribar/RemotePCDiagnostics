@@ -190,7 +190,7 @@ public sealed class FileBenchmarkStore(string path, Action<string>? log = null) 
     }
 }
 
-public enum BenchmarkVerdict { Better, Worse, NoChange, NotMeasured }
+public enum BenchmarkVerdict { Better, Worse, NoChange, NotMeasured, Uncertain }
 
 public sealed record BenchmarkDelta(BenchmarkInfo Info, double? Before, double? After, BenchmarkVerdict Verdict, double? ImprovementPercent, string? Note)
 {
@@ -200,6 +200,8 @@ public sealed record BenchmarkDelta(BenchmarkInfo Info, double? Before, double? 
     {
         BenchmarkVerdict.NotMeasured => "Not compared",
         BenchmarkVerdict.NoChange => "No real change",
+        BenchmarkVerdict.Uncertain => string.Create(CultureInfo.InvariantCulture,
+            $"{Math.Abs(ImprovementPercent!.Value):0}% {(Info.Kind == BenchmarkKind.BootTime ? (ImprovementPercent > 0 ? "shorter" : "longer") : ImprovementPercent > 0 ? Info.BetterWord : Info.WorseWord)}; needs confirmation"),
         _ when Info.Kind == BenchmarkKind.DiskFreeGb && AbsoluteChange is { } gb =>
             string.Create(CultureInfo.InvariantCulture, $"{(Verdict == BenchmarkVerdict.Better ? "+" : "-")}{Math.Abs(gb):0.0} GB {(Verdict == BenchmarkVerdict.Better ? "freed" : "used")}"),
         _ when Info.Kind == BenchmarkKind.MemoryUsedMb && AbsoluteChange is { } mb =>
@@ -250,13 +252,19 @@ public sealed record BenchmarkComparison(IReadOnlyList<BenchmarkDelta> Deltas, d
             var basis = Math.Max(Math.Abs(bv), 1e-9);
             var rel = diff / basis;
             var noise = Math.Max(info.MinRelativeChange, Math.Max(b.Spread, a.Spread));
-            var verdict = Math.Abs(diff) < info.MinAbsoluteChange || Math.Abs(rel) < noise ? BenchmarkVerdict.NoChange
+            var small = Math.Abs(diff) < info.MinAbsoluteChange || Math.Abs(rel) < info.MinRelativeChange;
+            var verdict = small ? BenchmarkVerdict.NoChange
+                : Math.Abs(rel) < noise ? BenchmarkVerdict.Uncertain
                 : diff > 0 ? BenchmarkVerdict.Better : BenchmarkVerdict.Worse;
             // Improvement as "x% faster/less": for lower-is-better, relative to before (time saved).
             double pct = rel * 100;
-            deltas.Add(new(info, bv, av, verdict, pct, null));
+            var note = verdict == BenchmarkVerdict.Uncertain
+                ? $"Observed change is within the full run-to-run range (before {b.Spread:P0}, after {a.Spread:P0}). Repeat under the same conditions to confirm."
+                  + (a.Samples.Count == 1 ? " Only one after measurement is available." : "")
+                : null;
+            deltas.Add(new(info, bv, av, verdict, pct, note));
 
-            var ratio = verdict == BenchmarkVerdict.NoChange ? 1.0
+            var ratio = verdict is BenchmarkVerdict.NoChange or BenchmarkVerdict.Uncertain ? 1.0
                 : info.LowerIsBetter ? (av <= 0 ? MaxRatio : bv / av) : (bv <= 0 ? MaxRatio : av / bv);
             ratio = Math.Clamp(ratio, MinRatio, MaxRatio);
             logSum += info.Weight * Math.Log(ratio);
