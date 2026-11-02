@@ -109,6 +109,7 @@ Verdict rule of thumb: `Fail` only for clear, actionable problems (e.g. two real
 - Publisher from Authenticode signature and file version info; classify Microsoft / OEM / third-party / unsigned.
 - OEM bloatware: a data list (Lenovo, HP, Dell, ASUS, Acer, MSI utilities, trialware) with "keep / review / optional" guidance; some vendor utilities provide firmware and driver updates and should not be blindly flagged.
 - Fix action (separate, explicit): disable via `StartupApproved` the same way Task Manager does, so it is reversible.
+- Target list and safety ratings: see [Startup cleanup targets](startup-cleanup-targets.md).
 
 ### 3. Antivirus and cloud sync activity check
 
