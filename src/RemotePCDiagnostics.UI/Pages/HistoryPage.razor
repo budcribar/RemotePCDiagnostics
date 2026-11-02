@@ -171,17 +171,17 @@ else
             {
                 <tr class="history-details" data-testid="history-details"><td colspan="5">
                     <div class="meta">@(entry.Suite is { } s ? $"Part of the stress tests ({s}). " : "")Machine: @entry.Machine · App version @entry.AppVersion</div>
-                    @if (entry.Measurements.Any(x => !HistoryLabels.IsHidden(x.Name)))
+                    @if (HistoryPresentation.Measurements(entry).Count > 0)
                     {
                         <div class="meta"><strong>Measurements</strong></div>
-                        <ul>@foreach (var m in entry.Measurements.Where(x => !HistoryLabels.IsHidden(x.Name))) { <li>@HistoryLabels.Measurement(m.Name): @m.Value</li> }</ul>
+                        <ul>@foreach (var m in HistoryPresentation.Measurements(entry)) { <li>@HistoryLabels.Measurement(m.Name): @m.Value</li> }</ul>
                     }
-                    @if (entry.Details is { Count: > 0 } det)
+                    @if (HistoryPresentation.Details(entry) is { Count: > 0 } det)
                     {
                         <div class="meta"><strong>Details</strong></div>
                         <ul data-testid="history-details-lines">@foreach (var line in det) { <li>@line</li> }</ul>
                     }
-                    @if (!entry.Measurements.Any(x => !HistoryLabels.IsHidden(x.Name)) && entry.Details is not { Count: > 0 }) { <div class="meta">No measurements were recorded for this result.</div> }
+                    @if (HistoryPresentation.Measurements(entry).Count == 0 && HistoryPresentation.Details(entry).Count == 0) { <div class="meta">Detailed measurements were not recorded for this result.</div> }
                 </td></tr>
             }
         }

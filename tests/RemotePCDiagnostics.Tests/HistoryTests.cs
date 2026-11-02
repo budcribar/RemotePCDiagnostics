@@ -8,6 +8,30 @@ namespace RemotePCDiagnostics.Tests;
 
 public sealed class HistoryTests
 {
+    [Fact]
+    public void Expansion_LegacyGenericFieldsAreHidden_AndDetailsAreNotRepeated()
+    {
+        var entry = E(DateTimeOffset.UtcNow, m: [("Cards", "3 item(s)"), ("Summary", "summary"), ("Status", "Ok"), ("Latency", "26 ms")])
+            with { Details = ["Cards: 3 item(s)", "Summary: summary", "Status: Ok", "Latency: 26 ms", "Useful extra detail"] };
+        Assert.Equal("Latency", Assert.Single(HistoryPresentation.Measurements(entry)).Name);
+        Assert.Equal("Useful extra detail", Assert.Single(HistoryPresentation.Details(entry)));
+        var old = entry with { Measurements = entry.Measurements.Take(3).ToList(), Details = entry.Details!.Take(3).ToList() };
+        Assert.Empty(HistoryPresentation.Measurements(old));
+        Assert.Empty(HistoryPresentation.Details(old));
+    }
+
+    [Fact]
+    public void AreaResult_RoundTripsCardObservations_WithoutGenericCountsOrDuplicateDetails()
+    {
+        var payload = new AreaReport([new AreaCard("dns", "DNS lookup", AreaLevel.Ok, "26 ms", "Current: 39 ms", [], [])], "Network healthy", DiagnosticStatus.Ok);
+        var result = new DiagnosticResult("Network", DiagnosticStatus.Ok, payload.Summary, DateTimeOffset.UtcNow, payload);
+        var entry = HistoryEventParser.Parse(ResultEventLogger.Format(result, null), DateTimeOffset.UtcNow)!;
+        var measurement = Assert.Single(HistoryPresentation.Measurements(entry));
+        Assert.Equal("DNS lookup", measurement.Name);
+        Assert.Contains("26 ms", measurement.Value);
+        Assert.Contains("Current: 39 ms", measurement.Value);
+        Assert.Empty(HistoryPresentation.Details(entry));
+    }
 
     private static HistoryEntry E(DateTimeOffset t, string module = "CpuStress", string outcome = "OK", double? dur = 60, (string, string)[]? m = null) =>
         new(t, module, module + " test", outcome, "summary", dur, null, (m ?? []).Select(x => new HistoryMeasurement(x.Item1, x.Item2)).ToList(), "PC1", "1.0");
@@ -221,18 +245,23 @@ public sealed class HistoryTests
         public Task<bool> WaitForStateAsync(string n, ServiceState t, TimeSpan to, CancellationToken ct) => Task.FromResult(true);
     }
 
-    [Fact]
-    public async Task Summary_DeduplicatesServiceStop_TriggeredFromMemoryOptimization()
+    [Theory]
+    [InlineData("PhoneSvc", 2)]
+    [InlineData("WSL", 30)]
+    [InlineData("SysMain", 60)]
+    [InlineData("Lenovo", 120)]
+    public async Task Summary_DeduplicatesServiceStop_TriggeredFromMemoryOptimization(string service, double stopDurationSeconds)
     {
         var svcActions = new ServiceActionService(new StubServiceBackend(), new SessionContext(SessionMode.Local));
-        var info = new ServiceInfo("SysMain", "SysMain", "RUNNING", "AUTO_START", "LocalSystem", "");
+        var info = new ServiceInfo(service, service, "RUNNING", "AUTO_START", "LocalSystem", "");
         await svcActions.ExecuteAsync(info, ServiceAction.Stop);
 
+        // Both event streams stamp completion, so even a long service stop is within the dedup window.
         var now = DateTimeOffset.UtcNow;
         var persistedSvc = new HistoryEntry(now, HistorySummary.ServiceFixModuleId, "Service (Stop)", "OK",
-            "SysMain stopped", null, null, [new("Action", "Stop"), new("Actor", "Local user"), new("Service", "SysMain")], "PC1", "1.0");
+            service + " stopped", stopDurationSeconds, null, [new("Action", "Stop"), new("Actor", "Local user"), new("Service", service)], "PC1", "1.0");
         var persistedMem = new HistoryEntry(now.AddSeconds(2), HistorySummary.MemoryFixModuleId, "Memory optimization", "OK",
-            "Done: SysMain stopped until the next restart. No measurable change. Available RAM 4.0 → 4.0 GB (used 75% → 75%).",
+            $"Done: {service} stopped until the next restart. No measurable change. Available RAM 4.0 → 4.0 GB (used 75% → 75%).",
             null, null, [new("Actor", "Local user")], "PC1", "1.0");
 
         var summary = HistorySummary.Build([persistedSvc, persistedMem], services: svcActions, now: now);
@@ -241,6 +270,6 @@ public sealed class HistoryTests
         Assert.Equal(1, summary.SuccessfulFixesCount);
         Assert.Equal(1, summary.MemoryFixesCount);
         Assert.Equal(0, summary.ServicesAdjustedCount);
-        Assert.StartsWith("Done: SysMain stopped until the next restart.", summary.Fixes[0].Summary);
+        Assert.StartsWith($"Done: {service} stopped until the next restart.", summary.Fixes[0].Summary);
     }
 }

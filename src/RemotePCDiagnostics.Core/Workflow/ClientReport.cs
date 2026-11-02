@@ -99,6 +99,15 @@ public static class ClientReport
 
         // Findings
         sb.Append("<h2>What we found</h2>");
+        sb.Append("<p class=\"meta\">Saved scan snapshot: ").Append(E(s.ReviewedUtc is { } reviewed ? T(reviewed) : "scan time unavailable"))
+          .Append(". Memory and space figures are estimates from that scan.</p>");
+        var dnsEvidence = s.Fixes.Where(f => f.Remediation?.Kind == Areas.RemediationKind.SetPublicDns).ToList();
+        if (dnsEvidence.Count > 0)
+        {
+            sb.Append("<h3>DNS measurement evidence</h3><ul>");
+            foreach (var f in dnsEvidence) sb.Append("<li>").Append(E(f.Why)).Append("</li>");
+            sb.Append("</ul>");
+        }
         if (s.Findings.Count == 0) sb.Append("<p>No problems were found by the checks.</p>");
         else { sb.Append("<ul>"); foreach (var f in s.Findings) sb.Append("<li>").Append(E(f)).Append("</li>"); sb.Append("</ul>"); }
 

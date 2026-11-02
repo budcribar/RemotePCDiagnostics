@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text;
 using RemotePCDiagnostics.Core.Security;
+using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Sensors;
 
 namespace RemotePCDiagnostics.Core.Logging;
@@ -160,6 +161,7 @@ public sealed class ResultEventLogger
         switch (payload)
         {
             case null: break;
+            case AreaReport: break; // Card observations are recorded once, under Measurements.
             case Exception ex: sb.Append("  Error: ").Append(ex.GetType().Name).Append(": ").AppendLine(ex.Message); break;
             case ModuleAvailability a: sb.Append("  Unavailable: ").AppendLine(a.Reason); break;
             case SecurityAuditReport sec:
@@ -189,6 +191,14 @@ public sealed class ResultEventLogger
         switch (payload)
         {
             case null or Exception or ModuleAvailability: return list;
+            case AreaReport area:
+                foreach (var card in area.Cards.Take(MaxAuditItems))
+                {
+                    var value = card.ErrorText ?? (string.IsNullOrWhiteSpace(card.Headline) ? card.EmptyText : card.Headline);
+                    if (!string.IsNullOrWhiteSpace(value))
+                        list.Add((card.Title, value + (string.IsNullOrWhiteSpace(card.Meta) ? "" : " · " + card.Meta)));
+                }
+                return list;
             case SecurityAuditReport sec:
                 list.Add(("Failed", sec.Failed.ToString(CultureInfo.InvariantCulture))); list.Add(("Warnings", sec.Warnings.ToString(CultureInfo.InvariantCulture)));
                 list.Add(("Passed", sec.Passed.ToString(CultureInfo.InvariantCulture))); list.Add(("NotChecked", sec.NotChecked.ToString(CultureInfo.InvariantCulture)));

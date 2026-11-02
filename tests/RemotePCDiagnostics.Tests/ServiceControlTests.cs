@@ -51,14 +51,14 @@ public class ServiceControlTests
     }
 
     [Theory]
-    [InlineData("RpcSs")] [InlineData("DcomLaunch")] [InlineData("EventLog")] [InlineData("winmgmt")] [InlineData("WinDefend")]
+    [InlineData("RpcSs")] [InlineData("DcomLaunch")] [InlineData("EventLog")] [InlineData("winmgmt")] [InlineData("WinDefend")] [InlineData("MdCoreSvc")] [InlineData("VSStandardCollectorService150")]
     [InlineData("Dhcp")] [InlineData("Dnscache")] [InlineData("BFE")] [InlineData("mpssvc")] [InlineData("TrustedInstaller")]
     public void Protected_Running_NoStopOrRestart(string name)
     {
         var o = ServiceProtection.For(Svc(name, name, "RUNNING"));
         Assert.True(o.IsProtected);
         Assert.False(o.CanStop); Assert.False(o.CanRestart); Assert.False(o.CanStart);
-        Assert.Equal("Protected by Windows", o.ProtectedText);
+        Assert.Equal(name.StartsWith("VSStandardCollector") ? "Manual-only: change startup type without stopping the collector" : "Protected by Windows", o.ProtectedText);
     }
 
     [Fact]
@@ -122,8 +122,8 @@ public class ServiceControlTests
     public async Task Execute_Protected_RefusedWithoutCallingBackend()
     {
         var (svc, be, _) = Make();
-        be.States["EventLog"] = ServiceState.Running;
-        var r = await svc.ExecuteAsync(Svc("EventLog", "Windows Event Log", "RUNNING"), ServiceAction.Stop);
+        be.States["MdCoreSvc"] = ServiceState.Running;
+        var r = await svc.ExecuteAsync(Svc("MdCoreSvc", "Microsoft Defender Core Service", "RUNNING"), ServiceAction.Stop);
         Assert.False(r.Success);
         Assert.DoesNotContain(be.Calls, c => c.StartsWith("stop"));
         Assert.Single(svc.Recent);

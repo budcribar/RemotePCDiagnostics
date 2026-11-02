@@ -54,6 +54,8 @@ public sealed record WorkflowState
     public string HardwareSummary { get; init; } = "";
     public string? Actor { get; init; }
     public DateTimeOffset? StartedUtc { get; init; }
+    /// <summary>When the saved review snapshot was assembled, before technician approval.</summary>
+    public DateTimeOffset? ReviewedUtc { get; init; }
     public DateTimeOffset? FinishedUtc { get; init; }
     /// <summary>When the last restart was requested; used to tell whether the PC really restarted.</summary>
     public DateTimeOffset? RestartRequestedUtc { get; init; }

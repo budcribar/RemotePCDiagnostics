@@ -1,7 +1,8 @@
 @inherits LayoutComponentBase
 @inject ISessionContext Session
-<div class="app">
+<div class="app @(_navigationOpen ? "nav-open" : "")">
     <header class="topbar">
+        <button class="nav-toggle" aria-label="Toggle navigation" aria-controls="main-navigation" aria-expanded="@(_navigationOpen ? "true" : "false")" @onclick="() => _navigationOpen = !_navigationOpen">Menu</button>
         <span class="title"><Icon Name="health" Size="22" Class="logo" />RemotePCDiagnostics</span>
         <span class="badge badge-@Session.Mode.ToString().ToLowerInvariant()">@Session.Mode</span>
         <span class="topbar-spacer"></span>
@@ -11,3 +12,5 @@
     <NavRail />
     <main class="content">@Body</main>
 </div>
+
+@code { private bool _navigationOpen; }
