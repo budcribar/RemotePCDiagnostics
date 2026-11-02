@@ -2,12 +2,22 @@ using RemotePCDiagnostics.Core.Changes;
 
 namespace RemotePCDiagnostics.Core.Memory;
 
-/// <summary>#3 / #8 / #10: removing allowlisted apps (permanent, journaled as NotUndoable) and the reversible settings that go with it.</summary>
+/// <summary>
+/// #3 / #8 / #10: removing allowlisted apps and the reversible settings that go with it. A removal whose every package has a verified Store id
+/// is journaled as <see cref="ChangeKind.StoreReinstall"/> (undo reinstalls it from the Microsoft Store); anything else stays permanent (NotUndoable).
+/// </summary>
 public sealed partial class MemorySuggestionService
 {
     private void JournalPermanent(string target, string label)
     {
         try { journal?.Add(Undoability.Permanent($"{target}|{Guid.NewGuid():N}", label, Actor)); } catch (Exception ex) { Log("journal: " + ex.Message); }
+    }
+
+    /// <summary>One removed package: reinstallable (family name + Store id + label) or permanent.</summary>
+    private void JournalRemoved(RemovableAppx app, long? bytes, bool reinstall)
+    {
+        if (!reinstall || !StoreReinstall.CanReinstall(app)) { JournalPermanent("appx|" + app.FamilyName, AppRemoval.RemovedLabel(app, bytes)); return; }
+        try { journal?.Add(StoreReinstall.Record(app, bytes, Actor)); } catch (Exception ex) { Log("journal: " + ex.Message); }
     }
 
     /// <summary>One app from the allowlist: a Store package (Remove-AppxPackage -AllUsers + Remove-AppxProvisionedPackage) or a vendor program (its own uninstaller).</summary>
@@ -21,10 +31,12 @@ public sealed partial class MemorySuggestionService
             if (left is null) return new(false, $"Windows didn't allow removing {pkg.Label} (administrator rights needed). Nothing was changed.");
             if (left.Contains(pkg.FamilyName, StringComparer.OrdinalIgnoreCase))
                 return new(false, $"{pkg.Label} is still installed after trying to remove it (Windows or your organization may protect it). Nothing was recorded as removed.");
-            JournalPermanent("appx|" + pkg.FamilyName, AppRemoval.RemovedLabel(pkg, found.Installed.SizeBytes));
+            var reinstall = StoreReinstall.CanReinstall(pkg);
+            JournalRemoved(pkg, found.Installed.SizeBytes, reinstall);
+            if (reinstall) AddUndo(new(s.Id, pkg.Label, MemoryActionType.RemoveApp, pkg.Id, new AppRemoval.Undo([], [], [], [pkg.FamilyName]).Encode()));
             return new(true, $"{pkg.Label} removed for every account on this PC."
                 + (found.Installed.SizeBytes is > 0 ? $" Freed about {MemoryText.Size(found.Installed.SizeBytes.Value)}." : "")
-                + $" {AppRemoval.StoreGetBack}");
+                + $" {(reinstall ? AppRemoval.StoreUndo : AppRemoval.StoreGetBack)}");
         }
         if (AppRemoval.ProgramById(a.Target) is { } prog)
             return await UninstallProgramAsync(s, snap, prog, ct).ConfigureAwait(false);
@@ -93,9 +105,11 @@ public sealed partial class MemorySuggestionService
         var found = AppRemoval.FoundPackages(snap).Where(f => f.App.Group == AppGroup.Xbox).ToList();
         if (found.Count == 0) return new(false, "The Xbox apps are no longer installed.");
 
+        // Reinstallable only when every package this click tries to remove has a Store id (a mixed removal stays permanent).
+        var reinstall = StoreReinstall.CanReinstallAll(found.Select(f => f.App));
         var left = await sys.RemoveAppxPackagesAsync(found.Select(f => f.App).ToList(), ct).ConfigureAwait(false);
         var removed = left is null ? new List<AppRemoval.FoundPackage>() : found.Where(f => !left.Contains(f.App.FamilyName, StringComparer.OrdinalIgnoreCase)).ToList();
-        foreach (var f in removed) JournalPermanent("appx|" + f.App.FamilyName, AppRemoval.RemovedLabel(f.App, f.Installed.SizeBytes));
+        foreach (var f in removed) JournalRemoved(f.App, f.Installed.SizeBytes, reinstall);
 
         var registry = new List<RegistryUndo.Item>();
         foreach (var (setting, what) in new[] { (RegistryAllowlist.GameDvrEnabled, "Game DVR"), (RegistryAllowlist.AppCaptureEnabled, "Background game recording") })
@@ -123,18 +137,19 @@ public sealed partial class MemorySuggestionService
         var xblTask = ScheduledTaskAllowlist.XblGameSave.Folder + ScheduledTaskAllowlist.XblGameSave.Name;
         if (await DisableTaskAsync(xblTask, ct).ConfigureAwait(false)) tasks.Add(xblTask);
 
-        var undo = new AppRemoval.Undo(registry, services, tasks);
-        if (!undo.IsEmpty) AddUndo(new(s.Id, "Game DVR, Xbox services and the cloud-save task", MemoryActionType.RemoveXboxApps, "", undo.Encode()));
+        var undo = new AppRemoval.Undo(registry, services, tasks, reinstall && removed.Count > 0 ? removed.Select(f => f.App.FamilyName).ToList() : null);
+        if (!undo.IsEmpty) AddUndo(new(s.Id, reinstall && removed.Count > 0 ? "The Xbox apps, Game DVR, Xbox services and the cloud-save task" : "Game DVR, Xbox services and the cloud-save task",
+            MemoryActionType.RemoveXboxApps, "", undo.Encode()));
 
         var freed = removed.Sum(f => f.Installed.SizeBytes ?? 0);
         var notRemoved = found.Count - removed.Count;
         var parts = new List<string>();
-        if (removed.Count > 0) parts.Add($"Removed {string.Join(", ", removed.Select(f => f.App.Label))}" + (freed > 0 ? $" (about {MemoryText.Size(freed)} freed)" : "") + $"; {AppRemoval.StoreGetBackMany}");
+        if (removed.Count > 0) parts.Add($"Removed {string.Join(", ", removed.Select(f => f.App.Label))}" + (freed > 0 ? $" (about {MemoryText.Size(freed)} freed)" : "") + $"; {(reinstall ? AppRemoval.StoreUndoMany : AppRemoval.StoreGetBackMany)}");
         if (notRemoved > 0) parts.Add($"{MemoryText.Plural(notRemoved, "Xbox app")} couldn't be removed ({string.Join(", ", found.Except(removed).Select(f => f.App.Label))}).");
         if (registry.Count > 0) parts.Add("Game DVR and background recording turned off.");
         if (services.Count > 0) parts.Add($"{string.Join(", ", services.Select(x => x.Target))} set to start only when needed.");
         if (tasks.Count > 0) parts.Add("Xbox cloud-save task turned off.");
-        if (!undo.IsEmpty) parts.Add("Undo turns those settings back on.");
+        if (registry.Count + services.Count + tasks.Count > 0) parts.Add("Undo turns those settings back on.");
         if (removed.Count == 0 && undo.IsEmpty)
             return new(false, "Windows didn't allow removing the Xbox apps (administrator rights needed, or your organization protects them). Nothing was changed.");
         return new(removed.Count > 0, string.Join(" ", parts));
@@ -146,21 +161,23 @@ public sealed partial class MemorySuggestionService
         if (Snapshot is not { } snap) return new(false, "Scan the PC first.");
         var found = AppRemoval.FoundNarrator(snap);
         if (found.Count == 0) return new(false, "Narrator's add-ons are no longer installed, or Narrator is in use.");
+        var reinstall = StoreReinstall.CanReinstallAll(found.Select(f => f.App));
         var left = await sys.RemoveAppxPackagesAsync(found.Select(f => f.App).ToList(), ct).ConfigureAwait(false);
         var removed = left is null ? new List<AppRemoval.FoundPackage>() : found.Where(f => !left.Contains(f.App.FamilyName, StringComparer.OrdinalIgnoreCase)).ToList();
-        foreach (var f in removed) JournalPermanent("appx|" + f.App.FamilyName, AppRemoval.RemovedLabel(f.App, f.Installed.SizeBytes));
+        foreach (var f in removed) JournalRemoved(f.App, f.Installed.SizeBytes, reinstall);
 
         var registry = new List<RegistryUndo.Item>();
         var w = SetDword(RegistryAllowlist.NarratorWinEnterLaunch, 0, was => $"Win+Ctrl+Enter Narrator shortcut turned off for this account (was {was})", restart: false);
         if (w.Changed) registry.Add(new(w.Target, w.Previous));
-        var undo = new AppRemoval.Undo(registry, [], []);
-        if (!undo.IsEmpty) AddUndo(new(s.Id, "The Win+Ctrl+Enter Narrator shortcut", MemoryActionType.RemoveNarratorAddons, "", undo.Encode()));
+        var undo = new AppRemoval.Undo(registry, [], [], reinstall && removed.Count > 0 ? removed.Select(f => f.App.FamilyName).ToList() : null);
+        if (!undo.IsEmpty) AddUndo(new(s.Id, reinstall && removed.Count > 0 ? "Narrator's add-ons and the Win+Ctrl+Enter shortcut" : "The Win+Ctrl+Enter Narrator shortcut",
+            MemoryActionType.RemoveNarratorAddons, "", undo.Encode()));
 
         if (removed.Count == 0 && undo.IsEmpty)
             return new(false, "Windows didn't allow removing Narrator's add-ons (administrator rights needed, or Windows protects them). Nothing was changed.");
         var freed = removed.Sum(f => f.Installed.SizeBytes ?? 0);
         var parts = new List<string>();
-        if (removed.Count > 0) parts.Add($"Removed {string.Join(", ", removed.Select(f => f.App.Label))}" + (freed > 0 ? $" (about {MemoryText.Size(freed)} freed)" : "") + $"; {AppRemoval.StoreGetBackMany}");
+        if (removed.Count > 0) parts.Add($"Removed {string.Join(", ", removed.Select(f => f.App.Label))}" + (freed > 0 ? $" (about {MemoryText.Size(freed)} freed)" : "") + $"; {(reinstall ? AppRemoval.StoreUndoMany : AppRemoval.StoreGetBackMany)}");
         if (removed.Count < found.Count) parts.Add($"{MemoryText.Plural(found.Count - removed.Count, "add-on")} couldn't be removed ({string.Join(", ", found.Except(removed).Select(f => f.App.Label))}).");
         if (w.Changed) parts.Add("The Win+Ctrl+Enter shortcut no longer starts Narrator; undo turns it back on.");
         return new(removed.Count > 0, string.Join(" ", parts));
@@ -194,12 +211,24 @@ public sealed partial class MemorySuggestionService
             + (ok < AppRemoval.ContentDeliverySettings.Count ? $" ({AppRemoval.ContentDeliverySettings.Count - ok} of the settings couldn't be changed)" : "") + ". Undo turns them back on.");
     }
 
-    /// <summary>Per-item undo for app removal: puts back the settings, services and tasks (allowlisted only). Removed apps stay removed.</summary>
+    /// <summary>
+    /// Per-item undo for app removal: puts back the settings, services and tasks (allowlisted only) and reinstalls removed Store apps that
+    /// were recorded as reinstallable (allowlisted family names only, Store id from the allowlist). Other removed apps stay removed.
+    /// </summary>
     private async Task<ActionOutcome> UndoAppRemovalAsync(UndoEntry u, CancellationToken ct)
     {
         var undo = AppRemoval.Undo.Decode(u.Previous);
         if (undo.IsEmpty) return new(false, "The original settings weren't recorded.");
         var failed = 0;
+        var reinstalled = new List<string>();
+        var notReinstalled = new List<string>();
+        foreach (var family in undo.Reinstall ?? Array.Empty<string>())
+        {
+            var r = await StoreReinstall.ReinstallAsync(sys, family, null, ct, Log).ConfigureAwait(false);
+            if (r.Success) { reinstalled.Add(r.Message); try { journal?.RemoveLatest(ChangeKind.StoreReinstall, family); } catch { } }
+            else { notReinstalled.Add(r.Message); failed++; }
+        }
+        var settings = undo.Registry.Count + undo.Services.Count + undo.Tasks.Count > 0;
         foreach (var item in undo.Registry)
         {
             bool ok;
@@ -225,14 +254,18 @@ public sealed partial class MemorySuggestionService
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo task {t}: {ex.Message}"); failed++; }
         }
-        var apps = u.Type switch
+        var store = string.Concat(reinstalled.Concat(notReinstalled).Select(m => " " + m));
+        var apps = undo.Reinstall is { Count: > 0 } ? store : u.Type switch
         {
             MemoryActionType.RemoveXboxApps => $" The removed Xbox apps stay removed. {AppRemoval.StoreGetBackMany}",
             MemoryActionType.RemoveNarratorAddons => $" The removed Narrator add-ons stay removed. {AppRemoval.StoreGetBackMany}",
             _ => " The uninstalled app stays uninstalled; reinstall it from its maker to get it back.",
         };
+        if (!settings) return new(failed == 0, apps.Trim());
+        var settingsFailed = failed - notReinstalled.Count;
+        var turnedOn = undo.Reinstall is { Count: > 0 } ? "The settings were turned back on." : $"{u.Label} turned back on.";
         return failed == 0
-            ? new(true, $"{u.Label} turned back on.{apps}")
-            : new(false, $"Windows didn't allow turning everything back on (administrator rights needed).{apps}");
+            ? new(true, turnedOn + apps)
+            : new(false, (settingsFailed > 0 ? "Windows didn't allow turning everything back on (administrator rights needed)." : "The settings were turned back on.") + apps);
     }
 }

@@ -114,6 +114,13 @@ public interface IMemorySystem
     Task<string?> GetScheduledTaskStateAsync(string path, CancellationToken ct) => Task.FromResult<string?>(null);
     /// <summary>Enables or disables an allowlisted scheduled task (admin) and returns its state read back (null = couldn't read).</summary>
     Task<string?> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct) => Task.FromResult<string?>(null);
+    /// <summary>
+    /// Runs a validated <see cref="StoreReinstall"/> winget command (<see cref="StoreReinstall.IsAllowedCommand"/>) as the signed-in user, not
+    /// elevated and never as SYSTEM, and waits up to <see cref="StoreReinstall.Timeout"/>.
+    /// </summary>
+    Task<WingetResult> RunWingetAsync(WingetCommand command, CancellationToken ct) => Task.FromResult(WingetResult.NotStarted("Not supported on this PC."));
+    /// <summary>The allowlisted package (exact name + publisher id) is installed for the signed-in account (Get-AppxPackage); null = couldn't tell.</summary>
+    Task<bool?> IsStorePackageInstalledAsync(RemovableAppx app, CancellationToken ct) => Task.FromResult<bool?>(null);
 }
 
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null);

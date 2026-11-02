@@ -25,6 +25,7 @@ public enum ChangeKind
     ExtensionBlock,      // Target = "Chrome|<extension id>" (must be on BrowserExtensions.Allowlist); Previous = the blocklist value name this app added ("3"); undo deletes only that value
     BrowserLocalStateValue, // Target = "Edge|background_mode.enabled" (BrowserBackground.Target only); Previous = "true" | "false" | null (not set: undo removes it)
     ScheduledTask,       // Target = task path on ScheduledTaskAllowlist ("\Microsoft\XblGameSave\XblGameSaveTask"); Previous = "Enabled"; undo enables it again
+    StoreReinstall,      // A removed Store app undo can reinstall. Target = package family name on AppRemoval.Packages ("Microsoft.BingWeather_8wekyb3d8bbwe"); Previous = its Store id ("9WZDNCRFJ3Q2"); undo runs winget for the allowlist's id, never the journal's alone
 }
 
 /// <param name="Label">Friendly, e.g. "Spotify won't start with Windows".</param>

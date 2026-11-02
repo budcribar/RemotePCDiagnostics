@@ -30,7 +30,8 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
 public sealed class UndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem? memory = null, IServiceControlBackend? services = null,
     Action<LogLevel, string>? events = null, Action<string>? log = null)
 {
-    public const string NotUndoableNote = "Installed updates, removed apps, and deleted temporary files, caches or Recycle Bin items can't be put back; undo lists them as left as is.";
+    public const string NotUndoableNote = "Installed updates, uninstalled programs, removed apps without a Microsoft Store listing, and deleted temporary files, caches or Recycle Bin items can't be put back; undo lists them as left as is. "
+        + "Removed Microsoft Store apps marked \"undo reinstalls from Store\" are reinstalled from the Store for the signed-in account (needs internet; their settings and data aren't restored).";
     private void Log(string m) { try { log?.Invoke("[undo] " + m); } catch { } }
 
     public IReadOnlyList<ChangeRecord> Pending => journal.All;
@@ -71,6 +72,12 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
         {
             case ChangeKind.NotUndoable:
                 return new(c, false, "Permanent change; Windows has no way to put it back.", Skipped: true);
+
+            case ChangeKind.StoreReinstall:
+                // Allowlisted family name only; the Store id comes from the allowlist and must match the journal's. Failure keeps the entry (retry later).
+                if (memory is null) return Fail(StoreReinstall.FindByFamily(c.Target) is { } a ? StoreReinstall.FailedMessage(a.Label) : "Not available.");
+                var reinstall = await StoreReinstall.ReinstallAsync(memory, c.Target, c.Previous, ct, Log).ConfigureAwait(false);
+                return new(c, reinstall.Success, reinstall.Message);
 
             case ChangeKind.DefenderExclusion:
                 var sep = c.Target.IndexOf('|');

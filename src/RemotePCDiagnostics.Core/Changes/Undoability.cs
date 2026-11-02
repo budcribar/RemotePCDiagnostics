@@ -14,6 +14,11 @@ public enum UndoSupport
     PlaceholdersOnly,
     /// <summary>Permanent: installed updates, removed apps, uninstalled programs. Journaled so "Undo all" reports it as skipped.</summary>
     None,
+    /// <summary>
+    /// Undo reinstalls it from the Microsoft Store (needs internet): removed Store apps whose every package has a verified Store id
+    /// (<see cref="StoreReinstall"/>). For the account signed in when undo runs; the app's settings and data aren't restored.
+    /// </summary>
+    Reinstall,
 }
 
 public static class Undoability
@@ -35,7 +40,8 @@ public static class Undoability
             or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile or MemoryActionType.DisableFastStartup
             or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile
             or MemoryActionType.SkipOfficeStartScreen or MemoryActionType.SetPdfDefaultPrinter or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension or MemoryActionType.StopBrowserBackground or MemoryActionType.StopSilentAppInstalls => UndoSupport.Full,
-        // Removed apps can't be put back (their scheduled tasks, Game DVR and Xbox service settings can; undo restores those).
+        // By action type, removed apps can't be put back (their scheduled tasks, Game DVR and Xbox service settings can; undo restores those).
+        // Cards whose every app has a verified Store id say so themselves (MemorySuggestion.Undo = Reinstall).
         MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.RemoveNarratorAddons => UndoSupport.None,
         MemoryActionType.CleanStorage => UndoSupport.None, // deleted caches don't come back
         _ => UndoSupport.NothingToUndo, // closing apps, ending build servers, restarting, opening Settings
@@ -46,6 +52,7 @@ public static class Undoability
     {
         UndoSupport.None => "can't be undone",
         UndoSupport.PlaceholdersOnly => "can't be undone",
+        UndoSupport.Reinstall => AppRemoval.StoreChip,
         _ => null,
     };
 
@@ -53,6 +60,7 @@ public static class Undoability
     public static UndoSupport Of(ChangeRecord c) => c.Kind switch
     {
         ChangeKind.NotUndoable => UndoSupport.None,
+        ChangeKind.StoreReinstall => UndoSupport.Reinstall,
         ChangeKind.TempFiles => UndoSupport.None, // deleted files can't come back
         _ => UndoSupport.Full,
     };

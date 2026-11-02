@@ -27,7 +27,7 @@
         <details>
             <summary class="meta">Show what will be put back</summary>
             <ul class="undo-list" data-testid="undo-list">
-                @foreach (var c in pending) { <li>@c.Label <span class="meta">· @c.TimeUtc.ToLocalTime().ToString("g") · @c.Actor@(c.NeedsRestart ? " · needs a restart" : "")</span></li> }
+                @foreach (var c in pending) { <li>@c.Label <span class="meta">· @c.TimeUtc.ToLocalTime().ToString("g") · @c.Actor@(c.NeedsRestart ? " · needs a restart" : "")@(c.Kind == ChangeKind.StoreReinstall ? " · reinstalls from the Microsoft Store (needs internet)" : "")</span></li> }
             </ul>
         </details>
         }

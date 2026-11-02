@@ -193,25 +193,34 @@ public static class ClientReport
         }
 
         // Undo: what can be put back, what's permanent, and how.
-        var undoable = new List<string>(); var permanent = new List<string>();
+        var undoable = new List<string>(); var reinstall = new List<string>(); var permanent = new List<string>();
         foreach (var o in s.Outcomes.Where(o => !o.Skipped))
         {
             if (o.Changes is { Count: > 0 } ch)
-                foreach (var c in ch) (c.Undo is Changes.UndoSupport.None or Changes.UndoSupport.PlaceholdersOnly ? permanent : undoable).Add(c.Text);
+                foreach (var c in ch)
+                    (c.Undo switch { Changes.UndoSupport.None or Changes.UndoSupport.PlaceholdersOnly => permanent, Changes.UndoSupport.Reinstall => reinstall, _ => undoable }).Add(c.Text);
             else if (o.Success)
                 switch (UndoOf(o))
                 {
                     case Changes.UndoSupport.Full: undoable.Add(o.Title); break;
+                    case Changes.UndoSupport.Reinstall when !s.ChangesTracked: reinstall.Add(o.Title); break;
                     case Changes.UndoSupport.None or Changes.UndoSupport.PlaceholdersOnly when !s.ChangesTracked: permanent.Add(o.Title); break;
                 }
         }
         sb.Append("<h2>Undoing changes</h2>");
-        if (undoable.Count + permanent.Count == 0) sb.Append("<p>Nothing lasting was changed, so there's nothing to undo.</p>");
+        if (undoable.Count + reinstall.Count + permanent.Count == 0) sb.Append("<p>Nothing lasting was changed, so there's nothing to undo.</p>");
         else
         {
             if (undoable.Count > 0) { sb.Append("<p>Can be put back exactly as it was:</p><ul>"); foreach (var x in undoable) sb.Append("<li>").Append(E(x)).Append("</li>"); sb.Append("</ul>"); }
+            if (reinstall.Count > 0)
+            {
+                sb.Append("<p>Removed apps that undo reinstalls from the Microsoft Store (for the account signed in at the time; needs internet). Their settings and data aren't restored:</p><ul>");
+                foreach (var x in reinstall) sb.Append("<li>").Append(E(x)).Append("</li>");
+                sb.Append("</ul>");
+            }
             if (permanent.Count > 0) { sb.Append("<p>Permanent (can't be undone; for example, installed updates stay installed and deleted files can't be recovered):</p><ul>"); foreach (var x in permanent) sb.Append("<li>").Append(E(x)).Append("</li>"); sb.Append("</ul>"); }
-            sb.Append("<p>To put changes back, your technician opens Remote PC Diagnostics and clicks \"Undo all changes\" (History page), or runs <code>RemotePCDiagnostics.Host.exe --undo-all</code> as administrator (add <code>--restart</code> to restart afterwards). Permanent changes are left as they are.</p>");
+            sb.Append("<p>To put changes back, your technician opens Remote PC Diagnostics and clicks \"Undo all changes\" (History page), or runs <code>RemotePCDiagnostics.Host.exe --undo-all</code> as administrator (add <code>--restart</code> to restart afterwards). Permanent changes are left as they are.")
+              .Append(reinstall.Count > 0 ? " If an app can't be reinstalled automatically, undo says so and it can be reinstalled from the Microsoft Store by hand." : "").Append("</p>");
         }
         if (s.EarlierChanges > 0)
             sb.Append("<p class=\"meta\">\"Undo all changes\" also puts back ").Append(s.EarlierChanges).Append(" earlier change").Append(s.EarlierChanges == 1 ? "" : "s")
@@ -234,6 +243,7 @@ public static class ClientReport
                     sb.Append("<li>").Append(E(c.Text)).Append(" <span class=\"meta\">(").Append(c.Undo switch
                     {
                         Changes.UndoSupport.None or Changes.UndoSupport.PlaceholdersOnly => "permanent",
+                        Changes.UndoSupport.Reinstall => "undo reinstalls it from the Microsoft Store; settings and data aren't restored",
                         _ => "can be undone",
                     }).Append(")</span></li>");
                 sb.Append("</ul>");
@@ -245,6 +255,7 @@ public static class ClientReport
                     Changes.UndoSupport.Full => "can be undone.",
                     Changes.UndoSupport.PlaceholdersOnly => "deleted files can't be recovered.",
                     Changes.UndoSupport.None => s.ChangesTracked ? "nothing permanent was changed." : "permanent, can't be undone.",
+                    Changes.UndoSupport.Reinstall => s.ChangesTracked ? "nothing was removed." : "undo reinstalls it from the Microsoft Store (needs internet); its settings and data aren't restored.",
                     _ => "nothing lasting to undo.",
                 };
                 sb.Append("<div class=\"meta\">Undo: ").Append(undo).Append("</div>");

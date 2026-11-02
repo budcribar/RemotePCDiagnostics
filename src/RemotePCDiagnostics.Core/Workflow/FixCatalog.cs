@@ -109,7 +109,7 @@ public static class FixCatalog
                     or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension
                     or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.RemoveNarratorAddons
                     || (a.Type == MemoryActionType.StopBrowserBackground && a.Target == nameof(BrowserKind.Edge)),
-                Undo: Changes.Undoability.Of(a.Type), DefaultOn: s.DefaultOn, UndoChip: s.UndoChip, AreaKey: s.Category));
+                Undo: s.Undo ?? Changes.Undoability.Of(a.Type), DefaultOn: s.DefaultOn, UndoChip: s.UndoChip, AreaKey: s.Category));
         }
 
         return list.OrderBy(f => f.Order).ThenBy(f => f.Area).ThenBy(f => f.Title, StringComparer.OrdinalIgnoreCase).ToList();

@@ -489,7 +489,8 @@ public class AppRemovalTests
     [Fact]
     public async Task UndoAll_RestoresXboxSettingsAndTasks_SkipsRemovedApps_RefusesOffListTargets()
     {
-        var sys = new Sys { Packages = [Pkg("Microsoft.GamingApp")], Services = { ["XblGameSave"] = "Automatic" }, Tasks = { [XblTask] = "Ready", [@"\Microsoft\Windows\Defrag\ScheduledDefrag"] = "Disabled" } };
+        // Xbox TCUI has no Store id, so the removal stays permanent (StoreReinstallTests covers the reinstallable case).
+        var sys = new Sys { Packages = [Pkg("Microsoft.Xbox.TCUI")], Services = { ["XblGameSave"] = "Automatic" }, Tasks = { [XblTask] = "Ready", [@"\Microsoft\Windows\Defrag\ScheduledDefrag"] = "Disabled" } };
         AllCdmOff(sys);
         var (j, svc) = Make(sys);
         await svc.ScanAsync();
@@ -499,7 +500,7 @@ public class AppRemovalTests
         j.Add(ChangeRecord.New(ChangeKind.ScheduledTask, @"\Lenovo\LenovoNowGone", "Enabled", "removed with its app", "x"));
 
         var all = await new UndoService(j, new SystemCommandRunner(new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""))), sys).UndoAllAsync("x");
-        Assert.Equal(1, all.Skipped); // the removed Xbox app
+        Assert.Equal(1, all.Skipped); // the removed Xbox TCUI
         Assert.Equal(1, all.Failed);  // the task that isn't on the allowlist
         Assert.Equal("Ready", sys.Tasks[XblTask]);
         Assert.Equal("Disabled", sys.Tasks[@"\Microsoft\Windows\Defrag\ScheduledDefrag"]);
@@ -568,10 +569,14 @@ public class AppRemovalTests
         Assert.Equal("can't be undone", Undoability.Chip(people.Undo));
         Assert.Contains("reinstall it from the Microsoft Store", people.Why);
         Assert.Equal("reinstall from Store", fixes.Single(f => f.SuggestionId == people.SuggestionId).UndoChip);
-        Assert.False(fixes.Single(f => f.SuggestionId == "remove-app-bing-weather").DefaultOn);
+        var weather = fixes.Single(f => f.SuggestionId == "remove-app-bing-weather");
+        Assert.False(weather.DefaultOn);
+        Assert.Equal(SuggestionRisk.Medium, weather.Risk);
+        Assert.Equal(UndoSupport.Reinstall, weather.Undo); // verified Store id
+        Assert.Equal("undo reinstalls from Store", weather.UndoChip);
         var xbox = fixes.Single(f => f.SuggestionId == "remove-xbox");
         Assert.False(xbox.DefaultOn);
-        Assert.Equal(UndoSupport.None, xbox.Undo);
+        Assert.Equal(UndoSupport.Reinstall, xbox.Undo); // only the Xbox app is installed, and it has a Store id
         var lenovo = fixes.Single(f => f.SuggestionId == "remove-app-lenovo-now");
         Assert.True(lenovo.DefaultOn);
         Assert.True(lenovo.NeedsAdmin);

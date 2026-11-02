@@ -177,10 +177,12 @@ public enum MemoryActionType
 public sealed record MemoryAction(MemoryActionType Type, string Target, string Label, string? Confirm = null);
 
 /// <param name="DefaultOn">False = opt-in: the service workflow lists its fix unticked.</param>
+/// <param name="Undo">What undo does for this card when it differs from <see cref="Changes.Undoability.Of(MemoryActionType)"/> for its action
+/// (removed Store apps that undo reinstalls: <see cref="Changes.UndoSupport.Reinstall"/>). Null = go by the action.</param>
 public sealed record MemorySuggestion(
     string Id, string Title, string Why, long? SavingBytes, SuggestionRisk Risk, SuggestionKind Kind,
     IReadOnlyList<string> Steps, IReadOnlyList<MemoryAction> Actions, string Category = "General", string? Note = null, bool DefaultOn = true,
-    string? UndoChip = null, string? SavingText = null);
+    string? UndoChip = null, string? SavingText = null, Changes.UndoSupport? Undo = null);
 
 public static class MemoryText
 {
