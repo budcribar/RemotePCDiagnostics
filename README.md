@@ -292,7 +292,7 @@ Raw bytes, a 30 s rolling summary and every sample during the CPU stress test ar
 ### CPU temperature fallbacks
 
 LibreHardwareMonitorLib 0.9.5+ reads Ryzen/Intel CPU temperatures through the separately installed **PawnIO** driver
-(https://pawnio.eu); it is not bundled (kernel driver, own installer). The app only detects it (logged) and, when no real CPU
+(https://pawnio.eu). CI provides its verified official installer as the separate **PawnIO-sensor-driver-2.2.0** artifact; it is not installed automatically or embedded in the app executable. See [sensor driver setup](docs/sensor-driver-setup.md). The app detects it (logged) and, when no real CPU
 temperature is available, shows "CPU temperature needs a sensor driver that isn't available on this PC." If LHM has no valid
 CPU temperature: (1) on AMD APUs ("… with Radeon Graphics") the GPU temperature from Windows is shown as
 "CPU temperature (approximate, from built-in graphics)" (same chip); (2) last resort, the ACPI thermal zone (approximate).

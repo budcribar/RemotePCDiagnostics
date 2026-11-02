@@ -9,6 +9,21 @@ permissions:
   contents: read
 
 jobs:
+  sensor-driver:
+    name: Optional signed sensor driver download
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify official PawnIO installer (no installation)
+        shell: pwsh
+        run: ./scripts/Get-SensorDriver.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PawnIO-sensor-driver-2.2.0
+          path: artifacts/PawnIO-driver/
+          if-no-files-found: error
+
   service-workflow:
     name: Service workflow (simulated restarts)
     runs-on: windows-latest
