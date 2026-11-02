@@ -42,7 +42,7 @@ public static class ServiceProtection
     public static readonly IReadOnlySet<string> Protected = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "RpcSs", "DcomLaunch", "RpcEptMapper", "LSM", "SamSs", "lsass", "KeyIso", "VaultSvc", "Netlogon", "EFS",
-        "EventLog", "Winmgmt", "CryptSvc", "BFE", "mpssvc", "WinDefend", "wscsvc", "SecurityHealthService", "Sense", "WdNisSvc",
+        "EventLog", "Winmgmt", "CryptSvc", "BFE", "mpssvc", "WinDefend", "wscsvc", "SecurityHealthService", "Sense", "WdNisSvc", "MdCoreSvc",
         "Dhcp", "Dnscache", "NlaSvc", "nsi", "Power", "PlugPlay", "ProfSvc", "UserManager", "gpsvc", "Schedule",
         "TrustedInstaller", "BrokerInfrastructure", "SystemEventsBroker", "CoreMessagingRegistrar", "StateRepository",
         "TimeBrokerSvc", "AudioEndpointBuilder", "Appinfo", "LanmanWorkstation", "TermService", "UmRdpService", "SessionEnv",
@@ -57,12 +57,14 @@ public static class ServiceProtection
 
     public static ServiceControlOptions For(ServiceInfo s, bool isDriver = false)
     {
-        var locked = isDriver || IsProtected(s.Name) || IsSelfComponent(s.Name);
+        // The collector is Manual-only throughout the app; generic service controls must not bypass that policy.
+        var collector = Memory.MemorySuggestionEngine.IsVisualStudioCollector(s.Name);
+        var locked = isDriver || IsProtected(s.Name) || IsSelfComponent(s.Name) || collector;
         var running = s.IsRunning;
         var stopped = s.IsStopped;
         // Start is allowed for a stopped protected service (it only brings Windows back to normal); never for drivers or disabled services.
         var canStart = stopped && !s.IsDisabled && !isDriver && !IsSelfComponent(s.Name);
-        return new(canStart, running && !locked, running && !locked, locked, locked ? ProtectedText : null);
+        return new(canStart, running && !locked, running && !locked, locked, collector ? "Manual-only: change startup type without stopping the collector" : locked ? ProtectedText : null);
     }
 }
 
@@ -131,7 +133,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         string? warning = deps.Count == 0 ? null : action == ServiceAction.Stop
             ? $"These running services depend on it and will also be stopped: {string.Join(", ", deps.Select(d => d.Label))}."
             : $"These running services depend on it and will be stopped and started again: {string.Join(", ", deps.Select(d => d.Label))}.";
-        if (!allowed) warning = opts.IsProtected ? $"{s.Label} is protected by Windows and can't be changed from here." : $"{s.Label} can't be {Past(action)} right now.";
+        if (!allowed) warning = Memory.MemorySuggestionEngine.IsVisualStudioCollector(s.Name) ? "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector." : opts.IsProtected ? $"{s.Label} is protected by Windows and can't be changed from here." : $"{s.Label} can't be {Past(action)} right now.";
         return new(action, $"{Verb(action)} {s.Label}?", what, happen, deps, warning, allowed);
     }
 
@@ -151,7 +153,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         if (!allowed)
         {
             Log($"Refused {action} of '{s.Name}': protected={opts.IsProtected} status={s.Status} startType={s.StartType}");
-            result = new(false, opts.IsProtected ? $"{s.Label} is protected by Windows and can't be {Past(action)} from here." : $"{s.Label} can't be {Past(action)} right now.", SafeState(s.Name));
+            result = new(false, Memory.MemorySuggestionEngine.IsVisualStudioCollector(s.Name) ? "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector." : opts.IsProtected ? $"{s.Label} is protected by Windows and can't be {Past(action)} from here." : $"{s.Label} can't be {Past(action)} right now.", SafeState(s.Name));
         }
         else
         {

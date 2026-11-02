@@ -18,6 +18,8 @@ public static class ProcessProtection
         "MsMpEng", "MsMpEng.exe", "SecurityHealthService", "SecurityHealthService.exe",
         "audiodg", "audiodg.exe", "conhost", "conhost.exe", "dllhost", "dllhost.exe",
         "WmiPrvSE", "WmiPrvSE.exe", "ctfmon", "ctfmon.exe",
+        // Service-hosting collector: use its Manual-only service recommendation, never generic End task.
+        "StandardCollector.Service", "StandardCollector.Service.exe",
     };
 
     public static bool IsProtected(string name)

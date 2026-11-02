@@ -174,6 +174,8 @@ public class RemediationTests
     [InlineData("osqueryi")]
     [InlineData("MemTestHelper")]
     [InlineData("LsaIso")]
+    [InlineData("StandardCollector.Service.exe")]
+    [InlineData("standardcollector.service")]
     public async Task EndTask_IsRefused_ForProcessesTheMemoryPageAlsoProtects(string process)
     {
         var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
@@ -184,6 +186,9 @@ public class RemediationTests
         var res = await svc.ExecuteAsync(action);
         Assert.False(res.Success);
         Assert.Empty(launcher.Calls);
+        var report = ResourceHogsModule.Build(null, [new(process, 123, 200_000_000, 5_000, 500)]);
+        Assert.DoesNotContain(report.Cards.SelectMany(c => c.Rows).SelectMany(r => r.Actions ?? []),
+            a => a.Kind == RemediationKind.EndProcessGroup);
     }
 
     [Fact]

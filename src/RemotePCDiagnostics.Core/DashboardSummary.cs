@@ -34,7 +34,7 @@ public sealed class DashboardSummary
     }
 
     /// <summary>Hint shown after the note when the stress suite would run the missing tests.</summary>
-    public string? NotRunHint => NotRun.Any(m => m.IsStress) ? "use Run all + stress tests" : null;
+    public string? NotRunHint => NotRun.Any(m => m.IsStress) ? "for stress tests, use Run all + stress tests" : null;
 
     private int stressTotal;
 

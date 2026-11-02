@@ -64,7 +64,7 @@ public class DashboardSummaryTests
         var sum = DashboardSummary.Build([Check("EventLog", "Windows error log", DiagnosticStatus.Ok), .. AllStress(), Audit()], null);
         Assert.Equal(4, sum.NotRun.Count);
         Assert.Equal("On-demand tests not run: 4 (stress tests and security audit)", sum.NotRunNote);
-        Assert.Equal("use Run all + stress tests", sum.NotRunHint);
+        Assert.Equal("for stress tests, use Run all + stress tests", sum.NotRunHint);
     }
 
     [Fact]
@@ -91,7 +91,7 @@ public class DashboardSummaryTests
         var sum = DashboardSummary.Build(mods, Suite(true, ("CpuStress", StressSuiteStepState.Passed), ("MemoryTest", StressSuiteStepState.NotRun), ("GpuStress", StressSuiteStepState.Pending)));
         Assert.Equal(3, sum.NotRun.Count);
         Assert.Equal("On-demand tests not run: 3 (memory test, graphics (GPU) stress test and security audit)", sum.NotRunNote);
-        Assert.Equal("use Run all + stress tests", sum.NotRunHint);
+        Assert.Equal("for stress tests, use Run all + stress tests", sum.NotRunHint);
     }
 
     [Fact]

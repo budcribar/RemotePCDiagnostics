@@ -152,6 +152,8 @@ public class WorkflowTests
         Assert.Equal(RemediationKind.CheckAndInstallWindowsUpdates, s.Fixes[^1].Remediation!.Kind); // slow ones last
         Assert.True(s.Fixes[^1].Slow);
         Assert.Equal(3, s.Findings.Count);
+        Assert.NotNull(s.ReviewedUtc);
+        Assert.All(s.Findings, finding => Assert.Contains("(scan ", finding));
     }
 
     [Fact]
@@ -170,6 +172,38 @@ public class WorkflowTests
         Assert.Contains(fixes, f => f.MemoryAction == MemoryActionType.SetServiceManual && f.MemoryTarget == "WSearch");
         Assert.DoesNotContain(fixes, f => f.Id.Contains("disablefaststartup"));
         Assert.Equal(["defender: why"], FixCatalog.Recommendations([Sug("defender", SuggestionKind.Guided)]));
+    }
+
+    [Fact]
+    public void Catalog_ManualAction_DescribesStartupChangeAndLeavesRunningServiceAlone()
+    {
+        var suggestion = new MemorySuggestion("sql", "Stop \"SQL Server VSS Writer\"", "Uses 20 MB.", null,
+            SuggestionRisk.Medium, SuggestionKind.Automated, [],
+            [new(MemoryActionType.StopService, "SQLWriter", "Stop now"), new(MemoryActionType.SetServiceManual, "SQLWriter", "Manual")]);
+        var fix = Assert.Single(FixCatalog.Build([], [suggestion]));
+        Assert.Equal("Set \"SQL Server VSS Writer\" to Manual", fix.Title);
+        Assert.Equal(MemoryActionType.SetServiceManual, fix.MemoryAction);
+        Assert.Contains("running service is left running", fix.Why);
+    }
+
+    [Fact]
+    public void Catalog_DnsEvidenceSurvivesSavedStateAndClientReport()
+    {
+        var scan = DateTimeOffset.Parse("2026-11-02T10:00:00Z");
+        var action = new AreaAction(RemediationKind.SetPublicDns, "Use Cloudflare & Google DNS (26 ms vs 39 ms now)", "Wi-Fi", "Wi-Fi");
+        var report = new AreaReport([new("ipdns", "DNS", AreaLevel.Ok, "192.168.1.1", "", [],
+            [new(AreaLevel.Ok, ["Wi-Fi"], Actions: [action])], Note: "Current DNS 39 ms; Cloudflare 26 ms; Google 41 ms.")], "Network", DiagnosticStatus.Ok);
+        var fixes = FixCatalog.Build([new("Network", DiagnosticStatus.Ok, "Network", scan, report)], []);
+        var state = new WorkflowState { Fixes = fixes, ReviewedUtc = scan };
+        var saved = WorkflowState.FromJson(state.ToJson())!;
+        Assert.Equal(scan, saved.ReviewedUtc);
+        var why = Assert.Single(saved.Fixes).Why;
+        Assert.Contains("Google 41 ms", why);
+        Assert.Contains(scan.ToString("O"), why);
+        var html = ClientReport.Build(saved, null, null, new BenchmarkComparison([], null, []), scan);
+        Assert.Contains("DNS measurement evidence", html);
+        Assert.Contains("Google 41 ms", html);
+        Assert.Contains("Saved scan snapshot", html);
     }
 
     // ---- opt-in fixes (DefaultOn = false) ----

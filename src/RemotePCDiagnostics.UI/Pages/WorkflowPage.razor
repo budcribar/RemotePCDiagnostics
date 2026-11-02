@@ -51,6 +51,7 @@
         break;
 
     case WorkflowStage.Review:
+        <p class="meta" data-testid="wf-snapshot">Saved scan snapshot: @(s.ReviewedUtc is { } reviewed ? reviewed.ToLocalTime().ToString("f") : "scan time unavailable for this saved review"). Memory and space figures are estimates from that scan. To refresh, cancel this review and run the checks again.</p>
         <section class="card wf-section" data-testid="wf-findings"><div class="card-head"><strong>What the checks found</strong>
                 <span class="meta" data-testid="wf-check-count">Ran @checkCount checks · @(s.Findings.Count == 0 ? "nothing wrong found" : $"{s.Findings.Count} found something")</span></div>
             @if (s.Findings.Count > 0) { <ul>@foreach (var f in s.Findings) { <li>@f</li> }</ul> }

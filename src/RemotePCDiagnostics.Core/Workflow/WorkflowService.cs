@@ -92,11 +92,11 @@ public sealed class WorkflowService(
             var fixes = FixCatalog.Build(snapshot, suggestions, remediation);
             var notOffered = FixCatalog.NotOffered(snapshot, suggestions, remediation);
             var findings = snapshot.Where(r => r.Status is DiagnosticStatus.Warning or DiagnosticStatus.Error && !Cancellation.IsCancelled(r))
-                .Select(r => $"{diag.Modules.FirstOrDefault(m => m.Name == r.ModuleName)?.DisplayName ?? r.ModuleName}: {r.Message}").ToList();
+                .Select(r => $"{diag.Modules.FirstOrDefault(m => m.Name == r.ModuleName)?.DisplayName ?? r.ModuleName}: {r.Message} (scan {r.Timestamp:O})").ToList();
             var hw = results.Get("Osquery").Payload is HardwareInventory inv ? inv.FriendlySummary() : "";
             Save(s => s with
             {
-                Stage = WorkflowStage.Review, ReviewRulesVersion = CurrentReviewRulesVersion,
+                Stage = WorkflowStage.Review, ReviewRulesVersion = CurrentReviewRulesVersion, ReviewedUtc = DateTimeOffset.UtcNow,
                 // Ticked: what the technician chose for this fix last time, otherwise its default (everything except opt-in fixes).
                 Fixes = fixes, Approved = fixes.Where(f => prefs?.IsTicked(f.Id, f.DefaultOn) ?? f.DefaultOn).Select(f => f.Id).ToList(),
                 Findings = findings, NotOffered = notOffered, Recommendations = FixCatalog.Recommendations(suggestions), Machine = session?.MachineName ?? Environment.MachineName, HardwareSummary = hw,

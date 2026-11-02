@@ -14,6 +14,28 @@ public sealed record HistoryEntry(
     public string? Measurement(string name) => Measurements.FirstOrDefault(m => m.Name == name)?.Value;
 }
 
+/// <summary>Useful expansion fields, including cleanup of older generic payload snapshots.</summary>
+public static class HistoryPresentation
+{
+    private static bool Generic(string name) => name is "Cards" or "Summary" or "Status" or "Outcome";
+
+    public static IReadOnlyList<HistoryMeasurement> Measurements(HistoryEntry entry) =>
+        entry.Measurements.Where(m => !Generic(m.Name) && !HistoryLabels.IsHidden(m.Name)).Distinct().ToList();
+
+    public static IReadOnlyList<string> Details(HistoryEntry entry)
+    {
+        return (entry.Details ?? []).Where(line =>
+        {
+            var text = line.Trim();
+            var split = text.IndexOfAny([':', '=']);
+            if (split < 0) return text != entry.Summary;
+            var name = text[..split].Trim();
+            var value = text[(split + 1)..].Trim();
+            return !Generic(name) && !entry.Measurements.Any(m => m.Name == name && m.Value == value);
+        }).Distinct().ToList();
+    }
+}
+
 /// <summary>Result of reading history. Available=false when the source can't be read (Problem has the technical reason, log only).</summary>
 public sealed record HistoryReadResult(IReadOnlyList<HistoryEntry> Entries, bool Available, string? Problem = null);
 

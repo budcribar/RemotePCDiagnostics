@@ -99,13 +99,7 @@
                     else
                     {
                         <span class="chip chip-@(d.Verdict switch { BenchmarkVerdict.Better => "ok", BenchmarkVerdict.Worse => "err", _ => "na" })">
-                            @(d.Verdict switch
-                            {
-                                BenchmarkVerdict.Better => $"{Math.Abs(d.ImprovementPercent!.Value):0}% {info.BetterWord}",
-                                BenchmarkVerdict.Worse => $"{Math.Abs(d.ImprovementPercent!.Value):0}% {info.WorseWord}",
-                                BenchmarkVerdict.NoChange => "No real change",
-                                _ => "Not compared",
-                            })</span>
+                            @d.ChangeSummary</span>
                         @if (d.Note is { } n) { <div class="meta">@n</div> }
                     }
                 </td>

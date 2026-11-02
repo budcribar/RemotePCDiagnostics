@@ -78,7 +78,10 @@ public static class FixCatalog
                     var plan = plans?.Plan(a);
                     if (plan is { Allowed: false }) continue;
                     var title = plan?.Title.TrimEnd('?') ?? a.ButtonText;
-                    list.Add(new(id, title, plan?.WhatItIs ?? card.Headline, area, RiskOf(a.Kind), FixSource.Remediation, OrderOf(a.Kind), Remediation: a,
+                    var why = plan?.WhatItIs ?? card.Headline;
+                    if (a.Kind == RemediationKind.SetPublicDns)
+                        why += $" {a.ButtonText}. {card.Note} Measured during the network scan at {r.Timestamp:O}.";
+                    list.Add(new(id, title, why, area, RiskOf(a.Kind), FixSource.Remediation, OrderOf(a.Kind), Remediation: a,
                         NeedsAdmin: plan?.Warning?.Contains("administrator", StringComparison.OrdinalIgnoreCase) == true,
                         Slow: a.Kind is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates,
                         Undo: Changes.Undoability.Of(a.Kind), AreaKey: area));
@@ -95,7 +98,12 @@ public static class FixCatalog
             var id = MemoryId(s.Id, a.Type, a.Target);
             if (!seen.Add(id)) continue;
             var order = a.Type switch { MemoryActionType.DisableStartup => 20, MemoryActionType.SetServiceManual => 22, MemoryActionType.AutoManagePageFile => 12, MemoryActionType.CleanStorage => 40, _ => 15 };
-            list.Add(new(id, a.Type == MemoryActionType.SetServiceManual && !MemorySuggestionEngine.IsVisualStudioCollector(a.Target) && !AiVmServices.Is(a.Target) ? $"{s.Title}: start only when needed" : s.Title, s.Why, s.Category, s.Risk, FixSource.Memory, order,
+            var manual = a.Type == MemoryActionType.SetServiceManual;
+            // Suggestion titles can say Stop; describe the selected action rather than reusing that title.
+            var serviceLabel = s.Title.StartsWith("Stop ", StringComparison.OrdinalIgnoreCase) ? s.Title[5..] : a.Target;
+            var title = manual ? $"Set {serviceLabel} to Manual" : s.Title;
+            var why = manual ? $"{s.Why} Only the startup type changes; a running service is left running." : s.Why;
+            list.Add(new(id, title, why, s.Category, s.Risk, FixSource.Memory, order,
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
                 NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
                     or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension
