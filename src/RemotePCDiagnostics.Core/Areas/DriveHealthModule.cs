@@ -155,8 +155,10 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             if (i == 0)
                 actions.Add(new(RemediationKind.CleanTempFiles, "Clean up temporary files", "", "Temporary files & Recycle Bin"));
             // Not offered when Windows or this app retrimmed every volume of this SSD in the last 30 days.
-            if (ssdLetters.Length > 0 && !RecentlyRetrimmed(ssdLetters, retrims, now))
-                actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", ssdLetters, d.Name.Length > 0 ? d.Name : "SSD"));
+            var dueLetters = new string(ssdLetters.Where(letter =>
+                !RecentlyRetrimmed(letter.ToString(), retrims, now)).ToArray());
+            if (dueLetters.Length > 0)
+                actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", dueLetters, d.Name.Length > 0 ? d.Name : "SSD"));
             return new AreaCard($"drive{i}", d.Name.Length > 0 ? d.Name : $"Drive {i + 1}", d.Level, d.Verdict, meta, cols, rows,
                 Actions: actions.Count > 0 ? actions : null);
         }).ToList();

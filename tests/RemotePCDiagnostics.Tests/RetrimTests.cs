@@ -46,11 +46,11 @@ public class RetrimTests
     }
 
     [Fact]
-    public void MultiLetter_HiddenOnlyWhenAllRecent()
+    public void MultiLetter_OnlyTargetsVolumesWithoutRecentRetrim()
     {
         var mixed = Card(Ssd("CD"), R(('C', 1, RetrimSource.ThisApp)));
         Assert.True(Offers(mixed));
-        Assert.Equal("CD", mixed.Actions!.Single(a => a.Kind == RemediationKind.OptimizeSsd).Target);
+        Assert.Equal("D", mixed.Actions!.Single(a => a.Kind == RemediationKind.OptimizeSsd).Target);
         Assert.Equal("C: yesterday (by this app); D: Not reported", Row(mixed, "Last optimized"));
         var both = Card(Ssd("CD"), R(('C', 1, RetrimSource.ThisApp), ('D', 2, RetrimSource.Windows)));
         Assert.False(Offers(both));

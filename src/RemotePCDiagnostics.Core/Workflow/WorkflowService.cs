@@ -28,7 +28,7 @@ public sealed class WorkflowService(
     private readonly object _gate = new();
     /// <summary>7: Windows Search only on small, nearly-full PCs without classic Outlook, and opt-in (unticked); Widgets and Search highlights fixes.
     /// 8: Microsoft Teams startup is opt-in (unticked).</summary>
-    public const int CurrentReviewRulesVersion = 10;
+    public const int CurrentReviewRulesVersion = 11;
     private WorkflowState _state = LoadState(store);
 
     private static WorkflowState LoadState(IWorkflowStore store)
