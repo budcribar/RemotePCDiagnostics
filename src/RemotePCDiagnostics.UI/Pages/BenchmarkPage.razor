@@ -42,30 +42,36 @@
 </section>
 
 <div class="toolbar bench-actions">
-    @if (s.RestartBeforeAfter)
+    @if (running)
     {
-        <button class="btn btn-primary" data-testid="bench-restart-before" disabled="@(running || s.Enabled.Count == 0 || Bench.BeforePendingRestart || Bench.AfterPendingRestart)" @onclick="RestartThenBefore">
-            <Icon Name="refresh" Size="12" /> @(before is null ? "Restart, then run before benchmark" : "Restart, then run before benchmark again")</button>
-        <button class="btn-small" data-testid="bench-run-before" disabled="@(running || s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)"
-                title="Without restarting: start-up time uses the last few start-ups in Windows' log, which may not be comparable">Run before now (no restart)</button>
+        <button class="btn btn-stop" data-testid="bench-stop" @onclick="Bench.Stop">Stop</button>
     }
     else
     {
-        <button class="btn btn-primary" data-testid="bench-run-before" disabled="@(running || s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)">
-            <Icon Name="play" Size="12" /> @(before is null ? "Run before benchmark" : "Run before benchmark again")</button>
+        @if (s.RestartBeforeAfter)
+        {
+            <button class="btn btn-primary" data-testid="bench-restart-before" disabled="@(running || s.Enabled.Count == 0 || Bench.BeforePendingRestart || Bench.AfterPendingRestart)" @onclick="RestartThenBefore">
+                <Icon Name="refresh" Size="12" /> @(before is null ? "Restart, then run before benchmark" : "Restart, then run before benchmark again")</button>
+            <button class="btn-small" data-testid="bench-run-before" disabled="@(running || s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)"
+                    title="Without restarting: start-up time uses the last few start-ups in Windows' log, which may not be comparable">Run before now (no restart)</button>
+        }
+        else
+        {
+            <button class="btn btn-primary" data-testid="bench-run-before" disabled="@(running || s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)">
+                <Icon Name="play" Size="12" /> @(before is null ? "Run before benchmark" : "Run before benchmark again")</button>
+        }
+        @if (s.RestartBeforeAfter)
+        {
+            <button class="btn btn-outline" data-testid="bench-restart-after" disabled="@(running || before is null || Bench.AfterPendingRestart)" @onclick="RestartThenAfter">
+                <Icon Name="refresh" Size="12" /> Restart, then run after benchmark</button>
+            <button class="btn-small" data-testid="bench-run-after" disabled="@(running || before is null)" @onclick="() => Run(BenchmarkPhase.After)" title="Without restarting: start-up time won't be compared">Run after now (no restart)</button>
+        }
+        else
+        {
+            <button class="btn btn-outline" data-testid="bench-run-after" disabled="@(running || before is null)" @onclick="() => Run(BenchmarkPhase.After)"><Icon Name="play" Size="12" /> Run after benchmark</button>
+        }
+        @if (before is not null) { <button class="btn-small" data-testid="bench-clear" @onclick="Bench.Clear">Start over</button> }
     }
-    @if (s.RestartBeforeAfter)
-    {
-        <button class="btn btn-outline" data-testid="bench-restart-after" disabled="@(running || before is null || Bench.AfterPendingRestart)" @onclick="RestartThenAfter">
-            <Icon Name="refresh" Size="12" /> Restart, then run after benchmark</button>
-        <button class="btn-small" data-testid="bench-run-after" disabled="@(running || before is null)" @onclick="() => Run(BenchmarkPhase.After)" title="Without restarting: start-up time won't be compared">Run after now (no restart)</button>
-    }
-    else
-    {
-        <button class="btn btn-outline" data-testid="bench-run-after" disabled="@(running || before is null)" @onclick="() => Run(BenchmarkPhase.After)"><Icon Name="play" Size="12" /> Run after benchmark</button>
-    }
-    @if (running) { <button class="btn btn-stop" data-testid="bench-stop" @onclick="Bench.Stop">Stop</button> }
-    else if (before is not null) { <button class="btn-small" data-testid="bench-clear" @onclick="Bench.Clear">Start over</button> }
 </div>
 
 @if (before is not null && !running) { <UndoAllPanel /> }

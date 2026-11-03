@@ -18,8 +18,14 @@
             }
         </select>
     </label>
-    <button data-testid="nettest-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
-    <button data-testid="nettest-stop" @onclick="Stop" disabled="@(!running && !Diagnostics.IsStressSuiteRunning)">Stop</button>
+    @if (running || Diagnostics.IsStressSuiteRunning)
+    {
+        <button data-testid="nettest-stop" @onclick="Stop">Stop</button>
+    }
+    else
+    {
+        <button data-testid="nettest-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
+    }
 </div>
 <p class="meta">Checks how steady your connection is by contacting your router and the internet every second, measures your download and upload speed once (using a limited amount of data), and looks for new network errors. Video calls or downloads may be a little slower while it runs.</p>
 

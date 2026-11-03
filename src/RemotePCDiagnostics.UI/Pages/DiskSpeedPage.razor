@@ -36,8 +36,14 @@
             }
         </select>
     </label>
-    <button data-testid="diskspeed-start" @onclick="Start" disabled="@(running || otherBusy || Module is null || _drives.Count == 0)">Start</button>
-    <button data-testid="diskspeed-stop" @onclick="Stop" disabled="@(!running && !Diagnostics.IsStressSuiteRunning)">Stop</button>
+    @if (running || Diagnostics.IsStressSuiteRunning)
+    {
+        <button data-testid="diskspeed-stop" @onclick="Stop">Stop</button>
+    }
+    else
+    {
+        <button data-testid="diskspeed-start" @onclick="Start" disabled="@(running || otherBusy || Module is null || _drives.Count == 0)">Start</button>
+    }
 </div>
 <p class="meta">Measures how fast the drive reads and writes, and checks that data comes back exactly as it was written. It uses a temporary test file that is removed afterwards; your own files are never touched. If the drive is nearly full, a smaller test is used or the test is skipped.</p>
 @if (_drives.Count == 0)

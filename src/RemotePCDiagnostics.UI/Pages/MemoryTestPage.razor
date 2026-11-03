@@ -26,8 +26,14 @@
             }
         </select>
     </label>
-    <button data-testid="memtest-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
-    <button data-testid="memtest-stop" @onclick="Stop" disabled="@(!running && !Diagnostics.IsStressSuiteRunning)">Stop</button>
+    @if (running || Diagnostics.IsStressSuiteRunning)
+    {
+        <button data-testid="memtest-stop" @onclick="Stop">Stop</button>
+    }
+    else
+    {
+        <button data-testid="memtest-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
+    }
 </div>
 <p class="meta">Writes test patterns into your PC's memory and reads them back to find faulty spots. Your PC may feel slower while it runs; other programs keep working, and enough memory is always left free for them.
     @if (!running) { <span data-testid="memtest-plan">@(planned is { } pb ? $"This test will check about {HardwareInventory.FormatBytes(pb)} of memory." : "There isn't enough free memory to run this test right now. Close some programs and try again.")</span> }

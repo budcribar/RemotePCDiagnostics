@@ -240,13 +240,17 @@
                 else if (kind == RowKind.Cancelled) { <div class="meta">Earlier results are on the History page.</div> }
             </div>
             @* Stress tests, the security audit and the audio tests have their own Start/Stop (with length) below, so no second start button here. *@
-            @if (!HasOwnStart(m))
+            @if (m is WindowsIntegrityModule scan && kind == RowKind.Running)
+            {
+                <button type="button" class="btn btn-stop ct-run-one" data-testid="checks-cancel-scan" @onclick="scan.Cancel">Cancel scan</button>
+            }
+            else if (!HasOwnStart(m))
             {
                 <button class="btn btn-outline ct-run-one" data-testid="checks-run-one" disabled="@(!canRun)" @onclick="() => { _ = Screen.RunSingleAsync(m); }"><Icon Name="play" Size="12" /> Run just this</button>
             }
         </div>
         <div class="ct-detail-body" @key="m.Name">
-            @if (m is WindowsIntegrityModule scan && kind == RowKind.Running)
+            @if (m is WindowsIntegrityModule && kind == RowKind.Running)
             {
                 <p role="status">Running @m.DisplayName. This can take several minutes.</p>
                 @if (r.Payload is double percent)
@@ -258,16 +262,20 @@
                 {
                     <progress aria-label="@($"{m.DisplayName} scan in progress")"></progress>
                 }
-                <button type="button" class="btn-small" @onclick="scan.Cancel">Cancel scan</button>
             }
             else if (m is WindowsIntegrityModule && r.Payload is AreaReport integrity && kind != RowKind.Cancelled)
             {
                 @foreach (var card in integrity.Cards)
                 {
                     <p class="meta">@card.Meta</p>
+                    @foreach (var summary in card.Rows.Where(row => row.Values[0] == "CBS summary"))
+                    {
+                        <strong>CBS summary</strong>
+                        <div class="row-detail-text">@summary.Values[1]</div>
+                    }
                     <details>
                         <summary>Scan command and output</summary>
-                        @foreach (var row in card.Rows)
+                        @foreach (var row in card.Rows.Where(row => row.Values[0] != "CBS summary"))
                         {
                             <strong>@row.Values[0]</strong>
                             <div class="row-detail-text">@row.Values[1]</div>

@@ -18,8 +18,14 @@
             }
         </select>
     </label>
-    <button data-testid="gpustress-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
-    <button data-testid="gpustress-stop" @onclick="Stop" disabled="@(!running && !Diagnostics.IsStressSuiteRunning)">Stop</button>
+    @if (running || Diagnostics.IsStressSuiteRunning)
+    {
+        <button data-testid="gpustress-stop" @onclick="Stop">Stop</button>
+    }
+    else
+    {
+        <button data-testid="gpustress-start" @onclick="Start" disabled="@(running || otherBusy || Module is null)">Start</button>
+    }
 </div>
 <p class="meta">Works your graphics chip as hard as it can and checks that every answer it gives is correct. Works with built-in and separate graphics. The PC may get warm, the fan may speed up and the screen may feel slower while it runs. It stops by itself if anything gets too hot.</p>
 
