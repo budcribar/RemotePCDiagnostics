@@ -83,12 +83,14 @@ public class WorkflowTests
     ];
 
     private static (WorkflowService Flow, Sys Sys, IWorkflowStore Store, List<TimeSpan> Delays, ScriptedLauncher Launcher, Probes Probes) Make(
-        IWorkflowStore? flowStore = null, IBenchmarkStore? benchmarkStore = null, Sys? system = null, Probes? benchmarkProbes = null) =>
-        Make(null, null, null, DefaultModules(), flowStore, benchmarkStore, system, benchmarkProbes);
+        IWorkflowStore? flowStore = null, IBenchmarkStore? benchmarkStore = null, Sys? system = null, Probes? benchmarkProbes = null,
+        Func<TimeSpan, CancellationToken, Task>? delay = null) =>
+        Make(null, null, null, DefaultModules(), flowStore, benchmarkStore, system, benchmarkProbes, delay);
 
     private static (WorkflowService Flow, Sys Sys, IWorkflowStore Store, List<TimeSpan> Delays, ScriptedLauncher Launcher, Probes Probes) Make(
         Func<string, IReadOnlyList<string>, ProcessResult>? run, IChangeJournal? journal, IMemorySystem? memorySystem, IDiagnosticModule[] modules,
-        IWorkflowStore? flowStore = null, IBenchmarkStore? benchmarkStore = null, Sys? system = null, Probes? benchmarkProbes = null)
+        IWorkflowStore? flowStore = null, IBenchmarkStore? benchmarkStore = null, Sys? system = null, Probes? benchmarkProbes = null,
+        Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         var results = new ResultStore();
         var diag = new DiagnosticsService(results, modules);
@@ -103,7 +105,7 @@ public class WorkflowTests
         var store = flowStore ?? new MemFlowStore();
         var delays = new List<TimeSpan>();
         var flow = new WorkflowService(diag, results, rem, bench, sys, store, memory, session: new SessionContext(SessionMode.Remote),
-            delay: (d, _) => { delays.Add(d); return Task.CompletedTask; }, journal: journal);
+            delay: (d, c) => { delays.Add(d); return delay?.Invoke(d, c) ?? Task.CompletedTask; }, journal: journal);
         return (flow, sys, store, delays, launcher, probes);
     }
 
@@ -470,6 +472,48 @@ public class WorkflowTests
         Assert.Equal(WorkflowStage.RestartBefore, flow.State.Stage);
         Assert.Empty(delays);
         Assert.Contains("Waiting for the restart", flow.Status);
+    }
+
+    [Fact]
+    public async Task AfterRestart_NewAppInstance_LeavesRestartStageAtOnce_HidesRestartNow_AndOpensWorkflowPage()
+    {
+        var (flow, sys, store, _, _, _) = Make();
+        await flow.RunChecksAsync();
+        Assert.False(flow.ShouldOpenWorkflowPage);
+        Assert.Null(await flow.StartAsync(null));
+        Assert.Equal(WorkflowStage.RestartBefore, flow.State.Stage);
+        Assert.True(flow.WaitingForRestart);                       // before the restart: "Restart now" is offered
+
+        // The PC restarts; a new app instance loads workflow.json and resumes. Hold it in the start-up settle.
+        sys.Uptime = TimeSpan.Zero;
+        var gate = new TaskCompletionSource();
+        var (after, _, _, _, _, _) = Make(flowStore: store, system: sys, delay: (_, _) => gate.Task);
+        Assert.True(after.ShouldOpenWorkflowPage);                 // app opens on the Service workflow page
+        var restartsBefore = sys.Calls.Count(c => c == "restart");
+        var resume = after.ResumeAsync();
+        Assert.Equal(WorkflowStage.BeforeBenchmark, after.State.Stage); // not still "RestartBefore" while settling
+        Assert.Equal(WorkflowStage.BeforeBenchmark, store.Load()!.Stage);
+        Assert.False(after.WaitingForRestart);                     // no stale "Restart now" button
+        Assert.Equal("Nothing is waiting for a restart.", await after.RestartNowAsync());
+        Assert.Equal(restartsBefore, sys.Calls.Count(c => c == "restart"));
+        Assert.NotNull(after.State.Restarts.Last().BootedUtc);
+        gate.SetResult();
+        await resume;
+        Assert.Equal(WorkflowStage.RestartAfter, after.State.Stage);
+        sys.Uptime = TimeSpan.FromHours(1);                        // the second restart hasn't happened yet
+        Assert.True(after.WaitingForRestart);                      // waiting for the second restart again
+    }
+
+    [Fact]
+    public async Task RestartNotHappenedYet_KeepsRestartNowButton()
+    {
+        var (flow, sys, _, _, _, _) = Make();
+        await flow.RunChecksAsync();
+        Assert.Null(await flow.StartAsync(null));
+        sys.Uptime = TimeSpan.FromDays(3);
+        await flow.ResumeAsync();
+        Assert.Equal(WorkflowStage.RestartBefore, flow.State.Stage);
+        Assert.True(flow.WaitingForRestart);
     }
 
     [Fact]

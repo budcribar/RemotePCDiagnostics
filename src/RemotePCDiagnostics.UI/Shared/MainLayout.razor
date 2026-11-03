@@ -1,5 +1,7 @@
 @inherits LayoutComponentBase
 @inject ISessionContext Session
+@inject NavigationManager Nav
+@inject IServiceProvider Services
 <div class="app @(_navigationOpen ? "nav-open" : "")">
     <header class="topbar">
         <button class="nav-toggle" aria-label="Toggle navigation" aria-controls="main-navigation" aria-expanded="@(_navigationOpen ? "true" : "false")" @onclick="() => _navigationOpen = !_navigationOpen">Menu</button>
@@ -13,4 +15,18 @@
     <main class="content">@Body</main>
 </div>
 
-@code { private bool _navigationOpen; }
+@code {
+    private bool _navigationOpen;
+
+    // After the workflow's restart the app is relaunched (on the start page): go straight back to the Service workflow page.
+    protected override void OnInitialized()
+    {
+        try
+        {
+            if (Services.GetService(typeof(RemotePCDiagnostics.Core.Workflow.WorkflowService)) is RemotePCDiagnostics.Core.Workflow.WorkflowService { ShouldOpenWorkflowPage: true }
+                && Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Length == 0)
+                Nav.NavigateTo("workflow", replace: true);
+        }
+        catch { }
+    }
+}

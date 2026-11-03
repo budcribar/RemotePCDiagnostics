@@ -216,7 +216,11 @@ public sealed class WorkflowService(
         if (stage is WorkflowStage.RestartBefore or WorkflowStage.RestartAfter)
         {
             var booted = DateTimeOffset.UtcNow - sys.Uptime;
-            Save(s => s with { Restarts = s.Restarts.Select((r, i) => i == s.Restarts.Count - 1 && r.BootedUtc is null ? r with { BootedUtc = booted } : r).ToList() });
+            // The restart has happened: leave the restart stage right away (before settling), so the page stops offering "Restart now"
+            // and a second press can't restart the PC again while start-up settles.
+            var next = stage == WorkflowStage.RestartBefore ? WorkflowStage.BeforeBenchmark : WorkflowStage.AfterBenchmark;
+            Save(s => s with { Stage = next, Restarts = s.Restarts.Select((r, i) => i == s.Restarts.Count - 1 && r.BootedUtc is null ? r with { BootedUtc = booted } : r).ToList() });
+            stage = next;
         }
         try
         {
@@ -343,8 +347,14 @@ public sealed class WorkflowService(
     // ---- control ----
 
     /// <summary>Retries a restart that was cancelled or didn't happen.</summary>
+    /// <summary>True only while the workflow is really waiting for a restart (not once it has restarted and is continuing).</summary>
+    public bool WaitingForRestart => !Busy && State.Stage is WorkflowStage.RestartBefore or WorkflowStage.RestartAfter && !RestartHappened(DateTimeOffset.UtcNow);
+
+    /// <summary>When the app starts with a workflow in progress, it opens on the Service workflow page.</summary>
+    public bool ShouldOpenWorkflowPage => State.IsRunning;
+
     public Task<string?> RestartNowAsync(CancellationToken ct = default) =>
-        State.Stage is WorkflowStage.RestartBefore or WorkflowStage.RestartAfter ? RestartAsync("Restarting now…", ct) : Task.FromResult<string?>("Nothing is waiting for a restart.");
+        WaitingForRestart ? RestartAsync("Restarting now…", ct) : Task.FromResult<string?>("Nothing is waiting for a restart.");
 
     /// <summary>Stops the workflow: aborts a pending restart, removes automatic sign-in and the restart task. Fixes already applied stay (use Undo).</summary>
     public async Task CancelAsync()

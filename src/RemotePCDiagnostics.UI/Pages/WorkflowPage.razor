@@ -117,7 +117,7 @@
 
     default:
         <div class="toolbar">
-            @if (s.Stage is WorkflowStage.RestartBefore or WorkflowStage.RestartAfter) { <button class="btn btn-outline" data-testid="wf-restart-now" @onclick="RestartNow">Restart now</button> }
+            @if (Flow.WaitingForRestart) { <button class="btn btn-outline" data-testid="wf-restart-now" @onclick="RestartNow">Restart now</button> }
             <button class="btn btn-stop" data-testid="wf-cancel" @onclick="Cancel">Cancel workflow</button>
         </div>
         @if (s.Outcomes.Count > 0)
