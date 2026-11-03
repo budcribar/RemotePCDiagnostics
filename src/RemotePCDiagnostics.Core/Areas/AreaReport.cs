@@ -32,7 +32,7 @@ public enum RemediationKind
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>
-public sealed record AreaAction(RemediationKind Kind, string ButtonText, string Target = "", string TargetLabel = "");
+public sealed record AreaAction(RemediationKind Kind, string ButtonText, string Target = "", string TargetLabel = "", string? CurrentSetting = null);
 
 /// <summary>One drawer table row; <see cref="Values"/> line up with <see cref="AreaCard.Columns"/>. All text is end-user friendly.</summary>
 public sealed record AreaRow(
