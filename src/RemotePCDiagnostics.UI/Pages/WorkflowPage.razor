@@ -95,7 +95,8 @@
                 <p class="meta">The workflow restarts the PC twice. To carry on without anyone at the PC, Windows can sign in automatically for exactly those two restarts.
                     The password is checked first, stored only the way Windows' own automatic sign-in stores it, and removed when the workflow ends or is cancelled.</p>
                 <label class="wf-field">Account <input data-testid="wf-user" @bind="_user" placeholder="user name" /></label>
-                <label class="wf-field">Password <input type="password" data-testid="wf-password" @bind="_password" autocomplete="off" /></label>
+                <label class="wf-field">Password <input type="@(_showPassword ? "text" : "password")" data-testid="wf-password" @bind="_password" autocomplete="off" />
+                    <button type="button" class="btn-small" data-testid="wf-password-toggle" aria-label="@(_showPassword ? "Hide password" : "Show password")" title="@(_showPassword ? "Hide password" : "Show password")" aria-pressed="@(_showPassword ? "true" : "false")" @onclick="() => _showPassword = !_showPassword"><Icon Name="@(_showPassword ? "eye-off" : "eye")" Size="12" /></button></label>
                 <p class="meta">@(_logon?.MicrosoftAccountEmail is not null ? "This PC signs in with a Microsoft account, so the box shows its email address. " : "Microsoft account? Use the account's email address. ")The password must be the account's password, not the PIN.</p>
                 <label><input type="checkbox" @bind="_clientSignsIn" /> Skip: the client will sign in after each restart</label>
             }
@@ -170,7 +171,7 @@
 
     private AutoLogonStatus? _logon;
     private string _user = "", _password = "";
-    private bool _clientSignsIn, _starting;
+    private bool _clientSignsIn, _starting, _showPassword;
     private string? _message;
 
     private bool CanStart => _logon is { AlreadyAutomatic: true } || _clientSignsIn || (_user.Length > 0 && _password.Length > 0);
@@ -188,7 +189,7 @@
     }
 
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
-    public void Dispose() { Flow.Changed -= OnChanged; _password = ""; }
+    public void Dispose() { Flow.Changed -= OnChanged; _password = ""; _showPassword = false; }
 
     private void RunChecks() { _message = null; _ = Flow.RunChecksAsync(); }
 
@@ -208,7 +209,7 @@
             }
             _message = await Flow.StartAsync(req);
         }
-        finally { _password = ""; _starting = false; }
+        finally { _password = ""; _showPassword = false; _starting = false; }
     }
 
     private async Task RestartNow() => _message = await Flow.RestartNowAsync();
