@@ -21,6 +21,7 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
         Duration = StressSuite.PerTestDuration(mode);
     }
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is MemoryTestReport { Outcome: MemoryTestOutcome.Overheated };
+    bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => r.Payload is MemoryTestReport { CouldNotRun: true } or Exception;
     bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is MemoryTestReport { Outcome: MemoryTestOutcome.StoppedByUser };
     public event EventHandler<MemoryTestProgress>? ProgressChanged;
 
@@ -68,7 +69,7 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
     public static DiagnosticStatus ToStatus(MemoryTestOutcome o) => o switch
     {
         MemoryTestOutcome.Passed => DiagnosticStatus.Ok,
-        MemoryTestOutcome.StoppedByUser => DiagnosticStatus.Warning,
+        MemoryTestOutcome.StoppedByUser or MemoryTestOutcome.CouldNotRun or MemoryTestOutcome.Failed => DiagnosticStatus.Warning,
         _ => DiagnosticStatus.Error,
     };
 

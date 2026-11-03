@@ -157,6 +157,11 @@ public sealed class ChecksScreenState
     public CheckGroup? RunningGroup { get; private set; }
     public GroupRunProgress? Progress { get; private set; }
     public bool IsBusy => RunningGroup is not null;
+    /// <summary>Outcome line of the last group run (stress suite summary with skipped/stopping tests, or an error that kept a
+    /// test from running), shown on the page instead of being swallowed. Null until a run reports something.</summary>
+    public string? LastRunNote { get; private set; }
+    /// <summary>Last stress suite result from a group run.</summary>
+    public StressSuiteResult? LastSuiteResult { get; private set; }
 
     /// <summary>The mode label ("short run"/"extended run") the module's current result ran in, if it came from a stress run.</summary>
     public string? RunLabel(string module) { lock (_gate) return _runLabels.GetValueOrDefault(module); }
@@ -194,8 +199,15 @@ public sealed class ChecksScreenState
             RunningGroup = g;
             if (g == CheckGroup.Checks) CollapsedChecks = false; else CollapsedStress = false;
             _cts = cts = new CancellationTokenSource();
+            LastRunNote = null;
         }
         Raise();
+        var errors = new List<string>();
+        void Failed(IDiagnosticModule m, Exception ex)
+        {
+            if (ex is OperationCanceledException && cts.IsCancellationRequested) return;
+            lock (_gate) errors.Add($"{m.DisplayName} couldn't run: {ex.Message}");
+        }
         try
         {
             if (g == CheckGroup.Checks)
@@ -203,7 +215,7 @@ public sealed class ChecksScreenState
                 for (var i = 0; i < selected.Count && !cts.IsCancellationRequested; i++)
                 {
                     SetProgress(g, i + 1, selected.Count, selected[i]);
-                    try { await _diag.RunAsync(selected[i].Name, null, cts.Token).ConfigureAwait(false); } catch (Exception) { }
+                    try { await _diag.RunAsync(selected[i].Name, null, cts.Token).ConfigureAwait(false); } catch (Exception ex) { Failed(selected[i], ex); }
                 }
             }
             else
@@ -219,18 +231,27 @@ public sealed class ChecksScreenState
                         var mod = _diag.Modules.FirstOrDefault(m => string.Equals(m.Name, sp.Steps[sp.Index - 1].ModuleName, StringComparison.OrdinalIgnoreCase));
                         if (mod is not null) SetProgress(g, sp.Index, total, mod);
                     });
-                    try { await _diag.RunStressSuiteAsync(Mode, p, cts.Token, stress, runQuickChecks: false).ConfigureAwait(false); } catch (Exception) { }
+                    try
+                    {
+                        var res = await _diag.RunStressSuiteAsync(Mode, p, cts.Token, stress, runQuickChecks: false).ConfigureAwait(false);
+                        lock (_gate) { LastSuiteResult = res; errors.Insert(0, res.Message); }
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException && cts.IsCancellationRequested))
+                    {
+                        lock (_gate) errors.Insert(0, $"Stress tests couldn't run: {ex.Message}");
+                    }
+                    catch (OperationCanceledException) { }
                 }
                 for (var i = 0; i < separate.Count && !cts.IsCancellationRequested; i++)
                 {
                     SetProgress(g, stress.Count + i + 1, total, separate[i]);
-                    try { await _diag.RunAsync(separate[i].Name, null, cts.Token).ConfigureAwait(false); } catch (Exception) { }
+                    try { await _diag.RunAsync(separate[i].Name, null, cts.Token).ConfigureAwait(false); } catch (Exception ex) { Failed(separate[i], ex); }
                 }
             }
         }
         finally
         {
-            lock (_gate) { RunningGroup = null; Progress = null; _cts = null; }
+            lock (_gate) { RunningGroup = null; Progress = null; _cts = null; LastRunNote = errors.Count == 0 ? null : string.Join(" ", errors); }
             cts.Dispose();
             Raise();
         }

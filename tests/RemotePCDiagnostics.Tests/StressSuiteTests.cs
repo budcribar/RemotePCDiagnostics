@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using RemotePCDiagnostics.Core;
+using RemotePCDiagnostics.Core.Stress;
 
 namespace RemotePCDiagnostics.Tests;
 
@@ -15,6 +16,7 @@ internal sealed class FakeStressModule(string name, string suiteName, Func<FakeS
     public int StopCalls;
     public bool Unavailable;
     public bool Hot;
+    public bool CouldNotRun;
     public Action? OnStart, OnEnd;
     private CancellationTokenSource? _stop;
     public void Stop() { Interlocked.Increment(ref StopCalls); _stop?.Cancel(); }
@@ -41,6 +43,7 @@ internal sealed class FakeStressModule(string name, string suiteName, Func<FakeS
     bool IStressSuiteModule.IsUnavailableResult(DiagnosticResult r) => Unavailable;
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => Hot && r.Status == DiagnosticStatus.Error;
     bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Status == DiagnosticStatus.Warning && r.Message == "Stopped";
+    bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => CouldNotRun || r.Payload is Exception;
     public void Push(DiagnosticResult r) => Updated?.Invoke(this, r);
 }
 
@@ -103,7 +106,10 @@ public class StressSuiteTests
     {
         var (svc, store, mods, _) = Build(n => n == "MemoryTest" ? (_, _) => throw new InvalidOperationException("boom") : null);
         var r = await svc.RunStressSuiteAsync(StressSuiteMode.Extended, null);
-        Assert.Equal(StressSuiteOutcome.StoppedOnProblem, r.Outcome);
+        // A test that crashed couldn't run: it is skipped with the reason, not reported as a hardware problem.
+        Assert.Equal(StressSuiteOutcome.Completed, r.Outcome);
+        Assert.Equal(StressSuiteStepState.Skipped, r.Steps[1].State);
+        Assert.Contains("boom", r.Message);
         Assert.All(mods, m => Assert.Equal(TimeSpan.FromMinutes(3), m.Duration));
         Assert.Equal(DiagnosticStatus.Error, store.Get("MemoryTest").Status);
     }
@@ -239,5 +245,50 @@ public class StressSuiteTests
         await svc.RunStressSuiteAsync(StressSuiteMode.Short, null);
         Assert.Contains("half way", seen);
         Assert.Equal(DiagnosticStatus.Ok, store.Get("CpuStress").Status);
+    }
+
+    // ---- couldn't run vs real problem (IdeaPad: 400 MB free → memory test never ran, suite halted as "found a problem") ----
+    [Fact]
+    public async Task CouldNotRun_IsSkippedWithReason_AndRemainingTestsStillRun()
+    {
+        var (svc, _, mods, _) = Build(n => n == "MemoryTest"
+            ? (_, _) => Task.FromResult(new DiagnosticResult(n, DiagnosticStatus.Warning, "Couldn't run: not enough free memory", DateTimeOffset.Now))
+            : null);
+        mods[1].CouldNotRun = true;
+        var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null);
+        Assert.Equal(StressSuiteOutcome.Completed, r.Outcome);
+        Assert.Equal(new[] { StressSuiteStepState.Passed, StressSuiteStepState.Skipped, StressSuiteStepState.Passed, StressSuiteStepState.Passed, StressSuiteStepState.Passed },
+            r.Steps.Select(s => s.State).ToArray());
+        Assert.All(mods.Skip(2), m => Assert.Single(m.DurationsSeen));
+        Assert.DoesNotContain("found a problem", r.Message);
+        Assert.Contains("Skipped: Memory (Couldn't run: not enough free memory)", r.Message);
+        Assert.Equal("Skipped: Couldn't run: not enough free memory", r.Steps[1].Message);
+    }
+
+    [Fact]
+    public async Task RealMemoryModule_LowMemory_SkipsAndContinues_MemoryErrorsStillStop()
+    {
+        static async Task<StressSuiteResult> Run(IMemTestHelperLauncher launcher, long available)
+        {
+            var store = new ResultStore();
+            var mem = new MemoryTestModule(new FakeMemoryInfo(available), launcher, new SequenceSensorProvider(_ => throw new PlatformNotSupportedException(), available: false),
+                clockFactory: () => new FakeStressClock());
+            var others = new[] { ("CpuStress", "CPU"), ("DiskSpeed", "Disk"), ("GpuStress", "GPU"), ("NetworkTest", "Network") }.Select(n => new FakeStressModule(n.Item1, n.Item2)).ToArray();
+            var svc = new DiagnosticsService(store, [others[0], mem, others[1], others[2], others[3]]);
+            return await svc.RunStressSuiteAsync(StressSuiteMode.Short, null, runQuickChecks: false);
+        }
+        var low = await Run(new FakeHelperLauncher(), 300 * MemorySizing.MB);
+        Assert.Equal(StressSuiteOutcome.Completed, low.Outcome);
+        Assert.Equal(StressSuiteStepState.Skipped, low.Steps[1].State);
+        Assert.Contains("not enough free memory", low.Steps[1].Message);
+        Assert.Equal(StressSuiteStepState.Passed, low.Steps[4].State); // network still ran
+        Assert.DoesNotContain("found a problem", low.Message);
+
+        var bad = await Run(new FakeHelperLauncher(h => { h.Send(new MemTestMessage.Allocated(256 * MemorySizing.MB));
+            h.Send(new MemTestMessage.BadWord(4096, 0, 8)); h.Send(new MemTestMessage.Done(256 * MemorySizing.MB, 1, 1)); h.Exit(); }), 16 * MemorySizing.GB);
+        Assert.Equal(StressSuiteOutcome.StoppedOnProblem, bad.Outcome);
+        Assert.Equal(StressSuiteStepState.Problem, bad.Steps[1].State);
+        Assert.Contains("found a problem (Memory errors found)", bad.Message);
+        Assert.Equal(StressSuiteStepState.NotRun, bad.Steps[2].State);
     }
 }

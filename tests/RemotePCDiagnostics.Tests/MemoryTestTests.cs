@@ -111,13 +111,17 @@ public class MemoryTestTests
     [InlineData(64L * GB, MemoryTestMode.Quick, 2048L * MB)]      // capped at 2 GB
     [InlineData(16L * GB, MemoryTestMode.Full, 13056L * MB)]      // 80%: 13107 MB → 13056 MB
     [InlineData(4L * GB, MemoryTestMode.Full, 2048L * MB)]        // leave 2 GB free wins over 80%
-    [InlineData(2L * GB, MemoryTestMode.Full, null)]              // nothing left after the reserve
-    [InlineData(1050L * MB, MemoryTestMode.Quick, null)]          // quick also keeps 1 GB free
+    [InlineData(2L * GB, MemoryTestMode.Full, 256L * MB)]         // nothing left after the reserve → low-memory floor
+    [InlineData(1050L * MB, MemoryTestMode.Quick, 256L * MB)]     // quick reserve leaves too little → floor
+    [InlineData(400L * MB, MemoryTestMode.Quick, 256L * MB)]      // IdeaPad case (~400 MB free): still tests 256 MB
+    [InlineData(384L * MB, MemoryTestMode.Full, 256L * MB)]       // exactly floor + 128 MB reserve
+    [InlineData(383L * MB, MemoryTestMode.Quick, null)]           // below that: can't run
+    [InlineData(0L, MemoryTestMode.Quick, null)]
     public void Sizing(long available, MemoryTestMode mode, long? expected)
     {
         var s = MemorySizing.Plan(available, mode);
         Assert.Equal(expected, s);
-        if (s is { } v) { Assert.Equal(0, v % MemorySizing.ChunkBytes); Assert.True(available - v >= (mode == MemoryTestMode.Full ? 2 * GB : GB)); }
+        if (s is { } v) { Assert.Equal(0, v % MemorySizing.ChunkBytes); Assert.True(available - v >= (v == MemorySizing.FloorBytes ? MemorySizing.LowMemoryReserve : mode == MemoryTestMode.Full ? 2 * GB : GB)); }
     }
 
     // ---- protocol ----
@@ -174,14 +178,51 @@ public class MemoryTestTests
     }
 
     [Fact]
-    public async Task HelperMissing_OrTooLittleMemory_CouldNotFinish()
+    public async Task HelperMissing_OrTooLittleMemory_CouldNotRun_NotAHardwareProblem()
     {
         var r1 = await new MemoryTest(new FakeMemoryInfo(16 * GB), new FakeHelperLauncher { Throw = true }, NoSensors(), new FakeStressClock()).RunAsync(Opts);
-        Assert.Equal(MemoryTestOutcome.Failed, r1.Outcome);
+        Assert.Equal(MemoryTestOutcome.CouldNotRun, r1.Outcome);
+        Assert.Contains("helper couldn't start", r1.Notice);
+        Assert.Equal(DiagnosticStatus.Warning, MemoryTestModule.ToStatus(r1.Outcome));
         var launcher = new FakeHelperLauncher();
-        var r2 = await new MemoryTest(new FakeMemoryInfo(1 * GB), launcher, NoSensors(), new FakeStressClock()).RunAsync(Opts);
-        Assert.Equal(MemoryTestOutcome.Failed, r2.Outcome);
+        var r2 = await new MemoryTest(new FakeMemoryInfo(300 * MB, 16 * GB), launcher, NoSensors(), new FakeStressClock()).RunAsync(Opts);
+        Assert.Equal(MemoryTestOutcome.CouldNotRun, r2.Outcome);
+        Assert.True(r2.LowMemory);
         Assert.Null(launcher.Bytes); // never started
+        Assert.Equal("Couldn't run: not enough free memory", r2.Headline);
+        Assert.StartsWith("The memory test couldn't run: not enough free memory. Close some programs and try again.", r2.Explanation);
+        Assert.DoesNotContain("problem", r2.Headline + r2.Explanation);
+        Assert.Equal(300 * MB, r2.AvailableBytes);
+        Assert.Equal(16 * GB, r2.TotalBytes);
+        Assert.Contains("300 MB free of 16,384 MB", r2.Notice);
+    }
+
+    [Fact]
+    public async Task HelperCouldNotAllocate_IsLowMemory_CouldNotRun()
+    {
+        var launcher = new FakeHelperLauncher(h => { h.Send(new MemTestMessage.Fail("could not allocate memory")); h.Exit(); });
+        var r = await new MemoryTest(new FakeMemoryInfo(16 * GB), launcher, NoSensors(), new FakeStressClock()).RunAsync(Opts);
+        Assert.Equal(MemoryTestOutcome.CouldNotRun, r.Outcome);
+        Assert.True(r.LowMemory);
+        Assert.Contains("could not allocate memory", r.Notice);
+    }
+
+    [Fact]
+    public async Task EventLogMeasurements_CarryTheExactReason()
+    {
+        var r = await new MemoryTest(new FakeMemoryInfo(300 * MB, 16 * GB), new FakeHelperLauncher(), NoSensors(), new FakeStressClock()).RunAsync(Opts);
+        var ms = RemotePCDiagnostics.Core.Logging.ResultEventLogger.Measurements(r).ToDictionary(x => x.Name, x => x.Value);
+        Assert.Equal("CouldNotRun", ms["Outcome"]);
+        Assert.Equal((300 * MB).ToString(), ms["AvailableBytes"]);
+        Assert.Equal((16 * GB).ToString(), ms["TotalBytes"]);
+        Assert.Equal("0", ms["PlannedBytes"]);
+        Assert.Contains("not enough free memory", ms["Notice"]);
+
+        var crash = await new MemoryTest(new FakeMemoryInfo(16 * GB), new FakeHelperLauncher(h => { h.Send(new MemTestMessage.Progress(0, "Ones", 0.2, 0)); h.Exit(); }),
+            NoSensors(), new FakeStressClock()).RunAsync(Opts);
+        var cm = RemotePCDiagnostics.Core.Logging.ResultEventLogger.Measurements(crash).ToDictionary(x => x.Name, x => x.Value);
+        Assert.Equal(MemorySizing.Plan(16 * GB, MemoryTestMode.Quick).ToString(), cm["PlannedBytes"]);
+        Assert.Contains("exited before finishing", cm["Notice"]);
     }
 
     [Fact]
@@ -251,7 +292,7 @@ public class MemoryTestTests
         try
         {
             var r = await new MemoryTest(new FakeMemoryInfo(16 * GB), new ProcessMemTestHelperLauncher(dir), NoSensors(), new FakeStressClock()).RunAsync(Opts);
-            Assert.Equal(MemoryTestOutcome.Failed, r.Outcome);
+            Assert.Equal(MemoryTestOutcome.CouldNotRun, r.Outcome);
         }
         finally { Directory.Delete(dir, true); }
     }
@@ -259,12 +300,12 @@ public class MemoryTestTests
     [Fact]
     public async Task RealHelperProcess_RunsSweep_AndReportsDone()
     {
-        // 1.2 GB "available" → Quick plans one 64 MB chunk; the real helper runs for ~3 s.
+        // 1.2 GB "available" → Quick's plan is under the floor, so it tests 256 MB; the real helper runs for ~3 s.
         var logs = new List<string>();
         var test = new MemoryTest(new FakeMemoryInfo(1229 * MB), new ProcessMemTestHelperLauncher(AppContext.BaseDirectory), NoSensors(), log: l => { lock (logs) logs.Add(l); });
         var r = await test.RunAsync(new MemoryTestOptions { Mode = MemoryTestMode.Quick, Duration = TimeSpan.FromSeconds(3), SampleInterval = TimeSpan.FromMilliseconds(200) });
         Assert.True(r.Outcome == MemoryTestOutcome.Passed, string.Join("\n", logs));
-        Assert.Equal(64 * MB, r.TestBytes);
+        Assert.Equal(256 * MB, r.TestBytes);
         Assert.True(r.Passes >= 1);
         Assert.Equal(0, r.Errors);
     }

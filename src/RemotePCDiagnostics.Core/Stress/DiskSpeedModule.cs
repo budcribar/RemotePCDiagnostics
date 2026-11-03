@@ -11,6 +11,7 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
     public bool IncludeInRunAll => false;
     public event EventHandler<DiagnosticResult>? Updated;
     string IStressSuiteModule.SuiteName => "Disk";
+    bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.Failed } or Exception;
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.Overheated };
     bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.StoppedByUser };
     public event EventHandler<DiskSpeedProgress>? ProgressChanged;

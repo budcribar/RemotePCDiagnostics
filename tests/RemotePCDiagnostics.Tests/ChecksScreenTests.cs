@@ -167,4 +167,16 @@ public class ChecksScreenTests
         Assert.Equal(("ok", "Your PC looks healthy"), ChecksBanner.Build(ok, null, true));
         Assert.Equal(("ok", "Not checked yet"), ChecksBanner.Build(ok, null, false));
     }
+
+    [Fact]
+    public async Task StressGroup_SurfacesSuiteSummary_AndErrors_InsteadOfSwallowing()
+    {
+        var (svc, _, s, stress) = Build();
+        stress[1].CouldNotRun = true;
+        await s.RunGroupAsync(CheckGroup.Stress);
+        Assert.NotNull(s.LastSuiteResult);
+        Assert.Equal(StressSuiteOutcome.Completed, s.LastSuiteResult!.Outcome);
+        Assert.Contains("Skipped: Memory", s.LastRunNote);
+
+    }
 }

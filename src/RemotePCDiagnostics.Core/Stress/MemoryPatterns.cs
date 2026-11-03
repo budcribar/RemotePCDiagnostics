@@ -62,10 +62,16 @@ public static class MemorySizing
     public const double QuickFraction = 0.10, FullFraction = 0.80;
     public const long QuickCap = 2 * GB;
     public const long QuickReserve = 1 * GB, FullReserve = 2 * GB;
+    /// <summary>Low-memory fallback: when the normal plan is below this, test this much as long as
+    /// <see cref="LowMemoryReserve"/> stays free (so a busy PC is still tested instead of skipped).</summary>
+    public const long FloorBytes = 256 * MB, LowMemoryReserve = 128 * MB;
+    /// <summary>Least available memory needed to run at all.</summary>
+    public const long MinAvailableBytes = FloorBytes + LowMemoryReserve;
 
     /// <summary>
     /// Quick: min(10% of available, 2 GB). Full: up to 80% of available. Both always leave the reserve
-    /// (1 GB quick, 2 GB full) of available memory untouched. Rounded down to whole 64 MB chunks; null when too little is free.
+    /// (1 GB quick, 2 GB full) of available memory untouched. Rounded down to whole 64 MB chunks. When that is under 256 MB
+    /// (a busy PC), 256 MB is tested if 128 MB still stays free; null only when less than 384 MB is available.
     /// </summary>
     public static long? Plan(long availableBytes, MemoryTestMode mode)
     {
@@ -73,7 +79,8 @@ public static class MemorySizing
             ? Math.Min(Math.Min((long)(availableBytes * QuickFraction), QuickCap), availableBytes - QuickReserve)
             : Math.Min((long)(availableBytes * FullFraction), availableBytes - FullReserve);
         size -= size % ChunkBytes;
-        return size >= MinTestBytes ? size : null;
+        if (size >= FloorBytes) return size;
+        return availableBytes >= MinAvailableBytes ? FloorBytes : null;
     }
 }
 

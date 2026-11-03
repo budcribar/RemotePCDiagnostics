@@ -250,17 +250,34 @@ public sealed class DiagnosticsService
                     steps[i] = steps[i] with { State = StressSuiteStepState.Skipped, Message = "Skipped: not available on this PC" };
                     continue;
                 }
+                if (!m.IsOverheatedResult(r) && m.IsCouldNotRunResult(r))
+                {
+                    // Couldn't run (e.g. not enough free memory) is not a hardware problem: skip it and run the rest.
+                    steps[i] = steps[i] with { State = StressSuiteStepState.Skipped, Message = $"Skipped: {r.Message}" };
+                    Log?.Invoke($"Stress suite: {m.Name} skipped (couldn't run: {r.Message})");
+                    continue;
+                }
                 if (r.Status == DiagnosticStatus.Error || m.IsOverheatedResult(r))
                 {
                     var hot = m.IsOverheatedResult(r);
                     steps[i] = steps[i] with { State = StressSuiteStepState.Problem, Message = r.Message };
-                    return Finish(StressSuiteOutcome.StoppedOnProblem, hot
+                    return Finish(StressSuiteOutcome.StoppedOnProblem, (hot
                         ? $"Stress tests stopped: the PC got too hot during the {m.SuiteName} test. The remaining tests were not run."
-                        : $"Stress tests stopped: the {m.SuiteName} test found a problem. The remaining tests were not run.", i + 1);
+                        : $"Stress tests stopped: the {m.SuiteName} test found a problem ({r.Message}). The remaining tests were not run.") + SkippedNote(i), i + 1);
                 }
                 steps[i] = steps[i] with { State = r.Status == DiagnosticStatus.Ok ? StressSuiteStepState.Passed : StressSuiteStepState.Problem, Message = r.Message };
             }
-            return Finish(StressSuiteOutcome.Completed, $"Stress tests finished ({label}).", steps.Length);
+            return Finish(StressSuiteOutcome.Completed, $"Stress tests finished ({label})." + SkippedNote(steps.Length), steps.Length);
+
+            // " Skipped: Memory (couldn't run: not enough free memory)." for steps skipped so far (not "not available" ones).
+            string SkippedNote(int upTo)
+            {
+                var parts = new List<string>();
+                for (var k = 0; k < upTo && k < steps.Length; k++)
+                    if (steps[k].State == StressSuiteStepState.Skipped && steps[k].Message is { } msg && msg.StartsWith("Skipped: ", StringComparison.Ordinal))
+                        parts.Add($"{steps[k].DisplayName} ({msg["Skipped: ".Length..]})");
+                return parts.Count == 0 ? "" : $" Skipped: {string.Join("; ", parts)}.";
+            }
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {

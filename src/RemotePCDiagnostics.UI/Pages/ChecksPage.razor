@@ -21,6 +21,7 @@
         <span class="banner-icon"><Icon Name="@(banner.Kind is "warn" or "err" ? "crash" : "sec")" Size="22" /></span>
         <div class="banner-text">
             <div class="banner-title" data-testid="checks-banner-title">@banner.Title</div>
+            @if (Screen.Progress is null && Screen.LastRunNote is { } runNote) { <div class="banner-note" data-testid="checks-run-note">@runNote</div> }
             @if (Screen.Progress is null && summary.NotRunNote is { } note) { <div class="banner-note">@note</div> }
             else if (Screen.Progress is null) { <div class="banner-sub">Expand a group or click a test to see its full results on the right.</div> }
         </div>

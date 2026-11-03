@@ -38,6 +38,9 @@ public interface IStressSuiteModule : IDiagnosticModule
     bool IsUnavailableResult(DiagnosticResult result) => false;
     /// <summary>True when a result means the test stopped because the PC got too hot.</summary>
     bool IsOverheatedResult(DiagnosticResult result) => false;
+    /// <summary>True when the test couldn't run or finish for a reason that is not a hardware problem (too little free memory,
+    /// helper couldn't start, the test itself crashed). The suite skips it with the reason and carries on.</summary>
+    bool IsCouldNotRunResult(DiagnosticResult result) => result.Payload is Exception;
     /// <summary>True when a result means the user stopped the test before it finished.</summary>
     bool IsStoppedByUserResult(DiagnosticResult result) => result.Cancelled;
 }

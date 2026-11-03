@@ -12,6 +12,7 @@ public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, 
     public bool IncludeInRunAll => false;
     public event EventHandler<DiagnosticResult>? Updated;
     string IStressSuiteModule.SuiteName => "Network";
+    bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.Failed } or Exception;
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.Overheated };
     bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.StoppedByUser };
     public event EventHandler<NetworkTestProgress>? ProgressChanged;

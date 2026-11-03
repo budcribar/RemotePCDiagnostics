@@ -12,6 +12,7 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
     public event EventHandler<DiagnosticResult>? Updated;
     string IStressSuiteModule.SuiteName => "GPU";
     bool IStressSuiteModule.IsUnavailableResult(DiagnosticResult r) => r.Payload is GpuStressReport { Outcome: GpuStressOutcome.NoGpu };
+    bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => r.Payload is GpuStressReport { Outcome: GpuStressOutcome.Failed } or Exception;
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is GpuStressReport { Outcome: GpuStressOutcome.Overheated };
     bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is GpuStressReport { Outcome: GpuStressOutcome.StoppedByUser };
     public event EventHandler<GpuStressProgress>? ProgressChanged;
