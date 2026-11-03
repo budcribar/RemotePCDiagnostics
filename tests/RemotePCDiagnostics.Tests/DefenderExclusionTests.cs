@@ -12,7 +12,7 @@ public class DefenderExclusionTests
     private sealed class Sys(DefenderInfo? defender) : IMemorySystem
     {
         public List<string> Scripts = [];
-        public string ReadBack = """{"Paths":["D:\\work","C:\\Users\\bud\\.nuget\\packages"],"Procs":["C:\\VS\\MSBuild.exe"]}""";
+        public string ReadBack = """{"Paths":["D:\\work","C:\\Users\\user\\.nuget\\packages"],"Procs":["C:\\VS\\MSBuild.exe"]}""";
         public bool Fail;
         public DefenderInfo? Defender = defender;
         public MemoryReading ReadMemory() => new(16L << 30, 8L << 30);
@@ -36,7 +36,7 @@ public class DefenderExclusionTests
         }
     }
 
-    private static readonly DefenderInfo Work = new(true, [@"D:\work"], [@"D:\work", @"C:\Users\bud\.nuget\packages"], [@"C:\VS\MSBuild.exe", @"C:\VS\devenv.exe"]);
+    private static readonly DefenderInfo Work = new(true, [@"D:\work"], [@"D:\work", @"C:\Users\user\.nuget\packages"], [@"C:\VS\MSBuild.exe", @"C:\VS\devenv.exe"]);
 
     [Fact]
     public void Parse_ActiveDefender_PassiveMode_AndNonAdminReads()
@@ -63,19 +63,19 @@ public class DefenderExclusionTests
     public void Plan_OnlyMissingExclusions_NothingWhenInactiveOrNoProjects()
     {
         var status = new DefenderProbe.Status(true, [@"D:\work"], [@"C:\VS\devenv.exe"], true);
-        var plan = DefenderProbe.Plan(status, [@"D:\work\shop", @"E:\code"], @"C:\Users\bud\.nuget\packages", [@"C:\VS\devenv.exe", @"C:\VS\MSBuild.exe"]);
-        Assert.Equal([@"E:\code", @"C:\Users\bud\.nuget\packages"], plan.MissingFolders);
+        var plan = DefenderProbe.Plan(status, [@"D:\work\shop", @"E:\code"], @"C:\Users\user\.nuget\packages", [@"C:\VS\devenv.exe", @"C:\VS\MSBuild.exe"]);
+        Assert.Equal([@"E:\code", @"C:\Users\user\.nuget\packages"], plan.MissingFolders);
         Assert.Equal([@"C:\VS\MSBuild.exe"], plan.MissingProcesses);
         Assert.True(plan.HasWork);
         Assert.False(DefenderProbe.Plan(status with { Active = false }, [@"E:\code"], null, []).HasWork);
-        Assert.False(DefenderProbe.Plan(status, [], @"C:\Users\bud\.nuget\packages", [@"C:\VS\MSBuild.exe"]).HasWork); // no code on this PC
+        Assert.False(DefenderProbe.Plan(status, [], @"C:\Users\user\.nuget\packages", [@"C:\VS\MSBuild.exe"]).HasWork); // no code on this PC
     }
 
     [Fact]
     public void Scripts_QuoteSingleQuotes()
     {
-        var add = DefenderProbe.AddScript([@"D:\Bud's code"], [@"C:\VS\MSBuild.exe"]);
-        Assert.Contains(@"Add-MpPreference -ExclusionPath @('D:\Bud''s code')", add);
+        var add = DefenderProbe.AddScript([@"D:\Ann's code"], [@"C:\VS\MSBuild.exe"]);
+        Assert.Contains(@"Add-MpPreference -ExclusionPath @('D:\Ann''s code')", add);
         Assert.Contains(@"Add-MpPreference -ExclusionProcess @('C:\VS\MSBuild.exe')", add);
         Assert.Equal(@"$ErrorActionPreference='Stop';Remove-MpPreference -ExclusionPath @('D:\x');", DefenderProbe.RemoveScript([@"D:\x"], []));
     }
@@ -106,12 +106,12 @@ public class DefenderExclusionTests
         Assert.True(r.Success, r.Message);
         Assert.Contains("1 build tool", r.Message);   // devenv wasn't kept by Defender (read back)
         Assert.Contains("1 weren't kept", r.Message);
-        Assert.Equal(["path|D:\\work", "path|C:\\Users\\bud\\.nuget\\packages", "process|C:\\VS\\MSBuild.exe"],
+        Assert.Equal(["path|D:\\work", "path|C:\\Users\\user\\.nuget\\packages", "process|C:\\VS\\MSBuild.exe"],
             j.All.Where(c => c.Kind == ChangeKind.DefenderExclusion).Select(c => c.Target));
 
         var undo = svc.UndoFor("defender-exclusions")!;
         Assert.True((await svc.UndoAsync(undo)).Success);
-        Assert.Contains(sys.Scripts, x => x.Contains("Remove-MpPreference -ExclusionPath @('D:\\work','C:\\Users\\bud\\.nuget\\packages')") && x.Contains("-ExclusionProcess @('C:\\VS\\MSBuild.exe')"));
+        Assert.Contains(sys.Scripts, x => x.Contains("Remove-MpPreference -ExclusionPath @('D:\\work','C:\\Users\\user\\.nuget\\packages')") && x.Contains("-ExclusionProcess @('C:\\VS\\MSBuild.exe')"));
         Assert.DoesNotContain(j.All, c => c.Kind == ChangeKind.DefenderExclusion);
     }
 

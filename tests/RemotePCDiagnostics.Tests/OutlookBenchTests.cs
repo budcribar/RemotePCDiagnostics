@@ -65,8 +65,9 @@ public class OutlookBenchTests
     [Fact]
     public void Anonymize_IsStableAndHidesName()
     {
-        Assert.Equal(OutlookBenchMath.Anonymize("budslaptop"), OutlookBenchMath.Anonymize("BUDSLAPTOP"));
-        Assert.DoesNotContain("BUD", OutlookBenchMath.Anonymize("BUDSLAPTOP"));
+        Assert.Equal(OutlookBenchMath.Anonymize("desktop-test01"), OutlookBenchMath.Anonymize("DESKTOP-TEST01"));
+        Assert.DoesNotContain("DESKTOP-TEST01", OutlookBenchMath.Anonymize("DESKTOP-TEST01"), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("TEST01", OutlookBenchMath.Anonymize("DESKTOP-TEST01"), StringComparison.OrdinalIgnoreCase);
         Assert.StartsWith("PC-", OutlookBenchMath.Anonymize("x"));
     }
 }

@@ -102,7 +102,7 @@ public class OsqueryDiagnosticsAndFallbackTests
     {
         var l = Responder(sql => sql switch
         {
-            _ when sql.Contains("system_info") => """[{"computer_name":"BUD-LAPTOP","hardware_vendor":"LENOVO","hardware_model":"IdeaPad 5","cpu_brand":"AMD Ryzen 7 5700U","cpu_physical_cores":"8","cpu_logical_cores":"16","physical_memory":"17179869184"}]""",
+            _ when sql.Contains("system_info") => """[{"computer_name":"DESKTOP-TEST01","hardware_vendor":"LENOVO","hardware_model":"IdeaPad 5","cpu_brand":"AMD Ryzen 7 5700U","cpu_physical_cores":"8","cpu_logical_cores":"16","physical_memory":"17179869184"}]""",
             _ when sql.Contains("disk_info") => """[{"disk_index":"0","hardware_model":"WDC PC SN530","disk_size":""}]""",
             _ when sql.Contains("logical_drives") => """[{"device_id":"C:","type":"Local Disk","size":"511000000000"},{"device_id":"D:","type":"CD-ROM Disc","size":"0"},{"device_id":"E:","type":"Removable Disk","size":"32000000000"}]""",
             _ => "[]",
@@ -119,7 +119,7 @@ public class OsqueryDiagnosticsAndFallbackTests
         Assert.True(inv.Disks.FromFallback);
         Assert.Equal(511000000000, inv.Disks.Items.Single().SizeBytes);
         var summary = inv.FriendlySummary();
-        Assert.Contains("BUD-LAPTOP (LENOVO IdeaPad 5)", summary);
+        Assert.Contains("DESKTOP-TEST01 (LENOVO IdeaPad 5)", summary);
         Assert.Contains("AMD Ryzen 7 5700U", summary);
         Assert.Contains("16 GB memory", summary);
         Assert.Contains("1 drive", summary);

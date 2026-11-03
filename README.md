@@ -34,6 +34,10 @@ RemotePCDiagnostics is a single Windows desktop application (a WPF or WinForms h
 - RemoteBlazorWebView hosts the UI so a remote technician can drive it from a browser.
 - Admin rights are needed for some modules (event logs, sensors).
 
+## License
+
+RemotePCDiagnostics is released under the [MIT License](LICENSE). The bundled copy of HardeningKitty in `third_party/HardeningKitty` keeps its own license: see [third_party/HardeningKitty/module/LICENSE](third_party/HardeningKitty/module/LICENSE).
+
 ## Licensing notes
 
 Planned components are used under their own licenses and need to be confirmed before shipping: osquery (Apache-2.0 or GPL-2.0, used under Apache-2.0), LibreHardwareMonitor (MPL-2.0), HardeningKitty (MIT), NAudio (MIT), Vortice.Direct3D12 (MIT; the NPU test). This is not legal advice.

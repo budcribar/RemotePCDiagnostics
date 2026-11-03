@@ -127,7 +127,7 @@ public class AppRemovalTests
             Assert.Contains(never, AppRemoval.NeverRemove);
             Assert.Null(AppRemoval.FindPackage(never, Ms));
         }
-        Assert.Equal("xbfy0k16fey96", AppRemoval.Packages.Single(p => p.Name.Contains("Dropbox")).PublisherId); // seen on a real PC (BUDSLAPTOP)
+        Assert.Equal("xbfy0k16fey96", AppRemoval.Packages.Single(p => p.Name.Contains("Dropbox")).PublisherId); // seen on a real PC
         // Same name, another publisher: not ours.
         Assert.Null(AppRemoval.FindPackage("Microsoft.BingNews", "aaaaaaaaaaaaa"));
         Assert.NotNull(AppRemoval.FindPackage("MICROSOFT.BINGNEWS", Ms));

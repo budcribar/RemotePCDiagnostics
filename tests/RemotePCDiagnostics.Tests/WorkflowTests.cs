@@ -32,7 +32,7 @@ public class WorkflowTests
         public Task<bool> RemoveResumeAsync(CancellationToken ct) { Calls.Add("unregister"); return Task.FromResult(RemoveOk); }
         public Task<bool> RestartAsync(TimeSpan d, string m, CancellationToken ct) { Calls.Add("restart"); return Task.FromResult(true); }
         public Task AbortRestartAsync(CancellationToken ct) { Calls.Add("abort"); return Task.CompletedTask; }
-        public AutoLogonStatus GetAutoLogonStatus() => new("bud", "PC1", false, HelloOnly, null, Email);
+        public AutoLogonStatus GetAutoLogonStatus() => new("user", "PC1", false, HelloOnly, null, Email);
         public bool ValidateCredentials(string u, string d, string p) { Calls.Add($"validate:{d}\\{u}"); return PasswordOk; }
         public AutoLogonBackup EnableAutoLogon(string u, string d, string p, int n) { Calls.Add($"autologon-on:{n}"); return new("0", "old", "PC1", null, HelloOnly ? 2 : null); }
         public void DisableAutoLogon(AutoLogonBackup? b)
@@ -384,9 +384,9 @@ public class WorkflowTests
         var powerPlanId = flow.State.Fixes.Single(f => f.Remediation?.Kind == RemediationKind.SetBalancedPowerPlan).Id;
         flow.SetApproved(powerPlanId, false);
 
-        Assert.Null(await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "secret")));
+        Assert.Null(await flow.StartAsync(new AutoLogonRequest("user", "PC1", "secret")));
         Assert.Equal(WorkflowStage.RestartBefore, flow.State.Stage);
-        Assert.Equal(["validate:PC1\\bud", "autologon-on:2", "register", "restart"], sys.Calls);
+        Assert.Equal(["validate:PC1\\user", "autologon-on:2", "register", "restart"], sys.Calls);
         Assert.DoesNotContain("secret", store.Load()!.ToJson());                  // password never saved
 
         // First restart: Windows booted after the request.
@@ -425,7 +425,7 @@ public class WorkflowTests
             await first.Flow.RunChecksAsync();
             var skipped = first.Flow.State.Fixes.Single(f => f.Remediation?.Kind == RemediationKind.SetBalancedPowerPlan).Id;
             first.Flow.SetApproved(skipped, false);
-            Assert.Null(await first.Flow.StartAsync(new AutoLogonRequest("bud", "PC1", "test-secret")));
+            Assert.Null(await first.Flow.StartAsync(new AutoLogonRequest("user", "PC1", "test-secret")));
             Assert.DoesNotContain("test-secret", File.ReadAllText(workflowPath));
 
             var second = Make(new FileWorkflowStore(workflowPath), new FileBenchmarkStore(benchmarkPath), first.Sys);
@@ -522,7 +522,7 @@ public class WorkflowTests
         var (flow, sys, _, _, _, _) = Make();
         await flow.RunChecksAsync();
         sys.PasswordOk = false;
-        Assert.Contains("didn't work", await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "nope")));
+        Assert.Contains("didn't work", await flow.StartAsync(new AutoLogonRequest("user", "PC1", "nope")));
         Assert.Equal(WorkflowStage.Review, flow.State.Stage);
         Assert.DoesNotContain(sys.Calls, c => c.StartsWith("autologon-on") || c == "restart");
     }
@@ -533,7 +533,7 @@ public class WorkflowTests
         var (flow, sys, _, _, _, _) = Make();
         await flow.RunChecksAsync();
         sys.RegisterOk = false;
-        Assert.NotNull(await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "pw")));
+        Assert.NotNull(await flow.StartAsync(new AutoLogonRequest("user", "PC1", "pw")));
         Assert.Contains("autologon-off:old", sys.Calls);
         Assert.DoesNotContain("restart", sys.Calls);
     }
@@ -543,7 +543,7 @@ public class WorkflowTests
     {
         var (flow, sys, _, _, _, _) = Make();
         await flow.RunChecksAsync();
-        await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "pw"));
+        await flow.StartAsync(new AutoLogonRequest("user", "PC1", "pw"));
         await flow.CancelAsync();
         Assert.Equal(WorkflowStage.Cancelled, flow.State.Stage);
         Assert.Contains("abort", sys.Calls);
@@ -620,7 +620,7 @@ public class WorkflowTests
         public long Available = 4L << 30; // 75% of 16 GB used: transparency suggested
         public bool? Transparency = true;
         public Dictionary<string, byte[]?> Approved = new();
-        private static readonly StartupEntry Spotify = new("Spotify", "\"C:\\Users\\bud\\AppData\\Roaming\\Spotify\\Spotify.exe\" /minimized", true);
+        private static readonly StartupEntry Spotify = new("Spotify", "\"C:\\Users\\user\\AppData\\Roaming\\Spotify\\Spotify.exe\" /minimized", true);
         public MemoryReading ReadMemory() => new(16L << 30, Available);
         public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> s, CancellationToken ct) =>
             Task.FromResult(new MemorySnapshot(ReadMemory(), [], Startup: Approved.ContainsKey("Spotify") ? [] : [Spotify], TransparencyOn: Transparency));
@@ -681,7 +681,7 @@ public class WorkflowTests
         Assert.Contains(flow.State.Fixes, f => f.MemoryAction == MemoryActionType.DisableTransparency);
         flow.SetApproved(Id(flow, f => f.Remediation?.Kind == RemediationKind.SetBalancedPowerPlan), false); // un-ticked by the tech
 
-        Assert.Null(await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "secret")));
+        Assert.Null(await flow.StartAsync(new AutoLogonRequest("user", "PC1", "secret")));
         sys.Uptime = TimeSpan.Zero;
         mem.Available = 12L << 30; // fresh boot: memory isn't tight any more, so transparency is no longer suggested (skipped)
         await flow.ResumeAsync();
@@ -721,7 +721,7 @@ public class WorkflowTests
         Assert.Equal(2, s.Restarts.Count);
         Assert.All(s.Restarts, r => { Assert.True(r.Accepted); Assert.NotNull(r.BootedUtc); });
         Assert.Equal(2, CountOf(html, "Restarted the PC at "));
-        Assert.Contains("Turned on automatic sign-in for PC1\\bud", html);
+        Assert.Contains("Turned on automatic sign-in for PC1\\user", html);
         Assert.Contains("turned it off again", html);
         Assert.NotNull(s.AutoLogonRestoredUtc);
         Assert.Contains(WorkflowService.ResumeTaskName, html);
@@ -756,7 +756,7 @@ public class WorkflowTests
     {
         var (flow, sys, _, _, _, _) = Make();
         await flow.RunChecksAsync();
-        await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "pw"));
+        await flow.StartAsync(new AutoLogonRequest("user", "PC1", "pw"));
         sys.DisableFails = true;
         sys.Uptime = TimeSpan.Zero;
         await flow.ResumeAsync();
@@ -767,7 +767,7 @@ public class WorkflowTests
         Assert.Contains("Access to the Winlogon key was denied.", s.AutoLogonRestoreError);
         var html = sys.Report!;
         Assert.Contains("class=\"alert\"><strong>Important: automatic sign-in could not be turned off.</strong>", html);
-        Assert.Contains("to PC1\\bud by itself", html);
+        Assert.Contains("to PC1\\user by itself", html);
         Assert.Contains("could NOT be turned off again", html);
         Assert.DoesNotContain("turned it off again", html);
         Assert.Contains("could NOT be turned off", string.Join("\n", s.Log));
@@ -793,7 +793,7 @@ public class WorkflowTests
     {
         var (flow, sys, _, _, journal) = MakeFull();
         await flow.RunChecksAsync();
-        await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "pw"));
+        await flow.StartAsync(new AutoLogonRequest("user", "PC1", "pw"));
         sys.Uptime = TimeSpan.Zero;
         await flow.ResumeAsync();                                                     // before benchmark + fixes; waiting for the 2nd restart
         await flow.CancelAsync();
@@ -918,9 +918,9 @@ public class WorkflowTests
         await flow.RunChecksAsync();
         sys.Calls.Clear();
         sys.PasswordOk = false;
-        var err = await flow.StartAsync(new AutoLogonRequest("bud@outlook.com", "MicrosoftAccount", "wrong"));
+        var err = await flow.StartAsync(new AutoLogonRequest("user@outlook.com", "MicrosoftAccount", "wrong"));
         Assert.Equal("That password didn't work for this account. Nothing was changed.", err);
-        Assert.Equal(["validate:MicrosoftAccount\\bud@outlook.com"], sys.Calls);
+        Assert.Equal(["validate:MicrosoftAccount\\user@outlook.com"], sys.Calls);
         Assert.Equal(WorkflowStage.Review, flow.State.Stage);
         Assert.False(flow.State.AutoLogonEnabled);
     }
@@ -929,18 +929,18 @@ public class WorkflowTests
     public void SignInPrefill_UsesMicrosoftAccountEmail_WhenPresent()
     {
         var (flow, sys, _, _, _, _) = Make();
-        sys.Email = "bud@outlook.com";
+        sys.Email = "user@outlook.com";
         var st = flow.AutoLogonStatus();
-        Assert.Equal("bud@outlook.com", st.PrefillUser);
-        Assert.Equal("bud", st.UserName);
+        Assert.Equal("user@outlook.com", st.PrefillUser);
+        Assert.Equal("user", st.UserName);
     }
 
     [Fact]
     public void SignInPrefill_FallsBackToUserName_ForLocalAccount()
     {
         var (flow, _, _, _, _, _) = Make();
-        Assert.Equal("bud", flow.AutoLogonStatus().PrefillUser);
-        Assert.Equal("bud", new AutoLogonStatus("bud", "PC1", false, false, null, "not-an-email").PrefillUser);
+        Assert.Equal("user", flow.AutoLogonStatus().PrefillUser);
+        Assert.Equal("user", new AutoLogonStatus("user", "PC1", false, false, null, "not-an-email").PrefillUser);
     }
 
     [Fact]
@@ -953,13 +953,13 @@ public class WorkflowTests
 
         // If password isn't cached locally on a Windows Hello-only PC, message explains why and suggests Skip.
         sys.PasswordOk = false;
-        var err = await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "wrong"));
+        var err = await flow.StartAsync(new AutoLogonRequest("user", "PC1", "wrong"));
         Assert.Contains("Windows Hello-only PC", err);
         Assert.Contains("tick Skip", err);
 
         // Valid password enables auto sign-in, records PasswordLessBuildVersion = 2 in backup, and restores it on finish.
         sys.PasswordOk = true;
-        Assert.Null(await flow.StartAsync(new AutoLogonRequest("bud", "PC1", "secret")));
+        Assert.Null(await flow.StartAsync(new AutoLogonRequest("user", "PC1", "secret")));
         Assert.Equal(2, store.Load()!.AutoLogonBackup!.PasswordLessBuildVersion);
         sys.Uptime = TimeSpan.Zero;
         await flow.ResumeAsync();

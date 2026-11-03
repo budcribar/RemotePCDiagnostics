@@ -17,10 +17,10 @@ public class OsqueryJsonTests
 {
     private const string SystemInfoJson = """
     [
-      {"board_model":"0K8J6M","board_serial":"/ABC123/CNXYZ/","board_vendor":"Dell Inc.","board_version":"A00","computer_name":"BUD-PC",
+      {"board_model":"0K8J6M","board_serial":"/ABC123/CNXYZ/","board_vendor":"Dell Inc.","board_version":"A00","computer_name":"DESKTOP-TEST02",
        "cpu_brand":"13th Gen Intel(R) Core(TM) i7-13700","cpu_logical_cores":"24","cpu_microcode":"","cpu_physical_cores":"16",
        "cpu_sockets":"1","cpu_subtype":"-1","cpu_type":"x86_64","hardware_model":"OptiPlex 7010","hardware_serial":"ABC123",
-       "hardware_vendor":"Dell Inc.","hardware_version":"","hostname":"BUD-PC","local_hostname":"BUD-PC",
+       "hardware_vendor":"Dell Inc.","hardware_version":"","hostname":"DESKTOP-TEST02","local_hostname":"DESKTOP-TEST02",
        "physical_memory":"34359738368","uuid":"4c4c4544-0042-4310-8030-b1c04f4d3233"}
     ]
     """;

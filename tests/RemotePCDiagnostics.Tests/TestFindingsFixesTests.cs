@@ -553,7 +553,7 @@ public class TestFindingsFixesTests
     public void Defender_CardAndResult_CountTheSameWay()
     {
         var folders = Enumerable.Range(1, 18).Select(i => $@"D:\src\repo{i}").ToList();
-        var nuget = @"C:\Users\bud\.nuget\packages";
+        var nuget = @"C:\Users\user\.nuget\packages";
         var tools = Enumerable.Range(1, 7).Select(i => $@"C:\VS\tool{i}.exe").ToList();
         var info = new DefenderInfo(true, folders, [.. folders, nuget], tools);
         var card = MemorySuggestionEngine.Build(new MemorySnapshot(new(16 * Gb, 8 * Gb), [new("MsMpEng", 1, 300L << 20, IsService: true)], Defender: info))
@@ -567,7 +567,7 @@ public class TestFindingsFixesTests
     [Fact]
     public async Task Defender_Result_MatchesTheCard()
     {
-        var folders = new List<string> { @"D:\work", @"C:\Users\bud\.nuget\packages" };
+        var folders = new List<string> { @"D:\work", @"C:\Users\user\.nuget\packages" };
         var tools = new List<string> { @"C:\VS\MSBuild.exe" };
         var sys = new Sys
         {

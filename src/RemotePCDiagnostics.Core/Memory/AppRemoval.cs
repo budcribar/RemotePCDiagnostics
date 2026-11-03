@@ -370,7 +370,7 @@ public static class AppRemoval
 
     public const string Category = "Remove apps";
 
-    /// <summary>Power Automate is the one consumer app that is ticked by default (Bud's call); the other consumer apps stay opt-in.</summary>
+    /// <summary>Power Automate is the one consumer app that is ticked by default (a deliberate product choice); the other consumer apps stay opt-in.</summary>
     public const string PowerAutomateId = "power-automate";
 
     /// <summary>App-removal cards: one per app (ticked or opt-in), one for the Xbox group, and the ContentDeliveryManager settings.</summary>

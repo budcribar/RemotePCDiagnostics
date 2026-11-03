@@ -28,7 +28,7 @@ public sealed class ProjectLocatorTests : IDisposable
     {
         Assert.Equal(@"D:\work\my app", ProjectLocator.ParseWorkspaceJson("""{"folder":"file:///d%3A/work/my%20app"}"""));
         Assert.Equal(@"C:\src\mono", ProjectLocator.ParseWorkspaceJson("""{"workspace":"file:///c%3A/src/mono/all.code-workspace"}"""));
-        Assert.Null(ProjectLocator.ParseWorkspaceJson("""{"folder":"vscode-remote://wsl%2Bubuntu/home/bud/app"}"""));
+        Assert.Null(ProjectLocator.ParseWorkspaceJson("""{"folder":"vscode-remote://wsl%2Bubuntu/home/user/app"}"""));
         Assert.Null(ProjectLocator.ParseWorkspaceJson("not json"));
     }
 
@@ -45,7 +45,7 @@ public sealed class ProjectLocatorTests : IDisposable
     public void ParsesRiderRecentSolutions()
     {
         var xml = """<application><component name="RiderRecentProjectsManager"><option name="additionalInfo"><map><entry key="$USER_HOME$/RiderProjects/Game/Game.sln"><value/></entry><entry key="E:/code/Tools"><value/></entry></map></option></component></application>""";
-        Assert.Equal([@"C:\Users\bud\RiderProjects\Game", @"E:\code\Tools"], ProjectLocator.ParseRiderRecent(xml, @"C:\Users\bud").ToList());
+        Assert.Equal([@"C:\Users\user\RiderProjects\Game", @"E:\code\Tools"], ProjectLocator.ParseRiderRecent(xml, @"C:\Users\user").ToList());
     }
 
     [Fact]

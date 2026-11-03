@@ -331,7 +331,7 @@ public sealed class StorageCleanupTests : IDisposable
     [Fact]
     public void ClassicOst_OnlyWhenNewOutlookIsUsed_StaleOnly_NeverPst()
     {
-        var ost = Make(L("Microsoft", "Outlook", "bud@msn.com.ost"), 20 << 20, 90);
+        var ost = Make(L("Microsoft", "Outlook", "user@example.com.ost"), 20 << 20, 90);
         var recentOst = Make(L("Microsoft", "Outlook", "work.ost"), 1000, 10);
         var pst = Make(L("Microsoft", "Outlook", "archive.pst"), 1000, 400);
         var olk = L("Microsoft", "Olk");
@@ -421,7 +421,7 @@ public sealed class StorageCleanupTests : IDisposable
         File.WriteAllText(P(ext, "extensions.json"), JsonSerializer.Serialize(new object[]
         {
             new { identifier = new { id = "ms-dotnettools.csharp" }, version = "2.10.0", relativeLocation = "ms-dotnettools.csharp-2.10.0-win32-x64" },
-            new { identifier = new { id = "google.geminicodeassist" }, version = "2.98.0", location = new { path = "/c:/Users/bud/.vscode/extensions/google.geminicodeassist-2.98.0", scheme = "file" } },
+            new { identifier = new { id = "google.geminicodeassist" }, version = "2.98.0", location = new { path = "/c:/Users/user/.vscode/extensions/google.geminicodeassist-2.98.0", scheme = "file" } },
             new { identifier = new { id = "anthropic.claude-code" }, version = "2.1.300", relativeLocation = "anthropic.claude-code-2.1.300" },
         }));
 
