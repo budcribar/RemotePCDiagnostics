@@ -51,6 +51,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
 
     public sealed record Incident(DateTimeOffset Time, string App, string Version, bool IsCrash, string Part, string Message)
     {
+        public HangOccurrence? Hang { get; init; }
         public string? ReviewKey { get; init; }
         public string Code { get; init; } = "";
         public string? RuntimeError { get; init; }
@@ -97,6 +98,8 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             .Select(f => $"{f.Item1}: {f.Value}");
         return new(e.Time, app.Length > 0 ? app : "Unknown app", version, isCrash, part, e.ShortMessage)
         {
+            Hang = isCrash ? null : new(e.Time, app, e.DataAt(5, "ExeFileName"), e.DataAt(7, "PackageFullName"),
+                e.DataAt(9, "HangType"), e.DataAt(6, "ReportId")),
             ReviewKey = EventReviews.Key(e),
             Code = code.Length > 0 && !code.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? $"0x{code}" : code,
             Metadata = string.Join("\n", metadata)
@@ -160,7 +163,23 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             new("hangs", "Apps that stopped responding", hangs.Any(Recent) ? AreaLevel.Warning : hangs.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok,
                 hangs.Count == 0 ? "None" : AreaModuleBase.Plural(hangs.Count, "time"),
                 hangs.FirstOrDefault() is { } h ? $"Latest: {h.App}, {WindowsEventLog.FormatTime(h.Time)}" : $"In the last {Days} days",
-                cols, hangs.Select(Row).ToList()),
+                [.. cols, "Count"], hangs.GroupBy(i => (i.Hang!.Path.Length > 0 ? i.Hang.Path : i.App) + "\n" + i.Hang.Package,
+                    StringComparer.OrdinalIgnoreCase).Select(g =>
+                {
+                    var latest = g.First();
+                    var row = Row(latest);
+                    var occurrences = g.Select(i => i.Hang!).ToList();
+                    var package = latest.Hang!.Package;
+                    var detail = string.Join("\n\n", g.Select(i => $"{WindowsEventLog.FormatTime(i.Time)}\n{i.Expanded}"));
+                    return row with
+                    {
+                        Values = [row.Values[0], package.Length == 0 ? latest.App : $"{latest.App} · {package.Split('_')[0]}",
+                            row.Values[2], row.Values[3], row.Values[4], g.Count().ToString()],
+                        Detail = package.Length == 0 ? detail : $"Recorded package: {package}\n\n{detail}",
+                        ReviewKeys = g.Select(i => i.ReviewKey).OfType<string>().ToList(),
+                        HangOccurrences = occurrences
+                    };
+                }).OrderByDescending(row => row.HangOccurrences!.Count).ToList()),
             new("apps", "Most affected apps", top is null ? AreaLevel.Ok : AreaLevel.Neutral,
                 top is null ? "No problems recorded" : top.Key, top is null ? $"In the last {Days} days" : $"{AreaModuleBase.Plural(top.Count(), "problem")} in the last {Days} days",
                 ["App", "Crashes", "Freezes", "Last time"],
@@ -174,6 +193,34 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         var status = repeatApp is not null ? DiagnosticStatus.Error : recent.Count > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
         return new(cards, summary, status);
     }
+    public async Task<string> FindHangEvidenceAsync(IReadOnlyList<HangOccurrence> occurrences, CancellationToken ct)
+    {
+        var lines = new List<string>();
+        foreach (var hang in occurrences.Take(5))
+        {
+            var start = hang.Time.AddMinutes(-2).UtcDateTime.ToString("O");
+            var end = hang.Time.AddMinutes(2).UtcDateTime.ToString("O");
+            var time = $"TimeCreated[@SystemTime >= '{start}' and @SystemTime <= '{end}']";
+            var app = await _log.QueryAsync("Application",
+                $"*[System[{time} and (EventID=1000 or EventID=1001 or EventID=1002)]]", 40, ct);
+            var system = await _log.QueryAsync("System",
+                $"*[System[{time} and (Level=1 or Level=2)]]", 30, ct);
+            lines.Add($"{WindowsEventLog.FormatTime(hang.Time)} · {hang.App}");
+            if (app is null || system is null) lines.Add("Some event logs could not be read.");
+            var related = (app ?? []).Concat(system ?? []).Where(e => e.EventId != 1002 || e.Time != hang.Time)
+                .Select(e => (Event: e, Exact: Guid.TryParse(hang.ReportId, out var id) && e.EventId == 1001 &&
+                    (e.Data.Any(value => Guid.TryParse(value, out var other) && other == id) ||
+                     e.Message.Contains(id.ToString(), StringComparison.OrdinalIgnoreCase))))
+                .OrderByDescending(item => item.Exact).ThenBy(item => (item.Event.Time - hang.Time).Duration()).Take(8).ToList();
+            if (related.Count == 0) lines.Add("No related entries found in the two-minute window.");
+            foreach (var (e, exact) in related)
+                lines.Add($"{(exact ? "Matching report ID" : "Nearby event")} · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId}\n{(exact ? e.Message : e.ShortMessage)}");
+            lines.Add("");
+        }
+        if (occurrences.Count > 5) lines.Add("Showing evidence for the five latest freezes in this group.");
+        return string.Join("\n", lines);
+    }
+
     private static string AppDetails(IEnumerable<Incident> incidents)
     {
         var crashes = incidents.Where(i => i.IsCrash).ToList();
@@ -189,3 +236,5 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         }.Where(line => line is not null));
     }
 }
+
+public sealed record HangOccurrence(DateTimeOffset Time, string App, string Path, string Package, string Type, string ReportId);

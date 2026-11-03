@@ -41,7 +41,7 @@ public sealed record AreaRow(
     IReadOnlyList<string?>? SortKeys = null,
     string? Key = null,
     IReadOnlyList<AreaAction>? Actions = null,
-    string? Detail = null, string? DumpPath = null, string? GetHelpUri = null, string? EventCopyText = null, IReadOnlyList<string>? ReviewKeys = null);
+    string? Detail = null, string? DumpPath = null, string? GetHelpUri = null, string? EventCopyText = null, IReadOnlyList<string>? ReviewKeys = null, IReadOnlyList<HangOccurrence>? HangOccurrences = null);
 /// <remarks><see cref="AreaRow.Key"/> is an optional stable id (e.g. the service name) used for row actions.
 /// <see cref="AreaRow.Detail"/> is optional longer text (full message, occurrences) shown when the row is expanded.</remarks>
 

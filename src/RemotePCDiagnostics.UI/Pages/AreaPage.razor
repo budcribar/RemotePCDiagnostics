@@ -188,6 +188,16 @@ else
                                     {
                                         <div class="row-detail-text">@detail</div>
                                     }
+                                    @if (m is CrashesModule crashes && row.HangOccurrences is { Count: > 0 } occurrences)
+                                    {
+                                        <button type="button" class="btn-small" disabled="@_findingHangEvidence"
+                                            @onclick="() => FindHangEvidence(crashes, row, occurrences)">Find related evidence</button>
+                                        <button type="button" class="btn-small" @onclick="() => CopyGroupForCopilot(open, [row])">Review freeze group with Copilot</button>
+                                        @if (ReferenceEquals(_hangEvidenceRow, row))
+                                        {
+                                            <div class="row-detail-text" role="status">@(_findingHangEvidence ? "Checking Windows logs…" : _hangEvidence)</div>
+                                        }
+                                    }
                                     @if (row.ReviewKeys is { Count: > 0 })
                                     {
                                         <a href="https://copilot.microsoft.com/" target="_blank" rel="noopener noreferrer">Review with Copilot</a>
@@ -271,6 +281,19 @@ else
 
     private string? _getHelpError;
     private string? _copyStatus;
+    private bool _findingHangEvidence;
+    private AreaRow? _hangEvidenceRow;
+    private string? _hangEvidence;
+
+    private async Task FindHangEvidence(CrashesModule module, AreaRow row, IReadOnlyList<HangOccurrence> occurrences)
+    {
+        if (_findingHangEvidence) return;
+        _findingHangEvidence = true;
+        _hangEvidenceRow = row;
+        _hangEvidence = null;
+        try { _hangEvidence = await module.FindHangEvidenceAsync(occurrences, CancellationToken.None); }
+        finally { _findingHangEvidence = false; }
+    }
     private string? _copilotGroupStatus;
     private bool _copilotGroupCopied;
     private bool _sendingCopilot;
@@ -303,7 +326,8 @@ else
         var findings = rows.Select(row =>
         {
             var fields = string.Join("\n", card.Columns.Zip(row.Values, (label, value) => $"{label}: {value}"));
-            return string.Join("\n", new[] { fields, row.EventCopyText ?? row.Detail }.Where(text => !string.IsNullOrWhiteSpace(text)));
+            var evidence = ReferenceEquals(_hangEvidenceRow, row) ? _hangEvidence : null;
+            return string.Join("\n", new[] { fields, row.EventCopyText ?? row.Detail, evidence }.Where(text => !string.IsNullOrWhiteSpace(text)));
         });
         var prompt = $$"""
             Help a technician triage this group of Windows diagnostic findings.
