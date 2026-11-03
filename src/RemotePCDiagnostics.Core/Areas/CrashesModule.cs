@@ -195,29 +195,50 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
     }
     public async Task<string> FindHangEvidenceAsync(IReadOnlyList<HangOccurrence> occurrences, CancellationToken ct)
     {
-        var lines = new List<string>();
-        foreach (var hang in occurrences.Take(5))
+        const int maxOccurrences = 20;
+        var selected = occurrences.Where(h => h.Time != default).Distinct().OrderByDescending(h => h.Time)
+            .Take(maxOccurrences).OrderBy(h => h.Time).ToList();
+        var windows = new List<(DateTimeOffset Start, DateTimeOffset End)>();
+        foreach (var hang in selected)
         {
-            var start = hang.Time.AddMinutes(-2).UtcDateTime.ToString("O");
-            var end = hang.Time.AddMinutes(2).UtcDateTime.ToString("O");
-            var time = $"TimeCreated[@SystemTime >= '{start}' and @SystemTime <= '{end}']";
-            var app = await _log.QueryAsync("Application",
-                $"*[System[{time} and (EventID=1000 or EventID=1001 or EventID=1002)]]", 40, ct);
-            var system = await _log.QueryAsync("System",
-                $"*[System[{time} and (Level=1 or Level=2)]]", 30, ct);
-            lines.Add($"{WindowsEventLog.FormatTime(hang.Time)} · {hang.App}");
-            if (app is null || system is null) lines.Add("Some event logs could not be read.");
-            var related = (app ?? []).Concat(system ?? []).Where(e => e.EventId != 1002 || e.Time != hang.Time)
-                .Select(e => (Event: e, Exact: Guid.TryParse(hang.ReportId, out var id) && e.EventId == 1001 &&
-                    (e.Data.Any(value => Guid.TryParse(value, out var other) && other == id) ||
-                     e.Message.Contains(id.ToString(), StringComparison.OrdinalIgnoreCase))))
-                .OrderByDescending(item => item.Exact).ThenBy(item => (item.Event.Time - hang.Time).Duration()).Take(8).ToList();
-            if (related.Count == 0) lines.Add("No related entries found in the two-minute window.");
-            foreach (var (e, exact) in related)
-                lines.Add($"{(exact ? "Matching report ID" : "Nearby event")} · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId}\n{(exact ? e.Message : e.ShortMessage)}");
-            lines.Add("");
+            var start = hang.Time.AddMinutes(-5);
+            var end = hang.Time.AddMinutes(5);
+            if (windows.Count > 0 && start <= windows[^1].End)
+                windows[^1] = (windows[^1].Start, end);
+            else
+                windows.Add((start, end));
         }
-        if (occurrences.Count > 5) lines.Add("Showing evidence for the five latest freezes in this group.");
+
+        var reportIds = selected.Select(h => Guid.TryParse(h.ReportId, out var id) ? id : Guid.Empty)
+            .Where(id => id != Guid.Empty).ToHashSet();
+        var lines = new List<string> { "Historical timeline. Nearby events are timestamp matches only." };
+        foreach (var (start, end) in windows)
+        {
+            var time = $"TimeCreated[@SystemTime >= '{start.UtcDateTime:O}' and @SystemTime <= '{end.UtcDateTime:O}']";
+            var appQuery = $"*[System[{time} and (EventID=1000 or EventID=1001 or EventID=1002 or Level=1 or Level=2)]]";
+            var systemQuery = $"*[System[{time} and (Level=1 or Level=2 or Level=3 or Provider[@Name='Microsoft-Windows-WindowsUpdateClient' or @Name='Microsoft-Windows-Kernel-PnP'])]]";
+            var appTask = _log.QueryAsync("Application", appQuery, 60, ct);
+            var systemTask = _log.QueryAsync("System", systemQuery, 60, ct);
+            await Task.WhenAll(appTask, systemTask).ConfigureAwait(false);
+            var app = await appTask;
+            var system = await systemTask;
+
+            lines.Add($"\n{WindowsEventLog.FormatTime(start)} to {WindowsEventLog.FormatTime(end)}");
+            if (app is null || system is null) lines.Add("Some event logs could not be read.");
+            var related = (app ?? []).Concat(system ?? [])
+                .Select(e => (Event: e, Exact: e.EventId == 1001 &&
+                    (e.Data.Any(value => Guid.TryParse(value, out var id) && reportIds.Contains(id)) ||
+                     reportIds.Any(id => e.Message.Contains(id.ToString(), StringComparison.OrdinalIgnoreCase)))))
+                .OrderByDescending(item => item.Exact).ThenBy(item => item.Event.Time).Take(20).ToList();
+            if (related.Count == 0) lines.Add("No matching log entries found in this window.");
+            foreach (var (e, exact) in related)
+            {
+                var message = exact && e.Message.Length > 0 ? e.Message : e.ShortMessage;
+                lines.Add($"{(exact ? "Matching report ID" : "Nearby event")} · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId}\n{message}");
+            }
+        }
+        if (occurrences.Count > maxOccurrences) lines.Add($"Timeline limited to the {maxOccurrences} latest freezes.");
+        lines.Add("Historical memory pressure, disk latency, and wait-chain measurements were not collected by this lookup.");
         return string.Join("\n", lines);
     }
 

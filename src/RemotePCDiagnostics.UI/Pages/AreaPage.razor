@@ -84,6 +84,13 @@ else
                             @onclick="() => SetReview(m.Name, groupKeys, !showingReviewed)">@(showingReviewed ? "Undo group review" : "Mark group as reviewed")</button>
                         <button type="button" class="btn-small" @onclick="() => CopyGroupForCopilot(open, issueRows)">Review group with Copilot</button>
                     </div>
+                    @if (m is CrashesModule crashModule && open.Id == "hangs")
+                    {
+                        var selected = issueRows.Where(_selectedHangGroups.Contains).ToList();
+                        <button type="button" class="btn-small" disabled="@(selected.Count == 0 || _findingHangEvidence || _sendingCopilot)"
+                            @onclick="() => CollectHangGroups(crashModule, open, selected)">Collect evidence &amp; review with Copilot (@selected.Count selected)</button>
+                        @if (_collectingHangGroups) { <p role="status">Collecting the shared timeline…</p> }
+                    }
                     @if (_pendingCopilotPrompt is { } prompt)
                     {
                         <div class="row-detail-text">@prompt</div>
@@ -190,6 +197,8 @@ else
                                     }
                                     @if (m is CrashesModule crashes && row.HangOccurrences is { Count: > 0 } occurrences)
                                     {
+                                        <label><input type="checkbox" checked="@_selectedHangGroups.Contains(row)"
+                                            @onchange="e => SelectHangGroup(row, e.Value is true)" /> Include in shared timeline</label>
                                         <button type="button" class="btn-small" disabled="@_findingHangEvidence"
                                             @onclick="() => FindHangEvidence(crashes, row, occurrences)">Find related evidence</button>
                                         <button type="button" class="btn-small" @onclick="() => CopyGroupForCopilot(open, [row])">Review freeze group with Copilot</button>
@@ -254,6 +263,7 @@ else
     private void ToggleReviewed()
     {
         _showReviewed = !_showReviewed;
+        _selectedHangGroups.Clear();
         _pendingCopilotPrompt = null;
         _copilotGroupStatus = null;
         _expanded = null;
@@ -281,7 +291,31 @@ else
 
     private string? _getHelpError;
     private string? _copyStatus;
+    private readonly HashSet<AreaRow> _selectedHangGroups = new(ReferenceEqualityComparer.Instance);
+    private bool _collectingHangGroups;
     private bool _findingHangEvidence;
+
+    private void SelectHangGroup(AreaRow row, bool selected)
+    {
+        if (selected) _selectedHangGroups.Add(row);
+        else _selectedHangGroups.Remove(row);
+    }
+
+    private async Task CollectHangGroups(CrashesModule module, AreaCard card, IReadOnlyList<AreaRow> rows)
+    {
+        if (_findingHangEvidence) return;
+        _findingHangEvidence = _collectingHangGroups = true;
+        _pendingCopilotPrompt = null;
+        _copilotGroupStatus = null;
+        try
+        {
+            var timeline = await module.FindHangEvidenceAsync(rows.SelectMany(r => r.HangOccurrences ?? []).ToList(), CancellationToken.None);
+            if (_open == card.Id)
+                _pendingCopilotPrompt = BuildCopilotPrompt(card, rows) +
+                    "\n\nAssess whether the timeline supports a shared cause across the selected groups. Explain what remains uncertain.\n\n" + timeline;
+        }
+        finally { _findingHangEvidence = _collectingHangGroups = false; }
+    }
     private AreaRow? _hangEvidenceRow;
     private string? _hangEvidence;
 
@@ -321,7 +355,7 @@ else
         }
     }
 
-    private async Task CopyGroupForCopilot(AreaCard card, IReadOnlyList<AreaRow> rows)
+    private string BuildCopilotPrompt(AreaCard card, IReadOnlyList<AreaRow> rows)
     {
         var findings = rows.Select(row =>
         {
@@ -329,7 +363,7 @@ else
             var evidence = ReferenceEquals(_hangEvidenceRow, row) ? _hangEvidence : null;
             return string.Join("\n", new[] { fields, row.EventCopyText ?? row.Detail, evidence }.Where(text => !string.IsNullOrWhiteSpace(text)));
         });
-        var prompt = $$"""
+        return $$"""
             Help a technician triage this group of Windows diagnostic findings.
             - Start with the issues that warrant attention and explain why. Identify related or repeated events where the evidence supports a connection.
             - Cite the event IDs, error codes, app names, or timestamps that support your conclusions. Separate confirmed observations from suspected causes.
@@ -340,6 +374,11 @@ else
 
             {{string.Join("\n\n", findings)}}
             """;
+    }
+
+    private async Task CopyGroupForCopilot(AreaCard card, IReadOnlyList<AreaRow> rows)
+    {
+        var prompt = BuildCopilotPrompt(card, rows);
         _copilotGroupStatus = null;
         _copilotGroupCopied = false;
         if (Sp.GetService(typeof(ICopilotHandoff)) is ICopilotHandoff)
@@ -406,7 +445,7 @@ else
         finally { _analyzingDump = false; }
     }
 
-    private void Open(string id) { _showReviewed = false; _pendingCopilotPrompt = null; _copilotGroupStatus = null; _reviewError = null; _open = id; _expanded = null; _expandedKey = null; }
+    private void Open(string id) { _selectedHangGroups.Clear(); _showReviewed = false; _pendingCopilotPrompt = null; _copilotGroupStatus = null; _reviewError = null; _open = id; _expanded = null; _expandedKey = null; }
     private void Close() { _open = null; _expanded = null; _expandedKey = null; }
     // The row whose details are open; matched by content too, so an auto-refresh (new row objects) keeps it open.
     private AreaRow? _expanded;
