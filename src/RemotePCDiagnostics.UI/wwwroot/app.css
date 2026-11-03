@@ -383,6 +383,7 @@ body.ct-resizing { user-select: none; cursor: col-resize; }
 .ct-check { width: 20px; height: 20px; padding: 0; flex: none; font-size: 12px; line-height: 1; border-radius: 5px; margin-top: 3px; }
 .ct-check[aria-checked="true"], .ct-check[aria-checked="mixed"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 .btn-stop { background: var(--error-bg); color: var(--error-strong); border-color: var(--error-border); }
+.ct-section-label { font-size: 0.875rem; margin: 8px 0 2px; }
 .ct-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .ct-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer; min-width: 0; }
 .ct-row:hover { border-color: var(--accent); }

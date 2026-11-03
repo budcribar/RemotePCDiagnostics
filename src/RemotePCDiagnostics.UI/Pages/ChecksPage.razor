@@ -19,6 +19,8 @@
         <button class="btn-small" data-testid="checks-expand-all" @onclick="() => Screen.SetAllCollapsed(false)">Expand all</button>
         <button class="btn-small" data-testid="checks-collapse-all" @onclick="() => Screen.SetAllCollapsed(true)">Collapse all</button>
     </div>
+    @if (_group == CheckGroup.Stress || Screen.Progress is not null)
+    {
     <section class="banner banner-@banner.Kind ct-banner" data-testid="checks-banner">
         <span class="banner-icon"><Icon Name="@(banner.Kind is "warn" or "err" ? "crash" : "sec")" Size="22" /></span>
         <div class="banner-text">
@@ -28,6 +30,11 @@
             else if (Screen.Progress is null) { <div class="banner-sub">Expand a group or click a test to see its full results on the right.</div> }
         </div>
     </section>
+    }
+    else if (Screen.LastRunNote is { } lastRunNote)
+    {
+        <p class="meta" data-testid="checks-run-note">@lastRunNote</p>
+    }
 
     <div class="ct-workspace" data-testid="checks-workspace">
         <section class="ct-list" aria-label="@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")">
@@ -102,6 +109,8 @@
 
     private string RunLabel(IDiagnosticModule m) => Screen.RunLabel(m.Name) ?? "";
 
+    private readonly Dictionary<string, int> _checkRanks = new(StringComparer.OrdinalIgnoreCase);
+
     private RenderFragment Group(CheckGroup g, string title, string sub) => __builder =>
     {
         var mods = Screen.Modules(g);
@@ -110,6 +119,25 @@
         var all = Screen.AllSelected(g);
         var running = Screen.RunningGroup == g;
         var otherBusy = Screen.IsBusy && !running || Diagnostics.IsStressSuiteRunning && !running || (g == CheckGroup.Stress && !running && Diagnostics.IsAnyStressRunning);
+        var checkModules = mods;
+        var attentionCount = 0;
+        if (g == CheckGroup.Checks)
+        {
+            var results = mods.Select(m => (Module: m, Kind: CheckRows.KindOf(Store.Get(m.Name)))).ToList();
+            if (!running && results.All(r => r.Kind != RowKind.Running))
+            {
+                foreach (var result in results)
+                    _checkRanks[result.Module.Name] = result.Kind switch
+                    {
+                        RowKind.Critical => 0,
+                        RowKind.Warning => 1,
+                        _ => 2
+                    };
+            }
+            int Rank(IDiagnosticModule m) => _checkRanks.GetValueOrDefault(m.Name, 2);
+            checkModules = mods.OrderBy(Rank).ToList();
+            attentionCount = checkModules.Count(m => Rank(m) < 2);
+        }
         var id = g.ToString().ToLowerInvariant();
         var pills = CheckRows.Pills(mods.Select(m => CheckRows.KindOf(Store.Get(m.Name))));
         <div class="card ct-group" data-testid="checks-group-@id">
@@ -144,8 +172,13 @@
             @if (!collapsed)
             {
                 <div class="ct-rows">
-                    @foreach (var m in mods)
+                    @for (var index = 0; index < checkModules.Count; index++)
                     {
+                        @if (attentionCount > 0 && (index == 0 || index == attentionCount))
+                        {
+                            <h2 class="ct-section-label">@(index == 0 ? $"Needs attention · {attentionCount}" : "Other checks")</h2>
+                        }
+                        var m = checkModules[index];
                         var mod = m;
                         var r = Store.Get(m.Name);
                         var kind = CheckRows.KindOf(r);
@@ -153,7 +186,7 @@
                         var isSel = string.Equals(Screen.SelectedModule, m.Name, StringComparison.OrdinalIgnoreCase);
                         var prev = kind == RowKind.NotRun ? LastRun(m) : null;
                         var line = kind == RowKind.NotRun ? (prev is { } pv ? $"Last run {pv.LocalTime:g}: {pv.Outcome} · {pv.Summary}" : "Not run yet") : kind == RowKind.Running ? "In progress" : r.Message;
-                        <div class="ct-row @(isSel ? "selected" : "") @(kind == RowKind.Running ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
+                        <div @key="mod.Name" class="ct-row @(isSel ? "selected" : "") @(kind == RowKind.Running ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
                              data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => Select(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
                             <button class="ct-check" role="checkbox" aria-checked="@(Screen.IsSelected(m.Name) ? "true" : "false")" aria-label="Include @m.DisplayName"
                                     data-testid="checks-select-@m.Name.ToLowerInvariant()" @onclick="() => Screen.SetSelected(mod.Name, !Screen.IsSelected(mod.Name))" @onclick:stopPropagation="true">@(Screen.IsSelected(m.Name) ? "✓" : "")</button>
