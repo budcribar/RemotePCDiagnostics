@@ -50,7 +50,7 @@ public sealed record AreaCard(
     string Id, string Title, AreaLevel Level, string Headline, string Meta,
     IReadOnlyList<string> Columns, IReadOnlyList<AreaRow> Rows,
     string? ErrorText = null, string? EmptyText = null, string? Note = null,
-    IReadOnlyList<AreaAction>? Actions = null)
+    IReadOnlyList<AreaAction>? Actions = null, bool PreserveRowOrder = false)
 {
     public static AreaCard Failed(string id, string title, string errorText) =>
         new(id, title, AreaLevel.Error, "", "", [], [], ErrorText: errorText);

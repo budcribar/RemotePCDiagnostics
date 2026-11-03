@@ -98,7 +98,7 @@ else
                             @for (var hi = 0; hi < open.Columns.Count; hi++)
                             {
                                 var col = hi;
-                                <th @key="col" class="sortable-th" scope="col" aria-sort="@(sc == col ? (sd ? "descending" : "ascending") : "none")" data-testid="area-th-@col">
+                                <th @key="col" class="sortable-th @ColumnClass(open.Columns[col])" scope="col" aria-sort="@(sc == col ? (sd ? "descending" : "ascending") : "none")" data-testid="area-th-@col">
                                     <button type="button" class="th-btn" @onclick="() => ToggleSort(m.Name, open, col)">@open.Columns[col]<span class="sort-arrow" aria-hidden="true">@(sc == col ? (sd ? " ▼" : " ▲") : "")</span></button></th>
                             }
                             @if (svcActions is not null || hasRowRemActions) { <th>Actions</th> }
@@ -116,7 +116,7 @@ else
                                 @for (var i = 0; i < row.Values.Count; i++)
                                 {
                                     var col = open.Columns.Count > i ? open.Columns[i] : "";
-                                    <td>@if (i == 0) { @if (expandable) { <span class="row-caret" aria-hidden="true">@(expanded ? "▾" : "▸")</span> } <span class="dot dot-@Dot(level)"></span> }
+                                    <td class="@ColumnClass(open.Columns[i])">@if (i == 0) { @if (expandable) { <span class="row-caret" aria-hidden="true">@(expanded ? "▾" : "▸")</span> } <span class="dot dot-@Dot(level)"></span> }
                                         @if (col is "Type" or "Level") { <span class="badge badge-@row.Values[i].ToLowerInvariant()">@row.Values[i]</span> } else if (svc is not null && i == 1 && _svcStatus.ContainsKey(svc.Name)) { @svc.FriendlyStatus } else { @row.Values[i] }</td>
                                 }
                                 @if (svcActions is not null)
@@ -190,7 +190,14 @@ else
     // Sort choice per page+card; static so it survives auto-refresh and navigation.
     private static readonly Dictionary<string, (int Col, bool Desc)> _sorts = new();
     private static (int, bool) SortFor(string module, AreaCard c) =>
-        _sorts.TryGetValue(module + "/" + c.Id, out var v) ? v : AreaSort.Default(c.Columns);
+        _sorts.TryGetValue(module + "/" + c.Id, out var v) ? v : c.PreserveRowOrder ? (-1, false) : AreaSort.Default(c.Columns);
+    private static string? ColumnClass(string column) => column switch
+    {
+        "When" or "Last seen" or "Last time" or "Installed" or "Date" or "Time" => "drawer-time",
+        "Times" or "Count" or "Crashes" or "Freezes" or "Instances" => "drawer-count",
+        _ => null
+    };
+
     private static void ToggleSort(string module, AreaCard c, int col)
     {
         var (cur, desc) = SortFor(module, c);

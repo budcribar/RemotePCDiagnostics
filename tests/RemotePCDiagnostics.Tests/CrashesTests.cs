@@ -76,7 +76,7 @@ public class CrashesTests
         var rep = B(Crash("a.exe", "2026-10-27T09:00:00Z"), Crash("b.exe", "2026-10-20T09:00:00Z"), Crash("b.exe", "2026-10-21T09:00:00Z"),
             Crash("b.exe", "2026-10-02T09:00:00Z"));
         var apps = rep.Cards.Single(c => c.Id == "apps");
-        Assert.Equal(["App", "Crashes", "Stopped responding", "Last time"], apps.Columns);
+        Assert.Equal(["App", "Crashes", "Freezes", "Last time"], apps.Columns);
         Assert.Equal(["a.exe", "b.exe"], AreaSort.Sort(apps.Rows, 1, false).Select(r => r.Values[0]));          // by crash count
         Assert.Equal(["a.exe", "b.exe"], AreaSort.Sort(apps.Rows, 3, true).Select(r => r.Values[0]));           // last seen, newest first
         var crashes = rep.Cards.Single(c => c.Id == "crashes");

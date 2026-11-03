@@ -556,3 +556,7 @@ tr.history-day td { font-weight: 700; color: var(--text-strong); background: var
 .dash-banner .banner-actions { flex-wrap: nowrap; }
 .banner-more-small { font-size: 12px; }
 @media (max-width: 1100px) { .banner.dash-banner, .dash-banner .banner-actions { flex-wrap: wrap; } }
+
+table.sortable .drawer-time { white-space: nowrap; }
+table.sortable .drawer-count { width: 1%; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+tr.row-detail td { overflow-wrap: anywhere; }
