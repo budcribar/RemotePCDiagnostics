@@ -15,9 +15,8 @@
     var cpuGroup = sensors?.Groups.FirstOrDefault(g => g.Id == "cpu");
     var cpuTemp = cpuGroup?.Hottest;
     var querying = hw.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
-    var checks = Diagnostics.Modules.Where(m => m.IncludeInRunAll).ToList();
     var all = Diagnostics.Modules.Select(m => Store.Get(m.Name)).ToList();
-    var checking = checks.Any(m => Store.Get(m.Name).Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun);
+    var checking = Diagnostics.Modules.Where(m => m.IncludeInRunAll).Any(m => Store.Get(m.Name).Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun);
     var stressBusy = suiteBusy || Diagnostics.IsAnyStressRunning;
     var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled); }), suite);
     var problems = summary.Problems.Count;
@@ -33,8 +32,8 @@
 }
 <div class="toolbar"><h1 data-testid="dashboard-title">Dashboard</h1></div>
 
-<section class="banner banner-@bannerKind" data-testid="dashboard-banner">
-    <span class="banner-icon"><Icon Name="@(problems > 0 && !checking ? "crash" : "sec")" Size="26" /></span>
+<section class="banner banner-@bannerKind dash-banner" data-testid="dashboard-banner">
+    <span class="banner-icon"><Icon Name="@(problems > 0 && !checking ? "crash" : "sec")" Size="22" /></span>
     <div class="banner-text">
         <div class="banner-title" data-testid="dashboard-health">
             @if (checking) { <span>Checking your PC…</span> }
@@ -45,7 +44,7 @@
                 @for (var i = 0; i < shownProblems.Count; i++)
                 {
                     var p = shownProblems[i];
-                    <a href="checks" class="banner-problem banner-problem-@(p.IsError ? "err" : "warn")" data-testid="dashboard-problem-@p.Name.ToLowerInvariant()"
+                    <a href="@Screen.PageFor(p.Name)" class="banner-problem banner-problem-@(p.IsError ? "err" : "warn")" data-testid="dashboard-problem-@p.Name.ToLowerInvariant()"
                        @onclick="() => Open(p.Name)" @onclick:preventDefault>@p.DisplayName</a>@(i < shownProblems.Count - 1 ? ", " : "")
                 }
                 @if (shownProblems.Count < problems)
@@ -54,26 +53,27 @@
                 }
             }
         </div>
-        <div class="banner-sub" data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {RemotePCDiagnostics.Core.History.TimeText.Ago(l, now)}" : "Not checked yet")</div>
-        @if (summary.NotRunNote is { } note)
-        {
-            <div class="banner-note" data-testid="dashboard-notrun-note">
-                <span>@note</span>
-                @if (summary.NotRunHint is { } hint) { <span class="banner-hint"> · @hint</span> }
-                @if (summary.NotRun.Any(m => m.Name == "SecurityAudit"))
-                {
-                    <span> · Security audit is separate: </span><button class="banner-more" data-testid="dashboard-open-audit" @onclick='() => Open("SecurityAudit")'>Open security audit — Start audit</button>
-                }
-            </div>
-        }
+        <div class="banner-sub">
+            <span data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {RemotePCDiagnostics.Core.History.TimeText.Ago(l, now)}" : "Not checked yet")</span>
+            @if (summary.StressNotRunCount > 0)
+            {
+                <span> · </span><a href="stress" class="banner-more banner-more-small" data-testid="dashboard-notrun-count" title="@summary.NotRunNote">@summary.StressNotRunCount on-demand @(summary.StressNotRunCount == 1 ? "test" : "tests") not run</a>
+            }
+            @if (summary.AuditNotRun)
+            {
+                <span> · </span><a href="security-audit" class="banner-more banner-more-small" data-testid="dashboard-audit-notrun">security audit not run</a>
+            }
+        </div>
     </div>
     <div class="banner-actions">
-        <button class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || stressBusy)" @onclick="RunAll">
-            <Icon Name="@(checking ? "refresh" : "play")" Size="14" />@(checking ? "Checking…" : "Run all tests")</button>
-        <button class="btn btn-outline" data-testid="dashboard-runall-stress-short" disabled="@(checking || stressBusy)" @onclick="() => RunSuite(StressSuiteMode.Short)">
-            <Icon Name="play" Size="12" />Run all + stress tests (short, ~1 min each, about 5 min)</button>
-        <button class="btn btn-outline" data-testid="dashboard-runall-stress-extended" disabled="@(checking || stressBusy)" @onclick="() => RunSuite(StressSuiteMode.Extended)">
-            <Icon Name="play" Size="12" />Run all + stress tests (extended, ~5 min each, about 25 min)</button>
+        <button class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || stressBusy)" @onclick="RunAll" title="Runs every read-only check">
+            <Icon Name="@(checking ? "refresh" : "play")" Size="14" />@(checking ? "Checking…" : "Run all checks")</button>
+        <button class="btn btn-outline" data-testid="dashboard-runall-stress-short" disabled="@(checking || stressBusy)" @onclick="() => RunSuite(StressSuiteMode.Short)"
+                title="Short: ~1 min per stress test, about 5 min in all">
+            <Icon Name="play" Size="12" />Run checks + stress tests (short)</button>
+        <button class="btn btn-outline" data-testid="dashboard-runall-stress-extended" disabled="@(checking || stressBusy)" @onclick="() => RunSuite(StressSuiteMode.Extended)"
+                title="Extended: ~5 min per stress test, about 25 min in all">
+            <Icon Name="play" Size="12" />Run checks + stress tests (extended)</button>
     </div>
 </section>
 
@@ -140,19 +140,13 @@
         </div>
     }
 
-    <div class="card dash-card card-click" data-testid="dashboard-open-checks" role="link" tabindex="0"
-         @onclick='() => Nav.NavigateTo("checks")' @onkeydown='e => { if (e.Key is "Enter" or " ") Nav.NavigateTo("checks"); }'>
-        <div class="card-head"><span class="icon-badge"><Icon Name="play" /></span><strong>Checks &amp; tests workspace</strong></div>
-        <div class="card-msg">Inspect all @checks.Count system checks and run hardware stress tests or deep scans.</div>
-        <div class="meta">Open Checks &amp; tests →</div>
-    </div>
 </div>
 
 @code {
     private void Open(string module)
     {
         Screen.FocusModule(module);
-        Nav.NavigateTo("checks");
+        Nav.NavigateTo(Screen.PageFor(module)); // Checks, Stress tests or Security audit, whichever shows this module
     }
     private void Key(KeyboardEventArgs e, string module) { if (e.Key is "Enter" or " ") Open(module); }
     private void RunAll() => _ = Diagnostics.RunAllAsync();

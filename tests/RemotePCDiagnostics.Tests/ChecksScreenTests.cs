@@ -50,6 +50,35 @@ public class ChecksScreenTests
     }
 
     [Fact]
+    public void Pages_ChecksAndStressAreSeparate_AuditHasItsOwnPage()
+    {
+        var (_, _, s, _) = Build();
+        Assert.Equal(["A", "B"], s.ChecksModules.Select(m => m.Name));
+        Assert.Equal(["CpuStress", "MemoryTest"], s.StressModules.Select(m => m.Name));
+        Assert.Equal("checks", s.PageFor("B"));
+        Assert.Equal("stress", s.PageFor("MemoryTest"));
+        Assert.Equal("security-audit", s.PageFor("SecurityAudit"));
+        Assert.Equal("checks", s.PageFor("Unknown"));
+        Assert.Equal(CheckGroup.Checks, s.GroupOf("a"));
+        Assert.Equal(CheckGroup.Stress, s.GroupOf("CpuStress"));
+        Assert.Null(s.GroupOf("SecurityAudit"));
+    }
+
+    [Fact]
+    public void EachPageRemembersItsOwnSelection_FallsBackToFirst()
+    {
+        var (_, _, s, _) = Build();
+        Assert.Equal("A", s.SelectedIn(CheckGroup.Checks)!.Name);
+        Assert.Equal("CpuStress", s.SelectedIn(CheckGroup.Stress)!.Name);
+        s.FocusModule("MemoryTest");
+        s.FocusModule("B");
+        Assert.Equal("B", s.SelectedIn(CheckGroup.Checks)!.Name);
+        Assert.Equal("MemoryTest", s.SelectedIn(CheckGroup.Stress)!.Name);   // visiting Checks doesn't reset the Stress tests page
+        s.SelectedModule = "SecurityAudit";                                  // not on either page: both keep theirs
+        Assert.Equal("B", s.SelectedIn(CheckGroup.Checks)!.Name);
+    }
+
+    [Fact]
     public void Selection_TriState_AndDefaults()
     {
         var (_, _, s, _) = Build();

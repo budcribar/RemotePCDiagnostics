@@ -1,19 +1,21 @@
 @page "/checks"
+@page "/stress"
 @using Microsoft.JSInterop
 @inherits StoreAwareComponent
 @inject ChecksScreenState Screen
 @inject IJSRuntime JS
 @inject RemotePCDiagnostics.Core.History.IHistoryStore History
-@* Checks & Tests: two groups (system checks / stress & deep scans) on the left, the selected test's real page on the right. *@
+@inject NavigationManager Nav
+@* Two pages share this screen: /checks (read-only system checks) and /stress (stress tests, audio, webcam, NPU). The list is on the left,
+   the selected test's real page on the right. *@
 @{
     var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled); }), Diagnostics.LastStressSuiteProgress);
     var anyResult = Diagnostics.Modules.Any(m => Store.Get(m.Name).Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running));
     var banner = ChecksBanner.Build(summary, Screen.Progress, anyResult);
-    var selected = Diagnostics.Modules.FirstOrDefault(m => string.Equals(m.Name, Screen.SelectedModule, StringComparison.OrdinalIgnoreCase))
-        ?? Screen.ChecksModules.FirstOrDefault();
+    var selected = Screen.SelectedIn(_group);
 }
 <div class="ct-page">
-    <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="dash" Size="20" /></span><h1 data-testid="checks-title">Checks &amp; tests</h1>
+    <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="dash" Size="20" /></span><h1 data-testid="checks-title">@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")</h1>
         <button class="btn-small" data-testid="checks-expand-all" @onclick="() => Screen.SetAllCollapsed(false)">Expand all</button>
         <button class="btn-small" data-testid="checks-collapse-all" @onclick="() => Screen.SetAllCollapsed(true)">Collapse all</button>
     </div>
@@ -22,15 +24,15 @@
         <div class="banner-text">
             <div class="banner-title" data-testid="checks-banner-title">@banner.Title</div>
             @if (Screen.Progress is null && Screen.LastRunNote is { } runNote) { <div class="banner-note" data-testid="checks-run-note">@runNote</div> }
-            @if (Screen.Progress is null && summary.NotRunNote is { } note) { <div class="banner-note">@note</div> }
+            @if (Screen.Progress is null && _group == CheckGroup.Stress && summary.NotRunNote is { } note) { <div class="banner-note">@note</div> }
             else if (Screen.Progress is null) { <div class="banner-sub">Expand a group or click a test to see its full results on the right.</div> }
         </div>
     </section>
 
     <div class="ct-workspace" data-testid="checks-workspace">
-        <section class="ct-list" aria-label="Checks and tests">
-            @Group(CheckGroup.Checks, "System checks", "Quick, read-only checks of Windows logs, drives, services, programs and hardware.")
-            @Group(CheckGroup.Stress, "Hardware stress & deep scans", "Run one at a time · stop automatically if the PC gets too hot.")
+        <section class="ct-list" aria-label="@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")">
+            @if (_group == CheckGroup.Checks) { @Group(CheckGroup.Checks, "System checks", "Quick, read-only checks of Windows logs, drives, services, programs and hardware.") }
+            else { @Group(CheckGroup.Stress, "Hardware stress & deep scans", "Run one at a time · stop automatically if the PC gets too hot.") }
         </section>
         <div class="ct-splitter" role="separator" aria-orientation="vertical" aria-label="Resize panes" tabindex="0" data-testid="checks-splitter"
              aria-valuemin="28" aria-valuemax="75"><span class="ct-grip"></span></div>
@@ -45,7 +47,6 @@
     {
         base.OnInitialized();
         Screen.Changed += OnScreenChanged;
-        Screen.SelectedModule ??= Screen.ChecksModules.FirstOrDefault()?.Name;
         _ = LoadLastRunsAsync();
     }
 
@@ -62,6 +63,10 @@
         catch { /* no history source: rows just say "Not run yet" */ }
     }
     private RemotePCDiagnostics.Core.History.HistoryEntry? LastRun(IDiagnosticModule m) => _lastRuns.GetValueOrDefault(m.Name);
+
+    // Which page this is, from the address: /stress is the Stress tests page, anything else (/checks) the Checks page.
+    private CheckGroup _group => Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].TrimEnd('/')
+        .Equals(ChecksScreenState.StressRoute, StringComparison.OrdinalIgnoreCase) ? CheckGroup.Stress : CheckGroup.Checks;
 
     private void OnScreenChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
 
@@ -82,7 +87,7 @@
     {
         if (e.Key is "Enter" or " ") { Select(m); return; }
         if (e.Key is not ("ArrowDown" or "ArrowUp")) return;
-        var visible = new[] { CheckGroup.Checks, CheckGroup.Stress }.Where(g => !Screen.IsCollapsed(g)).SelectMany(Screen.Modules).ToList();
+        var visible = Screen.IsCollapsed(_group) ? [] : Screen.Modules(_group).ToList();
         var i = visible.FindIndex(x => string.Equals(x.Name, m.Name, StringComparison.OrdinalIgnoreCase));
         var next = i < 0 ? -1 : e.Key == "ArrowDown" ? i + 1 : i - 1;
         if (next < 0 || next >= visible.Count) return;

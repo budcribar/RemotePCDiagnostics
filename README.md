@@ -57,14 +57,15 @@ Power, Plug and Play, profiles, user manager, Group Policy, Task Scheduler, Trus
 Stop/Restart; a stopped protected service may still be started. In Remote mode actions are attributed to "Remote technician" and the
 person at the PC gets a pop-up notice; the app cannot tell whether a specific click came from the local window or the remote browser.
 
-## Checks & tests screen
+## Checks, Stress tests and Security audit pages
 
-**Checks & tests** (sidebar, between Dashboard and History) puts everything that can be run on one screen, in two collapsible groups:
+The sidebar has three separate items after Service workflow:
 
-- **System checks** – the quick read-only checks (Windows error log, crashes, drives, services, programs, network…).
-- **Hardware stress & deep scans** – CPU, memory, disk, GPU and network stress tests, plus the security audit (off by default; it runs on its own after the stress tests when ticked).
+- **Checks** (`/checks`) – the quick read-only system checks (everything in Run all: hardware inventory, sensors, drives and disk health, services, programs and patches, network, Windows error log, crashes, resource hogs…).
+- **Stress tests** (`/stress`) – CPU, memory, disk speed, GPU and network stability stress tests, then the on-demand audio tests (speaker to microphone, microphone to speaker), the webcam test and the NPU test (hidden entirely on PCs without an NPU). The on-demand tests are not ticked by default and run on their own after the stress tests when ticked.
+- **Security audit** (`/security-audit`, also `/module/securityaudit`) – its own page and its own Start; it is not in either list.
 
-Each group has a select-all box, "N of M selected", status pills and a **Run selected** button that turns into **Stop** while running. The stress group has a **Quick / Extended** switch (about 1 min / 5 min per test); tests run one at a time and stop automatically if the PC gets too hot or a test fails. Clicking a row (or Enter/Space) opens its details on the right, with **Run just this**. Stopping a run never hides the previous result, and labels show which mode a result came from, e.g. "Passed (short run)". The divider between the list and the details can be dragged or moved with the arrow keys; its position is remembered. Below about 900 px the details stack under the list. Results are still written to the Windows Event Log and appear in History as before.
+Each list has a select-all box, "N of M selected", status pills and a **Run selected** button that turns into **Stop** while running. The Stress tests page has a **Short / Extended** switch (about 1 min / 5 min per test); tests run one at a time and stop automatically if the PC gets too hot or a test fails. Clicking a row (or Enter/Space) opens its details on the right, with **Run just this**. Stopping a run never hides the previous result, and labels show which mode a result came from, e.g. "Passed (short run)". The divider between the list and the details can be dragged or moved with the arrow keys; its position is remembered. Below about 900 px the details stack under the list. Results are still written to the Windows Event Log and appear in History as before.
 
 ## Ways to use less memory
 
@@ -164,8 +165,10 @@ The Host's `app.manifest` sets `requestedExecutionLevel level="requireAdministra
 
 ### Stress suite (Dashboard)
 
-Next to **Run all tests** (quick checks only; stress tests stay out of it) the Dashboard has
-**Run all + stress tests (short, about 5 min)** and **Run all + stress tests (extended, about 25 min)**. One click, no
+The Dashboard banner is one compact row: health status on the left (problem names link to the page that shows that test),
+**Run all checks** (quick checks only; stress tests stay out of it), **Run checks + stress tests (short)** (about 5 min) and
+**Run checks + stress tests (extended)** (about 25 min) on the right; the times are in the buttons' tooltips. Under the status, small
+text shows "Last checked …", "N on-demand tests not run" (links to Stress tests) and "security audit not run" (links to Security audit). One click, no
 confirmation (also in Remote mode; the person at the PC already let the technician in). It runs the quick checks
 (`RunAllAsync`), then `DiagnosticsService.RunStressSuiteAsync` runs the stress tests strictly one at a time: CPU,
 Memory, Disk, GPU, Network. Short = 1 minute per test (memory in Quick mode); Extended = 5 minutes per test (memory in
@@ -191,7 +194,7 @@ Unit tests use fakes only; CI does not need internet access.
 
 ### Audio tests (speaker and microphone)
 
-Two on-demand tests in the Checks & tests screen, listed after the security audit. Like the audit they are a separate step:
+Two on-demand tests on the Stress tests page, listed after the stress tests. They are a separate step:
 never auto-run, not in Run All, not part of the stress run (when ticked there, they run on their own after it), and not ticked by default.
 No confirmation prompt; nothing needs a click at the PC (no Windows dialogs). Both pages list the speakers and microphones
 (Windows default preselected, USB/Bluetooth marked where Windows reports it), can be cancelled, and stop on a timeout.
@@ -224,7 +227,7 @@ synthetic signals. Real behaviour (levels, raw mode, feedback brake) still needs
 
 ### Webcam test
 
-On-demand, in the Checks & tests screen after the audio tests; same rules as the audio tests (never auto-run, not in Run All, not part of
+On-demand, on the Stress tests page after the audio tests; same rules as the audio tests (never auto-run, not in Run All, not part of
 the stress run, runs on its own after it when ticked, not ticked by default, no confirmation prompt, Stop/Cancel and app close cancel it).
 Camera access is behind `IWebcamIo` (Core); the Windows implementation is `MediaCaptureWebcamIo` in the Host (`MediaCapture` +
 `MediaFrameReader` from the Windows SDK projection the Host already targets, so no new package). The page lists the cameras
@@ -256,7 +259,7 @@ runs on its own after it), not ticked by default, no prompts. Page: **NPU (AI ac
 capped at 60 s). Access is behind `INpuIo` (Core, `NullNpuIo` for CI); the Windows implementation is `WindowsNpuIo` in the Host.
 
 **Shown only on PCs with an NPU.** At startup the app checks once, in the background, for an NPU (same detection as below, cached,
-20 s cap). If none is found, or the check fails or times out, the NPU test is hidden everywhere: not in the Checks & tests list, the
+20 s cap). If none is found, or the check fails or times out, the NPU test is hidden everywhere: not in the Stress tests list, the
 selection or the separate-step run, not on the dashboard or in navigation, and it can't be run. Opening its page directly says
 "No NPU detected on this machine." There is no "Skipped: No NPU found" result in the app any more.
 

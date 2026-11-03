@@ -34,7 +34,15 @@ public sealed class DashboardSummary
     }
 
     /// <summary>Hint shown after the note when the stress suite would run the missing tests.</summary>
-    public string? NotRunHint => NotRun.Any(m => m.IsStress) ? "for stress tests, use Run all + stress tests" : null;
+    public string? NotRunHint => NotRun.Any(m => m.IsStress) ? "for stress tests, use Run checks + stress tests" : null;
+
+    /// <summary>On-demand tests on the Stress tests page that haven't run (the security audit is counted separately).</summary>
+    public int StressNotRunCount => NotRun.Count(m => !IsAudit(m));
+
+    /// <summary>True when the security audit (its own page) hasn't run.</summary>
+    public bool AuditNotRun => NotRun.Any(IsAudit);
+
+    private static bool IsAudit(BannerModule m) => string.Equals(m.Name, Security.SecurityAuditModule.ModuleName, StringComparison.OrdinalIgnoreCase);
 
     private int stressTotal;
 

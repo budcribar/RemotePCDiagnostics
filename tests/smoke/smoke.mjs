@@ -50,7 +50,10 @@ try {
   await page.waitForFunction(() => document.documentElement.getAttribute('data-theme-choice') === 'system', null, { timeout: 10_000 });
   console.log(`Theme system: data-theme=${await attr('data-theme')}`);
 
-  // Checks & tests screen: loads, groups expand/collapse, a row opens the detail pane, Run buttons enable correctly. Stress tests are never started here.
+  // Sidebar: Checks, Stress tests and Security audit are separate items.
+  for (const id of ['nav-checks', 'nav-stress', 'nav-security-audit']) await page.getByTestId(id).waitFor({ state: 'visible', timeout: 10_000 });
+
+  // Checks screen: loads, the list expands/collapses, a row opens the detail pane, Run buttons enable correctly. Stress tests are never started here.
   await page.getByTestId('nav-checks').click();
   await page.getByTestId('checks-title').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('checks-collapse-all').click();
@@ -61,15 +64,30 @@ try {
   await firstRow.click();
   await page.getByTestId('checks-detail-title').waitFor({ state: 'visible', timeout: 10_000 });
   console.log('Checks detail:', await page.getByTestId('checks-detail-title').innerText());
-  // Any startup checks must finish first; then both Run buttons are enabled (nothing running, items selected).
+  if (await page.getByTestId('checks-group-stress').count()) throw new Error('Stress tests should not be listed on the Checks page');
+  // Any startup checks must finish first; then the Run button is enabled (nothing running, items selected).
   await page.waitForFunction(() => !document.querySelector('[data-testid="checks-run-checks"]')?.disabled, null, { timeout: 180_000 });
-  if (await page.getByTestId('checks-run-stress').isDisabled()) throw new Error('Run selected (stress) should be enabled when idle');
   if (await page.getByTestId('checks-run-one').isDisabled()) throw new Error('Run just this should be enabled when idle');
-  // Clearing the stress selection disables its Run button (tri-state: some -> all -> none).
+  await page.screenshot({ path: `${outDir}/checks.png`, fullPage: true });
+
+  // Stress tests screen: its own page; clearing the selection disables its Run button (tri-state: some -> all -> none).
+  await page.getByTestId('nav-stress').click();
+  await page.getByTestId('checks-group-stress').waitFor({ state: 'visible', timeout: 15_000 });
+  if (await page.getByTestId('checks-group-checks').count()) throw new Error('System checks should not be listed on the Stress tests page');
+  if (await page.getByTestId('checks-row-securityaudit').count()) throw new Error('The security audit has its own page');
+  if (await page.getByTestId('checks-run-stress').isDisabled()) throw new Error('Run selected (stress) should be enabled when idle');
   for (let i = 0; i < 2 && !(await page.getByTestId('checks-run-stress').isDisabled()); i++) await page.getByTestId('checks-selectall-stress').click();
   await page.waitForFunction(() => document.querySelector('[data-testid="checks-run-stress"]')?.disabled === true, null, { timeout: 10_000 });
-  console.log('Checks page: run buttons OK');
-  await page.screenshot({ path: `${outDir}/checks.png`, fullPage: true });
+  console.log('Checks and Stress tests pages: run buttons OK');
+  await page.screenshot({ path: `${outDir}/stress.png`, fullPage: true });
+
+  // Security audit: own sidebar item and page (not started here).
+  await page.getByTestId('nav-security-audit').click();
+  await page.getByTestId('audit-title').waitFor({ state: 'visible', timeout: 15_000 });
+
+  // Back to Checks for the resource hogs row.
+  await page.getByTestId('nav-checks').click();
+  await page.getByTestId('checks-expand-all').click();
 
   // Resource hogs: "Ways to use less memory" renders (suggestions, or the empty/error state). Actions are never clicked here.
   await page.getByTestId('checks-row-resourcehogs').click();

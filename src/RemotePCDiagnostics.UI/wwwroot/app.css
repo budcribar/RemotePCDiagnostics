@@ -548,3 +548,11 @@ tr.history-day td { font-weight: 700; color: var(--text-strong); background: var
     .run-progress-indeterminate > div { width: 100%; opacity: .5; transform: none; }
     .about-accent-line::after { display: none; }
 }
+
+/* Dashboard banner: one compact row (status left, run buttons right); wraps only on narrow windows. */
+.banner.dash-banner { flex-wrap: nowrap; padding: 12px 18px; gap: 14px; }
+.dash-banner .banner-text { flex: 1 1 auto; }
+.dash-banner .banner-title { font-size: 18px; }
+.dash-banner .banner-actions { flex-wrap: nowrap; }
+.banner-more-small { font-size: 12px; }
+@media (max-width: 1100px) { .banner.dash-banner, .dash-banner .banner-actions { flex-wrap: wrap; } }

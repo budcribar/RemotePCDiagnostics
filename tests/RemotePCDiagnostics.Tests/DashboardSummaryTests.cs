@@ -64,7 +64,9 @@ public class DashboardSummaryTests
         var sum = DashboardSummary.Build([Check("EventLog", "Windows error log", DiagnosticStatus.Ok), .. AllStress(), Audit()], null);
         Assert.Equal(4, sum.NotRun.Count);
         Assert.Equal("On-demand tests not run: 4 (stress tests and security audit)", sum.NotRunNote);
-        Assert.Equal("for stress tests, use Run all + stress tests", sum.NotRunHint);
+        Assert.Equal("for stress tests, use Run checks + stress tests", sum.NotRunHint);
+        Assert.Equal(3, sum.StressNotRunCount);   // banner: "3 on-demand tests not run" → Stress tests
+        Assert.True(sum.AuditNotRun);             // banner: "security audit not run" → Security audit
     }
 
     [Fact]
@@ -74,6 +76,8 @@ public class DashboardSummaryTests
         var sum = DashboardSummary.Build(mods, Suite(true, ("CpuStress", StressSuiteStepState.Passed), ("MemoryTest", StressSuiteStepState.Passed), ("GpuStress", StressSuiteStepState.Skipped)));
         Assert.Equal("On-demand tests not run: 1 (security audit)", sum.NotRunNote);
         Assert.Null(sum.NotRunHint);
+        Assert.Equal(0, sum.StressNotRunCount);
+        Assert.True(sum.AuditNotRun);
     }
 
     [Fact]
@@ -91,7 +95,7 @@ public class DashboardSummaryTests
         var sum = DashboardSummary.Build(mods, Suite(true, ("CpuStress", StressSuiteStepState.Passed), ("MemoryTest", StressSuiteStepState.NotRun), ("GpuStress", StressSuiteStepState.Pending)));
         Assert.Equal(3, sum.NotRun.Count);
         Assert.Equal("On-demand tests not run: 3 (memory test, graphics (GPU) stress test and security audit)", sum.NotRunNote);
-        Assert.Equal("for stress tests, use Run all + stress tests", sum.NotRunHint);
+        Assert.Equal("for stress tests, use Run checks + stress tests", sum.NotRunHint);
     }
 
     [Fact]
@@ -99,6 +103,8 @@ public class DashboardSummaryTests
     {
         var sum = DashboardSummary.Build([.. AllStress(DiagnosticStatus.Ok), Audit(DiagnosticStatus.Ok)], null);
         Assert.Null(sum.NotRunNote);
+        Assert.Equal(0, sum.StressNotRunCount);
+        Assert.False(sum.AuditNotRun);
         Assert.Empty(sum.Problems);
     }
 }

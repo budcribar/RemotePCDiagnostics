@@ -98,10 +98,10 @@ public sealed class ChecksScreenState
 
     public IReadOnlyList<IDiagnosticModule> ChecksModules => _diag.Modules.Where(m => m.IncludeInRunAll).ToList();
 
-    /// <summary>Stress tests in suite order, then the security audit and the audio tests (separate steps that run on their own after them when selected).</summary>
+    /// <summary>Stress tests page: stress tests in suite order, then the audio, webcam and NPU tests (separate steps that run on their own
+    /// after them when selected). The security audit is not here: it has its own page.</summary>
     public IReadOnlyList<IDiagnosticModule> StressModules =>
         StressSuite.Order.Select(n => _diag.Modules.FirstOrDefault(m => string.Equals(m.Name, n, StringComparison.OrdinalIgnoreCase))).OfType<IDiagnosticModule>()
-            .Concat(_diag.Modules.Where(m => m.Name == SecurityAuditModule.ModuleName))
             .Concat(_diag.Modules.OfType<Audio.IAudioTestModule>())
             .Concat(_diag.Modules.OfType<Webcam.IWebcamTestModule>())
             .Concat(_diag.Modules.OfType<Npu.INpuTestModule>()).ToList();
@@ -112,6 +112,28 @@ public sealed class ChecksScreenState
 
     public IReadOnlyList<IDiagnosticModule> Modules(CheckGroup g) => g == CheckGroup.Checks ? ChecksModules : StressModules;
 
+    public const string ChecksRoute = "checks", StressRoute = "stress", SecurityAuditRoute = "security-audit";
+
+    /// <summary>Which page shows <paramref name="module"/>: "security-audit", "stress" or "checks" (also for anything else).</summary>
+    public string PageFor(string module) =>
+        string.Equals(module, SecurityAuditModule.ModuleName, StringComparison.OrdinalIgnoreCase) ? SecurityAuditRoute
+        : StressModules.Any(m => string.Equals(m.Name, module, StringComparison.OrdinalIgnoreCase)) ? StressRoute : ChecksRoute;
+
+    /// <summary>The group (page) a module belongs to, or null for the security audit and modules on neither page.</summary>
+    public CheckGroup? GroupOf(string module) =>
+        ChecksModules.Any(m => string.Equals(m.Name, module, StringComparison.OrdinalIgnoreCase)) ? CheckGroup.Checks
+        : StressModules.Any(m => string.Equals(m.Name, module, StringComparison.OrdinalIgnoreCase)) ? CheckGroup.Stress : null;
+
+    private readonly Dictionary<CheckGroup, string> _selectedByGroup = [];
+
+    /// <summary>The selected test on one page (each page remembers its own), or its first test.</summary>
+    public IDiagnosticModule? SelectedIn(CheckGroup g)
+    {
+        var mods = Modules(g);
+        string? name; lock (_gate) name = _selectedByGroup.GetValueOrDefault(g);
+        return mods.FirstOrDefault(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase)) ?? mods.FirstOrDefault();
+    }
+
     private bool _collapsedChecks = true, _collapsedStress = true;
     public bool CollapsedChecks { get => _collapsedChecks; set { _collapsedChecks = value; _prefs?.Update(p => p with { ChecksCollapsed = value }); } }
     public bool CollapsedStress { get => _collapsedStress; set { _collapsedStress = value; _prefs?.Update(p => p with { StressCollapsed = value }); } }
@@ -121,7 +143,12 @@ public sealed class ChecksScreenState
 
     private StressSuiteMode _mode = StressSuiteMode.Short;
     public StressSuiteMode Mode { get => _mode; set { _mode = value; _prefs?.Update(p => p with { StressMode = value.ToString() }); } }
-    public string? SelectedModule { get; set; }
+    private string? _selectedModule;
+    public string? SelectedModule
+    {
+        get => _selectedModule;
+        set { _selectedModule = value; if (value is not null && GroupOf(value) is { } g) lock (_gate) _selectedByGroup[g] = value; }
+    }
 
     /// <summary>Selects <paramref name="module"/> and expands the group containing it so the row is visible in the left pane.</summary>
     public void FocusModule(string module)
@@ -186,7 +213,7 @@ public sealed class ChecksScreenState
     }
 
     /// <summary>Runs the selected modules of a group sequentially. Stress tests use the stress suite (mode, overheat/error stop);
-    /// the security audit runs on its own afterwards when ticked. No-op when anything is already running.</summary>
+    /// the audio, webcam and NPU tests run on their own afterwards when ticked. No-op when anything is already running.</summary>
     public async Task RunGroupAsync(CheckGroup g)
     {
         CancellationTokenSource cts;
@@ -264,7 +291,6 @@ public sealed class ChecksScreenState
         lock (_gate) c = _cts;
         try { c?.Cancel(); } catch (ObjectDisposedException) { }
         try { _diag.CancelStressSuite(); } catch { }
-        try { (_diag.Modules.FirstOrDefault(m => m.Name == SecurityAuditModule.ModuleName) as SecurityAuditModule)?.Cancel(); } catch { }
         foreach (var a in _diag.Modules.OfType<Audio.IAudioTestModule>()) { try { a.Cancel(); } catch { } }
         foreach (var w in _diag.Modules.OfType<Webcam.IWebcamTestModule>()) { try { w.Cancel(); } catch { } }
         foreach (var n in _diag.Modules.OfType<Npu.INpuTestModule>()) { try { n.Cancel(); } catch { } }
@@ -278,7 +304,8 @@ public sealed class ChecksScreenState
 
     private void SetProgress(CheckGroup g, int i, int n, IDiagnosticModule m)
     {
-        lock (_gate) { Progress = new GroupRunProgress(g, i, n, m.DisplayName); SelectedModule = m.Name; }
+        lock (_gate) Progress = new GroupRunProgress(g, i, n, m.DisplayName);
+        SelectedModule = m.Name;
         Raise();
     }
 
