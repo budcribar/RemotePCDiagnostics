@@ -72,7 +72,44 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
         var helloOnly = pl?.GetValue("DevicePasswordLessBuildVersion") is int v && v == 2;
         return new(user, domain, already, helloOnly, helloOnly
             ? "This PC only allows Windows Hello sign-in, which blocks automatic sign-in. Turn off \"For improved security, only allow Windows Hello sign-in\" (Settings > Accounts > Sign-in options), or the client signs in after each restart."
-            : already ? "This PC already signs in automatically." : null);
+            : already ? "This PC already signs in automatically." : null, FindMicrosoftAccountEmail());
+    }
+
+    [DllImport("secur32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool GetUserNameEx(int nameFormat, System.Text.StringBuilder name, ref uint size);
+
+    /// <summary>
+    /// The signed-in user's Microsoft account email, or null for a local/domain account. Read-only; never throws.
+    /// Sources in order: IdentityStore cache (HKLM, keyed by the user's SID), IdentityCRL UserExtendedProperties (HKCU, subkeys named by email),
+    /// then the user principal name (only if it looks like an email and the IdentityStore says nothing else).
+    /// </summary>
+    private string? FindMicrosoftAccountEmail()
+    {
+        static string? Email(object? v) => v is string s && s.Contains('@') && !s.Contains(' ') ? s.Trim() : null;
+        try
+        {
+            var sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value;
+            if (sid is not null)
+            {
+                using var ic = Registry.LocalMachine.OpenSubKey($@"SOFTWARE\Microsoft\IdentityStore\Cache\{sid}\IdentityCache\{sid}");
+                if (Email(ic?.GetValue("UserName")) is { } e1) return e1;
+            }
+        }
+        catch (Exception ex) { Log("identity store lookup: " + ex.Message); }
+        try
+        {
+            using var ux = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\IdentityCRL\UserExtendedProperties");
+            if (ux?.GetSubKeyNames().Select(Email).FirstOrDefault(e => e is not null) is { } e2) return e2;
+        }
+        catch (Exception ex) { Log("IdentityCRL lookup: " + ex.Message); }
+        try
+        {
+            uint size = 256; var sb = new System.Text.StringBuilder((int)size);
+            if (GetUserNameEx(8 /* NameUserPrincipal */, sb, ref size) && Email(sb.ToString()) is { } e3
+                && string.Equals(Environment.UserDomainName, Environment.MachineName, StringComparison.OrdinalIgnoreCase)) return e3;
+        }
+        catch (Exception ex) { Log("UPN lookup: " + ex.Message); }
+        return null;
     }
 
     [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]

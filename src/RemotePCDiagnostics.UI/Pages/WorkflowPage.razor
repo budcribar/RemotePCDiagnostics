@@ -96,7 +96,7 @@
                     The password is checked first, stored only the way Windows' own automatic sign-in stores it, and removed when the workflow ends or is cancelled.</p>
                 <label class="wf-field">Account <input data-testid="wf-user" @bind="_user" placeholder="user name" /></label>
                 <label class="wf-field">Password <input type="password" data-testid="wf-password" @bind="_password" autocomplete="off" /></label>
-                <p class="meta">Microsoft account? Use the account's email address and its password (not the PIN).</p>
+                <p class="meta">@(_logon?.MicrosoftAccountEmail is not null ? "This PC signs in with a Microsoft account, so the box shows its email address. " : "Microsoft account? Use the account's email address. ")The password must be the account's password, not the PIN.</p>
                 <label><input type="checkbox" @bind="_clientSignsIn" /> Skip: the client will sign in after each restart</label>
             }
         </section>
@@ -184,7 +184,7 @@
 
     private void LoadLogon()
     {
-        try { _logon = Flow.AutoLogonStatus(); _user = _logon.UserName; } catch { _logon = null; }
+        try { _logon = Flow.AutoLogonStatus(); _user = _logon.PrefillUser; } catch { _logon = null; }
     }
 
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }

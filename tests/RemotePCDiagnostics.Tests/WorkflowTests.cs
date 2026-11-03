@@ -27,11 +27,12 @@ public class WorkflowTests
         public bool PasswordOk = true, RegisterOk = true, RemoveOk = true, DisableFails, HelloOnly;
         public TimeSpan Uptime { get; set; } = TimeSpan.FromDays(3);
         public string? Report;
+        public string? Email;
         public Task<bool> RegisterResumeAsync(CancellationToken ct) { Calls.Add("register"); return Task.FromResult(RegisterOk); }
         public Task<bool> RemoveResumeAsync(CancellationToken ct) { Calls.Add("unregister"); return Task.FromResult(RemoveOk); }
         public Task<bool> RestartAsync(TimeSpan d, string m, CancellationToken ct) { Calls.Add("restart"); return Task.FromResult(true); }
         public Task AbortRestartAsync(CancellationToken ct) { Calls.Add("abort"); return Task.CompletedTask; }
-        public AutoLogonStatus GetAutoLogonStatus() => new("bud", "PC1", false, HelloOnly);
+        public AutoLogonStatus GetAutoLogonStatus() => new("bud", "PC1", false, HelloOnly, null, Email);
         public bool ValidateCredentials(string u, string d, string p) { Calls.Add($"validate:{d}\\{u}"); return PasswordOk; }
         public AutoLogonBackup EnableAutoLogon(string u, string d, string p, int n) { Calls.Add($"autologon-on:{n}"); return new("0", "old", "PC1", null, HelloOnly ? 2 : null); }
         public void DisableAutoLogon(AutoLogonBackup? b)
@@ -864,6 +865,24 @@ public class WorkflowTests
         Assert.Empty(vscode.Changes!);
         Assert.Single(journal.All, c => c.Kind == ChangeKind.NotUndoable && c.Label.Contains("4.0 GB freed"));
         Assert.Contains("Freed 4.0 GB", sys.Report!);
+    }
+
+    [Fact]
+    public void SignInPrefill_UsesMicrosoftAccountEmail_WhenPresent()
+    {
+        var (flow, sys, _, _, _, _) = Make();
+        sys.Email = "bud@outlook.com";
+        var st = flow.AutoLogonStatus();
+        Assert.Equal("bud@outlook.com", st.PrefillUser);
+        Assert.Equal("bud", st.UserName);
+    }
+
+    [Fact]
+    public void SignInPrefill_FallsBackToUserName_ForLocalAccount()
+    {
+        var (flow, _, _, _, _, _) = Make();
+        Assert.Equal("bud", flow.AutoLogonStatus().PrefillUser);
+        Assert.Equal("bud", new AutoLogonStatus("bud", "PC1", false, false, null, "not-an-email").PrefillUser);
     }
 
     [Fact]

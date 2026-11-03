@@ -39,9 +39,13 @@ public sealed record WorkflowRestart(string Why, DateTimeOffset RequestedUtc, bo
 public sealed record AutoLogonBackup(string? AutoAdminLogon, string? DefaultUserName, string? DefaultDomainName, string? AutoLogonCount, int? PasswordLessBuildVersion = null);
 
 /// <summary>Whether this PC can sign in automatically for the workflow's restarts.</summary>
-public sealed record AutoLogonStatus(string UserName, string Domain, bool AlreadyAutomatic, bool BlockedByWindowsHello, string? Note = null)
+public sealed record AutoLogonStatus(string UserName, string Domain, bool AlreadyAutomatic, bool BlockedByWindowsHello, string? Note = null,
+    string? MicrosoftAccountEmail = null)
 {
     public bool CanUse => !AlreadyAutomatic;
+
+    /// <summary>What the sign-in box starts with: the Microsoft account email when the signed-in account is one, else the local user name.</summary>
+    public string PrefillUser => MicrosoftAccountEmail is { } e && e.Contains('@') ? e.Trim() : UserName;
 }
 
 /// <summary>Everything the workflow keeps across restarts (%LOCALAPPDATA%\RemotePCDiagnostics\workflow.json). No passwords.</summary>
