@@ -71,7 +71,7 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
         using var pl = Registry.LocalMachine.OpenSubKey(PasswordLessKey);
         var helloOnly = pl?.GetValue("DevicePasswordLessBuildVersion") is int v && v == 2;
         return new(user, domain, already, helloOnly, helloOnly
-            ? "This PC only allows Windows Hello sign-in, which blocks automatic sign-in. Turn off \"For improved security, only allow Windows Hello sign-in\" (Settings > Accounts > Sign-in options), or the client signs in after each restart."
+            ? "This PC has \"Only allow Windows Hello sign-in\" turned on. Automatic sign-in will temporarily turn that off for the two restarts and turn it back on during cleanup (or tick Skip so the client signs in after each restart)."
             : already ? "This PC already signs in automatically." : null, FindMicrosoftAccountEmail());
     }
 
