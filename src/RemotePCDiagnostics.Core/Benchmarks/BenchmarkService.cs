@@ -34,6 +34,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public BenchmarkRun? Before => _state.Before;
     public BenchmarkRun? After => _state.After;
     public bool AfterPendingRestart => _state.RunAfterOnStartup;
+    public bool BeforePendingRestart => _state.RunBeforeOnStartup;
     public BenchmarkPhase? Running { get; private set; }
     public string? Progress { get; private set; }
     public string? Message { get; private set; }
@@ -77,7 +78,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             var prog = new Progress<string>(p => { Progress = p; Raise(); });
             var run = await runner.RunAsync(phase, settings, phase == BenchmarkPhase.After ? Before?.TimeUtc : null, prog, cts.Token,
                 phase == BenchmarkPhase.Before ? bootsSince : null).ConfigureAwait(false);
-            Save(phase == BenchmarkPhase.Before ? _state with { Before = run, After = null } : _state with { After = run });
+            Save(phase == BenchmarkPhase.Before ? _state with { Before = run, After = null, RunBeforeOnStartup = false } : _state with { After = run });
             Message = run.Completed ? null : "Stopped before every benchmark finished; the finished ones are kept.";
             WriteEvent(run);
             return run;
@@ -88,6 +89,22 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             cts.Dispose();
             Raise();
         }
+    }
+
+    /// <summary>
+    /// Remembers to run the "before" benchmark when the app starts again, then restarts the PC (60 s warning, auto-resume). Then the before and after
+    /// start-up times are each one full restart the app asked for, instead of whatever the last few start-ups in Windows' log were.
+    /// </summary>
+    public async Task<RemediationResult> RestartThenRunBeforeAsync(CancellationToken ct = default)
+    {
+        if (remediation is null) return new(false, "Restarting isn't available from here.");
+        if (Running is not null) return new(false, "A benchmark is running.");
+        Save(new BenchmarkState(Settings, RunBeforeOnStartup: true, RestartRequestedUtc: DateTimeOffset.UtcNow));
+        var r = await remediation.ExecuteAsync(new AreaAction(RemediationKind.ScheduleCleanRestart, "Restart, then benchmark"), ct).ConfigureAwait(false);
+        if (!r.Success) Save(_state with { RunBeforeOnStartup = false, RestartRequestedUtc = null });
+        Message = r.Success ? "Restarting in 60 seconds. The before benchmark runs by itself a few minutes after the PC is back." : r.Message;
+        Raise();
+        return r;
     }
 
     /// <summary>Remembers to run the "after" benchmark when the app starts again, then restarts the PC (60 s warning, auto-resume).</summary>
@@ -106,6 +123,17 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     /// <summary>Called once at app start: if an "after" was requested before a restart, wait for start-up to settle and run it.</summary>
     public async Task ResumeAfterRestartAsync(CancellationToken ct = default)
     {
+        if (BeforePendingRestart)
+        {
+            var since = _state.RestartRequestedUtc;
+            Save(_state with { RunBeforeOnStartup = false }); // once only, even if this run fails
+            Message = $"Waiting {Settings.SettleAfterRestart.TotalMinutes:0} minutes for start-up to settle before the before benchmark…";
+            Raise();
+            Log("resume: before benchmark scheduled after settle");
+            await (delay ?? Task.Delay)(Settings.SettleAfterRestart, ct).ConfigureAwait(false);
+            await RunAsync(BenchmarkPhase.Before, ct, since).ConfigureAwait(false);
+            return;
+        }
         if (!AfterPendingRestart) return;
         Save(_state with { RunAfterOnStartup = false }); // once only, even if this run fails
         Message = $"Waiting {Settings.SettleAfterRestart.TotalMinutes:0} minutes for start-up to settle before the after benchmark…";

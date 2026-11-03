@@ -37,13 +37,23 @@
         </label>
         <label class="meta"><input type="checkbox" data-testid="bench-restart" checked="@s.RestartBeforeAfter" disabled="@running"
                                    @onchange="e => Bench.UpdateSettings(s with { RestartBeforeAfter = e.Value is true })" />
-            Restart the PC before the after benchmark (needed for start-up time)</label>
+            Restart the PC before each benchmark (needed for a fair start-up time)</label>
     </div>
 </section>
 
 <div class="toolbar bench-actions">
-    <button class="btn btn-primary" data-testid="bench-run-before" disabled="@(running || s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)">
-        <Icon Name="play" Size="12" /> @(before is null ? "Run before benchmark" : "Run before benchmark again")</button>
+    @if (s.RestartBeforeAfter)
+    {
+        <button class="btn btn-primary" data-testid="bench-restart-before" disabled="@(running || s.Enabled.Count == 0 || Bench.BeforePendingRestart || Bench.AfterPendingRestart)" @onclick="RestartThenBefore">
+            <Icon Name="refresh" Size="12" /> @(before is null ? "Restart, then run before benchmark" : "Restart, then run before benchmark again")</button>
+        <button class="btn-small" data-testid="bench-run-before" disabled="@(running || s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)"
+                title="Without restarting: start-up time uses the last few start-ups in Windows' log, which may not be comparable">Run before now (no restart)</button>
+    }
+    else
+    {
+        <button class="btn btn-primary" data-testid="bench-run-before" disabled="@(running || s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)">
+            <Icon Name="play" Size="12" /> @(before is null ? "Run before benchmark" : "Run before benchmark again")</button>
+    }
     @if (s.RestartBeforeAfter)
     {
         <button class="btn btn-outline" data-testid="bench-restart-after" disabled="@(running || before is null || Bench.AfterPendingRestart)" @onclick="RestartThenAfter">
@@ -135,6 +145,7 @@ else if (!running)
 
     private void Run(BenchmarkPhase phase) => _ = Bench.RunAsync(phase);
     private async Task RestartThenAfter() => await Bench.RestartThenRunAfterAsync();
+    private async Task RestartThenBefore() => await Bench.RestartThenRunBeforeAsync();
 
     private static string Minutes(int seconds) => seconds < 90 ? $"{seconds} s" : $"{Math.Round(seconds / 60.0, 1):0.#} min";
 

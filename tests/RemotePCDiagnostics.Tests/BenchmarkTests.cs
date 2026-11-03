@@ -268,6 +268,39 @@ public class BenchmarkTests
     }
 
     [Fact]
+    public async Task Service_RestartThenBefore_CountsOnlyStartUpsAfterTheRestart()
+    {
+        var store = new MemStore();
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var runner = new SystemCommandRunner(launcher);
+        var statePath = Path.Combine(Path.GetTempPath(), "rpd-bench-reboot-" + Guid.NewGuid().ToString("N") + ".json");
+        var rem = new RemediationService(runner, new SessionContext(SessionMode.Remote), rebootResume: new RebootResumeCoordinator(runner, stateFilePath: statePath, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe"));
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, new SessionContext(SessionMode.Remote));
+        svc.UpdateSettings(Fast);
+
+        var r = await svc.RestartThenRunBeforeAsync();
+        Assert.True(r.Success);
+        Assert.True(store.State!.RunBeforeOnStartup);
+        Assert.NotNull(store.State.RestartRequestedUtc);
+        Assert.Contains(launcher.Calls, c => c.Args.Contains("/r"));
+
+        var delays = new List<TimeSpan>();
+        var svc2 = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, delay: (d, _) => { delays.Add(d); return Task.CompletedTask; });
+        Assert.True(svc2.BeforePendingRestart);
+        await svc2.ResumeAfterRestartAsync();
+        Assert.Equal([Fast.SettleAfterRestart], delays);
+        Assert.NotNull(svc2.Before);
+        Assert.False(store.State.RunBeforeOnStartup);
+        // The fake log only has a start-up from yesterday, before the restart: it must not count.
+        var boot = svc2.Before!.Get(BenchmarkKind.BootTime);
+        Assert.NotNull(boot);
+        Assert.Empty(boot!.Samples);
+        Assert.Contains("after the restart", boot.Note);
+        await svc2.ResumeAfterRestartAsync(); // only once
+        Assert.Single(delays);
+    }
+
+    [Fact]
     public async Task Service_NewBeforeClearsOldAfter_AndClearKeepsSettings()
     {
         var store = new MemStore();

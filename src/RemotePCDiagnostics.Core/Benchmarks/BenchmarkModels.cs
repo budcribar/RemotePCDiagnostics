@@ -142,7 +142,10 @@ public sealed record BenchmarkRun(BenchmarkPhase Phase, DateTimeOffset TimeUtc, 
 }
 
 /// <summary>Everything kept between app restarts (so a "before" survives the restart for the "after").</summary>
-public sealed record BenchmarkState(BenchmarkSettings Settings, BenchmarkRun? Before = null, BenchmarkRun? After = null, bool RunAfterOnStartup = false)
+/// <param name="RunBeforeOnStartup">"Restart, then run before benchmark" was asked: run the before benchmark once the app is back.</param>
+/// <param name="RestartRequestedUtc">When that restart was asked for: the before benchmark counts only start-ups after it.</param>
+public sealed record BenchmarkState(BenchmarkSettings Settings, BenchmarkRun? Before = null, BenchmarkRun? After = null, bool RunAfterOnStartup = false,
+    bool RunBeforeOnStartup = false, DateTimeOffset? RestartRequestedUtc = null)
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
     public string ToJson() => JsonSerializer.Serialize(this, Json);
