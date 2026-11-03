@@ -95,12 +95,13 @@
                 <p class="meta">The workflow restarts the PC twice. To carry on without anyone at the PC, Windows can sign in automatically for exactly those two restarts.
                     The password is checked first, stored only the way Windows' own automatic sign-in stores it, and removed when the workflow ends or is cancelled.</p>
                 <label class="wf-field">Account <input data-testid="wf-user" @bind="_user" placeholder="user name" /></label>
-                <label class="wf-field">Password <input type="@(_showPassword ? "text" : "password")" data-testid="wf-password" @bind="_password" autocomplete="off" />
+                <label class="wf-field">Password <input type="@(_showPassword ? "text" : "password")" data-testid="wf-password" @ref="_passwordBox" @bind="_password" autocomplete="off" />
                     <button type="button" class="btn-small" data-testid="wf-password-toggle" aria-label="@(_showPassword ? "Hide password" : "Show password")" title="@(_showPassword ? "Hide password" : "Show password")" aria-pressed="@(_showPassword ? "true" : "false")" @onclick="() => _showPassword = !_showPassword"><Icon Name="@(_showPassword ? "eye-off" : "eye")" Size="12" /></button></label>
                 <p class="meta">@(_logon?.MicrosoftAccountEmail is not null ? "This PC signs in with a Microsoft account, so the box shows its email address. " : "Microsoft account? Use the account's email address. ")The password must be the account's password, not the PIN.</p>
                 <label><input type="checkbox" @bind="_clientSignsIn" /> Skip: the client will sign in after each restart</label>
             }
         </section>
+        @if (_startError is { } se) { <p class="notice notice-error" role="alert" data-testid="wf-signin-error">@se</p> }
         <div class="toolbar">
             <button class="btn btn-primary" data-testid="wf-go" disabled="@(_starting || !CanStart)" @onclick="Start"><Icon Name="play" Size="12" /> @(_starting ? "Starting…" : $"Start: restart, benchmark, apply {approved} fix{(approved == 1 ? "" : "es")}, report")</button>
             <button class="btn-small" @onclick="Flow.Reset">Start over</button>
@@ -172,7 +173,8 @@
     private AutoLogonStatus? _logon;
     private string _user = "", _password = "";
     private bool _clientSignsIn, _starting, _showPassword;
-    private string? _message;
+    private string? _message, _startError;
+    private ElementReference _passwordBox;
 
     private bool CanStart => _logon is { AlreadyAutomatic: true } || _clientSignsIn || (_user.Length > 0 && _password.Length > 0);
 
@@ -195,7 +197,7 @@
 
     private async Task Start()
     {
-        _starting = true; _message = null;
+        _starting = true; _message = null; _startError = null;
         try
         {
             AutoLogonRequest? req = null;
@@ -207,9 +209,16 @@
                 if (user.Contains('\\')) user = user[(user.IndexOf('\\') + 1)..];
                 req = new AutoLogonRequest(user, domain, _password);
             }
-            _message = await Flow.StartAsync(req);
+            // A failed start is shown next to the Start button (not at the top of the page), and focus goes back to the password box.
+            _startError = await Flow.StartAsync(req);
         }
         finally { _password = ""; _showPassword = false; _starting = false; }
+        if (_startError is not null)
+        {
+            StateHasChanged();
+            await Task.Yield();
+            try { await _passwordBox.FocusAsync(preventScroll: false); } catch { }
+        }
     }
 
     private async Task RestartNow() => _message = await Flow.RestartNowAsync();

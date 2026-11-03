@@ -868,6 +868,20 @@ public class WorkflowTests
     }
 
     [Fact]
+    public async Task WrongPassword_ReturnsVisibleError_AndChangesNothing()
+    {
+        var (flow, sys, _, _, _, _) = Make();
+        await flow.RunChecksAsync();
+        sys.Calls.Clear();
+        sys.PasswordOk = false;
+        var err = await flow.StartAsync(new AutoLogonRequest("bud@outlook.com", "MicrosoftAccount", "wrong"));
+        Assert.Equal("That password didn't work for this account. Nothing was changed.", err);
+        Assert.Equal(["validate:MicrosoftAccount\\bud@outlook.com"], sys.Calls);
+        Assert.Equal(WorkflowStage.Review, flow.State.Stage);
+        Assert.False(flow.State.AutoLogonEnabled);
+    }
+
+    [Fact]
     public void SignInPrefill_UsesMicrosoftAccountEmail_WhenPresent()
     {
         var (flow, sys, _, _, _, _) = Make();

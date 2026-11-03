@@ -131,8 +131,14 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
         catch (Exception ex) { Log("passwordless check before validate: " + ex.Message); }
         try
         {
-            if (!LogonUser(user, domain, password, 2 /* interactive */, 0, out var token)) { Log($"credential check failed for {domain}\\{user}: {Marshal.GetLastWin32Error()}"); return false; }
+            if (!LogonUser(user, domain, password, 2 /* interactive */, 0, out var token))
+            {
+                var err = Marshal.GetLastWin32Error();
+                Log($"credential check failed for {domain}\\{user}: Win32 error {err}{err switch { 1326 => " (wrong user name or password)", 1327 => " (account restriction)", 1385 => " (logon type not granted)", 1311 => " (no logon server)", 1909 => " (account locked out)", _ => "" }}");
+                return false;
+            }
             CloseHandle(token);
+            Log($"credential check passed for {domain}\\{user}");
             return true;
         }
         finally
