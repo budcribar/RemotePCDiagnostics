@@ -38,6 +38,7 @@ jobs:
           name: service-workflow-results
           path: artifacts/workflow-tests/
           if-no-files-found: warn
+          retention-days: 3
 
   build-test-smoke:
     runs-on: windows-latest
@@ -123,12 +124,15 @@ jobs:
           if ($check.ExitCode -ne 0) { throw "Package verification failed: $($check.ExitCode)" }
           Get-Content $env:RPD_LOG_FILE
 
+      # Tester download: only for pushes to main and tags (no job downloads it; the smoke test runs the local publish output).
       - name: Upload portable diagnostics download
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         uses: actions/upload-artifact@v4
         with:
           name: RemotePCDiagnostics-win-x64
           path: artifacts/RemotePCDiagnostics-win-x64/RemotePCDiagnostics.Host.exe
           if-no-files-found: error
+          retention-days: 3
 
       - name: Publish OutlookBenchmark (single exe)
         shell: pwsh
@@ -206,10 +210,19 @@ jobs:
           if ($p.HasExited) { "Host exited with code $($p.ExitCode)" } else { Stop-Process -Id $p.Id -Force }
           exit $code
 
+      # Logs, test results and smoke screenshots only (no binaries or publish output), and only when the job failed.
       - name: Upload artifacts
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: ci-artifacts
-          path: artifacts/
+          path: |
+            artifacts/*.log
+            artifacts/*.txt
+            artifacts/*.png
+            artifacts/*.csv
+            artifacts/test-results/**/*.trx
+            artifacts/OutlookBenchmark/smoke-results/
+            artifacts/network-demo/
           if-no-files-found: warn
+          retention-days: 1
