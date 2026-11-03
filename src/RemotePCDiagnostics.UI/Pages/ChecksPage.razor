@@ -47,6 +47,7 @@
     {
         base.OnInitialized();
         Screen.Changed += OnScreenChanged;
+        Nav.LocationChanged += OnLocationChanged;
         _ = LoadLastRunsAsync();
     }
 
@@ -65,8 +66,10 @@
     private RemotePCDiagnostics.Core.History.HistoryEntry? LastRun(IDiagnosticModule m) => _lastRuns.GetValueOrDefault(m.Name);
 
     // Which page this is, from the address: /stress is the Stress tests page, anything else (/checks) the Checks page.
-    private CheckGroup _group => Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].TrimEnd('/')
-        .Equals(ChecksScreenState.StressRoute, StringComparison.OrdinalIgnoreCase) ? CheckGroup.Stress : CheckGroup.Checks;
+    // /checks and /stress use this same component, so Blazor keeps the instance (and, with no parameters, doesn't redraw it) when
+    // switching between them: redraw on every address change.
+    private CheckGroup _group => ChecksScreenState.GroupForPath(Nav.ToBaseRelativePath(Nav.Uri));
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e) { try { _ = InvokeAsync(StateHasChanged); } catch { } }
 
     private void OnScreenChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
 
@@ -76,7 +79,7 @@
         try { await JS.InvokeVoidAsync("rpdSplit.init"); } catch { /* no JS helper (older host page): fixed 55% split */ }
     }
 
-    public override void Dispose() { Screen.Changed -= OnScreenChanged; base.Dispose(); }
+    public override void Dispose() { Screen.Changed -= OnScreenChanged; Nav.LocationChanged -= OnLocationChanged; base.Dispose(); }
 
     private void Select(IDiagnosticModule m) { Screen.SelectedModule = m.Name; }
     private readonly Dictionary<string, ElementReference> _rowRefs = new(StringComparer.OrdinalIgnoreCase);

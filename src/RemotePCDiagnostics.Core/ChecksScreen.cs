@@ -114,6 +114,11 @@ public sealed class ChecksScreenState
 
     public const string ChecksRoute = "checks", StressRoute = "stress", SecurityAuditRoute = "security-audit";
 
+    /// <summary>Which list a page address shows: "stress" (any case, with or without query/fragment/trailing slash) is Stress tests,
+    /// anything else (e.g. "checks") is Checks.</summary>
+    public static CheckGroup GroupForPath(string? baseRelativePath) =>
+        (baseRelativePath ?? "").Split('?', '#')[0].Trim('/').Equals(StressRoute, StringComparison.OrdinalIgnoreCase) ? CheckGroup.Stress : CheckGroup.Checks;
+
     /// <summary>Which page shows <paramref name="module"/>: "security-audit", "stress" or "checks" (also for anything else).</summary>
     public string PageFor(string module) =>
         string.Equals(module, SecurityAuditModule.ModuleName, StringComparison.OrdinalIgnoreCase) ? SecurityAuditRoute

@@ -64,6 +64,17 @@ public class ChecksScreenTests
         Assert.Null(s.GroupOf("SecurityAudit"));
     }
 
+    [Theory]
+    [InlineData("stress", CheckGroup.Stress)]
+    [InlineData("Stress/", CheckGroup.Stress)]
+    [InlineData("stress?x=1#top", CheckGroup.Stress)]
+    [InlineData("checks", CheckGroup.Checks)]
+    [InlineData("checks/", CheckGroup.Checks)]
+    [InlineData("", CheckGroup.Checks)]
+    [InlineData(null, CheckGroup.Checks)]
+    [InlineData("stresses", CheckGroup.Checks)]
+    public void GroupForPath_PicksTheList(string? path, CheckGroup expected) => Assert.Equal(expected, ChecksScreenState.GroupForPath(path));
+
     [Fact]
     public void EachPageRemembersItsOwnSelection_FallsBackToFirst()
     {
