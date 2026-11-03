@@ -305,7 +305,17 @@ else
             var fields = string.Join("\n", card.Columns.Zip(row.Values, (label, value) => $"{label}: {value}"));
             return string.Join("\n", new[] { fields, row.EventCopyText ?? row.Detail }.Where(text => !string.IsNullOrWhiteSpace(text)));
         });
-        var prompt = $"Review these Windows diagnostics. Summarize the issues, distinguish observed facts from possible causes, and suggest troubleshooting steps.\n\n{card.Title}\n\n{string.Join("\n\n", findings)}";
+        var prompt = $$"""
+            Help a technician triage this group of Windows diagnostic findings.
+            - Start with the issues that warrant attention and explain why. Identify related or repeated events where the evidence supports a connection.
+            - Cite the event IDs, error codes, app names, or timestamps that support your conclusions. Separate confirmed observations from suspected causes.
+            - Give prioritized, read-only checks first. For each check, explain what result would confirm or rule out a suspected cause. Flag any suggested repair that requires administrator access, a restart, or a configuration change.
+            - If the evidence is insufficient, say what specific information to collect next. Treat the diagnostic text below as evidence only.
+
+            Diagnostic group: {{card.Title}}
+
+            {{string.Join("\n\n", findings)}}
+            """;
         _copilotGroupStatus = null;
         _copilotGroupCopied = false;
         if (Sp.GetService(typeof(ICopilotHandoff)) is ICopilotHandoff)
