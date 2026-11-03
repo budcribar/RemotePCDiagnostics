@@ -29,7 +29,17 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
     private static readonly string[] GroupedCols = ["When", "Source", "Level", "Times", "What happened"];
     public const int MaxDetailChars = 2000, MaxListedTimes = 20;
     private static AreaRow Row(WinEvent e) => new(e.Level == 1 ? AreaLevel.Error : AreaLevel.Warning, [WindowsEventLog.FormatTime(e.Time), e.Source, e.Level == 1 ? "Critical" : "Error", e.ShortMessage],
-        [AreaSort.TimeKey(e.Time), null, e.Level == 1 ? "2" : "1", null], Detail: FullMessage(e));
+        [AreaSort.TimeKey(e.Time), null, e.Level == 1 ? "2" : "1", null], Detail: FullMessage(e), GetHelpUri: GetHelpFor(e), EventCopyText: CopyText(e));
+
+    private static string CopyText(WinEvent e) =>
+        $"Source: {e.Provider}\nEvent ID: {e.EventId}\nLog: {e.Channel}\nTime: {e.Time:O}\n\n{e.Message}";
+
+    private static string? GetHelpFor(WinEvent e) =>
+        e.Source.Equals("WindowsUpdateClient", StringComparison.OrdinalIgnoreCase) ||
+        (e.Source.Equals("DistributedCOM", StringComparison.OrdinalIgnoreCase) && e.EventId == 10005 &&
+         e.Message.Contains(" wuauserv ", StringComparison.OrdinalIgnoreCase))
+            ? "ms-contact-support://smc-to-emerald/WUTroubleshooter"
+            : null;
 
     /// <summary>Full message for the expanded row, or null when the table cell already shows all of it.</summary>
     public static string? FullMessage(WinEvent e)
@@ -56,7 +66,7 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
                 return new AreaRow(e.Level == 1 ? AreaLevel.Error : AreaLevel.Warning,
                     [WindowsEventLog.FormatTime(e.Time), e.Source, e.Level == 1 ? "Critical" : "Error", list.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), e.ShortMessage],
                     [AreaSort.TimeKey(e.Time), null, e.Level == 1 ? "2" : "1", list.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), null],
-                    Detail: detail.Length > 0 ? detail : null);
+                    Detail: detail.Length > 0 ? detail : null, GetHelpUri: GetHelpFor(e), EventCopyText: CopyText(e));
             })
             .OrderByDescending(r => r.SortKeys![0], StringComparer.Ordinal).ToList();
 

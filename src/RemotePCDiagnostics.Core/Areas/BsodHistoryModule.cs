@@ -1,9 +1,10 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>One crash dump file in <c>C:\Windows\Minidump</c>.</summary>
-public sealed record MinidumpFile(string FileName, DateTimeOffset Created, long SizeBytes);
+public sealed record MinidumpFile(string FileName, DateTimeOffset Created, long SizeBytes, string? FullPath = null);
 
 /// <summary>
 /// Blue screens (BugChecks, WER-SystemErrorReporting event 1001), unexpected power losses (Kernel-Power event 41,
@@ -37,12 +38,85 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
         var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         if (string.IsNullOrEmpty(winDir)) return [];
         var dir = Path.Combine(winDir, "Minidump");
-        if (!Directory.Exists(dir)) return [];
-        return new DirectoryInfo(dir).EnumerateFiles("*.dmp")
-            .OrderByDescending(f => f.LastWriteTimeUtc)
-            .Take(50)
-            .Select(f => new MinidumpFile(f.Name, new DateTimeOffset(f.LastWriteTimeUtc, TimeSpan.Zero), f.Length))
+        var files = Directory.Exists(dir) ? new DirectoryInfo(dir).EnumerateFiles("*.dmp")
+            .OrderByDescending(f => f.LastWriteTimeUtc).Take(50).ToList() : [];
+        var memory = new FileInfo(Path.Combine(winDir, "MEMORY.DMP"));
+        if (memory.Exists) files.Add(memory);
+        return files.OrderByDescending(f => f.LastWriteTimeUtc)
+            .Select(f => new MinidumpFile(f.Name, new DateTimeOffset(f.LastWriteTimeUtc, TimeSpan.Zero), f.Length, f.FullName))
             .ToList();
+    }
+
+    private static string StopCode(uint code) => $"0x{code:x8}" + (code switch
+    {
+        0xA => " · Invalid memory access at elevated priority",
+        0x1A => " · Memory management error",
+        0x3B => " · System service exception",
+        0x50 => " · Invalid reference to nonpaged memory",
+        0x7E => " · Unhandled system thread exception",
+        0x9F => " · Driver power state failure",
+        0x116 => " · Graphics driver recovery failed",
+        0x124 => " · Uncorrectable hardware error",
+        0x133 => " · Driver work exceeded its time limit",
+        0xD1 => " · Driver accessed invalid memory at elevated priority",
+        0xEF => " · Critical system process stopped",
+        _ => ""
+    });
+
+    private static string? BugCheckCode(WinEvent e)
+    {
+        var match = Regex.Match(e.DataAt(0, "param1") + " " + e.Message, @"\b0x([0-9a-fA-F]{1,8})\b");
+        return match.Success && uint.TryParse(match.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var code)
+            ? StopCode(code) : null;
+    }
+
+    private static bool SameDump(MinidumpFile dump, string path) =>
+        dump.FullPath is not null && string.Equals(dump.FullPath, path, StringComparison.OrdinalIgnoreCase);
+
+    private static AreaRow BlueScreenRow(WinEvent e, bool recent, IReadOnlyList<MinidumpFile> dumps)
+    {
+        var code = BugCheckCode(e);
+        var path = e.DataAt(1, "param2");
+        var report = e.DataAt(2, "param3");
+        var parameters = Regex.Match(e.DataAt(0, "param1") + " " + e.Message, @"\((0x[0-9a-fA-F]+(?:,\s*0x[0-9a-fA-F]+){3})\)").Groups[1].Value;
+        var found = dumps.Any(d => MatchesEvent(d, e));
+        var details = string.Join("\n", new[]
+        {
+            code is null ? null : $"Stop code: {code}",
+            parameters.Length == 0 ? null : $"Bugcheck parameters: {parameters}",
+            path.Length == 0 ? null : $"Dump path: {path} ({(dumps.Any(d => SameDump(d, path)) ? "on disk" : "not in the dump inventory")})",
+            report.Length == 0 ? null : $"Report ID: {report}",
+            e.Message.Length > 0 ? e.Message : e.ShortMessage
+        }.OfType<string>());
+        return new(recent ? AreaLevel.Warning : AreaLevel.Neutral,
+            [WindowsEventLog.FormatTime(e.Time), "Blue screen (BugCheck)", code ?? e.ShortMessage],
+            [AreaSort.TimeKey(e.Time), null, null], Detail: details, DumpPath: found ? path : null);
+    }
+
+    private static AreaRow RestartRow(WinEvent e, bool recent)
+    {
+        var code = e.EventId == 41 && e.NamedData.TryGetValue("BugcheckCode", out var raw)
+            && uint.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var value) && value != 0
+            ? StopCode(value) : null;
+        var message = e.Message.Length > 0 ? e.Message : e.ShortMessage;
+        return new(recent ? AreaLevel.Warning : AreaLevel.Neutral,
+            [WindowsEventLog.FormatTime(e.Time), e.EventId == 41 ? "Kernel-Power (Event 41)" : "Unexpected shutdown (Event 6008)", code ?? e.ShortMessage],
+            [AreaSort.TimeKey(e.Time), null, null], Detail: code is null ? message : $"Stop code: {code}\n{message}");
+    }
+
+    private static bool MatchesEvent(MinidumpFile dump, WinEvent e) =>
+        SameDump(dump, e.DataAt(1, "param2")) && (e.Time - dump.Created).Duration() <= TimeSpan.FromMinutes(10);
+
+    private static AreaRow DumpRow(MinidumpFile dump, IReadOnlyList<WinEvent> events)
+    {
+        var related = events.FirstOrDefault(e => MatchesEvent(dump, e));
+        var detail = dump.FullPath ?? dump.FileName;
+        if (related is not null)
+            detail += $"\nBlue screen recorded: {WindowsEventLog.FormatTime(related.Time)} · {BugCheckCode(related) ?? related.ShortMessage}";
+        return new(AreaLevel.Neutral,
+            [WindowsEventLog.FormatTime(dump.Created), dump.FileName, Osquery.HardwareInventory.FormatBytes(dump.SizeBytes)],
+            [AreaSort.TimeKey(dump.Created), null, dump.SizeBytes.ToString(CultureInfo.InvariantCulture)],
+            Detail: detail, DumpPath: dump.FullPath);
     }
 
     public static bool IsBugCheckEvent(WinEvent e) =>
@@ -77,29 +151,24 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
                 bsods.Count == 0 ? "None" : Plural(bsods.Count, "blue screen"),
                 bsods.FirstOrDefault() is { } b ? $"Latest: {WindowsEventLog.FormatTime(b.Time)}" : $"In the last {Days} days",
                 eventCols,
-                bsods.Select(e => new AreaRow(Recent(e.Time) ? AreaLevel.Warning : AreaLevel.Neutral,
-                    [WindowsEventLog.FormatTime(e.Time), "Blue screen (BugCheck)", e.ShortMessage],
-                    [AreaSort.TimeKey(e.Time), null, null])).ToList(),
+                bsods.Select(e => BlueScreenRow(e, Recent(e.Time), dmpList)).ToList(),
                 EmptyText: $"No blue screen crashes were recorded in the last {Days} days."),
 
             new("power", "Unexpected power losses & resets", powerLevel,
                 incidents.Count == 0 ? "None" : Plural(incidents.Count, "unexpected restart"),
                 powerLosses.FirstOrDefault() is { } p ? $"Latest: {WindowsEventLog.FormatTime(p.Time)}" : $"In the last {Days} days",
                 eventCols,
-                powerLosses.Select(e => new AreaRow(Recent(e.Time) ? AreaLevel.Warning : AreaLevel.Neutral,
-                    [WindowsEventLog.FormatTime(e.Time), e.EventId == 41 ? "Kernel-Power (Event 41)" : "Unexpected shutdown (Event 6008)", e.ShortMessage],
-                    [AreaSort.TimeKey(e.Time), null, null])).ToList(),
+                powerLosses.Select(e => RestartRow(e, Recent(e.Time))).ToList(),
                 EmptyText: $"All shutdowns and restarts in the last {Days} days were clean.",
                 Note: "Event 41 happens when the PC loses power, is forced off by holding the power button, or resets before Windows can write a crash log."),
 
-            new("minidumps", "Crash dump files (Minidump)", dmpList.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok,
+            new("minidumps", "Crash dump files", dmpList.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok,
                 dmpList.Count == 0 ? "None on disk" : Plural(dmpList.Count, "dump file"),
                 dmpList.FirstOrDefault() is { } d ? $"Latest: {d.FileName} ({WindowsEventLog.FormatTime(d.Created)})" : @"C:\Windows\Minidump",
                 ["When", "File", "Size"],
-                dmpList.Select(f => new AreaRow(AreaLevel.Neutral,
-                    [WindowsEventLog.FormatTime(f.Created), f.FileName, Osquery.HardwareInventory.FormatBytes(f.SizeBytes)],
-                    [AreaSort.TimeKey(f.Created), null, f.SizeBytes.ToString(CultureInfo.InvariantCulture)])).ToList(),
-                EmptyText: @"No crash dump files (.dmp) were found in C:\Windows\Minidump."),
+                dmpList.Select(f => DumpRow(f, bsods)).ToList(),
+                EmptyText: @"No dumps were found in C:\Windows\Minidump or at C:\Windows\MEMORY.DMP.",
+                Note: "Expand a dump and choose Analyze dump to run Windows Debugging Tools. Analysis may download public symbols from Microsoft."),
         };
 
         string summary;

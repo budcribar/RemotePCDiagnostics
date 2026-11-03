@@ -2,6 +2,8 @@
 @using RemotePCDiagnostics.Core.Areas
 @inherits StoreAwareComponent
 @inject IServiceProvider Sp
+@inject Microsoft.JSInterop.IJSRuntime ClipboardJs
+@using Microsoft.JSInterop
 @* Generic card + drill-down page for area modules (drive health, services, programs, network, events, crashes, and new checks). *@
 @{
     var m = Diagnostics.Modules.FirstOrDefault(x => string.Equals(x.Name, Slug, StringComparison.OrdinalIgnoreCase));
@@ -108,7 +110,7 @@ else
                             var svc = SvcInfo(svcModule, row);
                             var level = svc is not null && _svcStatus.ContainsKey(svc.Name) ? (svc.IsRunning ? AreaLevel.Ok : svc.IsAutomatic ? AreaLevel.Warning : AreaLevel.Neutral) : row.Level;
                             var rowRef = row;
-                            var expandable = row.Detail is not null;
+                            var expandable = row.Detail is not null || row.GetHelpUri is not null || row.EventCopyText is not null;
                             var expanded = expandable && ReferenceEquals(_expanded, row) || expandable && _expandedKey is not null && _expandedKey == RowId(row);
                             <tr @key="row" data-testid="@(row.Key is null ? null : "svc-row-" + row.Key)" class="@(expandable ? "row-expandable" : null)"
                                 tabindex="@(expandable ? "0" : null)" aria-expanded="@(expandable ? (expanded ? "true" : "false") : null)"
@@ -116,7 +118,7 @@ else
                                 @for (var i = 0; i < row.Values.Count; i++)
                                 {
                                     var col = open.Columns.Count > i ? open.Columns[i] : "";
-                                    <td class="@ColumnClass(open.Columns[i])">@if (i == 0) { @if (expandable) { <span class="row-caret" aria-hidden="true">@(expanded ? "▾" : "▸")</span> } <span class="dot dot-@Dot(level)"></span> }
+                                    <td class="@ColumnClass(col)">@if (i == 0) { @if (expandable) { <span class="row-caret" aria-hidden="true">@(expanded ? "▾" : "▸")</span> } <span class="dot dot-@Dot(level)"></span> }
                                         @if (col is "Type" or "Level") { <span class="badge badge-@row.Values[i].ToLowerInvariant()">@row.Values[i]</span> } else if (svc is not null && i == 1 && _svcStatus.ContainsKey(svc.Name)) { @svc.FriendlyStatus } else { @row.Values[i] }</td>
                                 }
                                 @if (svcActions is not null)
@@ -148,7 +150,34 @@ else
                             </tr>
                             @if (expanded)
                             {
-                                <tr class="row-detail" data-testid="area-row-detail"><td colspan="@(open.Columns.Count + (svcActions is not null || hasRowRemActions ? 1 : 0))">@row.Detail</td></tr>
+                                <tr class="row-detail" data-testid="area-row-detail"><td colspan="@(open.Columns.Count + (svcActions is not null || hasRowRemActions ? 1 : 0))">@row.Detail
+                                    @if (row.EventCopyText is { } eventText)
+                                    {
+                                        <button type="button" class="btn-small" @onclick="() => CopyEvent(eventText)">Copy event details</button>
+                                        @if (_copyStatus is not null)
+                                        {
+                                            <span role="status">@_copyStatus</span>
+                                        }
+                                    }
+                                    @if (row.GetHelpUri is { } helpUri)
+                                    {
+                                        <button type="button" class="btn-small" @onclick="() => OpenGetHelp(helpUri)">Open in Get Help</button>
+                                        @if (_getHelpError is not null)
+                                        {
+                                            <p role="status">@_getHelpError</p>
+                                        }
+                                    }
+                                    @if (row.DumpPath is { } dumpPath)
+                                    {
+                                        <div class="svc-actions" @onclick:stopPropagation="true" @onkeydown="DrawerKey" @onkeydown:stopPropagation="true">
+                                            <button type="button" class="btn-small" disabled="@_analyzingDump" @onclick="() => AnalyzeDump(dumpPath)">Analyze dump</button>
+                                        </div>
+                                        @if (_analyzedDump == dumpPath)
+                                        {
+                                            <pre style="white-space:pre-wrap;overflow-wrap:anywhere" role="status">@(_analyzingDump ? "Analyzing dump…" : _dumpAnalysis)</pre>
+                                        }
+                                    }
+                                </td></tr>
                             }
                         }
                     </table>
@@ -162,6 +191,50 @@ else
 @code {
     [Parameter] public string Slug { get; set; } = "";
     private string? _open;
+    private string? _getHelpError;
+    private string? _copyStatus;
+
+    private async Task CopyEvent(string text)
+    {
+        try
+        {
+            await ClipboardJs.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            _copyStatus = "Event details copied.";
+        }
+        catch (JSException)
+        {
+            _copyStatus = "Couldn't copy event details.";
+        }
+    }
+
+
+    private void OpenGetHelp(string uri)
+    {
+        _getHelpError = null;
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri) { UseShellExecute = true });
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            _getHelpError = "Couldn't open Get Help. Open it from Start and search for Windows Update troubleshooter.";
+        }
+    }
+
+    private bool _analyzingDump;
+    private string? _analyzedDump;
+    private string? _dumpAnalysis;
+
+    private async Task AnalyzeDump(string path)
+    {
+        if (_analyzingDump) return;
+        _analyzingDump = true;
+        _analyzedDump = path;
+        _dumpAnalysis = null;
+        try { _dumpAnalysis = await CrashDumpDebugger.AnalyzeAsync(path); }
+        finally { _analyzingDump = false; }
+    }
+
     private void Open(string id) { _open = id; _expanded = null; _expandedKey = null; }
     private void Close() { _open = null; _expanded = null; _expandedKey = null; }
     // The row whose details are open; matched by content too, so an auto-refresh (new row objects) keeps it open.
@@ -170,7 +243,8 @@ else
     private static string RowId(AreaRow r) => r.Key ?? string.Join("\u001f", r.Values);
     private void ToggleRow(AreaRow r)
     {
-        if (r.Detail is null) return;
+        if (r.Detail is null && r.GetHelpUri is null && r.EventCopyText is null) return;
+        _copyStatus = null;
         var open = ReferenceEquals(_expanded, r) || _expandedKey == RowId(r);
         _expanded = open ? null : r;
         _expandedKey = open ? null : RowId(r);
