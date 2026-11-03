@@ -88,6 +88,21 @@ After every action the app waits ~2.5 s and shows the measured change ("Freed ab
 
 **Not yet verified on real hardware:** the Chrome/Edge Local State key names (`performance_tuning.high_efficiency_mode.state`, `performance_tuning.sleeping_tabs.enabled`) — if the key isn't present, only the settings page is offered; Visual Studio extension/Live Share detection paths; printer/Bluetooth/fingerprint detection; graceful close of every app; service start-type changes via the registry (take effect on next boot); the before/after numbers.
 
+## Drive health: Optimize / Retrim SSD
+
+Each SSD card on **Drive health** has a **Last optimized** row, e.g. "6 days ago (by Windows)", "today (by this app)" or "Not reported"
+(per drive letter when an SSD has several volumes that differ). **Optimize / Retrim SSD** is offered, on the page and in the service
+workflow's fix list, only when at least one of the SSD's volumes was not retrimmed in the last 30 days or the date is unknown.
+
+The date is the newest of:
+
+- **Windows' record:** Application log, provider `Microsoft-Windows-Defrag`, event **258** ("The storage optimizer successfully completed
+  retrim on …"), last 60 days, at most 500 events, read-only. The drive letter is taken from the event data ("(C:)"), not the English
+  message; events whose operation is defragmentation are skipped. Check on a PC with
+  `Get-WinEvent -FilterHashtable @{LogName='Application';ProviderName='Microsoft-Windows-Defrag';Id=258} -MaxEvents 5`.
+- **This app's record:** every successful Optimize / Retrim SSD fix is saved per letter to `%LOCALAPPDATA%\RemotePCDiagnostics\retrim.json`,
+  so the next check (e.g. the workflow's second pass) sees it at once, without waiting for Windows' event.
+
 ## Status
 
 Idea stage. This repository currently holds only this README.

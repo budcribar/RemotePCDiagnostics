@@ -59,7 +59,10 @@ public partial class MainWindow : Window
                 new SystemAdapterCounters(sp.GetRequiredService<SystemCommandRunner>()), sp.GetRequiredService<ISensorProvider>(), settings, App.Log);
         });
         services.AddSingleton<IDiagnosticModule>(sp => new GpuStressModule(new RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory(App.Log), sp.GetRequiredService<ISensorProvider>(), App.Log));
-        services.AddSingleton<IDiagnosticModule, DriveHealthModule>();
+        // Last retrim per SSD volume: Windows' Defrag event 258 plus this app's own record (retrim.json), so Drive health only offers it when needed.
+        services.AddSingleton(_ => new RetrimLog(RetrimLog.DefaultPath(), App.Log));
+        services.AddSingleton<IRetrimHistory>(sp => new RetrimHistory(sp.GetRequiredService<RetrimLog>(), new WindowsRetrimEvents(App.Log), App.Log));
+        services.AddSingleton<IDiagnosticModule>(sp => new DriveHealthModule(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<IRetrimHistory>()));
         services.AddSingleton<ServicesModule>();
         services.AddSingleton<IDiagnosticModule>(sp => sp.GetRequiredService<ServicesModule>());
         // Reversible changes (with their "before" values) for "Undo all changes" / --undo-all; survives restarts.
@@ -68,7 +71,7 @@ public partial class MainWindow : Window
             journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
         services.AddSingleton(sp => new RebootResumeCoordinator(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<OsqueryRunner>(), RebootResumeCoordinator.DefaultStateFilePath(), log: App.Log));
         services.AddSingleton(sp => new RemediationService(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), App.Log, sp.GetRequiredService<RebootResumeCoordinator>(),
-            sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
+            sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(), sp.GetRequiredService<RetrimLog>()));
         services.AddSingleton(sp => App.CreateUndoService(sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(), sp.GetRequiredService<SystemCommandRunner>(),
             new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), App.Log)));
         services.AddSingleton<IDiagnosticModule, ProgramsModule>(sp => new ProgramsModule(sp.GetRequiredService<OsqueryRunner>()));

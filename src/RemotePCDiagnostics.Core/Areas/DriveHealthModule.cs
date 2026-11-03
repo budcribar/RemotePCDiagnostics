@@ -53,8 +53,12 @@ public sealed record DriveHealth(
 /// (Get-PhysicalDisk HealthStatus/OperationalStatus + Get-StorageReliabilityCounter) via PowerShell.
 /// If that fails, drives are listed from osquery disk_info with health marked as not reported.
 /// </summary>
-public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunner osquery) : AreaModuleBase(commands.Log ?? osquery.Options.Log)
+public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunner osquery, IRetrimHistory? retrims = null, Func<DateTimeOffset>? clock = null)
+    : AreaModuleBase(commands.Log ?? osquery.Options.Log)
 {
+    /// <summary>"Optimize / Retrim SSD" is offered only when a volume of the SSD wasn't retrimmed in this long (or the date is unknown).</summary>
+    public static readonly TimeSpan RetrimFreshFor = TimeSpan.FromDays(30);
+
     public const string ModuleName = "DriveHealth";
     public override string Name => ModuleName;
     public override string DisplayName => "Drive health";
@@ -83,7 +87,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             try { drives = OsqueryJson.ParseRows(pr.StdOut).Select(DriveHealth.FromRow).ToList(); }
             catch (FormatException ex) { Log($"{Name}: storage health output unreadable: {ex.Message}"); }
         }
-        if (drives is { Count: > 0 }) return Build(drives);
+        if (drives is { Count: > 0 }) return Build(drives, await ReadRetrimsAsync(ct).ConfigureAwait(false), (clock ?? (() => DateTimeOffset.Now))());
 
         Log($"{Name}: Windows storage health unavailable; falling back to osquery disk_info (no health data)");
         var q = await osquery.RunQueryAsync(HardwareInventory.DiskSql, ct).ConfigureAwait(false);
@@ -93,7 +97,34 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
         return Build(fallback) with { Notice = "Windows didn't report drive health on this PC, so only the drive list is shown." };
     }
 
-    public static AreaReport Build(IReadOnlyList<DriveHealth> drives)
+    private async Task<IReadOnlyDictionary<char, RetrimRecord>?> ReadRetrimsAsync(CancellationToken ct)
+    {
+        if (retrims is null) return null;
+        try { return await retrims.LatestAsync(ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log($"{Name}: last retrim unknown: {ex.Message}"); return null; }
+    }
+
+    /// <summary>True when every letter was retrimmed within <see cref="RetrimFreshFor"/>; unknown letters count as not recent.</summary>
+    public static bool RecentlyRetrimmed(string letters, IReadOnlyDictionary<char, RetrimRecord>? retrims, DateTimeOffset now) =>
+        letters.Length > 0 && retrims is not null && letters.All(c => retrims.TryGetValue(c, out var r) && now - r.When < RetrimFreshFor);
+
+    /// <summary>"6 days ago (by Windows)"; per letter when they differ ("C: today (by this app); D: Not reported").</summary>
+    public static string LastOptimizedText(string letters, IReadOnlyDictionary<char, RetrimRecord>? retrims, DateTimeOffset now)
+    {
+        string One(char c) => retrims is not null && retrims.TryGetValue(c, out var r) ? $"{Ago(r.When, now)} ({r.SourceText})" : "Not reported";
+        var parts = letters.Select(c => (c, t: One(c))).ToList();
+        return parts.Select(p => p.t).Distinct().Count() <= 1 ? parts.FirstOrDefault().t ?? "Not reported" : string.Join("; ", parts.Select(p => $"{p.c}: {p.t}"));
+    }
+
+    private static string Ago(DateTimeOffset when, DateTimeOffset now)
+    {
+        var days = (int)Math.Floor((now - when).TotalDays);
+        return days <= 0 ? "today" : days == 1 ? "yesterday" : $"{days} days ago";
+    }
+
+    public static AreaReport Build(IReadOnlyList<DriveHealth> drives) => Build(drives, null, DateTimeOffset.Now);
+
+    public static AreaReport Build(IReadOnlyList<DriveHealth> drives, IReadOnlyDictionary<char, RetrimRecord>? retrims, DateTimeOffset now)
     {
         if (drives.Count == 0)
             return new([], "No drives were found to check.", DiagnosticStatus.Warning);
@@ -117,12 +148,15 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             Add("Uncorrected read errors", d.ReadErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported", d.ReadErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Uncorrected write errors", d.WriteErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported", d.WriteErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Hours powered on", d.PowerOnHours is >= 0 ? d.PowerOnHours.Value.ToString("N0", CultureInfo.InvariantCulture) : "Not reported");
+            var ssdLetters = d.Kind == "SSD" ? RemediationService.DriveLetters(d.Letters) : "";
+            if (ssdLetters.Length > 0) Add("Last optimized", LastOptimizedText(ssdLetters, retrims, now));
             Add("Serial number", d.Serial);
             var actions = new List<AreaAction>();
             if (i == 0)
                 actions.Add(new(RemediationKind.CleanTempFiles, "Clean up temporary files", "", "Temporary files & Recycle Bin"));
-            if (d.Kind == "SSD" && RemediationService.DriveLetters(d.Letters) is { Length: > 0 } letters)
-                actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", letters, d.Name.Length > 0 ? d.Name : "SSD"));
+            // Not offered when Windows or this app retrimmed every volume of this SSD in the last 30 days.
+            if (ssdLetters.Length > 0 && !RecentlyRetrimmed(ssdLetters, retrims, now))
+                actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", ssdLetters, d.Name.Length > 0 ? d.Name : "SSD"));
             return new AreaCard($"drive{i}", d.Name.Length > 0 ? d.Name : $"Drive {i + 1}", d.Level, d.Verdict, meta, cols, rows,
                 Actions: actions.Count > 0 ? actions : null);
         }).ToList();

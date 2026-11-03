@@ -72,8 +72,12 @@ public sealed class RemediationService(
     ISessionContext? session = null,
     Action<string>? log = null,
     RebootResumeCoordinator? rebootResume = null,
-    Changes.IChangeJournal? journal = null)
+    Changes.IChangeJournal? journal = null,
+    RetrimLog? retrimLog = null)
 {
+    /// <summary>This app's record of successful retrims (so Drive health stops offering it right away).</summary>
+    public RetrimLog? RetrimLog => retrimLog;
+
     public const int MaxRecent = 50;
     public const string BalancedPlanGuid = "381b4222-f694-41f0-9685-ff5bb260df2e";
 
@@ -298,6 +302,8 @@ public sealed class RemediationService(
             }
         }
 
+        if (action.Kind == RemediationKind.OptimizeSsd && result.Success)
+            try { retrimLog?.Record(action.Target, DateTimeOffset.Now); } catch (Exception ex) { Log($"retrim log: {ex.Message}"); }
         RecordCompleted(
             actor,
             action.Kind,
