@@ -20,7 +20,7 @@ else
         @if (running) { <button data-testid="cam-cancel" @onclick="m.Cancel">Cancel</button> }
         else { <button data-testid="cam-start" disabled="@suiteBusy" @onclick="() => Start(m)">@(r.Status == DiagnosticStatus.NotRun ? "Start" : "Run again")</button> }
     </div>
-    <p class="meta" data-testid="cam-intro">Opens the camera for a few seconds (at most 1280×720, 30 fps) and checks the picture automatically: frame rate, stalls, brightness, contrast, black or frozen frames and overexposure. Frames are only analysed in memory; no picture is saved, shown or sent. The camera light will turn on briefly.</p>
+    <p class="meta" data-testid="cam-intro">Opens the camera for a few seconds (at most 1280×720, 30 fps) and checks the picture automatically: frame rate, stalls, brightness, contrast, black or frozen frames and overexposure. Local tests show a small live preview. Frames stay in memory on the PC being tested. The camera light will turn on briefly.</p>
     <div class="toolbar">
         <label class="meta">Camera
             <select data-testid="cam-device" disabled="@running" @onchange="e => m.DeviceId = e.Value?.ToString() is { Length: > 0 } v ? v : null">

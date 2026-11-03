@@ -15,7 +15,7 @@ namespace RemotePCDiagnostics.Host;
 /// targets (net10.0-windows10.0.19041.0), so no extra package. Frames are reduced to a small luma thumbnail and analysed in memory only;
 /// nothing is saved or sent. The camera is always closed (MediaCapture disposed) when the capture ends, fails or is cancelled.
 /// </summary>
-public sealed class MediaCaptureWebcamIo(Action<string>? log = null) : IWebcamIo
+public sealed class MediaCaptureWebcamIo(Action<string>? log = null, bool showPreview = false) : IWebcamIo
 {
     private const string ConsentKey = @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam";
 
@@ -56,6 +56,7 @@ public sealed class MediaCaptureWebcamIo(Action<string>? log = null) : IWebcamIo
         string? note = null;
         MediaCapture? capture = null;
         MediaFrameReader? reader = null;
+        WebcamPreview? preview = null;
         try
         {
             MediaFrameSource? source;
@@ -89,12 +90,14 @@ public sealed class MediaCaptureWebcamIo(Action<string>? log = null) : IWebcamIo
 
             Exception? failure = null;
             capture.Failed += (_, e) => { failure ??= new WebcamDeviceException($"Camera failed: {e.Message} (0x{e.Code:X8})") { HResult = unchecked((int)e.Code) }; };
+            if (showPreview && System.Windows.Application.Current is { } app)
+                preview = await app.Dispatcher.InvokeAsync(() => new WebcamPreview());
             var sw = Stopwatch.StartNew();
             var gate = new object();
             var stopped = false;
             byte[]? bgra = null;
             byte[]? luma = null;
-            reader.AcquisitionMode = MediaFrameReaderAcquisitionMode.Realtime;
+            reader!.AcquisitionMode = MediaFrameReaderAcquisitionMode.Realtime;
             reader.FrameArrived += (r, _) =>
             {
                 lock (gate)
@@ -119,6 +122,7 @@ public sealed class MediaCaptureWebcamIo(Action<string>? log = null) : IWebcamIo
                             var tw = Math.Min(WebcamMath.ThumbWidth, bw);
                             if (luma is null || luma.Length != tw * th) luma = new byte[tw * th];
                             WebcamMath.LumaFromBgra(bgra, bw, bh, bw * 4, luma);
+                            preview?.ShowFrame(bgra, bw, bh, sw.Elapsed);
                             req.OnFrame(new WebcamFrame(tw, th, luma, sw.Elapsed));
                         }
                         finally { conv?.Dispose(); bmp.Dispose(); }
@@ -142,7 +146,11 @@ public sealed class MediaCaptureWebcamIo(Action<string>? log = null) : IWebcamIo
             if (WebcamVerdicts.IsBusyHResult(ex.HResult)) throw new WebcamBusyException(ex.Message, ex);
             throw new WebcamDeviceException(ex.Message, ex);
         }
-        finally { Dispose(ref reader, ref capture); }
+        finally
+        {
+            Dispose(ref reader, ref capture);
+            preview?.Close();
+        }
     }
 
     private static async Task<(MediaCapture, MediaFrameSource?)> OpenAsync(string deviceId, MediaCaptureSharingMode mode, CancellationToken ct)
