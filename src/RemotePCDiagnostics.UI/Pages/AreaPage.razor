@@ -310,9 +310,14 @@ else
         try
         {
             var timeline = await module.FindHangEvidenceAsync(rows.SelectMany(r => r.HangOccurrences ?? []).ToList(), CancellationToken.None);
+            var integrity = Diagnostics.Modules.OfType<WindowsIntegrityModule>()
+                .Select(check => (check.DisplayName, Result: Store.Get(check.Name)))
+                .Where(check => check.Result.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error)
+                .Select(check => $"{check.DisplayName} · {check.Result.Timestamp:O} · {check.Result.Message}").ToList();
             if (_open == card.Id)
                 _pendingCopilotPrompt = BuildCopilotPrompt(card, rows) +
-                    "\n\nAssess whether the timeline supports a shared cause across the selected groups. Explain what remains uncertain.\n\n" + timeline;
+                    "\n\nAssess whether the timeline supports a shared cause across the selected groups. Explain what remains uncertain.\n\n" + timeline +
+                    (integrity.Count == 0 ? "" : "\n\nIntegrity findings at scan time (separate from the historical timeline)\n" + string.Join("\n", integrity));
         }
         finally { _findingHangEvidence = _collectingHangGroups = false; }
     }

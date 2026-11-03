@@ -217,13 +217,28 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             var time = $"TimeCreated[@SystemTime >= '{start.UtcDateTime:O}' and @SystemTime <= '{end.UtcDateTime:O}']";
             var appQuery = $"*[System[{time} and (EventID=1000 or EventID=1001 or EventID=1002 or Level=1 or Level=2)]]";
             var systemQuery = $"*[System[{time} and (Level=1 or Level=2 or Level=3 or Provider[@Name='Microsoft-Windows-WindowsUpdateClient' or @Name='Microsoft-Windows-Kernel-PnP'])]]";
+            var storageQuery = $"*[System[{time} and Provider[@Name='disk' or @Name='Ntfs' or @Name='Microsoft-Windows-Ntfs' or @Name='Microsoft-Windows-StorPort' or @Name='stornvme' or @Name='storahci' or @Name='iaStorAC' or @Name='iaStorVD' or @Name='volmgr'] and (Level=1 or Level=2 or Level=3 or EventID=7 or EventID=11 or EventID=15 or EventID=51 or EventID=129 or EventID=153 or EventID=157)]]";
+            var serviceQuery = $"*[System[{time} and Provider[@Name='Service Control Manager'] and (EventID=7000 or EventID=7001 or EventID=7009 or EventID=7011 or EventID=7022 or EventID=7023 or EventID=7024)]]";
+            var storageTask = _log.QueryAsync("System", storageQuery, 20, ct);
+            var serviceTask = _log.QueryAsync("System", serviceQuery, 20, ct);
             var appTask = _log.QueryAsync("Application", appQuery, 60, ct);
             var systemTask = _log.QueryAsync("System", systemQuery, 60, ct);
-            await Task.WhenAll(appTask, systemTask).ConfigureAwait(false);
+            await Task.WhenAll(appTask, systemTask, storageTask, serviceTask).ConfigureAwait(false);
             var app = await appTask;
             var system = await systemTask;
 
             lines.Add($"\n{WindowsEventLog.FormatTime(start)} to {WindowsEventLog.FormatTime(end)}");
+            AddFollowUp("Storage stalls and file-system events", await storageTask);
+            AddFollowUp("Service startup, dependency, and timeout events", await serviceTask);
+
+            void AddFollowUp(string title, IReadOnlyList<WinEvent>? events)
+            {
+                lines.Add(title);
+                if (events is null) lines.Add("Could not read this event query.");
+                else if (events.Count == 0) lines.Add("No matching events in this window.");
+                else foreach (var e in events.OrderBy(e => e.Time))
+                    lines.Add($"Nearby event · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId} · {e.ShortMessage}");
+            }
             if (app is null || system is null) lines.Add("Some event logs could not be read.");
             var related = (app ?? []).Concat(system ?? [])
                 .Select(e => (Event: e, Exact: e.EventId == 1001 &&

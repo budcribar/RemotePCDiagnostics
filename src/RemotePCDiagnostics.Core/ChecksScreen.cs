@@ -104,11 +104,12 @@ public sealed class ChecksScreenState
         StressSuite.Order.Select(n => _diag.Modules.FirstOrDefault(m => string.Equals(m.Name, n, StringComparison.OrdinalIgnoreCase))).OfType<IDiagnosticModule>()
             .Concat(_diag.Modules.OfType<Audio.IAudioTestModule>())
             .Concat(_diag.Modules.OfType<Webcam.IWebcamTestModule>())
-            .Concat(_diag.Modules.OfType<Npu.INpuTestModule>()).ToList();
+            .Concat(_diag.Modules.OfType<Npu.INpuTestModule>())
+            .Concat(_diag.Modules.OfType<Areas.WindowsIntegrityModule>()).ToList();
 
     /// <summary>Security audit and audio tests: listed with the stress tests but never part of the stress run, and not ticked by default.</summary>
     public static bool IsSeparateStep(IDiagnosticModule m) => m.Name == SecurityAuditModule.ModuleName || m is Audio.IAudioTestModule || m is Webcam.IWebcamTestModule
-        || m is Npu.INpuTestModule;
+        || m is Npu.INpuTestModule || m is Areas.WindowsIntegrityModule;
 
     public IReadOnlyList<IDiagnosticModule> Modules(CheckGroup g) => g == CheckGroup.Checks ? ChecksModules : StressModules;
 
