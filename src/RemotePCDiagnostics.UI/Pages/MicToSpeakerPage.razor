@@ -61,8 +61,8 @@ else
             <div class="card" data-testid="m2s-card-level">
                 <div class="card-head"><span class="dot dot-@(rep.MicHeardSomething ? "ok" : "error")"></span><strong>Microphone level</strong></div>
                 <div class="headline">@Db(rep.MicPeakDbfs) peak</div>
-                <div class="meta">RMS @Db(rep.MicRmsDbfs) · @rep.Input</div>
-                <div class="meta">@(rep.FeedbackDetected ? "Stopped: feedback detected" : rep.GainReduced ? "Volume was turned down automatically to avoid feedback" : "")</div>
+                <CardList Items="@([ $"RMS {Db(rep.MicRmsDbfs)}", rep.Input, rep.FeedbackDetected ? "Stopped: feedback detected" : rep.GainReduced ? "Volume was turned down automatically to avoid feedback" : null ])" />
+
             </div>
         </div>
         @if (rep.MicHeardSomething && !rep.FeedbackDetected)

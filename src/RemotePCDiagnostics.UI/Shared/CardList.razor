@@ -1,0 +1,30 @@
+@* Renders a dot-separated (" · ") summary string or a list of items as a clean vertical list inside a card. *@
+@if (Lines.Count > 0)
+{
+    <ul class="card-list @(Strong ? "card-list-strong" : "") @Class" data-testid="@TestId">
+        @foreach (var line in Lines)
+        {
+            <li>@line</li>
+        }
+    </ul>
+}
+@code {
+    [Parameter] public string? Text { get; set; }
+    [Parameter] public IEnumerable<string?>? Items { get; set; }
+    [Parameter] public bool Strong { get; set; }
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public string? TestId { get; set; }
+
+    private IReadOnlyList<string> Lines
+    {
+        get
+        {
+            var source = Items ?? (Text is null ? [] : [Text]);
+            return source
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .SelectMany(s => s!.Split(" · ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .Where(s => s.Length > 0)
+                .ToList();
+        }
+    }
+}

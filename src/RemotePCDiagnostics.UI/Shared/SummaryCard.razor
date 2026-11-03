@@ -5,7 +5,7 @@
     @if (ErrorText is not null) { <div class="headline error-text" data-testid="osquery-card-@Id-error">@ErrorText</div> }
     else if (EmptyText is not null) { <div class="headline warn-text" data-testid="osquery-card-@Id-empty">@EmptyText</div> }
     else { @ChildContent }
-    <div class="meta">Click for details</div>
+    <div class="meta card-foot">Click for details</div>
 </div>
 @code {
     [Parameter, EditorRequired] public string Id { get; set; } = "";

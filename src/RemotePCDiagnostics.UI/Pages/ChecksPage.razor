@@ -229,7 +229,7 @@
                     @if (kind == RowKind.NotRun && LastRun(m) is { } lr) { <span data-testid="checks-detail-lastrun">Not run in this session · last run @lr.LocalTime.ToString("g"): @lr.Outcome · @lr.Summary (details on the History page)</span> }
                     else if (kind == RowKind.NotRun) { <span>Not run yet in this session.</span> }
                     else if (kind == RowKind.Running) { <span>Started @r.Timestamp.ToLocalTime().ToString("t")</span> }
-                    else { <span>@r.Message · @r.Timestamp.ToLocalTime().ToString("g")</span> }
+                    else { <CardList Text="@($"{r.Message} · {r.Timestamp.ToLocalTime():g}")" /> }
                 </div>
                 @if (last is { } l)
                 {

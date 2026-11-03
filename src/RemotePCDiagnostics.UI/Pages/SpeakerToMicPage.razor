@@ -96,13 +96,13 @@ else
         <div class="card" data-testid="s2m-card-@id">
             <div class="card-head"><span class="dot dot-@dot"></span><strong>@title</strong></div>
             <div class="headline">@(t is null ? "Not available" : t.ToneDetected ? "Tone found" : "No tone")</div>
-            <div class="meta">@device</div>
+            <CardList Items="@([ device, t is not null ? $"Tone {Db(t.ToneDbfs)} · noise {Db(t.NoiseDbfs)} · SNR {t.SnrDb:0.0} dB" : null, t is not null ? $"Peak {Db(t.PeakDbfs)} · RMS {Db(t.RmsDbfs)}{(t.Clipped ? " · clipping" : "")}" : null, meta ])" />
             @if (t is not null)
             {
-                <div class="meta">Tone @Db(t.ToneDbfs) · noise @Db(t.NoiseDbfs) · SNR @t.SnrDb.ToString("0.0") dB</div>
-                <div class="meta">Peak @Db(t.PeakDbfs) · RMS @Db(t.RmsDbfs)@(t.Clipped ? " · clipping" : "")</div>
+
+
             }
-            <div class="meta">@meta</div>
+
         </div>
     };
 

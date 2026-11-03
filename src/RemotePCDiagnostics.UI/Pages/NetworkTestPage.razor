@@ -42,12 +42,12 @@
         <div class="card" data-testid="nettest-live-latency">
             <div class="card-head"><span class="dot dot-neutral"></span><strong>Delay right now</strong></div>
             <div class="headline">@NetworkTestReport.Ms(p?.Samples.LastOrDefault()?.InternetMs)</div>
-            <div class="meta">Average @NetworkTestReport.Ms(live?.AverageMs) · @LostText(live?.LossPercent)</div>
+            <CardList Text="@($"Average {NetworkTestReport.Ms(live?.AverageMs)} · {LostText(live?.LossPercent)}")" />
         </div>
         <div class="card" data-testid="nettest-live-temp">
             <div class="card-head"><span class="dot dot-neutral"></span><strong>CPU temperature</strong></div>
             <div class="headline">@(p?.CpuTemperatureC is { } t ? $"{t:0}°C" : p is { SensorsAvailable: false } ? "Not available on this PC" : "—")</div>
-            <div class="meta">@(p?.FanRpm is { } fr ? $"Fan {fr:0} RPM · " : "")stops by itself if anything gets too hot</div>
+            <CardList Text="@($"{(p?.FanRpm is { } fr ? $"Fan {fr:0} RPM · " : "")}Stops by itself if anything gets too hot")" />
         </div>
     </div>
     @if (p is { Samples.Count: > 0 })
@@ -62,7 +62,7 @@ else if (report is not null)
         <div class="card" data-testid="nettest-result">
             <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
             <div class="headline">@report.Explanation</div>
-            <div class="meta">Ran for @Clock(report.Ran) · finished @r.Timestamp.ToLocalTime().ToString("g")</div>
+            <CardList Text="@($"Ran for {Clock(report.Ran)} · finished {r.Timestamp.ToLocalTime():g}")" />
         </div>
     </div>
     @if (report.Samples.Count > 0)
@@ -71,7 +71,7 @@ else if (report is not null)
             <div class="card" data-testid="nettest-card-latency">
                 <div class="card-head"><span class="@Dot(report.Internet.AverageMs is null ? null : report.Internet.AverageMs < 100)"></span><strong>Latency</strong></div>
                 <div class="headline">@NetworkTestReport.Ms(report.Internet.AverageMs) average</div>
-                <div class="meta">Slowest @NetworkTestReport.Ms(report.Internet.WorstMs)@(report.HasGateway ? $" · router {NetworkTestReport.Ms(report.Gateway.AverageMs)}" : "")</div>
+                <CardList Text="@($"Slowest {NetworkTestReport.Ms(report.Internet.WorstMs)}{(report.HasGateway ? $" · router {NetworkTestReport.Ms(report.Gateway.AverageMs)}" : "")}")" />
             </div>
             <div class="card" data-testid="nettest-card-loss">
                 <div class="card-head"><span class="@Dot(report.Internet.LossPercent is null || report.Internet.Received == 0 ? null : report.Internet.LossPercent < 0.5)"></span><strong>Loss</strong></div>

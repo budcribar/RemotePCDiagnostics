@@ -11,7 +11,7 @@
 </div>
 <p data-testid="lhm-status" class="status-line">
     <span class="@DotClass(r.Status)"></span>
-    <span class="status-text">@(r.Status is DiagnosticStatus.NotRun or DiagnosticStatus.Running && report is null ? "Checking temperatures and fan speeds…" : r.Message)</span>
+    <span class="status-text">@if (r.Status is DiagnosticStatus.NotRun or DiagnosticStatus.Running && report is null) { <span>Checking temperatures and fan speeds…</span> } else { <CardList Text="@r.Message" Strong="true" /> }</span>
     @if (report is not null) { <button class="btn-small status-action" data-testid="lhm-requery" disabled="@_busy" @onclick="Refresh">Check again</button> }
 </p>
 
@@ -37,16 +37,16 @@
                 {
                     var rpm = g.Readings.Where(x => x.Reading.Value is > 0).ToList();
                     <div class="headline">@rpm.Count of @g.Readings.Count spinning</div>
-                    <div class="meta">@string.Join(", ", rpm.Take(3).Select(x => $"{x.Reading.Value:0} RPM"))</div>
+                    <CardList Items="@rpm.Take(3).Select(x => $"{x.Reading.Value:0} RPM")" />
                 }
                 else
                 {
                     <div class="headline">Hottest @(g.Hottest is { } h ? $"{h:0.0}°C" : "—")</div>
                     @if (g.Readings.Any(x => x.Reading.IsApproximate)) { <div class="meta" data-testid="lhm-approx">Estimate (from Windows)</div> }
                     @if (g.Readings.Any(x => x.Reading.IsFromWindows)) { <div class="meta" data-testid="lhm-from-windows">From Windows (GPU driver)</div> }
-                    <div class="meta">@g.Readings.Count sensor(s) · @string.Join(", ", g.Readings.Select(x => x.Reading.HardwareName).Distinct().Take(2))</div>
+                    <CardList Items="@([ $"{g.Readings.Count} sensor(s)", .. g.Readings.Select(x => x.Reading.HardwareName).Distinct().Take(2) ])" />
                 }
-                <div class="meta">Click for details</div>
+                <div class="meta card-foot">Click for details</div>
             </div>
         }
     </div>

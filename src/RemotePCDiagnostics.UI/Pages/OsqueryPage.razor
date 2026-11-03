@@ -12,7 +12,7 @@
 <p data-testid="osquery-status" class="status-line">
     <span class="@DotClass(r.Status)"></span>
     @if (busy) { <span>Querying hardware…</span> }
-    else { <span>@r.Message</span> }
+    else { <span class="status-text"><CardList Text="@r.Message" Strong="true" /></span> }
     @if (!busy && Runner.Exists) { <button class="btn-small status-action" data-testid="osquery-requery" @onclick='() => Diagnostics.RunAsync("Osquery")'>Check again</button> }
 </p>
 
@@ -23,27 +23,27 @@
                      ErrorText="@(inv.System.Success ? null : "Couldn't read computer details on this PC.")"
                      EmptyText="@(inv.System.Success && sys is null ? "Computer details aren't available on this PC." : null)">
             <div class="headline">@Join(sys?.HardwareVendor, sys?.HardwareModel)</div>
-            <div class="meta">@(sys is null ? "" : (sys.ComputerName.Length > 0 ? sys.ComputerName : sys.Hostname))</div>
+            <CardList Text="@(sys is null ? "" : (sys.ComputerName.Length > 0 ? sys.ComputerName : sys.Hostname))" />
         </SummaryCard>
         @{ var c = inv.Cpus.Items.FirstOrDefault(); }
         <SummaryCard Id="cpu" Title="Processor" OnOpen="Open"
                      ErrorText="@(inv.Cpus.Success || sys?.CpuBrand is { Length: > 0 } ? null : "Couldn't read processor details on this PC.")"
                      EmptyText="@(inv.Cpus.Success && c is null ? "Processor details aren't available on this PC." : null)">
             <div class="headline">@(c?.Model is { Length: > 0 } m ? m : Dash(sys?.CpuBrand))</div>
-            <div class="meta">@CpuMeta(c ?? (sys is null ? null : HardwareInventory.CpuFromSystemPublic(sys)))</div>
+            <CardList Text="@CpuMeta(c ?? (sys is null ? null : HardwareInventory.CpuFromSystemPublic(sys)))" />
         </SummaryCard>
         @{ var pop = inv.Memory.Items.Where(d => d.IsPopulated).ToList(); }
         <SummaryCard Id="memory" Title="Memory" OnOpen="Open"
                      ErrorText="@(inv.Memory.Success || inv.TotalMemoryBytes is > 0 ? null : "Couldn't read memory details on this PC.")"
                      EmptyText="@(inv.TotalMemoryBytes is > 0 ? null : "Memory details aren't available on this PC.")">
             <div class="headline">@HardwareInventory.FormatBytes(inv.TotalMemoryBytes)</div>
-            <div class="meta">@(pop.Count > 0 ? $"{pop.Count} of {inv.Memory.Items.Count} slots in use · {Dash(pop[0].MemoryType)}" : "Installed memory")</div>
+            <CardList Text="@(pop.Count > 0 ? $"{pop.Count} of {inv.Memory.Items.Count} slots in use · {Dash(pop[0].MemoryType)}" : "Installed memory")" />
         </SummaryCard>
         <SummaryCard Id="disks" Title="Storage" OnOpen="Open"
                      ErrorText="@(inv.Disks.Success ? null : "Couldn't read storage details on this PC.")"
                      EmptyText="@(inv.Disks.Success && inv.Disks.Items.Count == 0 ? "Storage details aren't available on this PC." : null)">
-            <div class="headline">@(inv.Disks.Items.Count == 1 ? "1 drive" : $"{inv.Disks.Items.Count} drives")@(inv.TotalDiskBytes > 0 ? " · " + HardwareInventory.FormatBytes(inv.TotalDiskBytes) : "")</div>
-            <div class="meta">@string.Join(", ", inv.Disks.Items.Select(d => Dash(d.HardwareModel)).Take(3))</div>
+            <div class="headline">@(inv.Disks.Items.Count == 1 ? "1 drive" : $"{inv.Disks.Items.Count} drives")@(inv.TotalDiskBytes > 0 ? $" ({HardwareInventory.FormatBytes(inv.TotalDiskBytes)})" : "")</div>
+            <CardList Items="@inv.Disks.Items.Select(d => Dash(d.HardwareModel)).Take(3)" />
         </SummaryCard>
     </div>
 

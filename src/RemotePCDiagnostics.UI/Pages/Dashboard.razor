@@ -112,7 +112,7 @@
                 <text class="gauge-sub" x="60" y="80" text-anchor="middle">@(cpuTemp is null ? (thBusy ? "Checking…" : "No reading") : "CPU temp")</text>
             </svg>
         </div>
-        <div class="desc center" data-testid="dashboard-thermal">@(thBusy ? "Checking temperatures…" : th.Message)</div>
+        <div class="desc" data-testid="dashboard-thermal">@if (thBusy) { <span>Checking temperatures…</span> } else { <CardList Text="@th.Message" /> }</div>
     </div>
 
     <div class="card dash-card card-click" data-testid="dashboard-card-osquery" role="link" tabindex="0"
@@ -122,9 +122,9 @@
         <div data-testid="dashboard-status" class="@(hw.Status == DiagnosticStatus.Error ? "card-msg error-text" : "card-msg card-msg-full")">
             @if (querying) { <span>Querying hardware…</span> }
             else if (hw.Status == DiagnosticStatus.Error || inv is null) { <span>@hw.Message</span> }
-            else { <span>@inv.FriendlySummary()</span> }
+            else { <CardList Text="@inv.FriendlySummary()" Strong="true" /> }
         </div>
-        @if (!querying) { <div class="meta updated-ago" title="@hw.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(hw.Timestamp, now)</div> }
+        @if (!querying) { <div class="meta card-foot updated-ago" title="@hw.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(hw.Timestamp, now)</div> }
     </div>
 
     @foreach (var m in attentionModules)
@@ -135,8 +135,8 @@
              @onclick="() => Open(name)" @onkeydown="e => Key(e, name)">
             <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(r.Status)"><Icon Name="@Icon.ForModule(m.Name)" /></span><strong title="@m.DisplayName">@m.DisplayName</strong>
                 <StatusChip Status="@r.Status" /></div>
-            <div class="card-msg">@r.Message</div>
-            <div class="meta updated-ago" title="@r.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(r.Timestamp, now)</div>
+            <div class="card-msg card-msg-full"><CardList Text="@r.Message" Strong="true" /></div>
+            <div class="meta card-foot updated-ago" title="@r.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(r.Timestamp, now)</div>
         </div>
     }
 

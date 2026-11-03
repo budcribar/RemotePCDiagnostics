@@ -81,10 +81,10 @@ else
         <div class="card" data-testid="npu-card">
             <div class="card-head"><span class="dot dot-@dot"></span><strong>@d.Device.Name</strong></div>
             <div class="headline">@(d.Gflops is { } g ? $"{g:0.0} GFLOPS" : d.Verdict.ToString())</div>
-            <div class="meta">@d.Device.Vendor · driver @(d.Device.DriverVersion ?? "unknown") · @(d.Device.ProblemCode is { } c ? NpuDetection.ProblemText(c) : d.Device.Status ?? "status unknown")</div>
-            @if (d.AverageMs is { } avg) { <div class="meta">@d.Iterations runs · @avg.ToString("0.###") ms each · first @d.FirstRunMs?.ToString("0.#") ms@(d.MaxAbsError is { } e ? $" · max error {e:0.######}" : "")</div> }
-            @if (d.Adapter is { } a) { <div class="meta">Ran on: @a</div> }
-            <div class="meta">@d.Message</div>
+            <CardList Items="@([ d.Device.Vendor, $"Driver {d.Device.DriverVersion ?? "unknown"}", d.Device.ProblemCode is { } c ? NpuDetection.ProblemText(c) : d.Device.Status ?? "status unknown", d.AverageMs is { } avg ? $"{d.Iterations} runs · {avg:0.###} ms each · first {d.FirstRunMs:0.#} ms{(d.MaxAbsError is { } e ? $" · max error {e:0.######}" : "")}" : null, d.Adapter is { } a ? $"Ran on: {a}" : null, d.Message ])" />
+
+
+
         </div>
     };
 }

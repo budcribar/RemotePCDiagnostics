@@ -62,7 +62,7 @@
         <div class="card is-running" data-testid="diskspeed-live-step">
             <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
             <div class="headline">@(p?.PhaseText ?? "Getting ready")…</div>
-            <div class="meta">@(p is null ? "" : $"{Clock(p.Elapsed)} so far · at most {Clock(p.Duration)}")</div>
+            <CardList Text="@(p is null ? "" : $"{Clock(p.Elapsed)} so far · at most {Clock(p.Duration)}")" />
         </div>
         <div class="card" data-testid="diskspeed-live-temp">
             <div class="card-head"><span class="dot dot-neutral"></span><strong>Drive temperature</strong></div>
@@ -84,8 +84,8 @@ else if (report is not null)
         <div class="card" data-testid="diskspeed-result">
             <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
             <div class="headline">@report.Explanation</div>
-            <div class="meta">@report.Drive@(report.TestBytes > 0 ? $" · tested with {HardwareInventory.FormatBytes(report.TestBytes)}" : "")@(report.MaxDriveTemperatureC is { } mt ? $" · hottest {mt:0}°C" : "")</div>
-            <div class="meta">Finished @r.Timestamp.ToLocalTime().ToString("g")</div>
+            <CardList Items="@([ report.Drive, report.TestBytes > 0 ? $"Tested with {HardwareInventory.FormatBytes(report.TestBytes)}" : null, report.MaxDriveTemperatureC is { } mt ? $"Hottest {mt:0}°C" : null, $"Finished {r.Timestamp.ToLocalTime():g}" ])" />
+
         </div>
         @if (report.TestBytes > 0)
         {

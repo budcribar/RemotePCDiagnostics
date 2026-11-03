@@ -48,7 +48,7 @@
             <div class="headline">@(p is null ? "Getting ready…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
             @if (p is not null)
             {
-                <div class="meta">Testing @HardwareInventory.FormatBytes(p.TestBytes) · @(p.Pass == 1 ? "1 full round done" : $"{p.Pass} full rounds done")</div>
+                <CardList Text="@($"Testing {HardwareInventory.FormatBytes(p.TestBytes)} · {(p.Pass == 1 ? "1 full round done" : $"{p.Pass} full rounds done")}")" />
                 @if (p.Errors > 0) { <div class="meta error-text">Problems found so far: @p.Errors.ToString("N0")</div> }
             }
         </div>
@@ -72,8 +72,8 @@ else if (report is not null)
         <div class="card" data-testid="memtest-result">
             <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
             <div class="headline">@report.Explanation</div>
-            <div class="meta">@(report.Mode == MemoryTestMode.Quick ? "Quick test" : "Full test")@(report.TestBytes > 0 ? $" · {HardwareInventory.FormatBytes(report.TestBytes)} checked" : "")@(report.Passes > 0 ? $" · {(report.Passes == 1 ? "1 round" : $"{report.Passes} rounds")}" : "")@(report.MaxCpuTemperatureC is { } mt ? $" · hottest {mt:0}°C" : "")</div>
-            <div class="meta">Finished @r.Timestamp.ToLocalTime().ToString("g")</div>
+            <CardList Items="@([ report.Mode == MemoryTestMode.Quick ? "Quick test" : "Full test", report.TestBytes > 0 ? $"{HardwareInventory.FormatBytes(report.TestBytes)} checked" : null, report.Passes > 0 ? (report.Passes == 1 ? "1 round" : $"{report.Passes} rounds") : null, report.MaxCpuTemperatureC is { } mt ? $"Hottest {mt:0}°C" : null, $"Finished {r.Timestamp.ToLocalTime():g}" ])" />
+
         </div>
     </div>
 }

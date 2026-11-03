@@ -26,7 +26,7 @@ else
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="@m.Name" Size="20" /></span><h1 data-testid="area-title">@m.DisplayName</h1></div>
     <p data-testid="area-status" class="@(r.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
         <span class="@DotClass(r.Status)"></span>
-        <span class="status-text">@(busy ? "Checking…" : r.Message)</span>
+        <span class="status-text">@if (busy) { <span>Checking…</span> } else { <CardList Text="@r.Message" Strong="true" /> }</span>
         @if (!busy) { <button class="btn-small status-action" data-testid="area-requery" @onclick="() => Diagnostics.RunAsync(m.Name)">Check again</button> }
     </p>
     @if (!busy && rep?.Notice is { } notice) { <p class="meta" data-testid="area-notice">@notice</p> }
@@ -41,7 +41,7 @@ else
                 @* EmptyText describes an empty drawer; only show it on the card when there really is nothing in it. *@
                 <SummaryCard Id="@c.Id" Title="@c.Title" OnOpen="Open" ErrorText="@c.ErrorText" EmptyText="@(c.Rows.Count == 0 && string.IsNullOrEmpty(c.Headline) ? c.EmptyText : null)" Dot="@Dot(c.Level)">
                     <div class="headline">@c.Headline</div>
-                    @if (c.Meta.Length > 0) { <div class="meta">@c.Meta</div> }
+                    <CardList Text="@c.Meta" />
                     @if (remActions is not null && c.Actions is { Count: > 0 })
                     {
                         <div class="svc-actions" style="margin-top:0.5rem" @onclick:stopPropagation="true" @onkeydown="DrawerKey" @onkeydown:stopPropagation="true">

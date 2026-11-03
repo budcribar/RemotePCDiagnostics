@@ -57,8 +57,8 @@ else if (report is not null)
         <div class="card" data-testid="cpustress-result">
             <div class="card-head"><span class="@DotClass(r.Status)"></span><strong>@report.Headline</strong></div>
             <div class="headline">@report.Explanation</div>
-            <div class="meta">Ran for @Clock(report.Ran) on @report.Threads processor threads@(report.MaxCpuTemperatureC is { } mt ? $" · hottest {mt:0}°C" : "")</div>
-            <div class="meta">Finished @r.Timestamp.ToLocalTime().ToString("g")</div>
+            <CardList Items="@([ $"Ran for {Clock(report.Ran)} on {report.Threads} processor threads", report.MaxCpuTemperatureC is { } mt ? $"Hottest {mt:0}°C" : null, $"Finished {r.Timestamp.ToLocalTime():g}" ])" />
+
         </div>
     </div>
 }
