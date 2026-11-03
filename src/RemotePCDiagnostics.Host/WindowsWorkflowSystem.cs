@@ -31,7 +31,7 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
     public Task<bool> RegisterResumeAsync(CancellationToken ct)
     {
         var exe = Environment.ProcessPath ?? throw new InvalidOperationException("No process path");
-        var full = SessionLaunchOptions.BuildResumeCommandLine(exe, session.Mode, session.ServerUri, session.SessionId);
+        var full = SessionLaunchOptions.BuildResumeCommandLine(exe, session.Mode, session.ServerUri, session.SessionId, session.Mirror);
         var args = full[$"\"{exe.Trim('"')}\"".Length..].Trim() + " --workflow";
         var user = $"{Environment.UserDomainName}\\{Environment.UserName}";
         var script =

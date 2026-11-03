@@ -435,6 +435,13 @@ public class MemorySuggestionTests
         var crit = Build(critSnap).Single(x => x.Id == "svc-lenovovantageservices");
         Assert.Equal("Stop \"Critical Service for Lenovo Vantage\"", crit.Title);
         Assert.Contains("Despite \"Critical\" in its name, Windows and your hardware do not need it", crit.Why);
+        var imSnap = Snap() with { Services = [new(new ServiceInfo("ImControllerService", "System Interface Foundation Service", "RUNNING", "AUTO_START", "LocalSystem", ""), 24 * Mb)] };
+        var im = Build(imSnap).Single(x => x.Id == "svc-imcontrollerservice");
+        Assert.DoesNotContain(im.Actions, a => a.Type == MemoryActionType.SetServiceManual);
+        Assert.Contains(im.Actions, a => a.Type == MemoryActionType.SetServiceDisabled);
+        var imFix = Assert.Single(RemotePCDiagnostics.Core.Workflow.FixCatalog.Build([], [im]));
+        Assert.Equal(MemoryActionType.SetServiceDisabled, imFix.MemoryAction);
+        Assert.Equal("Disable \"System Interface Foundation Service\"", imFix.Title);
         Assert.DoesNotContain("svc-lenovofnandfunctionkeys", ids); // hardware hotkey service excluded
         Assert.DoesNotContain("svc-bthserv", ids);   // has BT devices
         Assert.DoesNotContain("svc-wbiosrvc", ids);  // fingerprint unknown → not suggested

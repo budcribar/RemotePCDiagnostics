@@ -13,7 +13,7 @@ public static class FixCatalog
     /// <summary>Memory actions that persist across a restart and need nobody at the keyboard.</summary>
     public static readonly IReadOnlySet<MemoryActionType> UnattendedMemoryActions = new HashSet<MemoryActionType>
     {
-        MemoryActionType.DisableStartup, MemoryActionType.EnableBrowserMemorySaver, MemoryActionType.SetServiceManual,
+        MemoryActionType.DisableStartup, MemoryActionType.EnableBrowserMemorySaver, MemoryActionType.SetServiceManual, MemoryActionType.SetServiceDisabled,
         MemoryActionType.DisableTransparency, MemoryActionType.AutoManagePageFile,
         MemoryActionType.AddDefenderExclusions,
         MemoryActionType.DisableWidgets, MemoryActionType.DisableSearchHighlights, MemoryActionType.ReduceHibernateFile,
@@ -97,15 +97,20 @@ public static class FixCatalog
             if (a is null) continue;
             var id = MemoryId(s.Id, a.Type, a.Target);
             if (!seen.Add(id)) continue;
-            var order = a.Type switch { MemoryActionType.DisableStartup => 20, MemoryActionType.SetServiceManual => 22, MemoryActionType.AutoManagePageFile => 12, MemoryActionType.CleanStorage => 40, _ => 15 };
+            var order = a.Type switch { MemoryActionType.DisableStartup => 20, MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled => 22, MemoryActionType.AutoManagePageFile => 12, MemoryActionType.CleanStorage => 40, _ => 15 };
+
             var manual = a.Type == MemoryActionType.SetServiceManual;
+            var disabled = a.Type == MemoryActionType.SetServiceDisabled;
+
             // Suggestion titles can say Stop; describe the selected action rather than reusing that title.
             var serviceLabel = s.Title.StartsWith("Stop ", StringComparison.OrdinalIgnoreCase) ? s.Title[5..] : a.Target;
-            var title = manual ? $"Set {serviceLabel} to Manual" : s.Title;
-            var why = manual ? $"{s.Why} Only the startup type changes; a running service is left running." : s.Why;
+            var title = manual ? $"Set {serviceLabel} to Manual" : disabled ? $"Disable {serviceLabel}" : s.Title;
+            var why = manual ? $"{s.Why} Only the startup type changes; a running service is left running."
+                : disabled ? $"{s.Why} Disables the service (Start = 4) so it cannot be started on demand or reset its own startup type."
+                : s.Why;
             list.Add(new(id, title, why, s.Category, s.Risk, FixSource.Memory, order,
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
-                NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
+                NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
                     or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension
                     or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.RemoveNarratorAddons
                     || (a.Type == MemoryActionType.StopBrowserBackground && a.Target == nameof(BrowserKind.Edge)),

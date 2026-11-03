@@ -70,7 +70,7 @@ public static class MemoryCommandAllowlist
 
 /// <summary>A service that's often safe to stop on a laptop, with what it does and what you lose.</summary>
 /// <param name="DefaultOn">False = opt-in: the service workflow lists the fix unticked (the tech ticks it by hand).</param>
-public sealed record ServiceCandidate(string What, string Lose, bool OfferDisable = false, Func<MemorySnapshot, bool>? NeededWhen = null, bool DefaultOn = true);
+public sealed record ServiceCandidate(string What, string Lose, bool OfferDisable = false, Func<MemorySnapshot, bool>? NeededWhen = null, bool DefaultOn = true, bool DisableInsteadOfManual = false);
 
 /// <summary>Pure rules: snapshot in, suggestions out (sorted by estimated saving).</summary>
 public static class MemorySuggestionEngine
@@ -205,6 +205,12 @@ public static class MemorySuggestionEngine
             return new("Visual Studio's diagnostics collector supports profiling and diagnostic data collection.",
                 "It will not start automatically at Windows startup. Manual permits on-demand starts; diagnostic tools may require you to start it. Its current running state is unchanged.");
         if (s.Name.StartsWith("TeamViewer", StringComparison.OrdinalIgnoreCase)) return ServiceCandidates["TeamViewer"];
+        if (s.Name.Contains("ImController", StringComparison.OrdinalIgnoreCase))
+            return new(
+                $"\"{s.Label}\" is a Lenovo Vantage system interface helper. Windows does not need it running in the background, and if only set to Manual it starts on demand and resets its own startup type back to Automatic.",
+                "Lenovo Vantage hardware settings and background update checks until you undo this.",
+                OfferDisable: true,
+                DisableInsteadOfManual: true);
         foreach (var (frag, what) in VendorServiceFragments)
             if (s.Name.Contains(frag, StringComparison.OrdinalIgnoreCase))
             {
@@ -583,8 +589,8 @@ public static class MemorySuggestionEngine
                 : su.Shared ? $"It runs in a shared process with {MemoryText.Plural(su.ServicesInProcess - 1, "other service")} ({MemoryText.Size(pm)} together), so its own share can't be measured exactly."
                 : $"It's using {MemoryText.Size(pm)}.";
             var actions = new List<MemoryAction> { new(MemoryActionType.StopService, svc.Name, "Stop now", $"Stop \"{svc.Label}\" until the next restart?") };
-            if (svc.IsAutomatic) actions.Add(new(MemoryActionType.SetServiceManual, svc.Name, "Don't start automatically", $"Set \"{svc.Label}\" to start only when needed (Manual)?"));
-            if (c.OfferDisable && !svc.IsDisabled) actions.Add(new(MemoryActionType.SetServiceDisabled, svc.Name, "Disable", $"Disable \"{svc.Label}\"? It won't run until you undo this."));
+            if (svc.IsAutomatic && !c.DisableInsteadOfManual) actions.Add(new(MemoryActionType.SetServiceManual, svc.Name, "Don't start automatically", $"Set \"{svc.Label}\" to start only when needed (Manual)?"));
+            if ((c.OfferDisable || c.DisableInsteadOfManual) && !svc.IsDisabled) actions.Add(new(MemoryActionType.SetServiceDisabled, svc.Name, "Disable", $"Disable \"{svc.Label}\"? It won't run until you undo this."));
             list.Add(new($"svc-{svc.Name}".ToLowerInvariant(), $"Stop \"{svc.Label}\"", $"{c.What} {mem} You lose: {c.Lose}",
                 su.Shared ? null : su.ProcessMemoryBytes, SuggestionRisk.Medium, SuggestionKind.Automated,
                 ["Stop now lasts until the next restart (Start it again from Services).", "\"Don't start automatically\" / Disable can be undone here; the original setting is remembered."],

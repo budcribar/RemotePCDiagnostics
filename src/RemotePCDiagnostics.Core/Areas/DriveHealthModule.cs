@@ -79,7 +79,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        progress?.Report("Checking drives…");
+        progress.ReportStep(1, 2, "Checking drive health and SMART status…");
         var pr = await commands.RunAsync(SystemCommandRunner.PowerShell, Arguments, ct).ConfigureAwait(false);
         List<DriveHealth>? drives = null;
         if (pr is { ExitCode: 0 })
@@ -87,9 +87,10 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             try { drives = OsqueryJson.ParseRows(pr.StdOut).Select(DriveHealth.FromRow).ToList(); }
             catch (FormatException ex) { Log($"{Name}: storage health output unreadable: {ex.Message}"); }
         }
-        if (drives is { Count: > 0 }) return Build(drives, await ReadRetrimsAsync(ct).ConfigureAwait(false), (clock ?? (() => DateTimeOffset.Now))());
+        if (drives is { Count: > 0 }) { progress.ReportStep(2, 2, "Checking SSD optimization history…"); return Build(drives, await ReadRetrimsAsync(ct).ConfigureAwait(false), (clock ?? (() => DateTimeOffset.Now))()); }
 
         Log($"{Name}: Windows storage health unavailable; falling back to osquery disk_info (no health data)");
+        progress.ReportStep(2, 2, "Reading drive list…");
         var q = await osquery.RunQueryAsync(HardwareInventory.DiskSql, ct).ConfigureAwait(false);
         if (!q.Success) return AreaReport.Failed(FailedMessage);
         var fallback = q.Rows!.Select(DiskInfo.FromRow)

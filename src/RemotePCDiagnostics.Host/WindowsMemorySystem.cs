@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Xml.Linq;
 using Microsoft.Win32;
+using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Memory;
@@ -52,8 +53,11 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
 
     private static readonly string[] SelfNames = [Process.GetCurrentProcess().ProcessName];
 
-    public async Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> services, CancellationToken ct)
+    public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> services, CancellationToken ct) => CaptureAsync(services, null, ct);
+
+    public async Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> services, IProgress<string>? progress, CancellationToken ct)
     {
+        progress.ReportStep(1, 5, "Reading memory and running processes…");
         var mem = ReadMemory();
 
         // Service PIDs (osquery), so service-hosting processes are never offered as "Close app" and services get their process memory.
@@ -94,6 +98,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             svcPid.TryGetValue(s.Name, out var pid) ? new ServiceUsage(s, byPid.TryGetValue(pid, out var b) ? b : null, pidCounts[pid]) : new ServiceUsage(s, null))
             .Select(u => AiVmServices.Is(u.Info.Name) ? u with { UsersCanStart = ReadUsersCanStart(u.Info.Name) } : u).ToList();
 
+        progress.ReportStep(2, 5, "Checking browser settings and background mode…");
         var browsers = new List<BrowserInfo>();
         var backgrounds = new List<BrowserBackgroundInfo>();
         foreach (var k in new[] { BrowserKind.Chrome, BrowserKind.Edge })
@@ -106,9 +111,12 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             backgrounds.Add(ReadBrowserBackground(k, json));
         }
 
+        progress.ReportStep(3, 5, "Checking page file and memory slots…");
         var probe = await RunPowerShellAsync(MemoryProbe.Script, ct).ConfigureAwait(false);
         var (autoPageFile, slots) = MemoryProbe.Parse(probe.ExitCode == 0 ? probe.Output : null);
+        progress.ReportStep(4, 5, "Checking Windows Defender exclusions…");
         var defender = apps.Any(a => a.Name.Equals("MsMpEng", StringComparison.OrdinalIgnoreCase)) ? await ReadDefenderAsync(ct).ConfigureAwait(false) : null;
+        progress.ReportStep(5, 5, "Checking startup apps, Windows settings and removable apps…");
         return new(mem, apps, TimeSpan.FromMilliseconds(Environment.TickCount64), ReadFastStartup(), browsers, ReadVisualStudio(), ReadStartup(), svcUsage, ReadDevices(),
             GetTransparency(), autoPageFile, slots, ReadDefaultBrowser(), defender, ReadFeeds(), ReadHibernate(), ReadOfficeStart(), ReadDefaultPrinter(), ReadOfficePrivacy(), ReadExtensions(ct), backgrounds, ReadRemovableApps());
     }
@@ -614,17 +622,33 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
 
     // One cache for the whole app: several WindowsMemorySystem instances exist (memory page, benchmarks, --undo-all).
     private static StorageCleanupCache? s_cleanupCache;
+    private static IProgress<string>? s_cleanupProgress;
     private static readonly object s_cleanupGate = new();
 
-    public Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct)
+    public Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct) => ScanStorageCleanupsAsync(refresh, null, ct);
+
+    public Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, IProgress<string>? progress, CancellationToken ct)
     {
         StorageCleanupCache cache;
+        lock (s_cleanupGate) s_cleanupProgress = progress;
         lock (s_cleanupGate) cache = s_cleanupCache ??= new(async c =>
         {
-            var roots = (await DevProjects.FindAsync(log, c).ConfigureAwait(false)).Select(r => r.Path).ToList();
-            return await Task.Run(() => ScanStorageCleanups(ReadDevices(), Log, c, roots), c).ConfigureAwait(false);
+            IProgress<string>? p;
+            lock (s_cleanupGate) p = s_cleanupProgress;
+            var total = StorageCleanupCatalog.All.Count + 3;
+            p.ReportStep(1, total, "Finding developer projects…");
+            var roots = (await DevProjects.FindAsync(Log, c).ConfigureAwait(false)).Select(r => r.Path).ToList();
+            return await Task.Run(() => ScanStorageCleanups(ReadDevices(), Log, c, roots, p, 1, total), c).ConfigureAwait(false);
         });
         return cache.GetAsync(refresh, ct);
+    }
+
+    private static void KeepGate() { Action _ = (() =>
+        {
+
+
+        });
+
     }
 
     private const string PersonalizeKey = @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
@@ -872,13 +896,15 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
     /// Grok worktree estimate (#1a, never deleted here), and %TEMP% (cleaned by the "Clean up temporary files" fix).
     /// </summary>
     public static IReadOnlyList<StorageCleanupItem> ScanStorageCleanups(DeviceFacts? devices = null, Action<string>? scanLog = null, CancellationToken ct = default,
-        IReadOnlyList<string>? projectRoots = null)
+        IReadOnlyList<string>? projectRoots = null, IProgress<string>? progress = null, int stepOffset = 0, int totalSteps = 0)
     {
         var roots = StorageRoots.Current();
         var ctx = new StorageScanContext(roots, projectRoots ?? [Path.Combine(roots.UserProfile, "source", "repos")], DateTime.UtcNow, scanLog);
-        var items = StorageCleanupCatalog.Scan(ctx, ct).ToList();
+        var total = totalSteps > 0 ? totalSteps : StorageCleanupCatalog.All.Count + 2;
+        var items = StorageCleanupCatalog.Scan(ctx, ct, progress, stepOffset, total).ToList();
 
         // %LOCALAPPDATA%\Temp (>24h): measured only; RemediationKind.CleanTempFiles deletes it.
+        progress.ReportStep(total, total, "Measuring temporary files (%TEMP%)…");
         var temp = Path.GetTempPath();
         if (Directory.Exists(temp))
         {

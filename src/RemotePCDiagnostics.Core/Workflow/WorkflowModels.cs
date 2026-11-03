@@ -13,6 +13,16 @@ public enum WorkflowStage { Idle, Checking, Review, RestartBefore, BeforeBenchma
 
 public enum FixSource { Remediation, Memory }
 
+/// <summary>Live status of one check or scan while <see cref="WorkflowStage.Checking"/> is running.</summary>
+public sealed record WorkflowCheckItem(
+    string Id, string Title, DiagnosticStatus Status, string Message, int Step = 0, int Total = 0)
+{
+    public bool HasProgress => Total > 1;
+    public double Fraction => Total > 0
+        ? Math.Clamp((double)Step / Total, 0.0, 1.0)
+        : Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error ? 1.0 : 0.0;
+}
+
 /// <summary>A fix the tech can approve. Remediation fixes replay their <see cref="AreaAction"/>; memory fixes are matched again after the restart.</summary>
 /// <param name="DefaultOn">Ticked when the review opens. False = opt-in (e.g. Windows Search): listed unticked; the tech ticks it by hand.</param>
 public sealed record WorkflowFix(

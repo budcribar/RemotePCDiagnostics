@@ -47,6 +47,7 @@ public interface IMemorySystem
 {
     MemoryReading ReadMemory();
     Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> services, CancellationToken ct);
+    Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> services, IProgress<string>? progress, CancellationToken ct) => CaptureAsync(services, ct);
     /// <summary>Asks every window of the app to close (like clicking X). Never kills.</summary>
     Task<ActionOutcome> CloseAppAsync(string processName, CancellationToken ct);
     /// <summary>Ends the app's processes. Only called after a graceful close failed and the user clicked Force close.</summary>
@@ -79,6 +80,7 @@ public interface IMemorySystem
     /// <summary>Runs powercfg /h /type reduced (or full) with administrator rights.</summary>
     Task<ActionOutcome> SetHibernateTypeAsync(bool reduced, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
     Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct) => Task.FromResult<IReadOnlyList<StorageCleanupItem>>([]);
+    Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, IProgress<string>? progress, CancellationToken ct) => ScanStorageCleanupsAsync(refresh, ct);
     /// <summary>
     /// Deletes one <see cref="Storage.StorageCleanupCatalog"/> category: re-evaluates its rule on disk, deletes only inside its allowlisted folders,
     /// skips it entirely while its app is open. Permanent.
@@ -183,6 +185,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
     public MemorySnapshot? Snapshot { get; private set; }
     public IReadOnlyList<MemorySuggestion> Suggestions { get; private set; } = [];
     public bool Scanning { get; private set; }
+    public CheckProgress? ScanProgress { get; private set; }
     public string? Busy { get; private set; }
     public string? ScanError { get; private set; }
     public long TotalFreedBytes { get; private set; }
@@ -191,6 +194,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
     /// <summary>One "Delete" suggestion per storage cleanup category found (kept apart from the memory suggestions).</summary>
     public IReadOnlyList<MemorySuggestion> StorageSuggestions { get; private set; } = [];
     public bool ScanningStorage { get; private set; }
+    public CheckProgress? StorageScanProgress { get; private set; }
     public bool StorageScanned { get; private set; }
     public string? StorageError { get; private set; }
     /// <summary>Disk space freed by storage cleanups this session.</summary>
@@ -205,14 +209,16 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
     private void Log(string m) => log?.Invoke("[memory] " + m);
     private void Raise() { try { Changed?.Invoke(); } catch (Exception ex) { Log("Changed handler failed: " + ex.Message); } }
 
-    public async Task ScanAsync(CancellationToken ct = default)
+    public async Task ScanAsync(CancellationToken ct = default, IProgress<string>? progress = null)
     {
         if (Scanning) return;
         Scanning = true; ScanError = null; Raise();
         try
         {
             var svcList = services?.Latest.Values.ToList() ?? [];
-            Snapshot = await sys.CaptureAsync(svcList, ct).ConfigureAwait(false);
+            var tracked = CheckProgressExtensions.Create(cp => { ScanProgress = cp; Raise(); }, progress);
+            tracked.ReportStep(1, 5, "Reading memory and running processes…");
+            Snapshot = await sys.CaptureAsync(svcList, tracked, ct).ConfigureAwait(false);
             PruneStaleServiceRunningEntries(Snapshot, svcList);
             Suggestions = MemorySuggestionEngine.Build(Snapshot);
         }
@@ -221,7 +227,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
             Log("Scan failed: " + ex);
             ScanError = "Couldn't read what's using memory on this PC.";
         }
-        finally { Scanning = false; Raise(); }
+        finally { Scanning = false; ScanProgress = null; Raise(); }
     }
 
     private void PruneStaleServiceRunningEntries(MemorySnapshot snap, IReadOnlyList<ServiceInfo> svcList)
@@ -242,13 +248,15 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
     }
 
     /// <summary>Measures the storage cleanups (cached by the Host for a few minutes unless <paramref name="refresh"/>). Never throws.</summary>
-    public async Task ScanStorageAsync(bool refresh = false, CancellationToken ct = default)
+    public async Task ScanStorageAsync(bool refresh = false, CancellationToken ct = default, IProgress<string>? progress = null)
     {
         await _storageGate.WaitAsync(ct).ConfigureAwait(false);
         ScanningStorage = true; StorageError = null; Raise();
         try
         {
-            SetStorage(await sys.ScanStorageCleanupsAsync(refresh, ct).ConfigureAwait(false));
+            var tracked = CheckProgressExtensions.Create(cp => { StorageScanProgress = cp; Raise(); }, progress);
+            tracked.ReportStep(1, Storage.StorageCleanupCatalog.All.Count + 3, "Measuring caches and leftovers…");
+            SetStorage(await sys.ScanStorageCleanupsAsync(refresh, tracked, ct).ConfigureAwait(false));
             StorageScanned = true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -256,7 +264,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
             Log("Storage scan failed: " + ex);
             StorageError = "Couldn't measure the caches and leftovers on this PC.";
         }
-        finally { ScanningStorage = false; _storageGate.Release(); Raise(); }
+        finally { ScanningStorage = false; StorageScanProgress = null; _storageGate.Release(); Raise(); }
     }
 
     private void SetStorage(IReadOnlyList<StorageCleanupItem> items)

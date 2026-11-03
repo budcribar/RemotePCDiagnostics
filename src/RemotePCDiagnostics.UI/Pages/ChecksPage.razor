@@ -187,7 +187,8 @@
                         var label = CheckRows.Label(kind, RunLabel(m));
                         var isSel = string.Equals(Screen.SelectedModule, m.Name, StringComparison.OrdinalIgnoreCase);
                         var prev = kind == RowKind.NotRun ? LastRun(m) : null;
-                        var line = kind == RowKind.NotRun ? (prev is { } pv ? $"Last run {pv.LocalTime:g}: {pv.Outcome} · {pv.Summary}" : "Not run yet") : kind == RowKind.Running ? "In progress" : r.Message;
+                        var prog = kind == RowKind.Running ? Diagnostics.GetProgress(m.Name) : null;
+                        var line = kind == RowKind.NotRun ? (prev is { } pv ? $"Last run {pv.LocalTime:g}: {pv.Outcome} · {pv.Summary}" : "Not run yet") : kind == RowKind.Running ? (string.IsNullOrWhiteSpace(r.Message) || r.Message == "Running..." ? "In progress" : r.Message) : r.Message;
                         <div @key="mod.Name" class="ct-row @(isSel ? "selected" : "") @(kind == RowKind.Running ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
                              data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => Select(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
                             <button class="ct-check" role="checkbox" aria-checked="@(Screen.IsSelected(m.Name) ? "true" : "false")" aria-label="Include @m.DisplayName"
@@ -196,6 +197,10 @@
                             <div class="ct-row-text">
                                 <div class="ct-row-name">@m.DisplayName</div>
                                 <div class="ct-row-summary meta" title="@line">@line</div>
+                                @if (prog is { HasProgress: true })
+                                {
+                                    <div class="progress run-progress ct-row-progress" data-testid="checks-progress-@m.Name.ToLowerInvariant()"><div class="progress-bar" style="width:@($"{prog.Percent:0.#}%")"></div></div>
+                                }
                             </div>
                             <div class="ct-row-side">
                                 <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-status-@m.Name.ToLowerInvariant()">@label</span>
@@ -210,7 +215,7 @@
 
     private string SideText(IDiagnosticModule m, DiagnosticResult r, RowKind kind)
     {
-        if (kind is RowKind.Running) return "";
+        if (kind is RowKind.Running) return Diagnostics.GetProgress(m.Name) is { HasProgress: true } cp ? $"{cp.Step}/{cp.Total}" : "";
         if (kind is RowKind.NotRun)
             return m is IStressSuiteModule ? (Screen.Mode == StressSuiteMode.Extended ? "~5 min" : "~1 min") : "";
         return r.Timestamp.ToLocalTime().ToString("t");

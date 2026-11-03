@@ -37,11 +37,13 @@ public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        progress?.Report("Checking battery health and power plan…");
+        var total = commands is not null ? 2 : 1;
+        progress.ReportStep(1, total, "Checking battery health…");
         var batQ = await QueryAsync(BatterySql, ct).ConfigureAwait(false);
         string? plan = null;
         if (commands is not null)
         {
+            progress.ReportStep(2, total, "Checking active power plan…");
             var pr = await commands.RunAsync(PowerCfg, ["/getactivescheme"], ct).ConfigureAwait(false);
             if (pr is { ExitCode: 0 }) plan = ParsePowerPlan(pr.StdOut);
         }

@@ -48,6 +48,65 @@
         break;
 
     case WorkflowStage.Checking:
+        @if (Flow.TotalChecksCount > 0)
+        {
+            <div class="progress run-progress wf-overall-progress" data-testid="wf-checks-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@Flow.TotalChecksCount" aria-valuenow="@Flow.CompletedChecksCount">
+                <div class="progress-bar" style="width:@($"{Flow.CheckProgressFraction * 100:0.#}%")"></div>
+            </div>
+            <section class="card wf-section" data-testid="wf-checking-list">
+                <div class="card-head">
+                    <strong>Checks in progress</strong>
+                    <span class="meta" data-testid="wf-checking-count">@Flow.CompletedChecksCount of @Flow.TotalChecksCount completed</span>
+                </div>
+                <div class="wf-check-rows">
+                    @foreach (var c in Flow.CheckItems)
+                    {
+                        var dot = c.Status switch
+                        {
+                            DiagnosticStatus.Ok => "ok",
+                            DiagnosticStatus.Warning => "warning",
+                            DiagnosticStatus.Error => "error",
+                            DiagnosticStatus.Running => "running",
+                            _ => "neutral",
+                        };
+                        var chipClass = c.Status switch
+                        {
+                            DiagnosticStatus.Ok => "chip-ok",
+                            DiagnosticStatus.Warning => "chip-warn",
+                            DiagnosticStatus.Error => "chip-bad",
+                            DiagnosticStatus.Running => "chip-run",
+                            _ => "chip-na",
+                        };
+                        var chipLabel = c.Status switch
+                        {
+                            DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error => "Done",
+                            DiagnosticStatus.Running => "Running",
+                            _ => "Waiting",
+                        };
+                        <div class="wf-check-row @(c.Status == DiagnosticStatus.Running ? "wf-check-active" : "")" data-testid="wf-check-row-@c.Id.ToLowerInvariant()">
+                            <div class="wf-check-main">
+                                <span class="dot dot-@dot"></span>
+                                <strong class="wf-check-name">@c.Title</strong>
+                                <span class="meta wf-check-msg" data-testid="wf-check-msg-@c.Id.ToLowerInvariant()">@c.Message</span>
+                            </div>
+                            <div class="wf-check-side">
+                                @if (c.Status == DiagnosticStatus.Running && c.HasProgress)
+                                {
+                                    <span class="meta wf-check-step" data-testid="wf-check-step-@c.Id.ToLowerInvariant()">@c.Step / @c.Total</span>
+                                }
+                                <span class="chip @chipClass">@chipLabel</span>
+                            </div>
+                            @if (c.Status == DiagnosticStatus.Running && c.HasProgress)
+                            {
+                                <div class="progress run-progress wf-check-bar" data-testid="wf-check-bar-@c.Id.ToLowerInvariant()" role="progressbar" aria-valuemin="0" aria-valuemax="@c.Total" aria-valuenow="@c.Step">
+                                    <div class="progress-bar" style="width:@($"{c.Fraction * 100:0.#}%")"></div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
+        }
         break;
 
     case WorkflowStage.Review:
@@ -120,6 +179,15 @@
             @if (Flow.WaitingForRestart) { <button class="btn btn-outline" data-testid="wf-restart-now" @onclick="RestartNow">Restart now</button> }
             <button class="btn btn-stop" data-testid="wf-cancel" @onclick="Cancel">Cancel workflow</button>
         </div>
+        @if (s.Stage is WorkflowStage.BeforeBenchmark or WorkflowStage.AfterBenchmark && Bench.Running is not null)
+        {
+            @if (!string.IsNullOrEmpty(Bench.Progress)) { <p class="meta" data-testid="wf-bench-step">@Bench.Progress</p> }
+            <div class="run-progress run-progress-indeterminate wf-overall-progress" data-testid="wf-bench-progress" aria-hidden="true"><div></div></div>
+        }
+        @if (s.Stage == WorkflowStage.Applying && approved > 0)
+        {
+            <div class="progress run-progress wf-overall-progress" data-testid="wf-apply-progress"><div class="progress-bar" style="width:@($"{Math.Clamp((double)s.Outcomes.Count / approved * 100, 0, 100):0.#}%")"></div></div>
+        }
         @if (s.Outcomes.Count > 0)
         {
             <table class="detail grid"><tr><th scope="col">Fix</th><th scope="col">Result</th></tr>
@@ -181,6 +249,7 @@
     protected override void OnInitialized()
     {
         Flow.Changed += OnChanged;
+        Bench.Changed += OnChanged;
         LoadLogon();
         foreach (var a in Prefs?.Current.WorkflowOpenAreas ?? []) _openAreas.Add(a);
     }
@@ -191,7 +260,7 @@
     }
 
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
-    public void Dispose() { Flow.Changed -= OnChanged; _password = ""; _showPassword = false; }
+    public void Dispose() { Flow.Changed -= OnChanged; Bench.Changed -= OnChanged; _password = ""; _showPassword = false; }
 
     private void RunChecks() { _message = null; _ = Flow.RunChecksAsync(); }
 

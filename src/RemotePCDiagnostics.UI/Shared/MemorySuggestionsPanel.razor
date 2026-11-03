@@ -19,7 +19,15 @@
         <p class="meta" data-testid="mem-total-freed">Total freed this session: about @MemoryText.Size(Svc.TotalFreedBytes)</p>
     }
     @if (Svc.ScanError is { } err) { <div class="notice notice-error" data-testid="mem-error">@err</div> }
-    else if (Svc.Snapshot is null) { <p class="meta">Looking at what's using memory…</p> }
+    else if (Svc.Snapshot is null)
+    {
+        var mp = Svc.ScanProgress;
+        <p class="meta" data-testid="mem-scanning">@(mp is not null && !string.IsNullOrWhiteSpace(mp.Message) ? mp.Message : "Looking at what's using memory…")</p>
+        @if (mp is { HasProgress: true })
+        {
+            <div class="progress run-progress" data-testid="mem-progress"><div class="progress-bar" style="width:@($"{mp.Percent:0.#}%")"></div></div>
+        }
+    }
     else if (Svc.Suggestions.Count == 0) { <p class="meta" data-testid="mem-empty">Nothing to suggest right now. Memory use looks reasonable.</p> }
 
     @foreach (var u in Svc.Undos.Where(u => Svc.Suggestions.All(s => s.Id != u.Id)))

@@ -16,6 +16,12 @@ public class RemoteLinkInfoTests
     public void BuildTechnicianUrl_JoinsSafely(string server, string expected) =>
         Assert.Equal(expected, RemoteLinkInfo.BuildTechnicianUrl(new Uri(server), Id).ToString());
 
+    [Theory]
+    [InlineData("https://remoteblazorwebview.com:34544", "https://remoteblazorwebview.com:34544/mirror/11111111-2222-3333-4444-555555555555")]
+    [InlineData("https://remoteblazorwebview.com:34544/", "https://remoteblazorwebview.com:34544/mirror/11111111-2222-3333-4444-555555555555")]
+    public void BuildMirrorUrl_JoinsSafely(string server, string expected) =>
+        Assert.Equal(expected, RemoteLinkInfo.BuildMirrorUrl(new Uri(server), Id).ToString());
+
     [Fact]
     public void BuildTechnicianUrl_RejectsRelative() =>
         Assert.Throws<ArgumentException>(() => RemoteLinkInfo.BuildTechnicianUrl(new Uri("/x", UriKind.Relative), Id));
@@ -31,6 +37,7 @@ public class RemoteLinkInfoTests
         Assert.Equal("Connecting to server…", RemoteLinkInfo.StatusText(RemoteSessionState.Connecting, s));
         Assert.Equal("Ready. Share this link with the technician:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s));
         Assert.Equal("Technician connected", RemoteLinkInfo.StatusText(RemoteSessionState.TechnicianConnected, s));
+        Assert.Equal("Technician connected — watching live below", RemoteLinkInfo.StatusText(RemoteSessionState.TechnicianConnected, s, mirror: true));
         var warn = RemoteLinkInfo.StatusText(RemoteSessionState.Unreachable, s);
         Assert.Equal("Couldn't reach the server yet: remoteblazorwebview.com:34544. Check your internet connection; still trying…", warn);
         Assert.True(RemoteLinkInfo.IsWarning(RemoteSessionState.Unreachable));

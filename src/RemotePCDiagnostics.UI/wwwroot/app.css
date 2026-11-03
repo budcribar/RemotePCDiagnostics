@@ -492,6 +492,17 @@ tr.history-day td { font-weight: 700; color: var(--text-strong); background: var
 .wf-field input { width: min(320px, 70vw); }
 .wf-report { width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
 .wf-log { margin-top: 16px; }
+.wf-overall-progress { max-width: 100%; margin: 8px 0 12px; }
+.wf-check-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.wf-check-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.wf-check-row.wf-check-active { border-color: var(--accent); background: var(--surface-active, var(--surface)); box-shadow: var(--glow-soft); }
+.wf-check-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.wf-check-name { white-space: nowrap; }
+.wf-check-msg { margin: 0; flex: 1 1 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wf-check-side { display: flex; align-items: center; gap: 8px; flex: none; }
+.wf-check-step { margin: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wf-check-bar { grid-column: 1 / -1; max-width: 100%; margin: 2px 0 0; }
+.ct-row-progress { max-width: 100%; margin: 4px 0 0; }
 
 /* Overlay levels: detail header (3), drawer (10/11), confirmation (20/21). */
 .drawer-backdrop { z-index: 10; }

@@ -339,15 +339,19 @@ public static class StorageCleanupCatalog
     // ---- scan and workflow ----
 
     /// <summary>Measures every category with the same targets and walk the cleanup uses, plus the review-only worktree estimate.</summary>
-    public static IReadOnlyList<StorageCleanupItem> Scan(StorageScanContext ctx, CancellationToken ct = default)
+    public static IReadOnlyList<StorageCleanupItem> Scan(StorageScanContext ctx, CancellationToken ct = default, IProgress<string>? progress = null, int stepOffset = 0, int totalSteps = 0)
     {
+        var total = totalSteps > 0 ? totalSteps : All.Count + 1;
+        var step = stepOffset;
         var items = new List<StorageCleanupItem>();
         foreach (var c in All)
         {
             ct.ThrowIfCancellationRequested();
+            progress.ReportStep(++step, total, $"Measuring {c.Title}…");
             var size = Measure(c, ctx, ct);
             if (size is { Files: > 0 } s && s.Bytes >= c.MinBytes) items.Add(new(c.Id, c.Title, c.Description, s.Bytes, c.AutoChecked, SuggestionCategory));
         }
+        progress.ReportStep(++step, total, "Measuring Grok agent worktrees…");
         if (GrokWorktrees(ctx, ct) is { } w) items.Add(w);
         return items;
     }

@@ -217,7 +217,7 @@ public sealed class RemediationService(
             RemediationKind.ResetDhcpDns => new(
                 action,
                 $"Reset DNS to automatic (DHCP) on {label}?",
-                (action.CurrentSetting is { Length: > 0 } dns ? $"Current DNS servers on {label} at last check: {dns}. " : "") +
+                (action.CurrentSetting is { Length: > 0 } dns ? $"Current DNS servers on {label} at last check: {DnsSpeedTest.FormatServers(dns)}. " : "") +
                 $"Restores automatic DNS settings on adapter '{label}'.",
                 "Clears custom static DNS server addresses so Windows uses the DNS provided by the router/DHCP.",
                 "Requires administrator privileges.",

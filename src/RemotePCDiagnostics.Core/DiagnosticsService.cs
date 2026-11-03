@@ -36,7 +36,14 @@ public sealed class DiagnosticsService
     private readonly List<IDiagnosticModule> _modules = new();
     private readonly ResultStore _store;
     private readonly ConcurrentDictionary<string, Task<DiagnosticResult>> _inFlight = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, CheckProgress> _progress = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
+
+    /// <summary>Current sub-step progress of a running module, or null when not running or no progress reported yet.</summary>
+    public CheckProgress? GetProgress(string moduleName) => _progress.TryGetValue(moduleName, out var p) ? p : null;
+
+    /// <summary>Raised when a running module reports sub-step progress (or finishes, with null).</summary>
+    public event EventHandler<(string ModuleName, CheckProgress? Progress)>? ProgressChanged;
 
     public DiagnosticsService(ResultStore store, IEnumerable<IDiagnosticModule>? modules = null)
     {
@@ -116,8 +123,11 @@ public sealed class DiagnosticsService
         return Task.WhenAll(modules.Select(m => RunAsync(m, null, ct)));
     }
 
-    private void MarkRunning(IDiagnosticModule module) =>
+    private void MarkRunning(IDiagnosticModule module)
+    {
+        _progress.TryRemove(module.Name, out _);
         _store.Set(new DiagnosticResult(module.Name, DiagnosticStatus.Running, "Running…", DateTimeOffset.Now));
+    }
 
     /// <summary>True while a run of the module is in flight.</summary>
     public bool IsRunning(string moduleName) => _inFlight.ContainsKey(moduleName);
@@ -143,17 +153,37 @@ public sealed class DiagnosticsService
             }
             task = existing;
         }
+        if (progress is not null)
+        {
+            if (_progress.TryGetValue(module.Name, out var current))
+                progress.ReportStep(current.Step, current.Total, current.Message);
+            void OnProgress(object? sender, (string ModuleName, CheckProgress? Progress) e)
+            {
+                if (string.Equals(e.ModuleName, module.Name, StringComparison.OrdinalIgnoreCase) && e.Progress is { } cp)
+                    progress.ReportStep(cp.Step, cp.Total, cp.Message);
+            }
+            ProgressChanged += OnProgress;
+            _ = task.ContinueWith(_ => ProgressChanged -= OnProgress, TaskScheduler.Default);
+        }
         return ct.CanBeCanceled ? task.WaitAsync(ct) : task;
     }
 
     private async Task<DiagnosticResult> RunCoreAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct)
     {
+        var startedAt = _store.Get(module.Name) is { Status: DiagnosticStatus.Running } cur ? cur.Timestamp : DateTimeOffset.Now;
+        var trackedProgress = CheckProgressExtensions.Create(cp =>
+        {
+            _progress[module.Name] = cp;
+            if (!string.IsNullOrWhiteSpace(cp.Message))
+                _store.Set(new DiagnosticResult(module.Name, DiagnosticStatus.Running, cp.Message, startedAt));
+            try { ProgressChanged?.Invoke(this, (module.Name, cp)); } catch { }
+        }, progress);
         DiagnosticResult result;
         try
         {
             var availability = await module.CheckAvailabilityAsync(ct).ConfigureAwait(false);
             result = availability.IsAvailable
-                ? await module.RefreshAsync(progress, ct).ConfigureAwait(false)
+                ? await module.RefreshAsync(trackedProgress, ct).ConfigureAwait(false)
                 : new DiagnosticResult(module.Name, DiagnosticStatus.Error, availability.Reason ?? "Unavailable", DateTimeOffset.Now, availability);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -164,6 +194,8 @@ public sealed class DiagnosticsService
         {
             result = new DiagnosticResult(module.Name, DiagnosticStatus.Error, ex.Message, DateTimeOffset.Now, ex);
         }
+        _progress.TryRemove(module.Name, out _);
+        try { ProgressChanged?.Invoke(this, (module.Name, null)); } catch { }
         result = MarkStopped(module, result);
         _store.Set(result);
         return result;

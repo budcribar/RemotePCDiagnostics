@@ -68,7 +68,7 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        progress?.Report("Checking Device Manager and hardware drivers…");
+        progress.ReportStep(1, 2, "Checking Device Manager for problem devices…");
         var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
             ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ProblemDevicesScript], ct).ConfigureAwait(false);
         List<ProblemDevice>? problems = null;
@@ -82,6 +82,7 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
             }
         }
 
+        progress.ReportStep(2, 2, "Reading hardware drivers…");
         var drvQ = await QueryAsync(DriversSql, ct).ConfigureAwait(false);
         var drivers = drvQ.Success ? drvQ.Rows!.Select(DriverEntry.FromRow).ToList() : null;
         return Build(problems, drivers);

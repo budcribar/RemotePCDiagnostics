@@ -80,10 +80,19 @@ public class DnsSpeedTests
         Assert.Equal(RemediationKind.SetPublicDns, faster.Kind);
         Assert.Contains("10 ms vs 30 ms", faster.ButtonText);
 
+
+
         var manual = auto with { DnsManual = true, Dns = "9.9.9.9" };
-        Assert.Equal([RemediationKind.ResetDhcpDns], Actions(manual, Slower).Select(x => x.Kind));
+        var reset = Assert.Single(Actions(manual, Slower));
+        Assert.Equal(RemediationKind.ResetDhcpDns, reset.Kind);
+        Assert.Equal("Quad9 (9.9.9.9)", reset.CurrentSetting);
+
         var already = auto with { Dns = "1.1.1.1, 8.8.8.8", DnsManual = true };
-        Assert.DoesNotContain(Actions(already, Faster), x => x.Kind == RemediationKind.SetPublicDns);
+        Assert.Empty(Actions(already, Faster));
+        Assert.Empty(Actions(already, Slower));
+        Assert.Equal("Cloudflare (1.1.1.1), Google (8.8.8.8)", DnsSpeedTest.FormatServers("1.1.1.1, 8.8.8.8"));
+
+
     }
 
     [Fact]

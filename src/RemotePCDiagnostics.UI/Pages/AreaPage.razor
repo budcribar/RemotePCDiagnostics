@@ -26,9 +26,13 @@ else
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="@m.Name" Size="20" /></span><h1 data-testid="area-title">@m.DisplayName</h1></div>
     <p data-testid="area-status" class="@(r.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
         <span class="@DotClass(r.Status)"></span>
-        <span class="status-text">@if (busy) { <span>Checking…</span> } else { <CardList Text="@r.Message" Strong="true" /> }</span>
+        <span class="status-text">@if (busy) { <span>@(r.Status == DiagnosticStatus.Running && !string.IsNullOrWhiteSpace(r.Message) && r.Message != "Running..." ? r.Message : "Checking…")</span> } else { <CardList Text="@r.Message" Strong="true" /> }</span>
         @if (!busy) { <button class="btn-small status-action" data-testid="area-requery" @onclick="() => Diagnostics.RunAsync(m.Name)">Check again</button> }
     </p>
+    @if (r.Status == DiagnosticStatus.Running && Diagnostics.GetProgress(m.Name) is { HasProgress: true } areaProg)
+    {
+        <div class="progress run-progress" data-testid="area-progress"><div class="progress-bar" style="width:@($"{areaProg.Percent:0.#}%")"></div></div>
+    }
     @if (!busy && rep?.Notice is { } notice) { <p class="meta" data-testid="area-notice">@notice</p> }
     @* Always mounted (even while the check re-runs after a fix), so the fix's result message stays visible near the top. *@
     @if (remActions is not null) { <RemediationActions @ref="_remUi" Actions="remActions" ShowRecent="hasRemActions" OnCompleted="() => Diagnostics.RunAsync(m.Name)" /> }

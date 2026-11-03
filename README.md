@@ -165,6 +165,7 @@ Configuration (resolved by `SessionLaunchOptions`, precedence top to bottom):
 - `-u=<server url>` command-line arg: forces Remote with that server (the RemoteBlazorWebViewTutorial convention), e.g. `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`.
 - `REMOTEPC_MODE=Local|Remote` and `REMOTEPC_SERVER_URL` env vars. Remote with no URL uses the default `https://remoteblazorwebview.com:34544`.
 - `-i=<guid>` or `REMOTEPC_ID`: fixed session id. Otherwise a new id is assigned each run.
+- `-m` / `--mirror` or `REMOTEPC_MIRROR=1`: enables session mirroring in Remote mode so the person at the PC can watch what the technician is doing live in the local window.
 
 Server address: the default is the Railway-direct address `https://remoteblazorwebview.com:34544` (Railway TCP proxy to the container's port 8443; Kestrel TLS with a Let's Encrypt cert, HTTP/2 gRPC). Alternative address: `https://server.remoteblazorwebview.com:34544` (same Railway proxy; the port is required, because plain 443 serves a `*.up.railway.app` cert that does not match). The cert on 34544 is issued to `server.remoteblazorwebview.com` and also covers `remoteblazorwebview.com` and `remoteblazor.pagetomovie.com` (Let's Encrypt, valid until 2027-01-27). `https://server.remoteblazorwebview.com` (no port) is the planned permanent name once Railway serves a matching cert on 443. Use either via `REMOTEPC_SERVER_URL` or `-u=`.
 

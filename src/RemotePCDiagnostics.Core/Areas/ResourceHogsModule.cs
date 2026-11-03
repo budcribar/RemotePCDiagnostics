@@ -70,8 +70,10 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        progress?.Report("Checking running processes and system uptime…");
+        var totalSteps = commands is not null ? 3 : 2;
+        progress.ReportStep(1, totalSteps, "Checking system uptime…");
         var upQ = await QueryAsync(UptimeSql, ct).ConfigureAwait(false);
+        progress.ReportStep(2, totalSteps, "Checking running processes…");
         var procQ = await QueryAsync(ProcessesSql, ct).ConfigureAwait(false);
         if (!upQ.Success && !procQ.Success) return AreaReport.Failed(FailedMessage);
 
@@ -79,6 +81,7 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
         MemoryUse? memory = null;
         if (commands is not null)
         {
+            progress.ReportStep(3, totalSteps, "Checking memory use and Fast Startup…");
             var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
                 ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", FastStartupScript], ct).ConfigureAwait(false);
             if (pr is { ExitCode: 0 } && !string.IsNullOrWhiteSpace(pr.StdOut))

@@ -969,6 +969,51 @@ public class WorkflowTests
         Assert.Contains("including \"Only allow Windows Hello sign-in\"", sys.Report!);
     }
 
+    private sealed class SteppedModule(string name, AreaReport report) : IDiagnosticModule
+    {
+        public string Name => name;
+        public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
+        public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
+        public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default)
+        {
+            p.ReportStep(1, 3, "Step one…");
+            p.ReportStep(2, 3, "Step two…");
+            p.ReportStep(3, 3, "Step three…");
+            return Task.FromResult(new DiagnosticResult(name, report.Status, report.Summary, DateTimeOffset.Now, report));
+        }
+    }
+
+    [Fact]
+    public async Task RunChecksAsync_ReportsStepProgressAndPerCheckProgressBars()
+    {
+        var modules = new IDiagnosticModule[]
+        {
+            new SteppedModule("Programs", Report(Updates)),
+            new AreaModule("DriveHealth", Report(Clean)),
+        };
+        var (flow, _, _, _, _, _) = Make(null, null, null, modules);
+        var seenSteps = new List<(int Step, int Total, string Msg, double Overall)>();
+        flow.Changed += () =>
+        {
+            var prog = flow.CheckItems.FirstOrDefault(c => c.Id == "Programs");
+            if (prog is { Status: DiagnosticStatus.Running, HasProgress: true })
+                seenSteps.Add((prog.Step, prog.Total, prog.Message, flow.CheckProgressFraction));
+        };
+
+        await flow.RunChecksAsync();
+
+        Assert.Equal(3, seenSteps.Count);
+        Assert.Equal((1, 3, "Step one…"), (seenSteps[0].Step, seenSteps[0].Total, seenSteps[0].Msg));
+        Assert.Equal((2, 3, "Step two…"), (seenSteps[1].Step, seenSteps[1].Total, seenSteps[1].Msg));
+        Assert.Equal((3, 3, "Step three…"), (seenSteps[2].Step, seenSteps[2].Total, seenSteps[2].Msg));
+        Assert.True(seenSteps[1].Overall > seenSteps[0].Overall);
+        Assert.Equal(2, flow.CompletedChecksCount);
+        Assert.Equal(2, flow.TotalChecksCount);
+        Assert.Equal(1.0, flow.CheckProgressFraction);
+        Assert.Contains(flow.State.Log, l => l.Contains("Programs: 1 thing (1 of 2)"));
+        Assert.Contains(flow.State.Log, l => l.Contains("DriveHealth: 1 thing (2 of 2)"));
+    }
+
     private static string E(string s) => System.Net.WebUtility.HtmlEncode(s);
     private static int CountOf(string text, string part) { var n = 0; for (var i = text.IndexOf(part, StringComparison.Ordinal); i >= 0; i = text.IndexOf(part, i + part.Length, StringComparison.Ordinal)) n++; return n; }
 }

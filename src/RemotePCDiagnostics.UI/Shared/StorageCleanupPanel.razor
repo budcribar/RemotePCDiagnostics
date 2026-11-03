@@ -12,7 +12,15 @@
     <p class="meta">Old caches, logs and leftover copies that apps rebuild or download again when needed. Deleting them can't be undone. Each one is skipped while its app is open.</p>
     @if (Svc.StorageFreedBytes > 0) { <p class="meta" data-testid="storage-freed">Freed this session: @StorageCleanupEngine.SizeText(Svc.StorageFreedBytes)</p> }
     @if (Svc.StorageError is { } err) { <div class="notice notice-error" data-testid="storage-error">@err</div> }
-    else if (Svc.ScanningStorage) { <p class="meta">Measuring caches and leftovers (this can take a minute)…</p> }
+    else if (Svc.ScanningStorage)
+    {
+        var sp = Svc.StorageScanProgress;
+        <p class="meta" data-testid="storage-scanning">@(sp is not null && !string.IsNullOrWhiteSpace(sp.Message) ? sp.Message : "Measuring caches and leftovers (this can take a minute)…")</p>
+        @if (sp is { HasProgress: true })
+        {
+            <div class="progress run-progress" data-testid="storage-progress"><div class="progress-bar" style="width:@($"{sp.Percent:0.#}%")"></div></div>
+        }
+    }
     else if (Svc.StorageScanned && Svc.StorageSuggestions.Count == 0) { <p class="meta" data-testid="storage-empty">Nothing worth deleting right now.</p> }
 
     <div class="ms-list">

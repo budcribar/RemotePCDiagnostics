@@ -45,7 +45,7 @@ public sealed record DnsComparison(DnsServerTiming Current, DnsServerTiming Clou
         get
         {
             string Ms(DnsServerTiming t) => t.MedianMs is { } v ? $"{v:0} ms" : "no answer";
-            var line = $"Website lookups: your DNS ({Current.Address}) {Ms(Current)} · Cloudflare {Ms(Cloudflare)} · Google {Ms(Google)}.";
+            var line = $"Website lookups: your DNS ({DnsSpeedTest.FormatServers(Current.Address)}) {Ms(Current)} · Cloudflare {Ms(Cloudflare)} · Google {Ms(Google)}.";
             return line + (PublicIsFaster
                 ? $" {Best!.Name} is faster on this PC, so switching is suggested."
                 : Current.MedianMs is null ? " Your current DNS didn't answer the test, so it couldn't be compared." : " Your current DNS is as fast or faster here, so switching isn't suggested.");
@@ -59,6 +59,23 @@ public sealed class DnsSpeedTest(IDnsTransport? transport = null, Action<string>
     public const int Lookups = 12;
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(2);
     private readonly IDnsTransport _t = transport ?? new UdpDnsTransport();
+
+    public static string? ServerName(string? address) => address?.Trim() switch
+    {
+        "1.1.1.1" or "1.0.0.1" or "2606:4700:4700::1111" or "2606:4700:4700::1001" => "Cloudflare",
+        "8.8.8.8" or "8.8.4.4" or "2001:4860:4860::8888" or "2001:4860:4860::8844" => "Google",
+        "9.9.9.9" or "149.112.112.112" or "2620:fe::fe" or "2620:fe::9" => "Quad9",
+        "208.67.222.222" or "208.67.220.220" => "OpenDNS",
+        _ => null,
+    };
+
+    public static string FormatServers(string? dnsServers)
+    {
+        if (string.IsNullOrWhiteSpace(dnsServers)) return "";
+        var parts = dnsServers.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => ServerName(s) is { } name && !s.Contains(name, StringComparison.OrdinalIgnoreCase) ? $"{name} ({s})" : s);
+        return string.Join(", ", parts);
+    }
 
     public static bool IsPublicAlready(string? dnsServers) =>
         (dnsServers ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(s => s is "1.1.1.1" or "1.0.0.1" or "8.8.8.8" or "8.8.4.4");

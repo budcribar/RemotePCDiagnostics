@@ -32,9 +32,11 @@ public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today =
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        progress?.Report("Checking programs and updates…");
+        progress.ReportStep(1, 3, "Checking Windows version…");
         var os = await QueryAsync(OsSql, ct).ConfigureAwait(false);
+        progress.ReportStep(2, 3, "Checking installed Windows updates…");
         var patches = await QueryAsync(PatchesSql, ct).ConfigureAwait(false);
+        progress.ReportStep(3, 3, "Reading installed programs…");
         var programs = await QueryAsync(ProgramsSql, ct).ConfigureAwait(false);
         return Build(os.Success ? os.Rows!.FirstOrDefault() : null, os.Success,
             patches.Success ? patches.Rows!.Select(InstalledUpdate.FromRow).ToList() : null,

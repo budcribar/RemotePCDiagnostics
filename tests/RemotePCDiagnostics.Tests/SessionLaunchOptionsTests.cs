@@ -14,6 +14,7 @@ public class SessionLaunchOptionsTests
         var o = SessionLaunchOptions.Resolve([], Env());
         Assert.Equal(SessionMode.Local, o.Mode);
         Assert.Null(o.ServerUri);
+        Assert.False(o.Mirror);
     }
 
     [Fact]
@@ -42,6 +43,29 @@ public class SessionLaunchOptionsTests
         Assert.Equal(id, o.Id);
     }
 
+    [Theory]
+    [InlineData("-m", true)]
+    [InlineData("--mirror", true)]
+    [InlineData("-m=true", true)]
+    [InlineData("--mirror=1", true)]
+    [InlineData("-m=false", false)]
+    public void MirrorArg_AndEnv_ParsedAndPreservedAcrossRestartAndReboot(string arg, bool expected)
+    {
+        var o = SessionLaunchOptions.Resolve(["-u=https://localhost:5001", arg], Env(("REMOTEPC_MIRROR", "true")));
+        Assert.Equal(expected, o.Mirror);
+
+        var envOnly = SessionLaunchOptions.Resolve(["-u=https://localhost:5001"], Env(("REMOTEPC_MIRROR", "1")));
+        Assert.True(envOnly.Mirror);
+
+        var id = Guid.Parse("7e57c0de-0000-4000-8000-000000000001");
+        var restartArgs = SessionLaunchOptions.RestartArguments(new Uri("https://remoteblazorwebview.com:34544/"), id, mirror: true);
+        Assert.Equal(["-u=https://remoteblazorwebview.com:34544", "-i=7e57c0de-0000-4000-8000-000000000001", "--mirror", "--restarted"], restartArgs);
+        Assert.True(SessionLaunchOptions.Resolve(restartArgs, _ => null).Mirror);
+
+        var resumeCmd = SessionLaunchOptions.BuildResumeCommandLine(@"C:\App\RemotePCDiagnostics.Host.exe", SessionMode.Remote, new Uri("https://remoteblazorwebview.com:34544"), id, mirror: true);
+        Assert.Equal("\"C:\\App\\RemotePCDiagnostics.Host.exe\" -u=https://remoteblazorwebview.com:34544 -i=7e57c0de-0000-4000-8000-000000000001 --mirror --post-reboot", resumeCmd);
+    }
+
     [Fact]
     public void LocalEnv_IgnoresServerUrl() =>
         Assert.Equal(SessionMode.Local, SessionLaunchOptions.Resolve([], Env(("REMOTEPC_MODE", "Local"), ("REMOTEPC_SERVER_URL", "https://x"))).Mode);
@@ -55,7 +79,7 @@ public class SessionLaunchOptionsTests
     {
         // Even if Remote mode was originally started without -i= (so SessionContext generated a SessionId),
         // that SessionId is saved to PendingRebootState and restored on restart even if launched without args.
-        var initialCtx = new SessionContext(SessionMode.Remote, new Uri("https://remoteblazorwebview.com:34544"));
+        var initialCtx = new SessionContext(SessionMode.Remote, new Uri("https://remoteblazorwebview.com:34544"), mirror: true);
         Assert.NotEqual(Guid.Empty, initialCtx.SessionId);
 
         var pending = new PendingRebootState(
@@ -67,13 +91,15 @@ public class SessionLaunchOptionsTests
             PreUptimeSeconds: 500_000,
             PreUsedMemoryBytes: 8L * 1024 * 1024 * 1024,
             PreProcessCount: 180,
-            PreTopProcesses: "chrome.exe (4 GB)");
+            PreTopProcesses: "chrome.exe (4 GB)",
+            Mirror: initialCtx.Mirror);
 
         var resumed = SessionLaunchOptions.Resolve([], Env(), pending);
         Assert.Equal(SessionMode.Remote, resumed.Mode);
         Assert.Equal(initialCtx.ServerUri, resumed.ServerUri);
         Assert.Equal(initialCtx.SessionId, resumed.Id);
         Assert.True(resumed.PostReboot);
+        Assert.True(resumed.Mirror);
     }
 
     [Fact]

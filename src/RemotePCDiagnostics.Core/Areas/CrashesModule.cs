@@ -18,9 +18,11 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        progress?.Report("Looking for app crashes…");
+        var total = includeSystemCrashes ? 3 : 2;
+        progress.ReportStep(1, total, "Looking for app crashes and hangs…");
         var events = await _log.QueryAsync("Application", Query, Max, ct).ConfigureAwait(false);
         Log($"{Name}: source=wevtutil Application log (Application Error 1000 / Application Hang 1002) events={events?.Count.ToString() ?? "failed"}");
+        progress.ReportStep(2, total, "Checking .NET runtime crash details…");
         var runtime = events?.Any(e => e.EventId == 1000) == true
             ? await _log.QueryAsync("Application",
                 $"*[System[Provider[@Name='.NET Runtime'] and EventID=1026 and TimeCreated[timediff(@SystemTime) <= {(long)Days * 86_400_000 + 2000}]]]",
@@ -36,6 +38,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         if (!includeSystemCrashes || events is null)
             return appReport;
 
+        progress.ReportStep(3, total, "Checking for blue screens and unexpected restarts…");
         var sysEvents = await _log.QueryAsync("System", BsodHistoryModule.Query, BsodHistoryModule.MaxEvents, ct).ConfigureAwait(false);
         if (sysEvents is null)
             return appReport;

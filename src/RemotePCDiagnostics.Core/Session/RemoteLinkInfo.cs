@@ -19,6 +19,16 @@ public static class RemoteLinkInfo
         return new Uri(b.Uri, $"app/{id}");
     }
 
+    /// <summary>Mirror URL <c>&lt;server&gt;/mirror/&lt;id&gt;</c> so the local user can watch what the technician is doing in real time.</summary>
+    public static Uri BuildMirrorUrl(Uri serverUri, Guid id)
+    {
+        ArgumentNullException.ThrowIfNull(serverUri);
+        if (!serverUri.IsAbsoluteUri) throw new ArgumentException("Server URI must be absolute.", nameof(serverUri));
+        var b = new UriBuilder(serverUri) { Query = string.Empty, Fragment = string.Empty };
+        if (!b.Path.EndsWith('/')) b.Path += "/";
+        return new Uri(b.Uri, $"mirror/{id}");
+    }
+
     /// <summary>
     /// What the local window shows in remote mode, under the native panel (which has the link and Copy link): a short note for
     /// the person at the PC, styled like the panel. Never the link again.
@@ -34,12 +44,12 @@ public static class RemoteLinkInfo
     /// <summary>"host:port" for display (port always shown, e.g. remoteblazorwebview.com:34544 or example.com:443).</summary>
     public static string HostAndPort(Uri serverUri) => $"{serverUri.Host}:{serverUri.Port}";
 
-    public static string StatusText(RemoteSessionState state, Uri serverUri) => state switch
+    public static string StatusText(RemoteSessionState state, Uri serverUri, bool mirror = false) => state switch
     {
         RemoteSessionState.Connecting => "Connecting to server…",
         RemoteSessionState.Ready => "Ready. Share this link with the technician:",
         RemoteSessionState.Unreachable => $"Couldn't reach the server yet: {HostAndPort(serverUri)}. Check your internet connection; still trying…",
-        RemoteSessionState.TechnicianConnected => "Technician connected",
+        RemoteSessionState.TechnicianConnected => mirror ? "Technician connected — watching live below" : "Technician connected",
         RemoteSessionState.Disconnected => "Technician disconnected",
         _ => string.Empty,
     };

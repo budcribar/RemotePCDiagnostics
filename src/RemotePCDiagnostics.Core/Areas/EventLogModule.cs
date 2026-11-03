@@ -12,9 +12,10 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        progress?.Report("Reading the Windows error log…");
+        progress.ReportStep(1, 2, "Reading the Windows System error log…");
         var q = WindowsEventLog.LevelQuery(Days, 1, 2);
         var system = await _log.QueryAsync("System", q, MaxPerLog, ct).ConfigureAwait(false);
+        progress.ReportStep(2, 2, "Reading the Windows Application error log…");
         var app = await _log.QueryAsync("Application", q, MaxPerLog, ct).ConfigureAwait(false);
         Log($"{Name}: source=wevtutil (windows_events needs the osquery event subscriber) system={system?.Count.ToString() ?? "failed"} application={app?.Count.ToString() ?? "failed"}");
         if (excludeCrashEvents)

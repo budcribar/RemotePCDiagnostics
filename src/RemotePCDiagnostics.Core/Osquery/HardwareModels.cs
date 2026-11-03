@@ -89,11 +89,11 @@ public sealed record HardwareInventory(
 
     public static async Task<HardwareInventory> CollectAsync(OsqueryRunner runner, IProgress<string>? progress = null, CancellationToken ct = default)
     {
-        async Task<OsqueryQueryResult> Q(string sql) { progress?.Report(sql); return await runner.RunQueryAsync(sql, ct).ConfigureAwait(false); }
-        var sys = InventorySection<SystemInfo>.From(await Q(SystemSql).ConfigureAwait(false), SystemInfo.FromRow);
-        var cpu = InventorySection<CpuInfo>.From(await Q(CpuSql).ConfigureAwait(false), CpuInfo.FromRow);
-        var mem = InventorySection<MemoryDevice>.From(await Q(MemorySql).ConfigureAwait(false), MemoryDevice.FromRow);
-        var disk = InventorySection<DiskInfo>.From(await Q(DiskSql).ConfigureAwait(false), DiskInfo.FromRow);
+        async Task<OsqueryQueryResult> Q(int step, string msg, string sql) { progress.ReportStep(step, 4, msg); return await runner.RunQueryAsync(sql, ct).ConfigureAwait(false); }
+        var sys = InventorySection<SystemInfo>.From(await Q(1, "Reading computer details…", SystemSql).ConfigureAwait(false), SystemInfo.FromRow);
+        var cpu = InventorySection<CpuInfo>.From(await Q(2, "Reading processor details…", CpuSql).ConfigureAwait(false), CpuInfo.FromRow);
+        var mem = InventorySection<MemoryDevice>.From(await Q(3, "Reading memory modules…", MemorySql).ConfigureAwait(false), MemoryDevice.FromRow);
+        var disk = InventorySection<DiskInfo>.From(await Q(4, "Reading storage drives…", DiskSql).ConfigureAwait(false), DiskInfo.FromRow);
 
         // Fallbacks (shown to the user as normal values).
         var s0 = sys.Items.FirstOrDefault();
@@ -103,7 +103,7 @@ public sealed record HardwareInventory(
             mem = mem with { FromFallback = true }; // UI/summary use system_info.physical_memory for the total
         if (disk.Success && disk.Items.Count == 1 && disk.Items[0].SizeBytes is not > 0)
         {
-            var ld = await Q(LogicalDrivesSql).ConfigureAwait(false);
+            var ld = await runner.RunQueryAsync(LogicalDrivesSql, ct).ConfigureAwait(false);
             var total = ld.Success ? SumFixedDrives(ld.Rows!) : 0;
             if (total > 0) disk = disk with { Items = [disk.Items[0] with { SizeBytes = total }], FromFallback = true };
         }

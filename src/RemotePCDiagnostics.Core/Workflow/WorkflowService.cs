@@ -28,7 +28,7 @@ public sealed class WorkflowService(
     private readonly object _gate = new();
     /// <summary>7: Windows Search only on small, nearly-full PCs without classic Outlook, and opt-in (unticked); Widgets and Search highlights fixes.
     /// 8: Microsoft Teams startup is opt-in (unticked).</summary>
-    public const int CurrentReviewRulesVersion = 11;
+    public const int CurrentReviewRulesVersion = 13;
     private WorkflowState _state = LoadState(store);
 
     private static WorkflowState LoadState(IWorkflowStore store)
@@ -40,6 +40,36 @@ public sealed class WorkflowService(
             ? new WorkflowState() : saved ?? new WorkflowState();
     }
     private CancellationTokenSource? _cts;
+    private readonly List<WorkflowCheckItem> _checkItems = [];
+
+    public IReadOnlyList<WorkflowCheckItem> CheckItems { get { lock (_gate) return _checkItems.ToList(); } }
+    public int CompletedChecksCount => CheckItems.Count(c => c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error);
+    public int TotalChecksCount => CheckItems.Count;
+
+    public double CheckProgressFraction
+    {
+        get
+        {
+            var items = CheckItems;
+            if (items.Count == 0) return 0;
+            var sum = 0.0;
+            foreach (var c in items)
+            {
+                if (c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error) sum += 1.0;
+                else if (c.Status == DiagnosticStatus.Running && c.Total > 0) sum += Math.Clamp(c.Fraction, 0.0, 0.95);
+            }
+            return Math.Clamp(sum / items.Count, 0.0, 1.0);
+        }
+    }
+
+    private void UpdateCheckItem(string id, Func<WorkflowCheckItem, WorkflowCheckItem> change)
+    {
+        lock (_gate)
+        {
+            var idx = _checkItems.FindIndex(x => x.Id == id);
+            if (idx >= 0) _checkItems[idx] = change(_checkItems[idx]);
+        }
+    }
     private TaskCompletionSource? _resuming;
 
     public event Action? Changed;
@@ -74,18 +104,75 @@ public sealed class WorkflowService(
     {
         if (Busy || State.IsRunning) return;
         Busy = true;
+        var modules = diag.Modules.Where(m => m.IncludeInRunAll).ToList();
+        lock (_gate)
+        {
+            _checkItems.Clear();
+            foreach (var m in modules)
+                _checkItems.Add(new(m.Name, m.DisplayName, DiagnosticStatus.NotRun, "Waiting…"));
+            if (memory is not null)
+            {
+                _checkItems.Add(new("MemoryScan", "Memory, startup & apps", DiagnosticStatus.NotRun, "Waiting…", 0, 5));
+                _checkItems.Add(new("StorageScan", "Storage caches & leftovers", DiagnosticStatus.NotRun, "Waiting…", 0, Storage.StorageCleanupCatalog.All.Count + 3));
+            }
+        }
         Save(_ => new WorkflowState { Stage = WorkflowStage.Checking, Actor = Actor });
         try
         {
             Note("Running all checks…");
-            await diag.RunAllAsync(ct).ConfigureAwait(false);
+            foreach (var m in modules)
+            {
+                ct.ThrowIfCancellationRequested();
+                UpdateCheckItem(m.Name, item => item with { Status = DiagnosticStatus.Running, Message = "Running…" });
+                Status = $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · {m.DisplayName}…";
+                Raise();
+                var progress = CheckProgressExtensions.Create(cp =>
+                {
+                    UpdateCheckItem(m.Name, item => item with { Status = DiagnosticStatus.Running, Message = cp.Message, Step = cp.Step, Total = cp.Total });
+                    Status = cp.HasProgress
+                        ? $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · {m.DisplayName} ({cp.Step}/{cp.Total}): {cp.Message}"
+                        : $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · {m.DisplayName}: {cp.Message}";
+                    Raise();
+                });
+                var r = await diag.RunAsync(m.Name, progress, ct).ConfigureAwait(false);
+                UpdateCheckItem(m.Name, item => item with { Status = r.Status, Message = r.Message, Step = item.Total > 0 ? item.Total : 1, Total = item.Total > 0 ? item.Total : 1 });
+                Note($"{m.DisplayName}: {r.Message} ({CompletedChecksCount} of {TotalChecksCount})");
+            }
             IReadOnlyList<MemorySuggestion> suggestions = [];
             if (memory is not null)
             {
+                UpdateCheckItem("MemoryScan", item => item with { Status = DiagnosticStatus.Running, Message = "Looking for ways to use less memory…", Step = 1, Total = 5 });
                 Note("Looking for ways to use less memory…");
-                await memory.ScanAsync(ct).ConfigureAwait(false);
+                var memProgress = CheckProgressExtensions.Create(cp =>
+                {
+                    UpdateCheckItem("MemoryScan", item => item with { Status = DiagnosticStatus.Running, Message = cp.Message, Step = cp.Step > 0 ? cp.Step : item.Step, Total = cp.Total > 0 ? cp.Total : item.Total });
+                    Status = cp.HasProgress
+                        ? $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · Memory, startup & apps ({cp.Step}/{cp.Total}): {cp.Message}"
+                        : $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · Memory, startup & apps: {cp.Message}";
+                    Raise();
+                });
+                await memory.ScanAsync(ct, memProgress).ConfigureAwait(false);
+                var memCount = memory.Suggestions.Count;
+                var memMsg = memCount == 0 ? "No memory or startup issues found." : $"{memCount} suggestion{(memCount == 1 ? "" : "s")} found.";
+                UpdateCheckItem("MemoryScan", item => item with { Status = memCount > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok, Message = memMsg, Step = item.Total, Total = item.Total });
+                Note($"Memory, startup & apps: {memMsg} ({CompletedChecksCount} of {TotalChecksCount})");
+
                 Note("Measuring caches and leftovers that can be deleted…");
-                await memory.ScanStorageAsync(refresh: true, ct).ConfigureAwait(false);
+                var storageTotal = Storage.StorageCleanupCatalog.All.Count + 3;
+                UpdateCheckItem("StorageScan", item => item with { Status = DiagnosticStatus.Running, Message = "Measuring caches and leftovers that can be deleted…", Step = 1, Total = storageTotal });
+                var storageProgress = CheckProgressExtensions.Create(cp =>
+                {
+                    UpdateCheckItem("StorageScan", item => item with { Status = DiagnosticStatus.Running, Message = cp.Message, Step = cp.Step > 0 ? cp.Step : item.Step, Total = cp.Total > 0 ? cp.Total : item.Total });
+                    Status = cp.HasProgress
+                        ? $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · Storage caches & leftovers ({cp.Step}/{cp.Total}): {cp.Message}"
+                        : $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · Storage caches & leftovers: {cp.Message}";
+                    Raise();
+                });
+                await memory.ScanStorageAsync(refresh: true, ct, storageProgress).ConfigureAwait(false);
+                var stCount = memory.StorageSuggestions.Count;
+                var stMsg = stCount == 0 ? "Nothing large to clean up." : $"{stCount} cleanup item{(stCount == 1 ? "" : "s")} found.";
+                UpdateCheckItem("StorageScan", item => item with { Status = stCount > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok, Message = stMsg, Step = item.Total, Total = item.Total });
+                Note($"Storage caches & leftovers: {stMsg} ({CompletedChecksCount} of {TotalChecksCount})");
                 suggestions = [.. memory.Suggestions, .. memory.StorageSuggestions];
             }
             var snapshot = results.Snapshot.Values.ToList();
@@ -378,6 +465,7 @@ public sealed class WorkflowService(
     {
         if (State.IsRunning || Busy) return;
         Status = null;
+        lock (_gate) _checkItems.Clear();
         Save(_ => new WorkflowState());
     }
 

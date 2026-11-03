@@ -79,7 +79,8 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        progress?.Report("Checking network adapters…");
+        var total = includeWifiAndIpConfig && commands is not null ? 3 : 1;
+        progress.ReportStep(1, total, "Checking network adapters…");
         var q = await QueryAsync(Sql, ct).ConfigureAwait(false);
         if (!q.Success) return AreaReport.Failed(FailedMessage);
         var adapters = q.Rows!.Select(NetworkAdapter.FromRow).ToList();
@@ -98,6 +99,7 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
         if (!includeWifiAndIpConfig || commands is null)
             return baseReport;
 
+        progress.ReportStep(2, total, "Checking Wi-Fi signal and IP configuration…");
         var wlanTask = commands.RunAsync(WifiConfigModule.Netsh, ["wlan", "show", "interfaces"], ct);
         var ipTask = commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", WifiConfigModule.IpConfigScript], ct);
         await Task.WhenAll(wlanTask, ipTask).ConfigureAwait(false);
@@ -113,7 +115,7 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
         DnsComparison? dns = null;
         if (ipSnap is not null && WifiConfigModule.PrimaryAdapter(ipSnap) is { } primary && !DnsSpeedTest.IsPublicAlready(primary.Dns))
         {
-            progress?.Report("Comparing DNS speed…");
+            progress.ReportStep(3, total, "Comparing DNS speed…");
             try { dns = await (dnsTest ?? new DnsSpeedTest(log: commands.Log)).CompareAsync(primary.Dns, ct).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException) { commands.Log?.Invoke($"DNS speed test failed: {ex.Message}"); }
         }

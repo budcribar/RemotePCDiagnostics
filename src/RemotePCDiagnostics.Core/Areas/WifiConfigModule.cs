@@ -181,7 +181,7 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         else
         {
             headline = primary is not null ? $"{primary.IPv4} ({primary.Alias})" : $"{Plural(snap.Adapters.Count, "active adapter")}";
-            meta = primary is not null ? $"Gateway {primary.Gateway} · DNS {primary.Dns}" : "";
+            meta = primary is not null ? $"Gateway {primary.Gateway} · DNS {DnsSpeedTest.FormatServers(primary.Dns)}" : "";
         }
 
         var rows = new List<AreaRow>();
@@ -192,7 +192,7 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
                 a.Alias,
                 string.IsNullOrWhiteSpace(a.IPv4) ? "None" : a.IPv4,
                 string.IsNullOrWhiteSpace(a.Gateway) ? "None" : a.Gateway,
-                string.IsNullOrWhiteSpace(a.Dns) ? "None" : a.Dns,
+                string.IsNullOrWhiteSpace(a.Dns) ? "None" : DnsSpeedTest.FormatServers(a.Dns),
                 a.Description
             ],
             Key: a.Alias,
@@ -228,9 +228,9 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         if (dns is { PublicIsFaster: true } d && !DnsSpeedTest.IsPublicAlready(a.Dns))
             list.Add(new(RemediationKind.SetPublicDns, $"Use Cloudflare & Google DNS ({d.Best!.MedianMs:0} ms vs {d.Current.MedianMs:0} ms now)", a.Alias, a.Alias));
         // Only useful when DNS was set by hand; on automatic there's nothing to reset.
-        if (a.DnsManual == true)
+        if (a.DnsManual == true && !DnsSpeedTest.IsPublicAlready(a.Dns))
             list.Add(new(RemediationKind.ResetDhcpDns, "Reset DNS to automatic", a.Alias, a.Alias,
-                CurrentSetting: string.IsNullOrWhiteSpace(a.Dns) ? null : a.Dns));
+                CurrentSetting: string.IsNullOrWhiteSpace(a.Dns) ? null : DnsSpeedTest.FormatServers(a.Dns)));
         return list;
     }
 
