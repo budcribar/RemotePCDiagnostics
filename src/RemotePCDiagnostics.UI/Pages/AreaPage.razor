@@ -36,7 +36,7 @@ else
     @if (rep is not null && rep.Cards.Count > 0)
     {
         <div class="cards">
-            @foreach (var c in rep.Cards)
+            @foreach (var c in rep.ReviewedCards is null ? rep.Cards.AsEnumerable() : rep.Cards.OrderByDescending(c => c.Level))
             {
                 @* EmptyText describes an empty drawer; only show it on the card when there really is nothing in it. *@
                 <SummaryCard Id="@c.Id" Title="@c.Title" OnOpen="Open" ErrorText="@c.ErrorText" EmptyText="@(c.Rows.Count == 0 && string.IsNullOrEmpty(c.Headline) ? c.EmptyText : null)" Dot="@Dot(c.Level)">
@@ -65,6 +65,8 @@ else
             var hasReviewed = reviewedCard?.Rows.Any(row => row.ReviewKeys is { Count: > 0 }) == true;
             var open = _showReviewed && hasReviewed ? reviewedCard! : activeCard;
             var showingReviewed = _showReviewed && hasReviewed;
+            var issueRows = open.Rows.Where(row => row.ReviewKeys is { Count: > 0 }).ToList();
+            var groupKeys = issueRows.SelectMany(row => row.ReviewKeys!).Distinct().ToList();
             var hasRowRemActions = remActions is not null && open.Rows.Any(rw => rw.Actions is { Count: > 0 });
             var isKeyValue = open.Columns is ["Detail", "Value"] && svcActions is null && !hasRowRemActions;
             <div class="drawer-backdrop" @onclick="Close"></div>
@@ -75,6 +77,28 @@ else
                     <button type="button" class="btn-small" @onclick="ToggleReviewed">@(showingReviewed ? "Show needs review" : "Show reviewed")</button>
                 }
                 @if (_reviewError is not null) { <p role="status">@_reviewError</p> }
+                @if (groupKeys.Count > 0)
+                {
+                    <div class="svc-actions issue-group-actions">
+                        <button type="button" class="btn-small" disabled="@_savingReview"
+                            @onclick="() => SetReview(m.Name, groupKeys, !showingReviewed)">@(showingReviewed ? "Undo group review" : "Mark group as reviewed")</button>
+                        <button type="button" class="btn-small" @onclick="() => CopyGroupForCopilot(open, issueRows)">Review group with Copilot</button>
+                    </div>
+                    @if (_pendingCopilotPrompt is { } prompt)
+                    {
+                        <div class="row-detail-text">@prompt</div>
+                        <button type="button" class="btn-small" disabled="@_sendingCopilot" @onclick="() => SendGroupToCopilot(prompt)">Send to Copilot</button>
+                    }
+                    @if (_copilotGroupStatus is not null)
+                    {
+                        <p class="meta" role="status">@_copilotGroupStatus
+                            @if (_copilotGroupCopied)
+                            {
+                                <a href="https://copilot.microsoft.com/" target="_blank" rel="noopener noreferrer">Open Copilot</a>
+                            }
+                        </p>
+                    }
+                }
                 @if (open.Note is { } note) { <p class="meta">@note</p> }
                 @if (open.Id == "memory" && memSvc is not null) { <p><button class="linklike" data-testid="mem-suggest-link" @onclick="ShowSuggestions">See ways to use less memory</button></p> }
                 @if (remActions is not null && open.Actions is { Count: > 0 })
@@ -159,7 +183,15 @@ else
                             </tr>
                             @if (expanded)
                             {
-                                <tr class="row-detail" data-testid="area-row-detail"><td colspan="@(open.Columns.Count + (svcActions is not null || hasRowRemActions ? 1 : 0))">@row.Detail
+                                <tr class="row-detail" data-testid="area-row-detail"><td colspan="@(open.Columns.Count + (svcActions is not null || hasRowRemActions ? 1 : 0))">
+                                    @if (row.Detail is { } detail)
+                                    {
+                                        <div class="row-detail-text">@detail</div>
+                                    }
+                                    @if (row.ReviewKeys is { Count: > 0 })
+                                    {
+                                        <a href="https://copilot.microsoft.com/" target="_blank" rel="noopener noreferrer">Review with Copilot</a>
+                                    }
                                     @if (row.ReviewKeys is { Count: > 0 } keys)
                                     {
                                         <button type="button" class="btn-small" disabled="@_savingReview"
@@ -212,6 +244,8 @@ else
     private void ToggleReviewed()
     {
         _showReviewed = !_showReviewed;
+        _pendingCopilotPrompt = null;
+        _copilotGroupStatus = null;
         _expanded = null;
         _expandedKey = null;
     }
@@ -237,6 +271,65 @@ else
 
     private string? _getHelpError;
     private string? _copyStatus;
+    private string? _copilotGroupStatus;
+    private bool _copilotGroupCopied;
+    private bool _sendingCopilot;
+    private string? _pendingCopilotPrompt;
+
+    private async Task SendGroupToCopilot(string prompt)
+    {
+        if (_sendingCopilot) return;
+        _sendingCopilot = true;
+        _copilotGroupCopied = false;
+        _copilotGroupStatus = "Opening Copilot…";
+        try
+        {
+            if (Sp.GetService(typeof(ICopilotHandoff)) is ICopilotHandoff handoff && await handoff.TrySendAsync(prompt))
+            {
+                _copilotGroupStatus = "Prompt sent to Copilot.";
+                return;
+            }
+            await CopyCopilotPrompt(prompt);
+        }
+        finally
+        {
+            _pendingCopilotPrompt = null;
+            _sendingCopilot = false;
+        }
+    }
+
+    private async Task CopyGroupForCopilot(AreaCard card, IReadOnlyList<AreaRow> rows)
+    {
+        var findings = rows.Select(row =>
+        {
+            var fields = string.Join("\n", card.Columns.Zip(row.Values, (label, value) => $"{label}: {value}"));
+            return string.Join("\n", new[] { fields, row.EventCopyText ?? row.Detail }.Where(text => !string.IsNullOrWhiteSpace(text)));
+        });
+        var prompt = $"Review these Windows diagnostics. Summarize the issues, distinguish observed facts from possible causes, and suggest troubleshooting steps.\n\n{card.Title}\n\n{string.Join("\n\n", findings)}";
+        _copilotGroupStatus = null;
+        _copilotGroupCopied = false;
+        if (Sp.GetService(typeof(ICopilotHandoff)) is ICopilotHandoff)
+        {
+            _pendingCopilotPrompt = prompt;
+            return;
+        }
+        await CopyCopilotPrompt(prompt);
+    }
+
+    private async Task CopyCopilotPrompt(string prompt)
+    {
+        try
+        {
+            await ClipboardJs.InvokeVoidAsync("navigator.clipboard.writeText", prompt);
+            _copilotGroupCopied = true;
+            _copilotGroupStatus = "Group summary copied. Review it before pasting into Copilot.";
+        }
+        catch (JSException)
+        {
+            _copilotGroupCopied = false;
+            _copilotGroupStatus = "Couldn't copy the group summary.";
+        }
+    }
 
     private async Task CopyEvent(string text)
     {
@@ -279,7 +372,7 @@ else
         finally { _analyzingDump = false; }
     }
 
-    private void Open(string id) { _showReviewed = false; _reviewError = null; _open = id; _expanded = null; _expandedKey = null; }
+    private void Open(string id) { _showReviewed = false; _pendingCopilotPrompt = null; _copilotGroupStatus = null; _reviewError = null; _open = id; _expanded = null; _expandedKey = null; }
     private void Close() { _open = null; _expanded = null; _expandedKey = null; }
     // The row whose details are open; matched by content too, so an auto-refresh (new row objects) keeps it open.
     private AreaRow? _expanded;

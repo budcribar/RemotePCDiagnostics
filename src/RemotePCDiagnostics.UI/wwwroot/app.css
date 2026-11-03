@@ -560,7 +560,8 @@ tr.history-day td { font-weight: 700; color: var(--text-strong); background: var
 
 table.sortable .drawer-time { white-space: nowrap; }
 table.sortable .drawer-count { width: 1%; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
-tr.row-detail td { overflow-wrap: anywhere; }
+table.detail tr.row-detail td { white-space: normal; }
+.row-detail-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0.5rem; }
 
 
 /* ---- Structured card lists & professional card polish ---- */

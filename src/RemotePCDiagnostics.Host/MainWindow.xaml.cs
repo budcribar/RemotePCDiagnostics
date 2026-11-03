@@ -39,6 +39,7 @@ public partial class MainWindow : Window
         services.AddRemoteWpfBlazorWebView();
         var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id);
         services.AddSingleton<ISessionContext>(sessionCtx);
+        if (mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
         services.AddSingleton<ResultStore>();
         services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = App.Log }));
         services.AddSingleton<IDiagnosticModule, OsqueryModule>();
