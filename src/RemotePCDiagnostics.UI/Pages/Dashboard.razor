@@ -19,40 +19,21 @@
     var checking = Diagnostics.Modules.Where(m => m.IncludeInRunAll).Any(m => Store.Get(m.Name).Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun);
     var stressBusy = suiteBusy || Diagnostics.IsAnyStressRunning;
     var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled); }), suite);
-    var problems = summary.Problems.Count;
     var last = all.Where(r => r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running)).Select(r => (DateTimeOffset?)r.Timestamp).Max();
-    var bannerKind = checking ? "run" : problems == 0 ? "ok" : summary.HasError ? "err" : "warn";
-    var shownProblems = showAllProblems || problems <= MaxProblems ? summary.Problems : summary.Problems.Take(MaxProblems - 1).ToList();
-    // Same list as the banner: a test the user stopped isn't a problem.
-    var problemNames = summary.Problems.Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-    var attentionModules = Diagnostics.Modules
-        .Where(m => m.Name is not ("Osquery" or LibreHardwareMonitorModule.ModuleName) && problemNames.Contains(m.Name))
-        .ToList();
+    var problemRanks = summary.Problems.ToDictionary(p => p.Name, p => p.IsError ? 0 : 1, StringComparer.OrdinalIgnoreCase);
+    if (_cardRanks is null || (!checking && !stressBusy && !all.Any(r => r.Status == DiagnosticStatus.Running)))
+        _cardRanks = problemRanks;
+    string[] fixedCards = [LibreHardwareMonitorModule.ModuleName, "Osquery"];
+    var cards = fixedCards.Concat(Diagnostics.Modules.Select(m => m.Name)
+        .Where(name => !fixedCards.Contains(name) && _cardRanks.ContainsKey(name)))
+        .OrderBy(name => _cardRanks.GetValueOrDefault(name, 2)).ToList();
+    var attentionCount = cards.Count(_cardRanks.ContainsKey);
     var now = DateTimeOffset.Now;
 }
 <div class="toolbar"><h1 data-testid="dashboard-title">Dashboard</h1></div>
 
-<section class="banner banner-@bannerKind dash-banner" data-testid="dashboard-banner">
-    <span class="banner-icon"><Icon Name="@(problems > 0 && !checking ? "crash" : "sec")" Size="22" /></span>
-    <div class="banner-text">
-        <div class="banner-title" data-testid="dashboard-health">
-            @if (checking) { <span>Checking your PC…</span> }
-            else if (problems == 0) { <span>Your PC looks healthy</span> }
-            else
-            {
-                <span>@summary.TitleLead: </span>
-                @for (var i = 0; i < shownProblems.Count; i++)
-                {
-                    var p = shownProblems[i];
-                    <a href="@Screen.PageFor(p.Name)" class="banner-problem banner-problem-@(p.IsError ? "err" : "warn")" data-testid="dashboard-problem-@p.Name.ToLowerInvariant()"
-                       @onclick="() => Open(p.Name)" @onclick:preventDefault>@p.DisplayName</a>@(i < shownProblems.Count - 1 ? ", " : "")
-                }
-                @if (shownProblems.Count < problems)
-                {
-                    <span>, </span><button class="banner-more" data-testid="dashboard-problems-more" @onclick="() => showAllProblems = true">+@(problems - shownProblems.Count) more</button>
-                }
-            }
-        </div>
+<div class="toolbar" data-testid="dashboard-controls">
+    <div class="meta">
         <div class="banner-sub">
             <span data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {RemotePCDiagnostics.Core.History.TimeText.Ago(l, now)}" : "Not checked yet")</span>
             @if (summary.StressNotRunCount > 0)
@@ -75,7 +56,7 @@
                 title="Extended: ~5 min per stress test, about 25 min in all">
             <Icon Name="play" Size="12" />Run checks + stress tests (extended)</button>
     </div>
-</section>
+</div>
 
 @if (suite is { } sp && (suiteBusy || sp.Finished))
 {
@@ -97,7 +78,16 @@
 }
 
 <div class="dash-grid">
-    <div class="card dash-card gauge-card card-click" data-testid="dashboard-card-sensors" role="link" tabindex="0"
+    @for (var index = 0; index < cards.Count; index++)
+    {
+        var name = cards[index];
+        @if (attentionCount > 0 && (index == 0 || index == attentionCount))
+        {
+            <h2 class="ct-section-label" style="grid-column: 1 / -1">@(index == 0 ? $"Needs attention · {attentionCount}" : "Other checks")</h2>
+        }
+        if (name == LibreHardwareMonitorModule.ModuleName)
+        {
+    <div @key="name" class="card dash-card gauge-card card-click" data-testid="dashboard-card-sensors" role="link" tabindex="0"
          @onclick='() => Open(LibreHardwareMonitorModule.ModuleName)' @onkeydown='e => Key(e, LibreHardwareMonitorModule.ModuleName)'>
         <div class="card-head"><span class="icon-badge"><Icon Name="temp" /></span><strong>Temperatures &amp; fans</strong>
             <StatusChip Status="@(cpuTemp is null && !thBusy ? DiagnosticStatus.NotRun : th.Status)" Text="@(cpuTemp is null && !thBusy ? "No reading" : null)" /></div>
@@ -115,7 +105,10 @@
         <div class="desc" data-testid="dashboard-thermal">@if (thBusy) { <span>Checking temperatures…</span> } else { <CardList Text="@th.Message" /> }</div>
     </div>
 
-    <div class="card dash-card card-click" data-testid="dashboard-card-osquery" role="link" tabindex="0"
+        }
+        else if (name == "Osquery")
+        {
+    <div @key="name" class="card dash-card card-click" data-testid="dashboard-card-osquery" role="link" tabindex="0"
          @onclick='() => Open("Osquery")' @onkeydown='e => Key(e, "Osquery")'>
         <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(hw.Status)"><Icon Name="@Icon.ForModule("Osquery")" /></span><strong>Hardware inventory</strong>
             <StatusChip Status="@(querying ? DiagnosticStatus.Running : hw.Status)" Text="@(querying ? "Checking…" : null)" /></div>
@@ -127,22 +120,24 @@
         @if (!querying) { <div class="meta card-foot updated-ago" title="@hw.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(hw.Timestamp, now)</div> }
     </div>
 
-    @foreach (var m in attentionModules)
-    {
-        var r = Store.Get(m.Name);
-        var name = m.Name;
-        <div class="card dash-card card-click" data-testid="dashboard-card-@m.Name.ToLowerInvariant()" role="link" tabindex="0"
+        }
+        else
+        {
+        var m = Diagnostics.Modules.First(module => module.Name == name);
+        var r = Store.Get(name);
+        <div @key="name" class="card dash-card card-click" data-testid="dashboard-card-@m.Name.ToLowerInvariant()" role="link" tabindex="0"
              @onclick="() => Open(name)" @onkeydown="e => Key(e, name)">
             <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(r.Status)"><Icon Name="@Icon.ForModule(m.Name)" /></span><strong title="@m.DisplayName">@m.DisplayName</strong>
                 <StatusChip Status="@r.Status" /></div>
             <div class="card-msg card-msg-full"><CardList Text="@r.Message" Strong="true" /></div>
             <div class="meta card-foot updated-ago" title="@r.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(r.Timestamp, now)</div>
         </div>
+        }
     }
-
 </div>
 
 @code {
+    private Dictionary<string, int>? _cardRanks;
     private void Open(string module)
     {
         Screen.FocusModule(module);
@@ -154,8 +149,6 @@
     private StressSuiteProgress? suite;
     private bool suiteBusy => Diagnostics.IsStressSuiteRunning;
     private bool cancelling;
-    private bool showAllProblems;
-    private const int MaxProblems = 4;
 
     protected override void OnInitialized()
     {
