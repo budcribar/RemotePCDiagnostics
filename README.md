@@ -255,6 +255,11 @@ On-demand, like the audio tests: listed after the security audit and the audio t
 runs on its own after it), not ticked by default, no prompts. Page: **NPU (AI accelerator) test**, length 5/10/30/60 s (default 10 s,
 capped at 60 s). Access is behind `INpuIo` (Core, `NullNpuIo` for CI); the Windows implementation is `WindowsNpuIo` in the Host.
 
+**Shown only on PCs with an NPU.** At startup the app checks once, in the background, for an NPU (same detection as below, cached,
+20 s cap). If none is found, or the check fails or times out, the NPU test is hidden everywhere: not in the Checks & tests list, the
+selection or the separate-step run, not on the dashboard or in navigation, and it can't be run. Opening its page directly says
+"No NPU detected on this machine." There is no "Skipped: No NPU found" result in the app any more.
+
 - **Detection**: `Win32_PnPEntity` devices in the `ComputeAccelerator` class or named like an NPU (Intel AI Boost, AMD IPU / NPU Compute
   Accelerator, Qualcomm Hexagon NPU), with status, problem code and driver version (`Win32_PnPSignedDriver`), merged with DXCore adapters
   (`dxcore.dll`, plain COM interop) that have the NPU hardware-type attribute (or, on older Windows, ML support without graphics).
@@ -265,7 +270,7 @@ capped at 60 s). Access is behind `INpuIo` (Core, `NullNpuIo` for CI); the Windo
 
 | Situation | Result |
 | --- | --- |
-| No NPU | Warning "Skipped: No NPU found." |
+| No NPU | Test hidden (if run directly from code: Warning "Skipped: No NPU found.") |
 | Driver problem code / status Error | Fail with the Device Manager problem text |
 | Listed but no DirectX adapter (compute driver not loaded) | Fail |
 | Workload throws, device removed, or times out | Fail |

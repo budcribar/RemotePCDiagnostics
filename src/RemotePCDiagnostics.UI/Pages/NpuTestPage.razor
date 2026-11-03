@@ -7,7 +7,8 @@
 }
 @if (m is null)
 {
-    <p class="meta" data-testid="area-missing">This page isn't available.</p>
+    @* Hidden when no NPU was found (IHardwareGatedModule): a direct link lands here instead of on a broken page. *@
+    <p class="meta" data-testid="npu-none">@(Diagnostics.IsDetectingHardware ? "Looking for an NPU…" : "No NPU detected on this machine.")</p>
 }
 else
 {

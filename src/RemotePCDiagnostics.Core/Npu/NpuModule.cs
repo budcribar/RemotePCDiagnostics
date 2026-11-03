@@ -17,7 +17,7 @@ public sealed class NpuTestSettings
 }
 
 /// <summary>NPU test: on-demand, own page, not in Run All and not part of the stress run (like the security audit and the audio tests).</summary>
-public interface INpuTestModule : IDiagnosticModule
+public interface INpuTestModule : IHardwareGatedModule
 {
     NpuTestSettings Settings { get; }
     IReadOnlyList<NpuDevice> Devices();
@@ -52,6 +52,32 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
     public event EventHandler<DiagnosticResult>? Updated { add { } remove { } } // no unsolicited updates
 
     private void Log(string s) { try { log?.Invoke(s); } catch { } }
+
+    /// <summary>Longest the one-time presence check may take before the NPU test is treated as absent (hidden).</summary>
+    public static readonly TimeSpan DetectionTimeout = TimeSpan.FromSeconds(20);
+    private Task<bool>? _detect;
+    private volatile bool _present;
+
+    public bool IsPresent => _present;
+
+    /// <summary>One cached detection on a background thread. Exceptions, an empty list or a timeout = no NPU (the test stays hidden).</summary>
+    public Task<bool> DetectPresenceAsync(CancellationToken ct = default)
+    {
+        lock (_gate) _detect ??= DetectCoreAsync();
+        return ct.CanBeCanceled ? _detect.WaitAsync(ct) : _detect;
+    }
+
+    private async Task<bool> DetectCoreAsync()
+    {
+        try
+        {
+            var list = await Task.Run(() => io.ListDevices()).WaitAsync(DetectionTimeout).ConfigureAwait(false);
+            _present = list is { Count: > 0 };
+            Log($"{Name}: presence check found {list?.Count ?? 0} NPU(s){(_present ? "" : "; test hidden")}");
+        }
+        catch (Exception ex) { _present = false; Log($"{Name}: presence check failed, test hidden: {ex.Message}"); }
+        return _present;
+    }
 
     public IReadOnlyList<NpuDevice> Devices()
     {

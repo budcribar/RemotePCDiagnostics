@@ -42,15 +42,57 @@ public sealed class DiagnosticsService
     {
         _store = store;
         foreach (var m in modules ?? []) Register(m);
+        StartHardwareDetection();
     }
 
-    public IReadOnlyList<IDiagnosticModule> Modules => _modules;
+    private IReadOnlyList<IDiagnosticModule>? _visible;
+
+    /// <summary>Registered modules, minus hardware-gated ones whose hardware wasn't found (see <see cref="IHardwareGatedModule"/>).</summary>
+    public IReadOnlyList<IDiagnosticModule> Modules
+    {
+        get
+        {
+            var v = Volatile.Read(ref _visible);
+            if (v is null) { v = _modules.Where(IsVisible).ToArray(); Volatile.Write(ref _visible, v); }
+            return v;
+        }
+    }
+
+    private static bool IsVisible(IDiagnosticModule m) => m is not IHardwareGatedModule g || g.IsPresent;
+
+    /// <summary>True while hardware detection for a gated module is still running (pages show "looking…" instead of "not found").</summary>
+    public bool IsDetectingHardware => Volatile.Read(ref _detecting) > 0;
+    private int _detecting;
+
+    /// <summary>Raised when the visible module list changes (a gated module's hardware was found).</summary>
+    public event EventHandler? ModulesChanged;
+
+    /// <summary>Runs each gated module's detection once in the background; never blocks the caller, never throws.</summary>
+    private void StartHardwareDetection()
+    {
+        foreach (var g in _modules.OfType<IHardwareGatedModule>())
+        {
+            Interlocked.Increment(ref _detecting);
+            _ = Task.Run(async () =>
+            {
+                var found = false;
+                try { found = await g.DetectPresenceAsync().ConfigureAwait(false); }
+                catch (Exception ex) { try { Log?.Invoke($"{g.Name}: detection failed, hidden: {ex.Message}"); } catch { } }
+                finally { Interlocked.Decrement(ref _detecting); }
+                Volatile.Write(ref _visible, null);
+                try { ModulesChanged?.Invoke(this, EventArgs.Empty); } catch { }
+                _store.Set(DiagnosticResult.NotRun(g.Name)); // nudges store-aware pages to re-render
+                if (found) try { Log?.Invoke($"{g.Name}: hardware found, shown"); } catch { }
+            });
+        }
+    }
 
     public void Register(IDiagnosticModule module)
     {
         if (_modules.Any(m => string.Equals(m.Name, module.Name, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException($"Module '{module.Name}' already registered.");
         _modules.Add(module);
+        Volatile.Write(ref _visible, null);
         module.Updated += (_, r) => _store.Set(MarkStopped(module, r));
         _store.Set(DiagnosticResult.NotRun(module.Name));
     }
@@ -61,7 +103,7 @@ public sealed class DiagnosticsService
 
     public async Task<DiagnosticResult> RunAsync(string moduleName, IProgress<string>? progress = null, CancellationToken ct = default)
     {
-        var module = _modules.FirstOrDefault(m => string.Equals(m.Name, moduleName, StringComparison.OrdinalIgnoreCase))
+        var module = Modules.FirstOrDefault(m => string.Equals(m.Name, moduleName, StringComparison.OrdinalIgnoreCase))
             ?? throw new ArgumentException($"Unknown module '{moduleName}'.", nameof(moduleName));
         return await RunAsync(module, progress, ct).ConfigureAwait(false);
     }
@@ -70,7 +112,7 @@ public sealed class DiagnosticsService
     /// On-demand modules (<see cref="IDiagnosticModule.IncludeInRunAll"/> false, e.g. stress tests) are skipped.</summary>
     public Task<DiagnosticResult[]> RunAllAsync(CancellationToken ct = default)
     {
-        var modules = _modules.Where(m => m.IncludeInRunAll).ToArray();
+        var modules = Modules.Where(m => m.IncludeInRunAll).ToArray();
         return Task.WhenAll(modules.Select(m => RunAsync(m, null, ct)));
     }
 
