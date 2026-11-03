@@ -24,7 +24,9 @@ public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool co
         var summary = status switch
         {
             DiagnosticStatus.Ok => "No corruption detected",
-            DiagnosticStatus.Warning => "Integrity violations detected",
+            DiagnosticStatus.Warning when !componentStore => "SFC found integrity violations in protected system files.",
+            DiagnosticStatus.Warning when Has("component store cannot be repaired") => "DISM found component store corruption and reports that the store cannot be repaired.",
+            DiagnosticStatus.Warning => "DISM found repairable corruption in the Windows component store.",
             _ => "Integrity scan could not confirm a result"
         };
         return new([new("integrity", DisplayName, status switch

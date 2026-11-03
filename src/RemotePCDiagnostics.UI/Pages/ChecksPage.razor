@@ -1,3 +1,4 @@
+@using RemotePCDiagnostics.Core.Areas
 @page "/checks"
 @page "/stress"
 @using Microsoft.JSInterop
@@ -90,7 +91,8 @@
 
     private void Select(IDiagnosticModule m) { Screen.SelectedModule = m.Name; }
     private readonly Dictionary<string, ElementReference> _rowRefs = new(StringComparer.OrdinalIgnoreCase);
-    private static bool HasOwnStart(IDiagnosticModule m) => m is IStressSuiteModule || ChecksScreenState.IsSeparateStep(m);
+    private static bool HasOwnStart(IDiagnosticModule m) => m is IStressSuiteModule ||
+        (m is not WindowsIntegrityModule && ChecksScreenState.IsSeparateStep(m));
 
     /// <summary>Enter/Space selects; ↑/↓ move to the previous/next visible test (and select it).</summary>
     private async Task RowKey(KeyboardEventArgs e, IDiagnosticModule m)
@@ -244,7 +246,30 @@
             }
         </div>
         <div class="ct-detail-body" @key="m.Name">
-            <DynamicComponent Type="PageFor(m)" Parameters="ParamsFor(m)" />
+            @if (m is WindowsIntegrityModule && kind == RowKind.Running)
+            {
+                <p role="status">Running @m.DisplayName. This can take several minutes.</p>
+                <progress aria-label="@($"{m.DisplayName} scan in progress")"></progress>
+            }
+            else if (m is WindowsIntegrityModule && r.Payload is AreaReport integrity && kind != RowKind.Cancelled)
+            {
+                @foreach (var card in integrity.Cards)
+                {
+                    <p class="meta">@card.Meta</p>
+                    <details>
+                        <summary>Scan command and output</summary>
+                        @foreach (var row in card.Rows)
+                        {
+                            <strong>@row.Values[0]</strong>
+                            <div class="row-detail-text">@row.Values[1]</div>
+                        }
+                    </details>
+                }
+            }
+            else
+            {
+                <DynamicComponent Type="PageFor(m)" Parameters="ParamsFor(m)" />
+            }
         </div>
     };
 
