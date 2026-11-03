@@ -22,14 +22,18 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
             system = system?.Where(e => !BsodHistoryModule.IsBugCheckEvent(e) && !BsodHistoryModule.IsPowerLossEvent(e)).ToList();
             app = app?.Where(e => !(e.EventId is 1000 or 1002 && (e.Provider.Contains("Application Error", StringComparison.OrdinalIgnoreCase) || e.Provider.Contains("Application Hang", StringComparison.OrdinalIgnoreCase)))).ToList();
         }
-        return Build(system, app);
+        var reviewed = EventReviews.Read();
+        var report = Build(system?.Where(e => !reviewed.Contains(EventReviews.Key(e))).ToList(),
+            app?.Where(e => !reviewed.Contains(EventReviews.Key(e))).ToList());
+        return report with { ReviewedCards = Build(system?.Where(e => reviewed.Contains(EventReviews.Key(e))).ToList(),
+            app?.Where(e => reviewed.Contains(EventReviews.Key(e))).ToList()).Cards };
     }
 
     private static readonly string[] Cols = ["When", "Source", "Level", "What happened"];
     private static readonly string[] GroupedCols = ["When", "Source", "Level", "Times", "What happened"];
     public const int MaxDetailChars = 2000, MaxListedTimes = 20;
     private static AreaRow Row(WinEvent e) => new(e.Level == 1 ? AreaLevel.Error : AreaLevel.Warning, [WindowsEventLog.FormatTime(e.Time), e.Source, e.Level == 1 ? "Critical" : "Error", e.ShortMessage],
-        [AreaSort.TimeKey(e.Time), null, e.Level == 1 ? "2" : "1", null], Detail: FullMessage(e), GetHelpUri: GetHelpFor(e), EventCopyText: CopyText(e));
+        [AreaSort.TimeKey(e.Time), null, e.Level == 1 ? "2" : "1", null], Detail: FullMessage(e), GetHelpUri: GetHelpFor(e), EventCopyText: CopyText(e), ReviewKeys: [EventReviews.Key(e)]);
 
     private static string CopyText(WinEvent e) =>
         $"Source: {e.Provider}\nEvent ID: {e.EventId}\nLog: {e.Channel}\nTime: {e.Time:O}\n\n{e.Message}";
@@ -66,7 +70,7 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
                 return new AreaRow(e.Level == 1 ? AreaLevel.Error : AreaLevel.Warning,
                     [WindowsEventLog.FormatTime(e.Time), e.Source, e.Level == 1 ? "Critical" : "Error", list.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), e.ShortMessage],
                     [AreaSort.TimeKey(e.Time), null, e.Level == 1 ? "2" : "1", list.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), null],
-                    Detail: detail.Length > 0 ? detail : null, GetHelpUri: GetHelpFor(e), EventCopyText: CopyText(e));
+                    Detail: detail.Length > 0 ? detail : null, GetHelpUri: GetHelpFor(e), EventCopyText: CopyText(e), ReviewKeys: list.Select(EventReviews.Key).ToList());
             })
             .OrderByDescending(r => r.SortKeys![0], StringComparer.Ordinal).ToList();
 
@@ -111,7 +115,7 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
             groups.Select(g => new AreaRow(g.Any(e => e.Level == 1) ? AreaLevel.Error : AreaLevel.Warning,
                 [g.First().Source, string.Equals(g.First().Channel, "System", StringComparison.OrdinalIgnoreCase) ? "Windows" : "Apps", g.Count().ToString(), WindowsEventLog.FormatTime(g.Max(e => e.Time))],
                 [null, null, null, AreaSort.TimeKey(g.Max(e => e.Time))],
-                Detail: SourceDetail(g))).ToList(),
+                Detail: SourceDetail(g), ReviewKeys: g.Select(EventReviews.Key).ToList())).ToList(),
             Note: "Click a source to see what it reported."));
 
         var summary = all.Count == 0 && critical.Count == 0

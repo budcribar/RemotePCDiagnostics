@@ -59,13 +59,22 @@ else
         @if (memSvc is not null) { <MemorySuggestionsPanel @ref="_memPanel" Svc="memSvc" /> }
         @if (storageSvc is not null) { <StorageCleanupPanel Svc="storageSvc" /> }
 
-        @if (_open is not null && rep.Cards.FirstOrDefault(c => c.Id == _open) is { } open)
+        @if (_open is not null && rep.Cards.FirstOrDefault(c => c.Id == _open) is { } activeCard)
         {
+            var reviewedCard = rep.ReviewedCards?.FirstOrDefault(c => c.Id == activeCard.Id);
+            var hasReviewed = reviewedCard?.Rows.Any(row => row.ReviewKeys is { Count: > 0 }) == true;
+            var open = _showReviewed && hasReviewed ? reviewedCard! : activeCard;
+            var showingReviewed = _showReviewed && hasReviewed;
             var hasRowRemActions = remActions is not null && open.Rows.Any(rw => rw.Actions is { Count: > 0 });
             var isKeyValue = open.Columns is ["Detail", "Value"] && svcActions is null && !hasRowRemActions;
             <div class="drawer-backdrop" @onclick="Close"></div>
             <aside class="drawer" role="dialog" aria-modal="true" aria-label="@open.Title" tabindex="-1" @onkeydown="DrawerKey" data-testid="area-drawer-@open.Id">
                 <div class="drawer-head"><strong title="@open.Title">@open.Title</strong><button data-testid="area-drawer-close" @onclick="Close">Close</button></div>
+                @if (hasReviewed)
+                {
+                    <button type="button" class="btn-small" @onclick="ToggleReviewed">@(showingReviewed ? "Show needs review" : "Show reviewed")</button>
+                }
+                @if (_reviewError is not null) { <p role="status">@_reviewError</p> }
                 @if (open.Note is { } note) { <p class="meta">@note</p> }
                 @if (open.Id == "memory" && memSvc is not null) { <p><button class="linklike" data-testid="mem-suggest-link" @onclick="ShowSuggestions">See ways to use less memory</button></p> }
                 @if (remActions is not null && open.Actions is { Count: > 0 })
@@ -79,7 +88,7 @@ else
                     </div>
                 }
                 @if (open.ErrorText is not null) { <div class="notice notice-error" data-testid="detail-error">@open.ErrorText</div> }
-                else if (open.Rows.Count == 0) { <p class="meta" data-testid="detail-empty">@(open.EmptyText ?? "Nothing to show here.")</p> }
+                else if (open.Rows.Count == 0) { <p class="meta" data-testid="detail-empty">@(hasReviewed ? "No events need review." : open.EmptyText ?? "Nothing to show here.")</p> }
                 else if (isKeyValue)
                 {
                     <table class="detail" data-testid="area-table">
@@ -110,7 +119,7 @@ else
                             var svc = SvcInfo(svcModule, row);
                             var level = svc is not null && _svcStatus.ContainsKey(svc.Name) ? (svc.IsRunning ? AreaLevel.Ok : svc.IsAutomatic ? AreaLevel.Warning : AreaLevel.Neutral) : row.Level;
                             var rowRef = row;
-                            var expandable = row.Detail is not null || row.GetHelpUri is not null || row.EventCopyText is not null;
+                            var expandable = row.Detail is not null || row.GetHelpUri is not null || row.EventCopyText is not null || row.ReviewKeys is { Count: > 0 };
                             var expanded = expandable && ReferenceEquals(_expanded, row) || expandable && _expandedKey is not null && _expandedKey == RowId(row);
                             <tr @key="row" data-testid="@(row.Key is null ? null : "svc-row-" + row.Key)" class="@(expandable ? "row-expandable" : null)"
                                 tabindex="@(expandable ? "0" : null)" aria-expanded="@(expandable ? (expanded ? "true" : "false") : null)"
@@ -151,6 +160,11 @@ else
                             @if (expanded)
                             {
                                 <tr class="row-detail" data-testid="area-row-detail"><td colspan="@(open.Columns.Count + (svcActions is not null || hasRowRemActions ? 1 : 0))">@row.Detail
+                                    @if (row.ReviewKeys is { Count: > 0 } keys)
+                                    {
+                                        <button type="button" class="btn-small" disabled="@_savingReview"
+                                            @onclick="() => SetReview(m.Name, keys, !showingReviewed)">@(showingReviewed ? "Undo review" : "Mark as reviewed")</button>
+                                    }
                                     @if (row.EventCopyText is { } eventText)
                                     {
                                         <button type="button" class="btn-small" @onclick="() => CopyEvent(eventText)">Copy event details</button>
@@ -191,6 +205,36 @@ else
 @code {
     [Parameter] public string Slug { get; set; } = "";
     private string? _open;
+    private bool _showReviewed;
+    private bool _savingReview;
+    private string? _reviewError;
+
+    private void ToggleReviewed()
+    {
+        _showReviewed = !_showReviewed;
+        _expanded = null;
+        _expandedKey = null;
+    }
+
+    private async Task SetReview(string module, IReadOnlyList<string> keys, bool reviewed)
+    {
+        if (_savingReview) return;
+        _savingReview = true;
+        _reviewError = null;
+        try
+        {
+            EventReviews.Set(keys, reviewed);
+            _expanded = null;
+            _expandedKey = null;
+            await Diagnostics.RunAsync(module);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _reviewError = "Couldn't save the event review.";
+        }
+        finally { _savingReview = false; }
+    }
+
     private string? _getHelpError;
     private string? _copyStatus;
 
@@ -235,7 +279,7 @@ else
         finally { _analyzingDump = false; }
     }
 
-    private void Open(string id) { _open = id; _expanded = null; _expandedKey = null; }
+    private void Open(string id) { _showReviewed = false; _reviewError = null; _open = id; _expanded = null; _expandedKey = null; }
     private void Close() { _open = null; _expanded = null; _expandedKey = null; }
     // The row whose details are open; matched by content too, so an auto-refresh (new row objects) keeps it open.
     private AreaRow? _expanded;
@@ -243,7 +287,7 @@ else
     private static string RowId(AreaRow r) => r.Key ?? string.Join("\u001f", r.Values);
     private void ToggleRow(AreaRow r)
     {
-        if (r.Detail is null && r.GetHelpUri is null && r.EventCopyText is null) return;
+        if (r.Detail is null && r.GetHelpUri is null && r.EventCopyText is null && r.ReviewKeys is not { Count: > 0 }) return;
         _copyStatus = null;
         var open = ReferenceEquals(_expanded, r) || _expandedKey == RowId(r);
         _expanded = open ? null : r;

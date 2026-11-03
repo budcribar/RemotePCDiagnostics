@@ -26,7 +26,13 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
                 $"*[System[Provider[@Name='.NET Runtime'] and EventID=1026 and TimeCreated[timediff(@SystemTime) <= {(long)Days * 86_400_000 + 2000}]]]",
                 Max, ct).ConfigureAwait(false)
             : null;
-        var appReport = events is null ? AreaReport.Failed(FailedMessage) : Build(events.Concat((runtime ?? []).Where(e => e.EventId == 1026)).ToList());
+        var reviewed = EventReviews.Read();
+        var runtimeEvents = (runtime ?? []).Where(e => e.EventId == 1026).ToList();
+        var appReport = events is null ? AreaReport.Failed(FailedMessage)
+            : Build(events.Where(e => !reviewed.Contains(EventReviews.Key(e))).Concat(runtimeEvents).ToList()) with
+            {
+                ReviewedCards = Build(events.Where(e => reviewed.Contains(EventReviews.Key(e))).Concat(runtimeEvents).ToList()).Cards
+            };
         if (!includeSystemCrashes || events is null)
             return appReport;
 
@@ -36,15 +42,16 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
 
         IReadOnlyList<MinidumpFile> dumps = [];
         try { dumps = (minidumpReader ?? BsodHistoryModule.ReadSystemMinidumps)(); } catch { }
-        var bsodReport = BsodHistoryModule.Build(sysEvents, dumps);
+        var bsodReport = BsodHistoryModule.BuildReviewed(sysEvents, dumps);
         var combinedCards = bsodReport.Cards.Concat(appReport.Cards).ToList();
         var combinedStatus = (DiagnosticStatus)Math.Max((int)bsodReport.Status, (int)appReport.Status);
         var combinedSummary = $"{bsodReport.Summary} · {appReport.Summary}";
-        return new(combinedCards, combinedSummary, combinedStatus);
+        return new(combinedCards, combinedSummary, combinedStatus, ReviewedCards: (bsodReport.ReviewedCards ?? []).Concat(appReport.ReviewedCards ?? []).ToList());
     }
 
     public sealed record Incident(DateTimeOffset Time, string App, string Version, bool IsCrash, string Part, string Message)
     {
+        public string? ReviewKey { get; init; }
         public string Code { get; init; } = "";
         public string? RuntimeError { get; init; }
         public string? Stack { get; init; }
@@ -90,6 +97,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             .Select(f => $"{f.Item1}: {f.Value}");
         return new(e.Time, app.Length > 0 ? app : "Unknown app", version, isCrash, part, e.ShortMessage)
         {
+            ReviewKey = EventReviews.Key(e),
             Code = code.Length > 0 && !code.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? $"0x{code}" : code,
             Metadata = string.Join("\n", metadata)
         };
@@ -138,7 +146,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         string[] cols = ["When", "App", "Type", "Version", "Details"];
         AreaRow Row(Incident i) => new(i.IsCrash && Recent(i) ? AreaLevel.Warning : AreaLevel.Neutral,
             [WindowsEventLog.FormatTime(i.Time), i.App, i.IsCrash ? "Crash" : "Freeze", i.Version, i.Details],
-            [AreaSort.TimeKey(i.Time), null, null, null, null], Detail: i.Expanded);
+            [AreaSort.TimeKey(i.Time), null, null, null, null], Detail: i.Expanded, ReviewKeys: i.ReviewKey is { } key ? [key] : null);
 
         var byApp = all.GroupBy(i => i.App, StringComparer.OrdinalIgnoreCase)
             .OrderByDescending(g => g.Count()).ThenByDescending(g => g.Max(i => i.Time)).ToList();
@@ -157,7 +165,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
                 top is null ? "No problems recorded" : top.Key, top is null ? $"In the last {Days} days" : $"{AreaModuleBase.Plural(top.Count(), "problem")} in the last {Days} days",
                 ["App", "Crashes", "Freezes", "Last time"],
                 byApp.Select(g => new AreaRow(AreaLevel.Neutral, [g.Key, g.Count(i => i.IsCrash).ToString(), g.Count(i => !i.IsCrash).ToString(), WindowsEventLog.FormatTime(g.Max(i => i.Time))],
-                    [null, null, null, AreaSort.TimeKey(g.Max(i => i.Time))], Detail: AppDetails(g))).ToList(), PreserveRowOrder: true),
+                    [null, null, null, AreaSort.TimeKey(g.Max(i => i.Time))], Detail: AppDetails(g), ReviewKeys: g.Select(i => i.ReviewKey).OfType<string>().ToList())).ToList(), PreserveRowOrder: true),
         };
         var summary = all.Count == 0 ? $"No app crashes in the last {Days} days"
             : recent.Count == 0 ? $"No crashes in the last {RecentDays} days ({older} older)"

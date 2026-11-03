@@ -30,7 +30,28 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
         IReadOnlyList<MinidumpFile> dumps = [];
         try { dumps = _readDumps(); }
         catch (Exception ex) { Log($"{Name}: minidump check failed: {ex.Message}"); }
-        return events is null ? AreaReport.Failed(FailedMessage) : Build(events, dumps);
+        return events is null ? AreaReport.Failed(FailedMessage) : BuildReviewed(events, dumps);
+    }
+
+    internal static AreaReport BuildReviewed(IReadOnlyList<WinEvent> events, IReadOnlyList<MinidumpFile> dumps)
+    {
+        var reviewed = EventReviews.Read();
+        var report = Build(events.Where(e => !reviewed.Contains(EventReviews.Key(e))).ToList(), dumps);
+        return report with { ReviewedCards = Build(events.Where(e => reviewed.Contains(EventReviews.Key(e))).ToList(), dumps).Cards };
+    }
+
+    private static IEnumerable<List<WinEvent>> RestartGroups(IEnumerable<WinEvent> events)
+    {
+        List<WinEvent>? group = null;
+        foreach (var e in events.OrderByDescending(e => e.Time))
+        {
+            if (group is null || group[0].Time - e.Time > IncidentWindow)
+            {
+                group = [];
+                yield return group;
+            }
+            group.Add(e);
+        }
     }
 
     public static IReadOnlyList<MinidumpFile> ReadSystemMinidumps()
@@ -90,10 +111,10 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
         }.OfType<string>());
         return new(recent ? AreaLevel.Warning : AreaLevel.Neutral,
             [WindowsEventLog.FormatTime(e.Time), "Blue screen (BugCheck)", code ?? e.ShortMessage],
-            [AreaSort.TimeKey(e.Time), null, null], Detail: details, DumpPath: found ? path : null);
+            [AreaSort.TimeKey(e.Time), null, null], Detail: details, DumpPath: found ? path : null, ReviewKeys: [EventReviews.Key(e)]);
     }
 
-    private static AreaRow RestartRow(WinEvent e, bool recent)
+    private static AreaRow RestartRow(WinEvent e, bool recent, IReadOnlyList<string> keys)
     {
         var code = e.EventId == 41 && e.NamedData.TryGetValue("BugcheckCode", out var raw)
             && uint.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var value) && value != 0
@@ -101,7 +122,7 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
         var message = e.Message.Length > 0 ? e.Message : e.ShortMessage;
         return new(recent ? AreaLevel.Warning : AreaLevel.Neutral,
             [WindowsEventLog.FormatTime(e.Time), e.EventId == 41 ? "Kernel-Power (Event 41)" : "Unexpected shutdown (Event 6008)", code ?? e.ShortMessage],
-            [AreaSort.TimeKey(e.Time), null, null], Detail: code is null ? message : $"Stop code: {code}\n{message}");
+            [AreaSort.TimeKey(e.Time), null, null], Detail: code is null ? message : $"Stop code: {code}\n{message}", ReviewKeys: keys);
     }
 
     private static bool MatchesEvent(MinidumpFile dump, WinEvent e) =>
@@ -158,7 +179,11 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
                 incidents.Count == 0 ? "None" : Plural(incidents.Count, "unexpected restart"),
                 powerLosses.FirstOrDefault() is { } p ? $"Latest: {WindowsEventLog.FormatTime(p.Time)}" : $"In the last {Days} days",
                 eventCols,
-                powerLosses.Select(e => RestartRow(e, Recent(e.Time))).ToList(),
+                RestartGroups(powerLosses).ToList().SelectMany(group =>
+                {
+                    var keys = group.Select(EventReviews.Key).ToList();
+                    return group.Select(e => RestartRow(e, Recent(e.Time), keys));
+                }).ToList(),
                 EmptyText: $"All shutdowns and restarts in the last {Days} days were clean.",
                 Note: "Event 41 happens when the PC loses power, is forced off by holding the power button, or resets before Windows can write a crash log."),
 

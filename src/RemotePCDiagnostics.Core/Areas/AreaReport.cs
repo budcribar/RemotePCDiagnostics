@@ -41,7 +41,7 @@ public sealed record AreaRow(
     IReadOnlyList<string?>? SortKeys = null,
     string? Key = null,
     IReadOnlyList<AreaAction>? Actions = null,
-    string? Detail = null, string? DumpPath = null, string? GetHelpUri = null, string? EventCopyText = null);
+    string? Detail = null, string? DumpPath = null, string? GetHelpUri = null, string? EventCopyText = null, IReadOnlyList<string>? ReviewKeys = null);
 /// <remarks><see cref="AreaRow.Key"/> is an optional stable id (e.g. the service name) used for row actions.
 /// <see cref="AreaRow.Detail"/> is optional longer text (full message, occurrences) shown when the row is expanded.</remarks>
 
@@ -57,7 +57,7 @@ public sealed record AreaCard(
 }
 
 /// <summary>Payload of an area module: the cards, a one-line summary for the Dashboard, and the overall status.</summary>
-public sealed record AreaReport(IReadOnlyList<AreaCard> Cards, string Summary, DiagnosticStatus Status, string? Notice = null)
+public sealed record AreaReport(IReadOnlyList<AreaCard> Cards, string Summary, DiagnosticStatus Status, string? Notice = null, IReadOnlyList<AreaCard>? ReviewedCards = null)
 {
     public static AreaReport Failed(string message) => new([], message, DiagnosticStatus.Error);
 
