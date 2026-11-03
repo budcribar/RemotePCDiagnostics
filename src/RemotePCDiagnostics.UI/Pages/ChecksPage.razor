@@ -228,7 +228,7 @@
                 <div class="ct-group-line"><h2 data-testid="checks-detail-title">@m.DisplayName</h2>
                     <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-detail-status">@CheckRows.Label(kind, RunLabel(m))</span></div>
                 <div class="meta" data-testid="checks-detail-sub">
-                    @if (kind == RowKind.NotRun && LastRun(m) is { } lr) { <span data-testid="checks-detail-lastrun">Not run in this session · last run @lr.LocalTime.ToString("g"): @lr.Outcome · @lr.Summary (details on the History page)</span> }
+                    @if (kind == RowKind.NotRun && LastRun(m) is { } lr) { <span data-testid="checks-detail-lastrun">Not run in this session · last run @lr.LocalTime.ToString("g"): @lr.Outcome · @lr.Summary <a href="@($"history?module={Uri.EscapeDataString(lr.Module)}&run={lr.TimeUtc.UtcTicks}")">View details in History</a></span> }
                     else if (kind == RowKind.NotRun) { <span>Not run yet in this session.</span> }
                     else if (kind == RowKind.Running) { <span>Started @r.Timestamp.ToLocalTime().ToString("t")</span> }
                     else { <CardList Text="@($"{r.Message} · {r.Timestamp.ToLocalTime():g}")" /> }

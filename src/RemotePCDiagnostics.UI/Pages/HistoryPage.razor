@@ -196,6 +196,8 @@ else
 @code {
     [Inject] private ResultStore Store { get; set; } = default!;
     [Inject] private DiagnosticsService Diagnostics { get; set; } = default!;
+    [SupplyParameterFromQuery(Name = "module")] public string? LinkedModule { get; set; }
+    [SupplyParameterFromQuery(Name = "run")] public long? LinkedRun { get; set; }
     private string _module = "", _outcome = "";
     private HistoryRange _range = HistoryRange.All;
     private static (HistoryColumn Col, bool Desc) _sort = HistoryQuery.DefaultSort;
@@ -209,6 +211,18 @@ else
     {
         Store.Changed += OnResult;
         await Load();
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (string.IsNullOrWhiteSpace(LinkedModule)) return;
+        _module = LinkedModule;
+        _outcome = "";
+        _sort = HistoryQuery.DefaultSort;
+        ResetPaging();
+        _open = _result?.Entries.FirstOrDefault(entry =>
+            string.Equals(entry.Module, LinkedModule, StringComparison.OrdinalIgnoreCase) &&
+            entry.TimeUtc.UtcTicks == LinkedRun);
     }
 
     private async Task Load()
