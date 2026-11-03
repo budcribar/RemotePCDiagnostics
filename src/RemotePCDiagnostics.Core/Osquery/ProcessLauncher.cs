@@ -14,7 +14,11 @@ public interface IProcessLauncher
 /// <summary>Starts a real process with no console window, capturing stdout and stderr.</summary>
 public sealed class SystemProcessLauncher : IProcessLauncher
 {
-    public async Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
+    public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken) =>
+        RunAsync(fileName, arguments, timeout, cancellationToken, null);
+
+    public async Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout,
+        CancellationToken cancellationToken, Action<string>? outputLine)
     {
         var psi = new ProcessStartInfo(fileName)
         {
@@ -28,7 +32,8 @@ public sealed class SystemProcessLauncher : IProcessLauncher
 
         using var p = new Process { StartInfo = psi };
         p.Start();
-        var stdout = p.StandardOutput.ReadToEndAsync(CancellationToken.None);
+        var stdout = outputLine is null ? p.StandardOutput.ReadToEndAsync(CancellationToken.None)
+            : ReadOutputAsync(p.StandardOutput, outputLine);
         var stderr = p.StandardError.ReadToEndAsync(CancellationToken.None);
 
         using var timeoutCts = new CancellationTokenSource(timeout);
@@ -46,6 +51,17 @@ public sealed class SystemProcessLauncher : IProcessLauncher
             return new ProcessResult(-1, "", err, TimedOut: true);
         }
         return new ProcessResult(p.ExitCode, await stdout.ConfigureAwait(false), await stderr.ConfigureAwait(false));
+    }
+
+    private static async Task<string> ReadOutputAsync(StreamReader reader, Action<string> outputLine)
+    {
+        var output = new System.Text.StringBuilder();
+        while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
+        {
+            output.AppendLine(line);
+            outputLine(line);
+        }
+        return output.ToString();
     }
 
     private static async Task<string> SafeRead(Task<string> t)

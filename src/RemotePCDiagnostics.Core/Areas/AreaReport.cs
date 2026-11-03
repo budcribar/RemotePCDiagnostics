@@ -57,7 +57,7 @@ public sealed record AreaCard(
 }
 
 /// <summary>Payload of an area module: the cards, a one-line summary for the Dashboard, and the overall status.</summary>
-public sealed record AreaReport(IReadOnlyList<AreaCard> Cards, string Summary, DiagnosticStatus Status, string? Notice = null, IReadOnlyList<AreaCard>? ReviewedCards = null)
+public sealed record AreaReport(IReadOnlyList<AreaCard> Cards, string Summary, DiagnosticStatus Status, string? Notice = null, IReadOnlyList<AreaCard>? ReviewedCards = null, bool Cancelled = false)
 {
     public static AreaReport Failed(string message) => new([], message, DiagnosticStatus.Error);
 

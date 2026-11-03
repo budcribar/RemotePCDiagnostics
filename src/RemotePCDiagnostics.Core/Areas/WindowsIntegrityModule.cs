@@ -5,6 +5,14 @@ public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool co
     public override string Name => componentStore ? "DismScanHealth" : "SfcVerifyOnly";
     public override string DisplayName => componentStore ? "Windows component store (DISM)" : "Protected system files (SFC)";
     public bool IncludeInRunAll => false;
+    private readonly object _scanGate = new();
+    private CancellationTokenSource? _scan;
+
+    public void Cancel()
+    {
+        lock (_scanGate) _scan?.Cancel();
+    }
+
     protected override string FailedMessage => "The integrity scan could not complete. Run RemotePCDiagnostics as administrator and try again.";
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
@@ -12,7 +20,33 @@ public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool co
         progress?.Report("Checking Windows integrity. This can take several minutes.");
         var exe = SystemCommandRunner.SystemTool(componentStore ? "dism.exe" : "sfc.exe");
         string[] args = componentStore ? ["/English", "/Online", "/Cleanup-Image", "/ScanHealth"] : ["/verifyonly"];
-        var result = await commands.RunAsync(exe, args, TimeSpan.FromMinutes(30), ct).ConfigureAwait(false);
+        using var scan = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        lock (_scanGate) _scan = scan;
+        var started = DateTimeOffset.Now;
+        double lastPercent = -1;
+        RemotePCDiagnostics.Core.Osquery.ProcessResult? result;
+        try
+        {
+            result = await commands.RunAsync(exe, args, TimeSpan.FromMinutes(30), scan.Token, line =>
+            {
+                if (scan.IsCancellationRequested) return;
+                var match = System.Text.RegularExpressions.Regex.Match(line.Replace("\0", ""), @"(?<![\d.])(\d{1,3}(?:[.,]\d+)?)\s*%");
+                if (!match.Success || !double.TryParse(match.Groups[1].Value.Replace(',', '.'),
+                    System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var percent)
+                    || percent > 100 || percent <= lastPercent) return;
+                lastPercent = percent;
+                RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, $"Scan {percent:0.#}% complete", started, percent));
+            }).ConfigureAwait(false);
+            scan.Token.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException) when (scan.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            return new([], "Scan cancelled", DiagnosticStatus.Warning, Cancelled: true);
+        }
+        finally
+        {
+            lock (_scanGate) _scan = null;
+        }
         if (result is null) return AreaReport.Failed(FailedMessage);
 
         var output = (result.StdOut + "\n" + result.StdErr).Replace("\0", "").Trim();

@@ -22,11 +22,16 @@ public sealed class SystemCommandRunner(IProcessLauncher? launcher = null, Actio
     public Task<ProcessResult?> RunAsync(string fileName, IReadOnlyList<string> arguments, CancellationToken ct) => RunAsync(fileName, arguments, null, ct);
 
     /// <summary>Same, with a longer limit for slow work (cleanup, updates); null = <see cref="Timeout"/>.</summary>
-    public async Task<ProcessResult?> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan? timeout, CancellationToken ct)
+    public async Task<ProcessResult?> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan? timeout, CancellationToken ct, Action<string>? outputLine = null)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         ProcessResult pr;
-        try { pr = await _launcher.RunAsync(fileName, arguments, timeout ?? Timeout, ct).ConfigureAwait(false); }
+        try
+        {
+            pr = outputLine is not null && _launcher is SystemProcessLauncher system
+                ? await system.RunAsync(fileName, arguments, timeout ?? Timeout, ct, outputLine).ConfigureAwait(false)
+                : await _launcher.RunAsync(fileName, arguments, timeout ?? Timeout, ct).ConfigureAwait(false);
+        }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {

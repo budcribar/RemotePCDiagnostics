@@ -246,10 +246,19 @@
             }
         </div>
         <div class="ct-detail-body" @key="m.Name">
-            @if (m is WindowsIntegrityModule && kind == RowKind.Running)
+            @if (m is WindowsIntegrityModule scan && kind == RowKind.Running)
             {
                 <p role="status">Running @m.DisplayName. This can take several minutes.</p>
-                <progress aria-label="@($"{m.DisplayName} scan in progress")"></progress>
+                @if (r.Payload is double percent)
+                {
+                    <progress max="100" value="@percent" aria-label="@($"{m.DisplayName} scan progress")"></progress>
+                    <span role="status"> @percent.ToString("0.#")% complete</span>
+                }
+                else
+                {
+                    <progress aria-label="@($"{m.DisplayName} scan in progress")"></progress>
+                }
+                <button type="button" class="btn-small" @onclick="scan.Cancel">Cancel scan</button>
             }
             else if (m is WindowsIntegrityModule && r.Payload is AreaReport integrity && kind != RowKind.Cancelled)
             {

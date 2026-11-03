@@ -24,7 +24,7 @@ public abstract class AreaModuleBase(Action<string>? log) : IDiagnosticModule
             Log($"{Name}: collection failed: {ex}");
             report = AreaReport.Failed(FailedMessage);
         }
-        return new DiagnosticResult<AreaReport>(Name, report.Status, report.Summary, DateTimeOffset.Now, report);
+        return new DiagnosticResult<AreaReport>(Name, report.Status, report.Summary, DateTimeOffset.Now, report) { Cancelled = report.Cancelled };
     }
 
     protected abstract Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct);
