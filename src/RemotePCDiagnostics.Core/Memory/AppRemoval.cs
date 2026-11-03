@@ -4,7 +4,7 @@ using RemotePCDiagnostics.Core.Changes;
 namespace RemotePCDiagnostics.Core.Memory;
 
 /// <summary>
-/// #3 / #8 / #10: which pre-installed apps this app may remove, and how. Ticked: retired Microsoft apps, Journal on a PC without a pen,
+/// #3 / #8 / #10: which pre-installed apps this app may remove, and how. Ticked: retired Microsoft apps, Power Automate, Journal on a PC without a pen,
 /// and the Lenovo Now / Brother PowerENGAGE promoters. Opt-in: consumer apps (one card each) and the Xbox apps (one card for the group).
 /// </summary>
 public enum AppGroup { Retired, Consumer, Xbox, Vendor, Narrator }
@@ -370,6 +370,9 @@ public static class AppRemoval
 
     public const string Category = "Remove apps";
 
+    /// <summary>Power Automate is the one consumer app that is ticked by default (Bud's call); the other consumer apps stay opt-in.</summary>
+    public const string PowerAutomateId = "power-automate";
+
     /// <summary>App-removal cards: one per app (ticked or opt-in), one for the Xbox group, and the ContentDeliveryManager settings.</summary>
     public static IEnumerable<MemorySuggestion> Suggestions(MemorySnapshot s)
     {
@@ -393,7 +396,7 @@ public static class AppRemoval
                 [new(MemoryActionType.RemoveApp, a.Id, $"Remove {a.Label}",
                     $"Remove {a.Label}? {getBack} Needs administrator rights.")],
                 // Retired apps: no chip of our own, so the fix list shows the plain "can't be undone" (they may not be in the Store any more).
-                Category, null, DefaultOn: retired, UndoChip: reinstall ? StoreChip : IsRetiredPermanent(a) ? null : StoreManualChip, SavingText: f.Installed.SizeBytes is > 0 ? $"~{MemoryText.Size(f.Installed.SizeBytes.Value)} disk" : null,
+                Category, null, DefaultOn: retired || a.Id == PowerAutomateId, UndoChip: reinstall ? StoreChip : IsRetiredPermanent(a) ? null : StoreManualChip, SavingText: f.Installed.SizeBytes is > 0 ? $"~{MemoryText.Size(f.Installed.SizeBytes.Value)} disk" : null,
                 Undo: reinstall ? UndoSupport.Reinstall : null);
         }
 

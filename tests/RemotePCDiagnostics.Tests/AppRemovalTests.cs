@@ -555,6 +555,15 @@ public class AppRemovalTests
         Assert.Null(svc.UndoFor(s.Id));
     }
 
+    [Fact]
+    public void PowerAutomate_TickedByDefault_OtherConsumerAppsStayOptIn()
+    {
+        var sys = new Sys { Packages = [Pkg("Microsoft.PowerAutomateDesktop"), Pkg("Microsoft.BingWeather")] };
+        var fixes = FixCatalog.Build([], Build(sys));
+        Assert.True(fixes.Single(f => f.SuggestionId == "remove-app-power-automate").DefaultOn);
+        Assert.False(fixes.Single(f => f.SuggestionId == "remove-app-bing-weather").DefaultOn);
+    }
+
     // ---- workflow ----
 
     [Fact]
