@@ -24,6 +24,7 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
     public DiskSpeedProgress? LastProgress { get; private set; }
 
     private CancellationTokenSource? _stop;
+    private StressCleanup? _cleanup;
     private readonly object _gate = new();
 
     public IReadOnlyList<TestDrive> ListDrives()
@@ -33,6 +34,9 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
     }
 
     public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
+
+    /// <summary>Gives back what the last run still holds (worker threads, helper process, temp file, device). Safe to call repeatedly.</summary>
+    public Task CleanupAsync() => _cleanup?.RunAsync() ?? Task.CompletedTask;
 
     public void Stop()
     {
@@ -47,7 +51,8 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
         {
             LastProgress = null;
             var opts = (Options ?? new DiskSpeedOptions()) with { Duration = Duration, RequestedSizeBytes = SizeBytes, DriveRoot = DriveRoot };
-            var test = new DiskSpeedTest(fs, sensors, clockFactory?.Invoke(), log);
+            var cleanup = _cleanup = new StressCleanup(log);
+            var test = new DiskSpeedTest(fs, sensors, clockFactory?.Invoke(), log, cleanup);
             var report = await test.RunAsync(opts, new P(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); }), stop.Token).ConfigureAwait(false);
             return new DiagnosticResult<DiskSpeedReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
         }

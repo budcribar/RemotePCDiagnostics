@@ -14,12 +14,16 @@ internal sealed class FakeStressModule(string name, string suiteName, Func<FakeS
     public TimeSpan Duration { get; set; } = TimeSpan.FromMinutes(3);
     public List<TimeSpan> DurationsSeen { get; } = new();
     public int StopCalls;
+    public int CleanupCalls;
+    /// <summary>What cleanup does (default: nothing). May block or throw to test the runner.</summary>
+    public Func<Task>? OnCleanup;
     public bool Unavailable;
     public bool Hot;
     public bool CouldNotRun;
     public Action? OnStart, OnEnd;
     private CancellationTokenSource? _stop;
     public void Stop() { Interlocked.Increment(ref StopCalls); _stop?.Cancel(); }
+    public Task CleanupAsync() { Interlocked.Increment(ref CleanupCalls); return OnCleanup?.Invoke() ?? Task.CompletedTask; }
     public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) =>
         Task.FromResult(available ? ModuleAvailability.Available : ModuleAvailability.Unavailable("no device"));
     public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default)
@@ -317,5 +321,95 @@ public class StressSuiteTests
         svc.StressHangLimitOverride = TimeSpan.FromSeconds(10);
         var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null);
         Assert.All(r.Steps, s => Assert.Equal(StressSuiteStepState.Passed, s.State));
+    }
+
+    [Fact]
+    public async Task RunnerCallsCleanup_ExactlyOncePerTest_WhenTestsFinish()
+    {
+        var (svc, _, mods, _) = Build();
+        await svc.RunStressSuiteAsync(StressSuiteMode.Short, null);
+        Assert.All(mods, m => Assert.Equal(2, m.CleanupCalls)); // once when the run ends, once from the suite's watchdog wrapper (idempotent)
+    }
+
+    [Fact]
+    public async Task RunnerCallsCleanup_ForHungTest_WhichTheTestItselfWillNeverRun()
+    {
+        var hang = new TaskCompletionSource<DiagnosticResult>();
+        var (svc, _, mods, _) = Build(n => n == "MemoryTest" ? (_, _) => hang.Task : null);
+        svc.StressHangLimitOverride = TimeSpan.FromMilliseconds(100);
+        svc.StressStopGrace = TimeSpan.FromMilliseconds(100);
+        var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null).WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Equal(StressSuiteStepState.Skipped, r.Steps.Single(s => s.ModuleName == "MemoryTest").State);
+        Assert.True(mods[1].CleanupCalls >= 1);
+        hang.TrySetResult(FakeModule.Ok("MemoryTest"));
+    }
+
+    [Fact]
+    public async Task RunnerCallsCleanup_WhenUserCancelsTheSuite()
+    {
+        var started = new TaskCompletionSource();
+        var (svc, _, mods, _) = Build(n => n == "CpuStress" ? async (_, ct) => { started.TrySetResult(); await Task.Delay(Timeout.Infinite, ct); return FakeModule.Ok(n); } : null);
+        var run = svc.RunStressSuiteAsync(StressSuiteMode.Short, null);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        svc.CancelStressSuite();
+        var r = await run.WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Equal(StressSuiteOutcome.Cancelled, r.Outcome);
+        Assert.True(mods[0].CleanupCalls >= 1);
+    }
+
+    [Fact]
+    public async Task ThrowingCleanup_IsLogged_AndSuiteCarriesOn()
+    {
+        var (svc, _, mods, _) = Build();
+        var log = new ConcurrentQueue<string>();
+        svc.Log = log.Enqueue;
+        mods[0].OnCleanup = () => throw new InvalidOperationException("boom");
+        var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null);
+        Assert.All(r.Steps, s => Assert.Equal(StressSuiteStepState.Passed, s.State));
+        Assert.Contains(log, l => l.Contains("cleanup for CpuStress failed") && l.Contains("boom"));
+    }
+
+    [Fact]
+    public async Task BlockingCleanup_DoesNotStallTheRunner()
+    {
+        var release = new ManualResetEventSlim();
+        var (svc, _, mods, _) = Build();
+        var log = new ConcurrentQueue<string>();
+        svc.Log = log.Enqueue;
+        svc.StressCleanupGrace = TimeSpan.FromMilliseconds(100);
+        mods[0].OnCleanup = () => Task.Run(() => release.Wait());
+        var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null).WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.All(r.Steps, s => Assert.Equal(StressSuiteStepState.Passed, s.State));
+        Assert.Contains(log, l => l.Contains("cleanup for CpuStress did not finish"));
+        release.Set();
+    }
+}
+
+public class StressCleanupTests
+{
+    [Fact]
+    public async Task RunsNewestFirst_EachOnce_AndSecondCallDoesNothing()
+    {
+        var order = new List<string>();
+        var c = new RemotePCDiagnostics.Core.Stress.StressCleanup();
+        c.Register("a", () => order.Add("a"));
+        c.Register("b", () => { order.Add("b"); return Task.CompletedTask; });
+        await c.RunAsync();
+        await c.RunAsync();
+        Assert.Equal(["b", "a"], order);
+        Assert.Equal(0, c.Pending);
+    }
+
+    [Fact]
+    public async Task OneFailingAction_DoesNotStopTheRest_AndIsLogged()
+    {
+        var ran = false;
+        var log = new List<string>();
+        var c = new RemotePCDiagnostics.Core.Stress.StressCleanup(log.Add);
+        c.Register("first", () => ran = true);
+        c.Register("second", () => throw new InvalidOperationException("nope"));
+        await c.RunAsync();
+        Assert.True(ran);
+        Assert.Contains(log, l => l.Contains("second failed") && l.Contains("nope"));
     }
 }

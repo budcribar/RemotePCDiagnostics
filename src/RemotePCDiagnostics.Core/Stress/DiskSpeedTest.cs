@@ -8,7 +8,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// random 4 KB writes → random 4 KB reads (verified). Free-space guarded, time-limited, stoppable, aborts on any critical
 /// temperature, and always deletes its temporary file (also stale ones left by a crash). Never touches any other file.
 /// </summary>
-public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensors, IStressClock? clock = null, Action<string>? log = null)
+public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensors, IStressClock? clock = null, Action<string>? log = null, StressCleanup? cleanup = null)
 {
     public const string TempFilePrefix = "rpd-speedtest-";
     public const string TempFilePattern = TempFilePrefix + "*.tmp";
@@ -82,6 +82,8 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
         var path = Path.Combine(folder, $"{TempFilePrefix}{Guid.NewGuid():N}.tmp");
         log?.Invoke($"Disk speed: start drive={drive.Root} file={path} size={size} free={free} duration={duration}");
         var st = new State();
+        cleanup?.Register("disk test file", () => DeleteTestFile(path, folder));
+        cleanup?.Register("disk test stop", () => { if (st.Stop == StopNone) st.Stop = StopUser; });
         var sensorsOk = SafeAvailability();
         using var monitorStop = new CancellationTokenSource();
         var monitor = MonitorAsync(st, clk, start, duration, o, sensorsOk, progress, cancellationToken, monitorStop.Token);

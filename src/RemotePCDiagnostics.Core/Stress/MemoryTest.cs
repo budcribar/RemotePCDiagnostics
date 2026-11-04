@@ -7,7 +7,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// sizes the test, starts the helper, reads its progress lines, watches temperatures, and kills the helper on Stop,
 /// overheating, or when it overruns the time limit.
 /// </summary>
-public sealed class MemoryTest(IMemoryInfo memory, IMemTestHelperLauncher launcher, ISensorProvider sensors, IStressClock? clock = null, Action<string>? log = null)
+public sealed class MemoryTest(IMemoryInfo memory, IMemTestHelperLauncher launcher, ISensorProvider sensors, IStressClock? clock = null, Action<string>? log = null, StressCleanup? cleanup = null)
 {
     private const int StopNone = 0, StopUser = 1, StopHot = 2, StopTimeout = 3;
 
@@ -45,6 +45,7 @@ public sealed class MemoryTest(IMemoryInfo memory, IMemTestHelperLauncher launch
             return Report(MemoryTestOutcome.CouldNotRun, notice: $"the memory test helper couldn't start: {ex.Message}");
         }
 
+        cleanup?.Register("memory helper process", proc.Kill);
         var sensorsOk = SafeAvailability();
         int stop = StopNone, pass = 0; double frac = 0; long errors = 0, tested = bytes;
         MemTestMessage.Done? done = null; string? fail = null;

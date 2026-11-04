@@ -27,6 +27,9 @@ public interface IStressSuiteModule : IDiagnosticModule
     TimeSpan Duration { get; set; }
     /// <summary>Asks a running test to stop.</summary>
     void Stop();
+    /// <summary>Gives back whatever the last run still holds (worker threads, helper process, temp file, device). The test runner calls this
+    /// after every run however it ended, including when it hung and was skipped. Safe to call more than once; never throws.</summary>
+    Task CleanupAsync() => Task.CompletedTask;
     /// <summary>Short name shown in suite progress ("CPU", "Memory", …).</summary>
     string SuiteName => DisplayName;
     /// <summary>Captures settings the suite changes, so they can be restored afterwards.</summary>

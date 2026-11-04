@@ -8,7 +8,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// before and after, and stops on Stop or a critical temperature.
 /// </summary>
 public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeedTester speed, IAdapterCounters counters, ISensorProvider sensors,
-    NetworkTestSettings? settings = null, IStressClock? clock = null, Action<string>? log = null)
+    NetworkTestSettings? settings = null, IStressClock? clock = null, Action<string>? log = null, StressCleanup? cleanup = null)
 {
     private readonly NetworkTestSettings _s = settings ?? new NetworkTestSettings();
 
@@ -26,6 +26,7 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
         string? gw = null;
         using var speedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Task? speedTask = null;
+        cleanup?.Register("network speed test", () => { try { speedCts.Cancel(); } catch (ObjectDisposedException) { } });
         string step = "Checking your connection";
 
         try

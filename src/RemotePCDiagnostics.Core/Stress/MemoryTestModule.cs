@@ -32,6 +32,7 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
     public bool CanLaunchWindowsDiagnostic => windowsDiagnostic is not null;
 
     private CancellationTokenSource? _stop;
+    private StressCleanup? _cleanup;
     private readonly object _gate = new();
 
     /// <summary>Planned test size for a mode right now (null = not enough free memory).</summary>
@@ -46,6 +47,9 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
 
     public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
 
+    /// <summary>Gives back what the last run still holds (worker threads, helper process, temp file, device). Safe to call repeatedly.</summary>
+    public Task CleanupAsync() => _cleanup?.RunAsync() ?? Task.CompletedTask;
+
     public void Stop()
     {
         lock (_gate) { try { _stop?.Cancel(); } catch (ObjectDisposedException) { } }
@@ -59,7 +63,8 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
         {
             LastProgress = null;
             var opts = (Options ?? new MemoryTestOptions()) with { Mode = Mode, Duration = Duration };
-            var test = new MemoryTest(memory, launcher, sensors, clockFactory?.Invoke(), log);
+            var cleanup = _cleanup = new StressCleanup(log);
+            var test = new MemoryTest(memory, launcher, sensors, clockFactory?.Invoke(), log, cleanup);
             var report = await test.RunAsync(opts, new P(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); }), stop.Token).ConfigureAwait(false);
             return new DiagnosticResult<MemoryTestReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
         }

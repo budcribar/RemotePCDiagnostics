@@ -8,12 +8,19 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// keeps each dispatch short (adaptive, ~150 ms, far below the 2 s TDR limit), and stops on Stop, a driver reset,
 /// or a critical temperature. A software adapter (WARP) is never tested or reported as a pass.
 /// </summary>
-public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sensors, IStressClock? clock = null, Action<string>? log = null)
+public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sensors, IStressClock? clock = null, Action<string>? log = null, StressCleanup? cleanup = null)
 {
     public Task<GpuStressReport> RunAsync(GpuStressOptions o, IProgress<GpuStressProgress>? progress = null, CancellationToken cancellationToken = default) =>
         Task.Run(() => RunCoreAsync(o, progress, cancellationToken), CancellationToken.None);
 
     private async Task<GpuStressReport> RunCoreAsync(GpuStressOptions o, IProgress<GpuStressProgress>? progress, CancellationToken ct)
+    {
+        var scope = cleanup ?? new StressCleanup(log);
+        try { return await RunInnerAsync(o, progress, ct, scope).ConfigureAwait(false); }
+        finally { await scope.RunAsync().ConfigureAwait(false); }
+    }
+
+    private async Task<GpuStressReport> RunInnerAsync(GpuStressOptions o, IProgress<GpuStressProgress>? progress, CancellationToken ct, StressCleanup scope)
     {
         var clk = clock ?? new StopwatchStressClock();
         var start = clk.Elapsed;
@@ -35,7 +42,9 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
             return new GpuStressReport(outcome, TimeSpan.Zero, null, 0, 0, 0, null, null);
         }
 
-        using var device = open.Device;
+        var device = open.Device;
+        int released = 0;
+        scope.Register("GPU device", () => { if (Interlocked.Exchange(ref released, 1) == 0) device.Dispose(); });
         adapterName = device.Adapter.Name;
         if (device.Adapter.IsSoftware)
         {

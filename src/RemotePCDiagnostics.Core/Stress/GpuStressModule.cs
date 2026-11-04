@@ -22,9 +22,13 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
     public GpuStressProgress? LastProgress { get; private set; }
 
     private CancellationTokenSource? _stop;
+    private StressCleanup? _cleanup;
     private readonly object _gate = new();
 
     public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
+
+    /// <summary>Gives back what the last run still holds (worker threads, helper process, temp file, device). Safe to call repeatedly.</summary>
+    public Task CleanupAsync() => _cleanup?.RunAsync() ?? Task.CompletedTask;
 
     public void Stop()
     {
@@ -39,7 +43,8 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
         {
             LastProgress = null;
             var opts = (Options ?? new GpuStressOptions()) with { Duration = Duration };
-            var test = new GpuStressTest(factory, sensors, clockFactory?.Invoke(), log);
+            var cleanup = _cleanup = new StressCleanup(log);
+            var test = new GpuStressTest(factory, sensors, clockFactory?.Invoke(), log, cleanup);
             var report = await test.RunAsync(opts, new P(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); }), stop.Token).ConfigureAwait(false);
             return new DiagnosticResult<GpuStressReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
         }

@@ -35,9 +35,39 @@ public sealed class DiagnosticsService
     /// <summary>Tests only: replaces duration + <see cref="StressHangGrace"/> as the first limit.</summary>
     public TimeSpan? StressHangLimitOverride { get; set; }
 
+    /// <summary>How long a stress test's cleanup gets before the runner logs a warning and moves on.</summary>
+    public TimeSpan StressCleanupGrace { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>Calls the test's cleanup on its own thread, so a cleanup that blocks can't stall the runner. Always called after a stress test
+    /// ends, however it ended (finished, stopped, failed, timed out and abandoned). Never throws.</summary>
+    private async Task CleanupStressAsync(IStressSuiteModule m)
+    {
+        try
+        {
+            var task = Task.Factory.StartNew(() => m.CleanupAsync(), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
+            using var d = new CancellationTokenSource();
+            var first = await Task.WhenAny(task, Task.Delay(StressCleanupGrace, d.Token)).ConfigureAwait(false);
+            d.Cancel();
+            if (first != task)
+            {
+                Log?.Invoke($"Stress suite: cleanup for {m.Name} did not finish within {StressCleanupGrace.TotalSeconds:0}s; moving on");
+                _ = task.ContinueWith(t => { _ = t.Exception; }, TaskScheduler.Default);
+                return;
+            }
+            await task.ConfigureAwait(false);
+        }
+        catch (Exception ex) { Log?.Invoke($"Stress suite: cleanup for {m.Name} failed: {ex.Message}"); }
+    }
+
     /// <summary>Runs one stress test with a hang watchdog. Result is null when the test never returned (the message says why).
     /// A test that hangs keeps running in the background, since a stuck thread can't be killed safely.</summary>
     private async Task<(DiagnosticResult? Result, string Message)> RunWithWatchdogAsync(IStressSuiteModule m, CancellationToken suiteCt)
+    {
+        try { return await RunWatchedAsync(m, suiteCt).ConfigureAwait(false); }
+        finally { await CleanupStressAsync(m).ConfigureAwait(false); }
+    }
+
+    private async Task<(DiagnosticResult? Result, string Message)> RunWatchedAsync(IStressSuiteModule m, CancellationToken suiteCt)
     {
         var run = RunAsync(m, null, suiteCt);
         var limit = StressHangLimitOverride ?? (m.Duration + StressHangGrace);
@@ -183,7 +213,11 @@ public sealed class DiagnosticsService
                 {
                     try { tcs.SetResult(await RunCoreAsync(module, progress, ct).ConfigureAwait(false)); }
                     catch (Exception ex) { tcs.SetException(ex); }
-                    finally { _inFlight.TryRemove(module.Name, out _); }
+                    finally
+                    {
+                        if (module is IStressSuiteModule stress) await CleanupStressAsync(stress).ConfigureAwait(false);
+                        _inFlight.TryRemove(module.Name, out _);
+                    }
                 }, CancellationToken.None);
                 return existing;
             }

@@ -7,7 +7,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// against a value precomputed before load. A sampler watches time, stop requests and CPU temperature
 /// (<see cref="ISensorProvider"/>, aborting at <see cref="SensorLevel.Critical"/>) and records throughput to detect slowing.
 /// </summary>
-public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock = null, ICpuWorkload? workload = null, Action<string>? log = null)
+public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock = null, ICpuWorkload? workload = null, Action<string>? log = null, StressCleanup? cleanup = null)
 {
     private readonly ICpuWorkload _workload = workload ?? DeterministicCpuWorkload.Instance;
 
@@ -43,6 +43,8 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
                 Interlocked.Increment(ref chunks);
             }
         }), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+        cleanup?.Register("CPU workers", () => Volatile.Write(ref stop, 1));
 
         var outcome = CpuStressOutcome.Passed;
         var samples = new List<double>();

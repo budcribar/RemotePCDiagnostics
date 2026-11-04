@@ -426,6 +426,11 @@ Besides the categories above, any other line that reads as a warning or an error
 "overran", an exception) is also written to the Event Log: warnings as event 1910, errors as event 1900. The same text is let
 through once per five minutes and at most 30 entries per minute, so a repeating problem can't flood the Event Log.
 
+**Stress-test cleanup is owned by the runner.** Each stress test registers what it holds (CPU worker threads, the memory-test helper process, the
+disk test file, the GPU device, the network speed test) with a `StressCleanup` as soon as it has it. After every test, however it ended (finished,
+stopped, failed, timed out and skipped by the hang watchdog), the runner calls the module's `CleanupAsync()` on its own thread with a 10 second
+limit (a warning is logged if it takes longer). Cleanup runs newest first, each action once, never throws, and is safe to call twice.
+
 ### Laptop fan from the embedded controller (Lenovo IdeaPad 1 15ALC7 only, experimental)
 
 On **one** model, Lenovo IdeaPad 1 15ALC7 (`Win32_ComputerSystemProduct.Name` = `82R4`), and only when PawnIO is installed,

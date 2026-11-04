@@ -23,9 +23,13 @@ public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log
     public CpuStressProgress? LastProgress { get; private set; }
 
     private CancellationTokenSource? _stop;
+    private StressCleanup? _cleanup;
     private readonly object _gate = new();
 
     public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
+
+    /// <summary>Gives back what the last run still holds (worker threads, helper process, temp file, device). Safe to call repeatedly.</summary>
+    public Task CleanupAsync() => _cleanup?.RunAsync() ?? Task.CompletedTask;
 
     /// <summary>Asks a running test to stop (the user pressed Stop).</summary>
     public void Stop()
@@ -42,7 +46,8 @@ public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log
         {
             LastProgress = null;
             var opts = (Options ?? new CpuStressOptions()) with { Duration = Duration };
-            var test = new CpuStressTest(sensors, clockFactory?.Invoke(), workload, log);
+            var cleanup = _cleanup = new StressCleanup(log);
+            var test = new CpuStressTest(sensors, clockFactory?.Invoke(), workload, log, cleanup);
             var p = new InlineProgress(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); });
             var report = await test.RunAsync(opts, p, stop.Token).ConfigureAwait(false);
             return new DiagnosticResult<CpuStressReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
