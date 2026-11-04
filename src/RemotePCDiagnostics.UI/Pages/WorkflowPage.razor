@@ -42,7 +42,7 @@
         {
             @* What the stopped run already did to the PC: same report as the saved file. *@
             <p class="meta" data-testid="wf-report-path">@(s.ReportPath is { } sp ? $"Report saved on this PC: {sp}" : "The report couldn't be saved as a file; it's shown below.")</p>
-            <iframe class="wf-report" data-testid="wf-report" sandbox="" title="Client report" srcdoc="@ReportHtml(s)"></iframe>
+            <iframe class="wf-report" data-testid="wf-report" sandbox="allow-same-origin" title="Client report" srcdoc="@ReportHtml(s)"></iframe>
         }
         <button class="btn btn-primary" data-testid="wf-start-checks" disabled="@Flow.Busy" @onclick="RunChecks"><Icon Name="play" Size="12" /> Start: run all checks</button>
         break;
@@ -170,7 +170,7 @@
     case WorkflowStage.Done:
         @if (Bench.Before is not null && Bench.After is not null) { <section class="banner banner-ok"><div class="banner-text"><div class="banner-title">@Bench.Comparison.OverallText</div></div></section> }
         <p class="meta" data-testid="wf-report-path">@(s.ReportPath is { } p ? $"Report saved on this PC: {p}" : "The report couldn't be saved as a file; it's shown below.")</p>
-        <iframe class="wf-report" data-testid="wf-report" sandbox="" title="Client report" srcdoc="@ReportHtml(s)"></iframe>
+        <iframe class="wf-report" data-testid="wf-report" sandbox="allow-same-origin" title="Client report" srcdoc="@ReportHtml(s)"></iframe>
         <div class="toolbar"><button class="btn-small" data-testid="wf-new" @onclick="Flow.Reset">New workflow</button></div>
         break;
 

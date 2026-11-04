@@ -483,3 +483,9 @@ $RECYCLE.BIN/
 
 # Shared portable CI publish profile
 !src/RemotePCDiagnostics.Host/Properties/PublishProfiles/Portable.pubxml
+
+# Locally built RemoteBlazorWebView packages used for integration testing
+.local-packages/
+
+# Versioned integration packages required to restore the tested remote client
+!third_party/RemoteBlazorWebView/packages/*.nupkg
