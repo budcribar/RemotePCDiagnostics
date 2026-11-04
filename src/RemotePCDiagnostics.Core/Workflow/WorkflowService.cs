@@ -76,6 +76,8 @@ public sealed class WorkflowService(
     public event Action? Changed;
     public WorkflowState State { get { lock (_gate) return _state; } }
     public string? Status { get; private set; }
+    /// <summary>0..1 progress of the DISM/SFC repair running right now (null when none runs or it hasn't reported a percent yet).</summary>
+    public double? RepairFraction { get; private set; }
     public bool Busy { get; private set; }
 
     private string Actor => ServiceActor.From(session);
@@ -455,10 +457,18 @@ public sealed class WorkflowService(
     private async Task<FixOutcome> ApplyRepairAsync(WorkflowFix f, AreaAction a, CancellationToken ct)
     {
         var title = f.Title;
-        remediation.RepairProgress = new InlineProgress(p => { Status = $"{title}: {p}"; Raise(); });
+        RepairFraction = null;
+        remediation.RepairProgress = new InlineProgress(p =>
+        {
+            Status = $"{title}: {p}";
+            var m = System.Text.RegularExpressions.Regex.Match(p, @"(\d{1,3}(?:\.\d+)?)\s*%");
+            if (m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var pct))
+                RepairFraction = Math.Clamp(pct / 100.0, 0, 1);
+            Raise();
+        });
         RemediationResult r;
         try { r = await remediation.ExecuteAsync(a, ct).ConfigureAwait(false); }
-        finally { remediation.RepairProgress = null; }
+        finally { remediation.RepairProgress = null; RepairFraction = null; }
         if (remediation.LastRepair is { } rr && (rr.Id == WindowsRepair.DismId) == (a.Kind == RemediationKind.RepairComponentStore))
         {
             Save(s => s with

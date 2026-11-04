@@ -186,7 +186,15 @@
         }
         @if (s.Stage == WorkflowStage.Applying && approved > 0)
         {
-            <div class="progress run-progress wf-overall-progress" data-testid="wf-apply-progress"><div class="progress-bar" style="width:@($"{Math.Clamp((double)s.Outcomes.Count / approved * 100, 0, 100):0.#}%")"></div></div>
+            <div class="progress run-progress wf-overall-progress" data-testid="wf-apply-progress"><div class="progress-bar" style="width:@($"{Math.Clamp((s.Outcomes.Count + (Flow.RepairFraction ?? 0)) / approved * 100, 0, 100):0.#}%")"></div></div>
+            @if (Flow.RepairFraction is { } rf)
+            {
+                <div class="progress run-progress wf-check-bar" data-testid="wf-repair-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@($"{rf * 100:0}")"><div class="progress-bar" style="width:@($"{rf * 100:0.#}%")"></div></div>
+            }
+            else if (Flow.Busy && Flow.Status is { } rs && rs.Contains("Repair", StringComparison.OrdinalIgnoreCase))
+            {
+                <div class="run-progress run-progress-indeterminate wf-check-bar" data-testid="wf-repair-progress" aria-hidden="true"><div></div></div>
+            }
         }
         @if (s.Outcomes.Count > 0)
         {
