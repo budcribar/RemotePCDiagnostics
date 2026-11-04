@@ -289,6 +289,13 @@ public partial class MainWindow : Window
             RemoteBlazorWebView.Id = id; // Guid.Empty = new id each run; fixed via -i=<guid> or REMOTEPC_ID
             RemoteBlazorWebView.ServerUri = serverUri;
             RemoteBlazorWebView.EnableMirrors = mirror || reverseMirror; // the read-only /mirror page needs this in both directions
+            if (reverseMirror)
+            {
+                // The admin Clients list renders each client's own card markup. In reverse mode the local window controls /app, so point
+                // that card at the read-only /mirror page (set Markup before HostPage; the library keeps a non-empty Markup as given).
+                try { RemoteBlazorWebView.Markup = RemoteLinkInfo.ToMirrorMarkup(RemoteWebView.GenMarkup(serverUri, id)); }
+                catch (Exception ex) { App.Log($"Reverse mirror markup failed: {ex}"); }
+            }
             RemoteBlazorWebView.HostPage = HostPage; // must be last (starts the control)
             _readyTimer.Start();
         }

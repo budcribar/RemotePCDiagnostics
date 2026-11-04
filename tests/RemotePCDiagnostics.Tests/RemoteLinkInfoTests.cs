@@ -56,4 +56,14 @@ public class RemoteLinkInfoTests
         Assert.Contains("can watch but not click", RemoteLinkInfo.StatusText(RemoteSessionState.TechnicianConnected, s, reverseMirror: true));
         Assert.Equal("Ready. Share this link with the technician:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s));
     }
+
+    [Fact]
+    public void ToMirrorMarkup_SwapsOnlyTheAppLink()
+    {
+        var app = "<div class='card'><h3><a href = 'https://remoteblazorwebview.com:34544/app/7e57c0de-0000-4000-8000-000000000001' > HOST </a></h3></div>";
+        var mirror = RemoteLinkInfo.ToMirrorMarkup(app);
+        Assert.Contains("/mirror/7e57c0de-0000-4000-8000-000000000001", mirror);
+        Assert.DoesNotContain("/app/", mirror);
+        Assert.Equal(string.Empty, RemoteLinkInfo.ToMirrorMarkup(null));
+    }
 }

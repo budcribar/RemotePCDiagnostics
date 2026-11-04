@@ -29,6 +29,13 @@ public static class RemoteLinkInfo
         return new Uri(b.Uri, $"mirror/{id}");
     }
 
+    /// <summary>
+    /// Turns the client card markup (which links to the controlling <c>/app/&lt;id&gt;</c> page) into one that links to the read-only
+    /// <c>/mirror/&lt;id&gt;</c> page, for the admin Clients list in reverse-mirror demos: the local window already controls /app, so the
+    /// admin link should watch, not hit "Locked". Only the href changes.
+    /// </summary>
+    public static string ToMirrorMarkup(string? appMarkup) => appMarkup?.Replace("/app/", "/mirror/") ?? string.Empty;
+
     /// <summary>The link to share: the technician link normally, the read-only mirror link with <c>--reverse-mirror</c> (the local window is in control).</summary>
     public static Uri BuildShareUrl(Uri serverUri, Guid id, bool reverseMirror) => reverseMirror ? BuildMirrorUrl(serverUri, id) : BuildTechnicianUrl(serverUri, id);
 
