@@ -60,7 +60,7 @@ public partial class App : Application
     }
 
     public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, RemotePCDiagnostics.Core.Memory.IMemorySystem memory) =>
-        new(journal, commands, memory, new WindowsServiceControlBackend(), (level, text) => Event(LogEventIds.Undo, level, text), Log);
+        HostServices.CreateUndoService(journal, commands, memory, Log, Event);
 
     protected override void OnStartup(StartupEventArgs e)
     {
