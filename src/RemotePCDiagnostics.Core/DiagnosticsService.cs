@@ -27,6 +27,42 @@ public sealed class DiagnosticsService
     /// <summary>"short run"/"extended run" while a stress suite is running; otherwise null (for result logging).</summary>
     public string? CurrentSuiteLabel { get; private set; }
 
+    /// <summary>Watchdog: how long past its set duration a stress test may run before the suite asks it to stop. Must exceed the longest
+    /// self-timeout inside a test (the memory test kills its helper after 60 s).</summary>
+    public TimeSpan StressHangGrace { get; set; } = TimeSpan.FromSeconds(90);
+    /// <summary>Watchdog: how long a test gets to return after being asked to stop before the suite gives up on it and moves on.</summary>
+    public TimeSpan StressStopGrace { get; set; } = TimeSpan.FromSeconds(15);
+    /// <summary>Tests only: replaces duration + <see cref="StressHangGrace"/> as the first limit.</summary>
+    public TimeSpan? StressHangLimitOverride { get; set; }
+
+    /// <summary>Runs one stress test with a hang watchdog. Result is null when the test never returned (the message says why).
+    /// A test that hangs keeps running in the background, since a stuck thread can't be killed safely.</summary>
+    private async Task<(DiagnosticResult? Result, string Message)> RunWithWatchdogAsync(IStressSuiteModule m, CancellationToken suiteCt)
+    {
+        var run = RunAsync(m, null, suiteCt);
+        var limit = StressHangLimitOverride ?? (m.Duration + StressHangGrace);
+        using (var d1 = CancellationTokenSource.CreateLinkedTokenSource(suiteCt))
+        {
+            var first = await Task.WhenAny(run, Task.Delay(limit, d1.Token)).ConfigureAwait(false);
+            d1.Cancel();
+            if (first == run) return (await run.ConfigureAwait(false), "");
+        }
+        if (!suiteCt.IsCancellationRequested)
+        {
+            Log?.Invoke($"Stress suite: {m.Name} ran past its time limit ({limit.TotalSeconds:0}s); asking it to stop");
+            try { m.Stop(); } catch { }
+        }
+        using var d2 = new CancellationTokenSource();
+        var second = await Task.WhenAny(run, Task.Delay(StressStopGrace, d2.Token)).ConfigureAwait(false);
+        d2.Cancel();
+        if (second == run) return (await run.ConfigureAwait(false), "");
+        var reason = suiteCt.IsCancellationRequested
+            ? "Stopped, but the test did not respond and is still running in the background"
+            : "The test stopped responding and was skipped; it may still be running in the background";
+        _store.Set(new DiagnosticResult(m.Name, DiagnosticStatus.Error, reason, DateTimeOffset.Now));
+        return (null, reason);
+    }
+
     /// <summary>Cancels a running stress suite (stops the current test and ends the sequence).</summary>
     public void CancelStressSuite()
     {
@@ -265,7 +301,17 @@ public sealed class DiagnosticsService
                 {
                     m.ApplySuiteMode(mode);
                     using (cts.Token.Register(() => { try { m.Stop(); } catch { } }))
-                        r = await RunAsync(m, null, cts.Token).ConfigureAwait(false);
+                    {
+                        var hung = await RunWithWatchdogAsync(m, cts.Token).ConfigureAwait(false);
+                        if (hung.Result is null)
+                        {
+                            steps[i] = steps[i] with { State = StressSuiteStepState.Skipped, Message = hung.Message };
+                            Log?.Invoke($"Stress suite: {m.Name} skipped ({hung.Message})");
+                            if (cts.IsCancellationRequested) return Finish(StressSuiteOutcome.Cancelled, "Stress tests cancelled.", i + 1);
+                            continue;
+                        }
+                        r = hung.Result;
+                    }
                 }
                 finally
                 {

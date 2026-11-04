@@ -291,4 +291,31 @@ public class StressSuiteTests
         Assert.Contains("found a problem (Memory errors found)", bad.Message);
         Assert.Equal(StressSuiteStepState.NotRun, bad.Steps[2].State);
     }
+
+    [Fact]
+    public async Task HungTest_IsAskedToStop_ThenSkipped_AndSuiteCarriesOn()
+    {
+        var hang = new TaskCompletionSource<DiagnosticResult>();
+        var (svc, store, mods, events) = Build(n => n == "MemoryTest" ? (_, _) => hang.Task : null);
+        svc.StressHangLimitOverride = TimeSpan.FromMilliseconds(100);
+        svc.StressStopGrace = TimeSpan.FromMilliseconds(100);
+        var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null).WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.Equal(StressSuiteOutcome.Completed, r.Outcome);
+        var mem = r.Steps.Single(s => s.ModuleName == "MemoryTest");
+        Assert.Equal(StressSuiteStepState.Skipped, mem.State);
+        Assert.Contains("stopped responding", mem.Message);
+        Assert.True(mods[1].StopCalls >= 1);
+        Assert.All(r.Steps.Where(s => s.ModuleName != "MemoryTest"), s => Assert.Equal(StressSuiteStepState.Passed, s.State));
+        Assert.Equal(DiagnosticStatus.Error, store.Get("MemoryTest").Status);
+        hang.TrySetResult(FakeModule.Ok("MemoryTest"));
+    }
+
+    [Fact]
+    public async Task TestThatStopsInTime_IsNotAffectedByWatchdog()
+    {
+        var (svc, _, _, _) = Build();
+        svc.StressHangLimitOverride = TimeSpan.FromSeconds(10);
+        var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null);
+        Assert.All(r.Steps, s => Assert.Equal(StressSuiteStepState.Passed, s.State));
+    }
 }
