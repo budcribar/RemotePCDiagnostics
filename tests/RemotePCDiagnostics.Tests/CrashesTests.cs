@@ -5,12 +5,15 @@ namespace RemotePCDiagnostics.Tests;
 
 public class CrashesTests
 {
+    // Relative to now so the test doesn't age out of the module's recent-crash window.
+    private static string Ago(int days) => DateTime.UtcNow.AddDays(-days).ToString("yyyy-MM-ddTHH:mm:ssZ");
+
     private static readonly string CrashXml =
-        EventLogTests.Ev("Application Error", 1000, 2, "2026-10-27T09:00:00Z", "Faulting application name: chrome.exe", "Application",
+        EventLogTests.Ev("Application Error", 1000, 2, Ago(2), "Faulting application name: chrome.exe", "Application",
            "<Data Name='AppName'>chrome.exe</Data><Data Name='AppVersion'>130.0.1</Data><Data Name='AppTimeStamp'>0</Data><Data Name='ModuleName'>ntdll.dll</Data>") +
-        EventLogTests.Ev("Application Error", 1000, 2, "2026-10-28T09:00:00Z", "Faulting application name: chrome.exe", "Application",
+        EventLogTests.Ev("Application Error", 1000, 2, Ago(1), "Faulting application name: chrome.exe", "Application",
            "<Data>chrome.exe</Data><Data>130.0.1</Data><Data>0</Data><Data>chrome.dll</Data>") +
-        EventLogTests.Ev("Application Hang", 1002, 2, "2026-10-26T09:00:00Z", "The program EXCEL.EXE stopped interacting with Windows", "Application",
+        EventLogTests.Ev("Application Hang", 1002, 2, Ago(3), "The program EXCEL.EXE stopped interacting with Windows", "Application",
            "<Data>EXCEL.EXE</Data><Data>16.0</Data>");
 
     [Fact]
@@ -59,12 +62,12 @@ public class CrashesTests
     }
 
     [Fact]
-    public void RecentCrash_Yellow() => Assert.Equal(DiagnosticStatus.Warning, B(Crash("a.exe", "2026-10-27T09:00:00Z"), Crash("a.exe", "2026-10-01T09:00:00Z")).Status);
+    public void RecentCrash_Yellow() => Assert.Equal(DiagnosticStatus.Warning, B(Crash("a.exe", Ago(2)), Crash("a.exe", "2026-10-01T09:00:00Z")).Status);
 
     [Fact]
     public void SameAppThreeTimesInWeek_Red()
     {
-        var rep = B(Crash("a.exe", "2026-10-27T09:00:00Z"), Crash("A.EXE", "2026-10-26T09:00:00Z"), Crash("a.exe", "2026-10-25T09:00:00Z"));
+        var rep = B(Crash("a.exe", Ago(2)), Crash("A.EXE", Ago(3)), Crash("a.exe", "2026-10-25T09:00:00Z"));
         Assert.Equal(DiagnosticStatus.Error, rep.Status);
         Assert.Equal(AreaLevel.Error, rep.Cards.Single(c => c.Id == "crashes").Level);
         Assert.Contains("crashed 3 times in the last 7 days", rep.Summary);
@@ -73,7 +76,7 @@ public class CrashesTests
     [Fact]
     public void AllCrashLists_AreSortable_ByEveryColumn()
     {
-        var rep = B(Crash("a.exe", "2026-10-27T09:00:00Z"), Crash("b.exe", "2026-10-20T09:00:00Z"), Crash("b.exe", "2026-10-21T09:00:00Z"),
+        var rep = B(Crash("a.exe", Ago(2)), Crash("b.exe", "2026-10-20T09:00:00Z"), Crash("b.exe", "2026-10-21T09:00:00Z"),
             Crash("b.exe", "2026-10-02T09:00:00Z"));
         var apps = rep.Cards.Single(c => c.Id == "apps");
         Assert.Equal(["App", "Crashes", "Freezes", "Last time"], apps.Columns);

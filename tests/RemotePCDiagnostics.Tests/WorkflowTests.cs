@@ -1061,4 +1061,106 @@ public class WorkflowTests
 
     private static string E(string s) => System.Net.WebUtility.HtmlEncode(s);
     private static int CountOf(string text, string part) { var n = 0; for (var i = text.IndexOf(part, StringComparison.Ordinal); i >= 0; i = text.IndexOf(part, i + part.Length, StringComparison.Ordinal)) n++; return n; }
+
+    // ---- Windows repair (DISM RestoreHealth / SFC scannow) ----
+    private sealed class RepairScript
+    {
+        public bool DismCorrupt = true, SfcCorrupt = true, Repaired = false, Reboot = false, DismFails = false;
+        public List<string> Order = [];
+        public ProcessResult Run(string file, IReadOnlyList<string> args)
+        {
+            if (args.Contains("/ScanHealth"))
+                return ScriptedLauncher.Ok(DismCorrupt && !Repaired ? "The component store is repairable.\nThe operation completed successfully." : "No component store corruption detected.\nThe operation completed successfully.");
+            if (args.Contains("/verifyonly"))
+                return ScriptedLauncher.Ok(SfcCorrupt && !Repaired ? "Windows Resource Protection found integrity violations." : "Windows Resource Protection did not find any integrity violations.");
+            if (args.Contains("/RestoreHealth"))
+            {
+                Order.Add("dism");
+                return DismFails ? new ProcessResult(unchecked((int)0x800f081f), "Error: 0x800f081f\nThe source files could not be found.", "")
+                    : new ProcessResult(Reboot ? 3010 : 0, "[====100.0%====]\nThe restore operation completed successfully.\nThe operation completed successfully.", "");
+            }
+            if (args.Contains("/scannow"))
+            {
+                Order.Add("sfc");
+                Repaired = !DismFails;
+                return ScriptedLauncher.Ok(DismFails ? "Windows Resource Protection found corrupt files but was unable to fix some of them." : "Windows Resource Protection found corrupt files and successfully repaired them.");
+            }
+            return ScriptedLauncher.Ok("""{"Count":0}""");
+        }
+    }
+
+    private static (WorkflowService Flow, Sys Sys, ScriptedLauncher Launcher) MakeRepair(RepairScript script)
+    {
+        SystemCommandRunner? runner = null;
+        var launcher = new ScriptedLauncher(script.Run);
+        runner = new SystemCommandRunner(launcher);
+        IDiagnosticModule[] modules = [new AreaModule("Programs", Report(Updates)), new WindowsIntegrityModule(runner, true), new WindowsIntegrityModule(runner, false)];
+        var m = Make(script.Run, null, null, modules);
+        return (m.Flow, m.Sys, m.Launcher);
+    }
+
+    private static async Task RunWorkflow(WorkflowService flow, Sys sys)
+    {
+        Assert.Null(await flow.StartAsync(null));
+        sys.Uptime = TimeSpan.Zero;
+        await flow.ResumeAsync();
+        await flow.ResumeAsync();
+        Assert.Equal(WorkflowStage.Done, flow.State.Stage);
+    }
+
+    [Fact]
+    public async Task Repair_Corruption_OffersBoth_RunsDismThenSfc_ReportsAndRescans()
+    {
+        var script = new RepairScript();
+        var (flow, sys, _) = MakeRepair(script);
+        await flow.RunChecksAsync();
+        var repairs = flow.State.Fixes.Where(f => f.Remediation?.Kind is RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles).ToList();
+        Assert.Equal(2, repairs.Count);
+        Assert.All(repairs, f => Assert.Contains(f.Id, flow.State.Approved));
+        await RunWorkflow(flow, sys);
+        Assert.Equal(["dism", "sfc"], script.Order);
+        var f = flow.State.RepairFindings;
+        Assert.Equal(DiagnosticStatus.Ok, f.Single(x => x.Id == WindowsRepair.DismId).Level);
+        var sfc = f.Single(x => x.Id == WindowsRepair.SfcId);
+        Assert.Contains("repaired", sfc.Summary);
+        Assert.Equal("Exit code 0", sfc.Evidence);
+        Assert.Contains(f, x => x.AfterRestart && x.Level == DiagnosticStatus.Ok);
+        Assert.Contains("Windows repair", sys.Report);
+        Assert.Contains(E(WindowsRepair.DismTitle), sys.Report);
+    }
+
+    [Fact]
+    public async Task Repair_CleanScans_OfferNothing()
+    {
+        var script = new RepairScript { DismCorrupt = false, SfcCorrupt = false };
+        var (flow, _, _) = MakeRepair(script);
+        await flow.RunChecksAsync();
+        Assert.DoesNotContain(flow.State.Fixes, f => f.Remediation?.Kind is RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles);
+    }
+
+    [Fact]
+    public async Task Repair_RebootRequired_IsRecorded()
+    {
+        var script = new RepairScript { Reboot = true };
+        var (flow, sys, _) = MakeRepair(script);
+        await flow.RunChecksAsync();
+        await RunWorkflow(flow, sys);
+        Assert.True(flow.State.RepairRebootPending);
+        Assert.True(flow.State.RepairFindings.Single(x => x.Id == WindowsRepair.DismId).RebootRequired);
+    }
+
+    [Fact]
+    public async Task Repair_Failure_ReportsErrorWithHint()
+    {
+        var script = new RepairScript { DismFails = true };
+        var (flow, sys, _) = MakeRepair(script);
+        await flow.RunChecksAsync();
+        await RunWorkflow(flow, sys);
+        var dism = flow.State.RepairFindings.Single(x => x.Id == WindowsRepair.DismId);
+        Assert.Equal(DiagnosticStatus.Error, dism.Level);
+        Assert.Contains("0x800f081f", dism.Summary);
+        Assert.Contains(dism.Details, d => d.Label == "DISM log excerpt");
+        Assert.Equal(DiagnosticStatus.Error, flow.State.RepairFindings.Single(x => x.Id == WindowsRepair.SfcId).Level);
+        Assert.Contains("0x800f081f", sys.Report);
+    }
 }

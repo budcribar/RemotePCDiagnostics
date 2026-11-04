@@ -28,7 +28,8 @@ public sealed class WorkflowService(
     private readonly object _gate = new();
     /// <summary>7: Windows Search only on small, nearly-full PCs without classic Outlook, and opt-in (unticked); Widgets and Search highlights fixes.
     /// 8: Microsoft Teams startup is opt-in (unticked).</summary>
-    public const int CurrentReviewRulesVersion = 13;
+    /// 14: Windows repair (DISM RestoreHealth, SFC /scannow) offered when the integrity scans found corruption.</summary>
+    public const int CurrentReviewRulesVersion = 14;
     private WorkflowState _state = LoadState(store);
 
     private static WorkflowState LoadState(IWorkflowStore store)
@@ -110,7 +111,8 @@ public sealed class WorkflowService(
     {
         if (Busy || State.IsRunning) return;
         Busy = true;
-        var modules = diag.Modules.Where(m => m.IncludeInRunAll).ToList();
+        // The Windows integrity scans (DISM ScanHealth, SFC verify-only) aren't in Run all, but the workflow needs them to decide on repairs.
+        var modules = diag.Modules.Where(m => m.IncludeInRunAll || m is WindowsIntegrityModule).ToList();
         lock (_gate)
         {
             _checkItems.Clear();
@@ -351,6 +353,8 @@ public sealed class WorkflowService(
                 Save(s => s with { Stage = WorkflowStage.AfterBenchmark });
                 Note("Running the after benchmark…");
                 if (await bench.RunAsync(BenchmarkPhase.After, token).ConfigureAwait(false) is null) Log("after benchmark didn't run");
+                // After the benchmark (so the scans don't load the PC while it's measured): confirm the repairs on the fresh boot.
+                await RescanAfterRepairAsync(token).ConfigureAwait(false);
                 stage = WorkflowStage.Reporting;
                 Save(s => s with { Stage = WorkflowStage.Reporting });
             }
@@ -430,6 +434,8 @@ public sealed class WorkflowService(
 
     private async Task<FixOutcome> ApplyOneAsync(WorkflowFix f, IReadOnlyList<MemorySuggestion> fresh, CancellationToken ct)
     {
+        if (f.Source == FixSource.Remediation && f.Remediation is { Kind: RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles } rep)
+            return await ApplyRepairAsync(f, rep, ct).ConfigureAwait(false);
         if (f.Source == FixSource.Remediation && f.Remediation is { } a)
         {
             var r = await remediation.ExecuteAsync(a, ct).ConfigureAwait(false);
@@ -445,6 +451,52 @@ public sealed class WorkflowService(
         }
         return new(f.Id, f.Title, false, "Skipped: this fix couldn't be run here (the part of the app that applies it isn't available).", Skipped: true);
     }
+
+    private async Task<FixOutcome> ApplyRepairAsync(WorkflowFix f, AreaAction a, CancellationToken ct)
+    {
+        var title = f.Title;
+        remediation.RepairProgress = new InlineProgress(p => { Status = $"{title}: {p}"; Raise(); });
+        RemediationResult r;
+        try { r = await remediation.ExecuteAsync(a, ct).ConfigureAwait(false); }
+        finally { remediation.RepairProgress = null; }
+        if (remediation.LastRepair is { } rr && (rr.Id == WindowsRepair.DismId) == (a.Kind == RemediationKind.RepairComponentStore))
+        {
+            Save(s => s with
+            {
+                RepairFindings = [.. s.RepairFindings, ToFinding(rr, afterRestart: false)],
+                RepairRebootPending = s.RepairRebootPending || rr.RebootRequired,
+            });
+            if (rr.RebootRequired) Note($"{title}: Windows asked for a restart; the restart after the fixes covers it.");
+        }
+        return new(f.Id, f.Title, r.Success, r.Message);
+    }
+
+    private static RepairFinding ToFinding(RepairResult r, bool afterRestart) =>
+        new(r.Id, r.Title, r.Status, r.Summary, r.Evidence, r.Details.Select(d => new RepairDetail(d.Label, d.Value)).ToList(), r.RebootRequired, afterRestart);
+
+    /// <summary>After the restart: scan again (DISM ScanHealth, SFC verify-only) for the repairs that ran, so the report shows the state after.</summary>
+    private async Task RescanAfterRepairAsync(CancellationToken ct)
+    {
+        var ran = State.RepairFindings.Where(x => !x.AfterRestart).Select(x => x.Id).ToHashSet();
+        if (ran.Count == 0 || State.RepairFindings.Any(x => x.AfterRestart)) return;
+        foreach (var m in diag.Modules.OfType<WindowsIntegrityModule>())
+        {
+            ct.ThrowIfCancellationRequested();
+            var dism = m.Name == WindowsIntegrityModule.DismModuleName;
+            if (dism && !ran.Contains(WindowsRepair.DismId)) continue;
+            Note($"Checking again after the restart: {m.DisplayName}…");
+            DiagnosticResult r;
+            try { r = await diag.RunAsync(m.Name, null, ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { Log("re-scan failed: " + ex.Message); continue; }
+            var card = (r.Payload as AreaReport)?.Cards.FirstOrDefault();
+            var finding = new RepairFinding($"{(dism ? WindowsRepair.DismId : WindowsRepair.SfcId)}-after", $"{m.DisplayName} after the restart",
+                r.Status, r.Message, card?.Meta ?? "", card?.Rows.Select(x => new RepairDetail(x.Values[0], x.Values.Count > 1 ? x.Values[1] : "")).ToList() ?? [],
+                AfterRestart: true);
+            Save(s => s with { RepairFindings = [.. s.RepairFindings, finding] });
+        }
+    }
+
+    private sealed class InlineProgress(Action<string> a) : IProgress<string> { public void Report(string v) { try { a(v); } catch { } } }
 
     // ---- control ----
 

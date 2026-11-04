@@ -107,6 +107,28 @@ The date is the newest of:
 - **This app's record:** every successful Optimize / Retrim SSD fix is saved per letter to `%LOCALAPPDATA%\RemotePCDiagnostics\retrim.json`,
   so the next check (e.g. the workflow's second pass) sees it at once, without waiting for Windows' event.
 
+## Service workflow: Windows repair (DISM / SFC)
+
+The workflow's Checking stage also runs the two integrity scans (DISM `/ScanHealth` and `sfc /verifyonly`), reusing results that already
+finished on the Checks page. Repair fixes appear under **Windows repair** in Review only when a scan found corruption:
+
+- **Repair Windows component store (DISM RestoreHealth):** `dism.exe /English /Online /Cleanup-Image /RestoreHealth` (45 min timeout,
+  progress shown). Offered only when ScanHealth found corruption. If ScanHealth says the store "cannot be repaired", it is still offered,
+  with a note that it needs a repair source or Windows Update.
+- **Repair protected system files (SFC):** `sfc.exe /scannow`. Offered when `sfc /verifyonly` found violations, or whenever the DISM repair is offered.
+
+Both are ticked by default, need administrator rights, are allowed in remote mode and cannot be undone. When both run, DISM goes first and SFC
+second. If either asks for a restart (exit code 3010 or restart/pending text), this is recorded. The workflow's restart after the fixes then covers it,
+and after the after-benchmark the scans run again. The client report has a **Windows repair** section with each result, its exit code, the command,
+the cleaned output and, on failure, CBS/DISM log excerpts. Results:
+
+- SFC "repaired" → OK, "unable to fix" → Error, nothing found → OK.
+- DISM restore success → OK.
+- `0x800f081f` (no source), `0x800f0906` (download failed), `0x800f0954` (blocked by policy) → Error with a plain explanation.
+
+Localized SFC output is judged by the exit code plus CBS.log `[SR]` lines. **Not yet verified on real hardware:** the repairs have only
+been exercised with fakes.
+
 ## Status
 
 Idea stage. This repository currently holds only this README.

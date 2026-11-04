@@ -121,6 +121,24 @@ public static class ClientReport
             foreach (var o in failed) Outcome(o);
             sb.Append("</ul>");
         }
+        // Windows repair (DISM / SFC): one finding each, plus the re-scan after the restart.
+        if (s.RepairFindings.Count > 0)
+        {
+            sb.Append("<h2>Windows repair</h2>");
+            if (s.RepairRebootPending) sb.Append("<p class=\"meta\">Windows asked for a restart to finish the repair; the service's restart after the fixes did that.</p>");
+            foreach (var f in s.RepairFindings)
+            {
+                var lvl = f.Level switch { DiagnosticStatus.Ok => "OK", DiagnosticStatus.Warning => "Warning", _ => "Error" };
+                sb.Append("<h3 data-finding=\"").Append(E(f.Id)).Append("\">").Append(E(f.Title)).Append(" — ").Append(lvl).Append("</h3>");
+                sb.Append("<p>").Append(E(f.Summary)).Append(f.Evidence.Length > 0 ? " <span class=\"meta\">(" + E(f.Evidence) + ")</span>" : "").Append("</p>");
+                if (f.Details.Count > 0)
+                {
+                    sb.Append("<details><summary>Details</summary><table><tr><th>Detail</th><th>Value</th></tr>");
+                    foreach (var d in f.Details) sb.Append("<tr><td>").Append(E(d.Label)).Append("</td><td><pre>").Append(E(d.Value)).Append("</pre></td></tr>");
+                    sb.Append("</table></details>");
+                }
+            }
+        }
         if (skipped.Count > 0)
         {
             sb.Append("<h2>Skipped</h2><ul>");

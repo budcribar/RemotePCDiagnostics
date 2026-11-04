@@ -89,6 +89,8 @@ public static class FixCatalog
             }
         }
 
+        foreach (var f in RepairFixes(results, plans)) if (seen.Add(f.Id)) list.Add(f);
+
         foreach (var s in suggestions)
         {
             if (s.Kind != SuggestionKind.Automated) continue;
@@ -118,6 +120,47 @@ public static class FixCatalog
         }
 
         return list.OrderBy(f => f.Order).ThenBy(f => f.Area).ThenBy(f => f.Title, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    public const string RepairArea = "Windows repair";
+    /// <summary>Apply order: DISM RestoreHealth first, then SFC /scannow (SFC repairs from the store DISM just fixed). After settings, before long downloads.</summary>
+    public const int DismRepairOrder = 85, SfcRepairOrder = 86;
+
+    /// <summary>
+    /// Windows repair fixes, only when the integrity scans found corruption: DISM RestoreHealth when ScanHealth reported a corrupt store
+    /// (also when it says "cannot be repaired": then it needs Windows Update or a source, noted in the reason); SFC /scannow when SFC
+    /// verify-only found violations or DISM repair runs. Cancelled, failed or clean scans offer nothing.
+    /// </summary>
+    public static IReadOnlyList<WorkflowFix> RepairFixes(IEnumerable<DiagnosticResult> results, RemediationService? plans = null)
+    {
+        var list = results.ToList();
+        bool Corrupt(string module, out DiagnosticResult? r)
+        {
+            r = list.LastOrDefault(x => string.Equals(x.ModuleName, module, StringComparison.OrdinalIgnoreCase));
+            return r is { Status: DiagnosticStatus.Warning } && !Cancellation.IsCancelled(r);
+        }
+        var fixes = new List<WorkflowFix>();
+        var dism = Corrupt(WindowsIntegrityModule.DismModuleName, out var dr);
+        var sfc = Corrupt(WindowsIntegrityModule.SfcModuleName, out var sr);
+        if (dism)
+        {
+            var needsSource = dr!.Message.Contains("cannot be repaired", StringComparison.OrdinalIgnoreCase);
+            var a = new AreaAction(RemediationKind.RepairComponentStore, "Repair Windows component store", needsSource ? "needs-source" : "", "Windows component store");
+            var why = $"DISM ScanHealth: {dr.Message} (scan {dr.Timestamp:O})."
+                + (needsSource ? " Needs a repair source: Windows Update (internet) or matching installation media; it may still fail." : "")
+                + " Runs before SFC; can take 10–30 minutes.";
+            fixes.Add(new(RemediationId(a), WindowsRepair.DismTitle, why, RepairArea, SuggestionRisk.Medium, FixSource.Remediation, DismRepairOrder,
+                Remediation: a, NeedsAdmin: true, Slow: true, Undo: Changes.Undoability.Of(a.Kind), DefaultOn: true, AreaKey: RepairArea));
+        }
+        if (dism || sfc)
+        {
+            var a = new AreaAction(RemediationKind.RepairSystemFiles, "Repair protected system files", "", "Protected system files");
+            var why = (sfc ? $"SFC verify-only: {sr!.Message} (scan {sr.Timestamp:O})." : "Runs after the DISM repair so protected files are restored from the repaired store.")
+                + " Can take 10–20 minutes.";
+            fixes.Add(new(RemediationId(a), WindowsRepair.SfcTitle, why, RepairArea, SuggestionRisk.Medium, FixSource.Remediation, SfcRepairOrder,
+                Remediation: a, NeedsAdmin: true, Slow: true, Undo: Changes.Undoability.Of(a.Kind), DefaultOn: true, AreaKey: RepairArea));
+        }
+        return fixes;
     }
 
     /// <summary>

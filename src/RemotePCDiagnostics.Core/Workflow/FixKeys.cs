@@ -28,6 +28,8 @@ public static class FixKeys
         [RemediationKind.ResetDhcpDns] = "resetdhcpdns",
         [RemediationKind.CleanTempFiles] = "cleantempfiles",
         [RemediationKind.OptimizeSsd] = "optimizessd",
+        [RemediationKind.RepairComponentStore] = "repaircomponentstore",
+        [RemediationKind.RepairSystemFiles] = "repairsystemfiles",
     };
 
     public static readonly IReadOnlyDictionary<MemoryActionType, string> Memory = new Dictionary<MemoryActionType, string>

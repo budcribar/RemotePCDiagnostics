@@ -28,6 +28,7 @@ public static class Undoability
         RemediationKind.SetBalancedPowerPlan or RemediationKind.DisableFastStartup or RemediationKind.DisableSystemProxy
             or RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns => UndoSupport.Full,
         RemediationKind.CleanTempFiles => UndoSupport.None,
+        RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles => UndoSupport.None, // repaired Windows files aren't put back
         RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.EnableDevice => UndoSupport.None,
         _ => UndoSupport.NothingToUndo,
     };

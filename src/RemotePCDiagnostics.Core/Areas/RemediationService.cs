@@ -240,6 +240,24 @@ public sealed class RemediationService(
                 DriveLetters(action.Target).Length > 0 ? "Requires administrator privileges." : "This drive has no drive letter to optimize.",
                 DriveLetters(action.Target).Length > 0),
 
+            // 5. Windows repair
+            RemediationKind.RepairComponentStore => new(
+                action,
+                "Repair the Windows component store (DISM RestoreHealth)?",
+                "Repairs corruption DISM found in the Windows component store (the copies Windows uses to fix its own files)."
+                    + (action.Target == "needs-source" ? " DISM reported the store cannot be repaired from local files: this needs Windows Update (internet) or a matching installation source." : ""),
+                "Runs 'dism.exe /English /Online /Cleanup-Image /RestoreHealth' (10–30 minutes; may download files from Windows Update). Not undoable.",
+                "Requires administrator privileges.",
+                true),
+
+            RemediationKind.RepairSystemFiles => new(
+                action,
+                "Repair protected system files (SFC /scannow)?",
+                "Replaces corrupt or changed protected Windows files with good copies from the component store.",
+                "Runs 'sfc.exe /scannow' (10–20 minutes), after DISM RestoreHealth when both run. Not undoable.",
+                "Requires administrator privileges.",
+                true),
+
             _ => new(action, action.ButtonText, "", "", null, true),
         };
     }
@@ -400,6 +418,8 @@ public sealed class RemediationService(
 
         RemediationKind.CleanTempFiles => await RunCleanTempFilesAsync(ct).ConfigureAwait(false),
 
+        RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles => ToResult(LastRepair = await RepairAsync(action, RepairProgress, ct).ConfigureAwait(false)),
+
         RemediationKind.OptimizeSsd => await RunPowerShellAsync(
             $"$ErrorActionPreference='Stop'; Optimize-Volume -DriveLetter {string.Join(",", DriveLetters(action.Target).ToCharArray())} -ReTrim",
             $"Optimized / Retrimmed {Display(action)}.",
@@ -408,6 +428,17 @@ public sealed class RemediationService(
 
         _ => new(false, "Unsupported action."),
     };
+
+    private static RemediationResult ToResult(RepairResult r) => new(r.Success, r.Summary);
+
+    /// <summary>Full result of the last DISM/SFC repair run through <see cref="ExecuteAsync"/> (for the workflow report).</summary>
+    public RepairResult? LastRepair { get; private set; }
+    /// <summary>Receives "Repair 45% complete" while a DISM/SFC repair runs through <see cref="ExecuteAsync"/>.</summary>
+    public IProgress<string>? RepairProgress { get; set; }
+
+    /// <summary>DISM RestoreHealth or SFC /scannow with the full finding (output, exit code, log excerpts, restart needed).</summary>
+    public Task<RepairResult> RepairAsync(AreaAction action, IProgress<string>? progress, CancellationToken ct) =>
+        WindowsRepair.RunAsync(commands, action.Kind == RemediationKind.RepairComponentStore, progress, ct);
 
     private async Task<RemediationResult> RunScheduleCleanRestartAsync(AreaAction action, CancellationToken ct)
     {

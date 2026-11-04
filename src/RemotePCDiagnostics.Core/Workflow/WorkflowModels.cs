@@ -39,6 +39,13 @@ public sealed record WorkflowFix(
 /// <param name="Changes">What the fix recorded in the undo journal while it ran (one line per setting, with its old value where known).</param>
 public sealed record FixOutcome(string FixId, string Title, bool Success, string Message, bool Skipped = false, IReadOnlyList<FixChange>? Changes = null);
 
+/// <summary>A Windows repair result (DISM RestoreHealth / SFC /scannow, or the re-scan after the restart) for the report,
+/// in the check-finding shape: id, title, level, summary, evidence line and a detail table.</summary>
+public sealed record RepairFinding(string Id, string Title, DiagnosticStatus Level, string Summary, string Evidence,
+    IReadOnlyList<RepairDetail> Details, bool RebootRequired = false, bool AfterRestart = false);
+
+public sealed record RepairDetail(string Label, string Value);
+
 /// <summary>One undo-journal entry written while a fix ran, so the report can say exactly what changed and whether undo puts it back.</summary>
 public sealed record FixChange(Guid JournalId, string Text, Changes.UndoSupport Undo);
 
@@ -105,6 +112,10 @@ public sealed record WorkflowState
     public string? ReportHtml { get; init; }
     public string? Error { get; init; }
     public IReadOnlyList<string> Log { get; init; } = [];
+    /// <summary>DISM/SFC repair results and the integrity re-scans after the restart.</summary>
+    public IReadOnlyList<RepairFinding> RepairFindings { get; init; } = [];
+    /// <summary>A repair asked for a restart (exit code 3010 or "restart" in its output); the workflow's restart after the fixes covers it.</summary>
+    public bool RepairRebootPending { get; init; }
 
     public bool IsApproved(string id) => Approved.Contains(id);
     public bool IsRunning => Stage is WorkflowStage.RestartBefore or WorkflowStage.BeforeBenchmark or WorkflowStage.Applying

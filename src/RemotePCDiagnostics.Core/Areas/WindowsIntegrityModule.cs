@@ -2,7 +2,8 @@ namespace RemotePCDiagnostics.Core.Areas;
 
 public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool componentStore) : AreaModuleBase(commands.Log)
 {
-    public override string Name => componentStore ? "DismScanHealth" : "SfcVerifyOnly";
+    public const string DismModuleName = "DismScanHealth", SfcModuleName = "SfcVerifyOnly";
+    public override string Name => componentStore ? DismModuleName : SfcModuleName;
     public override string DisplayName => componentStore ? "Windows component store (DISM)" : "Protected system files (SFC)";
     public bool IncludeInRunAll => false;
     private readonly object _scanGate = new();
@@ -67,7 +68,7 @@ public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool co
         {
             DiagnosticStatus.Ok => "No corruption detected",
             DiagnosticStatus.Warning when !componentStore => "SFC found integrity violations in protected system files.",
-            DiagnosticStatus.Warning when Has("component store cannot be repaired") => "DISM found component store corruption and reports that the store cannot be repaired.",
+            DiagnosticStatus.Warning when Has("component store cannot be repaired") => CannotBeRepairedSummary,
             DiagnosticStatus.Warning => "DISM found repairable corruption in the Windows component store.",
             _ when result is null => FailedMessage,
             _ => "Integrity scan could not confirm a result"
@@ -94,7 +95,7 @@ public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool co
             ["Detail", "Value"], rows)], summary, status);
     }
 
-    private static long? LogLength(string path)
+    internal static long? LogLength(string path)
     {
         try { return new FileInfo(path).Length; }
         catch (FileNotFoundException) { return 0; }
@@ -102,7 +103,7 @@ public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool co
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
     }
 
-    private static string SummarizeCbs(string excerpt)
+    internal static string SummarizeCbs(string excerpt)
     {
         var findings = System.Text.RegularExpressions.Regex.Matches(excerpt,
             @"(?im)\b(?<kind>CSI (?:Payload|Manifest|Metadata) Corrupt(?:ion)?|CBS (?:MUM|CAT) (?:Missing|Corrupt))\s+(?:\([nw]\)\s*)?(?<item>[^\r\n]+)")
@@ -120,7 +121,7 @@ public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool co
                 : excerpt;
     }
 
-    private static string ReadLogEvidence(string path, long? offset)
+    internal static string ReadLogEvidence(string path, long? offset)
     {
         if (offset is null) return "The log could not be read before the scan.";
         try
@@ -145,4 +146,24 @@ public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool co
             return "The servicing log is missing or inaccessible.";
         }
     }
+
+    /// <summary>Lines appended to a log since <paramref name="offset"/> (last 1 MB at most); empty when unreadable.</summary>
+    internal static IReadOnlyList<string> ReadNewLines(string path, long? offset)
+    {
+        if (offset is null) return [];
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (stream.Length < offset.Value) return [];
+            var start = Math.Max(offset.Value, stream.Length - 1024 * 1024);
+            stream.Position = start;
+            var bytes = new byte[(int)(stream.Length - start)];
+            var count = stream.ReadAtLeast(bytes, bytes.Length, throwOnEndOfStream: false);
+            return System.Text.Encoding.UTF8.GetString(bytes, 0, count).Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
+    }
+
+    /// <summary>The DISM ScanHealth message when the store is corrupt but DISM says it can't be repaired.</summary>
+    public const string CannotBeRepairedSummary = "DISM found component store corruption and reports that the store cannot be repaired.";
 }

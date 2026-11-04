@@ -29,6 +29,10 @@ public enum RemediationKind
     // 4. Storage & Disk Space Cleanup
     CleanTempFiles,
     OptimizeSsd,
+
+    // 5. Windows repair (service workflow only; offered when DISM ScanHealth / SFC verify-only found corruption)
+    RepairComponentStore,
+    RepairSystemFiles,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>
