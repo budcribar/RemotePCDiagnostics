@@ -14,12 +14,28 @@ public partial class App : Application
     /// <summary>Windows Event Log (Application, source RemotePCDiagnostics); never throws or blocks.</summary>
     public static ILogSink Events => _events.Value;
 
-    /// <summary>Optional file log, enabled by setting RPD_LOG_FILE (used by CI). Selected lines (fan diagnostic,
-    /// sensor driver, stress suite, crashes) also go to the Windows Event Log.</summary>
+    /// <summary>File log: on by default at %LOCALAPPDATA%\RemotePCDiagnostics\logs\RemotePCDiagnostics.log (rolls at 5 MB, keeps 5 older files).
+    /// Setting RPD_LOG_FILE sends it to that path instead, without rolling (CI).</summary>
+    private static readonly Lazy<RollingFileLog> _file = new(() =>
+        Environment.GetEnvironmentVariable("RPD_LOG_FILE") is { Length: > 0 } p ? new RollingFileLog(p, long.MaxValue) : new RollingFileLog(RollingFileLog.DefaultPath()));
+    private static readonly EventLogGate _gate = new();
+
+    /// <summary>Where the log file is written.</summary>
+    public static string LogFilePath => _file.Value.Path;
+
+    /// <summary>Writes the line to the log file. Selected lines (fan diagnostic, sensor driver, stress suite, crashes) also go to the Windows Event Log,
+    /// and so does any other line that reads as a warning or error (rate-limited, so a repeating problem can't flood it).</summary>
     public static void Log(string message)
     {
         LogFileOnly(message);
-        try { if (LogText.Route(message) is { } e) Events.Write(e); } catch { }
+        try
+        {
+            if (LogText.Route(message) is { } e) { Events.Write(e); return; }
+            var level = LogLevels.Classify(message);
+            if (level != LogLevel.Information && _gate.Allow(message))
+                Events.Write(new LogEntry(level == LogLevel.Error ? LogEventIds.Error : LogEventIds.AppWarning, level, message));
+        }
+        catch { }
     }
 
     /// <summary>Writes an event (and the same text to the file log).</summary>
@@ -29,13 +45,8 @@ public partial class App : Application
         try { Events.Write(new LogEntry(id, level, message)); } catch { }
     }
 
-    private static readonly object _fileGate = new();
-    private static void LogFileOnly(string message)
-    {
-        var path = Environment.GetEnvironmentVariable("RPD_LOG_FILE");
-        if (string.IsNullOrEmpty(path)) return;
-        try { lock (_fileGate) File.AppendAllText(path, $"{DateTimeOffset.Now:O} [{RemotePCDiagnostics.Core.AppBuildInfo.LogStamp}] {message}{Environment.NewLine}"); } catch { }
-    }
+    private static void LogFileOnly(string message) =>
+        _file.Value.Write($"{DateTimeOffset.Now:O} [{RemotePCDiagnostics.Core.AppBuildInfo.LogStamp}] {message}");
 
     /// <summary>Process exit codes (also used by --undo-all).</summary>
     public const int ExitOk = 0, ExitUndoPartial = 1, ExitAlreadyRunning = 2, ExitNotAdmin = 5;

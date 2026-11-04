@@ -419,7 +419,12 @@ so its result is logged at most every 10 minutes unless its status changes. The 
 administrator** (Windows requires admin to register an event source); if it can't be created or a write fails, event
 logging switches off silently for that run (one note in the file log). Writes run on a background queue and never block the
 UI; messages are truncated to 31,000 characters. No server URLs, session ids or raw audit output are written.
-`RPD_LOG_FILE` file logging is unchanged and still contains everything (event lines are mirrored as `[event N] ...`).
+**File log (on by default).** Everything the app logs goes to `%LOCALAPPDATA%\RemotePCDiagnostics\logs\RemotePCDiagnostics.log`
+(event lines are mirrored as `[event N] ...`). It rolls over at 5 MB and keeps the five older files (`RemotePCDiagnostics.1.log` to `.5.log`),
+so a technician can send that folder. Setting `RPD_LOG_FILE` writes to that path instead, without rolling (CI uses this).
+Besides the categories above, any other line that reads as a warning or an error (for example "failed", "couldn't", "timed out",
+"overran", an exception) is also written to the Event Log: warnings as event 1910, errors as event 1900. The same text is let
+through once per five minutes and at most 30 entries per minute, so a repeating problem can't flood the Event Log.
 
 ### Laptop fan from the embedded controller (Lenovo IdeaPad 1 15ALC7 only, experimental)
 
