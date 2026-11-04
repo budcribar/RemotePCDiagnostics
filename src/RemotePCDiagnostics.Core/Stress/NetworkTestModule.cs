@@ -4,52 +4,26 @@ namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand network stability test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
 public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, ISpeedTester speed, IAdapterCounters counters, ISensorProvider sensors,
-    NetworkTestSettings? settings = null, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : IStressSuiteModule
+    NetworkTestSettings? settings = null, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<NetworkTestProgress, NetworkTestReport>(log), IStressSuiteModule
 {
     public const string ModuleName = "NetworkTest";
-    public string Name => ModuleName;
-    public string DisplayName => "Network stability test";
-    public bool IncludeInRunAll => false;
-    public event EventHandler<DiagnosticResult>? Updated;
+    public override string Name => ModuleName;
+    public override string DisplayName => "Network stability test";
     string IStressSuiteModule.SuiteName => "Network";
     bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.Failed } or Exception;
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.Overheated };
     bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.StoppedByUser };
-    public event EventHandler<NetworkTestProgress>? ProgressChanged;
 
-    public TimeSpan Duration { get; set; } = TimeSpan.FromMinutes(1);
     public NetworkTestOptions? Options { get; set; }
-    public NetworkTestProgress? LastProgress { get; private set; }
 
-    private CancellationTokenSource? _stop;
-    private StressCleanup? _cleanup;
-    private readonly object _gate = new();
-
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
-
-    /// <summary>Gives back what the last run still holds (worker threads, helper process, temp file, device). Safe to call repeatedly.</summary>
-    public Task CleanupAsync() => _cleanup?.RunAsync() ?? Task.CompletedTask;
-
-    public void Stop()
+    protected override Task<NetworkTestReport> RunTestAsync(StressCleanup cleanup, IProgress<NetworkTestProgress> progress, CancellationToken cancellationToken)
     {
-        lock (_gate) { try { _stop?.Cancel(); } catch (ObjectDisposedException) { } }
+        var opts = (Options ?? new NetworkTestOptions()) with { Duration = Duration };
+        var test = new NetworkTest(pinger, gateway, speed, counters, sensors, settings, clockFactory?.Invoke(), log, cleanup);
+        return test.RunAsync(opts, progress, cancellationToken);
     }
 
-    public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
-    {
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        lock (_gate) _stop = stop;
-        try
-        {
-            LastProgress = null;
-            var opts = (Options ?? new NetworkTestOptions()) with { Duration = Duration };
-            var cleanup = _cleanup = new StressCleanup(log);
-            var test = new NetworkTest(pinger, gateway, speed, counters, sensors, settings, clockFactory?.Invoke(), log, cleanup);
-            var report = await test.RunAsync(opts, new P(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); }), stop.Token).ConfigureAwait(false);
-            return new DiagnosticResult<NetworkTestReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
-        }
-        finally { lock (_gate) _stop = null; }
-    }
+    protected override (DiagnosticStatus Status, string Headline) Describe(NetworkTestReport report) => (ToStatus(report.Outcome), report.Headline);
 
     public static DiagnosticStatus ToStatus(NetworkTestOutcome o) => o switch
     {
@@ -57,8 +31,4 @@ public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, 
         NetworkTestOutcome.SomeLoss or NetworkTestOutcome.StoppedByUser => DiagnosticStatus.Warning,
         _ => DiagnosticStatus.Error,
     };
-
-    private sealed class P(Action<NetworkTestProgress> a) : IProgress<NetworkTestProgress> { public void Report(NetworkTestProgress v) => a(v); }
-
-    internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);
 }

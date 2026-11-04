@@ -3,61 +3,31 @@ using RemotePCDiagnostics.Core.Sensors;
 namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand CPU stress test module. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
-public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null, ICpuWorkload? workload = null, IEcFanSource? ecFan = null) : IStressSuiteModule
+public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null, ICpuWorkload? workload = null, IEcFanSource? ecFan = null) : StressModuleBase<CpuStressProgress, CpuStressReport>(log), IStressSuiteModule
 {
     public const string ModuleName = "CpuStress";
-    public string Name => ModuleName;
-    public string DisplayName => "CPU stress test";
-    public bool IncludeInRunAll => false;
-    public event EventHandler<DiagnosticResult>? Updated;
+    public override string Name => ModuleName;
+    public override string DisplayName => "CPU stress test";
     string IStressSuiteModule.SuiteName => "CPU";
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is CpuStressReport { Outcome: CpuStressOutcome.Overheated };
     bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is CpuStressReport { Outcome: CpuStressOutcome.StoppedByUser };
 
-    /// <summary>Raised with live progress while a run is in progress.</summary>
-    public event EventHandler<CpuStressProgress>? ProgressChanged;
-
-    public TimeSpan Duration { get; set; } = TimeSpan.FromMinutes(1);
     /// <summary>Optional overrides (tests).</summary>
     public CpuStressOptions? Options { get; set; }
-    public CpuStressProgress? LastProgress { get; private set; }
 
-    private CancellationTokenSource? _stop;
-    private StressCleanup? _cleanup;
-    private readonly object _gate = new();
-
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
-
-    /// <summary>Gives back what the last run still holds (worker threads, helper process, temp file, device). Safe to call repeatedly.</summary>
-    public Task CleanupAsync() => _cleanup?.RunAsync() ?? Task.CompletedTask;
-
-    /// <summary>Asks a running test to stop (the user pressed Stop).</summary>
-    public void Stop()
+    protected override async Task<CpuStressReport> RunTestAsync(StressCleanup cleanup, IProgress<CpuStressProgress> progress, CancellationToken cancellationToken)
     {
-        lock (_gate) { try { _stop?.Cancel(); } catch (ObjectDisposedException) { } }
-    }
-
-    public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
-    {
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        lock (_gate) _stop = stop;
         try { ecFan?.SetStressLogging(true); } catch { /* log-only diagnostic */ }
         try
         {
-            LastProgress = null;
             var opts = (Options ?? new CpuStressOptions()) with { Duration = Duration };
-            var cleanup = _cleanup = new StressCleanup(log);
             var test = new CpuStressTest(sensors, clockFactory?.Invoke(), workload, log, cleanup);
-            var p = new InlineProgress(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); });
-            var report = await test.RunAsync(opts, p, stop.Token).ConfigureAwait(false);
-            return new DiagnosticResult<CpuStressReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
+            return await test.RunAsync(opts, progress, cancellationToken).ConfigureAwait(false);
         }
-        finally
-        {
-            lock (_gate) _stop = null;
-            try { ecFan?.SetStressLogging(false); } catch { /* log-only diagnostic */ }
-        }
+        finally { try { ecFan?.SetStressLogging(false); } catch { /* log-only diagnostic */ } }
     }
+
+    protected override (DiagnosticStatus Status, string Headline) Describe(CpuStressReport report) => (ToStatus(report.Outcome), report.Headline);
 
     public static DiagnosticStatus ToStatus(CpuStressOutcome o) => o switch
     {
@@ -65,11 +35,4 @@ public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log
         CpuStressOutcome.StoppedByUser or CpuStressOutcome.Throttled => DiagnosticStatus.Warning,
         _ => DiagnosticStatus.Error,
     };
-
-    private sealed class InlineProgress(Action<CpuStressProgress> a) : IProgress<CpuStressProgress>
-    {
-        public void Report(CpuStressProgress value) => a(value);
-    }
-
-    internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);
 }

@@ -3,29 +3,20 @@ using RemotePCDiagnostics.Core.Sensors;
 namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand disk speed test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
-public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : IStressSuiteModule
+public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<DiskSpeedProgress, DiskSpeedReport>(log), IStressSuiteModule
 {
     public const string ModuleName = "DiskSpeed";
-    public string Name => ModuleName;
-    public string DisplayName => "Disk speed test";
-    public bool IncludeInRunAll => false;
-    public event EventHandler<DiagnosticResult>? Updated;
+    public override string Name => ModuleName;
+    public override string DisplayName => "Disk speed test";
     string IStressSuiteModule.SuiteName => "Disk";
     bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.Failed } or Exception;
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.Overheated };
     bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.StoppedByUser };
-    public event EventHandler<DiskSpeedProgress>? ProgressChanged;
 
-    public TimeSpan Duration { get; set; } = TimeSpan.FromMinutes(1);
     public long SizeBytes { get; set; } = DiskSpeedOptions.GB;
     /// <summary>Null = system drive.</summary>
     public string? DriveRoot { get; set; }
     public DiskSpeedOptions? Options { get; set; }
-    public DiskSpeedProgress? LastProgress { get; private set; }
-
-    private CancellationTokenSource? _stop;
-    private StressCleanup? _cleanup;
-    private readonly object _gate = new();
 
     public IReadOnlyList<TestDrive> ListDrives()
     {
@@ -33,31 +24,14 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
         catch (Exception ex) { log?.Invoke($"Disk speed: listing drives failed: {ex.Message}"); return []; }
     }
 
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
-
-    /// <summary>Gives back what the last run still holds (worker threads, helper process, temp file, device). Safe to call repeatedly.</summary>
-    public Task CleanupAsync() => _cleanup?.RunAsync() ?? Task.CompletedTask;
-
-    public void Stop()
+    protected override Task<DiskSpeedReport> RunTestAsync(StressCleanup cleanup, IProgress<DiskSpeedProgress> progress, CancellationToken cancellationToken)
     {
-        lock (_gate) { try { _stop?.Cancel(); } catch (ObjectDisposedException) { } }
+        var opts = (Options ?? new DiskSpeedOptions()) with { Duration = Duration, RequestedSizeBytes = SizeBytes, DriveRoot = DriveRoot };
+        var test = new DiskSpeedTest(fs, sensors, clockFactory?.Invoke(), log, cleanup);
+        return test.RunAsync(opts, progress, cancellationToken);
     }
 
-    public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
-    {
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        lock (_gate) _stop = stop;
-        try
-        {
-            LastProgress = null;
-            var opts = (Options ?? new DiskSpeedOptions()) with { Duration = Duration, RequestedSizeBytes = SizeBytes, DriveRoot = DriveRoot };
-            var cleanup = _cleanup = new StressCleanup(log);
-            var test = new DiskSpeedTest(fs, sensors, clockFactory?.Invoke(), log, cleanup);
-            var report = await test.RunAsync(opts, new P(x => { LastProgress = x; ProgressChanged?.Invoke(this, x); }), stop.Token).ConfigureAwait(false);
-            return new DiagnosticResult<DiskSpeedReport>(Name, ToStatus(report.Outcome), report.Headline, DateTimeOffset.Now, report);
-        }
-        finally { lock (_gate) _stop = null; }
-    }
+    protected override (DiagnosticStatus Status, string Headline) Describe(DiskSpeedReport report) => (ToStatus(report.Outcome), report.Headline);
 
     public static DiagnosticStatus ToStatus(DiskSpeedOutcome o) => o switch
     {
@@ -65,8 +39,4 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
         DiskSpeedOutcome.SlowDrive or DiskSpeedOutcome.StoppedByUser or DiskSpeedOutcome.NotEnoughSpace => DiagnosticStatus.Warning,
         _ => DiagnosticStatus.Error,
     };
-
-    private sealed class P(Action<DiskSpeedProgress> a) : IProgress<DiskSpeedProgress> { public void Report(DiskSpeedProgress v) => a(v); }
-
-    internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);
 }
