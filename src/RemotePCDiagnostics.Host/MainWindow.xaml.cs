@@ -26,9 +26,7 @@ public partial class MainWindow : Window
     private bool _mirror;
     private bool _reverseMirror;
     private bool _restarting;
-    private Uri? _reverseControlUrl; // --reverse-mirror: the /app page the local window drives, navigated once the WebView is ready
-    private bool _webViewInitialized;
-    private bool _reverseNavigated;
+    private Microsoft.Web.WebView2.Wpf.WebView2? _controlWebView; // --reverse-mirror: a plain WebView2 that shows the controlling /app page locally
     private DispatcherTimer? _readyTimer;
     private DispatcherTimer? _copyResetTimer;
     public MainWindow()
@@ -182,12 +180,8 @@ public partial class MainWindow : Window
             }
             App.Log($"BlazorWebViewInitializing args='{extra}'");
         };
-        RemoteBlazorWebView.BlazorWebViewInitialized += (_, e) => Dispatcher.BeginInvoke(() =>
-        {
+        RemoteBlazorWebView.BlazorWebViewInitialized += (_, e) =>
             App.Log($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
-            _webViewInitialized = true;
-            TryStartReverseControl(); // reverse mirror: navigate now if ReadyToConnect already gave us the URL
-        });
 
         if (launch.ServerUri is not null)
             StartRemote(launch.ServerUri, sessionCtx.SessionId, launch.Mirror, launch.ReverseMirror);
@@ -221,12 +215,9 @@ public partial class MainWindow : Window
             SetRemoteState(RemoteSessionState.Ready);
             if (_reverseMirror)
             {
-                // Don't navigate yet: at ReadyToConnect the WebView2 may not be initialized, so Navigate(url) is dropped.
-                // Store the controlling /app URL and navigate once BlazorWebViewInitialized has fired (like the tutorial, which
-                // only calls CoreWebView2.Navigate on Connected, never this early).
-                _reverseControlUrl = RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id);
-                App.Log($"Reverse mirror: local window will take control at {_reverseControlUrl} (webViewInitialized={_webViewInitialized})");
-                TryStartReverseControl();
+                // Tutorial "Reversing The Mirror" pattern: a plain WebView2 (no Blazor external-link handling, which otherwise opens
+                // /app in the system browser) shows the controlling /app page locally; the Blazor control hosts the app + mirrors.
+                ShowLocalController(RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id));
                 return;
             }
             // The app runs in the technician's browser; this window only needs to say so (the link is in the panel above, not repeated).
@@ -308,19 +299,26 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// --reverse-mirror: point the local window's WebView at the controlling /app page so the person here drives, while watchers use the
-    /// read-only /mirror link. Runs once, only when both the URL (ReadyToConnect) and an initialized WebView (BlazorWebViewInitialized)
-    /// are available; CoreWebView2.Navigate before initialization is silently dropped.
+    /// --reverse-mirror (tutorial "Reversing The Mirror"): put a plain WebView2 over the Blazor view and point it at the controlling
+    /// /app page, so the person here drives the app in this window while watchers open the read-only /mirror link. A plain WebView2 has
+    /// none of the Blazor control's "open off-origin links in the system browser" behavior, so /app loads in-window instead of Chrome.
     /// </summary>
-    private void TryStartReverseControl()
+    private void ShowLocalController(Uri appUrl)
     {
-        if (!_reverseMirror || _reverseNavigated || _reverseControlUrl is null || !_webViewInitialized) return;
-        var core = RemoteBlazorWebView.WebView.CoreWebView2;
-        if (core is null) { App.Log("Reverse mirror: CoreWebView2 still null; will retry when it initializes"); return; }
-        _reverseNavigated = true;
-        App.Log($"Reverse mirror: navigating local window to {_reverseControlUrl}");
-        try { core.Navigate(_reverseControlUrl.ToString()); }
-        catch (Exception ex) { _reverseNavigated = false; App.Log($"Reverse mirror navigate failed: {ex}"); }
+        try
+        {
+            if (_controlWebView is null)
+            {
+                _controlWebView = new Microsoft.Web.WebView2.Wpf.WebView2();
+                System.Windows.Controls.Grid.SetRow(_controlWebView, 1);
+                System.Windows.Controls.Panel.SetZIndex(_controlWebView, 5); // above the Blazor view (0), below the panel (10)
+                RootGrid.Children.Add(_controlWebView);
+            }
+            App.Log($"Reverse mirror: showing the local controller at {appUrl}");
+            _controlWebView.Source = appUrl;
+            _controlWebView.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex) { App.Log($"Reverse mirror: couldn't show the local controller: {ex}"); }
     }
 
     private void SetRemoteState(RemoteSessionState state)

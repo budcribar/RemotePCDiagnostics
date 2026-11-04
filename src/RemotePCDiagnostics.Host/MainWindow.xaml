@@ -4,7 +4,7 @@
         xmlns:blazor="clr-namespace:PeakSWC.RemoteBlazorWebView.Wpf;assembly=PeakSWC.RemoteBlazorWebView.Wpf"
         xmlns:ui="clr-namespace:RemotePCDiagnostics.UI;assembly=RemotePCDiagnostics.UI"
         Title="RemotePCDiagnostics" Icon="Assets/diagnostics.ico" Height="768" Width="1200">
-    <Grid>
+    <Grid x:Name="RootGrid">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
