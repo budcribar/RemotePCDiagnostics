@@ -32,5 +32,16 @@
                 </StackPanel>
             </StackPanel>
         </Border>
+        <!-- Reverse-mirror demo: a small "Remote" bubble instead of the top card; click to copy the view-only link. -->
+        <Border x:Name="RemoteBubble" Grid.Row="1" Visibility="Collapsed" Panel.ZIndex="20" Cursor="Hand"
+                HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,20,20"
+                Background="#E62B2F36" BorderBrush="#FF5A6270" BorderThickness="1" CornerRadius="16" Padding="14,8"
+                MouseLeftButtonUp="RemoteBubble_Click" ToolTip="Click to copy the view-only link">
+            <Border.Effect><DropShadowEffect BlurRadius="10" ShadowDepth="1" Opacity="0.45" /></Border.Effect>
+            <StackPanel Orientation="Horizontal">
+                <Ellipse Width="9" Height="9" Fill="#FF22E58A" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <TextBlock x:Name="RemoteBubbleText" Text="Remote" Foreground="#FFF2F4F7" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

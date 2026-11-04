@@ -198,7 +198,8 @@ public partial class MainWindow : Window
         _serverUri = serverUri;
         _mirror = mirror;
         _reverseMirror = reverseMirror;
-        RemotePanel.Visibility = Visibility.Visible;
+        // Reverse-mirror demo: keep the top card hidden so the window looks like Local; a small "Remote" bubble carries the link instead.
+        RemotePanel.Visibility = reverseMirror ? Visibility.Collapsed : Visibility.Visible;
         SetRemoteState(RemoteSessionState.Connecting);
 
         RemoteBlazorWebView.ReadyToConnect += (s, e) => Dispatcher.BeginInvoke(() =>
@@ -218,6 +219,7 @@ public partial class MainWindow : Window
                 // Tutorial "Reversing The Mirror" pattern: a plain WebView2 (no Blazor external-link handling, which otherwise opens
                 // /app in the system browser) shows the controlling /app page locally; the Blazor control hosts the app + mirrors.
                 ShowLocalController(RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id));
+                RemoteBubble.Visibility = Visibility.Visible; // small bubble carries the view-only link; no top card
                 return;
             }
             // The app runs in the technician's browser; this window only needs to say so (the link is in the panel above, not repeated).
@@ -324,6 +326,8 @@ public partial class MainWindow : Window
     private void SetRemoteState(RemoteSessionState state)
     {
         if (_serverUri is null) return;
+        // Reverse-mirror demo looks like Local; only pop the card up if the server can't be reached, so errors aren't hidden.
+        if (_reverseMirror) RemotePanel.Visibility = RemoteLinkInfo.IsWarning(state) ? Visibility.Visible : Visibility.Collapsed;
         RemoteStatusText.Text = RemoteLinkInfo.StatusText(state, _serverUri, _mirror, _reverseMirror);
         RemoteStatusText.Foreground = new SolidColorBrush(RemoteLinkInfo.IsWarning(state) ? Color.FromRgb(0xFF, 0xC8, 0x57) : Color.FromRgb(0xD0, 0xD5, 0xDD));
     }
@@ -348,6 +352,21 @@ public partial class MainWindow : Window
             _copyResetTimer.Start();
         }
         catch (Exception ex) { App.Log($"Copy link failed: {ex}"); }
+    }
+
+    private void RemoteBubble_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (_technicianUrl is null) return;
+        try
+        {
+            Clipboard.SetText(_technicianUrl.ToString());
+            RemoteBubbleText.Text = "Link copied";
+            _copyResetTimer?.Stop();
+            _copyResetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            _copyResetTimer.Tick += (_, _) => { _copyResetTimer.Stop(); RemoteBubbleText.Text = "Remote"; };
+            _copyResetTimer.Start();
+        }
+        catch (Exception ex) { App.Log($"Copy link (bubble) failed: {ex}"); }
     }
 
     /// <summary>App start event text: version, machine model, admin, mode (no server URL or session id).</summary>
