@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private Uri? _technicianUrl;
     private Guid _sessionId;
     private bool _mirror;
+    private bool _reverseMirror;
     private bool _restarting;
     private DispatcherTimer? _readyTimer;
     private DispatcherTimer? _copyResetTimer;
@@ -31,14 +32,14 @@ public partial class MainWindow : Window
     {
         // Local (default) or Remote. Remote when started with -u=<server uri> (RemoteBlazorWebViewTutorial convention)
         // or REMOTEPC_MODE=Remote (+ optional REMOTEPC_SERVER_URL, default https://remoteblazorwebview.com:34544).
-        // See Properties/launchSettings.json for the Visual Studio profiles ("Remote (Railway, mirror)" is the default, "Remote (Railway)", "Local").
+        // See Properties/launchSettings.json for the Visual Studio profiles ("Remote (Railway, mirror)" is the default; "Remote (Railway, reverse mirror demo)", "Remote (Railway)", "Local").
         var pendingReboot = RebootResumeCoordinator.TryReadPendingStateFile();
         var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, pendingReboot);
         var mode = launch.Mode;
 
         var services = new ServiceCollection();
         services.AddRemoteWpfBlazorWebView();
-        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Mirror);
+        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Mirror, launch.ReverseMirror);
         services.AddSingleton<ISessionContext>(sessionCtx);
         if (mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
         services.AddSingleton<ResultStore>();
@@ -182,7 +183,7 @@ public partial class MainWindow : Window
             App.Log($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
 
         if (launch.ServerUri is not null)
-            StartRemote(launch.ServerUri, sessionCtx.SessionId, launch.Mirror);
+            StartRemote(launch.ServerUri, sessionCtx.SessionId, launch.Mirror, launch.ReverseMirror);
         else
             RemoteBlazorWebView.HostPage = HostPage; // Local: unchanged behavior (HostPage moved from XAML to code)
     }
@@ -191,10 +192,11 @@ public partial class MainWindow : Window
     /// Remote mode, matching RemoteBlazorWebViewTutorial (WpfApp): subscribe ReadyToConnect/Connected/Disconnected and set
     /// Id + ServerUri BEFORE HostPage (setting HostPage starts the control; ServerUri/GrpcBaseUri/Id set afterwards are rejected).
     /// </summary>
-    private void StartRemote(Uri serverUri, Guid id, bool mirror)
+    private void StartRemote(Uri serverUri, Guid id, bool mirror, bool reverseMirror = false)
     {
         _serverUri = serverUri;
         _mirror = mirror;
+        _reverseMirror = reverseMirror;
         RemotePanel.Visibility = Visibility.Visible;
         SetRemoteState(RemoteSessionState.Connecting);
 
@@ -203,12 +205,21 @@ public partial class MainWindow : Window
             _readyTimer?.Stop();
             if (_provider.GetService<ISessionContext>() is SessionContext sc && e.Id != Guid.Empty) sc.SessionId = e.Id;
             if (e.Id != Guid.Empty) _sessionId = e.Id;
-            _technicianUrl = RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id);
-            App.Log($"ReadyToConnect url={e.Url} id={e.Id} link={_technicianUrl}");
+            // Demo (--reverse-mirror): the shared link is the read-only mirror page; this window opens the controlling /app page itself.
+            _technicianUrl = RemoteLinkInfo.BuildShareUrl(e.Url ?? serverUri, e.Id, _reverseMirror);
+            App.Log($"ReadyToConnect url={e.Url} id={e.Id} link={_technicianUrl} reverseMirror={_reverseMirror}");
             RemoteLinkText.Text = _technicianUrl.ToString();
             RemoteHyperlink.NavigateUri = _technicianUrl;
             RemoteLinkRow.Visibility = Visibility.Visible;
             SetRemoteState(RemoteSessionState.Ready);
+            if (_reverseMirror)
+            {
+                var controlUrl = RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id);
+                App.Log($"Reverse mirror: local window takes control at {controlUrl}");
+                try { RemoteBlazorWebView.WebView.CoreWebView2?.Navigate(controlUrl.ToString()); }
+                catch (Exception ex) { App.Log($"Reverse mirror navigate failed: {ex}"); }
+                return;
+            }
             // The app runs in the technician's browser; this window only needs to say so (the link is in the panel above, not repeated).
             try { (s as IBlazorWebView)?.NavigateToString(RemoteLinkInfo.LocalPlaceholderHtml); }
             catch (Exception ex) { App.Log($"NavigateToString placeholder failed: {ex}"); }
@@ -216,7 +227,7 @@ public partial class MainWindow : Window
         RemoteBlazorWebView.Connected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
 
-            App.Log($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User} mirror={_mirror}");
+            App.Log($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User} mirror={_mirror} reverseMirror={_reverseMirror}");
             SetRemoteState(RemoteSessionState.TechnicianConnected);
             if (_mirror)
             {
@@ -244,7 +255,7 @@ public partial class MainWindow : Window
             try
             {
                 var psi = new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
-                foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id, _mirror)) psi.ArgumentList.Add(a);
+                foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id, _mirror, _reverseMirror)) psi.ArgumentList.Add(a);
                 System.Diagnostics.Process.Start(psi);
                 _restarting = true;
                 App.Log($"Refreshed: started a new copy for session {id}; closing this one");
@@ -268,7 +279,7 @@ public partial class MainWindow : Window
         {
             RemoteBlazorWebView.Id = id; // Guid.Empty = new id each run; fixed via -i=<guid> or REMOTEPC_ID
             RemoteBlazorWebView.ServerUri = serverUri;
-            RemoteBlazorWebView.EnableMirrors = mirror;
+            RemoteBlazorWebView.EnableMirrors = mirror || reverseMirror; // the read-only /mirror page needs this in both directions
             RemoteBlazorWebView.HostPage = HostPage; // must be last (starts the control)
             _readyTimer.Start();
         }
@@ -283,7 +294,7 @@ public partial class MainWindow : Window
     private void SetRemoteState(RemoteSessionState state)
     {
         if (_serverUri is null) return;
-        RemoteStatusText.Text = RemoteLinkInfo.StatusText(state, _serverUri, _mirror);
+        RemoteStatusText.Text = RemoteLinkInfo.StatusText(state, _serverUri, _mirror, _reverseMirror);
         RemoteStatusText.Foreground = new SolidColorBrush(RemoteLinkInfo.IsWarning(state) ? Color.FromRgb(0xFF, 0xC8, 0x57) : Color.FromRgb(0xD0, 0xD5, 0xDD));
     }
 

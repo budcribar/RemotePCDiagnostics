@@ -12,11 +12,13 @@ public interface ISessionContext
     Guid SessionId => Guid.Empty;
     /// <summary>True when the local window mirrors the remote technician's session (<c>-m</c> / <c>--mirror</c>).</summary>
     bool Mirror => false;
+    /// <summary>True for the demo direction (<c>--reverse-mirror</c>): the local window is in control, the shared link is read-only.</summary>
+    bool ReverseMirror => false;
 }
 
 public sealed class SessionContext : ISessionContext
 {
-    public SessionContext(SessionMode mode, Uri? serverUri = null, Guid sessionId = default, bool mirror = false)
+    public SessionContext(SessionMode mode, Uri? serverUri = null, Guid sessionId = default, bool mirror = false, bool reverseMirror = false)
     {
         Mode = mode;
         ServerUri = serverUri;
@@ -24,11 +26,13 @@ public sealed class SessionContext : ISessionContext
             ? sessionId
             : (mode == SessionMode.Remote ? Guid.NewGuid() : Guid.Empty);
         Mirror = mirror;
+        ReverseMirror = reverseMirror;
     }
 
     public SessionMode Mode { get; }
     public Uri? ServerUri { get; }
     public Guid SessionId { get; set; }
     public bool Mirror { get; }
+    public bool ReverseMirror { get; }
     public string MachineName { get; } = Environment.MachineName;
 }

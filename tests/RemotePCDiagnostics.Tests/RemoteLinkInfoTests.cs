@@ -44,4 +44,16 @@ public class RemoteLinkInfoTests
         Assert.False(RemoteLinkInfo.IsWarning(RemoteSessionState.Ready));
         Assert.Equal(TimeSpan.FromSeconds(15), RemoteLinkInfo.ReadyTimeout);
     }
+
+    [Fact]
+    public void ReverseMirror_SharesTheReadOnlyMirrorLink()
+    {
+        var s = new Uri("https://remoteblazorwebview.com:34544");
+        var id = Guid.Parse("7e57c0de-0000-4000-8000-000000000001");
+        Assert.Equal("https://remoteblazorwebview.com:34544/mirror/7e57c0de-0000-4000-8000-000000000001", RemoteLinkInfo.BuildShareUrl(s, id, reverseMirror: true).ToString());
+        Assert.Equal("https://remoteblazorwebview.com:34544/app/7e57c0de-0000-4000-8000-000000000001", RemoteLinkInfo.BuildShareUrl(s, id, reverseMirror: false).ToString());
+        Assert.Equal("Demo: you're in control here. Share this view-only link:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s, reverseMirror: true));
+        Assert.Contains("can watch but not click", RemoteLinkInfo.StatusText(RemoteSessionState.TechnicianConnected, s, reverseMirror: true));
+        Assert.Equal("Ready. Share this link with the technician:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s));
+    }
 }

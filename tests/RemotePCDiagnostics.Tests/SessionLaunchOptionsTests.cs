@@ -121,4 +121,33 @@ public class SessionLaunchOptionsTests
         Assert.Throws<ArgumentException>(() => SessionLaunchOptions.RestartArguments(new Uri("https://x.example/"), Guid.Empty));
         Assert.False(SessionLaunchOptions.IsRestarted(["-u=https://x.example"]));
     }
+
+    [Fact]
+    public void ReverseMirror_FromArgOrEnv_AndWinsOverMirror()
+    {
+        var byArg = SessionLaunchOptions.Resolve(["-u=https://remoteblazorwebview.com:34544", "--reverse-mirror"], _ => null);
+        Assert.True(byArg.ReverseMirror);
+        Assert.False(byArg.Mirror);
+
+        var byEnv = SessionLaunchOptions.Resolve([], v => v switch { "REMOTEPC_MODE" => "Remote", "REMOTEPC_REVERSE_MIRROR" => "1", "REMOTEPC_MIRROR" => "1", _ => null });
+        Assert.True(byEnv.ReverseMirror);
+        Assert.False(byEnv.Mirror); // the two directions exclude each other
+
+        Assert.False(SessionLaunchOptions.Resolve(["-u=https://x.example", "--reverse-mirror=false"], _ => null).ReverseMirror);
+        Assert.False(SessionLaunchOptions.Resolve(["-u=https://x.example", "--mirror"], _ => null).ReverseMirror);
+    }
+
+    [Fact]
+    public void ReverseMirror_SurvivesRestartAndReboot()
+    {
+        var id = Guid.Parse("7e57c0de-0000-4000-8000-000000000001");
+        var args = SessionLaunchOptions.RestartArguments(new Uri("https://remoteblazorwebview.com:34544/"), id, mirror: false, reverseMirror: true);
+        Assert.Contains("--reverse-mirror", args);
+        Assert.DoesNotContain("--mirror", args);
+        Assert.True(SessionLaunchOptions.Resolve(args, _ => null).ReverseMirror);
+
+        var cmd = SessionLaunchOptions.BuildResumeCommandLine(@"C:\App\RemotePCDiagnostics.Host.exe", SessionMode.Remote, new Uri("https://remoteblazorwebview.com:34544"), id, reverseMirror: true);
+        Assert.Contains(" --reverse-mirror ", cmd);
+        Assert.DoesNotContain(" --mirror ", cmd);
+    }
 }

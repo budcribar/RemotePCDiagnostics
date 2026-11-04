@@ -6,8 +6,10 @@ namespace RemotePCDiagnostics.Core.Session;
 /// How the Host should run, resolved from command-line args, environment, and any pending post-reboot state.
 /// Precedence: <c>-u=&lt;url&gt;</c> arg (forces Remote) &gt; REMOTEPC_MODE / REMOTEPC_SERVER_URL env vars &gt; pending reboot state &gt; Local.
 /// Pass <c>-m</c> or <c>--mirror</c> (or <c>REMOTEPC_MIRROR=1</c>) in Remote mode so the local window mirrors what the technician is doing.
+/// Pass <c>--reverse-mirror</c> (or <c>REMOTEPC_REVERSE_MIRROR=1</c>) for the opposite, for demos: the local window is in control and the shared
+/// link is the read-only <c>/mirror/&lt;id&gt;</c> page, so someone in a browser can watch but not click.
 /// </summary>
-public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid Id, bool PostReboot = false, bool Mirror = false)
+public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid Id, bool PostReboot = false, bool Mirror = false, bool ReverseMirror = false)
 {
     public const string ModeVariable = "REMOTEPC_MODE";
     public const string ServerUrlVariable = "REMOTEPC_SERVER_URL";
@@ -15,6 +17,8 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     public const string MirrorVariable = "REMOTEPC_MIRROR";
     public const string MirrorArg = "--mirror";
     public const string ShortMirrorArg = "-m";
+    public const string ReverseMirrorVariable = "REMOTEPC_REVERSE_MIRROR";
+    public const string ReverseMirrorArg = "--reverse-mirror";
     public const string PostRebootArg = "--post-reboot";
     /// <summary>Default relay (PeakSWC.RemoteWebViewService on Railway) used when Remote mode has no explicit URL.</summary>
     public const string DefaultServerUrl = "https://remoteblazorwebview.com:34544";
@@ -31,9 +35,11 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
             _ => null,
         };
 
-        bool? mirrorArg = null;
+        bool? mirrorArg = null, reverseArg = null;
         foreach (var a in argList)
         {
+            if (string.Equals(a, ReverseMirrorArg, StringComparison.OrdinalIgnoreCase)) { reverseArg = true; continue; }
+            if (a.StartsWith(ReverseMirrorArg + "=", StringComparison.OrdinalIgnoreCase)) { reverseArg = ParseBool(a[(ReverseMirrorArg.Length + 1)..]) ?? true; continue; }
             if (string.Equals(a, MirrorArg, StringComparison.OrdinalIgnoreCase) || string.Equals(a, ShortMirrorArg, StringComparison.OrdinalIgnoreCase))
                 mirrorArg = true;
             else if (a.StartsWith("-m=", StringComparison.OrdinalIgnoreCase))
@@ -41,7 +47,9 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
             else if (a.StartsWith("--mirror=", StringComparison.OrdinalIgnoreCase))
                 mirrorArg = ParseBool(a[9..]) ?? true;
         }
-        var mirror = mirrorArg ?? (ParseBool(env(MirrorVariable)) == true);
+        var reverse = reverseArg ?? (ParseBool(env(ReverseMirrorVariable)) == true);
+        // The two directions exclude each other; reverse wins (it's the one asked for explicitly for a demo).
+        var mirror = !reverse && (mirrorArg ?? (ParseBool(env(MirrorVariable)) == true));
 
         var urlArg = Arg("-u=");
         var idText = Arg("-i=") ?? env(IdVariable);
@@ -53,7 +61,7 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
 
         if (!remote)
         {
-            var localOpts = new SessionLaunchOptions(SessionMode.Local, null, id, postReboot, mirror);
+            var localOpts = new SessionLaunchOptions(SessionMode.Local, null, id, postReboot, mirror, reverse);
             return ApplyPendingReboot(localOpts, pendingReboot);
         }
 
@@ -62,7 +70,7 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
         if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
             throw new ArgumentException($"Invalid remote server URL '{url}'. Set {ServerUrlVariable} (or -u=) to e.g. {DefaultServerUrl}.");
 
-        var remoteOpts = new SessionLaunchOptions(SessionMode.Remote, uri, id, postReboot, mirror);
+        var remoteOpts = new SessionLaunchOptions(SessionMode.Remote, uri, id, postReboot, mirror, reverse);
         return ApplyPendingReboot(remoteOpts, pendingReboot);
     }
 
@@ -75,7 +83,8 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
         if (pending is null) return launch;
 
         var effectiveId = launch.Id != Guid.Empty ? launch.Id : pending.SessionId;
-        var effectiveMirror = launch.Mirror || pending.Mirror;
+        var effectiveReverse = launch.ReverseMirror || pending.ReverseMirror;
+        var effectiveMirror = !effectiveReverse && (launch.Mirror || pending.Mirror);
         if (pending.Mode == SessionMode.Remote)
         {
             var effectiveUri = launch.ServerUri;
@@ -84,10 +93,10 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
             if (effectiveUri is null)
                 effectiveUri = new Uri(DefaultServerUrl);
 
-            return new(SessionMode.Remote, effectiveUri, effectiveId, PostReboot: true, Mirror: effectiveMirror);
+            return new(SessionMode.Remote, effectiveUri, effectiveId, PostReboot: true, Mirror: effectiveMirror, ReverseMirror: effectiveReverse);
         }
 
-        return launch with { Id = effectiveId, PostReboot = true, Mirror = effectiveMirror };
+        return launch with { Id = effectiveId, PostReboot = true, Mirror = effectiveMirror, ReverseMirror = effectiveReverse };
     }
 
     /// <summary>Marks a copy started by <see cref="RestartArguments"/>: it waits for the old copy to exit instead of leaving at once.</summary>
@@ -104,11 +113,12 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     /// Refreshed event; the library's own Restart() starts the same <c>-u=</c>/<c>-i=</c> pair). The same session id keeps the
     /// technician's link working; <see cref="RestartedArg"/> lets the new copy wait for this one to release the one-copy lock.
     /// </summary>
-    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool mirror = false)
+    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool mirror = false, bool reverseMirror = false)
     {
         if (sessionId == Guid.Empty) throw new ArgumentException("A restart needs the session id the server assigned.", nameof(sessionId));
         var list = new List<string> { $"-u={serverUri.AbsoluteUri.TrimEnd('/')}", $"-i={sessionId:D}" };
-        if (mirror) list.Add(MirrorArg);
+        if (reverseMirror) list.Add(ReverseMirrorArg);
+        else if (mirror) list.Add(MirrorArg);
         list.Add(RestartedArg);
         return list;
     }
@@ -117,14 +127,14 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     /// Builds the Windows <c>RunOnce</c> command line so that after a reboot, <c>RemotePCDiagnostics.Host</c> restarts
     /// into the exact same session mode, relay server, remote session ID (<c>-i=&lt;guid&gt;</c>), and mirror setting.
     /// </summary>
-    public static string BuildResumeCommandLine(string executablePath, SessionMode mode, Uri? serverUri, Guid sessionId, bool mirror = false)
+    public static string BuildResumeCommandLine(string executablePath, SessionMode mode, Uri? serverUri, Guid sessionId, bool mirror = false, bool reverseMirror = false)
     {
         var quotedExe = $"\"{executablePath.Trim('"')}\"";
         if (mode == SessionMode.Remote && serverUri is not null)
         {
             var urlPart = $"-u={serverUri.AbsoluteUri.TrimEnd('/')}";
             var idPart = sessionId != Guid.Empty ? $" -i={sessionId:D}" : "";
-            var mirrorPart = mirror ? $" {MirrorArg}" : "";
+            var mirrorPart = reverseMirror ? $" {ReverseMirrorArg}" : mirror ? $" {MirrorArg}" : "";
             return $"{quotedExe} {urlPart}{idPart}{mirrorPart} {PostRebootArg}";
         }
         return $"{quotedExe} {PostRebootArg}";
