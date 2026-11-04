@@ -1014,6 +1014,51 @@ public class WorkflowTests
         Assert.Contains(flow.State.Log, l => l.Contains("DriveHealth: 1 thing (2 of 2)"));
     }
 
+    private sealed class CountingAreaModule(string name, AreaReport report) : IDiagnosticModule
+    {
+        public int Runs;
+        public string Name => name;
+        public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
+        public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
+        public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default)
+        {
+            Runs++;
+            return Task.FromResult(new DiagnosticResult(name, report.Status, report.Summary, DateTimeOffset.Now, report));
+        }
+    }
+
+    [Fact]
+    public async Task RunChecksAsync_ReusesAlreadyCompletedCheckResults_UnlessForced()
+    {
+        var mod1 = new CountingAreaModule("Programs", Report(Updates));
+        var mod2 = new CountingAreaModule("DriveHealth", Report(Clean));
+        var results = new ResultStore();
+        var diag = new DiagnosticsService(results, [mod1, mod2]);
+        var rem = new RemediationService(new SystemCommandRunner(new ScriptedLauncher((_, _) => ScriptedLauncher.Ok("""{"Count":0}"""))), new SessionContext(SessionMode.Remote));
+        var bench = new BenchmarkService(new BenchmarkRunner(new Probes(), resolve: (_, _) => Task.CompletedTask), new MemBenchStore());
+        var flow = new WorkflowService(diag, results, rem, bench, new Sys(), new MemFlowStore(), session: new SessionContext(SessionMode.Remote), delay: (_, _) => Task.CompletedTask);
+
+        // Simulate checks already run from the main page (Dashboard / Checks screen).
+        await diag.RunAsync("Programs");
+        await diag.RunAsync("DriveHealth");
+        Assert.Equal(1, mod1.Runs);
+        Assert.Equal(1, mod2.Runs);
+        Assert.True(flow.HasCompletedCheckModuleResults);
+
+        // Service workflow should reuse the completed check results without re-running the modules.
+        await flow.RunChecksAsync();
+        Assert.Equal(WorkflowStage.Review, flow.State.Stage);
+        Assert.Equal(1, mod1.Runs);
+        Assert.Equal(1, mod2.Runs);
+        Assert.NotEmpty(flow.State.Fixes);
+
+        // Reset + forceRerun should re-run the modules when explicitly requested.
+        flow.Reset();
+        await flow.RunChecksAsync(forceRerun: true);
+        Assert.Equal(2, mod1.Runs);
+        Assert.Equal(2, mod2.Runs);
+    }
+
     private static string E(string s) => System.Net.WebUtility.HtmlEncode(s);
     private static int CountOf(string text, string part) { var n = 0; for (var i = text.IndexOf(part, StringComparison.Ordinal); i >= 0; i = text.IndexOf(part, i + part.Length, StringComparison.Ordinal)) n++; return n; }
 }

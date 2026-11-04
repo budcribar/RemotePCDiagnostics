@@ -100,7 +100,13 @@ public sealed class WorkflowService(
 
     // ---- step 1: checks → review ----
 
-    public async Task RunChecksAsync(CancellationToken ct = default)
+    public bool HasCompletedCheckModuleResults =>
+        diag.Modules.Where(m => m.IncludeInRunAll).All(m => IsCompletedResult(results.Get(m.Name)));
+
+    private static bool IsCompletedResult(DiagnosticResult r) =>
+        r.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error && !Cancellation.IsCancelled(r);
+
+    public async Task RunChecksAsync(CancellationToken ct = default, bool forceRerun = false)
     {
         if (Busy || State.IsRunning) return;
         Busy = true;
@@ -123,6 +129,13 @@ public sealed class WorkflowService(
             foreach (var m in modules)
             {
                 ct.ThrowIfCancellationRequested();
+                var existing = !forceRerun ? results.Get(m.Name) : null;
+                if (existing is not null && IsCompletedResult(existing))
+                {
+                    UpdateCheckItem(m.Name, item => item with { Status = existing.Status, Message = existing.Message, Step = 1, Total = 1 });
+                    Note($"{m.DisplayName}: {existing.Message} ({CompletedChecksCount} of {TotalChecksCount})");
+                    continue;
+                }
                 UpdateCheckItem(m.Name, item => item with { Status = DiagnosticStatus.Running, Message = "Running…" });
                 Status = $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · {m.DisplayName}…";
                 Raise();
@@ -151,7 +164,8 @@ public sealed class WorkflowService(
                         : $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · Memory, startup & apps: {cp.Message}";
                     Raise();
                 });
-                await memory.ScanAsync(ct, memProgress).ConfigureAwait(false);
+                if (forceRerun || memory.Snapshot is null || memory.ScanError is not null)
+                    await memory.ScanAsync(ct, memProgress).ConfigureAwait(false);
                 var memCount = memory.Suggestions.Count;
                 var memMsg = memCount == 0 ? "No memory or startup issues found." : $"{memCount} suggestion{(memCount == 1 ? "" : "s")} found.";
                 UpdateCheckItem("MemoryScan", item => item with { Status = memCount > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok, Message = memMsg, Step = item.Total, Total = item.Total });
@@ -168,7 +182,8 @@ public sealed class WorkflowService(
                         : $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · Storage caches & leftovers: {cp.Message}";
                     Raise();
                 });
-                await memory.ScanStorageAsync(refresh: true, ct, storageProgress).ConfigureAwait(false);
+                if (forceRerun || !memory.StorageScanned || memory.StorageError is not null)
+                    await memory.ScanStorageAsync(refresh: true, ct, storageProgress).ConfigureAwait(false);
                 var stCount = memory.StorageSuggestions.Count;
                 var stMsg = stCount == 0 ? "Nothing large to clean up." : $"{stCount} cleanup item{(stCount == 1 ? "" : "s")} found.";
                 UpdateCheckItem("StorageScan", item => item with { Status = stCount > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok, Message = stMsg, Step = item.Total, Total = item.Total });

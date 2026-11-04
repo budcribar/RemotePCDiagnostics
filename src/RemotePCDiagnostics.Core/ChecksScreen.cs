@@ -128,9 +128,14 @@ public sealed class ChecksScreenState
 
     private readonly Preferences.PreferencesService? _prefs;
 
-    public ChecksScreenState(DiagnosticsService diag, ResultStore store, Preferences.PreferencesService? prefs = null)
+    private readonly ResultStore _store;
+    private readonly Memory.MemorySuggestionService? _memory;
+
+    public ChecksScreenState(DiagnosticsService diag, ResultStore store, Preferences.PreferencesService? prefs = null, Memory.MemorySuggestionService? memory = null)
     {
         _diag = diag;
+        _store = store;
+        _memory = memory;
         _prefs = prefs;
         var saved = prefs?.Current;
         if (saved?.SelectedModules is { } sel)
@@ -286,6 +291,11 @@ public sealed class ChecksScreenState
             {
                 _checkItems.Clear();
                 foreach (var m in selected) _checkItems.Add(new(m.Name, m.DisplayName, DiagnosticStatus.NotRun, "Waiting…"));
+                if (_memory is not null)
+                {
+                    _checkItems.Add(new("MemoryScan", "Memory, startup & apps", DiagnosticStatus.NotRun, "Waiting…", 0, 5));
+                    _checkItems.Add(new("StorageScan", "Storage caches & leftovers", DiagnosticStatus.NotRun, "Waiting…", 0, Storage.StorageCleanupCatalog.All.Count + 3));
+                }
             }
             if (selected.Count == 0) return;
             RunningGroup = g;
@@ -319,6 +329,7 @@ public sealed class ChecksScreenState
                     {
                         var r = await _diag.RunAsync(mod.Name, progress, cts.Token).ConfigureAwait(false);
                         UpdateCheckItem(mod.Name, item => item with { Status = r.Status, Message = r.Message, Step = item.Total > 0 ? item.Total : 1, Total = item.Total > 0 ? item.Total : 1 });
+                        if (i == selected.Count - 1) await RunMemoryAndStorageScansAsync(cts.Token, errors).ConfigureAwait(false);
                     }
                     catch (Exception ex) { Failed(mod, ex); }
                 }
@@ -363,6 +374,49 @@ public sealed class ChecksScreenState
     }
 
     /// <summary>Stops the running group (current test is cancelled; remaining ones are not started).</summary>
+    private async Task RunMemoryAndStorageScansAsync(CancellationToken ct, List<string> errors)
+    {
+        if (_memory is null || ct.IsCancellationRequested) return;
+        try
+        {
+            UpdateCheckItem("MemoryScan", item => item with { Status = DiagnosticStatus.Running, Message = "Looking for ways to use less memory…", Step = 1, Total = 5 });
+            Raise();
+            var memProgress = CheckProgressExtensions.Create(cp =>
+            {
+                UpdateCheckItem("MemoryScan", item => item with { Status = DiagnosticStatus.Running, Message = cp.Message, Step = cp.Step > 0 ? cp.Step : item.Step, Total = cp.Total > 0 ? cp.Total : item.Total });
+                Raise();
+            });
+            if (_memory.Snapshot is null || _memory.ScanError is not null)
+                await _memory.ScanAsync(ct, memProgress).ConfigureAwait(false);
+            var memCount = _memory.Suggestions.Count;
+            var memMsg = memCount == 0 ? "No memory or startup issues found." : $"{memCount} suggestion{(memCount == 1 ? "" : "s")} found.";
+            UpdateCheckItem("MemoryScan", item => item with { Status = memCount > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok, Message = memMsg, Step = item.Total, Total = item.Total });
+            Raise();
+
+            if (!ct.IsCancellationRequested)
+            {
+                var storageTotal = Storage.StorageCleanupCatalog.All.Count + 3;
+                UpdateCheckItem("StorageScan", item => item with { Status = DiagnosticStatus.Running, Message = "Measuring caches and leftovers that can be deleted…", Step = 1, Total = storageTotal });
+                Raise();
+                var storageProgress = CheckProgressExtensions.Create(cp =>
+                {
+                    UpdateCheckItem("StorageScan", item => item with { Status = DiagnosticStatus.Running, Message = cp.Message, Step = cp.Step > 0 ? cp.Step : item.Step, Total = cp.Total > 0 ? cp.Total : item.Total });
+                    Raise();
+                });
+                if (!_memory.StorageScanned || _memory.StorageError is not null)
+                    await _memory.ScanStorageAsync(refresh: true, ct, storageProgress).ConfigureAwait(false);
+                var stCount = _memory.StorageSuggestions.Count;
+                var stMsg = stCount == 0 ? "Nothing large to clean up." : $"{stCount} cleanup item{(stCount == 1 ? "" : "s")} found.";
+                UpdateCheckItem("StorageScan", item => item with { Status = stCount > 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Ok, Message = stMsg, Step = item.Total, Total = item.Total });
+                Raise();
+            }
+        }
+        catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+        {
+            lock (_gate) errors.Add($"Memory/storage scan couldn't run: {ex.Message}");
+        }
+    }
+
     public void Stop()
     {
         CancellationTokenSource? c;

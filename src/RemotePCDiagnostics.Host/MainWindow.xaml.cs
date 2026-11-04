@@ -104,7 +104,8 @@ public partial class MainWindow : Window
         services.AddSingleton(new RemotePCDiagnostics.Core.Preferences.PreferencesService(
             new RemotePCDiagnostics.Core.Preferences.FilePreferencesStore(RemotePCDiagnostics.Core.Preferences.FilePreferencesStore.DefaultPath(), App.Log)));
         services.AddSingleton(sp => new ChecksScreenState(sp.GetRequiredService<DiagnosticsService>(), sp.GetRequiredService<ResultStore>(),
-            sp.GetRequiredService<RemotePCDiagnostics.Core.Preferences.PreferencesService>()));
+            sp.GetRequiredService<RemotePCDiagnostics.Core.Preferences.PreferencesService>(),
+            sp.GetRequiredService<RemotePCDiagnostics.Core.Memory.MemorySuggestionService>()));
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Memory.MemorySuggestionService(
             new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), App.Log), sp.GetRequiredService<ServicesModule>(), sp.GetRequiredService<ServiceActionService>(),
             sp.GetRequiredService<ISessionContext>(), (level, text) => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.MemorySuggestion, level, text), App.Log,

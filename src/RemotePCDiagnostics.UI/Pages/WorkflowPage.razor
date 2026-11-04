@@ -163,7 +163,7 @@
         @if (_startError is { } se) { <p class="notice notice-error" role="alert" data-testid="wf-signin-error">@se</p> }
         <div class="toolbar">
             <button class="btn btn-primary" data-testid="wf-go" disabled="@(_starting || !CanStart)" @onclick="Start"><Icon Name="play" Size="12" /> @(_starting ? "Starting…" : $"Start: restart, benchmark, apply {approved} fix{(approved == 1 ? "" : "es")}, report")</button>
-            <button class="btn-small" @onclick="Flow.Reset">Start over</button>
+            <button class="btn-small" @onclick="StartOver">Start over</button>
         </div>
         break;
 
@@ -252,6 +252,8 @@
         Bench.Changed += OnChanged;
         LoadLogon();
         foreach (var a in Prefs?.Current.WorkflowOpenAreas ?? []) _openAreas.Add(a);
+        if (Flow.State.Stage == WorkflowStage.Idle && !Flow.Busy && Flow.HasCompletedCheckModuleResults)
+            _ = Flow.RunChecksAsync();
     }
 
     private void LoadLogon()
@@ -262,7 +264,9 @@
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
     public void Dispose() { Flow.Changed -= OnChanged; Bench.Changed -= OnChanged; _password = ""; _showPassword = false; }
 
-    private void RunChecks() { _message = null; _ = Flow.RunChecksAsync(); }
+    private void RunChecks() { _message = null; _ = Flow.RunChecksAsync(forceRerun: _forceRerunNext); _forceRerunNext = false; }
+    private bool _forceRerunNext;
+    private void StartOver() { _forceRerunNext = true; Flow.Reset(); }
 
     private async Task Start()
     {
