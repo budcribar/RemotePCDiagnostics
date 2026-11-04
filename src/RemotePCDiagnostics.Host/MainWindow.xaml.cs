@@ -347,13 +347,13 @@ public partial class MainWindow : Window
                 var info = System.IO.Directory.CreateDirectory(dir);
                 try
                 {
-                    var acl = info.GetAccessControl();
+                    var acl = System.IO.FileSystemAclExtensions.GetAccessControl(info);
                     var flags = System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit;
                     var usersSid = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.BuiltinUsersSid, null);
                     var authSid = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.AuthenticatedUserSid, null);
                     acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(usersSid, System.Security.AccessControl.FileSystemRights.Modify, flags, System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
                     acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(authSid, System.Security.AccessControl.FileSystemRights.Modify, flags, System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
-                    info.SetAccessControl(acl);
+                    System.IO.FileSystemAclExtensions.SetAccessControl(info, acl);
                 }
                 catch { }
                 var probe = System.IO.Path.Combine(dir, ".write-probe");
