@@ -84,7 +84,20 @@ public partial class App : Application
         base.OnStartup(e);
 
         // Everything this app does needs administrator rights: without them, leave right away (app and --undo-all alike).
-        if (!IsAdministrator()) { Log("Not running as administrator: exiting"); Shutdown(ExitNotAdmin); return; }
+        if (!IsAdministrator())
+        {
+            Log("Not running as administrator: requesting elevation before loading WebView");
+            if (!TryElevate(e.Args))
+            {
+                MessageBox.Show(
+                    "Remote PC Diagnostics requires administrator privileges to run.",
+                    "Administrator Privileges Required",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+            Shutdown(ExitNotAdmin);
+            return;
+        }
 
         // One instance per PC (local window and remote session share it); --undo-all also waits its turn.
         _instance = new Mutex(true, InstanceMutexName, out var first);
@@ -129,6 +142,30 @@ public partial class App : Application
             return result.Failed == 0 ? ExitOk : ExitUndoPartial;
         }
         catch (Exception ex) { Log("--undo-all failed: " + ex); return ExitUndoPartial; }
+    }
+
+    private static bool TryElevate(string[] args)
+    {
+        if (args.Any(a => a.Equals("--elevated", StringComparison.OrdinalIgnoreCase))) return false;
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(exe)) return false;
+        try
+        {
+            var quotedArgs = string.Join(" ", args.Append("--elevated").Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
+            var psi = new System.Diagnostics.ProcessStartInfo(exe, quotedArgs)
+            {
+                UseShellExecute = true,
+                Verb = "runas",
+                WorkingDirectory = AppContext.BaseDirectory
+            };
+            System.Diagnostics.Process.Start(psi);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log($"Elevation declined or failed: {ex.Message}");
+            return false;
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)
