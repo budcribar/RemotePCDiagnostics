@@ -219,4 +219,47 @@ public class ChecksScreenTests
         Assert.Contains("Skipped: Memory", s.LastRunNote);
 
     }
+
+    [Fact]
+    public async Task RunAllChecks_RunsEveryCheckModule_EvenWhenUnticked_AndTracksCheckItems()
+    {
+        var gate = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        var store = new ResultStore();
+        var svc = new DiagnosticsService(store, [
+            new FakeModule("A", async (p, ct) =>
+            {
+                p?.ReportStep(1, 2, "Step one");
+                gate.TrySetResult();
+                await release.Task.WaitAsync(ct);
+                return FakeModule.Ok("A");
+            }),
+            new FakeModule("B", _ => Task.FromResult(new DiagnosticResult("B", DiagnosticStatus.Warning, "warn", DateTimeOffset.Now)))]);
+        var s = new ChecksScreenState(svc, store);
+        s.SetSelected("B", false);
+
+        var run = s.RunAllChecksAsync();
+        await gate.Task;
+
+        Assert.Equal(CheckGroup.Checks, s.RunningGroup);
+        Assert.Equal(2, s.TotalChecksCount);
+        Assert.Equal(0, s.CompletedChecksCount);
+        var live = s.LiveCheckItems(store);
+        Assert.Equal(2, live.Count);
+        Assert.Equal(DiagnosticStatus.Running, live[0].Status);
+        Assert.Equal("Step one", live[0].Message);
+        Assert.Equal(1, live[0].Step);
+        Assert.Equal(2, live[0].Total);
+        Assert.Equal(DiagnosticStatus.NotRun, live[1].Status);
+        Assert.True(s.CheckProgressFraction > 0 && s.CheckProgressFraction < 0.5);
+
+        release.SetResult();
+        await run;
+
+        Assert.Equal(DiagnosticStatus.Ok, store.Get("A").Status);
+        Assert.Equal(DiagnosticStatus.Warning, store.Get("B").Status);
+        Assert.Null(s.RunningGroup);
+        Assert.Empty(s.CheckItems);
+
+    }
 }

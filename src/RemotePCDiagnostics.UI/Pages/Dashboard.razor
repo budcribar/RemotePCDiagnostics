@@ -16,10 +16,18 @@
     var cpuTemp = cpuGroup?.Hottest;
     var querying = hw.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
     var all = Diagnostics.Modules.Select(m => Store.Get(m.Name)).ToList();
-    var checking = Diagnostics.Modules.Where(m => m.IncludeInRunAll).Any(m => Store.Get(m.Name).Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun);
+    var checkModules = Diagnostics.Modules.Where(m => m.IncludeInRunAll).ToList();
+    var nonCardChecks = checkModules.Where(m => m.Name is not ("Osquery" or LibreHardwareMonitorModule.ModuleName)).ToList();
+    var checking = Screen.RunningGroup == CheckGroup.Checks || nonCardChecks.Any(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
+    var checkItems = checking ? Screen.LiveCheckItems(Store) : [];
+    var completedChecks = checkItems.Count(c => c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error);
+    var totalChecks = checkItems.Count;
+    var checkFraction = totalChecks > 0 ? Math.Clamp(checkItems.Sum(c => c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error ? 1.0 : c.Status == DiagnosticStatus.Running && c.Total > 0 ? Math.Clamp(c.Fraction, 0.0, 0.95) : 0.0) / totalChecks, 0.0, 1.0) : 0.0;
+    var activeCheck = checkItems.FirstOrDefault(c => c.Status == DiagnosticStatus.Running);
+    var checksNotRunCount = nonCardChecks.Count(m => Store.Get(m.Name).Status == DiagnosticStatus.NotRun);
     var stressBusy = suiteBusy || Diagnostics.IsAnyStressRunning;
     var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled); }), suite);
-    var last = all.Where(r => r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running)).Select(r => (DateTimeOffset?)r.Timestamp).Max();
+    var last = nonCardChecks.Select(m => Store.Get(m.Name)).Where(r => r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running)).Select(r => (DateTimeOffset?)r.Timestamp).Max();
     var problemRanks = summary.Problems.ToDictionary(p => p.Name, p => p.IsError ? 0 : 1, StringComparer.OrdinalIgnoreCase);
     if (_cardRanks is null || (!checking && !stressBusy && !all.Any(r => r.Status == DiagnosticStatus.Running)))
         _cardRanks = problemRanks;
@@ -36,6 +44,10 @@
     <div class="meta">
         <div class="banner-sub">
             <span data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {RemotePCDiagnostics.Core.History.TimeText.Ago(l, now)}" : "Not checked yet")</span>
+            @if (checksNotRunCount > 0 && !checking)
+            {
+                <span> · </span><a href="checks" class="banner-more banner-more-small" data-testid="dashboard-checks-notrun">@checksNotRunCount system @(checksNotRunCount == 1 ? "check" : "checks") not run</a>
+            }
             @if (summary.StressNotRunCount > 0)
             {
                 <span> · </span><a href="stress" class="banner-more banner-more-small" data-testid="dashboard-notrun-count" title="@summary.NotRunNote">@summary.StressNotRunCount on-demand @(summary.StressNotRunCount == 1 ? "test" : "tests") not run</a>
@@ -48,7 +60,7 @@
     </div>
     <div class="banner-actions">
         <button class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || stressBusy)" @onclick="RunAll" title="Runs every read-only check">
-            <Icon Name="@(checking ? "refresh" : "play")" Size="14" />@(checking ? "Checking…" : "Run all checks")</button>
+            <Icon Name="@(checking ? "refresh" : "play")" Size="14" />@(checking ? (totalChecks > 0 ? $"Checking… ({completedChecks}/{totalChecks})" : "Checking…") : "Run all checks")</button>
         <button class="btn btn-outline" data-testid="dashboard-runall-stress-short" disabled="@(checking || stressBusy)" @onclick="() => RunSuite(StressSuiteMode.Short)"
                 title="Short: ~1 min per stress test, about 5 min in all">
             <Icon Name="play" Size="12" />Run checks + stress tests (short)</button>
@@ -74,6 +86,70 @@
                 <li data-testid="dashboard-suite-step-@st.ModuleName.ToLowerInvariant()"><span class="@DotClass(StepStatus(st.State))"></span>@st.DisplayName: @StepText(st.State)</li>
             }
         </ul>
+    </section>
+}
+
+@if (checking && totalChecks > 0)
+{
+    <div class="progress run-progress wf-overall-progress" data-testid="dashboard-checks-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@totalChecks" aria-valuenow="@completedChecks">
+        <div class="progress-bar" style="width:@($"{checkFraction * 100:0.#}%")"></div>
+    </div>
+    <section class="card wf-section" data-testid="dashboard-checking-list" style="margin-bottom: 14px">
+        <div class="card-head">
+            <strong data-testid="dashboard-checking-headline">@(activeCheck is { } ac ? $"Running {ac.Title}: {ac.Message}" : "Checks in progress")</strong>
+            <span class="meta" data-testid="dashboard-checking-count">@completedChecks of @totalChecks completed</span>
+            @if (Screen.RunningGroup == CheckGroup.Checks)
+            {
+                <button class="btn-small btn-stop" data-testid="dashboard-checks-stop" @onclick="Screen.Stop">Stop</button>
+            }
+        </div>
+        <div class="wf-check-rows">
+            @foreach (var c in checkItems)
+            {
+                var dot = c.Status switch
+                {
+                    DiagnosticStatus.Ok => "ok",
+                    DiagnosticStatus.Warning => "warning",
+                    DiagnosticStatus.Error => "error",
+                    DiagnosticStatus.Running => "running",
+                    _ => "neutral",
+                };
+                var chipClass = c.Status switch
+                {
+                    DiagnosticStatus.Ok => "chip-ok",
+                    DiagnosticStatus.Warning => "chip-warn",
+                    DiagnosticStatus.Error => "chip-bad",
+                    DiagnosticStatus.Running => "chip-run",
+                    _ => "chip-na",
+                };
+                var chipLabel = c.Status switch
+                {
+                    DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error => "Done",
+                    DiagnosticStatus.Running => "Running",
+                    _ => "Waiting",
+                };
+                <div class="wf-check-row @(c.Status == DiagnosticStatus.Running ? "wf-check-active" : "")" data-testid="dashboard-check-row-@c.Id.ToLowerInvariant()">
+                    <div class="wf-check-main">
+                        <span class="dot dot-@dot"></span>
+                        <strong class="wf-check-name">@c.Title</strong>
+                        <span class="meta wf-check-msg" data-testid="dashboard-check-msg-@c.Id.ToLowerInvariant()">@c.Message</span>
+                    </div>
+                    <div class="wf-check-side">
+                        @if (c.Status == DiagnosticStatus.Running && c.HasProgress)
+                        {
+                            <span class="meta wf-check-step" data-testid="dashboard-check-step-@c.Id.ToLowerInvariant()">@c.Step / @c.Total</span>
+                        }
+                        <span class="chip @chipClass">@chipLabel</span>
+                    </div>
+                    @if (c.Status == DiagnosticStatus.Running && c.HasProgress)
+                    {
+                        <div class="progress run-progress wf-check-bar" data-testid="dashboard-check-bar-@c.Id.ToLowerInvariant()" role="progressbar" aria-valuemin="0" aria-valuemax="@c.Total" aria-valuenow="@c.Step">
+                            <div class="progress-bar" style="width:@($"{c.Fraction * 100:0.#}%")"></div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
     </section>
 }
 
@@ -144,7 +220,7 @@
         Nav.NavigateTo(Screen.PageFor(module)); // Checks, Stress tests or Security audit, whichever shows this module
     }
     private void Key(KeyboardEventArgs e, string module) { if (e.Key is "Enter" or " ") Open(module); }
-    private void RunAll() => _ = Diagnostics.RunAllAsync();
+    private void RunAll() => _ = Screen.RunAllChecksAsync();
 
     private StressSuiteProgress? suite;
     private bool suiteBusy => Diagnostics.IsStressSuiteRunning;
@@ -155,14 +231,17 @@
         base.OnInitialized();
         suite = Diagnostics.LastStressSuiteProgress;
         Diagnostics.StressSuiteProgressChanged += OnSuite;
+        Screen.Changed += OnScreenChanged;
         // Keep "Updated 3 min ago" current without any user action.
         _tick = new System.Threading.Timer(_ => { try { _ = InvokeAsync(StateHasChanged); } catch { } }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
     private System.Threading.Timer? _tick;
     private void OnSuite(object? s, StressSuiteProgress p) { suite = p; if (p.Finished) cancelling = false; _ = InvokeAsync(StateHasChanged); }
+    private void OnScreenChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
     public async ValueTask DisposeAsync()
     {
         Diagnostics.StressSuiteProgressChanged -= OnSuite;
+        Screen.Changed -= OnScreenChanged;
         if (_tick is not null) await _tick.DisposeAsync();
         Dispose();
     }

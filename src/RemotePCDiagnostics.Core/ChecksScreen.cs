@@ -72,6 +72,57 @@ public sealed class ChecksScreenState
     private readonly Dictionary<string, (DiagnosticResult Result, string? RunLabel)> _lastCompleted = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string?> _runLabels = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _cts;
+    private readonly List<Workflow.WorkflowCheckItem> _checkItems = [];
+
+    public IReadOnlyList<Workflow.WorkflowCheckItem> CheckItems { get { lock (_gate) return _checkItems.ToList(); } }
+    public int CompletedChecksCount => CheckItems.Count(c => c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error);
+    public int TotalChecksCount => CheckItems.Count;
+
+    public double CheckProgressFraction
+    {
+        get
+        {
+            var items = CheckItems;
+            if (items.Count == 0) return 0;
+            var sum = 0.0;
+            foreach (var c in items)
+            {
+                if (c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error) sum += 1.0;
+                else if (c.Status == DiagnosticStatus.Running && c.Total > 0) sum += Math.Clamp(c.Fraction, 0.0, 0.95);
+            }
+            return Math.Clamp(sum / items.Count, 0.0, 1.0);
+        }
+    }
+
+    public IReadOnlyList<Workflow.WorkflowCheckItem> LiveCheckItems(ResultStore store)
+    {
+        lock (_gate)
+        {
+            if (RunningGroup == CheckGroup.Checks && _checkItems.Count > 0)
+                return _checkItems.ToList();
+        }
+        return ChecksModules.Select(m =>
+        {
+            var r = store.Get(m.Name);
+            var cp = r.Status == DiagnosticStatus.Running ? _diag.GetProgress(m.Name) : null;
+            var msg = r.Status switch
+            {
+                DiagnosticStatus.NotRun => "Waiting…",
+                DiagnosticStatus.Running => !string.IsNullOrWhiteSpace(r.Message) ? r.Message : "Running…",
+                _ => r.Message
+            };
+            return new Workflow.WorkflowCheckItem(m.Name, m.DisplayName, r.Status, msg, cp?.Step ?? 0, cp?.Total ?? 0);
+        }).ToList();
+    }
+
+    private void UpdateCheckItem(string id, Func<Workflow.WorkflowCheckItem, Workflow.WorkflowCheckItem> change)
+    {
+        lock (_gate)
+        {
+            var idx = _checkItems.FindIndex(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0) _checkItems[idx] = change(_checkItems[idx]);
+        }
+    }
 
     public event Action? Changed;
 
@@ -220,14 +271,22 @@ public sealed class ChecksScreenState
 
     /// <summary>Runs the selected modules of a group sequentially. Stress tests use the stress suite (mode, overheat/error stop);
     /// the audio, webcam and NPU tests run on their own afterwards when ticked. No-op when anything is already running.</summary>
-    public async Task RunGroupAsync(CheckGroup g)
+    public Task RunAllChecksAsync() => RunGroupAsync(CheckGroup.Checks, allModules: true);
+
+    public async Task RunGroupAsync(CheckGroup g, bool allModules = false)
     {
         CancellationTokenSource cts;
         List<IDiagnosticModule> selected;
         lock (_gate)
         {
             if (RunningGroup is not null || _diag.IsStressSuiteRunning || (g == CheckGroup.Stress && _diag.IsAnyStressRunning)) return;
-            selected = Modules(g).Where(m => _selected.Contains(m.Name)).ToList();
+            selected = (allModules ? Modules(g) : Modules(g).Where(m => _selected.Contains(m.Name))).ToList();
+            if (selected.Count == 0) return;
+            if (g == CheckGroup.Checks)
+            {
+                _checkItems.Clear();
+                foreach (var m in selected) _checkItems.Add(new(m.Name, m.DisplayName, DiagnosticStatus.NotRun, "Waiting…"));
+            }
             if (selected.Count == 0) return;
             RunningGroup = g;
             if (g == CheckGroup.Checks) CollapsedChecks = false; else CollapsedStress = false;
@@ -247,8 +306,21 @@ public sealed class ChecksScreenState
             {
                 for (var i = 0; i < selected.Count && !cts.IsCancellationRequested; i++)
                 {
-                    SetProgress(g, i + 1, selected.Count, selected[i]);
-                    try { await _diag.RunAsync(selected[i].Name, null, cts.Token).ConfigureAwait(false); } catch (Exception ex) { Failed(selected[i], ex); }
+
+                    var mod = selected[i];
+                    UpdateCheckItem(mod.Name, item => item with { Status = DiagnosticStatus.Running, Message = "Running…" });
+                    SetProgress(g, i + 1, selected.Count, mod);
+                    var progress = CheckProgressExtensions.Create(cp =>
+                    {
+                        UpdateCheckItem(mod.Name, item => item with { Status = DiagnosticStatus.Running, Message = cp.Message, Step = cp.Step, Total = cp.Total });
+                        Raise();
+                    });
+                    try
+                    {
+                        var r = await _diag.RunAsync(mod.Name, progress, cts.Token).ConfigureAwait(false);
+                        UpdateCheckItem(mod.Name, item => item with { Status = r.Status, Message = r.Message, Step = item.Total > 0 ? item.Total : 1, Total = item.Total > 0 ? item.Total : 1 });
+                    }
+                    catch (Exception ex) { Failed(mod, ex); }
                 }
             }
             else
@@ -284,7 +356,7 @@ public sealed class ChecksScreenState
         }
         finally
         {
-            lock (_gate) { RunningGroup = null; Progress = null; _cts = null; LastRunNote = errors.Count == 0 ? null : string.Join(" ", errors); }
+            lock (_gate) { RunningGroup = null; Progress = null; _cts = null; if (g == CheckGroup.Checks) _checkItems.Clear(); LastRunNote = errors.Count == 0 ? null : string.Join(" ", errors); }
             cts.Dispose();
             Raise();
         }
