@@ -492,7 +492,7 @@ public sealed class WorkflowService(
         foreach (var m in diag.Modules.OfType<WindowsIntegrityModule>())
         {
             ct.ThrowIfCancellationRequested();
-            var dism = m.Name == WindowsIntegrityModule.DismModuleName;
+            var dism = m is DismScanHealthModule;
             if (dism && !ran.Contains(WindowsRepair.DismId)) continue;
             Note($"Checking again after the restart: {m.DisplayName}…");
             DiagnosticResult r;

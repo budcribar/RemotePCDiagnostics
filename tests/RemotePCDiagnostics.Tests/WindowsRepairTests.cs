@@ -89,26 +89,26 @@ public class WindowsRepairTests
     [Fact]
     public void Catalog_DismCorrupt_OffersBoth_DismFirst()
     {
-        var fixes = FixCatalog.RepairFixes([R(WindowsIntegrityModule.DismModuleName, DiagnosticStatus.Warning), R(WindowsIntegrityModule.SfcModuleName, DiagnosticStatus.Ok)]);
+        var fixes = FixCatalog.RepairFixes([R(DismScanHealthModule.ModuleName, DiagnosticStatus.Warning), R(SfcVerifyOnlyModule.ModuleName, DiagnosticStatus.Ok)]);
         Assert.Equal([RemediationKind.RepairComponentStore, RemediationKind.RepairSystemFiles], fixes.OrderBy(f => f.Order).Select(f => f.Remediation!.Kind));
         Assert.All(fixes, f => { Assert.True(f.DefaultOn); Assert.True(f.NeedsAdmin); Assert.Equal(UndoSupport.None, f.Undo); });
     }
 
     [Fact]
     public void Catalog_SfcOnly_OffersSfc() =>
-        Assert.Equal(RemediationKind.RepairSystemFiles, Assert.Single(FixCatalog.RepairFixes([R(WindowsIntegrityModule.SfcModuleName, DiagnosticStatus.Warning)])).Remediation!.Kind);
+        Assert.Equal(RemediationKind.RepairSystemFiles, Assert.Single(FixCatalog.RepairFixes([R(SfcVerifyOnlyModule.ModuleName, DiagnosticStatus.Warning)])).Remediation!.Kind);
 
     [Fact]
     public void Catalog_CleanOrCancelled_OffersNothing()
     {
-        Assert.Empty(FixCatalog.RepairFixes([R(WindowsIntegrityModule.DismModuleName, DiagnosticStatus.Ok), R(WindowsIntegrityModule.SfcModuleName, DiagnosticStatus.Ok)]));
-        Assert.Empty(FixCatalog.RepairFixes([R(WindowsIntegrityModule.DismModuleName, DiagnosticStatus.Warning, "Scan cancelled", cancelled: true)]));
+        Assert.Empty(FixCatalog.RepairFixes([R(DismScanHealthModule.ModuleName, DiagnosticStatus.Ok), R(SfcVerifyOnlyModule.ModuleName, DiagnosticStatus.Ok)]));
+        Assert.Empty(FixCatalog.RepairFixes([R(DismScanHealthModule.ModuleName, DiagnosticStatus.Warning, "Scan cancelled", cancelled: true)]));
     }
 
     [Fact]
     public void Catalog_CannotBeRepaired_StillOffered_NeedsSource()
     {
-        var fix = FixCatalog.RepairFixes([R(WindowsIntegrityModule.DismModuleName, DiagnosticStatus.Warning, WindowsIntegrityModule.CannotBeRepairedSummary)])
+        var fix = FixCatalog.RepairFixes([R(DismScanHealthModule.ModuleName, DiagnosticStatus.Warning, DismScanHealthModule.CannotBeRepairedSummary)])
             .Single(f => f.Remediation!.Kind == RemediationKind.RepairComponentStore);
         Assert.Equal("needs-source", fix.Remediation!.Target);
     }

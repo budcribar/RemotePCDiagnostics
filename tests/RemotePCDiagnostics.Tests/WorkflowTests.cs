@@ -1094,7 +1094,7 @@ public class WorkflowTests
         SystemCommandRunner? runner = null;
         var launcher = new ScriptedLauncher(script.Run);
         runner = new SystemCommandRunner(launcher);
-        IDiagnosticModule[] modules = [new AreaModule("Programs", Report(Updates)), new WindowsIntegrityModule(runner, true), new WindowsIntegrityModule(runner, false)];
+        IDiagnosticModule[] modules = [new AreaModule("Programs", Report(Updates)), new DismScanHealthModule(runner), new SfcVerifyOnlyModule(runner)];
         var m = Make(script.Run, null, null, modules);
         return (m.Flow, m.Sys, m.Launcher);
     }
