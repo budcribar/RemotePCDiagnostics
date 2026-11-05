@@ -4,7 +4,7 @@ using RemotePCDiagnostics.Core.Security;
 namespace RemotePCDiagnostics.Core;
 
 public enum CheckGroup { Checks, Stress }
-public enum RowKind { NotRun, Running, Passed, Warning, Critical, Cancelled, Unavailable, Skipped, Blocked }
+public enum RowKind { NotRun, Running, Passed, Warning, Critical, Cancelled, CouldNotRun, Skipped, Blocked }
 
 /// <summary>Row display rules for the Checks &amp; Tests screen.</summary>
 public static class CheckRows
@@ -16,7 +16,7 @@ public static class CheckRows
         _ => IsCancelled(r) ? RowKind.Cancelled : ResultEventLogger.Outcome(r) switch
         {
             "OK" => RowKind.Passed, "Warning" => RowKind.Warning, "Critical" => RowKind.Critical,
-            "Cancelled" => RowKind.Cancelled, "Unavailable" => RowKind.Unavailable, "Skipped" => RowKind.Skipped, "Blocked" => RowKind.Blocked,
+            "Cancelled" => RowKind.Cancelled, CouldNotRun.OutcomeText => RowKind.CouldNotRun, "Skipped" => RowKind.Skipped, "Blocked" => RowKind.Blocked,
             _ => RowKind.NotRun,
         },
     };
@@ -26,7 +26,7 @@ public static class CheckRows
     public static string Text(RowKind k) => k switch
     {
         RowKind.Passed => "Passed", RowKind.Warning => "Warning", RowKind.Critical => "Critical", RowKind.Running => "Running…",
-        RowKind.Cancelled => "Cancelled", RowKind.Unavailable => "Unavailable", RowKind.Skipped => "Skipped", RowKind.Blocked => "Blocked",
+        RowKind.Cancelled => "Cancelled", RowKind.CouldNotRun => CouldNotRun.OutcomeText, RowKind.Skipped => "Skipped", RowKind.Blocked => "Blocked",
         _ => "Not run",
     };
 
@@ -52,7 +52,7 @@ public static class CheckRows
         var order = new (RowKind K, string Word)[]
         {
             (RowKind.Running, "running"), (RowKind.Passed, "passed"), (RowKind.Warning, "warning"), (RowKind.Critical, "critical"),
-            (RowKind.Cancelled, "cancelled"), (RowKind.Unavailable, "unavailable"), (RowKind.Skipped, "skipped"), (RowKind.Blocked, "blocked"),
+            (RowKind.Cancelled, "cancelled"), (RowKind.CouldNotRun, "couldn't run"), (RowKind.Skipped, "skipped"), (RowKind.Blocked, "blocked"),
             (RowKind.NotRun, "not run"),
         };
         return order.Select(o => (o.K, N: list.Count(k => k == o.K))).Where(x => x.N > 0)

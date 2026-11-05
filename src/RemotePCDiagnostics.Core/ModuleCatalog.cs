@@ -48,6 +48,7 @@ public sealed class ModuleCatalog
     private readonly ConcurrentDictionary<Guid, IDiagnosticModule> _registered = new();
     private readonly ConcurrentDictionary<Guid, ModuleState> _disabled = new();
     private readonly ConcurrentDictionary<Guid, Type> _details = new();
+    private readonly ConcurrentDictionary<Guid, bool> _applies = new();
 
     public ModuleCatalog(IEnumerable<ModuleDescriptor>? known = null)
     {
@@ -120,6 +121,9 @@ public sealed class ModuleCatalog
         RaiseChanged();
     }
 
+    /// <summary>Records what a detectable module's DetectAsync said: a module that doesn't apply is <see cref="ModuleState.NotPresent"/>.</summary>
+    public void SetApplies(Guid id, bool applies) { _applies[id] = applies; RaiseChanged(); }
+
     /// <summary>Marks a module disabled (a plugin turned off or failed verification).</summary>
     public void Disable(Guid id) { _disabled[id] = ModuleState.Disabled; RaiseChanged(); }
 
@@ -148,7 +152,9 @@ public sealed class ModuleCatalog
     {
         if (_disabled.TryGetValue(id, out var s)) return s;
         if (!_registered.TryGetValue(id, out var m)) return ModuleState.Retired;
-        return m is IHardwareGatedModule g && !g.IsPresent ? ModuleState.NotPresent : ModuleState.Available;
+        if (m is IHardwareGatedModule g && !g.IsPresent) return ModuleState.NotPresent;
+        if (m is IDetectableModule && !_applies.GetValueOrDefault(id)) return ModuleState.NotPresent;
+        return ModuleState.Available;
     }
 
     /// <summary>The module's name for people. An unknown slug is shown as itself with "(unknown module)".</summary>

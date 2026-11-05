@@ -32,7 +32,7 @@ public class EventLoggingTests
         Assert.Contains(sink.Entries, e => e.Message.Contains("Test result: A") && e.Message.Contains("Outcome: OK") && e.Level == LogLevel.Information && e.Message.Contains("Duration:"));
         Assert.Contains(sink.Entries, e => e.Message.Contains("Test result: B") && e.Message.Contains("Outcome: Warning") && e.Level == LogLevel.Warning);
         Assert.Contains(sink.Entries, e => e.Message.Contains("Test result: C") && e.Message.Contains("Outcome: Critical") && e.Message.Contains("boom") && e.Level == LogLevel.Error);
-        Assert.Contains(sink.Entries, e => e.Message.Contains("Test result: D") && e.Message.Contains("Outcome: Unavailable") && e.Message.Contains("missing tool"));
+        Assert.Contains(sink.Entries, e => e.Message.Contains("Test result: D") && e.Message.Contains("Outcome: Couldn't run") && e.Message.Contains("missing tool"));
     }
 
     [Fact]

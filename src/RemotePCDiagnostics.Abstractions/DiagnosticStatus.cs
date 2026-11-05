@@ -16,6 +16,11 @@ public record DiagnosticResult(
     /// </summary>
     public bool Cancelled { get; init; }
 
+    /// <summary>The hardware instance this result is for (<see cref="ModuleInstance.Key"/>), or null for the module as a whole.</summary>
+    public string? InstanceKey { get; init; }
+    /// <summary>The instance's label at run time ("Samsung 990 Pro 2 TB, Disk 1").</summary>
+    public string? InstanceLabel { get; init; }
+
     public static DiagnosticResult NotRun(string module) =>
         new(module, DiagnosticStatus.NotRun, "Not run yet", DateTimeOffset.Now);
 }

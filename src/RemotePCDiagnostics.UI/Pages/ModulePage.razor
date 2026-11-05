@@ -4,6 +4,22 @@
 @{
     var m = Diagnostics.Modules.FirstOrDefault(x => string.Equals(x.Name, Slug, StringComparison.OrdinalIgnoreCase));
     var details = m is null ? null : Diagnostics.Catalog.Get(m.Id)?.DetailsComponent;
+    var instances = m is IPerDeviceModule ? Store.InstancesOf(m.Name) : [];
+}
+@if (instances.Count > 0)
+{
+    @* A per-device module: one result per drive, GPU or webcam. *@
+    <section class="card" data-testid="module-instances">
+        <h2>Devices tested</h2>
+        <table class="about-plugins">
+            <tbody>
+            @foreach (var r in instances)
+            {
+                <tr data-testid="module-instance"><td><span class="dot dot-@CheckRows.DotKind(CheckRows.KindOf(r))"></span>@r.InstanceLabel</td><td>@r.Message</td></tr>
+            }
+            </tbody>
+        </table>
+    </section>
 }
 @if (details is not null)
 {

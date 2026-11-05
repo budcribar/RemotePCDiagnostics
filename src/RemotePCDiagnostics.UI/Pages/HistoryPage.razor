@@ -166,7 +166,7 @@ else
             <tr class="clickable" role="button" tabindex="0" aria-expanded="@(open ? "true" : "false")" data-testid="history-row"
                 @onclick="() => _open = open ? null : entry" @onkeydown='k => { if (k.Key is "Enter" or " ") _open = open ? null : entry; }'>
                 <td title="@entry.LocalTime.ToString("g")">@(byDay ? entry.LocalTime.ToString("t") : entry.LocalTime.ToString("g"))</td>
-                <td>@entry.Test</td>
+                <td>@entry.Test@if (!string.IsNullOrEmpty(entry.Instance)) {<span class="meta" data-testid="history-instance"> · @entry.Instance</span>}</td>
                 <td><span class="dot dot-@Dot(entry.Outcome)"></span>@entry.Outcome</td>
                 <td class="summary">@entry.Summary</td>
                 <td>@HistoryQuery.FormatDuration(entry.DurationSeconds)</td>

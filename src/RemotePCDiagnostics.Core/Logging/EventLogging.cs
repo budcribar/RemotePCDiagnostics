@@ -91,6 +91,7 @@ public sealed class ResultEventLogger
     {
         _sink = sink; _suiteLabel = suiteLabel; _recorded = recorded; _ctx = context;
         store.Changed += (_, r) => OnChanged(r);
+        store.InstanceChanged += (_, r) => OnChanged(r);
     }
 
     public void OnChanged(DiagnosticResult r)
@@ -98,14 +99,16 @@ public sealed class ResultEventLogger
         try
         {
             if (r.Status == DiagnosticStatus.NotRun) return;
-            if (r.Status == DiagnosticStatus.Running) { _started[r.ModuleName] = r.Timestamp; return; }
-            if (_last.TryGetValue(r.ModuleName, out var x))
+            var key = r.InstanceKey is { } ik ? r.ModuleName + "#" + ik : r.ModuleName;
+            if (r.Status == DiagnosticStatus.Running) { _started[key] = r.Timestamp; return; }
+            if (r.Payload is InstanceResults) { _started.TryRemove(key, out _); return; } // each instance was logged on its own
+            if (_last.TryGetValue(key, out var x))
             {
                 if (x.Stamp == r.Timestamp && x.Status == r.Status && x.Message == r.Message) return; // same result stored again
                 if (r.ModuleName == LibreHardwareMonitorModule.ModuleName && x.Status == r.Status && r.Timestamp - x.Stamp < SensorsThrottle) return;
             }
-            _last[r.ModuleName] = (r.Timestamp, r.Status, r.Message);
-            TimeSpan? duration = _started.TryRemove(r.ModuleName, out var s) && r.Timestamp >= s ? r.Timestamp - s : null;
+            _last[key] = (r.Timestamp, r.Status, r.Message);
+            TimeSpan? duration = _started.TryRemove(key, out var s) && r.Timestamp >= s ? r.Timestamp - s : null;
             string? label = null;
             try { label = _suiteLabel?.Invoke(r.ModuleName); } catch { }
             try { _sink.Write(new LogEntry(LogEventIds.TestResult, LevelFor(r), LogText.Truncate(Format(r, duration, label, _ctx)))); } catch { }
@@ -118,14 +121,14 @@ public sealed class ResultEventLogger
         (r.Payload is not null && r.Payload.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() is "StoppedByUser" or "Cancelled");
 
     public static string Outcome(DiagnosticResult r) => r.Payload is DependencyGate gate ? gate.Outcome
-        : r.Payload is ModuleAvailability || r.Payload?.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() == "NoGpu" ? "Unavailable"
+        : r.Payload is CouldNotRun or ModuleAvailability || r.Payload?.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() == "NoGpu" ? CouldNotRun.OutcomeText
         : IsCancelled(r) ? "Cancelled"
         : r.Status switch { DiagnosticStatus.Ok => "OK", DiagnosticStatus.Warning => "Warning", DiagnosticStatus.Error => "Critical", _ => r.Status.ToString() };
 
     public static LogLevel LevelFor(DiagnosticResult r) => Outcome(r) switch
     {
         "Critical" => LogLevel.Error,
-        "Warning" or "Cancelled" or "Unavailable" or "Skipped" or "Blocked" => LogLevel.Warning,
+        "Warning" or "Cancelled" or CouldNotRun.OutcomeText or "Skipped" or "Blocked" => LogLevel.Warning,
         _ => LogLevel.Information,
     };
 
@@ -143,6 +146,11 @@ public sealed class ResultEventLogger
         try { id = ctx?.ModuleId?.Invoke(r.ModuleName) ?? Guid.Empty; } catch { }
         if (id == Guid.Empty) id = History.HistoryIds.For(r.ModuleName);
         sb.Append("Module id: ").Append(id.ToString("D")).AppendLine();
+        if (r.InstanceKey is { Length: > 0 } instanceKey)
+        {
+            sb.Append("Instance id: ").Append(One(instanceKey)).AppendLine();
+            if (!string.IsNullOrWhiteSpace(r.InstanceLabel)) sb.Append("Instance: ").Append(One(r.InstanceLabel)).AppendLine();
+        }
         if (ctx?.DisplayName is { } dn) { string? t = null; try { t = dn(r.ModuleName); } catch { } if (!string.IsNullOrEmpty(t)) sb.Append("Test: ").Append(One(t)).AppendLine(); }
         sb.Append("Outcome: ").Append(Outcome(r)).AppendLine();
         sb.Append("Summary: ").Append(One(r.Message)).AppendLine();

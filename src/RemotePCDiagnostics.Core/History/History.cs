@@ -164,6 +164,7 @@ public static class HistoryEventParser
             }
             if (!fields.TryGetValue("Test result", out var module) || module.Length == 0) return null;
             if (!fields.TryGetValue("Outcome", out var outcome) || outcome.Length == 0) return null;
+            if (outcome.Equals("Unavailable", StringComparison.OrdinalIgnoreCase)) outcome = CouldNotRun.OutcomeText; // written before "Couldn't run"
             var time = fields.TryGetValue("Finished", out var f) && DateTimeOffset.TryParse(f, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var ft) ? ft : timeCreated;
             double? dur = fields.TryGetValue("Duration", out var d) && double.TryParse(d.Replace(" s", ""), NumberStyles.Float, CultureInfo.InvariantCulture, out var dv) ? dv : null;
             var format = fields.TryGetValue("Format", out var fv) && int.TryParse(fv, NumberStyles.Integer, CultureInfo.InvariantCulture, out var fn) ? fn : 0;
@@ -248,7 +249,7 @@ public static class HistoryQuery
     public static readonly IReadOnlyList<(HistoryColumn Col, string Title)> Columns =
         [(HistoryColumn.Time, "Time"), (HistoryColumn.Test, "Test"), (HistoryColumn.Result, "Result"), (HistoryColumn.Summary, "Summary"), (HistoryColumn.Duration, "Duration")];
     /// <summary>Result filter choices. Cancelled runs aren't part of history (see <see cref="WithoutCancelled"/>).</summary>
-    public static readonly IReadOnlyList<string> Outcomes = ["OK", "Warning", "Critical", "Unavailable", "Skipped", "Blocked"];
+    public static readonly IReadOnlyList<string> Outcomes = ["OK", "Warning", "Critical", CouldNotRun.OutcomeText, "Skipped", "Blocked"];
 
     /// <summary>A cancelled run didn't produce a result, so history ignores it (lists, counts and trends).</summary>
     public static IReadOnlyList<HistoryEntry> WithoutCancelled(IEnumerable<HistoryEntry> entries) =>
@@ -285,7 +286,7 @@ public static class HistoryQuery
     }
 
     /// <summary>Critical first when ascending.</summary>
-    public static int OutcomeRank(string o) => o switch { "Critical" => 0, "Warning" => 1, "Cancelled" => 2, "Unavailable" => 3, "Skipped" => 4, "Blocked" => 5, "OK" => 6, _ => 7 };
+    public static int OutcomeRank(string o) => o switch { "Critical" => 0, "Warning" => 1, "Cancelled" => 2, CouldNotRun.OutcomeText => 3, "Skipped" => 4, "Blocked" => 5, "OK" => 6, _ => 7 };
 
     public static int Compare(HistoryEntry a, HistoryEntry b, HistoryColumn col) => col switch
     {
