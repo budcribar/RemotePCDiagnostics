@@ -12,12 +12,15 @@ namespace RemotePCDiagnostics.Host.Tests;
 /// </summary>
 public class HostServicesTests
 {
+    // An empty modules folder, so module DLLs installed on this PC (e.g. an unsigned sample) don't change the registered set.
+    private static readonly string EmptyModulesFolder = System.IO.Directory.CreateDirectory(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "rpcd-host-tests-modules-" + Guid.NewGuid().ToString("N"))).FullName;
+
     private static (ServiceProvider Provider, IServiceCollection Services) Build(SessionMode mode)
     {
         var session = mode == SessionMode.Remote
             ? new SessionContext(SessionMode.Remote, new Uri("https://relay.invalid"))
             : new SessionContext(SessionMode.Local);
-        var services = new ServiceCollection().AddRemotePCDiagnosticsHost(session, _ => { }, (_, _, _) => { });
+        var services = new ServiceCollection().AddRemotePCDiagnosticsHost(session, _ => { }, (_, _, _) => { }, EmptyModulesFolder);
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
         return (provider, services);
     }
