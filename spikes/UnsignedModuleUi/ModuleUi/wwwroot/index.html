@@ -15,7 +15,23 @@
             function fwd(kind, msg) { try { window.parent.postMessage({ type: 'diag', kind: kind, msg: String(msg).slice(0, 2000) }, '*'); } catch (e) { } }
             window.addEventListener('error', function (e) { fwd('error', e.message + ' @ ' + e.filename + ':' + e.lineno); });
             window.addEventListener('unhandledrejection', function (e) { const r = e.reason; fwd('rejection', r && (r.stack || r.message) || r); });
-            ['log', 'warn', 'error'].forEach(function (k) {
+            // Network trace: every fetch and XHR (gRPC-Web uses XHR) with its outcome, to see where an opaque-origin frame stalls.
+            const f0 = window.fetch;
+            window.fetch = function (input, init) {
+                const url = String(input && input.url || input);
+                fwd('fetch', 'start ' + url);
+                return f0.apply(this, arguments).then(function (r) { fwd('fetch', r.status + ' ' + url); return r; },
+                    function (e) { fwd('fetch', 'FAILED ' + url + ': ' + e); throw e; });
+            };
+            const open0 = XMLHttpRequest.prototype.open, send0 = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function (m, u) { this.__u = m + ' ' + u; return open0.apply(this, arguments); };
+            XMLHttpRequest.prototype.send = function () {
+                const x = this; fwd('xhr', 'send ' + x.__u);
+                x.addEventListener('readystatechange', function () { if (x.readyState === 2) fwd('xhr', 'headers ' + x.status + ' ' + x.__u); });
+                x.addEventListener('loadend', function () { fwd('xhr', 'end ' + x.status + ' ' + x.__u); });
+                return send0.apply(this, arguments);
+            };
+            ['log', 'info', 'debug', 'warn', 'error'].forEach(function (k) {
                 const o = console[k];
                 console[k] = function () { fwd(k, Array.prototype.map.call(arguments, String).join(' ')); o.apply(console, arguments); };
             });
