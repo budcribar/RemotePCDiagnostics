@@ -1,0 +1,104 @@
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace RemotePCDiagnostics.Core.Plugins;
+
+/// <summary>
+/// The module.json embedded in a module DLL: everything the host needs before any of the module's code runs. One DLL is one module, so
+/// the manifest describes exactly one id.
+/// </summary>
+public sealed record ModuleManifest
+{
+    public const string ResourceName = "module.json";
+
+    public Guid Id { get; init; }
+    public string Slug { get; init; } = "";
+    public string DisplayName { get; init; } = "";
+    /// <summary>The plugin's own version (shown on the About page).</summary>
+    public string Version { get; init; } = "1.0.0";
+    /// <summary>The contract version the plugin was built against ("1.0").</summary>
+    public string Contract { get; init; } = "1.0";
+    /// <summary>The lowest app version the plugin needs, for behaviour the contract version doesn't capture.</summary>
+    public string? MinHost { get; init; }
+    /// <summary>Full name of the <see cref="IModulePlugin"/> type.</summary>
+    public string EntryType { get; init; } = "";
+    public ModuleKind Kind { get; init; } = ModuleKind.Check;
+    public string Group { get; init; } = ModuleGroups.Other;
+    public int Order { get; init; } = 10_000;
+    public List<Guid> DependsOn { get; init; } = [];
+    public List<Guid> RunAfter { get; init; } = [];
+    /// <summary>The module changes the PC (through the host's change journal). Shown in the UI; an unsigned module with this set is disabled.</summary>
+    public bool ChangesSystem { get; init; }
+    /// <summary>The module needs administrator (SFC, DISM, SMART, sensors): it must be signed to run.</summary>
+    public bool NeedsAdmin { get; init; }
+
+    private static readonly JsonSerializerOptions Json = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter() },
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
+    public static ModuleManifest Parse(ReadOnlySpan<byte> json) => JsonSerializer.Deserialize<ModuleManifest>(json, Json)
+        ?? throw new InvalidDataException("module.json is empty");
+
+    public string ToJson() => JsonSerializer.Serialize(this, new JsonSerializerOptions(Json) { WriteIndented = true });
+
+    /// <summary>The problem with this manifest for this host, or null when it can load.</summary>
+    public string? Problem(Version hostVersion)
+    {
+        if (Id == Guid.Empty) return "module.json has no id";
+        if (string.IsNullOrWhiteSpace(Slug)) return "module.json has no slug";
+        if (!Slug.Contains('.')) return $"slug '{Slug}' must be vendor.name";
+        if (string.IsNullOrWhiteSpace(EntryType)) return "module.json has no entryType";
+        if (!System.Version.TryParse(Contract.Count(c => c == '.') == 0 ? Contract + ".0" : Contract, out var contract)) return $"contract '{Contract}' is not a version";
+        if (!ContractVersion.IsCompatible(contract))
+            return $"built for contract {Contract}, this app implements {ContractVersion.Current.ToString(2)}";
+        if (MinHost is { Length: > 0 } min && System.Version.TryParse(min, out var minHost) && minHost > hostVersion)
+            return $"needs app version {MinHost} or later";
+        return null;
+    }
+
+    /// <summary>The catalog descriptor for this module.</summary>
+    public ModuleDescriptor ToDescriptor(string pluginId) =>
+        new(Id, Slug, string.IsNullOrWhiteSpace(DisplayName) ? Slug : DisplayName, Kind, Group, Order)
+        {
+            Source = ModuleSource.Plugin, PluginId = pluginId, DependsOn = DependsOn, RunAfter = RunAfter,
+        };
+
+    /// <summary>Reads module.json (and strings/*.json) from the DLL's embedded resources without loading or running it.</summary>
+    public static (ModuleManifest Manifest, IReadOnlyDictionary<string, byte[]> Strings) ReadFromAssembly(byte[] dll)
+    {
+        using var pe = new PEReader(new MemoryStream(dll, writable: false));
+        if (!pe.HasMetadata) throw new InvalidDataException("not a .NET assembly");
+        var md = pe.GetMetadataReader();
+        byte[]? manifest = null;
+        var strings = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var h in md.ManifestResources)
+        {
+            var res = md.GetManifestResource(h);
+            if (!res.Implementation.IsNil) continue; // linked or in another assembly
+            var name = md.GetString(res.Name);
+            var bytes = ReadResource(pe, res.Offset);
+            if (name.Equals(ResourceName, StringComparison.OrdinalIgnoreCase) || name.EndsWith("." + ResourceName, StringComparison.OrdinalIgnoreCase)) manifest = bytes;
+            else if (name.StartsWith("strings/", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                strings[name["strings/".Length..]] = bytes;
+        }
+        if (manifest is null) throw new InvalidDataException("no embedded module.json");
+        return (Parse(manifest), strings);
+    }
+
+    private static byte[] ReadResource(PEReader pe, long offset)
+    {
+        var dir = pe.PEHeaders.CorHeader!.ResourcesDirectory;
+        if (!pe.PEHeaders.TryGetDirectoryOffset(dir, out var start)) throw new InvalidDataException("no resources directory");
+        var image = pe.GetEntireImage().GetContent();
+        var at = start + (int)offset;
+        var length = BitConverter.ToInt32(image.AsSpan(at, 4));
+        return image.AsSpan(at + 4, length).ToArray();
+    }
+}

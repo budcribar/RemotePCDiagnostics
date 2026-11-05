@@ -1,0 +1,14 @@
+{
+  // Read by the host before any code in this DLL runs. The id is permanent: never change or reuse it.
+  "id": "e38471d6-d5da-4ef8-9063-155f4bd2ec1a",
+  "slug": "sample.uptime",
+  "displayName": "Uptime (sample plugin)",
+  "version": "1.0.0",
+  "contract": "1.0",
+  "entryType": "SampleModule.SampleModulePlugin",
+  "kind": "Check",
+  "group": "other",
+  "order": 9000,
+  "changesSystem": false,
+  "needsAdmin": false
+}

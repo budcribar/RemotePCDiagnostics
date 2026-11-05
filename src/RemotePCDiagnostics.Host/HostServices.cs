@@ -58,6 +58,8 @@ public static class HostServices
         var plugins = new PluginRegistrar(session, HostVersion(), log);
         services.AddSingleton(plugins);
         plugins.Register(services, new BuiltInModulesPlugin(log), BuiltInModulesPlugin.Id, ModuleSource.BuiltIn);
+        // Module DLLs from %ProgramFiles%\RemotePCDiagnostics\modules (signed ones load in-process; unsigned ones never do).
+        services.AddSingleton(LoadModulePlugins(services, plugins, log, logEvent));
         services.AddSingleton(sp =>
         {
             var diag = new DiagnosticsService(sp.GetRequiredService<ResultStore>(), sp.GetServices<IDiagnosticModule>());
@@ -92,10 +94,30 @@ public static class HostServices
         // The optional host services pages may use (instead of injecting IServiceProvider).
         services.AddSingleton(sp => new RemotePCDiagnostics.UI.AppServices(sp.GetService<RemediationService>(), sp.GetService<ServiceActionService>(),
             sp.GetService<RemotePCDiagnostics.Core.Memory.MemorySuggestionService>(), sp.GetService<RemotePCDiagnostics.Core.Areas.ICopilotHandoff>(),
-            sp.GetService<RemotePCDiagnostics.Core.Preferences.PreferencesService>(), sp.GetService<RemotePCDiagnostics.Core.Workflow.WorkflowService>()));
+            sp.GetService<RemotePCDiagnostics.Core.Preferences.PreferencesService>(), sp.GetService<RemotePCDiagnostics.Core.Workflow.WorkflowService>(),
+            sp.GetService<PluginRegistrar>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(log));
         return services;
+    }
+
+    /// <summary>Discovers, verifies and registers module plugins. Never throws: a broken modules folder leaves only the built-ins.</summary>
+    public static ModuleLoader LoadModulePlugins(IServiceCollection services, PluginRegistrar plugins, Action<string> log,
+        Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent, ModuleLoaderOptions? options = null)
+    {
+        var loader = new ModuleLoader(options ?? new ModuleLoaderOptions { HostVersion = HostVersion() }, plugins, log);
+        var before = plugins.Records.Count;
+        try { loader.LoadAll(services); }
+        catch (Exception ex) { log($"Modules: loading plugins failed: {ex.GetType().Name}: {ex.Message}"); }
+        foreach (var r in plugins.Records.Skip(before))
+        {
+            var text = $"Module plugin: {r.PluginId}{Environment.NewLine}Module id: {r.ModuleId}{Environment.NewLine}Version: {r.Version}{Environment.NewLine}" +
+                $"Signature: {r.Signature}{Environment.NewLine}State: {r.State}{(r.Reason is null ? "" : Environment.NewLine + "Reason: " + r.Reason)}{Environment.NewLine}Path: {r.Path}";
+            try { logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.ModulePlugin,
+                r.State == PluginState.Loaded || r.UserMode ? RemotePCDiagnostics.Core.Logging.LogLevel.Information : RemotePCDiagnostics.Core.Logging.LogLevel.Warning, text); }
+            catch { }
+        }
+        return loader;
     }
 
     /// <summary>The app's version as a <see cref="Version"/> (for a plugin's minHost check).</summary>

@@ -25,6 +25,15 @@
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
     <!-- Real memory test helper for the end-to-end helper process test. -->
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.MemTest\RemotePCDiagnostics.MemTest.csproj" />
+    <!-- A real module DLL for the loader tests: built, not referenced, copied to sample-module/ (outside the default load context). -->
+    <ProjectReference Include="..\..\samples\SampleModule\SampleModule.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <Target Name="CopySampleModule" AfterTargets="Build">
+    <MSBuild Projects="..\..\samples\SampleModule\SampleModule.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_SampleModuleDll" />
+    </MSBuild>
+    <Copy SourceFiles="@(_SampleModuleDll)" DestinationFolder="$(OutDir)sample-module" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

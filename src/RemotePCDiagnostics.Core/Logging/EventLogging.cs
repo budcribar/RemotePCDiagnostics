@@ -22,6 +22,8 @@ public static class LogEventIds
     public const int Benchmark = 1500;
     public const int Undo = 1600;
     public const int Workflow = 1700;
+    /// <summary>A module plugin loaded, or was found and disabled (with the reason).</summary>
+    public const int ModulePlugin = 1800;
     public const int Error = 1900;
     /// <summary>A warning-level line from the app log that no specific category claimed.</summary>
     public const int AppWarning = 1910;

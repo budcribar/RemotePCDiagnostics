@@ -1,0 +1,189 @@
+using System.Reflection;
+using System.Runtime.Loader;
+using System.Security.Cryptography;
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using RemotePCDiagnostics.Agent.Core;
+
+namespace RemotePCDiagnostics.Core.Plugins;
+
+/// <summary>Where the loader looks and what it trusts.</summary>
+public sealed record ModuleLoaderOptions
+{
+    /// <summary>%ProgramFiles%\RemotePCDiagnostics\modules: standard users can't write there. Nothing loads from anywhere else.</summary>
+    public string ModulesFolder { get; init; } = DefaultModulesFolder();
+    /// <summary>%ProgramData%\RemotePCDiagnostics\catalog: each plugin's module.json and strings, kept after the DLL is removed.</summary>
+    public string CatalogFolder { get; init; } = DefaultCatalogFolder();
+    /// <summary>The project's module signing public key (PEM, ECDSA P-256). Empty: no module counts as signed.</summary>
+    public string? PublicKeyPem { get; init; } = ModuleSigningKey.PublicKeyPem;
+    public Version HostVersion { get; init; } = new(0, 0);
+    /// <summary>The person at the PC turned unsigned (user-mode) modules on. Never set from a remote session.</summary>
+    public bool AllowUnsigned { get; init; }
+
+    public static string DefaultModulesFolder() =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "RemotePCDiagnostics", "modules");
+    public static string DefaultCatalogFolder() =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "RemotePCDiagnostics", "catalog");
+}
+
+/// <summary>The release key that signs modules allowed to run in the app process. Set by tools/New-ModuleSigningKey.ps1.</summary>
+public static class ModuleSigningKey
+{
+    public const string PublicKeyPem = "";
+}
+
+/// <summary>Detached module signature: &lt;Module&gt;.dll.sig holds base64 ECDSA P-256 / SHA-256 (IEEE P1363) over the DLL's exact bytes,
+/// the same scheme as the agent's manifest.sig.</summary>
+public static class ModuleSignature
+{
+    public const string Extension = ".sig";
+
+    public static bool Verify(byte[] dll, string? signatureText, string? publicKeyPem) =>
+        publicKeyPem is { Length: > 0 } && ManifestSignature.Verify(dll, signatureText, publicKeyPem);
+
+    /// <summary>Signs <paramref name="dll"/> (for the packaging script and tests).</summary>
+    public static string Sign(byte[] dll, ECDsa key) =>
+        Convert.ToBase64String(key.SignData(dll, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation));
+}
+
+/// <summary>
+/// Loads module DLLs once at startup, before the container is built: discover, verify, read the manifest (no code runs), catalog, load
+/// into its own <see cref="AssemblyLoadContext"/>, register through <see cref="PluginRegistrar"/>. One bad plugin never stops startup.
+/// </summary>
+public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar registrar, Action<string>? log = null)
+{
+    /// <summary>Modules found unsigned that may run in the user-mode module host (see <see cref="UserModeModule"/>).</summary>
+    public IReadOnlyList<UserModeModule> UserMode => _userMode;
+    private readonly List<UserModeModule> _userMode = [];
+
+    public void LoadAll(IServiceCollection services, ModuleCatalog? builtIns = null)
+    {
+        var taken = new Dictionary<Guid, string>();
+        var slugs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in (builtIns ?? new ModuleCatalog()).All) { taken[d.Id] = d.Slug; slugs[d.Slug] = d.Slug; }
+
+        foreach (var path in Discover())
+        {
+            var pluginId = Path.GetFileNameWithoutExtension(path);
+            var record = new PluginRecord(pluginId, ModuleSource.Plugin, PluginState.Loaded) { Path = path };
+            try
+            {
+                var dll = File.ReadAllBytes(path); // verify, read and load these exact bytes (no swap between check and load)
+                var sigPath = path + ModuleSignature.Extension;
+                var signed = ModuleSignature.Verify(dll, File.Exists(sigPath) ? File.ReadAllText(sigPath) : null, options.PublicKeyPem);
+                record = record with { Signature = signed ? "Signed (project key)" : File.Exists(sigPath) ? "Signature does not match" : "Unsigned" };
+
+                var (manifest, strings) = ModuleManifest.ReadFromAssembly(dll);
+                pluginId = manifest.Slug;
+                var descriptor = manifest.ToDescriptor(pluginId);
+                record = record with { PluginId = pluginId, Version = manifest.Version, ModuleId = manifest.Id, DisplayName = descriptor.DisplayName };
+
+                if (manifest.Problem(options.HostVersion) is { } problem) { registrar.RecordDisabled(record with { Reason = problem }, descriptor); continue; }
+                if (taken.TryGetValue(manifest.Id, out var owner)) { registrar.RecordDisabled(record with { Reason = $"id {manifest.Id} is already used by {owner}" }); continue; }
+                if (slugs.ContainsKey(manifest.Slug)) { registrar.RecordDisabled(record with { Reason = $"slug {manifest.Slug} is already used" }); continue; }
+                taken[manifest.Id] = manifest.Slug;
+                slugs[manifest.Slug] = manifest.Slug;
+                SaveToCatalog(manifest, strings);
+
+                if (!signed)
+                {
+                    // Unsigned code never loads into the (elevated) app process.
+                    var why = manifest.NeedsAdmin ? "needs administrator, so it must be signed with the project key"
+                        : manifest.ChangesSystem ? "changes the PC, so it must be signed with the project key"
+                        : !options.AllowUnsigned ? "unsigned modules are turned off (turn them on at this PC to run them in user mode)"
+                        : null;
+                    if (why is not null) { registrar.RecordDisabled(record with { Reason = why }, descriptor); continue; }
+                    _userMode.Add(new UserModeModule(path, manifest, descriptor));
+                    registrar.RecordDisabled(record with { Reason = "runs in user mode, out of process", UserMode = true }, descriptor);
+                    continue;
+                }
+
+                var alc = new ModuleLoadContext(pluginId, dll);
+                var asm = alc.LoadFromStream(new MemoryStream(dll, writable: false));
+                var entry = asm.GetType(manifest.EntryType, throwOnError: false)
+                    ?? throw new InvalidDataException($"entryType {manifest.EntryType} not found");
+                if (Activator.CreateInstance(entry) is not IModulePlugin plugin)
+                    throw new InvalidDataException($"{manifest.EntryType} does not implement IModulePlugin");
+                if (registrar.Register(services, plugin, pluginId, ModuleSource.Plugin, manifest.Id, record))
+                    Log($"loaded {pluginId} {manifest.Version} ({manifest.Id}) from {path}");
+            }
+            catch (Exception ex)
+            {
+                registrar.RecordDisabled(record with { Reason = $"{ex.GetType().Name}: {ex.Message}" });
+            }
+        }
+        LoadRetired(taken);
+    }
+
+    /// <summary>Plugins whose DLL is gone keep their catalog copy, so History can still name their results.</summary>
+    private void LoadRetired(Dictionary<Guid, string> loaded)
+    {
+        if (!Directory.Exists(options.CatalogFolder)) return;
+        foreach (var dir in Directory.EnumerateDirectories(options.CatalogFolder))
+        {
+            try
+            {
+                var file = Path.Combine(dir, ModuleManifest.ResourceName);
+                if (!File.Exists(file)) continue;
+                var m = ModuleManifest.Parse(File.ReadAllBytes(file));
+                if (m.Id == Guid.Empty || loaded.ContainsKey(m.Id)) continue;
+                registrar.AddRetired(m.ToDescriptor(m.Slug));
+            }
+            catch (Exception ex) { Log($"catalog entry {dir} unreadable: {ex.Message}"); }
+        }
+    }
+
+    private IEnumerable<string> Discover()
+    {
+        if (!Directory.Exists(options.ModulesFolder)) return [];
+        return Directory.EnumerateFiles(options.ModulesFolder, "*.dll", SearchOption.TopDirectoryOnly).Order(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private void SaveToCatalog(ModuleManifest manifest, IReadOnlyDictionary<string, byte[]> strings)
+    {
+        try
+        {
+            var dir = Path.Combine(options.CatalogFolder, manifest.Id.ToString("D"));
+            Directory.CreateDirectory(Path.Combine(dir, "strings"));
+            File.WriteAllText(Path.Combine(dir, ModuleManifest.ResourceName), manifest.ToJson());
+            foreach (var (name, bytes) in strings) File.WriteAllBytes(Path.Combine(dir, "strings", Path.GetFileName(name)), bytes);
+        }
+        catch (Exception ex) { Log($"couldn't save {manifest.Slug} to the catalog: {ex.Message}"); }
+    }
+
+    private void Log(string message) { try { log?.Invoke("Modules: " + message); } catch { } }
+}
+
+/// <summary>An unsigned module the user-mode module host runs out of process.</summary>
+public sealed record UserModeModule(string Path, ModuleManifest Manifest, ModuleDescriptor Descriptor);
+
+/// <summary>
+/// One load context per module. The contract assembly, DI abstractions and ASP.NET Components come from the host, so types match across
+/// the boundary; the module's own dependencies come from its embedded "lib/&lt;name&gt;.dll" resources.
+/// </summary>
+public sealed class ModuleLoadContext(string name, byte[] moduleBytes) : AssemblyLoadContext($"module:{name}", isCollectible: false)
+{
+    private static readonly string[] Shared = ["RemotePCDiagnostics.Abstractions", "Microsoft.Extensions.DependencyInjection.Abstractions", "Microsoft.AspNetCore.Components"];
+
+    protected override Assembly? Load(AssemblyName assemblyName)
+    {
+        var n = assemblyName.Name ?? "";
+        if (Shared.Any(s => n.Equals(s, StringComparison.OrdinalIgnoreCase) || n.StartsWith(s + ".", StringComparison.OrdinalIgnoreCase))) return null;
+        if (EmbeddedLibrary(n) is { } bytes) return LoadFromStream(new MemoryStream(bytes, writable: false));
+        return null; // framework assemblies resolve from the default context
+    }
+
+    private byte[]? EmbeddedLibrary(string assemblyName)
+    {
+        var main = Assemblies.FirstOrDefault();
+        if (main is null) return null;
+        using var s = main.GetManifestResourceStream($"lib/{assemblyName}.dll");
+        if (s is null) return null;
+        using var ms = new MemoryStream();
+        s.CopyTo(ms);
+        return ms.ToArray();
+    }
+
+    /// <summary>The bytes the module was loaded from (kept for diagnostics).</summary>
+    public int ModuleSize => moduleBytes.Length;
+}

@@ -596,3 +596,6 @@ table.detail tr.row-detail td { white-space: normal; }
 .about-card dl { display: grid; grid-template-columns: minmax(140px, 180px) 1fr; gap: 6px 16px; margin: 12px 0; padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; }
 .about-card dt { color: var(--text-muted); font-weight: 600; font-size: 13px; }
 .about-card dd { margin: 0; color: var(--text-strong); font-family: var(--font-num); font-size: 13px; }
+.about-plugins { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.about-plugins th, .about-plugins td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
+.about-plugins th { color: var(--text-muted); font-weight: 600; }

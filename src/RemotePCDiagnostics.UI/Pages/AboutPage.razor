@@ -1,5 +1,7 @@
 @page "/about"
 @inject ISessionContext Session
+@inject AppServices App
+@using RemotePCDiagnostics.Core.Plugins
 
 <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="pc" Size="20" /></span><h1 data-testid="about-title">About Remote PC Diagnostics</h1></div>
 <div class="about-accent-line" aria-hidden="true"></div>
@@ -17,3 +19,29 @@
     </dl>
     <p class="meta">CI builds include a build number, attempt and Git revision. Local builds are marked local and may include uncommitted changes. Older logs retain the version information originally recorded.</p>
 </section>
+@if (Plugins.Count > 0)
+{
+    <section class="card about-card" data-testid="about-plugins">
+        <h2>Module plugins</h2>
+        <p>Modules installed in the modules folder. Signed modules run inside the app; unsigned ones never do.</p>
+        <table class="about-plugins">
+            <thead><tr><th>Module</th><th>Version</th><th>Signature</th><th>State</th></tr></thead>
+            <tbody>
+            @foreach (var p in Plugins)
+            {
+                <tr data-testid="about-plugin">
+                    <td><strong>@(p.DisplayName ?? p.PluginId)</strong><div class="meta">@p.PluginId@(p.ModuleId is { } id ? $" · {id}" : "")</div></td>
+                    <td>@(p.Version ?? "—")</td>
+                    <td>@(p.Signature ?? "—")</td>
+                    <td>@(p.UserMode ? "User mode" : p.State.ToString())@if (p.Reason is { Length: > 0 } && !p.UserMode) {<div class="meta">@p.Reason</div>}</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </section>
+}
+
+@code {
+    private IReadOnlyList<PluginRecord> Plugins =>
+        App.Plugins?.Records.Where(r => r.Source == RemotePCDiagnostics.Core.ModuleSource.Plugin).ToList() ?? [];
+}
