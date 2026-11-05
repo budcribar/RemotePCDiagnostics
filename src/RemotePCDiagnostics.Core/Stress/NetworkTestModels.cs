@@ -52,8 +52,10 @@ public sealed record NetworkTestProgress(
 public sealed record NetworkTestReport(
     NetworkTestOutcome Outcome, TimeSpan Ran, bool HasGateway, PingStats Gateway, PingStats Internet,
     double? DownloadMbps, double? UploadMbps, long? NewAdapterErrors, long? NewAdapterDrops,
-    IReadOnlyList<NetworkSample> Samples, double? MaxCpuTemperatureC)
+    IReadOnlyList<NetworkSample> Samples, double? MaxCpuTemperatureC) : IRunEnd
 {
+    [System.Text.Json.Serialization.JsonIgnore] public RunEnd RunEnd => Outcome == NetworkTestOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+
     public string Headline => Outcome switch
     {
         NetworkTestOutcome.Stable => "Stable",

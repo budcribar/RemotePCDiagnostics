@@ -33,8 +33,10 @@ public sealed record CpuStressProgress(
 public sealed record CpuStressReport(
     CpuStressOutcome Outcome, TimeSpan Ran, TimeSpan Requested, int Threads,
     long ChunksDone, long Errors, double? MaxCpuTemperatureC, double? EarlyThroughput, double? LateThroughput,
-    bool SensorsAvailable)
+    bool SensorsAvailable) : IRunEnd
 {
+    [System.Text.Json.Serialization.JsonIgnore] public RunEnd RunEnd => Outcome == CpuStressOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+
     /// <summary>Late vs early throughput, e.g. 0.8 = 20% slower at the end.</summary>
     public double? ThroughputRatio => EarlyThroughput is > 0 && LateThroughput is { } l ? l / EarlyThroughput : null;
 

@@ -117,11 +117,10 @@ public sealed class ResultEventLogger
         catch { /* logging must never affect diagnostics */ }
     }
 
-    public static bool IsCancelled(DiagnosticResult r) => r.Cancelled ||
-        (r.Payload is not null && r.Payload.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() is "StoppedByUser" or "Cancelled");
+    public static bool IsCancelled(DiagnosticResult r) => r.Cancelled || r.Payload is IRunEnd { RunEnd: RunEnd.Cancelled };
 
     public static string Outcome(DiagnosticResult r) => r.Payload is DependencyGate gate ? gate.Outcome
-        : r.Payload is CouldNotRun or ModuleAvailability || r.Payload?.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() == "NoGpu" ? CouldNotRun.OutcomeText
+        : r.Payload is ModuleAvailability or IRunEnd { RunEnd: RunEnd.CouldNotRun } ? CouldNotRun.OutcomeText
         : IsCancelled(r) ? "Cancelled"
         : r.Status switch { DiagnosticStatus.Ok => "OK", DiagnosticStatus.Warning => "Warning", DiagnosticStatus.Error => "Critical", _ => r.Status.ToString() };
 

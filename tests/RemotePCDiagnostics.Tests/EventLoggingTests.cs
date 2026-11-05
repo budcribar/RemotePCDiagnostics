@@ -155,6 +155,34 @@ public class EventLoggingTests
         Assert.Equal(level, e.Level);
     }
 
+    [Theory]
+    [InlineData(GpuStressOutcome.NoGpu, "Couldn't run")]
+    [InlineData(GpuStressOutcome.StoppedByUser, "Cancelled")]
+    [InlineData(GpuStressOutcome.Passed, "OK")]
+    public void Outcome_comes_from_the_payloads_RunEnd(GpuStressOutcome gpu, string expected)
+    {
+        var report = new GpuStressReport(gpu, TimeSpan.Zero, null, 0, 0, 0, null, null);
+        var r = new DiagnosticResult("GpuStress", DiagnosticStatus.Ok, "x", DateTimeOffset.Now, report);
+        Assert.Equal(expected, ResultEventLogger.Outcome(r));
+        Assert.Equal(gpu == GpuStressOutcome.StoppedByUser, ResultEventLogger.IsCancelled(r));
+    }
+
+    /// <summary>A payload with a property named Outcome no longer counts by name: only IRunEnd does.</summary>
+    private sealed record LooksLikeNoGpu(string Outcome);
+
+    [Fact]
+    public void A_property_named_Outcome_is_not_read_by_reflection()
+    {
+        var r = new DiagnosticResult("X", DiagnosticStatus.Ok, "x", DateTimeOffset.Now, new LooksLikeNoGpu("NoGpu"));
+        Assert.Equal("OK", ResultEventLogger.Outcome(r));
+        Assert.False(ResultEventLogger.IsCancelled(r with { Payload = new LooksLikeNoGpu("StoppedByUser") }));
+    }
+
+    [Fact]
+    public void A_cancelled_suite_result_is_cancelled() =>
+        Assert.True(ResultEventLogger.IsCancelled(new DiagnosticResult("StressSuite", DiagnosticStatus.Ok, "x", DateTimeOffset.Now,
+            new StressSuiteResult(StressSuiteMode.Short, StressSuiteOutcome.Cancelled, [], "stopped"))));
+
     [Fact]
     public void OtherLines_AreFileOnly() => Assert.Null(LogText.Route("ReadyToConnect url=https://x/app/123 id=abc"));
 }
