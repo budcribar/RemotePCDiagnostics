@@ -135,6 +135,7 @@ public class UiReviewFixesTests
     private sealed class Mod(string name, string display) : IDiagnosticModule
     {
         public string Name => name;
+        public Guid Id => TestIds.For(name);
         public string DisplayName => display;
         public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
         public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);

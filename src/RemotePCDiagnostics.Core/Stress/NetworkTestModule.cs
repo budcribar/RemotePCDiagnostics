@@ -8,6 +8,7 @@ public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, 
 {
     public const string ModuleName = "NetworkTest";
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.NetworkTest;
     public override string DisplayName => "Network stability test";
     string IStressSuiteModule.SuiteName => "Network";
     bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.Failed } or Exception;

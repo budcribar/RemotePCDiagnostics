@@ -42,6 +42,7 @@ public abstract class AudioModuleBase : IAudioTestModule
     protected AudioModuleBase(IAudioIo io, Action<string>? log) { Io = io; LogSink = log; }
 
     public abstract string Name { get; }
+    public abstract Guid Id { get; }
     public abstract string DisplayName { get; }
     public bool IncludeInRunAll => false;
     public AudioTestSettings Settings { get; } = new();
@@ -102,6 +103,7 @@ public sealed class SpeakerToMicModule(IAudioIo io, Action<string>? log = null) 
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.SpeakerToMic;
     public override string DisplayName => "Speaker to microphone test";
 
     protected override async Task<DiagnosticResult> RunCoreAsync(IProgress<string>? progress, CancellationToken ct)
@@ -171,6 +173,7 @@ public sealed class MicToSpeakerModule(IAudioIo io, Action<string>? log = null) 
     public const string FeedbackRetriedNotice = "Feedback (howling) was detected while playing live, so it was stopped and run again as half-duplex (record, then play back).";
 
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.MicToSpeaker;
     public override string DisplayName => "Microphone to speaker test";
     public TimeSpan Duration { get; set; } = DefaultDuration;
     public float Gain { get; set; } = AudioMath.MaxMonitorGain;

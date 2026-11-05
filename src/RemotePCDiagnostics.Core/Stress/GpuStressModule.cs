@@ -7,6 +7,7 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
 {
     public const string ModuleName = "GpuStress";
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.GpuStress;
     public override string DisplayName => "Graphics (GPU) stress test";
     string IStressSuiteModule.SuiteName => "GPU";
     bool IStressSuiteModule.IsUnavailableResult(DiagnosticResult r) => r.Payload is GpuStressReport { Outcome: GpuStressOutcome.NoGpu };

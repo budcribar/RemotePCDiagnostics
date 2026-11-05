@@ -30,6 +30,7 @@ public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner
     public const int LowBatteryHealthPercent = 70;
 
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.BatteryPower;
     public override string DisplayName => "Battery & power plan";
     protected override string FailedMessage => "Couldn't read battery and power settings on this PC.";
 

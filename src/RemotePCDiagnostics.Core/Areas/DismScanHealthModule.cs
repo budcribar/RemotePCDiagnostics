@@ -5,6 +5,7 @@ public sealed class DismScanHealthModule(SystemCommandRunner commands) : Windows
 {
     public const string ModuleName = "DismScanHealth";
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.DismScanHealth;
     public override string DisplayName => "Windows component store (DISM)";
 
     /// <summary>The DISM ScanHealth message when the store is corrupt but DISM says it can't be repaired.</summary>

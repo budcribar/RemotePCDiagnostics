@@ -7,6 +7,7 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
 {
     public const string ModuleName = "DiskSpeed";
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.DiskSpeed;
     public override string DisplayName => "Disk speed test";
     string IStressSuiteModule.SuiteName => "Disk";
     bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.Failed } or Exception;

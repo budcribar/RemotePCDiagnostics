@@ -6,7 +6,9 @@ public sealed class OsqueryModule(OsqueryRunner runner) : IDiagnosticModule
     public const string ToolMissingMessage = "The hardware tool wasn't found. Please reinstall the app.";
     public const string AllFailedMessage = "Couldn't read hardware details on this PC.";
 
-    public string Name => "Osquery";
+    public const string ModuleName = "Osquery";
+    public string Name => ModuleName;
+    public Guid Id => ModuleIds.Osquery;
     public string DisplayName => "Hardware inventory";
     public event EventHandler<DiagnosticResult>? Updated;
 

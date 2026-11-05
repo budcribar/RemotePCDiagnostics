@@ -63,6 +63,7 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
         "ConvertTo-Json -InputObject $p -Compress";
 
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.DeviceDrivers;
     public override string DisplayName => "Device Manager & drivers";
     protected override string FailedMessage => "Couldn't check Device Manager and drivers on this PC.";
 

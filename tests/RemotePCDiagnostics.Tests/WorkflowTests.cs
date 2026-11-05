@@ -15,6 +15,7 @@ public class WorkflowTests
     private sealed class AreaModule(string name, AreaReport report) : IDiagnosticModule
     {
         public string Name => name;
+        public Guid Id => TestIds.For(name);
         public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
         public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
         public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default) =>
@@ -972,6 +973,7 @@ public class WorkflowTests
     private sealed class SteppedModule(string name, AreaReport report) : IDiagnosticModule
     {
         public string Name => name;
+        public Guid Id => TestIds.For(name);
         public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
         public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
         public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default)
@@ -1018,6 +1020,7 @@ public class WorkflowTests
     {
         public int Runs;
         public string Name => name;
+        public Guid Id => TestIds.For(name);
         public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
         public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
         public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default)

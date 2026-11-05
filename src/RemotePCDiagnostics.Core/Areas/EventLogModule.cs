@@ -6,6 +6,7 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
     public const string ModuleName = "EventLog";
     public const int Days = 7, MaxPerLog = 300, RepeatErrors = 5;
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.EventLog;
     public override string DisplayName => "Windows error log";
     protected override string FailedMessage => "Couldn't read the Windows error log on this PC.";
     private readonly WindowsEventLog _log = new(commands);

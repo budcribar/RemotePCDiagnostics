@@ -31,6 +31,7 @@ public sealed class WebcamTestModule(IWebcamIo io, Action<string>? log = null) :
     private readonly object _gate = new();
 
     public string Name => ModuleName;
+    public Guid Id => ModuleIds.Webcam;
     public string DisplayName => "Webcam test";
     public bool IncludeInRunAll => false;
     public string? DeviceId { get; set; }

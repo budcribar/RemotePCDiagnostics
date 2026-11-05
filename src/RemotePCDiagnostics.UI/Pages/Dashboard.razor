@@ -7,7 +7,7 @@
 @inject RemotePCDiagnostics.Core.Session.ISessionContext Session
 @implements IAsyncDisposable
 @{
-    var hw = Store.Get("Osquery");
+    var hw = Store.Get(ModuleSlugs.Osquery);
     var inv = hw.Payload as HardwareInventory;
     var th = Store.Get(LibreHardwareMonitorModule.ModuleName);
     var thBusy = th.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
@@ -17,7 +17,7 @@
     var querying = hw.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
     var all = Diagnostics.Modules.Select(m => Store.Get(m.Name)).ToList();
     var checkModules = Diagnostics.Modules.Where(m => m.IncludeInRunAll).ToList();
-    var nonCardChecks = checkModules.Where(m => m.Name is not ("Osquery" or LibreHardwareMonitorModule.ModuleName)).ToList();
+    var nonCardChecks = checkModules.Where(m => m.Name is not (ModuleSlugs.Osquery or LibreHardwareMonitorModule.ModuleName)).ToList();
     var checking = Screen.RunningGroup == CheckGroup.Checks || nonCardChecks.Any(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
     var checkItems = checking ? Screen.LiveCheckItems(Store) : [];
     var completedChecks = checkItems.Count(c => c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error);
@@ -31,7 +31,7 @@
     var problemRanks = summary.Problems.ToDictionary(p => p.Name, p => p.IsError ? 0 : 1, StringComparer.OrdinalIgnoreCase);
     if (_cardRanks is null || (!checking && !stressBusy && !all.Any(r => r.Status == DiagnosticStatus.Running)))
         _cardRanks = problemRanks;
-    string[] fixedCards = [LibreHardwareMonitorModule.ModuleName, "Osquery"];
+    string[] fixedCards = [LibreHardwareMonitorModule.ModuleName, ModuleSlugs.Osquery];
     var cards = fixedCards.Concat(Diagnostics.Modules.Select(m => m.Name)
         .Where(name => !fixedCards.Contains(name) && _cardRanks.ContainsKey(name)))
         .OrderBy(name => _cardRanks.GetValueOrDefault(name, 2)).ToList();
@@ -182,11 +182,11 @@
     </div>
 
         }
-        else if (name == "Osquery")
+        else if (name == ModuleSlugs.Osquery)
         {
     <div @key="name" class="card dash-card card-click" data-testid="dashboard-card-osquery" role="link" tabindex="0"
-         @onclick='() => Open("Osquery")' @onkeydown='e => Key(e, "Osquery")'>
-        <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(hw.Status)"><Icon Name="@Icon.ForModule("Osquery")" /></span><strong>Hardware inventory</strong>
+         @onclick='() => Open(ModuleSlugs.Osquery)' @onkeydown='e => Key(e, ModuleSlugs.Osquery)'>
+        <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(hw.Status)"><Icon Name="@Icon.ForModule(ModuleSlugs.Osquery)" /></span><strong>Hardware inventory</strong>
             <StatusChip Status="@(querying ? DiagnosticStatus.Running : hw.Status)" Text="@(querying ? "Checking…" : null)" /></div>
         <div data-testid="dashboard-status" class="@(hw.Status == DiagnosticStatus.Error ? "card-msg error-text" : "card-msg card-msg-full")">
             @if (querying) { <span>Querying hardware…</span> }

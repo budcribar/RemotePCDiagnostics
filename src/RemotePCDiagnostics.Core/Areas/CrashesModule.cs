@@ -9,6 +9,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
     public const string ModuleName = "Crashes";
     public const int Days = 30, Max = 500, RecentDays = 7, RepeatCrashes = 3;
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.Crashes;
     public override string DisplayName => includeSystemCrashes ? "Crashes & unexpected restarts" : "App crashes";
     protected override string FailedMessage => "Couldn't read app crash reports on this PC.";
     private readonly WindowsEventLog _log = new(commands);

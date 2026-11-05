@@ -8,6 +8,7 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
 {
     public const string ModuleName = "MemoryTest";
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.MemoryTest;
     public override string DisplayName => "Memory test";
     string IStressSuiteModule.SuiteName => "Memory";
     object IStressSuiteModule.SaveSuiteSettings() => (Mode, Duration);

@@ -8,6 +8,7 @@ internal sealed class FakeStressModule(string name, string suiteName, Func<FakeS
     bool available = true) : IStressSuiteModule
 {
     public string Name => name;
+    public Guid Id => TestIds.For(name);
     public string SuiteName => suiteName;
     public bool IncludeInRunAll => false;
     public event EventHandler<DiagnosticResult>? Updated;

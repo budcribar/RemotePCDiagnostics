@@ -46,6 +46,7 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
     private CancellationTokenSource? _runCts;
 
     public string Name => ModuleName;
+    public Guid Id => ModuleIds.NpuTest;
     public string DisplayName => "NPU (AI accelerator) test";
     public bool IncludeInRunAll => false;
     public NpuTestSettings Settings { get; } = new();
