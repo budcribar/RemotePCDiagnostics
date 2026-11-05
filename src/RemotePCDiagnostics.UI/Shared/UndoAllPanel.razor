@@ -7,8 +7,9 @@
 @* "Undo all changes": puts back every reversible change this app made (also available as --undo-all on the command line). *@
 @{
     var all = Journal.All.OrderByDescending(c => c.TimeUtc).ToList();
-    var pending = all.Where(c => c.Kind != ChangeKind.NotUndoable).ToList();
-    var permanent = all.Where(c => c.Kind == ChangeKind.NotUndoable).ToList();
+    // Permanent changes (installed updates, removed apps, deleted temp files) are listed apart: undo reports them as left as is.
+    var pending = all.Where(c => Undoability.Of(c) != UndoSupport.None).ToList();
+    var permanent = all.Where(c => Undoability.Of(c) == UndoSupport.None).ToList();
 }
 <section class="card undo-panel" data-testid="undo-panel">
     <div class="card-head"><strong>Undo changes</strong>
