@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <!-- Stands in for an unsigned module's UI host: a RemoteBlazorWebView app started by the shell with a restricted token at Medium
+       integrity. Its Razor UI is rendered over the shell's embedded relay into a sandboxed iframe. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>UnsignedUiSpike.ModuleUi</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="PeakSWC.RemoteBlazorWebView.Wpf" Version="$(SpikeRbwvVersion)" />
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

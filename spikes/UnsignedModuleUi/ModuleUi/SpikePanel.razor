@@ -1,0 +1,48 @@
+@implements IDisposable
+@inject IJSRuntime JS
+@* The module's own UI. Runs in the restricted host process; its DOM lives in the shell's sandboxed iframe. *@
+<h3>Unsigned module UI (spike)</h3>
+<p>Host process: pid @Environment.ProcessId · integrity <b>@Token.Integrity</b> · admin <b>@Token.IsAdmin</b></p>
+<p>WebView2 user data: <code>@Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER")</code></p>
+<p>Clicks: @_count <button @onclick="Click">Click (round trip over the relay)</button>
+   <button @onclick="SendResult">Send a result to the shell (postMessage)</button>
+   <button @onclick="Probe">Run sandbox probes</button></p>
+<pre>@_log</pre>
+
+@code {
+    private int _count;
+    private string _log = "";
+    private DotNetObjectReference<SpikePanel>? _self;
+
+    protected override async Task OnAfterRenderAsync(bool first)
+    {
+        if (!first) return;
+        _self = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("spike.listen", _self);
+        await Post(new { type = "ready", pid = Environment.ProcessId, integrity = Token.Integrity, admin = Token.IsAdmin, at = DateTimeOffset.Now });
+        await Probe();
+    }
+
+    private void Click() => _count++;
+
+    private Task SendResult() => Post(new { type = "result", status = "Ok", message = $"Clicked {_count} times", at = DateTimeOffset.Now });
+
+    private async Task Probe()
+    {
+        var json = await JS.InvokeAsync<string>("spike.probes");
+        Append("probes: " + json);
+        await Post(new { type = "probes", result = json });
+    }
+
+    private async Task Post(object message)
+    {
+        await JS.InvokeVoidAsync("spike.post", message);
+        Append("posted " + System.Text.Json.JsonSerializer.Serialize(message));
+    }
+
+    [JSInvokable] public void FromShell(string origin, string json) { Append($"from shell ({origin}): {json}"); _ = InvokeAsync(StateHasChanged); }
+
+    private void Append(string line) { _log = $"{DateTime.Now:HH:mm:ss.fff} {line}\n" + _log; SpikeLog.Write(line); }
+
+    public void Dispose() => _self?.Dispose();
+}

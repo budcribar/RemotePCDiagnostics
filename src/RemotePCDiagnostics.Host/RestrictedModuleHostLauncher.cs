@@ -64,6 +64,22 @@ public sealed class RestrictedModuleHostLauncher(Action<string>? log = null, str
             new StreamReader(new FileStream(outRead, FileAccess.Read), Encoding.UTF8), stderr);
     }
 
+    /// <summary>
+    /// Starts a GUI process (a module's UI host) with the same restricted token, Medium integrity and no pipes. Its window is shown
+    /// normally; the caller owns the returned process.
+    /// </summary>
+    public static Process StartRestrictedGui(string exe, string arguments, string workingDirectory)
+    {
+        if (!File.Exists(exe)) throw new FileNotFoundException("UI host not found", exe);
+        using var token = RestrictedToken();
+        var si = new STARTUPINFO { cb = Marshal.SizeOf<STARTUPINFO>() };
+        Check(CreateProcessAsUser(token, null, new StringBuilder($"\"{exe}\" {arguments}"), IntPtr.Zero, IntPtr.Zero, false, CREATE_UNICODE_ENVIRONMENT,
+            IntPtr.Zero, workingDirectory, ref si, out var pi));
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return Process.GetProcessById(pi.dwProcessId);
+    }
+
     private static SafeAccessTokenHandle RestrictedToken()
     {
         Check(OpenProcessToken(Process.GetCurrentProcess().Handle, TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT, out var own));

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Unsigned module UI spike</title>
+    <style>
+        body { font-family: Segoe UI, sans-serif; margin: 12px; }
+        .frame { border: 3px solid #b45309; border-radius: 8px; margin: 10px 0; }
+        .banner { background: #fef3c7; color: #78350f; padding: 6px 10px; font-weight: 600; }
+        iframe { width: 100%; height: 330px; border: 0; display: block; }
+        pre { background: #f3f3f3; padding: 6px; white-space: pre-wrap; max-height: 260px; overflow: auto; }
+    </style>
+</head>
+<body>
+    <div id="app">Loading…</div>
+    <script src="_framework/blazor.webview.js"></script>
+    <script>
+        window.shell = {
+            listen: function (dotnet) {
+                window.addEventListener('message', function (e) {
+                    // Which frame sent it: compare e.source with each iframe's window (works across origins).
+                    let frame = '?';
+                    document.querySelectorAll('iframe[data-frame]').forEach(f => { if (f.contentWindow === e.source) frame = f.dataset.frame; });
+                    dotnet.invokeMethodAsync('FromFrame', frame, String(e.origin), JSON.stringify(e.data));
+                });
+                return String(location.origin);
+            },
+            post: function (frame, text) {
+                const f = document.querySelector('iframe[data-frame="' + frame + '"]');
+                if (f) f.contentWindow.postMessage({ type: 'ping', text: text }, '*');
+            },
+            probe: function (frame) {
+                const f = document.querySelector('iframe[data-frame="' + frame + '"]');
+                if (!f) return 'no frame';
+                try { return f.contentWindow.document ? 'READABLE (not isolated!)' : 'none'; } catch (e) { return 'blocked: ' + e.name; }
+            }
+        };
+    </script>
+</body>
+</html>

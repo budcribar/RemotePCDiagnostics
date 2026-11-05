@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Unsigned module (spike)</title>
+    <!-- Required: the relay rewrites this to /{id}/ so the page's files and gRPC calls are tied to this module host. -->
+    <base href="/" />
+    <style>body { font-family: Segoe UI, sans-serif; margin: 12px; } button { margin: 4px 4px 4px 0; } pre { background: #f3f3f3; padding: 6px; white-space: pre-wrap; }</style>
+</head>
+<body>
+    <div id="app">Loading…</div>
+    <script>
+        // Runs before Blazor. Forwards errors and console output to the shell, so a frame that never starts still says why.
+        (function () {
+            function fwd(kind, msg) { try { window.parent.postMessage({ type: 'diag', kind: kind, msg: String(msg).slice(0, 2000) }, '*'); } catch (e) { } }
+            window.addEventListener('error', function (e) { fwd('error', e.message + ' @ ' + e.filename + ':' + e.lineno); });
+            window.addEventListener('unhandledrejection', function (e) { const r = e.reason; fwd('rejection', r && (r.stack || r.message) || r); });
+            // Network trace: every fetch and XHR (gRPC-Web uses XHR) with its outcome, to see where an opaque-origin frame stalls.
+            const f0 = window.fetch;
+            window.fetch = function (input, init) {
+                const url = String(input && input.url || input);
+                fwd('fetch', 'start ' + url);
+                // Opaque origin: Blazor fetches blazor.modules.json with credentials 'include', and a credentialed request can't be
+                // answered with the relay's "Access-Control-Allow-Origin: *". Nothing here needs cookies, so leave them out.
+                if (String(self.origin) === 'null') init = Object.assign({}, init, { credentials: 'omit' });
+                return f0.call(this, input, init).then(function (r) { fwd('fetch', r.status + ' ' + url); return r; },
+                    function (e) { fwd('fetch', 'FAILED ' + url + ': ' + e); throw e; });
+            };
+            const open0 = XMLHttpRequest.prototype.open, send0 = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function (m, u) { this.__u = m + ' ' + u; return open0.apply(this, arguments); };
+            XMLHttpRequest.prototype.send = function () {
+                const x = this; fwd('xhr', 'send ' + x.__u);
+                x.addEventListener('readystatechange', function () { if (x.readyState === 2) fwd('xhr', 'headers ' + x.status + ' ' + x.__u); });
+                x.addEventListener('loadend', function () { fwd('xhr', 'end ' + x.status + ' ' + x.__u); });
+                return send0.apply(this, arguments);
+            };
+            ['log', 'info', 'debug', 'warn', 'error'].forEach(function (k) {
+                const o = console[k];
+                console[k] = function () { fwd(k, Array.prototype.map.call(arguments, String).join(' ')); o.apply(console, arguments); };
+            });
+            // In a sandboxed frame without allow-same-origin, location.origin is "null", and RemoteWebView.ts uses it as the gRPC-Web
+            // host. location.host is still the relay's, so point the client there. Without this the page stays at "Loading...".
+            if (String(self.origin) === 'null') window.RemoteBlazor = { grpcHost: location.protocol + '//' + location.host };
+            fwd('boot', 'origin=' + self.origin + ' href=' + location.href + ' grpcHost=' + (window.RemoteBlazor ? window.RemoteBlazor.grpcHost : '(location.origin)'));
+        })();
+    </script>
+    <script src="_framework/blazor.webview.js" onload="parent.postMessage({ type: 'diag', kind: 'script', msg: 'blazor.webview.js loaded' }, '*')" onerror="parent.postMessage({ type: 'diag', kind: 'script', msg: 'blazor.webview.js FAILED to load' }, '*')"></script>
+    <script>
+        // What an untrusted module page can and can't reach. Every probe is reported to the shell with postMessage.
+        window.spike = {
+            post: function (obj) { window.parent.postMessage(obj, '*'); },
+            probes: function () {
+                const r = { origin: String(self.origin), inFrame: window.top !== window.self };
+                try { r.topHref = String(window.top.location.href); } catch (e) { r.topHref = 'blocked: ' + e.name; }
+                try { r.topDocument = window.top.document ? 'READABLE' : 'none'; } catch (e) { r.topDocument = 'blocked: ' + e.name; }
+                try { localStorage.setItem('spike', '1'); r.localStorage = 'available'; } catch (e) { r.localStorage = 'blocked: ' + e.name; }
+                try { r.cookie = document.cookie === '' ? 'empty' : 'READABLE'; } catch (e) { r.cookie = 'blocked: ' + e.name; }
+                try { const w = window.open('about:blank'); r.popup = w ? 'OPENED' : 'blocked (null)'; if (w) w.close(); } catch (e) { r.popup = 'blocked: ' + e.name; }
+                try { alert('spike'); r.alert = 'shown?'; } catch (e) { r.alert = 'blocked: ' + e.name; }
+                return JSON.stringify(r);
+            },
+            listen: function (dotnet) {
+                window.addEventListener('message', function (e) {
+                    dotnet.invokeMethodAsync('FromShell', String(e.origin), JSON.stringify(e.data));
+                });
+            }
+        };
+    </script>
+</body>
+</html>
