@@ -11,6 +11,8 @@ public sealed record GpuStressOptions
     public static TimeSpan MaxDuration => DurationChoices[^1];
 
     public TimeSpan Duration { get; init; } = TimeSpan.FromMinutes(1);
+    /// <summary>The adapter to stress (<see cref="GpuAdapterInfo.Id"/>); null = the first hardware adapter.</summary>
+    public string? AdapterId { get; init; }
     /// <summary>Aim for dispatches this long: busy enough to load the GPU, far below Windows' 2-second TDR timeout.</summary>
     public TimeSpan TargetDispatch { get; init; } = TimeSpan.FromMilliseconds(150);
     /// <summary>A dispatch slower than this is cut back hard (half) right away.</summary>

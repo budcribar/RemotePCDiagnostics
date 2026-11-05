@@ -489,3 +489,6 @@ $RECYCLE.BIN/
 
 # Versioned integration packages required to restore the tested remote client
 !third_party/RemoteBlazorWebView/packages/*.nupkg
+
+# Module signing private key (tools/New-ModuleSigningKey.ps1): never commit it
+*.pem

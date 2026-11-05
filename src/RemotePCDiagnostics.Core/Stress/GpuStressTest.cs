@@ -32,7 +32,7 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
         string? adapterName = null;
 
         GpuOpenResult open;
-        try { open = factory.Open(); }
+        try { open = o.AdapterId is { } adapterId ? factory.Open(adapterId) : factory.Open(); }
         catch (Exception ex) { log?.Invoke($"GPU stress: open failed: {ex}"); open = new GpuOpenResult(GpuOpenStatus.Failed, Detail: ex.Message); }
 
         if (open.Status != GpuOpenStatus.Opened || open.Device is null)

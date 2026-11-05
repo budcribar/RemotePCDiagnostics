@@ -16,6 +16,60 @@ namespace RemotePCDiagnostics.Host.Gpu;
 /// </summary>
 public sealed class D3D11GpuDeviceFactory(Action<string>? log = null, int threadCount = 1 << 18) : IGpuDeviceFactory
 {
+    /// <summary>Hardware adapters in DXGI order, with ids from their PCI vendor, device, subsystem and revision.</summary>
+    public IReadOnlyList<GpuAdapterInfo> ListAdapters()
+    {
+        if (!OperatingSystem.IsWindows()) return [];
+        if (DXGI.CreateDXGIFactory1(out IDXGIFactory1? factory).Failure || factory is null) return [];
+        using (factory)
+        {
+            var found = new List<(GpuAdapterInfo, string)>();
+            for (uint i = 0; factory.EnumAdapters1(i, out IDXGIAdapter1? adapter).Success && adapter is not null; i++)
+            {
+                using (adapter)
+                {
+                    var d = adapter.Description1;
+                    if ((d.Flags & AdapterFlags.Software) != 0 || d.VendorId == GpuAdapterInfo.MicrosoftVendorId) continue;
+                    found.Add((Info(d), GpuAdapterInfo.PciId((uint)d.VendorId, (uint)d.DeviceId, (uint)d.SubsystemId, (uint)d.Revision)));
+                }
+            }
+            return GpuAdapterInfo.WithIds(found);
+        }
+    }
+
+    private static GpuAdapterInfo Info(AdapterDescription1 d) => new(d.Description, GpuAdapterKind.Hardware, (long)d.DedicatedVideoMemory, (uint)d.VendorId);
+
+    /// <summary>Opens the hardware adapter whose <see cref="GpuAdapterInfo.Id"/> is <paramref name="adapterId"/>.</summary>
+    public GpuOpenResult Open(string adapterId)
+    {
+        if (!OperatingSystem.IsWindows()) return new GpuOpenResult(GpuOpenStatus.NoGpu, Detail: "not Windows");
+        var ids = ListAdapters();
+        var index = ids.Select((a, i) => (a, i)).FirstOrDefault(x => string.Equals(x.a.Id, adapterId, StringComparison.OrdinalIgnoreCase));
+        if (index.a is null) return new GpuOpenResult(GpuOpenStatus.NoGpu, Detail: $"adapter {adapterId} is gone");
+        if (DXGI.CreateDXGIFactory1(out IDXGIFactory1? factory).Failure || factory is null)
+            return new GpuOpenResult(GpuOpenStatus.NoGpu, Detail: "CreateDXGIFactory1 failed");
+        using (factory)
+        {
+            var hw = -1;
+            for (uint i = 0; factory.EnumAdapters1(i, out IDXGIAdapter1? adapter).Success && adapter is not null; i++)
+            {
+                using (adapter)
+                {
+                    var d = adapter.Description1;
+                    if ((d.Flags & AdapterFlags.Software) != 0 || d.VendorId == GpuAdapterInfo.MicrosoftVendorId) continue;
+                    if (++hw != index.i) continue;
+                    try { return GpuOpenResult.Ok(new D3D11GpuDevice(adapter, Info(d) with { Id = index.a.Id }, threadCount, log)); }
+                    catch (Exception ex)
+                    {
+                        log?.Invoke($"GPU stress: could not open '{d.Description}': {ex}");
+                        return new GpuOpenResult(GpuOpenStatus.Failed, Detail: $"{d.Description}: {ex.Message}");
+                    }
+                }
+            }
+            return new GpuOpenResult(GpuOpenStatus.NoGpu, Detail: $"adapter {adapterId} is gone");
+        }
+    }
+
     public GpuOpenResult Open()
     {
         if (!OperatingSystem.IsWindows()) return new GpuOpenResult(GpuOpenStatus.NoGpu, Detail: "not Windows");

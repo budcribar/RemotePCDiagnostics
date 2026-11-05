@@ -27,6 +27,22 @@ internal sealed class FakeGpuDevice(GpuAdapterInfo? adapter = null, int threads 
     public void Dispose() => Disposed = true;
 }
 
+/// <summary>Two hardware GPUs (and WARP, which is never listed) that open by id.</summary>
+internal sealed class TwoGpuFactory : IGpuDeviceFactory
+{
+    public static readonly GpuAdapterInfo Igpu = new("Intel Iris Xe", GpuAdapterKind.Hardware, 128L << 20, 0x8086, GpuAdapterInfo.PciId(0x8086, 0x9A49, 0x12345678, 1));
+    public static readonly GpuAdapterInfo Dgpu = new("NVIDIA RTX 3050", GpuAdapterKind.Hardware, 4L << 30, 0x10DE, GpuAdapterInfo.PciId(0x10DE, 0x25A2, 0x87654321, 0xA1));
+    public readonly List<string?> Opened = [];
+    public GpuOpenResult Open() { Opened.Add(null); return GpuOpenResult.Ok(new FakeGpuDevice(Igpu)); }
+    public IReadOnlyList<GpuAdapterInfo> ListAdapters() => [Igpu, Dgpu];
+    public GpuOpenResult Open(string adapterId)
+    {
+        Opened.Add(adapterId);
+        return adapterId == Igpu.Id ? GpuOpenResult.Ok(new FakeGpuDevice(Igpu)) : adapterId == Dgpu.Id ? GpuOpenResult.Ok(new FakeGpuDevice(Dgpu))
+            : new GpuOpenResult(GpuOpenStatus.NoGpu);
+    }
+}
+
 internal sealed class FakeGpuFactory(GpuOpenResult result) : IGpuDeviceFactory
 {
     public int Opens;
@@ -255,7 +271,7 @@ public class GpuStressTests
         var r = await new DiagnosticsService(store, [gpu]).RunAsync(GpuStressModule.ModuleName);
         Assert.Equal(DiagnosticStatus.Warning, r.Status);
         Assert.Equal("Stopped by you", store.Get(GpuStressModule.ModuleName).Message);
-        Assert.IsType<GpuStressReport>(r.Payload);
+        Assert.IsType<GpuStressReport>(r.Report()); // per-GPU run: the combined report
         Assert.NotNull(gpu.LastProgress);
     }
 
@@ -271,5 +287,42 @@ public class GpuStressTests
                 foreach (var bad in new[] { "0x", "HRESULT", "WARP", "D3D", "DXGI", "TDR", "exit code", "\\", "Exception" }) Assert.DoesNotContain(bad, text);
             }
         }
+    }
+
+    [Fact]
+    public async Task Each_hardware_gpu_is_stressed_on_its_own()
+    {
+        var f = new TwoGpuFactory();
+        var store = new ResultStore();
+        var gpu = new GpuStressModule(f, SequenceSensorProvider.Unavail(), clockFactory: () => new FakeStressClock()) { Options = Opts() };
+        var svc = new DiagnosticsService(store, [gpu]);
+        await svc.RedetectAsync();
+        Assert.Equal(["Intel Iris Xe", "NVIDIA RTX 3050"], svc.InstancesOf(gpu).Select(i => i.Label));
+
+        var r = await svc.RunAsync(GpuStressModule.ModuleName);
+        Assert.Equal([TwoGpuFactory.Igpu.Id, TwoGpuFactory.Dgpu.Id], f.Opened);
+        Assert.Equal(2, store.InstancesOf(GpuStressModule.ModuleName).Count);
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+        Assert.IsType<GpuStressReport>(r.Report());
+    }
+
+    [Fact]
+    public async Task Without_an_adapter_list_the_test_runs_once_on_the_first_gpu()
+    {
+        var f = FakeGpuFactory.With(new FakeGpuDevice());
+        var gpu = new GpuStressModule(f, SequenceSensorProvider.Unavail(), clockFactory: () => new FakeStressClock()) { Options = Opts() };
+        var detection = await gpu.DetectAsync();
+        Assert.Equal(GpuStressModule.FirstGpuKey, Assert.Single(detection.Instances).Key);
+        var r = await new DiagnosticsService(new ResultStore(), [gpu]).RunAsync(GpuStressModule.ModuleName);
+        Assert.Equal(1, f.Opens);
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+    }
+
+    [Fact]
+    public void Identical_cards_get_numbered_ids()
+    {
+        var a = new GpuAdapterInfo("RTX", GpuAdapterKind.Hardware);
+        var ids = GpuAdapterInfo.WithIds([(a, "PCI\\X"), (a, "PCI\\X"), (a, "PCI\\Y")]).Select(x => x.Id);
+        Assert.Equal(["PCI\\X", "PCI\\X#2", "PCI\\Y"], ids);
     }
 }
