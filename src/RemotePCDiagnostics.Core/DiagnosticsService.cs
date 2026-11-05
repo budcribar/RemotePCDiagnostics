@@ -307,7 +307,7 @@ public sealed class DiagnosticsService
 
     private Task<DiagnosticResult> RunGatedAsync(IDiagnosticModule module, ModuleDescriptor d, IReadOnlyDictionary<Guid, Task<DiagnosticResult>> started, CancellationToken ct)
     {
-        if (d.DependsOn.Count == 0 && !d.RunAfter.Any(started.ContainsKey)) return RunAsync(module, null, ct);
+        if (d.DependsOn.Count == 0 && !d.RunAfter.Any(started.ContainsKey)) return RunAsync(module, null, ct, gateInstances: true);
         // Taken now: every module this one waits for was started before it (topological order).
         var waitFor = d.DependsOn.Concat(d.RunAfter).Distinct().Where(started.ContainsKey).ToDictionary(id => id, id => started[id]);
         return WaitThenRunAsync();
@@ -322,6 +322,8 @@ public sealed class DiagnosticsService
                 catch { ran[id] = null; }
             }
             ct.ThrowIfCancellationRequested();
+            // Per-device gating needs to know this module's devices (SharesDevices).
+            if (module is IDetectableModule detectable && !_detections.ContainsKey(module.Id)) await DetectAsync(detectable).ConfigureAwait(false);
             if (GateFor(d, ran) is { } gate)
             {
                 var r = ModuleOrdering.GateResult(module.Name, gate);
@@ -329,16 +331,46 @@ public sealed class DiagnosticsService
                 try { Log?.Invoke($"{module.Name}: {r.Message}"); } catch { }
                 return r;
             }
-            return await RunAsync(module, null, ct).ConfigureAwait(false);
+            return await RunAsync(module, null, ct, gateInstances: true).ConfigureAwait(false);
         }
     }
 
     /// <summary>Why the module can't run now, or null. <paramref name="ranInThisRun"/> holds the results of modules that were part of the
-    /// same run (null when one threw); a dependency outside the run counts when it passed earlier in this session.</summary>
+    /// same run (null when one threw); a dependency outside the run counts when it passed earlier in this session.
+    /// A per-device dependency that shares devices with a per-device module (<see cref="SharesDevices"/>) only blocks it here when it
+    /// can't run at all; whether it passed is checked per device when the module runs (<see cref="InstanceGate"/>).</summary>
     public DependencyGate? GateFor(ModuleDescriptor d, IReadOnlyDictionary<Guid, DiagnosticResult?> ranInThisRun)
     {
+        var dependent = _modules.FirstOrDefault(m => m.Id == d.Id);
         foreach (var dep in d.DependsOn)
-            if (GateForDependency(dep, ranInThisRun) is { } gate) return gate;
+            if (GateForDependency(dep, ranInThisRun) is { } gate && !(gate.Kind == GateKind.Skipped && PerDevicePair(dependent, dep) is not null)) return gate;
+        return null;
+    }
+
+    /// <summary>True when both modules run per device and test some of the same devices (the same instance key): drive A's SMART check
+    /// then gates only drive A's surface scan. Modules of one device class key their instances the same way.</summary>
+    public bool SharesDevices(IDiagnosticModule a, IDiagnosticModule b) =>
+        a is IPerDeviceModule && b is IPerDeviceModule && InstancesOf(a).Select(i => i.Key).Intersect(InstancesOf(b).Select(i => i.Key), StringComparer.OrdinalIgnoreCase).Any();
+
+    private IDiagnosticModule? PerDevicePair(IDiagnosticModule? dependent, Guid dep) =>
+        dependent is not null && _modules.FirstOrDefault(m => m.Id == dep) is { } depModule && SharesDevices(dependent, depModule) ? depModule : null;
+
+    /// <summary>Why one device of a per-device module can't run: a per-device dependency that shares devices didn't pass on this same
+    /// device, or (for a device it doesn't have) didn't pass on every device.</summary>
+    private DependencyGate? InstanceGate(IDiagnosticModule module, ModuleInstance inst)
+    {
+        foreach (var dep in DescriptorOf(module).DependsOn)
+        {
+            if (PerDevicePair(module, dep) is not { } depModule) continue; // checked for the module as a whole
+            var name = Catalog.Get(dep)?.DisplayName ?? depModule.DisplayName;
+            var own = _store.GetInstance(depModule.Name, inst.Key);
+            if (own is not null || InstancesOf(depModule).Any(i => string.Equals(i.Key, inst.Key, StringComparison.OrdinalIgnoreCase)))
+            {
+                if (!ModuleOrdering.Passed(own)) return new DependencyGate(GateKind.Skipped, $"{name} did not pass on this device", dep);
+            }
+            else if (!ModuleOrdering.Passed(_store.Get(depModule.Name)))
+                return new DependencyGate(GateKind.Skipped, $"{name} did not pass", dep);
+        }
         return null;
     }
 
@@ -393,7 +425,7 @@ public sealed class DiagnosticsService
     public bool IsRunning(string moduleName) => _inFlight.ContainsKey(moduleName);
 
     /// <summary>Starts a run unless one is already in progress, in which case the in-flight task is returned (no double-runs).</summary>
-    private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance = null)
+    private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance = null, bool gateInstances = false)
     {
         Task<DiagnosticResult> task;
         lock (_gate)
@@ -405,7 +437,7 @@ public sealed class DiagnosticsService
                 _inFlight[module.Name] = existing = tcs.Task;
                 _ = Task.Run(async () =>
                 {
-                    try { tcs.SetResult(await RunCoreAsync(module, progress, ct, onlyInstance).ConfigureAwait(false)); }
+                    try { tcs.SetResult(await RunCoreAsync(module, progress, ct, onlyInstance, gateInstances).ConfigureAwait(false)); }
                     catch (Exception ex) { tcs.SetException(ex); }
                     finally
                     {
@@ -432,7 +464,7 @@ public sealed class DiagnosticsService
         return ct.CanBeCanceled ? task.WaitAsync(ct) : task;
     }
 
-    private async Task<DiagnosticResult> RunCoreAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance)
+    private async Task<DiagnosticResult> RunCoreAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance, bool gateInstances)
     {
         var startedAt = _store.Get(module.Name) is { Status: DiagnosticStatus.Running } cur ? cur.Timestamp : DateTimeOffset.Now;
         var trackedProgress = CheckProgressExtensions.Create(cp =>
@@ -447,7 +479,7 @@ public sealed class DiagnosticsService
         {
             var availability = await module.CheckAvailabilityAsync(ct).ConfigureAwait(false);
             result = !availability.IsAvailable ? CouldNotRun.Result(module.Name, availability.Reason ?? "Couldn't run")
-                : module is IPerDeviceModule perDevice ? await RunInstancesAsync(perDevice, trackedProgress, ct, onlyInstance).ConfigureAwait(false)
+                : module is IPerDeviceModule perDevice ? await RunInstancesAsync(perDevice, trackedProgress, ct, onlyInstance, gateInstances).ConfigureAwait(false)
                 : await module.RefreshAsync(trackedProgress, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -468,7 +500,7 @@ public sealed class DiagnosticsService
     /// <summary>One run per instance, one after another; each instance result is stored (and logged) on its own. The module's result is
     /// the worst of them, with the instance results as its payload. With <paramref name="onlyInstance"/> only that instance runs, and the
     /// module's result also counts the latest stored result of each other instance.</summary>
-    private async Task<DiagnosticResult> RunInstancesAsync(IPerDeviceModule module, ICheckProgress progress, CancellationToken ct, string? onlyInstance = null)
+    private async Task<DiagnosticResult> RunInstancesAsync(IPerDeviceModule module, ICheckProgress progress, CancellationToken ct, string? onlyInstance = null, bool gateInstances = false)
     {
         if (!_detections.ContainsKey(module.Id)) await DetectAsync(module).ConfigureAwait(false);
         var all = InstancesOf(module);
@@ -484,9 +516,17 @@ public sealed class DiagnosticsService
             progress.Report(i + 1, instances.Count, inst.Label);
             _store.Set(new DiagnosticResult(module.Name, DiagnosticStatus.Running, "Running…", DateTimeOffset.Now) { InstanceKey = inst.Key, InstanceLabel = inst.Label });
             DiagnosticResult r;
-            try { r = await module.RefreshAsync(inst, progress, ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception ex) { r = new DiagnosticResult(module.Name, DiagnosticStatus.Error, ex.Message, DateTimeOffset.Now, ex); }
+            if (gateInstances && InstanceGate(module, inst) is { } gate)
+            {
+                r = ModuleOrdering.GateResult(module.Name, gate);
+                try { Log?.Invoke($"{module.Name} ({inst.Label}): {r.Message}"); } catch { }
+            }
+            else
+            {
+                try { r = await module.RefreshAsync(inst, progress, ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception ex) { r = new DiagnosticResult(module.Name, DiagnosticStatus.Error, ex.Message, DateTimeOffset.Now, ex); }
+            }
             r = r with { ModuleName = module.Name, InstanceKey = inst.Key, InstanceLabel = inst.Label };
             _store.Set(r);
             ran.Add(r);
