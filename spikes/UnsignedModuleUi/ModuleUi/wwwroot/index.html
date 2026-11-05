@@ -20,7 +20,10 @@
             window.fetch = function (input, init) {
                 const url = String(input && input.url || input);
                 fwd('fetch', 'start ' + url);
-                return f0.apply(this, arguments).then(function (r) { fwd('fetch', r.status + ' ' + url); return r; },
+                // Opaque origin: Blazor fetches blazor.modules.json with credentials 'include', and a credentialed request can't be
+                // answered with the relay's "Access-Control-Allow-Origin: *". Nothing here needs cookies, so leave them out.
+                if (String(self.origin) === 'null') init = Object.assign({}, init, { credentials: 'omit' });
+                return f0.call(this, input, init).then(function (r) { fwd('fetch', r.status + ' ' + url); return r; },
                     function (e) { fwd('fetch', 'FAILED ' + url + ': ' + e); throw e; });
             };
             const open0 = XMLHttpRequest.prototype.open, send0 = XMLHttpRequest.prototype.send;
