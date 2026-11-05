@@ -40,7 +40,7 @@ public static class UserModePlugin
         public ISessionContext Session { get; } = new SessionContext(SessionMode.Local);
         public Version HostVersion => typeof(Context).Assembly.GetName().Version ?? new Version(0, 0);
         public Version ContractVersion => Plugins.ContractVersion.Current;
-        public void Log(string message) => log.Line($"[{pluginId}] {message}"); // a plugin's own wording: level read from the text
+        public ILogger Log { get; } = new PrefixedLogger(log, pluginId); // "[pluginId] " on each line, at the level the plugin chose
         public void SetDetailsComponent(Guid moduleId, Type component) => Details[moduleId] = component;
     }
 }

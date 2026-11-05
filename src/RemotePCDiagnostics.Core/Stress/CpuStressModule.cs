@@ -3,7 +3,7 @@ using RemotePCDiagnostics.Core.Sensors;
 namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand CPU stress test module. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
-public sealed class CpuStressModule(ISensorProvider sensors, ILogger? log = null, Func<IStressClock>? clockFactory = null, ICpuWorkload? workload = null, IEcFanSource? ecFan = null) : StressModuleBase<CpuStressProgress, CpuStressReport>(log.AsAction()), IStressSuiteModule
+public sealed class CpuStressModule(ISensorProvider sensors, ILogger? log = null, Func<IStressClock>? clockFactory = null, ICpuWorkload? workload = null, IEcFanSource? ecFan = null) : StressModuleBase<CpuStressProgress, CpuStressReport>(log), IStressSuiteModule
 {
     public const string ModuleName = ModuleSlugs.CpuStress;
     public override string Name => ModuleName;
@@ -22,7 +22,7 @@ public sealed class CpuStressModule(ISensorProvider sensors, ILogger? log = null
         try
         {
             var opts = (Options ?? new CpuStressOptions()) with { Duration = Duration };
-            var test = new CpuStressTest(sensors, clockFactory?.Invoke(), workload, log, cleanup);
+            var test = new CpuStressTest(sensors, clockFactory?.Invoke(), workload, Logger, cleanup);
             return await test.RunAsync(opts, progress, cancellationToken).ConfigureAwait(false);
         }
         finally { try { ecFan?.SetStressLogging(false); } catch { /* log-only diagnostic */ } }

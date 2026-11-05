@@ -93,7 +93,7 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
             if (pr is { ExitCode: 0 })
             {
                 try { adapters = MergeStatistics(adapters, OsqueryJson.ParseRows(pr.StdOut)); }
-                catch (FormatException ex) { Log($"{Name}: adapter statistics unreadable: {ex.Message}"); }
+                catch (FormatException ex) { LogWarn($"{Name}: adapter statistics unreadable: {ex.Message}"); }
             }
         }
         var baseReport = Build(adapters);

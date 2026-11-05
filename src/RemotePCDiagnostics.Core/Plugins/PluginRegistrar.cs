@@ -111,7 +111,7 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
         public ISessionContext Session => session;
         public Version HostVersion => hostVersion;
         public Version ContractVersion => Plugins.ContractVersion.Current;
-        public void Log(string message) => log.Line($"[{pluginId}] {message}"); // a plugin's own wording: level read from the text
+        public ILogger Log { get; } = new PrefixedLogger(log, pluginId); // "[pluginId] " on each line, at the level the plugin chose
         public void SetDetailsComponent(Guid moduleId, Type component) => owner._details[moduleId] = component;
     }
 }

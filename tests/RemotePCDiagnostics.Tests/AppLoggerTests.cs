@@ -53,16 +53,15 @@ public sealed class AppLoggerTests
         Assert.Equal("Scan failed to find anything {not a template}", _lines[0].Message);
         ILogger? none = null;
         none.Info("nothing happens");
-        Assert.Null(none.AsAction());
     }
 
     [Fact]
-    public void LineLogger_and_AsAction_bridge_text_callbacks()
+    public void LineLogger_bridges_text_callbacks()
     {
         var lines = new List<string>();
         var log = new LineLogger(lines.Add);
         log.Warn("one");
-        log.AsAction()!("two failed: x");
+        log.Line("two failed: x");
         Assert.Equal(["one", "two failed: x"], lines);
         Assert.Null(LineLogger.From(null));
     }

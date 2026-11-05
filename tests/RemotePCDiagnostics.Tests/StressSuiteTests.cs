@@ -406,7 +406,7 @@ public class StressCleanupTests
     {
         var ran = false;
         var log = new List<string>();
-        var c = new RemotePCDiagnostics.Core.Stress.StressCleanup(log.Add);
+        var c = new RemotePCDiagnostics.Core.Stress.StressCleanup(new LineLogger(log.Add));
         c.Register("first", () => ran = true);
         c.Register("second", () => throw new InvalidOperationException("nope"));
         await c.RunAsync();

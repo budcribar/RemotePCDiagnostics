@@ -4,7 +4,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand network stability test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
 public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, ISpeedTester speed, IAdapterCounters counters, ISensorProvider sensors,
-    NetworkTestSettings? settings = null, ILogger? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<NetworkTestProgress, NetworkTestReport>(log.AsAction()), IStressSuiteModule
+    NetworkTestSettings? settings = null, ILogger? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<NetworkTestProgress, NetworkTestReport>(log), IStressSuiteModule
 {
     public const string ModuleName = ModuleSlugs.NetworkTest;
     public override string Name => ModuleName;
@@ -20,7 +20,7 @@ public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, 
     protected override Task<NetworkTestReport> RunTestAsync(StressCleanup cleanup, IProgress<NetworkTestProgress> progress, CancellationToken cancellationToken)
     {
         var opts = (Options ?? new NetworkTestOptions()) with { Duration = Duration };
-        var test = new NetworkTest(pinger, gateway, speed, counters, sensors, settings, clockFactory?.Invoke(), log, cleanup);
+        var test = new NetworkTest(pinger, gateway, speed, counters, sensors, settings, clockFactory?.Invoke(), Logger, cleanup);
         return test.RunAsync(opts, progress, cancellationToken);
     }
 

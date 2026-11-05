@@ -7,7 +7,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// Wi-Fi signal/band/link rate (via <c>netsh wlan show interfaces</c>) and active IP, gateway, DNS, and proxy configuration.
 /// Complements <see cref="NetworkModule"/> (which checks adapter packet error/drop counters).
 /// </summary>
-public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleBase(commands.Log.AsAction())
+public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleBase(commands.Log)
 {
     public const string ModuleName = ModuleSlugs.WifiConfig;
     public const int WeakSignalPercent = 50;

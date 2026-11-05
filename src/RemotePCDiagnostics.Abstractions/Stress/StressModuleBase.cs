@@ -5,13 +5,16 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// <see cref="CleanupAsync"/> drains, and the module plumbing (never in Run All, default 1 minute). A concrete module only says how to run
 /// its test (<see cref="RunTestAsync"/>) and how to describe a finished report (<see cref="Describe"/>).
 /// </summary>
-public abstract class StressModuleBase<TProgress, TReport>(Action<string>? log) : IStressSuiteModule
+public abstract class StressModuleBase<TProgress, TReport>(ILogger? log) : IStressSuiteModule
     where TProgress : class
 {
     private CancellationTokenSource? _stop;
     private StressCleanup? _cleanup;
     private TimeSpan? _duration;
     private readonly object _gate = new();
+
+    /// <summary>The module's logger (null: nothing is logged).</summary>
+    protected ILogger? Logger => log;
 
     public abstract string Name { get; }
     public abstract Guid Id { get; }

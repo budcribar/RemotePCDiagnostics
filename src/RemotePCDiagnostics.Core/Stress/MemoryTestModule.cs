@@ -4,7 +4,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand memory test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
 public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher launcher, ISensorProvider sensors,
-    IWindowsMemoryDiagnosticLauncher? windowsDiagnostic = null, ILogger? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<MemoryTestProgress, MemoryTestReport>(log.AsAction()), IStressSuiteModule
+    IWindowsMemoryDiagnosticLauncher? windowsDiagnostic = null, ILogger? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<MemoryTestProgress, MemoryTestReport>(log), IStressSuiteModule
 {
     public const string ModuleName = ModuleSlugs.MemoryTest;
     public override string Name => ModuleName;
@@ -32,7 +32,7 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
     public long? PlannedBytes(MemoryTestMode mode)
     {
         try { return MemorySizing.Plan(memory.Read().Available, mode); }
-        catch (Exception ex) { log.Warn($"Memory test: memory status failed: {ex.Message}"); return null; }
+        catch (Exception ex) { Logger.Warn($"Memory test: memory status failed: {ex.Message}"); return null; }
     }
 
     /// <summary>Opens Windows Memory Diagnostic. Call only after the user confirmed (it offers to restart the PC).</summary>
@@ -41,7 +41,7 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
     protected override Task<MemoryTestReport> RunTestAsync(StressCleanup cleanup, IProgress<MemoryTestProgress> progress, CancellationToken cancellationToken)
     {
         var opts = (Options ?? new MemoryTestOptions()) with { Mode = Mode, Duration = Duration };
-        var test = new MemoryTest(memory, launcher, sensors, clockFactory?.Invoke(), log, cleanup);
+        var test = new MemoryTest(memory, launcher, sensors, clockFactory?.Invoke(), Logger, cleanup);
         return test.RunAsync(opts, progress, cancellationToken);
     }
 

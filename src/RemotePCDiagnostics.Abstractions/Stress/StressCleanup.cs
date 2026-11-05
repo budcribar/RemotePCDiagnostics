@@ -6,7 +6,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// finishes, is stopped, errors, or hangs and is abandoned. Runs the actions newest first, each at most once, and never throws,
 /// so calling it again (or after the test's own cleanup already ran) does nothing.
 /// </summary>
-public sealed class StressCleanup(Action<string>? log = null)
+public sealed class StressCleanup(ILogger? log = null)
 {
     private readonly object _gate = new();
     private readonly List<(string Name, Func<Task> Action)> _items = [];
@@ -33,7 +33,7 @@ public sealed class StressCleanup(Action<string>? log = null)
                 _items.RemoveAt(_items.Count - 1);
             }
             try { await item.Action().ConfigureAwait(false); }
-            catch (Exception ex) { log?.Invoke($"Stress cleanup: {item.Name} failed: {ex.Message}"); }
+            catch (Exception ex) { log.Warn($"Stress cleanup: {item.Name} failed: {ex.Message}"); }
         }
     }
 }

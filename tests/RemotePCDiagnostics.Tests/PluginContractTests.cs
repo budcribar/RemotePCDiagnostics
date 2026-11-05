@@ -15,7 +15,8 @@ public class PluginContractTests
         var refs = asm.GetReferencedAssemblies().Select(a => a.Name!).ToList();
         Assert.DoesNotContain(refs, r => r.StartsWith("RemotePCDiagnostics", StringComparison.Ordinal));
         Assert.All(refs, r => Assert.True(r.StartsWith("System", StringComparison.Ordinal) || r == "netstandard"
-            || r.StartsWith("Microsoft.Extensions.DependencyInjection.Abstractions", StringComparison.Ordinal), $"unexpected reference {r}"));
+            || r.StartsWith("Microsoft.Extensions.DependencyInjection.Abstractions", StringComparison.Ordinal)
+            || r.StartsWith("Microsoft.Extensions.Logging.Abstractions", StringComparison.Ordinal), $"unexpected reference {r}"));
         // The types a plugin needs live there, not in Core.
         foreach (var t in new[] { typeof(IModulePlugin), typeof(IPluginContext), typeof(ModuleDescriptor), typeof(DiagnosticResult), typeof(IStressSuiteModule),
                      typeof(IHardwareGatedModule), typeof(Core.Areas.AreaReport), typeof(Core.Areas.AreaModuleBase), typeof(ISessionContext) })

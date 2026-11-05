@@ -72,12 +72,12 @@ public sealed class SecurityAuditModule : IDiagnosticModule
     {
         if (!_fileExists(ManifestPath))
         {
-            Log($"SecurityAudit: HardeningKitty not found at '{ManifestPath}' (set {PathEnvironmentVariable} or bundle third_party/HardeningKitty)");
+            LogWarn($"SecurityAudit: HardeningKitty not found at '{ManifestPath}' (set {PathEnvironmentVariable} or bundle third_party/HardeningKitty)");
             return Task.FromResult(ModuleAvailability.Unavailable(ToolMissingMessage));
         }
         if (!_fileExists(PowerShellPath))
         {
-            Log($"SecurityAudit: PowerShell not found at '{PowerShellPath}'");
+            LogWarn($"SecurityAudit: PowerShell not found at '{PowerShellPath}'");
             return Task.FromResult(ModuleAvailability.Unavailable(PowerShellMissingMessage));
         }
         return Task.FromResult(ModuleAvailability.Available);
@@ -127,19 +127,19 @@ public sealed class SecurityAuditModule : IDiagnosticModule
 
             if (!File.Exists(reportPath))
             {
-                Log($"SecurityAudit: no report produced at '{reportPath}'");
+                LogWarn($"SecurityAudit: no report produced at '{reportPath}'");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             IReadOnlyList<AuditFinding> findings;
             try { findings = HardeningKittyCsv.Parse(await File.ReadAllTextAsync(reportPath, CancellationToken.None).ConfigureAwait(false)); }
             catch (Exception ex) when (ex is FormatException or IOException)
             {
-                Log($"SecurityAudit: report unreadable: {ex.Message}");
+                LogWarn($"SecurityAudit: report unreadable: {ex.Message}");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             if (findings.Count == 0)
             {
-                Log("SecurityAudit: report had no rows");
+                LogWarn("SecurityAudit: report had no rows");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             var report = new SecurityAuditReport(findings, admin ? null : NotAdminNotice);

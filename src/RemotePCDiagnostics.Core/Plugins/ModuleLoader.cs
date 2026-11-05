@@ -172,12 +172,12 @@ internal sealed class SingleModulePlugin(IDiagnosticModule module) : IModulePlug
 public sealed record UserModeModule(string Path, ModuleManifest Manifest, ModuleDescriptor Descriptor);
 
 /// <summary>
-/// One load context per module. The contract assembly, DI abstractions and ASP.NET Components come from the host, so types match across
+/// One load context per module. The contract assembly, DI and logging abstractions and ASP.NET Components come from the host, so types match across
 /// the boundary; the module's own dependencies come from its embedded "lib/&lt;name&gt;.dll" resources.
 /// </summary>
 public sealed class ModuleLoadContext(string name, byte[] moduleBytes) : AssemblyLoadContext($"module:{name}", isCollectible: false)
 {
-    private static readonly string[] Shared = ["RemotePCDiagnostics.Abstractions", "Microsoft.Extensions.DependencyInjection.Abstractions", "Microsoft.AspNetCore.Components", "Microsoft.JSInterop"];
+    private static readonly string[] Shared = ["RemotePCDiagnostics.Abstractions", "Microsoft.Extensions.DependencyInjection.Abstractions", "Microsoft.Extensions.Logging.Abstractions", "Microsoft.AspNetCore.Components", "Microsoft.JSInterop"];
 
     protected override Assembly? Load(AssemblyName assemblyName)
     {

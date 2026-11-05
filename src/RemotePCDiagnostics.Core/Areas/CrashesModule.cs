@@ -4,7 +4,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// App crashes ("Application Error", event 1000) and freezes ("Application Hang", event 1002) from the Windows
 /// Application log over the last 30 days, via <see cref="WindowsEventLog"/>.
 /// </summary>
-public sealed class CrashesModule(SystemCommandRunner commands, bool includeSystemCrashes = false, Func<IReadOnlyList<MinidumpFile>>? minidumpReader = null) : AreaModuleBase(commands.Log.AsAction()), IHangEvidenceSource
+public sealed class CrashesModule(SystemCommandRunner commands, bool includeSystemCrashes = false, Func<IReadOnlyList<MinidumpFile>>? minidumpReader = null) : AreaModuleBase(commands.Log), IHangEvidenceSource
 {
     public const string HangsCardId = "hangs";
     string IHangEvidenceSource.HangCardId => HangsCardId;

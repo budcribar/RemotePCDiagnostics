@@ -79,7 +79,7 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
             else
             {
                 try { problems = OsqueryJson.ParseRows(pr.StdOut).Select(ProblemDevice.FromRow).ToList(); }
-                catch (FormatException ex) { Log($"{Name}: problem devices output unreadable: {ex.Message}"); }
+                catch (FormatException ex) { LogWarn($"{Name}: problem devices output unreadable: {ex.Message}"); }
             }
         }
 

@@ -15,7 +15,7 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
 
     private async Task<GpuStressReport> RunCoreAsync(GpuStressOptions o, IProgress<GpuStressProgress>? progress, CancellationToken ct)
     {
-        var scope = cleanup ?? new StressCleanup(log.AsAction());
+        var scope = cleanup ?? new StressCleanup(log);
         try { return await RunInnerAsync(o, progress, ct, scope).ConfigureAwait(false); }
         finally { await scope.RunAsync().ConfigureAwait(false); }
     }

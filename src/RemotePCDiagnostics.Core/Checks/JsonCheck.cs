@@ -128,7 +128,7 @@ public sealed record JsonCheck
 
 /// <summary>Runs one <see cref="JsonCheck"/> through osquery.</summary>
 public sealed class JsonCheckModule(JsonCheck check, Func<string, CancellationToken, Task<OsqueryQueryResult>> query,
-    Func<ModuleAvailability>? availability = null, ILogger? log = null) : AreaModuleBase(log.AsAction())
+    Func<ModuleAvailability>? availability = null, ILogger? log = null) : AreaModuleBase(log)
 {
     public JsonCheck Check => check;
     public override Guid Id => check.Id;

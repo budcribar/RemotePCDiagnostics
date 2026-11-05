@@ -19,7 +19,7 @@ public sealed record ModuleManifest
     /// <summary>The plugin's own version (shown on the About page).</summary>
     public string Version { get; init; } = "1.0.0";
     /// <summary>The contract version the plugin was built against ("1.0").</summary>
-    public string Contract { get; init; } = "1.0";
+    public string Contract { get; init; } = "2.0";
     /// <summary>The lowest app version the plugin needs, for behaviour the contract version doesn't capture.</summary>
     public string? MinHost { get; init; }
     /// <summary>Full name of the <see cref="IModulePlugin"/> type.</summary>
