@@ -71,16 +71,33 @@ public static class Program
         catch (Exception ex) { Log("failed: " + ex); return ExitFailed; }
     }
 
-    /// <summary>Ends this process when the app ends, even if it never got to close the relay.</summary>
+    /// <summary>Ends this process when the app ends, even if it never got to close the relay. This process runs with a restricted,
+    /// Medium-integrity token and can't open the elevated app's process handle (so no WaitForExit); it polls the process list instead,
+    /// which needs no handle.</summary>
     private static void ExitWithApp(Application app, int appPid)
     {
-        try
+        _ = Task.Run(async () =>
         {
-            var parent = Process.GetProcessById(appPid);
-            _ = parent.WaitForExitAsync().ContinueWith(_ => { Log("the app exited"); app.Dispatcher.BeginInvoke(() => app.Shutdown(ExitOk)); },
-                TaskScheduler.Default);
-        }
-        catch (Exception ex) { Log($"can't watch the app (pid {appPid}): {ex.Message}"); }
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+            while (await timer.WaitForNextTickAsync())
+            {
+                bool running;
+                try { running = IsRunning(appPid); }
+                catch (Exception ex) { Log($"can't watch the app (pid {appPid}): {ex.Message}"); return; }
+                if (running) continue;
+                Log("the app exited");
+                await app.Dispatcher.BeginInvoke(() => app.Shutdown(ExitOk));
+                return;
+            }
+        });
+    }
+
+    private static bool IsRunning(int pid)
+    {
+        foreach (var p in Process.GetProcesses())
+            using (p)
+                if (p.Id == pid) return true;
+        return false;
     }
 
     private static readonly object LogGate = new();
