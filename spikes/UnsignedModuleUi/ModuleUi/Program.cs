@@ -32,8 +32,14 @@ public static class Program
             webView.HostPage = @"wwwroot\index.html";
             webView.Connected += (_, e) => SpikeLog.Write($"browser connected from {e.IpAddress}");
             webView.Disconnected += (_, e) => SpikeLog.Write($"disconnected: {e.Exception?.Message}");
-            // The window is only the control's owner; the UI people use is the iframe in the shell. Minimized so it stays out of the way.
-            var window = new Window { Title = "Unsigned module host (spike)", Width = 600, Height = 400, Content = webView, WindowState = WindowState.Minimized };
+            // The window is only the control's owner; the UI people use is the iframe in the shell. It must not be minimized: the
+            // WebView2 composition control creates a D3D9 device from it on load, which throws NotImplementedException for a minimized
+            // window. So it stays Normal, off screen, out of the taskbar and never activated.
+            var window = new Window
+            {
+                Title = "Unsigned module host (spike)", Width = 600, Height = 400, Content = webView,
+                WindowStartupLocation = WindowStartupLocation.Manual, Left = -32000, Top = -32000, ShowInTaskbar = false, ShowActivated = false,
+            };
             return app.Run(window);
         }
         catch (Exception ex) { SpikeLog.Write("failed: " + ex); return 1; }
