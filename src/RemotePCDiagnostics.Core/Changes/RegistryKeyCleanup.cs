@@ -37,7 +37,7 @@ public static class RegistryKeyCleanup
     }
 
     /// <summary>Same, never throws: a key that can't be checked counts as existing (nothing is recorded, so nothing is ever deleted for it).</summary>
-    public static string? TopmostMissing(IMemorySystem sys, RegistryRoot root, string key, Action<string>? log = null)
+    public static string? TopmostMissing(IRegistryTweaks sys, RegistryRoot root, string key, Action<string>? log = null)
     {
         try
         {
@@ -92,7 +92,7 @@ public static class RegistryKeyCleanup
     /// each only if it has no values and no subkeys. Stops at the first key that is kept (its parents aren't empty either). Never throws: a key
     /// Windows won't delete is logged and left. Returns the keys deleted (or already gone).
     /// </summary>
-    public static IReadOnlyList<string> Remove(IMemorySystem sys, RegistryRoot root, string key, string? createdTop, Action<string>? log = null)
+    public static IReadOnlyList<string> Remove(IRegistryTweaks sys, RegistryRoot root, string key, string? createdTop, Action<string>? log = null)
     {
         var deleted = new List<string>();
         foreach (var k in DeleteOrder(key, createdTop))
@@ -134,7 +134,7 @@ public static class ServiceDelayedStart
     public const string ValueName = "DelayedAutostart";
 
     /// <summary>Recorded before a start-type change (journal form); null when it couldn't be read (undo then leaves it alone). Never throws.</summary>
-    public static string? Record(IMemorySystem sys, string service, Action<string>? log = null)
+    public static string? Record(IServiceConfig sys, string service, Action<string>? log = null)
     {
         try
         {
@@ -149,7 +149,7 @@ public static class ServiceDelayedStart
         PreviousDwords.Decode(previousExtra) is { } d && d.TryGetValue(ValueName, out var v) ? (true, v) : (false, null);
 
     /// <summary>Runs after the start type is restored (which may write DelayedAutostart). Never throws: a failure is logged.</summary>
-    public static void Restore(IMemorySystem sys, string service, string? previousExtra, Action<string>? log = null)
+    public static void Restore(IServiceConfig sys, string service, string? previousExtra, Action<string>? log = null)
     {
         var (restore, value) = Plan(previousExtra);
         if (!restore) return;

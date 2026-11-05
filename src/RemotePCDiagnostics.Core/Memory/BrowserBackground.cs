@@ -148,7 +148,7 @@ public static class BrowserBackground
     /// Puts a journaled Local State value back (or removes it when it wasn't set), then reads it back. Only allowlisted targets;
     /// the browser's windowless background processes are ended first, and a browser with a window open is left alone (close it, then undo).
     /// </summary>
-    public static async Task<(bool Ok, string Message)> RestoreAsync(IMemorySystem sys, string target, string? previous, CancellationToken ct)
+    public static async Task<(bool Ok, string Message)> RestoreAsync(IBrowserSettings sys, string target, string? previous, CancellationToken ct)
     {
         if (ParseTarget(target) is not { } kind) return (false, "That browser setting isn't one this app changes, so it was left as is.");
         if (!TryDecode(previous, out var old)) return (false, "The original setting wasn't recorded.");

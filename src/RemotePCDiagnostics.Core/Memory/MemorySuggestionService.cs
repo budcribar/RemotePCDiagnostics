@@ -42,12 +42,27 @@ public static class MemoryFeedback
 /// <param name="Skipped">Nothing was attempted on purpose (e.g. the app whose cache it is was open); the workflow lists it as skipped.</param>
 public sealed record ActionOutcome(bool Success, string Message, bool Skipped = false);
 
-/// <summary>Host-side probes and actions (Windows implementation in the Host; fakes in tests). Methods may throw.</summary>
-public interface IMemorySystem
+/// <summary>
+/// Host-side probes and actions (Windows implementation in the Host; fakes in tests). Methods may throw. It is the sum of the role
+/// interfaces below, each registered on its own, so a consumer can take only the part it uses.
+/// </summary>
+public interface IMemorySystem : IMemoryProbe, IAppControl, IServiceConfig, IBrowserSettings, IRegistryTweaks, IPowerConfig, IStorageCleanupSystem, IDefenderConfig, IAppManagementSystem
+{
+}
+
+/// <summary>Memory and process readings: free memory, the snapshot the suggestions are built from, running processes.</summary>
+public interface IMemoryProbe
 {
     MemoryReading ReadMemory();
     Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> services, CancellationToken ct);
     Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> services, IProgress<string>? progress, CancellationToken ct) => CaptureAsync(services, ct);
+    /// <summary>Names (without .exe) of the processes running right now, for a last check just before acting; null = not available.</summary>
+    IReadOnlyList<string>? RunningProcessNames() => null;
+}
+
+/// <summary>Closing apps, starting tools, opening links, and the startup-apps switch.</summary>
+public interface IAppControl
+{
     /// <summary>Asks every window of the app to close (like clicking X). Never kills.</summary>
     Task<ActionOutcome> CloseAppAsync(string processName, CancellationToken ct);
     /// <summary>Ends the app's processes. Only called after a graceful close failed and the user clicked Force close.</summary>
@@ -57,37 +72,51 @@ public interface IMemorySystem
     byte[]? GetStartupApproved(string name);
     /// <summary>Writes (or deletes when null) the HKCU StartupApproved\Run value.</summary>
     void SetStartupApproved(string name, byte[]? value);
-    bool IsBrowserRunning(BrowserKind kind);
-    string? ReadBrowserLocalState(BrowserKind kind);
-    void WriteBrowserLocalState(BrowserKind kind, string json);
     void OpenUri(string uri);
+}
+
+/// <summary>Windows services' start types and delayed-start values, and allowlisted scheduled tasks.</summary>
+public interface IServiceConfig
+{
     /// <summary>"Automatic", "AutomaticDelayed", "Manual" or "Disabled".</summary>
     string GetServiceStartType(string name);
     void SetServiceStartType(string name, string startType);
+    /// <summary>A DWORD under HKLM\SYSTEM\CurrentControlSet\Services\&lt;service&gt; (only <see cref="ServiceDelayedStart.ValueName"/>).
+    /// (true, null) = absent; (false, _) = couldn't read.</summary>
+    (bool Known, int? Value) ReadServiceValue(string service, string name) => (false, null);
+    /// <summary>Writes that DWORD back, or deletes it when <paramref name="value"/> is null (admin; protected services refused).</summary>
+    void RestoreServiceValue(string service, string name, int? value) => throw new NotSupportedException();
+    /// <summary>State of an allowlisted scheduled task ("Ready", "Disabled", …, or <see cref="ScheduledTaskAllowlist.Missing"/>); null = couldn't read.</summary>
+    Task<string?> GetScheduledTaskStateAsync(string path, CancellationToken ct) => Task.FromResult<string?>(null);
+    /// <summary>Enables or disables an allowlisted scheduled task (admin) and returns its state read back (null = couldn't read).</summary>
+    Task<string?> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct) => Task.FromResult<string?>(null);
+}
+
+/// <summary>Browser Local State files, extension blocklist policies and background browser processes.</summary>
+public interface IBrowserSettings
+{
+    bool IsBrowserRunning(BrowserKind kind);
+    string? ReadBrowserLocalState(BrowserKind kind);
+    void WriteBrowserLocalState(BrowserKind kind, string json);
+    /// <summary>#22: the values under the browser's HKLM ExtensionInstallBlocklist policy key (empty = key absent; null = couldn't read).</summary>
+    IReadOnlyList<BlocklistEntry>? ReadExtensionBlocklist(BrowserKind browser) => null;
+    /// <summary>Adds one REG_SZ entry (admin). Refuses IDs not on <see cref="BrowserExtensions.Allowlist"/> and names that already exist.</summary>
+    void AddExtensionBlock(BrowserKind browser, string valueName, string extensionId) => throw new NotSupportedException();
+    /// <summary>Deletes one entry, only when it still holds <paramref name="extensionId"/> (admin). Refuses IDs not on the allowlist.</summary>
+    void RemoveExtensionBlock(BrowserKind browser, string valueName, string extensionId) => throw new NotSupportedException();
+    /// <summary>
+    /// #19: ends the browser's processes in this Windows session, only when none of them has a window (it's only running in the background).
+    /// Never closes a window: fails instead. Success = none of its processes is left in this session.
+    /// </summary>
+    Task<ActionOutcome> EndBrowserBackgroundAsync(BrowserKind kind, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
+}
+
+/// <summary>Allowlisted registry values (Windows settings the suggestions change), transparency and the default printer.</summary>
+public interface IRegistryTweaks
+{
     /// <summary>HKCU transparency effects (Settings > Personalization > Colors); null = not set (Windows default: on).</summary>
     bool? GetTransparency() => null;
     void SetTransparency(bool on) => throw new NotSupportedException();
-    /// <summary>Switches the page file to "managed by Windows" (admin; effective after restart).</summary>
-    Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
-    /// <summary>Current custom page file settings (opaque, for undo), or null when Windows manages it / unknown.</summary>
-    Task<string?> ReadPageFileSettingsAsync(CancellationToken ct) => Task.FromResult<string?>(null);
-    /// <summary>Puts back custom page file settings saved by <see cref="ReadPageFileSettingsAsync"/> (admin; after restart).</summary>
-    Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
-    /// <summary>Removable caches and leftovers with their measured size. Expensive (sizes big folders), so it isn't part of
-    /// <see cref="CaptureAsync"/>; the Host caches the result for a few minutes unless <paramref name="refresh"/> is set.</summary>
-    /// <summary>Current hibernation file state (registry + hiberfil.sys size); null = couldn't read.</summary>
-    HibernateInfo? ReadHibernate() => null;
-    /// <summary>Runs powercfg /h /type reduced (or full) with administrator rights.</summary>
-    Task<ActionOutcome> SetHibernateTypeAsync(bool reduced, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
-    Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct) => Task.FromResult<IReadOnlyList<StorageCleanupItem>>([]);
-    Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, IProgress<string>? progress, CancellationToken ct) => ScanStorageCleanupsAsync(refresh, ct);
-    /// <summary>
-    /// Deletes one <see cref="Storage.StorageCleanupCatalog"/> category: re-evaluates its rule on disk, deletes only inside its allowlisted folders,
-    /// skips it entirely while its app is open. Permanent.
-    /// </summary>
-    Task<Storage.StorageCleanResult> CleanStorageAsync(string id, CancellationToken ct) => Task.FromResult(Storage.StorageCleanResult.NotRun(id, "Not supported on this PC."));
-    /// <summary>Runs a Defender PowerShell script built by <see cref="DefenderProbe"/> (admin). Output = its stdout.</summary>
-    Task<(bool Ok, string? Output)> RunDefenderScriptAsync(string script, CancellationToken ct) => Task.FromResult<(bool, string?)>((false, null));
     /// <summary>A DWORD on <see cref="RegistryAllowlist"/> (null = absent). Throws for a value that exists but isn't a DWORD.</summary>
     int? ReadDword(RegistrySetting setting) => null;
     /// <summary>Writes a DWORD on <see cref="RegistryAllowlist"/> (HKLM needs admin). Refuses anything else.</summary>
@@ -101,44 +130,63 @@ public interface IMemorySystem
     /// True = deleted or already absent; false = kept (not empty, or not allowed). May throw (access denied).
     /// </summary>
     bool DeleteRegistryKeyIfEmpty(RegistryRoot root, string key) => false;
-    /// <summary>A DWORD under HKLM\SYSTEM\CurrentControlSet\Services\&lt;service&gt; (only <see cref="ServiceDelayedStart.ValueName"/>).
-    /// (true, null) = absent; (false, _) = couldn't read.</summary>
-    (bool Known, int? Value) ReadServiceValue(string service, string name) => (false, null);
-    /// <summary>Writes that DWORD back, or deletes it when <paramref name="value"/> is null (admin; protected services refused).</summary>
-    void RestoreServiceValue(string service, string name, int? value) => throw new NotSupportedException();
-    /// <summary><see cref="Hibernation.TrackedValues"/> under HKLM\SYSTEM\CurrentControlSet\Control\Power (a null value = absent); null = couldn't read.</summary>
-    IReadOnlyDictionary<string, int?>? ReadHibernateValues() => null;
-    /// <summary>Deletes one of <see cref="Hibernation.TrackedValues"/> (admin). Refuses any other name.</summary>
-    void DeleteHibernateValue(string name) => throw new NotSupportedException();
     /// <summary>#24: this account's default printer, its port, LegacyDefaultPrinterMode and whether Print to PDF exists (registry only); null = couldn't read.</summary>
     DefaultPrinterInfo? ReadDefaultPrinter() => null;
     /// <summary>The printer is installed (local printer or \\server\printer connection). Only names that pass <see cref="DefaultPrinter.IsSafeName"/>.</summary>
     bool PrinterExists(string name) => false;
     /// <summary>Makes an installed printer this account's default (winspool SetDefaultPrinter).</summary>
     ActionOutcome SetDefaultPrinter(string name) => new(false, "Not supported on this PC.");
-    /// <summary>Names (without .exe) of the processes running right now, for a last check just before acting; null = not available.</summary>
-    IReadOnlyList<string>? RunningProcessNames() => null;
-    /// <summary>#22: the values under the browser's HKLM ExtensionInstallBlocklist policy key (empty = key absent; null = couldn't read).</summary>
-    IReadOnlyList<BlocklistEntry>? ReadExtensionBlocklist(BrowserKind browser) => null;
-    /// <summary>Adds one REG_SZ entry (admin). Refuses IDs not on <see cref="BrowserExtensions.Allowlist"/> and names that already exist.</summary>
-    void AddExtensionBlock(BrowserKind browser, string valueName, string extensionId) => throw new NotSupportedException();
-    /// <summary>Deletes one entry, only when it still holds <paramref name="extensionId"/> (admin). Refuses IDs not on the allowlist.</summary>
-    void RemoveExtensionBlock(BrowserKind browser, string valueName, string extensionId) => throw new NotSupportedException();
+}
+
+/// <summary>Page file and hibernation file settings.</summary>
+public interface IPowerConfig
+{
+    /// <summary>Switches the page file to "managed by Windows" (admin; effective after restart).</summary>
+    Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
+    /// <summary>Current custom page file settings (opaque, for undo), or null when Windows manages it / unknown.</summary>
+    Task<string?> ReadPageFileSettingsAsync(CancellationToken ct) => Task.FromResult<string?>(null);
+    /// <summary>Puts back custom page file settings saved by <see cref="ReadPageFileSettingsAsync"/> (admin; after restart).</summary>
+    Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
+    /// <summary>Removable caches and leftovers with their measured size. Expensive (sizes big folders), so it isn't part of
+    /// <see cref="CaptureAsync"/>; the Host caches the result for a few minutes unless <paramref name="refresh"/> is set.</summary>
+    /// <summary>Current hibernation file state (registry + hiberfil.sys size); null = couldn't read.</summary>
+    HibernateInfo? ReadHibernate() => null;
+    /// <summary>Runs powercfg /h /type reduced (or full) with administrator rights.</summary>
+    Task<ActionOutcome> SetHibernateTypeAsync(bool reduced, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
+    /// <summary><see cref="Hibernation.TrackedValues"/> under HKLM\SYSTEM\CurrentControlSet\Control\Power (a null value = absent); null = couldn't read.</summary>
+    IReadOnlyDictionary<string, int?>? ReadHibernateValues() => null;
+    /// <summary>Deletes one of <see cref="Hibernation.TrackedValues"/> (admin). Refuses any other name.</summary>
+    void DeleteHibernateValue(string name) => throw new NotSupportedException();
+}
+
+/// <summary>Scanning and deleting removable caches and leftovers.</summary>
+public interface IStorageCleanupSystem
+{
+    Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct) => Task.FromResult<IReadOnlyList<StorageCleanupItem>>([]);
+    Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, IProgress<string>? progress, CancellationToken ct) => ScanStorageCleanupsAsync(refresh, ct);
     /// <summary>
-    /// #19: ends the browser's processes in this Windows session, only when none of them has a window (it's only running in the background).
-    /// Never closes a window: fails instead. Success = none of its processes is left in this session.
+    /// Deletes one <see cref="Storage.StorageCleanupCatalog"/> category: re-evaluates its rule on disk, deletes only inside its allowlisted folders,
+    /// skips it entirely while its app is open. Permanent.
     /// </summary>
-    Task<ActionOutcome> EndBrowserBackgroundAsync(BrowserKind kind, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
+    Task<Storage.StorageCleanResult> CleanStorageAsync(string id, CancellationToken ct) => Task.FromResult(Storage.StorageCleanResult.NotRun(id, "Not supported on this PC."));
+}
+
+/// <summary>Microsoft Defender settings (exclusions).</summary>
+public interface IDefenderConfig
+{
+    /// <summary>Runs a Defender PowerShell script built by <see cref="DefenderProbe"/> (admin). Output = its stdout.</summary>
+    Task<(bool Ok, string? Output)> RunDefenderScriptAsync(string script, CancellationToken ct) => Task.FromResult<(bool, string?)>((false, null));
+}
+
+/// <summary>Removing and reinstalling allowlisted apps (Store packages, vendor uninstallers, winget).</summary>
+public interface IAppManagementSystem
+{
     /// <summary>#3/#8/#10: allowlisted Store packages, Uninstall entries, settings and scheduled tasks present on this PC (registry reads; sizes cached). Null = couldn't read.</summary>
     AppRemovalInfo? ReadRemovableApps() => null;
     /// <summary>Removes allowlisted packages for all users plus their provisioned copies (admin), then reads back. Returns the family names still present; null = couldn't run.</summary>
     Task<IReadOnlyList<string>?> RemoveAppxPackagesAsync(IReadOnlyList<RemovableAppx> apps, CancellationToken ct) => Task.FromResult<IReadOnlyList<string>?>(null);
     /// <summary>Runs a validated vendor uninstaller (<see cref="AppRemoval.IsAllowedCommand"/>) and waits for it to finish (admin).</summary>
     Task<ActionOutcome> RunUninstallerAsync(UninstallCommand command, CancellationToken ct) => Task.FromResult(new ActionOutcome(false, "Not supported on this PC."));
-    /// <summary>State of an allowlisted scheduled task ("Ready", "Disabled", …, or <see cref="ScheduledTaskAllowlist.Missing"/>); null = couldn't read.</summary>
-    Task<string?> GetScheduledTaskStateAsync(string path, CancellationToken ct) => Task.FromResult<string?>(null);
-    /// <summary>Enables or disables an allowlisted scheduled task (admin) and returns its state read back (null = couldn't read).</summary>
-    Task<string?> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct) => Task.FromResult<string?>(null);
     /// <summary>
     /// Runs a validated <see cref="StoreReinstall"/> winget command (<see cref="StoreReinstall.IsAllowedCommand"/>) as the signed-in user, not
     /// elevated and never as SYSTEM, and waits up to <see cref="StoreReinstall.Timeout"/>.

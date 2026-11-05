@@ -127,6 +127,10 @@ public class HostServicesTests
         {
             Assert.Single(services, d => d.ServiceType == typeof(IMemorySystem));
             Assert.Same(provider.GetRequiredService<IMemorySystem>(), provider.GetRequiredService<IMemorySystem>());
+            // Each role interface is the same instance, not a second WindowsMemorySystem.
+            var memory = provider.GetRequiredService<IMemorySystem>();
+            foreach (var role in typeof(IMemorySystem).GetInterfaces())
+                Assert.Same(memory, provider.GetRequiredService(role));
         }
     }
 

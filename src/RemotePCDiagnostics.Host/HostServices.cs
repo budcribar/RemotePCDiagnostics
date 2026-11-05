@@ -38,6 +38,16 @@ public static class HostServices
         services.AddSingleton(new SystemCommandRunner(log: log));
         // One Windows memory/startup adapter for the whole app (undo and memory suggestions share it).
         services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), log));
+        // Its role interfaces resolve to the same instance, so a consumer can take only the part it uses.
+        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IMemoryProbe>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IAppControl>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IServiceConfig>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IBrowserSettings>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IRegistryTweaks>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IPowerConfig>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IStorageCleanupSystem>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IDefenderConfig>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IAppManagementSystem>(sp => sp.GetRequiredService<IMemorySystem>());
         // Last retrim per SSD volume: Windows' Defrag event 258 plus this app's own record (retrim.json), so Drive health only offers it when needed.
         services.AddSingleton(_ => new RetrimLog(RetrimLog.DefaultPath(), log));
         services.AddSingleton<IRetrimHistory>(sp => new RetrimHistory(sp.GetRequiredService<RetrimLog>(), new WindowsRetrimEvents(log), log));

@@ -160,7 +160,7 @@ public static class StoreReinstall
     /// Reinstalls one removed app for the signed-in account: already back → done; otherwise winget (fixed command) and a check with
     /// Get-AppxPackage that it's installed again. Success only when that check finds it. The caller keeps the journal entry on failure.
     /// </summary>
-    public static async Task<ActionOutcome> ReinstallAsync(IMemorySystem sys, string? familyName, string? journaledId, CancellationToken ct, Action<string>? log = null)
+    public static async Task<ActionOutcome> ReinstallAsync(IAppManagementSystem sys, string? familyName, string? journaledId, CancellationToken ct, Action<string>? log = null)
     {
         var app = FindByFamily(familyName);
         var cmd = CommandFor(familyName, journaledId);
