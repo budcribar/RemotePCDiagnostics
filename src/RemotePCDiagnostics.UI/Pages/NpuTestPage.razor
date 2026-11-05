@@ -6,13 +6,13 @@
 }
 @if (m is null)
 {
-    @* Hidden when no NPU was found (IHardwareGatedModule): a direct link lands here instead of on a broken page. *@
+    @* Hidden when no NPU was found (DetectAsync): a direct link lands here instead of on a broken page. *@
     <p class="meta" data-testid="npu-none">@(Diagnostics.IsDetectingHardware ? "Looking for an NPU…" : "No NPU detected on this machine.")</p>
 }
 else
 {
     var r = Store.Get(m.Name);
-    var rep = r.Payload as NpuTestReport;
+    var rep = r.Report() as NpuTestReport; // one result per NPU, combined into one report
     var running = r.Status == DiagnosticStatus.Running;
     var suiteBusy = Diagnostics.IsStressSuiteRunning;
     <div class="toolbar toolbar-grouped">

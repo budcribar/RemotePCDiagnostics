@@ -175,12 +175,45 @@ public class WebcamTests
     public async Task Webcam_is_separate_step_after_audio_and_not_selected()
     {
         var store = new ResultStore();
-        var svc = new DiagnosticsService(store, [new WebcamTestModule(new NullWebcamIo()), new RemotePCDiagnostics.Core.Audio.SpeakerToMicModule(new RemotePCDiagnostics.Core.Audio.NullAudioIo())]);
+        var svc = new DiagnosticsService(store, [new WebcamTestModule(new FakeIo((r, _) => Feed(r, i => Scene(i)))), new RemotePCDiagnostics.Core.Audio.SpeakerToMicModule(new RemotePCDiagnostics.Core.Audio.NullAudioIo())]);
+        await svc.RedetectAsync();
         Assert.Empty(await svc.RunAllAsync());
         var screen = new ChecksScreenState(svc, store);
         var names = screen.StressModules.Select(m => m.Name).ToList();
         Assert.True(names.IndexOf(WebcamTestModule.ModuleName) > names.IndexOf(RemotePCDiagnostics.Core.Audio.SpeakerToMicModule.ModuleName));
         Assert.False(screen.IsSelected(WebcamTestModule.ModuleName));
         Assert.True(ChecksScreenState.IsSeparateStep(svc.Modules[0]));
+    }
+
+    [Fact]
+    public async Task Each_camera_is_an_instance_and_a_PC_without_one_hides_the_test()
+    {
+        var none = new DiagnosticsService(new ResultStore(), [new WebcamTestModule(new NullWebcamIo())]);
+        await none.RedetectAsync();
+        Assert.Empty(none.Modules);
+
+        var cam = new WebcamTestModule(new FakeIo((r, _) => Feed(r, i => Scene(i))));
+        var svc = new DiagnosticsService(new ResultStore(), [cam]);
+        await svc.RedetectAsync();
+        var instances = svc.InstancesOf(svc.Modules.Single());
+        Assert.Equal(["Integrated Camera (built-in)", "USB Cam (USB)"], instances.Select(i => i.Label));
+        Assert.Equal(WebcamTestModule.InstanceOf(new("cam2", "renamed", WebcamBus.Usb)).Key, instances[1].Key); // keyed on the device id only
+    }
+
+    [Fact]
+    public async Task RunInstanceAsync_tests_only_the_picked_camera()
+    {
+        var io = new FakeIo((r, _) => Feed(r, i => Scene(i)));
+        var store = new ResultStore();
+        var svc = new DiagnosticsService(store, [new WebcamTestModule(io)]);
+        await svc.RedetectAsync();
+        var usb = svc.InstancesOf(svc.Modules.Single())[1];
+
+        var r = await svc.RunInstanceAsync(WebcamTestModule.ModuleName, usb.Key);
+        Assert.Equal("cam2", io.Seen!.DeviceId);
+        var own = store.GetInstance(WebcamTestModule.ModuleName, usb.Key);
+        Assert.IsType<WebcamReport>(own!.Payload);
+        Assert.Equal("USB Cam (USB)", own.InstanceLabel);
+        Assert.Single(Assert.IsType<InstanceResults>(r.Payload).Results); // the built-in camera hasn't run yet
     }
 }

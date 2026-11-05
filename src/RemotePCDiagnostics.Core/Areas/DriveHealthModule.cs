@@ -6,11 +6,18 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// <summary>One physical drive's health (Windows Storage: MSFT_PhysicalDisk + storage reliability counters). Strings as reported.</summary>
 public sealed record DriveHealth(
     string Name, string Serial, string MediaType, string BusType, string Health, string Operational,
-    long? SizeBytes, int? TemperatureC, int? Wear, long? ReadErrors, long? WriteErrors, long? PowerOnHours, string Letters = "")
+    long? SizeBytes, int? TemperatureC, int? Wear, long? ReadErrors, long? WriteErrors, long? PowerOnHours, string Letters = "", string UniqueId = "")
 {
     public static DriveHealth FromRow(IReadOnlyDictionary<string, string> r) => new(
         r.Str("Name"), r.Str("Serial"), r.Str("MediaType"), r.Str("BusType"), r.Str("Health"), r.Str("Operational"),
-        r.Long("Size"), r.Int("Temperature"), r.Int("Wear"), r.Long("ReadErrors"), r.Long("WriteErrors"), r.Long("PowerOnHours"), r.Str("Letters"));
+        r.Long("Size"), r.Int("Temperature"), r.Int("Wear"), r.Long("ReadErrors"), r.Long("WriteErrors"), r.Long("PowerOnHours"), r.Str("Letters"), r.Str("Id"));
+
+    /// <summary>The raw id the instance key is hashed from: the serial number (also known to the osquery fallback), else the storage
+    /// UniqueId (WWN/EUI), else the name. Never the disk number, which changes when drives are added.</summary>
+    public string RawId => Serial.Trim() is { Length: > 0 } s ? "serial:" + s : UniqueId.Trim() is { Length: > 0 } u ? "id:" + u : "name:" + Name;
+
+    public string Label => (Name.Length > 0 ? Name : "Drive") + (SizeBytes is > 0 ? ", " + HardwareInventory.FormatBytes(SizeBytes) : "")
+        + (Letters.Length > 0 ? " (" + string.Join(", ", Letters.Select(c => c + ":")) + ")" : "");
 
     public const int HotC = 60, WornPercent = 90;
 
@@ -52,10 +59,16 @@ public sealed record DriveHealth(
 /// Drive health. osquery has no SMART table on Windows, so health comes from Windows Storage
 /// (Get-PhysicalDisk HealthStatus/OperationalStatus + Get-StorageReliabilityCounter) via PowerShell.
 /// If that fails, drives are listed from osquery disk_info with health marked as not reported.
+/// One instance per physical drive (keyed on <see cref="DriveHealth.RawId"/>); the page still shows one report with a card per drive
+/// (<see cref="Combine"/>). One drive read serves every drive of a run.
 /// </summary>
 public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunner osquery, IRetrimHistory? retrims = null, Func<DateTimeOffset>? clock = null)
-    : AreaModuleBase(commands.Log ?? osquery.Options.Log)
+    : AreaModuleBase(commands.Log ?? osquery.Options.Log), IPerDeviceModule, IInstanceSummary
 {
+    /// <summary>The instance used when the drive list itself can't be read, so the failure is still reported as a run.</summary>
+    public const string AllDrivesKey = "all";
+    /// <summary>A drive read this recent is reused by the next drive of the same run.</summary>
+    public static readonly TimeSpan ReuseReadFor = TimeSpan.FromSeconds(20);
     /// <summary>"Optimize / Retrim SSD" is offered only when a volume of the SSD wasn't retrimmed in this long (or the date is unknown).</summary>
     public static readonly TimeSpan RetrimFreshFor = TimeSpan.FromDays(30);
 
@@ -69,7 +82,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
         "$ErrorActionPreference='SilentlyContinue';" +
         "$d=@(Get-PhysicalDisk | ForEach-Object { $r=$_ | Get-StorageReliabilityCounter;" +
         "$l=(@(Get-Partition -DiskNumber $_.DeviceId | Where-Object { $_.DriveLetter } | ForEach-Object { [string]$_.DriveLetter }) -join '');" +
-        "[pscustomobject]@{Letters=$l;" +
+        "[pscustomobject]@{Letters=$l;Id=[string]$_.UniqueId;" +
         "Name=[string]$_.FriendlyName;Serial=[string]$_.SerialNumber;MediaType=[string]$_.MediaType;BusType=[string]$_.BusType;" +
         "Health=[string]$_.HealthStatus;Operational=[string]($_.OperationalStatus -join ', ');Size=[string]$_.Size;" +
         "Temperature=[string]$r.Temperature;Wear=[string]$r.Wear;ReadErrors=[string]$r.ReadErrorsUncorrected;" +
@@ -80,6 +93,40 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
+        var read = await ReadDrivesAsync(progress, ct).ConfigureAwait(false);
+        if (read.Drives is null) return AreaReport.Failed(FailedMessage);
+        return Build(read.Drives, read.Retrims, read.Now) with { Notice = read.Notice };
+    }
+
+    /// <summary>The drives as last read: health (or the osquery list with <see cref="Notice"/>), retrim dates, and when.</summary>
+    private sealed record DriveRead(List<DriveHealth>? Drives, IReadOnlyDictionary<char, RetrimRecord>? Retrims, DateTimeOffset Now, string? Notice, DateTimeOffset ReadAt);
+
+    private readonly object _readGate = new();
+    private Task<DriveRead>? _lastRead;
+    private DateTimeOffset _lastReadAt;
+    private volatile DriveRead? _latest;
+
+    /// <summary>Reads every drive once; a read finished (or started) in the last <see cref="ReuseReadFor"/> is shared.</summary>
+    private Task<DriveRead> ReadDrivesCachedAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        lock (_readGate)
+        {
+            if (_lastRead is { IsFaulted: false, IsCanceled: false } t && DateTimeOffset.Now - _lastReadAt < ReuseReadFor) return t;
+            _lastReadAt = DateTimeOffset.Now;
+            return _lastRead = ReadDrivesAsync(progress, ct);
+        }
+    }
+
+    private async Task<DriveRead> ReadDrivesAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        var read = await ReadDrivesCoreAsync(progress, ct).ConfigureAwait(false);
+        _latest = read;
+        return read;
+    }
+
+    private async Task<DriveRead> ReadDrivesCoreAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        var now = (clock ?? (() => DateTimeOffset.Now))();
         progress.ReportStep(1, 2, "Checking drive health and SMART status…");
         var pr = await commands.RunAsync(SystemCommandRunner.PowerShell, Arguments, ct).ConfigureAwait(false);
         List<DriveHealth>? drives = null;
@@ -88,15 +135,79 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             try { drives = OsqueryJson.ParseRows(pr.StdOut).Select(DriveHealth.FromRow).ToList(); }
             catch (FormatException ex) { Log($"{Name}: storage health output unreadable: {ex.Message}"); }
         }
-        if (drives is { Count: > 0 }) { progress.ReportStep(2, 2, "Checking SSD optimization history…"); return Build(drives, await ReadRetrimsAsync(ct).ConfigureAwait(false), (clock ?? (() => DateTimeOffset.Now))()); }
+        if (drives is { Count: > 0 })
+        {
+            progress.ReportStep(2, 2, "Checking SSD optimization history…");
+            return new(drives, await ReadRetrimsAsync(ct).ConfigureAwait(false), now, null, DateTimeOffset.Now);
+        }
 
         Log($"{Name}: Windows storage health unavailable; falling back to osquery disk_info (no health data)");
         progress.ReportStep(2, 2, "Reading drive list…");
         var q = await osquery.RunQueryAsync(HardwareInventory.DiskSql, ct).ConfigureAwait(false);
-        if (!q.Success) return AreaReport.Failed(FailedMessage);
+        if (!q.Success) return new(null, null, now, null, DateTimeOffset.Now);
         var fallback = q.Rows!.Select(DiskInfo.FromRow)
             .Select(d => new DriveHealth(d.HardwareModel, d.Serial, "", d.Type, "", "", d.SizeBytes, null, null, null, null, null)).ToList();
-        return Build(fallback) with { Notice = "Windows didn't report drive health on this PC, so only the drive list is shown." };
+        return new(fallback, null, DateTimeOffset.Now, "Windows didn't report drive health on this PC, so only the drive list is shown.", DateTimeOffset.Now);
+    }
+
+    /// <summary>Each drive's instance key, made unique when two drives report the same serial (some USB enclosures do).</summary>
+    public static IReadOnlyList<(DriveHealth Drive, ModuleInstance Instance)> Instances(IReadOnlyList<DriveHealth> drives)
+    {
+        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        return drives.Select(d =>
+        {
+            var raw = d.RawId;
+            var n = seen[raw] = seen.GetValueOrDefault(raw) + 1;
+            return (d, new ModuleInstance(InstanceKeys.From(n == 1 ? raw : raw + "#" + n), d.Label));
+        }).ToList();
+    }
+
+    /// <summary>Reads the drive list (and their health: the same read the first drive's run then reuses). Never throws.</summary>
+    public async Task<ModuleDetection> DetectAsync(CancellationToken ct = default)
+    {
+        DriveRead read;
+        try { read = await ReadDrivesCachedAsync(null, ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            Log($"{Name}: drive list failed: {ex.Message}");
+            read = new(null, null, DateTimeOffset.Now, null, DateTimeOffset.Now);
+        }
+        // Still listed when the drives can't be read, so the run reports why instead of the test vanishing.
+        if (read.Drives is null) return ModuleDetection.For([new ModuleInstance(AllDrivesKey, "All drives")]);
+        return read.Drives.Count == 0 ? ModuleDetection.NotApplicable("No drives found") : ModuleDetection.For(Instances(read.Drives).Select(x => x.Instance));
+    }
+
+    public async Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken cancellationToken = default)
+    {
+        if (instance.Key == AllDrivesKey) return await RefreshAsync(progress, cancellationToken).ConfigureAwait(false);
+        AreaReport report;
+        try
+        {
+            var read = await ReadDrivesCachedAsync(progress, cancellationToken).ConfigureAwait(false);
+            if (read.Drives is null) report = AreaReport.Failed(FailedMessage);
+            else if (Instances(read.Drives).FirstOrDefault(x => x.Instance.Key == instance.Key) is { Drive: { } drive })
+                report = Build([drive], read.Retrims, read.Now) with { Notice = read.Notice };
+            else return CouldNotRun.Result(Name, $"{instance.Label} is no longer connected.");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            Log($"{Name}: collection failed: {ex}");
+            report = AreaReport.Failed(FailedMessage);
+        }
+        var card = report.Cards.FirstOrDefault();
+        return new DiagnosticResult<AreaReport>(Name, report.Status, card is null ? report.Summary : card.Headline, DateTimeOffset.Now, report);
+    }
+
+    /// <summary>One report with a card per drive (the page and the fix list read this), rebuilt from the latest drive read so the
+    /// summary, the one "Clean up temporary files" action and the card ids come out as for a single read.</summary>
+    public object? Combine(IReadOnlyList<DiagnosticResult> instanceResults)
+    {
+        if (instanceResults.Count == 1 && instanceResults[0].InstanceKey == AllDrivesKey) return instanceResults[0].Payload;
+        if (_latest is not { Drives: { } drives } read) return null;
+        var byKey = Instances(drives).ToDictionary(x => x.Instance.Key, x => x.Drive);
+        var shown = instanceResults.Select(r => r.InstanceKey is { } k ? byKey.GetValueOrDefault(k) : null).OfType<DriveHealth>().ToList();
+        return shown.Count == 0 ? null : Build(shown, read.Retrims, read.Now) with { Notice = read.Notice };
     }
 
     private async Task<IReadOnlyDictionary<char, RetrimRecord>?> ReadRetrimsAsync(CancellationToken ct)

@@ -87,7 +87,55 @@ public class DriveHealthTests
         var store = new ResultStore();
         var svc = new DiagnosticsService(store, [m]);
         await svc.RunAsync(DriveHealthModule.ModuleName);
-        Assert.IsType<AreaReport>(store.Get("DriveHealth").Payload);
+        Assert.IsType<AreaReport>(store.Get("DriveHealth").Report());
+        Assert.Equal("Samsung SSD 980 1TB, 931.5 GB", Assert.Single(store.InstancesOf("DriveHealth")).InstanceLabel);
         Assert.Equal("Drive health", svc.Modules.Single().DisplayName);
+    }
+
+    private const string TwoDrives = """
+    [{"Name":"Samsung SSD 980 1TB","Serial":"S1","MediaType":"SSD","BusType":"NVMe","Health":"Healthy","Operational":"OK","Size":"1000204886016","Letters":"C"},
+     {"Name":"WD Blue","Serial":"W2","MediaType":"HDD","BusType":"SATA","Health":"Warning","Operational":"OK","Size":"2000398934016","Letters":"D"}]
+    """;
+
+    [Fact]
+    public async Task Each_drive_is_its_own_instance_from_one_read_and_the_page_still_gets_one_report()
+    {
+        var reads = 0;
+        var (m, _, _) = Make((f, a) => { Interlocked.Increment(ref reads); return ScriptedLauncher.Ok(TwoDrives); });
+        var store = new ResultStore();
+        var svc = new DiagnosticsService(store, [m]);
+        var r = await svc.RunAsync(DriveHealthModule.ModuleName);
+
+        var perDrive = store.InstancesOf(DriveHealthModule.ModuleName);
+        Assert.Equal(2, perDrive.Count);
+        Assert.Equal(DiagnosticStatus.Ok, perDrive.Single(x => x.InstanceLabel!.StartsWith("Samsung")).Status);
+        Assert.Equal(DiagnosticStatus.Warning, perDrive.Single(x => x.InstanceLabel!.StartsWith("WD")).Status);
+        Assert.Equal(DiagnosticStatus.Warning, r.Status);
+        var report = Assert.IsType<AreaReport>(r.Report());
+        Assert.Equal(2, report.Cards.Count);
+        Assert.Single(report.Cards.SelectMany(c => c.Actions ?? []), a => a.Kind == RemediationKind.CleanTempFiles); // once, not per drive
+        Assert.True(reads <= 2, $"read the drives {reads} times"); // detection, then one shared read for both drives
+    }
+
+    [Fact]
+    public void Instance_keys_come_from_the_serial_and_stay_unique_when_serials_repeat()
+    {
+        DriveHealth D(string serial, string id = "") => new("USB disk", serial, "", "USB", "", "", null, null, null, null, null, null, "", id);
+        var keys = DriveHealthModule.Instances([D("SAME"), D("SAME"), D("", "eui.1"), D("X")]).Select(x => x.Instance.Key).ToList();
+        Assert.Equal(4, keys.Distinct().Count());
+        Assert.Equal(InstanceKeys.From("serial:X"), keys[3]);
+        Assert.Equal(InstanceKeys.From("id:eui.1"), keys[2]);
+    }
+
+    [Fact]
+    public async Task When_no_drive_can_be_read_the_test_stays_listed_and_reports_why()
+    {
+        var (m, _, _) = Make((f, a) => ScriptedLauncher.Fail());
+        var detection = await m.DetectAsync();
+        Assert.True(detection.Applies);
+        var store = new ResultStore();
+        var r = await new DiagnosticsService(store, [m]).RunAsync(DriveHealthModule.ModuleName);
+        Assert.Equal(DiagnosticStatus.Error, r.Status);
+        Assert.Equal("Couldn't check drive health on this PC.", r.Message);
     }
 }

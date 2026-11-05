@@ -14,7 +14,7 @@
 else
 {
     var r = Store.Get(m.Name);
-    var rep = r.Payload as AreaReport;
+    var rep = r.Report() as AreaReport; // a per-device module (drive health) combines its devices into one report
     var busy = r.Status == DiagnosticStatus.Running;
     var svcModule = m as ServicesModule;
     var svcActions = svcModule is null ? null : App.ServiceActions;

@@ -161,6 +161,16 @@ public sealed class DiagnosticsService
         }
     }
 
+    /// <summary><see cref="Modules"/> plus detectable modules whose detection hasn't finished yet: a run started right at startup still
+    /// includes them (the run waits for detection), while pages only list them once they are known to apply.</summary>
+    private IEnumerable<IDiagnosticModule> Runnable =>
+        _modules.Where(m => IsRunnable(m.Id) && (m is IDetectableModule and not IHardwareGatedModule
+            ? !_detections.TryGetValue(m.Id, out var d) || d.Applies // one read: detection may finish meanwhile
+            : IsVisible(m)));
+
+    private IDiagnosticModule? FindRunnable(string moduleName) =>
+        Runnable.FirstOrDefault(m => string.Equals(m.Name, moduleName, StringComparison.OrdinalIgnoreCase));
+
     private bool IsVisible(IDiagnosticModule m) => m switch
     {
         IHardwareGatedModule g => g.IsPresent,
@@ -191,7 +201,7 @@ public sealed class DiagnosticsService
         Catalog.SetApplies(m.Id, detection.Applies);
         Volatile.Write(ref _visible, null);
         try { ModulesChanged?.Invoke(this, EventArgs.Empty); } catch { }
-        _store.Set(_store.Get(m.Name)); // nudges store-aware pages to re-render
+        _store.Touch(m.Name); // store-aware pages re-render
         try { Log?.Invoke(detection.Applies ? $"{m.Name}: {detection.Instances.Count(i => i.Applies)} instance(s)" : $"{m.Name}: doesn't apply ({detection.NotApplicableReason})"); } catch { }
     }
 
@@ -245,22 +255,29 @@ public sealed class DiagnosticsService
 
     public async Task<DiagnosticResult> RunAsync(string moduleName, IProgress<string>? progress = null, CancellationToken ct = default)
     {
-        var module = Modules.FirstOrDefault(m => string.Equals(m.Name, moduleName, StringComparison.OrdinalIgnoreCase))
-            ?? throw new ArgumentException($"Unknown module '{moduleName}'.", nameof(moduleName));
+        var module = FindRunnable(moduleName) ?? throw new ArgumentException($"Unknown module '{moduleName}'.", nameof(moduleName));
         return await RunAsync(module, progress, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Runs one device of a per-device module (a webcam picked on its page). The module's result then counts this device's new
+    /// result and the latest result of each other device.</summary>
+    public async Task<DiagnosticResult> RunInstanceAsync(string moduleName, string instanceKey, IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        var module = FindRunnable(moduleName) ?? throw new ArgumentException($"Unknown module '{moduleName}'.", nameof(moduleName));
+        if (module is not IPerDeviceModule) throw new ArgumentException($"'{moduleName}' doesn't run per device.", nameof(moduleName));
+        return await RunAsync(module, progress, ct, instanceKey).ConfigureAwait(false);
     }
 
     /// <summary>Runs every module concurrently; a slow or failing module does not block the others. A module with DependsOn or RunAfter
     /// waits for those that are part of the run; when a DependsOn didn't pass it is recorded as Skipped, and when one can't run here at all
     /// as Blocked (see <see cref="DependencyGate"/>). On-demand modules (<see cref="IDiagnosticModule.IncludeInRunAll"/> false) are left out.</summary>
-    public Task<DiagnosticResult[]> RunAllAsync(CancellationToken ct = default) => RunSetAsync(Modules.Where(m => m.IncludeInRunAll).ToArray(), ct);
+    public Task<DiagnosticResult[]> RunAllAsync(CancellationToken ct = default) => RunSetAsync(Runnable.Where(m => m.IncludeInRunAll).ToArray(), ct);
 
     /// <summary>Runs one module after the DependsOn modules (and theirs) that haven't passed in this session; ones that already passed
     /// are not run again.</summary>
     public async Task<DiagnosticResult> RunWithDependenciesAsync(string moduleName, CancellationToken ct = default)
     {
-        var target = Modules.FirstOrDefault(m => string.Equals(m.Name, moduleName, StringComparison.OrdinalIgnoreCase))
-            ?? throw new ArgumentException($"Unknown module '{moduleName}'.", nameof(moduleName));
+        var target = FindRunnable(moduleName) ?? throw new ArgumentException($"Unknown module '{moduleName}'.", nameof(moduleName));
         var set = new List<IDiagnosticModule> { target };
         var queue = new Queue<Guid>(DescriptorOf(target).DependsOn);
         var seen = new HashSet<Guid> { target.Id };
@@ -376,7 +393,7 @@ public sealed class DiagnosticsService
     public bool IsRunning(string moduleName) => _inFlight.ContainsKey(moduleName);
 
     /// <summary>Starts a run unless one is already in progress, in which case the in-flight task is returned (no double-runs).</summary>
-    private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct)
+    private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance = null)
     {
         Task<DiagnosticResult> task;
         lock (_gate)
@@ -388,7 +405,7 @@ public sealed class DiagnosticsService
                 _inFlight[module.Name] = existing = tcs.Task;
                 _ = Task.Run(async () =>
                 {
-                    try { tcs.SetResult(await RunCoreAsync(module, progress, ct).ConfigureAwait(false)); }
+                    try { tcs.SetResult(await RunCoreAsync(module, progress, ct, onlyInstance).ConfigureAwait(false)); }
                     catch (Exception ex) { tcs.SetException(ex); }
                     finally
                     {
@@ -415,7 +432,7 @@ public sealed class DiagnosticsService
         return ct.CanBeCanceled ? task.WaitAsync(ct) : task;
     }
 
-    private async Task<DiagnosticResult> RunCoreAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct)
+    private async Task<DiagnosticResult> RunCoreAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance)
     {
         var startedAt = _store.Get(module.Name) is { Status: DiagnosticStatus.Running } cur ? cur.Timestamp : DateTimeOffset.Now;
         var trackedProgress = CheckProgressExtensions.Create(cp =>
@@ -430,7 +447,7 @@ public sealed class DiagnosticsService
         {
             var availability = await module.CheckAvailabilityAsync(ct).ConfigureAwait(false);
             result = !availability.IsAvailable ? CouldNotRun.Result(module.Name, availability.Reason ?? "Couldn't run")
-                : module is IPerDeviceModule perDevice ? await RunInstancesAsync(perDevice, trackedProgress, ct).ConfigureAwait(false)
+                : module is IPerDeviceModule perDevice ? await RunInstancesAsync(perDevice, trackedProgress, ct, onlyInstance).ConfigureAwait(false)
                 : await module.RefreshAsync(trackedProgress, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -449,13 +466,17 @@ public sealed class DiagnosticsService
     }
 
     /// <summary>One run per instance, one after another; each instance result is stored (and logged) on its own. The module's result is
-    /// the worst of them, with the instance results as its payload.</summary>
-    private async Task<DiagnosticResult> RunInstancesAsync(IPerDeviceModule module, ICheckProgress progress, CancellationToken ct)
+    /// the worst of them, with the instance results as its payload. With <paramref name="onlyInstance"/> only that instance runs, and the
+    /// module's result also counts the latest stored result of each other instance.</summary>
+    private async Task<DiagnosticResult> RunInstancesAsync(IPerDeviceModule module, ICheckProgress progress, CancellationToken ct, string? onlyInstance = null)
     {
         if (!_detections.ContainsKey(module.Id)) await DetectAsync(module).ConfigureAwait(false);
-        var instances = InstancesOf(module);
-        if (instances.Count == 0) return CouldNotRun.Result(module.Name, DetectionOf(module.Id)?.NotApplicableReason ?? "No hardware to test");
-        var results = new List<DiagnosticResult>(instances.Count);
+        var all = InstancesOf(module);
+        var instances = onlyInstance is null ? all : all.Where(i => string.Equals(i.Key, onlyInstance, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (instances.Count == 0)
+            return CouldNotRun.Result(module.Name, onlyInstance is not null && all.Count > 0 ? "That device is no longer connected"
+                : DetectionOf(module.Id)?.NotApplicableReason ?? "No hardware to test");
+        var ran = new List<DiagnosticResult>(instances.Count);
         for (var i = 0; i < instances.Count; i++)
         {
             var inst = instances[i];
@@ -468,14 +489,26 @@ public sealed class DiagnosticsService
             catch (Exception ex) { r = new DiagnosticResult(module.Name, DiagnosticStatus.Error, ex.Message, DateTimeOffset.Now, ex); }
             r = r with { ModuleName = module.Name, InstanceKey = inst.Key, InstanceLabel = inst.Label };
             _store.Set(r);
-            results.Add(r);
+            ran.Add(r);
+            if (r.Cancelled) break;
         }
+        // Every instance in detection order: this run's result, or the latest one from earlier.
+        var results = all.Select(inst => ran.FirstOrDefault(r => r.InstanceKey == inst.Key) ?? Prior(inst.Key)).OfType<DiagnosticResult>().ToList();
         var worst = results.OrderByDescending(r => Severity(r.Status)).First();
         var message = results.Count == 1 ? worst.Message
             : results.All(r => r.Status == DiagnosticStatus.Ok) ? $"All {results.Count} passed"
             : $"{results.Count(r => r.Status != DiagnosticStatus.Ok)} of {results.Count} need attention: {worst.InstanceLabel}: {worst.Message}";
-        return new DiagnosticResult(module.Name, worst.Status, message, DateTimeOffset.Now, new InstanceResults(results)) { Cancelled = results.Any(r => r.Cancelled) };
+        object? summary = null;
+        if (module is IInstanceSummary combiner)
+        {
+            try { summary = combiner.Combine(results); }
+            catch (Exception ex) { try { Log?.Invoke($"{module.Name}: combining device results failed: {ex.Message}"); } catch { } }
+        }
+        return new DiagnosticResult(module.Name, worst.Status, message, DateTimeOffset.Now, new InstanceResults(results) { Summary = summary })
+            { Cancelled = ran.Any(r => r.Cancelled) };
 
+        DiagnosticResult? Prior(string key) =>
+            _store.GetInstance(module.Name, key) is { Status: not (DiagnosticStatus.NotRun or DiagnosticStatus.Running) } prior ? prior : null;
         static int Severity(DiagnosticStatus s) => s switch { DiagnosticStatus.Error => 3, DiagnosticStatus.Warning => 2, DiagnosticStatus.Ok => 1, _ => 0 };
     }
 
@@ -626,4 +659,24 @@ public sealed class DiagnosticsService
 }
 
 /// <summary>Payload of a per-device module's overall result: the result for each instance, in run order.</summary>
-public sealed record InstanceResults(IReadOnlyList<DiagnosticResult> Results);
+public sealed record InstanceResults(IReadOnlyList<DiagnosticResult> Results)
+{
+    /// <summary>The module's own combined report of all devices (<see cref="IInstanceSummary.Combine"/>), for pages that show one report.</summary>
+    public object? Summary { get; init; }
+}
+
+/// <summary>
+/// Optional on an <see cref="IPerDeviceModule"/>: folds the per-device results into the single report its page already knows how to show
+/// (one AreaReport with a card per drive, one NpuTestReport listing every NPU). Read it with <see cref="InstanceResultExtensions.Report"/>.
+/// </summary>
+public interface IInstanceSummary
+{
+    /// <summary>The latest result of each device, in detection order. Never throws for a result without a payload.</summary>
+    object? Combine(IReadOnlyList<DiagnosticResult> instanceResults);
+}
+
+public static class InstanceResultExtensions
+{
+    /// <summary>The payload to show for a module result: a per-device module's combined report, otherwise the payload itself.</summary>
+    public static object? Report(this DiagnosticResult r) => r.Payload is InstanceResults ir ? ir.Summary : r.Payload;
+}
