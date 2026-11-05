@@ -9,8 +9,8 @@ It is not part of `RemotePCDiagnostics.sln`, because it needs RemoteBlazorWebVie
 
 ## Build (Windows)
 
-1. Build the packages from a RemoteBlazorWebView clone on `net10` that has the JS bundle (`src/RemoteWebView.Blazor.JS/dist`), for example:
-   `dotnet pack src/RemoteWebViewService.Lib -c Release -p:Version=10.0.14-embedded.1 -o <repo>/third_party/RemoteBlazorWebView/packages`.
+1. Build the packages from a RemoteBlazorWebView clone on `net10` (with budcribar/RemoteBlazorWebView#64) that has the JS bundle (`src/RemoteWebView.Blazor.JS/dist`), for example:
+   `dotnet pack src/RemoteWebViewService.Lib -c Release -p:Version=10.0.14-embedded.2 -o <repo>/third_party/RemoteBlazorWebView/packages`.
    Do the same for `src/RemoteWebView` and `src/RemoteBlazorWebView.Wpf`.
 2. `dotnet build spikes/UnsignedModuleUi/Shell -c Release` (this also builds the module UI host and copies it into `moduleui\` next to the shell)
 3. Run `spikes/UnsignedModuleUi/Shell/bin/Release/net10.0-windows10.0.19041.0/win-x64/UnsignedUiSpike.Shell.exe`, or add `--unrestricted` for a control run with a normal token.
