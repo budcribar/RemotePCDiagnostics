@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <!-- Stands in for RemotePCDiagnostics.Host in Local mode: hosts the relay in-process, starts the module UI hosts with the app's
+       restricted token, and frames their UIs in sandboxed iframes under an app-drawn "Unsigned module" banner. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>UnsignedUiSpike.Shell</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="PeakSWC.RemoteBlazorWebView.Wpf" Version="$(SpikeRbwvVersion)" />
+    <PackageReference Include="PeakSWC.RemoteWebViewService.Lib" Version="$(SpikeLibVersion)" />
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The real launcher, unchanged: the spike tests what the app would actually do. -->
+    <Compile Include="..\..\..\src\RemotePCDiagnostics.Host\RestrictedModuleHostLauncher.cs" Link="RestrictedModuleHostLauncher.cs" />
+    <ProjectReference Include="..\..\..\src\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
+  </ItemGroup>
+  <!-- The module UI host next to the shell, like ModuleHost.exe next to the app. Built separately and copied in, because a
+       ProjectReference would merge its static web assets into the shell's and collide on _framework files. -->
+  <Target Name="CopyModuleUi" AfterTargets="Build">
+    <MSBuild Projects="..\ModuleUi\UnsignedUiSpike.ModuleUi.csproj" Targets="Build" Properties="Configuration=$(Configuration)" />
+    <ItemGroup>
+      <ModuleUiFiles Include="..\ModuleUi\bin\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModuleUiFiles)" DestinationFiles="@(ModuleUiFiles->'$(OutDir)moduleui\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

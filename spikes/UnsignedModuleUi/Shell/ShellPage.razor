@@ -1,0 +1,58 @@
+@implements IDisposable
+@inject IJSRuntime JS
+<h2>Unsigned module UI spike</h2>
+<p>Shell origin: <code>@_origin</code> · launch: <b>@(Spike.Restricted ? "restricted token, Medium integrity" : "normal token (control run)")</b></p>
+<p><button @onclick="PingAll">Post a message to every frame</button> <button @onclick="ProbeAll">Try to read each frame's document</button>
+   <button @onclick="Save">Save results</button> <span>@_saved</span></p>
+@foreach (var f in Spike.Frames)
+{
+    <div class="frame">
+        @* Drawn by the app, outside the iframe: the module can't hide or restyle it. *@
+        <div class="banner">Unsigned module · @f.Title · runs in user mode in a separate process</div>
+        <iframe data-frame="@f.Key" sandbox="@f.Sandbox" src="@f.Src"></iframe>
+    </div>
+}
+<pre>@_log</pre>
+
+@code {
+    private string _origin = "?", _log = "", _saved = "";
+    private DotNetObjectReference<ShellPage>? _self;
+
+    protected override async Task OnAfterRenderAsync(bool first)
+    {
+        if (!first) return;
+        _self = DotNetObjectReference.Create(this);
+        _origin = await JS.InvokeAsync<string>("shell.listen", _self);
+        Spike.ShellOrigin = _origin;
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void FromFrame(string frame, string origin, string json)
+    {
+        Spike.Record(frame, "message", $"origin={origin} {json}");
+        Append($"[{frame}] from {origin}: {json}");
+    }
+
+    private async Task PingAll()
+    {
+        foreach (var f in Spike.Frames) { await JS.InvokeVoidAsync("shell.post", f.Key, "hello from the shell"); Spike.Record(f.Key, "ping", "sent"); }
+        Append("pinged every frame");
+    }
+
+    private async Task ProbeAll()
+    {
+        foreach (var f in Spike.Frames)
+        {
+            var r = await JS.InvokeAsync<string>("shell.probe", f.Key);
+            Spike.Record(f.Key, "shell-probe", r);
+            Append($"[{f.Key}] shell reads frame document: {r}");
+        }
+    }
+
+    private void Save() { _saved = "saved to " + Spike.Save(); }
+
+    private void Append(string line) { _log = $"{DateTime.Now:HH:mm:ss.fff} {line}\n" + _log; _ = InvokeAsync(StateHasChanged); }
+
+    public void Dispose() => _self?.Dispose();
+}

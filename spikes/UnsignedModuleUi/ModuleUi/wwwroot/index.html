@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Unsigned module (spike)</title>
+    <style>body { font-family: Segoe UI, sans-serif; margin: 12px; } button { margin: 4px 4px 4px 0; } pre { background: #f3f3f3; padding: 6px; white-space: pre-wrap; }</style>
+</head>
+<body>
+    <div id="app">Loading…</div>
+    <script src="_framework/blazor.webview.js"></script>
+    <script>
+        // What an untrusted module page can and can't reach. Every probe is reported to the shell with postMessage.
+        window.spike = {
+            post: function (obj) { window.parent.postMessage(obj, '*'); },
+            probes: function () {
+                const r = { origin: String(self.origin), inFrame: window.top !== window.self };
+                try { r.topHref = String(window.top.location.href); } catch (e) { r.topHref = 'blocked: ' + e.name; }
+                try { r.topDocument = window.top.document ? 'READABLE' : 'none'; } catch (e) { r.topDocument = 'blocked: ' + e.name; }
+                try { localStorage.setItem('spike', '1'); r.localStorage = 'available'; } catch (e) { r.localStorage = 'blocked: ' + e.name; }
+                try { r.cookie = document.cookie === '' ? 'empty' : 'READABLE'; } catch (e) { r.cookie = 'blocked: ' + e.name; }
+                try { const w = window.open('about:blank'); r.popup = w ? 'OPENED' : 'blocked (null)'; if (w) w.close(); } catch (e) { r.popup = 'blocked: ' + e.name; }
+                try { alert('spike'); r.alert = 'shown?'; } catch (e) { r.alert = 'blocked: ' + e.name; }
+                return JSON.stringify(r);
+            },
+            listen: function (dotnet) {
+                window.addEventListener('message', function (e) {
+                    dotnet.invokeMethodAsync('FromShell', String(e.origin), JSON.stringify(e.data));
+                });
+            }
+        };
+    </script>
+</body>
+</html>
