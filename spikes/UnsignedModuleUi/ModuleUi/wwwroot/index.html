@@ -3,6 +3,8 @@
 <head>
     <meta charset="utf-8" />
     <title>Unsigned module (spike)</title>
+    <!-- Required: the relay rewrites this to /{id}/ so the page's files and gRPC calls are tied to this module host. -->
+    <base href="/" />
     <style>body { font-family: Segoe UI, sans-serif; margin: 12px; } button { margin: 4px 4px 4px 0; } pre { background: #f3f3f3; padding: 6px; white-space: pre-wrap; }</style>
 </head>
 <body>
@@ -23,7 +25,7 @@
             fwd('boot', 'origin=' + self.origin + ' href=' + location.href + ' grpcHost=' + (window.RemoteBlazor ? window.RemoteBlazor.grpcHost : '(location.origin)'));
         })();
     </script>
-    <script src="_framework/blazor.webview.js"></script>
+    <script src="_framework/blazor.webview.js" onload="parent.postMessage({ type: 'diag', kind: 'script', msg: 'blazor.webview.js loaded' }, '*')" onerror="parent.postMessage({ type: 'diag', kind: 'script', msg: 'blazor.webview.js FAILED to load' }, '*')"></script>
     <script>
         // What an untrusted module page can and can't reach. Every probe is reported to the shell with postMessage.
         window.spike = {
