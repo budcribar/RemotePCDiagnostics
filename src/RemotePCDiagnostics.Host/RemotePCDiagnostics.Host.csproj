@@ -32,6 +32,8 @@
     <ProjectReference Include="..\RemotePCDiagnostics.UI\RemotePCDiagnostics.UI.csproj" />
     <!-- Memory test helper process (RemotePCDiagnostics.MemTest.exe is copied next to the Host exe). -->
     <ProjectReference Include="..\RemotePCDiagnostics.MemTest\RemotePCDiagnostics.MemTest.csproj" />
+    <!-- User-mode module host for unsigned modules (RemotePCDiagnostics.ModuleHost.exe is copied next to the Host exe). -->
+    <ProjectReference Include="..\RemotePCDiagnostics.ModuleHost\RemotePCDiagnostics.ModuleHost.csproj" />
   </ItemGroup>
   <ItemGroup>
     <None Include="tools\osquery\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

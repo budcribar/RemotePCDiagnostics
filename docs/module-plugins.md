@@ -35,6 +35,12 @@ See `samples/SampleModule`. A module project:
 - An unsigned module never loads into the app. It is listed on the About page; if the person at the PC turned unsigned modules on, it
   runs in the user-mode module host instead (out of process, restricted token). Unsigned modules that need administrator or change the
   PC are always disabled.
+- The switch for unsigned modules is the file `allow-unsigned` in the modules folder, set from the About page by someone at the PC
+  (the folder is admin-only, so neither a standard user, a remote session nor a module can turn it on). It takes effect at the next start.
+- In user mode the app starts `RemotePCDiagnostics.ModuleHost.exe <module.dll>` with a restricted copy of its token (Administrators
+  deny-only, privileges removed, Medium integrity). The two talk over the host's stdin and stdout, one JSON line per message
+  (`availability`, `refresh`, `stop`, `exit` one way; `ready`, `availability`, `progress`, `result`, `error` the other). The module's
+  report is shown in the generic view, under an "Unsigned module" banner the app draws, with every one-click fix removed.
 - Admin modules are only ever signed with our key: they come in through a pull request and are reviewed and added by us.
 
 ## Startup
