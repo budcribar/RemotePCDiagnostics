@@ -59,7 +59,12 @@ public static class HostServices
         services.AddSingleton(plugins);
         plugins.Register(services, new BuiltInModulesPlugin(log), BuiltInModulesPlugin.Id, ModuleSource.BuiltIn);
         // Module DLLs from %ProgramFiles%\RemotePCDiagnostics\modules (signed ones load in-process; unsigned ones never do).
-        services.AddSingleton(LoadModulePlugins(services, plugins, log, logEvent));
+        services.AddSingleton(LoadModulePlugins(services, plugins, log, logEvent, new ModuleLoaderOptions
+        {
+            HostVersion = HostVersion(),
+            // Only the person at the PC can turn unsigned modules on (a marker in the admin-only modules folder); never in a remote session.
+            AllowUnsigned = session.Mode == SessionMode.Local && UnsignedModulesSetting.IsOn(),
+        }));
         services.AddSingleton(sp =>
         {
             var diag = new DiagnosticsService(sp.GetRequiredService<ResultStore>(), sp.GetServices<IDiagnosticModule>());
@@ -107,7 +112,9 @@ public static class HostServices
     public static ModuleLoader LoadModulePlugins(IServiceCollection services, PluginRegistrar plugins, Action<string> log,
         Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent, ModuleLoaderOptions? options = null)
     {
-        var loader = new ModuleLoader(options ?? new ModuleLoaderOptions { HostVersion = HostVersion() }, plugins, log);
+        var launcher = new RestrictedModuleHostLauncher(log);
+        var loader = new ModuleLoader(options ?? new ModuleLoaderOptions { HostVersion = HostVersion() }, plugins, log,
+            um => new UserModeModuleProxy(um, launcher, log));
         var before = plugins.Records.Count;
         try { loader.LoadAll(services); }
         catch (Exception ex) { log($"Modules: loading plugins failed: {ex.GetType().Name}: {ex.Message}"); }

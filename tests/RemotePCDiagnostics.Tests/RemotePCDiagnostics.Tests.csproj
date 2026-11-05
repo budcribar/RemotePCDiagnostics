@@ -27,6 +27,8 @@
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.MemTest\RemotePCDiagnostics.MemTest.csproj" />
     <!-- A real module DLL for the loader tests: built, not referenced, copied to sample-module/ (outside the default load context). -->
     <ProjectReference Include="..\..\samples\SampleModule\SampleModule.csproj" ReferenceOutputAssembly="false" />
+    <!-- The user-mode module host, started for real by the proxy tests (RemotePCDiagnostics.ModuleHost.dll lands in the test output). -->
+    <ProjectReference Include="..\..\src\RemotePCDiagnostics.ModuleHost\RemotePCDiagnostics.ModuleHost.csproj" />
   </ItemGroup>
 
   <Target Name="CopySampleModule" AfterTargets="Build">

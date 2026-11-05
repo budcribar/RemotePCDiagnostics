@@ -50,7 +50,10 @@ public static class ModuleSignature
 /// Loads module DLLs once at startup, before the container is built: discover, verify, read the manifest (no code runs), catalog, load
 /// into its own <see cref="AssemblyLoadContext"/>, register through <see cref="PluginRegistrar"/>. One bad plugin never stops startup.
 /// </summary>
-public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar registrar, Action<string>? log = null)
+/// <param name="userMode">Makes the in-app stand-in for an unsigned module (a <see cref="UserModeModuleProxy"/>); null leaves user-mode
+/// modules listed in <see cref="UserMode"/> only.</param>
+public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar registrar, Action<string>? log = null,
+    Func<UserModeModule, IDiagnosticModule>? userMode = null)
 {
     /// <summary>Modules found unsigned that may run in the user-mode module host (see <see cref="UserModeModule"/>).</summary>
     public IReadOnlyList<UserModeModule> UserMode => _userMode;
@@ -93,8 +96,12 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
                         : !options.AllowUnsigned ? "unsigned modules are turned off (turn them on at this PC to run them in user mode)"
                         : null;
                     if (why is not null) { registrar.RecordDisabled(record with { Reason = why }, descriptor); continue; }
-                    _userMode.Add(new UserModeModule(path, manifest, descriptor));
-                    registrar.RecordDisabled(record with { Reason = "runs in user mode, out of process", UserMode = true }, descriptor);
+                    var um = new UserModeModule(path, manifest, descriptor);
+                    _userMode.Add(um);
+                    var userRecord = record with { Reason = "runs in user mode, out of process", UserMode = true };
+                    if (userMode is null) { registrar.RecordDisabled(userRecord, descriptor); continue; }
+                    if (registrar.Register(services, new SingleModulePlugin(userMode(um)), pluginId, ModuleSource.Plugin, manifest.Id, userRecord, descriptor))
+                        Log($"{pluginId} {manifest.Version} ({manifest.Id}) runs in user mode from {path}");
                     continue;
                 }
 
@@ -152,6 +159,12 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
     }
 
     private void Log(string message) { try { log?.Invoke("Modules: " + message); } catch { } }
+}
+
+/// <summary>Registers one ready-made module (the user-mode stand-in).</summary>
+internal sealed class SingleModulePlugin(IDiagnosticModule module) : IModulePlugin
+{
+    public void Register(IServiceCollection services, IPluginContext context) => services.AddSingleton(module);
 }
 
 /// <summary>An unsigned module the user-mode module host runs out of process.</summary>

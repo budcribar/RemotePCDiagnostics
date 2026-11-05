@@ -41,7 +41,30 @@
     </section>
 }
 
+@if (Session.Mode == SessionMode.Local)
+{
+    <section class="card about-card" data-testid="about-unsigned">
+        <h2>Unsigned modules</h2>
+        <label><input type="checkbox" data-testid="about-unsigned-toggle" checked="@_unsigned" @onchange="ToggleUnsigned" />
+            Run unsigned modules in user mode</label>
+        <p class="meta">Unsigned modules run in a separate process without administrator rights and can't change this PC. Takes effect the next
+            time the app starts. Only someone at this PC can change this.</p>
+        @if (_unsignedError is not null) { <div class="notice notice-error">@_unsignedError</div> }
+    </section>
+}
+
 @code {
+    private bool _unsigned = UnsignedModulesSetting.IsOn();
+    private string? _unsignedError;
+
+    private void ToggleUnsigned(ChangeEventArgs e)
+    {
+        if (Session.Mode != SessionMode.Local) return;
+        var on = e.Value is true;
+        try { UnsignedModulesSetting.Set(on); _unsigned = on; _unsignedError = null; }
+        catch (Exception ex) { _unsignedError = $"Couldn't change the setting: {ex.Message}"; }
+    }
+
     private IReadOnlyList<PluginRecord> Plugins =>
         App.Plugins?.Records.Where(r => r.Source == RemotePCDiagnostics.Core.ModuleSource.Plugin).ToList() ?? [];
 }
