@@ -1,0 +1,20 @@
+{
+  // A check written as data: copy to %ProgramFiles%\RemotePCDiagnostics\checks. The id is permanent: never change or reuse it.
+  "id": "0b6f6a43-8c1d-4f33-9a59-2f0c1e2d7b10",
+  "slug": "sample.windows-update-service",
+  "displayName": "Windows Update service (sample check)",
+  "group": "windows",
+  "order": 9000,
+  "query": "SELECT name, display_name, status, start_type FROM services WHERE name IN ('wuauserv', 'bits', 'UsoSvc')",
+  "columns": [
+    { "name": "display_name", "title": "Service" },
+    { "name": "status", "title": "Status" },
+    { "name": "start_type", "title": "Start type" }
+  ],
+  "rules": [
+    { "column": "start_type", "op": "eq", "value": "DISABLED", "level": "Error", "message": "Disabled: Windows can't install updates." }
+  ],
+  "okText": "Update services can start",
+  "emptyText": "The update services weren't found",
+  "emptyLevel": "Warning"
+}

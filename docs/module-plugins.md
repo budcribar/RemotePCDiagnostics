@@ -49,3 +49,12 @@ For each DLL: verify the signature, read `module.json` without running code, che
 strings to `%ProgramData%\RemotePCDiagnostics\catalog\<id>`, then load (signed) or hand to the user-mode host (unsigned). A plugin that
 fails anywhere is disabled with the reason (About page, Event Log 1800) and startup carries on. A plugin whose DLL was removed keeps its
 catalog copy, so History can still name its results.
+
+## Checks written as data
+
+A check that only reads can be a JSON file in `%ProgramFiles%\RemotePCDiagnostics\checks` instead of a DLL (see
+`samples/checks/windows-update-service.json`): an `id`, `slug`, `displayName`, `group`, `order`, `dependsOn`/`runAfter`, one read-only
+osquery `query` (a single SELECT; `curl` and `carves` are refused), the `columns` to show and `rules` on them (`eq`, `ne`, `lt`, `le`,
+`gt`, `ge`, `contains`, `notContains`, `empty`, `notEmpty`, each with a `level` and a plain-text `message`). It carries no code, so it runs
+in the app unsigned and shows in the standard report view. A check that would run a script is code: it must be a signed module, or it
+runs in user mode.

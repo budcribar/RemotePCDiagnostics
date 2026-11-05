@@ -118,6 +118,7 @@ public static class HostServices
         var before = plugins.Records.Count;
         try { loader.LoadAll(services); }
         catch (Exception ex) { log($"Modules: loading plugins failed: {ex.GetType().Name}: {ex.Message}"); }
+        LoadJsonChecks(services, plugins, log);
         foreach (var r in plugins.Records.Skip(before))
         {
             var text = $"Module plugin: {r.PluginId}{Environment.NewLine}Module id: {r.ModuleId}{Environment.NewLine}Version: {r.Version}{Environment.NewLine}" +
@@ -127,6 +128,27 @@ public static class HostServices
             catch { }
         }
         return loader;
+    }
+
+    /// <summary>Checks written as data (%ProgramFiles%\RemotePCDiagnostics\checks\*.json): read-only osquery, no code, so they run unsigned.</summary>
+    public static void LoadJsonChecks(IServiceCollection services, PluginRegistrar plugins, Action<string> log, string? folder = null)
+    {
+        try
+        {
+            var ids = BuiltInModules.Descriptors.ToDictionary(d => d.Id, d => d.Slug);
+            var slugs = new HashSet<string>(BuiltInModules.Descriptors.Select(d => d.Slug), StringComparer.OrdinalIgnoreCase);
+            foreach (var r in plugins.Records) { if (r.ModuleId is { } id) ids[id] = r.PluginId; slugs.Add(r.PluginId); }
+            var problems = new List<(string File, string Problem)>();
+            foreach (var c in RemotePCDiagnostics.Core.Checks.JsonCheckModule.LoadFolder(folder ?? RemotePCDiagnostics.Core.Checks.JsonCheckModule.DefaultFolder(), ids, slugs, problems))
+            {
+                var record = new PluginRecord(c.Slug, ModuleSource.Plugin, PluginState.Loaded)
+                    { ModuleId = c.Id, DisplayName = c.DisplayName, Signature = "Check (no code)", Version = "check" };
+                plugins.Register(services, new RemotePCDiagnostics.Core.Checks.JsonCheckPlugin(c, log), c.Slug, ModuleSource.Plugin, c.Id, record, c.ToDescriptor());
+            }
+            foreach (var (file, problem) in problems)
+                plugins.RecordDisabled(new PluginRecord(System.IO.Path.GetFileNameWithoutExtension(file), ModuleSource.Plugin, PluginState.Disabled, problem) { Path = file, Signature = "Check (no code)" });
+        }
+        catch (Exception ex) { log($"Checks: loading JSON checks failed: {ex.Message}"); }
     }
 
     /// <summary>The app's version as a <see cref="Version"/> (for a plugin's minHost check).</summary>
