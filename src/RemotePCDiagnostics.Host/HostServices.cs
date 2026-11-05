@@ -63,7 +63,9 @@ public static class HostServices
         services.AddSingleton(sp =>
         {
             var diag = new DiagnosticsService(sp.GetRequiredService<ResultStore>(), sp.GetServices<IDiagnosticModule>());
+            diag.Log = log;
             sp.GetRequiredService<PluginRegistrar>().ApplyTo(diag.Catalog); // where each module came from, its details UI
+            diag.RejectDependencyCycles(); // now that plugin DependsOn / RunAfter are known
             return diag;
         });
         services.AddSingleton(new RemotePCDiagnostics.Core.Preferences.PreferencesService(

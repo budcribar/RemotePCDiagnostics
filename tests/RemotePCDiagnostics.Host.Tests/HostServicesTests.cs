@@ -70,9 +70,8 @@ public class HostServicesTests
             var duplicates = modules.GroupBy(m => m.Name, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
             Assert.Empty(duplicates);
             // DiagnosticsService throws on a duplicate name, so resolving it proves the registered set is consistent.
-            Assert.NotNull(provider.GetRequiredService<DiagnosticsService>());
-            foreach (var name in StressSuite.Order)
-                Assert.Contains(modules, m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase));
+            var diag = provider.GetRequiredService<DiagnosticsService>();
+            Assert.Equal([ModuleSlugs.CpuStress, ModuleSlugs.MemoryTest, ModuleSlugs.DiskSpeed, ModuleSlugs.GpuStress, ModuleSlugs.NetworkTest], diag.StressOrder);
             // Every registered module uses its permanent built-in id, and its name is the slug that id was given.
             foreach (var m in modules)
             {

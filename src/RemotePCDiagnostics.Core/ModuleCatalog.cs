@@ -21,10 +21,11 @@ public static class BuiltInModules
         new(ModuleIds.DismScanHealth, ModuleSlugs.DismScanHealth, "Windows component store (DISM)", ModuleKind.OnDemand, ModuleGroups.Windows, 400),
         new(ModuleIds.SfcVerifyOnly, ModuleSlugs.SfcVerifyOnly, "Protected system files (SFC)", ModuleKind.OnDemand, ModuleGroups.Windows, 500),
         new(ModuleIds.CpuStress, ModuleSlugs.CpuStress, "CPU stress test", ModuleKind.StressTest, ModuleGroups.Cpu, 200),
-        new(ModuleIds.MemoryTest, ModuleSlugs.MemoryTest, "Memory test", ModuleKind.StressTest, ModuleGroups.Memory, 100),
-        new(ModuleIds.DiskSpeed, ModuleSlugs.DiskSpeed, "Disk speed test", ModuleKind.StressTest, ModuleGroups.Storage, 200),
-        new(ModuleIds.GpuStress, ModuleSlugs.GpuStress, "Graphics (GPU) stress test", ModuleKind.StressTest, ModuleGroups.Graphics, 100),
-        new(ModuleIds.NetworkTest, ModuleSlugs.NetworkTest, "Network stability test", ModuleKind.StressTest, ModuleGroups.Network, 200),
+        // The stress suite runs CPU, Memory, Disk, GPU, Network: an order only (RunAfter), so one failing test never skips the next.
+        new(ModuleIds.MemoryTest, ModuleSlugs.MemoryTest, "Memory test", ModuleKind.StressTest, ModuleGroups.Memory, 100) { RunAfter = [ModuleIds.CpuStress] },
+        new(ModuleIds.DiskSpeed, ModuleSlugs.DiskSpeed, "Disk speed test", ModuleKind.StressTest, ModuleGroups.Storage, 200) { RunAfter = [ModuleIds.MemoryTest] },
+        new(ModuleIds.GpuStress, ModuleSlugs.GpuStress, "Graphics (GPU) stress test", ModuleKind.StressTest, ModuleGroups.Graphics, 100) { RunAfter = [ModuleIds.DiskSpeed] },
+        new(ModuleIds.NetworkTest, ModuleSlugs.NetworkTest, "Network stability test", ModuleKind.StressTest, ModuleGroups.Network, 200) { RunAfter = [ModuleIds.GpuStress] },
         new(ModuleIds.SpeakerToMic, ModuleSlugs.SpeakerToMic, "Speaker to microphone test", ModuleKind.OnDemand, ModuleGroups.Audio, 100),
         new(ModuleIds.MicToSpeaker, ModuleSlugs.MicToSpeaker, "Microphone to speaker test", ModuleKind.OnDemand, ModuleGroups.Audio, 200),
         new(ModuleIds.Webcam, ModuleSlugs.Webcam, "Webcam test", ModuleKind.OnDemand, ModuleGroups.Camera, 100),
@@ -108,6 +109,14 @@ public sealed class ModuleCatalog
     public void SetOrigin(Guid id, ModuleSource source, string? pluginId)
     {
         if (_byId.TryGetValue(id, out var d)) _byId[id] = d with { Source = source, PluginId = pluginId };
+        RaiseChanged();
+    }
+
+    /// <summary>Takes a loaded plugin's placement and dependencies from its manifest (the module itself only knows its id and names).</summary>
+    public void Describe(ModuleDescriptor manifest)
+    {
+        if (!_byId.TryGetValue(manifest.Id, out var d)) return;
+        _byId[manifest.Id] = d with { Group = manifest.Group, Order = manifest.Order, DependsOn = manifest.DependsOn, RunAfter = manifest.RunAfter };
         RaiseChanged();
     }
 

@@ -117,14 +117,15 @@ public sealed class ResultEventLogger
     public static bool IsCancelled(DiagnosticResult r) => r.Cancelled ||
         (r.Payload is not null && r.Payload.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() is "StoppedByUser" or "Cancelled");
 
-    public static string Outcome(DiagnosticResult r) => r.Payload is ModuleAvailability || r.Payload?.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() == "NoGpu" ? "Unavailable"
+    public static string Outcome(DiagnosticResult r) => r.Payload is DependencyGate gate ? gate.Outcome
+        : r.Payload is ModuleAvailability || r.Payload?.GetType().GetProperty("Outcome")?.GetValue(r.Payload)?.ToString() == "NoGpu" ? "Unavailable"
         : IsCancelled(r) ? "Cancelled"
         : r.Status switch { DiagnosticStatus.Ok => "OK", DiagnosticStatus.Warning => "Warning", DiagnosticStatus.Error => "Critical", _ => r.Status.ToString() };
 
     public static LogLevel LevelFor(DiagnosticResult r) => Outcome(r) switch
     {
         "Critical" => LogLevel.Error,
-        "Warning" or "Cancelled" or "Unavailable" => LogLevel.Warning,
+        "Warning" or "Cancelled" or "Unavailable" or "Skipped" or "Blocked" => LogLevel.Warning,
         _ => LogLevel.Information,
     };
 

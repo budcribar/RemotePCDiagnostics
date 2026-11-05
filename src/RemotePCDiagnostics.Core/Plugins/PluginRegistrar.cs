@@ -30,6 +30,7 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
     private readonly ConcurrentDictionary<Guid, Type> _details = new();
     private readonly ConcurrentDictionary<Guid, ModuleDescriptor> _known = new();
     private readonly ConcurrentDictionary<Guid, ModuleDescriptor> _retired = new();
+    private readonly ConcurrentDictionary<Guid, ModuleDescriptor> _manifests = new();
     private readonly object _gate = new();
 
     public IReadOnlyList<PluginRecord> Records { get { lock (_gate) return _records.ToList(); } }
@@ -37,7 +38,7 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
     /// <summary>Calls the plugin's Register. Returns false (and records it Disabled) when it throws or the module id isn't the expected one.</summary>
     /// <param name="expectedModuleId">From the plugin's manifest: the one module it may register.</param>
     public bool Register(IServiceCollection services, IModulePlugin plugin, string pluginId, ModuleSource source = ModuleSource.Plugin,
-        Guid? expectedModuleId = null, PluginRecord? record = null)
+        Guid? expectedModuleId = null, PluginRecord? record = null, ModuleDescriptor? manifest = null)
     {
         var scratch = new ServiceCollection();
         var ctx = new Context(this, pluginId, session, hostVersion, log);
@@ -60,6 +61,7 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
         foreach (var d in scratch)
             services.Add(d.ServiceType == typeof(IDiagnosticModule) ? Tracked(d, pluginId, source, expectedModuleId) : d);
         Add(record ?? new PluginRecord(pluginId, source, PluginState.Loaded));
+        if (manifest is not null) _manifests[manifest.Id] = manifest;
         if (source == ModuleSource.Plugin) Log($"plugin {pluginId}: registered");
         return true;
     }
@@ -80,6 +82,7 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
     {
         foreach (var (id, type) in _details) catalog.SetDetailsComponent(id, type);
         foreach (var (id, origin) in _origins) catalog.SetOrigin(id, origin.Source, origin.PluginId);
+        foreach (var d in _manifests.Values) catalog.Describe(d);
         foreach (var d in _known.Values) catalog.AddKnown(d, ModuleState.Disabled);
         foreach (var d in _retired.Values) catalog.AddKnown(d, ModuleState.Retired);
     }

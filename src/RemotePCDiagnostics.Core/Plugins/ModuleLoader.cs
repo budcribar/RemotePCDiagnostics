@@ -104,7 +104,7 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
                     ?? throw new InvalidDataException($"entryType {manifest.EntryType} not found");
                 if (Activator.CreateInstance(entry) is not IModulePlugin plugin)
                     throw new InvalidDataException($"{manifest.EntryType} does not implement IModulePlugin");
-                if (registrar.Register(services, plugin, pluginId, ModuleSource.Plugin, manifest.Id, record))
+                if (registrar.Register(services, plugin, pluginId, ModuleSource.Plugin, manifest.Id, record, descriptor))
                     Log($"loaded {pluginId} {manifest.Version} ({manifest.Id}) from {path}");
             }
             catch (Exception ex)
