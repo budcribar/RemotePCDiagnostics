@@ -33,3 +33,13 @@ Each module page reports the following to the shell with `postMessage`:
 
 The shell can post to each frame and tries to read each frame's document. **Save results** writes
 `%LOCALAPPDATA%\RemotePCDiagnostics\spike\results-*.json`, and each module host logs to `spike\modulehost\<frame>\module-ui.log`.
+
+## Results (2026-11-05, Budslaptop)
+
+The restricted and unrestricted runs gave the same results. Findings and the plan for the real feature are in
+[Unsigned module UI spike: findings and plan](https://claude.ai/artifact/3x14faej48NQEfnHczyhbf).
+
+- **open:** connects with the module page's workarounds: `window.RemoteBlazor.grpcHost` and fetch without credentials. Frame isolation holds, and localStorage and cookies are blocked.
+- **locked:** fails, because the relay returns 403 for `Origin: null`. This needs a change in RemoteBlazorWebView.
+- **samesrc:** connects. Frame isolation holds, and localStorage is available, scoped to the relay's origin.
+- The module host's window must not be minimized: WebView2CompositionControl crashes creating its D3D9 device.
