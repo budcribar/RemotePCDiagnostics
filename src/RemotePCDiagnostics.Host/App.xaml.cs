@@ -1,6 +1,7 @@
 using System.IO;
 using System.Security.Principal;
 using System.Windows;
+using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Logging;
@@ -121,6 +122,9 @@ public partial class App : Application
         }
         if (!first) { Log("Another instance is already running: exiting"); _instance.Dispose(); _instance = null; Shutdown(ExitAlreadyRunning); return; }
 
+        // Before anything reads the undo journal, workflow or resume state: secure their folder and move them out of %LOCALAPPDATA%.
+        SecureProtectedState();
+
         if (e.Args.Any(a => a.Equals("--undo-all", StringComparison.OrdinalIgnoreCase)))
         {
             Shutdown(RunUndoAll(restart: e.Args.Any(a => a.Equals("--restart", StringComparison.OrdinalIgnoreCase))));
@@ -132,6 +136,23 @@ public partial class App : Application
 
         MainWindow = new RemotePCDiagnostics.Host.MainWindow();
         MainWindow.Show();
+    }
+
+    private static void SecureProtectedState()
+    {
+        if (!ProtectedStateFolder.Ensure(Log))
+        {
+            Event(LogEventIds.Error, LogLevel.Error, $"Remote PC Diagnostics couldn't make {ProtectedState.Folder()} administrator-only. " +
+                "Undo, the service workflow and restart resume keep working, but a program without administrator rights may be able to change what they do.");
+            return;
+        }
+        try
+        {
+            var outcome = new RemotePCDiagnostics.Core.Migrations.ProtectedStateMigration(ProtectedState.LegacyFolder(), ProtectedState.Folder(),
+                new RemotePCDiagnostics.Core.Migrations.MigrationMarkers(RemotePCDiagnostics.Core.Migrations.MigrationMarkers.DefaultPath()), Log).Run();
+            if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"State move to {ProtectedState.Folder()}: {outcome}");
+        }
+        catch (Exception ex) { Log($"State move to {ProtectedState.Folder()} failed: {ex.Message}"); }
     }
 
     private static void RunStartupMigrations()
