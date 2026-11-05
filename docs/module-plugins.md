@@ -25,6 +25,7 @@ See `samples/SampleModule`. A module project:
 | `kind`, `group`, `order` | `Check`, `OnDemand` or `StressTest`; the group key and order within it. |
 | `dependsOn`, `runAfter` | Module ids that must run first (and pass), or only run first. |
 | `changesSystem`, `needsAdmin` | A module with either set must be signed with the project key. |
+| `hasUi` | The plugin sets its own details UI (`SetDetailsComponent`). Needed for an unsigned module's UI to be shown (see below). |
 
 ## Signing and trust
 
@@ -42,6 +43,24 @@ See `samples/SampleModule`. A module project:
   (`availability`, `refresh`, `stop`, `exit` one way; `ready`, `availability`, `progress`, `result`, `error` the other). The module's
   report is shown in the generic view, under an "Unsigned module" banner the app draws, with every one-click fix removed.
 - Admin modules are only ever signed with our key: they come in through a pull request and are reviewed and added by us.
+
+## A module's own UI
+
+A plugin can give its module a details UI: a Razor component with a `DiagnosticModule` parameter (`IDiagnosticModule`), set with
+`context.SetDetailsComponent(id, typeof(MyDetails))`. See `samples/SampleModuleUi`, which references Components through
+`<FrameworkReference Include="Microsoft.AspNetCore.App" />` so nothing of Components is copied or embedded.
+
+- Signed: the component renders in the module page like a built-in one.
+- Unsigned, with `"hasUi": true`, in Local mode: the app starts `moduleui\RemotePCDiagnostics.ModuleUiHost.exe` with the same restricted
+  token as the module host. It loads the module and renders the component as a RemoteBlazorWebView client of a relay inside the app
+  (loopback only, framed only by the app's page). The module page shows it in an iframe with `sandbox="allow-scripts allow-forms"`
+  under the app's "Unsigned module" banner, above the generic report of the module's last run.
+- The frame has an opaque origin: the module's page can't read the app's page, its own or anyone's storage and cookies, or another
+  module's frame, and can't open popups or navigate the app. The only message the app accepts from it is its content height.
+- The component gets its own instance of the module, in the UI process: a run it starts there is not the app's run and isn't stored.
+- Keep styles inline or in the component: the module's static web assets (`_content/...`) aren't served. A fresh UI process starts each
+  time the module page opens; its log is `%LOCALAPPDATA%\RemotePCDiagnostics\moduleui\<slug>\module-ui.log`.
+- Remote sessions show the generic report only for now.
 
 ## Startup
 

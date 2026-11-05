@@ -14,8 +14,9 @@
     <Resource Include="Assets\diagnostics.ico" />
   </ItemGroup>
   <ItemGroup>
-    <!-- Local scroll-sync build from RemoteBlazorWebView net10 (052cee5c). Packages are in third_party/RemoteBlazorWebView/packages. -->
-    <PackageReference Include="PeakSWC.RemoteBlazorWebView.Wpf" Version="10.0.14-scrollsync.1" />
+    <PackageReference Include="PeakSWC.RemoteBlazorWebView.Wpf" Version="$(RbwvVersion)" />
+    <!-- The in-process relay that serves unsigned modules' UIs to the module page in Local mode (ModuleUiFrames). -->
+    <PackageReference Include="PeakSWC.RemoteWebViewService.Lib" Version="$(RbwvLibVersion)" />
     <!-- Live temperatures/fans. 0.9.6 = latest stable (Oct 2026); ships a net10.0 lib. MPL-2.0. -->
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
     <PackageReference Include="NAudio.Wasapi" Version="3.3.0" />
@@ -35,6 +36,20 @@
     <!-- User-mode module host for unsigned modules (RemotePCDiagnostics.ModuleHost.exe is copied next to the Host exe). -->
     <ProjectReference Include="..\RemotePCDiagnostics.ModuleHost\RemotePCDiagnostics.ModuleHost.csproj" />
   </ItemGroup>
+  <!-- The module UI host (an unsigned module's own UI, RemotePCDiagnostics.ModuleUiHost.exe) lands in moduleui\ next to the Host exe.
+       Built and copied rather than referenced: a ProjectReference would merge its static web assets into the Host's and collide on
+       _framework files, and its wwwroot\index.html would overwrite the Host's. -->
+  <PropertyGroup>
+    <ModuleUiHostProject>..\RemotePCDiagnostics.ModuleUiHost\RemotePCDiagnostics.ModuleUiHost.csproj</ModuleUiHostProject>
+  </PropertyGroup>
+  <Target Name="BuildModuleUiHost" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+    <MSBuild Projects="$(ModuleUiHostProject)" Targets="Restore" Properties="Configuration=$(Configuration);MSBuildRestoreSessionId=$([System.Guid]::NewGuid())" />
+    <MSBuild Projects="$(ModuleUiHostProject)" Targets="Build" Properties="Configuration=$(Configuration)" />
+    <ItemGroup>
+      <ModuleUiHostFiles Include="..\RemotePCDiagnostics.ModuleUiHost\bin\$(Configuration)\$(TargetFramework)\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModuleUiHostFiles)" DestinationFiles="@(ModuleUiHostFiles->'$(OutDir)moduleui\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
   <ItemGroup>
     <None Include="tools\osquery\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- Bundled osquery (third_party/osquery, v5.24.0). Lands at <output>\tools\osquery\osqueryi.exe = OsqueryRunner.RelativePath. -->

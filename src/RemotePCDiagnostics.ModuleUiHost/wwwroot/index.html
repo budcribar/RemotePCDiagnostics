@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Module</title>
+    <!-- Required: the relay rewrites this to /{id}/, which ties the page's files and calls to this module's UI process. -->
+    <base href="/" />
+    <style>
+        body { font-family: "Segoe UI", system-ui, sans-serif; font-size: 14px; margin: 0; padding: 12px; color: #1f2328; background: transparent; }
+        @media (prefers-color-scheme: dark) { body { color: #e6edf3; } }
+        .module-ui-error { color: #b42318; }
+    </style>
+</head>
+<body>
+    <div id="app">Loading…</div>
+    <script>
+        // The page runs in a sandboxed frame on the module page. The only thing it tells the app is its height (ModuleUiFrame.HeightMessage).
+        (function () {
+            var last = 0;
+            function post() {
+                var h = Math.ceil(document.documentElement.scrollHeight);
+                if (h !== last) { last = h; window.parent.postMessage({ type: 'rpcd-module-height', height: h }, '*'); }
+            }
+            if (window.ResizeObserver) new ResizeObserver(post).observe(document.documentElement);
+            window.addEventListener('load', post);
+        })();
+    </script>
+    <script src="_framework/blazor.webview.js"></script>
+</body>
+</html>

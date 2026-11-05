@@ -4,7 +4,7 @@
       module.json        embedded as "module.json" (read by the host before any of the module's code runs)
       strings/*.json     embedded as "strings/<culture>.json" (display names in other languages; copied to the catalog)
       private packages   embedded as "lib/<name>.dll" (loaded into the module's own load context)
-    The contract assembly and the DI / Components abstractions come from the host, so they are referenced but never embedded.
+    The contract assembly, the DI abstractions and Components / JSInterop come from the host, so they are referenced but never embedded.
   -->
   <PropertyGroup>
     <EnableDynamicLoading>true</EnableDynamicLoading>
@@ -19,7 +19,8 @@
       <_ModuleLib Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'
           and !$([System.String]::Copy('%(Filename)').StartsWith('RemotePCDiagnostics.Abstractions'))
           and !$([System.String]::Copy('%(Filename)').StartsWith('Microsoft.Extensions.DependencyInjection.Abstractions'))
-          and !$([System.String]::Copy('%(Filename)').StartsWith('Microsoft.AspNetCore.Components'))" />
+          and !$([System.String]::Copy('%(Filename)').StartsWith('Microsoft.AspNetCore.Components'))
+          and !$([System.String]::Copy('%(Filename)').StartsWith('Microsoft.JSInterop'))" />
       <EmbeddedResource Include="@(_ModuleLib)" LogicalName="lib/%(Filename).dll" WithCulture="false" Type="Non-Resx" />
     </ItemGroup>
   </Target>

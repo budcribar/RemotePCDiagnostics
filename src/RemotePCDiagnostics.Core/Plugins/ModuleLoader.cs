@@ -176,7 +176,7 @@ public sealed record UserModeModule(string Path, ModuleManifest Manifest, Module
 /// </summary>
 public sealed class ModuleLoadContext(string name, byte[] moduleBytes) : AssemblyLoadContext($"module:{name}", isCollectible: false)
 {
-    private static readonly string[] Shared = ["RemotePCDiagnostics.Abstractions", "Microsoft.Extensions.DependencyInjection.Abstractions", "Microsoft.AspNetCore.Components"];
+    private static readonly string[] Shared = ["RemotePCDiagnostics.Abstractions", "Microsoft.Extensions.DependencyInjection.Abstractions", "Microsoft.AspNetCore.Components", "Microsoft.JSInterop"];
 
     protected override Assembly? Load(AssemblyName assemblyName)
     {

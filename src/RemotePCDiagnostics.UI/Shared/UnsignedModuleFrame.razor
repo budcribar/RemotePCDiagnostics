@@ -1,0 +1,65 @@
+@using Microsoft.JSInterop
+@using RemotePCDiagnostics.Core.Plugins
+@implements IAsyncDisposable
+@inject IServiceProvider Services
+@inject Microsoft.JSInterop.IJSRuntime JS
+@* An unsigned module's own UI. It runs in its own user-mode process and is framed with an opaque origin: it can't read this page, its
+   storage or cookies, or another module's frame. The only thing it can tell this page is its height. *@
+@if (_problem is not null)
+{
+    <div class="notice notice-error" data-testid="module-ui-problem">This module's own UI couldn't start: @_problem</div>
+}
+else if (_src is not null)
+{
+    <iframe @ref="_frame" class="module-ui-frame" data-testid="module-ui-frame" title="@Module.Source.Manifest.DisplayName"
+            sandbox="@ModuleUiFrame.Sandbox" referrerpolicy="no-referrer" src="@_src"
+            style="width: 100%; border: 0; display: block; height: @(_height)px"></iframe>
+}
+
+@code {
+    [Parameter, EditorRequired] public IUserModeModule Module { get; set; } = default!;
+
+    private string? _src, _problem;
+    private int _height = 360;
+    private ElementReference _frame;
+    private bool _watching;
+    private DotNetObjectReference<UnsignedModuleFrame>? _self;
+
+    /// <summary>Shown only where the host can do it (Local mode); otherwise the module page shows the generic report alone.</summary>
+    public static bool IsAvailable(IServiceProvider services, IUserModeModule module) =>
+        module.Source.Manifest.HasUi && services.GetService(typeof(IModuleUiFrames)) is not null;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_src is not null || _problem is not null) return;
+        try
+        {
+            var frames = (IModuleUiFrames)Services.GetService(typeof(IModuleUiFrames))!;
+            _src = (await frames.OpenAsync(Module.Source)).ToString();
+        }
+        catch (Exception ex) { _problem = ex.Message; }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_watching || _src is null) return;
+        _watching = true;
+        _self = DotNetObjectReference.Create(this);
+        try { await JS.InvokeVoidAsync("rpdModuleFrames.watch", _frame, _self); } catch { }
+    }
+
+    [JSInvokable]
+    public void SetHeight(double height)
+    {
+        var h = ModuleUiFrame.ClampHeight(height);
+        if (h == _height) return;
+        _height = h;
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_watching) { try { await JS.InvokeVoidAsync("rpdModuleFrames.unwatch", _frame); } catch { } }
+        _self?.Dispose();
+    }
+}

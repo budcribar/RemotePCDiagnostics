@@ -1,0 +1,16 @@
+{
+  // Read by the host before any code in this DLL runs. The id is permanent: never change or reuse it.
+  "id": "a22691b9-cab4-4006-b4c0-5428268812d6",
+  "slug": "sample.clock",
+  "displayName": "Clock (sample plugin with its own UI)",
+  "version": "1.0.0",
+  "contract": "1.1",
+  "entryType": "SampleModuleUi.ClockPlugin",
+  "kind": "Check",
+  "group": "other",
+  "order": 9001,
+  "changesSystem": false,
+  "needsAdmin": false,
+  // The plugin sets a details component; unsigned, it runs in its own process and is framed on the module page.
+  "hasUi": true
+}
