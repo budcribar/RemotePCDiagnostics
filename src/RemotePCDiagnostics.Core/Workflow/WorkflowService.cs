@@ -438,7 +438,7 @@ public sealed class WorkflowService(
     {
         if (f.Source == FixSource.Remediation && f.Remediation is { Kind: RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles } rep)
             return await ApplyRepairAsync(f, rep, ct).ConfigureAwait(false);
-        if (f.Source == FixSource.Remediation && f.Remediation is { } a)
+        if (f.Source == FixSource.Remediation && f.Remediation is { } a && !FixCatalog.SkippedRemediation.Contains(a.Kind))
         {
             var r = await remediation.ExecuteAsync(a, ct).ConfigureAwait(false);
             return new(f.Id, f.Title, r.Success, r.Message);
@@ -492,15 +492,15 @@ public sealed class WorkflowService(
         foreach (var m in diag.Modules.OfType<WindowsIntegrityModule>())
         {
             ct.ThrowIfCancellationRequested();
-            var dism = m is DismScanHealthModule;
-            if (dism && !ran.Contains(WindowsRepair.DismId)) continue;
+            var id = m is DismScanHealthModule ? WindowsRepair.DismId : WindowsRepair.SfcId;
+            if (!ran.Contains(id)) continue;
             Note($"Checking again after the restart: {m.DisplayName}…");
             DiagnosticResult r;
             try { r = await diag.RunAsync(m.Name, null, ct).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log("re-scan failed: " + ex.Message); continue; }
             var card = (r.Report() as AreaReport)?.Cards.FirstOrDefault();
-            var finding = new RepairFinding($"{(dism ? WindowsRepair.DismId : WindowsRepair.SfcId)}-after", $"{m.DisplayName} after the restart",
-                r.Status, r.Message, card?.Meta ?? "", card?.Rows.Select(x => new RepairDetail(x.Values[0], x.Values.Count > 1 ? x.Values[1] : "")).ToList() ?? [],
+            var finding = new RepairFinding($"{id}-after", $"{m.DisplayName} after the restart",
+                r.Status, r.Message, card?.Meta ?? "", card?.Rows.Select(x => new RepairDetail(x.Values.Count > 0 ? x.Values[0] : "", x.Values.Count > 1 ? x.Values[1] : "")).ToList() ?? [],
                 AfterRestart: true);
             Save(s => s with { RepairFindings = [.. s.RepairFindings, finding] });
         }

@@ -84,7 +84,7 @@ public sealed record JsonCheck
         if (!(q.StartsWith("select ", StringComparison.OrdinalIgnoreCase) || q.StartsWith("with ", StringComparison.OrdinalIgnoreCase)))
             return "the query must be a SELECT";
         if (q.Contains(';') || q.StartsWith('.')) return "the query must be one statement";
-        var words = q.Split([' ', '\t', '\r', '\n', ',', '(', ')'], StringSplitOptions.RemoveEmptyEntries);
+        var words = q.Split([' ', '\t', '\r', '\n', ',', '(', ')', '"', '\'', '`', '[', ']', '/', '*', '='], StringSplitOptions.RemoveEmptyEntries);
         if (words.Any(w => DeniedTables.Contains(w, StringComparer.OrdinalIgnoreCase))) return "the query uses a table checks may not use";
         if (words.Any(w => w.Equals("attach", StringComparison.OrdinalIgnoreCase) || w.Equals("pragma", StringComparison.OrdinalIgnoreCase)))
             return "the query must be a plain SELECT";

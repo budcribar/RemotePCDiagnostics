@@ -61,7 +61,7 @@
     }
 
     private void CloseDialog() { _plan = null; _target = null; }
-    private void CancelRun() => _cts?.Cancel();
+    private void CancelRun() { try { _cts?.Cancel(); } catch (ObjectDisposedException) { } }
 
     private async Task Run()
     {

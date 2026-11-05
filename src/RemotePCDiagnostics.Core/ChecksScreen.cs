@@ -342,10 +342,11 @@ public sealed class ChecksScreenState
                     {
                         var r = await _diag.RunAsync(mod.Name, progress, cts.Token).ConfigureAwait(false);
                         UpdateCheckItem(mod.Name, item => item with { Status = r.Status, Message = r.Message, Step = item.Total > 0 ? item.Total : 1, Total = item.Total > 0 ? item.Total : 1 });
-                        if (i == selected.Count - 1) await RunMemoryAndStorageScansAsync(cts.Token, errors).ConfigureAwait(false);
                     }
                     catch (Exception ex) { Failed(mod, ex); }
                 }
+                if (selected.Count > 0 && !cts.IsCancellationRequested)
+                    await RunMemoryAndStorageScansAsync(cts.Token, errors).ConfigureAwait(false);
             }
             else
             {

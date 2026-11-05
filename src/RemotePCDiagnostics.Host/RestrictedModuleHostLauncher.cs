@@ -25,33 +25,51 @@ public sealed class RestrictedModuleHostLauncher(Action<string>? log = null, str
 
         using var token = RestrictedToken();
         var sa = new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf<SECURITY_ATTRIBUTES>(), bInheritHandle = true };
-        Check(CreatePipe(out var inRead, out var inWrite, ref sa, 0));
-        Check(CreatePipe(out var outRead, out var outWrite, ref sa, 0));
-        Check(CreatePipe(out var errRead, out var errWrite, ref sa, 0));
-        // The app's ends must not be inherited.
-        Check(SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0));
-        Check(SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0));
-        Check(SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0));
-
-        var si = new STARTUPINFO
-        {
-            cb = Marshal.SizeOf<STARTUPINFO>(), dwFlags = STARTF_USESTDHANDLES,
-            hStdInput = inRead.DangerousGetHandle(), hStdOutput = outWrite.DangerousGetHandle(), hStdError = errWrite.DangerousGetHandle(),
-        };
-        PROCESS_INFORMATION pi;
+        SafeFileHandle? inRead = null, inWrite = null, outRead = null, outWrite = null, errRead = null, errWrite = null;
+        Process process;
         try
         {
-            Check(CreateProcessAsUser(token, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
-                IntPtr.Zero, dir, ref si, out pi));
+            Check(CreatePipe(out inRead, out inWrite, ref sa, 0));
+            Check(CreatePipe(out outRead, out outWrite, ref sa, 0));
+            Check(CreatePipe(out errRead, out errWrite, ref sa, 0));
+            // The app's ends must not be inherited.
+            Check(SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0));
+            Check(SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0));
+            Check(SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0));
+
+            var si = new STARTUPINFO
+            {
+                cb = Marshal.SizeOf<STARTUPINFO>(), dwFlags = STARTF_USESTDHANDLES,
+                hStdInput = inRead.DangerousGetHandle(), hStdOutput = outWrite.DangerousGetHandle(), hStdError = errWrite.DangerousGetHandle(),
+            };
+            PROCESS_INFORMATION pi;
+            try
+            {
+                Check(CreateProcessAsUser(token, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+                    IntPtr.Zero, dir, ref si, out pi));
+            }
+            finally
+            {
+                inRead.Dispose(); outWrite.Dispose(); errWrite.Dispose(); // the child's ends
+            }
+            try
+            {
+                process = Process.GetProcessById(pi.dwProcessId);
+            }
+            finally
+            {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+            }
+            log?.Invoke($"Module host [{module.Manifest.Slug}]: started pid={pi.dwProcessId} (restricted token, Medium integrity)");
         }
-        finally
+        catch
         {
-            inRead.Dispose(); outWrite.Dispose(); errWrite.Dispose(); // the child's ends
+            inRead?.Dispose(); inWrite?.Dispose();
+            outRead?.Dispose(); outWrite?.Dispose();
+            errRead?.Dispose(); errWrite?.Dispose();
+            throw;
         }
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
-        var process = Process.GetProcessById(pi.dwProcessId);
-        log?.Invoke($"Module host [{module.Manifest.Slug}]: started pid={pi.dwProcessId} (restricted token, Medium integrity)");
 
         var stderr = new StreamReader(new FileStream(errRead, FileAccess.Read), Encoding.UTF8);
         _ = Task.Run(async () =>
@@ -75,9 +93,15 @@ public sealed class RestrictedModuleHostLauncher(Action<string>? log = null, str
         var si = new STARTUPINFO { cb = Marshal.SizeOf<STARTUPINFO>() };
         Check(CreateProcessAsUser(token, null, new StringBuilder($"\"{exe}\" {arguments}"), IntPtr.Zero, IntPtr.Zero, false, CREATE_UNICODE_ENVIRONMENT,
             IntPtr.Zero, workingDirectory, ref si, out var pi));
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
-        return Process.GetProcessById(pi.dwProcessId);
+        try
+        {
+            return Process.GetProcessById(pi.dwProcessId);
+        }
+        finally
+        {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+        }
     }
 
     private static SafeAccessTokenHandle RestrictedToken()
@@ -93,9 +117,17 @@ public sealed class RestrictedModuleHostLauncher(Action<string>? log = null, str
             {
                 var disable = new[] { new SID_AND_ATTRIBUTES { Sid = sidHandle.AddrOfPinnedObject(), Attributes = 0 } };
                 Check(CreateRestrictedToken(own, DISABLE_MAX_PRIVILEGE | LUA_TOKEN, 1, disable, 0, IntPtr.Zero, 0, IntPtr.Zero, out var restricted));
-                SetMediumIntegrity(restricted);
-                SetUserOwnerAndDefaultDacl(restricted);
-                return restricted;
+                try
+                {
+                    SetMediumIntegrity(restricted);
+                    SetUserOwnerAndDefaultDacl(restricted);
+                    return restricted;
+                }
+                catch
+                {
+                    restricted.Dispose();
+                    throw;
+                }
             }
             finally { sidHandle.Free(); }
         }

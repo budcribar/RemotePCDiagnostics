@@ -138,12 +138,16 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
             case ChangeKind.ServiceStartType:
                 if (memory is null || !MemorySuggestionService.StartTypes.Contains(c.Previous)) return Fail("The original setting wasn't recorded.");
+                if (ServiceProtection.IsProtected(c.Target) || ServiceProtection.IsSelfComponent(c.Target))
+                    return Fail("That service is protected and cannot be changed.");
                 memory.SetServiceStartType(c.Target, c.Previous!);
                 ServiceDelayedStart.Restore(memory, c.Target, c.PreviousExtra, Log);
                 return Ok($"Start-up type restored to {c.Previous}.");
 
             case ChangeKind.ServiceRunning:
                 if (services is null) return Fail("Service control isn't available.");
+                if (c.Previous != "Running" && (ServiceProtection.IsProtected(c.Target) || ServiceProtection.IsSelfComponent(c.Target) || services.IsDriver(c.Target)))
+                    return Fail("That service is protected and cannot be stopped.");
                 var targetState = c.Previous == "Running" ? ServiceState.Running : ServiceState.Stopped;
                 if (services.GetState(c.Target) == targetState) return Ok(c.Previous == "Running" ? "Already running." : "Already stopped.");
                 if (c.Previous == "Running") services.Start(c.Target); else services.Stop(c.Target);
@@ -182,6 +186,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                     c, "System proxy setting restored.", ct).ConfigureAwait(false);
 
             case ChangeKind.AdapterDns:
+                if (c.Target.IndexOfAny(['*', '?', '[', ']']) >= 0) return Fail("Invalid network adapter name.");
                 var alias = c.Target.Replace("'", "''");
                 var servers = (c.Previous ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(IsIp).ToList();
                 var script = servers.Count == 0

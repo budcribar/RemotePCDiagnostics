@@ -94,10 +94,11 @@ public static class Program
 
     private static bool IsRunning(int pid)
     {
+        var found = false;
         foreach (var p in Process.GetProcesses())
             using (p)
-                if (p.Id == pid) return true;
-        return false;
+                if (p.Id == pid) found = true;
+        return found;
     }
 
     private static readonly object LogGate = new();

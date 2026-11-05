@@ -188,6 +188,11 @@ public sealed class EventLogV3Migration(IEventLogMigrationIo io, MigrationMarker
         sb.Append("Test result: ").Append(e.Module).AppendLine();
         sb.Append("Module id: ").Append(moduleId.ToString("D")).AppendLine();
         if (!string.IsNullOrWhiteSpace(e.Test)) sb.Append("Test: ").Append(One(e.Test)).AppendLine();
+        if (e.InstanceId is { Length: > 0 } instanceKey)
+        {
+            sb.Append("Instance id: ").Append(One(instanceKey)).AppendLine();
+            if (!string.IsNullOrWhiteSpace(e.Instance)) sb.Append("Instance: ").Append(One(e.Instance)).AppendLine();
+        }
         sb.Append("Outcome: ").Append(e.Outcome).AppendLine();
         sb.Append("Summary: ").Append(One(e.Summary)).AppendLine();
         if (e.DurationSeconds is { } d) sb.Append("Duration: ").Append(d.ToString("0.0", CultureInfo.InvariantCulture)).AppendLine(" s");

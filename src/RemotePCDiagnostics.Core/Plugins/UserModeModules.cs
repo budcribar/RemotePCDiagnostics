@@ -161,17 +161,25 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
         {
             var conn = Connect();
             await conn.WriteLineAsync(new ModuleHostMessage { Type = "refresh" }.ToLine(), CancellationToken.None).ConfigureAwait(false);
-            using var stopping = cancellationToken.Register(() => _ = conn.WriteLineAsync(new ModuleHostMessage { Type = "stop" }.ToLine(), CancellationToken.None));
+            using var stopping = cancellationToken.Register(() => { try { _ = conn.WriteLineAsync(new ModuleHostMessage { Type = "stop" }.ToLine(), CancellationToken.None); } catch { } });
             while (true)
             {
                 string? line;
-                if (cancellationToken.IsCancellationRequested)
+                try
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        using var grace = new CancellationTokenSource(AnswerTimeout);
+                        line = await conn.ReadLineAsync(grace.Token).ConfigureAwait(false);
+                    }
+                    else line = await conn.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     using var grace = new CancellationTokenSource(AnswerTimeout);
                     try { line = await conn.ReadLineAsync(grace.Token).ConfigureAwait(false); }
                     catch (OperationCanceledException) { Reset(); throw new OperationCanceledException(cancellationToken); }
                 }
-                else line = await conn.ReadLineAsync(CancellationToken.None).ConfigureAwait(false);
                 var m = ModuleHostMessage.Parse(line ?? throw Exited());
                 switch (m?.Type)
                 {
@@ -201,8 +209,8 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
     /// <summary>One-click actions run elevated in the app, so an unsigned module never gets to offer them.</summary>
     public static AreaReport WithoutActions(AreaReport r)
     {
-        static AreaCard Card(AreaCard c) => c with { Actions = null, Rows = c.Rows.Select(row => row with { Actions = null }).ToList() };
-        return r with { Cards = r.Cards.Select(Card).ToList(), ReviewedCards = r.ReviewedCards?.Select(Card).ToList() };
+        static AreaCard Card(AreaCard c) => c with { Actions = null, Rows = (c.Rows ?? []).Select(row => row with { Actions = null, DumpPath = null }).ToList() };
+        return r with { Cards = (r.Cards ?? []).Select(Card).ToList(), ReviewedCards = r.ReviewedCards?.Select(Card).ToList() };
     }
 
     private IModuleHostConnection Connect()

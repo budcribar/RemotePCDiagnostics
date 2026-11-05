@@ -47,7 +47,7 @@ internal sealed class CopilotHandoff : ICopilotHandoff
                         return true;
                     })()
                     """).WaitAsync(TimeSpan.FromSeconds(3));
-                if (result == "true")
+                if (result == "true" && !closed)
                 {
                     keepOpen = true;
                     window.Closed += (_, _) => view.Dispose();

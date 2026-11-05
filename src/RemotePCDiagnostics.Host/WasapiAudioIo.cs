@@ -125,7 +125,7 @@ public sealed class WasapiAudioIo(Action<string>? log = null) : IAudioIo
             using var en = new MMDeviceEnumerator();
             using var outDev = Device(en, r.OutputId, DataFlow.Render);
             using var inDev = Device(en, r.InputId, DataFlow.Capture);
-            var stop = new CancellationTokenSource();
+            using var stop = new CancellationTokenSource();
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, stop.Token);
             var queue = new ConcurrentQueue<float[]>();
             var stoppedEarly = false;
@@ -360,6 +360,7 @@ public sealed class WasapiAudioIo(Action<string>? log = null) : IAudioIo
             _stop.Cancel();
             try { _loop?.Wait(TimeSpan.FromSeconds(2)); } catch { }
             try { _client.Stop(); } catch { }
+            _stop.Dispose();
             _stop = null;
         }
 

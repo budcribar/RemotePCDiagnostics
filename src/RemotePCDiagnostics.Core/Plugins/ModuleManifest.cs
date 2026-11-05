@@ -86,10 +86,10 @@ public sealed record ModuleManifest
             var res = md.GetManifestResource(h);
             if (!res.Implementation.IsNil) continue; // linked or in another assembly
             var name = md.GetString(res.Name);
-            var bytes = ReadResource(pe, res.Offset);
-            if (name.Equals(ResourceName, StringComparison.OrdinalIgnoreCase) || name.EndsWith("." + ResourceName, StringComparison.OrdinalIgnoreCase)) manifest = bytes;
+            if (name.Equals(ResourceName, StringComparison.OrdinalIgnoreCase) || name.EndsWith("." + ResourceName, StringComparison.OrdinalIgnoreCase))
+                manifest = ReadResource(pe, res.Offset);
             else if (name.StartsWith("strings/", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
-                strings[name["strings/".Length..]] = bytes;
+                strings[name["strings/".Length..]] = ReadResource(pe, res.Offset);
         }
         if (manifest is null) throw new InvalidDataException("no embedded module.json");
         return (Parse(manifest), strings);
@@ -97,11 +97,13 @@ public sealed record ModuleManifest
 
     private static byte[] ReadResource(PEReader pe, long offset)
     {
-        var dir = pe.PEHeaders.CorHeader!.ResourcesDirectory;
-        if (!pe.PEHeaders.TryGetDirectoryOffset(dir, out var start)) throw new InvalidDataException("no resources directory");
+        if (pe.PEHeaders.CorHeader is not { } cor || !pe.PEHeaders.TryGetDirectoryOffset(cor.ResourcesDirectory, out var start))
+            throw new InvalidDataException("no resources directory");
         var image = pe.GetEntireImage().GetContent();
+        if (offset < 0 || start < 0 || offset > image.Length - start - 4) throw new InvalidDataException("invalid resource offset");
         var at = start + (int)offset;
         var length = BitConverter.ToInt32(image.AsSpan(at, 4));
+        if (length < 0 || length > image.Length - (at + 4)) throw new InvalidDataException("invalid resource length");
         return image.AsSpan(at + 4, length).ToArray();
     }
 }

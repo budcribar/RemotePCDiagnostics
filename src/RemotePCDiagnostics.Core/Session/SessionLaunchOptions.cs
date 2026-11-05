@@ -88,7 +88,8 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
         if (pending.Mode == SessionMode.Remote)
         {
             var effectiveUri = launch.ServerUri;
-            if (effectiveUri is null && !string.IsNullOrWhiteSpace(pending.ServerUri) && Uri.TryCreate(pending.ServerUri, UriKind.Absolute, out var parsedUri))
+            if (effectiveUri is null && !string.IsNullOrWhiteSpace(pending.ServerUri) && Uri.TryCreate(pending.ServerUri, UriKind.Absolute, out var parsedUri)
+                && (parsedUri.Scheme == Uri.UriSchemeHttps || parsedUri.Scheme == Uri.UriSchemeHttp))
                 effectiveUri = parsedUri;
             if (effectiveUri is null)
                 effectiveUri = new Uri(DefaultServerUrl);

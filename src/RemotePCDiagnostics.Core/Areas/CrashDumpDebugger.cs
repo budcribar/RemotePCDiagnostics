@@ -5,7 +5,8 @@ public static class CrashDumpDebugger
 {
     public static async Task<string> AnalyzeAsync(string path)
     {
-        if (!File.Exists(path))
+        if (string.IsNullOrWhiteSpace(path) || path.StartsWith(@"\\", StringComparison.Ordinal)
+            || !path.EndsWith(".dmp", StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
             return "The dump file is missing or inaccessible.";
 
         var arch = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture switch

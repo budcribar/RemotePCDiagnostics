@@ -173,16 +173,25 @@ public sealed partial class WindowsMemorySystem
             using var p = Process.Start(psi)!;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromMinutes(15));
-            await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            try
+            {
+                await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                try { p.Kill(entireProcessTree: true); } catch { }
+                throw;
+            }
             Log($"Uninstall {command.Display}: exit={p.ExitCode}");
+            // msiexec: 0 = done, 3010 = done, restart needed, 1605 = not installed any more.
+            var ok = p.ExitCode is 0 or 3010 or 1605;
             // Inno Setup uninstallers (unins000.exe) hand over to a temporary copy and exit at once: wait for the uninstaller file to go.
-            if (!command.Msi)
+            if (!command.Msi && ok)
             {
                 var until = DateTime.UtcNow.AddMinutes(3);
                 while (File.Exists(file) && DateTime.UtcNow < until) await Task.Delay(1000, ct).ConfigureAwait(false);
             }
-            // msiexec: 0 = done, 3010 = done, restart needed, 1605 = not installed any more.
-            return p.ExitCode is 0 or 3010 or 1605 ? new(true, "Uninstalled.") : new(false, $"The uninstaller ended with code {p.ExitCode}.");
+            return ok ? new(true, "Uninstalled.") : new(false, $"The uninstaller ended with code {p.ExitCode}.");
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
         {

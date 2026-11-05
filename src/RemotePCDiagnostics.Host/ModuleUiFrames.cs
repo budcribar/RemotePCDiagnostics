@@ -37,7 +37,8 @@ public sealed class ModuleUiFrames(Action<string>? log = null, string? directory
         // One UI process per module: the page opening again starts a fresh one (the relay treats a reload as a restart).
         if (_running.TryRemove(module.Manifest.Id, out var previous)) Stop(previous);
         var process = RestrictedModuleHostLauncher.StartRestrictedGui(exe, arguments, dir);
-        _running[module.Manifest.Id] = process;
+        _running.AddOrUpdate(module.Manifest.Id, process, (_, prev) => { Stop(prev); return process; });
+        if (_disposed != 0 && _running.TryRemove(module.Manifest.Id, out var raced)) { Stop(raced); ObjectDisposedException.ThrowIf(true, this); }
         log?.Invoke($"Module UI [{module.Manifest.Slug}]: started pid={process.Id} (restricted token, Medium integrity), log {data}\\module-ui.log");
         // The relay's /{id} page waits for the UI process to connect, so the frame can load right away.
         return new Uri(relay.BaseUri, id.ToString());

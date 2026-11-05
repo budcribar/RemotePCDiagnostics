@@ -171,12 +171,20 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             using var p = Process.Start(psi)!;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(60));
-            var err = p.StandardError.ReadToEndAsync(timeout.Token);
-            var output = p.StandardOutput.ReadToEndAsync(timeout.Token);
-            await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-            if (p.ExitCode == 0) return new(true, reduced ? "Hibernation file reduced." : "Hibernation file full size.");
-            Log($"powercfg /h /type failed ({p.ExitCode}): {(await err.ConfigureAwait(false)).Trim()} {(await output.ConfigureAwait(false)).Trim()}");
-            return new(false, "Windows didn't allow changing the hibernation file (a custom size may be set, or administrator rights are missing).");
+            try
+            {
+                var err = p.StandardError.ReadToEndAsync(timeout.Token);
+                var output = p.StandardOutput.ReadToEndAsync(timeout.Token);
+                await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+                if (p.ExitCode == 0) return new(true, reduced ? "Hibernation file reduced." : "Hibernation file full size.");
+                Log($"powercfg /h /type failed ({p.ExitCode}): {(await err.ConfigureAwait(false)).Trim()} {(await output.ConfigureAwait(false)).Trim()}");
+                return new(false, "Windows didn't allow changing the hibernation file (a custom size may be set, or administrator rights are missing).");
+            }
+            catch (OperationCanceledException)
+            {
+                try { p.Kill(entireProcessTree: true); } catch { }
+                throw;
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
@@ -708,10 +716,18 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             using var p = Process.Start(psi)!;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(limit ?? TimeSpan.FromSeconds(30));
-            var outTask = p.StandardOutput.ReadToEndAsync(timeout.Token);
-            var errTask = p.StandardError.ReadToEndAsync(timeout.Token);
-            await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-            return (p.ExitCode, await outTask.ConfigureAwait(false), await errTask.ConfigureAwait(false));
+            try
+            {
+                var outTask = p.StandardOutput.ReadToEndAsync(timeout.Token);
+                var errTask = p.StandardError.ReadToEndAsync(timeout.Token);
+                await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+                return (p.ExitCode, await outTask.ConfigureAwait(false), await errTask.ConfigureAwait(false));
+            }
+            catch (OperationCanceledException)
+            {
+                try { p.Kill(entireProcessTree: true); } catch { }
+                throw;
+            }
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or OperationCanceledException or InvalidOperationException)
         {
@@ -932,26 +948,32 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
     public async Task<ActionOutcome> CloseAppAsync(string processName, CancellationToken ct)
     {
         var procs = Process.GetProcessesByName(processName);
-        var asked = 0;
-        foreach (var p in procs) { try { if (p.MainWindowHandle != IntPtr.Zero && p.CloseMainWindow()) asked++; } catch (InvalidOperationException) { } }
-        if (asked == 0) { Dispose(procs); return new(false, $"{MemoryText.FriendlyAppName(processName)} has no window to close. Close it yourself, or use Force close."); }
-        var deadline = DateTime.UtcNow.AddSeconds(8);
-        while (DateTime.UtcNow < deadline && procs.Any(p => { try { return !p.HasExited && p.MainWindowHandle != IntPtr.Zero; } catch { return false; } }))
-            await Task.Delay(250, ct).ConfigureAwait(false);
-        var stillOpen = procs.Count(p => { try { p.Refresh(); return !p.HasExited && p.MainWindowHandle != IntPtr.Zero; } catch { return false; } });
-        Dispose(procs);
-        Log($"Close '{processName}': asked {asked} window(s), {stillOpen} still open");
-        return stillOpen == 0
-            ? new(true, $"Closed {MemoryText.FriendlyAppName(processName)}.")
-            : new(false, $"{MemoryText.FriendlyAppName(processName)} didn't close (it may be asking to save). Check its window, or use Force close.");
+        try
+        {
+            var asked = 0;
+            foreach (var p in procs) { try { if (p.MainWindowHandle != IntPtr.Zero && p.CloseMainWindow()) asked++; } catch (InvalidOperationException) { } }
+            if (asked == 0) return new(false, $"{MemoryText.FriendlyAppName(processName)} has no window to close. Close it yourself, or use Force close.");
+            var deadline = DateTime.UtcNow.AddSeconds(8);
+            while (DateTime.UtcNow < deadline && procs.Any(p => { try { return !p.HasExited && p.MainWindowHandle != IntPtr.Zero; } catch { return false; } }))
+                await Task.Delay(250, ct).ConfigureAwait(false);
+            var stillOpen = procs.Count(p => { try { p.Refresh(); return !p.HasExited && p.MainWindowHandle != IntPtr.Zero; } catch { return false; } });
+            Log($"Close '{processName}': asked {asked} window(s), {stillOpen} still open");
+            return stillOpen == 0
+                ? new(true, $"Closed {MemoryText.FriendlyAppName(processName)}.")
+                : new(false, $"{MemoryText.FriendlyAppName(processName)} didn't close (it may be asking to save). Check its window, or use Force close.");
+        }
+        finally { Dispose(procs); }
     }
 
     public async Task<ActionOutcome> ForceCloseAppAsync(string processName, CancellationToken ct)
     {
         var procs = Process.GetProcessesByName(processName);
-        foreach (var p in procs) { try { p.Kill(entireProcessTree: true); } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { Log($"Kill {processName}/{p.Id}: {ex.Message}"); } }
-        await Task.Delay(500, ct).ConfigureAwait(false);
-        Dispose(procs);
+        try
+        {
+            foreach (var p in procs) { try { p.Kill(entireProcessTree: true); } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { Log($"Kill {processName}/{p.Id}: {ex.Message}"); } }
+            await Task.Delay(500, ct).ConfigureAwait(false);
+        }
+        finally { Dispose(procs); }
         var left = Process.GetProcessesByName(processName); var n = left.Length; Dispose(left);
         return n == 0 ? new(true, $"Ended {MemoryText.FriendlyAppName(processName)}.") : new(false, $"Couldn't end every {MemoryText.FriendlyAppName(processName)} process.");
     }

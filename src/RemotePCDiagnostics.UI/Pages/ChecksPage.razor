@@ -274,17 +274,17 @@
                 @foreach (var card in integrity.Cards)
                 {
                     <p class="meta">@card.Meta</p>
-                    @foreach (var summary in card.Rows.Where(row => row.Values[0] == "CBS summary"))
+                    @foreach (var summary in card.Rows.Where(row => row.Values.Count > 0 && row.Values[0] == "CBS summary"))
                     {
                         <strong>CBS summary</strong>
-                        <div class="row-detail-text">@summary.Values[1]</div>
+                        <div class="row-detail-text">@(summary.Values.Count > 1 ? summary.Values[1] : "")</div>
                     }
                     <details>
                         <summary>Scan command and output</summary>
-                        @foreach (var row in card.Rows.Where(row => row.Values[0] != "CBS summary"))
+                        @foreach (var row in card.Rows.Where(row => row.Values.Count > 0 && row.Values[0] != "CBS summary"))
                         {
                             <strong>@row.Values[0]</strong>
-                            <div class="row-detail-text">@row.Values[1]</div>
+                            <div class="row-detail-text">@(row.Values.Count > 1 ? row.Values[1] : "")</div>
                         }
                     </details>
                 }

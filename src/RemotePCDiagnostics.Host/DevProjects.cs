@@ -52,9 +52,10 @@ public static class DevProjects
             if (p.ExitCode != 0) { log?.Invoke("[projects] search index unavailable: " + (await errTask.ConfigureAwait(false)).Trim()); return []; }
             return output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             try { p.Kill(true); } catch { }
+            if (ct.IsCancellationRequested) throw;
             log?.Invoke("[projects] search index timed out");
             return [];
         }

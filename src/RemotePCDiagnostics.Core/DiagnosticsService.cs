@@ -437,13 +437,17 @@ public sealed class DiagnosticsService
                 _inFlight[module.Name] = existing = tcs.Task;
                 _ = Task.Run(async () =>
                 {
-                    try { tcs.SetResult(await RunCoreAsync(module, progress, ct, onlyInstance, gateInstances).ConfigureAwait(false)); }
-                    catch (Exception ex) { tcs.SetException(ex); }
+                    DiagnosticResult? res = null;
+                    Exception? err = null;
+                    try { res = await RunCoreAsync(module, progress, ct, onlyInstance, gateInstances).ConfigureAwait(false); }
+                    catch (Exception ex) { err = ex; }
                     finally
                     {
                         if (module is IStressSuiteModule stress) await CleanupStressAsync(stress).ConfigureAwait(false);
                         _inFlight.TryRemove(module.Name, out _);
                     }
+                    if (err is not null) tcs.SetException(err);
+                    else tcs.SetResult(res!);
                 }, CancellationToken.None);
                 return existing;
             }

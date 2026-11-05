@@ -61,11 +61,13 @@ internal static class Probes
             Console.WriteLine("  Measuring disk response time…");
             disk = DiskLatencyMs();
         }
+        var procs = Process.GetProcesses();
+        foreach (var p in procs) p.Dispose();
         var machine = anonymize ? OutlookBenchMath.Anonymize(Environment.MachineName) : Environment.MachineName;
         return new(machine, S("Manufacturer"), S("Model"), new(S("CpuName").Trim(), (int)L("Cores"), (int)L("Threads"), (int)L("MaxMhz")),
             new(L("TotalRam"), L("FreeRamKb") * 1024, (int)L("Modules"), (int)L("Slots"), L("RamSpeed") is > 0 and var sp ? (int)sp : null, L("MaxRamKb") is > 0 and var mx ? mx * 1024 : null),
             new(S("DiskModel"), S("DiskMedia"), S("DiskBus"), L("DiskSize"), L("DiskFree")),
-            S("Os"), S("Build"), Math.Round(Environment.TickCount64 / 3_600_000.0, 1), L("PageFileMb") * 1048576, Process.GetProcesses().Length,
+            S("Os"), S("Build"), Math.Round(Environment.TickCount64 / 3_600_000.0, 1), L("PageFileMb") * 1048576, procs.Length,
             OnBattery(), PowerPlan(), av, S("Network") is { Length: > 0 } n ? n : null, Office365ConnectMs(), cpu1, cpuN, disk);
     }
 

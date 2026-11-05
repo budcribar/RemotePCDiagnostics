@@ -627,12 +627,22 @@ public sealed class RemediationService(
     public const string CleanTempScript =
         "$ErrorActionPreference='SilentlyContinue'; " +
         "$cutoff = (Get-Date).AddHours(-24); " +
-        "$paths = @($env:TEMP, (Join-Path $env:SystemRoot 'Temp')) | Where-Object { $_ -and (Test-Path $_) }; " +
+        "$paths = @($env:TEMP, (Join-Path $env:SystemRoot 'Temp')) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }; " +
         "$freed = [int64]0; $count = 0; " +
+        "$stack = New-Object System.Collections.Generic.Stack[string]; " +
         "foreach ($p in $paths) { " +
-        "  Get-ChildItem -LiteralPath $p -Recurse -Force -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt $cutoff } | ForEach-Object { " +
-        "    $len = $_.Length; Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue; " +
-        "    if (-not (Test-Path -LiteralPath $_.FullName)) { $freed += $len; $count++ } " +
+        "  $item = Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue; " +
+        "  if ($item -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)) { $stack.Push($item.FullName) } " +
+        "}; " +
+        "while ($stack.Count -gt 0) { " +
+        "  $dir = $stack.Pop(); " +
+        "  Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue | ForEach-Object { " +
+        "    if (($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return } " +
+        "    if ($_.PSIsContainer) { $stack.Push($_.FullName); return } " +
+        "    if ($_.LastWriteTime -lt $cutoff) { " +
+        "      $len = $_.Length; Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue; " +
+        "      if (-not (Test-Path -LiteralPath $_.FullName)) { $freed += $len; $count++ } " +
+        "    } " +
         "  } " +
         "}; " +
         "Clear-RecycleBin -Force -ErrorAction SilentlyContinue; " +
