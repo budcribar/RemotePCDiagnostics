@@ -7,7 +7,7 @@
     var details = m is null ? null : Diagnostics.Catalog.Get(m.Id)?.DetailsComponent;
     var instances = m is IPerDeviceModule ? Store.InstancesOf(m.Name) : [];
 }
-@if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule)
+@if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule umb && !UnsignedModuleFrame.IsAvailable(Services, umb))
 {
     @* Drawn by the app, outside anything the module controls. *@
     <div class="notice" data-testid="unsigned-module-banner"><strong>Unsigned module.</strong> Runs in user mode in a separate process: it can't
@@ -31,9 +31,7 @@
 }
 @if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule um && UnsignedModuleFrame.IsAvailable(Services, um))
 {
-    @* Its own UI, from its own process, above the generic report of its last run. *@
-    <UnsignedModuleFrame @key="um.Id" Module="um" />
-    <AreaPage Slug="@Slug" />
+    <UnsignedModuleDetails DiagnosticModule="um" />
 }
 else if (details is not null)
 {

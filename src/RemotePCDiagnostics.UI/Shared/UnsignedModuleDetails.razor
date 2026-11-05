@@ -1,0 +1,14 @@
+@using RemotePCDiagnostics.Core.Plugins
+@* An unsigned module that has its own UI: the app's banner, its UI from its own process, then the generic report of its last run.
+   Used wherever a module's details show (the module page and the Checks and Stress tests panel). *@
+@if (DiagnosticModule is IUserModeModule um)
+{
+    <div class="notice" data-testid="unsigned-module-banner"><strong>Unsigned module.</strong> Runs in user mode in a separate process: it can't
+        change this PC and has no one-click fixes.</div>
+    <UnsignedModuleFrame @key="um.Id" Module="um" />
+    <AreaPage Slug="@um.Name.ToLowerInvariant()" />
+}
+
+@code {
+    [Parameter] public IDiagnosticModule? DiagnosticModule { get; set; }
+}
