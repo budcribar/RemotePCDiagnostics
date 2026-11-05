@@ -9,6 +9,7 @@
     <PackageReference Include="NuGet.Versioning" Version="7.9.0" />
     <!-- UserModePlugin builds a plugin's own container inside a user-mode process. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
   </ItemGroup>
   <ItemGroup>
     <!-- Built-in modules use exactly the contract types a plugin uses. -->

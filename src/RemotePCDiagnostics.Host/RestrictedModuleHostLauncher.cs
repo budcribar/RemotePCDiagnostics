@@ -14,7 +14,7 @@ namespace RemotePCDiagnostics.Host;
 /// of its own token, so no extra rights are needed. The host talks to the app over anonymous pipes for its stdin and stdout, which only
 /// the app holds, and exits when the app closes them.
 /// </summary>
-public sealed class RestrictedModuleHostLauncher(Action<string>? log = null, string? directory = null) : IModuleHostLauncher
+public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.ILogger? log = null, string? directory = null) : IModuleHostLauncher
 {
     public IModuleHostConnection Start(UserModeModule module)
     {
@@ -61,7 +61,7 @@ public sealed class RestrictedModuleHostLauncher(Action<string>? log = null, str
                 CloseHandle(pi.hThread);
                 CloseHandle(pi.hProcess);
             }
-            log?.Invoke($"Module host [{module.Manifest.Slug}]: started pid={pi.dwProcessId} (restricted token, Medium integrity)");
+            if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: started pid={Pid} (restricted token, Medium integrity)", module.Manifest.Slug, pi.dwProcessId);
         }
         catch
         {
@@ -74,7 +74,7 @@ public sealed class RestrictedModuleHostLauncher(Action<string>? log = null, str
         var stderr = new StreamReader(new FileStream(errRead, FileAccess.Read), Encoding.UTF8);
         _ = Task.Run(async () =>
         {
-            try { while (await stderr.ReadLineAsync().ConfigureAwait(false) is { } line) log?.Invoke($"Module host [{module.Manifest.Slug}]: {line}"); }
+            try { while (await stderr.ReadLineAsync().ConfigureAwait(false) is { } line) { if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: {Line}", module.Manifest.Slug, line); } }
             catch { }
         });
         return new Connection(process,

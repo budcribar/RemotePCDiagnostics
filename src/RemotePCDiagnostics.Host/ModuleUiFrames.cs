@@ -11,7 +11,7 @@ namespace RemotePCDiagnostics.Host;
 /// only by the app's page, accepting the opaque origin of a sandboxed frame), then for each module page it starts the module's UI host
 /// (moduleui\RemotePCDiagnostics.ModuleUiHost.exe) with the restricted token, as a client of that relay under a fresh id.
 /// </summary>
-public sealed class ModuleUiFrames(Action<string>? log = null, string? directory = null) : IModuleUiFrames, IDisposable
+public sealed class ModuleUiFrames(Microsoft.Extensions.Logging.ILogger? log = null, string? directory = null) : IModuleUiFrames, IDisposable
 {
     public const string HostName = "RemotePCDiagnostics.ModuleUiHost";
 
@@ -39,7 +39,8 @@ public sealed class ModuleUiFrames(Action<string>? log = null, string? directory
         var process = RestrictedModuleHostLauncher.StartRestrictedGui(exe, arguments, dir);
         _running.AddOrUpdate(module.Manifest.Id, process, (_, prev) => { Stop(prev); return process; });
         if (_disposed != 0 && _running.TryRemove(module.Manifest.Id, out var raced)) { Stop(raced); ObjectDisposedException.ThrowIf(true, this); }
-        log?.Invoke($"Module UI [{module.Manifest.Slug}]: started pid={process.Id} (restricted token, Medium integrity), log {data}\\module-ui.log");
+        if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module UI [{Slug}]: started pid={Pid} (restricted token, Medium integrity), log {Log}",
+            module.Manifest.Slug, process.Id, data + "\\module-ui.log");
         // The relay's /{id} page waits for the UI process to connect, so the frame can load right away.
         return new Uri(relay.BaseUri, id.ToString());
     }
@@ -57,7 +58,7 @@ public sealed class ModuleUiFrames(Action<string>? log = null, string? directory
                     FrameAncestors = [AppOrigin],
                     AllowOpaqueOrigin = true, // the module page frames these pages without allow-same-origin
                 }, cancellationToken).ConfigureAwait(false);
-                log?.Invoke($"Module UI relay: {_relay.BaseUri} (gRPC {_relay.GrpcUri})");
+                if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module UI relay: {Relay} (gRPC {Grpc})", _relay.BaseUri, _relay.GrpcUri);
             }
             return _relay;
         }

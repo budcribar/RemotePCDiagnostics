@@ -23,11 +23,17 @@ public static class HostServices
 {
     /// <summary>Registers RemoteBlazorWebView and everything the app needs. <paramref name="log"/> is the file log line writer
     /// (<see cref="App.Log"/>); <paramref name="logEvent"/> writes a Windows Event Log entry (<see cref="App.Event"/>).
-    /// <paramref name="modulesFolder"/> overrides where module DLLs are loaded from (tests pass an empty folder so the PC's installed modules don't matter).</summary>
+    /// <paramref name="modulesFolder"/> overrides where module DLLs are loaded from (tests pass an empty folder so the PC's installed modules don't matter).
+    /// <paramref name="loggers"/> backs ILogger&lt;T&gt; (<see cref="App.Loggers"/>); without it, ILogger lines go to <paramref name="log"/>.</summary>
     public static IServiceCollection AddRemotePCDiagnosticsHost(this IServiceCollection services, SessionContext session,
-        Action<string> log, Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent, string? modulesFolder = null)
+        Action<string> log, Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent, string? modulesFolder = null,
+        Microsoft.Extensions.Logging.ILoggerFactory? loggers = null)
     {
         services.AddRemoteWpfBlazorWebView();
+        // ILogger<T> over the app's file and Event Log sinks (after the WebView's own logging registration, so this one wins).
+        var loggerFactory = loggers ?? RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(log);
+        services.AddSingleton(loggerFactory);
+        services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(Microsoft.Extensions.Logging.Logger<>));
         services.AddSingleton<ISessionContext>(session);
         if (session.Mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
         services.AddSingleton<ResultStore>();
@@ -70,7 +76,7 @@ public static class HostServices
         services.AddSingleton(plugins);
         plugins.Register(services, new BuiltInModulesPlugin(log), BuiltInModulesPlugin.Id, ModuleSource.BuiltIn);
         // Module DLLs from %ProgramFiles%\RemotePCDiagnostics\modules (signed ones load in-process; unsigned ones never do).
-        services.AddSingleton(LoadModulePlugins(services, plugins, log, logEvent, new ModuleLoaderOptions
+        services.AddSingleton(LoadModulePlugins(services, plugins, log, logEvent, loggerFactory, new ModuleLoaderOptions
         {
             HostVersion = HostVersion(),
             ModulesFolder = modulesFolder ?? ModuleLoaderOptions.DefaultModulesFolder(),
@@ -81,7 +87,7 @@ public static class HostServices
         if (session.Mode == SessionMode.Local)
             services.AddSingleton<IModuleUiFrames>(_ =>
             {
-                var frames = new ModuleUiFrames(log);
+                var frames = new ModuleUiFrames(Microsoft.Extensions.Logging.LoggerFactoryExtensions.CreateLogger<ModuleUiFrames>(loggerFactory));
                 AppDomain.CurrentDomain.ProcessExit += (_, _) => frames.Dispose(); // the UI processes never outlive the app
                 return frames;
             });
@@ -130,9 +136,10 @@ public static class HostServices
 
     /// <summary>Discovers, verifies and registers module plugins. Never throws: a broken modules folder leaves only the built-ins.</summary>
     public static ModuleLoader LoadModulePlugins(IServiceCollection services, PluginRegistrar plugins, Action<string> log,
-        Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent, ModuleLoaderOptions? options = null)
+        Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent, Microsoft.Extensions.Logging.ILoggerFactory loggers,
+        ModuleLoaderOptions? options = null)
     {
-        var launcher = new RestrictedModuleHostLauncher(log);
+        var launcher = new RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.LoggerFactoryExtensions.CreateLogger<RestrictedModuleHostLauncher>(loggers));
         var loader = new ModuleLoader(options ?? new ModuleLoaderOptions { HostVersion = HostVersion() }, plugins, log,
             um => new UserModeModuleProxy(um, launcher, log));
         var before = plugins.Records.Count;

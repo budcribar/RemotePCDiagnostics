@@ -46,6 +46,26 @@ public partial class App : Application
         try { Events.Write(new LogEntry(id, level, message)); } catch { }
     }
 
+    /// <summary>
+    /// ILogger&lt;T&gt; for the app (registered by <see cref="HostServices"/>): each line carries its level and category, so warnings and
+    /// errors reach the Event Log (rate-limited) without guessing from the wording.
+    /// </summary>
+    public static Microsoft.Extensions.Logging.ILoggerFactory Loggers { get; } = new AppLoggerFactory(Write);
+
+    /// <summary>Writes an ILogger line: file log with level and category; warnings and errors also to the Event Log.</summary>
+    public static void Write(LogLevel level, string category, string message)
+    {
+        var line = $"[{AppLoggerFactory.ShortName(category)}] {message}";
+        LogFileOnly(level == LogLevel.Information ? line : $"{level.ToString().ToUpperInvariant()} {line}");
+        try
+        {
+            if (LogText.Route(message) is { } e) { Events.Write(e with { Message = line }); return; }
+            if (level != LogLevel.Information && _gate.Allow(line))
+                Events.Write(new LogEntry(level == LogLevel.Error ? LogEventIds.Error : LogEventIds.AppWarning, level, line));
+        }
+        catch { }
+    }
+
     private static void LogFileOnly(string message) =>
         _file.Value.Write($"{DateTimeOffset.Now:O} [{RemotePCDiagnostics.Core.AppBuildInfo.LogStamp}] {message}");
 
