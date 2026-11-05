@@ -18,6 +18,7 @@
   <!-- The module UI host next to the shell, like ModuleHost.exe next to the app. Built separately and copied in, because a
        ProjectReference would merge its static web assets into the shell's and collide on _framework files. -->
   <Target Name="CopyModuleUi" AfterTargets="Build">
+    <MSBuild Projects="..\ModuleUi\UnsignedUiSpike.ModuleUi.csproj" Targets="Restore" Properties="Configuration=$(Configuration);MSBuildRestoreSessionId=$([System.Guid]::NewGuid())" />
     <MSBuild Projects="..\ModuleUi\UnsignedUiSpike.ModuleUi.csproj" Targets="Build" Properties="Configuration=$(Configuration)" />
     <ItemGroup>
       <ModuleUiFiles Include="..\ModuleUi\bin\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\**\*" />
