@@ -321,27 +321,49 @@ public sealed class DiagnosticsService
     public DependencyGate? GateFor(ModuleDescriptor d, IReadOnlyDictionary<Guid, DiagnosticResult?> ranInThisRun)
     {
         foreach (var dep in d.DependsOn)
-        {
-            var name = Catalog.Get(dep)?.DisplayName ?? dep.ToString("D");
-            if (ranInThisRun.TryGetValue(dep, out var r))
-            {
-                if (!ModuleOrdering.Passed(r)) return new DependencyGate(GateKind.Skipped, $"{name} did not pass", dep);
-                continue;
-            }
-            var state = Catalog.StateOf(dep);
-            var runnable = Modules.FirstOrDefault(m => m.Id == dep);
-            if (state != ModuleState.Available || runnable is null)
-                return new DependencyGate(GateKind.Blocked, state switch
-                {
-                    ModuleState.NotPresent => $"{name} doesn't apply to this PC",
-                    ModuleState.Disabled => $"{name} is turned off",
-                    _ when Catalog.Get(dep) is null => $"it needs module {dep:D}, which isn't installed",
-                    _ => $"{name} is no longer available",
-                }, dep);
-            if (!ModuleOrdering.Passed(_store.Get(runnable.Name)))
-                return new DependencyGate(GateKind.Skipped, $"{name} has not passed in this session", dep);
-        }
+            if (GateForDependency(dep, ranInThisRun) is { } gate) return gate;
         return null;
+    }
+
+    private static readonly IReadOnlyDictionary<Guid, DiagnosticResult?> NothingRan = new Dictionary<Guid, DiagnosticResult?>();
+
+    private DependencyGate? GateForDependency(Guid dep, IReadOnlyDictionary<Guid, DiagnosticResult?> ranInThisRun)
+    {
+        var name = Catalog.Get(dep)?.DisplayName ?? dep.ToString("D");
+        if (ranInThisRun.TryGetValue(dep, out var r))
+            return ModuleOrdering.Passed(r) ? null : new DependencyGate(GateKind.Skipped, $"{name} did not pass", dep);
+        var state = Catalog.StateOf(dep);
+        var runnable = Modules.FirstOrDefault(m => m.Id == dep);
+        if (state != ModuleState.Available || runnable is null)
+            return new DependencyGate(GateKind.Blocked, state switch
+            {
+                ModuleState.NotPresent => $"{name} doesn't apply to this PC",
+                ModuleState.Disabled => $"{name} is turned off",
+                _ when Catalog.Get(dep) is null => $"it needs module {dep:D}, which isn't installed",
+                _ => $"{name} is no longer available",
+            }, dep);
+        return ModuleOrdering.Passed(_store.Get(runnable.Name)) ? null
+            : new DependencyGate(GateKind.Skipped, $"{name} has not passed in this session", dep);
+    }
+
+    /// <summary>The DependsOn modules (and theirs) that haven't passed in this session, nearest first: what
+    /// <see cref="RunWithDependenciesAsync"/> would run before <paramref name="moduleName"/> (Skipped), or what stops it (Blocked).
+    /// Empty when every dependency has passed, or the module has none.</summary>
+    public IReadOnlyList<DependencyGate> UnmetDependencies(string moduleName)
+    {
+        var target = Modules.FirstOrDefault(m => string.Equals(m.Name, moduleName, StringComparison.OrdinalIgnoreCase));
+        if (target is null) return [];
+        var unmet = new List<DependencyGate>();
+        var queue = new Queue<Guid>(DescriptorOf(target).DependsOn);
+        var seen = new HashSet<Guid> { target.Id };
+        while (queue.TryDequeue(out var id))
+        {
+            if (!seen.Add(id) || GateForDependency(id, NothingRan) is not { } gate) continue;
+            unmet.Add(gate);
+            if (gate.Kind == GateKind.Skipped && Modules.FirstOrDefault(m => m.Id == id) is { } dep)
+                foreach (var next in DescriptorOf(dep).DependsOn) queue.Enqueue(next);
+        }
+        return unmet;
     }
 
     private void MarkRunning(IDiagnosticModule module)

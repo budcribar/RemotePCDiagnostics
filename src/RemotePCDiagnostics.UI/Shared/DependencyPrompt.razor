@@ -1,0 +1,47 @@
+@inherits StoreAwareComponent
+@* Shown on a module's page when checks it DependsOn haven't passed in this session. Offers to run them first
+   (DiagnosticsService.RunWithDependenciesAsync), or says what stops it. *@
+@{
+    var unmet = Module is null || _running || Diagnostics.IsRunning(Module.Name) ? [] : Diagnostics.UnmetDependencies(Module.Name);
+}
+@if (unmet.Count > 0)
+{
+    var blocked = unmet.Where(g => g.Kind == GateKind.Blocked).ToList();
+    <div class="notice" data-testid="dependency-prompt">
+        @if (blocked.Count == 0)
+        {
+            var names = unmet.Select(g => Diagnostics.Catalog.Get(g.Dependency)?.DisplayName ?? g.Dependency.ToString("D")).ToList();
+            <strong>@Module!.DisplayName needs @Join(names) to pass first.</strong>
+            <span> @(names.Count == 1 ? "It hasn't" : "They haven't") passed in this session.</span>
+            <button class="btn-small status-action" data-testid="run-with-dependencies" @onclick="RunWithDependencies">
+                Run @(names.Count == 1 ? "it" : "them") first, then @Module.DisplayName
+            </button>
+        }
+        else
+        {
+            <strong>@Module!.DisplayName can't run yet:</strong>
+            <span> @Join(blocked.Select(g => g.Reason).ToList()).</span>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public IDiagnosticModule? Module { get; set; }
+    private bool _running;
+
+    private async Task RunWithDependencies()
+    {
+        if (Module is null) return;
+        _running = true;
+        try { await Diagnostics.RunWithDependenciesAsync(Module.Name); }
+        catch (OperationCanceledException) { }
+        finally { _running = false; }
+    }
+
+    private static string Join(IReadOnlyList<string> items) => items.Count switch
+    {
+        0 => "",
+        1 => items[0],
+        _ => string.Join(", ", items.Take(items.Count - 1)) + " and " + items[^1],
+    };
+}
