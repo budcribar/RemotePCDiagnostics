@@ -60,7 +60,7 @@ public abstract class StressModuleBase<TProgress, TReport>(Action<string>? log) 
         finally { lock (_gate) _stop = null; }
     }
 
-    internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);
+    protected internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);
 
     private sealed class InlineProgress(Action<TProgress> a) : IProgress<TProgress> { public void Report(TProgress value) => a(value); }
 }

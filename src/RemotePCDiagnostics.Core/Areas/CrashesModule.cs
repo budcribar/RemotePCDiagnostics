@@ -276,5 +276,3 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         }.Where(line => line is not null));
     }
 }
-
-public sealed record HangOccurrence(DateTimeOffset Time, string App, string Path, string Package, string Type, string ReportId);
