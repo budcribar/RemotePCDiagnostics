@@ -164,7 +164,9 @@ public sealed class DiagnosticsService
     /// <summary><see cref="Modules"/> plus detectable modules whose detection hasn't finished yet: a run started right at startup still
     /// includes them (the run waits for detection), while pages only list them once they are known to apply.</summary>
     private IEnumerable<IDiagnosticModule> Runnable =>
-        _modules.Where(m => IsRunnable(m.Id) && (IsVisible(m) || m is IDetectableModule && !_detections.ContainsKey(m.Id)));
+        _modules.Where(m => IsRunnable(m.Id) && (m is IDetectableModule and not IHardwareGatedModule
+            ? !_detections.TryGetValue(m.Id, out var d) || d.Applies // one read: detection may finish meanwhile
+            : IsVisible(m)));
 
     private IDiagnosticModule? FindRunnable(string moduleName) =>
         Runnable.FirstOrDefault(m => string.Equals(m.Name, moduleName, StringComparison.OrdinalIgnoreCase));
@@ -199,7 +201,7 @@ public sealed class DiagnosticsService
         Catalog.SetApplies(m.Id, detection.Applies);
         Volatile.Write(ref _visible, null);
         try { ModulesChanged?.Invoke(this, EventArgs.Empty); } catch { }
-        _store.Set(_store.Get(m.Name)); // nudges store-aware pages to re-render
+        _store.Touch(m.Name); // store-aware pages re-render
         try { Log?.Invoke(detection.Applies ? $"{m.Name}: {detection.Instances.Count(i => i.Applies)} instance(s)" : $"{m.Name}: doesn't apply ({detection.NotApplicableReason})"); } catch { }
     }
 

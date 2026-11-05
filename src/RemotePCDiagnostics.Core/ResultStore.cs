@@ -27,6 +27,10 @@ public sealed class ResultStore
     public DiagnosticResult Get(string moduleName) =>
         _results.TryGetValue(moduleName, out var r) ? r : DiagnosticResult.NotRun(moduleName);
 
+    /// <summary>Raises <see cref="Changed"/> with the module's current result without storing anything, so pages re-render (a write
+    /// here could put back a result older than one a run stored meanwhile).</summary>
+    public void Touch(string moduleName) => Changed?.Invoke(this, Get(moduleName));
+
     public void Set(DiagnosticResult result)
     {
         if (result.InstanceKey is { } instance)
