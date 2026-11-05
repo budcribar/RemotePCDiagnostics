@@ -44,9 +44,13 @@ public sealed class HistoryTests
         var r = new DiagnosticResult("CpuStress", DiagnosticStatus.Ok, "Passed", new DateTimeOffset(2026, 10, 30, 8, 0, 0, TimeSpan.FromHours(-6)),
             new { Outcome = RemotePCDiagnostics.Core.Stress.CpuStressOutcome.Passed, MaxCpuTemperatureC = 81.5, Note = "C:\\x" });
         var msg = ResultEventLogger.Format(r, TimeSpan.FromSeconds(60), "extended run", new ResultEventContext(_ => "CPU stress test", () => "PC1 (LENOVO 82R4)", "1.2.3"));
-        Assert.Contains("Format: 2", msg);
+        Assert.Contains("Format: 3", msg);
+        Assert.Contains($"Module id: {ModuleIds.CpuStress}", msg);
         var e = HistoryEventParser.Parse(msg, DateTimeOffset.Now)!;
         Assert.Equal("CpuStress", e.Module);
+        Assert.Equal(ModuleIds.CpuStress, e.ModuleId);
+        Assert.Equal(3, e.Format);
+        Assert.False(e.IsLegacy);
         Assert.Equal("CPU stress test", e.Test);
         Assert.Equal("OK", e.Outcome);
         Assert.Equal("Passed", e.Summary);
@@ -73,6 +77,8 @@ public sealed class HistoryTests
         Assert.Null(e.Measurement("Headline")); // free text dropped
         Assert.Equal("", e.Machine);
         Assert.Equal(new DateTimeOffset(2026, 10, 30, 14, 10, 0, TimeSpan.Zero), e.TimeUtc);
+        Assert.True(e.IsLegacy);
+        Assert.Equal(Guid.Empty, e.ModuleId);
     }
 
     [Theory]
@@ -110,10 +116,14 @@ public sealed class HistoryTests
         string? xp = null; int max = 0;
         var logs = new List<string>();
         var store = new EventLogHistoryStore((x, m) => { xp = x; max = m; return [new(DateTimeOffset.Now.AddHours(-2), OldFormat), new(DateTimeOffset.Now, "junk"),
-            new(DateTimeOffset.Now, "Test result: DiskSpeed\nOutcome: Critical\nFinished: 2026-10-30T15:00:00Z\nFormat: 2")]; }, logs.Add);
+            new(DateTimeOffset.Now, $"Test result: DiskSpeed\nModule id: {ModuleIds.DiskSpeed}\nOutcome: Critical\nFinished: 2026-10-30T15:00:00Z\nFormat: 3"),
+            new(DateTimeOffset.Now.AddHours(-1), $"Test result: CpuStress\nModule id: {ModuleIds.CpuStress}\nOutcome: OK\nFinished: 2026-10-30T14:00:00Z\nFormat: 3"),
+            new(DateTimeOffset.Now, "Test result: DiskSpeed\nOutcome: OK\nFormat: 2")]; }, logs.Add);
         var r = store.Read(TimeSpan.FromDays(7));
         Assert.True(r.Available);
         Assert.Equal(new[] { "DiskSpeed", "CpuStress" }, r.Entries.Select(e => e.Module));
+        Assert.Equal(2, r.LegacyEntries); // OldFormat and the format 2 event wait for the migration
+        Assert.Contains(logs, l => l.Contains("2 event(s) in the old format"));
         Assert.Contains("timediff", xp);
         Assert.Equal(EventLogHistoryStore.MaxEvents, max);
         Assert.Contains(logs, l => l.Contains("skipped 1"));
@@ -134,7 +144,7 @@ public sealed class HistoryTests
     [Fact]
     public void Store_ReaderThrowsMidway_KeepsWhatWasRead()
     {
-        static IEnumerable<RawHistoryEvent> Src() { yield return new(DateTimeOffset.Now, OldFormat); throw new InvalidOperationException("log cleared"); }
+        static IEnumerable<RawHistoryEvent> Src() { yield return new(DateTimeOffset.Now, $"Test result: CpuStress\nModule id: {ModuleIds.CpuStress}\nOutcome: OK\nFormat: 3"); throw new InvalidOperationException("log cleared"); }
         var r = new EventLogHistoryStore((_, _) => Src()).Read(null);
         Assert.Single(r.Entries);
         Assert.True(r.Available);

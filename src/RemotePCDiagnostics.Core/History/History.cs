@@ -11,6 +11,16 @@ public sealed record HistoryEntry(
     string? Suite, IReadOnlyList<HistoryMeasurement> Measurements, string Machine, string AppVersion, IReadOnlyList<string>? Details = null)
 {
     public DateTimeOffset LocalTime => TimeUtc.ToLocalTime();
+    /// <summary>The module's permanent id ("Module id:", format 3). History groups and matches on it.</summary>
+    public Guid ModuleId { get; init; }
+    /// <summary>The event's "Format:" version (0 when it has none).</summary>
+    public int Format { get; init; }
+    /// <summary>A test result written before format 3. The app no longer shows these; the one-time migration rewrites them.</summary>
+    public bool IsLegacy { get; init; }
+    /// <summary>The hardware instance the test ran against ("Instance id:"), or null for a system-wide test.</summary>
+    public string? InstanceId { get; init; }
+    /// <summary>The instance's label at run time ("Instance:"), so History can name a drive that has since been removed.</summary>
+    public string? Instance { get; init; }
     public string? Measurement(string name) => Measurements.FirstOrDefault(m => m.Name == name)?.Value;
 }
 
@@ -37,7 +47,11 @@ public static class HistoryPresentation
 }
 
 /// <summary>Result of reading history. Available=false when the source can't be read (Problem has the technical reason, log only).</summary>
-public sealed record HistoryReadResult(IReadOnlyList<HistoryEntry> Entries, bool Available, string? Problem = null);
+public sealed record HistoryReadResult(IReadOnlyList<HistoryEntry> Entries, bool Available, string? Problem = null)
+{
+    /// <summary>Results in an older format that were left out; the one-time history update hasn't run yet (it needs administrator).</summary>
+    public int LegacyEntries { get; init; }
+}
 
 /// <summary>Read-only result history (Host: Windows Event Log, Application, source RemotePCDiagnostics, event 1100).</summary>
 public interface IHistoryStore
@@ -76,26 +90,31 @@ public sealed class EventLogHistoryStore(Func<string, int, IEnumerable<RawHistor
     {
         var list = new List<HistoryEntry>();
         var skipped = 0;
+        var legacy = 0;
         try
         {
             foreach (var raw in query(BuildXPath(within), MaxEvents))
             {
                 if (list.Count >= MaxEvents) break;
-                if (HistoryEventParser.Parse(raw.Message, raw.TimeCreated) is { } e) list.Add(e); else skipped++;
+                if (HistoryEventParser.Parse(raw.Message, raw.TimeCreated) is not { } e) skipped++;
+                else if (e.IsLegacy) legacy++; // the app reads only format 3; see StartupMigration
+                else list.Add(e);
             }
         }
         catch (Exception ex)
         {
             try { log?.Invoke($"History: Event Log read failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
-            return new(list.OrderByDescending(e => e.TimeUtc).ToList(), list.Count > 0, $"{ex.GetType().Name}: {ex.Message}");
+            return new(list.OrderByDescending(e => e.TimeUtc).ToList(), list.Count > 0, $"{ex.GetType().Name}: {ex.Message}") { LegacyEntries = legacy };
         }
         if (skipped > 0) try { log?.Invoke($"History: skipped {skipped} unparseable event(s)"); } catch { }
-        return new(list.OrderByDescending(e => e.TimeUtc).ToList(), true);
+        if (legacy > 0) try { log?.Invoke($"History: {legacy} event(s) in the old format wait for the one-time history update"); } catch { }
+        return new(list.OrderByDescending(e => e.TimeUtc).ToList(), true) { LegacyEntries = legacy };
     }
 }
 
-/// <summary>Parses the 1100 "Test result" message. Format 2 (current): "Key: value" lines + "Measurements:" ("  Name=value").
-/// Older messages (no Format line): measurements taken from numeric "  Name: value" lines under "Details:".</summary>
+/// <summary>Parses the 1100 "Test result" message. Format 3 (current): "Key: value" lines including "Module id:", then "Measurements:"
+/// ("  Name=value"). Older messages parse too, marked <see cref="HistoryEntry.IsLegacy"/>: History leaves them out and only the one-time
+/// migration reads them (format 2 has no Module id; messages without a Format line keep numeric "  Name: value" Details lines).</summary>
 public static class HistoryEventParser
 {
     public const int MaxDetailLines = 40;
@@ -139,16 +158,24 @@ public static class HistoryEventParser
                 };
                 var freed = HistorySummary.ParseFreedBytesFromText(memMsg);
                 if (freed > 0) memMeas.Add(new("FreedMemoryBytes", freed.ToString(CultureInfo.InvariantCulture)));
-                return new HistoryEntry(timeCreated.ToUniversalTime(), HistorySummary.MemoryFixModuleId, "Memory optimization", memOk, memMsg, null, null, memMeas, "", "");
+                var memTime = fields.TryGetValue("Logged", out var lg) && DateTimeOffset.TryParse(lg, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var lt) ? lt : timeCreated;
+                return new HistoryEntry(memTime.ToUniversalTime(), HistorySummary.MemoryFixModuleId, "Memory optimization", memOk, memMsg, null, null, memMeas, "", "")
+                    { ModuleId = HistoryIds.MemoryOptimization };
             }
             if (!fields.TryGetValue("Test result", out var module) || module.Length == 0) return null;
             if (!fields.TryGetValue("Outcome", out var outcome) || outcome.Length == 0) return null;
             var time = fields.TryGetValue("Finished", out var f) && DateTimeOffset.TryParse(f, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var ft) ? ft : timeCreated;
             double? dur = fields.TryGetValue("Duration", out var d) && double.TryParse(d.Replace(" s", ""), NumberStyles.Float, CultureInfo.InvariantCulture, out var dv) ? dv : null;
+            var format = fields.TryGetValue("Format", out var fv) && int.TryParse(fv, NumberStyles.Integer, CultureInfo.InvariantCulture, out var fn) ? fn : 0;
+            var moduleId = fields.TryGetValue("Module id", out var mid) && Guid.TryParse(mid, out var g) ? g : Guid.Empty;
             return new HistoryEntry(time.ToUniversalTime(), module, fields.GetValueOrDefault("Test") is { Length: > 0 } t2 ? t2 : module, outcome,
                 fields.GetValueOrDefault("Summary") ?? "", dur, fields.GetValueOrDefault("Stress suite"),
                 fields.ContainsKey("Format") ? measurements : oldDetails,
-                fields.GetValueOrDefault("Machine") ?? "", fields.GetValueOrDefault("App version") ?? "", details);
+                fields.GetValueOrDefault("Machine") ?? "", fields.GetValueOrDefault("App version") ?? "", details)
+                {
+                    ModuleId = moduleId, Format = format, IsLegacy = format < ResultEventLogger.FormatVersion || moduleId == Guid.Empty,
+                    InstanceId = fields.GetValueOrDefault("Instance id"), Instance = fields.GetValueOrDefault("Instance"),
+                };
         }
         catch { return null; }
     }
@@ -184,6 +211,11 @@ public static class HistoryNames
     public static IReadOnlyList<HistoryEntry> Normalize(IEnumerable<HistoryEntry> entries, ModuleCatalog catalog) =>
         entries.Select(e =>
         {
+            if (e.ModuleId != Guid.Empty && catalog.Get(e.ModuleId) is { } byId)
+            {
+                var current = byId.MergedInto is { } into && catalog.Get(into) is { } target ? target : byId;
+                return e with { Module = current.Slug, ModuleId = current.Id, Test = current.DisplayName };
+            }
             var module = catalog.CurrentSlug(e.Module);
             var known = catalog.Find(module) is not null;
             var test = known ? catalog.DisplayName(module)
@@ -313,15 +345,22 @@ public static class HistoryQuery
         return s < 60 ? $"{s} s" : s < 3600 ? $"{s / 60} min {s % 60} s" : $"{s / 3600} h {s % 3600 / 60} min";
     }
 
-    /// <summary>CSV export (invariant, RFC 4180 quoting).</summary>
-    public static string ToCsv(IEnumerable<HistoryEntry> entries)
+    /// <summary>CSV export (invariant, RFC 4180 quoting). The ids come first, next to the names, so any viewer can re-resolve the names in
+    /// another language: Module id (GUID), Module (slug), Test (name at export), Instance id, Instance (label), then the result columns.</summary>
+    public static string ToCsv(IEnumerable<HistoryEntry> entries, ModuleCatalog? catalog = null)
     {
         static string Q(string? s) => s is null ? "" : s.Contains('"') || s.Contains(',') || s.Contains('\n') ? "\"" + s.Replace("\"", "\"\"") + "\"" : s;
-        var sb = new System.Text.StringBuilder("TimeUtc,Test,Result,Summary,DurationSeconds,Suite,Measurements,Machine,AppVersion\n");
+        var sb = new System.Text.StringBuilder("Module id,Module,Test,Instance id,Instance,TimeUtc,Result,Summary,DurationSeconds,Suite,Measurements,Machine,AppVersion\n");
         foreach (var e in entries)
-            sb.Append(Q(e.TimeUtc.ToString("O", CultureInfo.InvariantCulture))).Append(',').Append(Q(e.Test)).Append(',').Append(Q(e.Outcome)).Append(',')
+        {
+            var id = e.ModuleId != Guid.Empty ? e.ModuleId : HistoryIds.For(e.Module, catalog);
+            var test = catalog?.Get(id)?.DisplayName ?? e.Test;
+            sb.Append(id.ToString("D")).Append(',').Append(Q(e.Module)).Append(',').Append(Q(test)).Append(',')
+              .Append(Q(e.InstanceId)).Append(',').Append(Q(e.Instance)).Append(',')
+              .Append(Q(e.TimeUtc.ToString("O", CultureInfo.InvariantCulture))).Append(',').Append(Q(e.Outcome)).Append(',')
               .Append(Q(e.Summary)).Append(',').Append(e.DurationSeconds?.ToString(CultureInfo.InvariantCulture)).Append(',').Append(Q(e.Suite)).Append(',')
               .Append(Q(string.Join("; ", e.Measurements.Select(m => $"{m.Name}={m.Value}")))).Append(',').Append(Q(e.Machine)).Append(',').Append(Q(e.AppVersion)).Append('\n');
+        }
         return sb.ToString();
     }
 }

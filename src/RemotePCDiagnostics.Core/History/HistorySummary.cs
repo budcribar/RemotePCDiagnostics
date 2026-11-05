@@ -289,11 +289,12 @@ public static class HistorySummary
         _ => "Automated fix",
     };
 
-    /// <summary>Formats a <see cref="RemediationRecord"/> as a Format-2 Event 1100 payload so it persists in Event Log history.</summary>
+    /// <summary>Formats a <see cref="RemediationRecord"/> as an Event 1100 payload (current format) so it persists in Event Log history.</summary>
     public static string FormatRemediationEvent(RemediationRecord rec, string? machine, string? appVersion)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"Test result: {RemediationModuleId}");
+        sb.AppendLine($"Module id: {HistoryIds.Remediation:D}");
         sb.AppendLine($"Test: {FriendlyKind(rec.Kind)}");
         sb.AppendLine($"Outcome: {(rec.Success ? "OK" : "Warning")}");
         sb.AppendLine($"Summary: {rec.Message.Replace("\r", " ").Replace("\n", " ").Trim()}");
@@ -311,11 +312,12 @@ public static class HistorySummary
         return sb.ToString().TrimEnd();
     }
 
-    /// <summary>Formats a <see cref="ServiceActionRecord"/> as a Format-2 Event 1100 payload so it persists in Event Log history.</summary>
+    /// <summary>Formats a <see cref="ServiceActionRecord"/> as an Event 1100 payload (current format) so it persists in Event Log history.</summary>
     public static string FormatServiceEvent(ServiceActionRecord rec, string? machine, string? appVersion)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"Test result: {ServiceFixModuleId}");
+        sb.AppendLine($"Module id: {HistoryIds.ServiceAction:D}");
         sb.AppendLine($"Test: Service ({rec.Action})");
         sb.AppendLine($"Outcome: {(rec.Success ? "OK" : "Warning")}");
         sb.AppendLine($"Summary: {rec.Message.Replace("\r", " ").Replace("\n", " ").Trim()}");

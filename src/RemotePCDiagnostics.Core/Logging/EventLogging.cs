@@ -28,7 +28,8 @@ public static class LogEventIds
 }
 
 /// <summary>Extra fields written into each 1100 event (test display name, machine, app version).</summary>
-public sealed record ResultEventContext(Func<string, string>? DisplayName, Func<string>? Machine, string? AppVersion);
+/// <param name="ModuleId">The module's permanent id for a slug (the catalog's); defaults to <see cref="History.HistoryIds.For"/>.</param>
+public sealed record ResultEventContext(Func<string, string>? DisplayName, Func<string>? Machine, string? AppVersion, Func<string, Guid>? ModuleId = null);
 
 public sealed record LogEntry(int EventId, LogLevel Level, string Message);
 
@@ -126,14 +127,19 @@ public sealed class ResultEventLogger
     };
 
     /// <summary>Message format version written in "Format:" (parsed back by <see cref="History.HistoryEventParser"/>).</summary>
-    public const int FormatVersion = 2;
+    public const int FormatVersion = 3;
 
-    /// <summary>Stable "Key: value" lines (one per line), then "Measurements:" ("  Name=value") and human "Details:".</summary>
+    /// <summary>Stable "Key: value" lines (one per line), then "Measurements:" ("  Name=value") and human "Details:". Format 3 adds
+    /// "Module id:" (the permanent id History groups and matches on); "Test:" stays in English only for people reading Event Viewer.</summary>
     public static string Format(DiagnosticResult r, TimeSpan? duration, string? suiteLabel = null, ResultEventContext? ctx = null)
     {
         static string One(string? s) => (s ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
         var sb = new StringBuilder();
         sb.Append("Test result: ").Append(r.ModuleName).AppendLine();
+        var id = Guid.Empty;
+        try { id = ctx?.ModuleId?.Invoke(r.ModuleName) ?? Guid.Empty; } catch { }
+        if (id == Guid.Empty) id = History.HistoryIds.For(r.ModuleName);
+        sb.Append("Module id: ").Append(id.ToString("D")).AppendLine();
         if (ctx?.DisplayName is { } dn) { string? t = null; try { t = dn(r.ModuleName); } catch { } if (!string.IsNullOrEmpty(t)) sb.Append("Test: ").Append(One(t)).AppendLine(); }
         sb.Append("Outcome: ").Append(Outcome(r)).AppendLine();
         sb.Append("Summary: ").Append(One(r.Message)).AppendLine();
