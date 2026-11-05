@@ -22,6 +22,10 @@ public sealed record UserPreferences
     public bool? ChecksCollapsed { get; init; }
     public bool? StressCollapsed { get; init; }
     public string? StressMode { get; init; }
+    /// <summary>The ticked checks and tests, by module id.</summary>
+    public List<Guid>? SelectedModuleIds { get; init; }
+    /// <summary>Before module ids: the ticked modules by name. Only read to convert it to <see cref="SelectedModuleIds"/> (see
+    /// <see cref="FilePreferencesStore.Load"/>); never written. Remove with the format 3 migration.</summary>
     public List<string>? SelectedModules { get; init; }
 
     /// <summary>Most remembered fix choices; the oldest are dropped first (fix ids from long-gone apps shouldn't pile up).</summary>
@@ -55,6 +59,9 @@ public sealed class FilePreferencesStore(string path, Action<string>? log = null
         {
             if (!File.Exists(path)) return new();
             var p = JsonSerializer.Deserialize<UserPreferences>(File.ReadAllText(path), Json) ?? new();
+            // One-time conversion: selections saved by name before module ids.
+            if (p.SelectedModules is { } names)
+                p = p with { SelectedModuleIds = p.SelectedModuleIds ?? names.Select(ModuleIds.FromSlug).OfType<Guid>().Distinct().ToList(), SelectedModules = null };
             return p with { WorkflowFixChoices = new(p.WorkflowFixChoices ?? new(), StringComparer.Ordinal), WorkflowOpenAreas = p.WorkflowOpenAreas ?? [] };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)

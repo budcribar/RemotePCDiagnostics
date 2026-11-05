@@ -87,6 +87,10 @@
     }
 }
 
+@if (_result is { LegacyEntries: > 0 } pendingUpdate)
+{
+    <p class="notice" data-testid="history-update-pending">History update pending: @pendingUpdate.LegacyEntries older @(pendingUpdate.LegacyEntries == 1 ? "result is" : "results are") converted the next time the app starts as administrator.</p>
+}
 @if (_result is null)
 {
     <p class="status-line" data-testid="history-loading">Loading history…</p>

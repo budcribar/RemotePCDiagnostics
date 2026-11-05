@@ -138,8 +138,8 @@ public sealed class ChecksScreenState
         _memory = memory;
         _prefs = prefs;
         var saved = prefs?.Current;
-        if (saved?.SelectedModules is { } sel)
-            foreach (var m in ChecksModules.Concat(StressModules).Where(m => sel.Contains(m.Name, StringComparer.OrdinalIgnoreCase))) _selected.Add(m.Name);
+        if (saved?.SelectedModuleIds is { } sel)
+            foreach (var m in ChecksModules.Concat(StressModules).Where(m => sel.Contains(m.Id))) _selected.Add(m.Name);
         else
         {
             foreach (var m in ChecksModules) _selected.Add(m.Name);
@@ -230,7 +230,8 @@ public sealed class ChecksScreenState
     {
         if (_prefs is null) return;
         List<string> sel; lock (_gate) sel = _selected.ToList();
-        _prefs.Update(p => p with { SelectedModules = sel });
+        var ids = sel.Select(n => _diag.Catalog.Find(n)?.Id).OfType<Guid>().ToList();
+        _prefs.Update(p => p with { SelectedModuleIds = ids });
     }
     public int SelectedCount(CheckGroup g) { lock (_gate) return Modules(g).Count(m => _selected.Contains(m.Name)); }
 

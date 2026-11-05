@@ -49,7 +49,8 @@ public partial class MainWindow : Window
         var diag = provider.GetRequiredService<DiagnosticsService>();
         var eventContext = new RemotePCDiagnostics.Core.Logging.ResultEventContext(
             n => diag.Catalog.DisplayName(n),
-            () => _machine.Value, RemotePCDiagnostics.Core.AppBuildInfo.Version);
+            () => _machine.Value, RemotePCDiagnostics.Core.AppBuildInfo.Version,
+            n => RemotePCDiagnostics.Core.History.HistoryIds.For(n, diag.Catalog));
         _ = new RemotePCDiagnostics.Core.Logging.ResultEventLogger(provider.GetRequiredService<ResultStore>(), App.Events, _ => diag.CurrentSuiteLabel, context: eventContext);
         _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.AppStart, RemotePCDiagnostics.Core.Logging.LogLevel.Information, AppStartText(mode.ToString())));
         // Tell the person at this PC when a remote technician starts/stops/restarts a service (non-blocking).

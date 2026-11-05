@@ -127,8 +127,23 @@ public partial class App : Application
             return;
         }
 
+        // One-time history update (event log format 3) before anything else writes events; the marker makes it a no-op afterwards.
+        RunStartupMigrations();
+
         MainWindow = new RemotePCDiagnostics.Host.MainWindow();
         MainWindow.Show();
+    }
+
+    private static void RunStartupMigrations()
+    {
+        try
+        {
+            var outcome = new RemotePCDiagnostics.Core.Migrations.EventLogV3Migration(new WindowsEventLogMigrationIo(Log),
+                new RemotePCDiagnostics.Core.Migrations.MigrationMarkers(RemotePCDiagnostics.Core.Migrations.MigrationMarkers.DefaultPath()),
+                RemotePCDiagnostics.Core.Migrations.EventLogV3Migration.DefaultWorkDir(), Log).Run();
+            if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"History update (event log format 3): {outcome}");
+        }
+        catch (Exception ex) { Log($"History update (event log format 3) failed: {ex.Message}"); }
     }
 
     /// <summary>
