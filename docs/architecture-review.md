@@ -131,3 +131,22 @@ These are not covered above and are still open at 67984a5:
 - **UI branches on concrete module types**: 13 `is XModule` checks remain in `RemotePCDiagnostics.UI`, so each new area with actions means editing a generic page. This is the larger form of 3.4.
 - **Remote mode has no authorization boundary**: every remote viewer has the same admin power as the person at the PC. The README asks for read-only by default; there is no written trust model or per-session "remote may change things" switch yet.
 
+
+---
+
+## 5. Status
+
+Updated November 5, 2026 (branch `claude/project-thread-4v3j0l`).
+
+| Item | Status | Where |
+| --- | --- | --- |
+| 3.3 / 4.1 State in `%LOCALAPPDATA%` | Fixed | `ProtectedState`, `ProtectedStateFolder`, `ProtectedStateMigration`: state lives in `%ProgramData%\RemotePCDiagnostics\state` (Administrators and SYSTEM only), moved once on first start |
+| 3.4 Two service locator styles | Fixed | `AppServices.ModuleUiFrames`; no UI file injects `IServiceProvider` |
+| 4.2 Stringly typed outcome | Fixed | `IRunEnd` (contract 1.2) on the stress reports, `StressSuiteResult` and `CouldNotRun`; no reflection in `ResultEventLogger` |
+| Module-name constants | Fixed | Every `ModuleName` points at `ModuleSlugs` |
+| 4.2 UI branches on concrete module types | Fixed | `IHasAreaPanels`, `IServiceRows`, `IHangEvidenceSource`, `ICancellableScan` in `Core/Areas/AreaCapabilities.cs` |
+| 3.2 `IMemorySystem` | Split | Nine role interfaces, each registered to the one `WindowsMemorySystem`; the restore helpers take only their role. Larger consumers (`MemorySuggestionService`, `UndoService`) still take `IMemorySystem`, and default methods still return "Not supported" |
+| 4.2 Logging | Started | `AppLoggerFactory` gives `ILogger<T>` with real levels; `ModuleUiFrames` and `RestrictedModuleHostLauncher` use it. About 70 files still take `Action<string>` |
+| 3.1 Two module instances | Open | |
+| 3.5 PowerShell one-liners | Open | |
+| 4.2 Remote trust model | Open | |
