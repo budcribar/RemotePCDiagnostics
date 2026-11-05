@@ -133,7 +133,7 @@ internal sealed class D3D11GpuDevice : IGpuComputeDevice
 
         try
         {
-            using var bytecode = Compiler.Compile(GpuStressKernel.Hlsl, "main", "GpuStressKernel.hlsl", "cs_5_0");
+            var bytecode = Compiler.Compile(GpuStressKernel.Hlsl, "main", "GpuStressKernel.hlsl", "cs_5_0");
             _shader = _device.CreateComputeShader(bytecode.Span);
 
             uint bytes = (uint)(ThreadCount * sizeof(uint));

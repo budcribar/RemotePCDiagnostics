@@ -177,8 +177,9 @@ public sealed partial class WindowsMemorySystem
             {
                 await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
+                // Stuck past the time limit: end it. A cancel by the user leaves the uninstaller running, since killing it mid-way can leave the app half removed.
                 try { p.Kill(entireProcessTree: true); } catch { }
                 throw;
             }

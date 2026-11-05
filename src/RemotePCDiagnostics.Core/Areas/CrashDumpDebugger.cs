@@ -3,11 +3,20 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// <summary>Runs the installed Windows kernel debugger on a selected system dump.</summary>
 public static class CrashDumpDebugger
 {
+    /// <summary>A .dmp file on a local drive. Paths are normalised first, so "//server/share" and "\\?\UNC\…" are refused like "\\server\share".</summary>
+    public static bool IsLocalDump(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        string full;
+        try { full = Path.GetFullPath(path); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
+        return !full.StartsWith(@"\\", StringComparison.Ordinal) && !full.StartsWith("//", StringComparison.Ordinal)
+            && full.EndsWith(".dmp", StringComparison.OrdinalIgnoreCase) && File.Exists(full);
+    }
+
     public static async Task<string> AnalyzeAsync(string path)
     {
-        if (string.IsNullOrWhiteSpace(path) || path.StartsWith(@"\\", StringComparison.Ordinal)
-            || !path.EndsWith(".dmp", StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
-            return "The dump file is missing or inaccessible.";
+        if (!IsLocalDump(path)) return "The dump file is missing or inaccessible.";
 
         var arch = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture switch
         {

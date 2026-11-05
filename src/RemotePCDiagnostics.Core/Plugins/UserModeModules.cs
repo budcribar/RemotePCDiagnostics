@@ -162,23 +162,21 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
             var conn = Connect();
             await conn.WriteLineAsync(new ModuleHostMessage { Type = "refresh" }.ToLine(), CancellationToken.None).ConfigureAwait(false);
             using var stopping = cancellationToken.Register(() => { try { _ = conn.WriteLineAsync(new ModuleHostMessage { Type = "stop" }.ToLine(), CancellationToken.None); } catch { } });
+            // After a cancel the module gets one AnswerTimeout to answer "stop"; past that the host is reset.
+            async Task<string?> GraceReadAsync()
+            {
+                using var grace = new CancellationTokenSource(AnswerTimeout);
+                try { return await conn.ReadLineAsync(grace.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) { Reset(); throw new OperationCanceledException(cancellationToken); }
+            }
             while (true)
             {
                 string? line;
-                try
+                if (cancellationToken.IsCancellationRequested) line = await GraceReadAsync().ConfigureAwait(false);
+                else
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        using var grace = new CancellationTokenSource(AnswerTimeout);
-                        line = await conn.ReadLineAsync(grace.Token).ConfigureAwait(false);
-                    }
-                    else line = await conn.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    using var grace = new CancellationTokenSource(AnswerTimeout);
-                    try { line = await conn.ReadLineAsync(grace.Token).ConfigureAwait(false); }
-                    catch (OperationCanceledException) { Reset(); throw new OperationCanceledException(cancellationToken); }
+                    try { line = await conn.ReadLineAsync(cancellationToken).ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { line = await GraceReadAsync().ConfigureAwait(false); }
                 }
                 var m = ModuleHostMessage.Parse(line ?? throw Exited());
                 switch (m?.Type)

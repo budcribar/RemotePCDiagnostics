@@ -438,7 +438,9 @@ public sealed class WorkflowService(
     {
         if (f.Source == FixSource.Remediation && f.Remediation is { Kind: RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles } rep)
             return await ApplyRepairAsync(f, rep, ct).ConfigureAwait(false);
-        if (f.Source == FixSource.Remediation && f.Remediation is { } a && !FixCatalog.SkippedRemediation.Contains(a.Kind))
+        if (f.Source == FixSource.Remediation && f.Remediation is { } skip && FixCatalog.SkippedRemediation.Contains(skip.Kind))
+            return new(f.Id, f.Title, true, "Skipped: this fix isn't run as part of a workflow. Apply it from its own page if it's still needed.", Skipped: true);
+        if (f.Source == FixSource.Remediation && f.Remediation is { } a)
         {
             var r = await remediation.ExecuteAsync(a, ct).ConfigureAwait(false);
             return new(f.Id, f.Title, r.Success, r.Message);

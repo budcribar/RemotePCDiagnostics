@@ -104,7 +104,7 @@ public sealed class WindowsNpuIo(Action<string>? log = null) : INpuIo
     private NpuWorkloadResult MatMul(ID3D12Device dev, string adapterName, int n, NpuWorkloadRequest req, CancellationToken ct)
     {
         var bytes = (ulong)n * (ulong)n * sizeof(float);
-        using var blob = Vortice.D3DCompiler.Compiler.Compile(Shader, "main", "npu_matmul.hlsl", "cs_5_1", Vortice.D3DCompiler.ShaderFlags.OptimizationLevel3);
+        var blob = Vortice.D3DCompiler.Compiler.Compile(Shader, "main", "npu_matmul.hlsl", "cs_5_1", Vortice.D3DCompiler.ShaderFlags.OptimizationLevel3);
         var cs = blob.ToArray();
         var rootDesc = new RootSignatureDescription1(RootSignatureFlags.None,
         [

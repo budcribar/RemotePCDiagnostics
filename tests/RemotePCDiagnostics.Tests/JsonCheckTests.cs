@@ -30,6 +30,8 @@ public class JsonCheckTests
     [InlineData("DELETE FROM x", "must be a SELECT")]
     [InlineData("SELECT 1; SELECT 2", "one statement")]
     [InlineData("SELECT * FROM curl WHERE url = 'http://x'", "may not use")]
+    [InlineData("SELECT * FROM main.curl WHERE url = 'http://x'", "may not use")]
+    [InlineData("SELECT * FROM \"curl\" WHERE url = 'http://x'", "may not use")]
     [InlineData("WITH a AS (SELECT 1) SELECT * FROM a", null)]
     [InlineData("SELECT * FROM services;", null)]
     public void Only_a_single_read_only_select_is_accepted(string query, string? problem)
