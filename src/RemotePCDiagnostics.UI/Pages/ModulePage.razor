@@ -1,13 +1,13 @@
 @page "/module/{Slug}"
 @inherits StoreAwareComponent
-@inject IServiceProvider Services
+@inject AppServices App
 @* One route for every module: its own details UI when it has one, otherwise the generic report view. Plugins add no routes. *@
 @{
     var m = Diagnostics.Modules.FirstOrDefault(x => string.Equals(x.Name, Slug, StringComparison.OrdinalIgnoreCase));
     var details = m is null ? null : Diagnostics.Catalog.Get(m.Id)?.DetailsComponent;
     var instances = m is IPerDeviceModule ? Store.InstancesOf(m.Name) : [];
 }
-@if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule umb && !UnsignedModuleFrame.IsAvailable(Services, umb))
+@if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule umb && !UnsignedModuleFrame.IsAvailable(App, umb))
 {
     @* Drawn by the app, outside anything the module controls. *@
     <div class="notice" data-testid="unsigned-module-banner"><strong>Unsigned module.</strong> Runs in user mode in a separate process: it can't
@@ -29,7 +29,7 @@
         </table>
     </section>
 }
-@if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule um && UnsignedModuleFrame.IsAvailable(Services, um))
+@if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule um && UnsignedModuleFrame.IsAvailable(App, um))
 {
     <UnsignedModuleDetails DiagnosticModule="um" />
 }

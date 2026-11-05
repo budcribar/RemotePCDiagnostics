@@ -7,7 +7,7 @@
 @inject IJSRuntime JS
 @inject RemotePCDiagnostics.Core.History.IHistoryStore History
 @inject NavigationManager Nav
-@inject IServiceProvider Services
+@inject AppServices App
 @* Two pages share this screen: /checks (read-only system checks) and /stress (stress tests, audio, webcam, NPU). The list is on the left,
    the selected test's real page on the right. *@
 @{
@@ -297,7 +297,7 @@
     };
 
     private Type PageFor(IDiagnosticModule m) =>
-        m is RemotePCDiagnostics.Core.Plugins.IUserModeModule um && UnsignedModuleFrame.IsAvailable(Services, um) ? typeof(UnsignedModuleDetails)
+        m is RemotePCDiagnostics.Core.Plugins.IUserModeModule um && UnsignedModuleFrame.IsAvailable(App, um) ? typeof(UnsignedModuleDetails)
         : Diagnostics.Catalog.Get(m.Id)?.DetailsComponent ?? typeof(AreaPage);
 
     private IDictionary<string, object> ParamsFor(IDiagnosticModule m) =>

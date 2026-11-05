@@ -112,7 +112,7 @@ public static class HostServices
         services.AddSingleton(sp => new RemotePCDiagnostics.UI.AppServices(sp.GetService<RemediationService>(), sp.GetService<ServiceActionService>(),
             sp.GetService<RemotePCDiagnostics.Core.Memory.MemorySuggestionService>(), sp.GetService<RemotePCDiagnostics.Core.Areas.ICopilotHandoff>(),
             sp.GetService<RemotePCDiagnostics.Core.Preferences.PreferencesService>(), sp.GetService<RemotePCDiagnostics.Core.Workflow.WorkflowService>(),
-            sp.GetService<PluginRegistrar>()));
+            sp.GetService<PluginRegistrar>(), sp.GetService<IModuleUiFrames>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(log));
         return services;

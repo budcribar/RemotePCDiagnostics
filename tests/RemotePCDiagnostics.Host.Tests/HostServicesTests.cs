@@ -109,6 +109,16 @@ public class HostServicesTests
         }
     }
 
+    [Theory]
+    [InlineData(SessionMode.Local, true)]
+    [InlineData(SessionMode.Remote, false)]
+    public void Pages_reach_module_UI_frames_through_AppServices_in_local_mode_only(SessionMode mode, bool expected)
+    {
+        var (provider, _) = Build(mode);
+        using (provider)
+            Assert.Equal(expected, provider.GetRequiredService<RemotePCDiagnostics.UI.AppServices>().ModuleUiFrames is not null);
+    }
+
     [Fact]
     public void One_memory_system_is_shared()
     {

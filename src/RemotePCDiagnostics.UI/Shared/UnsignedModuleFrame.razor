@@ -1,7 +1,7 @@
 @using Microsoft.JSInterop
 @using RemotePCDiagnostics.Core.Plugins
 @implements IAsyncDisposable
-@inject IServiceProvider Services
+@inject AppServices App
 @inject Microsoft.JSInterop.IJSRuntime JS
 @* An unsigned module's own UI. It runs in its own user-mode process and is framed with an opaque origin: it can't read this page, its
    storage or cookies, or another module's frame. The only thing it can tell this page is its height. *@
@@ -26,15 +26,15 @@ else if (_src is not null)
     private DotNetObjectReference<UnsignedModuleFrame>? _self;
 
     /// <summary>Shown only where the host can do it (Local mode); otherwise the module page shows the generic report alone.</summary>
-    public static bool IsAvailable(IServiceProvider services, IUserModeModule module) =>
-        module.Source.Manifest.HasUi && services.GetService(typeof(IModuleUiFrames)) is not null;
+    public static bool IsAvailable(AppServices app, IUserModeModule module) =>
+        module.Source.Manifest.HasUi && app.ModuleUiFrames is not null;
 
     protected override async Task OnParametersSetAsync()
     {
         if (_src is not null || _problem is not null) return;
         try
         {
-            var frames = (IModuleUiFrames)Services.GetService(typeof(IModuleUiFrames))!;
+            var frames = App.ModuleUiFrames ?? throw new InvalidOperationException("this host can't show a module's own UI");
             _src = (await frames.OpenAsync(Module.Source)).ToString();
         }
         catch (Exception ex) { _problem = ex.Message; }
