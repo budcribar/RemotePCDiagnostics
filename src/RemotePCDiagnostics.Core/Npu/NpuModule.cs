@@ -30,7 +30,7 @@ public interface INpuTestModule : IPerDeviceModule
 /// </summary>
 public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuTestModule, IInstanceSummary
 {
-    public const string ModuleName = "NpuTest";
+    public const string ModuleName = ModuleSlugs.NpuTest;
     public static readonly TimeSpan DefaultDuration = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan MaxDuration = TimeSpan.FromSeconds(60);
     public static readonly TimeSpan[] DurationChoices = [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(60)];

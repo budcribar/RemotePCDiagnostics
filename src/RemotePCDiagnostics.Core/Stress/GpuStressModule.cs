@@ -12,7 +12,7 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
     /// <summary>The single instance used when adapters can't be listed.</summary>
     public const string FirstGpuKey = "first-gpu";
     private string? _adapterId;
-    public const string ModuleName = "GpuStress";
+    public const string ModuleName = ModuleSlugs.GpuStress;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.GpuStress;
     public override string DisplayName => "Graphics (GPU) stress test";

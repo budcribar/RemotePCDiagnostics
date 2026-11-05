@@ -9,7 +9,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// </summary>
 public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleBase(commands.Log)
 {
-    public const string ModuleName = "WifiConfig";
+    public const string ModuleName = ModuleSlugs.WifiConfig;
     public const int WeakSignalPercent = 50;
 
     public const string IpConfigScript =

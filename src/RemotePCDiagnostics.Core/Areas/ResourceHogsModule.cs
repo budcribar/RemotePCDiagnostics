@@ -44,7 +44,7 @@ public sealed record MemoryUse(long TotalBytes, long AvailableBytes)
 
 public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner? commands = null) : OsqueryAreaModuleBase(runner)
 {
-    public const string ModuleName = "ResourceHogs";
+    public const string ModuleName = ModuleSlugs.ResourceHogs;
     public const string UptimeSql = "SELECT days, hours, minutes, total_seconds FROM uptime;";
     public const string ProcessesSql = "SELECT pid, name, resident_size, user_time, system_time, disk_bytes_read, disk_bytes_written FROM processes WHERE pid > 4;";
     public const string FastStartupScript =

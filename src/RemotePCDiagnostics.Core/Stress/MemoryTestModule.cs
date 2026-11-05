@@ -6,7 +6,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher launcher, ISensorProvider sensors,
     IWindowsMemoryDiagnosticLauncher? windowsDiagnostic = null, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<MemoryTestProgress, MemoryTestReport>(log), IStressSuiteModule
 {
-    public const string ModuleName = "MemoryTest";
+    public const string ModuleName = ModuleSlugs.MemoryTest;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.MemoryTest;
     public override string DisplayName => "Memory test";

@@ -3,7 +3,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// <summary>Protected system files check: <c>sfc /verifyonly</c> (read-only).</summary>
 public sealed class SfcVerifyOnlyModule(SystemCommandRunner commands) : WindowsIntegrityModule(commands)
 {
-    public const string ModuleName = "SfcVerifyOnly";
+    public const string ModuleName = ModuleSlugs.SfcVerifyOnly;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.SfcVerifyOnly;
     public override string DisplayName => "Protected system files (SFC)";

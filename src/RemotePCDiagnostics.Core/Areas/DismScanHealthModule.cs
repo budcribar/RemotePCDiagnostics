@@ -3,7 +3,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// <summary>Windows component store check: <c>dism /Online /Cleanup-Image /ScanHealth</c> (read-only).</summary>
 public sealed class DismScanHealthModule(SystemCommandRunner commands) : WindowsIntegrityModule(commands)
 {
-    public const string ModuleName = "DismScanHealth";
+    public const string ModuleName = ModuleSlugs.DismScanHealth;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.DismScanHealth;
     public override string DisplayName => "Windows component store (DISM)";

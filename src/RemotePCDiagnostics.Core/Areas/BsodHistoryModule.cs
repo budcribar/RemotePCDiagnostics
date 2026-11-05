@@ -12,7 +12,7 @@ public sealed record MinidumpFile(string FileName, DateTimeOffset Created, long 
 /// </summary>
 public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOnlyList<MinidumpFile>>? minidumpReader = null) : AreaModuleBase(commands.Log)
 {
-    public const string ModuleName = "BsodHistory";
+    public const string ModuleName = ModuleSlugs.BsodHistory;
     public const int Days = 30, RecentDays = 7, MaxEvents = 250;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.BsodHistory;

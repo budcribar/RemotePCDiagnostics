@@ -6,7 +6,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// </summary>
 public sealed class CrashesModule(SystemCommandRunner commands, bool includeSystemCrashes = false, Func<IReadOnlyList<MinidumpFile>>? minidumpReader = null) : AreaModuleBase(commands.Log)
 {
-    public const string ModuleName = "Crashes";
+    public const string ModuleName = ModuleSlugs.Crashes;
     public const int Days = 30, Max = 500, RecentDays = 7, RepeatCrashes = 3;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.Crashes;

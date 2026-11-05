@@ -5,7 +5,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// <summary>On-demand disk speed test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
 public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<DiskSpeedProgress, DiskSpeedReport>(log), IStressSuiteModule
 {
-    public const string ModuleName = "DiskSpeed";
+    public const string ModuleName = ModuleSlugs.DiskSpeed;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.DiskSpeed;
     public override string DisplayName => "Disk speed test";

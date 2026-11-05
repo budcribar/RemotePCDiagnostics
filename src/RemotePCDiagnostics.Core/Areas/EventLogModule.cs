@@ -3,7 +3,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// <summary>Critical events and errors from the Windows System and Application logs over the last week (via <see cref="WindowsEventLog"/>).</summary>
 public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCrashEvents = false) : AreaModuleBase(commands.Log)
 {
-    public const string ModuleName = "EventLog";
+    public const string ModuleName = ModuleSlugs.EventLog;
     public const int Days = 7, MaxPerLog = 300, RepeatErrors = 5;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.EventLog;

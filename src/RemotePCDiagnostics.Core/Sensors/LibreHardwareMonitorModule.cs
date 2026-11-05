@@ -3,7 +3,7 @@ namespace RemotePCDiagnostics.Core.Sensors;
 /// <summary>Live temperatures and fan speeds (LibreHardwareMonitorLib via <see cref="ISensorProvider"/>).</summary>
 public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiagnosticModule
 {
-    public const string ModuleName = "Sensors";
+    public const string ModuleName = ModuleSlugs.Sensors;
     public string Name => ModuleName;
     public Guid Id => ModuleIds.Sensors;
     public string DisplayName => "Temperatures & fans";

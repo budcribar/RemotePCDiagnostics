@@ -71,7 +71,7 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
         "idrops=[string]$_.ReceivedDiscardedPackets;odrops=[string]$_.OutboundDiscardedPackets } });" +
         "ConvertTo-Json -InputObject $s -Compress";
 
-    public const string ModuleName = "Network";
+    public const string ModuleName = ModuleSlugs.Network;
     public const string Sql = "SELECT * FROM interface_details;";
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.Network;

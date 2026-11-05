@@ -22,7 +22,7 @@ public sealed record WebcamReport(WebcamVerdict Verdict, string Device, WebcamBu
 /// </summary>
 public sealed class WebcamTestModule(IWebcamIo io, Action<string>? log = null) : IWebcamTestModule
 {
-    public const string ModuleName = "Webcam";
+    public const string ModuleName = ModuleSlugs.Webcam;
     public static readonly TimeSpan DefaultDuration = TimeSpan.FromSeconds(5);
     public static readonly TimeSpan[] DurationChoices = [TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10)];
     /// <summary>Hard cap on the capture window, whatever is asked for.</summary>

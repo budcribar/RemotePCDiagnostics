@@ -72,7 +72,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     /// <summary>"Optimize / Retrim SSD" is offered only when a volume of the SSD wasn't retrimmed in this long (or the date is unknown).</summary>
     public static readonly TimeSpan RetrimFreshFor = TimeSpan.FromDays(30);
 
-    public const string ModuleName = "DriveHealth";
+    public const string ModuleName = ModuleSlugs.DriveHealth;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.DriveHealth;
     public override string DisplayName => "Drive health";
