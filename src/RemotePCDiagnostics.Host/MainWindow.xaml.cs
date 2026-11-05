@@ -79,9 +79,6 @@ public partial class MainWindow : Window
         // An "after" benchmark requested before a restart runs by itself once start-up has settled.
         _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>().ResumeAfterRestartAsync(); } catch (Exception ex) { App.Log($"Benchmark resume failed: {ex.Message}"); } });
 
-        var webViewDataDir = ResolveWebViewUserDataFolder();
-        Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", webViewDataDir);
-
         InitializeComponent();
         App.Log($"MainWindow initialized, mode={mode} server={launch.ServerUri}");
 
@@ -95,8 +92,7 @@ public partial class MainWindow : Window
                 e.EnvironmentOptions ??= new Microsoft.Web.WebView2.Core.CoreWebView2EnvironmentOptions();
                 e.EnvironmentOptions.AdditionalBrowserArguments = extra;
             }
-            e.UserDataFolder = webViewDataDir;
-            App.Log($"BlazorWebViewInitializing userDataFolder='{webViewDataDir}' args='{extra}'");
+            App.Log($"BlazorWebViewInitializing args='{extra}'");
         };
         RemoteBlazorWebView.BlazorWebViewInitialized += (_, e) =>
             App.Log($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
@@ -229,10 +225,7 @@ public partial class MainWindow : Window
         {
             if (_controlWebView is null)
             {
-                _controlWebView = new Microsoft.Web.WebView2.Wpf.WebView2
-                {
-                    CreationProperties = new Microsoft.Web.WebView2.Wpf.CoreWebView2CreationProperties { UserDataFolder = ResolveWebViewUserDataFolder() }
-                };
+                _controlWebView = new Microsoft.Web.WebView2.Wpf.WebView2();
                 System.Windows.Controls.Grid.SetRow(_controlWebView, 1);
                 System.Windows.Controls.Panel.SetZIndex(_controlWebView, 5); // above the Blazor view (0), below the panel (10)
                 RootGrid.Children.Add(_controlWebView);
@@ -242,42 +235,6 @@ public partial class MainWindow : Window
             _controlWebView.Visibility = Visibility.Visible;
         }
         catch (Exception ex) { App.Log($"Reverse mirror: couldn't show the local controller: {ex}"); }
-    }
-
-    private static string ResolveWebViewUserDataFolder()
-    {
-        var custom = Environment.GetEnvironmentVariable("REMOTEPC_WEBVIEW_USER_DATA_FOLDER");
-        var candidates = new[]
-        {
-            custom,
-            System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "RemotePCDiagnostics", "WebView2"),
-            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "RemotePCDiagnostics", "WebView2")
-        };
-        foreach (var dir in candidates)
-        {
-            if (string.IsNullOrWhiteSpace(dir)) continue;
-            try
-            {
-                var info = System.IO.Directory.CreateDirectory(dir);
-                try
-                {
-                    var acl = System.IO.FileSystemAclExtensions.GetAccessControl(info);
-                    var flags = System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit;
-                    var usersSid = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.BuiltinUsersSid, null);
-                    var authSid = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.AuthenticatedUserSid, null);
-                    acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(usersSid, System.Security.AccessControl.FileSystemRights.Modify, flags, System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
-                    acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(authSid, System.Security.AccessControl.FileSystemRights.Modify, flags, System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
-                    System.IO.FileSystemAclExtensions.SetAccessControl(info, acl);
-                }
-                catch { }
-                var probe = System.IO.Path.Combine(dir, ".write-probe");
-                System.IO.File.WriteAllText(probe, "ok");
-                System.IO.File.Delete(probe);
-                return dir;
-            }
-            catch { }
-        }
-        return System.IO.Path.Combine(System.IO.Path.GetTempPath(), "RemotePCDiagnostics", "WebView2");
     }
 
     private void SetRemoteState(RemoteSessionState state)
