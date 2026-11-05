@@ -1,5 +1,6 @@
 @page "/module/{Slug}"
 @inherits StoreAwareComponent
+@inject IServiceProvider Services
 @* One route for every module: its own details UI when it has one, otherwise the generic report view. Plugins add no routes. *@
 @{
     var m = Diagnostics.Modules.FirstOrDefault(x => string.Equals(x.Name, Slug, StringComparison.OrdinalIgnoreCase));
@@ -28,7 +29,13 @@
         </table>
     </section>
 }
-@if (details is not null)
+@if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule um && UnsignedModuleFrame.IsAvailable(Services, um))
+{
+    @* Its own UI, from its own process, above the generic report of its last run. *@
+    <UnsignedModuleFrame @key="um.Id" Module="um" />
+    <AreaPage Slug="@Slug" />
+}
+else if (details is not null)
 {
     <DynamicComponent Type="details" Parameters="@(new Dictionary<string, object> { ["DiagnosticModule"] = m! })" />
 }

@@ -65,6 +65,14 @@ public static class HostServices
             // Only the person at the PC can turn unsigned modules on (a marker in the admin-only modules folder); never in a remote session.
             AllowUnsigned = session.Mode == SessionMode.Local && UnsignedModulesSetting.IsOn(),
         }));
+        // Unsigned modules' own UIs, framed on the module page (Local only, like unsigned modules themselves).
+        if (session.Mode == SessionMode.Local)
+            services.AddSingleton<IModuleUiFrames>(_ =>
+            {
+                var frames = new ModuleUiFrames(log);
+                AppDomain.CurrentDomain.ProcessExit += (_, _) => frames.Dispose(); // the UI processes never outlive the app
+                return frames;
+            });
         services.AddSingleton(sp =>
         {
             var diag = new DiagnosticsService(sp.GetRequiredService<ResultStore>(), sp.GetServices<IDiagnosticModule>());

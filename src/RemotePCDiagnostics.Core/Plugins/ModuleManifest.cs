@@ -33,6 +33,9 @@ public sealed record ModuleManifest
     public bool ChangesSystem { get; init; }
     /// <summary>The module needs administrator (SFC, DISM, SMART, sensors): it must be signed to run.</summary>
     public bool NeedsAdmin { get; init; }
+    /// <summary>The module sets its own details UI (<see cref="IPluginContext.SetDetailsComponent"/>). An unsigned module's UI then runs in
+    /// its own user-mode process and is shown on the module page in a sandboxed frame.</summary>
+    public bool HasUi { get; init; }
 
     private static readonly JsonSerializerOptions Json = new()
     {

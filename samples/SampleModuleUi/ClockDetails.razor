@@ -1,0 +1,31 @@
+@using RemotePCDiagnostics.Core
+@implements IDisposable
+@* The module's own UI. It gets the module it describes (DiagnosticModule) and runs in the same process as that module instance. *@
+<div style="display: flex; flex-direction: column; gap: 8px">
+    <div style="font-size: 32px; font-variant-numeric: tabular-nums">@DateTime.Now.ToString("T")</div>
+    <div>@TimeZoneInfo.Local.DisplayName</div>
+    <div>
+        <button @onclick="RunAsync" disabled="@_running">@(_running ? "Checking…" : "Check now")</button>
+        @if (_result is not null) { <span style="margin-left: 8px">@_result.Message</span> }
+    </div>
+</div>
+
+@code {
+    [Parameter] public IDiagnosticModule? DiagnosticModule { get; set; }
+
+    private Timer? _timer;
+    private DiagnosticResult? _result;
+    private bool _running;
+
+    protected override void OnInitialized() => _timer = new Timer(_ => InvokeAsync(StateHasChanged), null, 1000, 1000);
+
+    private async Task RunAsync()
+    {
+        if (DiagnosticModule is null) return;
+        _running = true;
+        try { _result = await DiagnosticModule.RefreshAsync(null); }
+        finally { _running = false; }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

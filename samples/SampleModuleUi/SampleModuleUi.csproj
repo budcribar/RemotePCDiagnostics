@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <!-- A module with its own UI (a Razor details component). Unsigned, with unsigned modules turned on, its UI runs in a user-mode process
+       and shows on the module page in a sandboxed frame. Install like samples/SampleModule (copy SampleModuleUi.dll to the modules folder). -->
+  <Import Project="..\..\build\RemotePCDiagnostics.Module.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Components come from the host at run time (shared framework reference: nothing copied or embedded). -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\..\src\RemotePCDiagnostics.Abstractions\RemotePCDiagnostics.Abstractions.csproj" Private="false" />
+  </ItemGroup>
+</Project>
