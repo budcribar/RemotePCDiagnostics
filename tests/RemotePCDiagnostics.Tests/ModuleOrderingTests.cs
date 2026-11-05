@@ -124,4 +124,29 @@ public class ModuleOrderingTests
         Assert.Equal(["top"], ran);
         Assert.Equal(DiagnosticStatus.Ok, store.Get("top").Status);
     }
+
+    [Fact]
+    public async Task UnmetDependencies_lists_what_RunWithDependencies_would_run_and_empties_once_they_pass()
+    {
+        var (diag, _, _) = Service([D("base"), D("mid", dependsOn: ["base"]), D("top", dependsOn: ["mid"]), D("solo")],
+            ("base", DiagnosticStatus.Ok), ("mid", DiagnosticStatus.Ok), ("top", DiagnosticStatus.Ok), ("solo", DiagnosticStatus.Ok));
+        Assert.Empty(diag.UnmetDependencies("solo"));
+        Assert.Empty(diag.UnmetDependencies("nope"));
+
+        var unmet = diag.UnmetDependencies("top");
+        Assert.Equal([TestIds.For("mid"), TestIds.For("base")], unmet.Select(g => g.Dependency));
+        Assert.All(unmet, g => Assert.Equal(GateKind.Skipped, g.Kind));
+
+        await diag.RunWithDependenciesAsync("top");
+        Assert.Empty(diag.UnmetDependencies("top"));
+    }
+
+    [Fact]
+    public void UnmetDependencies_reports_a_dependency_that_is_not_installed_as_Blocked()
+    {
+        var (diag, _, _) = Service([D("top", dependsOn: ["ghost"])], ("top", DiagnosticStatus.Ok));
+        var gate = Assert.Single(diag.UnmetDependencies("top"));
+        Assert.Equal(GateKind.Blocked, gate.Kind);
+        Assert.Contains("isn't installed", gate.Reason);
+    }
 }
