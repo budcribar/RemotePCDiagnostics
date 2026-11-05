@@ -94,6 +94,7 @@ public sealed class RestrictedModuleHostLauncher(Action<string>? log = null, str
                 var disable = new[] { new SID_AND_ATTRIBUTES { Sid = sidHandle.AddrOfPinnedObject(), Attributes = 0 } };
                 Check(CreateRestrictedToken(own, DISABLE_MAX_PRIVILEGE | LUA_TOKEN, 1, disable, 0, IntPtr.Zero, 0, IntPtr.Zero, out var restricted));
                 SetMediumIntegrity(restricted);
+                SetUserOwnerAndDefaultDacl(restricted);
                 return restricted;
             }
             finally { sidHandle.Free(); }
@@ -118,6 +119,37 @@ public sealed class RestrictedModuleHostLauncher(Action<string>? log = null, str
         finally { LocalFree(mediumSid); }
     }
 
+    /// <summary>
+    /// An elevated token's owner and default DACL are the Administrators group (plus SYSTEM). With Administrators deny-only, the child
+    /// could not open its own process and thread objects, and fails to start with 0xC0000142 (DLL initialization failed). So objects it
+    /// creates are owned by the user and grant the user and SYSTEM full access.
+    /// </summary>
+    private static void SetUserOwnerAndDefaultDacl(SafeAccessTokenHandle token)
+    {
+        var user = System.Security.Principal.WindowsIdentity.GetCurrent().User ?? throw new InvalidOperationException("no user SID");
+        var system = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null);
+        var userSid = new byte[user.BinaryLength];
+        user.GetBinaryForm(userSid, 0);
+        var acl = new System.Security.AccessControl.RawAcl(System.Security.AccessControl.RawAcl.AclRevision, 2);
+        acl.InsertAce(0, new System.Security.AccessControl.CommonAce(System.Security.AccessControl.AceFlags.None,
+            System.Security.AccessControl.AceQualifier.AccessAllowed, GENERIC_ALL, user, false, null));
+        acl.InsertAce(1, new System.Security.AccessControl.CommonAce(System.Security.AccessControl.AceFlags.None,
+            System.Security.AccessControl.AceQualifier.AccessAllowed, GENERIC_ALL, system, false, null));
+        var aclBytes = new byte[acl.BinaryLength];
+        acl.GetBinaryForm(aclBytes, 0);
+
+        var sidPin = GCHandle.Alloc(userSid, GCHandleType.Pinned);
+        var aclPin = GCHandle.Alloc(aclBytes, GCHandleType.Pinned);
+        try
+        {
+            var owner = sidPin.AddrOfPinnedObject();          // TOKEN_OWNER { PSID Owner }
+            Check(SetTokenInformation(token, TokenOwner, ref owner, IntPtr.Size));
+            var dacl = aclPin.AddrOfPinnedObject();           // TOKEN_DEFAULT_DACL { PACL DefaultDacl }
+            Check(SetTokenInformation(token, TokenDefaultDacl, ref dacl, IntPtr.Size));
+        }
+        finally { sidPin.Free(); aclPin.Free(); }
+    }
+
     private static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
 
     private sealed class Connection(Process process, StreamWriter input, StreamReader output, StreamReader error) : IModuleHostConnection
@@ -136,7 +168,8 @@ public sealed class RestrictedModuleHostLauncher(Action<string>? log = null, str
 
     private const uint TOKEN_DUPLICATE = 0x0002, TOKEN_QUERY = 0x0008, TOKEN_ASSIGN_PRIMARY = 0x0001, TOKEN_ADJUST_DEFAULT = 0x0080;
     private const uint DISABLE_MAX_PRIVILEGE = 0x1, LUA_TOKEN = 0x4;
-    private const int WinBuiltinAdministratorsSid = 26, SECURITY_MAX_SID_SIZE = 68, TokenIntegrityLevel = 25;
+    private const int WinBuiltinAdministratorsSid = 26, SECURITY_MAX_SID_SIZE = 68, TokenIntegrityLevel = 25, TokenOwner = 4, TokenDefaultDacl = 6;
+    private const int GENERIC_ALL = 0x10000000;
     private const uint SE_GROUP_INTEGRITY = 0x20, HANDLE_FLAG_INHERIT = 1, STARTF_USESTDHANDLES = 0x100;
     private const uint CREATE_NO_WINDOW = 0x08000000, CREATE_UNICODE_ENVIRONMENT = 0x00000400;
 
@@ -164,6 +197,8 @@ public sealed class RestrictedModuleHostLauncher(Action<string>? log = null, str
     [DllImport("advapi32.dll")] private static extern int GetLengthSid(IntPtr sid);
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool SetTokenInformation(SafeAccessTokenHandle token, int infoClass, IntPtr info, int length);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool SetTokenInformation(SafeAccessTokenHandle token, int infoClass, ref IntPtr info, int length);
     [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool CreateProcessAsUser(SafeAccessTokenHandle token, string? application, StringBuilder commandLine, IntPtr processAttributes,
         IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string? currentDirectory, ref STARTUPINFO startup, out PROCESS_INFORMATION info);
