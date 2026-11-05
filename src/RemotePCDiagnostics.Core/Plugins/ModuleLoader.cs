@@ -29,7 +29,7 @@ public sealed record ModuleLoaderOptions
 /// <summary>The release key that signs modules allowed to run in the app process. Set by tools/New-ModuleSigningKey.ps1.</summary>
 public static class ModuleSigningKey
 {
-    public const string PublicKeyPem = "";
+    public const string PublicKeyPem = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOveRgnw3/QQKbqvUxAcz300rcJxo\n9SGZ2uqTInJVMOr3+so0D6lH6LsT13JkcU+0yks6OFL8Rxwegi18Uy4vjQ==\n-----END PUBLIC KEY-----";
 }
 
 /// <summary>Detached module signature: &lt;Module&gt;.dll.sig holds base64 ECDSA P-256 / SHA-256 (IEEE P1363) over the DLL's exact bytes,
