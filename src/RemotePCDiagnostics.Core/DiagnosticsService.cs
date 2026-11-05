@@ -527,7 +527,7 @@ public sealed class DiagnosticsService
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
                 catch (Exception ex) { r = new DiagnosticResult(module.Name, DiagnosticStatus.Error, ex.Message, DateTimeOffset.Now, ex); }
             }
-            r = r with { ModuleName = module.Name, InstanceKey = inst.Key, InstanceLabel = inst.Label };
+            r = MarkStopped(module, r with { ModuleName = module.Name, InstanceKey = inst.Key, InstanceLabel = inst.Label });
             _store.Set(r);
             ran.Add(r);
             if (r.Cancelled) break;

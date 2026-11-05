@@ -3,8 +3,24 @@ namespace RemotePCDiagnostics.Core.Stress;
 public enum GpuAdapterKind { Hardware, Software }
 
 /// <summary>The graphics adapter a test runs on. Software = Microsoft Basic Render Driver (WARP): never a GPU pass.</summary>
-public sealed record GpuAdapterInfo(string Name, GpuAdapterKind Kind, long DedicatedMemoryBytes = 0, uint VendorId = 0)
+/// <param name="Id">Stable identity for per-GPU results: PCI vendor, device, subsystem and revision ids (plus "#2" for a second identical
+/// card), never the adapter LUID, which changes each boot. Null when the factory can't tell adapters apart.</param>
+public sealed record GpuAdapterInfo(string Name, GpuAdapterKind Kind, long DedicatedMemoryBytes = 0, uint VendorId = 0, string? Id = null)
 {
+    public static string PciId(uint vendor, uint device, uint subSys, uint revision) =>
+        $"PCI\\VEN_{vendor:X4}&DEV_{device:X4}&SUBSYS_{subSys:X8}&REV_{revision:X2}";
+
+    /// <summary>Gives each adapter its <see cref="Id"/> from <paramref name="pciId"/>, numbering identical cards in enumeration order.</summary>
+    public static IReadOnlyList<GpuAdapterInfo> WithIds(IEnumerable<(GpuAdapterInfo Info, string PciId)> adapters)
+    {
+        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        return adapters.Select(a =>
+        {
+            var n = seen[a.PciId] = seen.GetValueOrDefault(a.PciId) + 1;
+            return a.Info with { Id = n == 1 ? a.PciId : $"{a.PciId}#{n}" };
+        }).ToList();
+    }
+
     /// <summary>Microsoft's software rasterizer (WARP / Basic Render Driver) reports vendor 0x1414.</summary>
     public const uint MicrosoftVendorId = 0x1414;
     public bool IsSoftware => Kind == GpuAdapterKind.Software || VendorId == MicrosoftVendorId;
@@ -34,6 +50,13 @@ public interface IGpuDeviceFactory
 {
     /// <summary>Opens the first usable hardware adapter. Never opens a software adapter as a GPU.</summary>
     GpuOpenResult Open();
+
+    /// <summary>The hardware adapters (no software ones), each with its <see cref="GpuAdapterInfo.Id"/>. Opens nothing. Empty when the
+    /// factory can't list them: the GPU test then runs once, on the first adapter.</summary>
+    IReadOnlyList<GpuAdapterInfo> ListAdapters() => [];
+
+    /// <summary>Opens the adapter with this <see cref="GpuAdapterInfo.Id"/>; <see cref="GpuOpenStatus.NoGpu"/> when it is gone.</summary>
+    GpuOpenResult Open(string adapterId) => Open();
 }
 
 /// <summary>The GPU stopped responding: Windows reset the driver (TDR) or the device was removed/hung.</summary>

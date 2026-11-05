@@ -4,7 +4,7 @@
     var r = Store.Get(GpuStressModule.ModuleName);
     var running = r.Status == DiagnosticStatus.Running;
     var otherBusy = Diagnostics.IsAnyStressRunning && !running;
-    var report = r.Payload as GpuStressReport;
+    var report = r.Report() as GpuStressReport; // one result per GPU: the worst one (or the one you stopped)
     var p = running ? Module?.LastProgress : null;
 }
 <div class="toolbar">
