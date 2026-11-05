@@ -28,8 +28,8 @@ public class ChecksScreenTests
         Assert.Equal(expected, CheckRows.KindOf(new DiagnosticResult("M", st, msg, DateTimeOffset.Now) { Cancelled = expected == RowKind.Cancelled }));
 
     [Fact]
-    public void Unavailable_FromAvailabilityPayload() =>
-        Assert.Equal(RowKind.Unavailable, CheckRows.KindOf(new DiagnosticResult("M", DiagnosticStatus.Error, "no", DateTimeOffset.Now, ModuleAvailability.Unavailable("no"))));
+    public void CouldNotRun_FromAvailabilityPayload() =>
+        Assert.Equal(RowKind.CouldNotRun, CheckRows.KindOf(new DiagnosticResult("M", DiagnosticStatus.Error, "no", DateTimeOffset.Now, ModuleAvailability.Unavailable("no"))));
 
     [Fact]
     public void Labels_UseModeTheResultRanIn_WarningNeverPassed()

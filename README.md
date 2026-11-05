@@ -407,7 +407,7 @@ Results also go to the Windows Event Log: **Event Viewer > Windows Logs > Applic
 | ID | Content |
 |----|---------|
 | 1000 / 1001 | App start (version, machine model, admin yes/no, Local/Remote mode) / app exit |
-| 1100 | One event per finished test (every module and stress test), stable `Key: value` lines: `Test result` (module), `Module id` (the module's permanent GUID), `Test`, `Outcome` (OK/Warning/Critical/Cancelled/Unavailable), `Summary`, `Duration`, `Stress suite`, `Finished` (ISO 8601), `Machine`, `App version`, `Format: 3`, then `Measurements:` (`  Name=value`, numbers only) and human-readable `Details:`; security audit lists only failed/warning item IDs and titles (max 25). The History page reads these back. |
+| 1100 | One event per finished test (every module and stress test), stable `Key: value` lines: `Test result` (module), `Module id` (the module's permanent GUID), `Test`, `Instance id` and `Instance` (for a per-device test: the drive, GPU or webcam), `Outcome` (OK/Warning/Critical/Cancelled/Couldn't run/Skipped/Blocked), `Summary`, `Duration`, `Stress suite`, `Finished` (ISO 8601), `Machine`, `App version`, `Format: 3`, then `Measurements:` (`  Name=value`, numbers only) and human-readable `Details:`; security audit lists only failed/warning item IDs and titles (max 25). The History page reads these back. |
 | 1110 / 1111 | Stress suite started / finished (outcome and per-test states) |
 | 1200 | Fan diagnostic (EC fan, IdeaPad 82R4) lines |
 | 1300 | Sensor driver lines (PawnIO / LibreHardwareMonitor) |

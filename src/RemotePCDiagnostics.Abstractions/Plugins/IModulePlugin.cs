@@ -33,8 +33,9 @@ public interface IPluginContext
 /// <summary>The version of this contract assembly, separate from the app's version.</summary>
 public static class ContractVersion
 {
-    /// <summary>Major changes break plugins (removed type, changed signature); minor ones add optional members.</summary>
-    public static Version Current { get; } = new(1, 0, 0);
+    /// <summary>1.1: hardware instances (IPerDeviceModule, IDetectableModule, DiagnosticResult.InstanceKey) and CouldNotRun.</summary>
+    /// <remarks>Major changes break plugins (removed type, changed signature); minor ones add optional members.</remarks>
+    public static Version Current { get; } = new(1, 1, 0);
 
     /// <summary>A plugin built for <paramref name="builtFor"/> loads when the majors match and its minor is at or below the host's.</summary>
     public static bool IsCompatible(Version builtFor, Version? host = null)

@@ -161,7 +161,39 @@ public sealed class DiagnosticsService
         }
     }
 
-    private static bool IsVisible(IDiagnosticModule m) => m is not IHardwareGatedModule g || g.IsPresent;
+    private bool IsVisible(IDiagnosticModule m) => m switch
+    {
+        IHardwareGatedModule g => g.IsPresent,
+        IDetectableModule => _detections.TryGetValue(m.Id, out var d) && d.Applies,
+        _ => true,
+    };
+
+    private readonly ConcurrentDictionary<Guid, ModuleDetection> _detections = new();
+
+    /// <summary>What the module's last DetectAsync said, or null before detection finished (and for modules that don't detect).</summary>
+    public ModuleDetection? DetectionOf(Guid moduleId) => _detections.GetValueOrDefault(moduleId);
+
+    /// <summary>The instances a per-device module runs against (those the test applies to).</summary>
+    public IReadOnlyList<ModuleInstance> InstancesOf(IDiagnosticModule module) =>
+        _detections.TryGetValue(module.Id, out var d) ? d.Instances.Where(i => i.Applies).ToList() : [];
+
+    /// <summary>Runs DetectAsync again for every detectable module (the host calls it on device arrival and removal).</summary>
+    public Task RedetectAsync() => Task.WhenAll(_modules.OfType<IDetectableModule>().Select(DetectAsync));
+
+    private async Task DetectAsync(IDetectableModule m)
+    {
+        Interlocked.Increment(ref _detecting);
+        ModuleDetection detection;
+        try { detection = await m.DetectAsync().ConfigureAwait(false); }
+        catch (Exception ex) { detection = ModuleDetection.NotApplicable($"Detection failed: {ex.Message}"); }
+        finally { Interlocked.Decrement(ref _detecting); }
+        _detections[m.Id] = detection;
+        Catalog.SetApplies(m.Id, detection.Applies);
+        Volatile.Write(ref _visible, null);
+        try { ModulesChanged?.Invoke(this, EventArgs.Empty); } catch { }
+        _store.Set(_store.Get(m.Name)); // nudges store-aware pages to re-render
+        try { Log?.Invoke(detection.Applies ? $"{m.Name}: {detection.Instances.Count(i => i.Applies)} instance(s)" : $"{m.Name}: doesn't apply ({detection.NotApplicableReason})"); } catch { }
+    }
 
     /// <summary>True while hardware detection for a gated module is still running (pages show "looking…" instead of "not found").</summary>
     public bool IsDetectingHardware => Volatile.Read(ref _detecting) > 0;
@@ -173,6 +205,7 @@ public sealed class DiagnosticsService
     /// <summary>Runs each gated module's detection once in the background; never blocks the caller, never throws.</summary>
     private void StartHardwareDetection()
     {
+        foreach (var d in _modules.OfType<IDetectableModule>()) _ = Task.Run(() => DetectAsync(d));
         foreach (var g in _modules.OfType<IHardwareGatedModule>())
         {
             Interlocked.Increment(ref _detecting);
@@ -374,9 +407,9 @@ public sealed class DiagnosticsService
         try
         {
             var availability = await module.CheckAvailabilityAsync(ct).ConfigureAwait(false);
-            result = availability.IsAvailable
-                ? await module.RefreshAsync(trackedProgress, ct).ConfigureAwait(false)
-                : new DiagnosticResult(module.Name, DiagnosticStatus.Error, availability.Reason ?? "Unavailable", DateTimeOffset.Now, availability);
+            result = !availability.IsAvailable ? CouldNotRun.Result(module.Name, availability.Reason ?? "Couldn't run")
+                : module is IPerDeviceModule perDevice ? await RunInstancesAsync(perDevice, trackedProgress, ct).ConfigureAwait(false)
+                : await module.RefreshAsync(trackedProgress, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -391,6 +424,37 @@ public sealed class DiagnosticsService
         result = MarkStopped(module, result);
         _store.Set(result);
         return result;
+    }
+
+    /// <summary>One run per instance, one after another; each instance result is stored (and logged) on its own. The module's result is
+    /// the worst of them, with the instance results as its payload.</summary>
+    private async Task<DiagnosticResult> RunInstancesAsync(IPerDeviceModule module, ICheckProgress progress, CancellationToken ct)
+    {
+        if (!_detections.ContainsKey(module.Id)) await DetectAsync(module).ConfigureAwait(false);
+        var instances = InstancesOf(module);
+        if (instances.Count == 0) return CouldNotRun.Result(module.Name, DetectionOf(module.Id)?.NotApplicableReason ?? "No hardware to test");
+        var results = new List<DiagnosticResult>(instances.Count);
+        for (var i = 0; i < instances.Count; i++)
+        {
+            var inst = instances[i];
+            ct.ThrowIfCancellationRequested();
+            progress.Report(i + 1, instances.Count, inst.Label);
+            _store.Set(new DiagnosticResult(module.Name, DiagnosticStatus.Running, "Running…", DateTimeOffset.Now) { InstanceKey = inst.Key, InstanceLabel = inst.Label });
+            DiagnosticResult r;
+            try { r = await module.RefreshAsync(inst, progress, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) { r = new DiagnosticResult(module.Name, DiagnosticStatus.Error, ex.Message, DateTimeOffset.Now, ex); }
+            r = r with { ModuleName = module.Name, InstanceKey = inst.Key, InstanceLabel = inst.Label };
+            _store.Set(r);
+            results.Add(r);
+        }
+        var worst = results.OrderByDescending(r => Severity(r.Status)).First();
+        var message = results.Count == 1 ? worst.Message
+            : results.All(r => r.Status == DiagnosticStatus.Ok) ? $"All {results.Count} passed"
+            : $"{results.Count(r => r.Status != DiagnosticStatus.Ok)} of {results.Count} need attention: {worst.InstanceLabel}: {worst.Message}";
+        return new DiagnosticResult(module.Name, worst.Status, message, DateTimeOffset.Now, new InstanceResults(results)) { Cancelled = results.Any(r => r.Cancelled) };
+
+        static int Severity(DiagnosticStatus s) => s switch { DiagnosticStatus.Error => 3, DiagnosticStatus.Warning => 2, DiagnosticStatus.Ok => 1, _ => 0 };
     }
 
     /// <summary>Runs the quick checks (<see cref="RunAllAsync"/>) and then the stress tests one after another
@@ -538,3 +602,6 @@ public sealed class DiagnosticsService
         }
     }
 }
+
+/// <summary>Payload of a per-device module's overall result: the result for each instance, in run order.</summary>
+public sealed record InstanceResults(IReadOnlyList<DiagnosticResult> Results);
