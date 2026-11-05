@@ -1,7 +1,7 @@
 @inherits LayoutComponentBase
 @inject ISessionContext Session
 @inject NavigationManager Nav
-@inject IServiceProvider Services
+@inject AppServices App
 <div class="app @(_navigationOpen ? "nav-open" : "")">
     <header class="topbar">
         <button class="nav-toggle" aria-label="Toggle navigation" aria-controls="main-navigation" aria-expanded="@(_navigationOpen ? "true" : "false")" @onclick="() => _navigationOpen = !_navigationOpen">Menu</button>
@@ -23,7 +23,7 @@
     {
         try
         {
-            if (Services.GetService(typeof(RemotePCDiagnostics.Core.Workflow.WorkflowService)) is RemotePCDiagnostics.Core.Workflow.WorkflowService { ShouldOpenWorkflowPage: true }
+            if (App.Workflow is { ShouldOpenWorkflowPage: true }
                 && Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Length == 0)
                 Nav.NavigateTo("workflow", replace: true);
         }

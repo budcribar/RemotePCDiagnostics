@@ -1,7 +1,6 @@
-@page "/module/memorytest"
 @using RemotePCDiagnostics.Core.Stress
 @using RemotePCDiagnostics.Core.Osquery
-@inherits StoreAwareComponent
+@inherits ModuleDetailsBase
 @{
     var r = Store.Get(MemoryTestModule.ModuleName);
     var running = r.Status == DiagnosticStatus.Running;
@@ -106,7 +105,7 @@ else if (report is not null)
 </div>
 
 @code {
-    private MemoryTestModule? Module => Diagnostics.Modules.OfType<MemoryTestModule>().FirstOrDefault();
+    private MemoryTestModule? Module => (DiagnosticModule as MemoryTestModule);
     private MemoryTestMode _mode = MemoryTestMode.Quick;
     private TimeSpan _duration = MemoryTestOptions.DefaultDuration(MemoryTestMode.Quick);
     private bool _confirm;

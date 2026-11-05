@@ -156,16 +156,24 @@ public sealed class ChecksScreenState
 
     /// <summary>Stress tests page: stress tests in suite order, then the audio, webcam and NPU tests (separate steps that run on their own
     /// after them when selected). The security audit is not here: it has its own page.</summary>
-    public IReadOnlyList<IDiagnosticModule> StressModules =>
-        StressSuite.Order.Select(n => _diag.Modules.FirstOrDefault(m => string.Equals(m.Name, n, StringComparison.OrdinalIgnoreCase))).OfType<IDiagnosticModule>()
-            .Concat(_diag.Modules.OfType<Audio.IAudioTestModule>())
-            .Concat(_diag.Modules.OfType<Webcam.IWebcamTestModule>())
-            .Concat(_diag.Modules.OfType<Npu.INpuTestModule>())
-            .Concat(_diag.Modules.OfType<Areas.WindowsIntegrityModule>()).ToList();
+    /// <remarks>Built from the catalog: stress tests in suite order, then on-demand tests by group and order.</remarks>
+    public IReadOnlyList<IDiagnosticModule> StressModules
+    {
+        get
+        {
+            var listed = _diag.Modules.Select(m => (Module: m, Descriptor: _diag.Catalog.Get(m.Id))).Where(x => x.Descriptor is { OnStressPage: true }).ToList();
+            var stress = listed.Where(x => x.Descriptor!.Kind == ModuleKind.StressTest)
+                .OrderBy(x => Array.FindIndex(StressSuite.Order, n => string.Equals(n, x.Module.Name, StringComparison.OrdinalIgnoreCase)) is var i and >= 0 ? i : int.MaxValue)
+                .ThenBy(x => ModuleGroups.Rank(x.Descriptor!.Group)).ThenBy(x => x.Descriptor!.Order);
+            var onDemand = listed.Where(x => x.Descriptor!.Kind == ModuleKind.OnDemand)
+                .OrderBy(x => ModuleGroups.Rank(x.Descriptor!.Group)).ThenBy(x => x.Descriptor!.Order);
+            return stress.Concat(onDemand).Select(x => x.Module).ToList();
+        }
+    }
 
-    /// <summary>Security audit and audio tests: listed with the stress tests but never part of the stress run, and not ticked by default.</summary>
-    public static bool IsSeparateStep(IDiagnosticModule m) => m.Name == SecurityAuditModule.ModuleName || m is Audio.IAudioTestModule || m is Webcam.IWebcamTestModule
-        || m is Npu.INpuTestModule || m is Areas.WindowsIntegrityModule;
+    /// <summary>On-demand tests (security audit, audio, webcam, NPU, SFC/DISM): listed with the stress tests but never part of the stress run,
+    /// and not ticked by default.</summary>
+    public static bool IsSeparateStep(IDiagnosticModule m) => m is not IStressSuiteModule && !m.IncludeInRunAll;
 
     public IReadOnlyList<IDiagnosticModule> Modules(CheckGroup g) => g == CheckGroup.Checks ? ChecksModules : StressModules;
 
@@ -178,7 +186,7 @@ public sealed class ChecksScreenState
 
     /// <summary>Which page shows <paramref name="module"/>: "security-audit", "stress" or "checks" (also for anything else).</summary>
     public string PageFor(string module) =>
-        string.Equals(module, SecurityAuditModule.ModuleName, StringComparison.OrdinalIgnoreCase) ? SecurityAuditRoute
+        _diag.Catalog.Find(module)?.Page is { } page ? page
         : StressModules.Any(m => string.Equals(m.Name, module, StringComparison.OrdinalIgnoreCase)) ? StressRoute : ChecksRoute;
 
     /// <summary>The group (page) a module belongs to, or null for the security audit and modules on neither page.</summary>

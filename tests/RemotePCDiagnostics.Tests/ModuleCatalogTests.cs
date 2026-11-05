@@ -112,6 +112,29 @@ public class ModuleCatalogTests
     }
 
     [Fact]
+    public void Details_component_set_before_or_after_registration_is_kept()
+    {
+        var c = new ModuleCatalog();
+        c.SetDetailsComponent(ModuleIds.CpuStress, typeof(string));
+        var d = c.Add(new FakeModule(ModuleSlugs.CpuStress, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.CpuStress))));
+        Assert.Equal(typeof(string), d.DetailsComponent);
+        c.Add(new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth))));
+        c.SetDetailsComponent(ModuleIds.DriveHealth, typeof(int));
+        Assert.Equal(typeof(int), c.Get(ModuleIds.DriveHealth)!.DetailsComponent);
+    }
+
+    [Fact]
+    public void Stress_page_membership_and_group_rank()
+    {
+        Assert.True(new ModuleDescriptor(Guid.NewGuid(), "a", "A", ModuleKind.StressTest).OnStressPage);
+        Assert.True(new ModuleDescriptor(Guid.NewGuid(), "b", "B", ModuleKind.OnDemand).OnStressPage);
+        Assert.False(new ModuleDescriptor(Guid.NewGuid(), "c", "C", ModuleKind.Check).OnStressPage);
+        Assert.False(BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.SecurityAudit).OnStressPage);
+        Assert.True(ModuleGroups.Rank(ModuleGroups.Cpu) < ModuleGroups.Rank(ModuleGroups.Network));
+        Assert.Equal(ModuleGroups.Rank(ModuleGroups.Other), ModuleGroups.Rank("contoso.custom"));
+    }
+
+    [Fact]
     public void Unknown_ids_show_as_unknown()
     {
         var id = Guid.NewGuid();

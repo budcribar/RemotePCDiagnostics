@@ -295,16 +295,8 @@
         </div>
     };
 
-    private static Type PageFor(IDiagnosticModule m) => m.Name switch
-    {
-        ModuleSlugs.Osquery => typeof(OsqueryPage), ModuleSlugs.Sensors => typeof(LibreHardwareMonitorPage), ModuleSlugs.CpuStress => typeof(CpuStressPage),
-        ModuleSlugs.MemoryTest => typeof(MemoryTestPage), ModuleSlugs.DiskSpeed => typeof(DiskSpeedPage), ModuleSlugs.GpuStress => typeof(GpuStressPage),
-        ModuleSlugs.NetworkTest => typeof(NetworkTestPage), ModuleSlugs.SecurityAudit => typeof(SecurityAuditPage),
-        ModuleSlugs.SpeakerToMic => typeof(SpeakerToMicPage), ModuleSlugs.MicToSpeaker => typeof(MicToSpeakerPage), ModuleSlugs.Webcam => typeof(WebcamTestPage),
-        ModuleSlugs.NpuTest => typeof(NpuTestPage),
-        _ => typeof(AreaPage),
-    };
+    private Type PageFor(IDiagnosticModule m) => Diagnostics.Catalog.Get(m.Id)?.DetailsComponent ?? typeof(AreaPage);
 
-    private static IDictionary<string, object>? ParamsFor(IDiagnosticModule m) =>
-        PageFor(m) == typeof(AreaPage) ? new Dictionary<string, object> { ["Slug"] = m.Name.ToLowerInvariant() } : null;
+    private IDictionary<string, object> ParamsFor(IDiagnosticModule m) =>
+        PageFor(m) == typeof(AreaPage) ? new Dictionary<string, object> { ["Slug"] = m.Name.ToLowerInvariant() } : new Dictionary<string, object> { ["DiagnosticModule"] = m };
 }

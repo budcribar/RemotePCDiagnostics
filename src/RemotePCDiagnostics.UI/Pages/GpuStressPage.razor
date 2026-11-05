@@ -1,6 +1,5 @@
-@page "/module/gpustress"
 @using RemotePCDiagnostics.Core.Stress
-@inherits StoreAwareComponent
+@inherits ModuleDetailsBase
 @{
     var r = Store.Get(GpuStressModule.ModuleName);
     var running = r.Status == DiagnosticStatus.Running;
@@ -81,7 +80,7 @@ else if (report is not null)
 }
 
 @code {
-    private GpuStressModule? Module => Diagnostics.Modules.OfType<GpuStressModule>().FirstOrDefault();
+    private GpuStressModule? Module => (DiagnosticModule as GpuStressModule);
     private TimeSpan _duration = TimeSpan.FromMinutes(1);
 
     protected override void OnInitialized()

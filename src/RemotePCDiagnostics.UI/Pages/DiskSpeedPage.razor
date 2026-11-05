@@ -1,7 +1,6 @@
-@page "/module/diskspeed"
 @using RemotePCDiagnostics.Core.Stress
 @using RemotePCDiagnostics.Core.Osquery
-@inherits StoreAwareComponent
+@inherits ModuleDetailsBase
 @{
     var r = Store.Get(DiskSpeedModule.ModuleName);
     var running = r.Status == DiagnosticStatus.Running;
@@ -110,7 +109,7 @@ else if (report is not null)
 }
 
 @code {
-    private DiskSpeedModule? Module => Diagnostics.Modules.OfType<DiskSpeedModule>().FirstOrDefault();
+    private DiskSpeedModule? Module => (DiagnosticModule as DiskSpeedModule);
     private IReadOnlyList<TestDrive> _drives = [];
     private string? _drive;
     private long _size = DiskSpeedOptions.GB;

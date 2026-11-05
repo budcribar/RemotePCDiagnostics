@@ -1,6 +1,5 @@
-@page "/module/osquery"
 @using RemotePCDiagnostics.Core.Osquery
-@inherits StoreAwareComponent
+@inherits ModuleDetailsBase
 @inject OsqueryRunner Runner
 @{
     var r = Store.Get(ModuleSlugs.Osquery);

@@ -1,9 +1,8 @@
-@page "/module/speakertomic"
 @using RemotePCDiagnostics.Core.Audio
-@inherits StoreAwareComponent
+@inherits ModuleDetailsBase
 @* On-demand speaker → microphone test: plays a capped, faded 1 kHz tone while recording the mic and the speaker output (loopback). *@
 @{
-    var m = Diagnostics.Modules.OfType<SpeakerToMicModule>().FirstOrDefault();
+    var m = (DiagnosticModule as SpeakerToMicModule);
 }
 @if (m is null)
 {
@@ -67,7 +66,7 @@ else
     protected override void OnInitialized()
     {
         base.OnInitialized();
-        if (Diagnostics.Modules.OfType<SpeakerToMicModule>().FirstOrDefault() is { } m) LoadDevices(m);
+        if ((DiagnosticModule as SpeakerToMicModule) is { } m) LoadDevices(m);
     }
 
     private void LoadDevices(SpeakerToMicModule m) { _outputs = m.Devices(AudioFlow.Output); _inputs = m.Devices(AudioFlow.Input); }

@@ -52,6 +52,11 @@ public sealed record ModuleDescriptor(Guid Id, string Slug, string DisplayName, 
     public IReadOnlyList<Guid> RunAfter { get; init; } = [];
     /// <summary>A retired module whose results now count as this module's (it was merged into it).</summary>
     public Guid? MergedInto { get; init; }
+    /// <summary>The route of the module's own top-level page (the security audit), when it isn't listed on Checks or Stress tests.</summary>
+    public string? Page { get; init; }
+
+    /// <summary>Listed on the Stress tests page: stress tests and on-demand tests without a page of their own.</summary>
+    public bool OnStressPage => Kind != ModuleKind.Check && Page is null;
 }
 
 /// <summary>Stable group keys for built-in modules. A plugin may add its own key.</summary>
@@ -59,6 +64,11 @@ public static class ModuleGroups
 {
     public const string Hardware = "hardware", Cpu = "cpu", Memory = "memory", Storage = "storage", Graphics = "graphics", Network = "network",
         Windows = "windows", Apps = "apps", Security = "security", Audio = "audio", Camera = "camera", Ai = "ai", Power = "power", Other = "other";
+
+    private static readonly string[] Ranked = [Hardware, Cpu, Memory, Storage, Graphics, Network, Power, Windows, Apps, Audio, Camera, Ai, Security];
+
+    /// <summary>Where a group sorts in lists (unknown keys last, as "Other").</summary>
+    public static int Rank(string? key) => Array.IndexOf(Ranked, key) is var i and >= 0 ? i : Ranked.Length;
 
     /// <summary>English name for a group key; unknown keys are "Other".</summary>
     public static string DisplayName(string? key) => key switch
@@ -96,7 +106,7 @@ public static class BuiltInModules
         new(ModuleIds.MicToSpeaker, ModuleSlugs.MicToSpeaker, "Microphone to speaker test", ModuleKind.OnDemand, ModuleGroups.Audio, 200),
         new(ModuleIds.Webcam, ModuleSlugs.Webcam, "Webcam test", ModuleKind.OnDemand, ModuleGroups.Camera, 100),
         new(ModuleIds.NpuTest, ModuleSlugs.NpuTest, "NPU (AI accelerator) test", ModuleKind.OnDemand, ModuleGroups.Ai, 100),
-        new(ModuleIds.SecurityAudit, ModuleSlugs.SecurityAudit, "Security audit", ModuleKind.OnDemand, ModuleGroups.Security, 100),
+        new(ModuleIds.SecurityAudit, ModuleSlugs.SecurityAudit, "Security audit", ModuleKind.OnDemand, ModuleGroups.Security, 100) { Page = "security-audit" },
         // Merged into other modules; kept so History can still name their old results.
         new(ModuleIds.BsodHistory, ModuleSlugs.BsodHistory, "Blue screens & unexpected restarts", ModuleKind.Check, ModuleGroups.Windows, 310) { MergedInto = ModuleIds.Crashes },
         new(ModuleIds.WifiConfig, ModuleSlugs.WifiConfig, "Wi-Fi & network config", ModuleKind.Check, ModuleGroups.Network, 110) { MergedInto = ModuleIds.Network },
@@ -113,6 +123,7 @@ public sealed class ModuleCatalog
     private readonly ConcurrentDictionary<Guid, ModuleDescriptor> _byId = new();
     private readonly ConcurrentDictionary<Guid, IDiagnosticModule> _registered = new();
     private readonly ConcurrentDictionary<Guid, ModuleState> _disabled = new();
+    private readonly ConcurrentDictionary<Guid, Type> _details = new();
 
     public ModuleCatalog(IEnumerable<ModuleDescriptor>? known = null)
     {
@@ -142,7 +153,11 @@ public sealed class ModuleCatalog
             throw new InvalidOperationException($"Module '{module.Name}' uses the id of '{existing.Slug}' ({module.Id}).");
         if (existing is null && Find(module.Name) is { } slugClash)
             throw new InvalidOperationException($"Module '{module.Name}' uses the slug of module {slugClash.Id}.");
-        var d = DescriptorFor(module, existing) with { Source = existing?.Source == ModuleSource.Plugin ? ModuleSource.Plugin : source, PluginId = pluginId ?? existing?.PluginId };
+        var d = DescriptorFor(module, existing) with
+        {
+            Source = existing?.Source == ModuleSource.Plugin ? ModuleSource.Plugin : source, PluginId = pluginId ?? existing?.PluginId,
+            DetailsComponent = _details.GetValueOrDefault(module.Id) ?? existing?.DetailsComponent,
+        };
         _byId[d.Id] = d;
         _registered[d.Id] = module;
         RaiseChanged();
@@ -154,6 +169,15 @@ public sealed class ModuleCatalog
     {
         _byId.TryAdd(descriptor.Id, descriptor);
         if (state == ModuleState.Disabled) _disabled[descriptor.Id] = state;
+        RaiseChanged();
+    }
+
+    /// <summary>Sets the module's own details UI (a Razor component type). The component gets the module as its
+    /// <c>DiagnosticModule</c> parameter; a module without one is shown in the generic report view.</summary>
+    public void SetDetailsComponent(Guid id, Type component)
+    {
+        _details[id] = component;
+        if (_byId.TryGetValue(id, out var d)) _byId[id] = d with { DetailsComponent = component };
         RaiseChanged();
     }
 
