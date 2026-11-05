@@ -65,7 +65,7 @@ public sealed record AutoLogonStatus(string UserName, string Domain, bool Alread
     public string PrefillUser => MicrosoftAccountEmail is { } e && e.Contains('@') ? e.Trim() : UserName;
 }
 
-/// <summary>Everything the workflow keeps across restarts (%LOCALAPPDATA%\RemotePCDiagnostics\workflow.json). No passwords.</summary>
+/// <summary>Everything the workflow keeps across restarts (%ProgramData%\RemotePCDiagnostics\state\workflow.json, which only administrators can change). No passwords.</summary>
 public sealed record WorkflowState
 {
     /// <summary>Recommendation rules used to produce this review; zero denotes a legacy saved review.</summary>
@@ -139,7 +139,7 @@ public interface IWorkflowStore
 public sealed class FileWorkflowStore(string path, Action<string>? log = null) : IWorkflowStore
 {
     public static string DefaultPath() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RemotePCDiagnostics", "workflow.json");
+        ProtectedState.PathFor(ProtectedState.WorkflowFile);
 
     public WorkflowState? Load()
     {

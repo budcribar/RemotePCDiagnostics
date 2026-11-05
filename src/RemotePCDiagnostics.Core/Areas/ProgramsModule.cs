@@ -18,7 +18,7 @@ public sealed record InstalledUpdate(string Id, string Description, DateOnly? In
 /// <summary>Windows version, installed updates (osquery <c>os_version</c>, <c>patches</c>) and installed programs (<c>programs</c>).</summary>
 public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today = null) : OsqueryAreaModuleBase(runner)
 {
-    public const string ModuleName = "Programs";
+    public const string ModuleName = ModuleSlugs.Programs;
     public const string OsSql = "SELECT * FROM os_version;";
     public const string PatchesSql = "SELECT hotfix_id, description, installed_on FROM patches;";
     public const string ProgramsSql = "SELECT name, version, publisher, install_date FROM programs;";

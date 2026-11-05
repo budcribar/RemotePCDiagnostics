@@ -4,9 +4,11 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// App crashes ("Application Error", event 1000) and freezes ("Application Hang", event 1002) from the Windows
 /// Application log over the last 30 days, via <see cref="WindowsEventLog"/>.
 /// </summary>
-public sealed class CrashesModule(SystemCommandRunner commands, bool includeSystemCrashes = false, Func<IReadOnlyList<MinidumpFile>>? minidumpReader = null) : AreaModuleBase(commands.Log)
+public sealed class CrashesModule(SystemCommandRunner commands, bool includeSystemCrashes = false, Func<IReadOnlyList<MinidumpFile>>? minidumpReader = null) : AreaModuleBase(commands.Log), IHangEvidenceSource
 {
-    public const string ModuleName = "Crashes";
+    public const string HangsCardId = "hangs";
+    string IHangEvidenceSource.HangCardId => HangsCardId;
+    public const string ModuleName = ModuleSlugs.Crashes;
     public const int Days = 30, Max = 500, RecentDays = 7, RepeatCrashes = 3;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.Crashes;
@@ -164,7 +166,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
                 crashes.Count == 0 ? "None" : AreaModuleBase.Plural(crashes.Count, "crash", "crashes"),
                 crashes.FirstOrDefault() is { } c ? $"Latest: {c.App}, {WindowsEventLog.FormatTime(c.Time)}" : $"In the last {Days} days",
                 cols, crashes.Select(Row).ToList()),
-            new("hangs", "Apps that stopped responding", hangs.Any(Recent) ? AreaLevel.Warning : hangs.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok,
+            new(HangsCardId, "Apps that stopped responding", hangs.Any(Recent) ? AreaLevel.Warning : hangs.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok,
                 hangs.Count == 0 ? "None" : AreaModuleBase.Plural(hangs.Count, "time"),
                 hangs.FirstOrDefault() is { } h ? $"Latest: {h.App}, {WindowsEventLog.FormatTime(h.Time)}" : $"In the last {Days} days",
                 [.. cols, "Count"], hangs.GroupBy(i => (i.Hang!.Path.Length > 0 ? i.Hang.Path : i.App) + "\n" + i.Hang.Package,

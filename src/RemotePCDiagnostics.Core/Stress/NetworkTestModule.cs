@@ -6,7 +6,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, ISpeedTester speed, IAdapterCounters counters, ISensorProvider sensors,
     NetworkTestSettings? settings = null, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<NetworkTestProgress, NetworkTestReport>(log), IStressSuiteModule
 {
-    public const string ModuleName = "NetworkTest";
+    public const string ModuleName = ModuleSlugs.NetworkTest;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.NetworkTest;
     public override string DisplayName => "Network stability test";

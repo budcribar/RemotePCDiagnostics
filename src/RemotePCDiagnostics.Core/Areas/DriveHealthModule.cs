@@ -63,8 +63,9 @@ public sealed record DriveHealth(
 /// (<see cref="Combine"/>). One drive read serves every drive of a run.
 /// </summary>
 public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunner osquery, IRetrimHistory? retrims = null, Func<DateTimeOffset>? clock = null)
-    : AreaModuleBase(commands.Log ?? osquery.Options.Log), IPerDeviceModule, IInstanceSummary
+    : AreaModuleBase(commands.Log ?? osquery.Options.Log), IPerDeviceModule, IInstanceSummary, IHasAreaPanels
 {
+    public AreaPanels Panels => AreaPanels.StorageCleanup;
     /// <summary>The instance used when the drive list itself can't be read, so the failure is still reported as a run.</summary>
     public const string AllDrivesKey = "all";
     /// <summary>A drive read this recent is reused by the next drive of the same run.</summary>
@@ -72,7 +73,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     /// <summary>"Optimize / Retrim SSD" is offered only when a volume of the SSD wasn't retrimmed in this long (or the date is unknown).</summary>
     public static readonly TimeSpan RetrimFreshFor = TimeSpan.FromDays(30);
 
-    public const string ModuleName = "DriveHealth";
+    public const string ModuleName = ModuleSlugs.DriveHealth;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.DriveHealth;
     public override string DisplayName => "Drive health";

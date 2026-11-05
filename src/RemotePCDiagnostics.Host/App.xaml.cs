@@ -1,6 +1,7 @@
 using System.IO;
 using System.Security.Principal;
 using System.Windows;
+using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Logging;
@@ -43,6 +44,26 @@ public partial class App : Application
     {
         LogFileOnly($"[event {id}] {message.Replace(Environment.NewLine, " | ")}");
         try { Events.Write(new LogEntry(id, level, message)); } catch { }
+    }
+
+    /// <summary>
+    /// ILogger&lt;T&gt; for the app (registered by <see cref="HostServices"/>): each line carries its level and category, so warnings and
+    /// errors reach the Event Log (rate-limited) without guessing from the wording.
+    /// </summary>
+    public static Microsoft.Extensions.Logging.ILoggerFactory Loggers { get; } = new AppLoggerFactory(Write);
+
+    /// <summary>Writes an ILogger line: file log with level and category; warnings and errors also to the Event Log.</summary>
+    public static void Write(LogLevel level, string category, string message)
+    {
+        var line = $"[{AppLoggerFactory.ShortName(category)}] {message}";
+        LogFileOnly(level == LogLevel.Information ? line : $"{level.ToString().ToUpperInvariant()} {line}");
+        try
+        {
+            if (LogText.Route(message) is { } e) { Events.Write(e with { Message = line }); return; }
+            if (level != LogLevel.Information && _gate.Allow(line))
+                Events.Write(new LogEntry(level == LogLevel.Error ? LogEventIds.Error : LogEventIds.AppWarning, level, line));
+        }
+        catch { }
     }
 
     private static void LogFileOnly(string message) =>
@@ -121,6 +142,9 @@ public partial class App : Application
         }
         if (!first) { Log("Another instance is already running: exiting"); _instance.Dispose(); _instance = null; Shutdown(ExitAlreadyRunning); return; }
 
+        // Before anything reads the undo journal, workflow or resume state: secure their folder and move them out of %LOCALAPPDATA%.
+        SecureProtectedState();
+
         if (e.Args.Any(a => a.Equals("--undo-all", StringComparison.OrdinalIgnoreCase)))
         {
             Shutdown(RunUndoAll(restart: e.Args.Any(a => a.Equals("--restart", StringComparison.OrdinalIgnoreCase))));
@@ -132,6 +156,23 @@ public partial class App : Application
 
         MainWindow = new RemotePCDiagnostics.Host.MainWindow();
         MainWindow.Show();
+    }
+
+    private static void SecureProtectedState()
+    {
+        if (!ProtectedStateFolder.Ensure(Log))
+        {
+            Event(LogEventIds.Error, LogLevel.Error, $"Remote PC Diagnostics couldn't make {ProtectedState.Folder()} administrator-only. " +
+                "Undo, the service workflow and restart resume keep working, but a program without administrator rights may be able to change what they do.");
+            return;
+        }
+        try
+        {
+            var outcome = new RemotePCDiagnostics.Core.Migrations.ProtectedStateMigration(ProtectedState.LegacyFolder(), ProtectedState.Folder(),
+                new RemotePCDiagnostics.Core.Migrations.MigrationMarkers(RemotePCDiagnostics.Core.Migrations.MigrationMarkers.DefaultPath()), Log).Run();
+            if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"State move to {ProtectedState.Folder()}: {outcome}");
+        }
+        catch (Exception ex) { Log($"State move to {ProtectedState.Folder()} failed: {ex.Message}"); }
     }
 
     private static void RunStartupMigrations()

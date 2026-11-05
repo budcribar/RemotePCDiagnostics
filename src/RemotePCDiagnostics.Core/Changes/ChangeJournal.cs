@@ -98,7 +98,7 @@ public class MemoryChangeJournal : IChangeJournal
     private void Raise() { try { Changed?.Invoke(); } catch { } }
 }
 
-/// <summary>Journal saved as JSON in %LOCALAPPDATA%\RemotePCDiagnostics\changes.json (survives restarts).</summary>
+/// <summary>Journal saved as JSON in %ProgramData%\RemotePCDiagnostics\state\changes.json (survives restarts; only administrators can change it).</summary>
 public sealed class FileChangeJournal : MemoryChangeJournal
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
@@ -106,7 +106,7 @@ public sealed class FileChangeJournal : MemoryChangeJournal
     private readonly Action<string>? _log;
 
     public static string DefaultPath() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RemotePCDiagnostics", "changes.json");
+        ProtectedState.PathFor(ProtectedState.ChangesFile);
 
     public FileChangeJournal(string path, Action<string>? log = null)
     {

@@ -19,7 +19,10 @@ public sealed record StressSuiteProgress(StressSuiteMode Mode, int Index, int To
 
 public enum StressSuiteOutcome { Completed, StoppedOnProblem, Cancelled }
 
-public sealed record StressSuiteResult(StressSuiteMode Mode, StressSuiteOutcome Outcome, IReadOnlyList<StressSuiteStep> Steps, string Message);
+public sealed record StressSuiteResult(StressSuiteMode Mode, StressSuiteOutcome Outcome, IReadOnlyList<StressSuiteStep> Steps, string Message) : IRunEnd
+{
+    [System.Text.Json.Serialization.JsonIgnore] public RunEnd RunEnd => Outcome == StressSuiteOutcome.Cancelled ? RunEnd.Cancelled : RunEnd.Finished;
+}
 
 /// <summary>A stress-test module that the sequential stress suite can drive.</summary>
 public interface IStressSuiteModule : IDiagnosticModule

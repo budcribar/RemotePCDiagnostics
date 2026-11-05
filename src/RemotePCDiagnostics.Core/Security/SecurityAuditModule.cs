@@ -24,7 +24,7 @@ public sealed class SecurityAuditOptions
 /// </summary>
 public sealed class SecurityAuditModule : IDiagnosticModule
 {
-    public const string ModuleName = "SecurityAudit";
+    public const string ModuleName = ModuleSlugs.SecurityAudit;
     public const string PathEnvironmentVariable = "RPD_HARDENINGKITTY_PATH";
     public static readonly string RelativeFolder = Path.Combine("tools", "HardeningKitty");
     public const string ManifestFile = "HardeningKitty.psd1";

@@ -35,8 +35,10 @@ public sealed record GpuStressProgress(
 
 public sealed record GpuStressReport(
     GpuStressOutcome Outcome, TimeSpan Ran, string? AdapterName, long Batches, long ValuesChecked, long Mismatches,
-    double? MaxGpuTemperatureC, double? BillionOpsPerSecond)
+    double? MaxGpuTemperatureC, double? BillionOpsPerSecond) : IRunEnd
 {
+    [System.Text.Json.Serialization.JsonIgnore] public RunEnd RunEnd => Outcome == GpuStressOutcome.StoppedByUser ? RunEnd.Cancelled : Outcome == GpuStressOutcome.NoGpu ? RunEnd.CouldNotRun : RunEnd.Finished;
+
     public string Headline => Outcome switch
     {
         GpuStressOutcome.Passed => "Passed",

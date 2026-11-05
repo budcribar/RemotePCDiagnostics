@@ -29,8 +29,10 @@ public sealed record MemoryTestProgress(
 
 public sealed record MemoryTestReport(
     MemoryTestOutcome Outcome, MemoryTestMode Mode, long TestBytes, int Passes, long Errors, TimeSpan Ran, double? MaxCpuTemperatureC,
-    long AvailableBytes = 0, long TotalBytes = 0, long PlannedBytes = 0, int? HelperExitCode = null, bool LowMemory = false, string? Notice = null)
+    long AvailableBytes = 0, long TotalBytes = 0, long PlannedBytes = 0, int? HelperExitCode = null, bool LowMemory = false, string? Notice = null) : IRunEnd
 {
+    [System.Text.Json.Serialization.JsonIgnore] public RunEnd RunEnd => Outcome == MemoryTestOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+
     /// <summary>True when memory was never (fully) tested for a non-hardware reason: not a memory fault.</summary>
     public bool CouldNotRun => Outcome is MemoryTestOutcome.CouldNotRun or MemoryTestOutcome.Failed;
 

@@ -58,10 +58,11 @@ public static class InstanceKeys
 /// to start. Recorded in History as "Couldn't run" with the reason. A test that doesn't apply to the PC is hidden instead (see
 /// <see cref="IDetectableModule"/>).
 /// </summary>
-public sealed record CouldNotRun(string Reason)
+public sealed record CouldNotRun(string Reason) : IRunEnd
 {
     public const string OutcomeText = "Couldn't run";
     public string Outcome => OutcomeText;
+    [System.Text.Json.Serialization.JsonIgnore] public RunEnd RunEnd => RunEnd.CouldNotRun;
 
     public static DiagnosticResult Result(string moduleName, string reason) =>
         new(moduleName, DiagnosticStatus.Error, reason, DateTimeOffset.Now, new CouldNotRun(reason));

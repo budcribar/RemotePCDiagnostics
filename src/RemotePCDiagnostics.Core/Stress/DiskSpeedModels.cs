@@ -52,8 +52,10 @@ public sealed record DiskSpeedProgress(
 public sealed record DiskSpeedReport(
     DiskSpeedOutcome Outcome, string Drive, long TestBytes, TimeSpan Ran,
     double? SequentialWriteMBps, double? SequentialReadMBps, double? RandomWriteIops, double? RandomReadIops,
-    long BlocksVerified, long DataErrors, double? MaxDriveTemperatureC, bool CleanedUp)
+    long BlocksVerified, long DataErrors, double? MaxDriveTemperatureC, bool CleanedUp) : IRunEnd
 {
+    [System.Text.Json.Serialization.JsonIgnore] public RunEnd RunEnd => Outcome == DiskSpeedOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+
     public string Headline => Outcome switch
     {
         DiskSpeedOutcome.Passed => "Passed",

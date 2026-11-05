@@ -42,9 +42,10 @@ public sealed record MemoryUse(long TotalBytes, long AvailableBytes)
     public int UsedPercent => TotalBytes > 0 ? (int)Math.Round(100.0 * UsedBytes / TotalBytes) : 0;
 }
 
-public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner? commands = null) : OsqueryAreaModuleBase(runner)
+public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner? commands = null) : OsqueryAreaModuleBase(runner), IHasAreaPanels
 {
-    public const string ModuleName = "ResourceHogs";
+    public AreaPanels Panels => AreaPanels.MemorySuggestions;
+    public const string ModuleName = ModuleSlugs.ResourceHogs;
     public const string UptimeSql = "SELECT days, hours, minutes, total_seconds FROM uptime;";
     public const string ProcessesSql = "SELECT pid, name, resident_size, user_time, system_time, disk_bytes_read, disk_bytes_written FROM processes WHERE pid > 4;";
     public const string FastStartupScript =

@@ -17,4 +17,5 @@ public sealed record AppServices(
     ICopilotHandoff? Copilot = null,
     PreferencesService? Preferences = null,
     WorkflowService? Workflow = null,
-    PluginRegistrar? Plugins = null);
+    PluginRegistrar? Plugins = null,
+    IModuleUiFrames? ModuleUiFrames = null);

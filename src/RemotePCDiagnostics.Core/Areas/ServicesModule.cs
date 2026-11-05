@@ -35,9 +35,9 @@ public sealed record ServiceInfo(string Name, string DisplayName, string Status,
 }
 
 /// <summary>Windows services via osquery <c>services</c> (kernel/file-system drivers excluded).</summary>
-public sealed class ServicesModule(OsqueryRunner runner) : OsqueryAreaModuleBase(runner)
+public sealed class ServicesModule(OsqueryRunner runner) : OsqueryAreaModuleBase(runner), IServiceRows
 {
-    public const string ModuleName = "Services";
+    public const string ModuleName = ModuleSlugs.Services;
     public const string Sql = "SELECT name, display_name, status, start_type, user_account, description FROM services WHERE service_type NOT LIKE '%DRIVER%';";
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.Services;

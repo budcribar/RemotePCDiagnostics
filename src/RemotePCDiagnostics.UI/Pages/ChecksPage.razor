@@ -7,7 +7,7 @@
 @inject IJSRuntime JS
 @inject RemotePCDiagnostics.Core.History.IHistoryStore History
 @inject NavigationManager Nav
-@inject IServiceProvider Services
+@inject AppServices App
 @* Two pages share this screen: /checks (read-only system checks) and /stress (stress tests, audio, webcam, NPU). The list is on the left,
    the selected test's real page on the right. *@
 @{
@@ -93,7 +93,7 @@
     private void Select(IDiagnosticModule m) { Screen.SelectedModule = m.Name; }
     private readonly Dictionary<string, ElementReference> _rowRefs = new(StringComparer.OrdinalIgnoreCase);
     private static bool HasOwnStart(IDiagnosticModule m) => m is IStressSuiteModule ||
-        (m is not WindowsIntegrityModule && ChecksScreenState.IsSeparateStep(m));
+        (m is not ICancellableScan && ChecksScreenState.IsSeparateStep(m));
 
     /// <summary>Enter/Space selects; ↑/↓ move to the previous/next visible test (and select it).</summary>
     private async Task RowKey(KeyboardEventArgs e, IDiagnosticModule m)
@@ -246,7 +246,7 @@
                 else if (kind == RowKind.Cancelled) { <div class="meta">Earlier results are on the History page.</div> }
             </div>
             @* Stress tests, the security audit and the audio tests have their own Start/Stop (with length) below, so no second start button here. *@
-            @if (m is WindowsIntegrityModule scan && kind == RowKind.Running)
+            @if (m is ICancellableScan scan && kind == RowKind.Running)
             {
                 <button type="button" class="btn btn-stop ct-run-one" data-testid="checks-cancel-scan" @onclick="scan.Cancel">Cancel scan</button>
             }
@@ -256,7 +256,7 @@
             }
         </div>
         <div class="ct-detail-body" @key="m.Name">
-            @if (m is WindowsIntegrityModule && kind == RowKind.Running)
+            @if (m is ICancellableScan && kind == RowKind.Running)
             {
                 <p role="status">Running @m.DisplayName. This can take several minutes.</p>
                 @if (r.Payload is double percent)
@@ -269,7 +269,7 @@
                     <progress aria-label="@($"{m.DisplayName} scan in progress")"></progress>
                 }
             }
-            else if (m is WindowsIntegrityModule && r.Payload is AreaReport integrity && kind != RowKind.Cancelled)
+            else if (m is ICancellableScan && r.Payload is AreaReport integrity && kind != RowKind.Cancelled)
             {
                 @foreach (var card in integrity.Cards)
                 {
@@ -297,7 +297,7 @@
     };
 
     private Type PageFor(IDiagnosticModule m) =>
-        m is RemotePCDiagnostics.Core.Plugins.IUserModeModule um && UnsignedModuleFrame.IsAvailable(Services, um) ? typeof(UnsignedModuleDetails)
+        m is RemotePCDiagnostics.Core.Plugins.IUserModeModule um && UnsignedModuleFrame.IsAvailable(App, um) ? typeof(UnsignedModuleDetails)
         : Diagnostics.Catalog.Get(m.Id)?.DetailsComponent ?? typeof(AreaPage);
 
     private IDictionary<string, object> ParamsFor(IDiagnosticModule m) =>

@@ -30,6 +30,18 @@ public sealed record DiagnosticResult<T>(
     string ModuleName, DiagnosticStatus Status, string Message, DateTimeOffset Timestamp, T? Data)
     : DiagnosticResult(ModuleName, Status, Message, Timestamp, Data);
 
+/// <summary>How a run ended when its status alone doesn't say: stopped by the user (not a problem), or couldn't run on this PC.</summary>
+public enum RunEnd { Finished, Cancelled, CouldNotRun }
+
+/// <summary>
+/// A payload that knows how its run ended (a stress test's own outcome, <see cref="CouldNotRun"/>). The event log, History and the Checks
+/// screen read this instead of looking for a property named Outcome.
+/// </summary>
+public interface IRunEnd
+{
+    RunEnd RunEnd { get; }
+}
+
 public record ModuleAvailability(bool IsAvailable, string? Reason = null)
 {
     public static ModuleAvailability Available { get; } = new(true);

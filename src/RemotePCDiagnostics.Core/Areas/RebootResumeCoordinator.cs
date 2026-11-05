@@ -123,7 +123,7 @@ public sealed class RebootResumeCoordinator(
     }
 
     public static string DefaultStateFilePath() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RemotePCDiagnostics", "pending-reboot.json");
+        ProtectedState.PathFor(ProtectedState.PendingRebootFile);
 
     public static PendingRebootState? TryReadPendingStateFile(string? path = null)
     {

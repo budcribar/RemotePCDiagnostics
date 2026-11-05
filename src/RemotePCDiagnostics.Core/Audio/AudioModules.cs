@@ -95,7 +95,7 @@ public abstract class AudioModuleBase : IAudioTestModule
 /// <summary>Plays a capped, faded 1 kHz tone while recording the microphone and the speaker output (loopback), then decides automatically.</summary>
 public sealed class SpeakerToMicModule(IAudioIo io, Action<string>? log = null) : AudioModuleBase(io, log)
 {
-    public const string ModuleName = "SpeakerToMic";
+    public const string ModuleName = ModuleSlugs.SpeakerToMic;
     public const double FrequencyHz = 1000;
     public const int SampleRate = 48000;
     public static readonly TimeSpan ToneDuration = TimeSpan.FromSeconds(3);
@@ -165,7 +165,7 @@ public sealed class SpeakerToMicModule(IAudioIo io, Action<string>? log = null) 
 /// <summary>Plays the microphone back through the speakers (live monitor) with a capped gain and a feedback brake. The audible part is the technician's call.</summary>
 public sealed class MicToSpeakerModule(IAudioIo io, Action<string>? log = null) : AudioModuleBase(io, log)
 {
-    public const string ModuleName = "MicToSpeaker";
+    public const string ModuleName = ModuleSlugs.MicToSpeaker;
     public static readonly TimeSpan DefaultDuration = TimeSpan.FromSeconds(10);
     public static readonly TimeSpan[] DurationChoices = [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(30)];
     /// <summary>Mic peak below this = the microphone heard nothing.</summary>

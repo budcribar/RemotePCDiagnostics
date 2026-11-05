@@ -101,7 +101,7 @@ public static class RegistryAllowlist
     /// </summary>
     /// <param name="createdKey">The topmost key the original write created (<see cref="ChangeRecord.CreatedKey"/>): once the value is gone, that key and
     /// the ones below it are deleted again while they're empty (<see cref="RegistryKeyCleanup.Remove"/>; best effort, never fails the undo).</param>
-    public static (bool Ok, string Message) Restore(IMemorySystem sys, string target, string? previous, string? createdKey = null, Action<string>? log = null)
+    public static (bool Ok, string Message) Restore(IRegistryTweaks sys, string target, string? previous, string? createdKey = null, Action<string>? log = null)
     {
         if (Find(target) is not { } s) return (false, "That registry value isn't one this app changes, so it was left as is.");
         if (!TryDecode(previous, out var v)) return (false, "The original value wasn't recorded.");

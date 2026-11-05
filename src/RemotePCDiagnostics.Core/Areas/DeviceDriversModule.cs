@@ -54,7 +54,7 @@ public sealed record DriverEntry(string DeviceName, string Class, string Provide
 /// </summary>
 public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunner commands) : OsqueryAreaModuleBase(runner)
 {
-    public const string ModuleName = "DeviceDrivers";
+    public const string ModuleName = ModuleSlugs.DeviceDrivers;
     public const string DriversSql = "SELECT device_name, description, class, provider, manufacturer, version, date, signed FROM drivers WHERE device_name != '';";
     public const string ProblemDevicesScript =
         "$ErrorActionPreference='SilentlyContinue';" +

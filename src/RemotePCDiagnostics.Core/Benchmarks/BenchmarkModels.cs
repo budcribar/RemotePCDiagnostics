@@ -169,11 +169,11 @@ public interface IBenchmarkStore
     void Save(BenchmarkState state);
 }
 
-/// <summary>JSON file next to the app's other per-user state (%LOCALAPPDATA%\RemotePCDiagnostics).</summary>
+/// <summary>JSON file in the protected state folder (%ProgramData%\RemotePCDiagnostics\state; see <see cref="ProtectedState"/>).</summary>
 public sealed class FileBenchmarkStore(string path, Action<string>? log = null) : IBenchmarkStore
 {
     public static string DefaultPath() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RemotePCDiagnostics", "benchmarks.json");
+        ProtectedState.PathFor(ProtectedState.BenchmarksFile);
 
     public BenchmarkState? Load()
     {

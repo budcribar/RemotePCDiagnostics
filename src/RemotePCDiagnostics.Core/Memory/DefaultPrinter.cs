@@ -76,7 +76,7 @@ public static class DefaultPrinter
     /// Puts the journaled default printer back (only names that pass <see cref="IsSafeName"/> and are still installed), then reads it back.
     /// Refuses any other journal target. May throw.
     /// </summary>
-    public static (bool Ok, string Message) Restore(IMemorySystem sys, string target, string? previous)
+    public static (bool Ok, string Message) Restore(IRegistryTweaks sys, string target, string? previous)
     {
         if (!string.Equals(target, JournalTarget, StringComparison.OrdinalIgnoreCase)) return (false, "That isn't a printer setting this app changes, so it was left as is.");
         if (!IsSafeName(previous)) return (false, "The previous default printer wasn't recorded.");

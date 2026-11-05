@@ -16,10 +16,11 @@ else
     var r = Store.Get(m.Name);
     var rep = r.Report() as AreaReport; // a per-device module (drive health) combines its devices into one report
     var busy = r.Status == DiagnosticStatus.Running;
-    var svcModule = m as ServicesModule;
+    var svcModule = m as IServiceRows;
     var svcActions = svcModule is null ? null : App.ServiceActions;
-    var memSvc = m is ResourceHogsModule ? App.Memory : null;
-    var storageSvc = m is DriveHealthModule ? App.Memory : null;
+    var panels = (m as IHasAreaPanels)?.Panels ?? AreaPanels.None;
+    var memSvc = panels.HasFlag(AreaPanels.MemorySuggestions) ? App.Memory : null;
+    var storageSvc = panels.HasFlag(AreaPanels.StorageCleanup) ? App.Memory : null;
     var remActions = App.Remediation;
     var hasRemActions = remActions is not null && rep is not null && rep.Cards.Any(c => c.Actions is { Count: > 0 } || c.Rows.Any(rw => rw.Actions is { Count: > 0 }));
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="@m.Name" Size="20" /></span><h1 data-testid="area-title">@m.DisplayName</h1></div>
@@ -87,7 +88,7 @@ else
                             @onclick="() => SetReview(m.Name, groupKeys, !showingReviewed)">@(showingReviewed ? "Undo group review" : "Mark group as reviewed")</button>
                         <button type="button" class="btn-small" @onclick="() => CopyGroupForCopilot(open, issueRows)">Review group with Copilot</button>
                     </div>
-                    @if (m is CrashesModule crashModule && open.Id == "hangs")
+                    @if (m is IHangEvidenceSource crashModule && open.Id == crashModule.HangCardId)
                     {
                         var selected = issueRows.Where(_selectedHangGroups.Contains).ToList();
                         <button type="button" class="btn-small" disabled="@(selected.Count == 0 || _findingHangEvidence || _sendingCopilot)"
@@ -198,7 +199,7 @@ else
                                     {
                                         <div class="row-detail-text">@detail</div>
                                     }
-                                    @if (m is CrashesModule crashes && row.HangOccurrences is { Count: > 0 } occurrences)
+                                    @if (m is IHangEvidenceSource crashes && row.HangOccurrences is { Count: > 0 } occurrences)
                                     {
                                         <label><input type="checkbox" checked="@_selectedHangGroups.Contains(row)"
                                             @onchange="e => SelectHangGroup(row, e.Value is true)" /> Include in shared timeline</label>
@@ -306,7 +307,7 @@ else
         else _selectedHangGroups.Remove(row);
     }
 
-    private async Task CollectHangGroups(CrashesModule module, AreaCard card, IReadOnlyList<AreaRow> rows)
+    private async Task CollectHangGroups(IHangEvidenceSource module, AreaCard card, IReadOnlyList<AreaRow> rows)
     {
         if (_findingHangEvidence) return;
         _findingHangEvidence = _collectingHangGroups = true;
@@ -315,7 +316,7 @@ else
         try
         {
             var timeline = await module.FindHangEvidenceAsync(rows.SelectMany(r => r.HangOccurrences ?? []).ToList(), CancellationToken.None);
-            var integrity = Diagnostics.Modules.OfType<WindowsIntegrityModule>()
+            var integrity = Diagnostics.Modules.Where(check => check is ICancellableScan)
                 .Select(check => (check.DisplayName, Result: Store.Get(check.Name)))
                 .Where(check => check.Result.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error)
                 .Select(check => $"{check.DisplayName} · {check.Result.Timestamp:O} · {check.Result.Message}").ToList();
@@ -329,7 +330,7 @@ else
     private AreaRow? _hangEvidenceRow;
     private string? _hangEvidence;
 
-    private async Task FindHangEvidence(CrashesModule module, AreaRow row, IReadOnlyList<HangOccurrence> occurrences)
+    private async Task FindHangEvidence(IHangEvidenceSource module, AreaRow row, IReadOnlyList<HangOccurrence> occurrences)
     {
         if (_findingHangEvidence) return;
         _findingHangEvidence = true;
@@ -503,7 +504,7 @@ else
     private RemediationActions? _remUi;
     private readonly Dictionary<string, string> _svcStatus = new(StringComparer.OrdinalIgnoreCase);
     private object? _svcSeen;
-    private ServiceInfo? SvcInfo(ServicesModule? sm, AreaRow row)
+    private ServiceInfo? SvcInfo(IServiceRows? sm, AreaRow row)
     {
         if (sm is null || row.Key is null) return null;
         if (!ReferenceEquals(sm.Latest, _svcSeen)) { _svcSeen = sm.Latest; _svcStatus.Clear(); } // fresh check replaces live overrides

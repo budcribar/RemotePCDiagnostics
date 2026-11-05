@@ -5,7 +5,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// <summary>On-demand CPU stress test module. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
 public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null, ICpuWorkload? workload = null, IEcFanSource? ecFan = null) : StressModuleBase<CpuStressProgress, CpuStressReport>(log), IStressSuiteModule
 {
-    public const string ModuleName = "CpuStress";
+    public const string ModuleName = ModuleSlugs.CpuStress;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.CpuStress;
     public override string DisplayName => "CPU stress test";

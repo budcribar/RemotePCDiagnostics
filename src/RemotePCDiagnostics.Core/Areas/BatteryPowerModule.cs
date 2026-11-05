@@ -25,7 +25,7 @@ public sealed record BatteryStatus(
 /// </summary>
 public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner? commands = null) : OsqueryAreaModuleBase(runner)
 {
-    public const string ModuleName = "BatteryPower";
+    public const string ModuleName = ModuleSlugs.BatteryPower;
     public const string BatterySql = "SELECT * FROM battery;";
     public const int LowBatteryHealthPercent = 70;
 
