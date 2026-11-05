@@ -47,6 +47,7 @@ public static class Program
         Spike.Frames.Add(Spike.Start("samesrc", "locked relay, allow-same-origin", locked, "allow-scripts allow-forms allow-same-origin"));
 
         var services = new ServiceCollection();
+        services.AddRemoteBlazorWebViewDeveloperTools(); // F12 in the shell opens DevTools, including the frames' consoles
         services.AddRemoteWpfBlazorWebView();
         // Local mode, like the app: no ServerUri. Setting HostPage starts the control, so it goes last.
         var webView = new BlazorWebView { Services = services.BuildServiceProvider() };
@@ -57,8 +58,9 @@ public static class Program
         {
             foreach (var f in Spike.Frames) { try { if (!f.Process.HasExited) f.Process.Kill(); } catch { } }
             Spike.Save();
-            open.StopAsync().GetAwaiter().GetResult();
-            locked.StopAsync().GetAwaiter().GetResult();
+            // StopAsync can hang while frames still hold gRPC streams; don't let it block exit.
+            Task.WaitAny([Task.Run(() => open.StopAsync()), Task.Run(() => locked.StopAsync())], TimeSpan.FromSeconds(3));
+            Environment.Exit(0);
         };
         app.Run(window);
     }

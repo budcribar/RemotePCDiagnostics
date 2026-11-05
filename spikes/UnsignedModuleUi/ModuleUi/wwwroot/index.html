@@ -7,6 +7,22 @@
 </head>
 <body>
     <div id="app">Loading…</div>
+    <script>
+        // Runs before Blazor. Forwards errors and console output to the shell, so a frame that never starts still says why.
+        (function () {
+            function fwd(kind, msg) { try { window.parent.postMessage({ type: 'diag', kind: kind, msg: String(msg).slice(0, 2000) }, '*'); } catch (e) { } }
+            window.addEventListener('error', function (e) { fwd('error', e.message + ' @ ' + e.filename + ':' + e.lineno); });
+            window.addEventListener('unhandledrejection', function (e) { const r = e.reason; fwd('rejection', r && (r.stack || r.message) || r); });
+            ['log', 'warn', 'error'].forEach(function (k) {
+                const o = console[k];
+                console[k] = function () { fwd(k, Array.prototype.map.call(arguments, String).join(' ')); o.apply(console, arguments); };
+            });
+            // In a sandboxed frame without allow-same-origin, location.origin is "null", and RemoteWebView.ts uses it as the gRPC-Web
+            // host. location.host is still the relay's, so point the client there. Without this the page stays at "Loading...".
+            if (String(self.origin) === 'null') window.RemoteBlazor = { grpcHost: location.protocol + '//' + location.host };
+            fwd('boot', 'origin=' + self.origin + ' href=' + location.href + ' grpcHost=' + (window.RemoteBlazor ? window.RemoteBlazor.grpcHost : '(location.origin)'));
+        })();
+    </script>
     <script src="_framework/blazor.webview.js"></script>
     <script>
         // What an untrusted module page can and can't reach. Every probe is reported to the shell with postMessage.
