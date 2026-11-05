@@ -245,6 +245,30 @@ public class NpuTests
     [Fact]
     public void Npu_test_is_a_separate_step() =>
         Assert.True(ChecksScreenState.IsSeparateStep(new NpuTestModule(new NullNpuIo())));
+
+    [Fact]
+    public async Task Each_npu_is_an_instance_and_the_page_report_lists_them_all()
+    {
+        var second = Dev() with { Id = "npu2", Name = "Second NPU", HardwareId = "PCI\\VEN_2" };
+        var m = new NpuTestModule(new FakeIo(Correct(), Dev(), second)) { Settings = { Duration = TimeSpan.FromSeconds(1) } };
+        var store = new ResultStore();
+        var svc = new DiagnosticsService(store, [m]);
+        await svc.RedetectAsync();
+        Assert.Equal(2, svc.InstancesOf(m).Count);
+
+        var r = await svc.RunAsync(NpuTestModule.ModuleName);
+        Assert.Equal(2, store.InstancesOf(NpuTestModule.ModuleName).Count);
+        var rep = Assert.IsType<NpuTestReport>(r.Report());
+        Assert.Equal(2, rep.Devices.Count);
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+    }
+
+    [Fact]
+    public async Task No_npu_means_the_test_does_not_apply()
+    {
+        var detection = await new NpuTestModule(new FakeIo(Correct())).DetectAsync();
+        Assert.False(detection.Applies);
+    }
 }
 
 public class NpuVisibilityTests

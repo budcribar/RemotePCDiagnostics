@@ -10,9 +10,12 @@
 }
 else
 {
-    var r = Store.Get(m.Name);
+    var moduleResult = Store.Get(m.Name);
+    var running = moduleResult.Status == DiagnosticStatus.Running;
+    // One result per camera: show the selected camera's last result (the module's result counts every camera).
+    var r = running ? moduleResult : Selected(m) is { } sel && Store.GetInstance(m.Name, WebcamTestModule.InstanceOf(sel).Key) is { } own ? own
+        : moduleResult.Payload is InstanceResults ? DiagnosticResult.NotRun(m.Name) : moduleResult;
     var rep = r.Payload as WebcamReport;
-    var running = r.Status == DiagnosticStatus.Running;
     var suiteBusy = Diagnostics.IsStressSuiteRunning;
     <div class="toolbar toolbar-grouped">
         <span class="icon-badge page-icon"><Icon Name="camera" Size="20" /></span><h1 data-testid="cam-title">@m.DisplayName</h1>
@@ -32,7 +35,7 @@ else
                 @foreach (var d in WebcamTestModule.DurationChoices) { <option value="@((int)d.TotalSeconds)" selected="@(d == m.Duration)">@((int)d.TotalSeconds) s</option> }
             </select>
         </label>
-        <button class="btn-small" data-testid="cam-refresh-devices" disabled="@running" @onclick="() => _devices = m.Devices()">Refresh devices</button>
+        <button class="btn-small" data-testid="cam-refresh-devices" disabled="@running" @onclick="() => RefreshDevices(m)">Refresh devices</button>
     </div>
     <p data-testid="cam-status" class="@(running ? "status-line is-running" : r.Status == DiagnosticStatus.Error && rep is null ? "status-line error-text" : "status-line")">
         <span class="@DotClass(r.Status)"></span>
@@ -65,10 +68,21 @@ else
         if ((DiagnosticModule as WebcamTestModule) is { } m) _devices = m.Devices();
     }
 
-    private void Start(WebcamTestModule m)
+    private WebcamDevice? Selected(WebcamTestModule m) => _devices.FirstOrDefault(d => d.Id == m.DeviceId) ?? _devices.FirstOrDefault();
+
+    private async Task RefreshDevices(WebcamTestModule m)
+    {
+        _devices = m.Devices();
+        await Diagnostics.RedetectAsync();
+    }
+
+    private async Task Start(WebcamTestModule m)
     {
         if (Diagnostics.IsStressSuiteRunning) return;
-        _ = Diagnostics.RunAsync(m.Name);
+        if (Selected(m) is not { } dev) { _ = Diagnostics.RunAsync(m.Name); return; }
+        var key = WebcamTestModule.InstanceOf(dev).Key;
+        if (!Diagnostics.InstancesOf(m).Any(i => i.Key == key)) await Diagnostics.RedetectAsync(); // plugged in since the last check
+        _ = Diagnostics.RunInstanceAsync(m.Name, key);
     }
 
     private static string Pct(double v) => (v * 100).ToString("0") + " %";

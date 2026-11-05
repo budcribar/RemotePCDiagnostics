@@ -69,7 +69,7 @@ public static class FixCatalog
 
         foreach (var r in results)
         {
-            if (r.Payload is not AreaReport rep) continue;
+            if (r.Report() is not AreaReport rep) continue;
             var area = AreaNames.GetValueOrDefault(r.ModuleName) ?? (catalog ?? BuiltInCatalog.Value).DisplayName(r.ModuleName);
             foreach (var card in rep.Cards)
             {
@@ -177,7 +177,7 @@ public static class FixCatalog
         void Add(string line) { if (!list.Contains(line)) list.Add(line); }
         foreach (var r in results)
         {
-            if (r.Payload is not AreaReport rep) continue;
+            if (r.Report() is not AreaReport rep) continue;
             foreach (var a in rep.Cards.SelectMany(c => (c.Actions ?? []).Concat(c.Rows.SelectMany(row => row.Actions ?? []))))
             {
                 var what = string.IsNullOrWhiteSpace(a.TargetLabel) ? string.IsNullOrWhiteSpace(a.Target) ? a.ButtonText : $"{a.ButtonText} ({a.Target})" : $"{a.ButtonText} ({a.TargetLabel})";

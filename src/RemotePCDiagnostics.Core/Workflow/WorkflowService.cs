@@ -498,7 +498,7 @@ public sealed class WorkflowService(
             DiagnosticResult r;
             try { r = await diag.RunAsync(m.Name, null, ct).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log("re-scan failed: " + ex.Message); continue; }
-            var card = (r.Payload as AreaReport)?.Cards.FirstOrDefault();
+            var card = (r.Report() as AreaReport)?.Cards.FirstOrDefault();
             var finding = new RepairFinding($"{(dism ? WindowsRepair.DismId : WindowsRepair.SfcId)}-after", $"{m.DisplayName} after the restart",
                 r.Status, r.Message, card?.Meta ?? "", card?.Rows.Select(x => new RepairDetail(x.Values[0], x.Values.Count > 1 ? x.Values[1] : "")).ToList() ?? [],
                 AfterRestart: true);

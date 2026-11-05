@@ -17,15 +17,18 @@ public sealed class NpuTestSettings
 }
 
 /// <summary>NPU test: on-demand, own page, not in Run All and not part of the stress run (like the security audit and the audio tests).</summary>
-public interface INpuTestModule : IHardwareGatedModule
+public interface INpuTestModule : IPerDeviceModule
 {
     NpuTestSettings Settings { get; }
     IReadOnlyList<NpuDevice> Devices();
     void Cancel();
 }
 
-/// <summary>Detects NPUs, checks driver health, and runs a short matrix-multiply (or queue round-trip) on each one with a watchdog. Fully automatic.</summary>
-public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuTestModule
+/// <summary>
+/// Detects NPUs, checks driver health, and runs a short matrix-multiply (or queue round-trip) on each one with a watchdog. Fully automatic.
+/// One instance per NPU (keyed on its PnP hardware id); a PC without an NPU doesn't show the test. Each NPU gets the whole time budget.
+/// </summary>
+public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuTestModule, IInstanceSummary
 {
     public const string ModuleName = "NpuTest";
     public static readonly TimeSpan DefaultDuration = TimeSpan.FromSeconds(10);
@@ -78,6 +81,63 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
         }
         catch (Exception ex) { _present = false; Log($"{Name}: presence check failed, test hidden: {ex.Message}"); }
         return _present;
+    }
+
+    public static ModuleInstance InstanceOf(NpuDevice d) => new(InstanceKeys.From(d.HardwareId is { Length: > 0 } hw ? hw + "|" + d.Id : d.Id), d.Name, d.Id);
+
+    /// <summary>Lists NPUs (bounded by <see cref="DetectionTimeout"/>); runs nothing on them.</summary>
+    public async Task<ModuleDetection> DetectAsync(CancellationToken ct = default)
+    {
+        IReadOnlyList<NpuDevice> list;
+        try { list = await Task.Run(() => io.ListDevices(), ct).WaitAsync(DetectionTimeout, ct).ConfigureAwait(false) ?? []; }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _present = false;
+            Log($"{Name}: detection failed, test hidden: {ex.Message}");
+            return ModuleDetection.NotApplicable("Couldn't look for an NPU");
+        }
+        _present = list.Count > 0;
+        Log($"{Name}: found {list.Count} NPU(s){(_present ? "" : "; test hidden")}");
+        return list.Count == 0 ? ModuleDetection.NotApplicable("This PC has no NPU (AI accelerator), or Windows has no driver for it")
+            : ModuleDetection.For(list.Select(InstanceOf));
+    }
+
+    /// <summary>Tests one NPU with the whole time budget.</summary>
+    public async Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken cancellationToken = default)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        lock (_gate) _runCts = cts;
+        try
+        {
+            var budget = ClampDuration(Settings.Duration);
+            var device = (await Task.Run(Devices, cts.Token).ConfigureAwait(false)).FirstOrDefault(d => d.Id == instance.Details);
+            if (device is null) return CouldNotRun.Result(Name, $"{instance.Label} is no longer connected.");
+            var (a, b) = Inputs(MatrixSize);
+            var cpu = CpuBaseline(a, b, MatrixSize, out var reference);
+            progress?.Report($"Testing {device.Name}…");
+            var report = await TestDeviceAsync(io, device, a, b, reference, cpu, budget, WatchdogGrace, cts.Token, Log).ConfigureAwait(false);
+            Log($"{Name}: {device.Name}: {report.Verdict} {report.Message}");
+            return ToResult(new NpuTestReport([report], MatrixSize, budget, report.Verdict, null));
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            return new DiagnosticResult(Name, DiagnosticStatus.Warning, "The NPU test was cancelled.", DateTimeOffset.Now) { Cancelled = true };
+        }
+        catch (Exception ex)
+        {
+            Log($"{Name}: {ex}");
+            return new DiagnosticResult(Name, DiagnosticStatus.Error, "The NPU test couldn't finish on this PC. Please try again.", DateTimeOffset.Now);
+        }
+        finally { lock (_gate) _runCts = null; }
+    }
+
+    /// <summary>One report listing every NPU's latest result, for the page.</summary>
+    public object? Combine(IReadOnlyList<DiagnosticResult> instanceResults)
+    {
+        var reports = instanceResults.Select(r => r.Payload).OfType<NpuTestReport>().ToList();
+        if (reports.Count == 0) return null;
+        var devices = reports.SelectMany(r => r.Devices).ToList();
+        return new NpuTestReport(devices, MatrixSize, reports.Max(r => r.Budget), Worst(devices.Select(d => d.Verdict)), reports.Select(r => r.Notice).FirstOrDefault(n => n is not null));
     }
 
     public IReadOnlyList<NpuDevice> Devices()
