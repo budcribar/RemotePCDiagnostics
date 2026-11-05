@@ -162,48 +162,48 @@ public static class HistoryEventParser
     }
 }
 
-/// <summary>Consistent test names: events without a "Test:" line (older builds) get the module's display name.</summary>
+/// <summary>Consistent test names: every result is named through the module catalog, which knows every module that ever shipped
+/// (including ones whose hardware is missing or that were retired). Events from unknown modules keep the name they were logged with.</summary>
 public static class HistoryNames
 {
-    /// <summary>Display name for a module ID from the registered modules; the ID itself for unknown modules.</summary>
-    public static string DisplayName(string module, IEnumerable<IDiagnosticModule> modules)
-    {
-        var m = modules.FirstOrDefault(x => string.Equals(x.Name, module, StringComparison.OrdinalIgnoreCase));
-        return m is null || string.IsNullOrWhiteSpace(m.DisplayName) ? module : m.DisplayName;
-    }
+    /// <summary>Display name for a module slug from the catalog; the slug itself for unknown modules.</summary>
+    public static string DisplayName(string module, ModuleCatalog catalog) => catalog.DisplayName(module);
 
-    /// <summary>Modules that were merged into another one: their old results count as the new module's.</summary>
-    public static readonly IReadOnlyDictionary<string, string> ModuleAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-    {
-        [ModuleSlugs.BsodHistory] = ModuleSlugs.Crashes,   // "Blue screens & unexpected restarts" + "App crashes" → "Crashes & unexpected restarts"
-        [ModuleSlugs.WifiConfig] = ModuleSlugs.Network,    // "Wi-Fi & network config" + "Network adapters" → "Network & Wi-Fi"
-    };
+    /// <inheritdoc cref="DisplayName(string, ModuleCatalog)"/>
+    public static string DisplayName(string module, IEnumerable<IDiagnosticModule> modules) => DisplayName(module, ModuleCatalog.For(modules));
+
+    /// <summary>Modules that were merged into another one: their old results count as the new module's (from the catalog's MergedInto).</summary>
+    public static IReadOnlyDictionary<string, string> ModuleAliases { get; } = BuiltInModules.Descriptors
+        .Where(d => d.MergedInto is not null)
+        .ToDictionary(d => d.Slug, d => BuiltInModules.Descriptors.First(t => t.Id == d.MergedInto).Slug, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Maps merged modules to their current ID, and gives every known module its current display name (so a renamed
     /// test isn't listed twice). Unknown modules keep the name they were logged with.
     /// </summary>
-    public static IReadOnlyList<HistoryEntry> Normalize(IEnumerable<HistoryEntry> entries, IEnumerable<IDiagnosticModule> modules)
-    {
-        var mods = modules.ToList();
-        return entries.Select(e =>
+    public static IReadOnlyList<HistoryEntry> Normalize(IEnumerable<HistoryEntry> entries, ModuleCatalog catalog) =>
+        entries.Select(e =>
         {
-            var module = ModuleAliases.TryGetValue(e.Module, out var to) ? to : e.Module;
-            var known = mods.Any(m => string.Equals(m.Name, module, StringComparison.OrdinalIgnoreCase));
-            var test = known ? DisplayName(module, mods)
-                : string.IsNullOrWhiteSpace(e.Test) || string.Equals(e.Test, e.Module, StringComparison.OrdinalIgnoreCase) ? DisplayName(module, mods) : e.Test;
+            var module = catalog.CurrentSlug(e.Module);
+            var known = catalog.Find(module) is not null;
+            var test = known ? catalog.DisplayName(module)
+                : string.IsNullOrWhiteSpace(e.Test) || string.Equals(e.Test, e.Module, StringComparison.OrdinalIgnoreCase) ? module : e.Test;
             return e with { Module = module, Test = test };
         }).ToList();
-    }
+
+    /// <inheritdoc cref="Normalize(IEnumerable{HistoryEntry}, ModuleCatalog)"/>
+    public static IReadOnlyList<HistoryEntry> Normalize(IEnumerable<HistoryEntry> entries, IEnumerable<IDiagnosticModule> modules) =>
+        Normalize(entries, ModuleCatalog.For(modules));
 
     /// <summary>Test filter options (module ID, name): every module present in the data, once, sorted by name.</summary>
-    public static IReadOnlyList<(string Module, string Test)> FilterOptions(IEnumerable<HistoryEntry> entries, IEnumerable<IDiagnosticModule> modules)
-    {
-        var mods = modules.ToList();
-        return entries.GroupBy(e => e.Module, StringComparer.OrdinalIgnoreCase)
-            .Select(g => (Module: g.Key, Test: DisplayName(g.Key, mods) is var d && !string.Equals(d, g.Key, StringComparison.OrdinalIgnoreCase) ? d : g.First().Test))
+    public static IReadOnlyList<(string Module, string Test)> FilterOptions(IEnumerable<HistoryEntry> entries, ModuleCatalog catalog) =>
+        entries.GroupBy(e => e.Module, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Module: g.Key, Test: catalog.Find(g.Key) is { } d ? d.DisplayName : g.First().Test))
             .OrderBy(t => t.Test, StringComparer.OrdinalIgnoreCase).ToList();
-    }
+
+    /// <inheritdoc cref="FilterOptions(IEnumerable{HistoryEntry}, ModuleCatalog)"/>
+    public static IReadOnlyList<(string Module, string Test)> FilterOptions(IEnumerable<HistoryEntry> entries, IEnumerable<IDiagnosticModule> modules) =>
+        FilterOptions(entries, ModuleCatalog.For(modules));
 }
 
 public enum HistoryColumn { Time, Test, Result, Summary, Duration }

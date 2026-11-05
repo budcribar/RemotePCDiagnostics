@@ -111,9 +111,14 @@ public sealed class DiagnosticsService
     /// <summary>Raised when a running module reports sub-step progress (or finishes, with null).</summary>
     public event EventHandler<(string ModuleName, CheckProgress? Progress)>? ProgressChanged;
 
-    public DiagnosticsService(ResultStore store, IEnumerable<IDiagnosticModule>? modules = null)
+    /// <summary>Every known module, including ones that can't run on this PC (hardware missing, retired). History and the export name
+    /// results through it; <see cref="Modules"/> stays the list of runnable modules.</summary>
+    public ModuleCatalog Catalog { get; }
+
+    public DiagnosticsService(ResultStore store, IEnumerable<IDiagnosticModule>? modules = null, ModuleCatalog? catalog = null)
     {
         _store = store;
+        Catalog = catalog ?? new ModuleCatalog();
         foreach (var m in modules ?? []) Register(m);
         StartHardwareDetection();
     }
@@ -153,6 +158,7 @@ public sealed class DiagnosticsService
                 catch (Exception ex) { try { Log?.Invoke($"{g.Name}: detection failed, hidden: {ex.Message}"); } catch { } }
                 finally { Interlocked.Decrement(ref _detecting); }
                 Volatile.Write(ref _visible, null);
+                Catalog.RaiseChanged();
                 try { ModulesChanged?.Invoke(this, EventArgs.Empty); } catch { }
                 _store.Set(DiagnosticResult.NotRun(g.Name)); // nudges store-aware pages to re-render
                 if (found) try { Log?.Invoke($"{g.Name}: hardware found, shown"); } catch { }
@@ -168,6 +174,7 @@ public sealed class DiagnosticsService
             throw new InvalidOperationException($"Module '{module.Name}' has no Id.");
         if (_modules.FirstOrDefault(m => m.Id == module.Id) is { } clash)
             throw new InvalidOperationException($"Module '{module.Name}' has the same Id ({module.Id}) as '{clash.Name}'.");
+        Catalog.Add(module);
         _modules.Add(module);
         Volatile.Write(ref _visible, null);
         module.Updated += (_, r) => _store.Set(MarkStopped(module, r));

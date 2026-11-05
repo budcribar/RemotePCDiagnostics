@@ -195,10 +195,10 @@ public sealed class WorkflowService(
                 suggestions = [.. memory.Suggestions, .. memory.StorageSuggestions];
             }
             var snapshot = results.Snapshot.Values.ToList();
-            var fixes = FixCatalog.Build(snapshot, suggestions, remediation);
+            var fixes = FixCatalog.Build(snapshot, suggestions, remediation, diag.Catalog);
             var notOffered = FixCatalog.NotOffered(snapshot, suggestions, remediation);
             var findings = snapshot.Where(r => r.Status is DiagnosticStatus.Warning or DiagnosticStatus.Error && !Cancellation.IsCancelled(r))
-                .Select(r => $"{diag.Modules.FirstOrDefault(m => m.Name == r.ModuleName)?.DisplayName ?? r.ModuleName}: {r.Message} (scan {r.Timestamp:O})").ToList();
+                .Select(r => $"{diag.Catalog.DisplayName(r.ModuleName)}: {r.Message} (scan {r.Timestamp:O})").ToList();
             var hw = results.Get(ModuleSlugs.Osquery).Payload is HardwareInventory inv ? inv.FriendlySummary() : "";
             Save(s => s with
             {

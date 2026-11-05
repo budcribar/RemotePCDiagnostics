@@ -48,7 +48,7 @@ public partial class MainWindow : Window
         // One Windows Event Log entry per finished test (every module and run path), see ResultEventLogger.
         var diag = provider.GetRequiredService<DiagnosticsService>();
         var eventContext = new RemotePCDiagnostics.Core.Logging.ResultEventContext(
-            n => diag.Modules.FirstOrDefault(m => string.Equals(m.Name, n, StringComparison.OrdinalIgnoreCase))?.DisplayName ?? n,
+            n => diag.Catalog.DisplayName(n),
             () => _machine.Value, RemotePCDiagnostics.Core.AppBuildInfo.Version);
         _ = new RemotePCDiagnostics.Core.Logging.ResultEventLogger(provider.GetRequiredService<ResultStore>(), App.Events, _ => diag.CurrentSuiteLabel, context: eventContext);
         _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.AppStart, RemotePCDiagnostics.Core.Logging.LogLevel.Information, AppStartText(mode.ToString())));

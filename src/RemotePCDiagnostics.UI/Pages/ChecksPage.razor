@@ -66,7 +66,7 @@
         try
         {
             var read = await Task.Run(() => History.Read(TimeSpan.FromDays(30)));
-            _lastRuns = RemotePCDiagnostics.Core.History.HistoryQuery.LatestByModule(RemotePCDiagnostics.Core.History.HistoryNames.Normalize(read.Entries, Diagnostics.Modules));
+            _lastRuns = RemotePCDiagnostics.Core.History.HistoryQuery.LatestByModule(RemotePCDiagnostics.Core.History.HistoryNames.Normalize(read.Entries, Diagnostics.Catalog));
             await InvokeAsync(StateHasChanged);
         }
         catch { /* no history source: rows just say "Not run yet" */ }

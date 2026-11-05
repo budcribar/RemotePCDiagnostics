@@ -19,7 +19,7 @@
     var byDay = _sort.Col == HistoryColumn.Time;
     var localNow = DateTimeOffset.Now;
     string? lastDay = null;
-    var tests = HistoryNames.FilterOptions(diagEntries, Diagnostics.Modules);
+    var tests = HistoryNames.FilterOptions(diagEntries, Diagnostics.Catalog);
     var trends = tests.Where(t => HistoryQuery.TrendKey(t.Module) is not null && (_module.Length == 0 || string.Equals(_module, t.Module, StringComparison.OrdinalIgnoreCase)))
         .Select(t => (t.Test, Key: HistoryQuery.TrendKey(t.Module)!.Value, Points: HistoryQuery.Trend(diagEntries, t.Module))).Where(t => t.Points.Count > 0).ToList();
 }
@@ -235,7 +235,7 @@ else
             // Event Log reads can take a moment: never on the render thread.
             var read = await Task.Run(() => History.Read(within));
             // Cancelled runs produced no result: they're left out of history entirely.
-            _result = read with { Entries = HistoryQuery.WithoutCancelled(HistoryNames.Normalize(read.Entries, Diagnostics.Modules)) };
+            _result = read with { Entries = HistoryQuery.WithoutCancelled(HistoryNames.Normalize(read.Entries, Diagnostics.Catalog)) };
             if (_open is not null && !_result.Entries.Contains(_open)) _open = null;
         }
         catch { _result = new HistoryReadResult([], false); }

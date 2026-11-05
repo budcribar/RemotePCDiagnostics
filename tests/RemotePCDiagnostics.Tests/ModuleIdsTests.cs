@@ -78,8 +78,9 @@ public class ModuleIdsTests
     public void Register_rejects_a_duplicate_id()
     {
         var svc = new DiagnosticsService(new ResultStore());
-        svc.Register(new IdModule("First", ModuleIds.DriveHealth));
-        var ex = Assert.Throws<InvalidOperationException>(() => svc.Register(new IdModule("Second", ModuleIds.DriveHealth)));
+        var id = Guid.NewGuid();
+        svc.Register(new IdModule("First", id));
+        var ex = Assert.Throws<InvalidOperationException>(() => svc.Register(new IdModule("Second", id)));
         Assert.Contains("First", ex.Message);
     }
 

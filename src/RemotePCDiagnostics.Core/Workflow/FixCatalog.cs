@@ -28,6 +28,8 @@ public static class FixCatalog
 
     public const string NotNeededNote = "Closing apps, ending tasks and restarting aren't listed: the workflow restarts the PC itself, which does the same.";
 
+    private static readonly Lazy<ModuleCatalog> BuiltInCatalog = new(() => new ModuleCatalog());
+
     private static readonly Dictionary<string, string> AreaNames = new(StringComparer.OrdinalIgnoreCase)
     {
         [ModuleSlugs.DeviceDrivers] = "Drivers & devices", [ModuleSlugs.Programs] = "Windows updates", [ModuleSlugs.ResourceHogs] = "Performance & power",
@@ -58,7 +60,9 @@ public static class FixCatalog
 
     private static bool CanRunUnattended(MemoryAction action) => UnattendedMemoryActions.Contains(action.Type);
 
-    public static IReadOnlyList<WorkflowFix> Build(IEnumerable<DiagnosticResult> results, IEnumerable<MemorySuggestion> suggestions, RemediationService? plans = null)
+    /// <param name="catalog">Names a fix's area when it isn't one of the fixed areas; defaults to the built-in modules.</param>
+    public static IReadOnlyList<WorkflowFix> Build(IEnumerable<DiagnosticResult> results, IEnumerable<MemorySuggestion> suggestions, RemediationService? plans = null,
+        ModuleCatalog? catalog = null)
     {
         var list = new List<WorkflowFix>();
         var seen = new HashSet<string>();
@@ -66,7 +70,7 @@ public static class FixCatalog
         foreach (var r in results)
         {
             if (r.Payload is not AreaReport rep) continue;
-            var area = AreaNames.GetValueOrDefault(r.ModuleName, r.ModuleName);
+            var area = AreaNames.GetValueOrDefault(r.ModuleName) ?? (catalog ?? BuiltInCatalog.Value).DisplayName(r.ModuleName);
             foreach (var card in rep.Cards)
             {
                 var actions = (card.Actions ?? []).Concat(card.Rows.SelectMany(row => row.Actions ?? []));
