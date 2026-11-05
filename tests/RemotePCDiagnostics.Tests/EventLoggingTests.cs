@@ -113,10 +113,15 @@ public class EventLoggingTests
         Assert.Equal(level, ResultEventLogger.LevelFor(r));
     }
 
+    private sealed record StoppedPayload(CpuStressOutcome Outcome, double MaxTemperature, int Errors, string Secret) : IRunEnd
+    {
+        public RunEnd RunEnd => Outcome == CpuStressOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+    }
+
     [Fact]
     public void StoppedByUserPayload_IsCancelled_AndMeasurementsIncluded()
     {
-        var payload = new { Outcome = CpuStressOutcome.StoppedByUser, MaxTemperature = 81.5, Errors = 0, Secret = "token-abc" };
+        var payload = new StoppedPayload(CpuStressOutcome.StoppedByUser, 81.5, 0, "token-abc");
         var r = new DiagnosticResult("CpuStress", DiagnosticStatus.Warning, "Stopped", DateTimeOffset.Now, payload);
         Assert.Equal("Cancelled", ResultEventLogger.Outcome(r));
         var text = ResultEventLogger.Format(r, TimeSpan.FromSeconds(60), "short run");
