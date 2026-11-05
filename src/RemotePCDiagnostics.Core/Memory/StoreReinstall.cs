@@ -160,20 +160,20 @@ public static class StoreReinstall
     /// Reinstalls one removed app for the signed-in account: already back → done; otherwise winget (fixed command) and a check with
     /// Get-AppxPackage that it's installed again. Success only when that check finds it. The caller keeps the journal entry on failure.
     /// </summary>
-    public static async Task<ActionOutcome> ReinstallAsync(IAppManagementSystem sys, string? familyName, string? journaledId, CancellationToken ct, Action<string>? log = null)
+    public static async Task<ActionOutcome> ReinstallAsync(IAppManagementSystem sys, string? familyName, string? journaledId, CancellationToken ct, ILogger? log = null)
     {
         var app = FindByFamily(familyName);
         var cmd = CommandFor(familyName, journaledId);
         if (app is null || cmd is null || !IsAllowedCommand(cmd))
         {
-            log?.Invoke($"Refused reinstall of '{familyName}' (Store id '{journaledId}'): not on the allowlist");
+            log.Info($"Refused reinstall of '{familyName}' (Store id '{journaledId}'): not on the allowlist");
             return new(false, "That app isn't one this app reinstalls, so it was left as is. Reinstall it from the Microsoft Store if needed.");
         }
         if (await sys.IsStorePackageInstalledAsync(app, ct).ConfigureAwait(false) == true)
             return new(true, $"{app.Label} is already installed for the signed-in account.");
 
         var r = await sys.RunWingetAsync(cmd, ct).ConfigureAwait(false);
-        log?.Invoke($"Reinstall {app.FamilyName}: {cmd.Display} → {(r.Started ? r.ExitCode?.ToString(CultureInfo.InvariantCulture) ?? "no exit code" : "not started")} {r.Problem}");
+        log.Info($"Reinstall {app.FamilyName}: {cmd.Display} → {(r.Started ? r.ExitCode?.ToString(CultureInfo.InvariantCulture) ?? "no exit code" : "not started")} {r.Problem}");
         if (!r.Started || r.ExitCode != 0) return new(false, $"{FailedMessage(app.Label)} ({Reason(r)}.)");
 
         var back = await sys.IsStorePackageInstalledAsync(app, ct).ConfigureAwait(false);

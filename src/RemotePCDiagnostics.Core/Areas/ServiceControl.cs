@@ -85,7 +85,7 @@ public sealed record ServiceActionResult(bool Success, string Message, ServiceSt
 public sealed record ServiceActionPlan(ServiceAction Action, string Title, string WhatItIs, string WhatWillHappen, IReadOnlyList<DependentService> Dependents, string? Warning, bool Allowed);
 
 /// <summary>Plans, runs and audits start/stop/restart of Windows services. All user-facing text is plain; detail goes to the log.</summary>
-public sealed class ServiceActionService(IServiceControlBackend backend, ISessionContext? session = null, Action<string>? log = null, TimeSpan? timeout = null,
+public sealed class ServiceActionService(IServiceControlBackend backend, ISessionContext? session = null, ILogger? log = null, TimeSpan? timeout = null,
     Changes.IChangeJournal? journal = null)
 {
     public const int MaxRecent = 20;
@@ -100,12 +100,14 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
 
     public string Actor => ServiceActor.From(session);
 
-    private void Log(string m) => log?.Invoke("[services] " + m);
+    private void Log(string m) => log.Info("[services] " + m);
+    private void LogWarn(string m) => log.Warn("[services] " + m);
+    private void LogError(string m) => log.Error("[services] " + m);
 
     public ServiceControlOptions OptionsFor(ServiceInfo s)
     {
         bool driver;
-        try { driver = backend.IsDriver(s.Name); } catch (Exception ex) { Log($"IsDriver({s.Name}) failed: {ex}"); driver = false; }
+        try { driver = backend.IsDriver(s.Name); } catch (Exception ex) { LogError($"IsDriver({s.Name}) failed: {ex}"); driver = false; }
         return ServiceProtection.For(s, driver);
     }
 
@@ -122,7 +124,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         if (action != ServiceAction.Start)
         {
             try { deps = backend.GetRunningDependents(s.Name); }
-            catch (Exception ex) { Log($"GetRunningDependents({s.Name}) failed: {ex}"); }
+            catch (Exception ex) { LogError($"GetRunningDependents({s.Name}) failed: {ex}"); }
         }
         var happen = action switch
         {
@@ -168,13 +170,13 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
             if (_recent.Count > MaxRecent) _recent.RemoveAt(_recent.Count - 1);
         }
         Log($"AUDIT when={rec.When:O} actor='{actor}' action={action} service='{s.Name}' success={result.Success} newState={result.NewState} message='{result.Message}'");
-        try { ActionCompleted?.Invoke(rec); } catch (Exception ex) { Log($"ActionCompleted handler failed: {ex}"); }
+        try { ActionCompleted?.Invoke(rec); } catch (Exception ex) { LogError($"ActionCompleted handler failed: {ex}"); }
         return result;
     }
 
     private ServiceState SafeState(string name)
     {
-        try { return backend.GetState(name); } catch (Exception ex) { Log($"GetState({name}) failed: {ex}"); return ServiceState.Unknown; }
+        try { return backend.GetState(name); } catch (Exception ex) { LogError($"GetState({name}) failed: {ex}"); return ServiceState.Unknown; }
     }
 
     private async Task<ServiceActionResult> RunAsync(ServiceInfo s, ServiceAction action, CancellationToken ct)
@@ -191,7 +193,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
                 backend.Stop(s.Name);
                 if (!await backend.WaitForStateAsync(s.Name, ServiceState.Stopped, Timeout, ct).ConfigureAwait(false))
                 {
-                    Log($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to stop");
+                    LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to stop");
                     return new(false, $"Couldn't {verb} {s.Label}: it didn't respond in time.", SafeState(s.Name));
                 }
             }
@@ -201,7 +203,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
                 backend.Start(s.Name);
                 if (!await backend.WaitForStateAsync(s.Name, ServiceState.Running, Timeout, ct).ConfigureAwait(false))
                 {
-                    Log($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to start");
+                    LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to start");
                     return new(false, $"Couldn't {verb} {s.Label}: it didn't respond in time.", SafeState(s.Name));
                 }
                 if (action == ServiceAction.Restart)
@@ -213,7 +215,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
                             backend.Start(d.Name);
                             await backend.WaitForStateAsync(d.Name, ServiceState.Running, Timeout, ct).ConfigureAwait(false);
                         }
-                        catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Restarting dependent '{d.Name}' failed: {ex}"); }
+                        catch (Exception ex) when (ex is not OperationCanceledException) { LogError($"Restarting dependent '{d.Name}' failed: {ex}"); }
                     }
                 }
             }
@@ -226,7 +228,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         }
         catch (Exception ex)
         {
-            Log($"{action} of '{s.Name}' failed during {step}: {ex}");
+            LogError($"{action} of '{s.Name}' failed during {step}: {ex}");
             var why = s.IsDisabled && step == "start" ? "it's turned off (disabled)" : "Windows didn't allow it";
             return new(false, $"Couldn't {verb} {s.Label}: {why}.", SafeState(s.Name));
         }

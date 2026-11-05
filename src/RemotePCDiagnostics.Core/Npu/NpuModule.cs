@@ -28,7 +28,7 @@ public interface INpuTestModule : IPerDeviceModule
 /// Detects NPUs, checks driver health, and runs a short matrix-multiply (or queue round-trip) on each one with a watchdog. Fully automatic.
 /// One instance per NPU (keyed on its PnP hardware id); a PC without an NPU doesn't show the test. Each NPU gets the whole time budget.
 /// </summary>
-public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuTestModule, IInstanceSummary
+public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : INpuTestModule, IInstanceSummary
 {
     public const string ModuleName = ModuleSlugs.NpuTest;
     public static readonly TimeSpan DefaultDuration = TimeSpan.FromSeconds(10);
@@ -55,7 +55,9 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
     public NpuTestSettings Settings { get; } = new();
     public event EventHandler<DiagnosticResult>? Updated { add { } remove { } } // no unsolicited updates
 
-    private void Log(string s) { try { log?.Invoke(s); } catch { } }
+    private void Log(string m) => log.Info(m);
+    private void LogWarn(string m) => log.Warn(m);
+    private void LogError(string m) => log.Error(m);
 
     /// <summary>Longest the one-time presence check may take before the NPU test is treated as absent (hidden).</summary>
     public static readonly TimeSpan DetectionTimeout = TimeSpan.FromSeconds(20);
@@ -79,7 +81,7 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
             _present = list is { Count: > 0 };
             Log($"{Name}: presence check found {list?.Count ?? 0} NPU(s){(_present ? "" : "; test hidden")}");
         }
-        catch (Exception ex) { _present = false; Log($"{Name}: presence check failed, test hidden: {ex.Message}"); }
+        catch (Exception ex) { _present = false; LogWarn($"{Name}: presence check failed, test hidden: {ex.Message}"); }
         return _present;
     }
 
@@ -93,7 +95,7 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             _present = false;
-            Log($"{Name}: detection failed, test hidden: {ex.Message}");
+            LogWarn($"{Name}: detection failed, test hidden: {ex.Message}");
             return ModuleDetection.NotApplicable("Couldn't look for an NPU");
         }
         _present = list.Count > 0;
@@ -115,7 +117,7 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
             var (a, b) = Inputs(MatrixSize);
             var cpu = CpuBaseline(a, b, MatrixSize, out var reference);
             progress?.Report($"Testing {device.Name}…");
-            var report = await TestDeviceAsync(io, device, a, b, reference, cpu, budget, WatchdogGrace, cts.Token, Log).ConfigureAwait(false);
+            var report = await TestDeviceAsync(io, device, a, b, reference, cpu, budget, WatchdogGrace, cts.Token, log).ConfigureAwait(false);
             Log($"{Name}: {device.Name}: {report.Verdict} {report.Message}");
             return ToResult(new NpuTestReport([report], MatrixSize, budget, report.Verdict, null));
         }
@@ -125,7 +127,7 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
         }
         catch (Exception ex)
         {
-            Log($"{Name}: {ex}");
+            LogError($"{Name}: {ex}");
             return new DiagnosticResult(Name, DiagnosticStatus.Error, "The NPU test couldn't finish on this PC. Please try again.", DateTimeOffset.Now);
         }
         finally { lock (_gate) _runCts = null; }
@@ -143,7 +145,7 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
     public IReadOnlyList<NpuDevice> Devices()
     {
         try { return io.ListDevices(); }
-        catch (Exception ex) { Log($"{Name}: device list failed: {ex.Message}"); return []; }
+        catch (Exception ex) { LogWarn($"{Name}: device list failed: {ex.Message}"); return []; }
     }
 
     public void Cancel() { lock (_gate) { try { _runCts?.Cancel(); } catch (ObjectDisposedException) { } } }
@@ -163,7 +165,7 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
         }
         catch (Exception ex)
         {
-            Log($"{Name}: {ex}");
+            LogError($"{Name}: {ex}");
             return new DiagnosticResult(Name, DiagnosticStatus.Error, "The NPU test couldn't finish on this PC. Please try again.", DateTimeOffset.Now);
         }
         finally { lock (_gate) _runCts = null; }
@@ -187,7 +189,7 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
         {
             ct.ThrowIfCancellationRequested();
             progress?.Report($"Testing {d.Name}…");
-            reports.Add(await TestDeviceAsync(io, d, a, b, reference, cpu, per, WatchdogGrace, ct, Log).ConfigureAwait(false));
+            reports.Add(await TestDeviceAsync(io, d, a, b, reference, cpu, per, WatchdogGrace, ct, log).ConfigureAwait(false));
         }
         var rep = new NpuTestReport(reports, MatrixSize, budget, Worst(reports.Select(r => r.Verdict)), null);
         Log($"{Name}: {rep.Overall}; " + string.Join("; ", reports.Select(r => $"{r.Device.Name}: {r.Verdict} {r.Message}")));
@@ -196,7 +198,7 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
 
     /// <summary>Driver check, watchdog-bounded workload, then the decision table. Public for tests.</summary>
     public static async Task<NpuDeviceReport> TestDeviceAsync(INpuIo io, NpuDevice d, float[] a, float[] b, float[] reference, double cpuMs,
-        TimeSpan budget, TimeSpan grace, CancellationToken ct, Action<string>? log = null)
+        TimeSpan budget, TimeSpan grace, CancellationToken ct, ILogger? log = null)
     {
         if (!d.DriverHealthy)
             return Report(d, NpuVerdict.DriverProblem, null, cpuMs, null, null);
@@ -211,13 +213,13 @@ public sealed class NpuTestModule(INpuIo io, Action<string>? log = null) : INpuT
         catch (TimeoutException)
         {
             _ = work.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe a late fault
-            log?.Invoke($"NpuTest: {d.Name} timed out after {budget + grace}");
+            log.Warn($"NpuTest: {d.Name} timed out after {budget + grace}");
             return Report(d, NpuVerdict.TimedOut, null, cpuMs, null, null);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            log?.Invoke($"NpuTest: {d.Name} workload failed: {ex}");
+            log.Error($"NpuTest: {d.Name} workload failed: {ex}");
             return Report(d, NpuVerdict.WorkloadFailed, null, cpuMs, null, ex.Message);
         }
         double? err = res.Output is null ? null : MaxError(res.Output, reference);

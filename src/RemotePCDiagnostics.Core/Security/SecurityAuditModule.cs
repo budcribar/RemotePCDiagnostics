@@ -15,7 +15,7 @@ public sealed class SecurityAuditOptions
     public Func<string>? ReportPathFactory { get; set; }
     public Func<bool>? IsAdministrator { get; set; }
     public Func<string, bool>? FileExists { get; set; }
-    public Action<string>? Log { get; set; }
+    public ILogger? Log { get; set; }
 }
 
 /// <summary>
@@ -117,7 +117,7 @@ public sealed class SecurityAuditModule : IDiagnosticModule
             }
             catch (Exception ex)
             {
-                Log($"SecurityAudit: failed to start PowerShell: {ex}");
+                LogError($"SecurityAudit: failed to start PowerShell: {ex}");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             var head = pr.StdOut.Length > 2048 ? pr.StdOut[..2048] : pr.StdOut;
@@ -143,7 +143,7 @@ public sealed class SecurityAuditModule : IDiagnosticModule
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             var report = new SecurityAuditReport(findings, admin ? null : NotAdminNotice);
-            Log($"SecurityAudit: parsed {findings.Count} findings passed={report.Passed} warn={report.Warnings} failed={report.Failed} notChecked={report.NotChecked}");
+            LogWarn($"SecurityAudit: parsed {findings.Count} findings passed={report.Passed} warn={report.Warnings} failed={report.Failed} notChecked={report.NotChecked}");
             return Result(report.Status, report.Summary, report);
         }
         finally
@@ -177,10 +177,12 @@ public sealed class SecurityAuditModule : IDiagnosticModule
     private void TryDelete(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
-        catch (Exception ex) { Log($"SecurityAudit: couldn't delete temp folder: {ex.Message}"); }
+        catch (Exception ex) { LogWarn($"SecurityAudit: couldn't delete temp folder: {ex.Message}"); }
     }
 
-    private void Log(string s) { try { _o.Log?.Invoke(s); } catch { } }
+    private void Log(string m) => _o.Log.Info(m);
+    private void LogWarn(string m) => _o.Log.Warn(m);
+    private void LogError(string m) => _o.Log.Error(m);
 
     internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);
 }

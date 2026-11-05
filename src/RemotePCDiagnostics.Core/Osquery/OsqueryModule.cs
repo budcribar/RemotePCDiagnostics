@@ -16,7 +16,7 @@ public sealed class OsqueryModule(OsqueryRunner runner) : IDiagnosticModule
     {
         var a = runner.CheckAvailability();
         if (a.IsAvailable) return Task.FromResult(a);
-        runner.Options.Log?.Invoke(a.Reason ?? runner.NotFoundMessage); // developer detail (path) goes to the log only
+        runner.Options.Log.Line(a.Reason ?? runner.NotFoundMessage); // developer detail (path) goes to the log only
         return Task.FromResult(ModuleAvailability.Unavailable(ToolMissingMessage));
     }
 

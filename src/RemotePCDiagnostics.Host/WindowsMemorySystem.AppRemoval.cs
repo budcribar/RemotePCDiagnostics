@@ -51,7 +51,7 @@ public sealed partial class WindowsMemorySystem
 
             return new(packages, ReadRemovablePrograms(), ReadAppRemovalSettings(), ReadAllowlistedTasks(), ReadNarratorInUse());
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Log("App removal read failed: " + ex.Message); return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn("App removal read failed: " + ex.Message); return null; }
     }
 
     /// <summary>Install folders plus this account's app data (%LOCALAPPDATA%\Packages\&lt;family&gt;). Null when nothing could be read.</summary>
@@ -148,7 +148,7 @@ public sealed partial class WindowsMemorySystem
                 }
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException) { Log("Task tree read failed: " + ex.Message); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException) { LogWarn("Task tree read failed: " + ex.Message); }
         return list;
     }
 
@@ -196,7 +196,7 @@ public sealed partial class WindowsMemorySystem
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
         {
-            Log($"Uninstall {command.Display} failed: {ex.Message}");
+            LogWarn($"Uninstall {command.Display} failed: {ex.Message}");
             return new(false, "Couldn't run the uninstaller.");
         }
     }

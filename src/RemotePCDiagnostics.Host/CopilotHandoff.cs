@@ -7,6 +7,8 @@ namespace RemotePCDiagnostics.Host;
 
 internal sealed class CopilotHandoff : ICopilotHandoff
 {
+    private static readonly ILogger Logger = HostServices.For<CopilotHandoff>(App.Loggers);
+
     public Task<bool> TrySendAsync(string prompt) =>
         Application.Current.Dispatcher.InvokeAsync(() => SendAsync(prompt)).Task.Unwrap();
 
@@ -57,7 +59,7 @@ internal sealed class CopilotHandoff : ICopilotHandoff
         }
         catch (Exception ex)
         {
-            App.Log($"Copilot handoff unavailable: {ex.GetType().Name}");
+            Logger.Error($"Copilot handoff unavailable: {ex.GetType().Name}");
         }
         finally
         {

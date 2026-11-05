@@ -73,7 +73,7 @@ public sealed record RawHistoryEvent(DateTimeOffset TimeCreated, string? Message
 /// History from raw Event Log events: builds the query, parses each 1100 message (current and older formats; unparseable
 /// ones are skipped) and turns any reader failure (no source, access denied, not Windows) into Available=false.
 /// </summary>
-public sealed class EventLogHistoryStore(Func<string, int, IEnumerable<RawHistoryEvent>> query, Action<string>? log = null) : IHistoryStore
+public sealed class EventLogHistoryStore(Func<string, int, IEnumerable<RawHistoryEvent>> query, ILogger? log = null) : IHistoryStore
 {
     public const string ProviderName = "RemotePCDiagnostics";
     public const string LogName = "Application";
@@ -103,11 +103,11 @@ public sealed class EventLogHistoryStore(Func<string, int, IEnumerable<RawHistor
         }
         catch (Exception ex)
         {
-            try { log?.Invoke($"History: Event Log read failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            try { log.Error($"History: Event Log read failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
             return new(list.OrderByDescending(e => e.TimeUtc).ToList(), list.Count > 0, $"{ex.GetType().Name}: {ex.Message}") { LegacyEntries = legacy };
         }
-        if (skipped > 0) try { log?.Invoke($"History: skipped {skipped} unparseable event(s)"); } catch { }
-        if (legacy > 0) try { log?.Invoke($"History: {legacy} event(s) in the old format wait for the one-time history update"); } catch { }
+        if (skipped > 0) try { log.Info($"History: skipped {skipped} unparseable event(s)"); } catch { }
+        if (legacy > 0) try { log.Info($"History: {legacy} event(s) in the old format wait for the one-time history update"); } catch { }
         return new(list.OrderByDescending(e => e.TimeUtc).ToList(), true) { LegacyEntries = legacy };
     }
 }

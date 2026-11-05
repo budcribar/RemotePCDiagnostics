@@ -21,9 +21,9 @@ public static class ProtectedStateFolder
     private const FileSystemRights ReadOnly = FileSystemRights.ReadAndExecute | FileSystemRights.Synchronize;
 
     /// <summary>Returns false (after logging why) when either folder couldn't be secured.</summary>
-    public static bool Ensure(Action<string>? log) => Ensure(ProtectedState.AppDataFolder(), ProtectedState.Folder(), log);
+    public static bool Ensure(ILogger? log) => Ensure(ProtectedState.AppDataFolder(), ProtectedState.Folder(), log);
 
-    public static bool Ensure(string appFolder, string stateFolder, Action<string>? log)
+    public static bool Ensure(string appFolder, string stateFolder, ILogger? log)
     {
         try
         {
@@ -33,27 +33,27 @@ public static class ProtectedStateFolder
             if (IsSecure(state, readers: false)) return true;
 
             var aside = $"{stateFolder}.untrusted-{DateTime.Now:yyyyMMdd-HHmmss}";
-            log?.Invoke($"Protected state: {stateFolder} wasn't created by this app or was opened up; moved it to {aside}");
+            log.Warn($"Protected state: {stateFolder} wasn't created by this app or was opened up; moved it to {aside}");
             Directory.Move(stateFolder, aside);
             state = new DirectoryInfo(stateFolder);
             state.Create(Wanted(readers: false));
             if (IsSecure(state, readers: false)) return true;
-            log?.Invoke($"Protected state: {stateFolder} is still not secure after replacing it");
+            log.Warn($"Protected state: {stateFolder} is still not secure after replacing it");
             return false;
         }
         catch (Exception ex)
         {
-            log?.Invoke($"Protected state: couldn't secure {stateFolder}: {ex.Message}");
+            log.Warn($"Protected state: couldn't secure {stateFolder}: {ex.Message}");
             return false;
         }
     }
 
-    private static bool SecureInPlace(string path, bool readers, Action<string>? log)
+    private static bool SecureInPlace(string path, bool readers, ILogger? log)
     {
         var dir = new DirectoryInfo(path);
         dir.Create(Wanted(readers));
         if (IsSecure(dir, readers)) return true;
-        log?.Invoke($"Protected state: resetting the owner and permissions of {path}");
+        log.Info($"Protected state: resetting the owner and permissions of {path}");
         using (Privileges.Enable("SeTakeOwnershipPrivilege", "SeRestorePrivilege"))
         {
             var owner = new DirectorySecurity();
@@ -62,7 +62,7 @@ public static class ProtectedStateFolder
             dir.SetAccessControl(Wanted(readers));
         }
         if (IsSecure(dir, readers)) return true;
-        log?.Invoke($"Protected state: {path} is still not secure after resetting it");
+        log.Warn($"Protected state: {path} is still not secure after resetting it");
         return false;
     }
 

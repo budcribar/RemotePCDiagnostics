@@ -118,7 +118,7 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
         {
             progress.ReportStep(3, total, "Comparing DNS speed…");
             try { dns = await (dnsTest ?? new DnsSpeedTest(log: commands.Log)).CompareAsync(primary.Dns, ct).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { commands.Log?.Invoke($"DNS speed test failed: {ex.Message}"); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { commands.Log.Warn($"DNS speed test failed: {ex.Message}"); }
         }
         var wifiRep = WifiConfigModule.Build(
             wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null,

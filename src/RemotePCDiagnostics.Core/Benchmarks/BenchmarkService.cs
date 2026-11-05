@@ -9,7 +9,7 @@ namespace RemotePCDiagnostics.Core.Benchmarks;
 /// "before" survives the restart and the "after" can run by itself once the PC is back.
 /// </summary>
 public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore store, RemediationService? remediation = null,
-    ISessionContext? session = null, Action<LogLevel, string>? events = null, Action<string>? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
+    ISessionContext? session = null, Action<LogLevel, string>? events = null, ILogger? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
 {
     private readonly object _gate = new();
     private BenchmarkState _state = LoadState(store);
@@ -40,8 +40,9 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public string? Message { get; private set; }
     public BenchmarkComparison Comparison => BenchmarkComparison.Build(Before, After);
 
-    private void Log(string m) { try { log?.Invoke("[benchmark] " + m); } catch { } }
-    private void Raise() { try { Changed?.Invoke(); } catch (Exception ex) { Log("Changed handler failed: " + ex.Message); } }
+    private void Log(string m) => log.Info("[benchmark] " + m);
+    private void LogWarn(string m) => log.Warn("[benchmark] " + m);
+    private void Raise() { try { Changed?.Invoke(); } catch (Exception ex) { LogWarn("Changed handler failed: " + ex.Message); } }
     private void Save(BenchmarkState s) { lock (_gate) _state = s; store.Save(s); Raise(); }
 
     public void UpdateSettings(BenchmarkSettings s)
@@ -153,6 +154,6 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             if (run.Phase == BenchmarkPhase.After && Before is not null) text += "\r\n" + Comparison.OverallText;
             events?.Invoke(LogLevel.Information, text);
         }
-        catch (Exception ex) { Log("event write failed: " + ex.Message); }
+        catch (Exception ex) { LogWarn("event write failed: " + ex.Message); }
     }
 }

@@ -21,12 +21,12 @@ public static class CpuTemperatureFallback
         (n.Contains("AMD", StringComparison.OrdinalIgnoreCase) || n.Contains("Ryzen", StringComparison.OrdinalIgnoreCase)) &&
         n.Contains("Radeon", StringComparison.OrdinalIgnoreCase);
 
-    public static List<SensorReading> ApplyApuDie(IReadOnlyList<SensorReading> readings, string? cpuName, Action<string>? log = null)
+    public static List<SensorReading> ApplyApuDie(IReadOnlyList<SensorReading> readings, string? cpuName, ILogger? log = null)
     {
         var list = readings.ToList();
         if (HasRealCpuTemp(list) || !IsAmdApu(cpuName)) return list;
         var gpu = list.Where(r => r.IsFromWindows && r.IsLive && r.HardwareName.Contains("Radeon", StringComparison.OrdinalIgnoreCase)).MaxBy(r => r.Value);
-        log?.Invoke($"CPU temperature fallback (APU shared die): cpu='{cpuName}' radeonGpuFromWindows={(gpu?.Value?.ToString("0.0") ?? "none")}");
+        log.Info($"CPU temperature fallback (APU shared die): cpu='{cpuName}' radeonGpuFromWindows={(gpu?.Value?.ToString("0.0") ?? "none")}");
         if (gpu?.Value is { } v) list.Add(new SensorReading(cpuName!, HardwareKind.Cpu, ApuSensorName, SensorKind.Temperature, v, null, null, "°C"));
         return list;
     }

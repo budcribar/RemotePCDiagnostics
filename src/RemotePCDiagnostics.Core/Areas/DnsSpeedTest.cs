@@ -53,7 +53,7 @@ public sealed record DnsComparison(DnsServerTiming Current, DnsServerTiming Clou
     }
 }
 
-public sealed class DnsSpeedTest(IDnsTransport? transport = null, Action<string>? log = null)
+public sealed class DnsSpeedTest(IDnsTransport? transport = null, ILogger? log = null)
 {
     public static readonly IPAddress CloudflareIp = IPAddress.Parse("1.1.1.1"), GoogleIp = IPAddress.Parse("8.8.8.8");
     public const int Lookups = 12;
@@ -102,7 +102,7 @@ public sealed class DnsSpeedTest(IDnsTransport? transport = null, Action<string>
         DnsServerTiming T(int j) => new(servers[j].Item1, servers[j].Item2.ToString(),
             times[j].Count >= Lookups * 2 / 3 ? Median(times[j]) : null, times[j].Count, Lookups);
         var c = new DnsComparison(T(0), T(1), T(2));
-        log?.Invoke($"DNS speed: current {c.Current.Address}={c.Current.MedianMs:0.0}ms ({c.Current.Answered}/{Lookups}) cloudflare={c.Cloudflare.MedianMs:0.0} google={c.Google.MedianMs:0.0} faster={c.PublicIsFaster}");
+        log.Info($"DNS speed: current {c.Current.Address}={c.Current.MedianMs:0.0}ms ({c.Current.Answered}/{Lookups}) cloudflare={c.Cloudflare.MedianMs:0.0} google={c.Google.MedianMs:0.0} faster={c.PublicIsFaster}");
         return c;
     }
 

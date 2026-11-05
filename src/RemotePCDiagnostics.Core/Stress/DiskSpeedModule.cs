@@ -3,7 +3,7 @@ using RemotePCDiagnostics.Core.Sensors;
 namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand disk speed test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
-public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<DiskSpeedProgress, DiskSpeedReport>(log), IStressSuiteModule
+public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sensors, ILogger? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<DiskSpeedProgress, DiskSpeedReport>(log.AsAction()), IStressSuiteModule
 {
     public const string ModuleName = ModuleSlugs.DiskSpeed;
     public override string Name => ModuleName;
@@ -22,7 +22,7 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
     public IReadOnlyList<TestDrive> ListDrives()
     {
         try { return fs.GetFixedDrives(); }
-        catch (Exception ex) { log?.Invoke($"Disk speed: listing drives failed: {ex.Message}"); return []; }
+        catch (Exception ex) { log.Warn($"Disk speed: listing drives failed: {ex.Message}"); return []; }
     }
 
     protected override Task<DiskSpeedReport> RunTestAsync(StressCleanup cleanup, IProgress<DiskSpeedProgress> progress, CancellationToken cancellationToken)

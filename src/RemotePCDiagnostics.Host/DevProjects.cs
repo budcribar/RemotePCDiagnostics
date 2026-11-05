@@ -14,7 +14,7 @@ public static class DevProjects
     private static (DateTime At, IReadOnlyList<ProjectRoot> Roots)? s_last;
     private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(5);
 
-    public static async Task<IReadOnlyList<ProjectRoot>> FindAsync(Action<string>? log, CancellationToken ct)
+    public static async Task<IReadOnlyList<ProjectRoot>> FindAsync(ILogger? log, CancellationToken ct)
     {
         await Gate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -35,7 +35,7 @@ public static class DevProjects
         "$o=New-Object System.Collections.Generic.List[string];" +
         "while(-not $rs.EOF){ $o.Add([string]$rs.Fields.Item(0).Value); $rs.MoveNext() };$rs.Close();$c.Close();$o -join \"`n\"";
 
-    private static async Task<IReadOnlyList<string>> SearchIndexAsync(Action<string>? log, CancellationToken ct)
+    private static async Task<IReadOnlyList<string>> SearchIndexAsync(ILogger? log, CancellationToken ct)
     {
         var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"))
         { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -49,14 +49,14 @@ public static class DevProjects
             var errTask = p.StandardError.ReadToEndAsync(timeout.Token);
             await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
             var output = await outTask.ConfigureAwait(false);
-            if (p.ExitCode != 0) { log?.Invoke("[projects] search index unavailable: " + (await errTask.ConfigureAwait(false)).Trim()); return []; }
+            if (p.ExitCode != 0) { log.Info("[projects] search index unavailable: " + (await errTask.ConfigureAwait(false)).Trim()); return []; }
             return output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         }
         catch (OperationCanceledException)
         {
             try { p.Kill(true); } catch { }
             if (ct.IsCancellationRequested) throw;
-            log?.Invoke("[projects] search index timed out");
+            log.Warn("[projects] search index timed out");
             return [];
         }
     }

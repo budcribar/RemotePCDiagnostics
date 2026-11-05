@@ -12,9 +12,9 @@ namespace RemotePCDiagnostics.Host;
 /// Windows measurements for the before/after benchmarks. Only Windows' own programs are started (and closed again);
 /// counters use English names (PDH), so they work on any Windows language.
 /// </summary>
-public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensorProvider? sensors, Action<string>? log = null) : IBenchmarkProbes
+public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensorProvider? sensors, ILogger? log = null) : IBenchmarkProbes
 {
-    private void Log(string m) { try { log?.Invoke("[benchmark] " + m); } catch { } }
+    private void Log(string m) => log.Info("[benchmark] " + m);
 
     // ---- conditions ----
     [StructLayout(LayoutKind.Sequential)]

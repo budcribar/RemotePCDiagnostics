@@ -62,7 +62,7 @@ public sealed class SystemMemoryInfo : IMemoryInfo
 }
 
 /// <summary>Starts the bundled RemotePCDiagnostics.MemTest helper (next to the app) at below-normal priority.</summary>
-public sealed class ProcessMemTestHelperLauncher(string? directory = null, Action<string>? log = null) : IMemTestHelperLauncher
+public sealed class ProcessMemTestHelperLauncher(string? directory = null, ILogger? log = null) : IMemTestHelperLauncher
 {
     public const string HelperName = "RemotePCDiagnostics.MemTest";
 
@@ -78,10 +78,10 @@ public sealed class ProcessMemTestHelperLauncher(string? directory = null, Actio
             : throw new FileNotFoundException("Memory test helper not found", exe);
         psi.UseShellExecute = false; psi.RedirectStandardOutput = true; psi.RedirectStandardError = true; psi.CreateNoWindow = true;
         var p = Process.Start(psi) ?? throw new InvalidOperationException("Memory test helper did not start");
-        try { p.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception ex) { log?.Invoke($"Memory test: couldn't lower helper priority: {ex.Message}"); }
-        p.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) log?.Invoke($"Memory test helper stderr: {e.Data}"); };
+        try { p.PriorityClass = ProcessPriorityClass.BelowNormal; } catch (Exception ex) { log.Warn($"Memory test: couldn't lower helper priority: {ex.Message}"); }
+        p.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) log.Info($"Memory test helper stderr: {e.Data}"); };
         p.BeginErrorReadLine();
-        log?.Invoke($"Memory test: started helper pid={p.Id} {psi.FileName} {psi.Arguments}");
+        log.Info($"Memory test: started helper pid={p.Id} {psi.FileName} {psi.Arguments}");
         return new Proc(p);
     }
 
@@ -94,7 +94,7 @@ public sealed class ProcessMemTestHelperLauncher(string? directory = null, Actio
     }
 }
 
-public sealed class MdschedLauncher(Action<string>? log = null) : IWindowsMemoryDiagnosticLauncher
+public sealed class MdschedLauncher(ILogger? log = null) : IWindowsMemoryDiagnosticLauncher
 {
     public bool Launch()
     {
@@ -102,9 +102,9 @@ public sealed class MdschedLauncher(Action<string>? log = null) : IWindowsMemory
         {
             var exe = Path.Combine(Environment.SystemDirectory, "mdsched.exe");
             Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true })?.Dispose();
-            log?.Invoke("Memory test: launched Windows Memory Diagnostic");
+            log.Info("Memory test: launched Windows Memory Diagnostic");
             return true;
         }
-        catch (Exception ex) { log?.Invoke($"Memory test: couldn't launch Windows Memory Diagnostic: {ex.Message}"); return false; }
+        catch (Exception ex) { log.Warn($"Memory test: couldn't launch Windows Memory Diagnostic: {ex.Message}"); return false; }
     }
 }

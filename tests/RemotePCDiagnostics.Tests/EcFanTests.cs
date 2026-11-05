@@ -52,7 +52,7 @@ public class EcFanTests
         public EcFanMonitor Build(string? model = "82R4", bool pawn = true, bool factoryThrows = false, TimeSpan? interval = null) =>
             new(() => model, () => (pawn, pawn ? "test" : "not installed"),
                 () => { FactoryCalls++; if (factoryThrows) throw new InvalidOperationException("no module"); return Ports; },
-                Lock, Logs.Add, () => Now, interval, stepTimeout: TimeSpan.FromMilliseconds(5));
+                Lock, new LineLogger(Logs.Add), () => Now, interval, stepTimeout: TimeSpan.FromMilliseconds(5));
         public void Advance(double s) => Now = Now.AddSeconds(s);
     }
 

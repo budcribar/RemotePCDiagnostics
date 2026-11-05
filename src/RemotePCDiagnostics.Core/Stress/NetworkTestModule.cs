@@ -4,7 +4,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 
 /// <summary>On-demand network stability test. Never auto-runs and is excluded from Run All; runs only when the user presses Start.</summary>
 public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, ISpeedTester speed, IAdapterCounters counters, ISensorProvider sensors,
-    NetworkTestSettings? settings = null, Action<string>? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<NetworkTestProgress, NetworkTestReport>(log), IStressSuiteModule
+    NetworkTestSettings? settings = null, ILogger? log = null, Func<IStressClock>? clockFactory = null) : StressModuleBase<NetworkTestProgress, NetworkTestReport>(log.AsAction()), IStressSuiteModule
 {
     public const string ModuleName = ModuleSlugs.NetworkTest;
     public override string Name => ModuleName;

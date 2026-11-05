@@ -136,7 +136,7 @@ public interface IWorkflowStore
     void Save(WorkflowState state);
 }
 
-public sealed class FileWorkflowStore(string path, Action<string>? log = null) : IWorkflowStore
+public sealed class FileWorkflowStore(string path, ILogger? log = null) : IWorkflowStore
 {
     public static string DefaultPath() =>
         ProtectedState.PathFor(ProtectedState.WorkflowFile);
@@ -144,7 +144,7 @@ public sealed class FileWorkflowStore(string path, Action<string>? log = null) :
     public WorkflowState? Load()
     {
         try { return File.Exists(path) ? WorkflowState.FromJson(File.ReadAllText(path)) : null; }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log?.Invoke($"Workflow state read failed: {ex.Message}"); return null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log.Warn($"Workflow state read failed: {ex.Message}"); return null; }
     }
 
     public void Save(WorkflowState state)
@@ -156,7 +156,7 @@ public sealed class FileWorkflowStore(string path, Action<string>? log = null) :
             File.WriteAllText(tmp, state.ToJson());
             File.Move(tmp, path, overwrite: true);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log?.Invoke($"Workflow state write failed: {ex.Message}"); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log.Warn($"Workflow state write failed: {ex.Message}"); }
     }
 }
 

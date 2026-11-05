@@ -52,7 +52,7 @@ public static class ModuleSignature
 /// </summary>
 /// <param name="userMode">Makes the in-app stand-in for an unsigned module (a <see cref="UserModeModuleProxy"/>); null leaves user-mode
 /// modules listed in <see cref="UserMode"/> only.</param>
-public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar registrar, Action<string>? log = null,
+public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar registrar, ILogger? log = null,
     Func<UserModeModule, IDiagnosticModule>? userMode = null)
 {
     /// <summary>Modules found unsigned that may run in the user-mode module host (see <see cref="UserModeModule"/>).</summary>
@@ -155,10 +155,11 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
             File.WriteAllText(Path.Combine(dir, ModuleManifest.ResourceName), manifest.ToJson());
             foreach (var (name, bytes) in strings) File.WriteAllBytes(Path.Combine(dir, "strings", Path.GetFileName(name)), bytes);
         }
-        catch (Exception ex) { Log($"couldn't save {manifest.Slug} to the catalog: {ex.Message}"); }
+        catch (Exception ex) { LogWarn($"couldn't save {manifest.Slug} to the catalog: {ex.Message}"); }
     }
 
-    private void Log(string message) { try { log?.Invoke("Modules: " + message); } catch { } }
+    private void Log(string m) => log.Info("Modules: " + m);
+    private void LogWarn(string m) => log.Warn("Modules: " + m);
 }
 
 /// <summary>Registers one ready-made module (the user-mode stand-in).</summary>

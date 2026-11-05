@@ -37,17 +37,17 @@ public static class RegistryKeyCleanup
     }
 
     /// <summary>Same, never throws: a key that can't be checked counts as existing (nothing is recorded, so nothing is ever deleted for it).</summary>
-    public static string? TopmostMissing(IRegistryTweaks sys, RegistryRoot root, string key, Action<string>? log = null)
+    public static string? TopmostMissing(IRegistryTweaks sys, RegistryRoot root, string key, ILogger? log = null)
     {
         try
         {
             return TopmostMissing(key, k =>
             {
                 try { return sys.RegistryKeyExists(root, k); }
-                catch (Exception ex) when (ex is not OperationCanceledException) { log?.Invoke($"Key check {k}: {ex.Message}"); return true; }
+                catch (Exception ex) when (ex is not OperationCanceledException) { log.Info($"Key check {k}: {ex.Message}"); return true; }
             });
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { log?.Invoke($"Key check {key}: {ex.Message}"); return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { log.Info($"Key check {key}: {ex.Message}"); return null; }
     }
 
     /// <summary>
@@ -92,18 +92,18 @@ public static class RegistryKeyCleanup
     /// each only if it has no values and no subkeys. Stops at the first key that is kept (its parents aren't empty either). Never throws: a key
     /// Windows won't delete is logged and left. Returns the keys deleted (or already gone).
     /// </summary>
-    public static IReadOnlyList<string> Remove(IRegistryTweaks sys, RegistryRoot root, string key, string? createdTop, Action<string>? log = null)
+    public static IReadOnlyList<string> Remove(IRegistryTweaks sys, RegistryRoot root, string key, string? createdTop, ILogger? log = null)
     {
         var deleted = new List<string>();
         foreach (var k in DeleteOrder(key, createdTop))
         {
             bool gone;
             try { gone = sys.DeleteRegistryKeyIfEmpty(root, k); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { log?.Invoke($"Couldn't remove the empty key {k}: {ex.Message}"); break; }
+            catch (Exception ex) when (ex is not OperationCanceledException) { log.Warn($"Couldn't remove the empty key {k}: {ex.Message}"); break; }
             if (!gone) break;
             deleted.Add(k);
         }
-        if (deleted.Count > 0) log?.Invoke($"Removed keys this app had created: {string.Join(", ", deleted)}");
+        if (deleted.Count > 0) log.Info($"Removed keys this app had created: {string.Join(", ", deleted)}");
         return deleted;
     }
 }
@@ -134,14 +134,14 @@ public static class ServiceDelayedStart
     public const string ValueName = "DelayedAutostart";
 
     /// <summary>Recorded before a start-type change (journal form); null when it couldn't be read (undo then leaves it alone). Never throws.</summary>
-    public static string? Record(IServiceConfig sys, string service, Action<string>? log = null)
+    public static string? Record(IServiceConfig sys, string service, ILogger? log = null)
     {
         try
         {
             var (known, value) = sys.ReadServiceValue(service, ValueName);
             return known ? PreviousDwords.Encode(new Dictionary<string, int?> { [ValueName] = value }) : null;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { log?.Invoke($"{service} {ValueName} read failed: {ex.Message}"); return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { log.Warn($"{service} {ValueName} read failed: {ex.Message}"); return null; }
     }
 
     /// <summary>What undo does: (false, _) = not recorded, leave it; (true, null) = delete it (it didn't exist); (true, v) = set it back to v.</summary>
@@ -149,11 +149,11 @@ public static class ServiceDelayedStart
         PreviousDwords.Decode(previousExtra) is { } d && d.TryGetValue(ValueName, out var v) ? (true, v) : (false, null);
 
     /// <summary>Runs after the start type is restored (which may write DelayedAutostart). Never throws: a failure is logged.</summary>
-    public static void Restore(IServiceConfig sys, string service, string? previousExtra, Action<string>? log = null)
+    public static void Restore(IServiceConfig sys, string service, string? previousExtra, ILogger? log = null)
     {
         var (restore, value) = Plan(previousExtra);
         if (!restore) return;
         try { sys.RestoreServiceValue(service, ValueName, value); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { log?.Invoke($"{service} {ValueName} restore failed: {ex.Message}"); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { log.Warn($"{service} {ValueName} restore failed: {ex.Message}"); }
     }
 }

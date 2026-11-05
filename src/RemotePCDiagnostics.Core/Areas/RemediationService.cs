@@ -70,7 +70,7 @@ public sealed record RemediationRecord(
 public sealed class RemediationService(
     SystemCommandRunner commands,
     ISessionContext? session = null,
-    Action<string>? log = null,
+    ILogger? log = null,
     RebootResumeCoordinator? rebootResume = null,
     Changes.IChangeJournal? journal = null,
     RetrimLog? retrimLog = null)
@@ -95,10 +95,9 @@ public sealed class RemediationService(
 
     public string Actor => ServiceActor.From(session);
 
-    private void Log(string m)
-    {
-        try { (log ?? commands.Log)?.Invoke("[remediation] " + m); } catch { }
-    }
+    private void Log(string m) => (log ?? commands.Log).Info("[remediation] " + m);
+    private void LogWarn(string m) => (log ?? commands.Log).Warn("[remediation] " + m);
+    private void LogError(string m) => (log ?? commands.Log).Error("[remediation] " + m);
 
     public RemediationPlan Plan(AreaAction action)
     {
@@ -316,7 +315,7 @@ public sealed class RemediationService(
             }
             catch (Exception ex)
             {
-                Log($"{action.Kind} failed: {ex}");
+                LogError($"{action.Kind} failed: {ex}");
                 result = new(false, $"Couldn't complete '{action.ButtonText}'. Make sure the app is running as administrator.");
             }
         }
@@ -365,7 +364,7 @@ public sealed class RemediationService(
             if (_recent.Count > MaxRecent) _recent.RemoveAt(_recent.Count - 1);
         }
         Log($"AUDIT when={rec.When:O} actor='{actor}' kind={kind} target='{target}' success={success} freedDisk={freedDiskBytes} freedMem={freedMemoryBytes} message='{message}'");
-        try { ActionCompleted?.Invoke(rec); } catch (Exception ex) { Log($"ActionCompleted handler failed: {ex}"); }
+        try { ActionCompleted?.Invoke(rec); } catch (Exception ex) { LogError($"ActionCompleted handler failed: {ex}"); }
         return rec;
     }
 
@@ -713,7 +712,7 @@ public sealed class RemediationService(
                         action.Kind == RemediationKind.SetPublicDns ? $"Public DNS set on {Display(action)}" : $"DNS reset to automatic on {Display(action)}");
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Couldn't record the previous setting for {action.Kind}: {ex.Message}"); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"Couldn't record the previous setting for {action.Kind}: {ex.Message}"); }
         return null;
     }
 }

@@ -34,7 +34,7 @@ public static class Program
         {
             Directory.CreateDirectory(args[4]);
             _logPath = Path.Combine(args[4], "module-ui.log");
-            Ui = UserModePlugin.Load(args[0], Log);
+            Ui = UserModePlugin.Load(args[0], RemotePCDiagnostics.Logging.LineLogger.From(Log));
             Log($"start pid={Environment.ProcessId} module={Ui.Manifest.Slug} relay={relay} id={id}");
             if (Ui.DetailsComponent is null) { Log("the module sets no details UI"); return ExitNoUi; }
 

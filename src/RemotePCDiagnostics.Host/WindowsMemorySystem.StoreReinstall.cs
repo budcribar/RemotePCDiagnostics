@@ -19,7 +19,7 @@ public sealed partial class WindowsMemorySystem
     public async Task<WingetResult> RunWingetAsync(WingetCommand command, CancellationToken ct)
     {
         if (!StoreReinstall.IsAllowedCommand(command)) { Log("Refused winget: " + command.Display); return WingetResult.NotStarted("that command isn't one this app may run"); }
-        using var user = SignedInUser.Open(Log);
+        using var user = SignedInUser.Open(Logger);
         if (user is null) return WingetResult.NotStarted("no signed-in desktop was found to reinstall it for");
         var exe = StoreReinstall.WingetPath(user.LocalAppData());
         if (exe is null) return WingetResult.NotStarted("the signed-in account's folders couldn't be found");
@@ -27,7 +27,7 @@ public sealed partial class WindowsMemorySystem
 
         var r = user.IsCurrentProcessUser && !IsElevatedOrSystem()
             ? await RunDirectAsync(exe, command.Arguments, ct).ConfigureAwait(false)
-            : await user.RunAsync(exe, command.Arguments, StoreReinstall.Timeout, Log, ct).ConfigureAwait(false);
+            : await user.RunAsync(exe, command.Arguments, StoreReinstall.Timeout, Logger, ct).ConfigureAwait(false);
         Log($"winget {command.Display} as {user.Sid}: started={r.Started} exit={r.ExitCode?.ToString() ?? "none"} {r.Problem}");
         return r;
     }
@@ -35,7 +35,7 @@ public sealed partial class WindowsMemorySystem
     public async Task<bool?> IsStorePackageInstalledAsync(RemovableAppx app, CancellationToken ct)
     {
         if (!StoreReinstall.CanReinstall(app)) return null;
-        using var user = SignedInUser.Open(Log);
+        using var user = SignedInUser.Open(Logger);
         if (user is null) return null;
         // Elevated (always, for the Host): Get-AppxPackage -User <signed-in user's SID>. Not elevated and the same account: its own packages.
         var sid = user.IsCurrentProcessUser && !IsElevatedOrSystem() ? null : user.Sid;
@@ -84,31 +84,31 @@ public sealed partial class WindowsMemorySystem
         private SignedInUser(SafeAccessTokenHandle token, string sid, bool current) { _token = token; Sid = sid; IsCurrentProcessUser = current; }
         public void Dispose() => _token.Dispose();
 
-        public static SignedInUser? Open(Action<string> log)
+        public static SignedInUser? Open(ILogger? log)
         {
             try
             {
                 var shell = Native.GetShellWindow();
-                if (shell == IntPtr.Zero) { log("No desktop shell window (nobody signed in at this desktop?)"); return null; }
+                if (shell == IntPtr.Zero) { log.Info("No desktop shell window (nobody signed in at this desktop?)"); return null; }
                 Native.GetWindowThreadProcessId(shell, out var pid);
-                if (pid == 0) { log("Shell process not found"); return null; }
+                if (pid == 0) { log.Info("Shell process not found"); return null; }
                 using var process = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
-                if (process.IsInvalid) { log($"OpenProcess(shell) failed: {Marshal.GetLastWin32Error()}"); return null; }
-                if (!Native.OpenProcessToken(process, Native.TOKEN_DUPLICATE | Native.TOKEN_QUERY, out var shellToken)) { log($"OpenProcessToken(shell) failed: {Marshal.GetLastWin32Error()}"); return null; }
+                if (process.IsInvalid) { log.Warn($"OpenProcess(shell) failed: {Marshal.GetLastWin32Error()}"); return null; }
+                if (!Native.OpenProcessToken(process, Native.TOKEN_DUPLICATE | Native.TOKEN_QUERY, out var shellToken)) { log.Warn($"OpenProcessToken(shell) failed: {Marshal.GetLastWin32Error()}"); return null; }
                 using (shellToken)
                 {
                     if (!Native.DuplicateTokenEx(shellToken, Native.TOKEN_PRIMARY_ACCESS, IntPtr.Zero, Native.SecurityImpersonation, Native.TokenPrimary, out var primary))
-                    { log($"DuplicateTokenEx failed: {Marshal.GetLastWin32Error()}"); return null; }
+                    { log.Warn($"DuplicateTokenEx failed: {Marshal.GetLastWin32Error()}"); return null; }
                     string? sid;
                     using (var id = new WindowsIdentity(primary.DangerousGetHandle())) sid = id.User?.Value;
                     using var me = WindowsIdentity.GetCurrent();
-                    if (sid is null || sid == "S-1-5-18") { primary.Dispose(); log("Shell runs as SYSTEM or an unknown account"); return null; }
+                    if (sid is null || sid == "S-1-5-18") { primary.Dispose(); log.Info("Shell runs as SYSTEM or an unknown account"); return null; }
                     return new(primary, sid, string.Equals(me.User?.Value, sid, StringComparison.OrdinalIgnoreCase));
                 }
             }
             catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or UnauthorizedAccessException or ArgumentException or System.Security.SecurityException)
             {
-                log("Signed-in user: " + ex.Message);
+                log.Info("Signed-in user: " + ex.Message);
                 return null;
             }
         }
@@ -127,14 +127,14 @@ public sealed partial class WindowsMemorySystem
         }
 
         /// <summary>Starts <paramref name="exe"/> with this user's token (CreateProcessWithTokenW, the user's own environment), no window, and waits.</summary>
-        public async Task<WingetResult> RunAsync(string exe, IReadOnlyList<string> args, TimeSpan limit, Action<string> log, CancellationToken ct)
+        public async Task<WingetResult> RunAsync(string exe, IReadOnlyList<string> args, TimeSpan limit, ILogger? log, CancellationToken ct)
         {
             var si = new Native.STARTUPINFO { cb = Marshal.SizeOf<Native.STARTUPINFO>() };
             var commandLine = new StringBuilder(StoreReinstall.CommandLine(exe, args));
             if (!Native.CreateProcessWithTokenW(_token, Native.LOGON_WITH_PROFILE, exe, commandLine, Native.CREATE_NO_WINDOW | Native.CREATE_UNICODE_ENVIRONMENT,
                     IntPtr.Zero, null, ref si, out var pi))
             {
-                log($"CreateProcessWithTokenW failed: {Marshal.GetLastWin32Error()}");
+                log.Warn($"CreateProcessWithTokenW failed: {Marshal.GetLastWin32Error()}");
                 return WingetResult.NotStarted("Windows didn't allow starting winget for the signed-in account");
             }
             Native.CloseHandle(pi.hThread);

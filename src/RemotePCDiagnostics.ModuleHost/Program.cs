@@ -14,7 +14,7 @@ var writeGate = new object();
 void Send(ModuleHostMessage m) { lock (writeGate) { output.WriteLine(m.ToLine()); output.Flush(); } }
 
 IDiagnosticModule module;
-try { module = UserModePlugin.Load(args[0], line => Console.Error.WriteLine(line)).Module; }
+try { module = UserModePlugin.Load(args[0], new RemotePCDiagnostics.Logging.LineLogger(line => Console.Error.WriteLine(line))).Module; }
 catch (Exception ex)
 {
     Send(new ModuleHostMessage { Type = "error", Message = $"Couldn't load the module: {ex.GetType().Name}: {ex.Message}" });

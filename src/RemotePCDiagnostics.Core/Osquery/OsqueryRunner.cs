@@ -5,8 +5,8 @@ public sealed class OsqueryOptions
     /// <summary>Explicit path to osqueryi(.exe). When null, uses RPD_OSQUERYI_PATH or tools/osquery under the base directory.</summary>
     public string? ExecutablePath { get; set; }
     public TimeSpan QueryTimeout { get; set; } = TimeSpan.FromSeconds(30);
-    /// <summary>Optional diagnostic sink (the Host wires this to App.Log / RPD_LOG_FILE). Never rendered in the UI.</summary>
-    public Action<string>? Log { get; set; }
+    /// <summary>Optional diagnostic sink (the Host wires this to a logger from App.Loggers; lines go to the file log, RPD_LOG_FILE). Never rendered in the UI.</summary>
+    public ILogger? Log { get; set; }
 }
 
 /// <summary>Result of one osquery SQL query: rows on success, otherwise an error message.</summary>
@@ -69,7 +69,7 @@ public sealed class OsqueryRunner
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var result = await RunQueryCoreAsync(sql, cancellationToken).ConfigureAwait(false);
         result = result with { ElapsedMs = sw.ElapsedMilliseconds };
-        try { Options.Log?.Invoke(result.ToLogLine()); } catch { /* logging must never break a query */ }
+        try { Options.Log.Line(result.ToLogLine()); } catch { /* logging must never break a query */ }
         return result;
     }
 

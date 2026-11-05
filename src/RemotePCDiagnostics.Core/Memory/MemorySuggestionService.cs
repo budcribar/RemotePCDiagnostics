@@ -208,7 +208,7 @@ public sealed record SuggestionResult(string SuggestionId, bool Success, string 
 /// with the actor (Local/Remote technician) and, where possible, can be undone.
 /// </summary>
 public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesModule? services = null, ServiceActionService? serviceActions = null,
-    ISessionContext? session = null, Action<LogLevel, string>? events = null, Action<string>? log = null, TimeSpan? settle = null, Func<DateTime>? now = null,
+    ISessionContext? session = null, Action<LogLevel, string>? events = null, ILogger? log = null, TimeSpan? settle = null, Func<DateTime>? now = null,
     RemediationService? remediation = null, IChangeJournal? journal = null)
 {
     private void Journal(ChangeKind kind, string target, string? previous, string label, bool restart = false, string? createdKey = null, string? extra = null)
@@ -254,8 +254,11 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
     public UndoEntry? UndoFor(string id) { lock (_gate) return _undo.LastOrDefault(u => u.Id == id); }
 
     public string Actor => ServiceActor.From(session);
-    private void Log(string m) => log?.Invoke("[memory] " + m);
-    private void Raise() { try { Changed?.Invoke(); } catch (Exception ex) { Log("Changed handler failed: " + ex.Message); } }
+    private ILogger? Logger => log; // for helpers that take the logger itself (all partial files)
+    private void Log(string m) => log.Info("[memory] " + m);
+    private void LogWarn(string m) => log.Warn("[memory] " + m);
+    private void LogError(string m) => log.Error("[memory] " + m);
+    private void Raise() { try { Changed?.Invoke(); } catch (Exception ex) { LogWarn("Changed handler failed: " + ex.Message); } }
 
     public async Task ScanAsync(CancellationToken ct = default, IProgress<string>? progress = null)
     {
@@ -272,7 +275,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log("Scan failed: " + ex);
+            LogWarn("Scan failed: " + ex);
             ScanError = "Couldn't read what's using memory on this PC.";
         }
         finally { Scanning = false; ScanProgress = null; Raise(); }
@@ -309,7 +312,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log("Storage scan failed: " + ex);
+            LogWarn("Storage scan failed: " + ex);
             StorageError = "Couldn't measure the caches and leftovers on this PC.";
         }
         finally { ScanningStorage = false; StorageScanProgress = null; _storageGate.Release(); Raise(); }
@@ -341,7 +344,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         return new(r.FilesRemoved > 0 || r.FilesSkipped == 0, r.Message);
     }
 
-    private MemoryReading? SafeRead() { try { return sys.ReadMemory(); } catch (Exception ex) { Log("ReadMemory failed: " + ex.Message); return null; } }
+    private MemoryReading? SafeRead() { try { return sys.ReadMemory(); } catch (Exception ex) { LogWarn("ReadMemory failed: " + ex.Message); return null; } }
 
     /// <summary>Runs one action of one suggestion (explicit UI click only), measures memory before/after, logs 1400, rescans.</summary>
     public async Task<SuggestionResult> ApplyAsync(MemorySuggestion s, MemoryAction a, CancellationToken ct = default)
@@ -356,7 +359,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
             try { outcome = await PerformAsync(s, a, ct).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                Log($"{a.Type} '{a.Target}' failed: {ex}");
+                LogError($"{a.Type} '{a.Target}' failed: {ex}");
                 outcome = new(false, "Windows didn't allow that change.");
             }
             string text = outcome.Message;
@@ -398,7 +401,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                 case MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled:
                     if (!StartTypes.Contains(u.Previous)) { outcome = new(false, "The original setting wasn't recorded."); break; }
                     sys.SetServiceStartType(u.Target, u.Previous!);
-                    ServiceDelayedStart.Restore(sys, u.Target, u.PreviousExtra, Log);
+                    ServiceDelayedStart.Restore(sys, u.Target, u.PreviousExtra, Logger);
                     outcome = new(true, $"{u.Label} start-up setting restored to {u.Previous}.");
                     break;
                 case MemoryActionType.AddDefenderExclusions:
@@ -422,7 +425,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                     outcome = UndoRegistry(u, "Office's optional online extras are back for this account. Takes effect the next time each Office app opens.");
                     break;
                 case MemoryActionType.BlockBrowserExtension:
-                    var (extOk, extMessage) = BrowserExtensions.RemoveBlock(sys, u.Target, u.Previous, u.CreatedKey, Log);
+                    var (extOk, extMessage) = BrowserExtensions.RemoveBlock(sys, u.Target, u.Previous, u.CreatedKey, Logger);
                     if (extOk) try { journal?.RemoveLatest(ChangeKind.ExtensionBlock, u.Target); } catch { }
                     outcome = new(extOk, extMessage);
                     break;
@@ -431,7 +434,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                     break;
                 case MemoryActionType.ReduceHibernateFile:
                     var full = await sys.SetHibernateTypeAsync(false, ct).ConfigureAwait(false);
-                    if (full.Success) Hibernation.RemoveAddedValues(sys, u.PreviousExtra, Log);
+                    if (full.Success) Hibernation.RemoveAddedValues(sys, u.PreviousExtra, Logger);
                     outcome = full.Success ? new(true, "The hibernation file is full size again; Hibernate is back in the power menu.") : full;
                     break;
                 case MemoryActionType.StopSilentAppInstalls:
@@ -451,7 +454,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log($"Undo {u.Type} '{u.Target}' failed: {ex}");
+            LogError($"Undo {u.Type} '{u.Target}' failed: {ex}");
             outcome = new(false, "Windows didn't allow undoing that change.");
         }
         if (outcome.Success)
@@ -537,12 +540,12 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         {
             var before = sys.ReadDword(r);
             if (before == value) return new(true, false, r.Target, RegistryAllowlist.Encode(before));
-            created = RegistryKeyCleanup.TopmostMissing(sys, r.Root, r.Key, Log);
+            created = RegistryKeyCleanup.TopmostMissing(sys, r.Root, r.Key, Logger);
             sys.WriteDword(r, value);
             if (sys.ReadDword(r) != value)
             {
                 Log($"{r.Target} = {value} didn't stick");
-                RegistryKeyCleanup.Remove(sys, r.Root, r.Key, created, Log);
+                RegistryKeyCleanup.Remove(sys, r.Root, r.Key, created, Logger);
                 return new(false, false, r.Target, null);
             }
             var previous = RegistryAllowlist.Encode(before);
@@ -551,9 +554,9 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log($"{r.Target} = {value} failed: {ex.Message}");
+            LogWarn($"{r.Target} = {value} failed: {ex.Message}");
             // The Host already tries this when SetValue fails; again here for keys created before a later failure. Never throws.
-            RegistryKeyCleanup.Remove(sys, r.Root, r.Key, created, Log);
+            RegistryKeyCleanup.Remove(sys, r.Root, r.Key, created, Logger);
             return new(false, false, r.Target, null);
         }
     }
@@ -565,7 +568,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
     private async Task<ActionOutcome> ReduceHibernateFileAsync(MemorySuggestion s, CancellationToken ct)
     {
         if (Snapshot?.Hibernate is not { OfferReduce: true } before) return new(false, "The hibernation file is already reduced or turned off.");
-        var values = Hibernation.RecordValues(sys, Log); // HiberFileType / HibernateEnabled: undo removes the ones powercfg adds
+        var values = Hibernation.RecordValues(sys, Logger); // HiberFileType / HibernateEnabled: undo removes the ones powercfg adds
         var r = await sys.SetHibernateTypeAsync(true, ct).ConfigureAwait(false);
         if (!r.Success) return r;
         var after = sys.ReadHibernate();
@@ -653,7 +656,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         {
             if (mode.Changed)
             {
-                try { if (RegistryAllowlist.Restore(sys, mode.Target, mode.Previous, mode.CreatedKey, Log).Ok) journal?.RemoveLatest(ChangeKind.RegistryValue, mode.Target); }
+                try { if (RegistryAllowlist.Restore(sys, mode.Target, mode.Previous, mode.CreatedKey, Logger).Ok) journal?.RemoveLatest(ChangeKind.RegistryValue, mode.Target); }
                 catch (Exception ex) when (ex is not OperationCanceledException) { Log("LegacyDefaultPrinterMode rollback: " + ex.Message); }
             }
             return new(false, $"Windows didn't make {DefaultPrinter.PdfPrinter} the default printer (your organization may manage printers). Nothing was changed.");
@@ -676,7 +679,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         foreach (var item in RegistryUndo.Decode(u.Previous))
         {
             bool ok;
-            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Log).Ok; }
+            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Logger).Ok; }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
             if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
             else modeOk = false;
@@ -715,7 +718,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
             if (BrowserExtensions.IsBlocked(list, id)) return new(true, $"{known.Name} is already blocked in {label}.");
             if (BrowserExtensions.NextName(list) is not { } name)
                 return new(false, $"{label}'s extension blocklist isn't numbered 1, 2, 3… (your organization may manage it), so it was left as is.");
-            var created = RegistryKeyCleanup.TopmostMissing(sys, RegistryRoot.LocalMachine, BrowserExtensions.BlocklistKey(browser), Log);
+            var created = RegistryKeyCleanup.TopmostMissing(sys, RegistryRoot.LocalMachine, BrowserExtensions.BlocklistKey(browser), Logger);
             sys.AddExtensionBlock(browser, name, id);
             var after = sys.ReadExtensionBlocklist(browser);
             if (after?.FirstOrDefault(e => e.Name == name)?.Data?.Trim().Equals(id, StringComparison.OrdinalIgnoreCase) != true)
@@ -723,7 +726,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                 Log($"{label} blocklist {name} = {id} didn't stick");
                 // Best effort: the name was free before, and the Host deletes it only if it holds this ID.
                 try { sys.RemoveExtensionBlock(browser, name, id); } catch (Exception ex) when (ex is not OperationCanceledException) { Log("cleanup: " + ex.Message); }
-                RegistryKeyCleanup.Remove(sys, RegistryRoot.LocalMachine, BrowserExtensions.BlocklistKey(browser), created, Log);
+                RegistryKeyCleanup.Remove(sys, RegistryRoot.LocalMachine, BrowserExtensions.BlocklistKey(browser), created, Logger);
                 return new(false, $"Windows didn't keep {known.Name} on {label}'s blocklist " + PolicyRefused);
             }
             var target = BrowserExtensions.Target(browser, id);
@@ -733,7 +736,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log($"Block {a.Target} failed: {ex.Message}");
+            LogWarn($"Block {a.Target} failed: {ex.Message}");
             return new(false, $"Windows didn't allow blocking {known.Name} in {label} " + PolicyRefused);
         }
     }
@@ -816,7 +819,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         foreach (var item in undo.Registry ?? [])
         {
             bool ok;
-            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Log).Ok; }
+            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Logger).Ok; }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
             if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
             else failed.Add("Startup Boost");
@@ -842,7 +845,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         foreach (var item in Enumerable.Reverse(items)) // last written first: the first write is the one that created any keys
         {
             bool ok;
-            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Log).Ok; }
+            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Logger).Ok; }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
             if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
             else failed.Add(item.Target);
@@ -866,7 +869,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
         return r;
     }
 
-    private void Event(LogLevel l, string text) { try { events?.Invoke(l, text); } catch (Exception ex) { Log("Event write failed: " + ex.Message); } }
+    private void Event(LogLevel l, string text) { try { events?.Invoke(l, text); } catch (Exception ex) { LogWarn("Event write failed: " + ex.Message); } }
 
     private void AddUndo(UndoEntry u) { lock (_gate) { _undo.RemoveAll(x => x.Id == u.Id && x.Type == u.Type); _undo.Add(u); } }
 
@@ -928,7 +931,7 @@ public sealed partial class MemorySuggestionService(IMemorySystem sys, ServicesM
                 }
                 var target = a.Type == MemoryActionType.SetServiceManual ? "Manual" : "Disabled";
                 var original = sys.GetServiceStartType(info.Name);
-                var delayed = ServiceDelayedStart.Record(sys, info.Name, Log); // undo puts DelayedAutostart back exactly (absent stays absent)
+                var delayed = ServiceDelayedStart.Record(sys, info.Name, Logger); // undo puts DelayedAutostart back exactly (absent stays absent)
                 if (AiVmServices.Is(info.Name)) return SetAiVmServiceManual(s, a, info, original, delayed);
                 sys.SetServiceStartType(info.Name, target);
                 AddUndo(new(s.Id, info.Label, a.Type, info.Name, original, PreviousExtra: delayed));

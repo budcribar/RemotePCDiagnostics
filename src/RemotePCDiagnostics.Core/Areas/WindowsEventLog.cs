@@ -50,7 +50,7 @@ public sealed class WindowsEventLog(SystemCommandRunner commands)
         try { return Parse(pr.StdOut, channel); }
         catch (XmlException ex)
         {
-            try { commands.Log?.Invoke($"wevtutil {channel}: unreadable output: {ex.Message}"); } catch { }
+            try { commands.Log.Info($"wevtutil {channel}: unreadable output: {ex.Message}"); } catch { }
             return null;
         }
     }

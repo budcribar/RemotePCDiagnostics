@@ -13,7 +13,7 @@ public sealed class ProtectedStateMigrationTests : IDisposable
 
     public void Dispose() { try { Directory.Delete(_dir, recursive: true); } catch { } }
 
-    private ProtectedStateMigration Migration(List<string>? logs = null) => new(Legacy, State, Markers, l => logs?.Add(l));
+    private ProtectedStateMigration Migration(List<string>? logs = null) => new(Legacy, State, Markers, new LineLogger(l => logs?.Add(l)));
 
     private void WriteLegacy(string name, string text)
     {

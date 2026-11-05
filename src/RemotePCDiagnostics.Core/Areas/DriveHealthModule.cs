@@ -63,7 +63,7 @@ public sealed record DriveHealth(
 /// (<see cref="Combine"/>). One drive read serves every drive of a run.
 /// </summary>
 public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunner osquery, IRetrimHistory? retrims = null, Func<DateTimeOffset>? clock = null)
-    : AreaModuleBase(commands.Log ?? osquery.Options.Log), IPerDeviceModule, IInstanceSummary, IHasAreaPanels
+    : AreaModuleBase((commands.Log ?? osquery.Options.Log).AsAction()), IPerDeviceModule, IInstanceSummary, IHasAreaPanels
 {
     public AreaPanels Panels => AreaPanels.StorageCleanup;
     /// <summary>The instance used when the drive list itself can't be read, so the failure is still reported as a run.</summary>

@@ -5,8 +5,10 @@ namespace RemotePCDiagnostics.Core.Logging;
 
 /// <summary>
 /// Microsoft.Extensions.Logging over the app's own sinks (file log, and the Windows Event Log for warnings and errors). Code that takes an
-/// <see cref="ILogger{T}"/> says how serious each line is, so nothing has to guess it from the wording (<see cref="LogLevels.Classify"/>,
-/// which the remaining <c>Action&lt;string&gt;</c> loggers still use). Framework categories (Microsoft.*, System.*) log warnings and up only.
+/// <see cref="ILogger"/> says how serious each line is (<see cref="RemotePCDiagnostics.Logging.LoggerLines"/>), so nothing has to guess it
+/// from the wording. Only text that arrives through the plugin contract's <c>Action&lt;string&gt;</c> log (AreaModuleBase, StressModuleBase,
+/// IPluginContext.Log) still has its level read from the text (<see cref="LogLevels.Classify"/>). Framework categories (Microsoft.*, System.*)
+/// log warnings and up only.
 /// </summary>
 public sealed class AppLoggerFactory(Action<LogLevel, string, string> write) : ILoggerFactory
 {

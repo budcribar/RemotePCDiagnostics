@@ -32,7 +32,7 @@ public class PluginContractTests
         Assert.Equal(ok, ContractVersion.IsCompatible(Version.Parse(builtFor), Version.Parse(host)));
 
     private static PluginRegistrar Registrar(List<string>? log = null) =>
-        new(new SessionContext(SessionMode.Local), new Version(1, 2, 0), l => log?.Add(l));
+        new(new SessionContext(SessionMode.Local), new Version(1, 2, 0), new LineLogger(l => log?.Add(l)));
 
     [Fact]
     public void A_plugin_that_throws_leaves_nothing_registered_and_is_disabled()

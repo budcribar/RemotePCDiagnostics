@@ -20,7 +20,7 @@ public sealed record WebcamReport(WebcamVerdict Verdict, string Device, WebcamBu
 /// camera; a PC without a camera doesn't show the test. The instance key comes from the camera's device interface id (stable across reboots
 /// while the camera stays on the same port).
 /// </summary>
-public sealed class WebcamTestModule(IWebcamIo io, Action<string>? log = null) : IWebcamTestModule
+public sealed class WebcamTestModule(IWebcamIo io, ILogger? log = null) : IWebcamTestModule
 {
     public const string ModuleName = ModuleSlugs.Webcam;
     public static readonly TimeSpan DefaultDuration = TimeSpan.FromSeconds(5);
@@ -41,14 +41,16 @@ public sealed class WebcamTestModule(IWebcamIo io, Action<string>? log = null) :
     public string? DeviceId { get; set; }
     public TimeSpan Duration { get; set; } = DefaultDuration;
     public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
-    private void Log(string s) { try { log?.Invoke(s); } catch { } }
+    private void Log(string m) => log.Info(m);
+    private void LogWarn(string m) => log.Warn(m);
+    private void LogError(string m) => log.Error(m);
 
     public static TimeSpan ClampDuration(TimeSpan d) => d <= TimeSpan.Zero ? DefaultDuration : d > MaxDuration ? MaxDuration : d;
 
     public IReadOnlyList<WebcamDevice> Devices()
     {
         try { return io.ListDevices(); }
-        catch (Exception ex) { Log($"{Name}: device list failed: {ex.Message}"); return []; }
+        catch (Exception ex) { LogWarn($"{Name}: device list failed: {ex.Message}"); return []; }
     }
 
     public void Cancel() { lock (_gate) { try { _runCts?.Cancel(); } catch (ObjectDisposedException) { } } }
@@ -107,13 +109,13 @@ public sealed class WebcamTestModule(IWebcamIo io, Action<string>? log = null) :
         try { cap = await io.CaptureAsync(req, timeout.Token).ConfigureAwait(false); }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            Log($"{Name}: timed out after {sw.ElapsedMilliseconds} ms");
+            LogWarn($"{Name}: timed out after {sw.ElapsedMilliseconds} ms");
             return new DiagnosticResult(Name, DiagnosticStatus.Error, "The webcam test didn't finish in time. Please try again.", DateTimeOffset.Now);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var v = WebcamVerdicts.FromException(ex, privacy);
-            Log($"{Name}: {v}: {ex}");
+            LogError($"{Name}: {v}: {ex}");
             return Result(new WebcamReport(v, dev.Name, dev.Bus, 0, 0, 0, null, duration, WebcamStats.Empty, null));
         }
         WebcamStats stats;

@@ -178,7 +178,7 @@ public static class BrowserExtensions
     /// it's left as is and reported. May throw (access denied). Once our entry is gone, the policy keys the block created
     /// (<paramref name="createdKey"/>, e.g. "SOFTWARE\Policies\Google") are deleted again while empty, so the browser stops saying it's managed.
     /// </summary>
-    public static (bool Ok, string Message) RemoveBlock(IMemorySystem sys, string? target, string? valueName, string? createdKey = null, Action<string>? log = null)
+    public static (bool Ok, string Message) RemoveBlock(IMemorySystem sys, string? target, string? valueName, string? createdKey = null, ILogger? log = null)
     {
         if (!TryParseTarget(target, out var browser, out var id) || Known(browser, id) is not { } known)
             return (false, "That extension isn't one this app blocks, so the browser's list was left as is.");

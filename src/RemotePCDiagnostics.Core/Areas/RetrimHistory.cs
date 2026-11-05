@@ -28,7 +28,7 @@ public interface IWindowsRetrimEvents
 /// %LOCALAPPDATA%\RemotePCDiagnostics\retrim.json so a later run (or the workflow's second pass) sees it at once,
 /// without waiting for Windows' event. <paramref name="path"/> null = memory only (tests).
 /// </summary>
-public sealed class RetrimLog(string? path = null, Action<string>? log = null)
+public sealed class RetrimLog(string? path = null, ILogger? log = null)
 {
     private readonly object _gate = new();
     private Dictionary<char, DateTimeOffset>? _cache;
@@ -50,7 +50,7 @@ public sealed class RetrimLog(string? path = null, Action<string>? log = null)
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 File.WriteAllText(path, JsonSerializer.Serialize(d.ToDictionary(k => k.Key.ToString(), k => k.Value)));
             }
-            catch (Exception ex) { log?.Invoke($"retrim log save: {ex.Message}"); }
+            catch (Exception ex) { log.Info($"retrim log save: {ex.Message}"); }
         }
     }
 
@@ -66,13 +66,13 @@ public sealed class RetrimLog(string? path = null, Action<string>? log = null)
             var raw = JsonSerializer.Deserialize<Dictionary<string, DateTimeOffset>>(File.ReadAllText(path)) ?? [];
             foreach (var (k, v) in raw) if (k.Length == 1 && char.IsAsciiLetter(k[0])) _cache[char.ToUpperInvariant(k[0])] = v;
         }
-        catch (Exception ex) { log?.Invoke($"retrim log read: {ex.Message}"); }
+        catch (Exception ex) { log.Info($"retrim log read: {ex.Message}"); }
         return _cache;
     }
 }
 
 /// <summary>Newest retrim per letter from Windows' event log and this app's own record.</summary>
-public sealed class RetrimHistory(RetrimLog? app, IWindowsRetrimEvents? windows = null, Action<string>? log = null) : IRetrimHistory
+public sealed class RetrimHistory(RetrimLog? app, IWindowsRetrimEvents? windows = null, ILogger? log = null) : IRetrimHistory
 {
     /// <summary>How far back Windows' log is read.</summary>
     public static readonly TimeSpan Window = TimeSpan.FromDays(60);
@@ -88,7 +88,7 @@ public sealed class RetrimHistory(RetrimLog? app, IWindowsRetrimEvents? windows 
         if (windows is not null)
         {
             try { foreach (var (c, w) in windows.Read(Window)) Take(c, w, RetrimSource.Windows); }
-            catch (Exception ex) { log?.Invoke($"retrim events: {ex.Message}"); }
+            catch (Exception ex) { log.Info($"retrim events: {ex.Message}"); }
         }
         if (app is not null) foreach (var (c, w) in app.All()) Take(c, w, RetrimSource.ThisApp);
         return (IReadOnlyDictionary<char, RetrimRecord>)best;

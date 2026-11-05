@@ -10,7 +10,7 @@ public sealed record MinidumpFile(string FileName, DateTimeOffset Created, long 
 /// Blue screens (BugChecks, WER-SystemErrorReporting event 1001), unexpected power losses (Kernel-Power event 41,
 /// EventLog event 6008) from the Windows System log over the last 30 days, and crash dump files in <c>C:\Windows\Minidump</c>.
 /// </summary>
-public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOnlyList<MinidumpFile>>? minidumpReader = null) : AreaModuleBase(commands.Log)
+public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOnlyList<MinidumpFile>>? minidumpReader = null) : AreaModuleBase(commands.Log.AsAction())
 {
     public const string ModuleName = ModuleSlugs.BsodHistory;
     public const int Days = 30, RecentDays = 7, MaxEvents = 250;

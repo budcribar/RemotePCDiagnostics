@@ -25,7 +25,7 @@ public static class GpuTemperatureFallback
     /// <summary>Plausible °C or null (null/NaN/≤0/≥150 = no data).</summary>
     public static double? Valid(double? c) => c is { } v && !double.IsNaN(v) && v > 0 && v < 150 ? Math.Round(v, 1) : null;
 
-    public static List<SensorReading> Apply(IReadOnlyList<SensorReading> readings, IReadOnlyList<IGpuTemperatureSource>? sources, Action<string>? log = null)
+    public static List<SensorReading> Apply(IReadOnlyList<SensorReading> readings, IReadOnlyList<IGpuTemperatureSource>? sources, ILogger? log = null)
     {
         var list = readings.ToList();
         if (sources is null || sources.Count == 0) return list;
@@ -34,17 +34,17 @@ public static class GpuTemperatureFallback
         {
             IReadOnlyList<GpuTemperatureSample> samples;
             try { samples = src.Read() ?? []; }
-            catch (Exception ex) { log?.Invoke($"GPU temperature fallback: {src.Name} failed: {ex.Message}"); continue; }
-            log?.Invoke($"GPU temperature fallback: {src.Name} returned [{string.Join("; ", samples.Select(s => $"{s.AdapterName}={(s.Celsius?.ToString("0.0") ?? "null")}"))}]");
+            catch (Exception ex) { log.Warn($"GPU temperature fallback: {src.Name} failed: {ex.Message}"); continue; }
+            log.Info($"GPU temperature fallback: {src.Name} returned [{string.Join("; ", samples.Select(s => $"{s.AdapterName}={(s.Celsius?.ToString("0.0") ?? "null")}"))}]");
             var valid = samples.Select(s => (s.AdapterName, C: Valid(s.Celsius))).Where(s => s.C.HasValue)
                 .GroupBy(s => s.AdapterName).Select(g => (Name: g.Key, C: g.Max(x => x.C)!.Value)).ToList();
             if (valid.Count == 0) continue;
             foreach (var (name, c) in valid)
                 list.Add(new SensorReading(string.IsNullOrWhiteSpace(name) ? "GPU" : name, HardwareKind.Gpu, SensorName, SensorKind.Temperature, c, null, null, "°C"));
-            log?.Invoke($"GPU temperature fallback: using {src.Name}");
+            log.Info($"GPU temperature fallback: using {src.Name}");
             return list;
         }
-        log?.Invoke("GPU temperature fallback: no source returned a valid GPU temperature");
+        log.Info("GPU temperature fallback: no source returned a valid GPU temperature");
         return list;
     }
 }

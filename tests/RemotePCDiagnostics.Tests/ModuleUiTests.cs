@@ -18,7 +18,7 @@ public sealed class ModuleUiTests
     public void UserModePlugin_loads_the_module_and_its_details_component()
     {
         var lines = new List<string>();
-        var loaded = UserModePlugin.Load(Dll("sample-module-ui", "SampleModuleUi.dll"), lines.Add);
+        var loaded = UserModePlugin.Load(Dll("sample-module-ui", "SampleModuleUi.dll"), new LineLogger(lines.Add));
         Assert.Equal("sample.clock", loaded.Manifest.Slug);
         Assert.True(loaded.Manifest.HasUi);
         Assert.Equal(loaded.Manifest.Id, loaded.Module.Id);

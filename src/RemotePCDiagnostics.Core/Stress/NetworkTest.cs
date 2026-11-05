@@ -8,7 +8,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// before and after, and stops on Stop or a critical temperature.
 /// </summary>
 public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeedTester speed, IAdapterCounters counters, ISensorProvider sensors,
-    NetworkTestSettings? settings = null, IStressClock? clock = null, Action<string>? log = null, StressCleanup? cleanup = null)
+    NetworkTestSettings? settings = null, IStressClock? clock = null, ILogger? log = null, StressCleanup? cleanup = null)
 {
     private readonly NetworkTestSettings _s = settings ?? new NetworkTestSettings();
 
@@ -33,7 +33,7 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
         {
             gw = SafeGateway();
             before = await SafeCounters(cancellationToken).ConfigureAwait(false);
-            log?.Invoke($"Network test: start gateway={gw ?? "(none)"} hosts={string.Join(",", _s.PublicHosts)} server={_s.SpeedServer} duration={duration} counters={before}");
+            log.Info($"Network test: start gateway={gw ?? "(none)"} hosts={string.Join(",", _s.PublicHosts)} server={_s.SpeedServer} duration={duration} counters={before}");
             int hostIdx = 0;
             while (true)
             {
@@ -46,7 +46,7 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
                     var (t, f, critical, what) = ReadSensors();
                     temp = t; fan = f;
                     if (t is { } tv) maxT = Math.Max(maxT ?? tv, tv);
-                    if (critical) { hot = true; log?.Invoke($"Network test: abort, critical temperature: {what}"); break; }
+                    if (critical) { hot = true; log.Warn($"Network test: abort, critical temperature: {what}"); break; }
                 }
 
                 var host = _s.PublicHosts.Count == 0 ? "1.1.1.1" : _s.PublicHosts[hostIdx++ % _s.PublicHosts.Count];
@@ -70,7 +70,7 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
                             Volatile.Write(ref step, "Measuring upload speed");
                             up = await speed.UploadAsync(_s.UploadBytes, limit, speedCts.Token).ConfigureAwait(false);
                             Volatile.Write(ref step, "Checking your connection");
-                            log?.Invoke($"Network test: download {down.Bytes} B in {down.Elapsed} ({down.Mbps:0.0} Mbps, err={down.Error}); upload {up.Bytes} B in {up.Elapsed} ({up.Mbps:0.0} Mbps, err={up.Error})");
+                            log.Info($"Network test: download {down.Bytes} B in {down.Elapsed} ({down.Mbps:0.0} Mbps, err={down.Error}); upload {up.Bytes} B in {up.Elapsed} ({up.Mbps:0.0} Mbps, err={up.Error})");
                         }, CancellationToken.None);
                     }
                 }
@@ -83,7 +83,7 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             failed = true;
-            log?.Invoke($"Network test: failed: {ex}");
+            log.Error($"Network test: failed: {ex}");
         }
         finally
         {
@@ -92,7 +92,7 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
                 if (stopped || hot || failed) speedCts.Cancel();
                 try { await speedTask.ConfigureAwait(false); }
                 catch (OperationCanceledException) { }
-                catch (Exception ex) { log?.Invoke($"Network test: speed test error: {ex.Message}"); }
+                catch (Exception ex) { log.Warn($"Network test: speed test error: {ex.Message}"); }
             }
         }
         if (!stopped && !hot && !failed) after = await SafeCounters(CancellationToken.None).ConfigureAwait(false);
@@ -103,7 +103,7 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
         long? newDrop = before is not null && after is not null ? Math.Max(0, after.Drops - before.Drops) : null;
         var outcome = Verdict(o, stopped, hot, failed, samples.Count, netStats, down, newErr, newDrop);
         var report = new NetworkTestReport(outcome, clk.Elapsed - start, gw is not null, gwStats, netStats, down?.Mbps, up?.Mbps, newErr, newDrop, samples, maxT);
-        log?.Invoke($"Network test: done outcome={outcome} internet={netStats} gateway={gwStats} down={report.DownloadMbps:0.0} up={report.UploadMbps:0.0} newErrors={newErr} newDrops={newDrop}");
+        log.Info($"Network test: done outcome={outcome} internet={netStats} gateway={gwStats} down={report.DownloadMbps:0.0} up={report.UploadMbps:0.0} newErrors={newErr} newDrops={newDrop}");
         return report;
     }
 
@@ -125,20 +125,20 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
     private string? SafeGateway()
     {
         try { return gateway.GetDefaultGateway(); }
-        catch (Exception ex) { log?.Invoke($"Network test: gateway lookup failed: {ex.Message}"); return null; }
+        catch (Exception ex) { log.Warn($"Network test: gateway lookup failed: {ex.Message}"); return null; }
     }
 
     private async Task<AdapterTotals?> SafeCounters(CancellationToken ct)
     {
         try { return await counters.ReadAsync(ct).ConfigureAwait(false); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (Exception ex) { log?.Invoke($"Network test: adapter counters failed: {ex.Message}"); return null; }
+        catch (Exception ex) { log.Warn($"Network test: adapter counters failed: {ex.Message}"); return null; }
     }
 
     private bool SafeAvailability()
     {
-        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log?.Invoke($"Network test: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
-        catch (Exception ex) { log?.Invoke($"Network test: sensor availability failed: {ex.Message}"); return false; }
+        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log.Info($"Network test: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
+        catch (Exception ex) { log.Warn($"Network test: sensor availability failed: {ex.Message}"); return false; }
     }
 
     private (double? Temp, double? Fan, bool Critical, string What) ReadSensors()
@@ -152,6 +152,6 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
             var crit = temps.FirstOrDefault(r => SensorThresholds.Evaluate(r) == SensorLevel.Critical);
             return (cpu, fan, crit is not null, crit is null ? "" : $"{crit.HardwareName} {crit.SensorName} {crit.Value:0.0}°C");
         }
-        catch (Exception ex) { log?.Invoke($"Network test: sensor read failed: {ex.Message}"); return (null, null, false, ""); }
+        catch (Exception ex) { log.Warn($"Network test: sensor read failed: {ex.Message}"); return (null, null, false, ""); }
     }
 }

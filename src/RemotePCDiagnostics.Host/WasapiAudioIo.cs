@@ -12,7 +12,7 @@ namespace RemotePCDiagnostics.Host;
 /// <see cref="AudioClient"/> so raw mode (IAudioClient2::SetClientProperties, AUDCLNT_STREAMOPTIONS_RAW) can be requested before
 /// Initialize; playback uses <see cref="WasapiOut"/> at the device mix rate.
 /// </summary>
-public sealed class WasapiAudioIo(Action<string>? log = null) : IAudioIo
+public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
 {
     /// <summary>PKEY_Device_EnumeratorName ("USB", "BTHENUM", "HDAUDIO"…).</summary>
     private static readonly PropertyKey EnumeratorName = new(new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), 24);
@@ -22,7 +22,8 @@ public sealed class WasapiAudioIo(Action<string>? log = null) : IAudioIo
     private const int AUDCLNT_E_DEVICE_INVALIDATED = unchecked((int)0x88890004);
     private const string ConsentKey = @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
 
-    private void Log(string s) { try { log?.Invoke("Audio: " + s); } catch { } }
+    private void Log(string m) => log.Info("Audio: " + m);
+    private void LogWarn(string m) => log.Warn("Audio: " + m);
 
     public IReadOnlyList<AudioDevice> ListDevices()
     {
@@ -42,7 +43,7 @@ public sealed class WasapiAudioIo(Action<string>? log = null) : IAudioIo
                     var name = dev.FriendlyName;
                     list.Add(new AudioDevice(dev.ID, name, kind, AudioDevice.GuessBus(enumerator, name), dev.ID == defaultId));
                 }
-                catch (Exception ex) { Log($"device read failed: {ex.Message}"); }
+                catch (Exception ex) { LogWarn($"device read failed: {ex.Message}"); }
                 finally { dev.Dispose(); }
             }
         }
@@ -72,11 +73,11 @@ public sealed class WasapiAudioIo(Action<string>? log = null) : IAudioIo
 
             async Task<Capture?> PlayWith(bool mic, bool loop)
             {
-                using var micCap = mic ? Capture.Open(inDev, loopback: false, raw: r.RequestRawMic, Log) : null;
+                using var micCap = mic ? Capture.Open(inDev, loopback: false, raw: r.RequestRawMic, log) : null;
                 Capture? loopCap = null;
                 if (loop)
                 {
-                    try { loopCap = Capture.Open(outDev, loopback: true, raw: false, Log); }
+                    try { loopCap = Capture.Open(outDev, loopback: true, raw: false, log); }
                     catch (Exception ex) when (ex is not OperationCanceledException) { Log($"loopback unavailable: {ex.Message}"); note = "The app couldn't record the speaker output on this PC, so only the microphone was checked."; }
                 }
                 try
@@ -131,7 +132,7 @@ public sealed class WasapiAudioIo(Action<string>? log = null) : IAudioIo
             var stoppedEarly = false;
             var keep = r.HalfDuplex ? new List<float[]>() : null;
             var micRate = 0;
-            using var mic = Capture.Open(inDev, loopback: false, raw: r.RequestRawMic, Log, block =>
+            using var mic = Capture.Open(inDev, loopback: false, raw: r.RequestRawMic, log, block =>
             {
                 var gain = AudioMath.ClampMonitorGain(r.ProcessBlock(block, micRate));
                 if (gain <= 0) { stoppedEarly = true; try { stop.Cancel(); } catch { } return; }
@@ -289,21 +290,21 @@ public sealed class WasapiAudioIo(Action<string>? log = null) : IAudioIo
             _cc = client.AudioCaptureClient;
         }
 
-        public static Capture Open(MMDevice dev, bool loopback, bool raw, Action<string> log, Action<float[]>? onBlock = null, bool keepSamples = true)
+        public static Capture Open(MMDevice dev, bool loopback, bool raw, ILogger? log, Action<float[]>? onBlock = null, bool keepSamples = true)
         {
             var client = dev.CreateAudioClient();
             var rawApplied = false;
             if (raw && !loopback && client.SupportsAudioClient2)
             {
                 try { client.SetClientProperties(AudioStreamCategory.Other, AudioClientStreamOptions.Raw); rawApplied = true; }
-                catch (Exception ex) { log($"raw mode not supported on '{dev.FriendlyName}': {ex.Message}"); }
+                catch (Exception ex) { log.Info($"raw mode not supported on '{dev.FriendlyName}': {ex.Message}"); }
             }
             var fmt = client.MixFormat;
             const long bufferHns = 2_000_000; // 200 ms
             try { client.Initialize(AudioClientShareMode.Shared, loopback ? AudioClientStreamFlags.Loopback : AudioClientStreamFlags.None, bufferHns, 0, fmt, Guid.Empty); }
             catch (Exception ex) when (rawApplied && ex is COMException ce && ce.HResult != E_ACCESSDENIED)
             {
-                log($"initialize with raw mode failed on '{dev.FriendlyName}' ({ex.Message}), retrying without");
+                log.Warn($"initialize with raw mode failed on '{dev.FriendlyName}' ({ex.Message}), retrying without");
                 client.Dispose();
                 client = dev.CreateAudioClient();
                 rawApplied = false;

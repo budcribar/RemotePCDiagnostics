@@ -5,7 +5,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// <see cref="SfcVerifyOnlyModule"/> supply the tool, its arguments and how to read its output. The log helpers here are shared
 /// with <see cref="WindowsRepair"/>.
 /// </summary>
-public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : AreaModuleBase(commands.Log), ICancellableScan
+public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : AreaModuleBase(commands.Log.AsAction()), ICancellableScan
 {
     public bool IncludeInRunAll => false;
     private readonly object _scanGate = new();

@@ -170,7 +170,7 @@ public interface IBenchmarkStore
 }
 
 /// <summary>JSON file in the protected state folder (%ProgramData%\RemotePCDiagnostics\state; see <see cref="ProtectedState"/>).</summary>
-public sealed class FileBenchmarkStore(string path, Action<string>? log = null) : IBenchmarkStore
+public sealed class FileBenchmarkStore(string path, ILogger? log = null) : IBenchmarkStore
 {
     public static string DefaultPath() =>
         ProtectedState.PathFor(ProtectedState.BenchmarksFile);
@@ -178,7 +178,7 @@ public sealed class FileBenchmarkStore(string path, Action<string>? log = null) 
     public BenchmarkState? Load()
     {
         try { return File.Exists(path) ? BenchmarkState.FromJson(File.ReadAllText(path)) : null; }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log?.Invoke($"Benchmark state read failed: {ex.Message}"); return null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log.Warn($"Benchmark state read failed: {ex.Message}"); return null; }
     }
 
     public void Save(BenchmarkState state)
@@ -190,7 +190,7 @@ public sealed class FileBenchmarkStore(string path, Action<string>? log = null) 
             File.WriteAllText(tmp, state.ToJson());
             File.Move(tmp, path, overwrite: true);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log?.Invoke($"Benchmark state write failed: {ex.Message}"); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log.Warn($"Benchmark state write failed: {ex.Message}"); }
     }
 }
 

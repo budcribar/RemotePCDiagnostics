@@ -16,5 +16,5 @@ internal sealed class ScriptedLauncher(Func<string, IReadOnlyList<string>, Proce
     public static ProcessResult Fail(string stderr = "boom") => new(1, "", stderr);
 
     public static OsqueryRunner Osquery(IProcessLauncher l, List<string>? log = null) =>
-        new(options: new OsqueryOptions { ExecutablePath = "/x/osqueryi.exe", Log = log is null ? null : s => { lock (log) log.Add(s); } }, launcher: l, fileExists: _ => true);
+        new(options: new OsqueryOptions { ExecutablePath = "/x/osqueryi.exe", Log = log is null ? null : new LineLogger(s => { lock (log) log.Add(s); }) }, launcher: l, fileExists: _ => true);
 }

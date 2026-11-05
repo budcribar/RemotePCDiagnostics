@@ -18,6 +18,7 @@ namespace RemotePCDiagnostics.Host;
 
 public partial class MainWindow : Window
 {
+    private static readonly ILogger Logger = HostServices.For<MainWindow>(App.Loggers);
     private const string HostPage = @"wwwroot\index.html";
     private readonly ServiceProvider _provider;
     private Uri? _serverUri;
@@ -43,7 +44,6 @@ public partial class MainWindow : Window
         var provider = _provider = services.BuildServiceProvider();
         Resources.Add("services", provider);
         Closed += (_, _) => { try { provider.GetService<IEcFanSource>()?.Dispose(); } catch { } }; // release the PawnIO EC module handle
-        provider.GetRequiredService<DiagnosticsService>().Log = App.Log;
         provider.GetRequiredService<ChecksScreenState>(); // start tracking results (run mode labels, last completed) from launch
         // One Windows Event Log entry per finished test (every module and run path), see ResultEventLogger.
         var diag = provider.GetRequiredService<DiagnosticsService>();
@@ -69,18 +69,18 @@ public partial class MainWindow : Window
 
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
         // Results flow through ResultStore to the Dashboard / Hardware inventory page. Disable with REMOTEPC_AUTORUN=0.
-        AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Log, ModuleSlugs.Osquery, LibreHardwareMonitorModule.ModuleName);
+        AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Loggers.CreateLogger(typeof(AutoRun).FullName!), ModuleSlugs.Osquery, LibreHardwareMonitorModule.ModuleName);
 
 
-        _ = Task.Run(async () => { try { await provider.GetRequiredService<RebootResumeCoordinator>().CompletePostRebootIfPendingAsync(provider.GetRequiredService<RemediationService>(), provider.GetRequiredService<DiagnosticsService>(), launch.PostReboot); } catch (Exception ex) { App.Log($"Post-reboot check failed: {ex.Message}"); } });
+        _ = Task.Run(async () => { try { await provider.GetRequiredService<RebootResumeCoordinator>().CompletePostRebootIfPendingAsync(provider.GetRequiredService<RemediationService>(), provider.GetRequiredService<DiagnosticsService>(), launch.PostReboot); } catch (Exception ex) { Logger.Warn($"Post-reboot check failed: {ex.Message}"); } });
 
         // A service workflow waiting for this restart carries on by itself.
-        _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Workflow.WorkflowService>().ResumeAsync(); } catch (Exception ex) { App.Log($"Workflow resume failed: {ex.Message}"); } });
+        _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Workflow.WorkflowService>().ResumeAsync(); } catch (Exception ex) { Logger.Warn($"Workflow resume failed: {ex.Message}"); } });
         // An "after" benchmark requested before a restart runs by itself once start-up has settled.
-        _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>().ResumeAfterRestartAsync(); } catch (Exception ex) { App.Log($"Benchmark resume failed: {ex.Message}"); } });
+        _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>().ResumeAfterRestartAsync(); } catch (Exception ex) { Logger.Warn($"Benchmark resume failed: {ex.Message}"); } });
 
         InitializeComponent();
-        App.Log($"MainWindow initialized, mode={mode} server={launch.ServerUri}");
+        Logger.Info($"MainWindow initialized, mode={mode} server={launch.ServerUri}");
 
         // CI/diagnostics: pass WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS (e.g. --remote-debugging-port=9222) explicitly
         // and log WebView2 startup so failures show up in host.log.
@@ -92,10 +92,10 @@ public partial class MainWindow : Window
                 e.EnvironmentOptions ??= new Microsoft.Web.WebView2.Core.CoreWebView2EnvironmentOptions();
                 e.EnvironmentOptions.AdditionalBrowserArguments = extra;
             }
-            App.Log($"BlazorWebViewInitializing args='{extra}'");
+            Logger.Info($"BlazorWebViewInitializing args='{extra}'");
         };
         RemoteBlazorWebView.BlazorWebViewInitialized += (_, e) =>
-            App.Log($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
+            Logger.Info($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
 
         if (launch.ServerUri is not null)
             StartRemote(launch.ServerUri, sessionCtx.SessionId, launch.Mirror, launch.ReverseMirror);
@@ -123,7 +123,7 @@ public partial class MainWindow : Window
             if (e.Id != Guid.Empty) _sessionId = e.Id;
             // Demo (--reverse-mirror): the shared link is the read-only mirror page; this window opens the controlling /app page itself.
             _technicianUrl = RemoteLinkInfo.BuildShareUrl(e.Url ?? serverUri, e.Id, _reverseMirror);
-            App.Log($"ReadyToConnect url={e.Url} id={e.Id} link={_technicianUrl} reverseMirror={_reverseMirror}");
+            Logger.Info($"ReadyToConnect url={e.Url} id={e.Id} link={_technicianUrl} reverseMirror={_reverseMirror}");
             RemoteLinkText.Text = _technicianUrl.ToString();
             RemoteHyperlink.NavigateUri = _technicianUrl;
             RemoteLinkRow.Visibility = Visibility.Visible;
@@ -138,46 +138,46 @@ public partial class MainWindow : Window
             }
             // The app runs in the technician's browser; this window only needs to say so (the link is in the panel above, not repeated).
             try { (s as IBlazorWebView)?.NavigateToString(RemoteLinkInfo.LocalPlaceholderHtml); }
-            catch (Exception ex) { App.Log($"NavigateToString placeholder failed: {ex}"); }
+            catch (Exception ex) { Logger.Error($"NavigateToString placeholder failed: {ex}"); }
         });
         RemoteBlazorWebView.Connected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
 
-            App.Log($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User} mirror={_mirror} reverseMirror={_reverseMirror}");
+            Logger.Info($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User} mirror={_mirror} reverseMirror={_reverseMirror}");
             SetRemoteState(RemoteSessionState.TechnicianConnected);
             if (_mirror)
             {
                 var activeId = e.Id != Guid.Empty ? e.Id : (_sessionId != Guid.Empty ? _sessionId : id);
                 var mirrorUrl = RemoteLinkInfo.BuildMirrorUrl(e.Url ?? serverUri, activeId);
-                App.Log($"Navigating local WebView to mirror={mirrorUrl}");
+                Logger.Info($"Navigating local WebView to mirror={mirrorUrl}");
                 try { RemoteBlazorWebView.WebView.CoreWebView2?.Navigate(mirrorUrl.ToString()); }
-                catch (Exception ex) { App.Log($"Mirror navigate failed: {ex}"); }
+                catch (Exception ex) { Logger.Error($"Mirror navigate failed: {ex}"); }
             }
         });
         RemoteBlazorWebView.Disconnected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
-            App.Log($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
+            Logger.Info($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
             SetRemoteState(_technicianUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected);
         });
         // The technician refreshed the browser (or pressed Restart on the "Locked" page): the server drops this client, so
         // start a fresh copy on the same session id and close this one (RemoteBlazorWebViewTutorial does the same with Restart()).
         RemoteBlazorWebView.Refreshed += (_, e) => Dispatcher.BeginInvoke(() =>
         {
-            App.Log($"Remote Refreshed {e}");
+            Logger.Info($"Remote Refreshed {e}");
             if (_restarting) return;
             var id = _sessionId != Guid.Empty ? _sessionId : RemoteBlazorWebView.Id;
             var exe = Environment.ProcessPath;
-            if (id == Guid.Empty || exe is null) { App.Log("Refreshed: no session id or executable path, can't restart"); return; }
+            if (id == Guid.Empty || exe is null) { Logger.Info("Refreshed: no session id or executable path, can't restart"); return; }
             try
             {
                 var psi = new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
                 foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id, _mirror, _reverseMirror)) psi.ArgumentList.Add(a);
                 System.Diagnostics.Process.Start(psi);
                 _restarting = true;
-                App.Log($"Refreshed: started a new copy for session {id}; closing this one");
+                Logger.Info($"Refreshed: started a new copy for session {id}; closing this one");
                 System.Windows.Application.Current.Shutdown();
             }
-            catch (Exception ex) { App.Log($"Refreshed: restart failed: {ex.Message}"); }
+            catch (Exception ex) { Logger.Warn($"Refreshed: restart failed: {ex.Message}"); }
         });
 
         _readyTimer = new DispatcherTimer { Interval = RemoteLinkInfo.ReadyTimeout };
@@ -186,7 +186,7 @@ public partial class MainWindow : Window
             _readyTimer.Stop();
             if (_technicianUrl is null)
             {
-                App.Log($"No ReadyToConnect after {RemoteLinkInfo.ReadyTimeout.TotalSeconds}s (server={serverUri})");
+                Logger.Warn($"No ReadyToConnect after {RemoteLinkInfo.ReadyTimeout.TotalSeconds}s (server={serverUri})");
                 SetRemoteState(RemoteSessionState.Unreachable);
             }
         };
@@ -201,14 +201,14 @@ public partial class MainWindow : Window
                 // The admin Clients list renders each client's own card markup. In reverse mode the local window controls /app, so point
                 // that card at the read-only /mirror page (set Markup before HostPage; the library keeps a non-empty Markup as given).
                 try { RemoteBlazorWebView.Markup = RemoteLinkInfo.ToMirrorMarkup(RemoteWebView.GenMarkup(serverUri, id)); }
-                catch (Exception ex) { App.Log($"Reverse mirror markup failed: {ex}"); }
+                catch (Exception ex) { Logger.Error($"Reverse mirror markup failed: {ex}"); }
             }
             RemoteBlazorWebView.HostPage = HostPage; // must be last (starts the control)
             _readyTimer.Start();
         }
         catch (Exception ex)
         {
-            App.Log($"Remote start failed: {ex}");
+            Logger.Error($"Remote start failed: {ex}");
             SetRemoteState(RemoteSessionState.Unreachable);
         }
         // TODO: consent prompt + audit log before accepting a remote session (see README Safety section).
@@ -230,11 +230,11 @@ public partial class MainWindow : Window
                 System.Windows.Controls.Panel.SetZIndex(_controlWebView, 5); // above the Blazor view (0), below the panel (10)
                 RootGrid.Children.Add(_controlWebView);
             }
-            App.Log($"Reverse mirror: showing the local controller at {appUrl}");
+            Logger.Info($"Reverse mirror: showing the local controller at {appUrl}");
             _controlWebView.Source = appUrl;
             _controlWebView.Visibility = Visibility.Visible;
         }
-        catch (Exception ex) { App.Log($"Reverse mirror: couldn't show the local controller: {ex}"); }
+        catch (Exception ex) { Logger.Error($"Reverse mirror: couldn't show the local controller: {ex}"); }
     }
 
     private void SetRemoteState(RemoteSessionState state)
@@ -249,7 +249,7 @@ public partial class MainWindow : Window
     private void RemoteHyperlink_RequestNavigate(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
     {
         try { Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true }); }
-        catch (Exception ex) { App.Log($"Open link failed: {ex}"); }
+        catch (Exception ex) { Logger.Error($"Open link failed: {ex}"); }
         e.Handled = true;
     }
 
@@ -265,7 +265,7 @@ public partial class MainWindow : Window
             _copyResetTimer.Tick += (_, _) => { _copyResetTimer.Stop(); CopyLinkButton.Content = "Copy link"; };
             _copyResetTimer.Start();
         }
-        catch (Exception ex) { App.Log($"Copy link failed: {ex}"); }
+        catch (Exception ex) { Logger.Error($"Copy link failed: {ex}"); }
     }
 
     private void RemoteBubble_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -280,7 +280,7 @@ public partial class MainWindow : Window
             _copyResetTimer.Tick += (_, _) => { _copyResetTimer.Stop(); RemoteBubbleText.Text = "Remote"; };
             _copyResetTimer.Start();
         }
-        catch (Exception ex) { App.Log($"Copy link (bubble) failed: {ex}"); }
+        catch (Exception ex) { Logger.Error($"Copy link (bubble) failed: {ex}"); }
     }
 
     /// <summary>App start event text: version, machine model, admin, mode (no server URL or session id).</summary>
@@ -319,7 +319,7 @@ public partial class MainWindow : Window
             }
             _provider.Dispose();
         }
-        catch (Exception ex) { App.Log($"Shutdown cleanup failed: {ex.Message}"); }
+        catch (Exception ex) { Logger.Warn($"Shutdown cleanup failed: {ex.Message}"); }
     }
 
     private static readonly Lazy<string> _machine = new(() =>

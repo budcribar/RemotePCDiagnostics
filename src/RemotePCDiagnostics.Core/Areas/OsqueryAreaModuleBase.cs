@@ -3,7 +3,7 @@ using RemotePCDiagnostics.Core.Osquery;
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>Base for areas backed by the bundled osqueryi: unavailable (friendly text) when the tool is missing.</summary>
-public abstract class OsqueryAreaModuleBase(OsqueryRunner runner) : AreaModuleBase(runner.Options.Log)
+public abstract class OsqueryAreaModuleBase(OsqueryRunner runner) : AreaModuleBase(runner.Options.Log.AsAction())
 {
     public const string ToolMissingMessage = "The diagnostics tool wasn't found. Please reinstall the app.";
     protected OsqueryRunner Runner => runner;

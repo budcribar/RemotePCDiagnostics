@@ -12,16 +12,17 @@ namespace RemotePCDiagnostics.Host;
 /// and a short Direct3D 12 workload on the DXCore adapter (matrix multiply compute shader on "core compute" NPUs, a copy round-trip on ML-only NPUs).
 /// No network, no files written, no dialogs. All failures are thrown as <see cref="NpuDeviceException"/> or logged and skipped.
 /// </summary>
-public sealed class WindowsNpuIo(Action<string>? log = null) : INpuIo
+public sealed class WindowsNpuIo(ILogger? log = null) : INpuIo
 {
-    private void Log(string s) { try { log?.Invoke(s); } catch { } }
+    private void Log(string m) => log.Info(m);
+    private void LogWarn(string m) => log.Warn(m);
 
     public IReadOnlyList<NpuDevice> ListDevices()
     {
         List<PnpRow> pnp = [];
         List<DxCoreAdapterRow> dx = [];
-        try { pnp = QueryPnp(); } catch (Exception ex) { Log($"NpuTest: WMI query failed: {ex.Message}"); }
-        try { dx = DxCore.ListAdapters(); } catch (Exception ex) { Log($"NpuTest: DXCore enumeration failed: {ex.Message}"); }
+        try { pnp = QueryPnp(); } catch (Exception ex) { LogWarn($"NpuTest: WMI query failed: {ex.Message}"); }
+        try { dx = DxCore.ListAdapters(); } catch (Exception ex) { LogWarn($"NpuTest: DXCore enumeration failed: {ex.Message}"); }
         Log($"NpuTest: PnP candidates={pnp.Count(NpuDetection.IsNpuCandidate)} DXCore adapters={dx.Count} ({string.Join(", ", dx.Select(a => $"{a.Description} npu={a.IsNpuHardwareType} gfx={a.SupportsGraphics} core={a.SupportsCoreCompute} ml={a.SupportsGenericMl}"))})");
         return NpuDetection.Merge(pnp, dx);
     }
@@ -76,7 +77,7 @@ public sealed class WindowsNpuIo(Action<string>? log = null) : INpuIo
         var hr = D3D12.D3D12CreateDevice(adapter.Pointer, level, out ID3D12Device? d3d);
         if (hr.Failure && core)
         {
-            Log($"NpuTest: core device failed (0x{hr.Code:X8}), retrying generic");
+            LogWarn($"NpuTest: core device failed (0x{hr.Code:X8}), retrying generic");
             core = false; level = FeatureLevel.Level_1_0_GENERIC;
             hr = D3D12.D3D12CreateDevice(adapter.Pointer, level, out d3d);
         }

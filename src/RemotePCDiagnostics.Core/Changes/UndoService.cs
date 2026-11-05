@@ -51,11 +51,12 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
 /// removed apps) and deleted temporary files are reported as skipped; deleted files are never recreated.
 /// </summary>
 public sealed class UndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem? memory = null, IServiceControlBackend? services = null,
-    Action<LogLevel, string>? events = null, Action<string>? log = null)
+    Action<LogLevel, string>? events = null, ILogger? log = null)
 {
     public const string NotUndoableNote = "Installed updates, uninstalled programs, removed apps without a Microsoft Store listing, and deleted temporary files, caches or Recycle Bin items can't be put back; undo lists them as left as is. "
         + "Removed Microsoft Store apps marked \"undo reinstalls from Store\" are reinstalled from the Store for the signed-in account (needs internet; their settings and data aren't restored).";
-    private void Log(string m) { try { log?.Invoke("[undo] " + m); } catch { } }
+    private void Log(string m) => log.Info("[undo] " + m);
+    private void LogError(string m) => log.Error("[undo] " + m);
 
     public IReadOnlyList<ChangeRecord> Pending => journal.All;
 
@@ -70,7 +71,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
             try { r = await UndoOneAsync(c, ct).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                Log($"{c.Kind} '{c.Target}' failed: {ex}");
+                LogError($"{c.Kind} '{c.Target}' failed: {ex}");
                 r = new(c, false, "Windows didn't allow undoing it.");
             }
             // Permanent changes are reported once, then forgotten (there's nothing to retry).
@@ -100,7 +101,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
             case ChangeKind.StoreReinstall:
                 // Allowlisted family name only; the Store id comes from the allowlist and must match the journal's. Failure keeps the entry (retry later).
                 if (memory is null) return Fail(StoreReinstall.FindByFamily(c.Target) is { } a ? StoreReinstall.FailedMessage(a.Label) : "Not available.");
-                var reinstall = await StoreReinstall.ReinstallAsync(memory, c.Target, c.Previous, ct, Log).ConfigureAwait(false);
+                var reinstall = await StoreReinstall.ReinstallAsync(memory, c.Target, c.Previous, ct, log).ConfigureAwait(false);
                 return new(c, reinstall.Success, reinstall.Message);
 
             case ChangeKind.DefenderExclusion:
@@ -113,12 +114,12 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
             case ChangeKind.HiberFileType:
                 var hr = await commands.RunAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/h", "/type", "full"], ct).ConfigureAwait(false);
                 if (hr is not { ExitCode: 0 }) return Fail("Windows didn't allow changing the hibernation file back.");
-                if (memory is not null) Hibernation.RemoveAddedValues(memory, c.PreviousExtra, Log);
+                if (memory is not null) Hibernation.RemoveAddedValues(memory, c.PreviousExtra, log);
                 return Ok("Hibernation file back to full size; Hibernate is available again.");
 
             case ChangeKind.RegistryValue:
                 if (memory is null) return Fail("Not available.");
-                var (regOk, regMessage) = RegistryAllowlist.Restore(memory, c.Target, c.Previous, c.CreatedKey, Log);
+                var (regOk, regMessage) = RegistryAllowlist.Restore(memory, c.Target, c.Previous, c.CreatedKey, log);
                 return new(c, regOk, regMessage);
 
             case ChangeKind.DefaultPrinter:
@@ -128,7 +129,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
             case ChangeKind.ExtensionBlock:
                 if (memory is null) return Fail("Not available.");
-                var (extOk, extMessage) = BrowserExtensions.RemoveBlock(memory, c.Target, c.Previous, c.CreatedKey, Log);
+                var (extOk, extMessage) = BrowserExtensions.RemoveBlock(memory, c.Target, c.Previous, c.CreatedKey, log);
                 return new(c, extOk, extMessage);
 
             case ChangeKind.StartupApp:
@@ -141,7 +142,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 if (ServiceProtection.IsProtected(c.Target) || ServiceProtection.IsSelfComponent(c.Target))
                     return Fail("That service is protected and cannot be changed.");
                 memory.SetServiceStartType(c.Target, c.Previous!);
-                ServiceDelayedStart.Restore(memory, c.Target, c.PreviousExtra, Log);
+                ServiceDelayedStart.Restore(memory, c.Target, c.PreviousExtra, log);
                 return Ok($"Start-up type restored to {c.Previous}.");
 
             case ChangeKind.ServiceRunning:

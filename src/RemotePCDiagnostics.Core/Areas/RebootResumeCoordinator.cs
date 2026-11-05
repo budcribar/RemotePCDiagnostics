@@ -102,7 +102,7 @@ public sealed class RebootResumeCoordinator(
     OsqueryRunner? osquery = null,
     string? stateFilePath = null,
     string? executablePath = null,
-    Action<string>? log = null)
+    ILogger? log = null)
 {
     public const string RunOnceRegistryKey = @"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce";
     public const string RunOnceValueName = "RemotePCDiagnosticsResume";
@@ -117,10 +117,8 @@ public sealed class RebootResumeCoordinator(
 
     public string? LastRegisteredCommandLine { get; private set; }
 
-    private void Log(string m)
-    {
-        try { (log ?? commands.Log)?.Invoke("[reboot-resume] " + m); } catch { }
-    }
+    private void Log(string m) => (log ?? commands.Log).Info("[reboot-resume] " + m);
+    private void LogWarn(string m) => (log ?? commands.Log).Warn("[reboot-resume] " + m);
 
     public static string DefaultStateFilePath() =>
         ProtectedState.PathFor(ProtectedState.PendingRebootFile);
@@ -151,7 +149,7 @@ public sealed class RebootResumeCoordinator(
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                Log($"osquery baseline capture failed, falling back to Process API: {ex.Message}");
+                LogWarn($"osquery baseline capture failed, falling back to Process API: {ex.Message}");
             }
         }
 
@@ -265,7 +263,7 @@ public sealed class RebootResumeCoordinator(
         if (diagnostics is not null)
         {
             try { await diagnostics.RunAsync(ResourceHogsModule.ModuleName, ct: ct).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Post-reboot ResourceHogs refresh failed: {ex.Message}"); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"Post-reboot ResourceHogs refresh failed: {ex.Message}"); }
         }
 
         var post = postBaselineOverride ?? await CaptureBaselineAsync(ct).ConfigureAwait(false);
@@ -328,7 +326,7 @@ public sealed class RebootResumeCoordinator(
         }
         catch (Exception ex)
         {
-            Log($"SavePendingState failed: {ex.Message}");
+            LogWarn($"SavePendingState failed: {ex.Message}");
         }
     }
 
@@ -349,7 +347,7 @@ public sealed class RebootResumeCoordinator(
         }
         catch (Exception ex)
         {
-            Log($"LoadPendingState failed: {ex.Message}");
+            LogWarn($"LoadPendingState failed: {ex.Message}");
             return null;
         }
     }
@@ -364,7 +362,7 @@ public sealed class RebootResumeCoordinator(
         }
         catch (Exception ex)
         {
-            Log($"ClearPendingState failed: {ex.Message}");
+            LogWarn($"ClearPendingState failed: {ex.Message}");
         }
     }
 }

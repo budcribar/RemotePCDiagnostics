@@ -14,11 +14,11 @@ public static class NuGetCleanupScanner
     public static readonly TimeSpan KeepRecent = TimeSpan.FromDays(45);
 
     public static IReadOnlyList<string> FindSupersededVersions(string packagesRoot, string projectsRoot,
-        Action<string>? log = null, CancellationToken ct = default) =>
+        ILogger? log = null, CancellationToken ct = default) =>
         Directory.Exists(projectsRoot) ? FindSupersededVersions(packagesRoot, [projectsRoot], log, ct) : [];
 
     public static IReadOnlyList<string> FindSupersededVersions(string packagesRoot, IReadOnlyList<string> projectRoots,
-        Action<string>? log = null, CancellationToken ct = default, DateTime? utcNow = null)
+        ILogger? log = null, CancellationToken ct = default, DateTime? utcNow = null)
     {
         try
         {
@@ -68,7 +68,7 @@ public static class NuGetCleanupScanner
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or
             KeyNotFoundException or InvalidOperationException or FormatException)
         {
-            log?.Invoke("NuGet package pruning skipped: reference/candidate scan incomplete: " + ex.Message);
+            log.Info("NuGet package pruning skipped: reference/candidate scan incomplete: " + ex.Message);
             return [];
         }
     }

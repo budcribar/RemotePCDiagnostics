@@ -125,7 +125,7 @@ public sealed partial class MemorySuggestionService
             {
                 var original = sys.GetServiceStartType(name);
                 if (original is not ("Automatic" or "AutomaticDelayed")) continue;
-                var delayed = ServiceDelayedStart.Record(sys, name, Log);
+                var delayed = ServiceDelayedStart.Record(sys, name, Logger);
                 sys.SetServiceStartType(name, "Manual");
                 if (sys.GetServiceStartType(name) != "Manual") { Log($"{name} didn't stay Manual"); continue; }
                 Journal(ChangeKind.ServiceStartType, name, original, ServiceLabel(name, "Manual", original), extra: delayed);
@@ -225,7 +225,7 @@ public sealed partial class MemorySuggestionService
         var notReinstalled = new List<string>();
         foreach (var family in undo.Reinstall ?? Array.Empty<string>())
         {
-            var r = await StoreReinstall.ReinstallAsync(sys, family, null, ct, Log).ConfigureAwait(false);
+            var r = await StoreReinstall.ReinstallAsync(sys, family, null, ct, Logger).ConfigureAwait(false);
             if (r.Success) { reinstalled.Add(r.Message); try { journal?.RemoveLatest(ChangeKind.StoreReinstall, family); } catch { } }
             else { notReinstalled.Add(r.Message); failed++; }
         }
@@ -233,7 +233,7 @@ public sealed partial class MemorySuggestionService
         foreach (var item in Enumerable.Reverse(undo.Registry)) // last written first: the first write is the one that created any keys
         {
             bool ok;
-            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Log).Ok; }
+            try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Logger).Ok; }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
             if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } } else failed++;
         }
@@ -243,7 +243,7 @@ public sealed partial class MemorySuggestionService
             try
             {
                 sys.SetServiceStartType(svc.Target, svc.Previous!);
-                ServiceDelayedStart.Restore(sys, svc.Target, svc.Extra, Log);
+                ServiceDelayedStart.Restore(sys, svc.Target, svc.Extra, Logger);
                 try { journal?.RemoveLatest(ChangeKind.ServiceStartType, svc.Target); } catch { }
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {svc.Target}: {ex.Message}"); failed++; }

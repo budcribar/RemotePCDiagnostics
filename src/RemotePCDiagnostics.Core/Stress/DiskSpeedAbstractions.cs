@@ -28,7 +28,7 @@ public interface IDiskTestFileSystem
 }
 
 /// <summary>Real file system: <see cref="FileOptions.WriteThrough"/> plus Windows FILE_FLAG_NO_BUFFERING with sector-aligned buffers.</summary>
-public sealed class PhysicalDiskTestFileSystem(Action<string>? log = null) : IDiskTestFileSystem
+public sealed class PhysicalDiskTestFileSystem(ILogger? log = null) : IDiskTestFileSystem
 {
     private const FileOptions NoBuffering = (FileOptions)0x20000000;
 
@@ -44,7 +44,7 @@ public sealed class PhysicalDiskTestFileSystem(Action<string>? log = null) : IDi
                 list.Add(new TestDrive(d.RootDirectory.FullName, d.VolumeLabel, d.AvailableFreeSpace, d.TotalSize,
                     string.Equals(d.RootDirectory.FullName, sys, StringComparison.OrdinalIgnoreCase)));
             }
-            catch (Exception ex) { log?.Invoke($"Disk speed: skipping drive {d.Name}: {ex.Message}"); }
+            catch (Exception ex) { log.Info($"Disk speed: skipping drive {d.Name}: {ex.Message}"); }
         }
         return list.OrderByDescending(d => d.IsSystem).ThenBy(d => d.Root).ToList();
     }
@@ -80,7 +80,7 @@ public sealed class PhysicalDiskTestFileSystem(Action<string>? log = null) : IDi
         if (OperatingSystem.IsWindows())
         {
             try { return Open(FileOptions.WriteThrough | NoBuffering); }
-            catch (Exception ex) { log?.Invoke($"Disk speed: unbuffered open failed ({ex.Message}); using write-through only"); }
+            catch (Exception ex) { log.Warn($"Disk speed: unbuffered open failed ({ex.Message}); using write-through only"); }
         }
         return Open(FileOptions.WriteThrough);
     }

@@ -8,14 +8,14 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// keeps each dispatch short (adaptive, ~150 ms, far below the 2 s TDR limit), and stops on Stop, a driver reset,
 /// or a critical temperature. A software adapter (WARP) is never tested or reported as a pass.
 /// </summary>
-public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sensors, IStressClock? clock = null, Action<string>? log = null, StressCleanup? cleanup = null)
+public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sensors, IStressClock? clock = null, ILogger? log = null, StressCleanup? cleanup = null)
 {
     public Task<GpuStressReport> RunAsync(GpuStressOptions o, IProgress<GpuStressProgress>? progress = null, CancellationToken cancellationToken = default) =>
         Task.Run(() => RunCoreAsync(o, progress, cancellationToken), CancellationToken.None);
 
     private async Task<GpuStressReport> RunCoreAsync(GpuStressOptions o, IProgress<GpuStressProgress>? progress, CancellationToken ct)
     {
-        var scope = cleanup ?? new StressCleanup(log);
+        var scope = cleanup ?? new StressCleanup(log.AsAction());
         try { return await RunInnerAsync(o, progress, ct, scope).ConfigureAwait(false); }
         finally { await scope.RunAsync().ConfigureAwait(false); }
     }
@@ -33,11 +33,11 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
 
         GpuOpenResult open;
         try { open = o.AdapterId is { } adapterId ? factory.Open(adapterId) : factory.Open(); }
-        catch (Exception ex) { log?.Invoke($"GPU stress: open failed: {ex}"); open = new GpuOpenResult(GpuOpenStatus.Failed, Detail: ex.Message); }
+        catch (Exception ex) { log.Error($"GPU stress: open failed: {ex}"); open = new GpuOpenResult(GpuOpenStatus.Failed, Detail: ex.Message); }
 
         if (open.Status != GpuOpenStatus.Opened || open.Device is null)
         {
-            log?.Invoke($"GPU stress: no device status={open.Status} detail={open.Detail}");
+            log.Info($"GPU stress: no device status={open.Status} detail={open.Detail}");
             var outcome = open.Status switch { GpuOpenStatus.NoGpu => GpuStressOutcome.NoGpu, GpuOpenStatus.SoftwareOnly => GpuStressOutcome.SoftwareOnly, _ => GpuStressOutcome.Failed };
             return new GpuStressReport(outcome, TimeSpan.Zero, null, 0, 0, 0, null, null);
         }
@@ -49,7 +49,7 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
         if (device.Adapter.IsSoftware)
         {
             // Defense in depth: a factory must never hand back WARP, but if it does it is not a GPU pass.
-            log?.Invoke($"GPU stress: refusing software adapter '{adapterName}' vendor=0x{device.Adapter.VendorId:X4}");
+            log.Warn($"GPU stress: refusing software adapter '{adapterName}' vendor=0x{device.Adapter.VendorId:X4}");
             return new GpuStressReport(GpuStressOutcome.SoftwareOnly, TimeSpan.Zero, adapterName, 0, 0, 0, null, null);
         }
 
@@ -59,7 +59,7 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
         uint seed = 0x12345u;
         int threads = Math.Max(1, device.ThreadCount);
         int sampleOffset = 0;
-        log?.Invoke($"GPU stress: start adapter='{adapterName}' vendor=0x{device.Adapter.VendorId:X4} vram={device.Adapter.DedicatedMemoryBytes} threads={threads} duration={duration}");
+        log.Info($"GPU stress: start adapter='{adapterName}' vendor=0x{device.Adapter.VendorId:X4} vram={device.Adapter.DedicatedMemoryBytes} threads={threads} duration={duration}");
 
         try
         {
@@ -75,7 +75,7 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
                     var (t, f, critical, what) = ReadSensors();
                     temp = t; fan = f;
                     if (t is { } tv) maxT = Math.Max(maxT ?? tv, tv);
-                    if (critical) { hot = true; log?.Invoke($"GPU stress: abort, critical temperature: {what}"); break; }
+                    if (critical) { hot = true; log.Warn($"GPU stress: abort, critical temperature: {what}"); break; }
                 }
 
                 seed = unchecked(seed * 1664525u + 1013904223u);
@@ -86,11 +86,11 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
                 if (bad > 0)
                 {
                     mismatches += bad;
-                    log?.Invoke($"GPU stress: {bad} mismatches in batch {batches} seed=0x{seed:X8} iterations={iterations}");
+                    log.Warn($"GPU stress: {bad} mismatches in batch {batches} seed=0x{seed:X8} iterations={iterations}");
                 }
                 if (result.GpuTime > TimeSpan.Zero) rate = (double)threads * iterations / result.GpuTime.TotalSeconds / 1e9;
                 var next = NextIterations(iterations, result.GpuTime, o);
-                if (result.GpuTime >= o.SlowDispatch) log?.Invoke($"GPU stress: slow dispatch {result.GpuTime.TotalMilliseconds:0} ms at {iterations} iterations, cutting to {next}");
+                if (result.GpuTime >= o.SlowDispatch) log.Info($"GPU stress: slow dispatch {result.GpuTime.TotalMilliseconds:0} ms at {iterations} iterations, cutting to {next}");
                 iterations = next;
 
                 progress?.Report(new GpuStressProgress(clk.Elapsed - start, duration, adapterName, batches, checkedValues, mismatches, temp, fan, sensorsOk, rate));
@@ -101,12 +101,12 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
         catch (GpuDeviceLostException ex)
         {
             fatal = GpuStressOutcome.DriverReset;
-            log?.Invoke($"GPU stress: device lost after {batches} batches at {iterations} iterations: {ex.Message} {ex.InnerException}");
+            log.Warn($"GPU stress: device lost after {batches} batches at {iterations} iterations: {ex.Message} {ex.InnerException}");
         }
         catch (Exception ex)
         {
             fatal = GpuStressOutcome.Failed;
-            log?.Invoke($"GPU stress: failed: {ex}");
+            log.Error($"GPU stress: failed: {ex}");
         }
 
         var outcome2 = fatal is { } fo ? fo
@@ -116,7 +116,7 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
             : batches == 0 ? GpuStressOutcome.Failed
             : GpuStressOutcome.Passed;
         var report = new GpuStressReport(outcome2, clk.Elapsed - start, adapterName, batches, checkedValues, mismatches, maxT, rate);
-        log?.Invoke($"GPU stress: done outcome={outcome2} batches={batches} checked={checkedValues} mismatches={mismatches} maxTemp={maxT} rate={rate:0.00}G/s");
+        log.Info($"GPU stress: done outcome={outcome2} batches={batches} checked={checkedValues} mismatches={mismatches} maxTemp={maxT} rate={rate:0.00}G/s");
         return report;
     }
 
@@ -146,8 +146,8 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
 
     private bool SafeAvailability()
     {
-        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log?.Invoke($"GPU stress: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
-        catch (Exception ex) { log?.Invoke($"GPU stress: sensor availability failed: {ex.Message}"); return false; }
+        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log.Info($"GPU stress: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
+        catch (Exception ex) { log.Warn($"GPU stress: sensor availability failed: {ex.Message}"); return false; }
     }
 
     /// <summary>GPU temperature (null when not reported: many integrated GPUs don't expose one), GPU fan (else any fan), and any critical temperature.</summary>
@@ -166,6 +166,6 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
             var crit = temps.FirstOrDefault(r => SensorThresholds.Evaluate(r) == SensorLevel.Critical);
             return (gpu, fan, crit is not null, crit is null ? "" : $"{crit.HardwareName} {crit.SensorName} {crit.Value:0.0}°C");
         }
-        catch (Exception ex) { log?.Invoke($"GPU stress: sensor read failed: {ex.Message}"); return (null, null, false, ""); }
+        catch (Exception ex) { log.Warn($"GPU stress: sensor read failed: {ex.Message}"); return (null, null, false, ""); }
     }
 }

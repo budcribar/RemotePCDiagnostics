@@ -11,12 +11,13 @@ namespace RemotePCDiagnostics.Host;
 /// Windows side of the service workflow: an elevated "continue after sign-in" task, temporary automatic sign-in (password kept
 /// as an LSA secret, like Sysinternals Autologon; never in a file or plain registry value), restarts, and the saved report.
 /// </summary>
-public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISessionContext session, Action<string>? log = null) : IWorkflowSystem
+public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISessionContext session, ILogger? log = null) : IWorkflowSystem
 {
     public const string TaskName = WorkflowService.ResumeTaskName;
     private const string WinlogonKey = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon";
     private const string PasswordLessKey = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device";
-    private void Log(string m) { try { log?.Invoke("[workflow] " + m); } catch { } }
+    private void Log(string m) => log.Info("[workflow] " + m);
+    private void LogWarn(string m) => log.Warn("[workflow] " + m);
 
     private static string Q(string s) => s.Replace("'", "''");
 
@@ -134,7 +135,7 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
             if (!LogonUser(user, domain, password, 2 /* interactive */, 0, out var token))
             {
                 var err = Marshal.GetLastWin32Error();
-                Log($"credential check failed for {domain}\\{user}: Win32 error {err}{err switch { 1326 => " (wrong user name or password)", 1327 => " (account restriction)", 1385 => " (logon type not granted)", 1311 => " (no logon server)", 1909 => " (account locked out)", _ => "" }}");
+                LogWarn($"credential check failed for {domain}\\{user}: Win32 error {err}{err switch { 1326 => " (wrong user name or password)", 1327 => " (account restriction)", 1385 => " (logon type not granted)", 1311 => " (no logon server)", 1909 => " (account locked out)", _ => "" }}");
                 return false;
             }
             CloseHandle(token);

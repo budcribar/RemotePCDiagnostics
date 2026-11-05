@@ -121,7 +121,7 @@ public sealed class EcFanMonitor : IEcFanSource
     private readonly Func<(bool Available, string Detail)> _pawnIo;
     private readonly Func<IEcPortIo> _ioFactory;
     private readonly IEcLock _lock;
-    private readonly Action<string>? _log;
+    private readonly ILogger? _log;
     private readonly Func<DateTimeOffset> _now;
     private readonly TimeSpan _interval;
     private readonly TimeSpan _lockTimeout;
@@ -139,7 +139,7 @@ public sealed class EcFanMonitor : IEcFanSource
     private double? _min1, _max1, _min2, _max2;
 
     public EcFanMonitor(Func<string?> model, Func<(bool Available, string Detail)> pawnIo, Func<IEcPortIo> ioFactory, IEcLock ecLock,
-        Action<string>? log = null, Func<DateTimeOffset>? now = null, TimeSpan? pollInterval = null, TimeSpan? lockTimeout = null, TimeSpan? stepTimeout = null)
+        ILogger? log = null, Func<DateTimeOffset>? now = null, TimeSpan? pollInterval = null, TimeSpan? lockTimeout = null, TimeSpan? stepTimeout = null)
     {
         _model = model; _pawnIo = pawnIo; _ioFactory = ioFactory; _lock = ecLock; _log = log;
         _now = now ?? (() => DateTimeOffset.Now);
@@ -180,21 +180,21 @@ public sealed class EcFanMonitor : IEcFanSource
                 return _cached;
             }
         }
-        catch (Exception ex) { Log($"Fan diagnostic: unexpected error, EC fan reading turned off: {ex}"); Disable(); return []; }
+        catch (Exception ex) { LogError($"Fan diagnostic: unexpected error, EC fan reading turned off: {ex}"); Disable(); return []; }
     }
 
     private void Init()
     {
         _initDone = true;
         string? model;
-        try { model = _model()?.Trim(); } catch (Exception ex) { Log($"Fan diagnostic: model check failed: {ex.Message}"); return; }
+        try { model = _model()?.Trim(); } catch (Exception ex) { LogWarn($"Fan diagnostic: model check failed: {ex.Message}"); return; }
         if (!string.Equals(model, SupportedModel, StringComparison.OrdinalIgnoreCase)) return; // other models: stay silent and off
         (bool Available, string Detail) pawn;
         try { pawn = _pawnIo(); } catch (Exception ex) { pawn = (false, ex.Message); }
         Log($"Fan diagnostic: model={model} (Lenovo IdeaPad 1 15ALC7); PawnIO {(pawn.Available ? "available" : "not available")}: {pawn.Detail}");
         if (!pawn.Available) return;
         try { _io = _ioFactory(); }
-        catch (Exception ex) { Log($"Fan diagnostic: PawnIO LpcACPIEC module could not be loaded, EC fan reading off: {ex.GetType().Name}: {ex.Message}"); return; }
+        catch (Exception ex) { LogError($"Fan diagnostic: PawnIO LpcACPIEC module could not be loaded, EC fan reading off: {ex.GetType().Name}: {ex.Message}"); return; }
         _enabled = true;
         Log($"Fan diagnostic: PawnIO LpcACPIEC module loaded; reading EC addresses {string.Join(", ", AcpiEcReader.AllowedAddresses.Select(a => $"0x{a:X2}"))} (read command 0x80 only) every {_interval.TotalSeconds:0.#}s");
     }
@@ -218,7 +218,7 @@ public sealed class EcFanMonitor : IEcFanSource
                 if (f1 is null || f2 is null) failure = "EC protocol timeout";
             }
             catch (Exception ex) { failure = $"EC read error: {ex.GetType().Name}: {ex.Message}"; }
-            finally { try { _lock.Exit(); } catch (Exception ex) { Log($"Fan diagnostic: EC mutex release failed: {ex.Message}"); } }
+            finally { try { _lock.Exit(); } catch (Exception ex) { LogWarn($"Fan diagnostic: EC mutex release failed: {ex.Message}"); } }
         }
 
         if (failure is not null)
@@ -261,11 +261,13 @@ public sealed class EcFanMonitor : IEcFanSource
 
     private void CloseIo()
     {
-        try { _io?.Dispose(); } catch (Exception ex) { Log($"Fan diagnostic: closing PawnIO module failed: {ex.Message}"); }
+        try { _io?.Dispose(); } catch (Exception ex) { LogWarn($"Fan diagnostic: closing PawnIO module failed: {ex.Message}"); }
         _io = null;
     }
 
-    private void Log(string m) { try { _log?.Invoke(m); } catch { } }
+    private void Log(string m) => _log.Info(m);
+    private void LogWarn(string m) => _log.Warn(m);
+    private void LogError(string m) => _log.Error(m);
 
     public void Dispose()
     {

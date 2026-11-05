@@ -47,4 +47,10 @@
     <Copy SourceFiles="@(_SampleModuleUiDll)" DestinationFolder="$(OutDir)sample-module-ui" SkipUnchangedFiles="true" />
   </Target>
 
+  <ItemGroup>
+    <!-- Logging: ILogger plus the plain-line helpers (LoggerLines), without importing Microsoft.Extensions.Logging, whose LogLevel
+         would clash with RemotePCDiagnostics.Core.Logging.LogLevel. -->
+    <Using Include="Microsoft.Extensions.Logging.ILogger" Alias="ILogger" />
+    <Using Include="RemotePCDiagnostics.Logging" />
+  </ItemGroup>
 </Project>

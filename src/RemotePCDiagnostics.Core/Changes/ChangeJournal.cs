@@ -103,12 +103,12 @@ public sealed class FileChangeJournal : MemoryChangeJournal
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
     private readonly string _path;
-    private readonly Action<string>? _log;
+    private readonly ILogger? _log;
 
     public static string DefaultPath() =>
         ProtectedState.PathFor(ProtectedState.ChangesFile);
 
-    public FileChangeJournal(string path, Action<string>? log = null)
+    public FileChangeJournal(string path, ILogger? log = null)
     {
         _path = path; _log = log;
         try
@@ -121,7 +121,7 @@ public sealed class FileChangeJournal : MemoryChangeJournal
                 if (kept.Count != loaded.Count) Persist();
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { log?.Invoke($"Change journal read failed: {ex.Message}"); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { log.Warn($"Change journal read failed: {ex.Message}"); }
     }
 
     protected override void Persist()
@@ -133,6 +133,6 @@ public sealed class FileChangeJournal : MemoryChangeJournal
             File.WriteAllText(tmp, JsonSerializer.Serialize(Items, Json));
             File.Move(tmp, _path, overwrite: true);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { _log?.Invoke($"Change journal write failed: {ex.Message}"); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { _log.Warn($"Change journal write failed: {ex.Message}"); }
     }
 }

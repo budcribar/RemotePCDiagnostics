@@ -75,7 +75,7 @@ public enum MigrationOutcome
 /// written back oldest first. Each written event is ticked off in pending.json, so an interrupted run resumes on the next start instead
 /// of re-reading the cleared log. The marker is written last. Delete this class once the PCs with old history are done.
 /// </summary>
-public sealed class EventLogV3Migration(IEventLogMigrationIo io, MigrationMarkers markers, string workDir, Action<string>? log = null,
+public sealed class EventLogV3Migration(IEventLogMigrationIo io, MigrationMarkers markers, string workDir, ILogger? log = null,
     Func<DateTimeOffset>? now = null, ModuleCatalog? catalog = null)
 {
     public const string MarkerKey = "eventlog-v3";
@@ -113,7 +113,7 @@ public sealed class EventLogV3Migration(IEventLogMigrationIo io, MigrationMarker
             Directory.CreateDirectory(workDir);
             var backup = Path.Combine(workDir, $"Application-{Now.ToUniversalTime():yyyyMMdd-HHmmss}.evtx");
             try { io.Backup(backup); }
-            catch (Exception ex) { Log($"backup failed, log not cleared: {ex.Message}"); return MigrationOutcome.Failed; }
+            catch (Exception ex) { LogWarn($"backup failed, log not cleared: {ex.Message}"); return MigrationOutcome.Failed; }
 
             var converted = new List<PendingEvent>(events.Count);
             foreach (var e in events)
@@ -133,7 +133,7 @@ public sealed class EventLogV3Migration(IEventLogMigrationIo io, MigrationMarker
         }
         catch (Exception ex)
         {
-            Log($"failed: {ex.GetType().Name}: {ex.Message}");
+            LogError($"failed: {ex.GetType().Name}: {ex.Message}");
             return MigrationOutcome.Failed;
         }
     }
@@ -228,7 +228,9 @@ public sealed class EventLogV3Migration(IEventLogMigrationIo io, MigrationMarker
         File.Move(tmp, PendingPath, overwrite: true);
     }
 
-    private void Log(string message) { try { log?.Invoke("History update (event log format 3): " + message); } catch { } }
+    private void Log(string m) => log.Info("History update (event log format 3): " + m);
+    private void LogWarn(string m) => log.Warn("History update (event log format 3): " + m);
+    private void LogError(string m) => log.Error("History update (event log format 3): " + m);
 
     public sealed record PendingEvent(int EventId, LogLevel Level, string Message, bool Written = false);
     public sealed record PendingState(string Backup, bool Cleared, IReadOnlyList<PendingEvent> Events);

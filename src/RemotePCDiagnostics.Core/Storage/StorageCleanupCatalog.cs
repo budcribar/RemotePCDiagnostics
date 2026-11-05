@@ -280,7 +280,7 @@ public static class StorageCleanupCatalog
     /// Extension folders a newer version of the same extension (and platform) replaced, ordered by version number (not dates).
     /// Never the newest version, never a folder extensions.json lists, and nothing at all when extensions.json is missing or unreadable.
     /// </summary>
-    public static IReadOnlyList<string> SupersededExtensions(string extRoot, Action<string>? log = null)
+    public static IReadOnlyList<string> SupersededExtensions(string extRoot, ILogger? log = null)
     {
         var manifest = Path.Combine(extRoot, "extensions.json");
         if (!Directory.Exists(extRoot) || StorageCleanupEngine.IsReparsePoint(extRoot) || !File.Exists(manifest)) return [];
@@ -288,7 +288,7 @@ public static class StorageCleanupCatalog
         try { active = ActiveExtensionFolders(File.ReadAllText(manifest)); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
         {
-            log?.Invoke("[storage] VS Code extensions.json unreadable, old versions kept: " + ex.Message);
+            log.Info("[storage] VS Code extensions.json unreadable, old versions kept: " + ex.Message);
             return [];
         }
         if (active is not { Count: > 0 }) return [];
@@ -374,7 +374,7 @@ public static class StorageCleanupCatalog
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            ctx.Log?.Invoke($"[storage] {c.Id}: measure failed: {ex.Message}");
+            ctx.Log.Warn($"[storage] {c.Id}: measure failed: {ex.Message}");
             return null;
         }
     }

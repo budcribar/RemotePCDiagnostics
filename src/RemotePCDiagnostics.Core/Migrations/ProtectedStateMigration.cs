@@ -6,7 +6,7 @@ namespace RemotePCDiagnostics.Core.Migrations;
 /// state folder's permissions (a move would keep the old file's, which let the user change it). A file already in the state folder wins.
 /// The marker makes this run once: afterwards a file someone drops in the old folder is never read.
 /// </summary>
-public sealed class ProtectedStateMigration(string legacyFolder, string stateFolder, MigrationMarkers markers, Action<string>? log = null,
+public sealed class ProtectedStateMigration(string legacyFolder, string stateFolder, MigrationMarkers markers, ILogger? log = null,
     Func<DateTimeOffset>? now = null)
 {
     public const string MarkerKey = "protected-state";
@@ -25,7 +25,7 @@ public sealed class ProtectedStateMigration(string legacyFolder, string stateFol
                 if (File.Exists(to))
                 {
                     File.Delete(from);
-                    log?.Invoke($"State move: kept {to} and removed the older copy in {legacyFolder}");
+                    log.Info($"State move: kept {to} and removed the older copy in {legacyFolder}");
                     continue;
                 }
                 Directory.CreateDirectory(stateFolder);
@@ -34,11 +34,11 @@ public sealed class ProtectedStateMigration(string legacyFolder, string stateFol
                 File.Move(tmp, to, overwrite: false);
                 File.Delete(from);
                 moved++;
-                log?.Invoke($"State move: {name} moved to {stateFolder}");
+                log.Info($"State move: {name} moved to {stateFolder}");
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                log?.Invoke($"State move: {name} failed, will retry next start: {ex.Message}");
+                log.Warn($"State move: {name} failed, will retry next start: {ex.Message}");
                 return MigrationOutcome.Failed;
             }
         }

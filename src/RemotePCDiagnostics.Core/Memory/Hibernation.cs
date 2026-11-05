@@ -50,14 +50,14 @@ public static class Hibernation
     public static bool IsTracked(string? name) => name is not null && TrackedValues.Contains(name, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Recorded before "powercfg /h /type reduced" (journal form, <see cref="Changes.PreviousDwords"/>); null = couldn't read. Never throws.</summary>
-    public static string? RecordValues(IPowerConfig sys, Action<string>? log = null)
+    public static string? RecordValues(IPowerConfig sys, ILogger? log = null)
     {
         try
         {
             if (sys.ReadHibernateValues() is not { } values) return null;
             return Changes.PreviousDwords.Encode(TrackedValues.ToDictionary(n => n, n => values.TryGetValue(n, out var v) ? v : null));
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { log?.Invoke("Hibernation values read failed: " + ex.Message); return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { log.Warn("Hibernation values read failed: " + ex.Message); return null; }
     }
 
     /// <summary>The tracked values that didn't exist before (undo deletes them after /type full). Empty when nothing was recorded.</summary>
@@ -65,12 +65,12 @@ public static class Hibernation
         Changes.PreviousDwords.Decode(previousExtra) is { } d ? TrackedValues.Where(n => d.TryGetValue(n, out var v) && v is null).ToList() : [];
 
     /// <summary>After "powercfg /h /type full" succeeded: deletes the values that were absent before. Never throws: failures are logged.</summary>
-    public static void RemoveAddedValues(IPowerConfig sys, string? previousExtra, Action<string>? log = null)
+    public static void RemoveAddedValues(IPowerConfig sys, string? previousExtra, ILogger? log = null)
     {
         foreach (var name in ValuesToDelete(previousExtra))
         {
             try { sys.DeleteHibernateValue(name); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { log?.Invoke($"Couldn't remove {name}: {ex.Message}"); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { log.Warn($"Couldn't remove {name}: {ex.Message}"); }
         }
     }
 }

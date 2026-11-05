@@ -8,6 +8,7 @@ namespace RemotePCDiagnostics.Host.Sensors;
 /// <summary>ISensorProvider backed by LibreHardwareMonitorLib. Many sensors (CPU MSRs, SuperIO fans) need admin.</summary>
 public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDisposable
 {
+    private static readonly ILogger Logger = HostServices.For<LhmSensorProvider>(App.Loggers);
     private readonly object _gate = new();
     private Computer? _computer;
     private string? _openError;
@@ -37,19 +38,19 @@ public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDi
             foreach (var hw in _computer.Hardware) Collect(hw, list);
             if (!_loggedRead) { _loggedRead = true; LogInventory(_computer, "first read"); }
             if (!_fallbackLogged && !list.Any(r => r.HardwareType == HardwareKind.Cpu && r.SensorType == SensorKind.Temperature))
-                App.Log("LibreHardwareMonitor: no usable CPU temperature (sensor missing or 0). LHM 0.9.5+ needs the PawnIO driver for low-level CPU access; using ACPI thermal zone fallback if available.");
+                Logger.Info("LibreHardwareMonitor: no usable CPU temperature (sensor missing or 0). LHM 0.9.5+ needs the PawnIO driver for low-level CPU access; using ACPI thermal zone fallback if available.");
             var first = !_fallbackLogged; _fallbackLogged = true;
             var firstGpu = !_gpuLogged; _gpuLogged = true;
-            if (firstGpu) App.Log($"GPU temperature: LHM valid GPU temperature={(list.Any(r => r.HardwareType == HardwareKind.Gpu && r.SensorType == SensorKind.Temperature && r.IsLive) ? "yes" : "no")}; fallback sources={string.Join(", ", _gpuSources.Select(s => s.Name))}");
-            list = GpuTemperatureFallback.Apply(list, _gpuSources, firstGpu ? App.Log : null);
+            if (firstGpu) Logger.Info($"GPU temperature: LHM valid GPU temperature={(list.Any(r => r.HardwareType == HardwareKind.Gpu && r.SensorType == SensorKind.Temperature && r.IsLive) ? "yes" : "no")}; fallback sources={string.Join(", ", _gpuSources.Select(s => s.Name))}");
+            list = GpuTemperatureFallback.Apply(list, _gpuSources, firstGpu ? Logger : null);
             // CPU fallbacks (only when LHM has no valid CPU temp): APU shared die from the Windows GPU reading, then ACPI thermal zone.
             var cpuName = _computer.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Cpu)?.Name;
-            list = CpuTemperatureFallback.ApplyApuDie(list, cpuName, first ? App.Log : null);
-            list = ThermalZoneFallback.Apply(list, _zones, first ? App.Log : null);
+            list = CpuTemperatureFallback.ApplyApuDie(list, cpuName, first ? Logger : null);
+            list = ThermalZoneFallback.Apply(list, _zones, first ? Logger : null);
             // EC fan diagnostic (82R4 only; empty elsewhere or until a plausible reading). Never throws.
             if (!list.Any(r => r.SensorType == SensorKind.Fan && r.HasData)) list.AddRange(ecFan.Read());
             var driver = _driver.Value;
-            if (first) App.Log($"CPU sensor driver (PawnIO, needed by LHM 0.9.5+ for Ryzen/Intel CPU temperatures): {driver.Detail}");
+            if (first) Logger.Info($"CPU sensor driver (PawnIO, needed by LHM 0.9.5+ for Ryzen/Intel CPU temperatures): {driver.Detail}");
             var cpuNote = CpuTemperatureFallback.Note(list, driver.Available);
             var elevated = IsElevated();
             return new SensorSnapshot(list, elevated, elevated ? null : "Some readings need administrator rights and may be missing.", cpuNote);
@@ -70,7 +71,7 @@ public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDi
             _computer = c;
             LogInventory(c, "opened");
         }
-        catch (Exception ex) { _openError = ex.Message; App.Log($"LibreHardwareMonitor open failed: {ex}"); }
+        catch (Exception ex) { _openError = ex.Message; Logger.Error($"LibreHardwareMonitor open failed: {ex}"); }
     }
 
     private static void Collect(IHardware hw, List<SensorReading> list)
@@ -101,9 +102,9 @@ public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDi
                 foreach (var sub in hw.SubHardware) Dump(sub, indent + "  ");
             }
             foreach (var hw in c.Hardware) Dump(hw, "  ");
-            App.Log(sb.ToString());
+            Logger.Line(sb.ToString());
         }
-        catch (Exception ex) { App.Log($"LibreHardwareMonitor inventory log failed: {ex.Message}"); }
+        catch (Exception ex) { Logger.Warn($"LibreHardwareMonitor inventory log failed: {ex.Message}"); }
     }
 
     private static HardwareKind Map(HardwareType t) => t switch

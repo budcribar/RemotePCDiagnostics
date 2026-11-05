@@ -302,7 +302,7 @@ public class MemoryTestTests
     {
         // 1.2 GB "available" → Quick's plan is under the floor, so it tests 256 MB; the real helper runs for ~3 s.
         var logs = new List<string>();
-        var test = new MemoryTest(new FakeMemoryInfo(1229 * MB), new ProcessMemTestHelperLauncher(AppContext.BaseDirectory), NoSensors(), log: l => { lock (logs) logs.Add(l); });
+        var test = new MemoryTest(new FakeMemoryInfo(1229 * MB), new ProcessMemTestHelperLauncher(AppContext.BaseDirectory), NoSensors(), log: new LineLogger(l => { lock (logs) logs.Add(l); }));
         var r = await test.RunAsync(new MemoryTestOptions { Mode = MemoryTestMode.Quick, Duration = TimeSpan.FromSeconds(3), SampleInterval = TimeSpan.FromMilliseconds(200) });
         Assert.True(r.Outcome == MemoryTestOutcome.Passed, string.Join("\n", logs));
         Assert.Equal(256 * MB, r.TestBytes);

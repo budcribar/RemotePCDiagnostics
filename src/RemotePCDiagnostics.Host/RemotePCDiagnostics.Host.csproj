@@ -58,4 +58,10 @@
     <!-- Bundled HardeningKitty (third_party/HardeningKitty, v0.9.4, MIT). Lands at <output>\tools\HardeningKitty\ = HardeningKittyRunner.RelativeFolder. -->
     <None Include="..\..\third_party\HardeningKitty\module\**" Link="tools\HardeningKitty\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Logging: ILogger plus the plain-line helpers (LoggerLines), without importing Microsoft.Extensions.Logging, whose LogLevel
+         would clash with RemotePCDiagnostics.Core.Logging.LogLevel. -->
+    <Using Include="Microsoft.Extensions.Logging.ILogger" Alias="ILogger" />
+    <Using Include="RemotePCDiagnostics.Logging" />
+  </ItemGroup>
 </Project>
