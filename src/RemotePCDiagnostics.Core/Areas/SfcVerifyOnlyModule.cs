@@ -5,6 +5,7 @@ public sealed class SfcVerifyOnlyModule(SystemCommandRunner commands) : WindowsI
 {
     public const string ModuleName = "SfcVerifyOnly";
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.SfcVerifyOnly;
     public override string DisplayName => "Protected system files (SFC)";
 
     protected override string ToolExe => "sfc.exe";

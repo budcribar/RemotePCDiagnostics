@@ -30,6 +30,7 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         "[pscustomobject]@{ Adapters = $cfg; ProxyEnabled = $proxyOn; ProxyServer = $proxySrv } | ConvertTo-Json -Compress -Depth 4";
 
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.WifiConfig;
     public override string DisplayName => "Wi-Fi & network config";
     protected override string FailedMessage => "Couldn't read Wi-Fi and IP network configuration on this PC.";
 

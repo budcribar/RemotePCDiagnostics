@@ -262,6 +262,7 @@ public class NpuVisibilityTests
     private sealed class Other : IDiagnosticModule
     {
         public string Name => "Other";
+        public Guid Id => TestIds.For("Other");
         public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
         public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken c = default) => Task.FromResult(ModuleAvailability.Available);
         public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken c = default) =>

@@ -297,11 +297,11 @@
 
     private static Type PageFor(IDiagnosticModule m) => m.Name switch
     {
-        "Osquery" => typeof(OsqueryPage), "Sensors" => typeof(LibreHardwareMonitorPage), "CpuStress" => typeof(CpuStressPage),
-        "MemoryTest" => typeof(MemoryTestPage), "DiskSpeed" => typeof(DiskSpeedPage), "GpuStress" => typeof(GpuStressPage),
-        "NetworkTest" => typeof(NetworkTestPage), "SecurityAudit" => typeof(SecurityAuditPage),
-        "SpeakerToMic" => typeof(SpeakerToMicPage), "MicToSpeaker" => typeof(MicToSpeakerPage), "Webcam" => typeof(WebcamTestPage),
-        "NpuTest" => typeof(NpuTestPage),
+        ModuleSlugs.Osquery => typeof(OsqueryPage), ModuleSlugs.Sensors => typeof(LibreHardwareMonitorPage), ModuleSlugs.CpuStress => typeof(CpuStressPage),
+        ModuleSlugs.MemoryTest => typeof(MemoryTestPage), ModuleSlugs.DiskSpeed => typeof(DiskSpeedPage), ModuleSlugs.GpuStress => typeof(GpuStressPage),
+        ModuleSlugs.NetworkTest => typeof(NetworkTestPage), ModuleSlugs.SecurityAudit => typeof(SecurityAuditPage),
+        ModuleSlugs.SpeakerToMic => typeof(SpeakerToMicPage), ModuleSlugs.MicToSpeaker => typeof(MicToSpeakerPage), ModuleSlugs.Webcam => typeof(WebcamTestPage),
+        ModuleSlugs.NpuTest => typeof(NpuTestPage),
         _ => typeof(AreaPage),
     };
 

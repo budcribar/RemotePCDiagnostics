@@ -65,6 +65,7 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
     public const int TopCount = 15;
 
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.ResourceHogs;
     public override string DisplayName => "Resource hogs & uptime";
     protected override string FailedMessage => "Couldn't read running processes and uptime on this PC.";
 

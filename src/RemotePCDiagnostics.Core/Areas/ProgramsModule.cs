@@ -26,6 +26,7 @@ public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today =
     public const int StaleUpdateDays = 60;
 
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.Programs;
     public override string DisplayName => "Programs & updates";
     protected override string FailedMessage => "Couldn't read installed programs and updates on this PC.";
     private readonly Func<DateOnly> _today = today ?? (() => DateOnly.FromDateTime(DateTime.Today));

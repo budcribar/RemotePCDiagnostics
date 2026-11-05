@@ -53,6 +53,7 @@ public sealed class SecurityAuditModule : IDiagnosticModule
     }
 
     public string Name => ModuleName;
+    public Guid Id => ModuleIds.SecurityAudit;
     public string DisplayName => "Security audit";
     public bool IncludeInRunAll => false;
     public TimeSpan Timeout => _o.Timeout;

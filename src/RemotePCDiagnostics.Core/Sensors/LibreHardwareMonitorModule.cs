@@ -5,6 +5,7 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
 {
     public const string ModuleName = "Sensors";
     public string Name => ModuleName;
+    public Guid Id => ModuleIds.Sensors;
     public string DisplayName => "Temperatures & fans";
     public event EventHandler<DiagnosticResult>? Updated;
 

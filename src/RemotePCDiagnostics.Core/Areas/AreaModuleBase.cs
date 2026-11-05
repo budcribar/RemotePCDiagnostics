@@ -6,6 +6,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 public abstract class AreaModuleBase(Action<string>? log) : IDiagnosticModule
 {
     public abstract string Name { get; }
+    public abstract Guid Id { get; }
     public abstract string DisplayName { get; }
     /// <summary>Friendly text used when collection fails unexpectedly.</summary>
     protected abstract string FailedMessage { get; }

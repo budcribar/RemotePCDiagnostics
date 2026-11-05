@@ -41,11 +41,11 @@
     /// <summary>Icon key for a diagnostic module name (falls back to the pulse icon).</summary>
     public static string ForModule(string module) => module switch
     {
-        "Osquery" => "hw", "Sensors" => "temp", "CpuStress" => "cpu", "DiskSpeed" => "disk", "MemoryTest" => "mem",
-        "NetworkTest" => "net", "GpuStress" => "gpu", "DriveHealth" => "health", "Services" => "svc", "Programs" => "prog",
-        "Network" => "adp", "EventLog" => "log", "Crashes" => "crash", "SecurityAudit" => "sec", "SpeakerToMic" => "audio", "MicToSpeaker" => "audio", "Webcam" => "camera",
-        "NpuTest" => "chip",
-        "ResourceHogs" => "cpu", "DeviceDrivers" => "hw", "BsodHistory" => "crash", "BatteryPower" => "health", "WifiConfig" => "net",
+        ModuleSlugs.Osquery => "hw", ModuleSlugs.Sensors => "temp", ModuleSlugs.CpuStress => "cpu", ModuleSlugs.DiskSpeed => "disk", ModuleSlugs.MemoryTest => "mem",
+        ModuleSlugs.NetworkTest => "net", ModuleSlugs.GpuStress => "gpu", ModuleSlugs.DriveHealth => "health", ModuleSlugs.Services => "svc", ModuleSlugs.Programs => "prog",
+        ModuleSlugs.Network => "adp", ModuleSlugs.EventLog => "log", ModuleSlugs.Crashes => "crash", ModuleSlugs.SecurityAudit => "sec", ModuleSlugs.SpeakerToMic => "audio", ModuleSlugs.MicToSpeaker => "audio", ModuleSlugs.Webcam => "camera",
+        ModuleSlugs.NpuTest => "chip",
+        ModuleSlugs.ResourceHogs => "cpu", ModuleSlugs.DeviceDrivers => "hw", ModuleSlugs.BsodHistory => "crash", ModuleSlugs.BatteryPower => "health", ModuleSlugs.WifiConfig => "net",
         _ => "health",
     };
 

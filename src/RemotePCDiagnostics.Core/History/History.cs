@@ -175,8 +175,8 @@ public static class HistoryNames
     /// <summary>Modules that were merged into another one: their old results count as the new module's.</summary>
     public static readonly IReadOnlyDictionary<string, string> ModuleAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
-        ["BsodHistory"] = "Crashes",   // "Blue screens & unexpected restarts" + "App crashes" → "Crashes & unexpected restarts"
-        ["WifiConfig"] = "Network",    // "Wi-Fi & network config" + "Network adapters" → "Network & Wi-Fi"
+        [ModuleSlugs.BsodHistory] = ModuleSlugs.Crashes,   // "Blue screens & unexpected restarts" + "App crashes" → "Crashes & unexpected restarts"
+        [ModuleSlugs.WifiConfig] = ModuleSlugs.Network,    // "Wi-Fi & network config" + "Network adapters" → "Network & Wi-Fi"
     };
 
     /// <summary>
@@ -288,11 +288,11 @@ public static class HistoryQuery
     /// <summary>Key measurement per stress test for the trend list: (measurement, friendly label, unit).</summary>
     public static (string Name, string Label, string Unit)? TrendKey(string module) => module switch
     {
-        "CpuStress" => ("MaxCpuTemperatureC", "Peak CPU temperature", "°C"),
-        "MemoryTest" => ("MaxCpuTemperatureC", "Peak CPU temperature", "°C"),
-        "GpuStress" => ("MaxGpuTemperatureC", "Peak GPU temperature", "°C"),
-        "DiskSpeed" => ("SequentialReadMBps", "Read speed", "MB/s"),
-        "NetworkTest" => ("DownloadMbps", "Download speed", "Mbps"),
+        ModuleSlugs.CpuStress => ("MaxCpuTemperatureC", "Peak CPU temperature", "°C"),
+        ModuleSlugs.MemoryTest => ("MaxCpuTemperatureC", "Peak CPU temperature", "°C"),
+        ModuleSlugs.GpuStress => ("MaxGpuTemperatureC", "Peak GPU temperature", "°C"),
+        ModuleSlugs.DiskSpeed => ("SequentialReadMBps", "Read speed", "MB/s"),
+        ModuleSlugs.NetworkTest => ("DownloadMbps", "Download speed", "Mbps"),
         _ => null,
     };
 

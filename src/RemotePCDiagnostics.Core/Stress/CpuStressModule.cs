@@ -7,6 +7,7 @@ public sealed class CpuStressModule(ISensorProvider sensors, Action<string>? log
 {
     public const string ModuleName = "CpuStress";
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.CpuStress;
     public override string DisplayName => "CPU stress test";
     string IStressSuiteModule.SuiteName => "CPU";
     bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is CpuStressReport { Outcome: CpuStressOutcome.Overheated };

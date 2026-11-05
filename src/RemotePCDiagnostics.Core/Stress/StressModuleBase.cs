@@ -14,6 +14,7 @@ public abstract class StressModuleBase<TProgress, TReport>(Action<string>? log) 
     private readonly object _gate = new();
 
     public abstract string Name { get; }
+    public abstract Guid Id { get; }
     public abstract string DisplayName { get; }
     public bool IncludeInRunAll => false;
     public event EventHandler<DiagnosticResult>? Updated;

@@ -30,8 +30,8 @@ public static class FixCatalog
 
     private static readonly Dictionary<string, string> AreaNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["DeviceDrivers"] = "Drivers & devices", ["Programs"] = "Windows updates", ["ResourceHogs"] = "Performance & power",
-        ["BatteryPower"] = "Performance & power", ["Network"] = "Network", ["DriveHealth"] = "Storage", ["Services"] = "Services",
+        [ModuleSlugs.DeviceDrivers] = "Drivers & devices", [ModuleSlugs.Programs] = "Windows updates", [ModuleSlugs.ResourceHogs] = "Performance & power",
+        [ModuleSlugs.BatteryPower] = "Performance & power", [ModuleSlugs.Network] = "Network", [ModuleSlugs.DriveHealth] = "Storage", [ModuleSlugs.Services] = "Services",
     };
 
     /// <summary>Order groups: quick settings first, cleanup next, network renew near the end, long downloads last.</summary>

@@ -43,6 +43,9 @@ public static class CheckProgressExtensions
 
 public interface IDiagnosticModule
 {
+    /// <summary>Permanent identity (see <see cref="ModuleIds"/>). Never changes and is never reused, so stored results key on it.</summary>
+    Guid Id { get; }
+    /// <summary>Readable handle (the slug) for logs, URLs and test ids. Unique, but <see cref="Id"/> is the key.</summary>
     string Name { get; }
     /// <summary>User-visible label (nav, dashboard). Defaults to <see cref="Name"/>.</summary>
     string DisplayName => Name;

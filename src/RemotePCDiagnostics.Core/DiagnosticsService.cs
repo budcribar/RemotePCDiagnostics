@@ -164,6 +164,10 @@ public sealed class DiagnosticsService
     {
         if (_modules.Any(m => string.Equals(m.Name, module.Name, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException($"Module '{module.Name}' already registered.");
+        if (module.Id == Guid.Empty)
+            throw new InvalidOperationException($"Module '{module.Name}' has no Id.");
+        if (_modules.FirstOrDefault(m => m.Id == module.Id) is { } clash)
+            throw new InvalidOperationException($"Module '{module.Name}' has the same Id ({module.Id}) as '{clash.Name}'.");
         _modules.Add(module);
         Volatile.Write(ref _visible, null);
         module.Updated += (_, r) => _store.Set(MarkStopped(module, r));

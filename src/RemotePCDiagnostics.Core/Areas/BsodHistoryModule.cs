@@ -15,6 +15,7 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
     public const string ModuleName = "BsodHistory";
     public const int Days = 30, RecentDays = 7, MaxEvents = 250;
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.BsodHistory;
     public override string DisplayName => "Blue screens & unexpected restarts";
     protected override string FailedMessage => "Couldn't read blue screen and shutdown history on this PC.";
     private readonly WindowsEventLog _log = new(commands);

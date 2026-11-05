@@ -74,6 +74,7 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
     public const string ModuleName = "Network";
     public const string Sql = "SELECT * FROM interface_details;";
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.Network;
     public override string DisplayName => includeWifiAndIpConfig ? "Network & Wi-Fi" : "Network adapters";
     protected override string FailedMessage => "Couldn't read network adapter details on this PC.";
 

@@ -61,6 +61,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
 
     public const string ModuleName = "DriveHealth";
     public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.DriveHealth;
     public override string DisplayName => "Drive health";
     protected override string FailedMessage => "Couldn't check drive health on this PC.";
 

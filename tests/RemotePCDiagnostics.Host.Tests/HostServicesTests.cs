@@ -73,6 +73,13 @@ public class HostServicesTests
             Assert.NotNull(provider.GetRequiredService<DiagnosticsService>());
             foreach (var name in StressSuite.Order)
                 Assert.Contains(modules, m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase));
+            // Every registered module uses its permanent built-in id, and its name is the slug that id was given.
+            foreach (var m in modules)
+            {
+                Assert.True(ModuleIds.BuiltIn.TryGetValue(m.Id, out var slug), $"{m.Name} has id {m.Id}, which is not in ModuleIds");
+                Assert.Equal(slug, m.Name);
+            }
+            Assert.Equal(modules.Count, modules.Select(m => m.Id).Distinct().Count());
         }
     }
 
