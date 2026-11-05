@@ -140,8 +140,8 @@ public static class FixCatalog
             return r is { Status: DiagnosticStatus.Warning } && !Cancellation.IsCancelled(r);
         }
         var fixes = new List<WorkflowFix>();
-        var dism = Corrupt(WindowsIntegrityModule.DismModuleName, out var dr);
-        var sfc = Corrupt(WindowsIntegrityModule.SfcModuleName, out var sr);
+        var dism = Corrupt(DismScanHealthModule.ModuleName, out var dr);
+        var sfc = Corrupt(SfcVerifyOnlyModule.ModuleName, out var sr);
         if (dism)
         {
             var needsSource = dr!.Message.Contains("cannot be repaired", StringComparison.OrdinalIgnoreCase);

@@ -1,13 +1,29 @@
 namespace RemotePCDiagnostics.Core.Areas;
 
-public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool componentStore) : AreaModuleBase(commands.Log)
+/// <summary>
+/// Read-only Windows integrity scan (one run of a system tool, live percent, cancel). <see cref="DismScanHealthModule"/> and
+/// <see cref="SfcVerifyOnlyModule"/> supply the tool, its arguments and how to read its output. The log helpers here are shared
+/// with <see cref="WindowsRepair"/>.
+/// </summary>
+public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : AreaModuleBase(commands.Log)
 {
-    public const string DismModuleName = "DismScanHealth", SfcModuleName = "SfcVerifyOnly";
-    public override string Name => componentStore ? DismModuleName : SfcModuleName;
-    public override string DisplayName => componentStore ? "Windows component store (DISM)" : "Protected system files (SFC)";
     public bool IncludeInRunAll => false;
     private readonly object _scanGate = new();
     private CancellationTokenSource? _scan;
+
+    /// <summary>Executable in the Windows system directory ("dism.exe", "sfc.exe").</summary>
+    protected abstract string ToolExe { get; }
+    protected abstract string[] Arguments { get; }
+    /// <summary>Status and summary for the scan's (NUL-free, trimmed) output. <paramref name="result"/> is null when the tool didn't return.</summary>
+    protected abstract (DiagnosticStatus Status, string Summary) Interpret(string output, RemotePCDiagnostics.Core.Osquery.ProcessResult? result);
+    /// <summary>False: a scan that didn't return (start failure, timeout) is reported as failed straight away.</summary>
+    protected virtual bool InterpretWithoutResult => false;
+    /// <summary>Strips tool noise (progress bars) from the output shown to the user.</summary>
+    protected virtual string CleanOutput(string output) => output;
+    /// <summary>Called just before the tool starts (e.g. to note where the servicing logs end).</summary>
+    protected virtual void OnScanStarting() { }
+    /// <summary>Extra detail rows when the scan didn't come back clean.</summary>
+    protected virtual void AddProblemEvidence(List<AreaRow> rows) { }
 
     public void Cancel()
     {
@@ -19,16 +35,12 @@ public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool co
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         progress?.Report("Checking Windows integrity. This can take several minutes.");
-        var exe = SystemCommandRunner.SystemTool(componentStore ? "dism.exe" : "sfc.exe");
-        string[] args = componentStore ? ["/English", "/Online", "/Cleanup-Image", "/ScanHealth"] : ["/verifyonly"];
+        var exe = SystemCommandRunner.SystemTool(ToolExe);
+        var args = Arguments;
         using var scan = CancellationTokenSource.CreateLinkedTokenSource(ct);
         lock (_scanGate) _scan = scan;
         var started = DateTimeOffset.Now;
-        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        var cbsPath = Path.Combine(windows, "Logs", "CBS", "CBS.log");
-        var dismPath = Path.Combine(windows, "Logs", "DISM", "dism.log");
-        var cbsOffset = componentStore ? LogLength(cbsPath) : null;
-        var dismOffset = componentStore ? LogLength(dismPath) : null;
+        OnScanStarting();
         double lastPercent = -1;
         RemotePCDiagnostics.Core.Osquery.ProcessResult? result;
         try
@@ -53,38 +65,16 @@ public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool co
         {
             lock (_scanGate) _scan = null;
         }
-        if (result is null && !componentStore) return AreaReport.Failed(FailedMessage);
+        if (result is null && !InterpretWithoutResult) return AreaReport.Failed(FailedMessage);
 
-        var output = (result?.StdOut + "\n" + result?.StdErr).Replace("\0", "").Trim();
-        if (componentStore)
-            output = System.Text.RegularExpressions.Regex.Replace(output,
-                @"(?m)^[ \t]*\[[= \t]*\d{1,3}(?:[.,]\d+)?%[= \t]*\][ \t]*\r?(?:\n|$)", "").Trim();
-        bool Has(string text) => output.Contains(text, StringComparison.OrdinalIgnoreCase);
-        var clean = componentStore ? Has("No component store corruption detected") : Has("did not find any integrity violations");
-        var corrupt = componentStore ? Has("component store is repairable") || Has("component store cannot be repaired")
-            : Has("found integrity violations");
-        var status = corrupt ? DiagnosticStatus.Warning : clean && result?.ExitCode == 0 ? DiagnosticStatus.Ok : DiagnosticStatus.Error;
-        var summary = status switch
-        {
-            DiagnosticStatus.Ok => "No corruption detected",
-            DiagnosticStatus.Warning when !componentStore => "SFC found integrity violations in protected system files.",
-            DiagnosticStatus.Warning when Has("component store cannot be repaired") => CannotBeRepairedSummary,
-            DiagnosticStatus.Warning => "DISM found repairable corruption in the Windows component store.",
-            _ when result is null => FailedMessage,
-            _ => "Integrity scan could not confirm a result"
-        };
+        var output = CleanOutput((result?.StdOut + "\n" + result?.StdErr).Replace("\0", "").Trim());
+        var (status, summary) = Interpret(output, result);
         var rows = new List<AreaRow>
         {
             new(AreaLevel.Neutral, ["Command", $"{Path.GetFileName(exe)} {string.Join(' ', args)}"]),
             new(AreaLevel.Neutral, ["Output", output.Length > 12000 ? output[^12000..] : output])
         };
-        if (componentStore && status != DiagnosticStatus.Ok)
-        {
-            var cbs = ReadLogEvidence(cbsPath, cbsOffset);
-            rows.Add(new(AreaLevel.Neutral, ["CBS summary", SummarizeCbs(cbs)]));
-            rows.Add(new(AreaLevel.Neutral, ["CBS findings during scan", cbs]));
-            rows.Add(new(AreaLevel.Neutral, ["DISM log errors during scan", ReadLogEvidence(dismPath, dismOffset)]));
-        }
+        if (status != DiagnosticStatus.Ok) AddProblemEvidence(rows);
 
         return new([new("integrity", DisplayName, status switch
             {
@@ -94,6 +84,16 @@ public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool co
             }, summary, result is null ? "Scan did not return an exit code" : $"Exit code {result.ExitCode}",
             ["Detail", "Value"], rows)], summary, status);
     }
+
+    /// <summary>Warning when corruption was reported, Ok when the clean message came with exit code 0, otherwise Error.</summary>
+    protected static DiagnosticStatus Classify(bool corrupt, bool clean, RemotePCDiagnostics.Core.Osquery.ProcessResult? result) =>
+        corrupt ? DiagnosticStatus.Warning : clean && result?.ExitCode == 0 ? DiagnosticStatus.Ok : DiagnosticStatus.Error;
+
+    protected static bool Contains(string output, string text) => output.Contains(text, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>%windir%\Logs\<paramref name="folder"/>\<paramref name="file"/>.</summary>
+    internal static string WindowsLog(string folder, string file) =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Logs", folder, file);
 
     internal static long? LogLength(string path)
     {
@@ -163,7 +163,4 @@ public sealed class WindowsIntegrityModule(SystemCommandRunner commands, bool co
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
     }
-
-    /// <summary>The DISM ScanHealth message when the store is corrupt but DISM says it can't be repaired.</summary>
-    public const string CannotBeRepairedSummary = "DISM found component store corruption and reports that the store cannot be repaired.";
 }
