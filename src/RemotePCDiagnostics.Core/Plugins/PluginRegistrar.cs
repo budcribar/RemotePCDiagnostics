@@ -29,6 +29,7 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
     private readonly ConcurrentDictionary<Guid, (ModuleSource Source, string PluginId)> _origins = new();
     private readonly ConcurrentDictionary<Guid, Type> _details = new();
     private readonly ConcurrentDictionary<Guid, ModuleDescriptor> _known = new();
+    private readonly ConcurrentDictionary<Guid, ModuleDescriptor> _retired = new();
     private readonly object _gate = new();
 
     public IReadOnlyList<PluginRecord> Records { get { lock (_gate) return _records.ToList(); } }
@@ -71,12 +72,16 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
         Log($"plugin {record.PluginId}: disabled: {record.Reason}");
     }
 
+    /// <summary>A plugin whose DLL is gone but whose catalog copy is kept: History and the export can still name its results.</summary>
+    public void AddRetired(ModuleDescriptor descriptor) => _retired[descriptor.Id] = descriptor;
+
     /// <summary>Copies where each module came from, the details components and the disabled plugins' descriptors into the catalog.</summary>
     public void ApplyTo(ModuleCatalog catalog)
     {
         foreach (var (id, type) in _details) catalog.SetDetailsComponent(id, type);
         foreach (var (id, origin) in _origins) catalog.SetOrigin(id, origin.Source, origin.PluginId);
         foreach (var d in _known.Values) catalog.AddKnown(d, ModuleState.Disabled);
+        foreach (var d in _retired.Values) catalog.AddKnown(d, ModuleState.Retired);
     }
 
     private ServiceDescriptor Tracked(ServiceDescriptor d, string pluginId, ModuleSource source, Guid? expectedModuleId)

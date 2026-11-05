@@ -1,5 +1,6 @@
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Plugins;
 using RemotePCDiagnostics.Core.Preferences;
 using RemotePCDiagnostics.Core.Workflow;
 
@@ -15,4 +16,5 @@ public sealed record AppServices(
     MemorySuggestionService? Memory = null,
     ICopilotHandoff? Copilot = null,
     PreferencesService? Preferences = null,
-    WorkflowService? Workflow = null);
+    WorkflowService? Workflow = null,
+    PluginRegistrar? Plugins = null);

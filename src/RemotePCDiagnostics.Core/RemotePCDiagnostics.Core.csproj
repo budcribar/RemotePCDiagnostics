@@ -11,5 +11,7 @@
   <ItemGroup>
     <!-- Built-in modules use exactly the contract types a plugin uses. -->
     <ProjectReference Include="..\RemotePCDiagnostics.Abstractions\RemotePCDiagnostics.Abstractions.csproj" />
+    <!-- Module signatures use the agent's manifest signature scheme. -->
+    <ProjectReference Include="..\RemotePCDiagnostics.Agent.Core\RemotePCDiagnostics.Agent.Core.csproj" />
   </ItemGroup>
 </Project>
