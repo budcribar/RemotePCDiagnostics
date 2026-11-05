@@ -248,7 +248,7 @@ public static class HistoryQuery
     public static readonly IReadOnlyList<(HistoryColumn Col, string Title)> Columns =
         [(HistoryColumn.Time, "Time"), (HistoryColumn.Test, "Test"), (HistoryColumn.Result, "Result"), (HistoryColumn.Summary, "Summary"), (HistoryColumn.Duration, "Duration")];
     /// <summary>Result filter choices. Cancelled runs aren't part of history (see <see cref="WithoutCancelled"/>).</summary>
-    public static readonly IReadOnlyList<string> Outcomes = ["OK", "Warning", "Critical", "Unavailable"];
+    public static readonly IReadOnlyList<string> Outcomes = ["OK", "Warning", "Critical", "Unavailable", "Skipped", "Blocked"];
 
     /// <summary>A cancelled run didn't produce a result, so history ignores it (lists, counts and trends).</summary>
     public static IReadOnlyList<HistoryEntry> WithoutCancelled(IEnumerable<HistoryEntry> entries) =>
@@ -285,7 +285,7 @@ public static class HistoryQuery
     }
 
     /// <summary>Critical first when ascending.</summary>
-    public static int OutcomeRank(string o) => o switch { "Critical" => 0, "Warning" => 1, "Cancelled" => 2, "Unavailable" => 3, "OK" => 4, _ => 5 };
+    public static int OutcomeRank(string o) => o switch { "Critical" => 0, "Warning" => 1, "Cancelled" => 2, "Unavailable" => 3, "Skipped" => 4, "Blocked" => 5, "OK" => 6, _ => 7 };
 
     public static int Compare(HistoryEntry a, HistoryEntry b, HistoryColumn col) => col switch
     {

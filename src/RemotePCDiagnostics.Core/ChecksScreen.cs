@@ -4,7 +4,7 @@ using RemotePCDiagnostics.Core.Security;
 namespace RemotePCDiagnostics.Core;
 
 public enum CheckGroup { Checks, Stress }
-public enum RowKind { NotRun, Running, Passed, Warning, Critical, Cancelled, Unavailable }
+public enum RowKind { NotRun, Running, Passed, Warning, Critical, Cancelled, Unavailable, Skipped, Blocked }
 
 /// <summary>Row display rules for the Checks &amp; Tests screen.</summary>
 public static class CheckRows
@@ -16,7 +16,8 @@ public static class CheckRows
         _ => IsCancelled(r) ? RowKind.Cancelled : ResultEventLogger.Outcome(r) switch
         {
             "OK" => RowKind.Passed, "Warning" => RowKind.Warning, "Critical" => RowKind.Critical,
-            "Cancelled" => RowKind.Cancelled, "Unavailable" => RowKind.Unavailable, _ => RowKind.NotRun,
+            "Cancelled" => RowKind.Cancelled, "Unavailable" => RowKind.Unavailable, "Skipped" => RowKind.Skipped, "Blocked" => RowKind.Blocked,
+            _ => RowKind.NotRun,
         },
     };
 
@@ -25,7 +26,8 @@ public static class CheckRows
     public static string Text(RowKind k) => k switch
     {
         RowKind.Passed => "Passed", RowKind.Warning => "Warning", RowKind.Critical => "Critical", RowKind.Running => "Running…",
-        RowKind.Cancelled => "Cancelled", RowKind.Unavailable => "Unavailable", _ => "Not run",
+        RowKind.Cancelled => "Cancelled", RowKind.Unavailable => "Unavailable", RowKind.Skipped => "Skipped", RowKind.Blocked => "Blocked",
+        _ => "Not run",
     };
 
     /// <summary>"Passed (short run)": the mode the result actually ran in (never the currently selected mode).</summary>
@@ -50,7 +52,8 @@ public static class CheckRows
         var order = new (RowKind K, string Word)[]
         {
             (RowKind.Running, "running"), (RowKind.Passed, "passed"), (RowKind.Warning, "warning"), (RowKind.Critical, "critical"),
-            (RowKind.Cancelled, "cancelled"), (RowKind.Unavailable, "unavailable"), (RowKind.NotRun, "not run"),
+            (RowKind.Cancelled, "cancelled"), (RowKind.Unavailable, "unavailable"), (RowKind.Skipped, "skipped"), (RowKind.Blocked, "blocked"),
+            (RowKind.NotRun, "not run"),
         };
         return order.Select(o => (o.K, N: list.Count(k => k == o.K))).Where(x => x.N > 0)
             .Select(x => (ChipKind(x.K), $"{x.N} {order.First(o => o.K == x.K).Word}")).ToList();
@@ -161,9 +164,10 @@ public sealed class ChecksScreenState
     {
         get
         {
+            var order = _diag.StressOrder.ToList();
             var listed = _diag.Modules.Select(m => (Module: m, Descriptor: _diag.Catalog.Get(m.Id))).Where(x => x.Descriptor is { OnStressPage: true }).ToList();
             var stress = listed.Where(x => x.Descriptor!.Kind == ModuleKind.StressTest)
-                .OrderBy(x => Array.FindIndex(StressSuite.Order, n => string.Equals(n, x.Module.Name, StringComparison.OrdinalIgnoreCase)) is var i and >= 0 ? i : int.MaxValue)
+                .OrderBy(x => order.FindIndex(n => string.Equals(n, x.Module.Name, StringComparison.OrdinalIgnoreCase)) is var i and >= 0 ? i : int.MaxValue)
                 .ThenBy(x => ModuleGroups.Rank(x.Descriptor!.Group)).ThenBy(x => x.Descriptor!.Order);
             var onDemand = listed.Where(x => x.Descriptor!.Kind == ModuleKind.OnDemand)
                 .OrderBy(x => ModuleGroups.Rank(x.Descriptor!.Group)).ThenBy(x => x.Descriptor!.Order);

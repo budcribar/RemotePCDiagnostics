@@ -14,7 +14,12 @@ public sealed class DiagnosticsService
     /// <summary>True while a stress suite is running (both dashboard run buttons are disabled).</summary>
     public bool IsStressSuiteRunning => Volatile.Read(ref _suiteRunning) == 1;
     /// <summary>True while a stress suite or any individual stress test module is running.</summary>
-    public bool IsAnyStressRunning => IsStressSuiteRunning || StressSuite.Order.Any(IsRunning);
+    public bool IsAnyStressRunning => IsStressSuiteRunning || StressOrder.Any(IsRunning);
+
+    /// <summary>The stress suite's run order (module slugs): the registered stress tests sorted on DependsOn and RunAfter, ties by group
+    /// and Order. Built-ins chain CPU, Memory, Disk, GPU, Network through RunAfter; a plugin stress test joins by its own RunAfter.</summary>
+    public IReadOnlyList<string> StressOrder => ModuleOrdering.Sort(_modules.OfType<IStressSuiteModule>()
+        .Select(m => Catalog.Get(m.Id)).OfType<ModuleDescriptor>().Where(d => d.Kind == ModuleKind.StressTest && IsRunnable(d.Id))).Select(d => d.Slug).ToList();
     /// <summary>Latest suite progress, so a page opened mid-run can show it.</summary>
     public StressSuiteProgress? LastStressSuiteProgress { get; private set; }
     /// <summary>Raised on every suite progress change.</summary>
@@ -120,8 +125,28 @@ public sealed class DiagnosticsService
         _store = store;
         Catalog = catalog ?? new ModuleCatalog();
         foreach (var m in modules ?? []) Register(m);
+        RejectDependencyCycles();
         StartHardwareDetection();
     }
+
+    /// <summary>
+    /// Every module in a DependsOn / RunAfter loop is marked not executable (Disabled in the catalog, so History still names it) and the
+    /// loop is logged. Runs at construction and again after plugin descriptors are applied to the catalog. Returns the loops found.
+    /// </summary>
+    public IReadOnlyList<IReadOnlyList<Guid>> RejectDependencyCycles()
+    {
+        var registered = _modules.Select(m => Catalog.Get(m.Id)).OfType<ModuleDescriptor>().ToList();
+        var cycles = ModuleOrdering.FindCycles(registered);
+        foreach (var cycle in cycles)
+        {
+            foreach (var id in cycle) Catalog.Disable(id);
+            try { Log?.Invoke($"Modules: dependency loop, not run: {string.Join(" -> ", cycle.Select(Catalog.DisplayName))}"); } catch { }
+        }
+        if (cycles.Count > 0) Volatile.Write(ref _visible, null);
+        return cycles;
+    }
+
+    private bool IsRunnable(Guid id) => Catalog.StateOf(id) != ModuleState.Disabled;
 
     private IReadOnlyList<IDiagnosticModule>? _visible;
 
@@ -131,7 +156,7 @@ public sealed class DiagnosticsService
         get
         {
             var v = Volatile.Read(ref _visible);
-            if (v is null) { v = _modules.Where(IsVisible).ToArray(); Volatile.Write(ref _visible, v); }
+            if (v is null) { v = _modules.Where(m => IsVisible(m) && IsRunnable(m.Id)).ToArray(); Volatile.Write(ref _visible, v); }
             return v;
         }
     }
@@ -192,12 +217,98 @@ public sealed class DiagnosticsService
         return await RunAsync(module, progress, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Runs every module concurrently; a slow or failing module does not block the others.
-    /// On-demand modules (<see cref="IDiagnosticModule.IncludeInRunAll"/> false, e.g. stress tests) are skipped.</summary>
-    public Task<DiagnosticResult[]> RunAllAsync(CancellationToken ct = default)
+    /// <summary>Runs every module concurrently; a slow or failing module does not block the others. A module with DependsOn or RunAfter
+    /// waits for those that are part of the run; when a DependsOn didn't pass it is recorded as Skipped, and when one can't run here at all
+    /// as Blocked (see <see cref="DependencyGate"/>). On-demand modules (<see cref="IDiagnosticModule.IncludeInRunAll"/> false) are left out.</summary>
+    public Task<DiagnosticResult[]> RunAllAsync(CancellationToken ct = default) => RunSetAsync(Modules.Where(m => m.IncludeInRunAll).ToArray(), ct);
+
+    /// <summary>Runs one module after the DependsOn modules (and theirs) that haven't passed in this session; ones that already passed
+    /// are not run again.</summary>
+    public async Task<DiagnosticResult> RunWithDependenciesAsync(string moduleName, CancellationToken ct = default)
     {
-        var modules = Modules.Where(m => m.IncludeInRunAll).ToArray();
-        return Task.WhenAll(modules.Select(m => RunAsync(m, null, ct)));
+        var target = Modules.FirstOrDefault(m => string.Equals(m.Name, moduleName, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ArgumentException($"Unknown module '{moduleName}'.", nameof(moduleName));
+        var set = new List<IDiagnosticModule> { target };
+        var queue = new Queue<Guid>(DescriptorOf(target).DependsOn);
+        var seen = new HashSet<Guid> { target.Id };
+        while (queue.TryDequeue(out var id))
+        {
+            if (!seen.Add(id)) continue;
+            if (Modules.FirstOrDefault(m => m.Id == id) is not { } dep || ModuleOrdering.Passed(_store.Get(dep.Name))) continue;
+            set.Add(dep);
+            foreach (var next in DescriptorOf(dep).DependsOn) queue.Enqueue(next);
+        }
+        var results = await RunSetAsync(set, ct).ConfigureAwait(false);
+        return results[0];
+    }
+
+    private ModuleDescriptor DescriptorOf(IDiagnosticModule m) =>
+        Catalog.Get(m.Id) ?? new ModuleDescriptor(m.Id, m.Name, m.DisplayName, m.IncludeInRunAll ? ModuleKind.Check : ModuleKind.OnDemand);
+
+    /// <summary>Runs <paramref name="modules"/> together in dependency order; results come back in the order given.</summary>
+    private Task<DiagnosticResult[]> RunSetAsync(IReadOnlyList<IDiagnosticModule> modules, CancellationToken ct)
+    {
+        var byId = modules.GroupBy(m => m.Id).ToDictionary(g => g.Key, g => g.First());
+        var tasks = new Dictionary<Guid, Task<DiagnosticResult>>();
+        foreach (var d in ModuleOrdering.Sort(byId.Values.Select(DescriptorOf)))
+            tasks[d.Id] = RunGatedAsync(byId[d.Id], d, tasks, ct);
+        return Task.WhenAll(modules.Select(m => tasks[m.Id]));
+    }
+
+    private Task<DiagnosticResult> RunGatedAsync(IDiagnosticModule module, ModuleDescriptor d, IReadOnlyDictionary<Guid, Task<DiagnosticResult>> started, CancellationToken ct)
+    {
+        if (d.DependsOn.Count == 0 && !d.RunAfter.Any(started.ContainsKey)) return RunAsync(module, null, ct);
+        // Taken now: every module this one waits for was started before it (topological order).
+        var waitFor = d.DependsOn.Concat(d.RunAfter).Distinct().Where(started.ContainsKey).ToDictionary(id => id, id => started[id]);
+        return WaitThenRunAsync();
+
+        async Task<DiagnosticResult> WaitThenRunAsync()
+        {
+            var ran = new Dictionary<Guid, DiagnosticResult?>();
+            foreach (var (id, t) in waitFor)
+            {
+                try { ran[id] = await t.ConfigureAwait(false); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch { ran[id] = null; }
+            }
+            ct.ThrowIfCancellationRequested();
+            if (GateFor(d, ran) is { } gate)
+            {
+                var r = ModuleOrdering.GateResult(module.Name, gate);
+                _store.Set(r);
+                try { Log?.Invoke($"{module.Name}: {r.Message}"); } catch { }
+                return r;
+            }
+            return await RunAsync(module, null, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Why the module can't run now, or null. <paramref name="ranInThisRun"/> holds the results of modules that were part of the
+    /// same run (null when one threw); a dependency outside the run counts when it passed earlier in this session.</summary>
+    public DependencyGate? GateFor(ModuleDescriptor d, IReadOnlyDictionary<Guid, DiagnosticResult?> ranInThisRun)
+    {
+        foreach (var dep in d.DependsOn)
+        {
+            var name = Catalog.Get(dep)?.DisplayName ?? dep.ToString("D");
+            if (ranInThisRun.TryGetValue(dep, out var r))
+            {
+                if (!ModuleOrdering.Passed(r)) return new DependencyGate(GateKind.Skipped, $"{name} did not pass", dep);
+                continue;
+            }
+            var state = Catalog.StateOf(dep);
+            var runnable = Modules.FirstOrDefault(m => m.Id == dep);
+            if (state != ModuleState.Available || runnable is null)
+                return new DependencyGate(GateKind.Blocked, state switch
+                {
+                    ModuleState.NotPresent => $"{name} doesn't apply to this PC",
+                    ModuleState.Disabled => $"{name} is turned off",
+                    _ when Catalog.Get(dep) is null => $"it needs module {dep:D}, which isn't installed",
+                    _ => $"{name} is no longer available",
+                }, dep);
+            if (!ModuleOrdering.Passed(_store.Get(runnable.Name)))
+                return new DependencyGate(GateKind.Skipped, $"{name} has not passed in this session", dep);
+        }
+        return null;
     }
 
     private void MarkRunning(IDiagnosticModule module)
@@ -295,7 +406,7 @@ public sealed class DiagnosticsService
             throw new InvalidOperationException("A stress test run is already in progress.");
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         lock (_gate) _suiteCts = cts;
-        var modules = StressSuite.Order
+        var modules = StressOrder
             .Where(n => only is null || only.Contains(n, StringComparer.OrdinalIgnoreCase))
             .Select(n => _modules.FirstOrDefault(m => string.Equals(m.Name, n, StringComparison.OrdinalIgnoreCase)) as IStressSuiteModule)
             .Where(m => m is not null).Cast<IStressSuiteModule>().ToList();
@@ -328,6 +439,20 @@ public sealed class DiagnosticsService
             {
                 var m = modules[i];
                 if (cts.IsCancellationRequested) return Finish(StressSuiteOutcome.Cancelled, "Stress tests cancelled.", i);
+                if (Catalog.Get(m.Id) is { DependsOn.Count: > 0 } descriptor)
+                {
+                    var ran = new Dictionary<Guid, DiagnosticResult?>();
+                    for (var k = 0; k < i; k++)
+                        ran[modules[k].Id] = steps[k].State is StressSuiteStepState.Passed or StressSuiteStepState.Problem ? _store.Get(modules[k].Name) : null;
+                    if (GateFor(descriptor, ran) is { } gate)
+                    {
+                        var gr = ModuleOrdering.GateResult(m.Name, gate);
+                        _store.Set(gr);
+                        steps[i] = steps[i] with { State = StressSuiteStepState.Skipped, Message = gr.Message };
+                        Log?.Invoke($"Stress suite: {m.Name} {gr.Message}");
+                        continue;
+                    }
+                }
                 steps[i] = steps[i] with { State = StressSuiteStepState.Running };
                 Report(i + 1, false, null);
                 ModuleAvailability availability;
