@@ -39,7 +39,10 @@ The shell can post to each frame and tries to read each frame's document. **Save
 The restricted and unrestricted runs gave the same results. Findings and the plan for the real feature are in
 [Unsigned module UI spike: findings and plan](https://claude.ai/artifact/3x14faej48NQEfnHczyhbf).
 
-- **open:** connects with the module page's workarounds: `window.RemoteBlazor.grpcHost` and fetch without credentials. Frame isolation holds, and localStorage and cookies are blocked.
-- **locked:** fails, because the relay returns 403 for `Origin: null`. This needs a change in RemoteBlazorWebView.
-- **samesrc:** connects. Frame isolation holds, and localStorage is available, scoped to the relay's origin.
+With 10.0.14-embedded.2 (RemoteBlazorWebView net10 with PR #64), all three frames connect with no workarounds in the page.
+
+- **open** and **locked** (opaque origin): the frame can't reach `window.top`, localStorage, cookies or popups. The locked relay needs `AllowOpaqueOrigin = true`.
+- **samesrc:** the frame can't reach `window.top` or popups. localStorage is available, scoped to the relay's origin, and is shared by every module on the same relay.
+- In every frame the shell can't read the frame's document.
 - The module host's window must not be minimized: WebView2CompositionControl crashes creating its D3D9 device.
+- The module page needs `<base href="/">`, which the relay rewrites to `/{id}/`.
