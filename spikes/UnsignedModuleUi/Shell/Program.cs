@@ -39,7 +39,7 @@ public static class Program
         var open = RemoteWebViewServer.StartAsync(new RemoteWebViewServerOptions()).GetAwaiter().GetResult();
         Spike.Record("shell", "relay-open", $"{open.BaseUri} grpc={open.GrpcUri} in {sw.ElapsedMilliseconds} ms");
         sw.Restart();
-        var locked = RemoteWebViewServer.StartAsync(new RemoteWebViewServerOptions { FrameAncestors = [frameAncestor] }).GetAwaiter().GetResult();
+        var locked = RemoteWebViewServer.StartAsync(new RemoteWebViewServerOptions { FrameAncestors = [frameAncestor], AllowOpaqueOrigin = true }).GetAwaiter().GetResult();
         Spike.Record("shell", "relay-locked", $"{locked.BaseUri} grpc={locked.GrpcUri} frame-ancestors={frameAncestor} in {sw.ElapsedMilliseconds} ms");
 
         Spike.Frames.Add(Spike.Start("open", "open relay, opaque origin", open, "allow-scripts allow-forms"));

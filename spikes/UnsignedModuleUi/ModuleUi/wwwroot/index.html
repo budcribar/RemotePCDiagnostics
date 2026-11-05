@@ -20,9 +20,6 @@
             window.fetch = function (input, init) {
                 const url = String(input && input.url || input);
                 fwd('fetch', 'start ' + url);
-                // Opaque origin: Blazor fetches blazor.modules.json with credentials 'include', and a credentialed request can't be
-                // answered with the relay's "Access-Control-Allow-Origin: *". Nothing here needs cookies, so leave them out.
-                if (String(self.origin) === 'null') init = Object.assign({}, init, { credentials: 'omit' });
                 return f0.call(this, input, init).then(function (r) { fwd('fetch', r.status + ' ' + url); return r; },
                     function (e) { fwd('fetch', 'FAILED ' + url + ': ' + e); throw e; });
             };
@@ -38,9 +35,6 @@
                 const o = console[k];
                 console[k] = function () { fwd(k, Array.prototype.map.call(arguments, String).join(' ')); o.apply(console, arguments); };
             });
-            // In a sandboxed frame without allow-same-origin, location.origin is "null", and RemoteWebView.ts uses it as the gRPC-Web
-            // host. location.host is still the relay's, so point the client there. Without this the page stays at "Loading...".
-            if (String(self.origin) === 'null') window.RemoteBlazor = { grpcHost: location.protocol + '//' + location.host };
             fwd('boot', 'origin=' + self.origin + ' href=' + location.href + ' grpcHost=' + (window.RemoteBlazor ? window.RemoteBlazor.grpcHost : '(location.origin)'));
         })();
     </script>
