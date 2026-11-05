@@ -1,7 +1,6 @@
-@page "/module/{Slug}"
 @using RemotePCDiagnostics.Core.Areas
 @inherits StoreAwareComponent
-@inject IServiceProvider Sp
+@inject AppServices App
 @inject Microsoft.JSInterop.IJSRuntime ClipboardJs
 @using Microsoft.JSInterop
 @* Generic card + drill-down page for area modules (drive health, services, programs, network, events, crashes, and new checks). *@
@@ -18,10 +17,10 @@ else
     var rep = r.Payload as AreaReport;
     var busy = r.Status == DiagnosticStatus.Running;
     var svcModule = m as ServicesModule;
-    var svcActions = svcModule is null ? null : Sp.GetService(typeof(ServiceActionService)) as ServiceActionService;
-    var memSvc = m is ResourceHogsModule ? Sp.GetService(typeof(RemotePCDiagnostics.Core.Memory.MemorySuggestionService)) as RemotePCDiagnostics.Core.Memory.MemorySuggestionService : null;
-    var storageSvc = m is DriveHealthModule ? Sp.GetService(typeof(RemotePCDiagnostics.Core.Memory.MemorySuggestionService)) as RemotePCDiagnostics.Core.Memory.MemorySuggestionService : null;
-    var remActions = Sp.GetService(typeof(RemediationService)) as RemediationService;
+    var svcActions = svcModule is null ? null : App.ServiceActions;
+    var memSvc = m is ResourceHogsModule ? App.Memory : null;
+    var storageSvc = m is DriveHealthModule ? App.Memory : null;
+    var remActions = App.Remediation;
     var hasRemActions = remActions is not null && rep is not null && rep.Cards.Any(c => c.Actions is { Count: > 0 } || c.Rows.Any(rw => rw.Actions is { Count: > 0 }));
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="@m.Name" Size="20" /></span><h1 data-testid="area-title">@m.DisplayName</h1></div>
     <p data-testid="area-status" class="@(r.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
@@ -352,7 +351,7 @@ else
         _copilotGroupStatus = "Opening Copilot…";
         try
         {
-            if (Sp.GetService(typeof(ICopilotHandoff)) is ICopilotHandoff handoff && await handoff.TrySendAsync(prompt))
+            if (App.Copilot is { } handoff && await handoff.TrySendAsync(prompt))
             {
                 _copilotGroupStatus = "Prompt sent to Copilot.";
                 return;
@@ -392,7 +391,7 @@ else
         var prompt = BuildCopilotPrompt(card, rows);
         _copilotGroupStatus = null;
         _copilotGroupCopied = false;
-        if (Sp.GetService(typeof(ICopilotHandoff)) is ICopilotHandoff)
+        if (App.Copilot is not null)
         {
             _pendingCopilotPrompt = prompt;
             return;

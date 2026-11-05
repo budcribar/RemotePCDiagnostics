@@ -1,0 +1,19 @@
+@page "/module/{Slug}"
+@inherits StoreAwareComponent
+@* One route for every module: its own details UI when it has one, otherwise the generic report view. Plugins add no routes. *@
+@{
+    var m = Diagnostics.Modules.FirstOrDefault(x => string.Equals(x.Name, Slug, StringComparison.OrdinalIgnoreCase));
+    var details = m is null ? null : Diagnostics.Catalog.Get(m.Id)?.DetailsComponent;
+}
+@if (details is not null)
+{
+    <DynamicComponent Type="details" Parameters="@(new Dictionary<string, object> { ["DiagnosticModule"] = m! })" />
+}
+else
+{
+    <AreaPage Slug="@Slug" />
+}
+
+@code {
+    [Parameter] public string Slug { get; set; } = "";
+}

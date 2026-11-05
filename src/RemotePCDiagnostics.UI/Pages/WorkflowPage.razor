@@ -6,7 +6,7 @@
 @inject WorkflowService Flow
 @inject BenchmarkService Bench
 @inject DiagnosticsService Diagnostics
-@inject IServiceProvider Services
+@inject AppServices App
 @* Service workflow: the tech reviews once; the rest (restarts, benchmarks, fixes, report) runs by itself. *@
 @{
     var s = Flow.State;
@@ -215,7 +215,7 @@
     // The areas the technician left open are remembered on this PC.
     private readonly HashSet<string> _openAreas = new(StringComparer.Ordinal);
     private RemotePCDiagnostics.Core.Preferences.PreferencesService? Prefs =>
-        Services.GetService(typeof(RemotePCDiagnostics.Core.Preferences.PreferencesService)) as RemotePCDiagnostics.Core.Preferences.PreferencesService;
+        App.Preferences;
     private void SaveOpenAreas() { var open = _openAreas.ToList(); Prefs?.Update(p => p with { WorkflowOpenAreas = open }); }
     private void ToggleArea(string area) { if (!_openAreas.Remove(area)) _openAreas.Add(area); SaveOpenAreas(); }
     private bool AllOpen(WorkflowState s) => s.Fixes.Select(f => f.GroupKey).Distinct().All(_openAreas.Contains);

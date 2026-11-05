@@ -87,7 +87,12 @@ public static class HostServices
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(log));
         services.AddSingleton<IDiagnosticModule>(sp => new RemotePCDiagnostics.Core.Npu.NpuTestModule(sp.GetRequiredService<RemotePCDiagnostics.Core.Npu.INpuIo>(), log));
-        services.AddSingleton<DiagnosticsService>();
+        services.AddSingleton(sp =>
+        {
+            var diag = new DiagnosticsService(sp.GetRequiredService<ResultStore>(), sp.GetServices<IDiagnosticModule>());
+            RemotePCDiagnostics.UI.BuiltInModuleUi.Register(diag.Catalog); // each built-in module's own details UI
+            return diag;
+        });
         services.AddSingleton(new RemotePCDiagnostics.Core.Preferences.PreferencesService(
             new RemotePCDiagnostics.Core.Preferences.FilePreferencesStore(RemotePCDiagnostics.Core.Preferences.FilePreferencesStore.DefaultPath(), log)));
         services.AddSingleton(sp => new ChecksScreenState(sp.GetRequiredService<DiagnosticsService>(), sp.GetRequiredService<ResultStore>(),
@@ -113,6 +118,10 @@ public static class HostServices
             (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Workflow, level, text), log,
             journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(),
             prefs: sp.GetRequiredService<RemotePCDiagnostics.Core.Preferences.PreferencesService>()));
+        // The optional host services pages may use (instead of injecting IServiceProvider).
+        services.AddSingleton(sp => new RemotePCDiagnostics.UI.AppServices(sp.GetService<RemediationService>(), sp.GetService<ServiceActionService>(),
+            sp.GetService<RemotePCDiagnostics.Core.Memory.MemorySuggestionService>(), sp.GetService<RemotePCDiagnostics.Core.Areas.ICopilotHandoff>(),
+            sp.GetService<RemotePCDiagnostics.Core.Preferences.PreferencesService>(), sp.GetService<RemotePCDiagnostics.Core.Workflow.WorkflowService>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(log));
         return services;

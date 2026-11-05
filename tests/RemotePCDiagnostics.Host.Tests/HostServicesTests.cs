@@ -84,6 +84,30 @@ public class HostServicesTests
     }
 
     [Fact]
+    public void Lists_and_details_UI_come_from_the_catalog()
+    {
+        var (provider, _) = Build(SessionMode.Local);
+        using (provider)
+        {
+            var diag = provider.GetRequiredService<DiagnosticsService>();
+            // Every built-in details component is registered on its descriptor.
+            foreach (var (id, type) in RemotePCDiagnostics.UI.BuiltInModuleUi.Components)
+                Assert.Equal(type, diag.Catalog.Get(id)!.DetailsComponent);
+            Assert.Null(diag.Catalog.Get(ModuleIds.DriveHealth)!.DetailsComponent); // generic report view
+
+            // Same Stress tests list as before it was data-driven: suite order, then audio, webcam, NPU, then SFC/DISM.
+            var screen = provider.GetRequiredService<ChecksScreenState>();
+            string[] expected = [ModuleSlugs.CpuStress, ModuleSlugs.MemoryTest, ModuleSlugs.DiskSpeed, ModuleSlugs.GpuStress, ModuleSlugs.NetworkTest,
+                ModuleSlugs.SpeakerToMic, ModuleSlugs.MicToSpeaker, ModuleSlugs.Webcam, ModuleSlugs.NpuTest, ModuleSlugs.DismScanHealth, ModuleSlugs.SfcVerifyOnly];
+            var shown = screen.StressModules.Select(m => m.Name).ToList();
+            Assert.Equal(expected.Where(shown.Contains), shown); // the NPU test is hidden until its hardware is found
+            Assert.DoesNotContain(ModuleSlugs.SecurityAudit, shown);
+            Assert.Equal("security-audit", screen.PageFor(ModuleSlugs.SecurityAudit));
+            Assert.NotNull(provider.GetRequiredService<RemotePCDiagnostics.UI.AppServices>().Remediation);
+        }
+    }
+
+    [Fact]
     public void One_memory_system_is_shared()
     {
         var (provider, services) = Build(SessionMode.Local);

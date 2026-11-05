@@ -4,14 +4,14 @@
 @using RemotePCDiagnostics.Core.Memory
 @implements IDisposable
 @inject IHistoryStore History
-@inject IServiceProvider Sp
+@inject AppServices App
 @* Past test results and automated fix impact summary from the Windows Event Log and current session. *@
 @{
     var all = _result?.Entries ?? [];
     var diagEntries = all.Where(e => !HistorySummary.IsFixEntry(e)).ToList();
-    var remSvc = Sp.GetService(typeof(RemediationService)) as RemediationService;
-    var memSvc = Sp.GetService(typeof(MemorySuggestionService)) as MemorySuggestionService;
-    var svcAct = Sp.GetService(typeof(ServiceActionService)) as ServiceActionService;
+    var remSvc = App.Remediation;
+    var memSvc = App.Memory;
+    var svcAct = App.ServiceActions;
     var rows = HistoryQuery.Sort(HistoryQuery.Filter(diagEntries, _module, _outcome, _range, DateTimeOffset.UtcNow), _sort.Col, _sort.Desc);
     // Tiles follow the filters: fixes as before, runs = the rows listed below.
     var impact = HistorySummary.Build(all.Where(HistorySummary.IsFixEntry).Concat(rows).ToList(), remSvc, memSvc, svcAct, _range, DateTimeOffset.UtcNow);

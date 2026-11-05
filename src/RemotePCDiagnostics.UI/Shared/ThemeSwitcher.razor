@@ -1,7 +1,7 @@
 @using Microsoft.JSInterop
 @using RemotePCDiagnostics.Core.Theming
 @inject IJSRuntime JS
-@inject IServiceProvider Services
+@inject AppServices App
 @* Dark / System / Light segmented control. Applied by window.rpdTheme (index.html); remembered on this PC (preferences.json), so it's the same
    in the local window and for a remote technician, and survives a browser that doesn't keep localStorage. *@
 <div class="theme-switch" role="radiogroup" aria-label="Theme" data-testid="theme-switch">
@@ -20,7 +20,7 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
-        var prefs = Services.GetService(typeof(RemotePCDiagnostics.Core.Preferences.PreferencesService)) as RemotePCDiagnostics.Core.Preferences.PreferencesService;
+        var prefs = App.Preferences;
         try
         {
             if (prefs?.Current.Theme is { } saved)
@@ -41,7 +41,7 @@
     async Task SetAsync(ThemeChoice c)
     {
         _choice = c;
-        (Services.GetService(typeof(RemotePCDiagnostics.Core.Preferences.PreferencesService)) as RemotePCDiagnostics.Core.Preferences.PreferencesService)
+        (App.Preferences)
             ?.Update(p => p with { Theme = ThemePreference.ToStorage(c) });
         try { await JS.InvokeAsync<string>("rpdTheme.set", ThemePreference.ToStorage(c)); }
         catch (Exception) { /* no JS: selection is visual only */ }

@@ -1,10 +1,9 @@
-@page "/module/securityaudit"
 @page "/security-audit"
 @using RemotePCDiagnostics.Core.Security
-@inherits StoreAwareComponent
+@inherits ModuleDetailsBase
 @* On-demand security baseline audit (bundled HardeningKitty, read-only Audit mode). Only friendly text here; detail goes to the log. *@
 @{
-    var m = Diagnostics.Modules.OfType<SecurityAuditModule>().FirstOrDefault();
+    var m = ((DiagnosticModule ?? Diagnostics.Catalog.ModuleFor(ModuleIds.SecurityAudit)) as SecurityAuditModule);
 }
 @if (m is null)
 {
@@ -121,7 +120,7 @@ else
     protected override void OnInitialized()
     {
         base.OnInitialized();
-        if (Diagnostics.Modules.OfType<SecurityAuditModule>().FirstOrDefault() is { } m && Store.Get(m.Name).Status == DiagnosticStatus.Running)
+        if (((DiagnosticModule ?? Diagnostics.Catalog.ModuleFor(ModuleIds.SecurityAudit)) as SecurityAuditModule) is { } m && Store.Get(m.Name).Status == DiagnosticStatus.Running)
             StartTicker(m);
     }
 

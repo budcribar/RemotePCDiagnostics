@@ -1,9 +1,8 @@
-@page "/module/npu"
 @using RemotePCDiagnostics.Core.Npu
-@inherits StoreAwareComponent
+@inherits ModuleDetailsBase
 @* On-demand NPU test: finds NPUs (PnP + DXCore), checks the driver, and runs a short bounded workload on each one. Fully automatic. *@
 @{
-    var m = Diagnostics.Modules.OfType<NpuTestModule>().FirstOrDefault();
+    var m = (DiagnosticModule as NpuTestModule);
 }
 @if (m is null)
 {
@@ -64,7 +63,7 @@ else
     protected override void OnInitialized()
     {
         base.OnInitialized();
-        if (Diagnostics.Modules.OfType<NpuTestModule>().FirstOrDefault() is { } m) _ = Task.Run(() => LoadDevices(m));
+        if ((DiagnosticModule as NpuTestModule) is { } m) _ = Task.Run(() => LoadDevices(m));
     }
 
     private void LoadDevices(NpuTestModule m) { _devices = m.Devices(); _ = InvokeAsync(StateHasChanged); }

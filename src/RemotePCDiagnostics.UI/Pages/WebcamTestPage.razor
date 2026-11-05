@@ -1,9 +1,8 @@
-@page "/module/webcam"
 @using RemotePCDiagnostics.Core.Webcam
-@inherits StoreAwareComponent
+@inherits ModuleDetailsBase
 @* On-demand webcam test: opens the camera for a few seconds and checks the frames in memory (nothing is saved, shown or sent). *@
 @{
-    var m = Diagnostics.Modules.OfType<WebcamTestModule>().FirstOrDefault();
+    var m = (DiagnosticModule as WebcamTestModule);
 }
 @if (m is null)
 {
@@ -63,7 +62,7 @@ else
     protected override void OnInitialized()
     {
         base.OnInitialized();
-        if (Diagnostics.Modules.OfType<WebcamTestModule>().FirstOrDefault() is { } m) _devices = m.Devices();
+        if ((DiagnosticModule as WebcamTestModule) is { } m) _devices = m.Devices();
     }
 
     private void Start(WebcamTestModule m)

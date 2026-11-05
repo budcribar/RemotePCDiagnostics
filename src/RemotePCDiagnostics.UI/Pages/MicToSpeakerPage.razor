@@ -1,9 +1,8 @@
-@page "/module/mictospeaker"
 @using RemotePCDiagnostics.Core.Audio
-@inherits StoreAwareComponent
+@inherits ModuleDetailsBase
 @* On-demand microphone → speaker test: live monitoring with a capped gain and a feedback brake; the audible part is a person's judgement. *@
 @{
-    var m = Diagnostics.Modules.OfType<MicToSpeakerModule>().FirstOrDefault();
+    var m = (DiagnosticModule as MicToSpeakerModule);
 }
 @if (m is null)
 {
@@ -82,7 +81,7 @@ else
     protected override void OnInitialized()
     {
         base.OnInitialized();
-        if (Diagnostics.Modules.OfType<MicToSpeakerModule>().FirstOrDefault() is { } m) LoadDevices(m);
+        if ((DiagnosticModule as MicToSpeakerModule) is { } m) LoadDevices(m);
     }
 
     private void LoadDevices(MicToSpeakerModule m) { _outputs = m.Devices(AudioFlow.Output); _inputs = m.Devices(AudioFlow.Input); }
