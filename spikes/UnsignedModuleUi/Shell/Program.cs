@@ -27,8 +27,9 @@ public static class Program
     {
         Spike.Restricted = !args.Contains("--unrestricted");
         var ancestorArg = Array.IndexOf(args, "--frame-ancestor");
-        // A WPF BlazorWebView serves its page from https://0.0.0.0; the page reports its real origin, which the results record.
-        var frameAncestor = ancestorArg >= 0 && ancestorArg + 1 < args.Length ? args[ancestorArg + 1] : "https://0.0.0.0";
+        // A WPF BlazorWebView on .NET 8+ serves its page from https://0.0.0.1 (0.0.0.0 only with the AppHostAddressAlways0000 switch);
+        // the page reports its real origin, which the results record.
+        var frameAncestor = ancestorArg >= 0 && ancestorArg + 1 < args.Length ? args[ancestorArg + 1] : "https://0.0.0.1";
         Directory.CreateDirectory(Spike.Folder);
 
         var app = new Application();
@@ -92,7 +93,7 @@ public static class Spike
             Record(key, "launch-failed", ex.ToString());
             throw;
         }
-        return new SpikeFrame(key, title, sandbox, new Uri(relay.BaseUri, $"app/{id}").ToString(), p, id, DateTimeOffset.Now);
+        return new SpikeFrame(key, title, sandbox, new Uri(relay.BaseUri, $"{id}").ToString(), p, id, DateTimeOffset.Now);
     }
 
     public static void Record(string frame, string kind, string detail)
@@ -107,7 +108,7 @@ public static class Spike
         var frames = Frames.Select(f => new
         {
             f.Key, f.Title, f.Sandbox, f.Src, pid = f.Process.Id,
-            exited = Exited(f.Process), exitCode = Exited(f.Process) ? (int?)f.Process.ExitCode : null,
+            exited = Exited(f.Process), exitCode = ExitCode(f.Process),
             moduleLog = Path.Combine(Folder, "modulehost", f.Key, "module-ui.log"),
         });
         File.WriteAllText(path, JsonSerializer.Serialize(new { ShellOrigin, Restricted, frames, events = Events.ToArray() }, new JsonSerializerOptions { WriteIndented = true }));
@@ -115,4 +116,13 @@ public static class Spike
     }
 
     private static bool Exited(Process p) { try { return p.HasExited; } catch { return true; } }
+
+    // A process from GetProcessById (the restricted launch) has no exit code; read it through the OS handle instead.
+    private static int? ExitCode(Process p)
+    {
+        try { return p.HasExited && GetExitCodeProcess(p.Handle, out var code) ? (int)code : null; } catch { return null; }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
 }
