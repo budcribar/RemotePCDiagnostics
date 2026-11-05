@@ -22,9 +22,10 @@ namespace RemotePCDiagnostics.Host;
 public static class HostServices
 {
     /// <summary>Registers RemoteBlazorWebView and everything the app needs. <paramref name="log"/> is the file log line writer
-    /// (<see cref="App.Log"/>); <paramref name="logEvent"/> writes a Windows Event Log entry (<see cref="App.Event"/>).</summary>
+    /// (<see cref="App.Log"/>); <paramref name="logEvent"/> writes a Windows Event Log entry (<see cref="App.Event"/>).
+    /// <paramref name="modulesFolder"/> overrides where module DLLs are loaded from (tests pass an empty folder so the PC's installed modules don't matter).</summary>
     public static IServiceCollection AddRemotePCDiagnosticsHost(this IServiceCollection services, SessionContext session,
-        Action<string> log, Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent)
+        Action<string> log, Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent, string? modulesFolder = null)
     {
         services.AddRemoteWpfBlazorWebView();
         services.AddSingleton<ISessionContext>(session);
@@ -62,9 +63,18 @@ public static class HostServices
         services.AddSingleton(LoadModulePlugins(services, plugins, log, logEvent, new ModuleLoaderOptions
         {
             HostVersion = HostVersion(),
+            ModulesFolder = modulesFolder ?? ModuleLoaderOptions.DefaultModulesFolder(),
             // Only the person at the PC can turn unsigned modules on (a marker in the admin-only modules folder); never in a remote session.
             AllowUnsigned = session.Mode == SessionMode.Local && UnsignedModulesSetting.IsOn(),
         }));
+        // Unsigned modules' own UIs, framed on the module page (Local only, like unsigned modules themselves).
+        if (session.Mode == SessionMode.Local)
+            services.AddSingleton<IModuleUiFrames>(_ =>
+            {
+                var frames = new ModuleUiFrames(log);
+                AppDomain.CurrentDomain.ProcessExit += (_, _) => frames.Dispose(); // the UI processes never outlive the app
+                return frames;
+            });
         services.AddSingleton(sp =>
         {
             var diag = new DiagnosticsService(sp.GetRequiredService<ResultStore>(), sp.GetServices<IDiagnosticModule>());

@@ -1,0 +1,12 @@
+@* The module's own details UI, given the module it describes (the IPluginContext.SetDetailsComponent contract). *@
+@if (Program.Ui is { DetailsComponent: { } component } ui)
+{
+    <ErrorBoundary>
+        <ChildContent>
+            <DynamicComponent Type="component" Parameters="@(new Dictionary<string, object> { ["DiagnosticModule"] = ui.Module })" />
+        </ChildContent>
+        <ErrorContent Context="ex">
+            <p class="module-ui-error">The module's UI failed: @ex.Message</p>
+        </ErrorContent>
+    </ErrorBoundary>
+}

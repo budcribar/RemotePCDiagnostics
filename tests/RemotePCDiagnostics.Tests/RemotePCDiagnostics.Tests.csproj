@@ -15,6 +15,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <!-- For the sample module's Razor component (a package, not the ASP.NET Core framework: the module host started from this folder
+         must still find the DI assemblies here). -->
+    <PackageReference Include="Microsoft.AspNetCore.Components" Version="10.0.13" />
   </ItemGroup>
 
   <ItemGroup>
@@ -27,6 +30,8 @@
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.MemTest\RemotePCDiagnostics.MemTest.csproj" />
     <!-- A real module DLL for the loader tests: built, not referenced, copied to sample-module/ (outside the default load context). -->
     <ProjectReference Include="..\..\samples\SampleModule\SampleModule.csproj" ReferenceOutputAssembly="false" />
+    <!-- A module with its own UI, for UserModePlugin (its Razor component needs Components in this process: package reference above). -->
+    <ProjectReference Include="..\..\samples\SampleModuleUi\SampleModuleUi.csproj" ReferenceOutputAssembly="false" />
     <!-- The user-mode module host, started for real by the proxy tests (RemotePCDiagnostics.ModuleHost.dll lands in the test output). -->
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.ModuleHost\RemotePCDiagnostics.ModuleHost.csproj" />
   </ItemGroup>
@@ -36,6 +41,10 @@
       <Output TaskParameter="TargetOutputs" ItemName="_SampleModuleDll" />
     </MSBuild>
     <Copy SourceFiles="@(_SampleModuleDll)" DestinationFolder="$(OutDir)sample-module" SkipUnchangedFiles="true" />
+    <MSBuild Projects="..\..\samples\SampleModuleUi\SampleModuleUi.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_SampleModuleUiDll" />
+    </MSBuild>
+    <Copy SourceFiles="@(_SampleModuleUiDll)" DestinationFolder="$(OutDir)sample-module-ui" SkipUnchangedFiles="true" />
   </Target>
 
 </Project>

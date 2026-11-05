@@ -1,8 +1,6 @@
-using Microsoft.Extensions.DependencyInjection;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Plugins;
-using RemotePCDiagnostics.Core.Session;
 
 // RemotePCDiagnostics.ModuleHost "<module.dll>"
 // Loads one module into its own load context and answers the app's requests (one JSON line each) until stdin closes or "exit".
@@ -16,7 +14,7 @@ var writeGate = new object();
 void Send(ModuleHostMessage m) { lock (writeGate) { output.WriteLine(m.ToLine()); output.Flush(); } }
 
 IDiagnosticModule module;
-try { module = Load(args[0]); }
+try { module = UserModePlugin.Load(args[0], line => Console.Error.WriteLine(line)).Module; }
 catch (Exception ex)
 {
     Send(new ModuleHostMessage { Type = "error", Message = $"Couldn't load the module: {ex.GetType().Name}: {ex.Message}" });
@@ -70,33 +68,3 @@ while (Console.In.ReadLine() is { } line)
 }
 try { running?.Cancel(); } catch { }
 return 0;
-
-static IDiagnosticModule Load(string path)
-{
-    var dll = File.ReadAllBytes(path);
-    var (manifest, _) = ModuleManifest.ReadFromAssembly(dll);
-    if (manifest.Problem(new Version(int.MaxValue, 0)) is { } problem && !problem.StartsWith("needs app version", StringComparison.Ordinal))
-        throw new InvalidDataException(problem);
-    var alc = new ModuleLoadContext(manifest.Slug, dll);
-    var asm = alc.LoadFromStream(new MemoryStream(dll, writable: false));
-    var entry = asm.GetType(manifest.EntryType, throwOnError: false) ?? throw new InvalidDataException($"entryType {manifest.EntryType} not found");
-    if (Activator.CreateInstance(entry) is not IModulePlugin plugin) throw new InvalidDataException($"{manifest.EntryType} does not implement IModulePlugin");
-    var services = new ServiceCollection();
-    plugin.Register(services, new HostContext(manifest.Slug));
-    var sp = services.BuildServiceProvider();
-    var modules = sp.GetServices<IDiagnosticModule>().ToList();
-    if (modules.Count != 1) throw new InvalidDataException($"registered {modules.Count} modules; a plugin registers exactly one");
-    if (modules[0].Id != manifest.Id) throw new InvalidDataException($"registered module {modules[0].Id}, but its manifest says {manifest.Id}");
-    return modules[0];
-}
-
-sealed class HostContext(string pluginId) : IPluginContext
-{
-    public string PluginId => pluginId;
-    // Remote rules still apply in the app (actor attribution, notices); the module host itself never acts for a technician.
-    public ISessionContext Session { get; } = new SessionContext(SessionMode.Local);
-    public Version HostVersion => typeof(HostContext).Assembly.GetName().Version ?? new Version(0, 0);
-    public Version ContractVersion => RemotePCDiagnostics.Core.Plugins.ContractVersion.Current;
-    public void Log(string message) { try { Console.Error.WriteLine($"[{pluginId}] {message}"); } catch { } }
-    public void SetDetailsComponent(Guid moduleId, Type component) { } // UI in the module host comes with the iframe work
-}

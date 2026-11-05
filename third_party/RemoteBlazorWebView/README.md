@@ -1,13 +1,22 @@
-# RemoteBlazorWebView scroll synchronization client
+# RemoteBlazorWebView packages
 
-These local NuGet packages are built from `budcribar/RemoteBlazorWebView` net10 commit `052cee5c` (scroll synchronization cherry-picked from net11 `7578de00`). Version `10.0.14-scrollsync.1` is a local integration build, not a nuget.org release. The root `NuGet.Config` includes this directory so a fresh checkout and CI can restore it.
+These local NuGet packages are built from `budcribar/RemoteBlazorWebView` net10 at `514fb8d7` (the merge of PR #64, which lets pages in
+opaque-origin sandboxed iframes connect; net10 already has the embedded relay and scroll synchronization). Version `10.0.14-embedded.2`
+is a local integration build, not a nuget.org release. The root `NuGet.Config` includes this directory so a fresh checkout and CI can
+restore it. The version is set once, as `RbwvVersion` in the root `Directory.Build.props`.
 
-Included packages: `PeakSWC.RemoteBlazorWebView.Wpf` and its `PeakSWC.RemoteWebView` dependency. Both use the upstream MIT license. The upstream repository is https://github.com/budcribar/RemoteBlazorWebView.
+Included packages, all under the upstream MIT license (https://github.com/budcribar/RemoteBlazorWebView):
 
-To reproduce from that commit, run `npm ci` and `npm run build:noprotoc` in `src/RemoteWebView.Blazor.JS`, then run from the upstream repository root:
+- `PeakSWC.RemoteBlazorWebView.Wpf` and its `PeakSWC.RemoteWebView` dependency: the app's UI and the module UI host.
+- `PeakSWC.RemoteWebViewService.Lib`: the relay inside the app that serves unsigned modules' UIs in Local mode.
+
+To reproduce, build the JS bundle in `src/RemoteWebView.Blazor.JS` (`npm run build:production`; see its `Build.md`), then from the
+upstream repository root:
 
 ```powershell
-dotnet build src/RemoteBlazorWebView.Wpf/RemoteBlazorWebView.Wpf.csproj -c Release -p:Platform=x64 -p:Version=10.0.14-scrollsync.1 -p:PackageVersion=10.0.14-scrollsync.1 -p:VersionPrefix=10.0.14 -p:VersionSuffix=scrollsync.1
+foreach ($p in 'RemoteWebViewService.Lib', 'RemoteWebView', 'RemoteBlazorWebView.Wpf') {
+    dotnet pack src/$p -c Release -p:Version=10.0.14-embedded.2 -o <this folder>
+}
 ```
 
-The packages are produced in `artifacts`. Copy the two matching packages here and update `SHA256SUMS.txt` when replacing them. Replace this local build with a published package once available.
+Update `SHA256SUMS.txt` when replacing them. Replace this local build with a published package once available.

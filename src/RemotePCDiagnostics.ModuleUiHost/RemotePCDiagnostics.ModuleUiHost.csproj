@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <!-- Runs one unsigned module's own UI (its details component), started by the app with a restricted, Medium-integrity token. The UI
+       reaches the module page through the app's relay, framed in a sandboxed iframe. Built and copied to moduleui\ next to the Host exe
+       by RemotePCDiagnostics.Host.csproj (not a ProjectReference: the static web assets would collide). -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- Same TFM as the Host: WebView2CompositionControl needs Microsoft.Windows.SDK.NET at runtime. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>RemotePCDiagnostics.ModuleUiHost</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="PeakSWC.RemoteBlazorWebView.Wpf" Version="$(RbwvVersion)" />
+    <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

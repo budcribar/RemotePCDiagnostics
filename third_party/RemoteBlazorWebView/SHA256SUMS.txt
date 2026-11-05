@@ -1,2 +1,3 @@
-7b99f032234f691911f82724ab084ff166effff472c57838aa2d12e2c2d3e265  packages/PeakSWC.RemoteBlazorWebView.Wpf.10.0.14-scrollsync.1.nupkg
-ccd2db3e985ff0b44ad0f62e617d41c87ce5e9b73640baee87ddeca4c86cec76  packages/PeakSWC.RemoteWebView.10.0.14-scrollsync.1.nupkg
+2089e37404b343a81cce609c5bfae951c442776193848a3a957dc9c38fe58d7e  packages/PeakSWC.RemoteBlazorWebView.Wpf.10.0.14-embedded.2.nupkg
+7458e5446f2a052d3d8a21094f7ae38114ef422443a43808b5de9d923bb38d92  packages/PeakSWC.RemoteWebView.10.0.14-embedded.2.nupkg
+d3fd08fea2c1be3f545702dbf369758287caa8bbd6dc55d7c24a8abc1f22eed1  packages/PeakSWC.RemoteWebViewService.Lib.10.0.14-embedded.2.nupkg
