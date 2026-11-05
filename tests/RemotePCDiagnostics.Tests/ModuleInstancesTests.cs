@@ -6,10 +6,10 @@ namespace RemotePCDiagnostics.Tests;
 
 public class ModuleInstancesTests
 {
-    private sealed class FakeDrives(Func<ModuleDetection> detect, Func<ModuleInstance, DiagnosticStatus>? status = null) : IPerDeviceModule
+    private sealed class FakeDrives(Func<ModuleDetection> detect, Func<ModuleInstance, DiagnosticStatus>? status = null, string name = "drives") : IPerDeviceModule
     {
         public Guid Id => TestIds.For(Name);
-        public string Name => "drives";
+        public string Name => name;
         public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
         public List<string> Ran { get; } = [];
         public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
@@ -109,5 +109,53 @@ public class ModuleInstancesTests
     {
         var e = HistoryEventParser.Parse("Test result: x\nModule id: 6e35be79-0000-0000-0000-000000000000\nOutcome: Unavailable\nSummary: s\nFinished: 2026-01-01T00:00:00Z\nFormat: 3", DateTimeOffset.Now);
         Assert.Equal(CouldNotRun.OutcomeText, e!.Outcome);
+    }
+
+    private static readonly ModuleInstance DiskC = new(InstanceKeys.From("SERIAL-C"), "Crucial 500 GB, Disk 2");
+
+    private static (DiagnosticsService Diag, ResultStore Store, FakeDrives Smart, FakeDrives Surface) SmartThenSurface(
+        ModuleInstance[] smartDisks, Func<ModuleInstance, DiagnosticStatus> smartStatus, ModuleInstance[] surfaceDisks)
+    {
+        var smart = new FakeDrives(() => ModuleDetection.For(smartDisks), smartStatus, "smart");
+        var surface = new FakeDrives(() => ModuleDetection.For(surfaceDisks), name: "surface");
+        var catalog = new ModuleCatalog(BuiltInModules.Descriptors.Concat([
+            new ModuleDescriptor(smart.Id, "smart", "SMART check", ModuleKind.Check),
+            new ModuleDescriptor(surface.Id, "surface", "Surface scan", ModuleKind.Check) { DependsOn = [smart.Id] },
+        ]));
+        var store = new ResultStore();
+        return (new DiagnosticsService(store, [smart, surface], catalog), store, smart, surface);
+    }
+
+    [Fact]
+    public async Task A_dependency_between_per_device_modules_gates_each_device_on_its_own()
+    {
+        var (diag, store, _, surface) = SmartThenSurface([DiskA, DiskB], d => d == DiskA ? DiagnosticStatus.Error : DiagnosticStatus.Ok, [DiskA, DiskB]);
+        Assert.Equal(2, (await diag.RunAllAsync()).Length); // also while detection is still finishing
+
+        Assert.Equal([DiskB.Key], surface.Ran); // drive A's failed SMART check skips only drive A's scan
+        var a = store.GetInstance("surface", DiskA.Key)!;
+        var gate = Assert.IsType<DependencyGate>(a.Payload);
+        Assert.Equal(GateKind.Skipped, gate.Kind);
+        Assert.Contains("did not pass on this device", gate.Reason);
+        Assert.Equal(DiagnosticStatus.Ok, store.GetInstance("surface", DiskB.Key)!.Status);
+    }
+
+    [Fact]
+    public async Task A_device_the_dependency_does_not_have_needs_the_dependency_to_pass_on_every_device()
+    {
+        // Shares drive A, so gating is per device; drive C isn't tested by SMART, so it needs SMART to pass everywhere.
+        var (diag, store, _, surface) = SmartThenSurface([DiskA, DiskB], d => d == DiskB ? DiagnosticStatus.Error : DiagnosticStatus.Ok, [DiskA, DiskC]);
+        await diag.RunAllAsync();
+        Assert.Equal([DiskA.Key], surface.Ran);
+        Assert.IsType<DependencyGate>(store.GetInstance("surface", DiskC.Key)!.Payload);
+    }
+
+    [Fact]
+    public async Task Without_shared_devices_the_whole_module_is_skipped_as_before()
+    {
+        var (diag, store, _, surface) = SmartThenSurface([DiskA], _ => DiagnosticStatus.Error, [DiskC]);
+        await diag.RunAllAsync();
+        Assert.Empty(surface.Ran);
+        Assert.IsType<DependencyGate>(store.Get("surface").Payload);
     }
 }
