@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// #24: this account's default printer, read from the registry by the Host.

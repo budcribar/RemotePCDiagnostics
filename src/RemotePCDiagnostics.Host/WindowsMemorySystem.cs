@@ -8,7 +8,7 @@ using Microsoft.Win32;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Projects;
 using RemotePCDiagnostics.Core.Storage;

@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using RemotePCDiagnostics.Core.Areas;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 
 namespace RemotePCDiagnostics.Core.Workflow;
 

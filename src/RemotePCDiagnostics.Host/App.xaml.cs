@@ -80,7 +80,7 @@ public partial class App : Application
         return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
-    public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, RemotePCDiagnostics.Core.Memory.IMemorySystem memory) =>
+    public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, RemotePCDiagnostics.Core.Optimizations.IMemorySystem memory) =>
         HostServices.CreateUndoService(journal, commands, memory, HostServices.For<UndoService>(Loggers), Event);
 
     protected override void OnStartup(StartupEventArgs e)

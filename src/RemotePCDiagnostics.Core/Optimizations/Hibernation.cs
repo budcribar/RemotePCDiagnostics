@@ -1,4 +1,4 @@
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// Hibernation file state, for "Shrink hiberfil.sys" (<c>powercfg /h /type reduced</c>). A full file holds the whole of RAM for

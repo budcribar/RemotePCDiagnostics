@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using RemotePCDiagnostics.Core;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Host;
 

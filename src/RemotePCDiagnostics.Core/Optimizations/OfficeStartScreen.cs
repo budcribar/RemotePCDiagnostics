@@ -1,6 +1,6 @@
 using RemotePCDiagnostics.Core.Changes;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// One Office 16.x app (Microsoft 365 / 2016–2024) and its per-account start screen setting, read from the registry by the Host.

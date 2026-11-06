@@ -2,7 +2,7 @@ using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Benchmarks;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Logging;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Session;
 

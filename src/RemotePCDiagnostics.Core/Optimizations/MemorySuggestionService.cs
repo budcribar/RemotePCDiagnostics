@@ -3,7 +3,7 @@ using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Session;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>Before/after wording shown on a card after an action.</summary>
 public static class MemoryFeedback

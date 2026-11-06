@@ -2,7 +2,7 @@ using System.Globalization;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>Physical memory and commit charge at one moment.</summary>
 public sealed record MemoryReading(long TotalBytes, long AvailableBytes, long? CommitBytes = null, long? CommitLimitBytes = null)

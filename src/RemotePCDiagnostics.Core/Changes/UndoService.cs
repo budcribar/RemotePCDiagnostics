@@ -1,7 +1,7 @@
 using System.Text.RegularExpressions;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Logging;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 
 namespace RemotePCDiagnostics.Core.Changes;
 

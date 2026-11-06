@@ -1,6 +1,6 @@
 using RemotePCDiagnostics.Core.Changes;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// #18: Office 16.x privacy policy state for this account, read from the registry by the Host.

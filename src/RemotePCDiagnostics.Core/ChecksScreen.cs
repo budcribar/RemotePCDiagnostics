@@ -132,9 +132,9 @@ public sealed class ChecksScreenState
     private readonly Preferences.PreferencesService? _prefs;
 
     private readonly ResultStore _store;
-    private readonly Memory.MemorySuggestionService? _memory;
+    private readonly Optimizations.MemorySuggestionService? _memory;
 
-    public ChecksScreenState(DiagnosticsService diag, ResultStore store, Preferences.PreferencesService? prefs = null, Memory.MemorySuggestionService? memory = null)
+    public ChecksScreenState(DiagnosticsService diag, ResultStore store, Preferences.PreferencesService? prefs = null, Optimizations.MemorySuggestionService? memory = null)
     {
         _diag = diag;
         _store = store;

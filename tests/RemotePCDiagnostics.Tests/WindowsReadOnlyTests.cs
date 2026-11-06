@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using RemotePCDiagnostics.Core.Areas;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Scripts;
 
 namespace RemotePCDiagnostics.Tests;

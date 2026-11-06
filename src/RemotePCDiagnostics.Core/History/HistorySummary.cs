@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Logging;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.History;

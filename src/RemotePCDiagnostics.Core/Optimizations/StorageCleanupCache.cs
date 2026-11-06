@@ -1,4 +1,4 @@
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// Remembers the last storage cleanup scan for a few minutes. The scan sizes large folders file by file (NuGet packages,

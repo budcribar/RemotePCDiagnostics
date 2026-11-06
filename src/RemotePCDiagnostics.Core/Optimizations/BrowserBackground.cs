@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using RemotePCDiagnostics.Core.Changes;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// #19: what keeps a browser running in the background, read by the Host for Chrome and Edge.

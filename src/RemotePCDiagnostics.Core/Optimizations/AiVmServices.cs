@@ -1,6 +1,6 @@
 using RemotePCDiagnostics.Core.Areas;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// #14: the services that start an AI app's background Linux VM at every Windows sign-in: Claude Desktop's <c>CoworkVMService</c>

@@ -87,7 +87,7 @@ public sealed class WindowsSystemSettings(ILogger? log = null) : ISystemSettings
         using var user = WindowsMemorySystem.SignedInUser.Open(log);
         if (user is null) return null;
         if (user.IsCurrentProcessUser) return RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default);
-        if (!Core.Memory.StoreReinstall.IsValidSid(user.Sid)) { log.Warn($"Signed-in user: unexpected SID {user.Sid}"); return null; }
+        if (!Core.Optimizations.StoreReinstall.IsValidSid(user.Sid)) { log.Warn($"Signed-in user: unexpected SID {user.Sid}"); return null; }
         using var users = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default);
         return users.OpenSubKey(user.Sid, writable: true);
     }

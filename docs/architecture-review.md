@@ -72,7 +72,7 @@ Not shown: Core also references `RemotePCDiagnostics.Agent.Core` (used by `Modul
 ---
 
 ### 3.2 God-Object Growth in `IMemorySystem` / `WindowsMemorySystem`
-- **Where**: `src/RemotePCDiagnostics.Core/Memory/MemorySuggestionService.cs` (`IMemorySystem`, about 55 members, about 40 of them default-implemented) and `src/RemotePCDiagnostics.Host/WindowsMemorySystem.cs` (~1,630 lines across 3 partial files)
+- **Where**: `src/RemotePCDiagnostics.Core/Optimizations/MemorySuggestionService.cs` (`IMemorySystem`, about 55 members, about 40 of them default-implemented) and `src/RemotePCDiagnostics.Host/WindowsMemorySystem.cs` (~1,630 lines across 3 partial files)
 - **Observation**: Originally scoped to RAM and startup apps, `IMemorySystem` has become the catch-all OS abstraction for:
   - RAM & process working sets
   - Windows Services start types & delayed autostart

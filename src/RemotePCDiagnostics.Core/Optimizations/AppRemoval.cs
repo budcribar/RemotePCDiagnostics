@@ -1,7 +1,7 @@
 using System.Text.Json;
 using RemotePCDiagnostics.Core.Changes;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// #3 / #8 / #10: which pre-installed apps this app may remove, and how. Ticked: retired Microsoft apps, Power Automate, Journal on a PC without a pen,
@@ -155,11 +155,11 @@ public static class AppRemoval
     public const string RetiredLabel = "Microsoft has retired it, so it may not be available to reinstall";
 
     /// <summary>A retired app (Mail and Calendar, Maps, People, Dev Home, Mixed Reality Portal) that undo can't reinstall: permanent, and the Store may not have it.</summary>
-    public static bool IsRetiredPermanent(RemovableAppx a) => a.Group == AppGroup.Retired && !global::RemotePCDiagnostics.Core.Memory.StoreReinstall.CanReinstall(a);
+    public static bool IsRetiredPermanent(RemovableAppx a) => a.Group == AppGroup.Retired && !global::RemotePCDiagnostics.Core.Optimizations.StoreReinstall.CanReinstall(a);
 
     /// <summary>How to get a removed package back: undo reinstalls it, reinstall it from the Store, or (retired) it may not be available.</summary>
     public static string GetBack(RemovableAppx a) =>
-        global::RemotePCDiagnostics.Core.Memory.StoreReinstall.CanReinstall(a) ? StoreUndo : IsRetiredPermanent(a) ? RetiredGetBack : StoreGetBack;
+        global::RemotePCDiagnostics.Core.Optimizations.StoreReinstall.CanReinstall(a) ? StoreUndo : IsRetiredPermanent(a) ? RetiredGetBack : StoreGetBack;
     /// <summary>Workflow chip for removed apps without a verified Store id (replaces the generic "can't be undone").</summary>
     public const string StoreManualChip = "reinstall from Store";
     /// <summary>Workflow chip for removed apps that undo reinstalls from the Microsoft Store (<see cref="StoreReinstall"/>).</summary>
@@ -345,7 +345,7 @@ public static class AppRemoval
         if (found.Count == 0) return null;
         var bytes = found.All(x => x.Installed.SizeBytes is null) ? (long?)null : found.Sum(x => x.Installed.SizeBytes ?? 0);
         var names = string.Join(", ", found.Select(x => x.App.Label));
-        var reinstall = global::RemotePCDiagnostics.Core.Memory.StoreReinstall.CanReinstallAll(found.Select(x => x.App));
+        var reinstall = global::RemotePCDiagnostics.Core.Optimizations.StoreReinstall.CanReinstallAll(found.Select(x => x.App));
         var getBack = reinstall ? StoreUndoMany : StoreGetBackMany;
         return new MemorySuggestion("remove-narrator-addons", "Remove Narrator's Office add-ons",
             $"Windows includes {MemoryText.Plural(found.Count, "add-on")} that let the Narrator screen reader read Office and Outlook ({names}). Narrator isn't used on this PC. "
@@ -380,7 +380,7 @@ public static class AppRemoval
         {
             var a = f.App;
             var retired = a.Group == AppGroup.Retired;
-            var reinstall = global::RemotePCDiagnostics.Core.Memory.StoreReinstall.CanReinstall(a);
+            var reinstall = global::RemotePCDiagnostics.Core.Optimizations.StoreReinstall.CanReinstall(a);
             var getBack = GetBack(a);
             List<string> steps =
             [
@@ -407,7 +407,7 @@ public static class AppRemoval
         {
             var bytes = xbox.All(x => x.Installed.SizeBytes is null) ? (long?)null : xbox.Sum(x => x.Installed.SizeBytes ?? 0);
             var names = string.Join(", ", xbox.Select(x => x.App.Label));
-            var reinstall = global::RemotePCDiagnostics.Core.Memory.StoreReinstall.CanReinstallAll(xbox.Select(x => x.App));
+            var reinstall = global::RemotePCDiagnostics.Core.Optimizations.StoreReinstall.CanReinstallAll(xbox.Select(x => x.App));
             var getBack = reinstall ? StoreUndoMany : StoreGetBackMany;
             yield return new MemorySuggestion("remove-xbox", "Remove the Xbox apps and turn off Game DVR",
                 $"Windows comes with {MemoryText.Plural(xbox.Count, "Xbox app")} ({names}) and background game recording, which matter only for Xbox and Game Pass games. "

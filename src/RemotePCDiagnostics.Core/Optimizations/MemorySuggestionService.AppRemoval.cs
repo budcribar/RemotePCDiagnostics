@@ -1,6 +1,6 @@
 using RemotePCDiagnostics.Core.Changes;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// #3 / #8 / #10: removing allowlisted apps and the reversible settings that go with it. A removal whose every package has a verified Store id

@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Workflow;
 

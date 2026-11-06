@@ -1,4 +1,4 @@
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// Windows 11 Widgets (#16) and Search highlights (#17) state, read from the registry by the Host.

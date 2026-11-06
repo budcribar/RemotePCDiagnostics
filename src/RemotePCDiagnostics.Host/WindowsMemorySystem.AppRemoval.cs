@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using Microsoft.Win32;
 using RemotePCDiagnostics.Core.Changes;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 
 namespace RemotePCDiagnostics.Host;
 

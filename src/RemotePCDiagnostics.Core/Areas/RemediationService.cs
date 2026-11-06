@@ -30,7 +30,7 @@ public static class ProcessProtection
         var noExt = Path.GetFileNameWithoutExtension(trimmed);
         if (ProtectedNames.Contains(noExt)) return true;
         // Same list the Memory page uses ("this app and its web view", security, shell), so End task can't kill them either.
-        if (Memory.ProtectedProcesses.Names.Contains(trimmed) || Memory.ProtectedProcesses.Names.Contains(noExt)) return true;
+        if (Optimizations.ProtectedProcesses.Names.Contains(trimmed) || Optimizations.ProtectedProcesses.Names.Contains(noExt)) return true;
         return ServiceProtection.IsSelfComponent(trimmed);
     }
 }

@@ -4,7 +4,7 @@ using PeakSWC.RemoteWebView;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Plugins;
 using RemotePCDiagnostics.Core.Security;
@@ -46,15 +46,15 @@ public static class HostServices
         // One Windows memory/startup adapter for the whole app (undo and memory suggestions share it).
         services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), L<WindowsMemorySystem>()));
         // Its role interfaces resolve to the same instance, so a consumer can take only the part it uses.
-        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IMemoryProbe>(sp => sp.GetRequiredService<IMemorySystem>());
-        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IAppControl>(sp => sp.GetRequiredService<IMemorySystem>());
-        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IServiceConfig>(sp => sp.GetRequiredService<IMemorySystem>());
-        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IBrowserSettings>(sp => sp.GetRequiredService<IMemorySystem>());
-        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IRegistryTweaks>(sp => sp.GetRequiredService<IMemorySystem>());
-        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IPowerConfig>(sp => sp.GetRequiredService<IMemorySystem>());
-        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IStorageCleanupSystem>(sp => sp.GetRequiredService<IMemorySystem>());
-        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IDefenderConfig>(sp => sp.GetRequiredService<IMemorySystem>());
-        services.AddSingleton<RemotePCDiagnostics.Core.Memory.IAppManagementSystem>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IMemoryProbe>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IAppControl>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IServiceConfig>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IBrowserSettings>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IRegistryTweaks>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IPowerConfig>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IStorageCleanupSystem>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IDefenderConfig>(sp => sp.GetRequiredService<IMemorySystem>());
+        services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IAppManagementSystem>(sp => sp.GetRequiredService<IMemorySystem>());
         // Last retrim per SSD volume: Windows' Defrag event 258 plus this app's own record (retrim.json), so Drive health only offers it when needed.
         services.AddSingleton(_ => new RetrimLog(RetrimLog.DefaultPath(), L<RetrimLog>()));
         services.AddSingleton<IRetrimHistory>(sp => new RetrimHistory(sp.GetRequiredService<RetrimLog>(), new WindowsRetrimEvents(L<WindowsRetrimEvents>()), L<RetrimHistory>()));
@@ -106,10 +106,10 @@ public static class HostServices
             new RemotePCDiagnostics.Core.Preferences.FilePreferencesStore(RemotePCDiagnostics.Core.Preferences.FilePreferencesStore.DefaultPath(), L<RemotePCDiagnostics.Core.Preferences.FilePreferencesStore>())));
         services.AddSingleton(sp => new ChecksScreenState(sp.GetRequiredService<DiagnosticsService>(), sp.GetRequiredService<ResultStore>(),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Preferences.PreferencesService>(),
-            sp.GetRequiredService<RemotePCDiagnostics.Core.Memory.MemorySuggestionService>()));
-        services.AddSingleton(sp => new RemotePCDiagnostics.Core.Memory.MemorySuggestionService(
+            sp.GetRequiredService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>()));
+        services.AddSingleton(sp => new RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService(
             sp.GetRequiredService<IMemorySystem>(), sp.GetRequiredService<ServicesModule>(), sp.GetRequiredService<ServiceActionService>(),
-            sp.GetRequiredService<ISessionContext>(), (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.MemorySuggestion, level, text), L<RemotePCDiagnostics.Core.Memory.MemorySuggestionService>(),
+            sp.GetRequiredService<ISessionContext>(), (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.MemorySuggestion, level, text), L<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(),
             remediation: sp.GetRequiredService<RemediationService>(), journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
         // Before/after performance benchmarks (state saved so the "before" survives a restart; event 1500).
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Benchmarks.BenchmarkService(
@@ -123,13 +123,13 @@ public static class HostServices
             sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>(),
             new WindowsWorkflowSystem(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), L<WindowsWorkflowSystem>()),
             new RemotePCDiagnostics.Core.Workflow.FileWorkflowStore(RemotePCDiagnostics.Core.Workflow.FileWorkflowStore.DefaultPath(), L<RemotePCDiagnostics.Core.Workflow.FileWorkflowStore>()),
-            sp.GetRequiredService<RemotePCDiagnostics.Core.Memory.MemorySuggestionService>(), sp.GetRequiredService<ISessionContext>(),
+            sp.GetRequiredService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(), sp.GetRequiredService<ISessionContext>(),
             (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Workflow, level, text), L<RemotePCDiagnostics.Core.Workflow.WorkflowService>(),
             journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(),
             prefs: sp.GetRequiredService<RemotePCDiagnostics.Core.Preferences.PreferencesService>()));
         // The optional host services pages may use (instead of injecting IServiceProvider).
         services.AddSingleton(sp => new RemotePCDiagnostics.UI.AppServices(sp.GetService<RemediationService>(), sp.GetService<ServiceActionService>(),
-            sp.GetService<RemotePCDiagnostics.Core.Memory.MemorySuggestionService>(), sp.GetService<RemotePCDiagnostics.Core.Areas.ICopilotHandoff>(),
+            sp.GetService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(), sp.GetService<RemotePCDiagnostics.Core.Areas.ICopilotHandoff>(),
             sp.GetService<RemotePCDiagnostics.Core.Preferences.PreferencesService>(), sp.GetService<RemotePCDiagnostics.Core.Workflow.WorkflowService>(),
             sp.GetService<PluginRegistrar>(), sp.GetService<IModuleUiFrames>()));
         // History page reads past results (event 1100) back from the Windows Event Log.

@@ -1,6 +1,6 @@
 using RemotePCDiagnostics.Core.Areas;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>Processes the app never offers to close (Windows core, security, shell, this app and its web view).</summary>
 public static class ProtectedProcesses

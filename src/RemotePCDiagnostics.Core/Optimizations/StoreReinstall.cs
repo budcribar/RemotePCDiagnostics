@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using RemotePCDiagnostics.Core.Changes;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>The one winget command undo runs for a removed Store app. Built only by <see cref="StoreReinstall.CommandFor"/>.</summary>
 public sealed record WingetCommand(string StoreId, IReadOnlyList<string> Arguments)

@@ -1,7 +1,7 @@
 using System.Text.Json;
 using NuGet.Versioning;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// Read-only candidates for removal from ~/.nuget/packages. A version is a candidate only when all of these hold:

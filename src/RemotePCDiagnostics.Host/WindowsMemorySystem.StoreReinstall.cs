@@ -5,7 +5,7 @@ using System.Security.Principal;
 using System.Text;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 
 namespace RemotePCDiagnostics.Host;
 

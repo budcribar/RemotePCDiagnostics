@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// Microsoft Defender state for the "stop scanning code and build folders" fix.

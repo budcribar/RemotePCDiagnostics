@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.IO.Enumeration;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 
 namespace RemotePCDiagnostics.Core.Storage;
 

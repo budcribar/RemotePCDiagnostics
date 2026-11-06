@@ -1,5 +1,5 @@
 using RemotePCDiagnostics.Core.Areas;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 
 namespace RemotePCDiagnostics.Core.Changes;
 

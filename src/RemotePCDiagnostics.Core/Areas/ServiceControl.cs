@@ -58,7 +58,7 @@ public static class ServiceProtection
     public static ServiceControlOptions For(ServiceInfo s, bool isDriver = false)
     {
         // The collector is Manual-only throughout the app; generic service controls must not bypass that policy.
-        var collector = Memory.MemorySuggestionEngine.IsVisualStudioCollector(s.Name);
+        var collector = Optimizations.MemorySuggestionEngine.IsVisualStudioCollector(s.Name);
         var locked = isDriver || IsProtected(s.Name) || IsSelfComponent(s.Name) || collector;
         var running = s.IsRunning;
         var stopped = s.IsStopped;
@@ -135,7 +135,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         string? warning = deps.Count == 0 ? null : action == ServiceAction.Stop
             ? $"These running services depend on it and will also be stopped: {string.Join(", ", deps.Select(d => d.Label))}."
             : $"These running services depend on it and will be stopped and started again: {string.Join(", ", deps.Select(d => d.Label))}.";
-        if (!allowed) warning = Memory.MemorySuggestionEngine.IsVisualStudioCollector(s.Name) ? "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector." : opts.IsProtected ? $"{s.Label} is protected by Windows and can't be changed from here." : $"{s.Label} can't be {Past(action)} right now.";
+        if (!allowed) warning = Optimizations.MemorySuggestionEngine.IsVisualStudioCollector(s.Name) ? "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector." : opts.IsProtected ? $"{s.Label} is protected by Windows and can't be changed from here." : $"{s.Label} can't be {Past(action)} right now.";
         return new(action, $"{Verb(action)} {s.Label}?", what, happen, deps, warning, allowed);
     }
 
@@ -155,7 +155,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         if (!allowed)
         {
             Log($"Refused {action} of '{s.Name}': protected={opts.IsProtected} status={s.Status} startType={s.StartType}");
-            result = new(false, Memory.MemorySuggestionEngine.IsVisualStudioCollector(s.Name) ? "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector." : opts.IsProtected ? $"{s.Label} is protected by Windows and can't be {Past(action)} from here." : $"{s.Label} can't be {Past(action)} right now.", SafeState(s.Name));
+            result = new(false, Optimizations.MemorySuggestionEngine.IsVisualStudioCollector(s.Name) ? "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector." : opts.IsProtected ? $"{s.Label} is protected by Windows and can't be {Past(action)} from here." : $"{s.Label} can't be {Past(action)} right now.", SafeState(s.Name));
         }
         else
         {

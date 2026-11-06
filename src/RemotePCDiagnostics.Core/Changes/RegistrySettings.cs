@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 
 namespace RemotePCDiagnostics.Core.Changes;
 

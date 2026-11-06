@@ -1,4 +1,4 @@
-namespace RemotePCDiagnostics.Core.Memory;
+namespace RemotePCDiagnostics.Core.Optimizations;
 
 /// <summary>
 /// #14: "wsl --shutdown" on the live memory page only (never in the unattended workflow: the workflow restarts the PC anyway).
