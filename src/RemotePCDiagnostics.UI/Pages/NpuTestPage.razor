@@ -46,7 +46,7 @@ else
         </div>
         <table class="detail" data-testid="npu-table">
             <tr><th>Workload</th><td>@rep.MatrixSize × @rep.MatrixSize float32 matrix multiply, @((int)rep.Budget.TotalSeconds) s</td></tr>
-            <tr><th>CPU reference</th><td>@(rep.Devices.FirstOrDefault()?.CpuAverageMs is { } c ? $"{c:0.###} ms per multiply (one core)" : "–")</td></tr>
+            <tr><th>CPU reference</th><td>@(rep.Devices.FirstOrDefault()?.CpuAverageMs is { } c ? $"{RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(c)} ms per multiply (one core)" : "–")</td></tr>
         </table>
     }
     else if (!running && rep is null)
@@ -80,7 +80,7 @@ else
         <div class="card" data-testid="npu-card">
             <div class="card-head"><span class="dot dot-@dot"></span><strong>@d.Device.Name</strong></div>
             <div class="headline">@(d.Gflops is { } g ? $"{g:0.0} GFLOPS" : d.Verdict.ToString())</div>
-            <CardList Items="@([ d.Device.Vendor, $"Driver {d.Device.DriverVersion ?? "unknown"}", d.Device.ProblemCode is { } c ? NpuDetection.ProblemText(c) : d.Device.Status ?? "status unknown", d.AverageMs is { } avg ? $"{d.Iterations} runs · {avg:0.###} ms each · first {d.FirstRunMs:0.#} ms{(d.MaxAbsError is { } e ? $" · max error {e:0.######}" : "")}" : null, d.Adapter is { } a ? $"Ran on: {a}" : null, d.Message ])" />
+            <CardList Items="@([ d.Device.Vendor, $"Driver {d.Device.DriverVersion ?? "unknown"}", d.Device.ProblemCode is { } c ? NpuDetection.ProblemText(c) : d.Device.Status ?? "status unknown", d.AverageMs is { } avg ? $"{d.Iterations} runs · {RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(avg)} ms each · first {(d.FirstRunMs is { } first ? RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(first) : "—")} ms{(d.MaxAbsError is { } e ? $" · max error {e:0.##e+0}" : "")}" : null, d.Adapter is { } a ? $"Ran on: {a}" : null, d.Message ])" />
 
 
 

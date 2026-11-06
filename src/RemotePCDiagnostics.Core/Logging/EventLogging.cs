@@ -189,7 +189,7 @@ public sealed class ResultEventLogger
                 break;
             case SensorReport rep:
                 foreach (var g in rep.Groups.Where(g => g.Readings.Count > 0))
-                    sb.AppendLine($"  {g.Title}: " + string.Join("; ", g.Readings.Select(e => $"{e.Reading.FriendlyName}={e.Reading.Value?.ToString("0.#", CultureInfo.InvariantCulture)} {e.Reading.Unit}{(e.Reading.Max is { } mx ? $" (max {mx.ToString("0.#", CultureInfo.InvariantCulture)})" : "")}").Take(12)));
+                    sb.AppendLine($"  {g.Title}: " + string.Join("; ", g.Readings.Select(e => $"{e.Reading.FriendlyName}={e.Reading.Value?.ToString("0", CultureInfo.InvariantCulture)} {e.Reading.Unit}{(e.Reading.Max is { } mx ? $" (max {mx.ToString("0", CultureInfo.InvariantCulture)})" : "")}").Take(12)));
                 break;
             default: AppendScalars(sb, payload); break;
         }
@@ -222,7 +222,7 @@ public sealed class ResultEventLogger
                 return list;
             case SensorReport rep:
                 foreach (var g in rep.Groups.Where(g => g.Readings.Count > 0 && g.Id != "fans"))
-                    if (g.Hottest is { } h) list.Add(($"Hottest {g.Title}", h.ToString("0.#", CultureInfo.InvariantCulture)));
+                    if (g.Hottest is { } h) list.Add(($"Hottest {g.Title}", History.MeasurementFormat.Round("Hottest", h)));
                 var fans = rep.Groups.FirstOrDefault(g => g.Id == "fans")?.Readings.Count ?? 0;
                 list.Add(("Fans", fans.ToString(CultureInfo.InvariantCulture)));
                 return list;
@@ -235,8 +235,8 @@ public sealed class ResultEventLogger
             string? text = v switch
             {
                 null => null,
-                double dv => dv.ToString("0.###", CultureInfo.InvariantCulture),
-                float fv => fv.ToString("0.###", CultureInfo.InvariantCulture),
+                double dv => History.MeasurementFormat.Round(p.Name, dv),
+                float fv => History.MeasurementFormat.Round(p.Name, fv),
                 decimal or int or long or short or byte or uint or ulong => Convert.ToString(v, CultureInfo.InvariantCulture),
                 bool b => b ? "yes" : "no",
                 Enum e => e.ToString(),

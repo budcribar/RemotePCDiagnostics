@@ -406,7 +406,7 @@ public static class HistoryQuery
               .Append(Q(e.InstanceId)).Append(',').Append(Q(e.Instance)).Append(',')
               .Append(Q(e.TimeUtc.ToString("O", CultureInfo.InvariantCulture))).Append(',').Append(Q(e.Outcome)).Append(',')
               .Append(Q(e.Summary)).Append(',').Append(e.DurationSeconds?.ToString(CultureInfo.InvariantCulture)).Append(',').Append(Q(e.Suite)).Append(',')
-              .Append(Q(string.Join("; ", e.Measurements.Select(m => $"{m.Name}={m.Value}")))).Append(',').Append(Q(e.Machine)).Append(',').Append(Q(e.AppVersion)).Append('\n');
+              .Append(Q(string.Join("; ", e.Measurements.Select(m => $"{m.Name}={MeasurementFormat.Round(m.Name, m.Value)}")))).Append(',').Append(Q(e.Machine)).Append(',').Append(Q(e.AppVersion)).Append('\n');
         }
         return sb.ToString();
     }

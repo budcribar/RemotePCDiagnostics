@@ -175,13 +175,13 @@ else
                 <div class="card">
                     <div class="card-head"><strong>@t.Test</strong></div>
                     <div class="meta">@t.Key.Label, last @t.Points.Count run(s)</div>
-                    <div class="trend" role="img" aria-label="@($"{t.Key.Label}: {string.Join(", ", t.Points.Select(p => p.Value.ToString("0.#")))} {t.Key.Unit}")">
+                    <div class="trend" role="img" aria-label="@($"{t.Key.Label}: {string.Join(", ", t.Points.Select(p => MeasurementFormat.Display(t.Key.Name, p.Value)))} {t.Key.Unit}")">
                         @foreach (var p in t.Points)
                         {
-                            <span style="height:@((max > 0 ? Math.Max(5, p.Value / max * 100) : 5).ToString("0", System.Globalization.CultureInfo.InvariantCulture))%" title="@($"{p.Time.ToLocalTime():g}: {p.Value:0.#} {t.Key.Unit}")"></span>
+                            <span style="height:@((max > 0 ? Math.Max(5, p.Value / max * 100) : 5).ToString("0", System.Globalization.CultureInfo.InvariantCulture))%" title="@($"{p.Time.ToLocalTime():g}: {MeasurementFormat.Display(t.Key.Name, p.Value)} {t.Key.Unit}")"></span>
                         }
                     </div>
-                    <div class="meta">Latest: @t.Points[^1].Value.ToString("0.#") @t.Key.Unit</div>
+                    <div class="meta">Latest: @MeasurementFormat.Display(t.Key.Name, t.Points[^1].Value) @t.Key.Unit</div>
                 </div>
             }
         </div>
@@ -257,7 +257,7 @@ else
                             @if (HistoryPresentation.Measurements(entry).Count > 0)
                             {
                                 <div class="meta"><strong>Measurements</strong></div>
-                                <ul>@foreach (var m in HistoryPresentation.Measurements(entry)) { <li>@HistoryLabels.Measurement(m.Name): @m.Value</li> }</ul>
+                                <ul>@foreach (var m in HistoryPresentation.Measurements(entry)) { <li>@HistoryLabels.Measurement(m.Name): @MeasurementFormat.Display(m.Name, m.Value)</li> }</ul>
                             }
                             @if (HistoryPresentation.Details(entry) is { Count: > 0 } det)
                             {

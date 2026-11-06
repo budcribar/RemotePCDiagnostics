@@ -59,7 +59,7 @@ public sealed class HistoryTests
         Assert.Equal("PC1 (LENOVO 82R4)", e.Machine);
         Assert.Equal("1.2.3", e.AppVersion);
         Assert.Equal(r.Timestamp.UtcDateTime, e.TimeUtc.UtcDateTime);
-        Assert.Equal("81.5", e.Measurement("MaxCpuTemperatureC"));
+        Assert.Equal("82", e.Measurement("MaxCpuTemperatureC")); // written rounded to the whole degree
         Assert.Null(e.Measurement("Note"));
     }
 
