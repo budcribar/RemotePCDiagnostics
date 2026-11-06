@@ -168,6 +168,10 @@ public sealed class DiagnosticsService
             ? !_detections.TryGetValue(m.Id, out var d) || d.Applies // one read: detection may finish meanwhile
             : IsVisible(m)));
 
+    /// <summary>True when <see cref="RunAsync(string, IProgress{string}?, CancellationToken)"/> would accept the module: unlike
+    /// <see cref="Modules"/> this includes a detectable module whose detection hasn't finished yet (the run waits for it).</summary>
+    public bool CanRun(string moduleName) => FindRunnable(moduleName) is not null;
+
     private IDiagnosticModule? FindRunnable(string moduleName) =>
         Runnable.FirstOrDefault(m => string.Equals(m.Name, moduleName, StringComparison.OrdinalIgnoreCase));
 

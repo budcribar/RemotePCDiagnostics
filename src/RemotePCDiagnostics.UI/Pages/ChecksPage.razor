@@ -19,8 +19,10 @@
 }
 <div class="ct-page">
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="dash" Size="20" /></span><h1 data-testid="checks-title">@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")</h1>
-        <button class="btn-small" data-testid="checks-expand-all" @onclick="() => Screen.SetAllCollapsed(false)">Expand all</button>
-        <button class="btn-small" data-testid="checks-collapse-all" @onclick="() => Screen.SetAllCollapsed(true)">Collapse all</button>
+        <span class="ct-expand-group">
+            <button class="btn-small" data-testid="checks-expand-all" @onclick="() => Screen.SetAllCollapsed(false)">Expand all</button>
+            <button class="btn-small" data-testid="checks-collapse-all" @onclick="() => Screen.SetAllCollapsed(true)">Collapse all</button>
+        </span>
     </div>
     @if (_group == CheckGroup.Stress || Screen.Progress is not null)
     {
@@ -213,7 +215,7 @@
                                 }
                             </div>
                             <div class="ct-row-side">
-                                <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-status-@m.Name.ToLowerInvariant()">@(prev is not null ? "Not run this session" : label)</span>
+                                <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-status-@m.Name.ToLowerInvariant()">@(prev is not null ? "Earlier result" : label)</span>
                                 <span class="meta">@SideText(m, r, kind)</span>
                             </div>
                         </div>

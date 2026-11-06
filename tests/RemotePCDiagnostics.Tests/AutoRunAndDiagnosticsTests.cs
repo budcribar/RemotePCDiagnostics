@@ -31,6 +31,28 @@ public class AutoRunTests
         Assert.Equal(DiagnosticStatus.Ok, store.Get("Osquery").Status);
     }
 
+    private sealed class SlowDetectModule(string name, Task<ModuleDetection> detection) : IDetectableModule
+    {
+        public string Name => name;
+        public Guid Id => TestIds.For(name);
+        public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
+        public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
+        public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default) => Task.FromResult(FakeModule.Ok(name));
+        public Task<ModuleDetection> DetectAsync(CancellationToken ct = default) => detection;
+    }
+
+    [Fact]
+    public void Start_IncludesDetectableModule_WhoseDetectionIsStillRunning()
+    {
+        // Drive health detects its drives at launch; auto-run used to skip it because Modules hides it until detection finishes.
+        var detection = new TaskCompletionSource<ModuleDetection>();
+        var svc = new DiagnosticsService(new ResultStore(), [new SlowDetectModule("SlowDetect", detection.Task)]);
+        Assert.DoesNotContain(svc.Modules, m => m.Name == "SlowDetect");
+        var tasks = AutoRun.Start(svc, _ => null, null, "SlowDetect");
+        Assert.Single(tasks);
+        detection.SetResult(ModuleDetection.NotApplicable("none here"));
+    }
+
     [Fact]
     public void Start_Disabled_DoesNothing()
     {

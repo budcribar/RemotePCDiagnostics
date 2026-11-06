@@ -637,3 +637,8 @@ table.detail tr.row-detail td { white-space: normal; }
   .dash-controls .banner-actions .btn { flex-basis: 100%; }
 }
 .wf-done-actions { justify-content: flex-start; align-items: center; gap: 12px; margin: 8px 0; } .wf-done-actions .btn-outline { width: auto; }
+/* Checks / Stress: Expand all + Collapse all stay together (they split onto two rows on phones). */
+.ct-expand-group { display: inline-flex; gap: 8px; flex-wrap: nowrap; }
+/* Details head: "Run just this" moves under the title when the panel is narrow, instead of squeezing the title (inventory lines wrapped at ~200px). */
+.ct-detail-head { flex-wrap: wrap; }
+.ct-detail-title { flex: 1 1 260px; }
