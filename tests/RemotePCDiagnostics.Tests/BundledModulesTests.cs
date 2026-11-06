@@ -133,7 +133,7 @@ public sealed class BundledModulesTests : IDisposable
         var record = Assert.Single(registrar.Records);
         Assert.Equal(PluginState.Disabled, record.State);
         Assert.Contains("not a module that ships with this app", record.Reason);
-        Assert.Empty(services.Where(d => d.ServiceType == typeof(IDiagnosticModule)));
+        Assert.DoesNotContain(services, d => d.ServiceType == typeof(IDiagnosticModule));
     }
 
     [Fact]
@@ -153,7 +153,7 @@ public sealed class BundledModulesTests : IDisposable
         File.Copy(Dll("RemotePCDiagnostics.Modules.Programs.dll"), Path.Combine(Plugins, "RemotePCDiagnostics.Modules.Programs.dll"));
         var (_, registrar, services) = Load(bundled: Plugins);
         Assert.Empty(registrar.Records);
-        Assert.Empty(services.Where(d => d.ServiceType == typeof(IDiagnosticModule)));
+        Assert.DoesNotContain(services, d => d.ServiceType == typeof(IDiagnosticModule));
     }
 
     [Fact]
