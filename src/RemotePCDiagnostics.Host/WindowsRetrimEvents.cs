@@ -10,7 +10,7 @@ namespace RemotePCDiagnostics.Host;
 /// from the event data ("(C:)", "Windows (C:)", "C:"), not from the English message; an event whose operation names defragmentation
 /// is skipped (on SSDs Windows' scheduled optimization is a retrim).
 /// </summary>
-public sealed partial class WindowsRetrimEvents(Action<string>? log = null) : IWindowsRetrimEvents
+public sealed partial class WindowsRetrimEvents(ILogger? log = null) : IWindowsRetrimEvents
 {
     public const string Provider = "Microsoft-Windows-Defrag";
     public const int EventId = 258, MaxEvents = 500;
@@ -34,7 +34,7 @@ public sealed partial class WindowsRetrimEvents(Action<string>? log = null) : IW
                 foreach (var c in Letters(data)) list.Add((c, new DateTimeOffset(t)));
             }
         }
-        catch (Exception ex) { log?.Invoke($"retrim events (Application/{Provider}/{EventId}) unreadable: {ex.Message}"); }
+        catch (Exception ex) { log.Info($"retrim events (Application/{Provider}/{EventId}) unreadable: {ex.Message}"); }
         return list;
     }
 

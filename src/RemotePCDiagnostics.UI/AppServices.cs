@@ -1,5 +1,5 @@
 using RemotePCDiagnostics.Core.Areas;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Plugins;
 using RemotePCDiagnostics.Core.Preferences;
 using RemotePCDiagnostics.Core.Workflow;

@@ -27,7 +27,7 @@ public sealed class SecurityAuditTests : IDisposable
             ModuleFolder = Path.Combine(_dir, "hk"), PowerShellPath = Path.Combine(_dir, "powershell.exe"),
             FileExists = p => p.EndsWith(".psd1") ? toolPresent : p.EndsWith("powershell.exe") ? psPresent : File.Exists(p),
             ReportPathFactory = () => ReportPath, IsAdministrator = () => admin,
-            Timeout = timeout ?? TimeSpan.FromMinutes(5), Log = s => { lock (_log) _log.Add(s); },
+            Timeout = timeout ?? TimeSpan.FromMinutes(5), Log = new LineLogger(s => { lock (_log) _log.Add(s); }),
         }, l);
 
     private ScriptedLauncher WritesReport(string csv) => new((_, args) =>

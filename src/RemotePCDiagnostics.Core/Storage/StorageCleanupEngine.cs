@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.IO.Enumeration;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 
 namespace RemotePCDiagnostics.Core.Storage;
 
@@ -14,7 +14,7 @@ public sealed record StorageRoots(string UserProfile, string LocalAppData, strin
 }
 
 /// <param name="ProjectRoots">Code folders found on this PC (only the NuGet rule uses them, to keep referenced package versions).</param>
-public sealed record StorageScanContext(StorageRoots Roots, IReadOnlyList<string> ProjectRoots, DateTime UtcNow, Action<string>? Log = null);
+public sealed record StorageScanContext(StorageRoots Roots, IReadOnlyList<string> ProjectRoots, DateTime UtcNow, ILogger? Log = null);
 
 public enum StorageTargetMode
 {
@@ -318,7 +318,7 @@ public static class StorageCleanupEngine
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            ctx.Log?.Invoke($"[storage] {c.Id}: couldn't evaluate the rule: {ex.Message}");
+            ctx.Log.Warn($"[storage] {c.Id}: couldn't evaluate the rule: {ex.Message}");
             return StorageCleanResult.NotRun(c.Id, "Couldn't check what to delete, so nothing was deleted.");
         }
 
@@ -329,12 +329,12 @@ public static class StorageCleanupEngine
             if (!IsAllowed(t, allowed, ctx.Roots, out var why))
             {
                 tally.Refused++;
-                ctx.Log?.Invoke($"[storage] {c.Id}: refused {t.Path}: {why}");
+                ctx.Log.Info($"[storage] {c.Id}: refused {t.Path}: {why}");
                 continue;
             }
             Delete(t, tally, ct);
         }
-        ctx.Log?.Invoke($"[storage] {c.Id}: removed {tally.Files} files ({tally.Bytes} bytes); in use {tally.InUse}, links {tally.Links}, protected {tally.Protected}, refused {tally.Refused}");
+        ctx.Log.Info($"[storage] {c.Id}: removed {tally.Files} files ({tally.Bytes} bytes); in use {tally.InUse}, links {tally.Links}, protected {tally.Protected}, refused {tally.Refused}");
         return new(c.Id, true, tally.Files, tally.Bytes, tally.InUse, Describe(tally), Refused: tally.Refused, LinksSkipped: tally.Links);
     }
 

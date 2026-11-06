@@ -107,7 +107,7 @@ public class GpuStressTests
     {
         var dev = new FakeGpuDevice { LoseAtBatch = 4 };
         var logs = new List<string>();
-        var r = await new GpuStressTest(FakeGpuFactory.With(dev), SequenceSensorProvider.Unavail(), new FakeStressClock(), logs.Add).RunAsync(Opts());
+        var r = await new GpuStressTest(FakeGpuFactory.With(dev), SequenceSensorProvider.Unavail(), new FakeStressClock(), new LineLogger(logs.Add)).RunAsync(Opts());
         Assert.Equal(GpuStressOutcome.DriverReset, r.Outcome);
         Assert.Equal("Graphics driver stopped responding", r.Headline);
         Assert.DoesNotContain("0x", r.Explanation);

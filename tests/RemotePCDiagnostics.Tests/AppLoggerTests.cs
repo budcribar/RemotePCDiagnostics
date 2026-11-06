@@ -42,6 +42,31 @@ public sealed class AppLoggerTests
     }
 
     [Fact]
+    public void Plain_lines_keep_the_level_of_the_call_and_their_text_as_is()
+    {
+        var log = Factory.CreateLogger("RemotePCDiagnostics.Core.X");
+        log.Info("Scan failed to find anything {not a template}");
+        log.Warn("Disk is hot");
+        log.Error("Gone");
+        log.Line("Restore failed: access denied"); // wording from elsewhere: level read from the text
+        Assert.Equal([AppLevel.Information, AppLevel.Warning, AppLevel.Error, AppLevel.Warning], _lines.Select(l => l.Level));
+        Assert.Equal("Scan failed to find anything {not a template}", _lines[0].Message);
+        ILogger? none = null;
+        none.Info("nothing happens");
+    }
+
+    [Fact]
+    public void LineLogger_bridges_text_callbacks()
+    {
+        var lines = new List<string>();
+        var log = new LineLogger(lines.Add);
+        log.Warn("one");
+        log.Line("two failed: x");
+        Assert.Equal(["one", "two failed: x"], lines);
+        Assert.Null(LineLogger.From(null));
+    }
+
+    [Fact]
     public void From_writes_short_category_lines_to_an_action_log()
     {
         var lines = new List<string>();

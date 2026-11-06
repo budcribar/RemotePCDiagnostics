@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Plugins;
@@ -15,7 +16,7 @@ public sealed class SampleModulePlugin : IModulePlugin
 }
 
 /// <summary>Reports how long Windows has been running. Reads only, changes nothing, needs no administrator.</summary>
-public sealed class UptimeModule(Action<string>? log) : AreaModuleBase(log)
+public sealed class UptimeModule(ILogger? log) : AreaModuleBase(log)
 {
     public override Guid Id => SampleModulePlugin.Id;
     public override string Name => "sample.uptime";

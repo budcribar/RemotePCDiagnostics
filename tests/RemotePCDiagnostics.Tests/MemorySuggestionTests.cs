@@ -1,6 +1,6 @@
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Logging;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Tests;
@@ -618,14 +618,15 @@ public class MemorySuggestionTests
     public async Task Restart_UsesRemediation_FastStartupToo()
     {
         var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
-        var rem = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Remote));
+        var settings = new FakeSystemSettings();
+        var rem = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Remote), settings: settings);
         var snap = Snap() with { Uptime = TimeSpan.FromHours(8), FastStartup = true };
         var (svc, _, _) = Make(snap, remediation: rem);
         await svc.ScanAsync();
         var s = svc.Suggestions.Single(x => x.Id == "restart");
         var r = await svc.ApplyAsync(s, s.Actions.Single(a => a.Type == MemoryActionType.DisableFastStartup));
         Assert.True(r.Success);
-        Assert.Contains(launcher.Calls, c => c.Args.Any(x => x.Contains("HiberbootEnabled")));
+        Assert.Contains("fast-startup=0", settings.Calls);
         Assert.Contains(rem.Recent, x => x.Kind == RemediationKind.DisableFastStartup);
         var (noRem, _, _) = Make(snap);
         await noRem.ScanAsync();

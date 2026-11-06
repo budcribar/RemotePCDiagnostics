@@ -64,7 +64,7 @@ public sealed record BootRecord(DateTimeOffset Time, double BootSeconds, double?
 }
 
 /// <summary>Runs the enabled benchmarks in a fixed order (quiet measurements first) and returns one run.</summary>
-public sealed class BenchmarkRunner(IBenchmarkProbes probes, Action<string>? log = null, Func<string, CancellationToken, Task>? resolve = null,
+public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null, Func<string, CancellationToken, Task>? resolve = null,
     Func<TimeSpan, CancellationToken, Task>? delay = null)
 {
     private readonly Func<TimeSpan, CancellationToken, Task> wait = delay ?? new Func<TimeSpan, CancellationToken, Task>(Task.Delay);
@@ -73,7 +73,7 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, Action<string>? log
         ["microsoft.com", "google.com", "amazon.com", "wikipedia.org", "apple.com", "cloudflare.com", "github.com", "bing.com", "yahoo.com", "netflix.com"];
     public static readonly TimeSpan LookupTimeout = TimeSpan.FromSeconds(3);
 
-    private void Log(string m) { try { log?.Invoke("[benchmark] " + m); } catch { } }
+    private void Log(string m) => log.Info("[benchmark] " + m);
 
     public async Task<BenchmarkRun> RunAsync(BenchmarkPhase phase, BenchmarkSettings settings, DateTimeOffset? beforeTime, IProgress<string>? progress, CancellationToken ct,
         DateTimeOffset? bootsSince = null)

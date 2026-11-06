@@ -82,7 +82,7 @@ public class GpuTemperatureFallbackTests
         var empty = FakeGpuTempSource.Of("empty", (Radeon, 0));
         var good = FakeGpuTempSource.Of("good", (Radeon, 61));
         var later = FakeGpuTempSource.Of("later", (Radeon, 99));
-        var list = GpuTemperatureFallback.Apply([], [broken, empty, good, later], logs.Add);
+        var list = GpuTemperatureFallback.Apply([], [broken, empty, good, later], new LineLogger(logs.Add));
         Assert.Equal(61, Assert.Single(list).Value);
         Assert.Equal(0, later.Calls);
         Assert.Contains(logs, l => l.Contains("broken failed: boom"));
@@ -94,7 +94,7 @@ public class GpuTemperatureFallbackTests
     {
         Assert.Single(GpuTemperatureFallback.Apply([Cpu(60)], null));
         var logs = new List<string>();
-        Assert.Single(GpuTemperatureFallback.Apply([Cpu(60)], [FakeGpuTempSource.Of("x")], logs.Add));
+        Assert.Single(GpuTemperatureFallback.Apply([Cpu(60)], [FakeGpuTempSource.Of("x")], new LineLogger(logs.Add)));
         Assert.Contains(logs, l => l.Contains("no source"));
     }
 

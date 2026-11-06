@@ -134,10 +134,14 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      # The standalone prototypes live outside RemotePCDiagnostics.sln (tools/prototypes/Prototypes.slnx); build them so they keep compiling.
+      - name: Build prototypes
+        run: dotnet build tools/prototypes/Prototypes.slnx -c Release
+
       - name: Publish OutlookBenchmark (single exe)
         shell: pwsh
         run: |
-          dotnet publish src/OutlookBenchmark/OutlookBenchmark.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts/OutlookBenchmark
+          dotnet publish tools/prototypes/OutlookBenchmark/OutlookBenchmark.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts/OutlookBenchmark
           $exe = 'artifacts/OutlookBenchmark/OutlookBenchmark.exe'
           if (-not (Test-Path $exe)) { throw 'OutlookBenchmark.exe was not published' }
           # Smoke run on the runner (no Outlook there): inventory only, must exit 0 and write results.
@@ -149,7 +153,7 @@ jobs:
       - name: Publish network history prototype and test demo export
         shell: pwsh
         run: |
-          dotnet publish src/NetworkUsagePrototype/NetworkUsagePrototype.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts/NetworkUsagePrototype
+          dotnet publish tools/prototypes/NetworkUsagePrototype/NetworkUsagePrototype.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts/NetworkUsagePrototype
           if ($LASTEXITCODE -ne 0) { throw 'Network usage prototype publish failed' }
           Copy-Item docs/network-usage-prototype.md artifacts/NetworkUsagePrototype/README.md
           & artifacts/NetworkUsagePrototype/NetworkUsagePrototype.exe --demo --out artifacts/network-demo

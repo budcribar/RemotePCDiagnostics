@@ -291,7 +291,9 @@
             }
             else
             {
-                <DynamicComponent Type="PageFor(m)" Parameters="ParamsFor(m)" />
+                <CascadingValue Value="@Store.Get(m.Name)" Name="@RemotePCDiagnostics.Core.Plugins.ModuleDetails.LastResult">
+                    <DynamicComponent Type="PageFor(m)" Parameters="ParamsFor(m)" />
+                </CascadingValue>
             }
         </div>
     };

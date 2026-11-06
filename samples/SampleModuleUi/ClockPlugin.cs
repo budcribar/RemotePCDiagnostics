@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Plugins;
@@ -18,7 +19,7 @@ public sealed class ClockPlugin : IModulePlugin
 }
 
 /// <summary>Reports the PC's clock and time zone. Reads only, changes nothing, needs no administrator.</summary>
-public sealed class ClockModule(Action<string>? log) : AreaModuleBase(log)
+public sealed class ClockModule(ILogger? log) : AreaModuleBase(log)
 {
     public override Guid Id => ClockPlugin.Id;
     public override string Name => "sample.clock";

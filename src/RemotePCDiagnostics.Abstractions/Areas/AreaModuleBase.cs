@@ -1,7 +1,7 @@
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>Base for card/drawer diagnostic areas. Never lets a collection exception reach the UI as raw text.</summary>
-public abstract class AreaModuleBase(Action<string>? log) : IDiagnosticModule
+public abstract class AreaModuleBase(ILogger? log) : IDiagnosticModule
 {
     public abstract string Name { get; }
     public abstract Guid Id { get; }
@@ -20,7 +20,7 @@ public abstract class AreaModuleBase(Action<string>? log) : IDiagnosticModule
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            Log($"{Name}: collection failed: {ex}");
+            LogError($"{Name}: collection failed: {ex}");
             report = AreaReport.Failed(FailedMessage);
         }
         return new DiagnosticResult<AreaReport>(Name, report.Status, report.Summary, DateTimeOffset.Now, report) { Cancelled = report.Cancelled };
@@ -28,7 +28,11 @@ public abstract class AreaModuleBase(Action<string>? log) : IDiagnosticModule
 
     protected abstract Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct);
 
-    protected void Log(string message) { try { log?.Invoke(message); } catch { /* logging never breaks a run */ } }
+    /// <summary>The module's logger (null: nothing is logged).</summary>
+    protected ILogger? Logger => log;
+    protected void Log(string message) => log.Info(message);
+    protected void LogWarn(string message) => log.Warn(message);
+    protected void LogError(string message) => log.Error(message);
 
     protected internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);
 

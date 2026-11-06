@@ -52,7 +52,7 @@ public static class ModuleSignature
 /// </summary>
 /// <param name="userMode">Makes the in-app stand-in for an unsigned module (a <see cref="UserModeModuleProxy"/>); null leaves user-mode
 /// modules listed in <see cref="UserMode"/> only.</param>
-public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar registrar, Action<string>? log = null,
+public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar registrar, ILogger? log = null,
     Func<UserModeModule, IDiagnosticModule>? userMode = null)
 {
     /// <summary>Modules found unsigned that may run in the user-mode module host (see <see cref="UserModeModule"/>).</summary>
@@ -155,10 +155,11 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
             File.WriteAllText(Path.Combine(dir, ModuleManifest.ResourceName), manifest.ToJson());
             foreach (var (name, bytes) in strings) File.WriteAllBytes(Path.Combine(dir, "strings", Path.GetFileName(name)), bytes);
         }
-        catch (Exception ex) { Log($"couldn't save {manifest.Slug} to the catalog: {ex.Message}"); }
+        catch (Exception ex) { LogWarn($"couldn't save {manifest.Slug} to the catalog: {ex.Message}"); }
     }
 
-    private void Log(string message) { try { log?.Invoke("Modules: " + message); } catch { } }
+    private void Log(string m) => log.Info("Modules: " + m);
+    private void LogWarn(string m) => log.Warn("Modules: " + m);
 }
 
 /// <summary>Registers one ready-made module (the user-mode stand-in).</summary>
@@ -171,12 +172,12 @@ internal sealed class SingleModulePlugin(IDiagnosticModule module) : IModulePlug
 public sealed record UserModeModule(string Path, ModuleManifest Manifest, ModuleDescriptor Descriptor);
 
 /// <summary>
-/// One load context per module. The contract assembly, DI abstractions and ASP.NET Components come from the host, so types match across
+/// One load context per module. The contract assembly, DI and logging abstractions and ASP.NET Components come from the host, so types match across
 /// the boundary; the module's own dependencies come from its embedded "lib/&lt;name&gt;.dll" resources.
 /// </summary>
 public sealed class ModuleLoadContext(string name, byte[] moduleBytes) : AssemblyLoadContext($"module:{name}", isCollectible: false)
 {
-    private static readonly string[] Shared = ["RemotePCDiagnostics.Abstractions", "Microsoft.Extensions.DependencyInjection.Abstractions", "Microsoft.AspNetCore.Components", "Microsoft.JSInterop"];
+    private static readonly string[] Shared = ["RemotePCDiagnostics.Abstractions", "Microsoft.Extensions.DependencyInjection.Abstractions", "Microsoft.Extensions.Logging.Abstractions", "Microsoft.AspNetCore.Components", "Microsoft.JSInterop"];
 
     protected override Assembly? Load(AssemblyName assemblyName)
     {

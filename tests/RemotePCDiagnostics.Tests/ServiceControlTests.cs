@@ -47,7 +47,7 @@ public class ServiceControlTests
     {
         var be = new FakeBackend();
         var log = new List<string>();
-        return (new ServiceActionService(be, new SessionContext(mode), log.Add, TimeSpan.FromSeconds(1)), be, log);
+        return (new ServiceActionService(be, new SessionContext(mode), new LineLogger(log.Add), TimeSpan.FromSeconds(1)), be, log);
     }
 
     [Theory]

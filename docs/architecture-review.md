@@ -32,7 +32,7 @@ Date: November 5, 2026
                     └──────────────────────────────────────────────────────────┘
 ```
 
-Not shown: Core also references `RemotePCDiagnostics.Agent.Core` (used by `ModuleLoader`), and `OsqueryRunner` and `SystemCommandRunner` live in Core and start processes through `IProcessLauncher`. The two prototypes (`OutlookBenchmark`, `NetworkUsagePrototype`) reference Core and are in the main solution.
+Not shown: Core also references `RemotePCDiagnostics.Agent.Core` (used by `ModuleLoader`), and `OsqueryRunner` and `SystemCommandRunner` live in Core and start processes through `IProcessLauncher`. The two prototypes (`OutlookBenchmark`, `NetworkUsagePrototype`) reference Core; they were in the main solution at the time of this review and are now in `tools/prototypes/Prototypes.slnx`.
 
 ---
 
@@ -72,7 +72,7 @@ Not shown: Core also references `RemotePCDiagnostics.Agent.Core` (used by `Modul
 ---
 
 ### 3.2 God-Object Growth in `IMemorySystem` / `WindowsMemorySystem`
-- **Where**: `src/RemotePCDiagnostics.Core/Memory/MemorySuggestionService.cs` (`IMemorySystem`, about 55 members, about 40 of them default-implemented) and `src/RemotePCDiagnostics.Host/WindowsMemorySystem.cs` (~1,630 lines across 3 partial files)
+- **Where**: `src/RemotePCDiagnostics.Core/Optimizations/MemorySuggestionService.cs` (`IMemorySystem`, about 55 members, about 40 of them default-implemented) and `src/RemotePCDiagnostics.Host/WindowsMemorySystem.cs` (~1,630 lines across 3 partial files)
 - **Observation**: Originally scoped to RAM and startup apps, `IMemorySystem` has become the catch-all OS abstraction for:
   - RAM & process working sets
   - Windows Services start types & delayed autostart
@@ -146,7 +146,7 @@ Updated November 5, 2026 (branch `claude/project-thread-4v3j0l`).
 | Module-name constants | Fixed | Every `ModuleName` points at `ModuleSlugs` |
 | 4.2 UI branches on concrete module types | Fixed | `IHasAreaPanels`, `IServiceRows`, `IHangEvidenceSource`, `ICancellableScan` in `Core/Areas/AreaCapabilities.cs` |
 | 3.2 `IMemorySystem` | Split | Nine role interfaces, each registered to the one `WindowsMemorySystem`; the restore helpers take only their role. Larger consumers (`MemorySuggestionService`, `UndoService`) still take `IMemorySystem`, and default methods still return "Not supported" |
-| 4.2 Logging | Started | `AppLoggerFactory` gives `ILogger<T>` with real levels; `ModuleUiFrames` and `RestrictedModuleHostLauncher` use it. About 70 files still take `Action<string>` |
-| 3.1 Two module instances | Open | |
-| 3.5 PowerShell one-liners | Open | |
+| 4.2 Logging | Done | Every class takes an `ILogger` (one category per class from `AppLoggerFactory`) and each call says its level (`Info`, `Warn`, `Error`). The plugin contract logs the same way: `AreaModuleBase`, `StressModuleBase`, `StressCleanup` and `IPluginContext.Log` take an `ILogger` (contract 2.0). The empty `catch { }` blocks are not reduced yet |
+| 3.1 Two module instances | Fixed | The app sends the module's latest result to its UI host over stdin (`ModuleUiState`, one `result` line when the page opens and after every run), and the details UI gets it as the `ModuleDetails.LastResult` cascading value; `DiagnosticModule` is still the UI process's own instance, for a run the UI starts itself |
+| 3.5 PowerShell one-liners | Fixed | Fast Startup, the proxy and adapter DNS go through `ISystemSettings` (`WindowsSystemSettings`: registry and WMI in process); the proxy is the signed-in user's (their `HKEY_USERS\<SID>`), so undo puts it back there too. The page file reads and writes through WMI. The remaining fixed scripts are embedded `.ps1` files in `Core/Scripts` (`PowerShellScripts.Get`), and the read-only ones run for real in the `WindowsReadOnly` test category |
 | 4.2 Remote trust model | Open | |

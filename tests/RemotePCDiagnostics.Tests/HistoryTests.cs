@@ -118,7 +118,7 @@ public sealed class HistoryTests
         var store = new EventLogHistoryStore((x, m) => { xp = x; max = m; return [new(DateTimeOffset.Now.AddHours(-2), OldFormat), new(DateTimeOffset.Now, "junk"),
             new(DateTimeOffset.Now, $"Test result: DiskSpeed\nModule id: {ModuleIds.DiskSpeed}\nOutcome: Critical\nFinished: 2026-10-30T15:00:00Z\nFormat: 3"),
             new(DateTimeOffset.Now.AddHours(-1), $"Test result: CpuStress\nModule id: {ModuleIds.CpuStress}\nOutcome: OK\nFinished: 2026-10-30T14:00:00Z\nFormat: 3"),
-            new(DateTimeOffset.Now, "Test result: DiskSpeed\nOutcome: OK\nFormat: 2")]; }, logs.Add);
+            new(DateTimeOffset.Now, "Test result: DiskSpeed\nOutcome: OK\nFormat: 2")]; }, new LineLogger(logs.Add));
         var r = store.Read(TimeSpan.FromDays(7));
         Assert.True(r.Available);
         Assert.Equal(new[] { "DiskSpeed", "CpuStress" }, r.Entries.Select(e => e.Module));
@@ -133,7 +133,7 @@ public sealed class HistoryTests
     public void Store_ReaderThrows_IsUnavailable_NotAnError()
     {
         var logs = new List<string>();
-        var r = new EventLogHistoryStore((_, _) => throw new UnauthorizedAccessException("denied"), logs.Add).Read(null);
+        var r = new EventLogHistoryStore((_, _) => throw new UnauthorizedAccessException("denied"), new LineLogger(logs.Add)).Read(null);
         Assert.False(r.Available);
         Assert.Empty(r.Entries);
         Assert.Contains("denied", r.Problem);

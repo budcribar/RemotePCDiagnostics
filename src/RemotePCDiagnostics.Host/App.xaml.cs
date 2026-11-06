@@ -80,8 +80,8 @@ public partial class App : Application
         return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
-    public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, RemotePCDiagnostics.Core.Memory.IMemorySystem memory) =>
-        HostServices.CreateUndoService(journal, commands, memory, Log, Event);
+    public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, RemotePCDiagnostics.Core.Optimizations.IMemorySystem memory) =>
+        HostServices.CreateUndoService(journal, commands, memory, HostServices.For<UndoService>(Loggers), Event);
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -160,7 +160,7 @@ public partial class App : Application
 
     private static void SecureProtectedState()
     {
-        if (!ProtectedStateFolder.Ensure(Log))
+        if (!ProtectedStateFolder.Ensure(Loggers.CreateLogger(typeof(ProtectedStateFolder).FullName!)))
         {
             Event(LogEventIds.Error, LogLevel.Error, $"Remote PC Diagnostics couldn't make {ProtectedState.Folder()} administrator-only. " +
                 "Undo, the service workflow and restart resume keep working, but a program without administrator rights may be able to change what they do.");
@@ -169,7 +169,7 @@ public partial class App : Application
         try
         {
             var outcome = new RemotePCDiagnostics.Core.Migrations.ProtectedStateMigration(ProtectedState.LegacyFolder(), ProtectedState.Folder(),
-                new RemotePCDiagnostics.Core.Migrations.MigrationMarkers(RemotePCDiagnostics.Core.Migrations.MigrationMarkers.DefaultPath()), Log).Run();
+                new RemotePCDiagnostics.Core.Migrations.MigrationMarkers(RemotePCDiagnostics.Core.Migrations.MigrationMarkers.DefaultPath()), HostServices.For<RemotePCDiagnostics.Core.Migrations.ProtectedStateMigration>(Loggers)).Run();
             if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"State move to {ProtectedState.Folder()}: {outcome}");
         }
         catch (Exception ex) { Log($"State move to {ProtectedState.Folder()} failed: {ex.Message}"); }
@@ -179,9 +179,9 @@ public partial class App : Application
     {
         try
         {
-            var outcome = new RemotePCDiagnostics.Core.Migrations.EventLogV3Migration(new WindowsEventLogMigrationIo(Log),
+            var outcome = new RemotePCDiagnostics.Core.Migrations.EventLogV3Migration(new WindowsEventLogMigrationIo(HostServices.For<WindowsEventLogMigrationIo>(Loggers)),
                 new RemotePCDiagnostics.Core.Migrations.MigrationMarkers(RemotePCDiagnostics.Core.Migrations.MigrationMarkers.DefaultPath()),
-                RemotePCDiagnostics.Core.Migrations.EventLogV3Migration.DefaultWorkDir(), Log).Run();
+                RemotePCDiagnostics.Core.Migrations.EventLogV3Migration.DefaultWorkDir(), HostServices.For<RemotePCDiagnostics.Core.Migrations.EventLogV3Migration>(Loggers)).Run();
             if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"History update (event log format 3): {outcome}");
         }
         catch (Exception ex) { Log($"History update (event log format 3) failed: {ex.Message}"); }
@@ -196,8 +196,9 @@ public partial class App : Application
     {
         try
         {
-            var commands = new SystemCommandRunner(log: Log);
-            var undo = CreateUndoService(new FileChangeJournal(FileChangeJournal.DefaultPath(), Log), commands, new WindowsMemorySystem(null, Log));
+            var commands = new SystemCommandRunner(log: HostServices.For<SystemCommandRunner>(Loggers));
+            var undo = CreateUndoService(new FileChangeJournal(FileChangeJournal.DefaultPath(), HostServices.For<FileChangeJournal>(Loggers)), commands,
+                new WindowsMemorySystem(null, HostServices.For<WindowsMemorySystem>(Loggers)));
             var result = Task.Run(() => undo.UndoAllAsync("Command line (--undo-all)")).GetAwaiter().GetResult();
             Log("--undo-all: " + result.Summary);
             foreach (var i in result.Items) Log($"--undo-all: {(i.Success ? "OK" : i.Skipped ? "LEFT AS IS (permanent)" : "FAILED")} {i.Change.Kind} '{i.Change.Target}': {i.Message}");

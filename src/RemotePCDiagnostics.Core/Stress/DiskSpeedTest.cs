@@ -8,7 +8,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// random 4 KB writes → random 4 KB reads (verified). Free-space guarded, time-limited, stoppable, aborts on any critical
 /// temperature, and always deletes its temporary file (also stale ones left by a crash). Never touches any other file.
 /// </summary>
-public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensors, IStressClock? clock = null, Action<string>? log = null, StressCleanup? cleanup = null)
+public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensors, IStressClock? clock = null, ILogger? log = null, StressCleanup? cleanup = null)
 {
     public const string TempFilePrefix = "rpd-speedtest-";
     public const string TempFilePattern = TempFilePrefix + "*.tmp";
@@ -60,10 +60,10 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
             drive = o.DriveRoot is null ? drives.FirstOrDefault(d => d.IsSystem) ?? drives.FirstOrDefault()
                 : drives.FirstOrDefault(d => string.Equals(d.Root, o.DriveRoot, StringComparison.OrdinalIgnoreCase));
         }
-        catch (Exception ex) { log?.Invoke($"Disk speed: listing drives failed: {ex}"); drive = null; }
+        catch (Exception ex) { log.Error($"Disk speed: listing drives failed: {ex}"); drive = null; }
         if (drive is null)
         {
-            log?.Invoke($"Disk speed: drive '{o.DriveRoot ?? "(system)"}' not found");
+            log.Info($"Disk speed: drive '{o.DriveRoot ?? "(system)"}' not found");
             return Empty(DiskSpeedOutcome.Failed, "", clk.Elapsed - start);
         }
 
@@ -72,15 +72,15 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
 
         long free;
         try { free = fs.GetFreeBytes(drive.Root); }
-        catch (Exception ex) { log?.Invoke($"Disk speed: free space check failed: {ex.Message}"); return Empty(DiskSpeedOutcome.Failed, drive.DisplayName, clk.Elapsed - start); }
+        catch (Exception ex) { log.Warn($"Disk speed: free space check failed: {ex.Message}"); return Empty(DiskSpeedOutcome.Failed, drive.DisplayName, clk.Elapsed - start); }
         if (PlanSize(free, o) is not { } size)
         {
-            log?.Invoke($"Disk speed: not enough free space on {drive.Root}: free={free}");
+            log.Info($"Disk speed: not enough free space on {drive.Root}: free={free}");
             return Empty(DiskSpeedOutcome.NotEnoughSpace, drive.DisplayName, clk.Elapsed - start);
         }
 
         var path = Path.Combine(folder, $"{TempFilePrefix}{Guid.NewGuid():N}.tmp");
-        log?.Invoke($"Disk speed: start drive={drive.Root} file={path} size={size} free={free} duration={duration}");
+        log.Info($"Disk speed: start drive={drive.Root} file={path} size={size} free={free} duration={duration}");
         var st = new State();
         cleanup?.Register("disk test file", () => DeleteTestFile(path, folder));
         cleanup?.Register("disk test stop", () => { if (st.Stop == StopNone) st.Stop = StopUser; });
@@ -99,7 +99,7 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
         catch (Exception ex)
         {
             failed = true;
-            log?.Invoke($"Disk speed: I/O failed: {ex}");
+            log.Error($"Disk speed: I/O failed: {ex}");
         }
         finally
         {
@@ -116,7 +116,7 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
             : verified == 0 || IsSlow(o, sw, sr, rr) ? DiskSpeedOutcome.SlowDrive
             : DiskSpeedOutcome.Passed;
         var report = new DiskSpeedReport(outcome, drive.DisplayName, size, clk.Elapsed - start, sw, sr, rw, rr, verified, errors, st.MaxDriveTemp, cleaned);
-        log?.Invoke($"Disk speed: done outcome={outcome} seqW={sw:0.0}MB/s seqR={sr:0.0}MB/s randW={rw:0}IOPS randR={rr:0}IOPS verified={verified} errors={errors} cleaned={cleaned}");
+        log.Info($"Disk speed: done outcome={outcome} seqW={sw:0.0}MB/s seqR={sr:0.0}MB/s randW={rw:0}IOPS randR={rr:0}IOPS verified={verified} errors={errors} cleaned={cleaned}");
         return report;
     }
 
@@ -140,7 +140,7 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
             FillPage(expect, runSeed, pageIndex, gen);
             verified++;
             if (page.SequenceEqual(expect)) return true;
-            if (++errors <= 10) log?.Invoke($"Disk speed: data mismatch at offset {pageIndex * PageBytes} (generation {gen})");
+            if (++errors <= 10) log.Warn($"Disk speed: data mismatch at offset {pageIndex * PageBytes} (generation {gen})");
             return false;
         }
 
@@ -230,7 +230,7 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
                 var (temp, fan, critical, what) = ReadSensors();
                 st.DriveTemp = temp; st.Fan = fan;
                 if (temp is { } t) st.MaxDriveTemp = Math.Max(st.MaxDriveTemp ?? t, t);
-                if (critical && st.Stop == StopNone) { st.Stop = StopHot; log?.Invoke($"Disk speed: abort, critical temperature: {what}"); }
+                if (critical && st.Stop == StopNone) { st.Stop = StopHot; log.Warn($"Disk speed: abort, critical temperature: {what}"); }
             }
             if (user.IsCancellationRequested && st.Stop == StopNone) st.Stop = StopUser;
             progress?.Report(new DiskSpeedProgress(st.Phase, clk.Elapsed - start, duration, st.PhaseFraction, st.DriveTemp, st.Fan, sensorsOk));
@@ -247,11 +247,11 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
             foreach (var f in fs.FindFiles(folder, TempFilePattern))
             {
                 if (!Path.GetFileName(f).StartsWith(TempFilePrefix, StringComparison.OrdinalIgnoreCase)) continue;
-                try { fs.DeleteFile(f); log?.Invoke($"Disk speed: removed leftover test file {f}"); }
-                catch (Exception ex) { log?.Invoke($"Disk speed: couldn't remove leftover {f}: {ex.Message}"); }
+                try { fs.DeleteFile(f); log.Info($"Disk speed: removed leftover test file {f}"); }
+                catch (Exception ex) { log.Warn($"Disk speed: couldn't remove leftover {f}: {ex.Message}"); }
             }
         }
-        catch (Exception ex) { log?.Invoke($"Disk speed: leftover scan failed: {ex.Message}"); }
+        catch (Exception ex) { log.Warn($"Disk speed: leftover scan failed: {ex.Message}"); }
     }
 
     private bool DeleteTestFile(string path, string folder)
@@ -261,18 +261,18 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
             try
             {
                 if (fs.FileExists(path)) fs.DeleteFile(path);
-                try { fs.DeleteDirectoryIfEmpty(folder); } catch (Exception ex) { log?.Invoke($"Disk speed: folder cleanup: {ex.Message}"); }
+                try { fs.DeleteDirectoryIfEmpty(folder); } catch (Exception ex) { log.Info($"Disk speed: folder cleanup: {ex.Message}"); }
                 return !fs.FileExists(path);
             }
-            catch (Exception ex) { log?.Invoke($"Disk speed: delete attempt {i + 1} failed: {ex.Message}"); Thread.Sleep(200); }
+            catch (Exception ex) { log.Warn($"Disk speed: delete attempt {i + 1} failed: {ex.Message}"); Thread.Sleep(200); }
         }
         return false;
     }
 
     private bool SafeAvailability()
     {
-        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log?.Invoke($"Disk speed: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
-        catch (Exception ex) { log?.Invoke($"Disk speed: sensor availability failed: {ex.Message}"); return false; }
+        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log.Info($"Disk speed: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
+        catch (Exception ex) { log.Warn($"Disk speed: sensor availability failed: {ex.Message}"); return false; }
     }
 
     /// <summary>Hottest drive temperature, fastest fan, and whether any temperature (drive or other) is critical.</summary>
@@ -289,7 +289,7 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
         }
         catch (Exception ex)
         {
-            log?.Invoke($"Disk speed: sensor read failed: {ex.Message}");
+            log.Warn($"Disk speed: sensor read failed: {ex.Message}");
             return (null, null, false, "");
         }
     }

@@ -4,7 +4,7 @@
   "slug": "sample.clock",
   "displayName": "Clock (sample plugin with its own UI)",
   "version": "1.0.0",
-  "contract": "1.1",
+  "contract": "2.0",
   "entryType": "SampleModuleUi.ClockPlugin",
   "kind": "Check",
   "group": "other",

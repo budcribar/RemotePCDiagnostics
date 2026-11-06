@@ -146,7 +146,7 @@
         }
         catch (OperationCanceledException) { }
         catch (ObjectDisposedException) { }
-        catch (Exception ex) { Diagnostics.Log?.Invoke($"Sensor page timer error: {ex.Message}"); }
+        catch (Exception ex) { Diagnostics.Log.Warn($"Sensor page timer error: {ex.Message}"); }
         finally
         {
             if (ReferenceEquals(_cts, cts)) _cts = null;

@@ -10,7 +10,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Database.ManagedEsent" Version="3.2.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
-    <Compile Include="../../src/NetworkUsagePrototype/SrumReader.cs" Link="Prototype/SrumReader.cs" />
+    <Compile Include="../../tools/prototypes/NetworkUsagePrototype/SrumReader.cs" Link="Prototype/SrumReader.cs" />
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
@@ -47,4 +47,10 @@
     <Copy SourceFiles="@(_SampleModuleUiDll)" DestinationFolder="$(OutDir)sample-module-ui" SkipUnchangedFiles="true" />
   </Target>
 
+  <ItemGroup>
+    <!-- Logging: ILogger plus the plain-line helpers (LoggerLines), without importing Microsoft.Extensions.Logging, whose LogLevel
+         would clash with RemotePCDiagnostics.Core.Logging.LogLevel. -->
+    <Using Include="Microsoft.Extensions.Logging.ILogger" Alias="ILogger" />
+    <Using Include="RemotePCDiagnostics.Logging" />
+  </ItemGroup>
 </Project>

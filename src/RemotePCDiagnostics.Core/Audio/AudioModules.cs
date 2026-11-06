@@ -35,11 +35,11 @@ public sealed record MicToSpeakerReport(string Output, string Input, double MicP
 public abstract class AudioModuleBase : IAudioTestModule
 {
     protected readonly IAudioIo Io;
-    protected readonly Action<string>? LogSink;
+    protected readonly ILogger? LogSink;
     private CancellationTokenSource? _runCts;
     private readonly object _gate = new();
 
-    protected AudioModuleBase(IAudioIo io, Action<string>? log) { Io = io; LogSink = log; }
+    protected AudioModuleBase(IAudioIo io, ILogger? log) { Io = io; LogSink = log; }
 
     public abstract string Name { get; }
     public abstract Guid Id { get; }
@@ -48,12 +48,14 @@ public abstract class AudioModuleBase : IAudioTestModule
     public AudioTestSettings Settings { get; } = new();
     public event EventHandler<DiagnosticResult>? Updated;
     protected void Raise(DiagnosticResult r) => Updated?.Invoke(this, r);
-    protected void Log(string s) { try { LogSink?.Invoke(s); } catch { } }
+    protected void Log(string m) => LogSink.Info(m);
+    protected void LogWarn(string m) => LogSink.Warn(m);
+    protected void LogError(string m) => LogSink.Error(m);
 
     public IReadOnlyList<AudioDevice> Devices(AudioFlow flow)
     {
         try { return Io.ListDevices().Where(d => d.Flow == flow).ToList(); }
-        catch (Exception ex) { Log($"{Name}: device list failed: {ex.Message}"); return []; }
+        catch (Exception ex) { LogWarn($"{Name}: device list failed: {ex.Message}"); return []; }
     }
 
     /// <summary>Selected device, else the Windows default, else the first one; null = none present.</summary>
@@ -85,7 +87,7 @@ public abstract class AudioModuleBase : IAudioTestModule
 
     protected DiagnosticResult Fail(Exception ex, object? payload)
     {
-        Log($"{Name}: {ex}");
+        LogError($"{Name}: {ex}");
         if (IsAccessDenied(ex)) return new DiagnosticResult(Name, DiagnosticStatus.Error, AudioVerdicts.PrivacyMessage, DateTimeOffset.Now, payload);
         var msg = ex is AudioDeviceException ? $"Couldn't use the audio device: {ex.Message}" : "The audio test couldn't finish on this PC. Please try again.";
         return new DiagnosticResult(Name, DiagnosticStatus.Error, msg, DateTimeOffset.Now, payload);
@@ -93,7 +95,7 @@ public abstract class AudioModuleBase : IAudioTestModule
 }
 
 /// <summary>Plays a capped, faded 1 kHz tone while recording the microphone and the speaker output (loopback), then decides automatically.</summary>
-public sealed class SpeakerToMicModule(IAudioIo io, Action<string>? log = null) : AudioModuleBase(io, log)
+public sealed class SpeakerToMicModule(IAudioIo io, ILogger? log = null) : AudioModuleBase(io, log)
 {
     public const string ModuleName = ModuleSlugs.SpeakerToMic;
     public const double FrequencyHz = 1000;
@@ -129,7 +131,7 @@ public sealed class SpeakerToMicModule(IAudioIo io, Action<string>? log = null) 
         try { cap = await Io.PlayAndCaptureAsync(req, timeout.Token).ConfigureAwait(false); }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            Log($"{Name}: timed out after {sw.ElapsedMilliseconds} ms");
+            LogWarn($"{Name}: timed out after {sw.ElapsedMilliseconds} ms");
             return new DiagnosticResult(Name, DiagnosticStatus.Error, "The audio test didn't finish in time. Please try again.", DateTimeOffset.Now);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -163,7 +165,7 @@ public sealed class SpeakerToMicModule(IAudioIo io, Action<string>? log = null) 
 }
 
 /// <summary>Plays the microphone back through the speakers (live monitor) with a capped gain and a feedback brake. The audible part is the technician's call.</summary>
-public sealed class MicToSpeakerModule(IAudioIo io, Action<string>? log = null) : AudioModuleBase(io, log)
+public sealed class MicToSpeakerModule(IAudioIo io, ILogger? log = null) : AudioModuleBase(io, log)
 {
     public const string ModuleName = ModuleSlugs.MicToSpeaker;
     public static readonly TimeSpan DefaultDuration = TimeSpan.FromSeconds(10);

@@ -5,8 +5,8 @@ namespace RemotePCDiagnostics.Core;
 /// <summary>Registers modules and runs them independently, recording results in the store.</summary>
 public sealed class DiagnosticsService
 {
-    /// <summary>Optional log sink (the Host passes App.Log).</summary>
-    public Action<string>? Log { get; set; }
+    /// <summary>Optional logger (the Host passes one from App.Loggers).</summary>
+    public ILogger? Log { get; set; }
     private int _suiteRunning;
     private readonly ConcurrentDictionary<string, (DateTimeOffset Stamp, string Label)> _suiteLabels = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _suiteCts;
@@ -55,13 +55,13 @@ public sealed class DiagnosticsService
             d.Cancel();
             if (first != task)
             {
-                Log?.Invoke($"Stress suite: cleanup for {m.Name} did not finish within {StressCleanupGrace.TotalSeconds:0}s; moving on");
+                Log.Info($"Stress suite: cleanup for {m.Name} did not finish within {StressCleanupGrace.TotalSeconds:0}s; moving on");
                 _ = task.ContinueWith(t => { _ = t.Exception; }, TaskScheduler.Default);
                 return;
             }
             await task.ConfigureAwait(false);
         }
-        catch (Exception ex) { Log?.Invoke($"Stress suite: cleanup for {m.Name} failed: {ex.Message}"); }
+        catch (Exception ex) { Log.Warn($"Stress suite: cleanup for {m.Name} failed: {ex.Message}"); }
     }
 
     /// <summary>Runs one stress test with a hang watchdog. Result is null when the test never returned (the message says why).
@@ -84,7 +84,7 @@ public sealed class DiagnosticsService
         }
         if (!suiteCt.IsCancellationRequested)
         {
-            Log?.Invoke($"Stress suite: {m.Name} ran past its time limit ({limit.TotalSeconds:0}s); asking it to stop");
+            Log.Warn($"Stress suite: {m.Name} ran past its time limit ({limit.TotalSeconds:0}s); asking it to stop");
             try { m.Stop(); } catch { }
         }
         using var d2 = new CancellationTokenSource();
@@ -140,7 +140,7 @@ public sealed class DiagnosticsService
         foreach (var cycle in cycles)
         {
             foreach (var id in cycle) Catalog.Disable(id);
-            try { Log?.Invoke($"Modules: dependency loop, not run: {string.Join(" -> ", cycle.Select(Catalog.DisplayName))}"); } catch { }
+            try { Log.Info($"Modules: dependency loop, not run: {string.Join(" -> ", cycle.Select(Catalog.DisplayName))}"); } catch { }
         }
         if (cycles.Count > 0) Volatile.Write(ref _visible, null);
         return cycles;
@@ -202,7 +202,7 @@ public sealed class DiagnosticsService
         Volatile.Write(ref _visible, null);
         try { ModulesChanged?.Invoke(this, EventArgs.Empty); } catch { }
         _store.Touch(m.Name); // store-aware pages re-render
-        try { Log?.Invoke(detection.Applies ? $"{m.Name}: {detection.Instances.Count(i => i.Applies)} instance(s)" : $"{m.Name}: doesn't apply ({detection.NotApplicableReason})"); } catch { }
+        try { Log.Info(detection.Applies ? $"{m.Name}: {detection.Instances.Count(i => i.Applies)} instance(s)" : $"{m.Name}: doesn't apply ({detection.NotApplicableReason})"); } catch { }
     }
 
     /// <summary>True while hardware detection for a gated module is still running (pages show "looking…" instead of "not found").</summary>
@@ -223,13 +223,13 @@ public sealed class DiagnosticsService
             {
                 var found = false;
                 try { found = await g.DetectPresenceAsync().ConfigureAwait(false); }
-                catch (Exception ex) { try { Log?.Invoke($"{g.Name}: detection failed, hidden: {ex.Message}"); } catch { } }
+                catch (Exception ex) { try { Log.Warn($"{g.Name}: detection failed, hidden: {ex.Message}"); } catch { } }
                 finally { Interlocked.Decrement(ref _detecting); }
                 Volatile.Write(ref _visible, null);
                 Catalog.RaiseChanged();
                 try { ModulesChanged?.Invoke(this, EventArgs.Empty); } catch { }
                 _store.Set(DiagnosticResult.NotRun(g.Name)); // nudges store-aware pages to re-render
-                if (found) try { Log?.Invoke($"{g.Name}: hardware found, shown"); } catch { }
+                if (found) try { Log.Info($"{g.Name}: hardware found, shown"); } catch { }
             });
         }
     }
@@ -328,7 +328,7 @@ public sealed class DiagnosticsService
             {
                 var r = ModuleOrdering.GateResult(module.Name, gate);
                 _store.Set(r);
-                try { Log?.Invoke($"{module.Name}: {r.Message}"); } catch { }
+                try { Log.Info($"{module.Name}: {r.Message}"); } catch { }
                 return r;
             }
             return await RunAsync(module, null, ct, gateInstances: true).ConfigureAwait(false);
@@ -523,7 +523,7 @@ public sealed class DiagnosticsService
             if (gateInstances && InstanceGate(module, inst) is { } gate)
             {
                 r = ModuleOrdering.GateResult(module.Name, gate);
-                try { Log?.Invoke($"{module.Name} ({inst.Label}): {r.Message}"); } catch { }
+                try { Log.Info($"{module.Name} ({inst.Label}): {r.Message}"); } catch { }
             }
             else
             {
@@ -546,7 +546,7 @@ public sealed class DiagnosticsService
         if (module is IInstanceSummary combiner)
         {
             try { summary = combiner.Combine(results); }
-            catch (Exception ex) { try { Log?.Invoke($"{module.Name}: combining device results failed: {ex.Message}"); } catch { } }
+            catch (Exception ex) { try { Log.Warn($"{module.Name}: combining device results failed: {ex.Message}"); } catch { } }
         }
         return new DiagnosticResult(module.Name, worst.Status, message, DateTimeOffset.Now, new InstanceResults(results) { Summary = summary })
             { Cancelled = ran.Any(r => r.Cancelled) };
@@ -589,13 +589,13 @@ public sealed class DiagnosticsService
                     steps[j] = steps[j] with { State = StressSuiteStepState.NotRun, Message = "Not run" };
             Report(steps.Length, true, message);
             CurrentSuiteLabel = null;
-            Log?.Invoke($"Stress suite ({label}) finished: {outcome} - {message} Steps: {string.Join("; ", steps.Select(s => $"{s.DisplayName}={s.State}"))}");
+            Log.Info($"Stress suite ({label}) finished: {outcome} - {message} Steps: {string.Join("; ", steps.Select(s => $"{s.DisplayName}={s.State}"))}");
             return new StressSuiteResult(mode, outcome, steps.ToArray(), message);
         }
         try
         {
             CurrentSuiteLabel = label;
-            Log?.Invoke($"Stress suite ({label}) started");
+            Log.Info($"Stress suite ({label}) started");
             Report(0, false, null);
             if (runQuickChecks) await RunAllAsync(cts.Token).ConfigureAwait(false);
             for (int i = 0; i < modules.Count; i++)
@@ -612,7 +612,7 @@ public sealed class DiagnosticsService
                         var gr = ModuleOrdering.GateResult(m.Name, gate);
                         _store.Set(gr);
                         steps[i] = steps[i] with { State = StressSuiteStepState.Skipped, Message = gr.Message };
-                        Log?.Invoke($"Stress suite: {m.Name} {gr.Message}");
+                        Log.Info($"Stress suite: {m.Name} {gr.Message}");
                         continue;
                     }
                 }
@@ -625,7 +625,7 @@ public sealed class DiagnosticsService
                 if (!availability.IsAvailable)
                 {
                     steps[i] = steps[i] with { State = StressSuiteStepState.Skipped, Message = "Skipped: not available on this PC" };
-                    Log?.Invoke($"Stress suite: {m.Name} skipped (unavailable: {availability.Reason})");
+                    Log.Info($"Stress suite: {m.Name} skipped (unavailable: {availability.Reason})");
                     continue;
                 }
                 var saved = m.SaveSuiteSettings();
@@ -639,7 +639,7 @@ public sealed class DiagnosticsService
                         if (hung.Result is null)
                         {
                             steps[i] = steps[i] with { State = StressSuiteStepState.Skipped, Message = hung.Message };
-                            Log?.Invoke($"Stress suite: {m.Name} skipped ({hung.Message})");
+                            Log.Info($"Stress suite: {m.Name} skipped ({hung.Message})");
                             if (cts.IsCancellationRequested) return Finish(StressSuiteOutcome.Cancelled, "Stress tests cancelled.", i + 1);
                             continue;
                         }
@@ -648,7 +648,7 @@ public sealed class DiagnosticsService
                 }
                 finally
                 {
-                    try { m.RestoreSuiteSettings(saved); } catch (Exception ex) { Log?.Invoke($"Stress suite: restoring {m.Name} settings failed: {ex.Message}"); }
+                    try { m.RestoreSuiteSettings(saved); } catch (Exception ex) { Log.Warn($"Stress suite: restoring {m.Name} settings failed: {ex.Message}"); }
                 }
                 _suiteLabels[m.Name] = (r.Timestamp, label);
                 if (cts.IsCancellationRequested || m.IsStoppedByUserResult(r))
@@ -665,7 +665,7 @@ public sealed class DiagnosticsService
                 {
                     // Couldn't run (e.g. not enough free memory) is not a hardware problem: skip it and run the rest.
                     steps[i] = steps[i] with { State = StressSuiteStepState.Skipped, Message = $"Skipped: {r.Message}" };
-                    Log?.Invoke($"Stress suite: {m.Name} skipped (couldn't run: {r.Message})");
+                    Log.Warn($"Stress suite: {m.Name} skipped (couldn't run: {r.Message})");
                     continue;
                 }
                 if (r.Status == DiagnosticStatus.Error || m.IsOverheatedResult(r))

@@ -15,7 +15,7 @@ public sealed class SecurityAuditOptions
     public Func<string>? ReportPathFactory { get; set; }
     public Func<bool>? IsAdministrator { get; set; }
     public Func<string, bool>? FileExists { get; set; }
-    public Action<string>? Log { get; set; }
+    public ILogger? Log { get; set; }
 }
 
 /// <summary>
@@ -72,12 +72,12 @@ public sealed class SecurityAuditModule : IDiagnosticModule
     {
         if (!_fileExists(ManifestPath))
         {
-            Log($"SecurityAudit: HardeningKitty not found at '{ManifestPath}' (set {PathEnvironmentVariable} or bundle third_party/HardeningKitty)");
+            LogWarn($"SecurityAudit: HardeningKitty not found at '{ManifestPath}' (set {PathEnvironmentVariable} or bundle third_party/HardeningKitty)");
             return Task.FromResult(ModuleAvailability.Unavailable(ToolMissingMessage));
         }
         if (!_fileExists(PowerShellPath))
         {
-            Log($"SecurityAudit: PowerShell not found at '{PowerShellPath}'");
+            LogWarn($"SecurityAudit: PowerShell not found at '{PowerShellPath}'");
             return Task.FromResult(ModuleAvailability.Unavailable(PowerShellMissingMessage));
         }
         return Task.FromResult(ModuleAvailability.Available);
@@ -117,7 +117,7 @@ public sealed class SecurityAuditModule : IDiagnosticModule
             }
             catch (Exception ex)
             {
-                Log($"SecurityAudit: failed to start PowerShell: {ex}");
+                LogError($"SecurityAudit: failed to start PowerShell: {ex}");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             var head = pr.StdOut.Length > 2048 ? pr.StdOut[..2048] : pr.StdOut;
@@ -127,23 +127,23 @@ public sealed class SecurityAuditModule : IDiagnosticModule
 
             if (!File.Exists(reportPath))
             {
-                Log($"SecurityAudit: no report produced at '{reportPath}'");
+                LogWarn($"SecurityAudit: no report produced at '{reportPath}'");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             IReadOnlyList<AuditFinding> findings;
             try { findings = HardeningKittyCsv.Parse(await File.ReadAllTextAsync(reportPath, CancellationToken.None).ConfigureAwait(false)); }
             catch (Exception ex) when (ex is FormatException or IOException)
             {
-                Log($"SecurityAudit: report unreadable: {ex.Message}");
+                LogWarn($"SecurityAudit: report unreadable: {ex.Message}");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             if (findings.Count == 0)
             {
-                Log("SecurityAudit: report had no rows");
+                LogWarn("SecurityAudit: report had no rows");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             var report = new SecurityAuditReport(findings, admin ? null : NotAdminNotice);
-            Log($"SecurityAudit: parsed {findings.Count} findings passed={report.Passed} warn={report.Warnings} failed={report.Failed} notChecked={report.NotChecked}");
+            LogWarn($"SecurityAudit: parsed {findings.Count} findings passed={report.Passed} warn={report.Warnings} failed={report.Failed} notChecked={report.NotChecked}");
             return Result(report.Status, report.Summary, report);
         }
         finally
@@ -177,10 +177,12 @@ public sealed class SecurityAuditModule : IDiagnosticModule
     private void TryDelete(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
-        catch (Exception ex) { Log($"SecurityAudit: couldn't delete temp folder: {ex.Message}"); }
+        catch (Exception ex) { LogWarn($"SecurityAudit: couldn't delete temp folder: {ex.Message}"); }
     }
 
-    private void Log(string s) { try { _o.Log?.Invoke(s); } catch { } }
+    private void Log(string m) => _o.Log.Info(m);
+    private void LogWarn(string m) => _o.Log.Warn(m);
+    private void LogError(string m) => _o.Log.Error(m);
 
     internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);
 }

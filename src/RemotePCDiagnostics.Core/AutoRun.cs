@@ -12,16 +12,16 @@ public static class AutoRun
     }
 
     /// <summary>Starts the named modules in the background if enabled; returns the started tasks (empty when disabled). Never throws.</summary>
-    public static IReadOnlyList<Task<DiagnosticResult>> Start(DiagnosticsService service, Func<string, string?> getEnv, Action<string>? log, params string[] moduleNames)
+    public static IReadOnlyList<Task<DiagnosticResult>> Start(DiagnosticsService service, Func<string, string?> getEnv, ILogger? log, params string[] moduleNames)
     {
-        if (!IsEnabled(getEnv)) { log?.Invoke("Auto-run disabled via " + EnvironmentVariable); return []; }
+        if (!IsEnabled(getEnv)) { log.Info("Auto-run disabled via " + EnvironmentVariable); return []; }
         var tasks = new List<Task<DiagnosticResult>>();
         foreach (var name in moduleNames)
         {
             if (!service.Modules.Any(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase))) continue;
-            log?.Invoke($"Auto-run: starting {name}");
+            log.Info($"Auto-run: starting {name}");
             var t = service.RunAsync(name);
-            _ = t.ContinueWith(r => log?.Invoke($"Auto-run: {name} finished: {(r.IsCompletedSuccessfully ? r.Result.Status.ToString() : r.Exception?.GetBaseException().Message)}"), TaskScheduler.Default);
+            _ = t.ContinueWith(r => log.Info($"Auto-run: {name} finished: {(r.IsCompletedSuccessfully ? r.Result.Status.ToString() : r.Exception?.GetBaseException().Message)}"), TaskScheduler.Default);
             tasks.Add(t);
         }
         return tasks;

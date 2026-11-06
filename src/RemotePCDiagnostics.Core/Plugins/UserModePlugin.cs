@@ -12,7 +12,7 @@ public static class UserModePlugin
     public sealed record Loaded(ModuleManifest Manifest, IDiagnosticModule Module, Type? DetailsComponent);
 
     /// <param name="log">Where the plugin's <see cref="IPluginContext.Log"/> lines go.</param>
-    public static Loaded Load(string path, Action<string>? log = null)
+    public static Loaded Load(string path, ILogger? log = null)
     {
         var dll = File.ReadAllBytes(path);
         var (manifest, _) = ModuleManifest.ReadFromAssembly(dll);
@@ -32,7 +32,7 @@ public static class UserModePlugin
         return new Loaded(manifest, modules[0], context.Details.GetValueOrDefault(manifest.Id));
     }
 
-    private sealed class Context(string pluginId, Action<string>? log) : IPluginContext
+    private sealed class Context(string pluginId, ILogger? log) : IPluginContext
     {
         public Dictionary<Guid, Type> Details { get; } = [];
         public string PluginId => pluginId;
@@ -40,7 +40,7 @@ public static class UserModePlugin
         public ISessionContext Session { get; } = new SessionContext(SessionMode.Local);
         public Version HostVersion => typeof(Context).Assembly.GetName().Version ?? new Version(0, 0);
         public Version ContractVersion => Plugins.ContractVersion.Current;
-        public void Log(string message) { try { log?.Invoke($"[{pluginId}] {message}"); } catch { } }
+        public ILogger Log { get; } = new PrefixedLogger(log, pluginId); // "[pluginId] " on each line, at the level the plugin chose
         public void SetDetailsComponent(Guid moduleId, Type component) => Details[moduleId] = component;
     }
 }

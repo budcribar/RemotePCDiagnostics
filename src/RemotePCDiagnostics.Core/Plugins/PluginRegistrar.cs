@@ -23,7 +23,7 @@ public sealed record PluginRecord(string PluginId, ModuleSource Source, PluginSt
 /// scratch collection first, so one that throws leaves nothing behind: it is marked Disabled and the app carries on. Modules a plugin
 /// registers are tracked so the catalog knows where each came from.
 /// </summary>
-public sealed class PluginRegistrar(ISessionContext session, Version hostVersion, Action<string>? log = null)
+public sealed class PluginRegistrar(ISessionContext session, Version hostVersion, ILogger? log = null)
 {
     private readonly List<PluginRecord> _records = [];
     private readonly ConcurrentDictionary<Guid, (ModuleSource Source, string PluginId)> _origins = new();
@@ -46,7 +46,7 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
         catch (Exception ex)
         {
             Add((record ?? new PluginRecord(pluginId, source, PluginState.Loaded)) with { State = PluginState.Disabled, Reason = $"Register failed: {ex.Message}" });
-            Log($"plugin {pluginId}: Register failed, disabled: {ex.GetType().Name}: {ex.Message}");
+            LogError($"plugin {pluginId}: Register failed, disabled: {ex.GetType().Name}: {ex.Message}");
             return false;
         }
         if (expectedModuleId is { } expectedId)
@@ -102,15 +102,16 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
     }
 
     private void Add(PluginRecord r) { lock (_gate) _records.Add(r); }
-    private void Log(string message) { try { log?.Invoke(message); } catch { } }
+    private void Log(string m) => log.Info(m);
+    private void LogError(string m) => log.Error(m);
 
-    private sealed class Context(PluginRegistrar owner, string pluginId, ISessionContext session, Version hostVersion, Action<string>? log) : IPluginContext
+    private sealed class Context(PluginRegistrar owner, string pluginId, ISessionContext session, Version hostVersion, ILogger? log) : IPluginContext
     {
         public string PluginId => pluginId;
         public ISessionContext Session => session;
         public Version HostVersion => hostVersion;
         public Version ContractVersion => Plugins.ContractVersion.Current;
-        public void Log(string message) { try { log?.Invoke($"[{pluginId}] {message}"); } catch { } }
+        public ILogger Log { get; } = new PrefixedLogger(log, pluginId); // "[pluginId] " on each line, at the level the plugin chose
         public void SetDetailsComponent(Guid moduleId, Type component) => owner._details[moduleId] = component;
     }
 }

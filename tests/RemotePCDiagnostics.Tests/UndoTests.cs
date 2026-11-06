@@ -1,6 +1,6 @@
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Tests;
@@ -85,8 +85,9 @@ public class UndoTests
         var sys = new Sys { BrowserRunning = true, Transparency = false };
         var backend = new Backend { State = ServiceState.Stopped };
         var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var settings = new FakeSystemSettings();
         var events = new List<string>();
-        var r = await new UndoService(j, new SystemCommandRunner(launcher), sys, backend, (_, t) => events.Add(t)).UndoAllAsync("Local user");
+        var r = await new UndoService(j, new SystemCommandRunner(launcher), sys, backend, (_, t) => events.Add(t), settings: settings).UndoAllAsync("Local user");
 
         Assert.Equal(8, r.Items.Count);
         Assert.Equal(ChangeKind.AdapterDns, r.Items[0].Change.Kind);                  // newest first
@@ -99,8 +100,8 @@ public class UndoTests
         Assert.Contains("start:Spooler", backend.Calls);
         Assert.Equal(true, sys.Transparency);
         Assert.Contains(launcher.Calls, c => c.Args.SequenceEqual(["/setactive", "a1841308-3541-4fab-bc81-f71556f20b4a"]));
-        Assert.Contains(launcher.Calls, c => c.Args[^1].Contains("-InterfaceAlias 'Wi-Fi' -ServerAddresses @('192.168.1.1')"));
-        Assert.Contains(launcher.Calls, c => c.Args[^1].Contains("-InterfaceAlias 'Ethernet' -ResetServerAddresses"));
+        Assert.Contains("dns:Wi-Fi=192.168.1.1", settings.Calls);
+        Assert.Contains("dns:Ethernet=", settings.Calls);                             // automatic again
         Assert.Contains("1 couldn't be undone", r.Summary);
         Assert.Contains(events, e => e.Contains("Undo all changes") && e.Contains("FAILED"));
     }
@@ -112,10 +113,12 @@ public class UndoTests
         j.Add(Rec(ChangeKind.AdapterDns, "Wi-Fi", "1.1.1.1; Remove-Item C:\\", 2));     // not an IP → treated as automatic, never injected
         j.Add(Rec(ChangeKind.FastStartup, "", "1", 1) with { NeedsRestart = true });
         var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
-        var r = await new UndoService(j, new SystemCommandRunner(launcher), new Sys()).UndoAllAsync("x");
+        var settings = new FakeSystemSettings();
+        var r = await new UndoService(j, new SystemCommandRunner(launcher), new Sys(), settings: settings).UndoAllAsync("x");
         Assert.True(r.NeedsRestart);
-        Assert.DoesNotContain(launcher.Calls, c => c.Args[^1].Contains("Remove-Item"));
-        Assert.Contains(launcher.Calls, c => c.Args[^1].Contains("HiberbootEnabled -Value 1"));
+        Assert.Contains("dns:Wi-Fi=", settings.Calls);                                // not an IP: automatic, never passed on
+        Assert.DoesNotContain(settings.Calls, c => c.Contains("Remove-Item"));
+        Assert.Contains("fast-startup=1", settings.Calls);
     }
 
     [Fact]

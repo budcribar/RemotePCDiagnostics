@@ -15,11 +15,11 @@ namespace RemotePCDiagnostics.Host;
 /// targets (net10.0-windows10.0.19041.0), so no extra package. Frames are reduced to a small luma thumbnail and analysed in memory only;
 /// nothing is saved or sent. The camera is always closed (MediaCapture disposed) when the capture ends, fails or is cancelled.
 /// </summary>
-public sealed class MediaCaptureWebcamIo(Action<string>? log = null, bool showPreview = false) : IWebcamIo
+public sealed class MediaCaptureWebcamIo(ILogger? log = null, bool showPreview = false) : IWebcamIo
 {
     private const string ConsentKey = @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam";
 
-    private void Log(string s) { try { log?.Invoke("Webcam: " + s); } catch { } }
+    private void Log(string m) => log.Info("Webcam: " + m);
 
     public IReadOnlyList<WebcamDevice> ListDevices()
     {

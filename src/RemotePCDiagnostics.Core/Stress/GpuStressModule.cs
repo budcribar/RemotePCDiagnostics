@@ -6,7 +6,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// On-demand GPU stress test. Never auto-runs and is excluded from Run All; runs only when the user presses Start. One instance per hardware
 /// GPU (an integrated and a discrete GPU are stressed one after the other); when the factory can't list adapters, one run on the first GPU.
 /// </summary>
-public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider sensors, Action<string>? log = null, Func<IStressClock>? clockFactory = null)
+public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider sensors, ILogger? log = null, Func<IStressClock>? clockFactory = null)
     : StressModuleBase<GpuStressProgress, GpuStressReport>(log), IStressSuiteModule, IPerDeviceModule, IInstanceSummary
 {
     /// <summary>The single instance used when adapters can't be listed.</summary>
@@ -30,7 +30,7 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
     {
         IReadOnlyList<GpuAdapterInfo> list;
         try { list = factory.ListAdapters().Where(a => !a.IsSoftware && a.Id is not null).ToList(); }
-        catch (Exception ex) { try { log?.Invoke($"{Name}: adapter list failed: {ex.Message}"); } catch { } list = []; }
+        catch (Exception ex) { try { Logger.Warn($"{Name}: adapter list failed: {ex.Message}"); } catch { } list = []; }
         return Task.FromResult(list.Count == 0 ? ModuleDetection.For([new ModuleInstance(FirstGpuKey, "Graphics")]) : ModuleDetection.For(list.Select(InstanceOf)));
     }
 
@@ -43,7 +43,7 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
         {
             _adapterId = null;
             // Let go of this GPU before the next one starts (the next run replaces the cleanup list).
-            try { await CleanupAsync().ConfigureAwait(false); } catch (Exception ex) { try { log?.Invoke($"{Name}: cleanup failed: {ex.Message}"); } catch { } }
+            try { await CleanupAsync().ConfigureAwait(false); } catch (Exception ex) { try { Logger.Warn($"{Name}: cleanup failed: {ex.Message}"); } catch { } }
         }
     }
 
@@ -62,7 +62,7 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
     {
         var opts = (Options ?? new GpuStressOptions()) with { Duration = Duration };
         if (_adapterId is { } id) opts = opts with { AdapterId = id };
-        var test = new GpuStressTest(factory, sensors, clockFactory?.Invoke(), log, cleanup);
+        var test = new GpuStressTest(factory, sensors, clockFactory?.Invoke(), Logger, cleanup);
         return test.RunAsync(opts, progress, cancellationToken);
     }
 

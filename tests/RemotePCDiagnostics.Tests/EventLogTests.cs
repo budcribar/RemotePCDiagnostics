@@ -44,7 +44,7 @@ public class EventLogTests
     {
         var log = new List<string>();
         var l = new ScriptedLauncher((f, a) => ScriptedLauncher.Ok(a[1] == "System" ? SystemXml : ""));
-        var r = await new EventLogModule(new SystemCommandRunner(l, log.Add)).RefreshAsync(null);
+        var r = await new EventLogModule(new SystemCommandRunner(l, new LineLogger(log.Add))).RefreshAsync(null);
         Assert.Equal(DiagnosticStatus.Warning, r.Status);
         Assert.Equal("Last 7 days: 1 critical problem, 2 Windows errors, 0 app errors", r.Message);
         var rep = Assert.IsType<AreaReport>(r.Payload);

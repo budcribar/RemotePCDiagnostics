@@ -151,7 +151,7 @@ public sealed class ModuleLoaderTests : IDisposable
     [Fact]
     public void A_module_built_for_another_contract_is_disabled()
     {
-        Install(Patch(SampleBytes(), "\"contract\": \"1.0\"", "\"contract\": \"9.0\""));
+        Install(Patch(SampleBytes(), "\"contract\": \"2.0\"", "\"contract\": \"9.0\""));
         var (_, registrar, services) = Load();
         Assert.Contains("built for contract 9.0", Assert.Single(registrar.Records).Reason);
         Assert.Equal(0, ModuleCount(services));

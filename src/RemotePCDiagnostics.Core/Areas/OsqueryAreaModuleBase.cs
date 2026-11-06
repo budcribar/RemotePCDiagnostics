@@ -12,7 +12,7 @@ public abstract class OsqueryAreaModuleBase(OsqueryRunner runner) : AreaModuleBa
     {
         var a = runner.CheckAvailability();
         if (a.IsAvailable) return Task.FromResult(a);
-        Log($"{Name}: {a.Reason}");
+        LogWarn($"{Name}: {a.Reason}");
         return Task.FromResult(ModuleAvailability.Unavailable(ToolMissingMessage));
     }
 

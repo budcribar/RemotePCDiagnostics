@@ -66,7 +66,7 @@ public class AutoRunTests
 public class OsqueryDiagnosticsAndFallbackTests
 {
     private static OsqueryRunner Runner(FakeLauncher l, List<string>? log = null, bool exists = true) =>
-        new(Path.Combine("C:", "app"), new OsqueryOptions { Log = log is null ? null : log.Add }, l, _ => exists);
+        new(Path.Combine("C:", "app"), new OsqueryOptions { Log = log is null ? null : new LineLogger(log.Add) }, l, _ => exists);
 
     private static FakeLauncher Responder(Func<string, string> json) => new(sql => Task.FromResult(new ProcessResult(0, json(sql), "W warn")));
 

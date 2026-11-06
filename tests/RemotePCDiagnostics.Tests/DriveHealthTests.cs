@@ -15,7 +15,7 @@ public class DriveHealthTests
     {
         var log = new List<string>();
         var l = new ScriptedLauncher(run);
-        return (new DriveHealthModule(new SystemCommandRunner(l, s => log.Add(s)), ScriptedLauncher.Osquery(l, log)), l, log);
+        return (new DriveHealthModule(new SystemCommandRunner(l, new LineLogger(s => log.Add(s))), ScriptedLauncher.Osquery(l, log)), l, log);
     }
 
     [Fact]

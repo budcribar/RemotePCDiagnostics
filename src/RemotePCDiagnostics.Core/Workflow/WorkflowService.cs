@@ -2,7 +2,7 @@ using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Benchmarks;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Logging;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Session;
 
@@ -17,7 +17,7 @@ public sealed record AutoLogonRequest(string User, string Domain, string Passwor
 /// </summary>
 public sealed class WorkflowService(
     DiagnosticsService diag, ResultStore results, RemediationService remediation, BenchmarkService bench, IWorkflowSystem sys, IWorkflowStore store,
-    MemorySuggestionService? memory = null, ISessionContext? session = null, Action<LogLevel, string>? events = null, Action<string>? log = null,
+    MemorySuggestionService? memory = null, ISessionContext? session = null, Action<LogLevel, string>? events = null, ILogger? log = null,
     Func<TimeSpan, CancellationToken, Task>? delay = null, IChangeJournal? journal = null, Preferences.PreferencesService? prefs = null)
 {
     public const int RestartsInWorkflow = 2;
@@ -81,8 +81,11 @@ public sealed class WorkflowService(
     public bool Busy { get; private set; }
 
     private string Actor => ServiceActor.From(session);
-    private void Log(string m) { try { log?.Invoke("[workflow] " + m); } catch { } }
-    private void Raise() { try { Changed?.Invoke(); } catch (Exception ex) { Log("Changed handler failed: " + ex.Message); } }
+    private void Log(string m) => log.Info("[workflow] " + m);
+    private void LogWarn(string m) => log.Warn("[workflow] " + m);
+    private void LogError(string m) => log.Error("[workflow] " + m);
+    private void LogLine(string m) => log.Line("[workflow] " + m);
+    private void Raise() { try { Changed?.Invoke(); } catch (Exception ex) { LogWarn("Changed handler failed: " + ex.Message); } }
 
     private void Save(Func<WorkflowState, WorkflowState> change)
     {
@@ -95,7 +98,7 @@ public sealed class WorkflowService(
     private void Note(string line)
     {
         Status = line;
-        Log(line);
+        LogLine(line);
         Save(s => s with { Log = [.. s.Log.TakeLast(199), $"{DateTimeOffset.Now:g}  {line}"] });
     }
 
@@ -211,7 +214,7 @@ public sealed class WorkflowService(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log("checks failed: " + ex);
+            LogWarn("checks failed: " + ex);
             Save(s => s with { Stage = WorkflowStage.Failed, Error = "The checks couldn't finish. Try again." });
         }
         finally { Busy = false; Raise(); }
@@ -373,7 +376,7 @@ public sealed class WorkflowService(
             }
         }
         catch (OperationCanceledException) { Log("resume cancelled"); }
-        catch (Exception ex) { Log("resume failed: " + ex); await FailAsync("Something went wrong while continuing the workflow.", CancellationToken.None).ConfigureAwait(false); }
+        catch (Exception ex) { LogWarn("resume failed: " + ex); await FailAsync("Something went wrong while continuing the workflow.", CancellationToken.None).ConfigureAwait(false); }
         finally { Busy = false; _cts?.Dispose(); _cts = null; _resuming?.TrySetResult(); Raise(); }
     }
 
@@ -411,7 +414,7 @@ public sealed class WorkflowService(
                 Save(s => s with { Outcomes = outcomes.ToList() });
                 throw;
             }
-            catch (Exception ex) { Log($"fix {f.Id} failed: {ex}"); o = new(f.Id, f.Title, false, "Windows didn't allow this change."); }
+            catch (Exception ex) { LogError($"fix {f.Id} failed: {ex}"); o = new(f.Id, f.Title, false, "Windows didn't allow this change."); }
             outcomes.Add(o with { Changes = NewChanges(journalBefore) });
             Save(s => s with { Outcomes = outcomes.ToList() });
         }
@@ -499,7 +502,7 @@ public sealed class WorkflowService(
             Note($"Checking again after the restart: {m.DisplayName}…");
             DiagnosticResult r;
             try { r = await diag.RunAsync(m.Name, null, ct).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { Log("re-scan failed: " + ex.Message); continue; }
+            catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn("re-scan failed: " + ex.Message); continue; }
             var card = (r.Report() as AreaReport)?.Cards.FirstOrDefault();
             var finding = new RepairFinding($"{id}-after", $"{m.DisplayName} after the restart",
                 r.Status, r.Message, card?.Meta ?? "", card?.Rows.Select(x => new RepairDetail(x.Values.Count > 0 ? x.Values[0] : "", x.Values.Count > 1 ? x.Values[1] : "")).ToList() ?? [],
@@ -531,7 +534,7 @@ public sealed class WorkflowService(
         try { bench.Stop(); } catch { }
         // Let a running step finish recording what it did before the report is written.
         if (_resuming is { } r) try { await r.Task.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false); } catch (TimeoutException) { Log("cancel: the running step didn't stop in time"); }
-        try { await sys.AbortRestartAsync(CancellationToken.None).ConfigureAwait(false); } catch (Exception ex) { Log("abort restart: " + ex.Message); }
+        try { await sys.AbortRestartAsync(CancellationToken.None).ConfigureAwait(false); } catch (Exception ex) { LogWarn("abort restart: " + ex.Message); }
         await CleanupAsync(CancellationToken.None).ConfigureAwait(false);
         Save(s => s with { Stage = WorkflowStage.Cancelled, RestartAborted = s.RestartAborted || restartPending });
         Note("Workflow cancelled. Fixes already applied stay in place (use Undo changes to revert them).");
@@ -605,7 +608,7 @@ public sealed class WorkflowService(
         if (path is not null)
         {
             try { sys.SaveReport(path, html!); }
-            catch (Exception ex) { Log("report save failed: " + ex.Message); path = null; }
+            catch (Exception ex) { LogWarn("report save failed: " + ex.Message); path = null; }
         }
         if (path is null) html = ClientReport.Build(State with { ReportPath = null }, bench.Before, bench.After, bench.Comparison, when);
         Save(s => s with { ReportPath = path, ReportHtml = html });

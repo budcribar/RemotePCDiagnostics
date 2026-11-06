@@ -58,7 +58,7 @@ public static class ServiceProtection
     public static ServiceControlOptions For(ServiceInfo s, bool isDriver = false)
     {
         // The collector is Manual-only throughout the app; generic service controls must not bypass that policy.
-        var collector = Memory.MemorySuggestionEngine.IsVisualStudioCollector(s.Name);
+        var collector = Optimizations.MemorySuggestionEngine.IsVisualStudioCollector(s.Name);
         var locked = isDriver || IsProtected(s.Name) || IsSelfComponent(s.Name) || collector;
         var running = s.IsRunning;
         var stopped = s.IsStopped;
@@ -85,7 +85,7 @@ public sealed record ServiceActionResult(bool Success, string Message, ServiceSt
 public sealed record ServiceActionPlan(ServiceAction Action, string Title, string WhatItIs, string WhatWillHappen, IReadOnlyList<DependentService> Dependents, string? Warning, bool Allowed);
 
 /// <summary>Plans, runs and audits start/stop/restart of Windows services. All user-facing text is plain; detail goes to the log.</summary>
-public sealed class ServiceActionService(IServiceControlBackend backend, ISessionContext? session = null, Action<string>? log = null, TimeSpan? timeout = null,
+public sealed class ServiceActionService(IServiceControlBackend backend, ISessionContext? session = null, ILogger? log = null, TimeSpan? timeout = null,
     Changes.IChangeJournal? journal = null)
 {
     public const int MaxRecent = 20;
@@ -100,12 +100,14 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
 
     public string Actor => ServiceActor.From(session);
 
-    private void Log(string m) => log?.Invoke("[services] " + m);
+    private void Log(string m) => log.Info("[services] " + m);
+    private void LogWarn(string m) => log.Warn("[services] " + m);
+    private void LogError(string m) => log.Error("[services] " + m);
 
     public ServiceControlOptions OptionsFor(ServiceInfo s)
     {
         bool driver;
-        try { driver = backend.IsDriver(s.Name); } catch (Exception ex) { Log($"IsDriver({s.Name}) failed: {ex}"); driver = false; }
+        try { driver = backend.IsDriver(s.Name); } catch (Exception ex) { LogError($"IsDriver({s.Name}) failed: {ex}"); driver = false; }
         return ServiceProtection.For(s, driver);
     }
 
@@ -122,7 +124,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         if (action != ServiceAction.Start)
         {
             try { deps = backend.GetRunningDependents(s.Name); }
-            catch (Exception ex) { Log($"GetRunningDependents({s.Name}) failed: {ex}"); }
+            catch (Exception ex) { LogError($"GetRunningDependents({s.Name}) failed: {ex}"); }
         }
         var happen = action switch
         {
@@ -133,7 +135,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         string? warning = deps.Count == 0 ? null : action == ServiceAction.Stop
             ? $"These running services depend on it and will also be stopped: {string.Join(", ", deps.Select(d => d.Label))}."
             : $"These running services depend on it and will be stopped and started again: {string.Join(", ", deps.Select(d => d.Label))}.";
-        if (!allowed) warning = Memory.MemorySuggestionEngine.IsVisualStudioCollector(s.Name) ? "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector." : opts.IsProtected ? $"{s.Label} is protected by Windows and can't be changed from here." : $"{s.Label} can't be {Past(action)} right now.";
+        if (!allowed) warning = Optimizations.MemorySuggestionEngine.IsVisualStudioCollector(s.Name) ? "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector." : opts.IsProtected ? $"{s.Label} is protected by Windows and can't be changed from here." : $"{s.Label} can't be {Past(action)} right now.";
         return new(action, $"{Verb(action)} {s.Label}?", what, happen, deps, warning, allowed);
     }
 
@@ -153,7 +155,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         if (!allowed)
         {
             Log($"Refused {action} of '{s.Name}': protected={opts.IsProtected} status={s.Status} startType={s.StartType}");
-            result = new(false, Memory.MemorySuggestionEngine.IsVisualStudioCollector(s.Name) ? "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector." : opts.IsProtected ? $"{s.Label} is protected by Windows and can't be {Past(action)} from here." : $"{s.Label} can't be {Past(action)} right now.", SafeState(s.Name));
+            result = new(false, Optimizations.MemorySuggestionEngine.IsVisualStudioCollector(s.Name) ? "Only changing the startup type to Manual is offered for the Visual Studio diagnostics collector." : opts.IsProtected ? $"{s.Label} is protected by Windows and can't be {Past(action)} from here." : $"{s.Label} can't be {Past(action)} right now.", SafeState(s.Name));
         }
         else
         {
@@ -168,13 +170,13 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
             if (_recent.Count > MaxRecent) _recent.RemoveAt(_recent.Count - 1);
         }
         Log($"AUDIT when={rec.When:O} actor='{actor}' action={action} service='{s.Name}' success={result.Success} newState={result.NewState} message='{result.Message}'");
-        try { ActionCompleted?.Invoke(rec); } catch (Exception ex) { Log($"ActionCompleted handler failed: {ex}"); }
+        try { ActionCompleted?.Invoke(rec); } catch (Exception ex) { LogError($"ActionCompleted handler failed: {ex}"); }
         return result;
     }
 
     private ServiceState SafeState(string name)
     {
-        try { return backend.GetState(name); } catch (Exception ex) { Log($"GetState({name}) failed: {ex}"); return ServiceState.Unknown; }
+        try { return backend.GetState(name); } catch (Exception ex) { LogError($"GetState({name}) failed: {ex}"); return ServiceState.Unknown; }
     }
 
     private async Task<ServiceActionResult> RunAsync(ServiceInfo s, ServiceAction action, CancellationToken ct)
@@ -191,7 +193,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
                 backend.Stop(s.Name);
                 if (!await backend.WaitForStateAsync(s.Name, ServiceState.Stopped, Timeout, ct).ConfigureAwait(false))
                 {
-                    Log($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to stop");
+                    LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to stop");
                     return new(false, $"Couldn't {verb} {s.Label}: it didn't respond in time.", SafeState(s.Name));
                 }
             }
@@ -201,7 +203,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
                 backend.Start(s.Name);
                 if (!await backend.WaitForStateAsync(s.Name, ServiceState.Running, Timeout, ct).ConfigureAwait(false))
                 {
-                    Log($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to start");
+                    LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to start");
                     return new(false, $"Couldn't {verb} {s.Label}: it didn't respond in time.", SafeState(s.Name));
                 }
                 if (action == ServiceAction.Restart)
@@ -213,7 +215,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
                             backend.Start(d.Name);
                             await backend.WaitForStateAsync(d.Name, ServiceState.Running, Timeout, ct).ConfigureAwait(false);
                         }
-                        catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Restarting dependent '{d.Name}' failed: {ex}"); }
+                        catch (Exception ex) when (ex is not OperationCanceledException) { LogError($"Restarting dependent '{d.Name}' failed: {ex}"); }
                     }
                 }
             }
@@ -226,7 +228,7 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         }
         catch (Exception ex)
         {
-            Log($"{action} of '{s.Name}' failed during {step}: {ex}");
+            LogError($"{action} of '{s.Name}' failed during {step}: {ex}");
             var why = s.IsDisabled && step == "start" ? "it's turned off (disabled)" : "Windows didn't allow it";
             return new(false, $"Couldn't {verb} {s.Label}: {why}.", SafeState(s.Name));
         }

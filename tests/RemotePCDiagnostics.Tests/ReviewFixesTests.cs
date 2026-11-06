@@ -1,7 +1,7 @@
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.History;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Stress;

@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="../../src/RemotePCDiagnostics.Abstractions/RemotePCDiagnostics.Abstractions.csproj" />
+  <Project Path="../../src/RemotePCDiagnostics.Agent.Core/RemotePCDiagnostics.Agent.Core.csproj" />
+  <Project Path="../../src/RemotePCDiagnostics.Core/RemotePCDiagnostics.Core.csproj" />
+  <Project Path="NetworkUsagePrototype/NetworkUsagePrototype.csproj" />
+  <Project Path="OutlookBenchmark/OutlookBenchmark.csproj" />
+</Solution>

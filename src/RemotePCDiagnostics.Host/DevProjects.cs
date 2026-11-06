@@ -14,7 +14,7 @@ public static class DevProjects
     private static (DateTime At, IReadOnlyList<ProjectRoot> Roots)? s_last;
     private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(5);
 
-    public static async Task<IReadOnlyList<ProjectRoot>> FindAsync(Action<string>? log, CancellationToken ct)
+    public static async Task<IReadOnlyList<ProjectRoot>> FindAsync(ILogger? log, CancellationToken ct)
     {
         await Gate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -28,14 +28,9 @@ public static class DevProjects
     }
 
     /// <summary>Asks the Windows Search index for project files (only folders Windows indexes; quick when the service runs).</summary>
-    public const string SearchIndexScript =
-        "$ErrorActionPreference='Stop';$c=New-Object -ComObject ADODB.Connection;" +
-        "$c.Open(\"Provider=Search.CollatorDSO;Extended Properties='Application=Windows';\");" +
-        "$rs=$c.Execute(\"SELECT TOP 5000 System.ItemPathDisplay FROM SYSTEMINDEX WHERE System.FileName = 'project.assets.json' OR System.FileExtension = '.sln' OR System.FileExtension = '.slnx' OR System.FileExtension = '.csproj'\");" +
-        "$o=New-Object System.Collections.Generic.List[string];" +
-        "while(-not $rs.EOF){ $o.Add([string]$rs.Fields.Item(0).Value); $rs.MoveNext() };$rs.Close();$c.Close();$o -join \"`n\"";
+    public static string SearchIndexScript => RemotePCDiagnostics.Core.Scripts.PowerShellScripts.Get("SearchIndexProjects");
 
-    private static async Task<IReadOnlyList<string>> SearchIndexAsync(Action<string>? log, CancellationToken ct)
+    private static async Task<IReadOnlyList<string>> SearchIndexAsync(ILogger? log, CancellationToken ct)
     {
         var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"))
         { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -49,14 +44,14 @@ public static class DevProjects
             var errTask = p.StandardError.ReadToEndAsync(timeout.Token);
             await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
             var output = await outTask.ConfigureAwait(false);
-            if (p.ExitCode != 0) { log?.Invoke("[projects] search index unavailable: " + (await errTask.ConfigureAwait(false)).Trim()); return []; }
+            if (p.ExitCode != 0) { log.Info("[projects] search index unavailable: " + (await errTask.ConfigureAwait(false)).Trim()); return []; }
             return output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         }
         catch (OperationCanceledException)
         {
             try { p.Kill(true); } catch { }
             if (ct.IsCancellationRequested) throw;
-            log?.Invoke("[projects] search index timed out");
+            log.Warn("[projects] search index timed out");
             return [];
         }
     }

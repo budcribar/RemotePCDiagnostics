@@ -101,7 +101,8 @@ public class RemediationTests
     public async Task Group3_NetworkProxy_Dns_And_FlushRenew()
     {
         var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
-        var svc = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Remote));
+        var settings = new FakeSystemSettings();
+        var svc = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Remote), settings: settings);
 
         var wifiRep = WifiConfigModule.Build(
             null,
@@ -127,6 +128,7 @@ public class RemediationTests
         var dnsRes = await svc.ExecuteAsync(rowActions.Single(a => a.Kind == RemediationKind.SetPublicDns));
         Assert.True(dnsRes.Success);
         Assert.Contains("1.1.1.1", dnsRes.Message);
+        Assert.Equal(["proxy=0", "dns:Wi-Fi=1.1.1.1,8.8.8.8"], settings.Calls); // in process: no PowerShell for either
     }
 
     [Fact]

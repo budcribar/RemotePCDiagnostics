@@ -11,11 +11,11 @@ namespace RemotePCDiagnostics.Host;
 /// </summary>
 public static class StorageCleaner
 {
-    public static async Task<StorageCleanResult> CleanAsync(string id, Action<string>? log, CancellationToken ct)
+    public static async Task<StorageCleanResult> CleanAsync(string id, ILogger? log, CancellationToken ct)
     {
         if (StorageCleanupCatalog.Find(id) is not { } category)
         {
-            log?.Invoke($"[storage] refused unknown cleanup '{id}'");
+            log.Info($"[storage] refused unknown cleanup '{id}'");
             return StorageCleanResult.NotRun(id, "That cleanup isn't one this app may run.");
         }
         IReadOnlyList<string> projects = [];
@@ -24,12 +24,12 @@ public static class StorageCleaner
             try { projects = [.. (await DevProjects.FindAsync(log, ct).ConfigureAwait(false)).Select(r => r.Path)]; }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                log?.Invoke("[storage] project search failed: " + ex.Message); // no projects found = no package versions are removed
+                log.Warn("[storage] project search failed: " + ex.Message); // no projects found = no package versions are removed
             }
         }
         var ctx = new StorageScanContext(StorageRoots.Current(), projects, DateTime.UtcNow, log);
         var result = await Task.Run(() => StorageCleanupEngine.Clean(category, ctx, IsAppRunning, ct), ct).ConfigureAwait(false);
-        log?.Invoke($"[storage] {id}: {result.Message}");
+        log.Info($"[storage] {id}: {result.Message}");
         return result;
     }
 

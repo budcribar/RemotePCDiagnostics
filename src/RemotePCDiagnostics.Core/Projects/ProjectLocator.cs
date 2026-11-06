@@ -24,9 +24,10 @@ public sealed record ProjectRoot(string Path, ProjectSource Source);
 /// Windsurf, VSCodium), Visual Studio and Rider have opened, project files Windows Search has indexed, and the usual
 /// places people keep code. Each hit is widened to its repository root (the folder holding .git).
 /// </summary>
-public sealed class ProjectLocator(ProjectLocatorPaths paths, Func<CancellationToken, Task<IReadOnlyList<string>>>? searchIndex = null, Action<string>? log = null)
+public sealed class ProjectLocator(ProjectLocatorPaths paths, Func<CancellationToken, Task<IReadOnlyList<string>>>? searchIndex = null, ILogger? log = null)
 {
-    private void Log(string m) { try { log?.Invoke("[projects] " + m); } catch { } }
+    private void Log(string m) => log.Info("[projects] " + m);
+    private void LogLine(string m) => log.Line("[projects] " + m);
 
     /// <summary>VS Code and its forks keep one workspace.json per folder ever opened under this folder.</summary>
     public static readonly string[] CodeEditors = ["Code", "Code - Insiders", "Cursor", "Windsurf", "VSCodium"];
@@ -65,7 +66,7 @@ public sealed class ProjectLocator(ProjectLocatorPaths paths, Func<CancellationT
     private IEnumerable<string> Safe(Func<IEnumerable<string>> f)
     {
         try { return f().ToList(); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or FormatException) { Log(ex.Message); return []; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or FormatException) { LogLine(ex.Message); return []; }
     }
 
     // ---- VS Code family: %APPDATA%\<editor>\User\workspaceStorage\<hash>\workspace.json ----

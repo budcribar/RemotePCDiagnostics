@@ -6,7 +6,7 @@ using RemotePCDiagnostics.Core.Migrations;
 namespace RemotePCDiagnostics.Host;
 
 /// <summary>Event Log access for <see cref="EventLogV3Migration"/>: EventLogReader to read, wevtutil to back up and clear, EventLog to write.</summary>
-public sealed class WindowsEventLogMigrationIo(Action<string> log) : IEventLogMigrationIo
+public sealed class WindowsEventLogMigrationIo(ILogger? log) : IEventLogMigrationIo
 {
     public bool IsElevated => App.IsAdministrator();
 
@@ -60,6 +60,6 @@ public sealed class WindowsEventLogMigrationIo(Action<string> log) : IEventLogMi
         var err = p.StandardError.ReadToEnd();
         if (!p.WaitForExit(120_000)) { try { p.Kill(); } catch { } throw new TimeoutException($"wevtutil {args[0]} timed out"); }
         if (p.ExitCode != 0) throw new InvalidOperationException($"wevtutil {args[0]} exited {p.ExitCode}: {err.Trim()}");
-        log($"wevtutil {string.Join(' ', args)}: done");
+        log.Info($"wevtutil {string.Join(' ', args)}: done");
     }
 }

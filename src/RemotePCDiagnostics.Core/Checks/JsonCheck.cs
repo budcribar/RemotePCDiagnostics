@@ -128,7 +128,7 @@ public sealed record JsonCheck
 
 /// <summary>Runs one <see cref="JsonCheck"/> through osquery.</summary>
 public sealed class JsonCheckModule(JsonCheck check, Func<string, CancellationToken, Task<OsqueryQueryResult>> query,
-    Func<ModuleAvailability>? availability = null, Action<string>? log = null) : AreaModuleBase(log)
+    Func<ModuleAvailability>? availability = null, ILogger? log = null) : AreaModuleBase(log)
 {
     public JsonCheck Check => check;
     public override Guid Id => check.Id;
@@ -176,7 +176,7 @@ public sealed class JsonCheckModule(JsonCheck check, Func<string, CancellationTo
 }
 
 /// <summary>Registers one JSON check, running its query through the app's osquery.</summary>
-public sealed class JsonCheckPlugin(JsonCheck check, Action<string>? log = null) : Plugins.IModulePlugin
+public sealed class JsonCheckPlugin(JsonCheck check, ILogger? log = null) : Plugins.IModulePlugin
 {
     public void Register(Microsoft.Extensions.DependencyInjection.IServiceCollection services, Plugins.IPluginContext context) =>
         Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<IDiagnosticModule>(services, sp =>

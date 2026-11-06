@@ -147,7 +147,7 @@ Verdict rule of thumb: `Fail` only for clear, actionable problems (e.g. two real
 
 **What it checks.** Outlook data file sizes (OST/PST), COM add-ins for Outlook/Word/Excel with load behavior and load time, and Outlook options that commonly slow startup.
 
-**Why it matters.** Large OST files, slow add-ins, and caching shared mailboxes are common causes of slow Outlook startup. The repo already contains `src/OutlookBenchmark`; this module should reuse or align with it.
+**Why it matters.** Large OST files, slow add-ins, and caching shared mailboxes are common causes of slow Outlook startup. The repo already contains `tools/prototypes/OutlookBenchmark`; this module should reuse or align with it.
 
 **Implementation notes.**
 - COM add-ins: `HKCU`/`HKLM\Software\Microsoft\Office\<App>\Addins\*` (`LoadBehavior`, `FriendlyName`), plus `WOW6432Node`. Disabled-item and slow-add-in data under `...\Office\16.0\<App>\Resiliency`. *Hypothesis:* Office records add-in load times in Resiliency keys; format to verify.

@@ -15,7 +15,8 @@ public class PluginContractTests
         var refs = asm.GetReferencedAssemblies().Select(a => a.Name!).ToList();
         Assert.DoesNotContain(refs, r => r.StartsWith("RemotePCDiagnostics", StringComparison.Ordinal));
         Assert.All(refs, r => Assert.True(r.StartsWith("System", StringComparison.Ordinal) || r == "netstandard"
-            || r.StartsWith("Microsoft.Extensions.DependencyInjection.Abstractions", StringComparison.Ordinal), $"unexpected reference {r}"));
+            || r.StartsWith("Microsoft.Extensions.DependencyInjection.Abstractions", StringComparison.Ordinal)
+            || r.StartsWith("Microsoft.Extensions.Logging.Abstractions", StringComparison.Ordinal), $"unexpected reference {r}"));
         // The types a plugin needs live there, not in Core.
         foreach (var t in new[] { typeof(IModulePlugin), typeof(IPluginContext), typeof(ModuleDescriptor), typeof(DiagnosticResult), typeof(IStressSuiteModule),
                      typeof(IHardwareGatedModule), typeof(Core.Areas.AreaReport), typeof(Core.Areas.AreaModuleBase), typeof(ISessionContext) })
@@ -32,7 +33,7 @@ public class PluginContractTests
         Assert.Equal(ok, ContractVersion.IsCompatible(Version.Parse(builtFor), Version.Parse(host)));
 
     private static PluginRegistrar Registrar(List<string>? log = null) =>
-        new(new SessionContext(SessionMode.Local), new Version(1, 2, 0), l => log?.Add(l));
+        new(new SessionContext(SessionMode.Local), new Version(1, 2, 0), new LineLogger(l => log?.Add(l)));
 
     [Fact]
     public void A_plugin_that_throws_leaves_nothing_registered_and_is_disabled()

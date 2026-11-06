@@ -8,6 +8,7 @@ namespace RemotePCDiagnostics.Core.Plugins;
 /// <summary>
 /// The line protocol between the app and RemotePCDiagnostics.ModuleHost (one JSON object per line over the helper's stdin and stdout, which
 /// only the app holds). App to host: availability, refresh, stop, exit. Host to app: ready, availability, progress, result, error.
+/// The app also sends "result" lines to a module's UI host (RemotePCDiagnostics.ModuleUiHost): the module's latest result, see <see cref="ModuleUiState"/>.
 /// </summary>
 public sealed record ModuleHostMessage
 {
@@ -20,6 +21,8 @@ public sealed record ModuleHostMessage
     public DiagnosticStatus? Status { get; init; }
     public bool? Cancelled { get; init; }
     public AreaReport? Report { get; init; }
+    /// <summary>When the result was produced (results sent to a module's UI host).</summary>
+    public DateTimeOffset? When { get; init; }
 
     public static readonly JsonSerializerOptions Json = new()
     {
@@ -72,7 +75,7 @@ public interface IModuleHostLauncher
 }
 
 /// <summary>Starts RemotePCDiagnostics.ModuleHost from the app folder with the current token (tests; the Windows host restricts it).</summary>
-public sealed class ProcessModuleHostLauncher(string? directory = null, Action<string>? log = null) : IModuleHostLauncher
+public sealed class ProcessModuleHostLauncher(string? directory = null, ILogger? log = null) : IModuleHostLauncher
 {
     public const string HostName = "RemotePCDiagnostics.ModuleHost";
 
@@ -92,7 +95,7 @@ public sealed class ProcessModuleHostLauncher(string? directory = null, Action<s
             UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
         };
         var p = Process.Start(psi) ?? throw new InvalidOperationException("Module host did not start");
-        p.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) log?.Invoke($"Module host [{module.Manifest.Slug}]: {e.Data}"); };
+        p.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) log.Info($"Module host [{module.Manifest.Slug}]: {e.Data}"); };
         p.BeginErrorReadLine();
         return new Connection(p);
     }
@@ -117,7 +120,7 @@ public interface IUserModeModule : IDiagnosticModule
 /// Stands in for an unsigned module inside the app: the descriptor comes from its manifest, the work happens in the module host. Its
 /// report is shown in the generic view with every one-click action removed, because those run elevated in the app.
 /// </summary>
-public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLauncher launcher, Action<string>? log = null) : IUserModeModule, IDisposable
+public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLauncher launcher, ILogger? log = null) : IUserModeModule, IDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _connGate = new();
@@ -198,7 +201,7 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
         catch (Exception ex)
         {
             Reset();
-            log?.Invoke($"Module host [{Name}]: {ex.Message}");
+            log.Info($"Module host [{Name}]: {ex.Message}");
             return CouldNotRun.Result(Name, $"The module host stopped: {ex.Message}");
         }
         finally { _gate.Release(); }
@@ -218,7 +221,7 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
             if (_conn is { HasExited: false } c) return c;
             _conn?.Dispose();
             _conn = launcher.Start(module);
-            log?.Invoke($"Module host [{Name}]: started for {module.Path}");
+            log.Info($"Module host [{Name}]: started for {module.Path}");
             return _conn;
         }
     }

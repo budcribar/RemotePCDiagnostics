@@ -4,7 +4,7 @@
   "slug": "sample.uptime",
   "displayName": "Uptime (sample plugin)",
   "version": "1.0.0",
-  "contract": "1.0",
+  "contract": "2.0",
   "entryType": "SampleModule.SampleModulePlugin",
   "kind": "Check",
   "group": "other",

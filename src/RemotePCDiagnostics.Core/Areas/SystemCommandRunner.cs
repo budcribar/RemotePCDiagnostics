@@ -3,11 +3,11 @@ using RemotePCDiagnostics.Core.Osquery;
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>Runs built-in Windows tools (PowerShell, wevtutil) for areas osquery can't cover. Logs every call; never throws except on cancellation.</summary>
-public sealed class SystemCommandRunner(IProcessLauncher? launcher = null, Action<string>? log = null, TimeSpan? timeout = null)
+public sealed class SystemCommandRunner(IProcessLauncher? launcher = null, ILogger? log = null, TimeSpan? timeout = null)
 {
     private readonly IProcessLauncher _launcher = launcher ?? new SystemProcessLauncher();
     public TimeSpan Timeout { get; } = timeout ?? TimeSpan.FromSeconds(60);
-    public Action<string>? Log { get; } = log;
+    public ILogger? Log { get; } = log;
 
     /// <summary>Full path of a tool in the Windows system directory (falls back to the bare name, resolved via PATH).</summary>
     public static string SystemTool(string exe)
@@ -45,5 +45,5 @@ public sealed class SystemCommandRunner(IProcessLauncher? launcher = null, Actio
         return pr.TimedOut ? null : pr;
     }
 
-    private void Write(string s) { try { Log?.Invoke(s); } catch { } }
+    private void Write(string s) { try { Log.Line(s); } catch { } }
 }

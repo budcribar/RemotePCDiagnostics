@@ -14,7 +14,7 @@ namespace RemotePCDiagnostics.Host.Gpu;
 /// and runs <see cref="GpuStressKernel"/>. Software adapters (WARP / Microsoft Basic Render Driver) are skipped and
 /// reported as <see cref="GpuOpenStatus.SoftwareOnly"/>, never opened.
 /// </summary>
-public sealed class D3D11GpuDeviceFactory(Action<string>? log = null, int threadCount = 1 << 18) : IGpuDeviceFactory
+public sealed class D3D11GpuDeviceFactory(ILogger? log = null, int threadCount = 1 << 18) : IGpuDeviceFactory
 {
     /// <summary>Hardware adapters in DXGI order, with ids from their PCI vendor, device, subsystem and revision.</summary>
     public IReadOnlyList<GpuAdapterInfo> ListAdapters()
@@ -61,7 +61,7 @@ public sealed class D3D11GpuDeviceFactory(Action<string>? log = null, int thread
                     try { return GpuOpenResult.Ok(new D3D11GpuDevice(adapter, Info(d) with { Id = index.a.Id }, threadCount, log)); }
                     catch (Exception ex)
                     {
-                        log?.Invoke($"GPU stress: could not open '{d.Description}': {ex}");
+                        log.Error($"GPU stress: could not open '{d.Description}': {ex}");
                         return new GpuOpenResult(GpuOpenStatus.Failed, Detail: $"{d.Description}: {ex.Message}");
                     }
                 }
@@ -85,7 +85,7 @@ public sealed class D3D11GpuDeviceFactory(Action<string>? log = null, int thread
                 {
                     var d = adapter.Description1;
                     var soft = (d.Flags & AdapterFlags.Software) != 0 || d.VendorId == GpuAdapterInfo.MicrosoftVendorId;
-                    log?.Invoke($"GPU stress: adapter {i} '{d.Description}' vendor=0x{d.VendorId:X4} device=0x{d.DeviceId:X4} vram={d.DedicatedVideoMemory} flags={d.Flags} software={soft}");
+                    log.Info($"GPU stress: adapter {i} '{d.Description}' vendor=0x{d.VendorId:X4} device=0x{d.DeviceId:X4} vram={d.DedicatedVideoMemory} flags={d.Flags} software={soft}");
                     if (soft) { sawSoftware = true; continue; }
                     try
                     {
@@ -95,7 +95,7 @@ public sealed class D3D11GpuDeviceFactory(Action<string>? log = null, int thread
                     catch (Exception ex)
                     {
                         failures.Add($"{d.Description}: {ex.Message}");
-                        log?.Invoke($"GPU stress: could not open '{d.Description}': {ex}");
+                        log.Error($"GPU stress: could not open '{d.Description}': {ex}");
                     }
                 }
             }
@@ -117,19 +117,19 @@ internal sealed class D3D11GpuDevice : IGpuComputeDevice
     private readonly ID3D11Buffer _output, _staging, _params;
     private readonly ID3D11UnorderedAccessView _uav;
     private readonly int[] _raw;
-    private readonly Action<string>? _log;
+    private readonly ILogger? _log;
 
     public GpuAdapterInfo Adapter { get; }
     public int ThreadCount { get; }
 
-    public D3D11GpuDevice(IDXGIAdapter1 adapter, GpuAdapterInfo info, int threadCount, Action<string>? log)
+    public D3D11GpuDevice(IDXGIAdapter1 adapter, GpuAdapterInfo info, int threadCount, ILogger? log)
     {
         Adapter = info; _log = log;
         ThreadCount = Math.Max(GpuStressKernel.GroupSize, threadCount / GpuStressKernel.GroupSize * GpuStressKernel.GroupSize);
         _raw = new int[ThreadCount];
         // Adapter given => driver type must be Unknown.
         D3D11.D3D11CreateDevice(adapter, DriverType.Unknown, DeviceCreationFlags.None, Levels, out _device!, out var level, out _context!).CheckError();
-        log?.Invoke($"GPU stress: D3D11 device created, feature level {level}");
+        log.Info($"GPU stress: D3D11 device created, feature level {level}");
 
         try
         {
@@ -192,7 +192,7 @@ internal sealed class D3D11GpuDevice : IGpuComputeDevice
 
     public void Dispose()
     {
-        _log?.Invoke("GPU stress: releasing D3D11 device");
+        _log.Info("GPU stress: releasing D3D11 device");
         try { _context?.ClearState(); } catch { }
         _uav?.Dispose(); _params?.Dispose(); _staging?.Dispose(); _output?.Dispose(); _shader?.Dispose();
         _context?.Dispose(); _device?.Dispose();

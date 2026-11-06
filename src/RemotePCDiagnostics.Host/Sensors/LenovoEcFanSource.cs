@@ -12,7 +12,7 @@ namespace RemotePCDiagnostics.Host.Sensors;
 /// </summary>
 public static class LenovoEcFanSource
 {
-    public static IEcFanSource Create(Action<string> log)
+    public static IEcFanSource Create(ILogger? log)
     {
         if (!OperatingSystem.IsWindows()) return new NoEcFanSource();
         return new EcFanMonitor(ReadModel, CheckPawnIo, () => new PawnIoEcPortIo(), new GlobalEcMutex(), log);

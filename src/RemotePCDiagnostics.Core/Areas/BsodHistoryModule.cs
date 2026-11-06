@@ -30,7 +30,7 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
         var events = await _log.QueryAsync("System", Query, MaxEvents, ct).ConfigureAwait(false);
         IReadOnlyList<MinidumpFile> dumps = [];
         try { dumps = _readDumps(); }
-        catch (Exception ex) { Log($"{Name}: minidump check failed: {ex.Message}"); }
+        catch (Exception ex) { LogWarn($"{Name}: minidump check failed: {ex.Message}"); }
         return events is null ? AreaReport.Failed(FailedMessage) : BuildReviewed(events, dumps);
     }
 

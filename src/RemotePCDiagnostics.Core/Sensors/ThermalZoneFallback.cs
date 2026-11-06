@@ -25,15 +25,15 @@ public static class ThermalZoneFallback
         return c is > 5 and < 125 ? c : null;
     }
 
-    public static List<SensorReading> Apply(IReadOnlyList<SensorReading> readings, IThermalZoneReader? zones, Action<string>? log = null)
+    public static List<SensorReading> Apply(IReadOnlyList<SensorReading> readings, IThermalZoneReader? zones, ILogger? log = null)
     {
         var list = readings.ToList();
         if (zones is null || list.Any(r => r.SensorType == SensorKind.Temperature && r.HardwareType == HardwareKind.Cpu && r.IsLive)) return list; // incl. the APU approximation (thermal zone = last resort)
         IReadOnlyList<double> raw;
         try { raw = zones.ReadTenthsKelvin(); }
-        catch (Exception ex) { log?.Invoke($"Thermal zone fallback failed: {ex.Message}"); return list; }
+        catch (Exception ex) { log.Warn($"Thermal zone fallback failed: {ex.Message}"); return list; }
         var best = raw.Select(ToCelsius).Where(v => v.HasValue).DefaultIfEmpty().Max();
-        log?.Invoke($"Thermal zone fallback: raw=[{string.Join(", ", raw)}] used={(best?.ToString("0.0") ?? "none")}");
+        log.Info($"Thermal zone fallback: raw=[{string.Join(", ", raw)}] used={(best?.ToString("0.0") ?? "none")}");
         if (best is { } v) list.Add(new SensorReading(HardwareName, HardwareKind.Cpu, SensorName, SensorKind.Temperature, v, null, null, "°C"));
         return list;
     }

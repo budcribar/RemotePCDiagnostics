@@ -7,7 +7,7 @@ namespace RemotePCDiagnostics.Host;
 /// Reading the Application log needs no admin; failures surface as exceptions handled by <see cref="EventLogHistoryStore"/>.</summary>
 public static class EventLogHistorySource
 {
-    public static IHistoryStore Create(Action<string> log) =>
+    public static IHistoryStore Create(ILogger? log) =>
         OperatingSystem.IsWindows() ? new EventLogHistoryStore(Query, log) : new NullHistoryStore();
 
     private static IEnumerable<RawHistoryEvent> Query(string xpath, int max)

@@ -37,7 +37,7 @@ public sealed class EventLogMigrationTests : IDisposable
     ];
 
     private EventLogV3Migration Migration(FakeLog io, List<string>? logs = null) =>
-        new(io, new MigrationMarkers(MarkersPath), WorkDir, l => logs?.Add(l), () => T0.AddDays(1));
+        new(io, new MigrationMarkers(MarkersPath), WorkDir, new LineLogger(l => logs?.Add(l)), () => T0.AddDays(1));
 
     [Fact]
     public void Format2_converts_to_format3_with_the_module_id_and_keeps_every_field()

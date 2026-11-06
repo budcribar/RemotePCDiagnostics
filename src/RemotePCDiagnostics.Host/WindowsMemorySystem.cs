@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using EnumerationOptions = System.IO.EnumerationOptions;
+using System.Management;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Xml.Linq;
@@ -6,7 +8,7 @@ using Microsoft.Win32;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Projects;
 using RemotePCDiagnostics.Core.Storage;
@@ -17,7 +19,7 @@ namespace RemotePCDiagnostics.Host;
 /// Windows probes and actions for memory suggestions. Per-user changes only (HKCU startup, the user's browser profile),
 /// except service start-up type, which the user explicitly clicks and can undo. Nothing here runs without a UI click.
 /// </summary>
-public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<string>? log = null) : IMemorySystem
+public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger? log = null) : IMemorySystem
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string Run32Key = @"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run";
@@ -27,7 +29,9 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
     private const int SM_DIGITIZER = 94;
     private const int NID_INTEGRATED_PEN = 0x04, NID_EXTERNAL_PEN = 0x08;
     [DllImport("user32.dll")] private static extern int GetSystemMetrics(int nIndex);
-    private void Log(string m) => log?.Invoke("[memory] " + m);
+    private ILogger? Logger => log; // for helpers that take the logger itself (all partial files)
+    private void Log(string m) => log.Info("[memory] " + m);
+    private void LogWarn(string m) => log.Warn("[memory] " + m);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MEMORYSTATUSEX
@@ -106,7 +110,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             var path = LocalStatePath(k);
             if (!File.Exists(path)) continue;
             string? json = null;
-            try { json = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false); } catch (IOException ex) { Log($"Read {k} Local State failed: {ex.Message}"); }
+            try { json = await File.ReadAllTextAsync(path, ct).ConfigureAwait(false); } catch (IOException ex) { LogWarn($"Read {k} Local State failed: {ex.Message}"); }
             browsers.Add(new(k, true, IsBrowserRunning(k), BrowserPrefs.ReadMemorySaver(json, k), json is not null && BrowserPrefs.EnableMemorySaver(json, k) is not null));
             backgrounds.Add(ReadBrowserBackground(k, json));
         }
@@ -141,7 +145,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             return new(enabled, Hibernation.IsReduced(k.GetValue("HiberFileType") as int?, bytes, ReadMemory().TotalBytes),
                 Hibernation.IsCustomSize(k.GetValue("HiberFileSizePercent") as int?), bytes, ReadFastStartup(), battery);
         }
-        catch (Exception ex) when (ex is not OutOfMemoryException) { Log("Hibernation read failed: " + ex.Message); return null; }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { LogWarn("Hibernation read failed: " + ex.Message); return null; }
     }
 
     public IReadOnlyDictionary<string, int?>? ReadHibernateValues()
@@ -177,7 +181,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
                 var output = p.StandardOutput.ReadToEndAsync(timeout.Token);
                 await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
                 if (p.ExitCode == 0) return new(true, reduced ? "Hibernation file reduced." : "Hibernation file full size.");
-                Log($"powercfg /h /type failed ({p.ExitCode}): {(await err.ConfigureAwait(false)).Trim()} {(await output.ConfigureAwait(false)).Trim()}");
+                LogWarn($"powercfg /h /type failed ({p.ExitCode}): {(await err.ConfigureAwait(false)).Trim()} {(await output.ConfigureAwait(false)).Trim()}");
                 return new(false, "Windows didn't allow changing the hibernation file (a custom size may be set, or administrator rights are missing).");
             }
             catch (OperationCanceledException)
@@ -188,7 +192,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            Log("powercfg failed: " + ex.Message);
+            LogWarn("powercfg failed: " + ex.Message);
             return new(false, "Couldn't run powercfg.");
         }
     }
@@ -208,7 +212,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             return new(Environment.OSVersion.Version.Build, ReadDword(RegistryAllowlist.WidgetsPolicy), installed, taskbarDa,
                 ReadDword(RegistryAllowlist.SearchHighlightsPolicy), ReadDword(RegistryAllowlist.SearchHighlightsToggle), ReadUcpdBlocks());
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Widgets/Search highlights read failed: " + ex.Message); return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn("Widgets/Search highlights read failed: " + ex.Message); return null; }
     }
 
     /// <summary>The User Choice Protection Driver blocks the Widgets policy: its Start value (registry) and whether it's running (service manager).</summary>
@@ -220,7 +224,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             using var k = Registry.LocalMachine.OpenSubKey(WindowsFeeds.UcpdServiceKey);
             start = k is null ? null : k.GetValue("Start") as int? ?? -1;
         }
-        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException) { Log("UCPD Start read failed: " + ex.Message); start = -1; }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException) { LogWarn("UCPD Start read failed: " + ex.Message); start = -1; }
         bool? running = null;
         if (start is not null)
         {
@@ -229,7 +233,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
                 using var sc = new System.ServiceProcess.ServiceController(WindowsFeeds.UcpdService);
                 running = sc.Status == System.ServiceProcess.ServiceControllerStatus.Running;
             }
-            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { Log("UCPD state read failed: " + ex.Message); }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { LogWarn("UCPD state read failed: " + ex.Message); }
         }
         var blocked = WindowsFeeds.PolicyBlockedByUcpd(start, running);
         if (blocked) Log($"UCPD is {(running == true ? "running" : "enabled")} (Start {start}): the Widgets policy isn't offered");
@@ -251,11 +255,11 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
                 if (!IsOffice16AppInstalled(app) || OfficeStartScreen.Setting(app) is not { } setting) continue;
                 try { apps.Add(new(app, ReadDword(setting))); }
                 catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or System.Security.SecurityException or IOException)
-                { Log($"{app} start screen setting read failed: {ex.Message}"); } // not a DWORD or unreadable: leave this app alone
+                { LogWarn($"{app} start screen setting read failed: {ex.Message}"); } // not a DWORD or unreadable: leave this app alone
             }
             return new(apps);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Office start screen read failed: " + ex.Message); return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn("Office start screen read failed: " + ex.Message); return null; }
     }
 
     /// <summary>
@@ -277,7 +281,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
                 }
             return new(true, ReadDword(OfficePrivacy.Setting), disconnected);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Office privacy policy read failed: " + ex.Message); return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn("Office privacy policy read failed: " + ex.Message); return null; }
     }
 
     /// <summary>
@@ -308,7 +312,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             return k.GetValueKind(name) == RegistryValueKind.DWord && v is int i ? i : -1;
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
-        { Log($"Read {key}\\{name} failed: {ex.Message}"); return -1; }
+        { LogWarn($"Read {key}\\{name} failed: {ex.Message}"); return -1; }
     }
 
     private static bool IsOffice16AppInstalled(string app)
@@ -356,7 +360,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             using (var pdfKey = printers?.OpenSubKey(DefaultPrinter.PdfPrinter)) pdf = pdfKey is not null;
             return new(name, port, mode, pdf);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Default printer read failed: " + ex.Message); return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn("Default printer read failed: " + ex.Message); return null; }
     }
 
     /// <summary>An installed local printer (HKLM Print\Printers subkey) or a \\server\printer connection (HKCU Printers\Connections). Only safe names.</summary>
@@ -377,7 +381,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
     {
         if (!PrinterExists(name)) return new(false, $"\"{name}\" isn't installed on this PC.");
         if (SetDefaultPrinterNative(name)) { Log($"Default printer set to {name}"); return new(true, $"{name} is the default printer."); }
-        Log($"SetDefaultPrinter({name}) failed: Win32 error {Marshal.GetLastWin32Error()}");
+        LogWarn($"SetDefaultPrinter({name}) failed: Win32 error {Marshal.GetLastWin32Error()}");
         return new(false, "Windows didn't allow changing the default printer.");
     }
 
@@ -393,7 +397,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             using var r = new StreamReader(fs);
             return r.ReadToEnd();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log($"Read {path} failed: {ex.Message}"); return null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { LogWarn($"Read {path} failed: {ex.Message}"); return null; }
     }
 
     private static long FolderBytes(string path)
@@ -442,7 +446,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             }
             return new(found, SafeBlocklist(BrowserKind.Chrome), SafeBlocklist(BrowserKind.Edge));
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Browser extensions read failed: " + ex.Message); return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn("Browser extensions read failed: " + ex.Message); return null; }
     }
 
     private static bool HasVersionFolder(string extensionDir)
@@ -454,7 +458,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
     private IReadOnlyList<BlocklistEntry>? SafeBlocklist(BrowserKind k)
     {
         try { return ReadExtensionBlocklist(k); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Log($"{k} extension blocklist read failed: {ex.Message}"); return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"{k} extension blocklist read failed: {ex.Message}"); return null; }
     }
 
     private static RegistryKey Hklm64() => RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
@@ -556,7 +560,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             try { if (!DeleteKeyIfEmpty(root, hive, k)) break; }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException or InvalidOperationException or ArgumentException)
             {
-                Log($"Couldn't remove the key {k} created by a refused write: {ex.Message}");
+                LogWarn($"Couldn't remove the key {k} created by a refused write: {ex.Message}");
                 break;
             }
         }
@@ -618,13 +622,13 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             var nuget = Path.Combine(p.UserProfile, ".nuget", "packages");
             return DefenderProbe.Plan(status, folders, Directory.Exists(nuget) ? nuget : null, DevProjects.BuildTools());
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Log("Defender read failed: " + ex.Message); return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn("Defender read failed: " + ex.Message); return null; }
     }
 
     public async Task<(bool Ok, string? Output)> RunDefenderScriptAsync(string script, CancellationToken ct)
     {
         var r = await RunPowerShellAsync(script, ct).ConfigureAwait(false);
-        if (r.ExitCode != 0) Log("Defender script failed: " + r.Error);
+        if (r.ExitCode != 0) LogWarn("Defender script failed: " + r.Error);
         return (r.ExitCode == 0, r.Output);
     }
 
@@ -645,8 +649,8 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             lock (s_cleanupGate) p = s_cleanupProgress;
             var total = StorageCleanupCatalog.All.Count + 3;
             p.ReportStep(1, total, "Finding developer projects…");
-            var roots = (await DevProjects.FindAsync(Log, c).ConfigureAwait(false)).Select(r => r.Path).ToList();
-            return await Task.Run(() => ScanStorageCleanups(ReadDevices(), Log, c, roots, p, 1, total), c).ConfigureAwait(false);
+            var roots = (await DevProjects.FindAsync(Logger, c).ConfigureAwait(false)).Select(r => r.Path).ToList();
+            return await Task.Run(() => ScanStorageCleanups(ReadDevices(), Logger, c, roots, p, 1, total), c).ConfigureAwait(false);
         });
         return cache.GetAsync(refresh, ct);
     }
@@ -664,45 +668,104 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
     public bool? GetTransparency()
     {
         try { return Registry.GetValue(PersonalizeKey, "EnableTransparency", null) is int v ? v != 0 : null; }
-        catch (Exception ex) { Log("Transparency read failed: " + ex.Message); return null; }
+        catch (Exception ex) { LogWarn("Transparency read failed: " + ex.Message); return null; }
     }
 
     /// <summary>Same value the Settings toggle writes (current user only); Explorer picks it up within a few seconds.</summary>
     public void SetTransparency(bool on) => Registry.SetValue(PersonalizeKey, "EnableTransparency", on ? 1 : 0, RegistryValueKind.DWord);
 
-    public async Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct)
+    public Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct) => Task.Run(() =>
     {
-        var r = await RunPowerShellAsync(MemoryProbe.EnableAutoPageFileScript, ct).ConfigureAwait(false);
-        Log($"Enable automatic page file: exit={r.ExitCode} err={r.Error.Trim()}");
-        return r.ExitCode == 0
-            ? new(true, "Windows will manage the page file size from the next restart.")
-            : new(false, "Couldn't change the page file setting (administrator rights required).");
+        try
+        {
+            SetAutomaticPageFile(true);
+            Log("Enable automatic page file: done");
+            return new ActionOutcome(true, "Windows will manage the page file size from the next restart.");
+        }
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or COMException)
+        {
+            LogWarn($"Enable automatic page file: {ex.Message}");
+            return new ActionOutcome(false, "Couldn't change the page file setting (administrator rights required).");
+        }
+    }, ct);
+
+    /// <summary>The custom page file sizes (Win32_PageFileSetting) as base64 of a JSON array of {Name, InitialSize, MaximumSize}, the format the
+    /// change journal keeps; null when Windows manages the size (no settings).</summary>
+    public Task<string?> ReadPageFileSettingsAsync(CancellationToken ct) => Task.Run(() =>
+    {
+        try
+        {
+            var rows = new List<PageFileSize>();
+            using var searcher = new ManagementObjectSearcher("SELECT Name, InitialSize, MaximumSize FROM Win32_PageFileSetting");
+            foreach (ManagementObject o in searcher.Get())
+                using (o) rows.Add(new((string)o["Name"], Convert.ToUInt32(o["InitialSize"] ?? 0u), Convert.ToUInt32(o["MaximumSize"] ?? 0u)));
+            return rows.Count == 0 ? null : Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(rows)));
+        }
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or COMException)
+        {
+            LogWarn($"Read page file settings: {ex.Message}");
+            return null;
+        }
+    }, ct);
+
+    public Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct) => Task.Run(() =>
+    {
+        if (settings.Length == 0 || settings.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '+' or '/' or '='))) return new ActionOutcome(false, "The saved page file settings are unreadable.");
+        List<PageFileSize> rows;
+        try
+        {
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(settings)).Trim();
+            if (!json.StartsWith('[')) json = "[" + json + "]"; // one setting was saved as a single object
+            rows = System.Text.Json.JsonSerializer.Deserialize<List<PageFileSize>>(json) ?? [];
+        }
+        catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException) { return new ActionOutcome(false, "The saved page file settings are unreadable."); }
+        if (rows.Count == 0 || rows.Any(r => !PageFileSize.IsValidName(r.Name))) return new ActionOutcome(false, "The saved page file settings are unreadable.");
+        try
+        {
+            SetAutomaticPageFile(false);
+            foreach (var row in rows)
+            {
+                using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_PageFileSetting");
+                ManagementObject? existing = null;
+                foreach (ManagementObject o in searcher.Get())
+                {
+                    if (existing is null && string.Equals(o["Name"] as string, row.Name, StringComparison.OrdinalIgnoreCase)) existing = o; else o.Dispose();
+                }
+                if (existing is null)
+                {
+                    using var cls = new ManagementClass("Win32_PageFileSetting");
+                    existing = cls.CreateInstance();
+                    existing["Name"] = row.Name;
+                }
+                using (existing)
+                {
+                    existing["InitialSize"] = row.InitialSize;
+                    existing["MaximumSize"] = row.MaximumSize;
+                    existing.Put();
+                }
+            }
+            Log($"Restore page file: {rows.Count} setting(s)");
+            return new ActionOutcome(true, "Custom page file size restored (takes effect after a restart).");
+        }
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or COMException)
+        {
+            LogWarn($"Restore page file: {ex.Message}");
+            return new ActionOutcome(false, "Couldn't restore the page file setting (administrator rights required).");
+        }
+    }, ct);
+
+    private static void SetAutomaticPageFile(bool automatic)
+    {
+        using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_ComputerSystem");
+        foreach (ManagementObject cs in searcher.Get())
+            using (cs) { cs["AutomaticManagedPagefile"] = automatic; cs.Put(); }
     }
 
-    private const string ReadPageFileScript =
-        "$ErrorActionPreference='SilentlyContinue';$s=@(Get-CimInstance Win32_PageFileSetting | Select-Object Name,InitialSize,MaximumSize);" +
-        "if($s.Count -gt 0){[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $s -Compress)))}";
-
-    public async Task<string?> ReadPageFileSettingsAsync(CancellationToken ct)
+    /// <summary>One Win32_PageFileSetting as the journal stores it (the names match what the earlier PowerShell version wrote).</summary>
+    private sealed record PageFileSize(string Name, uint InitialSize, uint MaximumSize)
     {
-        var r = await RunPowerShellAsync(ReadPageFileScript, ct).ConfigureAwait(false);
-        var b64 = r.Output.Trim();
-        return r.ExitCode == 0 && b64.Length > 0 ? b64 : null;
-    }
-
-    public async Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct)
-    {
-        if (settings.Length == 0 || settings.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '+' or '/' or '='))) return new(false, "The saved page file settings are unreadable.");
-        var script =
-            "$ErrorActionPreference='Stop';" +
-            $"$j=@([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{settings}')) | ConvertFrom-Json);" +
-            "$c=Get-CimInstance Win32_ComputerSystem; Set-CimInstance -InputObject $c -Property @{AutomaticManagedPagefile=$false};" +
-            "foreach($p in $j){ $e=Get-CimInstance Win32_PageFileSetting | Where-Object { $_.Name -eq $p.Name };" +
-            " if($e){ Set-CimInstance -InputObject $e -Property @{InitialSize=[uint32]$p.InitialSize;MaximumSize=[uint32]$p.MaximumSize} }" +
-            " else { New-CimInstance -ClassName Win32_PageFileSetting -Property @{Name=$p.Name;InitialSize=[uint32]$p.InitialSize;MaximumSize=[uint32]$p.MaximumSize} | Out-Null } }";
-        var r = await RunPowerShellAsync(script, ct).ConfigureAwait(false);
-        Log($"Restore page file: exit={r.ExitCode} err={r.Error.Trim()}");
-        return r.ExitCode == 0 ? new(true, "Custom page file size restored (takes effect after a restart).") : new(false, "Couldn't restore the page file setting (administrator rights required).");
+        public static bool IsValidName(string? name) => name is { Length: > 3 and < 260 } && name[1] == ':' && char.IsAsciiLetter(name[0])
+            && name.EndsWith(".sys", StringComparison.OrdinalIgnoreCase) && name.IndexOfAny(Path.GetInvalidPathChars()) < 0;
     }
 
     /// <summary>Runs one of this class's fixed PowerShell scripts (never user input) and returns its output.</summary>
@@ -731,7 +794,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or OperationCanceledException or InvalidOperationException)
         {
-            Log("PowerShell probe failed: " + ex.Message);
+            LogWarn("PowerShell probe failed: " + ex.Message);
             return (-1, "", ex.Message);
         }
     }
@@ -739,7 +802,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
     private bool? ReadFastStartup()
     {
         try { return Registry.GetValue(@"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Power", "HiberbootEnabled", null) is int v ? v == 1 : null; }
-        catch (Exception ex) { Log("Fast Startup read failed: " + ex.Message); return null; }
+        catch (Exception ex) { LogWarn("Fast Startup read failed: " + ex.Message); return null; }
     }
 
     private VisualStudioInfo? ReadVisualStudio()
@@ -777,7 +840,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
                 .ToList();
             return new(liveShare, deduped);
         }
-        catch (Exception ex) { Log("Visual Studio probe failed: " + ex.Message); return null; }
+        catch (Exception ex) { LogWarn("Visual Studio probe failed: " + ex.Message); return null; }
     }
 
     private static string? ManifestName(string path)
@@ -827,7 +890,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
                         }
                     }
         }
-        catch (Exception ex) { Log("Startup read failed: " + ex.Message); return null; }
+        catch (Exception ex) { LogWarn("Startup read failed: " + ex.Message); return null; }
         return list;
     }
 
@@ -843,7 +906,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
                 if (progId.Contains("MSEdge", StringComparison.OrdinalIgnoreCase)) return BrowserKind.Edge;
             }
         }
-        catch (Exception ex) { Log("Default browser read failed: " + ex.Message); }
+        catch (Exception ex) { LogWarn("Default browser read failed: " + ex.Message); }
         return null;
     }
 
@@ -875,7 +938,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             var cdDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "CrossDevice");
             crossDevice = Directory.Exists(cdDir) && Directory.EnumerateDirectories(cdDir).Any();
         }
-        catch (Exception ex) { Log("Device probe failed: " + ex.Message); }
+        catch (Exception ex) { LogWarn("Device probe failed: " + ex.Message); }
         return new(printer, bt, bio, pen, crossDevice, netPrinter, pdfPrinter, ReadClassicOutlook());
     }
 
@@ -904,14 +967,14 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             }
             return false;
         }
-        catch (Exception ex) { Log("Outlook probe failed: " + ex.Message); return null; }
+        catch (Exception ex) { LogWarn("Outlook probe failed: " + ex.Message); return null; }
     }
 
     /// <summary>
     /// Measures every <see cref="StorageCleanupCatalog"/> category with exactly the rules and folders its cleanup uses, the review-only
     /// Grok worktree estimate (#1a, never deleted here), and %TEMP% (cleaned by the "Clean up temporary files" fix).
     /// </summary>
-    public static IReadOnlyList<StorageCleanupItem> ScanStorageCleanups(DeviceFacts? devices = null, Action<string>? scanLog = null, CancellationToken ct = default,
+    public static IReadOnlyList<StorageCleanupItem> ScanStorageCleanups(DeviceFacts? devices = null, ILogger? scanLog = null, CancellationToken ct = default,
         IReadOnlyList<string>? projectRoots = null, IProgress<string>? progress = null, int stepOffset = 0, int totalSteps = 0)
     {
         var roots = StorageRoots.Current();
@@ -936,7 +999,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
     /// <summary>Deletes one storage cleanup category (by id only), then forgets the cached scan so the next view measures again.</summary>
     public async Task<StorageCleanResult> CleanStorageAsync(string id, CancellationToken ct)
     {
-        try { return await StorageCleaner.CleanAsync(id, Log, ct).ConfigureAwait(false); }
+        try { return await StorageCleaner.CleanAsync(id, Logger, ct).ConfigureAwait(false); }
         finally
         {
             StorageCleanupCache? cache;
@@ -1011,7 +1074,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, Action<s
             Log($"Service '{serviceName}' users can start: {r?.ToString() ?? "unknown"}");
             return r;
         }
-        catch (Exception ex) when (ex is not OutOfMemoryException) { Log($"Service '{serviceName}' security read failed: {ex.Message}"); return null; }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { LogWarn($"Service '{serviceName}' security read failed: {ex.Message}"); return null; }
         finally
         {
             if (svc != IntPtr.Zero) CloseServiceHandle(svc);

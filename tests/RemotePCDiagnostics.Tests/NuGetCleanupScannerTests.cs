@@ -1,5 +1,5 @@
 using System.Text.Json;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 
 namespace RemotePCDiagnostics.Tests;
 
@@ -79,7 +79,7 @@ public sealed class NuGetCleanupScannerTests : IDisposable
         Package("2.0.0");
         File.WriteAllText(Path.Combine(Projects, "project.assets.json"), json);
         var logs = new List<string>();
-        Assert.Empty(NuGetCleanupScanner.FindSupersededVersions(Packages, Projects, logs.Add));
+        Assert.Empty(NuGetCleanupScanner.FindSupersededVersions(Packages, Projects, new LineLogger(logs.Add)));
         Assert.Single(logs);
     }
 

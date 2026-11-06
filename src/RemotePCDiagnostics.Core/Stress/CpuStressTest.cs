@@ -7,7 +7,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 /// against a value precomputed before load. A sampler watches time, stop requests and CPU temperature
 /// (<see cref="ISensorProvider"/>, aborting at <see cref="SensorLevel.Critical"/>) and records throughput to detect slowing.
 /// </summary>
-public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock = null, ICpuWorkload? workload = null, Action<string>? log = null, StressCleanup? cleanup = null)
+public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock = null, ICpuWorkload? workload = null, ILogger? log = null, StressCleanup? cleanup = null)
 {
     private readonly ICpuWorkload _workload = workload ?? DeterministicCpuWorkload.Instance;
 
@@ -18,7 +18,7 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
         var clk = clock ?? new StopwatchStressClock();
         int threads = Math.Max(1, options.Threads), seeds = Math.Max(1, options.SeedCount);
         var duration = options.Duration <= TimeSpan.Zero ? TimeSpan.FromMinutes(1) : options.Duration > CpuStressOptions.MaxDuration ? CpuStressOptions.MaxDuration : options.Duration;
-        log?.Invoke($"CPU stress: start threads={threads} duration={duration} chunk={options.ChunkIterations}");
+        log.Info($"CPU stress: start threads={threads} duration={duration} chunk={options.ChunkIterations}");
 
         var expected = new ulong[seeds];
         for (int i = 0; i < seeds; i++) expected[i] = _workload.Compute(SeedFor(i), options.ChunkIterations);
@@ -38,7 +38,7 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
                 if (got != expected[s])
                 {
                     var e = Interlocked.Increment(ref errors);
-                    if (e <= 10) log?.Invoke($"CPU stress: checksum mismatch thread={t} seed#{s} expected={expected[s]:X16} got={got:X16}");
+                    if (e <= 10) log.Warn($"CPU stress: checksum mismatch thread={t} seed#{s} expected={expected[s]:X16} got={got:X16}");
                 }
                 Interlocked.Increment(ref chunks);
             }
@@ -63,7 +63,7 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
                 lastChunks = c; lastT = now;
                 progress?.Report(new CpuStressProgress(now - start, duration, c, Interlocked.Read(ref errors), temp, fan, crit, sensorsOk));
 
-                if (level == SensorLevel.Critical) { outcome = CpuStressOutcome.Overheated; log?.Invoke($"CPU stress: abort, CPU temperature {temp:0.0}°C reached critical {crit:0}°C"); break; }
+                if (level == SensorLevel.Critical) { outcome = CpuStressOutcome.Overheated; log.Warn($"CPU stress: abort, CPU temperature {temp:0.0}°C reached critical {crit:0}°C"); break; }
                 if (cancellationToken.IsCancellationRequested) { outcome = CpuStressOutcome.StoppedByUser; break; }
                 if (now - start >= duration) break;
                 var wait = options.SampleInterval < duration - (now - start) ? options.SampleInterval : duration - (now - start);
@@ -84,7 +84,7 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
         else if (outcome == CpuStressOutcome.Passed && IsThrottled(early, late, options.ThrottleRatio)) outcome = CpuStressOutcome.Throttled;
 
         var report = new CpuStressReport(outcome, ran, duration, threads, Interlocked.Read(ref chunks), errs, maxTemp, early, late, sensorsOk);
-        log?.Invoke($"CPU stress: done outcome={outcome} ran={ran} chunks={report.ChunksDone} errors={errs} maxTemp={maxTemp} early={early:0.0}/s late={late:0.0}/s samples={samples.Count}");
+        log.Info($"CPU stress: done outcome={outcome} ran={ran} chunks={report.ChunksDone} errors={errs} maxTemp={maxTemp} early={early:0.0}/s late={late:0.0}/s samples={samples.Count}");
         return report;
     }
 
@@ -102,8 +102,8 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
 
     private bool SafeAvailability()
     {
-        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log?.Invoke($"CPU stress: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
-        catch (Exception ex) { log?.Invoke($"CPU stress: sensor availability failed: {ex}"); return false; }
+        try { var a = sensors.CheckAvailability(); if (!a.IsAvailable) log.Info($"CPU stress: sensors unavailable: {a.Reason}"); return a.IsAvailable; }
+        catch (Exception ex) { log.Error($"CPU stress: sensor availability failed: {ex}"); return false; }
     }
 
     /// <summary>Hottest CPU temperature, fastest fan, its critical limit and the worst CPU temperature level.</summary>
@@ -120,7 +120,7 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
         }
         catch (Exception ex)
         {
-            log?.Invoke($"CPU stress: sensor read failed: {ex.Message}");
+            log.Warn($"CPU stress: sensor read failed: {ex.Message}");
             return (null, null, null, SensorLevel.Neutral);
         }
     }

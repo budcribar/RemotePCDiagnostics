@@ -2,7 +2,7 @@ using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Benchmarks;
 using RemotePCDiagnostics.Core.Changes;
-using RemotePCDiagnostics.Core.Memory;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Workflow;
@@ -91,12 +91,13 @@ public class WorkflowTests
     private static (WorkflowService Flow, Sys Sys, IWorkflowStore Store, List<TimeSpan> Delays, ScriptedLauncher Launcher, Probes Probes) Make(
         Func<string, IReadOnlyList<string>, ProcessResult>? run, IChangeJournal? journal, IMemorySystem? memorySystem, IDiagnosticModule[] modules,
         IWorkflowStore? flowStore = null, IBenchmarkStore? benchmarkStore = null, Sys? system = null, Probes? benchmarkProbes = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null, ISystemSettings? settings = null)
     {
         var results = new ResultStore();
         var diag = new DiagnosticsService(results, modules);
         var launcher = new ScriptedLauncher(run ?? ((file, args) => ScriptedLauncher.Ok(args.Any(a => a.Contains("RemovedFiles")) ? """{"RemovedFiles":42,"FreedBytes":524288000}""" : """{"Count":0}""")));
-        var rem = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Remote), journal: journal);
+        var rem = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Remote), journal: journal,
+            settings: settings ?? new FakeSystemSettings { DefaultDns = "" });
         var memory = memorySystem is null ? null : new MemorySuggestionService(memorySystem, session: new SessionContext(SessionMode.Remote), settle: TimeSpan.Zero, remediation: rem, journal: journal);
         var probes = benchmarkProbes ?? new Probes();
         var bench = new BenchmarkService(new BenchmarkRunner(probes, resolve: (_, _) => Task.CompletedTask), benchmarkStore ?? new MemBenchStore());
@@ -643,7 +644,7 @@ public class WorkflowTests
     private static readonly AreaAction Proxy = new(RemediationKind.DisableSystemProxy, "Turn off the proxy");
     private static readonly AreaAction Dns = new(RemediationKind.SetPublicDns, "Use public DNS", "Wi-Fi", "Wi-Fi");
 
-    /// <summary>Power plan (High performance now), proxy (on; turning it off fails), DNS (automatic now), temp files, 3 updates to install.</summary>
+    /// <summary>Power plan (High performance now), temp files, 3 updates to install. Proxy and DNS: <see cref="FakeSettings"/>.</summary>
     private static ProcessResult FakeWindows(string file, IReadOnlyList<string> args)
     {
         var cmd = string.Join(" ", args);
@@ -651,10 +652,15 @@ public class WorkflowTests
             return ScriptedLauncher.Ok(args.Contains("/getactivescheme") ? "Power Scheme GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c  (High performance)" : "");
         if (cmd.Contains("RemovedFiles")) return ScriptedLauncher.Ok("""{"RemovedFiles":42,"FreedBytes":524288000}""");
         if (cmd.Contains("CreateUpdateSearcher")) return ScriptedLauncher.Ok("""{"Count":3,"Installed":3,"InstallResult":2,"Titles":["KB5001 Security update","KB5002 .NET update","KB5003 Defender update"]}""");
-        if (cmd.Contains("ProxyEnable -Value 0")) return ScriptedLauncher.Fail("Access denied");
-        if (cmd.Contains("ProxyEnable")) return ScriptedLauncher.Ok("1");
-        if (cmd.Contains("NameServer")) return ScriptedLauncher.Ok("");
         return ScriptedLauncher.Ok("");
+    }
+
+    /// <summary>Proxy on (turning it off fails), DNS automatic now.</summary>
+    private static FakeSystemSettings FakeSettings()
+    {
+        var s = new FakeSystemSettings { ProxyEnable = 1, DefaultDns = "" };
+        s.FailWrites.Add("proxy");
+        return s;
     }
 
     private static (WorkflowService Flow, Sys Sys, IWorkflowStore Store, MemSys Mem, MemoryChangeJournal Journal) MakeFull()
@@ -666,7 +672,7 @@ public class WorkflowTests
             new AreaModule("Network", Report(Dns)),
             new AreaModule("DriveHealth", Report(Clean)),
             new AreaModule("Programs", Report(Updates)),
-        ]);
+        ], settings: FakeSettings());
         return (flow, sys, store, mem, journal);
     }
 

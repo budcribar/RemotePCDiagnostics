@@ -79,16 +79,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     public override string DisplayName => "Drive health";
     protected override string FailedMessage => "Couldn't check drive health on this PC.";
 
-    public const string Script =
-        "$ErrorActionPreference='SilentlyContinue';" +
-        "$d=@(Get-PhysicalDisk | ForEach-Object { $r=$_ | Get-StorageReliabilityCounter;" +
-        "$l=(@(Get-Partition -DiskNumber $_.DeviceId | Where-Object { $_.DriveLetter } | ForEach-Object { [string]$_.DriveLetter }) -join '');" +
-        "[pscustomobject]@{Letters=$l;Id=[string]$_.UniqueId;" +
-        "Name=[string]$_.FriendlyName;Serial=[string]$_.SerialNumber;MediaType=[string]$_.MediaType;BusType=[string]$_.BusType;" +
-        "Health=[string]$_.HealthStatus;Operational=[string]($_.OperationalStatus -join ', ');Size=[string]$_.Size;" +
-        "Temperature=[string]$r.Temperature;Wear=[string]$r.Wear;ReadErrors=[string]$r.ReadErrorsUncorrected;" +
-        "WriteErrors=[string]$r.WriteErrorsUncorrected;PowerOnHours=[string]$r.PowerOnHours } });" +
-        "ConvertTo-Json -InputObject $d -Compress";
+    public static string Script => Scripts.PowerShellScripts.Get("DriveHealth");
 
     public static IReadOnlyList<string> Arguments => ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", Script];
 
@@ -134,7 +125,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
         if (pr is { ExitCode: 0 })
         {
             try { drives = OsqueryJson.ParseRows(pr.StdOut).Select(DriveHealth.FromRow).ToList(); }
-            catch (FormatException ex) { Log($"{Name}: storage health output unreadable: {ex.Message}"); }
+            catch (FormatException ex) { LogWarn($"{Name}: storage health output unreadable: {ex.Message}"); }
         }
         if (drives is { Count: > 0 })
         {
@@ -142,7 +133,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             return new(drives, await ReadRetrimsAsync(ct).ConfigureAwait(false), now, null, DateTimeOffset.Now);
         }
 
-        Log($"{Name}: Windows storage health unavailable; falling back to osquery disk_info (no health data)");
+        LogWarn($"{Name}: Windows storage health unavailable; falling back to osquery disk_info (no health data)");
         progress.ReportStep(2, 2, "Reading drive list…");
         var q = await osquery.RunQueryAsync(HardwareInventory.DiskSql, ct).ConfigureAwait(false);
         if (!q.Success) return new(null, null, now, null, DateTimeOffset.Now);
@@ -170,7 +161,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
         try { read = await ReadDrivesCachedAsync(null, ct).ConfigureAwait(false); }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            Log($"{Name}: drive list failed: {ex.Message}");
+            LogWarn($"{Name}: drive list failed: {ex.Message}");
             read = new(null, null, DateTimeOffset.Now, null, DateTimeOffset.Now);
         }
         // Still listed when the drives can't be read, so the run reports why instead of the test vanishing.
@@ -193,7 +184,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            Log($"{Name}: collection failed: {ex}");
+            LogError($"{Name}: collection failed: {ex}");
             report = AreaReport.Failed(FailedMessage);
         }
         var card = report.Cards.FirstOrDefault();
@@ -215,7 +206,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     {
         if (retrims is null) return null;
         try { return await retrims.LatestAsync(ct).ConfigureAwait(false); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Log($"{Name}: last retrim unknown: {ex.Message}"); return null; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"{Name}: last retrim unknown: {ex.Message}"); return null; }
     }
 
     /// <summary>True when every letter was retrimmed within <see cref="RetrimFreshFor"/>; unknown letters count as not recent.</summary>

@@ -100,7 +100,7 @@ public sealed class SystemGatewayResolver : IGatewayResolver
 }
 
 /// <summary>HTTPS download/upload against a Cloudflare-style speed endpoint, with hard byte caps.</summary>
-public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? client = null, Action<string>? log = null) : ISpeedTester, IDisposable
+public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? client = null, ILogger? log = null) : ISpeedTester, IDisposable
 {
     private readonly bool _ownsClient = client is null;
     private readonly HttpClient _http = client ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
@@ -135,7 +135,7 @@ public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? cl
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            log?.Invoke($"Network test: download failed: {ex.GetType().Name}: {ex.Message}");
+            log.Error($"Network test: download failed: {ex.GetType().Name}: {ex.Message}");
             return new TransferResult(total, sw.Elapsed, ex.Message);
         }
     }
@@ -159,7 +159,7 @@ public sealed class HttpSpeedTester(NetworkTestSettings settings, HttpClient? cl
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            log?.Invoke($"Network test: upload failed: {ex.GetType().Name}: {ex.Message}");
+            log.Error($"Network test: upload failed: {ex.GetType().Name}: {ex.Message}");
             return new TransferResult(0, sw.Elapsed, ex.Message);
         }
     }
@@ -175,7 +175,7 @@ public sealed class SystemAdapterCounters(SystemCommandRunner commands) : IAdapt
             ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", NetworkModule.StatsScript], cancellationToken).ConfigureAwait(false);
         if (pr is not { ExitCode: 0 }) return null;
         try { return Sum(OsqueryJson.ParseRows(pr.StdOut)); }
-        catch (FormatException ex) { commands.Log?.Invoke($"Network test: adapter statistics unreadable: {ex.Message}"); return null; }
+        catch (FormatException ex) { commands.Log.Info($"Network test: adapter statistics unreadable: {ex.Message}"); return null; }
     }
 
     public static AdapterTotals Sum(IReadOnlyList<IReadOnlyDictionary<string, string>> rows) => new(

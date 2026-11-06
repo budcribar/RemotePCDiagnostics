@@ -11,4 +11,9 @@
   <ItemGroup>
     <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Logging: ILogger plus the plain-line helpers (LoggerLines), without importing Microsoft.Extensions.Logging. -->
+    <Using Include="Microsoft.Extensions.Logging.ILogger" Alias="ILogger" />
+    <Using Include="RemotePCDiagnostics.Logging" />
+  </ItemGroup>
 </Project>

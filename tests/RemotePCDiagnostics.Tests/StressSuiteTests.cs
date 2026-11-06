@@ -363,7 +363,7 @@ public class StressSuiteTests
     {
         var (svc, _, mods, _) = Build();
         var log = new ConcurrentQueue<string>();
-        svc.Log = log.Enqueue;
+        svc.Log = new LineLogger(log.Enqueue);
         mods[0].OnCleanup = () => throw new InvalidOperationException("boom");
         var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null);
         Assert.All(r.Steps, s => Assert.Equal(StressSuiteStepState.Passed, s.State));
@@ -376,7 +376,7 @@ public class StressSuiteTests
         var release = new ManualResetEventSlim();
         var (svc, _, mods, _) = Build();
         var log = new ConcurrentQueue<string>();
-        svc.Log = log.Enqueue;
+        svc.Log = new LineLogger(log.Enqueue);
         svc.StressCleanupGrace = TimeSpan.FromMilliseconds(100);
         mods[0].OnCleanup = () => Task.Run(() => release.Wait());
         var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null).WaitAsync(TimeSpan.FromSeconds(20));
@@ -406,7 +406,7 @@ public class StressCleanupTests
     {
         var ran = false;
         var log = new List<string>();
-        var c = new RemotePCDiagnostics.Core.Stress.StressCleanup(log.Add);
+        var c = new RemotePCDiagnostics.Core.Stress.StressCleanup(new LineLogger(log.Add));
         c.Register("first", () => ran = true);
         c.Register("second", () => throw new InvalidOperationException("nope"));
         await c.RunAsync();

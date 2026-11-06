@@ -24,4 +24,10 @@
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Host\RemotePCDiagnostics.Host.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Logging: ILogger plus the plain-line helpers (LoggerLines), without importing Microsoft.Extensions.Logging, whose LogLevel
+         would clash with RemotePCDiagnostics.Core.Logging.LogLevel. -->
+    <Using Include="Microsoft.Extensions.Logging.ILogger" Alias="ILogger" />
+    <Using Include="RemotePCDiagnostics.Logging" />
+  </ItemGroup>
 </Project>

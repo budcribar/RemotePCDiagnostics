@@ -46,7 +46,7 @@ public sealed class MemoryPreferencesStore : IPreferencesStore
 }
 
 /// <summary>JSON file; a missing or unreadable file means "no preferences yet" (never an error the user sees).</summary>
-public sealed class FilePreferencesStore(string path, Action<string>? log = null) : IPreferencesStore
+public sealed class FilePreferencesStore(string path, ILogger? log = null) : IPreferencesStore
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 
@@ -66,7 +66,7 @@ public sealed class FilePreferencesStore(string path, Action<string>? log = null
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
-            log?.Invoke("[prefs] couldn't read preferences: " + ex.Message);
+            log.Warn("[prefs] couldn't read preferences: " + ex.Message);
             return new();
         }
     }
@@ -80,7 +80,7 @@ public sealed class FilePreferencesStore(string path, Action<string>? log = null
             File.WriteAllText(tmp, JsonSerializer.Serialize(p, Json));
             File.Move(tmp, path, overwrite: true);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log?.Invoke("[prefs] couldn't save preferences: " + ex.Message); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log.Warn("[prefs] couldn't save preferences: " + ex.Message); }
     }
 }
 

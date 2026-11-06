@@ -57,7 +57,14 @@ A plugin can give its module a details UI: a Razor component with a `DiagnosticM
   under the app's "Unsigned module" banner, above the generic report of the module's last run.
 - The frame has an opaque origin: the module's page can't read the app's page, its own or anyone's storage and cookies, or another
   module's frame, and can't open popups or navigate the app. The only message the app accepts from it is its content height.
-- The component gets its own instance of the module, in the UI process: a run it starts there is not the app's run and isn't stored.
+- The component gets the module's latest result in the app as a cascading value:
+  `[CascadingParameter(Name = ModuleDetails.LastResult)] public DiagnosticResult? LastResult { get; set; }` ("not run yet" before the
+  first run). For an unsigned module the app sends it to the UI process over that process's stdin (one JSON line, the same `result`
+  message the module host sends, with one-click fixes removed) when the module page opens and again after every run, so the UI shows
+  the app's run instead of starting blank. A signed module's component gets the same value. `samples/SampleModuleUi` shows the last
+  run's time this way.
+- `DiagnosticModule` is still the UI process's own instance of the module: a run the component starts itself is not the app's run and
+  isn't stored.
 - Keep styles inline or in the component: the module's static web assets (`_content/...`) aren't served. A fresh UI process starts each
   time the module page opens; its log is `%LOCALAPPDATA%\RemotePCDiagnostics\moduleui\<slug>\module-ui.log`.
 - Remote sessions show the generic report only for now.

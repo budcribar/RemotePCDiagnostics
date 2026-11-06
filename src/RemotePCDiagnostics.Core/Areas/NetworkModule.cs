@@ -62,14 +62,7 @@ public sealed record NetworkAdapter(
 /// </summary>
 public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? commands = null, bool includeWifiAndIpConfig = false, DnsSpeedTest? dnsTest = null) : OsqueryAreaModuleBase(runner)
 {
-    public const string StatsScript =
-        "$ErrorActionPreference='SilentlyContinue';" +
-        "$s=@(Get-NetAdapterStatistics | ForEach-Object { [pscustomobject]@{Name=[string]$_.Name;" +
-        "ipackets=[string]($_.ReceivedUnicastPackets+$_.ReceivedMulticastPackets+$_.ReceivedBroadcastPackets);" +
-        "opackets=[string]($_.SentUnicastPackets+$_.SentMulticastPackets+$_.SentBroadcastPackets);" +
-        "ierrors=[string]$_.ReceivedPacketErrors;oerrors=[string]$_.OutboundPacketErrors;" +
-        "idrops=[string]$_.ReceivedDiscardedPackets;odrops=[string]$_.OutboundDiscardedPackets } });" +
-        "ConvertTo-Json -InputObject $s -Compress";
+    public static string StatsScript => Scripts.PowerShellScripts.Get("NetAdapterStatistics");
 
     public const string ModuleName = ModuleSlugs.Network;
     public const string Sql = "SELECT * FROM interface_details;";
@@ -93,7 +86,7 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
             if (pr is { ExitCode: 0 })
             {
                 try { adapters = MergeStatistics(adapters, OsqueryJson.ParseRows(pr.StdOut)); }
-                catch (FormatException ex) { Log($"{Name}: adapter statistics unreadable: {ex.Message}"); }
+                catch (FormatException ex) { LogWarn($"{Name}: adapter statistics unreadable: {ex.Message}"); }
             }
         }
         var baseReport = Build(adapters);
@@ -118,7 +111,7 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
         {
             progress.ReportStep(3, total, "Comparing DNS speed…");
             try { dns = await (dnsTest ?? new DnsSpeedTest(log: commands.Log)).CompareAsync(primary.Dns, ct).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { commands.Log?.Invoke($"DNS speed test failed: {ex.Message}"); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { commands.Log.Warn($"DNS speed test failed: {ex.Message}"); }
         }
         var wifiRep = WifiConfigModule.Build(
             wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null,

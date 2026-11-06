@@ -24,8 +24,8 @@ public interface IPluginContext
     Version HostVersion { get; }
     /// <summary>The contract version the host implements (<see cref="ContractVersion.Current"/>).</summary>
     Version ContractVersion { get; }
-    /// <summary>Writes a line to the app log.</summary>
-    void Log(string message);
+    /// <summary>The app log, with the plugin's id on each line. Say each line's level (<c>Log.Info</c>, <c>Log.Warn</c>, <c>Log.Error</c>).</summary>
+    ILogger Log { get; }
     /// <summary>Sets a module's own details UI (a Razor component with a <c>DiagnosticModule</c> parameter).</summary>
     void SetDetailsComponent(Guid moduleId, Type component);
 }
@@ -34,9 +34,10 @@ public interface IPluginContext
 public static class ContractVersion
 {
     /// <summary>1.1: hardware instances (IPerDeviceModule, IDetectableModule, DiagnosticResult.InstanceKey) and CouldNotRun.
-    /// 1.2: IRunEnd, so a module's payload can say it was cancelled or couldn't run.</summary>
+    /// 1.2: IRunEnd, so a module's payload can say it was cancelled or couldn't run.
+    /// 2.0: logging through ILogger (AreaModuleBase, StressModuleBase, StressCleanup, IPluginContext.Log).</summary>
     /// <remarks>Major changes break plugins (removed type, changed signature); minor ones add optional members.</remarks>
-    public static Version Current { get; } = new(1, 2, 0);
+    public static Version Current { get; } = new(2, 0, 0);
 
     /// <summary>A plugin built for <paramref name="builtFor"/> loads when the majors match and its minor is at or below the host's.</summary>
     public static bool IsCompatible(Version builtFor, Version? host = null)
