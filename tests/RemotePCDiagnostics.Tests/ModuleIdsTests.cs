@@ -37,6 +37,7 @@ public class ModuleIdsTests
         ["MicToSpeaker"] = "670ba9f7-bd2c-4207-b13b-9a9f7262489d",
         ["Webcam"] = "243be433-599b-42e4-ad92-04346a59a292",
         ["NpuTest"] = "85ffb9ea-fb21-4189-9714-5d58f7115237",
+        ["BootSecurity"] = "61025d7b-f5ef-4286-82ff-df9a74834b39",
     };
 
     [Fact]

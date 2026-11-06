@@ -30,6 +30,7 @@ public static class BuiltInModules
         new(ModuleIds.MicToSpeaker, ModuleSlugs.MicToSpeaker, "Microphone to speaker test", ModuleKind.OnDemand, ModuleGroups.Audio, 200),
         new(ModuleIds.Webcam, ModuleSlugs.Webcam, "Webcam test", ModuleKind.OnDemand, ModuleGroups.Camera, 100),
         new(ModuleIds.NpuTest, ModuleSlugs.NpuTest, "NPU (AI accelerator) test", ModuleKind.OnDemand, ModuleGroups.Ai, 100),
+        new(ModuleIds.BootSecurity, ModuleSlugs.BootSecurity, "Secure Boot & encryption", ModuleKind.Check, ModuleGroups.Security, 50),
         new(ModuleIds.SecurityAudit, ModuleSlugs.SecurityAudit, "Security audit", ModuleKind.OnDemand, ModuleGroups.Security, 100) { Page = "security-audit" },
         // Merged into other modules; kept so History can still name their old results.
         new(ModuleIds.BsodHistory, ModuleSlugs.BsodHistory, "Blue screens & unexpected restarts", ModuleKind.Check, ModuleGroups.Windows, 310) { MergedInto = ModuleIds.Crashes },
