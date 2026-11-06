@@ -1,3 +1,4 @@
-2089e37404b343a81cce609c5bfae951c442776193848a3a957dc9c38fe58d7e  packages/PeakSWC.RemoteBlazorWebView.Wpf.10.0.14-embedded.2.nupkg
-7458e5446f2a052d3d8a21094f7ae38114ef422443a43808b5de9d923bb38d92  packages/PeakSWC.RemoteWebView.10.0.14-embedded.2.nupkg
-d3fd08fea2c1be3f545702dbf369758287caa8bbd6dc55d7c24a8abc1f22eed1  packages/PeakSWC.RemoteWebViewService.Lib.10.0.14-embedded.2.nupkg
+4c856fa02c350b5a25fe4870732a8bec9d38f63dd71bf467549a020239064e52  packages/PeakSWC.RemoteBlazorWebView.RemoteComponents.10.0.14-embedded.3.nupkg
+b7116ed0bc40e3d7051ceda85958c3e18add3c0443befe60bf661152468eafbc  packages/PeakSWC.RemoteBlazorWebView.Wpf.10.0.14-embedded.3.nupkg
+d74385a61143041a65c99b3acbf46a738c117af0ca85053a54117b95b1a33946  packages/PeakSWC.RemoteWebView.10.0.14-embedded.3.nupkg
+c9a2a1a8aa9dbef407ca44b0ba2be522e6bcee653fd220ac3691870085c55ffd  packages/PeakSWC.RemoteWebViewService.Lib.10.0.14-embedded.3.nupkg

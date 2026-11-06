@@ -2,7 +2,7 @@
   <!-- The spike is not part of RemotePCDiagnostics.sln: it needs RemoteBlazorWebView packages built from net10 with the embedded relay
        (PeakSWC.RemoteWebViewService.Lib), built on Windows. See README.md. -->
   <PropertyGroup>
-    <SpikeRbwvVersion Condition="'$(SpikeRbwvVersion)' == ''">10.0.14-embedded.2</SpikeRbwvVersion>
+    <SpikeRbwvVersion Condition="'$(SpikeRbwvVersion)' == ''">10.0.14-embedded.3</SpikeRbwvVersion>
     <SpikeLibVersion Condition="'$(SpikeLibVersion)' == ''">$(SpikeRbwvVersion)</SpikeLibVersion>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>

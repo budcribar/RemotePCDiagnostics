@@ -1,65 +1,41 @@
-@using Microsoft.JSInterop
 @using RemotePCDiagnostics.Core.Plugins
-@implements IAsyncDisposable
+@using RemotePCDiagnostics.ModuleUi
+@implements IDisposable
 @inject AppServices App
-@inject Microsoft.JSInterop.IJSRuntime JS
-@* An unsigned module's own UI. It runs in its own user-mode process and is framed with an opaque origin: it can't read this page, its
-   storage or cookies, or another module's frame. The only thing it can tell this page is its height. *@
-@if (_problem is not null)
-{
-    <div class="notice notice-error" data-testid="module-ui-problem">This module's own UI couldn't start: @_problem</div>
-}
-else if (_src is not null)
-{
-    <iframe @ref="_frame" class="module-ui-frame" data-testid="module-ui-frame" title="@Module.Source.Manifest.DisplayName"
-            sandbox="@ModuleUiFrame.Sandbox" referrerpolicy="no-referrer" src="@_src"
-            style="width: 100%; border: 0; display: block; height: @(_height)px"></iframe>
-}
+@inject ResultStore Store
+@* An unsigned module's own UI. It runs in its own user-mode process and is framed with an opaque origin (ModuleUiFrame, generated from
+   the IModuleUi contract): it can't read this page, its storage or cookies, or another module's frame. The only thing it can tell this
+   page is its height. The module's latest result goes to its process whenever it changes, over the process's stdin. *@
+<ModuleUiFrame Open="OpenAsync" LastResult="_last" Title="@Module.Source.Manifest.DisplayName" class="module-ui-frame" data-testid="module-ui-frame">
+    <ProblemContent Context="problem">
+        <div class="notice notice-error" data-testid="module-ui-problem">This module's own UI couldn't start: @problem</div>
+    </ProblemContent>
+</ModuleUiFrame>
 
 @code {
     [Parameter, EditorRequired] public IUserModeModule Module { get; set; } = default!;
 
-    private string? _src, _problem;
-    private int _height = 360;
-    private ElementReference _frame;
-    private bool _watching;
-    private DotNetObjectReference<UnsignedModuleFrame>? _self;
+    private ModuleUiResult? _last;
 
     /// <summary>Shown only where the host can do it (Local mode); otherwise the module page shows the generic report alone.</summary>
     public static bool IsAvailable(AppServices app, IUserModeModule module) =>
         module.Source.Manifest.HasUi && app.ModuleUiFrames is not null;
 
-    protected override async Task OnParametersSetAsync()
+    protected override void OnInitialized()
     {
-        if (_src is not null || _problem is not null) return;
-        try
-        {
-            var frames = App.ModuleUiFrames ?? throw new InvalidOperationException("this host can't show a module's own UI");
-            _src = (await frames.OpenAsync(Module.Source)).ToString();
-        }
-        catch (Exception ex) { _problem = ex.Message; }
+        _last = ModuleUiResult.From(Store.Get(Module.Name));
+        Store.Changed += OnResult;
     }
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    private Task<PeakSWC.RemoteBlazorWebView.RemoteComponents.RemoteComponentSession> OpenAsync(CancellationToken cancellationToken) =>
+        (App.ModuleUiFrames ?? throw new InvalidOperationException("this host can't show a module's own UI")).OpenAsync(Module.Source, cancellationToken);
+
+    /// <summary>A run finished (or a result was stored): re-rendering passes it to the frame, which sends it if it changed.</summary>
+    private void OnResult(object? sender, DiagnosticResult result)
     {
-        if (_watching || _src is null) return;
-        _watching = true;
-        _self = DotNetObjectReference.Create(this);
-        try { await JS.InvokeVoidAsync("rpdModuleFrames.watch", _frame, _self); } catch { }
+        if (!string.Equals(result.ModuleName, Module.Name, StringComparison.OrdinalIgnoreCase)) return;
+        _ = InvokeAsync(() => { _last = ModuleUiResult.From(result); StateHasChanged(); });
     }
 
-    [JSInvokable]
-    public void SetHeight(double height)
-    {
-        var h = ModuleUiFrame.ClampHeight(height);
-        if (h == _height) return;
-        _height = h;
-        StateHasChanged();
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (_watching) { try { await JS.InvokeVoidAsync("rpdModuleFrames.unwatch", _frame); } catch { } }
-        _self?.Dispose();
-    }
+    public void Dispose() => Store.Changed -= OnResult;
 }

@@ -10,6 +10,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
+    <!-- The IModuleUi contract and its generated ModuleUiFrame (unsigned modules' own UIs). -->
+    <ProjectReference Include="..\RemotePCDiagnostics.ModuleUi\RemotePCDiagnostics.ModuleUi.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- Logging: ILogger plus the plain-line helpers (LoggerLines), without importing Microsoft.Extensions.Logging. -->

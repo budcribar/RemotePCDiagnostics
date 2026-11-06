@@ -15,12 +15,13 @@
 <body>
     <div id="app">Loading…</div>
     <script>
-        // The page runs in a sandboxed frame on the module page. The only thing it tells the app is its height (ModuleUiFrame.HeightMessage).
+        // The page runs in a sandboxed frame on the module page. The only thing it tells the app is its height
+        // (RemoteComponentFrame.HeightScript, kept in step with the RemoteComponents package).
         (function () {
             var last = 0;
             function post() {
                 var h = Math.ceil(document.documentElement.scrollHeight);
-                if (h !== last) { last = h; window.parent.postMessage({ type: 'rpcd-module-height', height: h }, '*'); }
+                if (h !== last) { last = h; window.parent.postMessage({ type: 'rbwv-remote-height', height: h }, '*'); }
             }
             if (window.ResizeObserver) new ResizeObserver(post).observe(document.documentElement);
             window.addEventListener('load', post);

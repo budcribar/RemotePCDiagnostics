@@ -3,6 +3,7 @@ using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Plugins;
 using RemotePCDiagnostics.Core.Preferences;
 using RemotePCDiagnostics.Core.Workflow;
+using RemotePCDiagnostics.ModuleUi;
 
 namespace RemotePCDiagnostics.UI;
 

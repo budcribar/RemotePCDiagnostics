@@ -14,7 +14,8 @@ One page on how the app is put together. Design detail lives next to it: [module
 | `src/RemotePCDiagnostics.UI` | net10.0 Razor library | Pages and components. Takes optional host services through `AppServices`. |
 | `src/RemotePCDiagnostics.Host` | net10.0-windows, WPF | The app: elevated entry point, `HostServices` (the composition root), the Windows adapters (registry, WMI, LibreHardwareMonitor, WASAPI, Direct3D, DXCore), RemoteBlazorWebView and the loopback relay for module UIs. |
 | `src/RemotePCDiagnostics.ModuleHost` | net10.0 | Runs one unsigned module out of process (JSON lines over stdin/stdout). |
-| `src/RemotePCDiagnostics.ModuleUiHost` | net10.0-windows | Renders an unsigned module's own UI out of process, framed in the module page. Gets the module's latest result over stdin. |
+| `src/RemotePCDiagnostics.ModuleUi` | net10.0 | The `IModuleUi` remote-component contract between the module page and `ModuleUiHost`, and `IModuleUiFrames`. The RemoteComponents source generator writes `ModuleUiFrame` (the page's sandboxed iframe) and `ModuleUiReceiver` from it. |
+| `src/RemotePCDiagnostics.ModuleUiHost` | net10.0-windows | Renders an unsigned module's own UI out of process (`RemoteComponentHost`), framed in the module page. Gets the module's latest result over stdin. |
 | `src/RemotePCDiagnostics.MemTest` | net10.0 | The RAM stress helper process. |
 | `src/RemotePCDiagnostics.Agent.Core` | net10.0 | The agent's pure logic (release manifest, signature, cache, launch rules, backoff); AOT-safe. The contract is `src/RemotePCDiagnostics.Agent/Protos/agent.proto`. |
 | `samples/SampleModule`, `samples/SampleModuleUi` | net10.0 | Example plugins (a check, and a check with its own UI). |

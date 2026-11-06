@@ -13,7 +13,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="PeakSWC.RemoteBlazorWebView.Wpf" Version="$(RbwvVersion)" />
-    <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
+    <ProjectReference Include="..\RemotePCDiagnostics.ModuleUi\RemotePCDiagnostics.ModuleUi.csproj" />
     <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
