@@ -266,9 +266,9 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : INpuTestModu
             NpuVerdict.TimedOut => "The NPU didn't finish its workload in time (driver hang?). The test stopped waiting.",
             NpuVerdict.WorkloadFailed => $"The workload failed on the NPU{(detail is { Length: > 0 } ? ": " + detail : ".")}",
             NpuVerdict.Mismatch => $"The NPU returned wrong results (max error {err:0.####} vs CPU, limit {MaxAbsError}).",
-            NpuVerdict.Slow => $"The NPU works but is {slow:0}× slower than the CPU reference ({res!.AverageMs:0.###} ms vs {cpuMs:0.###} ms).",
-            NpuVerdict.SmokeOnly => $"Driver healthy; the NPU accepted and completed {res!.Iterations} work submissions (avg {res.AverageMs:0.###} ms). This NPU only runs ML operators (no compute shaders), so the math wasn't checked.",
-            NpuVerdict.Pass => $"Passed: {res!.Iterations} matrix multiplies, results match the CPU, {gflops:0.0} GFLOPS ({res.AverageMs:0.###} ms each).",
+            NpuVerdict.Slow => $"The NPU works but is {slow:0}× slower than the CPU reference ({RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(res!.AverageMs, System.Globalization.CultureInfo.InvariantCulture)} ms vs {RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(cpuMs, System.Globalization.CultureInfo.InvariantCulture)} ms).",
+            NpuVerdict.SmokeOnly => $"Driver healthy; the NPU accepted and completed {res!.Iterations} work submissions (avg {RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(res.AverageMs, System.Globalization.CultureInfo.InvariantCulture)} ms). This NPU only runs ML operators (no compute shaders), so the math wasn't checked.",
+            NpuVerdict.Pass => $"Passed: {res!.Iterations} matrix multiplies, results match the CPU, {gflops:0.0} GFLOPS ({RemotePCDiagnostics.Core.History.MeasurementFormat.Significant(res.AverageMs, System.Globalization.CultureInfo.InvariantCulture)} ms each).",
             _ => "No NPU found.",
         };
         return new NpuDeviceReport(d, v, msg, res?.Kind ?? NpuWorkloadKind.None, res?.FirstRunMs, res?.AverageMs, res?.Iterations ?? 0, gflops, cpuMs, slow, err,

@@ -125,7 +125,7 @@ public class EventLoggingTests
         var r = new DiagnosticResult("CpuStress", DiagnosticStatus.Warning, "Stopped", DateTimeOffset.Now, payload);
         Assert.Equal("Cancelled", ResultEventLogger.Outcome(r));
         var text = ResultEventLogger.Format(r, TimeSpan.FromSeconds(60), "short run");
-        Assert.Contains("MaxTemperature: 81.5", text);
+        Assert.Contains("MaxTemperature: 82", text); // temperatures are stored to the whole degree the sensor reports
         Assert.Contains("Duration: 60.0 s", text);
         Assert.Contains("Stress suite: short run", text);
         Assert.DoesNotContain("token-abc", text); // free-text payload fields are never logged
