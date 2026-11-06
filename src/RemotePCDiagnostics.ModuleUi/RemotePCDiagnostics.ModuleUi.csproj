@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- What crosses between the app and an unsigned module's UI process (RemotePCDiagnostics.ModuleUiHost): the IModuleUi contract, from
+       which the RemoteComponents source generator writes ModuleUiFrame (the app's sandboxed iframe) and ModuleUiReceiver (the UI
+       process's side). A library of its own because Razor can't use a component generated in its own project, and so Core stays free of
+       Blazor. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="PeakSWC.RemoteBlazorWebView.RemoteComponents" Version="$(RbwvVersion)" />
+    <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
+  </ItemGroup>
+</Project>

@@ -35,6 +35,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.ModuleU
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Agent.Core.Tests", "tests\RemotePCDiagnostics.Agent.Core.Tests\RemotePCDiagnostics.Agent.Core.Tests.csproj", "{54FDD5B2-82A4-4FDF-8AE0-4AB883DA9AD8}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.ModuleUi", "src\RemotePCDiagnostics.ModuleUi\RemotePCDiagnostics.ModuleUi.csproj", "{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -201,6 +203,18 @@ Global
 		{54FDD5B2-82A4-4FDF-8AE0-4AB883DA9AD8}.Release|x64.Build.0 = Release|Any CPU
 		{54FDD5B2-82A4-4FDF-8AE0-4AB883DA9AD8}.Release|x86.ActiveCfg = Release|Any CPU
 		{54FDD5B2-82A4-4FDF-8AE0-4AB883DA9AD8}.Release|x86.Build.0 = Release|Any CPU
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}.Debug|x64.Build.0 = Debug|Any CPU
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}.Debug|x86.Build.0 = Debug|Any CPU
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}.Release|x64.ActiveCfg = Release|Any CPU
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}.Release|x64.Build.0 = Release|Any CPU
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}.Release|x86.ActiveCfg = Release|Any CPU
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -219,5 +233,6 @@ Global
 		{DF8CCF69-89D7-40B4-8E6B-C3DCC185279E} = {5D20AA90-6969-D8BD-9DCD-8634F4692FDA}
 		{CD873A2B-2882-4712-BC3B-ABA2517BA5CC} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{54FDD5B2-82A4-4FDF-8AE0-4AB883DA9AD8} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{D38567AD-1C82-455F-A7A6-AD42D7C8AF5F} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

@@ -39,20 +39,13 @@ public sealed class ModuleUiTests
     [Fact]
     public void The_frame_is_sandboxed_without_same_origin()
     {
-        Assert.Contains("allow-scripts", ModuleUiFrame.Sandbox);
-        Assert.DoesNotContain("allow-same-origin", ModuleUiFrame.Sandbox);
-        Assert.DoesNotContain("allow-top-navigation", ModuleUiFrame.Sandbox);
-        Assert.DoesNotContain("allow-popups", ModuleUiFrame.Sandbox);
-        Assert.DoesNotContain("allow-modals", ModuleUiFrame.Sandbox);
+        // ModuleUiFrame (generated from IModuleUi) keeps RemoteComponentFrameBase's default sandbox; UnsignedModuleFrame doesn't set one.
+        var sandbox = PeakSWC.RemoteBlazorWebView.RemoteComponents.RemoteComponentFrame.DefaultSandbox;
+        Assert.Contains("allow-scripts", sandbox);
+        Assert.DoesNotContain("allow-same-origin", sandbox);
+        Assert.DoesNotContain("allow-top-navigation", sandbox);
+        Assert.DoesNotContain("allow-popups", sandbox);
+        Assert.DoesNotContain("allow-modals", sandbox);
+        Assert.Equal(sandbox, new RemotePCDiagnostics.ModuleUi.ModuleUiFrame().Sandbox);
     }
-
-    [Theory]
-    [InlineData(500, 500)]
-    [InlineData(500.2, 501)]
-    [InlineData(10, ModuleUiFrame.MinHeight)]
-    [InlineData(1e9, ModuleUiFrame.MaxHeight)]
-    [InlineData(double.NaN, ModuleUiFrame.MinHeight)]
-    [InlineData(double.PositiveInfinity, ModuleUiFrame.MinHeight)]
-    [InlineData(-5, ModuleUiFrame.MinHeight)]
-    public void A_requested_height_is_clamped(double requested, int expected) => Assert.Equal(expected, ModuleUiFrame.ClampHeight(requested));
 }

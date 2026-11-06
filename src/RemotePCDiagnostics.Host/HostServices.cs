@@ -7,6 +7,7 @@ using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Plugins;
+using RemotePCDiagnostics.ModuleUi;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Sensors;
@@ -90,7 +91,7 @@ public static class HostServices
         if (session.Mode == SessionMode.Local)
             services.AddSingleton<IModuleUiFrames>(sp =>
             {
-                var frames = new ModuleUiFrames(L<ModuleUiFrames>(), results: sp.GetRequiredService<ResultStore>());
+                var frames = new ModuleUiFrames(L<ModuleUiFrames>());
                 AppDomain.CurrentDomain.ProcessExit += (_, _) => frames.Dispose(); // the UI processes never outlive the app
                 return frames;
             });
