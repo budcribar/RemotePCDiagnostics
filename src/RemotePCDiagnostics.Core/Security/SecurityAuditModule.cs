@@ -88,7 +88,7 @@ public sealed class SecurityAuditModule : IDiagnosticModule
     public static string BuildScript(string manifestPath, string reportPath) =>
         "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';" +
         $"Import-Module -Name {Quote(manifestPath)} -Force;" +
-        $"Invoke-HardeningKitty -Mode Audit -Report -ReportFile {Quote(reportPath)} -SkipMachineInformation -SkipLanguageWarning | Out-Null";
+        $"Invoke-HardeningKitty -Mode Audit -Report -ReportFile {Quote(reportPath)} -SkipMachineInformation -SkipLanguageWarning | Out-Null;" + PcProfile.DetectScript;
 
     /// <summary>-ExecutionPolicy Bypass applies to this PowerShell process only; nothing system-wide is changed.</summary>
     public static IReadOnlyList<string> BuildArguments(string manifestPath, string reportPath) =>
@@ -142,8 +142,9 @@ public sealed class SecurityAuditModule : IDiagnosticModule
                 LogWarn("SecurityAudit: report had no rows");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
-            var report = new SecurityAuditReport(findings, admin ? null : NotAdminNotice);
-            LogWarn($"SecurityAudit: parsed {findings.Count} findings passed={report.Passed} warn={report.Warnings} failed={report.Failed} notChecked={report.NotChecked}");
+            var profile = PcProfile.Parse(pr.StdOut);
+            var report = new SecurityAuditReport(findings, admin ? null : NotAdminNotice, profile);
+            LogWarn($"SecurityAudit: profile={(profile is null ? "unknown" : $"managed={profile.Managed} domain={profile.Domain} entra={profile.EntraJoined} mdm={profile.Mdm} edition={profile.Edition}")} hidden={report.Hidden} parsed {findings.Count} findings passed={report.Passed} warn={report.Warnings} failed={report.Failed} notChecked={report.NotChecked}");
             return Result(report.Status, report.Summary, report);
         }
         finally

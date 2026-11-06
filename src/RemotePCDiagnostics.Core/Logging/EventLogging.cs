@@ -183,7 +183,7 @@ public sealed class ResultEventLogger
             case ModuleAvailability a: sb.Append("  Unavailable: ").AppendLine(a.Reason); break;
             case SecurityAuditReport sec:
                 sb.AppendLine($"  Failed={sec.Failed} Warnings={sec.Warnings} Passed={sec.Passed} NotChecked={sec.NotChecked}");
-                var bad = sec.Findings.Where(f => f.Outcome is AuditOutcome.Failed or AuditOutcome.Warning).ToList();
+                var bad = sec.Shown.Where(f => f.Outcome is AuditOutcome.Failed or AuditOutcome.Warning).ToList();
                 foreach (var f in bad.Take(MaxAuditItems)) sb.AppendLine($"  {f.OutcomeText}: {f.Id} {f.Name}");
                 if (bad.Count > MaxAuditItems) sb.AppendLine($"  … and {bad.Count - MaxAuditItems} more");
                 break;

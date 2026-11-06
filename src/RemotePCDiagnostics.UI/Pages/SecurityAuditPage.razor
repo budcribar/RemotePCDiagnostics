@@ -31,14 +31,24 @@ else
 
     @if (!running && rep is not null)
     {
+        var visible = Visible(rep);
+        int Count(AuditOutcome o) => visible.Count(f => f.Outcome == o);
+        @if (rep.Hidden > 0)
+        {
+            <p class="meta" data-testid="audit-profile">
+                @if (_showAll) { <span>Showing all @rep.Findings.Count settings, including @rep.Hidden enterprise-only ones.</span> }
+                else { <span>This PC is @rep.Profile!.Reason, so the @rep.Hidden settings only organizations use (Group Policy, audit logging, domain sign-in rules) are hidden.</span> }
+                <button class="btn-small" data-testid="audit-show-all" @onclick="() => _showAll = !_showAll">@(_showAll ? "Show only home PC settings" : "Show all settings")</button>
+            </p>
+        }
         <div class="cards">
-            @Card("failed", "Failed", "error", rep.Failed, "Important settings that differ from the recommendation", AuditOutcome.Failed)
-            @Card("warning", "Warnings", "warning", rep.Warnings, "Lower-risk settings that differ", AuditOutcome.Warning)
-            @Card("passed", "Passed", "ok", rep.Passed, "Settings that match the recommendation", AuditOutcome.Passed)
-            @if (rep.NotChecked > 0) { @Card("notchecked", "Not checked", "neutral", rep.NotChecked, "Settings that couldn't be read", AuditOutcome.NotChecked) }
+            @Card("failed", "Failed", "error", Count(AuditOutcome.Failed), "Important settings that differ from the recommendation", AuditOutcome.Failed)
+            @Card("warning", "Warnings", "warning", Count(AuditOutcome.Warning), "Lower-risk settings that differ", AuditOutcome.Warning)
+            @Card("passed", "Passed", "ok", Count(AuditOutcome.Passed), "Settings that match the recommendation", AuditOutcome.Passed)
+            @if (Count(AuditOutcome.NotChecked) > 0) { @Card("notchecked", "Not checked", "neutral", Count(AuditOutcome.NotChecked), "Settings that couldn't be read", AuditOutcome.NotChecked) }
         </div>
 
-        var categories = rep.Findings.Select(f => f.Category).Where(c => c.Length > 0).Distinct().OrderBy(c => c).ToList();
+        var categories = visible.Select(f => f.Category).Where(c => c.Length > 0).Distinct().OrderBy(c => c).ToList();
         var rows = Filtered(rep).ToList();
         var hasFilters = _outcome is not null || _category.Length > 0 || _text.Length > 0;
         <div class="toolbar audit-filters">
@@ -55,7 +65,7 @@ else
             </select>
             <input type="search" data-testid="audit-filter-text" aria-label="Search settings" placeholder="Search settings…" value="@_text" @oninput="SetText" />
             @if (hasFilters) { <button class="btn-small" data-testid="audit-filter-clear" @onclick="ClearFilters">Clear filters</button> }
-            <span class="meta">@rows.Count of @rep.Findings.Count</span>
+            <span class="meta">@rows.Count of @visible.Count</span>
         </div>
         <table class="detail grid sticky-head sortable" data-testid="audit-table">
             <tr>
@@ -98,6 +108,9 @@ else
 
 @code {
     private AuditOutcome? _outcome;
+    private bool _showAll;
+
+    private IReadOnlyList<AuditFinding> Visible(SecurityAuditReport rep) => _showAll ? rep.Findings : rep.Shown;
     private string _category = "", _text = "";
     private AuditFinding? _open;
     // Static so the chosen sort survives re-runs, live updates and navigation.
@@ -144,7 +157,7 @@ else
 
     private void ClearFilters() { _outcome = null; _category = ""; _text = ""; }
 
-    private IEnumerable<AuditFinding> Filtered(SecurityAuditReport rep) => AuditSort.Sort(rep.Findings
+    private IEnumerable<AuditFinding> Filtered(SecurityAuditReport rep) => AuditSort.Sort(Visible(rep)
         .Where(f => _outcome is null || f.Outcome == _outcome)
         .Where(f => _category.Length == 0 || f.Category == _category)
         .Where(f => _text.Length == 0 || f.Name.Contains(_text, StringComparison.OrdinalIgnoreCase) || f.Id.Contains(_text, StringComparison.OrdinalIgnoreCase) || f.Category.Contains(_text, StringComparison.OrdinalIgnoreCase)),
