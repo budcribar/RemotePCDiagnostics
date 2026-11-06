@@ -49,7 +49,7 @@ public sealed class BuiltInModulesPlugin(Microsoft.Extensions.Logging.ILoggerFac
         services.AddSingleton<IDiagnosticModule>(sp => new DismScanHealthModule(sp.GetRequiredService<SystemCommandRunner>()));
         services.AddSingleton<IDiagnosticModule>(sp => new SfcVerifyOnlyModule(sp.GetRequiredService<SystemCommandRunner>()));
         services.AddSingleton<IDiagnosticModule>(sp => new BatteryPowerModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
-        services.AddSingleton<IDiagnosticModule>(sp => new RemotePCDiagnostics.Core.Security.BootSecurityModule(sp.GetRequiredService<SystemCommandRunner>()));
+        services.AddSingleton<IDiagnosticModule>(sp => new RemotePCDiagnostics.Core.Security.SecurityEssentialsModule(sp.GetRequiredService<SystemCommandRunner>()));
         // On-demand only (Start button on its page): not in AutoRun below and excluded from Run All (IncludeInRunAll=false).
         services.AddSingleton<IDiagnosticModule>(new SecurityAuditModule(new SecurityAuditOptions { Log = L<SecurityAuditModule>() }));
         services.AddSingleton<IDiagnosticModule>(sp => new RemotePCDiagnostics.Core.Audio.SpeakerToMicModule(sp.GetRequiredService<RemotePCDiagnostics.Core.Audio.IAudioIo>(), L<RemotePCDiagnostics.Core.Audio.SpeakerToMicModule>()));

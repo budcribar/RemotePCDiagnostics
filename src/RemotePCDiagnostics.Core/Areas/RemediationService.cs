@@ -258,6 +258,10 @@ public sealed class RemediationService(
                 "Requires administrator privileges.",
                 true),
 
+            RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf
+                ? new(action, $"{sf.ButtonText}?", sf.WhatItIs, sf.WhatHappens, "Requires administrator privileges." + (sf.Caveat is { } c ? " " + c : ""), true)
+                : new(action, action.ButtonText, "", "This setting isn't one this app changes.", "This setting isn't one this app changes.", Allowed: false),
+
             _ => new(action, action.ButtonText, "", "", null, true),
         };
     }
@@ -409,6 +413,11 @@ public sealed class RemediationService(
             $"Couldn't reset DNS on {Display(action)} (administrator rights required)."),
 
         RemediationKind.CleanTempFiles => await RunCleanTempFilesAsync(ct).ConfigureAwait(false),
+
+        RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf && Security.SecurityFixes.ApplyScript(sf.Key) is { } script
+            ? await RunPowerShellAsync(script, sf.Done,
+                $"Couldn't change {sf.Label.ToLowerInvariant()} (administrator rights required, or Tamper Protection or your organization's policy blocked it).", ct).ConfigureAwait(false)
+            : new(false, "This setting isn't one this app changes."),
 
         RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles => ToResult(LastRepair = await RepairAsync(action, RepairProgress, ct).ConfigureAwait(false)),
 
@@ -659,6 +668,11 @@ public sealed class RemediationService(
                 case RemediationKind.DisableSystemProxy:
                     return settings?.GetUserProxyEnable() == 1
                         ? Rec(Changes.ChangeKind.SystemProxy, "", "1", "System proxy turned off") : null;
+                case RemediationKind.ApplySecuritySetting when Security.SecurityFixes.Find(action.Target) is { } sf && Security.SecurityFixes.ReadScript(sf.Key) is { } read:
+                    var cur = await commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", read], ct).ConfigureAwait(false);
+                    var prev = cur is { ExitCode: 0 } ? cur.StdOut.Trim() : null;
+                    return prev is not null && Security.SecurityFixes.ParsePrevious(sf.Key, prev) is not null
+                        ? Rec(Changes.ChangeKind.SecuritySetting, sf.Key, prev, sf.Done.TrimEnd('.')) : null;
                 case RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns when SystemSettingsRules.IsAdapterName(action.Target):
                     var dns = settings?.GetAdapterDns(action.Target);
                     return dns is null ? null : Rec(Changes.ChangeKind.AdapterDns, action.Target, dns,

@@ -34,6 +34,7 @@ public static class FixCatalog
     {
         [ModuleSlugs.DeviceDrivers] = "Drivers & devices", [ModuleSlugs.Programs] = "Windows updates", [ModuleSlugs.ResourceHogs] = "Performance & power",
         [ModuleSlugs.BatteryPower] = "Performance & power", [ModuleSlugs.Network] = "Network", [ModuleSlugs.DriveHealth] = "Storage", [ModuleSlugs.Services] = "Services",
+        [ModuleSlugs.SecurityEssentials] = "Security",
     };
 
     /// <summary>Order groups: quick settings first, cleanup next, network renew near the end, long downloads last.</summary>

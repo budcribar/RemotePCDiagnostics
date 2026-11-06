@@ -111,6 +111,11 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 var removeScript = kindD == "process" ? DefenderProbe.RemoveScript([], [value]) : DefenderProbe.RemoveScript([value], []);
                 return await Ps(removeScript, c, $"Defender scans {(kindD == "process" ? "files opened by " + Path.GetFileName(value) : value)} again.", ct).ConfigureAwait(false);
 
+            case ChangeKind.SecuritySetting:
+                if (Security.SecurityFixes.Find(c.Target) is not { } sf || Security.SecurityFixes.RestoreScript(sf.Key, c.Previous) is not { } restore)
+                    return Fail("The original setting wasn't recorded, so it was left as is.");
+                return await Ps(restore, c, sf.UndoDone, ct).ConfigureAwait(false);
+
             case ChangeKind.HiberFileType:
                 var hr = await commands.RunAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/h", "/type", "full"], ct).ConfigureAwait(false);
                 if (hr is not { ExitCode: 0 }) return Fail("Windows didn't allow changing the hibernation file back.");

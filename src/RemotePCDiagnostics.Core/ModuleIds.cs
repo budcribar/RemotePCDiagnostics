@@ -57,8 +57,8 @@ public static class ModuleIds
     public static readonly Guid Webcam = new("243be433-599b-42e4-ad92-04346a59a292");
     /// <summary>Slug <c>NpuTest</c>.</summary>
     public static readonly Guid NpuTest = new("85ffb9ea-fb21-4189-9714-5d58f7115237");
-    /// <summary>Slug <c>BootSecurity</c>.</summary>
-    public static readonly Guid BootSecurity = new("61025d7b-f5ef-4286-82ff-df9a74834b39");
+    /// <summary>Slug <c>SecurityEssentials</c>.</summary>
+    public static readonly Guid SecurityEssentials = new("61025d7b-f5ef-4286-82ff-df9a74834b39");
 
     /// <summary>Every built-in id with its slug (the module's Name). Includes modules that are not registered on every build.</summary>
     public static IReadOnlyDictionary<Guid, string> BuiltIn { get; } = new Dictionary<Guid, string>
@@ -88,7 +88,7 @@ public static class ModuleIds
         [MicToSpeaker] = ModuleSlugs.MicToSpeaker,
         [Webcam] = ModuleSlugs.Webcam,
         [NpuTest] = ModuleSlugs.NpuTest,
-        [BootSecurity] = ModuleSlugs.BootSecurity,
+        [SecurityEssentials] = ModuleSlugs.SecurityEssentials,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -129,5 +129,5 @@ public static class ModuleSlugs
     public const string MicToSpeaker = "MicToSpeaker";
     public const string Webcam = "Webcam";
     public const string NpuTest = "NpuTest";
-    public const string BootSecurity = "BootSecurity";
+    public const string SecurityEssentials = "SecurityEssentials";
 }

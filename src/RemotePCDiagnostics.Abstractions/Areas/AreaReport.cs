@@ -33,6 +33,9 @@ public enum RemediationKind
     // 5. Windows repair (service workflow only; offered when DISM ScanHealth / SFC verify-only found corruption)
     RepairComponentStore,
     RepairSystemFiles,
+
+    // 6. Security settings (Security essentials): Target = a SecurityFixes key ("pua", "asr", "llmnr", ...)
+    ApplySecuritySetting,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>

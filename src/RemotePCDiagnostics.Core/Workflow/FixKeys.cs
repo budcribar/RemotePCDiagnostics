@@ -30,6 +30,7 @@ public static class FixKeys
         [RemediationKind.OptimizeSsd] = "optimizessd",
         [RemediationKind.RepairComponentStore] = "repaircomponentstore",
         [RemediationKind.RepairSystemFiles] = "repairsystemfiles",
+        [RemediationKind.ApplySecuritySetting] = "applysecuritysetting",
     };
 
     public static readonly IReadOnlyDictionary<MemoryActionType, string> Memory = new Dictionary<MemoryActionType, string>
