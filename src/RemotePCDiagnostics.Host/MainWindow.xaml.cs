@@ -70,7 +70,7 @@ public partial class MainWindow : Window
 
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
         // Results flow through ResultStore to the Dashboard / Hardware inventory page. Disable with REMOTEPC_AUTORUN=0.
-        AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Loggers.CreateLogger(typeof(AutoRun).FullName!), ModuleSlugs.Osquery, LibreHardwareMonitorModule.ModuleName);
+        AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Loggers.CreateLogger(typeof(AutoRun).FullName!), ModuleSlugs.Osquery, LibreHardwareMonitorModule.ModuleName, ModuleSlugs.DriveHealth);
 
 
         _ = Task.Run(async () => { try { await provider.GetRequiredService<RebootResumeCoordinator>().CompletePostRebootIfPendingAsync(provider.GetRequiredService<RemediationService>(), provider.GetRequiredService<DiagnosticsService>(), launch.PostReboot); } catch (Exception ex) { Logger.Warn($"Post-reboot check failed: {ex.Message}"); } });

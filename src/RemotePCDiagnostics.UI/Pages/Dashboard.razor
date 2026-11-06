@@ -17,7 +17,7 @@
     var querying = hw.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
     var all = Diagnostics.Modules.Select(m => Store.Get(m.Name)).ToList();
     var checkModules = Diagnostics.Modules.Where(m => m.IncludeInRunAll).ToList();
-    var nonCardChecks = checkModules.Where(m => m.Name is not (ModuleSlugs.Osquery or LibreHardwareMonitorModule.ModuleName)).ToList();
+    var nonCardChecks = checkModules.Where(m => m.Name is not (ModuleSlugs.Osquery or LibreHardwareMonitorModule.ModuleName or ModuleSlugs.DriveHealth)).ToList();
     var checking = Screen.RunningGroup == CheckGroup.Checks || nonCardChecks.Any(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
     var checkItems = checking ? Screen.LiveCheckItems(Store) : [];
     var completedChecks = checkItems.Count(c => c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error);
@@ -31,7 +31,7 @@
     var problemRanks = summary.Problems.ToDictionary(p => p.Name, p => p.IsError ? 0 : 1, StringComparer.OrdinalIgnoreCase);
     if (_cardRanks is null || (!checking && !stressBusy && !all.Any(r => r.Status == DiagnosticStatus.Running)))
         _cardRanks = problemRanks;
-    string[] fixedCards = [LibreHardwareMonitorModule.ModuleName, ModuleSlugs.Osquery];
+    string[] fixedCards = [LibreHardwareMonitorModule.ModuleName, ModuleSlugs.Osquery, ModuleSlugs.DriveHealth]; // always shown (auto-run at launch)
     var cards = fixedCards.Concat(Diagnostics.Modules.Select(m => m.Name)
         .Where(name => !fixedCards.Contains(name) && _cardRanks.ContainsKey(name)))
         .OrderBy(name => _cardRanks.GetValueOrDefault(name, 2)).ToList();
@@ -205,8 +205,15 @@
              @onclick="() => Open(name)" @onkeydown="e => Key(e, name)">
             <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(r.Status)"><Icon Name="@Icon.ForModule(m.Name)" /></span><strong title="@m.DisplayName">@m.DisplayName</strong>
                 <StatusChip Status="@r.Status" /></div>
-            <div class="card-msg card-msg-full"><CardList Text="@r.Message" Strong="true" /></div>
-            <div class="meta card-foot updated-ago" title="@r.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(r.Timestamp, now)</div>
+            @if (r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun)
+            {
+                <div class="card-msg card-msg-full"><span>@(r.Status == DiagnosticStatus.Running ? "Checking…" : "Not checked yet")</span></div>
+            }
+            else
+            {
+                <div class="card-msg card-msg-full"><CardList Text="@r.Message" Strong="true" /></div>
+                <div class="meta card-foot updated-ago" title="@r.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(r.Timestamp, now)</div>
+            }
         </div>
         }
     }
