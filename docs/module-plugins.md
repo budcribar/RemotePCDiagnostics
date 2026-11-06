@@ -76,6 +76,26 @@ strings to `%ProgramData%\RemotePCDiagnostics\catalog\<id>`, then load (signed) 
 fails anywhere is disabled with the reason (About page, Event Log 1800) and startup carries on. A plugin whose DLL was removed keeps its
 catalog copy, so History can still name its results.
 
+## Modules that ship with the app
+
+The built-in modules that run without administrator are module DLLs too, one project each under `src/Modules` (hardware inventory,
+device drivers, resource hogs, battery and power plan, network, Windows error log, programs, security essentials, the CPU, memory,
+disk, GPU and network stress tests, both audio tests, the webcam test and the NPU test). The ones that need administrator (sensors and
+fans, drive health, crashes, services, DISM, SFC, the security audit) stay compiled into the app (`BuiltInModulesPlugin.CompiledIn`).
+
+- `src/Modules/Directory.Build.props` sets each one up: `module.json` embedded, Abstractions, Core and UI referenced with
+  `Private="false"` (the app supplies them, so the DLL holds only the module's own code and page).
+- `build/BundledModules.targets` (imported by the Host and Host.Tests) builds them into `builtin-modules\` next to the exe, and publishes
+  them as ordinary files, so the single-file Portable exe bundles them.
+- `ModuleLoader.LoadBundled` loads each into its own load context, in process and without a signature: the folder is part of the app's
+  own install, like its other DLLs. Only an id the app already knows (`BuiltInModules.Descriptors`) with its usual slug loads from there;
+  anything else is listed as disabled on the About page. A module's group, order and run order stay the app's descriptor, and History
+  keeps naming the module even if its DLL is missing.
+- Its plugin builds the module from the app's services (`OsqueryRunner`, `SystemCommandRunner`, `ISensorProvider`, `IAudioIo`,
+  `IWebcamIo`, `INpuIo`, `IGpuDeviceFactory`, the logger factory via `ModuleServices.LoggerFor<T>`) and sets its page with
+  `SetDetailsComponent`. The Windows adapters stay in the Host.
+- `--verify-package` fails when a built-in module is neither compiled in nor in `builtin-modules\`.
+
 ## Checks written as data
 
 A check that only reads can be a JSON file in `%ProgramFiles%\RemotePCDiagnostics\checks` instead of a DLL (see

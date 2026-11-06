@@ -1,0 +1,9 @@
+{
+  "id": "243be433-599b-42e4-ad92-04346a59a292",
+  "slug": "Webcam",
+  "displayName": "Webcam test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.Webcam.WebcamPlugin",
+  "needsAdmin": false,
+  "hasUi": true
+}

@@ -1,0 +1,9 @@
+{
+  "id": "ff15c281-8b03-43d3-9465-d3f5e2187bb3",
+  "slug": "GpuStress",
+  "displayName": "Graphics (GPU) stress test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.GpuStress.GpuStressPlugin",
+  "needsAdmin": false,
+  "hasUi": true
+}

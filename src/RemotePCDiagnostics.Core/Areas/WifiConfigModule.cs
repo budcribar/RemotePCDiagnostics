@@ -5,7 +5,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>
 /// Wi-Fi signal/band/link rate (via <c>netsh wlan show interfaces</c>) and active IP, gateway, DNS, and proxy configuration.
-/// Complements <see cref="NetworkModule"/> (which checks adapter packet error/drop counters).
+/// Complements the Network module (which checks adapter packet error/drop counters).
 /// </summary>
 public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleBase(commands.Log)
 {

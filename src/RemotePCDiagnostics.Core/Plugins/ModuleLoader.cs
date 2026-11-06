@@ -19,9 +19,15 @@ public sealed record ModuleLoaderOptions
     public Version HostVersion { get; init; } = new(0, 0);
     /// <summary>The person at the PC turned unsigned (user-mode) modules on. Never set from a remote session.</summary>
     public bool AllowUnsigned { get; init; }
+    /// <summary>builtin-modules\ next to the app's exe: the modules that ship with the app, one DLL each. They are part of the app's own
+    /// install (the release zip the agent verified, or the build output), so they load into the app process like the app's other DLLs.
+    /// Only ids the app already knows (<see cref="BuiltInModules.Descriptors"/>) load from here. Null: none.</summary>
+    public string? BundledFolder { get; init; } = DefaultBundledFolder();
 
     public static string DefaultModulesFolder() =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "RemotePCDiagnostics", "modules");
+    public static string DefaultBundledFolder() => Path.Combine(AppContext.BaseDirectory, BundledFolderName);
+    public const string BundledFolderName = "builtin-modules";
     public static string DefaultCatalogFolder() =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "RemotePCDiagnostics", "catalog");
 }
@@ -105,12 +111,7 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
                     continue;
                 }
 
-                var alc = new ModuleLoadContext(pluginId, dll);
-                var asm = alc.LoadFromStream(new MemoryStream(dll, writable: false));
-                var entry = asm.GetType(manifest.EntryType, throwOnError: false)
-                    ?? throw new InvalidDataException($"entryType {manifest.EntryType} not found");
-                if (Activator.CreateInstance(entry) is not IModulePlugin plugin)
-                    throw new InvalidDataException($"{manifest.EntryType} does not implement IModulePlugin");
+                var plugin = Instantiate(pluginId, dll, manifest);
                 if (registrar.Register(services, plugin, pluginId, ModuleSource.Plugin, manifest.Id, record, descriptor))
                     Log($"loaded {pluginId} {manifest.Version} ({manifest.Id}) from {path}");
             }
@@ -120,6 +121,65 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
             }
         }
         LoadRetired(taken);
+    }
+
+    /// <summary>
+    /// Loads the modules that ship with the app (<see cref="ModuleLoaderOptions.BundledFolder"/>), each into its own load context, with no
+    /// signature check: they come with the app's other DLLs. Each must carry the id and slug of a module the app knows
+    /// (<paramref name="known"/>, by default <see cref="BuiltInModules.Descriptors"/>), so the descriptor (group, order, run order) stays the
+    /// app's own and History keeps naming the module even when its DLL is missing. Run before <see cref="LoadAll"/>.
+    /// </summary>
+    public void LoadBundled(IServiceCollection services, IEnumerable<ModuleDescriptor>? known = null)
+    {
+        var folder = options.BundledFolder;
+        if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder)) return;
+        if (SameFolder(folder, options.ModulesFolder)) { LogWarn($"{folder} is also the plugin folder; its modules load as plugins only"); return; }
+        var byId = (known ?? BuiltInModules.Descriptors).ToDictionary(d => d.Id);
+        var loaded = new HashSet<Guid>();
+        foreach (var path in Directory.EnumerateFiles(folder, "*.dll", SearchOption.TopDirectoryOnly).Order(StringComparer.OrdinalIgnoreCase).ToList())
+        {
+            var pluginId = Path.GetFileNameWithoutExtension(path);
+            var record = new PluginRecord(pluginId, ModuleSource.BuiltIn, PluginState.Loaded) { Path = path, Signature = BundledSignature, Version = AppBuildInfo.Release };
+            try
+            {
+                var dll = File.ReadAllBytes(path);
+                var (manifest, _) = ModuleManifest.ReadFromAssembly(dll);
+                record = record with { ModuleId = manifest.Id, DisplayName = manifest.DisplayName };
+                var why = !byId.TryGetValue(manifest.Id, out var d) ? $"id {manifest.Id} is not a module that ships with this app"
+                    : !string.Equals(d.Slug, manifest.Slug, StringComparison.Ordinal) ? $"slug {manifest.Slug} should be {d.Slug} for id {manifest.Id}"
+                    : !loaded.Add(manifest.Id) ? $"module {manifest.Slug} was already loaded from another DLL"
+                    : manifest.Problem(options.HostVersion, vendorSlug: false);
+                if (why is not null) { registrar.RecordDisabled(record with { Reason = why }); continue; }
+                var plugin = Instantiate(pluginId, dll, manifest);
+                // No manifest descriptor: the app's own descriptor (group, order, RunAfter) stays the one used.
+                if (registrar.Register(services, plugin, pluginId, ModuleSource.BuiltIn, manifest.Id, record))
+                    Log($"loaded built-in {manifest.Slug} ({manifest.Id}) from {path}");
+            }
+            catch (Exception ex)
+            {
+                registrar.RecordDisabled(record with { Reason = $"{ex.GetType().Name}: {ex.Message}" });
+            }
+        }
+    }
+
+    /// <summary>Shown as the signature of a module that ships with the app (About page, Event Log).</summary>
+    public const string BundledSignature = "Ships with the app";
+
+    private static IModulePlugin Instantiate(string pluginId, byte[] dll, ModuleManifest manifest)
+    {
+        var alc = new ModuleLoadContext(pluginId, dll);
+        var asm = alc.LoadFromStream(new MemoryStream(dll, writable: false));
+        var entry = asm.GetType(manifest.EntryType, throwOnError: false)
+            ?? throw new InvalidDataException($"entryType {manifest.EntryType} not found");
+        return Activator.CreateInstance(entry) as IModulePlugin
+            ?? throw new InvalidDataException($"{manifest.EntryType} does not implement IModulePlugin");
+    }
+
+    private static bool SameFolder(string a, string b)
+    {
+        try { return string.Equals(Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase); }
+        catch { return false; }
     }
 
     /// <summary>Plugins whose DLL is gone keep their catalog copy, so History can still name their results.</summary>

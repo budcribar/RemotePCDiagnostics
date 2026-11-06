@@ -1,0 +1,9 @@
+{
+  "id": "cfe95422-ed12-4dde-8bdc-9fed3db3a614",
+  "slug": "MemoryTest",
+  "displayName": "Memory test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.MemoryTest.MemoryTestPlugin",
+  "needsAdmin": false,
+  "hasUi": true
+}

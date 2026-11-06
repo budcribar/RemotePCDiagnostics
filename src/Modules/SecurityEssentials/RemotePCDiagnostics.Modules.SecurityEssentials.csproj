@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Security essentials: a module that ships with the app (see src/Modules/Directory.Build.props). -->
+</Project>

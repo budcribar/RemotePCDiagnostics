@@ -25,10 +25,11 @@ public static class HostServices
     /// <summary>Registers RemoteBlazorWebView and everything the app needs. <paramref name="log"/> is the file log line writer, used for ILogger lines only when <paramref name="loggers"/> is null
     /// (<see cref="App.Log"/>); <paramref name="logEvent"/> writes a Windows Event Log entry (<see cref="App.Event"/>).
     /// <paramref name="modulesFolder"/> overrides where module DLLs are loaded from (tests pass an empty folder so the PC's installed modules don't matter).
-    /// <paramref name="loggers"/> backs every class's ILogger (<see cref="App.Loggers"/>), one category per class.</summary>
+    /// <paramref name="loggers"/> backs every class's ILogger (<see cref="App.Loggers"/>), one category per class.
+    /// <paramref name="bundledModulesFolder"/> overrides where the modules that ship with the app are loaded from (default builtin-modules\ next to the exe).</summary>
     public static IServiceCollection AddRemotePCDiagnosticsHost(this IServiceCollection services, SessionContext session,
         Action<string> log, Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent, string? modulesFolder = null,
-        Microsoft.Extensions.Logging.ILoggerFactory? loggers = null)
+        Microsoft.Extensions.Logging.ILoggerFactory? loggers = null, string? bundledModulesFolder = null)
     {
         services.AddRemoteWpfBlazorWebView();
         // ILogger<T> over the app's file and Event Log sinks (after the WebView's own logging registration, so this one wins).
@@ -75,15 +76,21 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(L<WindowsNpuIo>()));
+        // GPU stress test: Direct3D 11 compute devices.
+        services.AddSingleton<IGpuDeviceFactory>(_ => new RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory(L<RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory>()));
+        // Webcam test: cameras through Windows MediaCapture (a preview window only at the PC itself).
+        services.AddSingleton<RemotePCDiagnostics.Core.Webcam.IWebcamIo>(_ => new MediaCaptureWebcamIo(L<MediaCaptureWebcamIo>(), showPreview: session.Mode == SessionMode.Local));
         // Every built-in module goes through the same registration path a plugin uses.
         var plugins = new PluginRegistrar(session, HostVersion(), L<PluginRegistrar>());
         services.AddSingleton(plugins);
         plugins.Register(services, new BuiltInModulesPlugin(loggerFactory), BuiltInModulesPlugin.Id, ModuleSource.BuiltIn);
-        // Module DLLs from %ProgramFiles%\RemotePCDiagnostics\modules (signed ones load in-process; unsigned ones never do).
+        // The modules that ship with the app (builtin-modules\ next to the exe, in-process), then module DLLs from
+        // %ProgramFiles%\RemotePCDiagnostics\modules (signed ones load in-process; unsigned ones never do).
         services.AddSingleton(LoadModulePlugins(services, plugins, logEvent, loggerFactory, new ModuleLoaderOptions
         {
             HostVersion = HostVersion(),
             ModulesFolder = modulesFolder ?? ModuleLoaderOptions.DefaultModulesFolder(),
+            BundledFolder = bundledModulesFolder ?? ModuleLoaderOptions.DefaultBundledFolder(),
             // Only the person at the PC can turn unsigned modules on (a marker in the admin-only modules folder); never in a remote session.
             AllowUnsigned = session.Mode == SessionMode.Local && UnsignedModulesSetting.IsOn(),
         }));
@@ -148,11 +155,14 @@ public static class HostServices
         var loader = new ModuleLoader(options ?? new ModuleLoaderOptions { HostVersion = HostVersion() }, plugins, log,
             um => new UserModeModuleProxy(um, launcher, For<UserModeModuleProxy>(loggers)));
         var before = plugins.Records.Count;
+        try { loader.LoadBundled(services); }
+        catch (Exception ex) { log.Error($"Modules: loading the built-in module DLLs failed: {ex.GetType().Name}: {ex.Message}"); }
         try { loader.LoadAll(services); }
         catch (Exception ex) { log.Error($"Modules: loading plugins failed: {ex.GetType().Name}: {ex.Message}"); }
         LoadJsonChecks(services, plugins, For<RemotePCDiagnostics.Core.Checks.JsonCheckModule>(loggers));
         foreach (var r in plugins.Records.Skip(before))
         {
+            if (r.Source == ModuleSource.BuiltIn && r.State == PluginState.Loaded) continue; // shipped with the app: only a failure is news
             var text = $"Module plugin: {r.PluginId}{Environment.NewLine}Module id: {r.ModuleId}{Environment.NewLine}Version: {r.Version}{Environment.NewLine}" +
                 $"Signature: {r.Signature}{Environment.NewLine}State: {r.State}{(r.Reason is null ? "" : Environment.NewLine + "Reason: " + r.Reason)}{Environment.NewLine}Path: {r.Path}";
             try { logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.ModulePlugin,

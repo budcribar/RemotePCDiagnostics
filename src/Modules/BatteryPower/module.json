@@ -1,0 +1,9 @@
+{
+  "id": "f9635901-3c6c-4c69-bdc7-b4f10d0c53a0",
+  "slug": "BatteryPower",
+  "displayName": "Battery & power plan",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.BatteryPower.BatteryPowerPlugin",
+  "needsAdmin": false,
+  "hasUi": false
+}

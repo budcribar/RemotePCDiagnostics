@@ -1,0 +1,9 @@
+{
+  "id": "44bcd831-09d1-46e8-8355-289ae77c7bf0",
+  "slug": "Osquery",
+  "displayName": "Hardware inventory",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.Osquery.OsqueryPlugin",
+  "needsAdmin": false,
+  "hasUi": true
+}

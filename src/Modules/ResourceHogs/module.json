@@ -1,0 +1,9 @@
+{
+  "id": "bb36465f-fcbc-4eb3-a6c9-de953345b9b0",
+  "slug": "ResourceHogs",
+  "displayName": "Resource hogs & uptime",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.ResourceHogs.ResourceHogsPlugin",
+  "needsAdmin": false,
+  "hasUi": false
+}

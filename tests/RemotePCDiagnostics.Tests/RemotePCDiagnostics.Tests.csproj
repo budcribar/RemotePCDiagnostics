@@ -26,6 +26,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
+    <!-- The modules that ship with the app (src/Modules), referenced so their code can be tested directly. -->
+    <ProjectReference Include="..\..\src\Modules\*\*.csproj" />
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.ModuleUi\RemotePCDiagnostics.ModuleUi.csproj" />
     <!-- Real memory test helper for the end-to-end helper process test. -->
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.MemTest\RemotePCDiagnostics.MemTest.csproj" />
