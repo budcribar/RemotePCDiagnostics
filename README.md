@@ -27,12 +27,9 @@ RemotePCDiagnostics is a single Windows desktop application (a WPF or WinForms h
 | Webcam test (optional) | Opens the camera for a few seconds: frame rate, stalls, brightness, black/frozen/overexposed frames | Windows.Media.Capture (WinRT, part of Windows) |
 | NPU test (optional) | Finds the NPU (AI accelerator), checks its driver, runs a short matrix-multiply on it vs the CPU | WMI, DXCore, Direct3D 12 (Vortice) |
 
-## Architecture (intended)
+## Architecture
 
-- One Blazor host app (WPF or WinForms with BlazorWebView), with one component per module.
-- A small collector layer that wraps each data source behind a .NET interface, so modules do not depend on how data is gathered. osquery runs as a bundled process and returns JSON. LibreHardwareMonitor is used as a library, and HardeningKitty runs as a PowerShell module.
-- RemoteBlazorWebView hosts the UI so a remote technician can drive it from a browser.
-- Admin rights are needed for some modules (event logs, sensors).
+See [docs/architecture.md](docs/architecture.md): the projects, how they layer, the plugin contract, the privilege model and logging.
 
 ## License
 

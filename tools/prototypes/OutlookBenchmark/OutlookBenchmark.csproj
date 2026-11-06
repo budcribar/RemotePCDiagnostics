@@ -11,6 +11,6 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
+    <ProjectReference Include="..\..\..\src\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
   </ItemGroup>
 </Project>

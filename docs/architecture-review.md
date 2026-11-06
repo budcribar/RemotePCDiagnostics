@@ -32,7 +32,7 @@ Date: November 5, 2026
                     └──────────────────────────────────────────────────────────┘
 ```
 
-Not shown: Core also references `RemotePCDiagnostics.Agent.Core` (used by `ModuleLoader`), and `OsqueryRunner` and `SystemCommandRunner` live in Core and start processes through `IProcessLauncher`. The two prototypes (`OutlookBenchmark`, `NetworkUsagePrototype`) reference Core and are in the main solution.
+Not shown: Core also references `RemotePCDiagnostics.Agent.Core` (used by `ModuleLoader`), and `OsqueryRunner` and `SystemCommandRunner` live in Core and start processes through `IProcessLauncher`. The two prototypes (`OutlookBenchmark`, `NetworkUsagePrototype`) reference Core; they were in the main solution at the time of this review and are now in `tools/prototypes/Prototypes.slnx`.
 
 ---
 

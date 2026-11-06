@@ -7,6 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Database.ManagedEsent" Version="3.2.0" />
-    <ProjectReference Include="../RemotePCDiagnostics.Core/RemotePCDiagnostics.Core.csproj" />
+    <ProjectReference Include="../../../src/RemotePCDiagnostics.Core/RemotePCDiagnostics.Core.csproj" />
   </ItemGroup>
 </Project>

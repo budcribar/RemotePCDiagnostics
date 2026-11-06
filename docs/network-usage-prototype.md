@@ -38,7 +38,7 @@ An existing database copy can be analyzed with `--srum-copy C:\Copies\SRUDB.dat`
 ## Build and validation
 
 ```powershell
-dotnet publish src/NetworkUsagePrototype/NetworkUsagePrototype.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts/NetworkUsagePrototype
+dotnet publish tools/prototypes/NetworkUsagePrototype/NetworkUsagePrototype.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts/NetworkUsagePrototype
 ```
 
 Tests cover aggregation, user/identity separation, HTML/CSV escaping, and reading/time-filtering a synthetic ESE database. Demo-mode smoke testing verifies the packaged executable and exports. Real API permissions, snapshot acquisition, and data agreement with Windows Settings still need a laptop run. The prototype is not a proven production SRUM collector.
