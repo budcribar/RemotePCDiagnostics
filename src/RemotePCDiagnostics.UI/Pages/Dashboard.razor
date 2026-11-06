@@ -43,14 +43,14 @@
 <div class="toolbar dash-controls" data-testid="dashboard-controls">
     <div class="meta">
         <div class="banner-sub">
-            <span data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {RemotePCDiagnostics.Core.History.TimeText.Ago(l, now)}" : "Not checked yet")</span>
+            <span data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {RemotePCDiagnostics.Core.History.TimeText.Ago(l, now)}" : "Live readings only, checks not run yet")</span>
             @if (checksNotRunCount > 0 && !checking)
             {
                 <span> · </span><a href="checks" class="banner-more banner-more-small" data-testid="dashboard-checks-notrun">@checksNotRunCount system @(checksNotRunCount == 1 ? "check" : "checks") not run</a>
             }
             @if (summary.StressNotRunCount > 0)
             {
-                <span> · </span><a href="stress" class="banner-more banner-more-small" data-testid="dashboard-notrun-count" title="@summary.NotRunNote">@summary.StressNotRunCount on-demand @(summary.StressNotRunCount == 1 ? "test" : "tests") not run</a>
+                <span> · </span><a href="stress" class="banner-more banner-more-small" data-testid="dashboard-notrun-count" title="@summary.StressNotRunNote">@summary.StressNotRunCount on-demand @(summary.StressNotRunCount == 1 ? "test" : "tests") not run</a>
             }
             @if (summary.AuditNotRun)
             {

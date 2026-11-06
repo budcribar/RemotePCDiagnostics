@@ -169,9 +169,13 @@
 
     case WorkflowStage.Done:
         @if (Bench.Before is not null && Bench.After is not null) { <section class="banner banner-ok"><div class="banner-text"><div class="banner-title">@Bench.Comparison.OverallText</div></div></section> }
+        @* The next action and the run's date come before the tall report frame, so they're visible without scrolling. *@
+        <div class="toolbar wf-done-actions">
+            @if (s.FinishedUtc is { } fin) { <span class="meta" data-testid="wf-finished">Workflow finished @fin.ToLocalTime().ToString("g")</span> }
+            <button class="btn btn-outline" data-testid="wf-new" @onclick="Flow.Reset">New workflow</button>
+        </div>
         <p class="meta" data-testid="wf-report-path">@(s.ReportPath is { } p ? $"Report saved on this PC: {p}" : "The report couldn't be saved as a file; it's shown below.")</p>
         <iframe class="wf-report" data-testid="wf-report" sandbox="allow-same-origin" title="Client report" srcdoc="@ReportHtml(s)"></iframe>
-        <div class="toolbar"><button class="btn-small" data-testid="wf-new" @onclick="Flow.Reset">New workflow</button></div>
         break;
 
     default:

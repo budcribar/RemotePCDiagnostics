@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private bool _mirror;
     private bool _reverseMirror;
     private bool _restarting;
+    private bool _technicianWasConnected; // a browser reached this copy, so a later server shutdown means that tab went away
     private Microsoft.Web.WebView2.Wpf.WebView2? _controlWebView; // --reverse-mirror: a plain WebView2 that shows the controlling /app page locally
     private DispatcherTimer? _readyTimer;
     private DispatcherTimer? _copyResetTimer;
@@ -145,6 +146,7 @@ public partial class MainWindow : Window
 
             Logger.Info($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User} mirror={_mirror} reverseMirror={_reverseMirror}");
             SetRemoteState(RemoteSessionState.TechnicianConnected);
+            _technicianWasConnected = true;
             if (_mirror)
             {
                 var activeId = e.Id != Guid.Empty ? e.Id : (_sessionId != Guid.Empty ? _sessionId : id);
@@ -158,26 +160,18 @@ public partial class MainWindow : Window
         {
             Logger.Info($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
             SetRemoteState(_technicianUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected);
+            // The relay drops this client for good when the technician's tab closes ("Server shut down connection"), and the link then
+            // only shows "Client id not found". Start a fresh copy on the same session id so the same link works again. Only after a
+            // technician actually connected to this copy, so a relay that keeps refusing us can't cause a restart loop.
+            if (_technicianWasConnected && !_reverseMirror && RemoteLinkInfo.IsServerShutdown(e.Exception))
+                RestartWhenIdle(serverUri);
         });
         // The technician refreshed the browser (or pressed Restart on the "Locked" page): the server drops this client, so
         // start a fresh copy on the same session id and close this one (RemoteBlazorWebViewTutorial does the same with Restart()).
         RemoteBlazorWebView.Refreshed += (_, e) => Dispatcher.BeginInvoke(() =>
         {
             Logger.Info($"Remote Refreshed {e}");
-            if (_restarting) return;
-            var id = _sessionId != Guid.Empty ? _sessionId : RemoteBlazorWebView.Id;
-            var exe = Environment.ProcessPath;
-            if (id == Guid.Empty || exe is null) { Logger.Info("Refreshed: no session id or executable path, can't restart"); return; }
-            try
-            {
-                var psi = new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
-                foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id, _mirror, _reverseMirror)) psi.ArgumentList.Add(a);
-                System.Diagnostics.Process.Start(psi);
-                _restarting = true;
-                Logger.Info($"Refreshed: started a new copy for session {id}; closing this one");
-                System.Windows.Application.Current.Shutdown();
-            }
-            catch (Exception ex) { Logger.Warn($"Refreshed: restart failed: {ex.Message}"); }
+            RestartSameSession(serverUri, "technician refreshed the browser");
         });
 
         _readyTimer = new DispatcherTimer { Interval = RemoteLinkInfo.ReadyTimeout };
@@ -219,6 +213,37 @@ public partial class MainWindow : Window
     /// /app page, so the person here drives the app in this window while watchers open the read-only /mirror link. A plain WebView2 has
     /// none of the Blazor control's "open off-origin links in the system browser" behavior, so /app loads in-window instead of Chrome.
     /// </summary>
+    /// <summary>Starts a new copy of the app on the same relay and session id (so the technician's link keeps working) and closes this one.</summary>
+    private void RestartSameSession(Uri serverUri, string reason)
+    {
+        if (_restarting) return;
+        var id = _sessionId != Guid.Empty ? _sessionId : RemoteBlazorWebView.Id;
+        var exe = Environment.ProcessPath;
+        if (id == Guid.Empty || exe is null) { Logger.Info($"Restart ({reason}): no session id or executable path, can't restart"); return; }
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
+            foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id, _mirror, _reverseMirror)) psi.ArgumentList.Add(a);
+            System.Diagnostics.Process.Start(psi);
+            _restarting = true;
+            Logger.Info($"Restart ({reason}): started a new copy for session {id}; closing this one");
+            System.Windows.Application.Current.Shutdown();
+        }
+        catch (Exception ex) { Logger.Warn($"Restart ({reason}) failed: {ex.Message}"); }
+    }
+
+    /// <summary>Restarts for a dropped session, but lets a running test finish first (its result still goes to the Event Log).</summary>
+    private void RestartWhenIdle(Uri serverUri)
+    {
+        const string reason = "server dropped the session after the technician disconnected";
+        var diag = _provider.GetService<DiagnosticsService>();
+        if (diag is null || !diag.IsAnyRunning) { RestartSameSession(serverUri, reason); return; }
+        Logger.Info($"Restart ({reason}): waiting for running tests to finish");
+        var wait = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        wait.Tick += (_, _) => { if (diag.IsAnyRunning) return; wait.Stop(); RestartSameSession(serverUri, reason); };
+        wait.Start();
+    }
+
     private void ShowLocalController(Uri appUrl)
     {
         try

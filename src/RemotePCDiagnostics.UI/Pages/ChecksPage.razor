@@ -12,8 +12,9 @@
    the selected test's real page on the right. *@
 @{
     var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled); }), Diagnostics.LastStressSuiteProgress);
-    var anyResult = Diagnostics.Modules.Any(m => Store.Get(m.Name).Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running));
-    var banner = ChecksBanner.Build(summary, Screen.Progress, anyResult);
+    // Only this page's tests count: the auto-run sensor and inventory checks alone don't make the Stress tests page say "healthy".
+    var anyResult = Screen.Modules(_group).Any(m => Store.Get(m.Name).Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running));
+    var banner = ChecksBanner.Build(summary, Screen.Progress, anyResult, _group == CheckGroup.Stress ? "No tests run in this session" : "Not checked yet");
     var selected = Screen.SelectedIn(_group);
 }
 <div class="ct-page">
@@ -28,7 +29,7 @@
         <div class="banner-text">
             <div class="banner-title" data-testid="checks-banner-title">@banner.Title</div>
             @if (Screen.Progress is null && Screen.LastRunNote is { } runNote) { <div class="banner-note" data-testid="checks-run-note">@runNote</div> }
-            @if (Screen.Progress is null && _group == CheckGroup.Stress && summary.NotRunNote is { } note) { <div class="banner-note">@note</div> }
+            @if (Screen.Progress is null && _group == CheckGroup.Stress && summary.StressNotRunNote is { } note) { <div class="banner-note">@note</div> }
             else if (Screen.Progress is null) { <div class="banner-sub">Expand a group or click a test to see its full results on the right.</div> }
         </div>
     </section>
@@ -212,7 +213,7 @@
                                 }
                             </div>
                             <div class="ct-row-side">
-                                <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-status-@m.Name.ToLowerInvariant()">@label</span>
+                                <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-status-@m.Name.ToLowerInvariant()">@(prev is not null ? "Not run this session" : label)</span>
                                 <span class="meta">@SideText(m, r, kind)</span>
                             </div>
                         </div>
