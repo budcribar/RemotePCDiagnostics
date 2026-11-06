@@ -19,18 +19,21 @@ public sealed class DashboardSummary
     public string TitleLead => $"{Problems.Count} {(Problems.Count == 1 ? "thing" : "things")} to look at";
 
     /// <summary>"On-demand tests not run: 3 (stress tests and security audit)", or null when everything ran.</summary>
-    public string? NotRunNote
+    public string? NotRunNote => Note(NotRun);
+
+    /// <summary>The same note for the Stress tests page, without the security audit (it has its own page and is counted separately,
+    /// so this matches <see cref="StressNotRunCount"/> and the group pills), or null when every test there ran.</summary>
+    public string? StressNotRunNote => Note(NotRun.Where(m => !IsAudit(m)).ToList());
+
+    private string? Note(IReadOnlyList<BannerModule> notRun)
     {
-        get
-        {
-            if (NotRun.Count == 0) return null;
-            var parts = new List<string>();
-            var stress = NotRun.Where(m => m.IsStress).ToList();
-            if (stress.Count > 1 && stress.Count == stressTotal) parts.Add("stress tests");
-            else parts.AddRange(stress.Select(m => Lower(m.DisplayName)));
-            parts.AddRange(NotRun.Where(m => !m.IsStress).Select(m => Lower(m.DisplayName)));
-            return $"On-demand tests not run: {NotRun.Count} ({JoinList(parts)})";
-        }
+        if (notRun.Count == 0) return null;
+        var parts = new List<string>();
+        var stress = notRun.Where(m => m.IsStress).ToList();
+        if (stress.Count > 1 && stress.Count == stressTotal) parts.Add("stress tests");
+        else parts.AddRange(stress.Select(m => Lower(m.DisplayName)));
+        parts.AddRange(notRun.Where(m => !m.IsStress).Select(m => Lower(m.DisplayName)));
+        return $"On-demand tests not run: {notRun.Count} ({JoinList(parts)})";
     }
 
     /// <summary>Hint shown after the note when the stress suite would run the missing tests.</summary>

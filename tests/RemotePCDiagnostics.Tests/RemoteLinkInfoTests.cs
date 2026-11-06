@@ -66,4 +66,12 @@ public class RemoteLinkInfoTests
         Assert.DoesNotContain("/app/", mirror);
         Assert.Equal(string.Empty, RemoteLinkInfo.ToMirrorMarkup(null));
     }
+
+    [Fact]
+    public void IsServerShutdown_OnlyForTheRelaysShutdownCommand()
+    {
+        Assert.True(RemoteLinkInfo.IsServerShutdown(new Exception("Server shut down connection")));
+        Assert.False(RemoteLinkInfo.IsServerShutdown(new Exception("Connection refused")));
+        Assert.False(RemoteLinkInfo.IsServerShutdown(null));
+    }
 }

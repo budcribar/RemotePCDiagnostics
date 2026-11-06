@@ -636,3 +636,4 @@ table.detail tr.row-detail td { white-space: normal; }
   .ct-group-actions > .btn { flex: 1 1 auto; }
   .dash-controls .banner-actions .btn { flex-basis: 100%; }
 }
+.wf-done-actions { justify-content: flex-start; align-items: center; gap: 12px; margin: 8px 0; } .wf-done-actions .btn-outline { width: auto; }

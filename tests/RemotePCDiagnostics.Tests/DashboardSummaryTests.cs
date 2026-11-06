@@ -66,6 +66,7 @@ public class DashboardSummaryTests
         Assert.Equal("On-demand tests not run: 4 (stress tests and security audit)", sum.NotRunNote);
         Assert.Equal("for stress tests, use Run checks + stress tests", sum.NotRunHint);
         Assert.Equal(3, sum.StressNotRunCount);   // banner: "3 on-demand tests not run" → Stress tests
+        Assert.Equal("On-demand tests not run: 3 (stress tests)", sum.StressNotRunNote);   // Stress tests page: same count as the link
         Assert.True(sum.AuditNotRun);             // banner: "security audit not run" → Security audit
     }
 
@@ -76,6 +77,7 @@ public class DashboardSummaryTests
         var sum = DashboardSummary.Build(mods, Suite(true, ("CpuStress", StressSuiteStepState.Passed), ("MemoryTest", StressSuiteStepState.Passed), ("GpuStress", StressSuiteStepState.Skipped)));
         Assert.Equal("On-demand tests not run: 1 (security audit)", sum.NotRunNote);
         Assert.Null(sum.NotRunHint);
+        Assert.Null(sum.StressNotRunNote);
         Assert.Equal(0, sum.StressNotRunCount);
         Assert.True(sum.AuditNotRun);
     }

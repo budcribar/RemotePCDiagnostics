@@ -23,7 +23,15 @@ else
     <p class="meta" data-testid="audit-intro">Checks this PC's Windows security settings against a recommended baseline. It only reads settings — nothing is changed. The audit runs only when you start it and can take a few minutes (it stops automatically after @SecurityAuditModule.FormatDuration(m.Timeout)).</p>
     <p data-testid="audit-status" class="@(r.Status == DiagnosticStatus.Error && rep is null ? "status-line error-text" : running ? "status-line is-running" : "status-line")">
         <span class="@DotClass(r.Status)"></span>
-        <span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start audit to begin.", DiagnosticStatus.Running => $"Auditing security settings… {Elapsed}", _ => r.Message })</span>
+        @if (r.Status == DiagnosticStatus.NotRun && _lastRun is { } lr)
+        {
+            @* Not run in this session, but an earlier audit is in the Event Log: say so, so nobody re-runs a 5-minute audit for nothing. *@
+            <span data-testid="audit-lastrun">Not run in this session · last run @lr.LocalTime.ToString("g"): @lr.Outcome · @lr.Summary <a href="@($"history?module={Uri.EscapeDataString(lr.Module)}&run={lr.TimeUtc.UtcTicks}")">View details in History</a></span>
+        }
+        else
+        {
+            <span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start audit to begin.", DiagnosticStatus.Running => $"Auditing security settings… {Elapsed}", _ => r.Message })</span>
+        }
         @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
     </p>
     @if (running) { <div class="run-progress run-progress-indeterminate" data-testid="audit-run-progress" aria-hidden="true"><div></div></div> }
@@ -130,9 +138,27 @@ else
         }
     }
 
+    [Inject] private IServiceProvider Services { get; set; } = default!;
+    private RemotePCDiagnostics.Core.History.HistoryEntry? _lastRun;
+
+    // The latest audit from earlier sessions (Event Log), shown while it hasn't run in this session. Read once, off the render thread.
+    private async Task LoadLastRunAsync(string module)
+    {
+        try
+        {
+            if (Services.GetService(typeof(RemotePCDiagnostics.Core.History.IHistoryStore)) is not RemotePCDiagnostics.Core.History.IHistoryStore history) return;
+            var read = await Task.Run(() => history.Read(TimeSpan.FromDays(30)));
+            var latest = RemotePCDiagnostics.Core.History.HistoryQuery.LatestByModule(RemotePCDiagnostics.Core.History.HistoryNames.Normalize(read.Entries, Diagnostics.Catalog));
+            _lastRun = latest.GetValueOrDefault(module);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { /* no history source: keep "Not run yet" */ }
+    }
+
     protected override void OnInitialized()
     {
         base.OnInitialized();
+        if ((DiagnosticModule ?? Diagnostics.Catalog.ModuleFor(ModuleIds.SecurityAudit)) is { } am) _ = LoadLastRunAsync(am.Name);
         if (((DiagnosticModule ?? Diagnostics.Catalog.ModuleFor(ModuleIds.SecurityAudit)) as SecurityAuditModule) is { } m && Store.Get(m.Name).Status == DiagnosticStatus.Running)
             StartTicker(m);
     }

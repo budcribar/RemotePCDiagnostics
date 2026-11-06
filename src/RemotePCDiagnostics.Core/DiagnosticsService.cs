@@ -424,6 +424,9 @@ public sealed class DiagnosticsService
     /// <summary>True while a run of the module is in flight.</summary>
     public bool IsRunning(string moduleName) => _inFlight.ContainsKey(moduleName);
 
+    /// <summary>True while any module or the stress suite is running.</summary>
+    public bool IsAnyRunning => !_inFlight.IsEmpty || IsStressSuiteRunning;
+
     /// <summary>Starts a run unless one is already in progress, in which case the in-flight task is returned (no double-runs).</summary>
     private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance = null, bool gateInstances = false)
     {

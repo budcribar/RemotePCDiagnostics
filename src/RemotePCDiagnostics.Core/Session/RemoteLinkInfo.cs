@@ -6,6 +6,13 @@ public enum RemoteSessionState { Connecting, Ready, Unreachable, TechnicianConne
 /// <summary>Link building and status text for the Remote-mode overlay (no WPF dependency, unit-tested).</summary>
 public static class RemoteLinkInfo
 {
+    /// <summary>
+    /// True when RemoteBlazorWebView reports that the relay sent its "shutdown" command ("Server shut down connection"): the relay
+    /// dropped this client (the technician's tab closed) and the link stops working until a copy registers the session id again.
+    /// </summary>
+    public static bool IsServerShutdown(Exception? error) =>
+        error?.Message is { } m && m.Contains("shut down", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>How long to wait for ReadyToConnect before showing the "couldn't reach the server" warning.</summary>
     public static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(15);
 

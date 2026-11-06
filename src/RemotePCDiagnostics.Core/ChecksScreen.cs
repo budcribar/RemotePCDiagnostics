@@ -467,10 +467,12 @@ public sealed class ChecksScreenState
 public static class ChecksBanner
 {
     /// <returns>Kind: run / ok / warn / err; Title text.</returns>
-    public static (string Kind, string Title) Build(DashboardSummary summary, GroupRunProgress? progress, bool anyResult)
+    /// <param name="anyResult">Whether any test this page is about has a result in this session.</param>
+    /// <param name="noResultTitle">Title when nothing has run yet.</param>
+    public static (string Kind, string Title) Build(DashboardSummary summary, GroupRunProgress? progress, bool anyResult, string noResultTitle = "Not checked yet")
     {
         if (progress is { } p) return ("run", $"Running {p.Index} of {p.Total}: {p.Current}");
         if (summary.Problems.Count > 0) return (summary.HasError ? "err" : "warn", $"{summary.TitleLead}: {string.Join(", ", summary.Problems.Select(x => x.DisplayName))}");
-        return anyResult ? ("ok", "Your PC looks healthy") : ("ok", "Not checked yet");
+        return anyResult ? ("ok", "Your PC looks healthy") : ("ok", noResultTitle);
     }
 }
