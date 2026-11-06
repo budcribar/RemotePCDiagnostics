@@ -175,6 +175,58 @@ public class UiReviewFixesTests
         Assert.Equal("Monday, Oct 27 2025", HistoryQuery.DayLabel(new DateTimeOffset(2025, 10, 27, 9, 0, 0, now.Offset), now));
     }
 
+    [Fact]
+    public void History_GroupByDay_RollsUpAndOrdersByLatestFirst()
+    {
+        var localNow = DateTimeOffset.Now;
+        var today = new DateTimeOffset(localNow.Year, localNow.Month, localNow.Day, 14, 0, 0, localNow.Offset);
+        var yesterday = today.AddDays(-1);
+        var older = today.AddDays(-3);
+
+        HistoryEntry EntryAt(DateTimeOffset localTime, string module, string outcome) =>
+            new(localTime.ToUniversalTime(), module, module, outcome, outcome, 1.5, null, [], "PC", "1.1.0");
+
+        var entries = new[]
+        {
+            EntryAt(today, "CpuStress", "OK"),
+            EntryAt(today.AddHours(-2), "MemoryTest", "Warning"),
+            EntryAt(yesterday, "DiskSpeed", "Critical"),
+            EntryAt(older, "NetworkTest", "OK"),
+        };
+
+        var groups = HistoryQuery.GroupByDay(entries, localNow);
+        Assert.Equal(3, groups.Count);
+        Assert.Equal("Today", groups[0].Label);
+        Assert.Equal(2, groups[0].Entries.Count);
+        Assert.Equal("2 runs", groups[0].CountText);
+        Assert.Equal(1, groups[0].PassedCount);
+        Assert.Equal(1, groups[0].WarningCount);
+        Assert.Equal(0, groups[0].CriticalCount);
+
+        Assert.Equal("Yesterday", groups[1].Label);
+        Assert.Single(groups[1].Entries);
+        Assert.Equal("1 run", groups[1].CountText);
+        Assert.Equal(1, groups[1].CriticalCount);
+
+        var ascGroups = HistoryQuery.GroupByDay(entries, localNow, ascendingDays: true);
+        Assert.Equal(groups[2].Date, ascGroups[0].Date);
+        Assert.Equal(groups[0].Date, ascGroups[2].Date);
+
+        var fixes = new[]
+        {
+            new FixHistoryItem(today.ToUniversalTime(), "Disk cleanup", "Local user", true, "Cleaned temp files", "+500 MB disk"),
+            new FixHistoryItem(yesterday.ToUniversalTime(), "Service (Restart)", "Local user", false, "Restart failed", null),
+        };
+        var fixGroups = HistorySummary.GroupFixesByDay(fixes, localNow);
+        Assert.Equal(2, fixGroups.Count);
+        Assert.Equal("Today", fixGroups[0].Label);
+        Assert.Equal(1, fixGroups[0].AppliedCount);
+        Assert.Equal(0, fixGroups[0].FailedCount);
+        Assert.Equal("Yesterday", fixGroups[1].Label);
+        Assert.Equal(0, fixGroups[1].AppliedCount);
+        Assert.Equal(1, fixGroups[1].FailedCount);
+    }
+
     [Theory]
     [InlineData("MaxCpuTemperatureC", "Peak CPU temperature (°C)")]
     [InlineData("ChunksDone", "Work units completed")]
