@@ -42,17 +42,25 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
         var started = DateTimeOffset.Now;
         OnScanStarting();
         double lastPercent = -1;
+        // How the tool's output arrived: if the first percent comes late, or many lines land at once, the tool is buffering its piped output.
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        int lines = 0, percentUpdates = 0;
+        double? firstLineAt = null, firstPercentAt = null;
         RemotePCDiagnostics.Core.Osquery.ProcessResult? result;
         try
         {
             result = await commands.RunAsync(exe, args, TimeSpan.FromMinutes(30), scan.Token, line =>
             {
+                lines++;
+                firstLineAt ??= clock.Elapsed.TotalSeconds;
                 if (scan.IsCancellationRequested) return;
                 var match = System.Text.RegularExpressions.Regex.Match(line.Replace("\0", ""), @"(?<![\d.])(\d{1,3}(?:[.,]\d+)?)\s*%");
                 if (!match.Success || !double.TryParse(match.Groups[1].Value.Replace(',', '.'),
                     System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var percent)
                     || percent > 100 || percent <= lastPercent) return;
                 lastPercent = percent;
+                percentUpdates++;
+                firstPercentAt ??= clock.Elapsed.TotalSeconds;
                 RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, $"Scan {percent:0.#}% complete", started, percent));
             }).ConfigureAwait(false);
             scan.Token.ThrowIfCancellationRequested();
@@ -64,6 +72,9 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
         finally
         {
             lock (_scanGate) _scan = null;
+            static string At(double? s) => s is { } v ? $"{v:0.0}s" : "never";
+            Log($"{Name}: output after {clock.Elapsed.TotalSeconds:0.0}s: {lines} lines, first line {At(firstLineAt)}, " +
+                $"first percent {At(firstPercentAt)}, {percentUpdates} percent updates, last {(lastPercent < 0 ? "none" : $"{lastPercent:0.#}%")}");
         }
         if (result is null && !InterpretWithoutResult) return AreaReport.Failed(FailedMessage);
 
