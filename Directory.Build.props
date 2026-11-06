@@ -7,7 +7,7 @@
     <InformationalVersion Condition="'$(GITHUB_RUN_NUMBER)' == ''">$(Version)-local</InformationalVersion>
     <!-- RemoteBlazorWebView packages (Wpf, RemoteWebView, RemoteWebViewService.Lib), built from net10 with the embedded relay and the
          opaque-origin fix (budcribar/RemoteBlazorWebView#64). They are in third_party/RemoteBlazorWebView/packages. -->
-    <RbwvVersion Condition="'$(RbwvVersion)' == ''">10.0.14-embedded.2</RbwvVersion>
+    <RbwvVersion Condition="'$(RbwvVersion)' == ''">10.0.14-embedded.3</RbwvVersion>
     <RbwvLibVersion Condition="'$(RbwvLibVersion)' == ''">$(RbwvVersion)</RbwvLibVersion>
   </PropertyGroup>
 </Project>
