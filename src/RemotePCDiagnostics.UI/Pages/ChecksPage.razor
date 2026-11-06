@@ -202,7 +202,7 @@
                         <div @key="mod.Name" class="ct-row @(isSel ? "selected" : "") @(kind == RowKind.Running ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
                              data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => SelectAndShowAsync(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
                             <button class="ct-check" role="checkbox" aria-checked="@(Screen.IsSelected(m.Name) ? "true" : "false")" aria-label="Include @m.DisplayName"
-                                    data-testid="checks-select-@m.Name.ToLowerInvariant()" @onclick="() => Screen.SetSelected(mod.Name, !Screen.IsSelected(mod.Name))" @onclick:stopPropagation="true">@(Screen.IsSelected(m.Name) ? "✓" : "")</button>
+                                    data-testid="checks-select-@m.Name.ToLowerInvariant()" @onclick="() => Screen.SetSelected(mod.Name, !Screen.IsSelected(mod.Name))" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">@(Screen.IsSelected(m.Name) ? "✓" : "")</button>
                             <span class="dot dot-@CheckRows.DotKind(kind)"></span>
                             <div class="ct-row-text">
                                 <div class="ct-row-name">@m.DisplayName</div>

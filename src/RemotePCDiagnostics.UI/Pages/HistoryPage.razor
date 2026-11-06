@@ -289,7 +289,7 @@ else
     [SupplyParameterFromQuery(Name = "run")] public long? LinkedRun { get; set; }
     private string _module = "", _outcome = "";
     private HistoryRange _range = HistoryRange.All;
-    private static (HistoryColumn Col, bool Desc) _sort = HistoryQuery.DefaultSort;
+    private (HistoryColumn Col, bool Desc) _sort = HistoryQuery.DefaultSort;
     private HistoryEntry? _open;
     private int _shown = HistoryQuery.PageSize;
     private readonly Dictionary<DateOnly, bool> _dayOverrides = [];
@@ -353,12 +353,15 @@ else
             var read = await Task.Run(() => History.Read(within));
             // Cancelled runs produced no result: they're left out of history entirely.
             _result = read with { Entries = HistoryQuery.WithoutCancelled(HistoryNames.Normalize(read.Entries, Diagnostics.Catalog)) };
-            if (_open is null && !string.IsNullOrWhiteSpace(LinkedModule))
+            if (_open is { } previous)
+            {
+                _open = _result.Entries.FirstOrDefault(entry => entry.TimeUtc == previous.TimeUtc &&
+                    string.Equals(entry.Module, previous.Module, StringComparison.OrdinalIgnoreCase));
+            }
+            else if (!string.IsNullOrWhiteSpace(LinkedModule))
                 ApplyLinkedEntrySelection();
-            else if (_open is not null && !_result.Entries.Contains(_open))
-                _open = null;
         }
-        catch { _result = new HistoryReadResult([], false); }
+        catch { _result = new HistoryReadResult([], false); _open = null; }
         finally { _loading = false; }
     }
 

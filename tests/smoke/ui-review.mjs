@@ -7,10 +7,14 @@ const dialogs = readFileSync(new URL('../../src/RemotePCDiagnostics.UI/wwwroot/d
 // Blazor stops these bubbled events within its event delegation layer. Verify every action
 // island declares both event boundaries; browser fixture tests below cover native modal behavior.
 const area = readFileSync(new URL('../../src/RemotePCDiagnostics.UI/Pages/AreaPage.razor', import.meta.url), 'utf8');
-for (const island of area.matchAll(/<(?:div|td) class="svc-actions"[^>]*@onclick:stopPropagation="true"[^>]*>/g)) {
-  assert.match(island[0], /@onkeydown:stopPropagation="true"/, 'nested keyboard actions must not activate their parent');
+const actionIslands = [...area.matchAll(/<(?:div|td) class="svc-actions"[^>]*@onclick:stopPropagation="true"[^>]*>/g)];
+assert.ok(actionIslands.length > 0, 'AreaPage must contain action islands');
+for (const [island] of actionIslands) {
+  assert.match(island, /@onkeydown:stopPropagation="true"/, 'nested keyboard actions must not activate their parent');
 }
-assert.equal([...area.matchAll(/@onclick:stopPropagation="true"/g)].length, 3);
+const checks = readFileSync(new URL('../../src/RemotePCDiagnostics.UI/Pages/ChecksPage.razor', import.meta.url), 'utf8');
+assert.match(checks, /data-testid="checks-select-@m\.Name\.ToLowerInvariant\(\)"[^\r\n]*@onkeydown:stopPropagation="true"/,
+  'keyboard selection must not activate the enclosing check row');
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
