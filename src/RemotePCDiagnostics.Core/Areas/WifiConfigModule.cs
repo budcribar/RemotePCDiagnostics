@@ -12,22 +12,7 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
     public const string ModuleName = ModuleSlugs.WifiConfig;
     public const int WeakSignalPercent = 50;
 
-    public const string IpConfigScript =
-        "$ErrorActionPreference='SilentlyContinue'; " +
-        "$cfg = @(Get-NetIPConfiguration | Where-Object { $_.NetAdapter.Status -eq 'Up' } | ForEach-Object { " +
-        "[pscustomobject]@{ " +
-        "Alias = [string]$_.InterfaceAlias; " +
-        "Description = [string]$_.InterfaceDescription; " +
-        "IPv4 = [string]($_.IPv4Address | Select-Object -First 1 -ExpandProperty IPAddress); " +
-        "Gateway = [string]($_.IPv4DefaultGateway | Select-Object -First 1 -ExpandProperty NextHop); " +
-        "Dns = [string](($_.DnsServer | Where-Object AddressFamily -eq 2 | Select-Object -ExpandProperty ServerAddresses) -join ', '); " +
-        // NameServer under the adapter's Tcpip key is only set when DNS was entered by hand (empty = automatic from DHCP).
-        "DnsManual = [string](Get-ItemProperty -Path ('HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\' + $_.NetAdapter.InterfaceGuid) -Name NameServer -ErrorAction SilentlyContinue).NameServer " +
-        "} }); " +
-        "$p = Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue; " +
-        "$proxyOn = ($null -ne $p -and $p.ProxyEnable -eq 1); " +
-        "$proxySrv = if ($proxyOn) { [string]$p.ProxyServer } else { '' }; " +
-        "[pscustomobject]@{ Adapters = $cfg; ProxyEnabled = $proxyOn; ProxyServer = $proxySrv } | ConvertTo-Json -Compress -Depth 4";
+    public static string IpConfigScript => Scripts.PowerShellScripts.Get("IpConfig");
 
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.WifiConfig;

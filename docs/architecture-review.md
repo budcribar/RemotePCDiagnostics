@@ -148,5 +148,5 @@ Updated November 5, 2026 (branch `claude/project-thread-4v3j0l`).
 | 3.2 `IMemorySystem` | Split | Nine role interfaces, each registered to the one `WindowsMemorySystem`; the restore helpers take only their role. Larger consumers (`MemorySuggestionService`, `UndoService`) still take `IMemorySystem`, and default methods still return "Not supported" |
 | 4.2 Logging | Done | Every class takes an `ILogger` (one category per class from `AppLoggerFactory`) and each call says its level (`Info`, `Warn`, `Error`). The plugin contract logs the same way: `AreaModuleBase`, `StressModuleBase`, `StressCleanup` and `IPluginContext.Log` take an `ILogger` (contract 2.0). The empty `catch { }` blocks are not reduced yet |
 | 3.1 Two module instances | Open | |
-| 3.5 PowerShell one-liners | Open | |
+| 3.5 PowerShell one-liners | Fixed | Fast Startup, the proxy and adapter DNS go through `ISystemSettings` (`WindowsSystemSettings`: registry and WMI in process); the proxy is the signed-in user's (their `HKEY_USERS\<SID>`), so undo puts it back there too. The page file reads and writes through WMI. The remaining fixed scripts are embedded `.ps1` files in `Core/Scripts` (`PowerShellScripts.Get`), and the read-only ones run for real in the `WindowsReadOnly` test category |
 | 4.2 Remote trust model | Open | |

@@ -48,11 +48,7 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
     public const string ModuleName = ModuleSlugs.ResourceHogs;
     public const string UptimeSql = "SELECT days, hours, minutes, total_seconds FROM uptime;";
     public const string ProcessesSql = "SELECT pid, name, resident_size, user_time, system_time, disk_bytes_read, disk_bytes_written FROM processes WHERE pid > 4;";
-    public const string FastStartupScript =
-        "$ErrorActionPreference='SilentlyContinue';" +
-        "$v=(Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power' -Name HiberbootEnabled).HiberbootEnabled;" +
-        "$o=Get-CimInstance Win32_OperatingSystem;" +
-        "[pscustomobject]@{FastStartup=[string]$v;TotalBytes=[string]([int64]$o.TotalVisibleMemorySize*1024);FreeBytes=[string]([int64]$o.FreePhysicalMemory*1024)} | ConvertTo-Json -Compress";
+    public static string FastStartupScript => Scripts.PowerShellScripts.Get("FastStartupState");
 
     /// <summary>RAM in use at or above this percentage makes the check a warning (matches the "Memory is almost full" suggestion).</summary>
     public const int HighMemoryPercent = 85;

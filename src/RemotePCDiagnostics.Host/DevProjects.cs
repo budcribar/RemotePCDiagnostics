@@ -28,12 +28,7 @@ public static class DevProjects
     }
 
     /// <summary>Asks the Windows Search index for project files (only folders Windows indexes; quick when the service runs).</summary>
-    public const string SearchIndexScript =
-        "$ErrorActionPreference='Stop';$c=New-Object -ComObject ADODB.Connection;" +
-        "$c.Open(\"Provider=Search.CollatorDSO;Extended Properties='Application=Windows';\");" +
-        "$rs=$c.Execute(\"SELECT TOP 5000 System.ItemPathDisplay FROM SYSTEMINDEX WHERE System.FileName = 'project.assets.json' OR System.FileExtension = '.sln' OR System.FileExtension = '.slnx' OR System.FileExtension = '.csproj'\");" +
-        "$o=New-Object System.Collections.Generic.List[string];" +
-        "while(-not $rs.EOF){ $o.Add([string]$rs.Fields.Item(0).Value); $rs.MoveNext() };$rs.Close();$c.Close();$o -join \"`n\"";
+    public static string SearchIndexScript => RemotePCDiagnostics.Core.Scripts.PowerShellScripts.Get("SearchIndexProjects");
 
     private static async Task<IReadOnlyList<string>> SearchIndexAsync(ILogger? log, CancellationToken ct)
     {

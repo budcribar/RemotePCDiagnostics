@@ -51,7 +51,7 @@ public sealed record UndoAllResult(IReadOnlyList<UndoItemResult> Items)
 /// removed apps) and deleted temporary files are reported as skipped; deleted files are never recreated.
 /// </summary>
 public sealed class UndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem? memory = null, IServiceControlBackend? services = null,
-    Action<LogLevel, string>? events = null, ILogger? log = null)
+    Action<LogLevel, string>? events = null, ILogger? log = null, ISystemSettings? settings = null)
 {
     public const string NotUndoableNote = "Installed updates, uninstalled programs, removed apps without a Microsoft Store listing, and deleted temporary files, caches or Recycle Bin items can't be put back; undo lists them as left as is. "
         + "Removed Microsoft Store apps marked \"undo reinstalls from Store\" are reinstalled from the Store for the signed-in account (needs internet; their settings and data aren't restored).";
@@ -174,8 +174,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 return Ok(c.Previous != "0" ? "Transparency effects back on." : "Transparency effects left off.");
 
             case ChangeKind.FastStartup:
-                return await Ps($"$ErrorActionPreference='Stop'; Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power' -Name HiberbootEnabled -Value {Dword(c.Previous)} -Type DWord",
-                    c, "Fast Startup setting restored (full effect after the next restart).", ct).ConfigureAwait(false);
+                return Set(c, s => s.SetFastStartup(Dword(c.Previous)), "Fast Startup setting restored (full effect after the next restart).");
 
             case ChangeKind.PowerPlan:
                 if (c.Previous is null || !Guid.TryParse(c.Previous, out var g)) return Fail("The original power plan wasn't recorded.");
@@ -183,17 +182,12 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 return pr is { ExitCode: 0 } ? Ok("Previous power plan active again.") : Fail("Couldn't switch the power plan back.");
 
             case ChangeKind.SystemProxy:
-                return await Ps($"$ErrorActionPreference='Stop'; Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name ProxyEnable -Value {Dword(c.Previous)} -Type DWord",
-                    c, "System proxy setting restored.", ct).ConfigureAwait(false);
+                return Set(c, s => s.SetUserProxyEnable(Dword(c.Previous)), "System proxy setting restored.");
 
             case ChangeKind.AdapterDns:
-                if (c.Target.IndexOfAny(['*', '?', '[', ']']) >= 0) return Fail("Invalid network adapter name.");
-                var alias = c.Target.Replace("'", "''");
-                var servers = (c.Previous ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(IsIp).ToList();
-                var script = servers.Count == 0
-                    ? $"$ErrorActionPreference='Stop'; Set-DnsClientServerAddress -InterfaceAlias '{alias}' -ResetServerAddresses"
-                    : $"$ErrorActionPreference='Stop'; Set-DnsClientServerAddress -InterfaceAlias '{alias}' -ServerAddresses @({string.Join(",", servers.Select(s => $"'{s}'"))})";
-                return await Ps(script, c, servers.Count == 0 ? "DNS back to automatic." : $"DNS back to {string.Join(", ", servers)}.", ct).ConfigureAwait(false);
+                if (!SystemSettingsRules.IsAdapterName(c.Target)) return Fail("Invalid network adapter name.");
+                var servers = SystemSettingsRules.Ipv4Servers(c.Previous); // anything that isn't an address counts as automatic
+                return Set(c, s => s.SetAdapterDns(c.Target, servers), servers.Count == 0 ? "DNS back to automatic." : $"DNS back to {string.Join(", ", servers)}.");
 
             case ChangeKind.TempFiles:
                 return new(c, false, "Deleted temporary files and emptied Recycle Bin items cannot be restored.", Skipped: true);
@@ -216,7 +210,18 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
     }
 
     private static int Dword(string? v) => int.TryParse(v, out var i) && i is >= 0 and <= 1 ? i : 1;
-    private static bool IsIp(string s) => System.Net.IPAddress.TryParse(s, out _);
+
+    /// <summary>Puts a setting back in process (<see cref="ISystemSettings"/>); a refusal from Windows keeps the entry for a later try.</summary>
+    private UndoItemResult Set(ChangeRecord c, Action<ISystemSettings> restore, string ok)
+    {
+        if (settings is null) return new(c, false, "Not available.");
+        try { restore(settings); return new(c, true, ok); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogError($"{c.Kind} {c.Target}: {ex.GetType().Name}: {ex.Message}");
+            return new(c, false, "Couldn't put it back (administrator rights required).");
+        }
+    }
 
     private async Task<UndoItemResult> Ps(string script, ChangeRecord c, string ok, CancellationToken ct)
     {

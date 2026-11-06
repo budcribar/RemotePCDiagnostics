@@ -125,16 +125,7 @@ public sealed record MemorySlots(int Total, int Used, long? MaxCapacityBytes, lo
 /// <summary>Parses the Host's one-shot CIM probe: page file mode and memory slots.</summary>
 public static class MemoryProbe
 {
-    public const string Script =
-        "$ErrorActionPreference='SilentlyContinue';" +
-        "$c=Get-CimInstance Win32_ComputerSystem;" +
-        "$a=@(Get-CimInstance Win32_PhysicalMemoryArray | Where-Object { $_.Use -eq 3 });" +
-        "$m=@(Get-CimInstance Win32_PhysicalMemory);" +
-        "[pscustomobject]@{Auto=[string]$c.AutomaticManagedPagefile;Slots=[string](($a | Measure-Object MemoryDevices -Sum).Sum);" +
-        "Used=[string]$m.Count;MaxKB=[string](($a | Measure-Object MaxCapacityEx -Sum).Sum);Installed=[string](($m | Measure-Object Capacity -Sum).Sum)} | ConvertTo-Json -Compress";
-
-    public const string EnableAutoPageFileScript =
-        "$ErrorActionPreference='Stop';$c=Get-CimInstance Win32_ComputerSystem;Set-CimInstance -InputObject $c -Property @{AutomaticManagedPagefile=$true}";
+    public static string Script => Scripts.PowerShellScripts.Get("MemoryProbe");
 
     public static (bool? AutoPageFile, MemorySlots? Slots) Parse(string? json)
     {

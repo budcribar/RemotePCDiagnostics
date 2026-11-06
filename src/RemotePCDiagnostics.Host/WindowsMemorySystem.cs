@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using EnumerationOptions = System.IO.EnumerationOptions;
+using System.Management;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Xml.Linq;
@@ -672,39 +674,98 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
     /// <summary>Same value the Settings toggle writes (current user only); Explorer picks it up within a few seconds.</summary>
     public void SetTransparency(bool on) => Registry.SetValue(PersonalizeKey, "EnableTransparency", on ? 1 : 0, RegistryValueKind.DWord);
 
-    public async Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct)
+    public Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct) => Task.Run(() =>
     {
-        var r = await RunPowerShellAsync(MemoryProbe.EnableAutoPageFileScript, ct).ConfigureAwait(false);
-        Log($"Enable automatic page file: exit={r.ExitCode} err={r.Error.Trim()}");
-        return r.ExitCode == 0
-            ? new(true, "Windows will manage the page file size from the next restart.")
-            : new(false, "Couldn't change the page file setting (administrator rights required).");
+        try
+        {
+            SetAutomaticPageFile(true);
+            Log("Enable automatic page file: done");
+            return new ActionOutcome(true, "Windows will manage the page file size from the next restart.");
+        }
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or COMException)
+        {
+            LogWarn($"Enable automatic page file: {ex.Message}");
+            return new ActionOutcome(false, "Couldn't change the page file setting (administrator rights required).");
+        }
+    }, ct);
+
+    /// <summary>The custom page file sizes (Win32_PageFileSetting) as base64 of a JSON array of {Name, InitialSize, MaximumSize}, the format the
+    /// change journal keeps; null when Windows manages the size (no settings).</summary>
+    public Task<string?> ReadPageFileSettingsAsync(CancellationToken ct) => Task.Run(() =>
+    {
+        try
+        {
+            var rows = new List<PageFileSize>();
+            using var searcher = new ManagementObjectSearcher("SELECT Name, InitialSize, MaximumSize FROM Win32_PageFileSetting");
+            foreach (ManagementObject o in searcher.Get())
+                using (o) rows.Add(new((string)o["Name"], Convert.ToUInt32(o["InitialSize"] ?? 0u), Convert.ToUInt32(o["MaximumSize"] ?? 0u)));
+            return rows.Count == 0 ? null : Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(rows)));
+        }
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or COMException)
+        {
+            LogWarn($"Read page file settings: {ex.Message}");
+            return null;
+        }
+    }, ct);
+
+    public Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct) => Task.Run(() =>
+    {
+        if (settings.Length == 0 || settings.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '+' or '/' or '='))) return new ActionOutcome(false, "The saved page file settings are unreadable.");
+        List<PageFileSize> rows;
+        try
+        {
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(settings)).Trim();
+            if (!json.StartsWith('[')) json = "[" + json + "]"; // one setting was saved as a single object
+            rows = System.Text.Json.JsonSerializer.Deserialize<List<PageFileSize>>(json) ?? [];
+        }
+        catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException) { return new ActionOutcome(false, "The saved page file settings are unreadable."); }
+        if (rows.Count == 0 || rows.Any(r => !PageFileSize.IsValidName(r.Name))) return new ActionOutcome(false, "The saved page file settings are unreadable.");
+        try
+        {
+            SetAutomaticPageFile(false);
+            foreach (var row in rows)
+            {
+                using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_PageFileSetting");
+                ManagementObject? existing = null;
+                foreach (ManagementObject o in searcher.Get())
+                {
+                    if (existing is null && string.Equals(o["Name"] as string, row.Name, StringComparison.OrdinalIgnoreCase)) existing = o; else o.Dispose();
+                }
+                if (existing is null)
+                {
+                    using var cls = new ManagementClass("Win32_PageFileSetting");
+                    existing = cls.CreateInstance();
+                    existing["Name"] = row.Name;
+                }
+                using (existing)
+                {
+                    existing["InitialSize"] = row.InitialSize;
+                    existing["MaximumSize"] = row.MaximumSize;
+                    existing.Put();
+                }
+            }
+            Log($"Restore page file: {rows.Count} setting(s)");
+            return new ActionOutcome(true, "Custom page file size restored (takes effect after a restart).");
+        }
+        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or COMException)
+        {
+            LogWarn($"Restore page file: {ex.Message}");
+            return new ActionOutcome(false, "Couldn't restore the page file setting (administrator rights required).");
+        }
+    }, ct);
+
+    private static void SetAutomaticPageFile(bool automatic)
+    {
+        using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_ComputerSystem");
+        foreach (ManagementObject cs in searcher.Get())
+            using (cs) { cs["AutomaticManagedPagefile"] = automatic; cs.Put(); }
     }
 
-    private const string ReadPageFileScript =
-        "$ErrorActionPreference='SilentlyContinue';$s=@(Get-CimInstance Win32_PageFileSetting | Select-Object Name,InitialSize,MaximumSize);" +
-        "if($s.Count -gt 0){[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $s -Compress)))}";
-
-    public async Task<string?> ReadPageFileSettingsAsync(CancellationToken ct)
+    /// <summary>One Win32_PageFileSetting as the journal stores it (the names match what the earlier PowerShell version wrote).</summary>
+    private sealed record PageFileSize(string Name, uint InitialSize, uint MaximumSize)
     {
-        var r = await RunPowerShellAsync(ReadPageFileScript, ct).ConfigureAwait(false);
-        var b64 = r.Output.Trim();
-        return r.ExitCode == 0 && b64.Length > 0 ? b64 : null;
-    }
-
-    public async Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct)
-    {
-        if (settings.Length == 0 || settings.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '+' or '/' or '='))) return new(false, "The saved page file settings are unreadable.");
-        var script =
-            "$ErrorActionPreference='Stop';" +
-            $"$j=@([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{settings}')) | ConvertFrom-Json);" +
-            "$c=Get-CimInstance Win32_ComputerSystem; Set-CimInstance -InputObject $c -Property @{AutomaticManagedPagefile=$false};" +
-            "foreach($p in $j){ $e=Get-CimInstance Win32_PageFileSetting | Where-Object { $_.Name -eq $p.Name };" +
-            " if($e){ Set-CimInstance -InputObject $e -Property @{InitialSize=[uint32]$p.InitialSize;MaximumSize=[uint32]$p.MaximumSize} }" +
-            " else { New-CimInstance -ClassName Win32_PageFileSetting -Property @{Name=$p.Name;InitialSize=[uint32]$p.InitialSize;MaximumSize=[uint32]$p.MaximumSize} | Out-Null } }";
-        var r = await RunPowerShellAsync(script, ct).ConfigureAwait(false);
-        Log($"Restore page file: exit={r.ExitCode} err={r.Error.Trim()}");
-        return r.ExitCode == 0 ? new(true, "Custom page file size restored (takes effect after a restart).") : new(false, "Couldn't restore the page file setting (administrator rights required).");
+        public static bool IsValidName(string? name) => name is { Length: > 3 and < 260 } && name[1] == ':' && char.IsAsciiLetter(name[0])
+            && name.EndsWith(".sys", StringComparison.OrdinalIgnoreCase) && name.IndexOfAny(Path.GetInvalidPathChars()) < 0;
     }
 
     /// <summary>Runs one of this class's fixed PowerShell scripts (never user input) and returns its output.</summary>

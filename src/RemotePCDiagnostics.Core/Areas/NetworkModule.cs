@@ -62,14 +62,7 @@ public sealed record NetworkAdapter(
 /// </summary>
 public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? commands = null, bool includeWifiAndIpConfig = false, DnsSpeedTest? dnsTest = null) : OsqueryAreaModuleBase(runner)
 {
-    public const string StatsScript =
-        "$ErrorActionPreference='SilentlyContinue';" +
-        "$s=@(Get-NetAdapterStatistics | ForEach-Object { [pscustomobject]@{Name=[string]$_.Name;" +
-        "ipackets=[string]($_.ReceivedUnicastPackets+$_.ReceivedMulticastPackets+$_.ReceivedBroadcastPackets);" +
-        "opackets=[string]($_.SentUnicastPackets+$_.SentMulticastPackets+$_.SentBroadcastPackets);" +
-        "ierrors=[string]$_.ReceivedPacketErrors;oerrors=[string]$_.OutboundPacketErrors;" +
-        "idrops=[string]$_.ReceivedDiscardedPackets;odrops=[string]$_.OutboundDiscardedPackets } });" +
-        "ConvertTo-Json -InputObject $s -Compress";
+    public static string StatsScript => Scripts.PowerShellScripts.Get("NetAdapterStatistics");
 
     public const string ModuleName = ModuleSlugs.Network;
     public const string Sql = "SELECT * FROM interface_details;";

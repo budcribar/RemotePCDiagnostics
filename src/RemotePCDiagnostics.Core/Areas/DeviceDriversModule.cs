@@ -56,11 +56,7 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
 {
     public const string ModuleName = ModuleSlugs.DeviceDrivers;
     public const string DriversSql = "SELECT device_name, description, class, provider, manufacturer, version, date, signed FROM drivers WHERE device_name != '';";
-    public const string ProblemDevicesScript =
-        "$ErrorActionPreference='SilentlyContinue';" +
-        "$p=@(Get-CimInstance Win32_PnPEntity -Filter 'ConfigManagerErrorCode <> 0' | ForEach-Object { [pscustomobject]@{" +
-        "Name=[string]$_.Name;Class=[string]$_.PNPClass;DeviceId=[string]$_.DeviceID;ErrorCode=[string]$_.ConfigManagerErrorCode;Status=[string]$_.Status } });" +
-        "ConvertTo-Json -InputObject $p -Compress";
+    public static string ProblemDevicesScript => Scripts.PowerShellScripts.Get("ProblemDevices");
 
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.DeviceDrivers;

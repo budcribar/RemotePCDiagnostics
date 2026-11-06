@@ -12,6 +12,10 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Fixed PowerShell scripts, loaded by name (PowerShellScripts.Get). -->
+    <EmbeddedResource Include="Scripts\*.ps1" LogicalName="Scripts/%(Filename).ps1" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Built-in modules use exactly the contract types a plugin uses. -->
     <ProjectReference Include="..\RemotePCDiagnostics.Abstractions\RemotePCDiagnostics.Abstractions.csproj" />
     <!-- Module signatures use the agent's manifest signature scheme. -->

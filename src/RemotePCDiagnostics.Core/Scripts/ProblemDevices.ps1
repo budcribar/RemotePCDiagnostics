@@ -1,0 +1,1 @@
+$ErrorActionPreference='SilentlyContinue';$p=@(Get-CimInstance Win32_PnPEntity -Filter 'ConfigManagerErrorCode <> 0' | ForEach-Object { [pscustomobject]@{Name=[string]$_.Name;Class=[string]$_.PNPClass;DeviceId=[string]$_.DeviceID;ErrorCode=[string]$_.ConfigManagerErrorCode;Status=[string]$_.Status } });ConvertTo-Json -InputObject $p -Compress

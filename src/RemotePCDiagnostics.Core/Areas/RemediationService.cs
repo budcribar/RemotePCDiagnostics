@@ -73,7 +73,8 @@ public sealed class RemediationService(
     ILogger? log = null,
     RebootResumeCoordinator? rebootResume = null,
     Changes.IChangeJournal? journal = null,
-    RetrimLog? retrimLog = null)
+    RetrimLog? retrimLog = null,
+    ISystemSettings? settings = null)
 {
     /// <summary>This app's record of successful retrims (so Drive health stops offering it right away).</summary>
     public RetrimLog? RetrimLog => retrimLog;
@@ -383,11 +384,9 @@ public sealed class RemediationService(
             "Couldn't switch the power plan.",
             ct).ConfigureAwait(false),
 
-        RemediationKind.DisableFastStartup => await RunPowerShellAsync(
-            "$ErrorActionPreference='Stop'; Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power' -Name HiberbootEnabled -Value 0 -Type DWord",
+        RemediationKind.DisableFastStartup => Apply(s => s.SetFastStartup(0),
             "Turned off Fast Startup (future shutdowns will perform a full reset).",
-            "Couldn't turn off Fast Startup (administrator rights required).",
-            ct).ConfigureAwait(false),
+            "Couldn't turn off Fast Startup (administrator rights required)."),
 
         RemediationKind.ScheduleCleanRestart => await RunScheduleCleanRestartAsync(action, ct).ConfigureAwait(false),
 
@@ -395,25 +394,19 @@ public sealed class RemediationService(
 
         RemediationKind.EndProcessGroup => await RunEndProcessAsync(action, ct).ConfigureAwait(false),
 
-        RemediationKind.DisableSystemProxy => await RunPowerShellAsync(
-            "$ErrorActionPreference='Stop'; Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name ProxyEnable -Value 0 -Type DWord",
+        RemediationKind.DisableSystemProxy => Apply(s => s.SetUserProxyEnable(0),
             "Disabled the Windows system HTTP proxy.",
-            "Couldn't disable the system proxy.",
-            ct).ConfigureAwait(false),
+            "Couldn't disable the system proxy."),
 
         RemediationKind.FlushDnsAndRenewIp => await RunFlushAndRenewAsync(ct).ConfigureAwait(false),
 
-        RemediationKind.SetPublicDns => await RunPowerShellAsync(
-            $"$ErrorActionPreference='Stop'; Set-DnsClientServerAddress -InterfaceAlias '{EscapeSingleQuotes(action.Target)}' -ServerAddresses @('1.1.1.1','8.8.8.8')",
+        RemediationKind.SetPublicDns => Apply(s => s.SetAdapterDns(AdapterName(action.Target), PublicDns),
             $"Configured {Display(action)} to use Cloudflare (1.1.1.1) and Google (8.8.8.8) DNS.",
-            $"Couldn't set DNS on {Display(action)} (administrator rights required).",
-            ct).ConfigureAwait(false),
+            $"Couldn't set DNS on {Display(action)} (administrator rights required)."),
 
-        RemediationKind.ResetDhcpDns => await RunPowerShellAsync(
-            $"$ErrorActionPreference='Stop'; Set-DnsClientServerAddress -InterfaceAlias '{EscapeSingleQuotes(action.Target)}' -ResetServerAddresses",
+        RemediationKind.ResetDhcpDns => Apply(s => s.SetAdapterDns(AdapterName(action.Target), []),
             $"Reset DNS on {Display(action)} to automatic (DHCP).",
-            $"Couldn't reset DNS on {Display(action)} (administrator rights required).",
-            ct).ConfigureAwait(false),
+            $"Couldn't reset DNS on {Display(action)} (administrator rights required)."),
 
         RemediationKind.CleanTempFiles => await RunCleanTempFilesAsync(ct).ConfigureAwait(false),
 
@@ -472,6 +465,24 @@ public sealed class RemediationService(
         !string.IsNullOrWhiteSpace(a.TargetLabel) ? a.TargetLabel : !string.IsNullOrWhiteSpace(a.Target) ? a.Target : "item";
 
     private static string EscapeSingleQuotes(string s) => s.Replace("'", "''");
+
+    /// <summary>The DNS servers "Use public DNS" sets: Cloudflare, then Google.</summary>
+    public static readonly IReadOnlyList<string> PublicDns = ["1.1.1.1", "8.8.8.8"];
+
+    private static string AdapterName(string? target) =>
+        SystemSettingsRules.IsAdapterName(target) ? target! : throw new ArgumentException("Invalid network adapter name.");
+
+    /// <summary>Runs an in-process settings change; any refusal from Windows is the fix's failure message.</summary>
+    private RemediationResult Apply(Action<ISystemSettings> change, string okMsg, string failMsg)
+    {
+        if (settings is null) return new(false, failMsg);
+        try { change(settings); return new(true, okMsg); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogWarn($"{failMsg} {ex.GetType().Name}: {ex.Message}");
+            return new(false, failMsg);
+        }
+    }
 
     /// <summary>Volume letters of an OptimizeSsd target ("C", "DE", "C:"), upper-cased and de-duplicated; empty when anything else is in it.</summary>
     public static string DriveLetters(string? target)
@@ -547,32 +558,8 @@ public sealed class RemediationService(
         return new(false, "Couldn't flush DNS cache or renew IP configuration.");
     }
 
-    public static string BuildWindowsUpdateScript(bool driversOnly)
-    {
-        var criteria = driversOnly ? "IsInstalled=0 and Type='Driver'" : "IsInstalled=0 and Type='Software'";
-        return "$ErrorActionPreference='SilentlyContinue'; " +
-               "$s = New-Object -ComObject Microsoft.Update.Session; " +
-               "$searcher = $s.CreateUpdateSearcher(); " +
-               $"$res = $searcher.Search(\"{criteria}\"); " +
-               "if ($null -eq $res -or $res.Updates.Count -eq 0) { " +
-               "  [pscustomobject]@{ Count = 0; Installed = 0; Titles = @() } | ConvertTo-Json -Compress; exit 0 " +
-               "} " +
-               "$titles = @($res.Updates | ForEach-Object { [string]$_.Title }); " +
-               "$toDownload = New-Object -ComObject Microsoft.Update.UpdateColl; " +
-               "foreach ($u in $res.Updates) { if (-not $u.EulaAccepted) { $u.AcceptEula() }; [void]$toDownload.Add($u) }; " +
-               "$dl = $s.CreateUpdateDownloader(); $dl.Updates = $toDownload; $dlRes = $dl.Download(); " +
-               "$toInstall = New-Object -ComObject Microsoft.Update.UpdateColl; " +
-               "foreach ($u in $res.Updates) { if ($u.IsDownloaded) { [void]$toInstall.Add($u) } }; " +
-               "$installed = 0; $installResult = -1; " +
-               "if ($toInstall.Count -gt 0) { " +
-               "  $inst = $s.CreateUpdateInstaller(); $inst.Updates = $toInstall; $instRes = $inst.Install(); " +
-               "  $installResult = [int]$instRes.ResultCode; " +
-               "  if ($installResult -eq 2 -or $installResult -eq 3) { $installed = $toInstall.Count } " +
-               "} else { " +
-               "  Start-Process 'UsoClient.exe' -ArgumentList 'StartInteractiveScan' -WindowStyle Hidden -ErrorAction SilentlyContinue " +
-               "} " +
-               "[pscustomobject]@{ Count = $titles.Count; Installed = $installed; InstallResult = $installResult; Titles = $titles } | ConvertTo-Json -Compress";
-    }
+    public static string BuildWindowsUpdateScript(bool driversOnly) =>
+        Scripts.PowerShellScripts.Get("WindowsUpdate").Replace("__CRITERIA__", driversOnly ? "IsInstalled=0 and Type='Driver'" : "IsInstalled=0 and Type='Software'");
 
     private async Task<RemediationResult> RunWindowsUpdateAsync(bool driversOnly, CancellationToken ct)
     {
@@ -623,29 +610,7 @@ public sealed class RemediationService(
         }
     }
 
-    public const string CleanTempScript =
-        "$ErrorActionPreference='SilentlyContinue'; " +
-        "$cutoff = (Get-Date).AddHours(-24); " +
-        "$paths = @($env:TEMP, (Join-Path $env:SystemRoot 'Temp')) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }; " +
-        "$freed = [int64]0; $count = 0; " +
-        "$stack = New-Object System.Collections.Generic.Stack[string]; " +
-        "foreach ($p in $paths) { " +
-        "  $item = Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue; " +
-        "  if ($item -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)) { $stack.Push($item.FullName) } " +
-        "}; " +
-        "while ($stack.Count -gt 0) { " +
-        "  $dir = $stack.Pop(); " +
-        "  Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue | ForEach-Object { " +
-        "    if (($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return } " +
-        "    if ($_.PSIsContainer) { $stack.Push($_.FullName); return } " +
-        "    if ($_.LastWriteTime -lt $cutoff) { " +
-        "      $len = $_.Length; Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue; " +
-        "      if (-not (Test-Path -LiteralPath $_.FullName)) { $freed += $len; $count++ } " +
-        "    } " +
-        "  } " +
-        "}; " +
-        "Clear-RecycleBin -Force -ErrorAction SilentlyContinue; " +
-        "[pscustomobject]@{ RemovedFiles = $count; FreedBytes = $freed } | ConvertTo-Json -Compress";
+    public static string CleanTempScript => Scripts.PowerShellScripts.Get("CleanTempFiles");
 
     private async Task<RemediationResult> RunCleanTempFilesAsync(CancellationToken ct)
     {
@@ -675,18 +640,6 @@ public sealed class RemediationService(
 
     // ---- Undo support: what a setting was before a reversible fix changes it ----
 
-    public const string ReadFastStartupScript = "(Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power' -Name HiberbootEnabled -ErrorAction SilentlyContinue).HiberbootEnabled";
-    public const string ReadProxyScript = "(Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -Name ProxyEnable -ErrorAction SilentlyContinue).ProxyEnable";
-
-    /// <summary>Static DNS servers set on the adapter ("" = automatic), from the adapter's Tcpip NameServer value.</summary>
-    public static string ReadDnsScript(string alias) =>
-        $"$a=Get-NetAdapter -Name '{EscapeSingleQuotes(alias)}' -ErrorAction Stop; (Get-ItemProperty -Path \"HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\$($a.InterfaceGuid)\" -Name NameServer -ErrorAction SilentlyContinue).NameServer";
-
-    private async Task<string?> ReadPsAsync(string script, CancellationToken ct)
-    {
-        var pr = await commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], ct).ConfigureAwait(false);
-        return pr is { ExitCode: 0 } ? pr.StdOut.Trim() : null;
-    }
 
     private async Task<Changes.ChangeRecord?> CaptureBeforeAsync(AreaAction action, CancellationToken ct)
     {
@@ -701,14 +654,14 @@ public sealed class RemediationService(
                     return Changes.UndoService.ParseSchemeGuid(pr?.StdOut) is { } g && !g.Equals(BalancedPlanGuid, StringComparison.OrdinalIgnoreCase)
                         ? Rec(Changes.ChangeKind.PowerPlan, "", g, "Power plan switched to Balanced") : null;
                 case RemediationKind.DisableFastStartup:
-                    return await ReadPsAsync(ReadFastStartupScript, ct).ConfigureAwait(false) is "1"
+                    return settings?.GetFastStartup() == 1
                         ? Rec(Changes.ChangeKind.FastStartup, "", "1", "Fast Startup turned off", restart: true) : null;
                 case RemediationKind.DisableSystemProxy:
-                    return await ReadPsAsync(ReadProxyScript, ct).ConfigureAwait(false) is "1"
+                    return settings?.GetUserProxyEnable() == 1
                         ? Rec(Changes.ChangeKind.SystemProxy, "", "1", "System proxy turned off") : null;
-                case RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns when !string.IsNullOrWhiteSpace(action.Target):
-                    var dns = await ReadPsAsync(ReadDnsScript(action.Target), ct).ConfigureAwait(false);
-                    return dns is null ? null : Rec(Changes.ChangeKind.AdapterDns, action.Target, dns.Replace(' ', ','),
+                case RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns when SystemSettingsRules.IsAdapterName(action.Target):
+                    var dns = settings?.GetAdapterDns(action.Target);
+                    return dns is null ? null : Rec(Changes.ChangeKind.AdapterDns, action.Target, dns,
                         action.Kind == RemediationKind.SetPublicDns ? $"Public DNS set on {Display(action)}" : $"DNS reset to automatic on {Display(action)}");
             }
         }

@@ -18,10 +18,7 @@ public sealed record DefenderInfo(bool Active, IReadOnlyList<string> ProjectFold
 /// <summary>Reads Defender's status and exclusions, and works out which exclusions are still missing.</summary>
 public static class DefenderProbe
 {
-    public const string Script =
-        "$ErrorActionPreference='SilentlyContinue';$s=Get-MpComputerStatus;$p=Get-MpPreference;" +
-        "[pscustomobject]@{On=[string]([bool]$s.RealTimeProtectionEnabled -and [bool]$s.AMServiceEnabled);Mode=[string]$s.AMRunningMode;" +
-        "Paths=@($p.ExclusionPath | Where-Object { $_ });Procs=@($p.ExclusionProcess | Where-Object { $_ })} | ConvertTo-Json -Compress";
+    public static string Script => Scripts.PowerShellScripts.Get("DefenderExclusions");
 
     public sealed record Status(bool Active, IReadOnlyList<string> Paths, IReadOnlyList<string> Processes, bool ExclusionsReadable);
 

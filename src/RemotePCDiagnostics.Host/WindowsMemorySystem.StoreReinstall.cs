@@ -75,7 +75,7 @@ public sealed partial class WindowsMemorySystem
     }
 
     /// <summary>The account signed in at the desktop: a primary token duplicated from the shell (Explorer) process, and its SID.</summary>
-    private sealed class SignedInUser : IDisposable
+    internal sealed class SignedInUser : IDisposable
     {
         private readonly SafeAccessTokenHandle _token;
         public string Sid { get; }

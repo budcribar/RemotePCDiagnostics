@@ -79,16 +79,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     public override string DisplayName => "Drive health";
     protected override string FailedMessage => "Couldn't check drive health on this PC.";
 
-    public const string Script =
-        "$ErrorActionPreference='SilentlyContinue';" +
-        "$d=@(Get-PhysicalDisk | ForEach-Object { $r=$_ | Get-StorageReliabilityCounter;" +
-        "$l=(@(Get-Partition -DiskNumber $_.DeviceId | Where-Object { $_.DriveLetter } | ForEach-Object { [string]$_.DriveLetter }) -join '');" +
-        "[pscustomobject]@{Letters=$l;Id=[string]$_.UniqueId;" +
-        "Name=[string]$_.FriendlyName;Serial=[string]$_.SerialNumber;MediaType=[string]$_.MediaType;BusType=[string]$_.BusType;" +
-        "Health=[string]$_.HealthStatus;Operational=[string]($_.OperationalStatus -join ', ');Size=[string]$_.Size;" +
-        "Temperature=[string]$r.Temperature;Wear=[string]$r.Wear;ReadErrors=[string]$r.ReadErrorsUncorrected;" +
-        "WriteErrors=[string]$r.WriteErrorsUncorrected;PowerOnHours=[string]$r.PowerOnHours } });" +
-        "ConvertTo-Json -InputObject $d -Compress";
+    public static string Script => Scripts.PowerShellScripts.Get("DriveHealth");
 
     public static IReadOnlyList<string> Arguments => ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", Script];
 
