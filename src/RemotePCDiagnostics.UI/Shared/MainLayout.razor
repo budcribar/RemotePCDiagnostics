@@ -1,4 +1,5 @@
 @inherits LayoutComponentBase
+@implements IDisposable
 @inject ISessionContext Session
 @inject NavigationManager Nav
 @inject AppServices App
@@ -21,6 +22,7 @@
     // After the workflow's restart the app is relaunched (on the start page): go straight back to the Service workflow page.
     protected override void OnInitialized()
     {
+        Nav.LocationChanged += CloseNavigation;
         try
         {
             if (App.Workflow is { ShouldOpenWorkflowPage: true }
@@ -29,4 +31,14 @@
         }
         catch { }
     }
+
+    // Phone layout: picking a page from the menu closes it, so the chosen page isn't pushed below the open menu.
+    private void CloseNavigation(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        if (!_navigationOpen) return;
+        _navigationOpen = false;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => Nav.LocationChanged -= CloseNavigation;
 }

@@ -99,6 +99,7 @@
 
 @if (before is not null)
 {
+    <div class="table-scroll">
     <table class="detail grid bench-table" data-testid="bench-table">
         <tr><th scope="col">Test</th><th scope="col">Before</th><th scope="col">After</th><th scope="col">Change</th></tr>
         @foreach (var info in Benchmarks.All)
@@ -123,6 +124,7 @@
             </tr>
         }
     </table>
+    </div>
     <p class="meta" data-testid="bench-conditions">@RunLine("Before", before)
         @if (after is not null) { <br />@RunLine("After", after) }</p>
 }

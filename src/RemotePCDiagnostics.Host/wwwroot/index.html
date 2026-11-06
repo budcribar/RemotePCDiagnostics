@@ -47,7 +47,12 @@
                     if (!d) return; e.preventDefault(); cur = apply(ws, cur + d); save(cur);
                 });
             }
-            return { init: init };
+            // Stacked layout (<= 900px, matches app.css): the details sit below the whole list, so bring them into view after a tap.
+            function showDetail() {
+                if (!window.matchMedia || !window.matchMedia('(max-width: 900px)').matches) return;
+                var d = document.querySelector('.ct-detail'); if (d && d.scrollIntoView) d.scrollIntoView({ block: 'start', behavior: 'smooth' });
+            }
+            return { init: init, showDetail: showDetail };
         })();
     </script>
     <link href="_content/RemotePCDiagnostics.UI/app.css" rel="stylesheet" />
