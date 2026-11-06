@@ -605,3 +605,34 @@ table.detail tr.row-detail td { white-space: normal; }
 .about-plugins { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
 .about-plugins th, .about-plugins td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
 .about-plugins th { color: var(--text-muted); font-weight: 600; }
+
+/* ---------- Responsive fixes from the 2026-11 UI bug hunt ---------- */
+/* Benchmark "What to measure": let the head wrap; card titles never shrink below a short word (was one letter per line on phones). */
+.bench-settings .card-head { flex-wrap: wrap; }
+.card-head strong { min-width: min(9em, 100%); }
+/* Wide tables (History, Benchmark) scroll inside their own box on phones instead of making the whole page scroll sideways.
+   Only on phones: an overflow box would otherwise capture History's sticky header. */
+.table-scroll { max-width: 100%; }
+.history-table th { white-space: nowrap; }
+/* Dashboard banner links: taller tap target without changing the line. */
+.banner-more-small { padding-block: 4px; }
+/* Dashboard run buttons: when they wrap, share the row evenly instead of leaving one ragged button. */
+@media (max-width: 1100px) { .dash-controls .banner-actions { flex: 1 1 100%; } .dash-controls .banner-actions .btn { flex: 1 1 15em; } }
+/* About: label column only as wide as the labels, so values (build hash, commit) get the room. */
+.about-card dl { grid-template-columns: minmax(0, max-content) minmax(0, 1fr); }
+.about-card dd { overflow-wrap: anywhere; }
+/* 601-900px (half-screen laptop window): icon-only sidebar so the page keeps its width. Labels stay in each link's title. */
+@media (min-width: 601px) and (max-width: 900px) {
+  .app { grid-template-columns: 64px minmax(0, 1fr); }
+  .rail { padding: 12px 8px; }
+  .rail a { justify-content: center; padding: 0; gap: 0; }
+  .rail a .nav-text, .rail a .dot, .rail-section { display: none; }
+}
+@media (max-width: 600px) {
+  .table-scroll { overflow-x: auto; }
+  .table-scroll > table { min-width: 560px; }   /* scroll the table rather than break words letter by letter */
+  /* Checks / Stress group header: the run controls take their own row so the title isn't squeezed to one word per line. */
+  .ct-group-actions { flex-basis: 100%; }
+  .ct-group-actions > .btn { flex: 1 1 auto; }
+  .dash-controls .banner-actions .btn { flex-basis: 100%; }
+}

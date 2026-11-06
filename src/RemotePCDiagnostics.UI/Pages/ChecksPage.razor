@@ -91,6 +91,14 @@
     public override void Dispose() { Screen.Changed -= OnScreenChanged; Nav.LocationChanged -= OnLocationChanged; base.Dispose(); }
 
     private void Select(IDiagnosticModule m) { Screen.SelectedModule = m.Name; }
+    /// <summary>Row click: select, and in the stacked (narrow) layout scroll the details panel into view.</summary>
+    private async Task SelectAndShowAsync(IDiagnosticModule m)
+    {
+        Select(m);
+        StateHasChanged();
+        await Task.Yield();
+        try { await JS.InvokeVoidAsync("rpdSplit.showDetail"); } catch { /* older host page without the helper */ }
+    }
     private readonly Dictionary<string, ElementReference> _rowRefs = new(StringComparer.OrdinalIgnoreCase);
     private static bool HasOwnStart(IDiagnosticModule m) => m is IStressSuiteModule ||
         (m is not ICancellableScan && ChecksScreenState.IsSeparateStep(m));
@@ -191,7 +199,7 @@
                         var prog = kind == RowKind.Running ? Diagnostics.GetProgress(m.Name) : null;
                         var line = kind == RowKind.NotRun ? (prev is { } pv ? $"Last run {pv.LocalTime:g}: {pv.Outcome} · {pv.Summary}" : "Not run yet") : kind == RowKind.Running ? (string.IsNullOrWhiteSpace(r.Message) || r.Message == "Running..." ? "In progress" : r.Message) : r.Message;
                         <div @key="mod.Name" class="ct-row @(isSel ? "selected" : "") @(kind == RowKind.Running ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
-                             data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => Select(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
+                             data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => SelectAndShowAsync(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
                             <button class="ct-check" role="checkbox" aria-checked="@(Screen.IsSelected(m.Name) ? "true" : "false")" aria-label="Include @m.DisplayName"
                                     data-testid="checks-select-@m.Name.ToLowerInvariant()" @onclick="() => Screen.SetSelected(mod.Name, !Screen.IsSelected(mod.Name))" @onclick:stopPropagation="true">@(Screen.IsSelected(m.Name) ? "✓" : "")</button>
                             <span class="dot dot-@CheckRows.DotKind(kind)"></span>

@@ -40,7 +40,7 @@
 }
 <div class="toolbar"><h1 data-testid="dashboard-title">Dashboard</h1></div>
 
-<div class="toolbar" data-testid="dashboard-controls">
+<div class="toolbar dash-controls" data-testid="dashboard-controls">
     <div class="meta">
         <div class="banner-sub">
             <span data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {RemotePCDiagnostics.Core.History.TimeText.Ago(l, now)}" : "Not checked yet")</span>

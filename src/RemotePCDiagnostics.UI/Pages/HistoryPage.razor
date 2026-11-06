@@ -63,6 +63,7 @@
     @if (fixGroups.Count > 0)
     {
         <h2 class="section-title">Automated fixes &amp; optimizations</h2>
+        <div class="table-scroll">
         <table class="detail grid sticky-head history-table" data-testid="history-fixes-table" style="margin-bottom: 18px;">
             <tr>
                 <th>Time</th>
@@ -122,6 +123,7 @@
                 }
             }
         </table>
+        </div>
     }
 }
 
@@ -187,6 +189,7 @@ else
         </div>
     }
 
+    <div class="table-scroll">
     <table class="detail grid sticky-head sortable history-table" data-testid="history-table">
         <tr>
             @foreach (var (col, title) in HistoryQuery.Columns)
@@ -271,6 +274,7 @@ else
             }
         }
     </table>
+    </div>
     @if (totalExpandedRows > renderedRows)
     {
         <div class="history-more"><button data-testid="history-more" @onclick="() => _shown += HistoryQuery.PageSize">Show @Math.Min(HistoryQuery.PageSize, totalExpandedRows - renderedRows) more (@renderedRows of @totalExpandedRows expanded rows shown)</button></div>
