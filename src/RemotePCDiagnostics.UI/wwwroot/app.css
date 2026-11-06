@@ -452,8 +452,14 @@ tr.row-detail td { white-space: pre-wrap; font-size: 13px; color: var(--text); b
 }
 /* Visible focus ring on clickable cards and rows. */
 .card-click:focus-visible, .ct-row:focus-visible, tr.clickable:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-/* History: day headings and "show more". */
-tr.history-day td { font-weight: 700; color: var(--text-strong); background: var(--surface); padding-top: 14px; border-bottom: 1px solid var(--border); }
+/* History: collapsible day rollup headings and "show more". */
+tr.history-day td { font-weight: 700; color: var(--text-strong); background: var(--surface-2); padding: 9px 12px; border-bottom: 1px solid var(--border); user-select: none; }
+tr.history-day.clickable:hover td { background: var(--surface-hover); }
+.history-day-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.history-day-title { display: inline-flex; align-items: center; gap: 7px; }
+.history-day-chevron { display: inline-block; width: 12px; color: var(--text-muted); font-size: 12px; }
+.history-day-date { font-weight: 500; margin-bottom: 0; }
+.history-day-summary { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: 600; }
 .history-more { margin: 12px 0; }
 .updated-ago { white-space: nowrap; }
 

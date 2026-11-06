@@ -242,6 +242,19 @@ public static class HistoryNames
 public enum HistoryColumn { Time, Test, Result, Summary, Duration }
 public enum HistoryRange { Last24Hours, Last7Days, Last30Days, All }
 
+/// <summary>One local calendar day of history entries, rolled up with outcome counts.</summary>
+public sealed record HistoryDayGroup(
+    DateOnly Date,
+    string Label,
+    IReadOnlyList<HistoryEntry> Entries,
+    int PassedCount,
+    int WarningCount,
+    int CriticalCount,
+    int OtherCount)
+{
+    public string CountText => Entries.Count == 1 ? "1 run" : $"{Entries.Count} runs";
+}
+
 /// <summary>Filter, sort and trend logic for the History page.</summary>
 public static class HistoryQuery
 {
@@ -262,6 +275,39 @@ public static class HistoryQuery
         if (d == today) return "Today";
         if (d == today.AddDays(-1)) return "Yesterday";
         return localTime.ToString(d.Year == today.Year ? "dddd, MMM d" : "dddd, MMM d yyyy", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Groups entries by local calendar day for collapsible day-by-day rollup on the History page.</summary>
+    public static IReadOnlyList<HistoryDayGroup> GroupByDay(
+        IEnumerable<HistoryEntry> entries,
+        DateTimeOffset localNow,
+        bool ascendingDays = false)
+    {
+        var groups = entries.GroupBy(e => DateOnly.FromDateTime(e.LocalTime.Date));
+        var ordered = ascendingDays ? groups.OrderBy(g => g.Key) : groups.OrderByDescending(g => g.Key);
+        return ordered.Select(g =>
+        {
+            var list = g.ToList();
+            var passed = 0;
+            var warning = 0;
+            var critical = 0;
+            var other = 0;
+            foreach (var e in list)
+            {
+                if (string.Equals(e.Outcome, "OK", StringComparison.OrdinalIgnoreCase)) passed++;
+                else if (string.Equals(e.Outcome, "Warning", StringComparison.OrdinalIgnoreCase)) warning++;
+                else if (string.Equals(e.Outcome, "Critical", StringComparison.OrdinalIgnoreCase)) critical++;
+                else other++;
+            }
+            return new HistoryDayGroup(
+                g.Key,
+                DayLabel(list[0].LocalTime, localNow),
+                list,
+                passed,
+                warning,
+                critical,
+                other);
+        }).ToList();
     }
 
     /// <summary>Newest result per module (cancelled runs ignored), for "last run" on tests not run in this session.</summary>

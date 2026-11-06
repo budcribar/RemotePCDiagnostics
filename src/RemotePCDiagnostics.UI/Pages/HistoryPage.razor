@@ -15,10 +15,14 @@
     var rows = HistoryQuery.Sort(HistoryQuery.Filter(diagEntries, _module, _outcome, _range, DateTimeOffset.UtcNow), _sort.Col, _sort.Desc);
     // Tiles follow the filters: fixes as before, runs = the rows listed below.
     var impact = HistorySummary.Build(all.Where(HistorySummary.IsFixEntry).Concat(rows).ToList(), remSvc, memSvc, svcAct, _range, DateTimeOffset.UtcNow);
-    var shown = rows.Take(_shown).ToList();
-    var byDay = _sort.Col == HistoryColumn.Time;
     var localNow = DateTimeOffset.Now;
-    string? lastDay = null;
+    var ascendingDays = _sort.Col == HistoryColumn.Time && !_sort.Desc;
+    var dayGroups = HistoryQuery.GroupByDay(rows, localNow, ascendingDays);
+    DateOnly? latestDay = dayGroups.Count > 0 ? dayGroups.MaxBy(g => g.Date)!.Date : null;
+    var fixGroups = HistorySummary.GroupFixesByDay(impact.Fixes, localNow);
+    DateOnly? latestFixDay = fixGroups.Count > 0 ? fixGroups.MaxBy(g => g.Date)!.Date : null;
+    var totalExpandedRows = dayGroups.Where(g => IsDayExpanded(g.Date, latestDay)).Sum(g => g.Entries.Count);
+    var renderedRows = 0;
     var tests = HistoryNames.FilterOptions(diagEntries, Diagnostics.Catalog);
     var trends = tests.Where(t => HistoryQuery.TrendKey(t.Module) is not null && (_module.Length == 0 || string.Equals(_module, t.Module, StringComparison.OrdinalIgnoreCase)))
         .Select(t => (t.Test, Key: HistoryQuery.TrendKey(t.Module)!.Value, Points: HistoryQuery.Trend(diagEntries, t.Module))).Where(t => t.Points.Count > 0).ToList();
@@ -56,7 +60,7 @@
 
     <UndoAllPanel />
 
-    @if (impact.Fixes.Count > 0)
+    @if (fixGroups.Count > 0)
     {
         <h2 class="section-title">Automated fixes &amp; optimizations</h2>
         <table class="detail grid sticky-head history-table" data-testid="history-fixes-table" style="margin-bottom: 18px;">
@@ -67,21 +71,55 @@
                 <th>Result</th>
                 <th>What changed</th>
             </tr>
-            @foreach (var fx in impact.Fixes)
+            @foreach (var fg in fixGroups)
             {
-                <tr data-testid="history-fix-row">
-                    <td>@fx.TimeUtc.ToLocalTime().ToString("g")</td>
-                    <td>@fx.Category</td>
-                    <td>@fx.Actor</td>
-                    <td>
-                        <span class="dot dot-@(fx.Success ? "ok" : "warning")"></span>@(fx.Success ? "Applied" : "Failed")
-                        @if (fx.ImpactBadge is { } badge)
-                        {
-                            <span class="chip chip-ok" style="margin-left: 6px;">@badge</span>
-                        }
+                var fixGroup = fg;
+                var fixDayOpen = IsFixDayExpanded(fixGroup.Date, latestFixDay);
+                <tr @key="fixGroup.Date" class="history-day clickable" role="button" tabindex="0" aria-expanded="@(fixDayOpen ? "true" : "false")" data-testid="history-fix-day"
+                    @onclick="() => ToggleFixDay(fixGroup.Date, latestFixDay)" @onkeydown='k => { if (k.Key is "Enter" or " ") ToggleFixDay(fixGroup.Date, latestFixDay); }'>
+                    <td colspan="5">
+                        <div class="history-day-bar">
+                            <span class="history-day-title">
+                                <span class="history-day-chevron" aria-hidden="true">@(fixDayOpen ? "▾" : "▸")</span>
+                                <span>@fixGroup.Label</span>
+                                @if (fixGroup.Label is "Today" or "Yesterday")
+                                {
+                                    <span class="history-day-date meta">(@fixGroup.Date.ToString("MMM d", System.Globalization.CultureInfo.InvariantCulture))</span>
+                                }
+                            </span>
+                            <span class="history-day-summary">
+                                <span class="chip chip-na">@fixGroup.CountText</span>
+                                @if (fixGroup.AppliedCount > 0)
+                                {
+                                    <span class="chip chip-ok"><span class="dot dot-ok"></span>@fixGroup.AppliedCount applied</span>
+                                }
+                                @if (fixGroup.FailedCount > 0)
+                                {
+                                    <span class="chip chip-warn"><span class="dot dot-warning"></span>@fixGroup.FailedCount failed</span>
+                                }
+                            </span>
+                        </div>
                     </td>
-                    <td class="summary">@fx.Summary</td>
                 </tr>
+                @if (fixDayOpen)
+                {
+                    @foreach (var fx in fixGroup.Fixes)
+                    {
+                        <tr data-testid="history-fix-row">
+                            <td title="@fx.TimeUtc.ToLocalTime().ToString("g")">@fx.TimeUtc.ToLocalTime().ToString("t")</td>
+                            <td>@fx.Category</td>
+                            <td>@fx.Actor</td>
+                            <td>
+                                <span class="dot dot-@(fx.Success ? "ok" : "warning")"></span>@(fx.Success ? "Applied" : "Failed")
+                                @if (fx.ImpactBadge is { } badge)
+                                {
+                                    <span class="chip chip-ok" style="margin-left: 6px;">@badge</span>
+                                }
+                            </td>
+                            <td class="summary">@fx.Summary</td>
+                        </tr>
+                    }
+                }
             }
         </table>
     }
@@ -120,7 +158,12 @@ else
             <option value="Last30Days">Last 30 days</option>
             <option value="All">All</option>
         </select>
-        <span class="meta">@rows.Count of @diagEntries.Count</span>
+        <span class="meta">@rows.Count of @diagEntries.Count · @dayGroups.Count @(dayGroups.Count == 1 ? "day" : "days")</span>
+        @if (dayGroups.Count > 1)
+        {
+            <button type="button" data-testid="history-expand-all" @onclick="() => SetAllDays(dayGroups, true)">Expand all</button>
+            <button type="button" data-testid="history-collapse-all" @onclick="() => SetAllDays(dayGroups, false)">Collapse all</button>
+        }
     </div>
 
     @if (trends.Count > 0)
@@ -153,46 +196,84 @@ else
                     data-testid="history-th-@c.ToString().ToLowerInvariant()"><button type="button" class="th-btn" @onclick="() => _sort = HistoryQuery.Toggle(_sort, c)">@title<span class="sort-arrow" aria-hidden="true">@(_sort.Col == c ? (_sort.Desc ? " ▼" : " ▲") : "")</span></button></th>
             }
         </tr>
-        @foreach (var e in shown)
+        @foreach (var g in dayGroups)
         {
-            var entry = e;
-            var open = ReferenceEquals(_open, entry);
-            var day = byDay ? HistoryQuery.DayLabel(entry.LocalTime, localNow) : null;
-            @if (day is not null && day != lastDay)
-            {
-                lastDay = day;
-                <tr class="history-day" data-testid="history-day"><td colspan="5">@day</td></tr>
-            }
-            <tr class="clickable" role="button" tabindex="0" aria-expanded="@(open ? "true" : "false")" data-testid="history-row"
-                @onclick="() => _open = open ? null : entry" @onkeydown='k => { if (k.Key is "Enter" or " ") _open = open ? null : entry; }'>
-                <td title="@entry.LocalTime.ToString("g")">@(byDay ? entry.LocalTime.ToString("t") : entry.LocalTime.ToString("g"))</td>
-                <td>@entry.Test@if (!string.IsNullOrEmpty(entry.Instance)) {<span class="meta" data-testid="history-instance"> · @entry.Instance</span>}</td>
-                <td><span class="dot dot-@Dot(entry.Outcome)"></span>@entry.Outcome</td>
-                <td class="summary">@entry.Summary</td>
-                <td>@HistoryQuery.FormatDuration(entry.DurationSeconds)</td>
+            var group = g;
+            var dayOpen = IsDayExpanded(group.Date, latestDay);
+            <tr @key="group.Date" class="history-day clickable" role="button" tabindex="0" aria-expanded="@(dayOpen ? "true" : "false")" data-testid="history-day"
+                @onclick="() => ToggleDay(group.Date, latestDay)" @onkeydown='k => { if (k.Key is "Enter" or " ") ToggleDay(group.Date, latestDay); }'>
+                <td colspan="5">
+                    <div class="history-day-bar">
+                        <span class="history-day-title">
+                            <span class="history-day-chevron" aria-hidden="true">@(dayOpen ? "▾" : "▸")</span>
+                            <span>@group.Label</span>
+                            @if (group.Label is "Today" or "Yesterday")
+                            {
+                                <span class="history-day-date meta">(@group.Date.ToString("MMM d", System.Globalization.CultureInfo.InvariantCulture))</span>
+                            }
+                        </span>
+                        <span class="history-day-summary" data-testid="history-day-summary">
+                            <span class="chip chip-na">@group.CountText</span>
+                            @if (group.PassedCount > 0)
+                            {
+                                <span class="chip chip-ok"><span class="dot dot-ok"></span>@group.PassedCount OK</span>
+                            }
+                            @if (group.WarningCount > 0)
+                            {
+                                <span class="chip chip-warn"><span class="dot dot-warning"></span>@group.WarningCount warning</span>
+                            }
+                            @if (group.CriticalCount > 0)
+                            {
+                                <span class="chip chip-err"><span class="dot dot-error"></span>@group.CriticalCount critical</span>
+                            }
+                            @if (group.OtherCount > 0)
+                            {
+                                <span class="chip chip-na">@group.OtherCount other</span>
+                            }
+                        </span>
+                    </div>
+                </td>
             </tr>
-            @if (open)
+            @if (dayOpen)
             {
-                <tr class="history-details" data-testid="history-details"><td colspan="5">
-                    <div class="meta">@(entry.Suite is { } s ? $"Part of the stress tests ({s}). " : "")Machine: @entry.Machine · App version @entry.AppVersion</div>
-                    @if (HistoryPresentation.Measurements(entry).Count > 0)
+                @foreach (var e in group.Entries)
+                {
+                    if (renderedRows >= _shown) break;
+                    renderedRows++;
+                    var entry = e;
+                    var open = ReferenceEquals(_open, entry);
+                    <tr class="clickable" role="button" tabindex="0" aria-expanded="@(open ? "true" : "false")" data-testid="history-row"
+                        @onclick="() => _open = open ? null : entry" @onkeydown='k => { if (k.Key is "Enter" or " ") _open = open ? null : entry; }'>
+                        <td title="@entry.LocalTime.ToString("g")">@entry.LocalTime.ToString("t")</td>
+                        <td>@entry.Test@if (!string.IsNullOrEmpty(entry.Instance)) {<span class="meta" data-testid="history-instance"> · @entry.Instance</span>}</td>
+                        <td><span class="dot dot-@Dot(entry.Outcome)"></span>@entry.Outcome</td>
+                        <td class="summary">@entry.Summary</td>
+                        <td>@HistoryQuery.FormatDuration(entry.DurationSeconds)</td>
+                    </tr>
+                    @if (open)
                     {
-                        <div class="meta"><strong>Measurements</strong></div>
-                        <ul>@foreach (var m in HistoryPresentation.Measurements(entry)) { <li>@HistoryLabels.Measurement(m.Name): @m.Value</li> }</ul>
+                        <tr class="history-details" data-testid="history-details"><td colspan="5">
+                            <div class="meta">@(entry.Suite is { } s ? $"Part of the stress tests ({s}). " : "")Machine: @entry.Machine · App version @entry.AppVersion</div>
+                            @if (HistoryPresentation.Measurements(entry).Count > 0)
+                            {
+                                <div class="meta"><strong>Measurements</strong></div>
+                                <ul>@foreach (var m in HistoryPresentation.Measurements(entry)) { <li>@HistoryLabels.Measurement(m.Name): @m.Value</li> }</ul>
+                            }
+                            @if (HistoryPresentation.Details(entry) is { Count: > 0 } det)
+                            {
+                                <div class="meta"><strong>Details</strong></div>
+                                <ul data-testid="history-details-lines">@foreach (var line in det) { <li>@line</li> }</ul>
+                            }
+                            @if (HistoryPresentation.Measurements(entry).Count == 0 && HistoryPresentation.Details(entry).Count == 0) { <div class="meta">Detailed measurements were not recorded for this result.</div> }
+                        </td></tr>
                     }
-                    @if (HistoryPresentation.Details(entry) is { Count: > 0 } det)
-                    {
-                        <div class="meta"><strong>Details</strong></div>
-                        <ul data-testid="history-details-lines">@foreach (var line in det) { <li>@line</li> }</ul>
-                    }
-                    @if (HistoryPresentation.Measurements(entry).Count == 0 && HistoryPresentation.Details(entry).Count == 0) { <div class="meta">Detailed measurements were not recorded for this result.</div> }
-                </td></tr>
+                }
             }
         }
     </table>
-    @if (rows.Count > shown.Count)
+    @if (totalExpandedRows > renderedRows)
     {
-        <div class="history-more"><button data-testid="history-more" @onclick="() => _shown += HistoryQuery.PageSize">Show @Math.Min(HistoryQuery.PageSize, rows.Count - shown.Count) more (@shown.Count of @rows.Count shown)</button></div>
+        <div class="history-more"><button data-testid="history-more" @onclick="() => _shown += HistoryQuery.PageSize">Show @Math.Min(HistoryQuery.PageSize, totalExpandedRows - renderedRows) more (@renderedRows of @totalExpandedRows expanded rows shown)</button></div>
     }
     @if (rows.Count == 0) { <p class="meta" data-testid="history-nomatch">No results match these filters.</p> }
 }
@@ -207,6 +288,8 @@ else
     private static (HistoryColumn Col, bool Desc) _sort = HistoryQuery.DefaultSort;
     private HistoryEntry? _open;
     private int _shown = HistoryQuery.PageSize;
+    private readonly Dictionary<DateOnly, bool> _dayOverrides = [];
+    private readonly Dictionary<DateOnly, bool> _fixDayOverrides = [];
     private HistoryReadResult? _result;
     private bool _loading, _disposed;
     private int _reloadPending;
@@ -224,10 +307,36 @@ else
         _outcome = "";
         _sort = HistoryQuery.DefaultSort;
         ResetPaging();
-        _open = _result?.Entries.FirstOrDefault(entry =>
+        ApplyLinkedEntrySelection();
+    }
+
+    private void ApplyLinkedEntrySelection()
+    {
+        if (string.IsNullOrWhiteSpace(LinkedModule) || _result is null) return;
+        _open = _result.Entries.FirstOrDefault(entry =>
             string.Equals(entry.Module, LinkedModule, StringComparison.OrdinalIgnoreCase) &&
             entry.TimeUtc.UtcTicks == LinkedRun);
+        if (_open is not null)
+            _dayOverrides[DateOnly.FromDateTime(_open.LocalTime.Date)] = true;
     }
+
+    private bool IsDayExpanded(DateOnly date, DateOnly? latestDay) =>
+        _dayOverrides.TryGetValue(date, out var open) ? open : (latestDay is not null && date == latestDay.Value);
+
+    private void ToggleDay(DateOnly date, DateOnly? latestDay) =>
+        _dayOverrides[date] = !IsDayExpanded(date, latestDay);
+
+    private void SetAllDays(IEnumerable<HistoryDayGroup> groups, bool expanded)
+    {
+        foreach (var g in groups)
+            _dayOverrides[g.Date] = expanded;
+    }
+
+    private bool IsFixDayExpanded(DateOnly date, DateOnly? latestFixDay) =>
+        _fixDayOverrides.TryGetValue(date, out var open) ? open : (latestFixDay is not null && date == latestFixDay.Value);
+
+    private void ToggleFixDay(DateOnly date, DateOnly? latestFixDay) =>
+        _fixDayOverrides[date] = !IsFixDayExpanded(date, latestFixDay);
 
     private async Task Load()
     {
@@ -240,17 +349,25 @@ else
             var read = await Task.Run(() => History.Read(within));
             // Cancelled runs produced no result: they're left out of history entirely.
             _result = read with { Entries = HistoryQuery.WithoutCancelled(HistoryNames.Normalize(read.Entries, Diagnostics.Catalog)) };
-            if (_open is not null && !_result.Entries.Contains(_open)) _open = null;
+            if (_open is null && !string.IsNullOrWhiteSpace(LinkedModule))
+                ApplyLinkedEntrySelection();
+            else if (_open is not null && !_result.Entries.Contains(_open))
+                _open = null;
         }
         catch { _result = new HistoryReadResult([], false); }
         finally { _loading = false; }
     }
 
-    private void ResetPaging() => _shown = HistoryQuery.PageSize;
+    private void ResetPaging()
+    {
+        _shown = HistoryQuery.PageSize;
+        _dayOverrides.Clear();
+    }
 
     private async Task SetRange(ChangeEventArgs e)
     {
         ResetPaging();
+        _fixDayOverrides.Clear();
         _range = Enum.TryParse<HistoryRange>(e.Value?.ToString(), out var r) ? r : HistoryRange.All;
         await Load();
     }

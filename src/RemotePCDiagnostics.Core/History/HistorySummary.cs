@@ -16,6 +16,16 @@ public sealed record FixHistoryItem(
     string Summary,
     string? ImpactBadge);
 
+public sealed record FixDayGroup(
+    DateOnly Date,
+    string Label,
+    IReadOnlyList<FixHistoryItem> Fixes,
+    int AppliedCount,
+    int FailedCount)
+{
+    public string CountText => Fixes.Count == 1 ? "1 fix" : $"{Fixes.Count} fixes";
+}
+
 public sealed record HistoryImpactSummary(
     long DiskReclaimedBytes,
     int TempFilesCleaned,
@@ -77,6 +87,21 @@ public static class HistorySummary
         string.Equals(e.Module, RemediationModuleId, StringComparison.OrdinalIgnoreCase)
         || string.Equals(e.Module, ServiceFixModuleId, StringComparison.OrdinalIgnoreCase)
         || string.Equals(e.Module, MemoryFixModuleId, StringComparison.OrdinalIgnoreCase);
+
+    public static IReadOnlyList<FixDayGroup> GroupFixesByDay(IEnumerable<FixHistoryItem> fixes, DateTimeOffset localNow) =>
+        fixes.GroupBy(f => DateOnly.FromDateTime(f.TimeUtc.ToLocalTime().Date))
+            .OrderByDescending(g => g.Key)
+            .Select(g =>
+            {
+                var list = g.ToList();
+                var applied = list.Count(f => f.Success);
+                return new FixDayGroup(
+                    g.Key,
+                    HistoryQuery.DayLabel(list[0].TimeUtc.ToLocalTime(), localNow),
+                    list,
+                    applied,
+                    list.Count - applied);
+            }).ToList();
 
     public static HistoryImpactSummary Build(
         IReadOnlyList<HistoryEntry> entries,
