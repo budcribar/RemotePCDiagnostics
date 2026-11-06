@@ -81,7 +81,7 @@ public sealed class SecurityEssentialsModule(SystemCommandRunner commands) : Are
         "'Llmnr='+(D '" + SecurityFixes.LlmnrKey + "' '" + SecurityFixes.LlmnrValue + "');" +
         "'AutoRun='+(D '" + SecurityFixes.AutoRunKey + "' '" + SecurityFixes.AutoRunValue + "');" +
         "$g=D 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\LanmanWorkstation' 'AllowInsecureGuestAuth';" +
-        "if($g -eq ''){$g=D 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\LanmanWorkstation\\Parameters' 'AllowInsecureGuestAuth'};'InsecureGuest='+$g";
+        "if([string]$g -eq ''){$g=D 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\LanmanWorkstation\\Parameters' 'AllowInsecureGuestAuth'};'InsecureGuest='+$g";
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
