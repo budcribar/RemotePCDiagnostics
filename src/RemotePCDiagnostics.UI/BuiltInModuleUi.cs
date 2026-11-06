@@ -8,7 +8,6 @@ public static class BuiltInModuleUi
 {
     public static IReadOnlyDictionary<Guid, Type> Components { get; } = new Dictionary<Guid, Type>
     {
-        [ModuleIds.Osquery] = typeof(OsqueryPage),
         [ModuleIds.Sensors] = typeof(LibreHardwareMonitorPage),
         [ModuleIds.CpuStress] = typeof(CpuStressPage),
         [ModuleIds.MemoryTest] = typeof(MemoryTestPage),

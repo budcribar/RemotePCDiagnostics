@@ -1,0 +1,33 @@
+<Project>
+  <!--
+    Modules that ship with the app, one project per module (one DLL: the module's code, its Razor details UI and module.json).
+    The app builds them into modules\ next to its exe (build/BundledModules.targets) and loads each into its own load context at startup.
+    They are part of the app's own install (the same trust as RemotePCDiagnostics.Core.dll), so they run in the app process unsigned.
+    Unlike a third-party plugin (samples/SampleModule), a bundled module may use Core and UI types: the host supplies those assemblies
+    (Private="false"), so nothing but the module's own code is in its DLL.
+  -->
+  <Import Project="..\..\Directory.Build.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\RemotePCDiagnostics.Abstractions\RemotePCDiagnostics.Abstractions.csproj" Private="false" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" Private="false" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\RemotePCDiagnostics.UI\RemotePCDiagnostics.UI.csproj" Private="false" />
+    <EmbeddedResource Include="module.json" LogicalName="module.json" />
+    <Content Remove="module.json" />
+    <None Remove="module.json" />
+    <InternalsVisibleTo Include="RemotePCDiagnostics.Tests" />
+    <!-- Logging: ILogger plus the plain-line helpers (LoggerLines), as in Core and UI. -->
+    <Using Include="Microsoft.Extensions.Logging.ILogger" Alias="ILogger" />
+    <Using Include="RemotePCDiagnostics.Logging" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <Using Include="RemotePCDiagnostics.Core" />
+    <Using Include="RemotePCDiagnostics.Core.Plugins" />
+  </ItemGroup>
+</Project>

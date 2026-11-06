@@ -1,0 +1,9 @@
+{
+  "id": "b20a783c-c8b2-4674-a40a-37244b1b5e02",
+  "slug": "Network",
+  "displayName": "Network & Wi-Fi",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.Network.NetworkPlugin",
+  "needsAdmin": false,
+  "hasUi": false
+}

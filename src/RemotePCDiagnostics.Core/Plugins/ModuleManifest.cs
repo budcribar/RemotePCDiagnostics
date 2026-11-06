@@ -52,11 +52,12 @@ public sealed record ModuleManifest
     public string ToJson() => JsonSerializer.Serialize(this, new JsonSerializerOptions(Json) { WriteIndented = true });
 
     /// <summary>The problem with this manifest for this host, or null when it can load.</summary>
-    public string? Problem(Version hostVersion)
+    /// <param name="vendorSlug">The slug must be vendor.name (every plugin). A module that ships with the app keeps the slug it always had.</param>
+    public string? Problem(Version hostVersion, bool vendorSlug = true)
     {
         if (Id == Guid.Empty) return "module.json has no id";
         if (string.IsNullOrWhiteSpace(Slug)) return "module.json has no slug";
-        if (!Slug.Contains('.')) return $"slug '{Slug}' must be vendor.name";
+        if (vendorSlug && !Slug.Contains('.')) return $"slug '{Slug}' must be vendor.name";
         if (string.IsNullOrWhiteSpace(EntryType)) return "module.json has no entryType";
         if (!System.Version.TryParse(Contract.Count(c => c == '.') == 0 ? Contract + ".0" : Contract, out var contract)) return $"contract '{Contract}' is not a version";
         if (!ContractVersion.IsCompatible(contract))

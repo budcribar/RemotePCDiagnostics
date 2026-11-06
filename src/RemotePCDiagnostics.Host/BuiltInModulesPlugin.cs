@@ -24,7 +24,6 @@ public sealed class BuiltInModulesPlugin(Microsoft.Extensions.Logging.ILoggerFac
     public void Register(IServiceCollection services, IPluginContext context)
     {
         var session = context.Session;
-        services.AddSingleton<IDiagnosticModule, OsqueryModule>();
         services.AddSingleton<IDiagnosticModule, LibreHardwareMonitorModule>();
         // On demand only: not auto-run and excluded from Run All; runs when the user presses Start on its page.
         services.AddSingleton<IDiagnosticModule>(sp => new CpuStressModule(sp.GetRequiredService<ISensorProvider>(), L<CpuStressModule>(), ecFan: sp.GetRequiredService<IEcFanSource>()));
@@ -40,16 +39,9 @@ public sealed class BuiltInModulesPlugin(Microsoft.Extensions.Logging.ILoggerFac
         services.AddSingleton<IDiagnosticModule>(sp => new GpuStressModule(new RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory(L<RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory>()), sp.GetRequiredService<ISensorProvider>(), L<GpuStressModule>()));
         services.AddSingleton<IDiagnosticModule>(sp => new DriveHealthModule(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<IRetrimHistory>()));
         services.AddSingleton<IDiagnosticModule>(sp => sp.GetRequiredService<ServicesModule>());
-        services.AddSingleton<IDiagnosticModule, ProgramsModule>(sp => new ProgramsModule(sp.GetRequiredService<OsqueryRunner>()));
-        services.AddSingleton<IDiagnosticModule, NetworkModule>(sp => new NetworkModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>(), includeWifiAndIpConfig: true));
-        services.AddSingleton<IDiagnosticModule>(sp => new EventLogModule(sp.GetRequiredService<SystemCommandRunner>(), excludeCrashEvents: true));
         services.AddSingleton<IDiagnosticModule>(sp => new CrashesModule(sp.GetRequiredService<SystemCommandRunner>(), includeSystemCrashes: true));
-        services.AddSingleton<IDiagnosticModule>(sp => new ResourceHogsModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
-        services.AddSingleton<IDiagnosticModule>(sp => new DeviceDriversModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
         services.AddSingleton<IDiagnosticModule>(sp => new DismScanHealthModule(sp.GetRequiredService<SystemCommandRunner>()));
         services.AddSingleton<IDiagnosticModule>(sp => new SfcVerifyOnlyModule(sp.GetRequiredService<SystemCommandRunner>()));
-        services.AddSingleton<IDiagnosticModule>(sp => new BatteryPowerModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>()));
-        services.AddSingleton<IDiagnosticModule>(sp => new RemotePCDiagnostics.Core.Security.SecurityEssentialsModule(sp.GetRequiredService<SystemCommandRunner>()));
         // On-demand only (Start button on its page): not in AutoRun below and excluded from Run All (IncludeInRunAll=false).
         services.AddSingleton<IDiagnosticModule>(new SecurityAuditModule(new SecurityAuditOptions { Log = L<SecurityAuditModule>() }));
         services.AddSingleton<IDiagnosticModule>(sp => new RemotePCDiagnostics.Core.Audio.SpeakerToMicModule(sp.GetRequiredService<RemotePCDiagnostics.Core.Audio.IAudioIo>(), L<RemotePCDiagnostics.Core.Audio.SpeakerToMicModule>()));

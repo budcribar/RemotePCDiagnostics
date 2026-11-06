@@ -44,7 +44,7 @@ public sealed record DriverEntry(string DeviceName, string Class, string Provide
         r.Str("class"),
         r.Str("provider").Length > 0 ? r.Str("provider") : r.Str("manufacturer"),
         r.Str("version"),
-        ProgramsModule.ParseDate(r.Str("date")),
+        OsqueryDates.Parse(r.Str("date")),
         r.Str("signed") != "0");
 }
 
@@ -148,8 +148,8 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
                 unsigned.Count > 0 ? $"{Plural(unsigned.Count, "unsigned driver")} · click to inspect" : "All reported drivers are signed",
                 ["Device", "Category", "Provider", "Version", "Date"],
                 distinct.Select(d => new AreaRow(d.Signed ? AreaLevel.Neutral : AreaLevel.Warning,
-                    [d.DeviceName, d.Class, d.Provider, d.Version, ProgramsModule.FormatDate(d.Date)],
-                    [null, null, null, null, ProgramsModule.DateKey(d.Date)])).ToList(),
+                    [d.DeviceName, d.Class, d.Provider, d.Version, OsqueryDates.Format(d.Date)],
+                    [null, null, null, null, OsqueryDates.SortKey(d.Date)])).ToList(),
                 EmptyText: "No drivers were reported.",
                 Actions: [new(RemediationKind.CheckAndInstallDriverUpdates, "Check & install driver updates")]));
 

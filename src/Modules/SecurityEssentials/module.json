@@ -1,0 +1,9 @@
+{
+  "id": "61025d7b-f5ef-4286-82ff-df9a74834b39",
+  "slug": "SecurityEssentials",
+  "displayName": "Security essentials",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.SecurityEssentials.SecurityEssentialsPlugin",
+  "needsAdmin": false,
+  "hasUi": false
+}

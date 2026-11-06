@@ -1,0 +1,9 @@
+{
+  "id": "031e7150-84b6-4d77-8788-28dccaa94246",
+  "slug": "Programs",
+  "displayName": "Programs & updates",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.Programs.ProgramsPlugin",
+  "needsAdmin": false,
+  "hasUi": false
+}

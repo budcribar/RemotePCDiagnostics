@@ -1,0 +1,9 @@
+{
+  "id": "09f626ba-8cda-4c17-a273-ad98dd9eff40",
+  "slug": "DeviceDrivers",
+  "displayName": "Device Manager & drivers",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.DeviceDrivers.DeviceDriversPlugin",
+  "needsAdmin": false,
+  "hasUi": false
+}

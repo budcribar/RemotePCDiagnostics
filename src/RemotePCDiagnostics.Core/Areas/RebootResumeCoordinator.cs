@@ -58,7 +58,7 @@ public sealed record ResourceBaselineSnapshot(
             return new(upSec, 0, 0, "");
 
         var totalMem = processes.Sum(p => Math.Max(0, p.ResidentBytes));
-        var groups = ResourceHogsModule.GroupProcesses(processes)
+        var groups = ResourceUsage.GroupProcesses(processes)
             .OrderByDescending(g => g.MemoryBytes)
             .Take(3)
             .Select(g => $"{g.Name} ({HardwareInventory.FormatBytes(g.MemoryBytes)})");
@@ -138,8 +138,8 @@ public sealed class RebootResumeCoordinator(
         {
             try
             {
-                var upQ = await osquery.RunQueryAsync(ResourceHogsModule.UptimeSql, ct).ConfigureAwait(false);
-                var procQ = await osquery.RunQueryAsync(ResourceHogsModule.ProcessesSql, ct).ConfigureAwait(false);
+                var upQ = await osquery.RunQueryAsync(ResourceUsage.UptimeSql, ct).ConfigureAwait(false);
+                var procQ = await osquery.RunQueryAsync(ResourceUsage.ProcessesSql, ct).ConfigureAwait(false);
                 if (upQ.Success || procQ.Success)
                 {
                     var uptime = upQ.Success && upQ.Rows is { Count: > 0 } ? SystemUptimeInfo.FromRow(upQ.Rows[0]) : null;
@@ -262,7 +262,7 @@ public sealed class RebootResumeCoordinator(
         // Re-run ResourceHogsModule first so the UI and store have fresh post-reboot process/uptime cards.
         if (diagnostics is not null)
         {
-            try { await diagnostics.RunAsync(ResourceHogsModule.ModuleName, ct: ct).ConfigureAwait(false); }
+            try { await diagnostics.RunAsync(ModuleSlugs.ResourceHogs, ct: ct).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"Post-reboot ResourceHogs refresh failed: {ex.Message}"); }
         }
 

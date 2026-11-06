@@ -36,6 +36,8 @@
     <!-- User-mode module host for unsigned modules (RemotePCDiagnostics.ModuleHost.exe is copied next to the Host exe). -->
     <ProjectReference Include="..\RemotePCDiagnostics.ModuleHost\RemotePCDiagnostics.ModuleHost.csproj" />
   </ItemGroup>
+  <!-- The modules that ship with the app, one DLL each, in builtin-modules\ next to the exe. -->
+  <Import Project="..\..\build\BundledModules.targets" />
   <!-- The module UI host (an unsigned module's own UI, RemotePCDiagnostics.ModuleUiHost.exe) lands in moduleui\ next to the Host exe.
        Built and copied rather than referenced: a ProjectReference would merge its static web assets into the Host's and collide on
        _framework files, and its wwwroot\index.html would overwrite the Host's. -->

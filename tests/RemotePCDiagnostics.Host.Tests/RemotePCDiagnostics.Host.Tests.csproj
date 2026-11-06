@@ -24,6 +24,8 @@
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Host\RemotePCDiagnostics.Host.csproj" />
   </ItemGroup>
 
+  <!-- The modules that ship with the app, one DLL each, in builtin-modules\ next to the exe. -->
+  <Import Project="..\..\build\BundledModules.targets" />
   <ItemGroup>
     <!-- Logging: ILogger plus the plain-line helpers (LoggerLines), without importing Microsoft.Extensions.Logging, whose LogLevel
          would clash with RemotePCDiagnostics.Core.Logging.LogLevel. -->

@@ -1,0 +1,9 @@
+{
+  "id": "3f767a16-4998-45dc-8883-f1f0068adfc0",
+  "slug": "EventLog",
+  "displayName": "Windows error log",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.EventLog.EventLogPlugin",
+  "needsAdmin": false,
+  "hasUi": false
+}
