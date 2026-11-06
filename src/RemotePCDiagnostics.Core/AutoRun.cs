@@ -18,7 +18,8 @@ public static class AutoRun
         var tasks = new List<Task<DiagnosticResult>>();
         foreach (var name in moduleNames)
         {
-            if (!service.Modules.Any(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase))) continue;
+            // Not service.Modules: that hides detectable modules (Drive health) until detection finishes, which is usually after launch.
+            if (!service.CanRun(name)) continue;
             log.Info($"Auto-run: starting {name}");
             var t = service.RunAsync(name);
             _ = t.ContinueWith(r => log.Info($"Auto-run: {name} finished: {(r.IsCompletedSuccessfully ? r.Result.Status.ToString() : r.Exception?.GetBaseException().Message)}"), TaskScheduler.Default);
