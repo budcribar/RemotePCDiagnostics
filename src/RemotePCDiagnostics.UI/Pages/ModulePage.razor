@@ -35,7 +35,10 @@
 }
 else if (details is not null)
 {
-    <DynamicComponent Type="details" Parameters="@(new Dictionary<string, object> { ["DiagnosticModule"] = m! })" />
+    @* A signed module's details UI gets the module's latest result too (ModuleDetails.LastResult), like an unsigned one in its own process. *@
+    <CascadingValue Value="@Store.Get(m!.Name)" Name="@RemotePCDiagnostics.Core.Plugins.ModuleDetails.LastResult">
+        <DynamicComponent Type="details" Parameters="@(new Dictionary<string, object> { ["DiagnosticModule"] = m! })" />
+    </CascadingValue>
 }
 else
 {

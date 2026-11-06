@@ -1,12 +1,31 @@
-@* The module's own details UI, given the module it describes (the IPluginContext.SetDetailsComponent contract). *@
+@implements IDisposable
+@* The module's own details UI, given the module it describes (the IPluginContext.SetDetailsComponent contract) and the module's latest
+   result in the app as the ModuleDetails.LastResult cascading value. *@
 @if (Program.Ui is { DetailsComponent: { } component } ui)
 {
-    <ErrorBoundary>
-        <ChildContent>
-            <DynamicComponent Type="component" Parameters="@(new Dictionary<string, object> { ["DiagnosticModule"] = ui.Module })" />
-        </ChildContent>
-        <ErrorContent Context="ex">
-            <p class="module-ui-error">The module's UI failed: @ex.Message</p>
-        </ErrorContent>
-    </ErrorBoundary>
+    <CascadingValue Value="_last" Name="@RemotePCDiagnostics.Core.Plugins.ModuleDetails.LastResult">
+        <ErrorBoundary>
+            <ChildContent>
+                <DynamicComponent Type="component" Parameters="@(new Dictionary<string, object> { ["DiagnosticModule"] = ui.Module })" />
+            </ChildContent>
+            <ErrorContent Context="ex">
+                <p class="module-ui-error">The module's UI failed: @ex.Message</p>
+            </ErrorContent>
+        </ErrorBoundary>
+    </CascadingValue>
+}
+
+@code {
+    private RemotePCDiagnostics.Core.DiagnosticResult? _last;
+
+    protected override void OnInitialized()
+    {
+        if (Program.LastResult is not { } receiver) return;
+        _last = receiver.Current;
+        receiver.Changed += OnResult;
+    }
+
+    private void OnResult(RemotePCDiagnostics.Core.DiagnosticResult r) => InvokeAsync(() => { _last = r; StateHasChanged(); });
+
+    public void Dispose() { if (Program.LastResult is { } receiver) receiver.Changed -= OnResult; }
 }

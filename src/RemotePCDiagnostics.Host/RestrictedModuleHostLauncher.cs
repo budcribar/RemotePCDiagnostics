@@ -104,6 +104,44 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
         }
     }
 
+    /// <summary>
+    /// <see cref="StartRestrictedGui"/> with a pipe on the process's stdin (only stdin is inherited), for the app to send it lines (a module's
+    /// UI host gets the module's latest result this way). Closing the returned writer ends the input.
+    /// </summary>
+    public static (Process Process, StreamWriter Input) StartRestrictedGuiWithInput(string exe, string arguments, string workingDirectory)
+    {
+        if (!File.Exists(exe)) throw new FileNotFoundException("UI host not found", exe);
+        using var token = RestrictedToken();
+        var sa = new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf<SECURITY_ATTRIBUTES>(), bInheritHandle = true };
+        Check(CreatePipe(out var inRead, out var inWrite, ref sa, 0));
+        try
+        {
+            Check(SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0)); // the app's end stays here
+            var si = new STARTUPINFO { cb = Marshal.SizeOf<STARTUPINFO>(), dwFlags = STARTF_USESTDHANDLES, hStdInput = inRead.DangerousGetHandle() };
+            PROCESS_INFORMATION pi;
+            try
+            {
+                Check(CreateProcessAsUser(token, null, new StringBuilder($"\"{exe}\" {arguments}"), IntPtr.Zero, IntPtr.Zero, true, CREATE_UNICODE_ENVIRONMENT,
+                    IntPtr.Zero, workingDirectory, ref si, out pi));
+            }
+            finally { inRead.Dispose(); } // the child's end
+            try
+            {
+                return (Process.GetProcessById(pi.dwProcessId), new StreamWriter(new FileStream(inWrite, FileAccess.Write), new UTF8Encoding(false)) { AutoFlush = true });
+            }
+            finally
+            {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+            }
+        }
+        catch
+        {
+            inRead.Dispose(); inWrite.Dispose();
+            throw;
+        }
+    }
+
     private static SafeAccessTokenHandle RestrictedToken()
     {
         Check(OpenProcessToken(Process.GetCurrentProcess().Handle, TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT, out var own));

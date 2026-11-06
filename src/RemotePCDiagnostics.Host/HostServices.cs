@@ -88,9 +88,9 @@ public static class HostServices
         }));
         // Unsigned modules' own UIs, framed on the module page (Local only, like unsigned modules themselves).
         if (session.Mode == SessionMode.Local)
-            services.AddSingleton<IModuleUiFrames>(_ =>
+            services.AddSingleton<IModuleUiFrames>(sp =>
             {
-                var frames = new ModuleUiFrames(L<ModuleUiFrames>());
+                var frames = new ModuleUiFrames(L<ModuleUiFrames>(), results: sp.GetRequiredService<ResultStore>());
                 AppDomain.CurrentDomain.ProcessExit += (_, _) => frames.Dispose(); // the UI processes never outlive the app
                 return frames;
             });

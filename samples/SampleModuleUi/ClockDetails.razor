@@ -1,17 +1,30 @@
 @using RemotePCDiagnostics.Core
+@using RemotePCDiagnostics.Core.Plugins
 @implements IDisposable
-@* The module's own UI. It gets the module it describes (DiagnosticModule) and runs in the same process as that module instance. *@
+@* The module's own UI. It gets the module it describes (DiagnosticModule), which runs in the same process as this component, and the
+   module's latest result in the app (LastResult), which updates after every run of the check. *@
 <div style="display: flex; flex-direction: column; gap: 8px">
     <div style="font-size: 32px; font-variant-numeric: tabular-nums">@DateTime.Now.ToString("T")</div>
     <div>@TimeZoneInfo.Local.DisplayName</div>
+    <div data-testid="clock-last-run">
+        @if (LastResult is { Status: not DiagnosticStatus.NotRun } last)
+        {
+            <span>Last checked @last.Timestamp.ToLocalTime().ToString("T"): @last.Message</span>
+        }
+        else
+        {
+            <span>Not checked yet.</span>
+        }
+    </div>
     <div>
         <button @onclick="RunAsync" disabled="@_running">@(_running ? "Checking…" : "Check now")</button>
-        @if (_result is not null) { <span style="margin-left: 8px">@_result.Message</span> }
+        @if (_result is not null) { <span style="margin-left: 8px">@_result.Message (not stored in the app)</span> }
     </div>
 </div>
 
 @code {
     [Parameter] public IDiagnosticModule? DiagnosticModule { get; set; }
+    [CascadingParameter(Name = ModuleDetails.LastResult)] public DiagnosticResult? LastResult { get; set; }
 
     private Timer? _timer;
     private DiagnosticResult? _result;

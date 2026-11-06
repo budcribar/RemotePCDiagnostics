@@ -8,6 +8,7 @@ namespace RemotePCDiagnostics.Core.Plugins;
 /// <summary>
 /// The line protocol between the app and RemotePCDiagnostics.ModuleHost (one JSON object per line over the helper's stdin and stdout, which
 /// only the app holds). App to host: availability, refresh, stop, exit. Host to app: ready, availability, progress, result, error.
+/// The app also sends "result" lines to a module's UI host (RemotePCDiagnostics.ModuleUiHost): the module's latest result, see <see cref="ModuleUiState"/>.
 /// </summary>
 public sealed record ModuleHostMessage
 {
@@ -20,6 +21,8 @@ public sealed record ModuleHostMessage
     public DiagnosticStatus? Status { get; init; }
     public bool? Cancelled { get; init; }
     public AreaReport? Report { get; init; }
+    /// <summary>When the result was produced (results sent to a module's UI host).</summary>
+    public DateTimeOffset? When { get; init; }
 
     public static readonly JsonSerializerOptions Json = new()
     {

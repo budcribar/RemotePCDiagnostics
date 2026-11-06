@@ -13,12 +13,16 @@ namespace RemotePCDiagnostics.ModuleUiHost;
 /// Loads one unsigned module and renders its details UI as a RemoteBlazorWebView client of the app's relay, which serves it to the module
 /// page's sandboxed frame at &lt;relay uri&gt;/&lt;id&gt;. Runs with the token the app gave it: no administrator, Medium integrity. Exits
 /// when the frame is reloaded (the app starts a fresh copy each time the module page opens), or when the app or its relay goes away.
+/// Its stdin carries the module's latest result from the app (one JSON line when it starts, one after every run; see ModuleUiState),
+/// which the details UI gets as the ModuleDetails.LastResult cascading value.
 /// </summary>
 public static class Program
 {
     public const int ExitOk = 0, ExitFailed = 1, ExitUsage = 2, ExitNoUi = 3;
 
     internal static UserModePlugin.Loaded? Ui { get; private set; }
+    /// <summary>The module's latest result in the app (not run yet until the app sends one).</summary>
+    internal static ModuleUiState.Receiver? LastResult { get; private set; }
     private static string? _logPath;
 
     [STAThread]
@@ -37,6 +41,14 @@ public static class Program
             Ui = UserModePlugin.Load(args[0], RemotePCDiagnostics.Logging.LineLogger.From(Log));
             Log($"start pid={Environment.ProcessId} module={Ui.Manifest.Slug} relay={relay} id={id}");
             if (Ui.DetailsComponent is null) { Log("the module sets no details UI"); return ExitNoUi; }
+            LastResult = new ModuleUiState.Receiver(Ui.Module.Name);
+            LastResult.Changed += r => Log($"result from the app: {r.Status} {r.Timestamp:O}");
+            var stdin = Console.In;
+            _ = Task.Run(async () =>
+            {
+                try { await LastResult.ReadAsync(stdin); Log("the app closed the result input"); }
+                catch (Exception ex) { Log("result input failed: " + ex.Message); }
+            });
 
             // WebView2 needs a user data folder this token can write; the default is next to the exe, under Program Files.
             var webViewData = Path.Combine(args[4], "webview2");
