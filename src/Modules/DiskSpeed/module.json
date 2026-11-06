@@ -1,0 +1,9 @@
+{
+  "id": "09250d9c-dffb-4ad5-afb8-8bdb61e35230",
+  "slug": "DiskSpeed",
+  "displayName": "Disk speed test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.DiskSpeed.DiskSpeedPlugin",
+  "needsAdmin": false,
+  "hasUi": true
+}

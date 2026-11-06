@@ -1,0 +1,9 @@
+{
+  "id": "85ffb9ea-fb21-4189-9714-5d58f7115237",
+  "slug": "NpuTest",
+  "displayName": "NPU (AI accelerator) test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.NpuTest.NpuTestPlugin",
+  "needsAdmin": false,
+  "hasUi": true
+}

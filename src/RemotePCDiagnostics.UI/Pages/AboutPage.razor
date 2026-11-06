@@ -41,6 +41,27 @@
     </section>
 }
 
+@if (BuiltInDlls.Count > 0)
+{
+    <section class="card about-card" data-testid="about-builtin-modules">
+        <h2>Built-in modules</h2>
+        <p>Modules that ship with the app as their own DLLs (builtin-modules folder next to the app). @BuiltInDlls.Count(p => p.State == PluginState.Loaded) of @BuiltInDlls.Count loaded.</p>
+        <table class="about-plugins">
+            <thead><tr><th>Module</th><th>File</th><th>State</th></tr></thead>
+            <tbody>
+            @foreach (var p in BuiltInDlls)
+            {
+                <tr data-testid="about-builtin-module">
+                    <td><strong>@(p.DisplayName ?? p.PluginId)</strong>@if (p.ModuleId is { } id) {<div class="meta">@id</div>}</td>
+                    <td class="meta" style="overflow-wrap:anywhere">@System.IO.Path.GetFileName(p.Path)</td>
+                    <td>@p.State@if (p.Reason is { Length: > 0 }) {<div class="meta">@p.Reason</div>}</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </section>
+}
+
 @if (Session.Mode == SessionMode.Local)
 {
     <section class="card about-card" data-testid="about-unsigned">
@@ -64,6 +85,9 @@
         try { UnsignedModulesSetting.Set(on); _unsigned = on; _unsignedError = null; }
         catch (Exception ex) { _unsignedError = $"Couldn't change the setting: {ex.Message}"; }
     }
+
+    private IReadOnlyList<PluginRecord> BuiltInDlls =>
+        App.Plugins?.Records.Where(r => r.Source == RemotePCDiagnostics.Core.ModuleSource.BuiltIn && r.Path is not null).ToList() ?? [];
 
     private IReadOnlyList<PluginRecord> Plugins =>
         App.Plugins?.Records.Where(r => r.Source == RemotePCDiagnostics.Core.ModuleSource.Plugin).ToList() ?? [];

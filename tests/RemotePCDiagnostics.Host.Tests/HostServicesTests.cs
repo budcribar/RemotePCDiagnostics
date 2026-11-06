@@ -109,6 +109,32 @@ public class HostServicesTests
         }
     }
 
+    /// <summary>The modules that don't need administrator ship as their own DLLs (builtin-modules\, copied next to these tests too) and
+    /// still all load, in their own load contexts, with their pages.</summary>
+    [Fact]
+    public void Every_built_in_module_is_registered_whether_compiled_in_or_its_own_DLL()
+    {
+        var (provider, _) = Build(SessionMode.Local);
+        using (provider)
+        {
+            var diag = provider.GetRequiredService<DiagnosticsService>();
+            var registered = provider.GetServices<IDiagnosticModule>().ToDictionary(m => m.Id);
+            Assert.Empty(BuiltInModulesPlugin.MissingModuleDlls(System.IO.Path.Combine(AppContext.BaseDirectory, RemotePCDiagnostics.Core.Plugins.ModuleLoaderOptions.BundledFolderName)));
+            foreach (var d in BuiltInModules.Descriptors.Where(d => d.MergedInto is null))
+            {
+                Assert.True(registered.TryGetValue(d.Id, out var m), $"{d.Slug} is not registered");
+                var own = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(m!.GetType().Assembly) != System.Runtime.Loader.AssemblyLoadContext.Default;
+                Assert.Equal(!BuiltInModulesPlugin.CompiledIn.Contains(d.Id), own);
+                Assert.Equal(ModuleSource.BuiltIn, diag.Catalog.Get(d.Id)!.Source);
+            }
+            foreach (var id in new[] { ModuleIds.Osquery, ModuleIds.CpuStress, ModuleIds.MemoryTest, ModuleIds.DiskSpeed, ModuleIds.GpuStress, ModuleIds.NetworkTest,
+                ModuleIds.SpeakerToMic, ModuleIds.MicToSpeaker, ModuleIds.Webcam, ModuleIds.NpuTest })
+                Assert.NotNull(diag.Catalog.Get(id)!.DetailsComponent);
+            var plugins = provider.GetRequiredService<RemotePCDiagnostics.Core.Plugins.PluginRegistrar>();
+            Assert.DoesNotContain(plugins.Records, r => r.Source == ModuleSource.BuiltIn && r.State != RemotePCDiagnostics.Core.Plugins.PluginState.Loaded);
+        }
+    }
+
     [Theory]
     [InlineData(SessionMode.Local, true)]
     [InlineData(SessionMode.Remote, false)]

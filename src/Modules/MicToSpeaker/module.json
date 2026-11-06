@@ -1,0 +1,9 @@
+{
+  "id": "670ba9f7-bd2c-4207-b13b-9a9f7262489d",
+  "slug": "MicToSpeaker",
+  "displayName": "Microphone to speaker test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.MicToSpeaker.MicToSpeakerPlugin",
+  "needsAdmin": false,
+  "hasUi": true
+}

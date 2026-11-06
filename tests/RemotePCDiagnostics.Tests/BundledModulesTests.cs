@@ -37,13 +37,29 @@ public sealed class BundledModulesTests : IDisposable
         var services = new ServiceCollection();
         services.AddSingleton(new OsqueryRunner(baseDirectory: _root));
         services.AddSingleton(new SystemCommandRunner());
+        // The app's Windows adapters the test modules take (only their constructors run here).
+        services.AddSingleton(Stub<RemotePCDiagnostics.Core.Sensors.ISensorProvider>());
+        services.AddSingleton(Stub<RemotePCDiagnostics.Core.Sensors.IEcFanSource>());
+        services.AddSingleton(Stub<RemotePCDiagnostics.Core.Stress.IGpuDeviceFactory>());
+        services.AddSingleton(Stub<RemotePCDiagnostics.Core.Audio.IAudioIo>());
+        services.AddSingleton(Stub<RemotePCDiagnostics.Core.Webcam.IWebcamIo>());
+        services.AddSingleton(Stub<RemotePCDiagnostics.Core.Npu.INpuIo>());
         loader.LoadBundled(services);
         return (loader, registrar, services);
     }
 
+    private static T Stub<T>() where T : class => System.Reflection.DispatchProxy.Create<T, NullProxy>();
+
+    /// <summary>Answers every call with the default value.</summary>
+    public class NullProxy : System.Reflection.DispatchProxy
+    {
+        protected override object? Invoke(System.Reflection.MethodInfo? method, object?[]? args) =>
+            method?.ReturnType is { IsValueType: true } t && t != typeof(void) ? Activator.CreateInstance(t) : null;
+    }
+
     [Fact]
     public void Every_module_project_is_built() =>
-        Assert.True(ModuleDlls().Count() >= 8, "expected the module DLLs from src/Modules next to the tests");
+        Assert.True(ModuleDlls().Count() >= 17, "expected the module DLLs from src/Modules next to the tests");
 
     [Theory]
     [MemberData(nameof(ModuleDlls))]

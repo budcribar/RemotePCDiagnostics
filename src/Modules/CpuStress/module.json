@@ -1,0 +1,9 @@
+{
+  "id": "32813968-b952-417a-b5c0-53909188581d",
+  "slug": "CpuStress",
+  "displayName": "CPU stress test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.CpuStress.CpuStressPlugin",
+  "needsAdmin": false,
+  "hasUi": true
+}

@@ -91,7 +91,9 @@ public partial class App : Application
             var required = new[] { "tools/osquery/osqueryi.exe", "tools/HardeningKitty/HardeningKitty.psd1",
                 "tools/HardeningKitty/HardeningKitty.psm1", "RemotePCDiagnostics.MemTest.exe",
                 "RemotePCDiagnostics.MemTest.runtimeconfig.json", "wwwroot/index.html" };
-            var missing = required.Where(p => !File.Exists(Path.Combine(AppContext.BaseDirectory, p))).ToArray();
+            var missing = required.Where(p => !File.Exists(Path.Combine(AppContext.BaseDirectory, p)))
+                .Concat(BuiltInModulesPlugin.MissingModuleDlls(RemotePCDiagnostics.Core.Plugins.ModuleLoaderOptions.DefaultBundledFolder())
+                    .Select(slug => $"{RemotePCDiagnostics.Core.Plugins.ModuleLoaderOptions.BundledFolderName}/ (module {slug})")).ToArray();
             LogFileOnly($"Package base: {AppContext.BaseDirectory}; missing: {string.Join(", ", missing)}");
             var valid = missing.Length == 0;
             if (valid)

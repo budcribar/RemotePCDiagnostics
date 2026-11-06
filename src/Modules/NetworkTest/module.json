@@ -1,0 +1,9 @@
+{
+  "id": "b2383e8c-57ec-47a4-8de2-830adb3b75c3",
+  "slug": "NetworkTest",
+  "displayName": "Network stability test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.NetworkTest.NetworkTestPlugin",
+  "needsAdmin": false,
+  "hasUi": true
+}

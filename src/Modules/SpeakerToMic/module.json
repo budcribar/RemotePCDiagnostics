@@ -1,0 +1,9 @@
+{
+  "id": "8b37f40f-7a2e-428e-a71e-057e895e920d",
+  "slug": "SpeakerToMic",
+  "displayName": "Speaker to microphone test",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.SpeakerToMic.SpeakerToMicPlugin",
+  "needsAdmin": false,
+  "hasUi": true
+}

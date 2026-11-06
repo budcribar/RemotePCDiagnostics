@@ -70,7 +70,7 @@ public sealed class WindowsNpuIo(ILogger? log = null) : INpuIo
 
     private NpuWorkloadResult Run(long luid, NpuDevice device, NpuWorkloadRequest req, CancellationToken ct)
     {
-        var n = Math.Clamp(req.MatrixSize, 16, NpuTestModule.MaxMatrixSize) / 16 * 16;
+        var n = Math.Clamp(req.MatrixSize, 16, NpuTestLimits.MaxMatrixSize) / 16 * 16;
         using var adapter = DxCore.OpenAdapter(luid) ?? throw new NpuDeviceException("The NPU adapter disappeared.");
         var core = device.Compute == NpuComputeLevel.CoreCompute;
         var level = core ? FeatureLevel.Level_1_0_CORE : FeatureLevel.Level_1_0_GENERIC;
@@ -148,7 +148,7 @@ public sealed class WindowsNpuIo(ILogger? log = null) : INpuIo
 
         ulong value = 0;
         var deadline = Stopwatch.StartNew();
-        var limit = req.Budget + NpuTestModule.WatchdogGrace;
+        var limit = req.Budget + NpuTestLimits.WatchdogGrace;
         using var first = Record(true);
         var sw = Stopwatch.StartNew();
         queue.ExecuteCommandList(first);
@@ -189,7 +189,7 @@ public sealed class WindowsNpuIo(ILogger? log = null) : INpuIo
         list.Close();
         ulong value = 0;
         var deadline = Stopwatch.StartNew();
-        var limit = req.Budget + NpuTestModule.WatchdogGrace;
+        var limit = req.Budget + NpuTestLimits.WatchdogGrace;
         var sw = Stopwatch.StartNew();
         queue.ExecuteCommandList(list);
         Wait(dev, queue, fence, ++value, ev, deadline, limit, ct);

@@ -6,18 +6,22 @@
   -->
   <ItemGroup>
     <BundledModuleProject Include="$(MSBuildThisFileDirectory)..\src\Modules\*\*.csproj" />
-    <ProjectReference Include="@(BundledModuleProject)" ReferenceOutputAssembly="false" Private="false" SkipGetTargetFrameworkProperties="true" />
+    <ProjectReference Include="@(BundledModuleProject)" ReferenceOutputAssembly="false" Private="false" SkipGetTargetFrameworkProperties="true"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishProfile;PublishDir" />
   </ItemGroup>
   <Target Name="ResolveBundledModules">
     <MSBuild Projects="@(BundledModuleProject)" Targets="GetTargetPath" Properties="Configuration=$(Configuration)"
-             RemoveProperties="TargetFramework;RuntimeIdentifier;SelfContained;PublishProfile;PublishDir">
+             RemoveProperties="RuntimeIdentifier;SelfContained;PublishProfile;PublishDir">
       <Output TaskParameter="TargetOutputs" ItemName="_BundledModuleDll" />
     </MSBuild>
   </Target>
   <Target Name="CopyBundledModules" AfterTargets="Build" DependsOnTargets="ResolveBundledModules" Condition="'$(DesignTimeBuild)' != 'true'">
     <Copy SourceFiles="@(_BundledModuleDll)" DestinationFolder="$(OutDir)builtin-modules" SkipUnchangedFiles="true" />
   </Target>
-  <Target Name="PublishBundledModules" AfterTargets="Publish" DependsOnTargets="ResolveBundledModules">
-    <Copy SourceFiles="@(_BundledModuleDll)" DestinationFolder="$(PublishDir)builtin-modules" SkipUnchangedFiles="true" />
+  <!-- Published as ordinary publish items (not copied afterwards), so the single-file Portable profile bundles them like the app's other files. -->
+  <Target Name="PublishBundledModules" AfterTargets="ComputeFilesToPublish" BeforeTargets="_ComputeResolvedFilesToPublishTypes;_ComputeFilesToBundle" DependsOnTargets="ResolveBundledModules">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="@(_BundledModuleDll)" RelativePath="builtin-modules\%(Filename)%(Extension)" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
   </Target>
 </Project>

@@ -75,6 +75,10 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Npu.INpuIo>(_ => new WindowsNpuIo(L<WindowsNpuIo>()));
+        // GPU stress test: Direct3D 11 compute devices.
+        services.AddSingleton<IGpuDeviceFactory>(_ => new RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory(L<RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory>()));
+        // Webcam test: cameras through Windows MediaCapture (a preview window only at the PC itself).
+        services.AddSingleton<RemotePCDiagnostics.Core.Webcam.IWebcamIo>(_ => new MediaCaptureWebcamIo(L<MediaCaptureWebcamIo>(), showPreview: session.Mode == SessionMode.Local));
         // Every built-in module goes through the same registration path a plugin uses.
         var plugins = new PluginRegistrar(session, HostVersion(), L<PluginRegistrar>());
         services.AddSingleton(plugins);
