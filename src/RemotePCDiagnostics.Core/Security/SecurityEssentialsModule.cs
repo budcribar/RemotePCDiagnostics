@@ -373,19 +373,21 @@ public sealed class SecurityEssentialsModule(SystemCommandRunner commands) : Are
             Note: off ? null : fix.WhatHappens, Actions: off ? null : [Fix(SecurityFixes.AutoRun)]);
     }
 
-    /// <summary>Explained, never changed here: turning guest logons off can cut off old network drives (NAS) that only allow guest access.</summary>
+    /// <summary>Fixable, but the fix isn't ticked by default in the fix list: turning guest logons off can cut off old network drives (NAS).
+    /// Windows Home allows them unless a policy says otherwise; newer Pro and Enterprise builds turn them off by default.</summary>
     private static AreaCard GuestCard(SecurityFacts f)
     {
+        var fix = SecurityFixes.Find(SecurityFixes.GuestLogons)!;
         var (level, headline, value) = f.InsecureGuest switch
         {
             0 => (AreaLevel.Ok, "Insecure guest logons are off", "Off"),
             1 => (AreaLevel.Warning, "Insecure guest logons are allowed", "Allowed"),
-            _ => (AreaLevel.Neutral, "Insecure guest logons: Windows default", f.IsHome ? "Windows default (allowed on Home)" : "Windows default"),
+            _ when f.IsHome => (AreaLevel.Warning, "Insecure guest logons are allowed", "Allowed (Windows Home default)"),
+            _ => (AreaLevel.Neutral, "Insecure guest logons: Windows default", "Windows default"),
         };
-        return new("guest", "Network drive guest logons", level, headline, "", Cols,
-            [Row(level, "Guest access to network drives", value),
-             Means("Guest logons let this PC open shared folders without a password. Someone on the same network can pretend to be that shared folder and send this PC harmful files.")],
-            Note: level == AreaLevel.Warning ? "Only matters if you use an older network drive (NAS) that needs guest access. If you don't, ask a technician to turn off \"Enable insecure guest logons\". It isn't changed here because it can cut off those drives." : null);
+        var fixable = level == AreaLevel.Warning;
+        return new("guest", fix.Label, level, headline, "", Cols, [Row(level, "Guest access to network drives", value), Means(fix.WhatItIs)],
+            Note: fixable ? fix.WhatHappens + " " + fix.Caveat : null, Actions: fixable ? [Fix(SecurityFixes.GuestLogons)] : null);
     }
 
     private static string VersionLabel(string? v) => v is null ? "" : v.Split(',', StringSplitOptions.TrimEntries)[0];

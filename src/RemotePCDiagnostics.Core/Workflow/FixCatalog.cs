@@ -87,9 +87,10 @@ public static class FixCatalog
                     if (a.Kind == RemediationKind.SetPublicDns)
                         why += $" {a.ButtonText}. {card.Note} Measured during the network scan at {r.Timestamp:O}.";
                     list.Add(new(id, title, why, area, RiskOf(a.Kind), FixSource.Remediation, OrderOf(a.Kind), Remediation: a,
-                        NeedsAdmin: plan?.Warning?.Contains("administrator", StringComparison.OrdinalIgnoreCase) == true,
+                        NeedsAdmin: a.Kind == RemediationKind.ApplySecuritySetting || plan?.Warning?.Contains("administrator", StringComparison.OrdinalIgnoreCase) == true,
                         Slow: a.Kind is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates,
-                        Undo: Changes.Undoability.Of(a.Kind), AreaKey: area));
+                        Undo: Changes.Undoability.Of(a.Kind), AreaKey: area,
+                        DefaultOn: a.Kind != RemediationKind.ApplySecuritySetting || Security.SecurityFixes.Find(a.Target)?.DefaultOn != false));
                 }
             }
         }

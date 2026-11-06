@@ -87,7 +87,7 @@ public class SecurityEssentialsTests
     {
         var rep = SecurityEssentialsModule.Build(new(false, "UEFI", "Core", 0, SecurityEssentialsModule.ParseTpm(TpmOutput)));
         Assert.Equal(DiagnosticStatus.Warning, rep.Status);
-        Assert.StartsWith("4 settings worth changing (2 can be fixed here) · Drive C: isn't encrypted · Secure Boot is off", rep.Summary);
+        Assert.StartsWith("5 settings worth changing (3 can be fixed here) · Drive C: isn't encrypted · Secure Boot is off", rep.Summary);
 
         var sb = Card(rep, "secureboot");
         Assert.Equal(AreaLevel.Warning, sb.Level);

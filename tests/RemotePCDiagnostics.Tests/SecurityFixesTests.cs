@@ -46,7 +46,7 @@ public class SecurityFixesTests
             Assert.Equal(RemediationKind.ApplySecuritySetting, a.Kind);
             Assert.Equal(key, a.Target);
         }
-        Assert.Null(Card(rep, "guest").Actions);
+        Assert.Equal(SecurityFixes.GuestLogons, Assert.Single(Card(rep, "guest").Actions!).Target);
         Assert.Null(Card(rep, "secureboot").Actions);
         Assert.Null(Card(rep, "encryption").Actions);
     }
@@ -87,7 +87,7 @@ public class SecurityFixesTests
     [Fact]
     public void Every_fix_has_read_and_apply_scripts()
     {
-        Assert.Equal(5, SecurityFixes.All.Count);
+        Assert.Equal(6, SecurityFixes.All.Count);
         foreach (var f in SecurityFixes.All)
         {
             Assert.NotNull(SecurityFixes.ReadScript(f.Key));
@@ -142,6 +142,20 @@ public class SecurityFixesTests
             Assert.Equal(RemotePCDiagnostics.Core.Changes.UndoSupport.Full, x.Undo);
         });
         Assert.Equal("Turn on PUA blocking", fixes.Single(x => x.Id.EndsWith(":pua")).Title);
+    }
+
+    [Fact]
+    public void Guest_logon_fix_is_offered_on_home_but_not_ticked_and_plans_never_mention_admin()
+    {
+        var f = SecurityEssentialsModule.ParseProbe("Edition=Core\nDefaultMode=Normal\nLlmnr=0\nAutoRun=255\nInsecureGuest=", null);
+        var rep = SecurityEssentialsModule.Build(f);
+        var result = new DiagnosticResult<AreaReport>(ModuleSlugs.SecurityEssentials, rep.Status, rep.Summary, DateTimeOffset.Now, rep);
+        var plans = new RemediationService(new SystemCommandRunner());
+        var guest = RemotePCDiagnostics.Core.Workflow.FixCatalog.Build([result], [], plans).Single(x => x.Id == "rem:applysecuritysetting:guest-logons");
+        Assert.False(guest.DefaultOn);
+        Assert.True(guest.NeedsAdmin);
+        foreach (var fix in SecurityFixes.All)
+            Assert.DoesNotContain("administrator", plans.Plan(new AreaAction(RemediationKind.ApplySecuritySetting, fix.ButtonText, fix.Key)).Warning ?? "", StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

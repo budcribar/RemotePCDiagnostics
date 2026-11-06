@@ -4,7 +4,8 @@ namespace RemotePCDiagnostics.Core.Security;
 
 /// <summary>One security setting this app can turn on (and put back). All text is end-user friendly.</summary>
 /// <param name="Key">Stable id: the <see cref="Areas.AreaAction.Target"/> of the fix and the change journal's target. Never rename.</param>
-public sealed record SecurityFix(string Key, string Label, string ButtonText, string WhatItIs, string WhatHappens, string? Caveat, string Done, string UndoDone);
+/// <param name="DefaultOn">Ticked by default in the fix list; false for a fix that can get in the way (guest logons and old NAS drives).</param>
+public sealed record SecurityFix(string Key, string Label, string ButtonText, string WhatItIs, string WhatHappens, string? Caveat, string Done, string UndoDone, bool DefaultOn = true);
 
 /// <summary>
 /// The fixed set of security settings the Security essentials check offers to change, with the PowerShell that reads, applies and
@@ -13,7 +14,7 @@ public sealed record SecurityFix(string Key, string Label, string ButtonText, st
 /// </summary>
 public static class SecurityFixes
 {
-    public const string Pua = "pua", NetworkProtection = "network-protection", AsrRules = "asr", Llmnr = "llmnr", AutoRun = "autorun";
+    public const string Pua = "pua", NetworkProtection = "network-protection", AsrRules = "asr", Llmnr = "llmnr", AutoRun = "autorun", GuestLogons = "guest-logons";
 
     /// <summary>Attack Surface Reduction rules that rarely get in a home user's way (the ones Microsoft suggests starting with).</summary>
     public static readonly IReadOnlyList<(string Id, string Name)> SafeAsrRules =
@@ -31,6 +32,9 @@ public static class SecurityFixes
     public const string AutoRunValue = "NoDriveTypeAutoRun";
     /// <summary>0xFF: AutoRun off on every kind of drive.</summary>
     public const int AutoRunAllDrives = 255;
+    /// <summary>Policy "Enable insecure guest logons" (Lanman Workstation): 0 = off.</summary>
+    public const string GuestKey = @"HKLM:\SOFTWARE\Policies\Microsoft\Windows\LanmanWorkstation";
+    public const string GuestValue = "AllowInsecureGuestAuth";
 
     public static readonly IReadOnlyList<SecurityFix> All =
     [
@@ -59,6 +63,11 @@ public static class SecurityFixes
             "Turns off AutoRun on all drives (policy NoDriveTypeAutoRun = 255). You can still open a drive yourself in File Explorer.",
             null,
             "Turned off AutoRun for all drives.", "AutoRun is back to how it was."),
+        new(GuestLogons, "Network drive guest logons", "Turn off insecure guest logons",
+            "Guest logons let this PC open shared folders without a password. Someone on the same network can pretend to be that shared folder and send this PC harmful files.",
+            "Turns off insecure guest logons with the Windows policy (AllowInsecureGuestAuth = 0), so shared folders need a user name and password.",
+            "An older network drive (NAS) that only allows guest access stops opening until you set a password on it. Not ticked by default for that reason.",
+            "Turned off insecure guest logons.", "Insecure guest logons are back to how they were.", DefaultOn: false),
     ];
 
     public static SecurityFix? Find(string? key) => All.FirstOrDefault(f => string.Equals(f.Key, key, StringComparison.OrdinalIgnoreCase));
@@ -78,6 +87,7 @@ public static class SecurityFixes
                     $"(@({IdList})|ForEach-Object{{if($m.ContainsKey($_)){{$_+'='+[int]$m[$_]}}else{{$_+'='}}}}) -join ';'",
         Llmnr => ReadDword(LlmnrKey, LlmnrValue),
         AutoRun => ReadDword(AutoRunKey, AutoRunValue),
+        GuestLogons => ReadDword(GuestKey, GuestValue),
         _ => null,
     };
 
@@ -91,6 +101,7 @@ public static class SecurityFixes
                     "$p=Get-MpPreference;$ids=@($p.AttackSurfaceReductionRules_Ids|ForEach-Object{$_.ToLowerInvariant()});foreach($x in $r){if($ids -notcontains $x){exit 3}}",
         Llmnr => WriteDword(LlmnrKey, LlmnrValue, 0),
         AutoRun => WriteDword(AutoRunKey, AutoRunValue, AutoRunAllDrives),
+        GuestLogons => WriteDword(GuestKey, GuestValue, 0),
         _ => null,
     };
 
@@ -113,7 +124,7 @@ public static class SecurityFixes
         {
             case Pua or NetworkProtection:
                 return int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) && n is >= 0 and <= 6 ? new(n, []) : null;
-            case Llmnr or AutoRun:
+            case Llmnr or AutoRun or GuestLogons:
                 if (text.Length == 0) return new(null, []);
                 return long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var d) && d is >= 0 and <= uint.MaxValue ? new(d, []) : null;
             case AsrRules:
@@ -145,6 +156,7 @@ public static class SecurityFixes
             NetworkProtection => $"$ErrorActionPreference='Stop';Set-MpPreference -EnableNetworkProtection {p.Value!.Value.ToString(CultureInfo.InvariantCulture)}",
             Llmnr => RestoreDword(LlmnrKey, LlmnrValue, p.Value),
             AutoRun => RestoreDword(AutoRunKey, AutoRunValue, p.Value),
+            GuestLogons => RestoreDword(GuestKey, GuestValue, p.Value),
             AsrRules => "$ErrorActionPreference='Stop';" + string.Concat(p.Rules.Select(r => r.Action is { } a
                 ? $"Add-MpPreference -AttackSurfaceReductionRules_Ids '{r.Id}' -AttackSurfaceReductionRules_Actions {a.ToString(CultureInfo.InvariantCulture)};"
                 : $"Remove-MpPreference -AttackSurfaceReductionRules_Ids '{r.Id}';")),

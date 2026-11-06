@@ -259,7 +259,7 @@ public sealed class RemediationService(
                 true),
 
             RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf
-                ? new(action, $"{sf.ButtonText}?", sf.WhatItIs, sf.WhatHappens, "Requires administrator privileges." + (sf.Caveat is { } c ? " " + c : ""), true)
+                ? new(action, $"{sf.ButtonText}?", sf.WhatItIs, sf.WhatHappens, sf.Caveat, true)
                 : new(action, action.ButtonText, "", "This setting isn't one this app changes.", "This setting isn't one this app changes.", Allowed: false),
 
             _ => new(action, action.ButtonText, "", "", null, true),
@@ -416,7 +416,7 @@ public sealed class RemediationService(
 
         RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf && Security.SecurityFixes.ApplyScript(sf.Key) is { } script
             ? await RunPowerShellAsync(script, sf.Done,
-                $"Couldn't change {sf.Label.ToLowerInvariant()} (administrator rights required, or Tamper Protection or your organization's policy blocked it).", ct).ConfigureAwait(false)
+                $"Couldn't change {sf.Label.ToLowerInvariant()} (Windows refused the change; Tamper Protection or an organization policy may be blocking it).", ct).ConfigureAwait(false)
             : new(false, "This setting isn't one this app changes."),
 
         RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles => ToResult(LastRepair = await RepairAsync(action, RepairProgress, ct).ConfigureAwait(false)),
