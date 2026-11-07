@@ -42,4 +42,7 @@ public interface IModuleUiFrames
     /// <summary>Starts the module's UI process (replacing one already open for it) and returns its session: the address to frame and the
     /// connection to the process. Disposing the session stops the process.</summary>
     Task<RemoteComponentSession> OpenAsync(UserModeModule module, CancellationToken cancellationToken = default);
+
+    /// <summary>This host can show <paramref name="module"/>'s UI (a remote session shows only those of modules that ship with the app).</summary>
+    bool CanOpen(UserModeModule module) => true;
 }

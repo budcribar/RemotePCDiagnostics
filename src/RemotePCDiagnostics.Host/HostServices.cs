@@ -96,11 +96,12 @@ public static class HostServices
             // In or out of process for each module that ships with the app (About page; process-mode.json in the same admin-only folder).
             ProcessModes = ModuleProcessModeSetting.Read(modulesFolder ?? ModuleLoaderOptions.DefaultModulesFolder()),
         }));
-        // Unsigned modules' own UIs, framed on the module page (Local only, like unsigned modules themselves).
-        if (session.Mode == SessionMode.Local)
+        // Modules' own UIs that run in the module UI host, framed on the module page: through a relay in the app in Local mode, through
+        // the session's relay in Remote mode (modules that ship with the app only).
+        if (session.Mode == SessionMode.Local || session.ServerUri is not null)
             services.AddSingleton<IModuleUiFrames>(sp =>
             {
-                var frames = new ModuleUiFrames(L<ModuleUiFrames>());
+                var frames = new ModuleUiFrames(L<ModuleUiFrames>(), remoteRelay: session.Mode == SessionMode.Remote ? session.ServerUri : null);
                 AppDomain.CurrentDomain.ProcessExit += (_, _) => frames.Dispose(); // the UI processes never outlive the app
                 return frames;
             });

@@ -17,9 +17,10 @@
 
     private ModuleUiResult? _last;
 
-    /// <summary>Shown only where the host can do it (Local mode); otherwise the module page shows the generic report alone.</summary>
+    /// <summary>Shown only where the host can do it (Local mode, or a remote session for a module that ships with the app); otherwise the
+    /// module page shows the generic report alone, with a note.</summary>
     public static bool IsAvailable(AppServices app, IUserModeModule module) =>
-        module.Source.Manifest.HasUi && app.ModuleUiFrames is not null;
+        module.Source.Manifest.HasUi && app.ModuleUiFrames is { } frames && frames.CanOpen(module.Source);
 
     protected override void OnInitialized()
     {

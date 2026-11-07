@@ -150,13 +150,42 @@ public class HostServicesTests
     }
 
     [Theory]
-    [InlineData(SessionMode.Local, true)]
-    [InlineData(SessionMode.Remote, false)]
-    public void Pages_reach_module_UI_frames_through_AppServices_in_local_mode_only(SessionMode mode, bool expected)
+    [InlineData(SessionMode.Local, null)]
+    [InlineData(SessionMode.Remote, "https://relay.invalid/")]
+    public void Pages_reach_module_UI_frames_through_AppServices_on_the_session_relay_when_remote(SessionMode mode, string? relay)
     {
         var (provider, _) = Build(mode);
         using (provider)
-            Assert.Equal(expected, provider.GetRequiredService<RemotePCDiagnostics.UI.AppServices>().ModuleUiFrames is not null);
+        {
+            var frames = Assert.IsType<ModuleUiFrames>(provider.GetRequiredService<RemotePCDiagnostics.UI.AppServices>().ModuleUiFrames);
+            Assert.Equal(relay, frames.RemoteRelay?.AbsoluteUri);
+        }
+    }
+
+    [Fact]
+    public void A_remote_session_frames_only_the_UIs_of_modules_that_ship_with_the_app()
+    {
+        var manifest = new RemotePCDiagnostics.Core.Plugins.ModuleManifest { Id = Guid.NewGuid(), Slug = "acme.clock", HasUi = true };
+        var unsigned = new RemotePCDiagnostics.Core.Plugins.UserModeModule("x.dll", manifest, BuiltInModules.Descriptors[0]);
+        var bundled = new RemotePCDiagnostics.Core.Plugins.UserModeModule("x.dll", manifest, BuiltInModules.Descriptors[0]) { Bundled = true };
+        var local = new ModuleUiFrames();
+        var remote = new ModuleUiFrames(remoteRelay: new Uri("https://relay.invalid"));
+        Assert.True(local.CanOpen(unsigned));
+        Assert.True(local.CanOpen(bundled));
+        Assert.False(remote.CanOpen(unsigned));
+        Assert.True(remote.CanOpen(bundled));
+    }
+
+    [Fact]
+    public void The_frame_page_is_the_frame_id_on_the_relay()
+    {
+        var id = Guid.NewGuid();
+        var (b, g, page) = ModuleUiFrames.Addresses(new Uri("https://remoteblazorwebview.com:34544"), null, id);
+        Assert.Equal("https://remoteblazorwebview.com:34544/", b.AbsoluteUri);
+        Assert.Equal(b, g);
+        Assert.Equal($"https://remoteblazorwebview.com:34544/{id}", page.AbsoluteUri);
+        // The mirror of a session frames the same UI from /mirror/{id} (RemoteBlazorWebView 10.0.14).
+        Assert.Equal($"https://remoteblazorwebview.com:34544/mirror/{id}", PeakSWC.RemoteBlazorWebView.RemoteComponents.RemoteComponentFrame.MirrorSourceFor(page)?.AbsoluteUri);
     }
 
     [Fact]
