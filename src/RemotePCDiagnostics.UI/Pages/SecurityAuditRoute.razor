@@ -1,0 +1,12 @@
+@page "/security-audit"
+@inherits StoreAwareComponent
+@* The security audit's top-level page (nav rail, Dashboard). The module ships as its own DLL, whose routes the app's router doesn't see, so
+   this page shows the module's details here, laid out as on its module page, in or out of process. *@
+@if (Diagnostics.Catalog.ModuleFor(ModuleIds.SecurityAudit) is { } m)
+{
+    <ModuleDetailsView DiagnosticModule="m" />
+}
+else
+{
+    <p class="meta" data-testid="area-missing">This page isn't available.</p>
+}

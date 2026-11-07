@@ -5,5 +5,8 @@
   "contract": "2.0",
   "entryType": "RemotePCDiagnostics.Modules.DiskSpeed.DiskSpeedPlugin",
   "needsAdmin": false,
-  "hasUi": true
+  "hasUi": true,
+  "portableUi": false,
+  "detailsReplaceReport": true,
+  "inProcessOnly": "it reads drive temperatures through the app's hardware monitor"
 }

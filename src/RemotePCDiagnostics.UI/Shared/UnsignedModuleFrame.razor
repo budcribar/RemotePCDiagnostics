@@ -6,7 +6,7 @@
 @* An unsigned module's own UI. It runs in its own user-mode process and is framed with an opaque origin (ModuleUiFrame, generated from
    the IModuleUi contract): it can't read this page, its storage or cookies, or another module's frame. The only thing it can tell this
    page is its height. The module's latest result goes to its process whenever it changes, over the process's stdin. *@
-<ModuleUiFrame Open="OpenAsync" LastResult="_last" Title="@Module.Source.Manifest.DisplayName" class="module-ui-frame" data-testid="module-ui-frame">
+<ModuleUiFrame Open="OpenAsync" LastResult="_last" Theme="@App.Preferences?.Current.Theme" Title="@Module.Source.Manifest.DisplayName" class="module-ui-frame" data-testid="module-ui-frame">
     <ProblemContent Context="problem">
         <div class="notice notice-error" data-testid="module-ui-problem">This module's own UI couldn't start: @problem</div>
     </ProblemContent>
@@ -17,15 +17,20 @@
 
     private ModuleUiResult? _last;
 
-    /// <summary>Shown only where the host can do it (Local mode); otherwise the module page shows the generic report alone.</summary>
+    /// <summary>Shown only where the host can do it (Local mode, or a remote session for a module that ships with the app); otherwise the
+    /// module page shows the generic report alone, with a note.</summary>
     public static bool IsAvailable(AppServices app, IUserModeModule module) =>
-        module.Source.Manifest.HasUi && app.ModuleUiFrames is not null;
+        module.Source.Manifest.HasUi && app.ModuleUiFrames is { } frames && frames.CanOpen(module.Source);
 
     protected override void OnInitialized()
     {
         _last = ModuleUiResult.From(Store.Get(Module.Name));
         Store.Changed += OnResult;
+        if (App.Preferences is { } prefs) prefs.Changed += OnPreferences;
     }
+
+    /// <summary>The theme changed (or another preference): re-rendering sends the theme if it changed.</summary>
+    private void OnPreferences() => _ = InvokeAsync(StateHasChanged);
 
     private Task<PeakSWC.RemoteBlazorWebView.RemoteComponents.RemoteComponentSession> OpenAsync(CancellationToken cancellationToken) =>
         (App.ModuleUiFrames ?? throw new InvalidOperationException("this host can't show a module's own UI")).OpenAsync(Module.Source, cancellationToken);
@@ -37,5 +42,9 @@
         _ = InvokeAsync(() => { _last = ModuleUiResult.From(result); StateHasChanged(); });
     }
 
-    public void Dispose() => Store.Changed -= OnResult;
+    public void Dispose()
+    {
+        Store.Changed -= OnResult;
+        if (App.Preferences is { } prefs) prefs.Changed -= OnPreferences;
+    }
 }

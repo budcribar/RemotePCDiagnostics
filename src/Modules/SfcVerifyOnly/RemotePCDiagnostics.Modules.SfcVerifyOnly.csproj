@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Protected system files (SFC): a module that ships with the app and needs administrator (see src/Modules/Directory.Build.props). -->
+</Project>

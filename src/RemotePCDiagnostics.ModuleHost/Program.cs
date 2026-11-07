@@ -4,7 +4,8 @@ using RemotePCDiagnostics.Core.Plugins;
 
 // RemotePCDiagnostics.ModuleHost "<module.dll>"
 // Loads one module into its own load context and answers the app's requests (one JSON line each) until stdin closes or "exit".
-// Everything here runs with the token the app gave it: no administrator, Medium integrity.
+// Everything here runs with the token the app gave it: a restricted one (no administrator, Medium integrity), or for a module that ships
+// with the app and needs administrator, the app's own (out of process for crash and memory isolation only).
 if (args.Length < 1) { Console.Error.WriteLine("usage: RemotePCDiagnostics.ModuleHost <module.dll>"); return 2; }
 
 // The protocol owns stdout; anything the module prints goes to stderr (the app's log).
@@ -12,6 +13,15 @@ var output = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = false 
 Console.SetOut(Console.Error);
 var writeGate = new object();
 void Send(ModuleHostMessage m) { lock (writeGate) { output.WriteLine(m.ToLine()); output.Flush(); } }
+
+// A module that ships with the app may reference the app's own assemblies (its details page derives from the UI's ModuleDetailsBase).
+// This host never renders that page, but registering it loads the type, so those assemblies resolve from the app folder next to this exe.
+System.Runtime.Loader.AssemblyLoadContext.Default.Resolving += (context, name) =>
+{
+    var file = Path.Combine(AppContext.BaseDirectory, (name.Name ?? "") + ".dll");
+    return name.Name is { Length: > 0 } && name.Name.StartsWith("RemotePCDiagnostics.", StringComparison.Ordinal) && File.Exists(file)
+        ? context.LoadFromAssemblyPath(file) : null;
+};
 
 IDiagnosticModule module;
 // This exe sits in the app's folder, so the app's helpers (osquery) resolve from here.

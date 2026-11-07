@@ -1,0 +1,14 @@
+{
+  "id": "0693da7b-093d-4f58-9e31-de22588fc0e7",
+  "slug": "Sensors",
+  "displayName": "Temperatures & fans",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.Sensors.SensorsPlugin",
+  "needsAdmin": true,
+  // Ships in process. The About page can run it out of process (RemotePCDiagnostics.ModuleHost with the app's own token) to test it.
+  "outOfProcess": false,
+  "hasUi": true,
+  "portableUi": false,
+  "detailsReplaceReport": true,
+  "inProcessOnly": "it reads sensors through the app's hardware monitor driver (a host query for sensor data is planned)"
+}

@@ -50,6 +50,7 @@ public sealed class ModuleCatalog
     private readonly ConcurrentDictionary<Guid, ModuleState> _disabled = new();
     private readonly ConcurrentDictionary<Guid, Type> _details = new();
     private readonly ConcurrentDictionary<Guid, bool> _applies = new();
+    private readonly ConcurrentDictionary<Guid, Plugins.ModuleHosting> _hosting = new();
 
     public ModuleCatalog(IEnumerable<ModuleDescriptor>? known = null)
     {
@@ -106,6 +107,12 @@ public sealed class ModuleCatalog
         if (_byId.TryGetValue(id, out var d)) _byId[id] = d with { DetailsComponent = component };
         RaiseChanged();
     }
+
+    /// <summary>Where a module runs and how its page is laid out (set by the plugin registrar from its manifest and the process-mode switch).</summary>
+    public void SetHosting(Guid id, Plugins.ModuleHosting hosting) { _hosting[id] = hosting; RaiseChanged(); }
+
+    /// <summary>The module's hosting, or null for a module compiled into the app (in process, its details UI replacing the report).</summary>
+    public Plugins.ModuleHosting? Hosting(Guid id) => _hosting.GetValueOrDefault(id);
 
     /// <summary>Records where a registered module came from (set by the plugin registrar, never by the module).</summary>
     public void SetOrigin(Guid id, ModuleSource source, string? pluginId)

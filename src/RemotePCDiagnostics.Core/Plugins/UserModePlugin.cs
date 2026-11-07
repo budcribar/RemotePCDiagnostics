@@ -18,8 +18,10 @@ public static class UserModePlugin
     {
         var dll = File.ReadAllBytes(path);
         var (manifest, _) = ModuleManifest.ReadFromAssembly(dll);
-        // A module that ships with the app keeps the slug it always had (no vendor. prefix); the app checked it before starting this process.
-        if (manifest.Problem(new Version(int.MaxValue, 0), vendorSlug: !manifest.OutOfProcess) is { } problem && !problem.StartsWith("needs app version", StringComparison.Ordinal))
+        // A module that ships with the app keeps the slug it always had (no vendor. prefix), whatever its module.json says about where it
+        // runs (the About page's switch decides); the app checked it before starting this process, and never lets a plugin take a built-in id.
+        var builtIn = BuiltInModules.Descriptors.Any(d => d.Id == manifest.Id && string.Equals(d.Slug, manifest.Slug, StringComparison.Ordinal));
+        if (manifest.Problem(new Version(int.MaxValue, 0), vendorSlug: !builtIn) is { } problem && !problem.StartsWith("needs app version", StringComparison.Ordinal))
             throw new InvalidDataException(problem);
         var alc = new ModuleLoadContext(manifest.Slug, dll);
         var asm = alc.LoadFromStream(new MemoryStream(dll, writable: false));

@@ -1,17 +1,10 @@
 @page "/module/{Slug}"
 @inherits StoreAwareComponent
 @inject AppServices App
-@* One route for every module: its own details UI when it has one, otherwise the generic report view. Plugins add no routes. *@
+@* One route for every module: its own details UI and/or the generic report view (ModuleDetailsView). Plugins add no routes. *@
 @{
     var m = Diagnostics.Modules.FirstOrDefault(x => string.Equals(x.Name, Slug, StringComparison.OrdinalIgnoreCase));
-    var details = m is null ? null : Diagnostics.Catalog.Get(m.Id)?.DetailsComponent;
     var instances = m is IPerDeviceModule ? Store.InstancesOf(m.Name) : [];
-}
-@if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule { Source.Bundled: false } umb && !UnsignedModuleFrame.IsAvailable(App, umb))
-{
-    @* Drawn by the app, outside anything the module controls. *@
-    <div class="notice" data-testid="unsigned-module-banner"><strong>Unsigned module.</strong> Runs in user mode in a separate process: it can't
-        change this PC and has no one-click fixes.</div>
 }
 <DependencyPrompt Module="m" />
 @if (instances.Count > 0)
@@ -29,21 +22,8 @@
         </table>
     </section>
 }
-@if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule um && UnsignedModuleFrame.IsAvailable(App, um))
-{
-    <UnsignedModuleDetails DiagnosticModule="um" />
-}
-else if (details is not null)
-{
-    @* A signed module's details UI gets the module's latest result too (ModuleDetails.LastResult), like an unsigned one in its own process. *@
-    <CascadingValue Value="@Store.Get(m!.Name)" Name="@RemotePCDiagnostics.Core.Plugins.ModuleDetails.LastResult">
-        <DynamicComponent Type="details" Parameters="@(new Dictionary<string, object> { ["DiagnosticModule"] = m! })" />
-    </CascadingValue>
-}
-else
-{
-    <AreaPage Slug="@Slug" />
-}
+@* The module's own UI and/or the generic report, laid out the same in and out of process. *@
+<ModuleDetailsView DiagnosticModule="m" />
 
 @code {
     [Parameter] public string Slug { get; set; } = "";

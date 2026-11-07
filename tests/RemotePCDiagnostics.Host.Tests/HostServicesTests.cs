@@ -96,6 +96,9 @@ public class HostServicesTests
             foreach (var (id, type) in RemotePCDiagnostics.UI.BuiltInModuleUi.Components)
                 Assert.Equal(type, diag.Catalog.Get(id)!.DetailsComponent);
             Assert.Null(diag.Catalog.Get(ModuleIds.DriveHealth)!.DetailsComponent); // generic report view
+            // The admin modules' pages now come from their own DLLs.
+            Assert.Equal("LibreHardwareMonitorPage", diag.Catalog.Get(ModuleIds.Sensors)!.DetailsComponent?.Name);
+            Assert.Equal("SecurityAuditPage", diag.Catalog.Get(ModuleIds.SecurityAudit)!.DetailsComponent?.Name);
 
             // Same Stress tests list as before it was data-driven: suite order, then audio, webcam, NPU, then SFC/DISM.
             var screen = provider.GetRequiredService<ChecksScreenState>();
@@ -109,8 +112,8 @@ public class HostServicesTests
         }
     }
 
-    /// <summary>The modules that don't need administrator ship as their own DLLs (builtin-modules\, copied next to these tests too) and
-    /// still all load, in their own load contexts, with their pages.</summary>
+    /// <summary>Every built-in module ships as its own DLL (builtin-modules\, copied next to these tests too), the ones that need
+    /// administrator included, and they all still load, with their pages.</summary>
     [Fact]
     public void Every_built_in_module_is_registered_whether_compiled_in_or_its_own_DLL()
     {
@@ -127,12 +130,14 @@ public class HostServicesTests
                 {
                     // Its manifest asks to run out of process (module host), so only a stand-in is in the app.
                     Assert.True(proxy.Source.Bundled && proxy.Source.Manifest.OutOfProcess, $"{d.Slug} should not be a user-mode stand-in");
-                    Assert.False(BuiltInModulesPlugin.CompiledIn.Contains(d.Id));
+                    Assert.False(proxy.Source.Manifest.NeedsAdmin, $"{d.Slug}: modules that need administrator ship in process");
                 }
                 else
                 {
+                    // Every module ships as its own DLL. An admin module's class may still be Core's (other parts of the app use it).
                     var own = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(m!.GetType().Assembly) != System.Runtime.Loader.AssemblyLoadContext.Default;
-                    Assert.Equal(!BuiltInModulesPlugin.CompiledIn.Contains(d.Id), own);
+                    Assert.True(own || m.GetType().Assembly == typeof(ModuleCatalog).Assembly, $"{d.Slug} is compiled into the app");
+                    Assert.Equal("RemotePCDiagnostics.Modules." + d.Slug, diag.Catalog.Get(d.Id)!.PluginId);
                 }
                 Assert.Equal(ModuleSource.BuiltIn, diag.Catalog.Get(d.Id)!.Source);
             }
@@ -145,13 +150,42 @@ public class HostServicesTests
     }
 
     [Theory]
-    [InlineData(SessionMode.Local, true)]
-    [InlineData(SessionMode.Remote, false)]
-    public void Pages_reach_module_UI_frames_through_AppServices_in_local_mode_only(SessionMode mode, bool expected)
+    [InlineData(SessionMode.Local, null)]
+    [InlineData(SessionMode.Remote, "https://relay.invalid/")]
+    public void Pages_reach_module_UI_frames_through_AppServices_on_the_session_relay_when_remote(SessionMode mode, string? relay)
     {
         var (provider, _) = Build(mode);
         using (provider)
-            Assert.Equal(expected, provider.GetRequiredService<RemotePCDiagnostics.UI.AppServices>().ModuleUiFrames is not null);
+        {
+            var frames = Assert.IsType<ModuleUiFrames>(provider.GetRequiredService<RemotePCDiagnostics.UI.AppServices>().ModuleUiFrames);
+            Assert.Equal(relay, frames.RemoteRelay?.AbsoluteUri);
+        }
+    }
+
+    [Fact]
+    public void A_remote_session_frames_only_the_UIs_of_modules_that_ship_with_the_app()
+    {
+        var manifest = new RemotePCDiagnostics.Core.Plugins.ModuleManifest { Id = Guid.NewGuid(), Slug = "acme.clock", HasUi = true };
+        var unsigned = new RemotePCDiagnostics.Core.Plugins.UserModeModule("x.dll", manifest, BuiltInModules.Descriptors[0]);
+        var bundled = new RemotePCDiagnostics.Core.Plugins.UserModeModule("x.dll", manifest, BuiltInModules.Descriptors[0]) { Bundled = true };
+        var local = new ModuleUiFrames();
+        var remote = new ModuleUiFrames(remoteRelay: new Uri("https://relay.invalid"));
+        Assert.True(local.CanOpen(unsigned));
+        Assert.True(local.CanOpen(bundled));
+        Assert.False(remote.CanOpen(unsigned));
+        Assert.True(remote.CanOpen(bundled));
+    }
+
+    [Fact]
+    public void The_frame_page_is_the_frame_id_on_the_relay()
+    {
+        var id = Guid.NewGuid();
+        var (b, g, page) = ModuleUiFrames.Addresses(new Uri("https://remoteblazorwebview.com:34544"), null, id);
+        Assert.Equal("https://remoteblazorwebview.com:34544/", b.AbsoluteUri);
+        Assert.Equal(b, g);
+        Assert.Equal($"https://remoteblazorwebview.com:34544/{id}", page.AbsoluteUri);
+        // The mirror of a session frames the same UI from /mirror/{id} (RemoteBlazorWebView 10.0.14).
+        Assert.Equal($"https://remoteblazorwebview.com:34544/mirror/{id}", PeakSWC.RemoteBlazorWebView.RemoteComponents.RemoteComponentFrame.MirrorSourceFor(page)?.AbsoluteUri);
     }
 
     [Fact]

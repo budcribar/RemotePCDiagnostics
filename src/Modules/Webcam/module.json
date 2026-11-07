@@ -5,5 +5,8 @@
   "contract": "2.0",
   "entryType": "RemotePCDiagnostics.Modules.Webcam.WebcamPlugin",
   "needsAdmin": false,
-  "hasUi": true
+  "hasUi": true,
+  "portableUi": false,
+  "detailsReplaceReport": true,
+  "inProcessOnly": "it uses the app's camera adapter"
 }

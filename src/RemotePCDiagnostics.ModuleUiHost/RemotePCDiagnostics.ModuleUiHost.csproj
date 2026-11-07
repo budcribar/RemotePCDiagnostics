@@ -15,5 +15,7 @@
     <PackageReference Include="PeakSWC.RemoteBlazorWebView.Wpf" Version="$(RbwvVersion)" />
     <ProjectReference Include="..\RemotePCDiagnostics.ModuleUi\RemotePCDiagnostics.ModuleUi.csproj" />
     <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The app's stylesheet, served as wwwroot/app.css (index.html), so module UIs match the app. -->
+    <Content Include="..\RemotePCDiagnostics.UI\wwwroot\app.css" Link="wwwroot\app.css" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

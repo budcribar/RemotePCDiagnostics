@@ -302,17 +302,9 @@
             }
             else
             {
-                <CascadingValue Value="@Store.Get(m.Name)" Name="@RemotePCDiagnostics.Core.Plugins.ModuleDetails.LastResult">
-                    <DynamicComponent Type="PageFor(m)" Parameters="ParamsFor(m)" />
-                </CascadingValue>
+                <ModuleDetailsView DiagnosticModule="m" />
             }
         </div>
     };
 
-    private Type PageFor(IDiagnosticModule m) =>
-        m is RemotePCDiagnostics.Core.Plugins.IUserModeModule um && UnsignedModuleFrame.IsAvailable(App, um) ? typeof(UnsignedModuleDetails)
-        : Diagnostics.Catalog.Get(m.Id)?.DetailsComponent ?? typeof(AreaPage);
-
-    private IDictionary<string, object> ParamsFor(IDiagnosticModule m) =>
-        PageFor(m) == typeof(AreaPage) ? new Dictionary<string, object> { ["Slug"] = m.Name.ToLowerInvariant() } : new Dictionary<string, object> { ["DiagnosticModule"] = m };
 }

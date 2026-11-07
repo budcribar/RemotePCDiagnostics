@@ -16,6 +16,8 @@ public sealed record PluginRecord(string PluginId, ModuleSource Source, PluginSt
     public string? DisplayName { get; init; }
     /// <summary>Unsigned plugin that runs out of process in user mode.</summary>
     public bool UserMode { get; init; }
+    /// <summary>Where the module runs and how its page is laid out (null for the compiled-in modules).</summary>
+    public ModuleHosting? Hosting { get; init; }
 }
 
 /// <summary>
@@ -31,6 +33,7 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
     private readonly ConcurrentDictionary<Guid, ModuleDescriptor> _known = new();
     private readonly ConcurrentDictionary<Guid, ModuleDescriptor> _retired = new();
     private readonly ConcurrentDictionary<Guid, ModuleDescriptor> _manifests = new();
+    private readonly ConcurrentDictionary<Guid, ModuleHosting> _hosting = new();
     private readonly object _gate = new();
 
     public IReadOnlyList<PluginRecord> Records { get { lock (_gate) return _records.ToList(); } }
@@ -61,6 +64,7 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
         foreach (var d in scratch)
             services.Add(d.ServiceType == typeof(IDiagnosticModule) ? Tracked(d, pluginId, source, expectedModuleId) : d);
         Add(record ?? new PluginRecord(pluginId, source, PluginState.Loaded));
+        if (record is { Hosting: { } hosting } && expectedModuleId is { } hostedId) _hosting[hostedId] = hosting;
         if (manifest is not null) _manifests[manifest.Id] = manifest;
         if (source == ModuleSource.Plugin) Log($"plugin {pluginId}: registered");
         return true;
@@ -81,6 +85,7 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
     public void ApplyTo(ModuleCatalog catalog)
     {
         foreach (var (id, type) in _details) catalog.SetDetailsComponent(id, type);
+        foreach (var (id, hosting) in _hosting) catalog.SetHosting(id, hosting);
         foreach (var (id, origin) in _origins) catalog.SetOrigin(id, origin.Source, origin.PluginId);
         foreach (var d in _manifests.Values) catalog.Describe(d);
         foreach (var d in _known.Values) catalog.AddKnown(d, ModuleState.Disabled);

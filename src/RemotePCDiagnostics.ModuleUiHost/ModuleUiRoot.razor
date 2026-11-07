@@ -1,6 +1,8 @@
 @using RemotePCDiagnostics.ModuleUi
 @implements IDisposable
 @inject ModuleUiReceiver Receiver
+@using Microsoft.JSInterop
+@inject IJSRuntime JS
 @* The module's own details UI, given the module it describes (the IPluginContext.SetDetailsComponent contract) and the module's latest
    result in the app (IModuleUi.LastResult, sent by the module page) as the ModuleDetails.LastResult cascading value. *@
 @if (Program.Ui is { DetailsComponent: { } component } ui)
@@ -31,8 +33,22 @@
     private RemotePCDiagnostics.Core.DiagnosticResult? Current() => Program.Ui is not { } ui ? null
         : Receiver.LastResult?.ToResult(ui.Module.Name) ?? RemotePCDiagnostics.Core.DiagnosticResult.NotRun(ui.Module.Name);
 
-    private void OnChanged() => InvokeAsync(() =>
+    private string? _theme;
+
+    protected override Task OnAfterRenderAsync(bool firstRender) => ApplyThemeAsync();
+
+    /// <summary>The app's theme choice, applied the way the app applies it (rpdTheme in wwwroot/index.html).</summary>
+    private async Task ApplyThemeAsync()
     {
+        if (Receiver.Theme is not { } theme || theme == _theme) return;
+        _theme = theme;
+        try { await JS.InvokeAsync<string>("rpdTheme.set", theme); }
+        catch (Exception ex) { Program.Log($"theme {theme}: {ex.Message}"); }
+    }
+
+    private void OnChanged() => InvokeAsync(async () =>
+    {
+        await ApplyThemeAsync();
         _last = Current();
         Program.Log($"result from the app: {_last?.Status} {_last?.Timestamp:O}");
         StateHasChanged();

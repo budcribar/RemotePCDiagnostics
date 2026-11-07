@@ -15,6 +15,10 @@ public interface IModuleUi
 {
     /// <summary>The module's latest result in the app; null until the app has sent one.</summary>
     ModuleUiResult? LastResult { get; }
+
+    /// <summary>The app's theme choice ("dark", "light" or "system"), so the module's UI matches the page it is framed on. The UI host
+    /// loads the app's own stylesheet, so a module UI that uses the app's classes looks the same in and out of process.</summary>
+    string? Theme { get; }
 }
 
 /// <summary>A module result as it crosses to the UI process. One-click actions are removed, as everywhere for unsigned modules.</summary>
@@ -38,4 +42,7 @@ public interface IModuleUiFrames
     /// <summary>Starts the module's UI process (replacing one already open for it) and returns its session: the address to frame and the
     /// connection to the process. Disposing the session stops the process.</summary>
     Task<RemoteComponentSession> OpenAsync(UserModeModule module, CancellationToken cancellationToken = default);
+
+    /// <summary>This host can show <paramref name="module"/>'s UI (a remote session shows only those of modules that ship with the app).</summary>
+    bool CanOpen(UserModeModule module) => true;
 }

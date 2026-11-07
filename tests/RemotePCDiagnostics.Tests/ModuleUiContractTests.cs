@@ -51,6 +51,20 @@ public class ModuleUiContractTests
     }
 
     [Fact]
+    public async Task The_app_theme_reaches_the_module_ui()
+    {
+        var receiver = await Receive(new RemoteComponentMessage { Set = new() { [nameof(IModuleUi.Theme)] = JsonSerializer.SerializeToElement("dark") } }.ToLine());
+        Assert.Equal("dark", receiver.Theme);
+        Assert.Null(receiver.LastResult);
+        // The UI host serves the app's stylesheet and applies the choice the way the app does.
+        var dir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "RemotePCDiagnostics.ModuleUiHost");
+        var index = File.ReadAllText(Path.Combine(dir, "wwwroot", "index.html"));
+        Assert.Contains("href=\"app.css\"", index);
+        Assert.Contains("window.rpdTheme", index);
+        Assert.Contains("RemotePCDiagnostics.UI\\wwwroot\\app.css", File.ReadAllText(Path.Combine(dir, "RemotePCDiagnostics.ModuleUiHost.csproj")));
+    }
+
+    [Fact]
     public async Task Not_run_and_cancelled_results_keep_what_they_are()
     {
         var notRun = (await Receive(SetLine(DiagnosticResult.NotRun("m")))).LastResult!.ToResult("m");

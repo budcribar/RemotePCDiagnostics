@@ -5,5 +5,8 @@
   "contract": "2.0",
   "entryType": "RemotePCDiagnostics.Modules.CpuStress.CpuStressPlugin",
   "needsAdmin": false,
-  "hasUi": true
+  "hasUi": true,
+  "portableUi": false,
+  "detailsReplaceReport": true,
+  "inProcessOnly": "it reads temperatures and fans through the app's hardware monitor"
 }
