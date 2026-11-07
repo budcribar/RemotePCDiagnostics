@@ -15,6 +15,10 @@ public interface IModuleUi
 {
     /// <summary>The module's latest result in the app; null until the app has sent one.</summary>
     ModuleUiResult? LastResult { get; }
+
+    /// <summary>The app's theme choice ("dark", "light" or "system"), so the module's UI matches the page it is framed on. The UI host
+    /// loads the app's own stylesheet, so a module UI that uses the app's classes looks the same in and out of process.</summary>
+    string? Theme { get; }
 }
 
 /// <summary>A module result as it crosses to the UI process. One-click actions are removed, as everywhere for unsigned modules.</summary>

@@ -1,14 +1,34 @@
 <!DOCTYPE html>
-<html>
+<html data-theme="light" data-theme-choice="system">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Module</title>
     <!-- Required: the relay rewrites this to /{id}/, which ties the page's files and calls to this module's UI process. -->
     <base href="/" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+        // The app's theme (IModuleUi.Theme: dark | system | light), applied like the app's own page so its stylesheet's tokens match.
+        // Nothing is stored: the frame has an opaque origin, and the app sends the choice.
+        (function () {
+            var choice = 'system', mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+            function norm(v) { v = (v || '').toLowerCase().trim(); return v === 'dark' || v === 'light' ? v : 'system'; }
+            function apply() {
+                var d = document.documentElement;
+                d.setAttribute('data-theme', choice === 'system' ? (mq && mq.matches ? 'dark' : 'light') : choice);
+                d.setAttribute('data-theme-choice', choice);
+                return choice;
+            }
+            if (mq) { if (mq.addEventListener) mq.addEventListener('change', apply); else if (mq.addListener) mq.addListener(apply); }
+            window.rpdTheme = { get: function () { return choice; }, set: function (v) { choice = norm(v); return apply(); } };
+            apply();
+        })();
+    </script>
+    <!-- The app's own stylesheet (RemotePCDiagnostics.UI/wwwroot/app.css, linked in at build), so a module UI that uses the app's classes
+         looks the same in and out of process. The frame keeps the page's background showing through. -->
+    <link href="app.css" rel="stylesheet" />
     <style>
-        body { font-family: "Segoe UI", system-ui, sans-serif; font-size: 14px; margin: 0; padding: 12px; color: #1f2328; background: transparent; }
-        @media (prefers-color-scheme: dark) { body { color: #e6edf3; } }
+        body { padding: 12px; background: transparent; background-image: none; }
         .module-ui-error { color: #b42318; }
     </style>
 </head>
