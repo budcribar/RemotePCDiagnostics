@@ -150,6 +150,16 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
                     : !loaded.Add(manifest.Id) ? $"module {manifest.Slug} was already loaded from another DLL"
                     : manifest.Problem(options.HostVersion, vendorSlug: false);
                 if (why is not null) { registrar.RecordDisabled(record with { Reason = why }); continue; }
+                if (manifest.OutOfProcess && userMode is not null)
+                {
+                    // Its code never loads into the app: the app holds a stand-in that asks the module host (user mode) to run it.
+                    var um = new UserModeModule(path, manifest, d!) { Bundled = true };
+                    var outOfProcess = record with { Reason = "runs out of process, in user mode", UserMode = true };
+                    if (registrar.Register(services, new SingleModulePlugin(userMode(um)), pluginId, ModuleSource.BuiltIn, manifest.Id, outOfProcess))
+                        Log($"built-in {manifest.Slug} ({manifest.Id}) runs out of process from {path}");
+                    continue;
+                }
+                // No module host (tests, tools): an out-of-process module ships with the app, so it may load in process like the others.
                 var plugin = Instantiate(pluginId, dll, manifest);
                 // No manifest descriptor: the app's own descriptor (group, order, RunAfter) stays the one used.
                 if (registrar.Register(services, plugin, pluginId, ModuleSource.BuiltIn, manifest.Id, record))
@@ -228,8 +238,14 @@ internal sealed class SingleModulePlugin(IDiagnosticModule module) : IModulePlug
     public void Register(IServiceCollection services, IPluginContext context) => services.AddSingleton(module);
 }
 
-/// <summary>An unsigned module the user-mode module host runs out of process.</summary>
-public sealed record UserModeModule(string Path, ModuleManifest Manifest, ModuleDescriptor Descriptor);
+/// <summary>A module the user-mode module host runs out of process: an unsigned plugin, or a module that ships with the app and asks to
+/// (<see cref="ModuleManifest.OutOfProcess"/>).</summary>
+public sealed record UserModeModule(string Path, ModuleManifest Manifest, ModuleDescriptor Descriptor)
+{
+    /// <summary>Ships with the app (builtin-modules\): trusted like the app's own code, so its report keeps its one-click fixes and the
+    /// module page shows no "Unsigned module" banner. It still runs with the restricted token.</summary>
+    public bool Bundled { get; init; }
+}
 
 /// <summary>
 /// One load context per module. The contract assembly, DI and logging abstractions and ASP.NET Components come from the host, so types match across

@@ -26,6 +26,7 @@ See `samples/SampleModule`. A module project:
 | `dependsOn`, `runAfter` | Module ids that must run first (and pass), or only run first. |
 | `changesSystem`, `needsAdmin` | A module with either set must be signed with the project key. |
 | `hasUi` | The plugin sets its own details UI (`SetDetailsComponent`). Needed for an unsigned module's UI to be shown (see below). |
+| `outOfProcess` | Only for a module that ships with the app: it runs out of process like an unsigned one (see below). Ignored for plugins. |
 
 ## Signing and trust
 
@@ -95,6 +96,25 @@ fans, drive health, crashes, services, DISM, SFC, the security audit) stay compi
   `IWebcamIo`, `INpuIo`, `IGpuDeviceFactory`, the logger factory via `ModuleServices.LoggerFor<T>`) and sets its page with
   `SetDetailsComponent`. The Windows adapters stay in the Host.
 - `--verify-package` fails when a built-in module is neither compiled in nor in `builtin-modules\`.
+
+### Built-in modules that run out of process
+
+A module that ships with the app can set `"outOfProcess": true` in its `module.json`. Programs & updates, Battery & power plan and
+Device Manager & drivers do. Then:
+
+- `LoadBundled` doesn't load its code into the app. It registers a `UserModeModuleProxy` (`UserModeModule.Bundled = true`) and the check
+  runs in `RemotePCDiagnostics.ModuleHost.exe` with the restricted, Medium-integrity token, in Local and Remote sessions. It doesn't need
+  the unsigned-modules switch, because it is part of the app's own install.
+- `UserModePlugin.Load` gives the plugin the app's read-only helpers (`OsqueryRunner` from the app folder's `tools\osquery`, and
+  `SystemCommandRunner`), so its plugin code is unchanged. Adapters that need the Host (sensors, audio, webcam, NPU, GPU) aren't
+  available there, so those modules stay in process.
+- Unlike an unsigned module, its report keeps its one-click fixes (the app runs them, elevated, as before) and its page shows no
+  "Unsigned module" banner. The app's descriptor (group, order, run order) still applies.
+- With `"hasUi": true` its details UI runs in `moduleui\RemotePCDiagnostics.ModuleUiHost.exe` and is framed on the module page above the
+  generic report (Local mode; Remote shows the generic report). That UI can use only Components and Core types and must style itself:
+  the app's UI assembly and CSS aren't in that process. Programs adds a search over installed programs and updates; Battery adds
+  health and charge gauges with a "Check now" that reads the battery in the UI process.
+- Without a module host (tests and tools that pass no user-mode factory) it loads in process like the others.
 
 ## Checks written as data
 

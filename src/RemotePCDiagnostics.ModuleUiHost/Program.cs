@@ -34,7 +34,9 @@ public static class Program
         {
             Directory.CreateDirectory(args[4]);
             _logPath = Path.Combine(args[4], "module-ui.log");
-            Ui = UserModePlugin.Load(args[0], RemotePCDiagnostics.Logging.LineLogger.From(Log));
+            // This exe is in moduleui\ under the app's folder: the app's helpers (osquery) resolve from the folder above.
+            var appDirectory = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory)) ?? AppContext.BaseDirectory;
+            Ui = UserModePlugin.Load(args[0], RemotePCDiagnostics.Logging.LineLogger.From(Log), appDirectory);
             Log($"start pid={Environment.ProcessId} module={Ui.Manifest.Slug} relay={relay} id={id}");
             if (Ui.DetailsComponent is null) { Log("the module sets no details UI"); return ExitNoUi; }
 

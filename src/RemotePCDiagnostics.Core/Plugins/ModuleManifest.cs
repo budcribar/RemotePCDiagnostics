@@ -36,6 +36,11 @@ public sealed record ModuleManifest
     /// <summary>The module sets its own details UI (<see cref="IPluginContext.SetDetailsComponent"/>). An unsigned module's UI then runs in
     /// its own user-mode process and is shown on the module page in a sandboxed frame.</summary>
     public bool HasUi { get; init; }
+    /// <summary>Only for a module that ships with the app (builtin-modules\): its check runs in its own user-mode process
+    /// (RemotePCDiagnostics.ModuleHost, restricted token) instead of the app process, and its details UI, if it has one, in the module UI
+    /// host, framed on the module page like an unsigned module's. Unlike an unsigned module it keeps its one-click fixes, which the app runs.
+    /// A plugin's value is ignored: signed plugins run in the app, unsigned ones always out of process.</summary>
+    public bool OutOfProcess { get; init; }
 
     private static readonly JsonSerializerOptions Json = new()
     {

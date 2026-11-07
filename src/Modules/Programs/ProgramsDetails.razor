@@ -1,0 +1,82 @@
+@using RemotePCDiagnostics.Core
+@using RemotePCDiagnostics.Core.Areas
+@using RemotePCDiagnostics.Core.Plugins
+@* The module's own UI: find an installed program or update in the last run. It runs in the module UI host (user mode, its own process)
+   and is framed on the module page above the generic report, so it only adds what the report doesn't have: a search. It uses nothing but
+   Components and Core types (the app's UI assembly isn't in that process) and styles itself inline (the frame has none of the app's CSS). *@
+<div class="programs-find" style="display: flex; flex-direction: column; gap: 8px">
+    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+        <input type="search" placeholder="Find a program or update (name, publisher, KB number)" aria-label="Find a program or update"
+               data-testid="programs-find" style="flex: 1 1 260px; min-width: 0; padding: 6px 8px; border: 1px solid rgba(128,128,128,.5); border-radius: 6px; font: inherit; color: inherit; background: transparent"
+               @bind="_query" @bind:event="oninput" />
+        <label style="display: flex; gap: 4px; align-items: center; white-space: nowrap">
+            <input type="checkbox" data-testid="programs-recent" @bind="_recentOnly" /> Last 30 days only
+        </label>
+    </div>
+    @if (Report is not { } report)
+    {
+        <div data-testid="programs-find-empty">@(LastResult is { Status: DiagnosticStatus.Running } ? "Reading installed programs…" : "Run the check to search installed programs and updates.")</div>
+    }
+    else
+    {
+        var matches = Matches(report).ToList();
+        <div data-testid="programs-find-count" style="opacity: .8">
+            @(matches.Count == 1 ? "1 match" : $"{matches.Count} matches")@(matches.Count > MaxShown ? $" (showing the first {MaxShown})" : "")
+        </div>
+        @if (matches.Count > 0)
+        {
+            <table style="border-collapse: collapse; width: 100%">
+                <thead><tr>@foreach (var h in new[] { "Name", "Version / type", "Publisher", "Installed" }) { <th style="text-align: left; padding: 4px 6px; border-bottom: 1px solid rgba(128,128,128,.4)">@h</th> }</tr></thead>
+                <tbody>
+                @foreach (var m in matches.Take(MaxShown))
+                {
+                    <tr data-testid="programs-find-row">
+                        <td style="padding: 4px 6px">@m.Name@if (m.IsUpdate) { <span style="margin-left: 6px; font-size: 12px; opacity: .7">update</span> }</td>
+                        <td style="padding: 4px 6px">@m.Version</td>
+                        <td style="padding: 4px 6px">@m.Publisher</td>
+                        <td style="padding: 4px 6px; white-space: nowrap">@m.Installed</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    }
+</div>
+
+@code {
+    public const int MaxShown = 50;
+    public const int RecentDays = 30;
+
+    [Parameter] public IDiagnosticModule? DiagnosticModule { get; set; }
+    [CascadingParameter(Name = ModuleDetails.LastResult)] public DiagnosticResult? LastResult { get; set; }
+
+    private string _query = "";
+    private bool _recentOnly;
+
+    private AreaReport? Report => LastResult is { Status: not (DiagnosticStatus.NotRun or DiagnosticStatus.Running) } r ? r.Payload as AreaReport : null;
+
+    /// <summary>One program or update found in the last run's report.</summary>
+    public sealed record Match(string Name, string Version, string Publisher, string Installed, DateOnly? InstalledOn, bool IsUpdate);
+
+    private IEnumerable<Match> Matches(AreaReport report) =>
+        Find(report, _query, _recentOnly ? DateOnly.FromDateTime(DateTime.Today).AddDays(-RecentDays) : null);
+
+    /// <summary>The installed programs and updates in <paramref name="report"/> that match <paramref name="query"/> (any column, any
+    /// case), newest first; with <paramref name="since"/>, only those installed on or after it.</summary>
+    public static IEnumerable<Match> Find(AreaReport report, string? query, DateOnly? since)
+    {
+        var all = Rows(report, "programs").Select(r => new Match(At(r, 0), At(r, 1), At(r, 2), At(r, 3), Date(r, 3), false))
+            .Concat(Rows(report, "updates").Select(r => new Match(At(r, 0), At(r, 1), "", At(r, 2), Date(r, 2), true)));
+        var q = query?.Trim() ?? "";
+        return all
+            .Where(m => q.Length == 0 || new[] { m.Name, m.Version, m.Publisher }.Any(v => v.Contains(q, StringComparison.CurrentCultureIgnoreCase)))
+            .Where(m => since is null || m.InstalledOn >= since)
+            .OrderByDescending(m => m.InstalledOn ?? DateOnly.MinValue).ThenBy(m => m.Name, StringComparer.CurrentCultureIgnoreCase);
+    }
+
+    private static IEnumerable<AreaRow> Rows(AreaReport report, string cardId) => report.Cards.FirstOrDefault(c => c.Id == cardId)?.Rows ?? [];
+    private static string At(AreaRow r, int i) => i < r.Values.Count ? r.Values[i] : "";
+    /// <summary>The row's sort key for its date column (ProgramsModule.DateKey), or its shown date.</summary>
+    private static DateOnly? Date(AreaRow r, int i) =>
+        (r.SortKeys is { } k && i < k.Count ? k[i] : null) is { Length: > 0 } key && ProgramsModule.ParseDate(key) is { } d ? d : ProgramsModule.ParseDate(At(r, i));
+}
