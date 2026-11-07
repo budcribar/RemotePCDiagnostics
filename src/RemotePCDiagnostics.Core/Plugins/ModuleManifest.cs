@@ -45,6 +45,12 @@ public sealed record ModuleManifest
     /// such as the hardware monitor driver or the app's audio and GPU adapters). Set: the process-mode switch keeps it in the app and
     /// shows this reason. Null: it can run either way.</summary>
     public string? InProcessOnly { get; init; }
+    /// <summary>A module that ships with the app whose own UI isn't portable but reads only the module's results (no app services): out
+    /// of process the app still renders it, from the stand-in's results, so the page is the same in either process.</summary>
+    public bool ResultOnlyUi { get; init; }
+    /// <summary>The host queries (<see cref="HostCapabilities"/>) the module asks the app for when it runs in user mode. The app answers
+    /// nothing that isn't listed here, and only for a module that ships with the app.</summary>
+    public List<string> Capabilities { get; init; } = [];
     /// <summary>The module's details UI already shows its results, so the module page shows it instead of the generic report. False (the
     /// default): the details UI is shown above the generic report. The same in and out of process, so switching modes never changes the
     /// page.</summary>
@@ -81,6 +87,7 @@ public sealed record ModuleManifest
             return $"built for contract {Contract}, this app implements {ContractVersion.Current.ToString(2)}";
         if (MinHost is { Length: > 0 } min && System.Version.TryParse(min, out var minHost) && minHost > hostVersion)
             return $"needs app version {MinHost} or later";
+        if ((Capabilities ?? []).FirstOrDefault(c => !HostCapabilities.All.Contains(c)) is { } unknown) return $"unknown capability '{unknown}'";
         return null;
     }
 

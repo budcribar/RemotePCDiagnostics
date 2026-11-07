@@ -14,7 +14,9 @@ public static class UserModePlugin
     /// <param name="log">Where the plugin's <see cref="IPluginContext.Log"/> lines go.</param>
     /// <param name="appDirectory">The app's folder (where tools\osquery is). When set, the plugin's services get the same helpers the
     /// app gives a module that ships with it (<see cref="AddHelpers"/>); they run in this user-mode process, with its token.</param>
-    public static Loaded Load(string path, ILogger? log = null, string? appDirectory = null)
+    /// <param name="hostQueries">The module host's line to the app (<see cref="IHostQueries"/>), registered for the plugin when the module
+    /// lists capabilities: a module that ships with the app then asks the app for what needs administrator rights.</param>
+    public static Loaded Load(string path, ILogger? log = null, string? appDirectory = null, IHostQueries? hostQueries = null)
     {
         var dll = File.ReadAllBytes(path);
         var (manifest, _) = ModuleManifest.ReadFromAssembly(dll);
@@ -30,6 +32,7 @@ public static class UserModePlugin
         var context = new Context(manifest.Slug, log);
         var services = new ServiceCollection();
         if (appDirectory is not null) AddHelpers(services, appDirectory, log);
+        if (hostQueries is not null && manifest.Capabilities.Count > 0) services.AddSingleton(hostQueries);
         plugin.Register(services, context);
         var sp = services.BuildServiceProvider();
         var modules = sp.GetServices<IDiagnosticModule>().ToList();
