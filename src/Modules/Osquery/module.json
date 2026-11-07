@@ -5,5 +5,7 @@
   "contract": "2.0",
   "entryType": "RemotePCDiagnostics.Modules.Osquery.OsqueryPlugin",
   "needsAdmin": false,
-  "hasUi": true
+  "hasUi": true,
+  "portableUi": false,
+  "detailsReplaceReport": true
 }

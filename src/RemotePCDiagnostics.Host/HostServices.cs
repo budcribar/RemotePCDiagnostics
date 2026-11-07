@@ -83,7 +83,7 @@ public static class HostServices
         // Every built-in module goes through the same registration path a plugin uses.
         var plugins = new PluginRegistrar(session, HostVersion(), L<PluginRegistrar>());
         services.AddSingleton(plugins);
-        plugins.Register(services, new BuiltInModulesPlugin(loggerFactory), BuiltInModulesPlugin.Id, ModuleSource.BuiltIn);
+        plugins.Register(services, new BuiltInModulesPlugin(), BuiltInModulesPlugin.Id, ModuleSource.BuiltIn);
         // The modules that ship with the app (builtin-modules\ next to the exe, in-process), then module DLLs from
         // %ProgramFiles%\RemotePCDiagnostics\modules (signed ones load in-process; unsigned ones never do).
         services.AddSingleton(LoadModulePlugins(services, plugins, logEvent, loggerFactory, new ModuleLoaderOptions
@@ -93,6 +93,8 @@ public static class HostServices
             BundledFolder = bundledModulesFolder ?? ModuleLoaderOptions.DefaultBundledFolder(),
             // Only the person at the PC can turn unsigned modules on (a marker in the admin-only modules folder); never in a remote session.
             AllowUnsigned = session.Mode == SessionMode.Local && UnsignedModulesSetting.IsOn(),
+            // In or out of process for each module that ships with the app (About page; process-mode.json in the same admin-only folder).
+            ProcessModes = ModuleProcessModeSetting.Read(modulesFolder ?? ModuleLoaderOptions.DefaultModulesFolder()),
         }));
         // Unsigned modules' own UIs, framed on the module page (Local only, like unsigned modules themselves).
         if (session.Mode == SessionMode.Local)

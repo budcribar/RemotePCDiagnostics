@@ -1,0 +1,10 @@
+{
+  "id": "31248025-232b-48ed-a0aa-b1a90fa045c0",
+  "slug": "Crashes",
+  "displayName": "Crashes & unexpected restarts",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.Crashes.CrashesPlugin",
+  "needsAdmin": true,
+  // Ships in process. The About page can run it out of process (RemotePCDiagnostics.ModuleHost with the app's own token) to test it.
+  "outOfProcess": false
+}

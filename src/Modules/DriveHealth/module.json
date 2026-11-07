@@ -1,0 +1,10 @@
+{
+  "id": "6e35be79-5873-46de-b029-de1c69e05d58",
+  "slug": "DriveHealth",
+  "displayName": "Drive health",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.DriveHealth.DriveHealthPlugin",
+  "needsAdmin": true,
+  // Ships in process. The About page can run it out of process (RemotePCDiagnostics.ModuleHost with the app's own token) to test it.
+  "outOfProcess": false
+}

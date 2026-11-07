@@ -18,6 +18,12 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
 {
     public IModuleHostConnection Start(UserModeModule module)
     {
+        // A module that ships with the app and needs administrator runs out of process for isolation only: the app's own (elevated) token.
+        if (module is { Bundled: true, Elevated: true })
+        {
+            if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: starting with the app's own token (needs administrator)", module.Manifest.Slug);
+            return new ProcessModuleHostLauncher(directory, log).Start(module);
+        }
         var dir = directory ?? AppContext.BaseDirectory;
         var exe = Path.Combine(dir, ProcessModuleHostLauncher.HostName + ".exe");
         if (!File.Exists(exe)) throw new FileNotFoundException("Module host not found", exe);

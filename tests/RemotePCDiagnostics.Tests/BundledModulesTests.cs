@@ -59,7 +59,19 @@ public sealed class BundledModulesTests : IDisposable
 
     [Fact]
     public void Every_module_project_is_built() =>
-        Assert.True(ModuleDlls().Count() >= 17, "expected the module DLLs from src/Modules next to the tests");
+        Assert.True(ModuleDlls().Count() >= 24, "expected the module DLLs from src/Modules next to the tests");
+
+    /// <summary>The modules that need administrator. They ship as their own DLLs too, and run in the app process by default.</summary>
+    public static readonly Guid[] AdminModules =
+        [ModuleIds.Sensors, ModuleIds.DriveHealth, ModuleIds.Services, ModuleIds.Crashes, ModuleIds.DismScanHealth, ModuleIds.SfcVerifyOnly, ModuleIds.SecurityAudit];
+
+    [Fact]
+    public void Every_built_in_module_ships_as_its_own_dll()
+    {
+        var shipped = ModuleDlls().Select(f => ModuleManifest.ReadFromAssembly(File.ReadAllBytes(Dll((string)f[0]))).Manifest.Id).ToHashSet();
+        var missing = BuiltInModules.Descriptors.Where(d => d.MergedInto is null && !shipped.Contains(d.Id)).Select(d => d.Slug).ToList();
+        Assert.True(missing.Count == 0, "no DLL for: " + string.Join(", ", missing));
+    }
 
     [Theory]
     [MemberData(nameof(ModuleDlls))]
@@ -70,7 +82,9 @@ public sealed class BundledModulesTests : IDisposable
         Assert.Equal(known.Slug, manifest.Slug);
         Assert.Equal(ModuleIds.BuiltIn[manifest.Id], manifest.Slug);
         Assert.Null(manifest.Problem(new Version(1, 2, 0), vendorSlug: false));
-        Assert.False(manifest.NeedsAdmin, $"{file}: only modules that run without administrator moved to their own DLL");
+        Assert.Equal(AdminModules.Contains(manifest.Id), manifest.NeedsAdmin);
+        // Admin modules ship in process; the process-mode switch can run them out of process (elevated) to test them.
+        if (manifest.NeedsAdmin) Assert.False(manifest.OutOfProcess, $"{file}: a module that needs administrator ships in process");
         Assert.False(manifest.ChangesSystem);
         Assert.Equal($"{Path.GetFileNameWithoutExtension(file)}.{Path.GetFileNameWithoutExtension(file)["RemotePCDiagnostics.Modules.".Length..]}Plugin", manifest.EntryType);
     }
@@ -90,9 +104,15 @@ public sealed class BundledModulesTests : IDisposable
         var module = Assert.Single(sp.GetServices<IDiagnosticModule>());
         Assert.Equal(record.ModuleId, module.Id);
         Assert.Equal(ModuleIds.BuiltIn[module.Id], module.Name);
+        // The module's own code is in its context. An admin module's class may be the app's Core type (other parts of the app use it too);
+        // then only its plugin is the DLL's.
         var alc = AssemblyLoadContext.GetLoadContext(module.GetType().Assembly);
-        Assert.NotEqual(AssemblyLoadContext.Default, alc);
-        Assert.StartsWith("module:", alc!.Name);
+        if (module.GetType().Assembly != typeof(ModuleCatalog).Assembly)
+        {
+            Assert.NotEqual(AssemblyLoadContext.Default, alc);
+            Assert.StartsWith("module:", alc!.Name);
+        }
+        else Assert.Contains(AdminModules, id => id == module.Id);
     }
 
     [Fact]

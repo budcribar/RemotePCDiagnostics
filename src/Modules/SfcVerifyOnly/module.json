@@ -1,0 +1,10 @@
+{
+  "id": "aed77d8b-a41d-426c-9b0e-07ee8b9af2e1",
+  "slug": "SfcVerifyOnly",
+  "displayName": "Protected system files (SFC)",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.SfcVerifyOnly.SfcVerifyOnlyPlugin",
+  "needsAdmin": true,
+  // Ships in process. The About page can run it out of process (RemotePCDiagnostics.ModuleHost with the app's own token) to test it.
+  "outOfProcess": false
+}

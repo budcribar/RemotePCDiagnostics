@@ -1,0 +1,45 @@
+@using RemotePCDiagnostics.Core.Plugins
+@using RemotePCDiagnostics.UI.Pages
+@inherits StoreAwareComponent
+@inject AppServices App
+@* A module's details wherever they show (the module page and the Checks and Stress tests panel). The layout (ModulePageLayout) comes from
+   the module's manifest, never from where it runs: its own UI above the generic report, or instead of it (detailsReplaceReport). So
+   switching a module between in process and out of process (About page) changes nothing on the page. Out of process its own UI comes
+   from the module UI host in a sandboxed frame; when it can't (a UI that needs the app process, or no frame host here), the page says so
+   and shows the report. *@
+@if (DiagnosticModule is { } m)
+{
+    var um = m as IUserModeModule;
+    var details = Diagnostics.Catalog.Get(m.Id)?.DetailsComponent;
+    var layout = ModulePageLayout.For(Diagnostics.Catalog.Hosting(m.Id), outOfProcess: um is not null, bundled: um?.Source.Bundled ?? true,
+        hasDetails: um is not null ? um.Source.Manifest.HasUi : details is not null, frameHost: um is not null && UnsignedModuleFrame.IsAvailable(App, um));
+    @if (um is { Source.Bundled: false })
+    {
+        @* Drawn by the app, outside anything the module controls. *@
+        <div class="notice" data-testid="unsigned-module-banner"><strong>Unsigned module.</strong> Runs in user mode in a separate process: it can't
+            change this PC and has no one-click fixes.</div>
+    }
+    @if (layout.Notice is { } notice)
+    {
+        <div class="notice" data-testid="module-ui-unavailable">This module's own page isn't shown here: @notice</div>
+    }
+    @if (layout.OwnUi == ModuleOwnUi.Frame && um is not null)
+    {
+        <UnsignedModuleFrame @key="um.Id" Module="um" />
+    }
+    else if (layout.OwnUi == ModuleOwnUi.InApp && details is not null)
+    {
+        @* The module's latest result too (ModuleDetails.LastResult), as its UI gets it in the module UI host. *@
+        <CascadingValue Value="@Store.Get(m.Name)" Name="@ModuleDetails.LastResult">
+            <DynamicComponent Type="details" Parameters="@(new Dictionary<string, object> { ["DiagnosticModule"] = m })" />
+        </CascadingValue>
+    }
+    @if (layout.ShowReport)
+    {
+        <AreaPage Slug="@m.Name.ToLowerInvariant()" />
+    }
+}
+
+@code {
+    [Parameter] public IDiagnosticModule? DiagnosticModule { get; set; }
+}

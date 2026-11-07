@@ -1,0 +1,13 @@
+{
+  "id": "2a538099-302e-41ca-9e31-93a425bf76b3",
+  "slug": "SecurityAudit",
+  "displayName": "Security audit",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.SecurityAudit.SecurityAuditPlugin",
+  "needsAdmin": true,
+  // Ships in process. The About page can run it out of process (RemotePCDiagnostics.ModuleHost with the app's own token) to test it.
+  "outOfProcess": false,
+  "hasUi": true,
+  "portableUi": false,
+  "detailsReplaceReport": true
+}

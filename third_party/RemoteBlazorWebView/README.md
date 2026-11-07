@@ -1,8 +1,7 @@
 # RemoteBlazorWebView packages
 
-These local NuGet packages are built from `budcribar/RemoteBlazorWebView` branch `claude/remote-components-generator` at `011e7d8`
-(net10 at `bd18a57` plus PR #69, remote components, and PR #70, their contract source generator; net10 already has the embedded relay,
-scroll synchronization and PR #64, which lets pages in opaque-origin sandboxed iframes connect). Version `10.0.14-embedded.3` is a local
+These local NuGet packages are built from `budcribar/RemoteBlazorWebView` branch `claude/mirror-safe-remote-frames` (PR #74: net10 at
+`8ba6a3b` plus mirror-safe remote component frames, so a mirror of the app's page never restarts a module's UI process). Version `10.0.14-embedded.4` is a local
 integration build, not a nuget.org release. The root `NuGet.Config` includes this directory so a fresh checkout and CI can
 restore it. The version is set once, as `RbwvVersion` in the root `Directory.Build.props`.
 
@@ -19,8 +18,8 @@ upstream repository root:
 
 ```powershell
 foreach ($p in 'RemoteWebViewService.Lib', 'RemoteWebView', 'RemoteBlazorWebView.RemoteComponents', 'RemoteBlazorWebView.Wpf') {
-    dotnet build src/$p -c Release -p:Version=10.0.14-embedded.3
-    dotnet pack src/$p -c Release --no-build -p:Version=10.0.14-embedded.3 -o <this folder>
+    dotnet build src/$p -c Release -p:Version=10.0.14-embedded.4
+    dotnet pack src/$p -c Release --no-build -p:Version=10.0.14-embedded.4 -o <this folder>
 }
 ```
 

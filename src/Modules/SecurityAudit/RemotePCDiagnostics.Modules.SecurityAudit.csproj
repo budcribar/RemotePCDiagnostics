@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <!-- Security audit: a module that ships with the app and needs administrator (see src/Modules/Directory.Build.props). -->
+</Project>

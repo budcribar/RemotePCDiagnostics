@@ -96,6 +96,9 @@ public class HostServicesTests
             foreach (var (id, type) in RemotePCDiagnostics.UI.BuiltInModuleUi.Components)
                 Assert.Equal(type, diag.Catalog.Get(id)!.DetailsComponent);
             Assert.Null(diag.Catalog.Get(ModuleIds.DriveHealth)!.DetailsComponent); // generic report view
+            // The admin modules' pages now come from their own DLLs.
+            Assert.Equal("LibreHardwareMonitorPage", diag.Catalog.Get(ModuleIds.Sensors)!.DetailsComponent?.Name);
+            Assert.Equal("SecurityAuditPage", diag.Catalog.Get(ModuleIds.SecurityAudit)!.DetailsComponent?.Name);
 
             // Same Stress tests list as before it was data-driven: suite order, then audio, webcam, NPU, then SFC/DISM.
             var screen = provider.GetRequiredService<ChecksScreenState>();
@@ -109,8 +112,8 @@ public class HostServicesTests
         }
     }
 
-    /// <summary>The modules that don't need administrator ship as their own DLLs (builtin-modules\, copied next to these tests too) and
-    /// still all load, in their own load contexts, with their pages.</summary>
+    /// <summary>Every built-in module ships as its own DLL (builtin-modules\, copied next to these tests too), the ones that need
+    /// administrator included, and they all still load, with their pages.</summary>
     [Fact]
     public void Every_built_in_module_is_registered_whether_compiled_in_or_its_own_DLL()
     {
@@ -127,12 +130,14 @@ public class HostServicesTests
                 {
                     // Its manifest asks to run out of process (module host), so only a stand-in is in the app.
                     Assert.True(proxy.Source.Bundled && proxy.Source.Manifest.OutOfProcess, $"{d.Slug} should not be a user-mode stand-in");
-                    Assert.False(BuiltInModulesPlugin.CompiledIn.Contains(d.Id));
+                    Assert.False(proxy.Source.Manifest.NeedsAdmin, $"{d.Slug}: modules that need administrator ship in process");
                 }
                 else
                 {
+                    // Every module ships as its own DLL. An admin module's class may still be Core's (other parts of the app use it).
                     var own = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(m!.GetType().Assembly) != System.Runtime.Loader.AssemblyLoadContext.Default;
-                    Assert.Equal(!BuiltInModulesPlugin.CompiledIn.Contains(d.Id), own);
+                    Assert.True(own || m.GetType().Assembly == typeof(ModuleCatalog).Assembly, $"{d.Slug} is compiled into the app");
+                    Assert.Equal("RemotePCDiagnostics.Modules." + d.Slug, diag.Catalog.Get(d.Id)!.PluginId);
                 }
                 Assert.Equal(ModuleSource.BuiltIn, diag.Catalog.Get(d.Id)!.Source);
             }

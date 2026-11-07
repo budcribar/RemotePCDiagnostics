@@ -41,6 +41,18 @@ public sealed record ModuleManifest
     /// host, framed on the module page like an unsigned module's. Unlike an unsigned module it keeps its one-click fixes, which the app runs.
     /// A plugin's value is ignored: signed plugins run in the app, unsigned ones always out of process.</summary>
     public bool OutOfProcess { get; init; }
+    /// <summary>Only for a module that ships with the app: why it can't run out of process (it uses services only the app process has,
+    /// such as the hardware monitor driver or the app's audio and GPU adapters). Set: the process-mode switch keeps it in the app and
+    /// shows this reason. Null: it can run either way.</summary>
+    public string? InProcessOnly { get; init; }
+    /// <summary>The module's details UI already shows its results, so the module page shows it instead of the generic report. False (the
+    /// default): the details UI is shown above the generic report. The same in and out of process, so switching modes never changes the
+    /// page.</summary>
+    public bool DetailsReplaceReport { get; init; }
+    /// <summary>The module's details UI uses only Components, Abstractions and Core types and styles itself (no app UI assembly, no app
+    /// services), so it can render in the module UI host when the module runs out of process. Out of process without it, the module page
+    /// shows the generic report and says why. An unsigned plugin's UI always runs in the UI host.</summary>
+    public bool PortableUi { get; init; }
 
     private static readonly JsonSerializerOptions Json = new()
     {

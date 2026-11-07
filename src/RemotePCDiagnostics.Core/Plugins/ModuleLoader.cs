@@ -23,6 +23,8 @@ public sealed record ModuleLoaderOptions
     /// install (the release zip the agent verified, or the build output), so they load into the app process like the app's other DLLs.
     /// Only ids the app already knows (<see cref="BuiltInModules.Descriptors"/>) load from here. Null: none.</summary>
     public string? BundledFolder { get; init; } = DefaultBundledFolder();
+    /// <summary>Where each module that ships with the app runs (the About page's process-mode switch). Default: as each module.json says.</summary>
+    public ModuleProcessModeSetting ProcessModes { get; init; } = new();
 
     public static string DefaultModulesFolder() =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "RemotePCDiagnostics", "modules");
@@ -104,7 +106,7 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
                     if (why is not null) { registrar.RecordDisabled(record with { Reason = why }, descriptor); continue; }
                     var um = new UserModeModule(path, manifest, descriptor);
                     _userMode.Add(um);
-                    var userRecord = record with { Reason = "runs in user mode, out of process", UserMode = true };
+                    var userRecord = record with { Reason = "runs in user mode, out of process", UserMode = true, Hosting = ModuleHosting.Unsigned(manifest) };
                     if (userMode is null) { registrar.RecordDisabled(userRecord, descriptor); continue; }
                     if (registrar.Register(services, new SingleModulePlugin(userMode(um)), pluginId, ModuleSource.Plugin, manifest.Id, userRecord, descriptor))
                         Log($"{pluginId} {manifest.Version} ({manifest.Id}) runs in user mode from {path}");
@@ -112,7 +114,7 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
                 }
 
                 var plugin = Instantiate(pluginId, dll, manifest);
-                if (registrar.Register(services, plugin, pluginId, ModuleSource.Plugin, manifest.Id, record, descriptor))
+                if (registrar.Register(services, plugin, pluginId, ModuleSource.Plugin, manifest.Id, record with { Hosting = ModuleHosting.Signed(manifest) }, descriptor))
                     Log($"loaded {pluginId} {manifest.Version} ({manifest.Id}) from {path}");
             }
             catch (Exception ex)
@@ -150,19 +152,24 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
                     : !loaded.Add(manifest.Id) ? $"module {manifest.Slug} was already loaded from another DLL"
                     : manifest.Problem(options.HostVersion, vendorSlug: false);
                 if (why is not null) { registrar.RecordDisabled(record with { Reason = why }); continue; }
-                if (manifest.OutOfProcess && userMode is not null)
+                var hosting = ModuleHosting.For(manifest, options.ProcessModes.For(manifest.Slug));
+                if (hosting.OutOfProcess && userMode is not null)
                 {
-                    // Its code never loads into the app: the app holds a stand-in that asks the module host (user mode) to run it.
-                    var um = new UserModeModule(path, manifest, d!) { Bundled = true };
-                    var outOfProcess = record with { Reason = "runs out of process, in user mode", UserMode = true };
+                    // Its code never loads into the app: the app holds a stand-in that asks the module host to run it (restricted token, or
+                    // the app's own token for a module that needs administrator).
+                    var um = new UserModeModule(path, manifest, d!) { Bundled = true, Elevated = hosting.Elevated };
+                    var outOfProcess = record with { Reason = hosting.Elevated ? "runs out of process, as administrator" : "runs out of process, in user mode", UserMode = true, Hosting = hosting };
                     if (registrar.Register(services, new SingleModulePlugin(userMode(um)), pluginId, ModuleSource.BuiltIn, manifest.Id, outOfProcess))
-                        Log($"built-in {manifest.Slug} ({manifest.Id}) runs out of process from {path}");
+                        Log($"built-in {manifest.Slug} ({manifest.Id}) runs out of process{(hosting.Elevated ? " (administrator)" : "")} from {path}");
                     continue;
                 }
-                // No module host (tests, tools): an out-of-process module ships with the app, so it may load in process like the others.
+                // No module host (tests, tools): a module that ships with the app may always load in process like the others.
+                if (hosting.OutOfProcess) hosting = hosting with { OutOfProcess = false, Elevated = false };
+                else if (hosting.Requested == ModuleProcessMode.OutOfProcess && hosting.InProcessOnly is { } stays)
+                    Log($"built-in {manifest.Slug} stays in process: {stays}");
                 var plugin = Instantiate(pluginId, dll, manifest);
                 // No manifest descriptor: the app's own descriptor (group, order, RunAfter) stays the one used.
-                if (registrar.Register(services, plugin, pluginId, ModuleSource.BuiltIn, manifest.Id, record))
+                if (registrar.Register(services, plugin, pluginId, ModuleSource.BuiltIn, manifest.Id, record with { Hosting = hosting }))
                     Log($"loaded built-in {manifest.Slug} ({manifest.Id}) from {path}");
             }
             catch (Exception ex)
@@ -245,6 +252,10 @@ public sealed record UserModeModule(string Path, ModuleManifest Manifest, Module
     /// <summary>Ships with the app (builtin-modules\): trusted like the app's own code, so its report keeps its one-click fixes and the
     /// module page shows no "Unsigned module" banner. It still runs with the restricted token.</summary>
     public bool Bundled { get; init; }
+
+    /// <summary>Ships with the app and needs administrator: the module host runs with the app's own (elevated) token instead of a restricted
+    /// one. Out of process for crash and memory isolation, not for fewer rights.</summary>
+    public bool Elevated { get; init; }
 }
 
 /// <summary>

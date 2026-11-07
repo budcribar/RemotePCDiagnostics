@@ -8,8 +8,6 @@ public static class BuiltInModuleUi
 {
     public static IReadOnlyDictionary<Guid, Type> Components { get; } = new Dictionary<Guid, Type>
     {
-        [ModuleIds.Sensors] = typeof(LibreHardwareMonitorPage),
-        [ModuleIds.SecurityAudit] = typeof(SecurityAuditPage),
     };
 
     public static void Register(ModuleCatalog catalog)
