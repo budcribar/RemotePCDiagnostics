@@ -4,7 +4,9 @@
   "displayName": "Crashes & unexpected restarts",
   "contract": "2.0",
   "entryType": "RemotePCDiagnostics.Modules.Crashes.CrashesPlugin",
-  "needsAdmin": true,
-  // Ships in process. The About page can run it out of process (RemotePCDiagnostics.ModuleHost with the app's own token) to test it.
+  "needsAdmin": false,
+  // Ships in process. The About page can run it out of process in user mode (RemotePCDiagnostics.ModuleHost, restricted token): the
+  // reads that need administrator rights then come from the app, and only these.
+  "capabilities": [ "eventlog.query", "crashes.minidumps", "events.reviewed" ],
   "outOfProcess": false
 }

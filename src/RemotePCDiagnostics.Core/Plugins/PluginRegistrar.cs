@@ -70,6 +70,29 @@ public sealed class PluginRegistrar(ISessionContext session, Version hostVersion
         return true;
     }
 
+    /// <summary>
+    /// For a module that ships with the app and runs out of process but whose own UI renders in the app (<see cref="ModuleManifest.ResultOnlyUi"/>):
+    /// runs the plugin's Register only to learn its details component, and keeps nothing else (its module stays the stand-in).
+    /// </summary>
+    public void RegisterUiOnly(IModulePlugin plugin, string pluginId, Guid moduleId)
+    {
+        var ctx = new UiOnlyContext(pluginId, session, hostVersion, log);
+        try { plugin.Register(new ServiceCollection(), ctx); }
+        catch (Exception ex) { LogError($"plugin {pluginId}: Register for its page failed: {ex.GetType().Name}: {ex.Message}"); return; }
+        if (ctx.Details.TryGetValue(moduleId, out var type)) _details[moduleId] = type;
+    }
+
+    private sealed class UiOnlyContext(string pluginId, ISessionContext session, Version hostVersion, ILogger? log) : IPluginContext
+    {
+        public Dictionary<Guid, Type> Details { get; } = [];
+        public string PluginId => pluginId;
+        public ISessionContext Session => session;
+        public Version HostVersion => hostVersion;
+        public Version ContractVersion => Plugins.ContractVersion.Current;
+        public ILogger Log { get; } = new PrefixedLogger(log, pluginId);
+        public void SetDetailsComponent(Guid moduleId, Type component) => Details[moduleId] = component;
+    }
+
     /// <summary>Records a plugin that was found but not loaded (bad signature, wrong contract version, duplicate id).</summary>
     public void RecordDisabled(PluginRecord record, ModuleDescriptor? known = null)
     {

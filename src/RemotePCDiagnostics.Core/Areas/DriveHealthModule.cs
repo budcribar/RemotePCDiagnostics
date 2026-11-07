@@ -62,7 +62,10 @@ public sealed record DriveHealth(
 /// One instance per physical drive (keyed on <see cref="DriveHealth.RawId"/>); the page still shows one report with a card per drive
 /// (<see cref="Combine"/>). One drive read serves every drive of a run.
 /// </summary>
-public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunner osquery, IRetrimHistory? retrims = null, Func<DateTimeOffset>? clock = null)
+/// <remarks>In user mode (the module host) <paramref name="host"/> is set: the health script and the drive list run in the app
+/// (<c>storage.drives</c>, <c>osquery.select</c>), since the reliability counters need administrator rights.</remarks>
+public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunner osquery, IRetrimHistory? retrims = null, Func<DateTimeOffset>? clock = null,
+    Plugins.IHostQueries? host = null)
     : AreaModuleBase(commands.Log ?? osquery.Options.Log), IPerDeviceModule, IInstanceSummary, IHasAreaPanels
 {
     public AreaPanels Panels => AreaPanels.StorageCleanup;
@@ -120,7 +123,8 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     {
         var now = (clock ?? (() => DateTimeOffset.Now))();
         progress.ReportStep(1, 2, "Checking drive health and SMART status…");
-        var pr = await commands.RunAsync(SystemCommandRunner.PowerShell, Arguments, ct).ConfigureAwait(false);
+        var pr = host is null ? await commands.RunAsync(SystemCommandRunner.PowerShell, Arguments, ct).ConfigureAwait(false)
+            : await AskAsync(() => host.ReadDrivesAsync(ct)).ConfigureAwait(false);
         List<DriveHealth>? drives = null;
         if (pr is { ExitCode: 0 })
         {
@@ -135,11 +139,19 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
 
         LogWarn($"{Name}: Windows storage health unavailable; falling back to osquery disk_info (no health data)");
         progress.ReportStep(2, 2, "Reading drive list…");
-        var q = await osquery.RunQueryAsync(HardwareInventory.DiskSql, ct).ConfigureAwait(false);
-        if (!q.Success) return new(null, null, now, null, DateTimeOffset.Now);
+        var q = host is null ? await osquery.RunQueryAsync(HardwareInventory.DiskSql, ct).ConfigureAwait(false)
+            : await AskAsync(() => host.SelectAsync(HardwareInventory.DiskSql, ct)).ConfigureAwait(false);
+        if (q is not { Success: true }) return new(null, null, now, null, DateTimeOffset.Now);
         var fallback = q.Rows!.Select(DiskInfo.FromRow)
             .Select(d => new DriveHealth(d.HardwareModel, d.Serial, "", d.Type, "", "", d.SizeBytes, null, null, null, null, null)).ToList();
         return new(fallback, null, DateTimeOffset.Now, "Windows didn't report drive health on this PC, so only the drive list is shown.", DateTimeOffset.Now);
+    }
+
+    /// <summary>A host query, or null (logged) when the app refused or couldn't answer it.</summary>
+    private async Task<T?> AskAsync<T>(Func<Task<T>> query) where T : class
+    {
+        try { return await query().ConfigureAwait(false); }
+        catch (Plugins.HostQueryException ex) { LogWarn($"{Name}: the app didn't answer ({ex.Error}): {ex.Message}"); return null; }
     }
 
     /// <summary>Each drive's instance key, made unique when two drives report the same serial (some USB enclosures do).</summary>

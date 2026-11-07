@@ -62,8 +62,11 @@ public sealed class BundledModulesTests : IDisposable
         Assert.True(ModuleDlls().Count() >= 24, "expected the module DLLs from src/Modules next to the tests");
 
     /// <summary>The modules that need administrator. They ship as their own DLLs too, and run in the app process by default.</summary>
-    public static readonly Guid[] AdminModules =
-        [ModuleIds.Sensors, ModuleIds.DriveHealth, ModuleIds.Services, ModuleIds.Crashes, ModuleIds.DismScanHealth, ModuleIds.SfcVerifyOnly, ModuleIds.SecurityAudit];
+    public static readonly Guid[] AdminModules = [ModuleIds.DismScanHealth, ModuleIds.SfcVerifyOnly, ModuleIds.SecurityAudit];
+
+    /// <summary>Modules whose class is the app's Core type (other parts of the app use it too), so only their plugin is the DLL's. The
+    /// last four used to need administrator; in user mode they ask the app for those reads (host queries).</summary>
+    public static readonly Guid[] CoreTypeModules = [.. AdminModules, ModuleIds.Sensors, ModuleIds.DriveHealth, ModuleIds.Services, ModuleIds.Crashes];
 
     [Fact]
     public void Every_built_in_module_ships_as_its_own_dll()
@@ -112,7 +115,7 @@ public sealed class BundledModulesTests : IDisposable
             Assert.NotEqual(AssemblyLoadContext.Default, alc);
             Assert.StartsWith("module:", alc!.Name);
         }
-        else Assert.Contains(AdminModules, id => id == module.Id);
+        else Assert.Contains(CoreTypeModules, id => id == module.Id);
     }
 
     [Fact]

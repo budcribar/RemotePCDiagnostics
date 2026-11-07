@@ -107,6 +107,7 @@ public static class HostServices
             });
         services.AddSingleton(sp =>
         {
+            sp.GetService<HostQueryBackendSlot>()?.Bind(sp);
             var diag = new DiagnosticsService(sp.GetRequiredService<ResultStore>(), sp.GetServices<IDiagnosticModule>());
             diag.Log = L<DiagnosticsService>();
             sp.GetRequiredService<PluginRegistrar>().ApplyTo(diag.Catalog); // where each module came from, its details UI
@@ -155,8 +156,13 @@ public static class HostServices
     {
         var log = For<ModuleLoader>(loggers);
         var launcher = new RestrictedModuleHostLauncher(For<RestrictedModuleHostLauncher>(loggers));
+        // Host queries: what a module in user mode asks the app for. The answers come from the app's own services, so they bind when the
+        // container builds the diagnostics service (HostQueryBackendSlot.Bind).
+        var backend = new HostQueryBackendSlot();
+        services.AddSingleton(backend);
+        var hostQueries = new HostQueryServer(() => backend.Value, For<HostQueryServer>(loggers));
         var loader = new ModuleLoader(options ?? new ModuleLoaderOptions { HostVersion = HostVersion() }, plugins, log,
-            um => new UserModeModuleProxy(um, launcher, For<UserModeModuleProxy>(loggers)));
+            um => new UserModeModuleProxy(um, launcher, For<UserModeModuleProxy>(loggers), hostQueries));
         var before = plugins.Records.Count;
         try { loader.LoadBundled(services); }
         catch (Exception ex) { log.Error($"Modules: loading the built-in module DLLs failed: {ex.GetType().Name}: {ex.Message}"); }
@@ -207,4 +213,16 @@ public static class HostServices
         ILogger? log, Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent) =>
         new(journal, commands, memory, new WindowsServiceControlBackend(), (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Undo, level, text), log,
             new WindowsSystemSettings(log));
+}
+
+/// <summary>The app's services that answer host queries (<see cref="HostQueryServer"/>), bound once the container exists.</summary>
+public sealed class HostQueryBackendSlot
+{
+    public HostQueryBackend? Value { get; private set; }
+
+    public void Bind(IServiceProvider sp) => Value ??= new HostQueryBackend
+    {
+        Sensors = sp.GetService<ISensorProvider>(), Osquery = sp.GetService<OsqueryRunner>(), Commands = sp.GetService<SystemCommandRunner>(),
+        Retrims = sp.GetService<IRetrimHistory>(),
+    };
 }

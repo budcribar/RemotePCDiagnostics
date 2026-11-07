@@ -160,7 +160,12 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
                     var um = new UserModeModule(path, manifest, d!) { Bundled = true, Elevated = hosting.Elevated };
                     var outOfProcess = record with { Reason = hosting.Elevated ? "runs out of process, as administrator" : "runs out of process, in user mode", UserMode = true, Hosting = hosting };
                     if (registrar.Register(services, new SingleModulePlugin(userMode(um)), pluginId, ModuleSource.BuiltIn, manifest.Id, outOfProcess))
+                    {
                         Log($"built-in {manifest.Slug} ({manifest.Id}) runs out of process{(hosting.Elevated ? " (administrator)" : "")} from {path}");
+                        // Its page is the app's own code reading only results: it still renders in the app.
+                        if (manifest is { HasUi: true, PortableUi: false, ResultOnlyUi: true })
+                            registrar.RegisterUiOnly(Instantiate(pluginId, dll, manifest), pluginId, manifest.Id);
+                    }
                     continue;
                 }
                 // No module host (tests, tools): a module that ships with the app may always load in process like the others.

@@ -34,6 +34,8 @@ public sealed record ModuleHosting
     public bool HasUi { get; init; }
     /// <summary>Its details UI can render in the module UI host (<see cref="ModuleManifest.PortableUi"/>).</summary>
     public bool PortableUi { get; init; }
+    /// <summary>Its details UI isn't portable but renders in the app from the module's results alone (<see cref="ModuleManifest.ResultOnlyUi"/>).</summary>
+    public bool ResultOnlyUi { get; init; }
     /// <summary>Its details UI replaces the generic report instead of sitting above it (<see cref="ModuleManifest.DetailsReplaceReport"/>).</summary>
     public bool DetailsReplaceReport { get; init; }
 
@@ -56,7 +58,7 @@ public sealed record ModuleHosting
         return new ModuleHosting
         {
             OutOfProcess = outOfProcess, Elevated = outOfProcess && manifest.NeedsAdmin, Requested = requested, InProcessOnly = inProcessOnly,
-            HasUi = manifest.HasUi, PortableUi = manifest.PortableUi, DetailsReplaceReport = manifest.DetailsReplaceReport,
+            HasUi = manifest.HasUi, PortableUi = manifest.PortableUi, DetailsReplaceReport = manifest.DetailsReplaceReport, ResultOnlyUi = manifest.ResultOnlyUi,
         };
     }
 
@@ -156,6 +158,8 @@ public sealed record ModulePageLayout(ModuleOwnUi OwnUi, bool ShowReport, string
         var replaces = hosting is null || hosting.DetailsReplaceReport;
         if (!hasDetails) return new(ModuleOwnUi.None, true);
         if (!outOfProcess) return new(ModuleOwnUi.InApp, !replaces);
+        // The app's own code, reading only the stand-in's results: rendered in the app, as in process.
+        if (bundled && hosting is { PortableUi: false, ResultOnlyUi: true }) return new(ModuleOwnUi.InApp, !replaces);
         if (bundled && hosting is { PortableUi: false }) return new(ModuleOwnUi.None, true, NeedsAppProcess);
         if (!frameHost) return new(ModuleOwnUi.None, true, NoFrameHost);
         return new(ModuleOwnUi.Frame, !replaces);

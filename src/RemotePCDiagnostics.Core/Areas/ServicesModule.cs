@@ -34,9 +34,14 @@ public sealed record ServiceInfo(string Name, string DisplayName, string Status,
     };
 }
 
-/// <summary>Windows services via osquery <c>services</c> (kernel/file-system drivers excluded).</summary>
-public sealed class ServicesModule(OsqueryRunner runner) : OsqueryAreaModuleBase(runner), IServiceRows
+/// <summary>Windows services via osquery <c>services</c> (kernel/file-system drivers excluded). In user mode (the module host)
+/// <paramref name="host"/> is set and the query runs in the app (<c>osquery.select</c>), which sees every service's details.</summary>
+public sealed class ServicesModule(OsqueryRunner runner, Plugins.IHostQueries? host = null) : OsqueryAreaModuleBase(runner), IServiceRows
 {
+    /// <summary>In user mode osquery runs in the app, so the module host needs no copy of its own.</summary>
+    public override Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) =>
+        host is null ? base.CheckAvailabilityAsync(cancellationToken) : Task.FromResult(ModuleAvailability.Available);
+
     public const string ModuleName = ModuleSlugs.Services;
     public const string Sql = "SELECT name, display_name, status, start_type, user_account, description FROM services WHERE service_type NOT LIKE '%DRIVER%';";
     public override string Name => ModuleName;
@@ -50,8 +55,14 @@ public sealed class ServicesModule(OsqueryRunner runner) : OsqueryAreaModuleBase
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         progress?.Report("Checking services…");
-        var q = await QueryAsync(Sql, ct).ConfigureAwait(false);
-        if (!q.Success) return AreaReport.Failed(FailedMessage);
+        OsqueryQueryResult? q;
+        if (host is null) q = await QueryAsync(Sql, ct).ConfigureAwait(false);
+        else
+        {
+            try { q = await host.SelectAsync(Sql, ct).ConfigureAwait(false); }
+            catch (Plugins.HostQueryException ex) { LogWarn($"{Name}: the app didn't answer ({ex.Error}): {ex.Message}"); q = null; }
+        }
+        if (q is not { Success: true }) return AreaReport.Failed(FailedMessage);
         var list = q.Rows!.Select(ServiceInfo.FromRow).ToList();
         Latest = list.GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         return Build(list);

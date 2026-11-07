@@ -7,7 +7,8 @@ namespace RemotePCDiagnostics.Core.Plugins;
 
 /// <summary>
 /// The line protocol between the app and RemotePCDiagnostics.ModuleHost (one JSON object per line over the helper's stdin and stdout, which
-/// only the app holds). App to host: availability, refresh, stop, exit. Host to app: ready, availability, progress, result, error.
+/// only the app holds). App to host: availability, refresh, stop, exit, answer. Host to app: ready, availability, progress, result, error,
+/// query (a host query, <see cref="IHostQueries"/>, which the app answers with the same <see cref="Id"/>).
 /// </summary>
 public sealed record ModuleHostMessage
 {
@@ -22,11 +23,22 @@ public sealed record ModuleHostMessage
     public AreaReport? Report { get; init; }
     /// <summary>When the result was produced (results sent to a module's UI host).</summary>
     public DateTimeOffset? When { get; init; }
+    /// <summary>A result's payload when it isn't an <see cref="AreaReport"/> (one of <see cref="ModuleHostPayloads.Types"/>), and its type.</summary>
+    public JsonElement? Payload { get; init; }
+    public string? PayloadType { get; init; }
+
+    /// <summary>Host queries: the query's id (chosen by the module host), capability and arguments; the answer's outcome and value.</summary>
+    public int? Id { get; init; }
+    public string? Capability { get; init; }
+    public JsonElement? Args { get; init; }
+    public bool? Ok { get; init; }
+    public string? Error { get; init; }
+    public JsonElement? Value { get; init; }
 
     public static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        Converters = { new JsonStringEnumConverter() },
+        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals, Converters = { new JsonStringEnumConverter() },
     };
 
     public string ToLine() => JsonSerializer.Serialize(this, Json);
@@ -34,6 +46,33 @@ public sealed record ModuleHostMessage
     {
         if (string.IsNullOrWhiteSpace(line)) return null;
         try { return JsonSerializer.Deserialize<ModuleHostMessage>(line, Json); } catch (JsonException) { return null; }
+    }
+}
+
+/// <summary>
+/// Result payloads other than <see cref="AreaReport"/> that a module that ships with the app may send back from the module host, so its
+/// page gets the same result in either process. A type not listed here arrives as no payload.
+/// </summary>
+public static class ModuleHostPayloads
+{
+    public static readonly IReadOnlyList<Type> Types = [typeof(Sensors.SensorReport)];
+
+    public static (JsonElement Payload, string Type)? Write(object? payload) =>
+        payload is not null && Types.Contains(payload.GetType())
+            ? (JsonSerializer.SerializeToElement(payload, payload.GetType(), ModuleHostMessage.Json), payload.GetType().FullName!)
+            : null;
+
+    /// <summary>The result with its typed payload, or null when the type isn't one of <see cref="Types"/> or doesn't read.</summary>
+    public static DiagnosticResult? Read(string name, DiagnosticStatus status, string message, JsonElement payload, string type)
+    {
+        var t = Types.FirstOrDefault(x => x.FullName == type);
+        if (t is null) return null;
+        try
+        {
+            var value = payload.Deserialize(t, ModuleHostMessage.Json);
+            return (DiagnosticResult?)Activator.CreateInstance(typeof(DiagnosticResult<>).MakeGenericType(t), name, status, message, DateTimeOffset.Now, value);
+        }
+        catch (JsonException) { return null; }
     }
 }
 
@@ -120,8 +159,27 @@ public interface IUserModeModule : IDiagnosticModule
 /// with the app), the work happens in the module host. An unsigned module's report is shown with every one-click action removed, because
 /// those run elevated in the app.
 /// </summary>
-public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLauncher launcher, ILogger? log = null) : IUserModeModule, IDisposable
+public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLauncher launcher, ILogger? log = null, HostQueryServer? hostQueries = null)
+    : IUserModeModule, IDisposable
 {
+    private readonly SemaphoreSlim _write = new(1, 1);
+
+    private async Task WriteAsync(IModuleHostConnection conn, ModuleHostMessage m, CancellationToken ct)
+    {
+        await _write.WaitAsync(ct).ConfigureAwait(false);
+        try { await conn.WriteLineAsync(m.ToLine(), ct).ConfigureAwait(false); }
+        finally { _write.Release(); }
+    }
+
+    /// <summary>The module asked the app for a reading (a host query): answer it, or refuse it when this app answers none.</summary>
+    private async Task AnswerAsync(IModuleHostConnection conn, ModuleHostMessage query, CancellationToken ct)
+    {
+        var answer = hostQueries is null
+            ? new ModuleHostMessage { Type = "answer", Id = query.Id, Ok = false, Error = "notAllowed", Reason = "this app answers no host queries" }
+            : await hostQueries.AnswerAsync(module, query, ct).ConfigureAwait(false);
+        await WriteAsync(conn, answer, CancellationToken.None).ConfigureAwait(false);
+    }
+
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _connGate = new();
     private IModuleHostConnection? _conn;
@@ -144,10 +202,11 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(AnswerTimeout);
             var conn = Connect();
-            await conn.WriteLineAsync(new ModuleHostMessage { Type = "availability" }.ToLine(), timeout.Token).ConfigureAwait(false);
+            await WriteAsync(conn, new ModuleHostMessage { Type = "availability" }, timeout.Token).ConfigureAwait(false);
             while (true)
             {
                 var m = ModuleHostMessage.Parse(await conn.ReadLineAsync(timeout.Token).ConfigureAwait(false) ?? throw Exited());
+                if (m?.Type == "query") { await AnswerAsync(conn, m, timeout.Token).ConfigureAwait(false); continue; }
                 if (m?.Type == "availability") return m.Available == true ? ModuleAvailability.Available : ModuleAvailability.Unavailable(m.Reason ?? "Unavailable");
                 if (m?.Type == "error") return ModuleAvailability.Unavailable(m.Message ?? "The module host failed");
             }
@@ -163,8 +222,8 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
         try
         {
             var conn = Connect();
-            await conn.WriteLineAsync(new ModuleHostMessage { Type = "refresh" }.ToLine(), CancellationToken.None).ConfigureAwait(false);
-            using var stopping = cancellationToken.Register(() => { try { _ = conn.WriteLineAsync(new ModuleHostMessage { Type = "stop" }.ToLine(), CancellationToken.None); } catch { } });
+            await WriteAsync(conn, new ModuleHostMessage { Type = "refresh" }, CancellationToken.None).ConfigureAwait(false);
+            using var stopping = cancellationToken.Register(() => { try { _ = WriteAsync(conn, new ModuleHostMessage { Type = "stop" }, CancellationToken.None); } catch { } });
             // After a cancel the module gets one AnswerTimeout to answer "stop"; past that the host is reset.
             async Task<string?> GraceReadAsync()
             {
@@ -184,6 +243,10 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
                 var m = ModuleHostMessage.Parse(line ?? throw Exited());
                 switch (m?.Type)
                 {
+                    case "query":
+                        // Answered even while stopping, so the module isn't left waiting on the app.
+                        await AnswerAsync(conn, m, CancellationToken.None).ConfigureAwait(false);
+                        break;
                     case "progress":
                         if (m.Total is > 1) progress.ReportStep(m.Step ?? 0, m.Total.Value, m.Message ?? "");
                         else if (m.Message is { Length: > 0 }) progress?.Report(m.Message);
@@ -191,6 +254,10 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
                     case "result":
                         // One-click fixes run elevated in the app: only a module that ships with the app may offer them.
                         var report = m.Report is { } r ? (module.Bundled ? r : WithoutActions(r)) : null;
+                        // Another payload type only from a module that ships with the app (its own page reads it).
+                        if (report is null && module.Bundled && m.Payload is { } payload && m.PayloadType is { } type
+                            && ModuleHostPayloads.Read(Name, m.Status ?? DiagnosticStatus.Error, m.Message ?? "", payload, type) is { } typed)
+                            return typed with { Cancelled = m.Cancelled == true || cancellationToken.IsCancellationRequested };
                         return new DiagnosticResult<AreaReport>(Name, m.Status ?? DiagnosticStatus.Error, m.Message ?? "", DateTimeOffset.Now, report)
                             { Cancelled = m.Cancelled == true || cancellationToken.IsCancellationRequested };
                     case "error":

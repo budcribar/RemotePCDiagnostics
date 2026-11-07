@@ -39,7 +39,7 @@ public sealed class ProcessModeSwitchTests : IDisposable
         {
             ModulesFolder = Path.Combine(_root, "modules"), CatalogFolder = Path.Combine(_root, "catalog"), BundledFolder = Bundled,
             HostVersion = new Version(1, 2, 0), ProcessModes = modes,
-        }, registrar, userMode: um => { made.Add(um); return new UserModeModuleProxy(um, new ProcessModuleHostLauncher(AppContext.BaseDirectory)); });
+        }, registrar, userMode: um => { made.Add(um); return new UserModeModuleProxy(um, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: HostQueries); });
         var services = new ServiceCollection();
         AddAppServices(services, _root);
         loader.LoadBundled(services);
@@ -50,6 +50,13 @@ public sealed class ProcessModeSwitchTests : IDisposable
         registrar.ApplyTo(catalog);
         return (registrar, modules, catalog, made);
     }
+
+    /// <summary>The app's answers to host queries, from this machine (no sensors, no osquery here).</summary>
+    private HostQueryServer HostQueries => new(new HostQueryBackend
+    {
+        Osquery = new RemotePCDiagnostics.Core.Osquery.OsqueryRunner(baseDirectory: _root), Commands = new SystemCommandRunner(),
+        Minidumps = () => [], EventReviews = () => [],
+    });
 
     /// <summary>What the app's container gives modules (the Windows adapters as do-nothing stubs: only constructors run).</summary>
     private static void AddAppServices(IServiceCollection services, string root)
@@ -112,8 +119,10 @@ public sealed class ProcessModeSwitchTests : IDisposable
         Assert.True(hosting.OutOfProcess);
         Assert.Equal(manifest.NeedsAdmin, hosting.Elevated);
         Assert.True(record.UserMode);
-        // Its code never loaded into the app: no details component in the app's catalog.
-        Assert.Null(catalog.Get(manifest.Id)!.DetailsComponent);
+        // Its code never loaded into the app: no details component in the app's catalog, unless its page is one the app renders from the
+        // stand-in's results (resultOnlyUi).
+        var appUi = manifest is { HasUi: true, PortableUi: false, ResultOnlyUi: true };
+        Assert.Equal(appUi, catalog.Get(manifest.Id)!.DetailsComponent is not null);
     }
 
     [Theory]
@@ -127,7 +136,7 @@ public sealed class ProcessModeSwitchTests : IDisposable
 
         var inLayout = ModulePageLayout.For(inProc, outOfProcess: false, bundled: true, hasDetails: manifest.HasUi, frameHost: true);
         var outLayout = ModulePageLayout.For(outProc, outOfProcess: outProc.OutOfProcess, bundled: true, hasDetails: manifest.HasUi, frameHost: true);
-        if (!outProc.OutOfProcess || manifest.PortableUi || !manifest.HasUi)
+        if (!outProc.OutOfProcess || manifest.PortableUi || manifest.ResultOnlyUi || !manifest.HasUi)
         {
             // Same parts in the same order; only where the module's own UI renders differs.
             Assert.Equal(inLayout.ShowReport, outLayout.ShowReport);
@@ -170,7 +179,7 @@ public sealed class ProcessModeSwitchTests : IDisposable
         // The module host's loader (the app's helpers only): a module that loads there can run out of process, and one that can't must say why.
         var manifest = ManifestOf(file);
         Exception? failed = null;
-        try { UserModePlugin.Load(Dll(file), appDirectory: _root); }
+        try { UserModePlugin.Load(Dll(file), appDirectory: _root, hostQueries: new HostQueriesClient(_ => { })); }
         catch (Exception ex) { failed = ex; }
         if (manifest.InProcessOnly is null) Assert.True(failed is null, $"{file} can't load in the module host: {failed}");
         else Assert.True(failed is not null, $"{file} loads in the module host: drop its inProcessOnly");
@@ -196,6 +205,14 @@ public sealed class ProcessModeSwitchTests : IDisposable
                 p => p.GetCustomAttributes(typeof(Microsoft.AspNetCore.Components.InjectAttribute), true).Length > 0);
         }
         else Assert.True(manifest.DetailsReplaceReport || appOnly.Count == 0, $"{file}: a UI that needs the app should say whether it replaces the report");
+        if (manifest.ResultOnlyUi)
+        {
+            // Rendered in the app from the stand-in's results: the page itself injects nothing (what it shows must come from the result).
+            Assert.False(manifest.PortableUi, $"{file}: resultOnlyUi is for a UI that isn't portable");
+            var page = UserModePlugin.Load(Dll(file), appDirectory: _root, hostQueries: new HostQueriesClient(_ => { })).DetailsComponent!;
+            Assert.DoesNotContain(page.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly),
+                p => p.GetCustomAttributes(typeof(Microsoft.AspNetCore.Components.InjectAttribute), true).Length > 0);
+        }
     }
 
     private static List<string> AssemblyReferences(string path)
