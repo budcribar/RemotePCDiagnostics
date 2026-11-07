@@ -32,7 +32,10 @@
     if (_cardRanks is null || (!checking && !stressBusy && !all.Any(r => r.Status == DiagnosticStatus.Running)))
         _cardRanks = problemRanks;
     string[] fixedCards = [LibreHardwareMonitorModule.ModuleName, ModuleSlugs.Osquery, ModuleSlugs.DriveHealth]; // always shown (auto-run at launch)
-    var cards = fixedCards.Concat(Diagnostics.Modules.Select(m => m.Name)
+    // Drive health is detectable: it isn't in Diagnostics.Modules until its drive detection finishes (or at all when no drive is
+    // found), so its card waits for the module instead of failing the first render. Sensors and Osquery have their own cards.
+    var cards = fixedCards.Where(name => name is LibreHardwareMonitorModule.ModuleName or ModuleSlugs.Osquery
+            || Diagnostics.Modules.Any(m => m.Name == name)).Concat(Diagnostics.Modules.Select(m => m.Name)
         .Where(name => !fixedCards.Contains(name) && _cardRanks.ContainsKey(name)))
         .OrderBy(name => _cardRanks.GetValueOrDefault(name, 2)).ToList();
     var attentionCount = cards.Count(_cardRanks.ContainsKey);
@@ -199,7 +202,8 @@
         }
         else
         {
-        var m = Diagnostics.Modules.First(module => module.Name == name);
+        var m = Diagnostics.Modules.FirstOrDefault(module => module.Name == name);
+        if (m is null) continue; // the module list changed since the card list was built
         var r = Store.Get(name);
         <div @key="name" class="card dash-card card-click" data-testid="dashboard-card-@m.Name.ToLowerInvariant()" role="link" tabindex="0"
              @onclick="() => Open(name)" @onkeydown="e => Key(e, name)">
