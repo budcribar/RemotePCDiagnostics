@@ -123,8 +123,17 @@ public class HostServicesTests
             foreach (var d in BuiltInModules.Descriptors.Where(d => d.MergedInto is null))
             {
                 Assert.True(registered.TryGetValue(d.Id, out var m), $"{d.Slug} is not registered");
-                var own = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(m!.GetType().Assembly) != System.Runtime.Loader.AssemblyLoadContext.Default;
-                Assert.Equal(!BuiltInModulesPlugin.CompiledIn.Contains(d.Id), own);
+                if (m is RemotePCDiagnostics.Core.Plugins.UserModeModuleProxy proxy)
+                {
+                    // Its manifest asks to run out of process (module host), so only a stand-in is in the app.
+                    Assert.True(proxy.Source.Bundled && proxy.Source.Manifest.OutOfProcess, $"{d.Slug} should not be a user-mode stand-in");
+                    Assert.False(BuiltInModulesPlugin.CompiledIn.Contains(d.Id));
+                }
+                else
+                {
+                    var own = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(m!.GetType().Assembly) != System.Runtime.Loader.AssemblyLoadContext.Default;
+                    Assert.Equal(!BuiltInModulesPlugin.CompiledIn.Contains(d.Id), own);
+                }
                 Assert.Equal(ModuleSource.BuiltIn, diag.Catalog.Get(d.Id)!.Source);
             }
             foreach (var id in new[] { ModuleIds.Osquery, ModuleIds.CpuStress, ModuleIds.MemoryTest, ModuleIds.DiskSpeed, ModuleIds.GpuStress, ModuleIds.NetworkTest,

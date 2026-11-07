@@ -116,8 +116,9 @@ public interface IUserModeModule : IDiagnosticModule
 }
 
 /// <summary>
-/// Stands in for an unsigned module inside the app: the descriptor comes from its manifest, the work happens in the module host. Its
-/// report is shown in the generic view with every one-click action removed, because those run elevated in the app.
+/// Stands in for an out-of-process module inside the app: the descriptor comes from its manifest (or the app's own, for a module that ships
+/// with the app), the work happens in the module host. An unsigned module's report is shown with every one-click action removed, because
+/// those run elevated in the app.
 /// </summary>
 public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLauncher launcher, ILogger? log = null) : IUserModeModule, IDisposable
 {
@@ -129,7 +130,7 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
     public Guid Id => module.Manifest.Id;
     public string Name => module.Manifest.Slug;
     public string DisplayName => module.Descriptor.DisplayName;
-    public bool IncludeInRunAll => module.Manifest.Kind == ModuleKind.Check;
+    public bool IncludeInRunAll => module.Descriptor.Kind == ModuleKind.Check; // the app's own descriptor for a module that ships with it
     public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
 
     /// <summary>How long the host gets to answer an availability check, and to stop after being asked.</summary>
@@ -188,7 +189,8 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
                         else if (m.Message is { Length: > 0 }) progress?.Report(m.Message);
                         break;
                     case "result":
-                        var report = m.Report is { } r ? WithoutActions(r) : null;
+                        // One-click fixes run elevated in the app: only a module that ships with the app may offer them.
+                        var report = m.Report is { } r ? (module.Bundled ? r : WithoutActions(r)) : null;
                         return new DiagnosticResult<AreaReport>(Name, m.Status ?? DiagnosticStatus.Error, m.Message ?? "", DateTimeOffset.Now, report)
                             { Cancelled = m.Cancelled == true || cancellationToken.IsCancellationRequested };
                     case "error":

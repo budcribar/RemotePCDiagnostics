@@ -7,7 +7,7 @@
     var details = m is null ? null : Diagnostics.Catalog.Get(m.Id)?.DetailsComponent;
     var instances = m is IPerDeviceModule ? Store.InstancesOf(m.Name) : [];
 }
-@if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule umb && !UnsignedModuleFrame.IsAvailable(App, umb))
+@if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule { Source.Bundled: false } umb && !UnsignedModuleFrame.IsAvailable(App, umb))
 {
     @* Drawn by the app, outside anything the module controls. *@
     <div class="notice" data-testid="unsigned-module-banner"><strong>Unsigned module.</strong> Runs in user mode in a separate process: it can't

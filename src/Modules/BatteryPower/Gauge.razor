@@ -1,0 +1,16 @@
+@* One labelled bar, 0–100%. *@
+<div data-testid="@TestId">
+    <div style="display: flex; justify-content: space-between; gap: 8px"><strong>@Label</strong><span>@Text</span></div>
+    <div style="height: 10px; border-radius: 5px; background: rgba(128,128,128,.25); overflow: hidden" role="meter" aria-label="@Label"
+         aria-valuemin="0" aria-valuemax="100" aria-valuenow="@(Percent ?? 0)">
+        <div style="height: 100%; width: @(Math.Clamp(Percent ?? 0, 0, 100))%; background: @(Warn ? "#d97706" : "#16a34a")"></div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public int? Percent { get; set; }
+    [Parameter] public bool Warn { get; set; }
+    [Parameter] public string Text { get; set; } = "";
+    [Parameter] public string? TestId { get; set; }
+}

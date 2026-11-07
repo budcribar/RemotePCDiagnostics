@@ -12,11 +12,14 @@ public static class UserModePlugin
     public sealed record Loaded(ModuleManifest Manifest, IDiagnosticModule Module, Type? DetailsComponent);
 
     /// <param name="log">Where the plugin's <see cref="IPluginContext.Log"/> lines go.</param>
-    public static Loaded Load(string path, ILogger? log = null)
+    /// <param name="appDirectory">The app's folder (where tools\osquery is). When set, the plugin's services get the same helpers the
+    /// app gives a module that ships with it (<see cref="AddHelpers"/>); they run in this user-mode process, with its token.</param>
+    public static Loaded Load(string path, ILogger? log = null, string? appDirectory = null)
     {
         var dll = File.ReadAllBytes(path);
         var (manifest, _) = ModuleManifest.ReadFromAssembly(dll);
-        if (manifest.Problem(new Version(int.MaxValue, 0)) is { } problem && !problem.StartsWith("needs app version", StringComparison.Ordinal))
+        // A module that ships with the app keeps the slug it always had (no vendor. prefix); the app checked it before starting this process.
+        if (manifest.Problem(new Version(int.MaxValue, 0), vendorSlug: !manifest.OutOfProcess) is { } problem && !problem.StartsWith("needs app version", StringComparison.Ordinal))
             throw new InvalidDataException(problem);
         var alc = new ModuleLoadContext(manifest.Slug, dll);
         var asm = alc.LoadFromStream(new MemoryStream(dll, writable: false));
@@ -24,12 +27,21 @@ public static class UserModePlugin
         if (Activator.CreateInstance(entry) is not IModulePlugin plugin) throw new InvalidDataException($"{manifest.EntryType} does not implement IModulePlugin");
         var context = new Context(manifest.Slug, log);
         var services = new ServiceCollection();
+        if (appDirectory is not null) AddHelpers(services, appDirectory, log);
         plugin.Register(services, context);
         var sp = services.BuildServiceProvider();
         var modules = sp.GetServices<IDiagnosticModule>().ToList();
         if (modules.Count != 1) throw new InvalidDataException($"registered {modules.Count} modules; a plugin registers exactly one");
         if (modules[0].Id != manifest.Id) throw new InvalidDataException($"registered module {modules[0].Id}, but its manifest says {manifest.Id}");
         return new Loaded(manifest, modules[0], context.Details.GetValueOrDefault(manifest.Id));
+    }
+
+    /// <summary>The app's helpers that a module which ships with the app takes from its services: osquery (from the app's tools folder)
+    /// and Windows commands. Both only read; here they run with the user-mode process's token.</summary>
+    public static void AddHelpers(IServiceCollection services, string appDirectory, ILogger? log = null)
+    {
+        services.AddSingleton(new Osquery.OsqueryRunner(baseDirectory: appDirectory, options: new Osquery.OsqueryOptions { Log = log }));
+        services.AddSingleton(new Areas.SystemCommandRunner(log: log));
     }
 
     private sealed class Context(string pluginId, ILogger? log) : IPluginContext

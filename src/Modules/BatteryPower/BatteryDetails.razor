@@ -1,0 +1,75 @@
+@using RemotePCDiagnostics.Core
+@using RemotePCDiagnostics.Core.Areas
+@using RemotePCDiagnostics.Core.Plugins
+@* The module's own UI: the battery's health and charge as gauges, from the app's last run, with a "Check now" that reads the battery again
+   right here (in the module UI host, user mode, its own process; that reading isn't stored in the app). Framed on the module page above the
+   generic report. Uses nothing but Components and Core types, styled inline (the frame has none of the app's CSS). *@
+<div style="display: flex; flex-direction: column; gap: 10px" data-testid="battery-gauges">
+    @if (Shown is not { } r)
+    {
+        <div data-testid="battery-gauges-empty">@(LastResult is { Status: DiagnosticStatus.Running } ? "Reading the battery…" : "Run the check to see battery health.")</div>
+    }
+    else if (Read(r) is not { } b)
+    {
+        <div data-testid="battery-none">No battery: this PC runs on wall power.</div>
+    }
+    else
+    {
+        <Gauge Label="Battery health" Percent="b.Health" Warn="b.Health < BatteryPowerModule.LowBatteryHealthPercent" TestId="battery-health"
+               Text="@(b.Health is { } h ? $"{h}% of its original capacity" : "Not reported")" />
+        <Gauge Label="Charge" Percent="b.Charge" Warn="false" TestId="battery-charge"
+               Text="@(b.Charge is { } c ? $"{c}%{(b.State.Length > 0 ? " · " + b.State : "")}" : "Not reported")" />
+        @if (b.Health < BatteryPowerModule.LowBatteryHealthPercent)
+        {
+            <div>Below @BatteryPowerModule.LowBatteryHealthPercent% health a battery holds noticeably less charge than when new.</div>
+        }
+    }
+    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+        <button data-testid="battery-check-now" @onclick="CheckNowAsync" disabled="@(_checking || DiagnosticModule is null)">@(_checking ? "Checking…" : "Check now")</button>
+        <span style="opacity: .8">@(_fresh is not null ? $"Read here at {_fresh.Timestamp.ToLocalTime():T} (not stored in the app)" : LastResult is { Status: not DiagnosticStatus.NotRun } last ? $"From the app's run at {last.Timestamp.ToLocalTime():T}" : "")</span>
+    </div>
+</div>
+
+@code {
+    [Parameter] public IDiagnosticModule? DiagnosticModule { get; set; }
+    [CascadingParameter(Name = ModuleDetails.LastResult)] public DiagnosticResult? LastResult { get; set; }
+
+    private DiagnosticResult? _fresh;
+    private bool _checking;
+
+    /// <summary>The reading this UI took itself, or else the app's last run.</summary>
+    private AreaReport? Shown => (_fresh ?? LastResult) is { Status: not (DiagnosticStatus.NotRun or DiagnosticStatus.Running) } r ? r.Payload as AreaReport : null;
+
+    /// <summary>What the gauges show, read back from the report's battery card.</summary>
+    public sealed record Battery(int? Health, int? Charge, string State);
+
+    /// <summary>The battery in <paramref name="report"/>, or null when the PC has none (or the card is missing).</summary>
+    public static Battery? Read(AreaReport report)
+    {
+        if (report.Cards.FirstOrDefault(c => c.Id == "battery") is not { ErrorText: null } card || card.Level == AreaLevel.Neutral && card.Rows.All(r => r.Values[0] == "Power source"))
+            return null;
+        string Value(string label) => card.Rows.FirstOrDefault(r => r.Values.Count > 1 && r.Values[0] == label)?.Values[1] ?? "";
+        return new Battery(LeadingPercent(Value("Estimated battery health")), LeadingPercent(Value("Current charge")), Value("Power state"));
+    }
+
+    /// <summary>"87% of original capacity (13% wear)" → 87.</summary>
+    public static int? LeadingPercent(string s)
+    {
+        var digits = new string(s.TakeWhile(char.IsDigit).ToArray());
+        return digits.Length > 0 && s.Length > digits.Length && s[digits.Length] == '%' && int.TryParse(digits, out var v) ? v : null;
+    }
+
+    /// <summary>A newer run in the app replaces this UI's own reading.</summary>
+    protected override void OnParametersSet()
+    {
+        if (_fresh is not null && LastResult is { Status: not (DiagnosticStatus.NotRun or DiagnosticStatus.Running) } last && last.Timestamp > _fresh.Timestamp) _fresh = null;
+    }
+
+    private async Task CheckNowAsync()
+    {
+        if (DiagnosticModule is null) return;
+        _checking = true;
+        try { _fresh = await DiagnosticModule.RefreshAsync(null); }
+        finally { _checking = false; }
+    }
+}
