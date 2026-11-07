@@ -9,13 +9,13 @@ using RemotePCDiagnostics.Modules.Programs;
 namespace RemotePCDiagnostics.Tests;
 
 /// <summary>
-/// Modules that ship with the app but run out of process (module.json "outOfProcess": Programs, Battery &amp; power, Device drivers): the
-/// app holds a stand-in, the check runs in RemotePCDiagnostics.ModuleHost and the details UI in the module UI host, like an unsigned
-/// module's, but they keep the app's descriptor and their one-click fixes.
+/// Test branch for measuring the cost of out-of-process modules: Programs, Battery &amp; power and Device drivers are flipped back in
+/// process (no module.json "outOfProcess"), so they load into the app and their own UI renders on the module page. The bundled
+/// out-of-process path itself is still covered with a hand-built manifest.
 /// </summary>
 public sealed class BundledOutOfProcessTests : IDisposable
 {
-    public static readonly string[] OutOfProcessDlls =
+    public static readonly string[] FormerlyOutOfProcessDlls =
         ["RemotePCDiagnostics.Modules.BatteryPower.dll", "RemotePCDiagnostics.Modules.DeviceDrivers.dll", "RemotePCDiagnostics.Modules.Programs.dll"];
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "rpcd-oop-" + Guid.NewGuid().ToString("N"));
@@ -26,16 +26,16 @@ public sealed class BundledOutOfProcessTests : IDisposable
 
     private static string Dll(string name) => Path.Combine(AppContext.BaseDirectory, name);
 
-    private (PluginRegistrar Registrar, ServiceCollection Services, List<UserModeModule> Started) Load(IModuleHostLauncher? launcher = null)
+    private (PluginRegistrar Registrar, ServiceCollection Services, List<UserModeModule> Started) Load()
     {
-        foreach (var f in OutOfProcessDlls.Append("RemotePCDiagnostics.Modules.EventLog.dll")) File.Copy(Dll(f), Path.Combine(Bundled, f));
+        foreach (var f in FormerlyOutOfProcessDlls.Append("RemotePCDiagnostics.Modules.EventLog.dll")) File.Copy(Dll(f), Path.Combine(Bundled, f));
         var registrar = new PluginRegistrar(new SessionContext(SessionMode.Local), new Version(1, 2, 0));
         var made = new List<UserModeModule>();
         var loader = new ModuleLoader(new ModuleLoaderOptions
         {
             ModulesFolder = Path.Combine(_root, "modules"), CatalogFolder = Path.Combine(_root, "catalog"), BundledFolder = Bundled, HostVersion = new Version(1, 2, 0),
-            AllowUnsigned = false, // the app's own modules don't need the unsigned-modules switch
-        }, registrar, userMode: um => { made.Add(um); return new UserModeModuleProxy(um, launcher ?? new ProcessModuleHostLauncher(AppContext.BaseDirectory)); });
+            AllowUnsigned = false,
+        }, registrar, userMode: um => { made.Add(um); return new UserModeModuleProxy(um, new ProcessModuleHostLauncher(AppContext.BaseDirectory)); });
         var services = new ServiceCollection();
         services.AddSingleton(new RemotePCDiagnostics.Core.Osquery.OsqueryRunner(baseDirectory: _root));
         services.AddSingleton(new SystemCommandRunner());
@@ -45,62 +45,35 @@ public sealed class BundledOutOfProcessTests : IDisposable
 
     [Theory]
     [MemberData(nameof(Dlls))]
-    public void The_manifest_asks_for_out_of_process(string file)
+    public void The_manifest_no_longer_asks_for_out_of_process(string file)
     {
         var (manifest, _) = ModuleManifest.ReadFromAssembly(File.ReadAllBytes(Dll(file)));
-        Assert.True(manifest.OutOfProcess);
+        Assert.False(manifest.OutOfProcess);
         Assert.Equal(file != "RemotePCDiagnostics.Modules.DeviceDrivers.dll", manifest.HasUi);
     }
 
-    public static IEnumerable<object[]> Dlls() => OutOfProcessDlls.Select(f => new object[] { f });
+    public static IEnumerable<object[]> Dlls() => FormerlyOutOfProcessDlls.Select(f => new object[] { f });
 
     [Fact]
-    public void Out_of_process_modules_register_a_stand_in_and_keep_the_app_descriptor()
+    public void Without_the_flag_the_modules_load_in_process_with_their_own_UI()
     {
         var (registrar, services, made) = Load();
         Assert.Equal(4, registrar.Records.Count);
         Assert.All(registrar.Records, r => Assert.Equal(PluginState.Loaded, r.State));
-        Assert.Equal(3, registrar.Records.Count(r => r.UserMode));
-        Assert.All(made, um => Assert.True(um.Bundled));
+        Assert.Empty(made);
 
         using var sp = services.BuildServiceProvider();
         var modules = sp.GetServices<IDiagnosticModule>().ToDictionary(m => m.Id);
-        foreach (var id in new[] { ModuleIds.Programs, ModuleIds.BatteryPower, ModuleIds.DeviceDrivers })
-        {
-            var proxy = Assert.IsType<UserModeModuleProxy>(modules[id]);
-            var builtIn = BuiltInModules.Descriptors.Single(d => d.Id == id);
-            Assert.Equal(builtIn.Slug, proxy.Name);
-            Assert.Same(builtIn, proxy.Source.Descriptor);
-            Assert.True(proxy.IncludeInRunAll);
-        }
-        // A module without the flag still loads in the app process.
-        Assert.IsNotType<UserModeModuleProxy>(modules[ModuleIds.EventLog]);
+        foreach (var id in new[] { ModuleIds.Programs, ModuleIds.BatteryPower, ModuleIds.DeviceDrivers, ModuleIds.EventLog })
+            Assert.IsNotType<UserModeModuleProxy>(modules[id]);
 
         var catalog = new ModuleCatalog();
         foreach (var m in modules.Values) catalog.Add(m);
         registrar.ApplyTo(catalog);
         Assert.Equal(ModuleSource.BuiltIn, catalog.Get(ModuleIds.Programs)!.Source);
-        // Its own UI isn't the app's to render: the module page frames it from the module UI host.
-        Assert.Null(catalog.Get(ModuleIds.Programs)!.DetailsComponent);
-    }
-
-    [Fact]
-    public async Task A_bundled_module_runs_in_the_real_module_host()
-    {
-        var (_, services, _) = Load();
-        using var sp = services.BuildServiceProvider();
-        var programs = (UserModeModuleProxy)sp.GetServices<IDiagnosticModule>().Single(m => m.Id == ModuleIds.Programs);
-        try
-        {
-            // No osquery next to the test host's module host here, so the module itself (loaded in the host with the app's helpers) says so.
-            var a = await programs.CheckAvailabilityAsync();
-            Assert.False(a.IsAvailable);
-            Assert.Equal(OsqueryAreaModuleBase.ToolMissingMessage, a.Reason);
-            var r = await programs.RefreshAsync(null);
-            Assert.False(r is { Status: DiagnosticStatus.Error } && r.Message.StartsWith("The module host", StringComparison.Ordinal), r.Message);
-            Assert.IsType<AreaReport>(r.Payload);
-        }
-        finally { programs.Dispose(); }
+        // In process the app renders the module's own UI on its page.
+        Assert.Equal(typeof(ProgramsDetails).FullName, catalog.Get(ModuleIds.Programs)!.DetailsComponent?.FullName);
+        Assert.Equal(typeof(BatteryDetails).FullName, catalog.Get(ModuleIds.BatteryPower)!.DetailsComponent?.FullName);
     }
 
     [Fact]
@@ -116,24 +89,6 @@ public sealed class BundledOutOfProcessTests : IDisposable
         Assert.NotNull(Assert.IsType<AreaReport>(bundled.Payload).Cards[0].Actions);
         var unsigned = await new UserModeModuleProxy(new UserModeModule("x.dll", manifest, descriptor), launcher).RefreshAsync(null);
         Assert.Null(Assert.IsType<AreaReport>(unsigned.Payload).Cards[0].Actions);
-    }
-
-    [Theory]
-    [InlineData("RemotePCDiagnostics.Modules.Programs.dll", typeof(ProgramsDetails))]
-    [InlineData("RemotePCDiagnostics.Modules.BatteryPower.dll", typeof(BatteryDetails))]
-    public void The_user_mode_loader_gets_the_module_its_helpers_and_its_UI(string file, Type ui)
-    {
-        // What the module host and the module UI host do: no vendor slug needed, osquery from the app folder they are given.
-        var loaded = UserModePlugin.Load(Dll(file), appDirectory: _root);
-        Assert.Equal(file.Contains("Programs") ? ModuleIds.Programs : ModuleIds.BatteryPower, loaded.Module.Id);
-        Assert.Equal(ui.FullName, loaded.DetailsComponent?.FullName);
-    }
-
-    [Fact]
-    public void Without_the_app_folder_the_helpers_are_missing()
-    {
-        var ex = Assert.ThrowsAny<Exception>(() => UserModePlugin.Load(Dll("RemotePCDiagnostics.Modules.Programs.dll")));
-        Assert.Contains("OsqueryRunner", ex.ToString());
     }
 
     [Fact]
