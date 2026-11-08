@@ -30,7 +30,8 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
         var commandLine = new StringBuilder($"\"{exe}\" \"{module.Path}\"");
 
         using var token = RestrictedToken();
-        var sa = new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf<SECURITY_ATTRIBUTES>(), bInheritHandle = true };
+        // Every pipe end starts out non-inheritable; only the child's three ends are handed to it (CreateRestricted).
+        var sa = new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf<SECURITY_ATTRIBUTES>(), bInheritHandle = false };
         SafeFileHandle? inRead = null, inWrite = null, outRead = null, outWrite = null, errRead = null, errWrite = null;
         Process process;
         try
@@ -38,10 +39,6 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
             Check(CreatePipe(out inRead, out inWrite, ref sa, 0));
             Check(CreatePipe(out outRead, out outWrite, ref sa, 0));
             Check(CreatePipe(out errRead, out errWrite, ref sa, 0));
-            // The app's ends must not be inherited.
-            Check(SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0));
-            Check(SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0));
-            Check(SetHandleInformation(errRead, HANDLE_FLAG_INHERIT, 0));
 
             var si = new STARTUPINFO
             {
@@ -51,8 +48,7 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
             PROCESS_INFORMATION pi;
             try
             {
-                Check(CreateProcessAsUser(token, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
-                    IntPtr.Zero, dir, ref si, out pi));
+                pi = CreateRestricted(token, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, dir, si, inRead, outWrite, errWrite);
             }
             finally
             {
@@ -118,17 +114,16 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
     {
         if (!File.Exists(exe)) throw new FileNotFoundException("UI host not found", exe);
         using var token = RestrictedToken();
-        var sa = new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf<SECURITY_ATTRIBUTES>(), bInheritHandle = true };
+        var sa = new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf<SECURITY_ATTRIBUTES>(), bInheritHandle = false };
         Check(CreatePipe(out var inRead, out var inWrite, ref sa, 0));
         try
         {
-            Check(SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0)); // the app's end stays here
-            var si = new STARTUPINFO { cb = Marshal.SizeOf<STARTUPINFO>(), dwFlags = STARTF_USESTDHANDLES, hStdInput = inRead.DangerousGetHandle() };
+            // Only stdin is handed over; the process has no stdout or stderr (it logs to its own file).
+            var si = new STARTUPINFO { dwFlags = STARTF_USESTDHANDLES, hStdInput = inRead.DangerousGetHandle() };
             PROCESS_INFORMATION pi;
             try
             {
-                Check(CreateProcessAsUser(token, null, new StringBuilder($"\"{exe}\" {arguments}"), IntPtr.Zero, IntPtr.Zero, true, CREATE_UNICODE_ENVIRONMENT,
-                    IntPtr.Zero, workingDirectory, ref si, out pi));
+                pi = CreateRestricted(token, new StringBuilder($"\"{exe}\" {arguments}"), CREATE_UNICODE_ENVIRONMENT, workingDirectory, si, inRead);
             }
             finally { inRead.Dispose(); } // the child's end
             try
@@ -146,6 +141,42 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
             inRead.Dispose(); inWrite.Dispose();
             throw;
         }
+    }
+
+    /// <summary>
+    /// CreateProcessAsUser with the restricted token that hands the child exactly <paramref name="inherit"/> (PROC_THREAD_ATTRIBUTE_HANDLE_LIST)
+    /// and no other handle of the app's. The handles are inheritable only for the call. Without the list, a host started at the same moment
+    /// as another (Check all) could pick up the other's pipe ends, and then closing that host's stdin wouldn't end it.
+    /// </summary>
+    private static PROCESS_INFORMATION CreateRestricted(SafeAccessTokenHandle token, StringBuilder commandLine, uint flags, string directory,
+        STARTUPINFO startup, params SafeFileHandle[] inherit)
+    {
+        var handles = inherit.Select(h => h.DangerousGetHandle()).Distinct().ToArray();
+        var size = IntPtr.Zero;
+        InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size); // asks for the size; fails by design
+        var list = Marshal.AllocHGlobal(size);
+        var pin = GCHandle.Alloc(handles, GCHandleType.Pinned);
+        try
+        {
+            Check(InitializeProcThreadAttributeList(list, 1, 0, ref size));
+            try
+            {
+                Check(UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, pin.AddrOfPinnedObject(),
+                    (IntPtr)(IntPtr.Size * handles.Length), IntPtr.Zero, IntPtr.Zero));
+                var si = new STARTUPINFOEX { StartupInfo = startup, lpAttributeList = list };
+                si.StartupInfo.cb = Marshal.SizeOf<STARTUPINFOEX>();
+                foreach (var h in inherit) Check(SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT));
+                try
+                {
+                    Check(CreateProcessAsUser(token, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, flags | EXTENDED_STARTUPINFO_PRESENT,
+                        IntPtr.Zero, directory, ref si, out var pi));
+                    return pi;
+                }
+                finally { foreach (var h in inherit) SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0); }
+            }
+            finally { DeleteProcThreadAttributeList(list); }
+        }
+        finally { pin.Free(); Marshal.FreeHGlobal(list); }
     }
 
     private static SafeAccessTokenHandle RestrictedToken()
@@ -247,7 +278,8 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
     private const int WinBuiltinAdministratorsSid = 26, SECURITY_MAX_SID_SIZE = 68, TokenIntegrityLevel = 25, TokenOwner = 4, TokenDefaultDacl = 6;
     private const int GENERIC_ALL = 0x10000000;
     private const uint SE_GROUP_INTEGRITY = 0x20, HANDLE_FLAG_INHERIT = 1, STARTF_USESTDHANDLES = 0x100;
-    private const uint CREATE_NO_WINDOW = 0x08000000, CREATE_UNICODE_ENVIRONMENT = 0x00000400;
+    private const uint CREATE_NO_WINDOW = 0x08000000, CREATE_UNICODE_ENVIRONMENT = 0x00000400, EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
+    private static readonly IntPtr PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002;
 
     [StructLayout(LayoutKind.Sequential)] private struct SID_AND_ATTRIBUTES { public IntPtr Sid; public uint Attributes; }
     [StructLayout(LayoutKind.Sequential)] private struct TOKEN_MANDATORY_LABEL { public SID_AND_ATTRIBUTES Label; }
@@ -259,6 +291,7 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
         public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute;
         public uint dwFlags; public short wShowWindow, cbReserved2; public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
     }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] private struct STARTUPINFOEX { public STARTUPINFO StartupInfo; public IntPtr lpAttributeList; }
     [StructLayout(LayoutKind.Sequential)] private struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
 
     [DllImport("advapi32.dll", SetLastError = true)]
@@ -278,6 +311,14 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
     [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool CreateProcessAsUser(SafeAccessTokenHandle token, string? application, StringBuilder commandLine, IntPtr processAttributes,
         IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string? currentDirectory, ref STARTUPINFO startup, out PROCESS_INFORMATION info);
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CreateProcessAsUser(SafeAccessTokenHandle token, string? application, StringBuilder commandLine, IntPtr processAttributes,
+        IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string? currentDirectory, ref STARTUPINFOEX startup, out PROCESS_INFORMATION info);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref IntPtr size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previous, IntPtr returnSize);
+    [DllImport("kernel32.dll")] private static extern void DeleteProcThreadAttributeList(IntPtr list);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CreatePipe(out SafeFileHandle read, out SafeFileHandle write, ref SECURITY_ATTRIBUTES sa, int size);
     [DllImport("kernel32.dll", SetLastError = true)]

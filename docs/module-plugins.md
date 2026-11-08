@@ -66,9 +66,11 @@ A plugin can give its module a details UI: a Razor component with a `DiagnosticM
   run's time this way.
 - `DiagnosticModule` is still the UI process's own instance of the module: a run the component starts itself is not the app's run and
   isn't stored.
-- Keep styles inline or in the component: the module's static web assets (`_content/...`) aren't served. A fresh UI process starts each
-  time the module page opens; its log is `%LOCALAPPDATA%\RemotePCDiagnostics\moduleui\<slug>\module-ui.log`.
-- Remote sessions show the generic report only for now.
+- The UI process serves the app's own `app.css` and follows the app's theme, so the app's classes work. The module's own static web
+  assets (`_content/...`) aren't served, so anything else goes inline or in the component. A fresh UI process starts each time the
+  module page opens; its log is `%LOCALAPPDATA%\RemotePCDiagnostics\moduleui\<slug>\module-ui.log`.
+- In a remote session the frame of a module that ships with the app goes through the session's relay. An unsigned module's UI is
+  Local mode only; remote sessions show its generic report.
 
 ## Startup
 
@@ -81,8 +83,10 @@ catalog copy, so History can still name its results.
 
 The built-in modules that run without administrator are module DLLs too, one project each under `src/Modules` (hardware inventory,
 device drivers, resource hogs, battery and power plan, network, Windows error log, programs, security essentials, the CPU, memory,
-disk, GPU and network stress tests, both audio tests, the webcam test and the NPU test). The ones that need administrator (sensors and
-fans, drive health, crashes, services, DISM, SFC, the security audit) stay compiled into the app (`BuiltInModulesPlugin.CompiledIn`).
+disk, GPU and network stress tests, both audio tests, the webcam test and the NPU test), and so are the rest (sensors and fans, drive
+health, crashes, services, osquery, DISM, SFC, the security audit). `BuiltInModulesPlugin.CompiledIn` is empty. Only DISM, SFC and the
+security audit still need administrator; sensors, drive health, crashes and services read what needs administrator through host
+queries (`docs/host-queries.md`).
 
 - `src/Modules/Directory.Build.props` sets each one up: `module.json` embedded, Abstractions, Core and UI referenced with
   `Private="false"` (the app supplies them, so the DLL holds only the module's own code and page).
@@ -100,7 +104,9 @@ fans, drive health, crashes, services, DISM, SFC, the security audit) stay compi
 ### Built-in modules that run out of process
 
 A module that ships with the app can set `"outOfProcess": true` in its `module.json`. Programs & updates, Battery & power plan and
-Device Manager & drivers do. Then:
+Device Manager & drivers do. The About page overrides that for all modules or one module at a time (`process-mode.json` in the
+admin-only modules folder, read at the next start); the module page lays itself out from the result (`ModuleHosting`), so a switch
+needs no code or page changes. A module that needs administrator runs out of process with the app's own token (isolation only). Then:
 
 - `LoadBundled` doesn't load its code into the app. It registers a `UserModeModuleProxy` (`UserModeModule.Bundled = true`) and the check
   runs in `RemotePCDiagnostics.ModuleHost.exe` with the restricted, Medium-integrity token, in Local and Remote sessions. It doesn't need
@@ -110,10 +116,16 @@ Device Manager & drivers do. Then:
   available there, so those modules stay in process.
 - Unlike an unsigned module, its report keeps its one-click fixes (the app runs them, elevated, as before) and its page shows no
   "Unsigned module" banner. The app's descriptor (group, order, run order) still applies.
-- With `"hasUi": true` its details UI runs in `moduleui\RemotePCDiagnostics.ModuleUiHost.exe` and is framed on the module page above the
-  generic report (Local mode; Remote shows the generic report). That UI can use only Components and Core types and must style itself:
-  the app's UI assembly and CSS aren't in that process. Programs adds a search over installed programs and updates; Battery adds
-  health and charge gauges with a "Check now" that reads the battery in the UI process.
+- With `"hasUi": true` and `"portableUi": true` its details UI runs in `moduleui\RemotePCDiagnostics.ModuleUiHost.exe` and is framed on
+  the module page above the generic report, in Local and Remote sessions. That UI can use only Components and Core types (no app
+  services); the app's CSS and theme are there. Programs adds a search over installed programs and updates; Battery adds health and
+  charge gauges with a "Check now" that reads the battery in the UI process. With `"resultOnlyUi": true` (Sensors) the app renders the
+  module's own page from the host's results instead. One-click fixes aren't offered inside a framed UI yet; they stay in the generic
+  report.
+- The host exits 2 seconds after each run and starts again for the next one, unless `"keepAlive": true` (Sensors, which is read
+  again and again). The app answers the module's host queries in the background, at most 4 at a time, so a slow one doesn't hold up
+  progress or a stop; when the run is stopped, queries still waiting are answered "cancelled".
+- The host gets only its own three pipe ends from the app (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), never another host's.
 - Without a module host (tests and tools that pass no user-mode factory) it loads in process like the others.
 
 ## Checks written as data

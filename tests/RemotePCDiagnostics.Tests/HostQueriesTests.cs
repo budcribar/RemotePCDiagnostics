@@ -352,3 +352,98 @@ public sealed class HostQueriesTests : IDisposable
         while (!done()) { Assert.True(DateTime.UtcNow < until, "timed out"); await Task.Delay(50); }
     }
 }
+
+/// <summary>The app answers a module's host queries in the background: a slow one holds up neither the others nor a stop.</summary>
+public sealed class HostQueryDispatchTests
+{
+    private static UserModeModule Services() =>
+        new("x.dll", new ModuleManifest { Id = ModuleIds.Services, Slug = "Services", Capabilities = [HostCapabilities.OsquerySelect, HostCapabilities.Minidumps] },
+            BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.Services)) { Bundled = true };
+
+    /// <summary>osquery that never finishes until its run is cancelled.</summary>
+    private sealed class HangingOsquery : IProcessLauncher
+    {
+        public async Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new InvalidOperationException("unreachable");
+        }
+    }
+
+    private static HostQueryServer Server() => new(new HostQueryBackend
+    {
+        Osquery = new OsqueryRunner(baseDirectory: Path.GetTempPath(), launcher: new HangingOsquery(), fileExists: _ => true),
+        Minidumps = () => [],
+    });
+
+    private static ModuleHostMessage Query(int id, string capability, object? args = null) => new()
+    {
+        Type = "query", Id = id, Capability = capability, Args = args is null ? null : JsonSerializer.SerializeToElement(args, HostCapabilities.Json),
+    };
+
+    private static readonly ModuleHostMessage SlowQuery = Query(1, HostCapabilities.OsquerySelect, new { sql = ServicesModule.Sql });
+    private static readonly ModuleHostMessage FastQuery = Query(2, HostCapabilities.Minidumps);
+
+    /// <summary>A module host played by the test: <paramref name="onLine"/> sees each line the app writes and returns the lines to send back.</summary>
+    private sealed class ScriptedHost(Func<ModuleHostMessage, IEnumerable<ModuleHostMessage>> onLine) : IModuleHostLauncher, IModuleHostConnection
+    {
+        private readonly System.Threading.Channels.Channel<string> _out = System.Threading.Channels.Channel.CreateUnbounded<string>();
+        public System.Collections.Concurrent.ConcurrentQueue<ModuleHostMessage> Written { get; } = new();
+        public IModuleHostConnection Start(UserModeModule module) => this;
+        public Task WriteLineAsync(string line, CancellationToken ct)
+        {
+            var m = ModuleHostMessage.Parse(line)!;
+            Written.Enqueue(m);
+            foreach (var reply in onLine(m)) _out.Writer.TryWrite(reply.ToLine());
+            return Task.CompletedTask;
+        }
+        public async Task<string?> ReadLineAsync(CancellationToken ct) => await _out.Reader.ReadAsync(ct);
+        public bool HasExited => false;
+        public void Kill() { }
+        public void Dispose() { }
+        public ModuleHostMessage? AnswerTo(int id) => Written.FirstOrDefault(w => w.Type == "answer" && w.Id == id);
+    }
+
+    private static ModuleHostMessage Result(bool cancelled = false) => new() { Type = "result", Status = DiagnosticStatus.Ok, Message = "done", Cancelled = cancelled };
+
+    [Fact]
+    public async Task A_slow_query_does_not_hold_up_the_next_one()
+    {
+        var host = new ScriptedHost(m => m switch
+        {
+            { Type: "refresh" } => [SlowQuery, FastQuery],
+            { Type: "answer", Id: 2 } => [Result()], // the module finishes once the fast query is answered
+            _ => [],
+        });
+        using var proxy = new UserModeModuleProxy(Services(), host, hostQueries: Server()) { IdleExit = Timeout.InfiniteTimeSpan };
+        var run = proxy.RefreshAsync(null);
+        Assert.Same(run, await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(20))));
+        Assert.Equal(DiagnosticStatus.Ok, (await run).Status);
+        Assert.True(host.AnswerTo(2)!.Ok);
+        // The run is over, so the query still running is answered "cancelled".
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while (host.AnswerTo(1) is null && DateTime.UtcNow < until) await Task.Delay(20);
+        Assert.Equal("cancelled", host.AnswerTo(1)?.Error);
+    }
+
+    [Fact]
+    public async Task Stopping_a_run_answers_its_slow_query_right_away()
+    {
+        var host = new ScriptedHost(m => m switch
+        {
+            { Type: "refresh" } => [SlowQuery],
+            { Type: "answer", Id: 1 } => [Result(cancelled: true)], // the module gives up once its query fails
+            _ => [],
+        });
+        using var proxy = new UserModeModuleProxy(Services(), host, hostQueries: Server()) { IdleExit = Timeout.InfiniteTimeSpan };
+        using var cts = new CancellationTokenSource();
+        var run = proxy.RefreshAsync(null, cts.Token);
+        await Task.Delay(300);
+        Assert.False(run.IsCompleted);
+        cts.Cancel();
+        Assert.Same(run, await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(10))));
+        Assert.True((await run).Cancelled);
+        Assert.Equal("cancelled", host.AnswerTo(1)?.Error);
+        Assert.Contains(host.Written, w => w.Type == "stop");
+    }
+}
