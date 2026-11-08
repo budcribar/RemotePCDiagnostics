@@ -42,6 +42,11 @@ public sealed record ModuleHostMessage
     /// (the services behind the rows, the card that can look up freeze evidence).</summary>
     public Dictionary<string, JsonElement>? PageData { get; init; }
 
+    /// <summary>A per-device module (<see cref="ModuleManifest.PerDevice"/>): the device a refresh runs against; the devices "detection"
+    /// found (with <see cref="Reason"/> when the module doesn't apply).</summary>
+    public ModuleInstance? Instance { get; init; }
+    public List<ModuleInstance>? Instances { get; init; }
+
     public static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -308,7 +313,41 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
         finally { _gate.Release(); Idle(); }
     }
 
-    public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
+    public Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default) =>
+        RefreshCoreAsync(null, progress, cancellationToken);
+
+    /// <summary>A per-device module (<see cref="ModuleManifest.PerDevice"/>): runs it against one device in the module host.</summary>
+    public Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken cancellationToken = default) =>
+        RefreshCoreAsync(instance, progress, cancellationToken);
+
+    /// <summary>A per-device module (<see cref="ModuleManifest.PerDevice"/>): the devices it runs against, found in the module host.
+    /// Never throws: a host that can't answer makes the module not apply, with the reason.</summary>
+    public async Task<ModuleDetection> DetectAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        Busy();
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(CallTimeout); // a drive list can take as long as a run's first read
+            var conn = Connect();
+            using var queries = new Queries(timeout.Token);
+            await WriteAsync(conn, new ModuleHostMessage { Type = "detect" }, timeout.Token).ConfigureAwait(false);
+            while (true)
+            {
+                var m = Read(await conn.ReadLineAsync(timeout.Token).ConfigureAwait(false) ?? throw Exited());
+                if (m?.Type == "query") { Answer(conn, m, queries); continue; }
+                if (m?.Type == "detection")
+                    return m.Reason is { } reason ? ModuleDetection.NotApplicable(reason) : ModuleDetection.For(m.Instances ?? []);
+                if (m?.Type == "error") return ModuleDetection.NotApplicable(m.Message ?? "The module host failed");
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex) { Reset(); return ModuleDetection.NotApplicable($"The module host didn't answer: {ex.Message}"); }
+        finally { _gate.Release(); Idle(); }
+    }
+
+    private async Task<DiagnosticResult> RefreshCoreAsync(ModuleInstance? instance, IProgress<string>? progress, CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         Busy();
@@ -316,7 +355,7 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
         {
             var conn = Connect();
             lock (_connGate) _refreshing = conn;
-            await WriteAsync(conn, new ModuleHostMessage { Type = "refresh" }, CancellationToken.None).ConfigureAwait(false);
+            await WriteAsync(conn, new ModuleHostMessage { Type = "refresh", Instance = instance }, CancellationToken.None).ConfigureAwait(false);
             using var queries = new Queries(CancellationToken.None);
             using var stopping = cancellationToken.Register(() =>
             {
@@ -445,6 +484,8 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
     private readonly object _pageGate = new();
     private IReadOnlyDictionary<string, ServiceInfo>? _serviceRows;
     private string? _hangCard;
+    private AreaPanels _panels;
+    private (HashSet<string> Keys, object? Report)? _combined;
 
     private void SetPageData(Dictionary<string, JsonElement> data)
     {
@@ -452,6 +493,8 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
         {
             _serviceRows = ModulePageCalls.ReadServiceRows(data);
             _hangCard = ModulePageCalls.ReadHangCard(data);
+            _panels = ModulePageCalls.ReadPanels(data);
+            if (ModulePageCalls.ReadCombined(data) is { } combined) _combined = combined;
         }
     }
 
@@ -463,8 +506,31 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
         {
             if (typeof(T) == typeof(IServiceRows) && _serviceRows is { } rows) return new ServiceRowsFeature(rows) as T;
             if (typeof(T) == typeof(IHangEvidenceSource) && _hangCard is { } card) return new HangEvidenceFeature(this, card) as T;
+            if (typeof(T) == typeof(IHasAreaPanels) && _panels != AreaPanels.None) return new PanelsFeature(_panels) as T;
         }
         return null;
+    }
+
+    /// <summary>
+    /// A per-device module's one report of all devices (<see cref="IInstanceSummary.Combine"/>): the module host's own combination when
+    /// it covers the same devices, which it does after a normal run; otherwise the devices' reports one after another.
+    /// </summary>
+    public object? Combine(IReadOnlyList<DiagnosticResult> instanceResults)
+    {
+        var keys = instanceResults.Select(r => r.InstanceKey).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        lock (_pageGate)
+            if (_combined is { } c && c.Keys.SetEquals(keys)) return c.Report;
+        if (instanceResults.Count == 1) return instanceResults[0].Payload;
+        var reports = instanceResults.Select(r => r.Payload).OfType<AreaReport>().ToList();
+        if (reports.Count == 0) return null;
+        static int Severity(DiagnosticStatus s) => s switch { DiagnosticStatus.Error => 3, DiagnosticStatus.Warning => 2, DiagnosticStatus.Ok => 1, _ => 0 };
+        return new AreaReport([.. reports.SelectMany(r => r.Cards)], string.Join(" · ", reports.Select(r => r.Summary).Where(t => t.Length > 0).Distinct()),
+            reports.Select(r => r.Status).OrderByDescending(Severity).First(), reports.Select(r => r.Notice).FirstOrDefault(n => n is not null));
+    }
+
+    private sealed class PanelsFeature(AreaPanels panels) : IHasAreaPanels
+    {
+        public AreaPanels Panels => panels;
     }
 
     private sealed class ServiceRowsFeature(IReadOnlyDictionary<string, ServiceInfo> rows) : IServiceRows
@@ -522,4 +588,32 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
 
     private void Reset() { lock (_connGate) { _conn?.Dispose(); _conn = null; } }
     private static IOException Exited() => new("the module host exited");
+}
+
+/// <summary>
+/// The app's stand-in for a module that ships with the app and runs once per device (<see cref="ModuleManifest.PerDevice"/>, Drive
+/// health), out of process: the devices are detected and each one is run in the module host, so the module keeps one result per device
+/// and its page one card per device, as in process.
+/// </summary>
+public sealed class PerDeviceModuleProxy(UserModeModuleProxy inner) : IPerDeviceModule, IInstanceSummary, IUserModeModule, IModuleFeatures, IDisposable
+{
+    public UserModeModuleProxy Inner => inner;
+    public UserModeModule Source => inner.Source;
+    public Guid Id => inner.Id;
+    public string Name => inner.Name;
+    public string DisplayName => inner.DisplayName;
+    public bool IncludeInRunAll => inner.IncludeInRunAll;
+    public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => inner.CheckAvailabilityAsync(cancellationToken);
+    public Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default) => inner.RefreshAsync(progress, cancellationToken);
+    public Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken ct = default) => inner.RefreshAsync(instance, progress, ct);
+    public Task<ModuleDetection> DetectAsync(CancellationToken ct = default) => inner.DetectAsync(ct);
+    public object? Combine(IReadOnlyList<DiagnosticResult> instanceResults) => inner.Combine(instanceResults);
+    public void Stop() => inner.Stop();
+    public T? Feature<T>() where T : class => inner.Feature<T>();
+    public void Dispose() => inner.Dispose();
+
+    /// <summary>The stand-in for <paramref name="module"/>: per device when its manifest says so and it ships with the app.</summary>
+    public static IDiagnosticModule For(UserModeModuleProxy proxy) =>
+        proxy.Source is { Bundled: true, Manifest.PerDevice: true } ? new PerDeviceModuleProxy(proxy) : proxy;
 }

@@ -58,8 +58,12 @@ How it works:
   - both only for modules that ship with the app; an unsigned module's page data is ignored and its calls refused.
 - **Security audit** renders its page in the app from results (`"resultOnlyUi": true`; `SecurityAuditReport` is in
   `ModuleHostPayloads.Types`), and its Cancel button asks the module host to stop the run (`IUserModeModule.Stop`, the `stop` line).
-- **Not carried over out of process yet:** Drive health's one card per drive (out of process it reports all drives as one), and the
-  Checks screen's Cancel for DISM and SFC (`ICancellableScan`).
+- **One run per device** (`"perDevice": true`, Drive health): the app's stand-in is a `PerDeviceModuleProxy` (`IPerDeviceModule`).
+  It asks the host for the devices (`{"type":"detect"}` → `{"type":"detection","instances":[...]}`), runs each one
+  (`{"type":"refresh","instance":{...}}`), and takes the one report of all drives from the host (`pageData.combined`, with the drive
+  keys it covers). So the module keeps one result per drive in History and one card per drive on its page. Its storage clean-up panel
+  comes as `pageData.panels`.
+- **Not carried over out of process yet:** the Checks screen's Cancel for DISM and SFC (`ICancellableScan`).
 
 ## Why
 

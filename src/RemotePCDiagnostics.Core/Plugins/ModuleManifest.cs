@@ -62,6 +62,10 @@ public sealed record ModuleManifest
     /// services), so it can render in the module UI host when the module runs out of process. Out of process without it, the module page
     /// shows the generic report and says why. An unsigned plugin's UI always runs in the UI host.</summary>
     public bool PortableUi { get; init; }
+    /// <summary>Only for a module that ships with the app: it runs once per device (<see cref="IPerDeviceModule"/>, such as one run per
+    /// drive). Out of process the app's stand-in then detects the devices and runs each one through the module host, so the module keeps its
+    /// one result per device. Without it an out-of-process module runs as one.</summary>
+    public bool PerDevice { get; init; }
 
     private static readonly JsonSerializerOptions Json = new()
     {
