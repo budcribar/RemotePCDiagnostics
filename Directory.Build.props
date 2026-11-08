@@ -5,9 +5,8 @@
     <!-- The SDK appends the Git revision to InformationalVersion. CI retries stay distinguishable. -->
     <InformationalVersion Condition="'$(GITHUB_RUN_NUMBER)' != ''">$(Version)-ci.$(GITHUB_RUN_NUMBER).$(GITHUB_RUN_ATTEMPT)</InformationalVersion>
     <InformationalVersion Condition="'$(GITHUB_RUN_NUMBER)' == ''">$(Version)-local</InformationalVersion>
-    <!-- RemoteBlazorWebView packages (Wpf, RemoteWebView, RemoteWebViewService.Lib), built from net10 with the embedded relay and the
-         opaque-origin fix (budcribar/RemoteBlazorWebView#64). They are in third_party/RemoteBlazorWebView/packages. -->
-    <RbwvVersion Condition="'$(RbwvVersion)' == ''">10.0.14-embedded.5</RbwvVersion>
+    <!-- RemoteBlazorWebView packages (Wpf, RemoteWebView, RemoteWebViewService.Lib, RemoteComponents) from nuget.org. -->
+    <RbwvVersion Condition="'$(RbwvVersion)' == ''">10.0.14</RbwvVersion>
     <RbwvLibVersion Condition="'$(RbwvLibVersion)' == ''">$(RbwvVersion)</RbwvLibVersion>
   </PropertyGroup>
 </Project>
