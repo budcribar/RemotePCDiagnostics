@@ -273,4 +273,30 @@ public sealed class HostQueriesTests : IDisposable
         Assert.IsType<SensorReport>(ModuleHostPayloads.Read("Sensors", DiagnosticStatus.Ok, "", payload, type)!.Payload);
         Assert.Null(ModuleHostPayloads.Read("Sensors", DiagnosticStatus.Ok, "", payload, "System.IO.FileInfo"));
     }
+
+    private const string DriveRows = """
+        [{"Name":"SAMSUNG MZVL2512","Serial":"S1","UniqueId":"U1","MediaType":"SSD","BusType":"NVMe","Health":"Healthy","Operational":"OK","SizeBytes":"512110190592","TemperatureC":"38","Wear":"3","ReadErrors":"0","WriteErrors":"0","PowerOnHours":"1200","Letters":"C"}]
+        """;
+
+    [Fact]
+    public async Task Drive_health_answers_from_the_real_module_host()
+    {
+        var module = Bundled("RemotePCDiagnostics.Modules.DriveHealth.dll");
+        var backend = Backend() with { Commands = new SystemCommandRunner(new FakeOsquery(DriveRows)) };
+        using var proxy = new UserModeModuleProxy(module, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: new HostQueryServer(backend));
+        Assert.True((await proxy.CheckAvailabilityAsync()).IsAvailable);
+        var steps = new List<string>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var r = await proxy.RefreshAsync(new Progress<string>(steps.Add), cts.Token);
+        var report = Assert.IsType<AreaReport>(r.Payload);
+        Assert.Contains(report.Cards, c => c.Title.Contains("SAMSUNG"));
+    }
+
+    [Fact]
+    public async Task A_query_the_app_never_answers_fails_instead_of_hanging()
+    {
+        var client = new HostQueriesClient(_ => { }) { AnswerTimeout = TimeSpan.FromMilliseconds(200) };
+        var ex = await Assert.ThrowsAsync<HostQueryException>(() => client.ReadDrivesAsync());
+        Assert.Equal("timedOut", ex.Error);
+    }
 }
