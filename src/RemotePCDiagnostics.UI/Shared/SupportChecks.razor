@@ -1,0 +1,141 @@
+@using RemotePCDiagnostics.Core.Areas
+@inject AppServices App
+@implements IDisposable
+
+<section class="card" data-testid="support-check-@Kind">
+    @if (IsDock)
+    {
+        <h3>External monitor and dock detection</h3>
+        <p class="meta">Scan what Windows sees now. For a reconnect check, capture a baseline while the dock is connected, reconnect it locally, then compare.</p>
+        <div class="toolbar">
+            <button type="button" disabled="@_busy" @onclick="() => ScanDockAsync(false)">Scan devices</button>
+            <button type="button" disabled="@_busy" @onclick="() => ScanDockAsync(true)">Capture baseline</button>
+            <button type="button" disabled="@(_busy || _baseline is null)" @onclick="() => ScanDockAsync(false)">Compare after reconnect</button>
+        </div>
+        @if (_baseline is not null) { <p class="meta">Baseline captured with @_baseline.Count devices.</p> }
+        @if (_devices is { } devices)
+        {
+            if (devices.Count == 0) { <p>No matching present devices were reported.</p> }
+            else
+            {
+                var groups = devices.Select(d => d.Container).Where(c => Guid.TryParse(c, out var id) && id != Guid.Empty)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                <div style="overflow-x:auto">
+                    <table class="detail" aria-label="Detected devices">
+                        <thead><tr><th scope="col">Kind</th><th scope="col">Device</th><th scope="col">Status</th><th scope="col">Windows group</th></tr></thead>
+                        <tbody>
+                            @foreach (var device in devices.OrderBy(d => d.Kind).ThenBy(d => d.Name))
+                            {
+                                var group = groups.FindIndex(g => string.Equals(g, device.Container, StringComparison.OrdinalIgnoreCase));
+                                <tr><td>@(device.Connection ?? device.Kind)</td><td>@device.Name</td>
+                                    <td>@(device.Active == true ? "Active display · " : "")@(device.Status ?? "Unavailable")</td>
+                                    <td>@(group < 0 ? "Unavailable" : $"Group {group + 1}")</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            @if (_baseline is { } baseline)
+            {
+                var missing = SupportDiagnostics.MissingDevices(baseline, devices).ToList();
+                var added = SupportDiagnostics.MissingDevices(devices, baseline).ToList();
+                <p>@(missing.Count == 0 ? "All baseline devices were detected." : "Missing since baseline: " + string.Join(", ", missing.Select(d => d.Name)))</p>
+                @if (added.Count > 0) { <p>Newly detected: @string.Join(", ", added.Select(d => d.Name))</p> }
+            }
+            <p class="meta">Windows grouping can help correlate devices. It does not establish which devices belong to a dock or whether a detected display is showing an image.</p>
+        }
+    }
+    else
+    {
+        <h3>@(IsSignIn ? "Sign-in diagnostics" : "Resource access diagnostics")</h3>
+        @if (IsSignIn)
+        {
+            <label>Where does sign-in fail?
+                <select @bind="_webSignIn" disabled="@_busy"><option value="false">Windows sign-in</option><option value="true">Website or application sign-in</option></select>
+            </label>
+        }
+        @if (!IsSignIn || _webSignIn)
+        {
+            <label>@(IsSignIn ? "Sign-in URL" : "Resource URL or share path")
+                <input type="text" maxlength="2048" placeholder="@(IsSignIn ? "https://sign-in.example.com" : @"https://site.example.com or \\server\share")"
+                       @bind="_target" disabled="@_busy" />
+            </label>
+            <p class="meta">The probe runs from this PC without credentials. Use a plain URL without a query string or sign-in token.</p>
+        }
+        <label>Reported error code or message (optional)
+            <input type="text" maxlength="160" @bind="_reportedError" disabled="@_busy" />
+        </label>
+        <button type="button" disabled="@_busy" @onclick="RunAccessAsync">Run checks</button>
+        @if (_observations is { } observations)
+        {
+            <dl>@foreach (var item in observations) { <dt>@item.Name</dt><dd>@item.Result</dd> }</dl>
+            <p class="meta">For this user's sign-in or permissions, verify the reported error in the affected session or service logs.</p>
+        }
+    }
+    @if (_busy) { <p role="status">Collecting evidence.</p> }
+    @if (_error is not null) { <p role="status">@_error</p> }
+</section>
+
+@code {
+    [Parameter] public Guid ModuleId { get; set; }
+    private bool IsSignIn => ModuleId == ModuleIds.SecurityEssentials;
+    private bool IsDock => ModuleId == ModuleIds.DeviceDrivers;
+    private string Kind => IsSignIn ? "sign-in" : IsDock ? "dock" : "access";
+    private readonly CancellationTokenSource _lifetime = new();
+    private bool _busy, _webSignIn;
+    private string _target = "", _reportedError = "";
+    private string? _error;
+    private IReadOnlyList<SupportObservation>? _observations;
+    private IReadOnlyList<DockDevice>? _devices, _baseline;
+
+    private async Task RunAccessAsync()
+    {
+        _observations = null;
+        SupportEndpoint? endpoint = null;
+        if (!IsSignIn || _webSignIn)
+        {
+            if (!SupportDiagnostics.TryEndpoint(_target, out endpoint) || (IsSignIn && endpoint.Web is null))
+            {
+                _error = IsSignIn ? "Enter an HTTP or HTTPS sign-in URL without credentials or a query string."
+                    : "Enter an HTTP or HTTPS URL without credentials or a query string, or a network share path.";
+                return;
+            }
+        }
+        await RunAsync(async ct =>
+        {
+            var observations = new List<SupportObservation>();
+            if (IsSignIn)
+            {
+                observations.Add(new("PC clock (UTC)", DateTimeOffset.UtcNow.ToString("u")));
+                observations.AddRange(await App.SupportDiagnostics!.ReadWindowsSignInAsync(ct));
+            }
+            if (endpoint is not null) observations.AddRange(await SupportDiagnostics.ProbeAsync(endpoint, IsSignIn, ct));
+            if (!string.IsNullOrWhiteSpace(_reportedError)) observations.Add(new("Reported error", _reportedError.Trim()));
+            _observations = observations;
+        });
+    }
+
+    private Task ScanDockAsync(bool baseline) => RunAsync(async ct =>
+    {
+        _devices = await App.SupportDiagnostics!.ReadDockAsync(ct);
+        if (_devices is null) _error = "Windows device inventory is unavailable.";
+        else if (baseline) _baseline = _devices;
+    });
+
+    private async Task RunAsync(Func<CancellationToken, Task> run)
+    {
+        if (_busy) return;
+        _busy = true;
+        _error = null;
+        var ct = _lifetime.Token;
+        try { await run(ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        finally { _busy = false; }
+    }
+
+    public void Dispose()
+    {
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
+}

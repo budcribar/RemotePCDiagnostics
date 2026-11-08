@@ -73,7 +73,7 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        var total = includeWifiAndIpConfig && commands is not null ? 3 : 1;
+        var total = includeWifiAndIpConfig && commands is not null ? 4 : 1;
         progress.ReportStep(1, total, "Checking network adapters…");
         var q = await QueryAsync(Sql, ct).ConfigureAwait(false);
         if (!q.Success) return AreaReport.Failed(FailedMessage);
@@ -101,10 +101,8 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
         var ipRes = await ipTask.ConfigureAwait(false);
         var wlanOk = wlanRes is { ExitCode: 0 };
         var ipOk = ipRes is { ExitCode: 0 };
-        if (!wlanOk && !ipOk)
-            return baseReport;
-
         var ipSnap = ipOk ? WifiConfigModule.ParseIpSnapshot(ipRes!.StdOut) : null;
+        var gateway = ipSnap is null ? null : WifiConfigModule.PrimaryAdapter(ipSnap)?.Gateway;
         // Measure the current DNS against Cloudflare/Google (a few seconds; nothing changed) so switching is only suggested when it's faster.
         DnsComparison? dns = null;
         if (ipSnap is not null && WifiConfigModule.PrimaryAdapter(ipSnap) is { } primary && !DnsSpeedTest.IsPublicAlready(primary.Dns))
@@ -113,13 +111,16 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
             try { dns = await (dnsTest ?? new DnsSpeedTest(log: commands.Log)).CompareAsync(primary.Dns, ct).ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException) { commands.Log.Warn($"DNS speed test failed: {ex.Message}"); }
         }
-        var wifiRep = WifiConfigModule.Build(
-            wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null,
-            wlanOk,
-            ipSnap, dns);
-        var combinedCards = wifiRep.Cards.Concat(baseReport.Cards).ToList();
+        progress.ReportStep(4, total, "Checking recent network events and reachability.");
+        var history = NetworkDiagnostics.ReadHistoryAsync(commands, ct);
+        var probes = NetworkDiagnostics.ProbeAsync(gateway, ct);
+        await Task.WhenAll(history, probes).ConfigureAwait(false);
+        var wifiRep = wlanOk || ipOk ? WifiConfigModule.Build(
+            wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null, wlanOk, ipSnap, dns) : null;
+        var combinedCards = (wifiRep?.Cards ?? []).Concat(baseReport.Cards)
+            .Append(await history.ConfigureAwait(false)).Append(await probes.ConfigureAwait(false)).ToList();
         var combinedStatus = AreaReport.Worst(combinedCards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));
-        var combinedSummary = $"{wifiRep.Summary} · {baseReport.Summary}";
+        var combinedSummary = wifiRep is null ? baseReport.Summary : $"{wifiRep.Summary} · {baseReport.Summary}";
         return new(combinedCards, combinedSummary, combinedStatus);
     }
 

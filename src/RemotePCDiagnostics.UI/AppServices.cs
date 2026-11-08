@@ -19,4 +19,5 @@ public sealed record AppServices(
     PreferencesService? Preferences = null,
     WorkflowService? Workflow = null,
     PluginRegistrar? Plugins = null,
-    IModuleUiFrames? ModuleUiFrames = null);
+    IModuleUiFrames? ModuleUiFrames = null,
+    SupportDiagnostics? SupportDiagnostics = null);

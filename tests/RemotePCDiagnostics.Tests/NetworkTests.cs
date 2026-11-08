@@ -59,6 +59,32 @@ public class NetworkTests
     public void Empty_Friendly() => Assert.Equal("No network adapters were found.", NetworkModule.Build([]).Summary);
 
     [Fact]
+    public void ConnectivityHistory_OrdersEventsAndDistinguishesMissingLogs()
+    {
+        const string wlan = "Microsoft-Windows-WLAN-AutoConfig/Operational";
+        const string profiles = "Microsoft-Windows-NetworkProfile/Operational";
+        var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var history = NetworkDiagnostics.BuildHistory([
+            (wlan, [new(now.AddMinutes(-1), wlan, "Microsoft-Windows-WLAN-AutoConfig", 8003, 4, "Disconnected", [], new Dictionary<string, string>())]),
+            ("System", [new(now, "System", "e1dexpress", 27, 3, "Link is disconnected", [], new Dictionary<string, string>())]),
+            (profiles, null)
+        ]);
+        Assert.Equal(["Intel Ethernet link dropped", "Wi-Fi disconnected"], history.Rows.Select(r => r.Values[1]));
+        Assert.Contains("2 of 3", history.Meta);
+        Assert.Equal("Event history unavailable", NetworkDiagnostics.BuildHistory([(wlan, null)]).Headline);
+        Assert.Equal("No matching events recorded", NetworkDiagnostics.BuildHistory([(wlan, [])]).Headline);
+    }
+
+    [Fact]
+    public void Reachability_KeepsGatewayDnsAndDestinationOutcomesSeparate()
+    {
+        var card = NetworkDiagnostics.BuildProbes(null, null, true, false);
+        Assert.Equal(["Unavailable", "Resolved", "No ICMP reply"], card.Rows.Select(r => r.Values[2]));
+        Assert.Equal(AreaLevel.Neutral, card.Level);
+        Assert.Equal("All three probes responded", NetworkDiagnostics.BuildProbes("192.0.2.1", true, true, true).Headline);
+    }
+
+    [Fact]
     public async Task QueryFails_Friendly()
     {
         var r = await new NetworkModule(ScriptedLauncher.Osquery(new ScriptedLauncher((f, a) => ScriptedLauncher.Fail()))).RefreshAsync(null);

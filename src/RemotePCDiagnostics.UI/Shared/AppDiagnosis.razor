@@ -1,0 +1,124 @@
+@using RemotePCDiagnostics.Core.Areas
+@inherits StoreAwareComponent
+@inject ChecksScreenState Screen
+
+<section class="card" data-testid="app-diagnosis">
+    <h3>App troubleshooting</h3>
+    <p class="meta">Compare installed versions, recorded crashes and freezes, and the latest resource snapshot for an app.</p>
+    @{ var crashedApps = CrashedApps(); }
+    <div class="toolbar">
+        <label>Recently crashed app
+            <select data-testid="app-diagnosis-crashed-app" @bind="_selectedCrash" @bind:after="SelectCrash" disabled="@(crashedApps.Count == 0)">
+                <option value="">@(crashedApps.Count > 0 ? "Select an app" : IsRunning(ModuleSlugs.Crashes) ? "Reading crashes…" :
+                    CrashCard is null ? "Refresh evidence to load crashes" : "No crashes in the latest report")</option>
+                @foreach (var app in crashedApps) { <option value="@app">@app</option> }
+            </select>
+        </label>
+        <label>App name <input type="search" list="app-diagnosis-apps" @bind="_app" @bind:event="oninput" @bind:after="ClearCrashSelection" /></label>
+        <datalist id="app-diagnosis-apps">
+            @foreach (var name in Names()) { <option value="@name"></option> }
+        </datalist>
+        <label>Executable name (optional) <input type="search" placeholder="app.exe" @bind="_executable" @bind:event="oninput" @bind:after="ClearCrashSelection" /></label>
+        <button type="button" class="btn-small" disabled="@(_refreshing || Screen.IsBusy || Sources.Any(IsRunning) || !Sources.Any(Diagnostics.CanRun))"
+                @onclick="RefreshAsync">Refresh evidence</button>
+    </div>
+    @if (_refreshing)
+    {
+        <p role="status">Collecting app evidence.</p>
+    }
+    @if (!string.IsNullOrWhiteSpace(_app) || !string.IsNullOrWhiteSpace(_executable))
+    {
+        @Evidence(ModuleSlugs.Programs, "Installed version and app update timing", ["programs"], 0, _app,
+            "No installed program matched. Try the app's name as shown in Windows.")
+        @Evidence(ModuleSlugs.Crashes, "Crashes and freezes", ["crashes", "hangs"], 1, ProcessQuery,
+            "No matching incidents in the latest 30-day report. Try the executable name if it differs from the installed name.")
+        @Evidence(ModuleSlugs.ResourceHogs, "Resource snapshot", ["memory", "cpu"], 0, ProcessQuery,
+            "No match among the top resource consumers in the latest snapshot. The app may still be running.")
+        @Evidence(ModuleSlugs.Programs, "Recent Windows updates", ["updates"], 0, null,
+            "No Windows updates were recorded in the latest inventory.", limit: 5)
+        <p class="meta">Results are matched by name. Update timing is context and does not establish what caused a crash.</p>
+    }
+</section>
+
+@code {
+    private static readonly string[] Sources = [ModuleSlugs.Programs, ModuleSlugs.Crashes, ModuleSlugs.ResourceHogs];
+    private string _app = "", _executable = "", _selectedCrash = "";
+    private bool _refreshing;
+    private string ProcessQuery => string.IsNullOrWhiteSpace(_executable) ? _app : _executable;
+
+    private bool IsRunning(string module) => Store.Get(module).Status == DiagnosticStatus.Running;
+
+    private AreaCard? CrashCard => Store.Get(ModuleSlugs.Crashes) is
+        { Cancelled: false, Status: not (DiagnosticStatus.Running or DiagnosticStatus.NotRun), Payload: AreaReport report }
+        ? report.Cards.FirstOrDefault(c => c.Id == "crashes" && c.ErrorText is null) : null;
+
+    private List<string> CrashedApps() => (CrashCard?.Rows ?? [])
+        .Where(r => r.Values.Count > 1).Select(r => r.Values[1].Trim())
+        .Where(name => name.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)
+        .Order(StringComparer.CurrentCultureIgnoreCase).ToList();
+
+    private void SelectCrash()
+    {
+        _executable = _selectedCrash;
+        _app = _selectedCrash.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? _selectedCrash[..^4] : _selectedCrash;
+    }
+
+    private void ClearCrashSelection() => _selectedCrash = "";
+
+    private IEnumerable<string> Names() => ((Store.Get(ModuleSlugs.Programs).Payload as AreaReport)?.Cards
+        .FirstOrDefault(c => c.Id == "programs")?.Rows ?? [])
+        .Select(r => r.Values.FirstOrDefault()).OfType<string>()
+        .Distinct(StringComparer.CurrentCultureIgnoreCase).Order(StringComparer.CurrentCultureIgnoreCase);
+
+    private async Task RefreshAsync()
+    {
+        _refreshing = true;
+        try
+        {
+            foreach (var source in Sources.Where(Diagnostics.CanRun))
+                await Diagnostics.RunAsync(source);
+        }
+        finally { _refreshing = false; }
+    }
+
+    private RenderFragment Evidence(string module, string title, string[] cardIds, int nameColumn, string? query, string empty, int limit = 20) => __builder =>
+    {
+        var result = Store.Get(module);
+        var report = result.Cancelled || result.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun ? null : result.Payload as AreaReport;
+        var cards = report?.Cards.Where(c => cardIds.Contains(c.Id) && c.ErrorText is null).ToList() ?? [];
+        var shown = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        <h4>@title</h4>
+        @if (query is not null && string.IsNullOrWhiteSpace(query))
+        {
+            <p class="meta">Enter the installed app name to match this evidence.</p>
+        }
+        else if (cards.Count == 0)
+        {
+            <p class="meta">@(result.Status == DiagnosticStatus.Running ? "Collecting evidence." : "Evidence unavailable. Run or refresh the check.")</p>
+        }
+        else
+        {
+            <p class="meta">Collected @result.Timestamp.ToLocalTime().ToString("g")</p>
+            @foreach (var card in cards)
+            {
+                var matches = card.Rows.Where(row => query is null || (row.Values.Count > nameColumn &&
+                    row.Values[nameColumn].Contains(query.Trim(), StringComparison.CurrentCultureIgnoreCase)))
+                    .Where(row => shown.Add(string.Join('\u001f', row.Values))).ToList();
+                if (matches.Count == 0) continue;
+                <div style="overflow-x:auto">
+                    <table class="detail" aria-label="@card.Title">
+                        <thead><tr>@foreach (var column in card.Columns) { <th scope="col">@column</th> }</tr></thead>
+                        <tbody>
+                            @foreach (var row in matches.Take(limit))
+                            {
+                                <tr>@foreach (var value in row.Values) { <td>@value</td> }</tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                if (matches.Count > limit) { <p class="meta">Showing @limit of @matches.Count matches.</p> }
+            }
+            @if (shown.Count == 0) { <p class="meta">@empty</p> }
+        }
+    };
+}

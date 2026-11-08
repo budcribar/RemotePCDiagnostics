@@ -13,6 +13,14 @@
     var details = Diagnostics.Catalog.Get(m.Id)?.DetailsComponent;
     var layout = ModulePageLayout.For(Diagnostics.Catalog.Hosting(m.Id), outOfProcess: um is not null, bundled: um?.Source.Bundled ?? true,
         hasDetails: um is not null ? um.Source.Manifest.HasUi : details is not null, frameHost: um is not null && UnsignedModuleFrame.IsAvailable(App, um));
+    @if (m.Id == ModuleIds.Programs)
+    {
+        <AppDiagnosis />
+    }
+    @if (App.SupportDiagnostics is not null && (m.Id == ModuleIds.SecurityEssentials || m.Id == ModuleIds.Network || m.Id == ModuleIds.DeviceDrivers))
+    {
+        <SupportChecks @key="m.Id" ModuleId="m.Id" />
+    }
     @if (um is { Source.Bundled: false })
     {
         @* Drawn by the app, outside anything the module controls. *@
