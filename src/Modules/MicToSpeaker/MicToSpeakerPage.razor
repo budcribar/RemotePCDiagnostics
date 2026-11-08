@@ -48,7 +48,11 @@ else
         <span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start to begin.", DiagnosticStatus.Running => m.Settings.HalfDuplex ? "Recording, then playing it back… speak now." : "Playing the microphone through the speaker… speak now.", _ => r.Message })</span>
         @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
     </p>
-    @if (running) { <div class="run-progress run-progress-indeterminate" data-testid="m2s-run-progress" aria-hidden="true"><div></div></div> }
+    @if (running)
+    {
+        <div class="run-progress run-progress-indeterminate" data-testid="m2s-run-progress" aria-hidden="true"><div></div></div>
+        <TestRunningVisual Slug="@m.Name" TestId="m2s-visual" Caption="Monitoring live microphone & speaker acoustic loop" />
+    }
     @if (!running && rep?.Notice is { } notice) { <p class="notice" data-testid="m2s-notice">@notice</p> }
     @if (!running && rep is { OfferHalfDuplex: true, HalfDuplex: false })
     {

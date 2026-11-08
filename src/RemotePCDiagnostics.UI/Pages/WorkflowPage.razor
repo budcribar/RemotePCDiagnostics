@@ -187,6 +187,7 @@
         {
             @if (!string.IsNullOrEmpty(Bench.Progress)) { <p class="meta" data-testid="wf-bench-step">@Bench.Progress</p> }
             <div class="run-progress run-progress-indeterminate wf-overall-progress" data-testid="wf-bench-progress" aria-hidden="true"><div></div></div>
+            <TestRunningVisual Slug="benchmark" TestId="wf-bench-visual" Caption="Measuring system performance pass" />
         }
         @if (s.Stage == WorkflowStage.Applying && approved > 0)
         {
@@ -199,6 +200,7 @@
             {
                 <div class="run-progress run-progress-indeterminate wf-check-bar" data-testid="wf-repair-progress" aria-hidden="true"><div></div></div>
             }
+            <TestRunningVisual Slug="dism-scan" TestId="wf-apply-visual" Caption="Applying approved system optimizations & repairs" />
         }
         @if (s.Outcomes.Count > 0)
         {

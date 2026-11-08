@@ -37,6 +37,7 @@
 @if (running)
 {
     <div class="progress run-progress" data-testid="gpustress-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
+    <TestRunningVisual Slug="@GpuStressModule.ModuleName" TestId="gpustress-visual" Caption="Running compute shader verification & thermal check" />
     <div class="cards">
         <div class="card is-running" data-testid="gpustress-live-progress">
             <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>

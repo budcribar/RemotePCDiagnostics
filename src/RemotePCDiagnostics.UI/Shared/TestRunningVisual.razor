@@ -1,0 +1,37 @@
+@* Sleek isometric hardware/telemetry animation shown while a long (>=30s) test or scan is running.
+   Uses a static PNG frame when prefers-reduced-motion: reduce is active. *@
+<div class="running-visual" data-testid="@TestId" data-visual="@AssetSlug" aria-hidden="true">
+    <div class="running-visual-frame">
+        <picture>
+            <source media="(prefers-reduced-motion: reduce)" srcset="@($"_content/RemotePCDiagnostics.UI/img/tests/{AssetSlug}.png")" />
+            <img class="running-visual-img" src="@($"_content/RemotePCDiagnostics.UI/img/tests/{AssetSlug}.gif")" alt="" width="400" height="225" loading="eager" decoding="async" />
+        </picture>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(Caption))
+    {
+        <div class="running-visual-caption">@Caption</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Slug { get; set; } = "";
+    [Parameter] public string? Caption { get; set; }
+    [Parameter] public string TestId { get; set; } = "running-visual";
+
+    public string AssetSlug => AssetSlugFor(Slug);
+
+    public static string AssetSlugFor(string? slug) => slug switch
+    {
+        ModuleSlugs.CpuStress or "cpu-stress" => "cpu-stress",
+        ModuleSlugs.GpuStress or "gpu-stress" => "gpu-stress",
+        ModuleSlugs.MemoryTest or "memory-test" => "memory-test",
+        ModuleSlugs.DiskSpeed or "disk-speed" => "disk-speed",
+        ModuleSlugs.NetworkTest or "network-test" => "network-test",
+        ModuleSlugs.NpuTest or "npu-test" => "npu-test",
+        ModuleSlugs.MicToSpeaker or ModuleSlugs.SpeakerToMic or "audio-test" => "audio-test",
+        ModuleSlugs.SfcVerifyOnly or "sfc-scan" => "sfc-scan",
+        ModuleSlugs.DismScanHealth or "dism-scan" => "dism-scan",
+        ModuleSlugs.SecurityAudit or "security-audit" => "security-audit",
+        _ => "benchmark",
+    };
+}

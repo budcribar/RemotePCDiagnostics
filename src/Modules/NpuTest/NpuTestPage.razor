@@ -37,7 +37,11 @@ else
         <span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start to begin.", DiagnosticStatus.Running => "Testing the NPU…", _ => r.Message })</span>
         @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
     </p>
-    @if (running) { <div class="run-progress run-progress-indeterminate" data-testid="npu-run-progress" aria-hidden="true"><div></div></div> }
+    @if (running)
+    {
+        <div class="run-progress run-progress-indeterminate" data-testid="npu-run-progress" aria-hidden="true"><div></div></div>
+        <TestRunningVisual Slug="@m.Name" TestId="npu-visual" Caption="Running neural matrix-multiply workload on NPU accelerator" />
+    }
     @if (!running && rep?.Notice is { } notice) { <p class="notice" data-testid="npu-notice">@notice</p> }
     @if (!running && rep is { Devices.Count: > 0 })
     {

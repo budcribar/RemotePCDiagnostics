@@ -279,6 +279,7 @@
                 {
                     <progress aria-label="@($"{m.DisplayName} scan in progress")"></progress>
                 }
+                <TestRunningVisual Slug="@m.Name" TestId="checks-scan-visual" Caption="@(m.Name == ModuleSlugs.SfcVerifyOnly ? "Verifying protected Windows system files" : "Scanning Windows component store health")" />
             }
             else if (m is ICancellableScan && r.Payload is AreaReport integrity && kind != RowKind.Cancelled)
             {

@@ -649,3 +649,13 @@ table.detail tr.row-detail td { white-space: normal; }
 /* Details head: "Run just this" moves under the title when the panel is narrow, instead of squeezing the title (inventory lines wrapped at ~200px). */
 .ct-detail-head { flex-wrap: wrap; }
 .ct-detail-title { flex: 1 1 260px; }
+
+/* ---------- Running test isometric entertainment visual ---------- */
+.running-visual { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 12px 0 16px; padding: 12px; background: linear-gradient(180deg, #0b1017 0%, #070a0f 100%); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow); max-width: 424px; }
+[data-theme="dark"] .running-visual { border-color: rgba(0, 229, 255, .28); box-shadow: 0 8px 28px rgba(0, 0, 0, .55), 0 0 22px rgba(0, 229, 255, .08); }
+.running-visual-frame { position: relative; width: 100%; max-width: 400px; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; border: 1px solid rgba(0, 229, 255, .18); background: #07090c; }
+.running-visual-frame picture { display: contents; }
+.running-visual-img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.running-visual-caption { font-size: 12px; color: var(--text-muted); font-family: var(--font-num); letter-spacing: .02em; text-align: center; }
+[data-theme="light"] .running-visual-caption { color: #9fb2c1; }
+

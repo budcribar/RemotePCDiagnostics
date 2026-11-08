@@ -35,7 +35,11 @@ else
         }
         @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
     </p>
-    @if (running) { <div class="run-progress run-progress-indeterminate" data-testid="audit-run-progress" aria-hidden="true"><div></div></div> }
+    @if (running)
+    {
+        <div class="run-progress run-progress-indeterminate" data-testid="audit-run-progress" aria-hidden="true"><div></div></div>
+        <TestRunningVisual Slug="@m.Name" TestId="audit-visual" Caption="Auditing Windows security baseline policies (read-only)" />
+    }
     @if (!running && rep?.Notice is { } notice) { <p class="notice" data-testid="audit-notice">@notice</p> }
 
     @if (!running && rep is not null)

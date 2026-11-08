@@ -47,6 +47,7 @@
 @if (running)
 {
     <div class="progress run-progress" data-testid="memtest-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
+    <TestRunningVisual Slug="@MemoryTestModule.ModuleName" TestId="memtest-visual" Caption="Writing and verifying bit patterns across memory blocks" />
     <div class="cards">
         <div class="card is-running" data-testid="memtest-live-progress">
             <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
