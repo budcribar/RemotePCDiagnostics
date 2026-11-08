@@ -12,8 +12,14 @@ if (args.Length < 1) { Console.Error.WriteLine("usage: RemotePCDiagnostics.Modul
 // The protocol owns stdout; anything the module prints goes to stderr (the app's log).
 var output = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = false };
 Console.SetOut(Console.Error);
+// The app writes UTF-8; Console.In would decode with the console's code page.
+var input = new StreamReader(Console.OpenStandardInput(), new System.Text.UTF8Encoding(false));
 var writeGate = new object();
-void Send(ModuleHostMessage m) { lock (writeGate) { output.WriteLine(m.ToLine()); output.Flush(); } }
+void Send(ModuleHostMessage m)
+{
+    if (m.Type == "query") Console.Error.WriteLine($"query {m.Id} {m.Capability} sent");
+    lock (writeGate) { output.WriteLine(m.ToLine()); output.Flush(); }
+}
 var queries = new HostQueriesClient(Send);
 
 // A module that ships with the app may reference the app's own assemblies (its details page derives from the UI's ModuleDetailsBase).
@@ -39,18 +45,21 @@ Send(new ModuleHostMessage { Type = "ready", Message = module.Name });
 CancellationTokenSource? running = null;
 Task? refresh = null;
 Task? availability = null;
-while (Console.In.ReadLine() is { } line)
+while (input.ReadLine() is { } line)
 {
     var request = ModuleHostMessage.Parse(line);
+    if (request is null && !string.IsNullOrWhiteSpace(line)) Console.Error.WriteLine($"unreadable request ({line.Length} chars) ignored");
     switch (request?.Type)
     {
         case "answer":
-            queries.Complete(request);
+            if (!queries.Complete(request)) Console.Error.WriteLine($"answer {request.Id} arrived with no query waiting for it");
             break;
         case "availability":
-            if (availability is { IsCompleted: false }) break; // one answer covers both asks
+            // Every ask gets its own answer: the app reads one per ask, so a skipped one would leave the next ask reading a stale answer.
+            var previous = availability;
             availability = Task.Run(async () =>
             {
+                if (previous is not null) await previous.ConfigureAwait(false);
                 try
                 {
                     var a = await module.CheckAvailabilityAsync();

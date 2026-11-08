@@ -194,9 +194,37 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
     /// <summary>How long the host gets to answer an availability check, and to stop after being asked.</summary>
     public TimeSpan AnswerTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>How long the host waits after a request before it exits (a run's availability check and the run share one host), unless
+    /// the module's manifest keeps it running.</summary>
+    public TimeSpan IdleExit { get; init; } = TimeSpan.FromSeconds(2);
+
+    private Timer? _idle;
+
+    /// <summary>True while a module host is running for this module.</summary>
+    public bool IsHostRunning { get { lock (_connGate) return _conn is { HasExited: false }; } }
+
+    /// <summary>A request finished: unless the manifest keeps the host running, it exits once nothing new arrives for <see cref="IdleExit"/>.</summary>
+    private void Idle()
+    {
+        if (module.Manifest.KeepAlive) return;
+        lock (_connGate)
+        {
+            _idle?.Dispose();
+            _idle = new Timer(_ =>
+            {
+                if (!_gate.Wait(0)) return; // a new request is running; it schedules its own exit
+                try { log.Info($"Module host [{Name}]: done, exiting"); Reset(); }
+                finally { _gate.Release(); }
+            }, null, IdleExit, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private void Busy() { lock (_connGate) { _idle?.Dispose(); _idle = null; } }
+
     public async Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        Busy();
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -205,7 +233,7 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
             await WriteAsync(conn, new ModuleHostMessage { Type = "availability" }, timeout.Token).ConfigureAwait(false);
             while (true)
             {
-                var m = ModuleHostMessage.Parse(await conn.ReadLineAsync(timeout.Token).ConfigureAwait(false) ?? throw Exited());
+                var m = Read(await conn.ReadLineAsync(timeout.Token).ConfigureAwait(false) ?? throw Exited());
                 if (m?.Type == "query") { await AnswerAsync(conn, m, timeout.Token).ConfigureAwait(false); continue; }
                 if (m?.Type == "availability") return m.Available == true ? ModuleAvailability.Available : ModuleAvailability.Unavailable(m.Reason ?? "Unavailable");
                 if (m?.Type == "error") return ModuleAvailability.Unavailable(m.Message ?? "The module host failed");
@@ -213,12 +241,13 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex) { Reset(); return ModuleAvailability.Unavailable($"The module host didn't answer: {ex.Message}"); }
-        finally { _gate.Release(); }
+        finally { _gate.Release(); Idle(); }
     }
 
     public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        Busy();
         try
         {
             var conn = Connect();
@@ -240,7 +269,7 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
                     try { line = await conn.ReadLineAsync(cancellationToken).ConfigureAwait(false); }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { line = await GraceReadAsync().ConfigureAwait(false); }
                 }
-                var m = ModuleHostMessage.Parse(line ?? throw Exited());
+                var m = Read(line ?? throw Exited());
                 switch (m?.Type)
                 {
                     case "query":
@@ -272,7 +301,17 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
             log.Info($"Module host [{Name}]: {ex.Message}");
             return CouldNotRun.Result(Name, $"The module host stopped: {ex.Message}");
         }
-        finally { _gate.Release(); }
+        finally { _gate.Release(); Idle(); }
+    }
+
+    /// <summary>A line from the module host; one that isn't a message, and each query, is logged (a dropped query would leave the module
+    /// waiting).</summary>
+    private ModuleHostMessage? Read(string line)
+    {
+        var m = ModuleHostMessage.Parse(line);
+        if (m is null && !string.IsNullOrWhiteSpace(line)) log.Info($"Module host [{Name}]: unreadable line ({line.Length} chars) ignored");
+        else if (m?.Type == "query") log.Info($"Module host [{Name}]: query {m.Id} {m.Capability} received");
+        return m;
     }
 
     /// <summary>One-click actions run elevated in the app, so an unsigned module never gets to offer them.</summary>
@@ -295,7 +334,7 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
     }
 
     /// <summary>Ends the module host (closing its stdin).</summary>
-    public void Dispose() => Reset();
+    public void Dispose() { Busy(); Reset(); }
 
     private void Reset() { lock (_connGate) { _conn?.Dispose(); _conn = null; } }
     private static IOException Exited() => new("the module host exited");

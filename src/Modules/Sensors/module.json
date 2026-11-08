@@ -13,5 +13,7 @@
   "portableUi": false,
   // Its page reads only the module's results, so out of process the app still renders it.
   "resultOnlyUi": true,
+  // Read every few seconds while it is shown, so out of process its module host stays running (others exit after each run).
+  "keepAlive": true,
   "detailsReplaceReport": true
 }

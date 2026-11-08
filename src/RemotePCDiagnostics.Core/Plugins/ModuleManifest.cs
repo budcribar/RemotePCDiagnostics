@@ -48,6 +48,9 @@ public sealed record ModuleManifest
     /// <summary>A module that ships with the app whose own UI isn't portable but reads only the module's results (no app services): out
     /// of process the app still renders it, from the stand-in's results, so the page is the same in either process.</summary>
     public bool ResultOnlyUi { get; init; }
+    /// <summary>Out of process, the module host stays running between requests (a module that is read again and again, such as
+    /// Temperatures &amp; fans). Otherwise the host exits as soon as a run is done and is started again for the next one.</summary>
+    public bool KeepAlive { get; init; }
     /// <summary>The host queries (<see cref="HostCapabilities"/>) the module asks the app for when it runs in user mode. The app answers
     /// nothing that isn't listed here, and only for a module that ships with the app.</summary>
     public List<string> Capabilities { get; init; } = [];
