@@ -1,6 +1,5 @@
 @using RemotePCDiagnostics.Core.Osquery
 @inherits ModuleDetailsBase
-@inject OsqueryRunner Runner
 @{
     var r = Store.Get(ModuleSlugs.Osquery);
     var inv = r.Payload as HardwareInventory;
@@ -12,7 +11,7 @@
     <span class="@DotClass(r.Status)"></span>
     @if (busy) { <span>@(r.Status == DiagnosticStatus.Running && !string.IsNullOrWhiteSpace(r.Message) && r.Message != "Running..." ? r.Message : "Querying hardware…")</span> }
     else { <span class="status-text"><CardList Text="@r.Message" Strong="true" /></span> }
-    @if (!busy && Runner.Exists) { <button class="btn-small status-action" data-testid="osquery-requery" @onclick='() => Diagnostics.RunAsync(ModuleSlugs.Osquery)'>Check again</button> }
+    @if (!busy && r.Message != OsqueryModule.ToolMissingMessage && inv?.ToolMissing != true) { <button class="btn-small status-action" data-testid="osquery-requery" @onclick='() => Diagnostics.RunAsync(ModuleSlugs.Osquery)'>Check again</button> }
 </p>
 
 @if (r.Status == DiagnosticStatus.Running && Diagnostics.GetProgress(ModuleSlugs.Osquery) is { HasProgress: true } hwProg)

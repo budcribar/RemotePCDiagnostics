@@ -70,7 +70,8 @@ public sealed record ModuleHostMessage
 /// </summary>
 public static class ModuleHostPayloads
 {
-    public static readonly IReadOnlyList<Type> Types = [typeof(Sensors.SensorReport), typeof(Security.SecurityAuditReport)];
+    public static readonly IReadOnlyList<Type> Types =
+        [typeof(Sensors.SensorReport), typeof(Security.SecurityAuditReport), typeof(Osquery.HardwareInventory)];
 
     public static (JsonElement Payload, string Type)? Write(object? payload) =>
         payload is not null && Types.Contains(payload.GetType())

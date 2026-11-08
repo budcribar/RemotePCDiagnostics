@@ -210,6 +210,7 @@ public sealed class HostQueriesTests : IDisposable
     [InlineData("RemotePCDiagnostics.Modules.DriveHealth.dll", new[] { HostCapabilities.StorageDrives, HostCapabilities.StorageRetrims, HostCapabilities.OsquerySelect })]
     [InlineData("RemotePCDiagnostics.Modules.Services.dll", new[] { HostCapabilities.OsquerySelect })]
     [InlineData("RemotePCDiagnostics.Modules.Crashes.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.Minidumps, HostCapabilities.EventReviews })]
+    [InlineData("RemotePCDiagnostics.Modules.EventLog.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.EventReviews })]
     public void The_four_modules_run_in_user_mode_and_list_what_they_ask_for(string file, string[] capabilities)
     {
         var m = ManifestOf(file);
@@ -253,10 +254,12 @@ public sealed class HostQueriesTests : IDisposable
         Assert.Contains("1 running", report.Summary);
     }
 
-    [Fact]
-    public void The_sensors_page_renders_in_the_app_when_the_check_runs_out_of_process()
+    [Theory]
+    [InlineData("RemotePCDiagnostics.Modules.Sensors.dll")]
+    [InlineData("RemotePCDiagnostics.Modules.Osquery.dll")]
+    public void The_sensors_page_renders_in_the_app_when_the_check_runs_out_of_process(string file)
     {
-        var hosting = ModuleHosting.For(ManifestOf("RemotePCDiagnostics.Modules.Sensors.dll"), ModuleProcessMode.OutOfProcess);
+        var hosting = ModuleHosting.For(ManifestOf(file), ModuleProcessMode.OutOfProcess);
         Assert.True(hosting.OutOfProcess);
         var layout = ModulePageLayout.For(hosting, outOfProcess: true, bundled: true, hasDetails: true, frameHost: false);
         Assert.Equal(ModuleOwnUi.InApp, layout.OwnUi);
@@ -272,6 +275,11 @@ public sealed class HostQueriesTests : IDisposable
         var (payload, type) = ModuleHostPayloads.Write(report)!.Value;
         Assert.IsType<SensorReport>(ModuleHostPayloads.Read("Sensors", DiagnosticStatus.Ok, "", payload, type)!.Payload);
         Assert.Null(ModuleHostPayloads.Read("Sensors", DiagnosticStatus.Ok, "", payload, "System.IO.FileInfo"));
+
+        var empty = new InventorySection<SystemInfo>("", [], null);
+        var inv = new HardwareInventory(empty, new("", [], null), new("", [], null), new("", [], null));
+        var (invPayload, invType) = ModuleHostPayloads.Write(inv)!.Value;
+        Assert.IsType<HardwareInventory>(ModuleHostPayloads.Read("Osquery", DiagnosticStatus.Ok, "", invPayload, invType)!.Payload);
     }
 
     private const string DriveRows = """

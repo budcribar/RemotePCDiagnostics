@@ -7,5 +7,7 @@
   "needsAdmin": false,
   "hasUi": true,
   "portableUi": false,
+  // Its page reads only the module's results, so out of process the app still renders it.
+  "resultOnlyUi": true,
   "detailsReplaceReport": true
 }

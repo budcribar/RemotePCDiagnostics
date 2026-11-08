@@ -5,5 +5,9 @@
   "contract": "2.0",
   "entryType": "RemotePCDiagnostics.Modules.EventLog.EventLogPlugin",
   "needsAdmin": false,
+  // Ships in process. The About page can run it out of process in user mode (RemotePCDiagnostics.ModuleHost, restricted token): the
+  // event logs and the reviewed list then come from the app, and only these.
+  "capabilities": [ "eventlog.query", "events.reviewed" ],
+  "outOfProcess": false,
   "hasUi": false
 }

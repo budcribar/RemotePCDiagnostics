@@ -14,8 +14,8 @@
 
 ## Implemented: modules that ship with the app
 
-Four modules that used to need administrator rights can now run out of process **in user mode** (`RemotePCDiagnostics.ModuleHost`,
-restricted token, Medium integrity) by asking the app for exactly the reads that need administrator rights. They still ship in process;
+Five modules that need elevated or host-assisted reads can run out of process **in user mode** (`RemotePCDiagnostics.ModuleHost`,
+restricted token, Medium integrity) by asking the app for those reads. They still ship in process;
 the About page switches each one.
 
 | Module | `capabilities` in its module.json | What the app reads for it |
@@ -24,6 +24,7 @@ the About page switches each one.
 | Drive health (`DriveHealth`) | `storage.drives`, `storage.retrims`, `osquery.select` | The drive health script's output, the last retrim per drive, `disk_info` |
 | Services (`Services`) | `osquery.select` | The `services` statement, with every service's details |
 | Crashes & unexpected restarts (`Crashes`) | `eventlog.query`, `crashes.minidumps`, `events.reviewed` | Application and System log events, the minidump list, the reviewed events |
+| Windows error log (`EventLog`) | `eventlog.query`, `events.reviewed` | Application and System log events, the reviewed events |
 
 How it works:
 
@@ -45,9 +46,10 @@ How it works:
   - `osquery.select` runs only the app's own statements, verbatim (`HostCapabilities.AllowedSql`);
   - `eventlog.query` reads only the System and Application logs, at most 1,000 events, with a filter of at most 2,000 characters;
   - every query has a 2-minute limit.
-- **Results:** a result whose payload isn't an `AreaReport` crosses only if its type is listed in `ModuleHostPayloads.Types` (today
-  `SensorReport`), so the Temperatures & fans page gets the same result in either process. That page has `"resultOnlyUi": true`: it
-  reads only the module's results, so out of process the app still renders it from the stand-in's results.
+- **Results:** a result whose payload isn't an `AreaReport` crosses only if its type is listed in `ModuleHostPayloads.Types`
+  (`SensorReport`, `SecurityAuditReport`, `HardwareInventory`), so the Temperatures & fans, Security audit, and Hardware inventory pages
+  get the same result in either process. Those pages have `"resultOnlyUi": true`: they read only the module's results, so out of process
+  the app still renders them from the stand-in's results.
 - **Page clicks** (`ModulePageCalls`): the Services page's Start, Stop and Restart buttons and the Crashes page's "Find related
   evidence" used to ask the module object in the app. Out of process that object is in the module host, so:
   - what the page reads from the last run travels with the result (`pageData` on the `result` line): `serviceRows` (the services
