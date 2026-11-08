@@ -30,9 +30,11 @@ public static class CheckRows
         _ => "Not run",
     };
 
-    /// <summary>"Passed (short run)": the mode the result actually ran in (never the currently selected mode).</summary>
+    /// <summary>"Passed (extended run)": the mode the result actually ran in (never the currently selected mode).
+    /// The short run is the default, so it adds no suffix ("Passed", not "Passed (short run)").</summary>
     public static string Label(RowKind k, string? runLabel) =>
-        runLabel is { Length: > 0 } && k is RowKind.Passed or RowKind.Warning or RowKind.Critical ? $"{Text(k)} ({runLabel})" : Text(k);
+        runLabel is { Length: > 0 } && runLabel != StressSuite.RunLabel(StressSuiteMode.Short) && k is RowKind.Passed or RowKind.Warning or RowKind.Critical
+            ? $"{Text(k)} ({runLabel})" : Text(k);
 
     /// <summary>Existing chip CSS kind (chip-ok / chip-warn / chip-err / chip-run / chip-na).</summary>
     public static string ChipKind(RowKind k) => k switch

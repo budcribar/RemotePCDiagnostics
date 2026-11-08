@@ -384,7 +384,7 @@ body.ct-resizing { user-select: none; cursor: col-resize; }
 .ct-check[aria-checked="true"], .ct-check[aria-checked="mixed"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 .btn-stop { background: var(--error-bg); color: var(--error-strong); border-color: var(--error-border); }
 .ct-section-label { font-size: 0.875rem; margin: 8px 0 2px; }
-.ct-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.ct-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; container-type: inline-size; }
 .ct-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer; min-width: 0; }
 .ct-row:hover { border-color: var(--accent); }
 .ct-row.selected { border-color: var(--accent); box-shadow: var(--glow-soft); background: var(--surface-active); }
@@ -392,10 +392,17 @@ body.ct-resizing { user-select: none; cursor: col-resize; }
 .ct-row .ct-check { margin-top: 0; }
 .ct-row .dot { margin-right: 0; }
 .ct-row-text { flex: 1; min-width: 0; }
-.ct-row-name { font-weight: 600; }
+.ct-row-name { font-weight: 600; overflow-wrap: break-word; }
 .ct-row-summary { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ct-row-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: none; }
 .ct-row-side .meta { margin: 0; }
+/* Narrow list (small window, large zoom, splitter dragged left): the result bubble and time move to their own line
+   under the name, so long names keep the full width instead of wrapping word by word under the bubble. */
+@container (max-width: 460px) {
+  .ct-row { display: grid; grid-template-columns: auto auto minmax(0, 1fr); column-gap: 10px; row-gap: 4px; }
+  .ct-row > .ct-check, .ct-row > .dot { grid-row: 1 / span 2; }
+  .ct-row-side { grid-column: 3; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+}
 .ct-detail-head { display: flex; align-items: flex-start; gap: 12px; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
 .ct-detail-title { flex: 1; min-width: 0; }
 .ct-detail-title .meta { margin: 4px 0 0; }
