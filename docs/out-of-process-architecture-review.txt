@@ -1,0 +1,59 @@
+OUT-OF-PROCESS ARCHITECTURE REVIEW
+==================================
+Repositories Reviewed:
+- RemotePCDiagnostics (main @ 80d1744): PRs #28–#33 — shipping all 23 built-in modules as individual DLLs, adding the runtime process-mode switch (process-mode.json), remote session module UI framing, and narrow capability-based host queries (IHostQueries).
+- RemoteBlazorWebView (net10 @ a969a6f): PRs #68–#74 — adding PeakSWC.RemoteBlazorWebView.RemoteComponents, RemoteComponentHost, the [RemoteComponentContract] source generator, and mirror-safe remote component frames (data-rbwv-src / data-rbwv-mirror-src).
+
+
+WHAT WORKS REALLY WELL
+----------------------
+
+1. Cohesive End-to-End Isolation Model
+   - Check execution (RemotePCDiagnostics.ModuleHost): Runs out-of-process with a restricted token (DISABLE_MAX_PRIVILEGE | LUA_TOKEN, Administrators SID set to deny-only, Medium integrity, and custom user+SYSTEM default DACL/owner in RestrictedModuleHostLauncher.cs to prevent 0xC0000142 startup failures).
+   - UI isolation (RemotePCDiagnostics.ModuleUiHost + RemoteComponents): Rendering untrusted/isolated Razor UIs in an off-screen WPF RemoteComponentHost connected to the embedded (or remote session) relay and framed with sandbox="allow-scripts allow-forms" (opaque origin, no allow-same-origin) is a very clean way to get full Blazor interactivity with hard browser-level DOM/storage isolation.
+   - Mirror-safe iframe loading: Deferring src assignment via data-rbwv-src and data-rbwv-mirror-src in RemoteComponentFrameBase.cs neatly solves the problem where a read-only mirror viewer would otherwise hit the primary component URL and trigger a client reload.
+
+2. Narrow, Capability-Checked Host Queries (IHostQueries)
+   - Allowing Services, Sensors, DriveHealth, and Crashes to drop privileges and run in user mode while asking the elevated host for specific reads via HostQueryServer is much safer than running entire modules elevated.
+   - Verbatim SQL allowlisting (HostCapabilities.AllowedSql) and per-manifest capability checks (module.json) keep the attack surface minimal.
+
+3. Zero-Diff Layout Switching (ModuleHosting & ModulePageLayout)
+   - Deciding layout from manifest metadata (ModuleProcessMode.cs) and supporting resultOnlyUi (e.g., Sensors) alongside portableUi (Programs, BatteryPower) makes toggling modules between in-process and out-of-process on the About page seamless.
+
+
+SUGGESTIONS FOR IMPROVEMENT
+---------------------------
+
+1. UserModeModuleProxy Keeps Every Spawned ModuleHost Alive Forever (Memory / Process Count)
+   - Where: src/RemotePCDiagnostics.Core/Plugins/UserModeModules.cs (UserModeModuleProxy.Connect)
+   - Issue: Once CheckAvailabilityAsync or RefreshAsync starts a RemotePCDiagnostics.ModuleHost process for a module, _conn is kept open indefinitely until the app exits or an error resets it. With "All modules: Out of process" enabled (or as more modules default to outOfProcess: true), running "Check all" will leave a separate .NET child process resident in memory for every module for the entire life of the app.
+   - Suggestion: Either shut down the child ModuleHost after an idle timeout (e.g., 30–60 seconds of inactivity after RefreshAsync completes), or share a single user-mode ModuleHost worker process across bundled user-mode modules while keeping separate processes for unsigned third-party plugins.
+
+2. Synchronous Blocking on Async Host Queries in ModuleHost (AnswerAsync)
+   - Where: src/RemotePCDiagnostics.Core/Plugins/UserModeModules.cs (UserModeModuleProxy.RefreshAsync) and src/RemotePCDiagnostics.Core/Plugins/HostQueries.cs (HostQueriesClient)
+   - Issue: In UserModeModuleProxy, the stdout read loop awaits AnswerAsync(conn, m, ...) inline before reading the next line from the child process:
+       case "query":
+           await AnswerAsync(conn, m, CancellationToken.None).ConfigureAwait(false);
+           break;
+     Although HostQueriesClient supports concurrent in-flight queries via ConcurrentDictionary<int, TaskCompletionSource<...>>, the server side processes them strictly serially and blocks reading progress messages or stop acknowledgments while a slow query (up to the 2-minute HostCapabilities.Timeout, such as PowerShell drive health or osquery) is running. Furthermore, during cancellation (GraceReadAsync), AnswerAsync is called with CancellationToken.None, so a cancelling module can still block the proxy for up to 2 minutes waiting for a host query to finish.
+   - Suggestion: Pass a cancellation token linked to the refresh/grace token into AnswerAsync, and dispatch AnswerAsync as a background task (bounded by a SemaphoreSlim, e.g., max 4–8 concurrent queries as described in docs/host-queries.md) so the proxy read loop stays responsive to progress, result, and cancellation.
+
+3. Elevated Out-of-Process Modules (Elevated = true) Leak Standard Handles or Lose Pipe Isolation
+   - Where: src/RemotePCDiagnostics.Host/RestrictedModuleHostLauncher.cs (Start and StartRestrictedGuiWithInput)
+   - Issue:
+     a) In StartRestrictedGuiWithInput, bInheritHandles: true is passed to CreateProcessAsUser with STARTF_USESTDHANDLES, where only hStdInput is set (hStdOutput and hStdError are IntPtr.Zero), and any other inheritable handles in the parent process at that moment are also inherited by the restricted child.
+     b) When an admin module (DISM, SFC, SecurityAudit) is switched to out-of-process, RestrictedModuleHostLauncher delegates to ProcessModuleHostLauncher, which does not wait briefly on Dispose() for graceful stdin EOF shutdown like RestrictedModuleHostLauncher.Connection.Dispose() does (process.WaitForExit(2000) before Kill()).
+   - Suggestion: In StartRestrictedGuiWithInput, bind hStdOutput and hStdError to NUL (or explicit pipes) and consider PROC_THREAD_ATTRIBUTE_HANDLE_LIST so only the intended pipe handles are inherited.
+
+4. ModuleUiHost Re-Creates the Module Instance and Doesn't Forward IHostQueries or Custom Payloads
+   - Where: src/RemotePCDiagnostics.ModuleUiHost/Program.cs and src/RemotePCDiagnostics.ModuleUi/ModuleUi.cs
+   - Issue:
+     a) ModuleUiResult only carries AreaReport? Report across IModuleUi, stripping actions unconditionally (UserModeModuleProxy.WithoutActions(r)), even when module.Bundled is true, and dropping non-AreaReport payloads (like SensorReport).
+     b) ModuleUiRoot.razor passes ui.Module (an instance created inside ModuleUiHost without IHostQueries) to DynamicComponent. As noted in docs/host-queries.md, this is why Sensors uses resultOnlyUi: true and why interactive pages (Osquery, SecurityAudit, Services, Crashes) currently show the "needs the app process" notice when switched to out-of-process.
+   - Suggestion:
+     - Preserve AreaActions in ModuleUiResult.From when module.Bundled is true (or route action clicks back to the host via a callback method on IModuleUi, which ContractGenerator already supports via Task OnAction(AreaAction action)).
+     - Using [RemoteComponentContract] callbacks for module UI actions would let more built-in pages become portableUi: true without needing in-process host services.
+
+5. Minor Robustness Items in RemoteBlazorWebView.RemoteComponents
+   - PID polling in RemoteComponentHost.ExitWithParent: RemoteComponentHost.IsRunning(int pid) calls Process.GetProcesses() every 2 seconds and disposes every Process object on the system just to check if parentPid exists. Instead, since RemoteComponentHost already reads Console.In via connection.RunAsync, closing connection (connection.Closed) when the parent exits—or waiting on EOF of the anonymous stdin pipe—detects parent termination immediately (even if the parent crashes or is killed by Task Manager, Windows closes the write end of the anonymous pipe) with zero polling overhead and no Process.GetProcesses() allocations.
+   - Documentation drift: docs/module-plugins.md (line 71 and lines 82–85) still states that admin modules are compiled into BuiltInModulesPlugin.CompiledIn, that ModuleUiHost doesn't have the app's CSS, and that remote sessions don't support module UI frames—all three of which were upgraded in PRs #32 and #33. Updating docs/module-plugins.md to match the new state will keep the docs aligned with the code.
