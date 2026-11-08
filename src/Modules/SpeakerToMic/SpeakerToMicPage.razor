@@ -1,5 +1,5 @@
 @using RemotePCDiagnostics.Core.Audio
-@inherits ModuleDetailsBase
+@inherits AudioPageBase<SpeakerToMicModule>
 @* On-demand speaker → microphone test: plays a capped, faded 1 kHz tone while recording the mic and the speaker output (loopback). *@
 @{
     var m = (DiagnosticModule as SpeakerToMicModule);
@@ -61,34 +61,6 @@ else
 }
 
 @code {
-    private IReadOnlyList<AudioDevice> _outputs = [], _inputs = [];
-
-    protected override void OnInitialized()
-    {
-        base.OnInitialized();
-        if ((DiagnosticModule as SpeakerToMicModule) is { } m) LoadDevices(m);
-    }
-
-    private void LoadDevices(SpeakerToMicModule m) { _outputs = m.Devices(AudioFlow.Output); _inputs = m.Devices(AudioFlow.Input); }
-
-    private void Start(SpeakerToMicModule m)
-    {
-        if (Diagnostics.IsStressSuiteRunning) return;
-        _ = Diagnostics.RunAsync(m.Name);
-    }
-
-    private static string? Id(ChangeEventArgs e) => e.Value?.ToString() is { Length: > 0 } v ? v : null;
-
-    private static RenderFragment DeviceOptions(IReadOnlyList<AudioDevice> devices, string? selected) => __builder =>
-    {
-        if (devices.Count == 0) { <option value="">None found</option> }
-        else
-        {
-            <option value="" selected="@(selected is null)">Windows default</option>
-            foreach (var d in devices) { <option value="@d.Id" selected="@(d.Id == selected)">@d.Label</option> }
-        }
-    };
-
     private static RenderFragment LevelCard(string id, string title, ToneMeasurement? t, string device, string meta) => __builder =>
     {
         var dot = t is null ? "neutral" : t.ToneDetected ? "ok" : "error";
@@ -96,14 +68,7 @@ else
             <div class="card-head"><span class="dot dot-@dot"></span><strong>@title</strong></div>
             <div class="headline">@(t is null ? "Not available" : t.ToneDetected ? "Tone found" : "No tone")</div>
             <CardList Items="@([ device, t is not null ? $"Tone {Db(t.ToneDbfs)} · noise {Db(t.NoiseDbfs)} · SNR {t.SnrDb:0.0} dB" : null, t is not null ? $"Peak {Db(t.PeakDbfs)} · RMS {Db(t.RmsDbfs)}{(t.Clipped ? " · clipping" : "")}" : null, meta ])" />
-            @if (t is not null)
-            {
-
-
-            }
-
         </div>
     };
-
-    private static string Db(double v) => v <= AudioMath.SilenceDbfs ? "silent" : $"{v:0.0} dBFS";
 }
+

@@ -34,9 +34,8 @@ public sealed record DiskSpeedOptions
 
 public sealed record DiskSpeedProgress(
     DiskSpeedPhase Phase, TimeSpan Elapsed, TimeSpan Duration, double PhaseFraction,
-    double? DriveTemperatureC, double? FanRpm, bool SensorsAvailable)
+    double? DriveTemperatureC, double? FanRpm, bool SensorsAvailable) : StressProgressBase(Elapsed, Duration)
 {
-    public double Fraction => Duration <= TimeSpan.Zero ? 1 : Math.Clamp(Elapsed / Duration, 0, 1);
     public string PhaseText => Phase switch
     {
         DiskSpeedPhase.Preparing => "Getting ready",
@@ -52,9 +51,17 @@ public sealed record DiskSpeedProgress(
 public sealed record DiskSpeedReport(
     DiskSpeedOutcome Outcome, string Drive, long TestBytes, TimeSpan Ran,
     double? SequentialWriteMBps, double? SequentialReadMBps, double? RandomWriteIops, double? RandomReadIops,
-    long BlocksVerified, long DataErrors, double? MaxDriveTemperatureC, bool CleanedUp) : IRunEnd
+    long BlocksVerified, long DataErrors, double? MaxDriveTemperatureC, bool CleanedUp) : IStressReport
 {
-    [System.Text.Json.Serialization.JsonIgnore] public RunEnd RunEnd => Outcome == DiskSpeedOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+    [JsonIgnore] public RunEnd RunEnd => Outcome == DiskSpeedOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+    [JsonIgnore] public DiagnosticStatus Status => Outcome switch
+    {
+        DiskSpeedOutcome.Passed => DiagnosticStatus.Ok,
+        DiskSpeedOutcome.SlowDrive or DiskSpeedOutcome.StoppedByUser or DiskSpeedOutcome.NotEnoughSpace => DiagnosticStatus.Warning,
+        _ => DiagnosticStatus.Error,
+    };
+    [JsonIgnore] public bool IsCouldNotRun => Outcome == DiskSpeedOutcome.Failed;
+    [JsonIgnore] public bool IsOverheated => Outcome == DiskSpeedOutcome.Overheated;
 
     public string Headline => Outcome switch
     {

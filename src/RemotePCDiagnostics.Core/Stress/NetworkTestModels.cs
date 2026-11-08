@@ -44,17 +44,22 @@ public sealed record PingStats(int Sent, int Received, double? AverageMs, double
 
 public sealed record NetworkTestProgress(
     TimeSpan Elapsed, TimeSpan Duration, string Step, IReadOnlyList<NetworkSample> Samples,
-    double? CpuTemperatureC, double? FanRpm, bool SensorsAvailable)
-{
-    public double Fraction => Duration <= TimeSpan.Zero ? 1 : Math.Clamp(Elapsed / Duration, 0, 1);
-}
+    double? CpuTemperatureC, double? FanRpm, bool SensorsAvailable) : StressProgressBase(Elapsed, Duration);
 
 public sealed record NetworkTestReport(
     NetworkTestOutcome Outcome, TimeSpan Ran, bool HasGateway, PingStats Gateway, PingStats Internet,
     double? DownloadMbps, double? UploadMbps, long? NewAdapterErrors, long? NewAdapterDrops,
-    IReadOnlyList<NetworkSample> Samples, double? MaxCpuTemperatureC) : IRunEnd
+    IReadOnlyList<NetworkSample> Samples, double? MaxCpuTemperatureC) : IStressReport
 {
-    [System.Text.Json.Serialization.JsonIgnore] public RunEnd RunEnd => Outcome == NetworkTestOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+    [JsonIgnore] public RunEnd RunEnd => Outcome == NetworkTestOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+    [JsonIgnore] public DiagnosticStatus Status => Outcome switch
+    {
+        NetworkTestOutcome.Stable => DiagnosticStatus.Ok,
+        NetworkTestOutcome.SomeLoss or NetworkTestOutcome.StoppedByUser => DiagnosticStatus.Warning,
+        _ => DiagnosticStatus.Error,
+    };
+    [JsonIgnore] public bool IsCouldNotRun => Outcome == NetworkTestOutcome.Failed;
+    [JsonIgnore] public bool IsOverheated => Outcome == NetworkTestOutcome.Overheated;
 
     public string Headline => Outcome switch
     {

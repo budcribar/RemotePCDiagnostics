@@ -52,9 +52,9 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
         if (commands is not null)
         {
             progress.ReportStep(3, totalSteps, "Checking memory use and Fast Startup…");
-            var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
-                ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", FastStartupScript], ct).ConfigureAwait(false);
+            var pr = await commands.RunPowerShellAsync(FastStartupScript, ct).ConfigureAwait(false);
             if (pr is { ExitCode: 0 } && !string.IsNullOrWhiteSpace(pr.StdOut))
+
             {
                 try
                 {

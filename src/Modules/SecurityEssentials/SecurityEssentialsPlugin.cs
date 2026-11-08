@@ -6,5 +6,6 @@ namespace RemotePCDiagnostics.Modules.SecurityEssentials;
 public sealed class SecurityEssentialsPlugin : IModulePlugin
 {
     public void Register(IServiceCollection services, IPluginContext context) =>
-        services.AddSingleton<IDiagnosticModule>(sp => new SecurityEssentialsModule(sp.GetRequiredService<SystemCommandRunner>()));
+        services.AddModule(context, sp => new SecurityEssentialsModule(sp.GetRequiredService<SystemCommandRunner>()));
 }
+

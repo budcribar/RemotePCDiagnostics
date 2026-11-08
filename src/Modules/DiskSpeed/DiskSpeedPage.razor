@@ -1,6 +1,6 @@
 @using RemotePCDiagnostics.Core.Stress
 @using RemotePCDiagnostics.Core.Osquery
-@inherits ModuleDetailsBase
+@inherits StressPageBase<DiskSpeedModule, DiskSpeedProgress, DiskSpeedReport>
 @{
     var r = Store.Get(DiskSpeedModule.ModuleName);
     var running = r.Status == DiagnosticStatus.Running;
@@ -31,7 +31,7 @@
         <select data-testid="diskspeed-duration" disabled="@(running || otherBusy)" @onchange="SetDuration">
             @foreach (var d in DiskSpeedOptions.DurationChoices)
             {
-                <option value="@d.TotalMinutes" selected="@(d == _duration)">@(d.TotalMinutes == 1 ? "1 minute" : $"{d.TotalMinutes:0} minutes")</option>
+                <option value="@d.TotalMinutes" selected="@(d == _duration)">@Minutes(d)</option>
             }
         </select>
     </label>
@@ -110,54 +110,23 @@ else if (report is not null)
 }
 
 @code {
-    private DiskSpeedModule? Module => (DiagnosticModule as DiskSpeedModule);
     private IReadOnlyList<TestDrive> _drives = [];
     private string? _drive;
     private long _size = DiskSpeedOptions.GB;
-    private TimeSpan _duration = TimeSpan.FromMinutes(1);
 
-    protected override void OnInitialized()
+    protected override void SyncFromModule(DiskSpeedModule m)
     {
-        base.OnInitialized();
-        if (Module is not { } m) return;
-        _drives = m.ListDrives();
-        _drive = m.DriveRoot is { } d && _drives.Any(x => x.Root == d) ? d : _drives.FirstOrDefault(x => x.IsSystem)?.Root ?? _drives.FirstOrDefault()?.Root;
-        _size = m.SizeBytes; _duration = m.Duration;
-        m.ProgressChanged += OnProgress;
-        Diagnostics.StressSuiteProgressChanged += OnSuite;
+        if (_drives.Count == 0)
+        {
+            _drives = m.ListDrives();
+            _drive = m.DriveRoot is { } d && _drives.Any(x => x.Root == d) ? d : _drives.FirstOrDefault(x => x.IsSystem)?.Root ?? _drives.FirstOrDefault()?.Root;
+            _size = m.SizeBytes;
+        }
+        _duration = m.Duration;
     }
 
-    private void OnProgress(object? s, DiskSpeedProgress p) => _ = InvokeAsync(StateHasChanged);
-    private void OnSuite(object? s, StressSuiteProgress p)
-    {
-        if (p.Finished && Module is { } m) _duration = m.Duration;
-        _ = InvokeAsync(StateHasChanged);
-    }
+    protected override void ApplyToModule(DiskSpeedModule m) { m.DriveRoot = _drive; m.SizeBytes = _size; m.Duration = _duration; }
     private void SetDrive(ChangeEventArgs e) => _drive = e.Value?.ToString();
     private void SetSize(ChangeEventArgs e) { if (long.TryParse(e.Value?.ToString(), out var v)) _size = v; }
-    private void SetDuration(ChangeEventArgs e)
-    {
-        if (double.TryParse(e.Value?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out var min)) _duration = TimeSpan.FromMinutes(min);
-    }
-
-    private void Start()
-    {
-        if (Module is not { } m || Diagnostics.IsRunning(m.Name) || Diagnostics.IsAnyStressRunning) return;
-        m.DriveRoot = _drive; m.SizeBytes = _size; m.Duration = _duration;
-        _ = Diagnostics.RunAsync(m.Name);
-    }
-
-    private void Stop()
-    {
-        if (Diagnostics.IsStressSuiteRunning) Diagnostics.CancelStressSuite();
-        Module?.Stop();
-    }
-    private static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
-
-    public override void Dispose()
-    {
-        if (Module is { } m) m.ProgressChanged -= OnProgress;
-        Diagnostics.StressSuiteProgressChanged -= OnSuite;
-        base.Dispose();
-    }
 }
+

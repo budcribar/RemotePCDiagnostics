@@ -7,14 +7,12 @@ namespace RemotePCDiagnostics.Modules.NetworkTest;
 /// <summary>Network stability test, with its own page.</summary>
 public sealed class NetworkTestPlugin : IModulePlugin
 {
-    public void Register(IServiceCollection services, IPluginContext context)
-    {
-        services.AddSingleton<IDiagnosticModule>(sp =>
+    public void Register(IServiceCollection services, IPluginContext context) =>
+        services.AddModule(context, sp =>
         {
             var settings = NetworkTestSettings.FromEnvironment(Environment.GetEnvironmentVariable);
             return new NetworkTestModule(new SystemPinger(), new SystemGatewayResolver(), new HttpSpeedTester(settings, log: sp.LoggerFor<HttpSpeedTester>()),
                 new SystemAdapterCounters(sp.GetRequiredService<SystemCommandRunner>()), sp.GetRequiredService<ISensorProvider>(), settings, sp.LoggerFor<NetworkTestModule>());
-        });
-        context.SetDetailsComponent(ModuleIds.NetworkTest, typeof(NetworkTestPage));
-    }
+        }, ModuleIds.NetworkTest, typeof(NetworkTestPage));
 }
+

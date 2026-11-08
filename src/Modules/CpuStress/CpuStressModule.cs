@@ -10,8 +10,6 @@ public sealed class CpuStressModule(ISensorProvider sensors, ILogger? log = null
     public override Guid Id => ModuleIds.CpuStress;
     public override string DisplayName => "CPU stress test";
     string IStressSuiteModule.SuiteName => "CPU";
-    bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is CpuStressReport { Outcome: CpuStressOutcome.Overheated };
-    bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is CpuStressReport { Outcome: CpuStressOutcome.StoppedByUser };
 
     /// <summary>Optional overrides (tests).</summary>
     public CpuStressOptions? Options { get; set; }
@@ -27,8 +25,6 @@ public sealed class CpuStressModule(ISensorProvider sensors, ILogger? log = null
         }
         finally { try { ecFan?.SetStressLogging(false); } catch { /* log-only diagnostic */ } }
     }
-
-    protected override (DiagnosticStatus Status, string Headline) Describe(CpuStressReport report) => (ToStatus(report.Outcome), report.Headline);
 
     public static DiagnosticStatus ToStatus(CpuStressOutcome o) => o switch
     {

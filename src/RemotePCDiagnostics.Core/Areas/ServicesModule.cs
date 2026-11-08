@@ -55,14 +55,10 @@ public sealed class ServicesModule(OsqueryRunner runner, Plugins.IHostQueries? h
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         progress?.Report("Checking services…");
-        OsqueryQueryResult? q;
-        if (host is null) q = await QueryAsync(Sql, ct).ConfigureAwait(false);
-        else
-        {
-            try { q = await host.SelectAsync(Sql, ct).ConfigureAwait(false); }
-            catch (Plugins.HostQueryException ex) { LogWarn($"{Name}: the app didn't answer ({ex.Error}): {ex.Message}"); q = null; }
-        }
+        var q = host is null ? await QueryAsync(Sql, ct).ConfigureAwait(false)
+            : await Plugins.HostQueryExtensions.AskAsync(host, Name, Logger, h => h.SelectAsync(Sql, ct)).ConfigureAwait(false);
         if (q is not { Success: true }) return AreaReport.Failed(FailedMessage);
+
         var list = q.Rows!.Select(ServiceInfo.FromRow).ToList();
         Latest = list.GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         return Build(list);

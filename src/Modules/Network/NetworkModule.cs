@@ -81,8 +81,7 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
         if (adapters.Count > 0 && !adapters.Any(a => a.HasCounters) && commands is not null)
         {
             Log($"{Name}: interface_details reported no traffic/error counters; using Get-NetAdapterStatistics");
-            var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
-                ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", StatsScript], ct).ConfigureAwait(false);
+            var pr = await commands.RunPowerShellAsync(StatsScript, ct).ConfigureAwait(false);
             if (pr is { ExitCode: 0 })
             {
                 try { adapters = MergeStatistics(adapters, OsqueryJson.ParseRows(pr.StdOut)); }
@@ -95,8 +94,9 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
 
         progress.ReportStep(2, total, "Checking Wi-Fi signal and IP configuration…");
         var wlanTask = commands.RunAsync(WifiConfigModule.Netsh, ["wlan", "show", "interfaces"], ct);
-        var ipTask = commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", WifiConfigModule.IpConfigScript], ct);
+        var ipTask = commands.RunPowerShellAsync(WifiConfigModule.IpConfigScript, ct);
         await Task.WhenAll(wlanTask, ipTask).ConfigureAwait(false);
+
         var wlanRes = await wlanTask.ConfigureAwait(false);
         var ipRes = await ipTask.ConfigureAwait(false);
         var wlanOk = wlanRes is { ExitCode: 0 };

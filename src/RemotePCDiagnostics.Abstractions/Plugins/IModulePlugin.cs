@@ -46,3 +46,21 @@ public static class ContractVersion
         return builtFor.Major == host.Major && builtFor.Minor <= host.Minor;
     }
 }
+
+public static class ModulePluginExtensions
+{
+    /// <summary>Registers an <see cref="IDiagnosticModule"/> singleton and optionally binds its details component.</summary>
+    public static void AddModule(this IServiceCollection services, IPluginContext context, Func<IServiceProvider, IDiagnosticModule> factory, Guid? moduleId = null, Type? detailsComponent = null)
+    {
+        services.AddSingleton<IDiagnosticModule>(factory);
+        if (moduleId is { } id && detailsComponent is not null) context.SetDetailsComponent(id, detailsComponent);
+    }
+
+    /// <summary>Registers a pre-constructed <see cref="IDiagnosticModule"/> singleton and optionally binds its details component using <see cref="IDiagnosticModule.Id"/>.</summary>
+    public static void AddModule(this IServiceCollection services, IPluginContext context, IDiagnosticModule module, Type? detailsComponent = null)
+    {
+        services.AddSingleton<IDiagnosticModule>(module);
+        if (detailsComponent is not null) context.SetDetailsComponent(module.Id, detailsComponent);
+    }
+}
+

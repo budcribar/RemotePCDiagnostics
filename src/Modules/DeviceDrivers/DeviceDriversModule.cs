@@ -66,9 +66,9 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         progress.ReportStep(1, 2, "Checking Device Manager for problem devices…");
-        var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
-            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ProblemDevicesScript], ct).ConfigureAwait(false);
+        var pr = await commands.RunPowerShellAsync(ProblemDevicesScript, ct).ConfigureAwait(false);
         List<ProblemDevice>? problems = null;
+
         if (pr is { ExitCode: 0 })
         {
             if (string.IsNullOrWhiteSpace(pr.StdOut) || pr.StdOut.Trim() == "[]") problems = [];

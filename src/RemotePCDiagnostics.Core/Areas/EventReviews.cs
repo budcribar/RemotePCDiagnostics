@@ -24,6 +24,14 @@ public static class EventReviews
         }
     }
 
+    public static async Task<IReadOnlyCollection<string>> ReadAsync(Plugins.IHostQueries? host, CancellationToken ct = default)
+    {
+        if (host is null) return Read();
+        try { return await host.ReadEventReviewsAsync(ct).ConfigureAwait(false); }
+        catch (Plugins.HostQueryException) { return []; }
+    }
+
+
     public static void Set(IReadOnlyList<string> keys, bool reviewed)
     {
         lock (Gate)

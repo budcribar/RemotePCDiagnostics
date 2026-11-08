@@ -19,9 +19,6 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
         Mode = mode == StressSuiteMode.Extended ? MemoryTestMode.Full : MemoryTestMode.Quick;
         Duration = StressSuite.PerTestDuration(mode);
     }
-    bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is MemoryTestReport { Outcome: MemoryTestOutcome.Overheated };
-    bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => r.Payload is MemoryTestReport { CouldNotRun: true } or Exception;
-    bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is MemoryTestReport { Outcome: MemoryTestOutcome.StoppedByUser };
 
     public MemoryTestMode Mode { get; set; } = MemoryTestMode.Quick;
     protected override TimeSpan DefaultDuration => MemoryTestOptions.DefaultDuration(MemoryTestMode.Quick);
@@ -44,8 +41,6 @@ public sealed class MemoryTestModule(IMemoryInfo memory, IMemTestHelperLauncher 
         var test = new MemoryTest(memory, launcher, sensors, clockFactory?.Invoke(), Logger, cleanup);
         return test.RunAsync(opts, progress, cancellationToken);
     }
-
-    protected override (DiagnosticStatus Status, string Headline) Describe(MemoryTestReport report) => (ToStatus(report.Outcome), report.Headline);
 
     public static DiagnosticStatus ToStatus(MemoryTestOutcome o) => o switch
     {

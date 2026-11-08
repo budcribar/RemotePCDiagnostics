@@ -22,7 +22,7 @@ public sealed class SecurityAuditOptions
 /// On-demand Windows security baseline audit using the bundled HardeningKitty module (Audit mode: read-only).
 /// Not auto-run and excluded from Run All. Technical detail goes to the log only; results/messages are end-user text.
 /// </summary>
-public sealed class SecurityAuditModule : IDiagnosticModule
+public sealed class SecurityAuditModule : OnDemandModuleBase
 {
     public const string ModuleName = ModuleSlugs.SecurityAudit;
     public const string PathEnvironmentVariable = "RPD_HARDENINGKITTY_PATH";
@@ -31,17 +31,16 @@ public sealed class SecurityAuditModule : IDiagnosticModule
 
     public const string ToolMissingMessage = "The security audit tool wasn't found. Please reinstall the app.";
     public const string PowerShellMissingMessage = "Windows PowerShell isn't available on this PC, so the security audit can't run.";
-    public const string CancelledMessage = "The security audit was cancelled.";
+    public new const string CancelledMessage = "The security audit was cancelled.";
     public const string FailedMessage = "The security audit couldn't finish on this PC. Please try again.";
     public const string NotAdminNotice = "Some checks need administrator rights and couldn't be completed. For a full audit, close the app and start it again as an administrator.";
 
     private readonly IProcessLauncher _launcher;
     private readonly SecurityAuditOptions _o;
     private readonly Func<string, bool> _fileExists;
-    private CancellationTokenSource? _runCts;
-    private readonly object _gate = new();
 
     public SecurityAuditModule(SecurityAuditOptions? options = null, IProcessLauncher? launcher = null)
+        : base(options?.Log)
     {
         _o = options ?? new SecurityAuditOptions();
         _launcher = launcher ?? new SystemProcessLauncher();
@@ -52,23 +51,15 @@ public sealed class SecurityAuditModule : IDiagnosticModule
         PowerShellPath = _o.PowerShellPath ?? SystemCommandRunner.PowerShell;
     }
 
-    public string Name => ModuleName;
-    public Guid Id => ModuleIds.SecurityAudit;
-    public string DisplayName => "Security audit";
-    public bool IncludeInRunAll => false;
+    public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.SecurityAudit;
+    public override string DisplayName => "Security audit";
     public TimeSpan Timeout => _o.Timeout;
     public string ModuleFolder { get; }
     public string ManifestPath => Path.Combine(ModuleFolder, ManifestFile);
     public string PowerShellPath { get; }
-    public event EventHandler<DiagnosticResult>? Updated;
 
-    /// <summary>Stops the in-flight audit (the launcher kills the PowerShell process tree).</summary>
-    public void Cancel()
-    {
-        lock (_gate) { try { _runCts?.Cancel(); } catch (ObjectDisposedException) { } }
-    }
-
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default)
+    public override Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default)
     {
         if (!_fileExists(ManifestPath))
         {
@@ -92,12 +83,10 @@ public sealed class SecurityAuditModule : IDiagnosticModule
 
     /// <summary>-ExecutionPolicy Bypass applies to this PowerShell process only; nothing system-wide is changed.</summary>
     public static IReadOnlyList<string> BuildArguments(string manifestPath, string reportPath) =>
-        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", BuildScript(manifestPath, reportPath)];
+        SystemCommandRunner.PowerShellArgs(BuildScript(manifestPath, reportPath));
 
-    public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
+    protected override async Task<DiagnosticResult> RunCoreAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        lock (_gate) _runCts = cts;
         string? reportPath = null;
         try
         {
@@ -109,8 +98,8 @@ public sealed class SecurityAuditModule : IDiagnosticModule
             progress?.Report("Auditing security settings…");
             var sw = Stopwatch.StartNew();
             ProcessResult pr;
-            try { pr = await _launcher.RunAsync(PowerShellPath, args, Timeout, cts.Token).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            try { pr = await _launcher.RunAsync(PowerShellPath, args, Timeout, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 Log($"SecurityAudit: cancelled after {sw.ElapsedMilliseconds} ms (process tree killed)");
                 return Result(DiagnosticStatus.Warning, CancelledMessage, null) with { Cancelled = true };
@@ -149,7 +138,6 @@ public sealed class SecurityAuditModule : IDiagnosticModule
         }
         finally
         {
-            lock (_gate) _runCts = null;
             if (reportPath is not null && _o.ReportPathFactory is null) TryDelete(Path.GetDirectoryName(reportPath)!);
         }
     }
@@ -180,10 +168,5 @@ public sealed class SecurityAuditModule : IDiagnosticModule
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
         catch (Exception ex) { LogWarn($"SecurityAudit: couldn't delete temp folder: {ex.Message}"); }
     }
-
-    private void Log(string m) => _o.Log.Info(m);
-    private void LogWarn(string m) => _o.Log.Warn(m);
-    private void LogError(string m) => _o.Log.Error(m);
-
-    internal void RaiseUpdated(DiagnosticResult r) => Updated?.Invoke(this, r);
 }
+

@@ -517,8 +517,7 @@ public sealed class RemediationService(
 
     private async Task<RemediationResult> RunPowerShellAsync(string script, string okMsg, string failMsg, CancellationToken ct, TimeSpan? timeout = null)
     {
-        var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
-            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], timeout, ct).ConfigureAwait(false);
+        var pr = await commands.RunPowerShellAsync(script, timeout, ct).ConfigureAwait(false);
         return pr is { ExitCode: 0 } ? new(true, okMsg) : new(false, failMsg);
     }
 
@@ -533,8 +532,7 @@ public sealed class RemediationService(
                      $"$mem = [int64]((Get-Process -Name '{escaped}' -ErrorAction SilentlyContinue | Measure-Object WorkingSet64 -Sum).Sum); " +
                      $"Stop-Process -Name '{escaped}' -Force; " +
                      $"[pscustomobject]@{{ FreedMemoryBytes = $mem }} | ConvertTo-Json -Compress";
-        var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
-            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], ct).ConfigureAwait(false);
+        var pr = await commands.RunPowerShellAsync(script, ct).ConfigureAwait(false);
         if (pr is not { ExitCode: 0 })
             return new(false, $"Couldn't close {Display(action)} (it may have already exited or requires administrator rights).");
 
@@ -573,8 +571,7 @@ public sealed class RemediationService(
     private async Task<RemediationResult> RunWindowsUpdateAsync(bool driversOnly, CancellationToken ct)
     {
         var kindWord = driversOnly ? "driver" : "Windows";
-        var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
-            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", BuildWindowsUpdateScript(driversOnly)], UpdateTimeout, ct).ConfigureAwait(false);
+        var pr = await commands.RunPowerShellAsync(BuildWindowsUpdateScript(driversOnly), UpdateTimeout, ct).ConfigureAwait(false);
         if (pr is not { ExitCode: 0 } || string.IsNullOrWhiteSpace(pr.StdOut))
             return new(false, $"Couldn't check Windows Update for {kindWord} updates.");
 
@@ -623,8 +620,7 @@ public sealed class RemediationService(
 
     private async Task<RemediationResult> RunCleanTempFilesAsync(CancellationToken ct)
     {
-        var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
-            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", CleanTempScript], CleanupTimeout, ct).ConfigureAwait(false);
+        var pr = await commands.RunPowerShellAsync(CleanTempScript, CleanupTimeout, ct).ConfigureAwait(false);
         if (pr is not { ExitCode: 0 } || string.IsNullOrWhiteSpace(pr.StdOut))
             return new(false, "Couldn't clean temporary files.");
 
@@ -669,7 +665,8 @@ public sealed class RemediationService(
                     return settings?.GetUserProxyEnable() == 1
                         ? Rec(Changes.ChangeKind.SystemProxy, "", "1", "System proxy turned off") : null;
                 case RemediationKind.ApplySecuritySetting when Security.SecurityFixes.Find(action.Target) is { } sf && Security.SecurityFixes.ReadScript(sf.Key) is { } read:
-                    var cur = await commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", read], ct).ConfigureAwait(false);
+                    var cur = await commands.RunPowerShellAsync(read, ct).ConfigureAwait(false);
+
                     var prev = cur is { ExitCode: 0 } ? cur.StdOut.Trim() : null;
                     return prev is not null && Security.SecurityFixes.ParsePrevious(sf.Key, prev) is not null
                         ? Rec(Changes.ChangeKind.SecuritySetting, sf.Key, prev, sf.Done.TrimEnd('.')) : null;

@@ -1,5 +1,5 @@
 @using RemotePCDiagnostics.Core.Audio
-@inherits ModuleDetailsBase
+@inherits AudioPageBase<MicToSpeakerModule>
 @* On-demand microphone → speaker test: live monitoring with a capped gain and a feedback brake; the audible part is a person's judgement. *@
 @{
     var m = (DiagnosticModule as MicToSpeakerModule);
@@ -79,34 +79,3 @@ else
     }
 }
 
-@code {
-    private IReadOnlyList<AudioDevice> _outputs = [], _inputs = [];
-
-    protected override void OnInitialized()
-    {
-        base.OnInitialized();
-        if ((DiagnosticModule as MicToSpeakerModule) is { } m) LoadDevices(m);
-    }
-
-    private void LoadDevices(MicToSpeakerModule m) { _outputs = m.Devices(AudioFlow.Output); _inputs = m.Devices(AudioFlow.Input); }
-
-    private void Start(MicToSpeakerModule m)
-    {
-        if (Diagnostics.IsStressSuiteRunning) return;
-        _ = Diagnostics.RunAsync(m.Name);
-    }
-
-    private static string? Id(ChangeEventArgs e) => e.Value?.ToString() is { Length: > 0 } v ? v : null;
-
-    private static RenderFragment DeviceOptions(IReadOnlyList<AudioDevice> devices, string? selected) => __builder =>
-    {
-        if (devices.Count == 0) { <option value="">None found</option> }
-        else
-        {
-            <option value="" selected="@(selected is null)">Windows default</option>
-            foreach (var d in devices) { <option value="@d.Id" selected="@(d.Id == selected)">@d.Label</option> }
-        }
-    };
-
-    private static string Db(double v) => v <= AudioMath.SilenceDbfs ? "silent" : $"{v:0.0} dBFS";
-}

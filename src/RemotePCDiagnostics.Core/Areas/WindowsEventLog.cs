@@ -27,10 +27,10 @@ public sealed record WinEvent(DateTimeOffset Time, string Channel, string Provid
 }
 
 /// <summary>
-/// Reads Windows event logs with the built-in <c>wevtutil</c>. osquery's <c>windows_events</c> table needs the
-/// osquery daemon's event subscriber (not available to osqueryi one-shot queries), so wevtutil is used instead.
+/// Reads Windows event logs with the built-in <c>wevtutil</c> (or via <see cref="Plugins.IHostQueries.QueryEventsAsync"/> in user mode).
+/// osquery's <c>windows_events</c> table needs the osquery daemon's event subscriber (not available to osqueryi one-shot queries), so wevtutil is used instead.
 /// </summary>
-public sealed class WindowsEventLog(SystemCommandRunner commands)
+public sealed class WindowsEventLog(SystemCommandRunner commands, Plugins.IHostQueries? host = null, string? moduleName = null)
 {
     public static string Wevtutil => SystemCommandRunner.SystemTool("wevtutil.exe");
 
@@ -44,6 +44,15 @@ public sealed class WindowsEventLog(SystemCommandRunner commands)
     /// <summary>Returns events newest first, or null when the log couldn't be read (details logged).</summary>
     public async Task<IReadOnlyList<WinEvent>?> QueryAsync(string channel, string xpath, int max, CancellationToken ct)
     {
+        if (host is not null)
+        {
+            try { return await host.QueryEventsAsync(channel, xpath, max, ct).ConfigureAwait(false); }
+            catch (Plugins.HostQueryException ex)
+            {
+                try { commands.Log.Warn($"{moduleName ?? "wevtutil"}: the app didn't read the {channel} log ({ex.Error}): {ex.Message}"); } catch { }
+                return null;
+            }
+        }
         var pr = await commands.RunAsync(Wevtutil, Arguments(channel, xpath, max), ct).ConfigureAwait(false);
         if (pr is null) return null;
         if (pr.ExitCode != 0) return null;
@@ -54,6 +63,7 @@ public sealed class WindowsEventLog(SystemCommandRunner commands)
             return null;
         }
     }
+
 
     private static readonly XNamespace Ns = "http://schemas.microsoft.com/win/2004/08/events/event";
 

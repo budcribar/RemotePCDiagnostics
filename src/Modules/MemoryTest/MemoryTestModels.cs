@@ -22,16 +22,16 @@ public sealed record MemoryTestOptions
 
 public sealed record MemoryTestProgress(
     TimeSpan Elapsed, TimeSpan Duration, long TestBytes, int Pass, double PassFraction, long Errors,
-    double? CpuTemperatureC, double? FanRpm, bool SensorsAvailable)
-{
-    public double Fraction => Duration <= TimeSpan.Zero ? 1 : Math.Clamp(Elapsed / Duration, 0, 1);
-}
+    double? CpuTemperatureC, double? FanRpm, bool SensorsAvailable) : StressProgressBase(Elapsed, Duration);
 
 public sealed record MemoryTestReport(
     MemoryTestOutcome Outcome, MemoryTestMode Mode, long TestBytes, int Passes, long Errors, TimeSpan Ran, double? MaxCpuTemperatureC,
-    long AvailableBytes = 0, long TotalBytes = 0, long PlannedBytes = 0, int? HelperExitCode = null, bool LowMemory = false, string? Notice = null) : IRunEnd
+    long AvailableBytes = 0, long TotalBytes = 0, long PlannedBytes = 0, int? HelperExitCode = null, bool LowMemory = false, string? Notice = null) : IStressReport
 {
-    [System.Text.Json.Serialization.JsonIgnore] public RunEnd RunEnd => Outcome == MemoryTestOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+    [JsonIgnore] public RunEnd RunEnd => Outcome == MemoryTestOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+    [JsonIgnore] public DiagnosticStatus Status => MemoryTestModule.ToStatus(Outcome);
+    [JsonIgnore] public bool IsOverheated => Outcome == MemoryTestOutcome.Overheated;
+    [JsonIgnore] bool IStressReport.IsCouldNotRun => CouldNotRun;
 
     /// <summary>True when memory was never (fully) tested for a non-hardware reason: not a memory fault.</summary>
     public bool CouldNotRun => Outcome is MemoryTestOutcome.CouldNotRun or MemoryTestOutcome.Failed;

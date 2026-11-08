@@ -6,5 +6,6 @@ namespace RemotePCDiagnostics.Modules.Network;
 public sealed class NetworkPlugin : IModulePlugin
 {
     public void Register(IServiceCollection services, IPluginContext context) =>
-        services.AddSingleton<IDiagnosticModule>(sp => new NetworkModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>(), includeWifiAndIpConfig: true));
+        services.AddModule(context, sp => new NetworkModule(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>(), includeWifiAndIpConfig: true));
 }
+

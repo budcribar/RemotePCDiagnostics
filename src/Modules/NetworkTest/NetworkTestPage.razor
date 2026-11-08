@@ -1,5 +1,5 @@
 @using RemotePCDiagnostics.Core.Stress
-@inherits ModuleDetailsBase
+@inherits StressPageBase<NetworkTestModule, NetworkTestProgress, NetworkTestReport>
 @{
     var r = Store.Get(NetworkTestModule.ModuleName);
     var running = r.Status == DiagnosticStatus.Running;
@@ -13,7 +13,7 @@
         <select data-testid="nettest-duration" disabled="@(running || otherBusy)" @onchange="SetDuration">
             @foreach (var d in NetworkTestOptions.DurationChoices)
             {
-                <option value="@d.TotalMinutes" selected="@(d == _duration)">@(d.TotalMinutes == 1 ? "1 minute" : $"{d.TotalMinutes:0} minutes")</option>
+                <option value="@d.TotalMinutes" selected="@(d == _duration)">@Minutes(d)</option>
             }
         </select>
     </label>
@@ -106,52 +106,7 @@ else if (report is not null)
 }
 
 @code {
-    private NetworkTestModule? Module => (DiagnosticModule as NetworkTestModule);
-    private TimeSpan _duration = TimeSpan.FromMinutes(1);
-
-    protected override void OnInitialized()
-    {
-        base.OnInitialized();
-        if (Module is { } m)
-        {
-            _duration = m.Duration;
-            m.ProgressChanged += OnProgress;
-        }
-        Diagnostics.StressSuiteProgressChanged += OnSuite;
-    }
-
-    private void OnProgress(object? s, NetworkTestProgress p) => _ = InvokeAsync(StateHasChanged);
-    private void OnSuite(object? s, StressSuiteProgress p)
-    {
-        if (p.Finished && Module is { } m) _duration = m.Duration;
-        _ = InvokeAsync(StateHasChanged);
-    }
-
-    private void SetDuration(ChangeEventArgs e)
-    {
-        if (double.TryParse(e.Value?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out var min)) _duration = TimeSpan.FromMinutes(min);
-    }
-
-    private void Start()
-    {
-        if (Module is not { } m || Diagnostics.IsRunning(m.Name) || Diagnostics.IsAnyStressRunning) return;
-        m.Duration = _duration;
-        _ = Diagnostics.RunAsync(m.Name);
-    }
-
-    private void Stop()
-    {
-        if (Diagnostics.IsStressSuiteRunning) Diagnostics.CancelStressSuite();
-        Module?.Stop();
-    }
     private static string Dot(bool? good) => good switch { null => "dot dot-neutral", true => "dot dot-ok", false => "dot dot-warning" };
-    private static string Clock(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
-
-    public override void Dispose()
-    {
-        if (Module is { } m) m.ProgressChanged -= OnProgress;
-        Diagnostics.StressSuiteProgressChanged -= OnSuite;
-        base.Dispose();
-    }
     private static string LostText(double? pct) => NetworkTestReport.Pct(pct) switch { "None" => "no replies lost", "—" => "loss not measured yet", var p => $"{p} of replies lost" };
 }
+

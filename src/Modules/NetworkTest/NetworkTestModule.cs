@@ -11,9 +11,6 @@ public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, 
     public override Guid Id => ModuleIds.NetworkTest;
     public override string DisplayName => "Network stability test";
     string IStressSuiteModule.SuiteName => "Network";
-    bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.Failed } or Exception;
-    bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.Overheated };
-    bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is NetworkTestReport { Outcome: NetworkTestOutcome.StoppedByUser };
 
     public NetworkTestOptions? Options { get; set; }
 
@@ -23,8 +20,6 @@ public sealed class NetworkTestModule(IPinger pinger, IGatewayResolver gateway, 
         var test = new NetworkTest(pinger, gateway, speed, counters, sensors, settings, clockFactory?.Invoke(), Logger, cleanup);
         return test.RunAsync(opts, progress, cancellationToken);
     }
-
-    protected override (DiagnosticStatus Status, string Headline) Describe(NetworkTestReport report) => (ToStatus(report.Outcome), report.Headline);
 
     public static DiagnosticStatus ToStatus(NetworkTestOutcome o) => o switch
     {

@@ -171,9 +171,9 @@ public sealed class SystemAdapterCounters(SystemCommandRunner commands) : IAdapt
     public async Task<AdapterTotals?> ReadAsync(CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows()) return null;
-        var pr = await commands.RunAsync(SystemCommandRunner.PowerShell,
-            ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", Scripts.PowerShellScripts.Get("NetAdapterStatistics")], cancellationToken).ConfigureAwait(false);
+        var pr = await commands.RunPowerShellAsync(Scripts.PowerShellScripts.Get("NetAdapterStatistics"), cancellationToken).ConfigureAwait(false);
         if (pr is not { ExitCode: 0 }) return null;
+
         try { return Sum(OsqueryJson.ParseRows(pr.StdOut)); }
         catch (FormatException ex) { commands.Log.Info($"Network test: adapter statistics unreadable: {ex.Message}"); return null; }
     }

@@ -230,9 +230,10 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
     private async Task<UndoItemResult> Ps(string script, ChangeRecord c, string ok, CancellationToken ct)
     {
-        var pr = await commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], ct).ConfigureAwait(false);
+        var pr = await commands.RunPowerShellAsync(script, ct).ConfigureAwait(false);
         return pr is { ExitCode: 0 } ? new(c, true, ok) : new(c, false, "Couldn't put it back (administrator rights required).");
     }
+
 
     // ---- helpers used when recording "before" values ----
 

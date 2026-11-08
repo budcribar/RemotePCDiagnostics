@@ -6,7 +6,7 @@ namespace RemotePCDiagnostics.Core.Npu;
 /// Detects NPUs, checks driver health, and runs a short matrix-multiply (or queue round-trip) on each one with a watchdog. Fully automatic.
 /// One instance per NPU (keyed on its PnP hardware id); a PC without an NPU doesn't show the test. Each NPU gets the whole time budget.
 /// </summary>
-public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : INpuTestModule, IInstanceSummary
+public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : OnDemandModuleBase(log), INpuTestModule, IInstanceSummary
 {
     public const string ModuleName = ModuleSlugs.NpuTest;
     public static readonly TimeSpan DefaultDuration = NpuTestLimits.DefaultDuration;
@@ -22,19 +22,11 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : INpuTestModu
     /// <summary>Device slower than the single-thread CPU reference by more than this = Warning.</summary>
     public const double SlowFactor = 20;
 
-    private readonly object _gate = new();
-    private CancellationTokenSource? _runCts;
-
-    public string Name => ModuleName;
-    public Guid Id => ModuleIds.NpuTest;
-    public string DisplayName => "NPU (AI accelerator) test";
-    public bool IncludeInRunAll => false;
+    public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.NpuTest;
+    public override string DisplayName => "NPU (AI accelerator) test";
+    protected override string CancelledMessage => "The NPU test was cancelled.";
     public NpuTestSettings Settings { get; } = new();
-    public event EventHandler<DiagnosticResult>? Updated { add { } remove { } } // no unsolicited updates
-
-    private void Log(string m) => log.Info(m);
-    private void LogWarn(string m) => log.Warn(m);
-    private void LogError(string m) => log.Error(m);
 
     /// <summary>Longest the one-time presence check may take before the NPU test is treated as absent (hidden).</summary>
     public static readonly TimeSpan DetectionTimeout = TimeSpan.FromSeconds(20);
@@ -46,7 +38,7 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : INpuTestModu
     /// <summary>One cached detection on a background thread. Exceptions, an empty list or a timeout = no NPU (the test stays hidden).</summary>
     public Task<bool> DetectPresenceAsync(CancellationToken ct = default)
     {
-        lock (_gate) _detect ??= DetectCoreAsync();
+        lock (Gate) _detect ??= DetectCoreAsync();
         return ct.CanBeCanceled ? _detect.WaitAsync(ct) : _detect;
     }
 
@@ -82,33 +74,28 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : INpuTestModu
     }
 
     /// <summary>Tests one NPU with the whole time budget.</summary>
-    public async Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken cancellationToken = default)
-    {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        lock (_gate) _runCts = cts;
-        try
+    public Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken cancellationToken = default) =>
+        RunGuardedAsync(async ct =>
         {
-            var budget = ClampDuration(Settings.Duration);
-            var device = (await Task.Run(Devices, cts.Token).ConfigureAwait(false)).FirstOrDefault(d => d.Id == instance.Details);
-            if (device is null) return CouldNotRun.Result(Name, $"{instance.Label} is no longer connected.");
-            var (a, b) = Inputs(MatrixSize);
-            var cpu = CpuBaseline(a, b, MatrixSize, out var reference);
-            progress?.Report($"Testing {device.Name}…");
-            var report = await TestDeviceAsync(io, device, a, b, reference, cpu, budget, WatchdogGrace, cts.Token, log).ConfigureAwait(false);
-            Log($"{Name}: {device.Name}: {report.Verdict} {report.Message}");
-            return ToResult(new NpuTestReport([report], MatrixSize, budget, report.Verdict, null));
-        }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
-        {
-            return new DiagnosticResult(Name, DiagnosticStatus.Warning, "The NPU test was cancelled.", DateTimeOffset.Now) { Cancelled = true };
-        }
-        catch (Exception ex)
-        {
-            LogError($"{Name}: {ex}");
-            return new DiagnosticResult(Name, DiagnosticStatus.Error, "The NPU test couldn't finish on this PC. Please try again.", DateTimeOffset.Now);
-        }
-        finally { lock (_gate) _runCts = null; }
-    }
+            try
+            {
+                var budget = ClampDuration(Settings.Duration);
+                var device = (await Task.Run(Devices, ct).ConfigureAwait(false)).FirstOrDefault(d => d.Id == instance.Details);
+                if (device is null) return CouldNotRun.Result(Name, $"{instance.Label} is no longer connected.");
+                var (a, b) = Inputs(MatrixSize);
+                var cpu = CpuBaseline(a, b, MatrixSize, out var reference);
+                progress?.Report($"Testing {device.Name}…");
+                var report = await TestDeviceAsync(io, device, a, b, reference, cpu, budget, WatchdogGrace, ct, Logger).ConfigureAwait(false);
+                Log($"{Name}: {device.Name}: {report.Verdict} {report.Message}");
+                return ToResult(new NpuTestReport([report], MatrixSize, budget, report.Verdict, null));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                LogError($"{Name}: {ex}");
+                return new DiagnosticResult(Name, DiagnosticStatus.Error, "The NPU test couldn't finish on this PC. Please try again.", DateTimeOffset.Now);
+            }
+        }, cancellationToken);
 
     /// <summary>One report listing every NPU's latest result, for the page.</summary>
     public object? Combine(IReadOnlyList<DiagnosticResult> instanceResults)
@@ -125,30 +112,21 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : INpuTestModu
         catch (Exception ex) { LogWarn($"{Name}: device list failed: {ex.Message}"); return []; }
     }
 
-    public void Cancel() { lock (_gate) { try { _runCts?.Cancel(); } catch (ObjectDisposedException) { } } }
-
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
-
     public static TimeSpan ClampDuration(TimeSpan d) => d <= TimeSpan.Zero ? DefaultDuration : d > MaxDuration ? MaxDuration : d;
 
-    public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
+    protected override async Task<DiagnosticResult> RunCoreAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        lock (_gate) _runCts = cts;
-        try { return await RunCoreAsync(progress, cts.Token).ConfigureAwait(false); }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
-        {
-            return new DiagnosticResult(Name, DiagnosticStatus.Warning, "The NPU test was cancelled.", DateTimeOffset.Now) { Cancelled = true };
-        }
+        try { return await RunAllDevicesAsync(progress, ct).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             LogError($"{Name}: {ex}");
             return new DiagnosticResult(Name, DiagnosticStatus.Error, "The NPU test couldn't finish on this PC. Please try again.", DateTimeOffset.Now);
         }
-        finally { lock (_gate) _runCts = null; }
     }
 
-    private async Task<DiagnosticResult> RunCoreAsync(IProgress<string>? progress, CancellationToken ct)
+    private async Task<DiagnosticResult> RunAllDevicesAsync(IProgress<string>? progress, CancellationToken ct)
+
     {
         progress?.Report("Looking for an NPU…");
         var devices = await Task.Run(Devices, ct).ConfigureAwait(false);

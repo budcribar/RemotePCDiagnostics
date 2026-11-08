@@ -28,16 +28,22 @@ public sealed record GpuStressOptions
 
 public sealed record GpuStressProgress(
     TimeSpan Elapsed, TimeSpan Duration, string? AdapterName, long Batches, long ValuesChecked, long Mismatches,
-    double? GpuTemperatureC, double? FanRpm, bool SensorsAvailable, double? BillionOpsPerSecond)
-{
-    public double Fraction => Duration <= TimeSpan.Zero ? 1 : Math.Clamp(Elapsed / Duration, 0, 1);
-}
+    double? GpuTemperatureC, double? FanRpm, bool SensorsAvailable, double? BillionOpsPerSecond) : StressProgressBase(Elapsed, Duration);
 
 public sealed record GpuStressReport(
     GpuStressOutcome Outcome, TimeSpan Ran, string? AdapterName, long Batches, long ValuesChecked, long Mismatches,
-    double? MaxGpuTemperatureC, double? BillionOpsPerSecond) : IRunEnd
+    double? MaxGpuTemperatureC, double? BillionOpsPerSecond) : IStressReport
 {
-    [System.Text.Json.Serialization.JsonIgnore] public RunEnd RunEnd => Outcome == GpuStressOutcome.StoppedByUser ? RunEnd.Cancelled : Outcome == GpuStressOutcome.NoGpu ? RunEnd.CouldNotRun : RunEnd.Finished;
+    [JsonIgnore] public RunEnd RunEnd => Outcome == GpuStressOutcome.StoppedByUser ? RunEnd.Cancelled : Outcome == GpuStressOutcome.NoGpu ? RunEnd.CouldNotRun : RunEnd.Finished;
+    [JsonIgnore] public DiagnosticStatus Status => Outcome switch
+    {
+        GpuStressOutcome.Passed => DiagnosticStatus.Ok,
+        GpuStressOutcome.StoppedByUser or GpuStressOutcome.NoGpu or GpuStressOutcome.SoftwareOnly => DiagnosticStatus.Warning,
+        _ => DiagnosticStatus.Error,
+    };
+    [JsonIgnore] public bool IsUnavailable => Outcome == GpuStressOutcome.NoGpu;
+    [JsonIgnore] public bool IsCouldNotRun => Outcome == GpuStressOutcome.Failed;
+    [JsonIgnore] public bool IsOverheated => Outcome == GpuStressOutcome.Overheated;
 
     public string Headline => Outcome switch
     {

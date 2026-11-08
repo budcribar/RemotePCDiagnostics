@@ -18,8 +18,21 @@ public sealed class SystemCommandRunner(IProcessLauncher? launcher = null, ILogg
 
     public static string PowerShell => SystemTool(Path.Combine("WindowsPowerShell", "v1.0", "powershell.exe"));
 
+    /// <summary>Standard PowerShell arguments for running a script without profiles or prompts.</summary>
+    public static IReadOnlyList<string> PowerShellArgs(string script) =>
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script];
+
+    /// <summary>Runs a PowerShell script via <see cref="PowerShell"/> using <see cref="PowerShellArgs"/>.</summary>
+    public Task<ProcessResult?> RunPowerShellAsync(string script, CancellationToken ct) =>
+        RunAsync(PowerShell, PowerShellArgs(script), null, ct);
+
+    /// <summary>Runs a PowerShell script via <see cref="PowerShell"/> with an optional timeout and output line callback.</summary>
+    public Task<ProcessResult?> RunPowerShellAsync(string script, TimeSpan? timeout, CancellationToken ct, Action<string>? outputLine = null) =>
+        RunAsync(PowerShell, PowerShellArgs(script), timeout, ct, outputLine);
+
     /// <summary>Returns the result, or null when the process couldn't start / timed out (details logged).</summary>
     public Task<ProcessResult?> RunAsync(string fileName, IReadOnlyList<string> arguments, CancellationToken ct) => RunAsync(fileName, arguments, null, ct);
+
 
     /// <summary>Same, with a longer limit for slow work (cleanup, updates); null = <see cref="Timeout"/>.</summary>
     public async Task<ProcessResult?> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan? timeout, CancellationToken ct, Action<string>? outputLine = null)

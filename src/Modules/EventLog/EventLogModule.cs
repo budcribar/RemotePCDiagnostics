@@ -11,36 +11,23 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
     public override Guid Id => ModuleIds.EventLog;
     public override string DisplayName => "Windows error log";
     protected override string FailedMessage => "Couldn't read the Windows error log on this PC.";
-    private readonly WindowsEventLog _log = new(commands);
-
-    private async Task<IReadOnlyList<WinEvent>?> EventsAsync(string log, string xpath, int max, CancellationToken ct)
-    {
-        if (host is null) return await _log.QueryAsync(log, xpath, max, ct).ConfigureAwait(false);
-        try { return await host.QueryEventsAsync(log, xpath, max, ct).ConfigureAwait(false); }
-        catch (Plugins.HostQueryException ex) { LogWarn($"{Name}: the app didn't read the {log} log ({ex.Error}): {ex.Message}"); return null; }
-    }
-
-    private async Task<IReadOnlyCollection<string>> ReviewedAsync(CancellationToken ct)
-    {
-        if (host is null) return EventReviews.Read();
-        try { return await host.ReadEventReviewsAsync(ct).ConfigureAwait(false); }
-        catch (Plugins.HostQueryException) { return []; }
-    }
+    private readonly WindowsEventLog _log = new(commands, host, ModuleName);
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         progress.ReportStep(1, 2, "Reading the Windows System error log…");
         var q = WindowsEventLog.LevelQuery(Days, 1, 2);
-        var system = await EventsAsync("System", q, MaxPerLog, ct).ConfigureAwait(false);
+        var system = await _log.QueryAsync("System", q, MaxPerLog, ct).ConfigureAwait(false);
         progress.ReportStep(2, 2, "Reading the Windows Application error log…");
-        var app = await EventsAsync("Application", q, MaxPerLog, ct).ConfigureAwait(false);
+        var app = await _log.QueryAsync("Application", q, MaxPerLog, ct).ConfigureAwait(false);
         Log($"{Name}: source=wevtutil (windows_events needs the osquery event subscriber) system={system?.Count.ToString() ?? "failed"} application={app?.Count.ToString() ?? "failed"}");
         if (excludeCrashEvents)
         {
             system = system?.Where(e => !BsodHistoryModule.IsBugCheckEvent(e) && !BsodHistoryModule.IsPowerLossEvent(e)).ToList();
             app = app?.Where(e => !(e.EventId is 1000 or 1002 && (e.Provider.Contains("Application Error", StringComparison.OrdinalIgnoreCase) || e.Provider.Contains("Application Hang", StringComparison.OrdinalIgnoreCase)))).ToList();
         }
-        var reviewed = await ReviewedAsync(ct).ConfigureAwait(false);
+        var reviewed = await EventReviews.ReadAsync(host, ct).ConfigureAwait(false);
+
         var report = Build(system?.Where(e => !reviewed.Contains(EventReviews.Key(e))).ToList(),
             app?.Where(e => !reviewed.Contains(EventReviews.Key(e))).ToList());
         return report with { ReviewedCards = Build(system?.Where(e => reviewed.Contains(EventReviews.Key(e))).ToList(),

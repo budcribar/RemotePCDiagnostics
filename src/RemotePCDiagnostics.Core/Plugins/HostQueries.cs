@@ -277,3 +277,14 @@ public sealed class HostRetrimHistory(IHostQueries queries) : IRetrimHistory
         catch (HostQueryException) { return new Dictionary<char, RetrimRecord>(); }
     }
 }
+
+public static class HostQueryExtensions
+{
+    /// <summary>Runs a host query and returns null (logging a warning) when the app refused or couldn't answer it.</summary>
+    public static async Task<T?> AskAsync<T>(this IHostQueries host, string moduleName, ILogger? log, Func<IHostQueries, Task<T>> query) where T : class?
+    {
+        try { return await query(host).ConfigureAwait(false); }
+        catch (HostQueryException ex) { log.Warn($"{moduleName}: the app didn't answer ({ex.Error}): {ex.Message}"); return null; }
+    }
+}
+

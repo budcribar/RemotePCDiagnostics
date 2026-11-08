@@ -23,10 +23,11 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
 
     private async Task<bool> PsAsync(string script, CancellationToken ct)
     {
-        var r = await commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], ct).ConfigureAwait(false);
+        var r = await commands.RunPowerShellAsync(script, ct).ConfigureAwait(false);
         Log($"powershell exit={r?.ExitCode} err={r?.StdErr.Trim()}");
         return r is { ExitCode: 0 };
     }
+
 
     // ---- continue after sign-in (Task Scheduler: starts elevated without a UAC prompt, unlike RunOnce) ----
     public Task<bool> RegisterResumeAsync(CancellationToken ct)

@@ -7,14 +7,13 @@ namespace RemotePCDiagnostics.Modules.DriveHealth;
 /// rights come from the app (<c>storage.drives</c>, <c>storage.retrims</c>, <c>osquery.select</c>).</summary>
 public sealed class DriveHealthPlugin : IModulePlugin
 {
-    public void Register(IServiceCollection services, IPluginContext context)
-    {
-        services.AddSingleton<IDiagnosticModule>(sp =>
+    public void Register(IServiceCollection services, IPluginContext context) =>
+        services.AddModule(context, sp =>
         {
             var host = sp.GetService<RemotePCDiagnostics.Core.Plugins.IHostQueries>();
             var retrims = host is not null ? new RemotePCDiagnostics.Core.Plugins.HostRetrimHistory(host)
                 : sp.GetService<IRetrimHistory>() ?? new RetrimHistory(new RetrimLog(RetrimLog.DefaultPath()));
             return new DriveHealthModule(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<OsqueryRunner>(), retrims, host: host);
         });
-    }
 }
+

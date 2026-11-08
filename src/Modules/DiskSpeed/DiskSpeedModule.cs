@@ -10,9 +10,6 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
     public override Guid Id => ModuleIds.DiskSpeed;
     public override string DisplayName => "Disk speed test";
     string IStressSuiteModule.SuiteName => "Disk";
-    bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.Failed } or Exception;
-    bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.Overheated };
-    bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Payload is DiskSpeedReport { Outcome: DiskSpeedOutcome.StoppedByUser };
 
     public long SizeBytes { get; set; } = DiskSpeedOptions.GB;
     /// <summary>Null = system drive.</summary>
@@ -31,8 +28,6 @@ public sealed class DiskSpeedModule(IDiskTestFileSystem fs, ISensorProvider sens
         var test = new DiskSpeedTest(fs, sensors, clockFactory?.Invoke(), Logger, cleanup);
         return test.RunAsync(opts, progress, cancellationToken);
     }
-
-    protected override (DiagnosticStatus Status, string Headline) Describe(DiskSpeedReport report) => (ToStatus(report.Outcome), report.Headline);
 
     public static DiagnosticStatus ToStatus(DiskSpeedOutcome o) => o switch
     {

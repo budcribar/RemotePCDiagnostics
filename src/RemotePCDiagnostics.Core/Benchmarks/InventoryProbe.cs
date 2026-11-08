@@ -13,8 +13,8 @@ public static class InventoryProbe
             ct.ThrowIfCancellationRequested();
             var script = "$ErrorActionPreference='Stop'; try { $items=@(" + query +
                 "); [Console]::WriteLine($items.Count) } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }";
-            var result = await commands.RunAsync(SystemCommandRunner.PowerShell,
-                ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], ct).ConfigureAwait(false);
+            var result = await commands.RunPowerShellAsync(script, ct).ConfigureAwait(false);
+
             return result is { ExitCode: 0, TimedOut: false } && string.IsNullOrWhiteSpace(result.StdErr) &&
                 int.TryParse(result.StdOut.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var count)
                 ? count : null;

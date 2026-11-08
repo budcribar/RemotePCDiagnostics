@@ -7,7 +7,7 @@ namespace RemotePCDiagnostics.Core.Webcam;
 /// camera; a PC without a camera doesn't show the test. The instance key comes from the camera's device interface id (stable across reboots
 /// while the camera stays on the same port).
 /// </summary>
-public sealed class WebcamTestModule(IWebcamIo io, ILogger? log = null) : IWebcamTestModule
+public sealed class WebcamTestModule(IWebcamIo io, ILogger? log = null) : OnDemandModuleBase(log), IWebcamTestModule
 {
     public const string ModuleName = ModuleSlugs.Webcam;
     public static readonly TimeSpan DefaultDuration = TimeSpan.FromSeconds(5);
@@ -18,19 +18,11 @@ public sealed class WebcamTestModule(IWebcamIo io, ILogger? log = null) : IWebca
     public static readonly TimeSpan OpenCloseAllowance = TimeSpan.FromSeconds(15);
     public const int MaxWidth = 1280, MaxHeight = 720, MaxFps = 30;
 
-    private CancellationTokenSource? _runCts;
-    private readonly object _gate = new();
-
-    public string Name => ModuleName;
-    public Guid Id => ModuleIds.Webcam;
-    public string DisplayName => "Webcam test";
-    public bool IncludeInRunAll => false;
+    public override string Name => ModuleName;
+    public override Guid Id => ModuleIds.Webcam;
+    public override string DisplayName => "Webcam test";
     public string? DeviceId { get; set; }
     public TimeSpan Duration { get; set; } = DefaultDuration;
-    public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
-    private void Log(string m) => log.Info(m);
-    private void LogWarn(string m) => log.Warn(m);
-    private void LogError(string m) => log.Error(m);
 
     public static TimeSpan ClampDuration(TimeSpan d) => d <= TimeSpan.Zero ? DefaultDuration : d > MaxDuration ? MaxDuration : d;
 
@@ -39,10 +31,6 @@ public sealed class WebcamTestModule(IWebcamIo io, ILogger? log = null) : IWebca
         try { return io.ListDevices(); }
         catch (Exception ex) { LogWarn($"{Name}: device list failed: {ex.Message}"); return []; }
     }
-
-    public void Cancel() { lock (_gate) { try { _runCts?.Cancel(); } catch (ObjectDisposedException) { } } }
-
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
 
     public static ModuleInstance InstanceOf(WebcamDevice d) => new(InstanceKeys.From(d.Id), d.Label, d.Id);
 
@@ -55,24 +43,13 @@ public sealed class WebcamTestModule(IWebcamIo io, ILogger? log = null) : IWebca
 
     /// <summary>Tests the camera <paramref name="instance"/> names (its <see cref="ModuleInstance.Details"/> is the device id).</summary>
     public Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken cancellationToken = default) =>
-        RunGuardedAsync(instance.Details ?? DeviceId, progress, cancellationToken);
+        RunGuardedAsync(ct => RunCoreAsync(instance.Details ?? DeviceId, progress, ct), cancellationToken);
 
-    public Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default) =>
-        RunGuardedAsync(DeviceId, progress, cancellationToken);
-
-    private async Task<DiagnosticResult> RunGuardedAsync(string? deviceId, IProgress<string>? progress, CancellationToken cancellationToken)
-    {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        lock (_gate) _runCts = cts;
-        try { return await RunCoreAsync(deviceId, progress, cts.Token).ConfigureAwait(false); }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
-        {
-            return new DiagnosticResult(Name, DiagnosticStatus.Warning, "The webcam test was cancelled.", DateTimeOffset.Now) { Cancelled = true };
-        }
-        finally { lock (_gate) _runCts = null; }
-    }
+    protected override Task<DiagnosticResult> RunCoreAsync(IProgress<string>? progress, CancellationToken ct) =>
+        RunCoreAsync(DeviceId, progress, ct);
 
     private async Task<DiagnosticResult> RunCoreAsync(string? deviceId, IProgress<string>? progress, CancellationToken ct)
+
     {
         var list = Devices();
         var dev = list.FirstOrDefault(d => deviceId is not null && d.Id == deviceId) ?? list.FirstOrDefault();

@@ -25,17 +25,16 @@ public sealed record CpuStressOptions
 /// <summary>Live progress pushed while the test runs.</summary>
 public sealed record CpuStressProgress(
     TimeSpan Elapsed, TimeSpan Duration, long ChunksDone, long Errors,
-    double? CpuTemperatureC, double? FanRpm, double? CpuCriticalC, bool SensorsAvailable)
-{
-    public double Fraction => Duration <= TimeSpan.Zero ? 1 : Math.Clamp(Elapsed / Duration, 0, 1);
-}
+    double? CpuTemperatureC, double? FanRpm, double? CpuCriticalC, bool SensorsAvailable) : StressProgressBase(Elapsed, Duration);
 
 public sealed record CpuStressReport(
     CpuStressOutcome Outcome, TimeSpan Ran, TimeSpan Requested, int Threads,
     long ChunksDone, long Errors, double? MaxCpuTemperatureC, double? EarlyThroughput, double? LateThroughput,
-    bool SensorsAvailable) : IRunEnd
+    bool SensorsAvailable) : IStressReport
 {
-    [System.Text.Json.Serialization.JsonIgnore] public RunEnd RunEnd => Outcome == CpuStressOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+    [JsonIgnore] public RunEnd RunEnd => Outcome == CpuStressOutcome.StoppedByUser ? RunEnd.Cancelled : RunEnd.Finished;
+    [JsonIgnore] public DiagnosticStatus Status => CpuStressModule.ToStatus(Outcome);
+    [JsonIgnore] public bool IsOverheated => Outcome == CpuStressOutcome.Overheated;
 
     /// <summary>Late vs early throughput, e.g. 0.8 = 20% slower at the end.</summary>
     public double? ThroughputRatio => EarlyThroughput is > 0 && LateThroughput is { } l ? l / EarlyThroughput : null;

@@ -6,9 +6,8 @@ namespace RemotePCDiagnostics.Modules.Crashes;
 /// reviewed list come from the app (<c>eventlog.query</c>, <c>crashes.minidumps</c>, <c>events.reviewed</c>).</summary>
 public sealed class CrashesPlugin : IModulePlugin
 {
-    public void Register(IServiceCollection services, IPluginContext context)
-    {
-        services.AddSingleton<IDiagnosticModule>(sp => new CrashesModule(sp.GetRequiredService<SystemCommandRunner>(), includeSystemCrashes: true,
+    public void Register(IServiceCollection services, IPluginContext context) =>
+        services.AddModule(context, sp => new CrashesModule(sp.GetRequiredService<SystemCommandRunner>(), includeSystemCrashes: true,
             host: sp.GetService<RemotePCDiagnostics.Core.Plugins.IHostQueries>()));
-    }
 }
+

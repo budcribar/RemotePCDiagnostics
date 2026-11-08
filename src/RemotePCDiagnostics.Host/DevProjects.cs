@@ -32,9 +32,10 @@ public static class DevProjects
 
     private static async Task<IReadOnlyList<string>> SearchIndexAsync(ILogger? log, CancellationToken ct)
     {
-        var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"))
+        var psi = new ProcessStartInfo(RemotePCDiagnostics.Core.Areas.SystemCommandRunner.PowerShell)
         { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var a in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", SearchIndexScript }) psi.ArgumentList.Add(a);
+        foreach (var a in RemotePCDiagnostics.Core.Areas.SystemCommandRunner.PowerShellArgs(SearchIndexScript)) psi.ArgumentList.Add(a);
+
         using var p = Process.Start(psi)!;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(20));

@@ -32,25 +32,13 @@ public sealed record MicToSpeakerReport(string Output, string Input, double MicP
 }
 
 /// <summary>Shared plumbing for both audio modules (device lookup, cancel, error mapping).</summary>
-public abstract class AudioModuleBase : IAudioTestModule
+public abstract class AudioModuleBase(IAudioIo io, ILogger? log) : OnDemandModuleBase(log), IAudioTestModule
 {
-    protected readonly IAudioIo Io;
-    protected readonly ILogger? LogSink;
-    private CancellationTokenSource? _runCts;
-    private readonly object _gate = new();
+    protected readonly IAudioIo Io = io;
+    protected ILogger? LogSink => Logger;
 
-    protected AudioModuleBase(IAudioIo io, ILogger? log) { Io = io; LogSink = log; }
-
-    public abstract string Name { get; }
-    public abstract Guid Id { get; }
-    public abstract string DisplayName { get; }
-    public bool IncludeInRunAll => false;
     public AudioTestSettings Settings { get; } = new();
-    public event EventHandler<DiagnosticResult>? Updated;
-    protected void Raise(DiagnosticResult r) => Updated?.Invoke(this, r);
-    protected void Log(string m) => LogSink.Info(m);
-    protected void LogWarn(string m) => LogSink.Warn(m);
-    protected void LogError(string m) => LogSink.Error(m);
+    protected void Raise(DiagnosticResult r) => RaiseUpdated(r);
 
     public IReadOnlyList<AudioDevice> Devices(AudioFlow flow)
     {
@@ -65,24 +53,6 @@ public abstract class AudioModuleBase : IAudioTestModule
         return list.FirstOrDefault(d => id is not null && d.Id == id) ?? list.FirstOrDefault(d => d.IsDefault) ?? list.FirstOrDefault();
     }
 
-    public void Cancel() { lock (_gate) { try { _runCts?.Cancel(); } catch (ObjectDisposedException) { } } }
-
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => Task.FromResult(ModuleAvailability.Available);
-
-    public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
-    {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        lock (_gate) _runCts = cts;
-        try { return await RunCoreAsync(progress, cts.Token).ConfigureAwait(false); }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
-        {
-            return new DiagnosticResult(Name, DiagnosticStatus.Warning, $"The {DisplayName.ToLowerInvariant()} was cancelled.", DateTimeOffset.Now) { Cancelled = true };
-        }
-        finally { lock (_gate) _runCts = null; }
-    }
-
-    protected abstract Task<DiagnosticResult> RunCoreAsync(IProgress<string>? progress, CancellationToken ct);
-
     protected static bool IsAccessDenied(Exception ex) => ex is AudioAccessDeniedException or UnauthorizedAccessException;
 
     protected DiagnosticResult Fail(Exception ex, object? payload)
@@ -93,3 +63,4 @@ public abstract class AudioModuleBase : IAudioTestModule
         return new DiagnosticResult(Name, DiagnosticStatus.Error, msg, DateTimeOffset.Now, payload);
     }
 }
+

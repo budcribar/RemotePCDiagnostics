@@ -17,11 +17,6 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
     public override Guid Id => ModuleIds.GpuStress;
     public override string DisplayName => "Graphics (GPU) stress test";
     string IStressSuiteModule.SuiteName => "GPU";
-    // Report(): the module result of a per-GPU run carries the combined report (see Combine).
-    bool IStressSuiteModule.IsUnavailableResult(DiagnosticResult r) => r.Report() is GpuStressReport { Outcome: GpuStressOutcome.NoGpu };
-    bool IStressSuiteModule.IsCouldNotRunResult(DiagnosticResult r) => r.Report() is GpuStressReport { Outcome: GpuStressOutcome.Failed } or Exception;
-    bool IStressSuiteModule.IsOverheatedResult(DiagnosticResult r) => r.Report() is GpuStressReport { Outcome: GpuStressOutcome.Overheated };
-    bool IStressSuiteModule.IsStoppedByUserResult(DiagnosticResult r) => r.Report() is GpuStressReport { Outcome: GpuStressOutcome.StoppedByUser };
 
     public static ModuleInstance InstanceOf(GpuAdapterInfo a) => new(InstanceKeys.From(a.Id ?? a.Name), a.Name, a.Id);
 
@@ -65,8 +60,6 @@ public sealed class GpuStressModule(IGpuDeviceFactory factory, ISensorProvider s
         var test = new GpuStressTest(factory, sensors, clockFactory?.Invoke(), Logger, cleanup);
         return test.RunAsync(opts, progress, cancellationToken);
     }
-
-    protected override (DiagnosticStatus Status, string Headline) Describe(GpuStressReport report) => (ToStatus(report.Outcome), report.Headline);
 
     public static DiagnosticStatus ToStatus(GpuStressOutcome o) => o switch
     {

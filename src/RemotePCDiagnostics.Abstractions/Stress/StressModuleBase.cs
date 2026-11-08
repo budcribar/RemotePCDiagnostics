@@ -1,5 +1,31 @@
 namespace RemotePCDiagnostics.Core.Stress;
 
+/// <summary>Live progress of a stress test run with elapsed/duration fraction calculation.</summary>
+public interface IStressProgress
+{
+    TimeSpan Elapsed { get; }
+    TimeSpan Duration { get; }
+    double Fraction => Duration <= TimeSpan.Zero ? 1 : Math.Clamp(Elapsed / Duration, 0, 1);
+}
+
+/// <summary>Base record for stress test progress snapshots that provides <see cref="Fraction"/> on the concrete record type.</summary>
+public abstract record StressProgressBase(TimeSpan Elapsed, TimeSpan Duration) : IStressProgress
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public double Fraction => Duration <= TimeSpan.Zero ? 1 : Math.Clamp(Elapsed / Duration, 0, 1);
+}
+
+/// <summary>Self-describing stress test report: supplies its status, headline, and suite classification flags directly.</summary>
+public interface IStressReport : IRunEnd
+{
+    string Headline { get; }
+    DiagnosticStatus Status { get; }
+    bool IsOverheated => false;
+    bool IsStoppedByUser => RunEnd == RunEnd.Cancelled;
+    bool IsCouldNotRun => RunEnd == RunEnd.CouldNotRun;
+    bool IsUnavailable => false;
+}
+
 /// <summary>
 /// What every on-demand stress test module shares: the Stop token, progress forwarding, the <see cref="StressCleanup"/> registry that
 /// <see cref="CleanupAsync"/> drains, and the module plumbing (never in Run All, default 1 minute). A concrete module only says how to run
@@ -35,8 +61,9 @@ public abstract class StressModuleBase<TProgress, TReport>(ILogger? log) : IStre
     /// <summary>Builds and runs this module's test. Register everything the test holds with <paramref name="cleanup"/> (the test does this).</summary>
     protected abstract Task<TReport> RunTestAsync(StressCleanup cleanup, IProgress<TProgress> progress, CancellationToken cancellationToken);
 
-    /// <summary>Status and headline for a finished report.</summary>
-    protected abstract (DiagnosticStatus Status, string Headline) Describe(TReport report);
+    /// <summary>Status and headline for a finished report. Defaults to reading <see cref="IStressReport"/> when <typeparamref name="TReport"/> implements it.</summary>
+    protected virtual (DiagnosticStatus Status, string Headline) Describe(TReport report) =>
+        report is IStressReport sr ? (sr.Status, sr.Headline) : throw new NotImplementedException();
 
     /// <summary>Asks a running test to stop (the user pressed Stop, or the runner's watchdog fired).</summary>
     public void Stop()

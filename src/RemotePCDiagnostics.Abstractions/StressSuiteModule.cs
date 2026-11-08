@@ -41,14 +41,14 @@ public interface IStressSuiteModule : IDiagnosticModule
     /// <summary>Applies the suite's per-test length (and mode) for a run.</summary>
     void ApplySuiteMode(StressSuiteMode mode) => Duration = StressSuiteDurations.PerTest(mode);
     /// <summary>True when a finished result means "this PC doesn't have that hardware" (skip, not a failure).</summary>
-    bool IsUnavailableResult(DiagnosticResult result) => false;
+    bool IsUnavailableResult(DiagnosticResult result) => result.Report() is Stress.IStressReport { IsUnavailable: true };
     /// <summary>True when a result means the test stopped because the PC got too hot.</summary>
-    bool IsOverheatedResult(DiagnosticResult result) => false;
+    bool IsOverheatedResult(DiagnosticResult result) => result.Report() is Stress.IStressReport { IsOverheated: true };
     /// <summary>True when the test couldn't run or finish for a reason that is not a hardware problem (too little free memory,
     /// helper couldn't start, the test itself crashed). The suite skips it with the reason and carries on.</summary>
-    bool IsCouldNotRunResult(DiagnosticResult result) => result.Payload is Exception;
+    bool IsCouldNotRunResult(DiagnosticResult result) => result.Report() is Stress.IStressReport { IsCouldNotRun: true } or Exception;
     /// <summary>True when a result means the user stopped the test before it finished.</summary>
-    bool IsStoppedByUserResult(DiagnosticResult result) => result.Cancelled;
+    bool IsStoppedByUserResult(DiagnosticResult result) => result.Cancelled || result.Report() is Stress.IStressReport { IsStoppedByUser: true };
 }
 
 /// <summary>How long each stress test runs in a suite of the given mode.</summary>

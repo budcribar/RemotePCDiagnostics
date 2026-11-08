@@ -771,9 +771,10 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
     /// <summary>Runs one of this class's fixed PowerShell scripts (never user input) and returns its output.</summary>
     private async Task<(int ExitCode, string Output, string Error)> RunPowerShellAsync(string script, CancellationToken ct, TimeSpan? limit = null)
     {
-        var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"))
+        var psi = new ProcessStartInfo(RemotePCDiagnostics.Core.Areas.SystemCommandRunner.PowerShell)
         { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var a in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script }) psi.ArgumentList.Add(a);
+        foreach (var a in RemotePCDiagnostics.Core.Areas.SystemCommandRunner.PowerShellArgs(script)) psi.ArgumentList.Add(a);
+
         try
         {
             using var p = Process.Start(psi)!;

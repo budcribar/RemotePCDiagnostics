@@ -25,8 +25,9 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
     {
         progress?.Report("Checking Wi-Fi signal and IP configuration…");
         var wlanTask = commands.RunAsync(Netsh, ["wlan", "show", "interfaces"], ct);
-        var ipTask = commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", IpConfigScript], ct);
+        var ipTask = commands.RunPowerShellAsync(IpConfigScript, ct);
         await Task.WhenAll(wlanTask, ipTask).ConfigureAwait(false);
+
 
         var wlanRes = await wlanTask.ConfigureAwait(false);
         var ipRes = await ipTask.ConfigureAwait(false);

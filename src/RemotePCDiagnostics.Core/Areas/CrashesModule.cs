@@ -17,21 +17,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
     public override Guid Id => ModuleIds.Crashes;
     public override string DisplayName => includeSystemCrashes ? "Crashes & unexpected restarts" : "App crashes";
     protected override string FailedMessage => "Couldn't read app crash reports on this PC.";
-    private readonly WindowsEventLog _log = new(commands);
-
-    private async Task<IReadOnlyList<WinEvent>?> EventsAsync(string log, string xpath, int max, CancellationToken ct)
-    {
-        if (host is null) return await _log.QueryAsync(log, xpath, max, ct).ConfigureAwait(false);
-        try { return await host.QueryEventsAsync(log, xpath, max, ct).ConfigureAwait(false); }
-        catch (Plugins.HostQueryException ex) { LogWarn($"{Name}: the app didn't read the {log} log ({ex.Error}): {ex.Message}"); return null; }
-    }
-
-    private async Task<IReadOnlyCollection<string>> ReviewedAsync(CancellationToken ct)
-    {
-        if (host is null) return EventReviews.Read();
-        try { return await host.ReadEventReviewsAsync(ct).ConfigureAwait(false); }
-        catch (Plugins.HostQueryException) { return []; }
-    }
+    private readonly WindowsEventLog _log = new(commands, host, ModuleName);
 
     private async Task<IReadOnlyList<MinidumpFile>> DumpsAsync(CancellationToken ct)
     {
@@ -46,15 +32,15 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
     {
         var total = includeSystemCrashes ? 3 : 2;
         progress.ReportStep(1, total, "Looking for app crashes and hangs…");
-        var events = await EventsAsync("Application", Query, Max, ct).ConfigureAwait(false);
+        var events = await _log.QueryAsync("Application", Query, Max, ct).ConfigureAwait(false);
         Log($"{Name}: source=wevtutil Application log (Application Error 1000 / Application Hang 1002) events={events?.Count.ToString() ?? "failed"}");
         progress.ReportStep(2, total, "Checking .NET runtime crash details…");
         var runtime = events?.Any(e => e.EventId == 1000) == true
-            ? await EventsAsync("Application",
+            ? await _log.QueryAsync("Application",
                 $"*[System[Provider[@Name='.NET Runtime'] and EventID=1026 and TimeCreated[timediff(@SystemTime) <= {(long)Days * 86_400_000 + 2000}]]]",
                 Max, ct).ConfigureAwait(false)
             : null;
-        var reviewed = await ReviewedAsync(ct).ConfigureAwait(false);
+        var reviewed = await EventReviews.ReadAsync(host, ct).ConfigureAwait(false);
         var runtimeEvents = (runtime ?? []).Where(e => e.EventId == 1026).ToList();
         var appReport = events is null ? AreaReport.Failed(FailedMessage)
             : Build(events.Where(e => !reviewed.Contains(EventReviews.Key(e))).Concat(runtimeEvents).ToList()) with
@@ -65,7 +51,8 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             return appReport;
 
         progress.ReportStep(3, total, "Checking for blue screens and unexpected restarts…");
-        var sysEvents = await EventsAsync("System", BsodHistoryModule.Query, BsodHistoryModule.MaxEvents, ct).ConfigureAwait(false);
+        var sysEvents = await _log.QueryAsync("System", BsodHistoryModule.Query, BsodHistoryModule.MaxEvents, ct).ConfigureAwait(false);
+
         if (sysEvents is null)
             return appReport;
 
@@ -247,10 +234,10 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             var systemQuery = $"*[System[{time} and (Level=1 or Level=2 or Level=3 or Provider[@Name='Microsoft-Windows-WindowsUpdateClient' or @Name='Microsoft-Windows-Kernel-PnP'])]]";
             var storageQuery = $"*[System[{time} and Provider[@Name='disk' or @Name='Ntfs' or @Name='Microsoft-Windows-Ntfs' or @Name='Microsoft-Windows-StorPort' or @Name='stornvme' or @Name='storahci' or @Name='iaStorAC' or @Name='iaStorVD' or @Name='volmgr'] and (Level=1 or Level=2 or Level=3 or EventID=7 or EventID=11 or EventID=15 or EventID=51 or EventID=129 or EventID=153 or EventID=157)]]";
             var serviceQuery = $"*[System[{time} and Provider[@Name='Service Control Manager'] and (EventID=7000 or EventID=7001 or EventID=7009 or EventID=7011 or EventID=7022 or EventID=7023 or EventID=7024)]]";
-            var storageTask = EventsAsync("System", storageQuery, 20, ct);
-            var serviceTask = EventsAsync("System", serviceQuery, 20, ct);
-            var appTask = EventsAsync("Application", appQuery, 60, ct);
-            var systemTask = EventsAsync("System", systemQuery, 60, ct);
+            var storageTask = _log.QueryAsync("System", storageQuery, 20, ct);
+            var serviceTask = _log.QueryAsync("System", serviceQuery, 20, ct);
+            var appTask = _log.QueryAsync("Application", appQuery, 60, ct);
+            var systemTask = _log.QueryAsync("System", systemQuery, 60, ct);
             await Task.WhenAll(appTask, systemTask, storageTask, serviceTask).ConfigureAwait(false);
             var app = await appTask;
             var system = await systemTask;

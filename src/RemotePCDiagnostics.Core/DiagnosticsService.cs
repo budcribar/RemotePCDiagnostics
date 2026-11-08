@@ -709,25 +709,3 @@ public sealed class DiagnosticsService
     }
 }
 
-/// <summary>Payload of a per-device module's overall result: the result for each instance, in run order.</summary>
-public sealed record InstanceResults(IReadOnlyList<DiagnosticResult> Results)
-{
-    /// <summary>The module's own combined report of all devices (<see cref="IInstanceSummary.Combine"/>), for pages that show one report.</summary>
-    public object? Summary { get; init; }
-}
-
-/// <summary>
-/// Optional on an <see cref="IPerDeviceModule"/>: folds the per-device results into the single report its page already knows how to show
-/// (one AreaReport with a card per drive, one NpuTestReport listing every NPU). Read it with <see cref="InstanceResultExtensions.Report"/>.
-/// </summary>
-public interface IInstanceSummary
-{
-    /// <summary>The latest result of each device, in detection order. Never throws for a result without a payload.</summary>
-    object? Combine(IReadOnlyList<DiagnosticResult> instanceResults);
-}
-
-public static class InstanceResultExtensions
-{
-    /// <summary>The payload to show for a module result: a per-device module's combined report, otherwise the payload itself.</summary>
-    public static object? Report(this DiagnosticResult r) => r.Payload is InstanceResults ir ? ir.Summary : r.Payload;
-}

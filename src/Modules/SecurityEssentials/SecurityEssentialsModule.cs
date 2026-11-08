@@ -86,8 +86,9 @@ public sealed class SecurityEssentialsModule(SystemCommandRunner commands) : Are
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         progress.ReportStep(1, 2, "Checking security settings…");
-        var probe = await commands.RunAsync(SystemCommandRunner.PowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ProbeScript], ct).ConfigureAwait(false);
+        var probe = await commands.RunPowerShellAsync(ProbeScript, ct).ConfigureAwait(false);
         progress.ReportStep(2, 2, "Checking the security chip (TPM)…");
+
         var tpm = await commands.RunAsync(TpmTool, ["getdeviceinformation"], ct).ConfigureAwait(false);
         if (probe is not { ExitCode: 0 } && tpm is not { ExitCode: 0 }) return AreaReport.Failed(FailedMessage);
         var facts = ParseProbe(probe is { ExitCode: 0 } ? probe.StdOut : null, tpm is { ExitCode: 0 } ? ParseTpm(tpm.StdOut) : null);
