@@ -42,6 +42,9 @@ public sealed record ModuleHostMessage
     /// (the services behind the rows, the card that can look up freeze evidence).</summary>
     public Dictionary<string, JsonElement>? PageData { get; init; }
 
+    /// <summary>When several bundled modules share one module host (--shared), the module DLL path this message belongs to.</summary>
+    public string? Module { get; init; }
+
     /// <summary>A per-device module (<see cref="ModuleManifest.PerDevice"/>): the device a refresh runs against; the devices "detection"
     /// found (with <see cref="Reason"/> when the module doesn't apply).</summary>
     public ModuleInstance? Instance { get; init; }
@@ -124,34 +127,178 @@ public interface IModuleHostLauncher
     IModuleHostConnection Start(UserModeModule module);
 }
 
+/// <summary>
+/// Multiplexes bundled out-of-process modules of the same token level (user-mode vs elevated) onto a single shared
+/// <c>RemotePCDiagnostics.ModuleHost --shared</c> process so running all checks in parallel starts one module host instead of a dozen.
+/// Unsigned third-party plugins are never shared: each gets its own process.
+/// </summary>
+public sealed class SharedBundledHost(Func<UserModeModule, IModuleHostConnection> startRaw)
+{
+    private readonly Group _userMode = new(startRaw);
+    private readonly Group _elevated = new(startRaw);
+
+    public IModuleHostConnection Start(UserModeModule module) =>
+        !module.Bundled ? startRaw(module) : (module.Elevated ? _elevated : _userMode).Open(module);
+
+    private sealed class Group(Func<UserModeModule, IModuleHostConnection> startRaw)
+    {
+        private readonly object _gate = new();
+        private readonly SemaphoreSlim _writeGate = new(1, 1);
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, VirtualConnection> _active = new(StringComparer.OrdinalIgnoreCase);
+        private IModuleHostConnection? _raw;
+
+        public IModuleHostConnection Open(UserModeModule module)
+        {
+            lock (_gate)
+            {
+                if (_raw is null || _raw.HasExited)
+                {
+                    try { _raw?.Dispose(); } catch { }
+                    _active.Clear();
+                    _raw = startRaw(module with { Path = "--shared" });
+                    var captured = _raw;
+                    _ = Task.Run(() => ReadLoopAsync(captured));
+                }
+                var vc = new VirtualConnection(this, _raw, module.Path);
+                if (_active.TryRemove(module.Path, out var prev)) prev.CompleteInbox();
+                _active[module.Path] = vc;
+                return vc;
+            }
+        }
+
+        private async Task ReadLoopAsync(IModuleHostConnection raw)
+        {
+            try
+            {
+                while (await raw.ReadLineAsync(CancellationToken.None).ConfigureAwait(false) is { } line)
+                {
+                    var m = ModuleHostMessage.Parse(line);
+                    if (m?.Module is { Length: > 0 } mod && _active.TryGetValue(mod, out var vc))
+                        vc.Deliver(line);
+                }
+            }
+            catch { }
+            finally
+            {
+                foreach (var vc in _active.Values) vc.CompleteInbox();
+            }
+        }
+
+        public async Task WriteRawAsync(IModuleHostConnection raw, string line, CancellationToken ct)
+        {
+            await _writeGate.WaitAsync(ct).ConfigureAwait(false);
+            try { await raw.WriteLineAsync(line, ct).ConfigureAwait(false); }
+            finally { _writeGate.Release(); }
+        }
+
+        public void Kill(IModuleHostConnection raw)
+        {
+            lock (_gate)
+            {
+                if (_raw == raw) { _raw = null; _active.Clear(); }
+            }
+            foreach (var vc in _active.Values) vc.CompleteInbox();
+            raw.Kill();
+        }
+
+        public void CloseVirtual(VirtualConnection vc, IModuleHostConnection raw, string modulePath)
+        {
+            IModuleHostConnection? toDispose = null;
+            lock (_gate)
+            {
+                _active.TryRemove(new KeyValuePair<string, VirtualConnection>(modulePath, vc));
+                if (_raw == raw && _active.IsEmpty)
+                {
+                    toDispose = _raw;
+                    _raw = null;
+                }
+            }
+            if (toDispose is not null)
+            {
+                try { toDispose.Dispose(); } catch { }
+            }
+            else if (!raw.HasExited)
+            {
+                _ = WriteRawAsync(raw, new ModuleHostMessage { Type = "exit", Module = modulePath }.ToLine(), CancellationToken.None)
+                    .ContinueWith(_ => { }, TaskScheduler.Default);
+            }
+        }
+    }
+
+    private sealed class VirtualConnection(Group group, IModuleHostConnection raw, string modulePath) : IModuleHostConnection
+    {
+        private readonly System.Threading.Channels.Channel<string> _inbox = System.Threading.Channels.Channel.CreateUnbounded<string>();
+        private int _disposed;
+
+        public void Deliver(string line) => _inbox.Writer.TryWrite(line);
+        public void CompleteInbox() => _inbox.Writer.TryComplete();
+
+        public async Task WriteLineAsync(string line, CancellationToken ct)
+        {
+            var m = ModuleHostMessage.Parse(line);
+            if (m is not null) line = (m with { Module = modulePath }).ToLine();
+            await group.WriteRawAsync(raw, line, ct).ConfigureAwait(false);
+        }
+
+        public async Task<string?> ReadLineAsync(CancellationToken ct)
+        {
+            try { return await _inbox.Reader.ReadAsync(ct).ConfigureAwait(false); }
+            catch (System.Threading.Channels.ChannelClosedException) { return null; }
+        }
+
+        public bool HasExited => Volatile.Read(ref _disposed) != 0 || raw.HasExited;
+        public void Kill() => group.Kill(raw);
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            CompleteInbox();
+            group.CloseVirtual(this, raw, modulePath);
+        }
+    }
+}
+
 /// <summary>Starts RemotePCDiagnostics.ModuleHost from the app folder with the current token (tests; the Windows host restricts it).</summary>
-public sealed class ProcessModuleHostLauncher(string? directory = null, ILogger? log = null) : IModuleHostLauncher
+public sealed class ProcessModuleHostLauncher : IModuleHostLauncher
 {
     public const string HostName = "RemotePCDiagnostics.ModuleHost";
+    private readonly string? _directory;
+    private readonly ILogger? _log;
+    private readonly SharedBundledHost _shared;
+
+    public ProcessModuleHostLauncher(string? directory = null, ILogger? log = null)
+    {
+        _directory = directory;
+        _log = log;
+        _shared = new SharedBundledHost(StartRaw);
+    }
 
     public static (string File, string Args) Command(string directory, UserModeModule module)
     {
         var exe = Path.Combine(directory, HostName + (OperatingSystem.IsWindows() ? ".exe" : ""));
         var dll = Path.Combine(directory, HostName + ".dll");
-        var args = $"\"{module.Path}\"";
+        var args = module.Path == "--shared" ? "--shared" : $"\"{module.Path}\"";
         return File.Exists(exe) ? (exe, args) : File.Exists(dll) ? ("dotnet", $"\"{dll}\" {args}") : throw new FileNotFoundException("Module host not found", exe);
     }
 
-    public IModuleHostConnection Start(UserModeModule module)
+    public IModuleHostConnection Start(UserModeModule module) => _shared.Start(module);
+
+    public IModuleHostConnection StartRaw(UserModeModule module)
     {
-        var (file, args) = Command(directory ?? AppContext.BaseDirectory, module);
+        var (file, args) = Command(_directory ?? AppContext.BaseDirectory, module);
         var psi = new ProcessStartInfo(file, args)
         {
             UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
         };
         var p = Process.Start(psi) ?? throw new InvalidOperationException("Module host did not start");
-        p.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) log.Info($"Module host [{module.Manifest.Slug}]: {e.Data}"); };
+        p.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) _log.Info($"Module host [{module.Manifest.Slug}]: {e.Data}"); };
         p.BeginErrorReadLine();
         return new Connection(p);
     }
 
     private sealed class Connection(Process p) : IModuleHostConnection
     {
+        public Process Process => p;
         public async Task WriteLineAsync(string line, CancellationToken ct) { await p.StandardInput.WriteLineAsync(line.AsMemory(), ct).ConfigureAwait(false); await p.StandardInput.FlushAsync(ct).ConfigureAwait(false); }
         public Task<string?> ReadLineAsync(CancellationToken ct) => p.StandardOutput.ReadLineAsync(ct).AsTask();
         public bool HasExited { get { try { return p.HasExited; } catch { return true; } } }

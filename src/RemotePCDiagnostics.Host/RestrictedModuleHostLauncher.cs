@@ -15,20 +15,36 @@ namespace RemotePCDiagnostics.Host;
 /// (<see cref="UnsignedDenyOnly"/>), so it can't read the Application or System log itself. The host talks to the app over anonymous pipes for its stdin and stdout, which only
 /// the app holds, and exits when the app closes them.
 /// </summary>
-public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.ILogger? log = null, string? directory = null) : IModuleHostLauncher
+public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
 {
-    public IModuleHostConnection Start(UserModeModule module)
+    private readonly Microsoft.Extensions.Logging.ILogger? _log;
+    private readonly string? _directory;
+    private readonly SharedBundledHost _shared;
+
+    public RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.ILogger? log = null, string? directory = null)
     {
+        _log = log;
+        _directory = directory;
+        _shared = new SharedBundledHost(StartRaw);
+    }
+
+    public IModuleHostConnection Start(UserModeModule module) => _shared.Start(module);
+
+    public IModuleHostConnection StartRaw(UserModeModule module)
+    {
+        var log = _log;
+        var directory = _directory;
         // A module that ships with the app and needs administrator runs out of process for isolation only: the app's own (elevated) token.
         if (module is { Bundled: true, Elevated: true })
         {
             if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: starting with the app's own token (needs administrator)", module.Manifest.Slug);
-            return new ProcessModuleHostLauncher(directory, log).Start(module);
+            return new ProcessModuleHostLauncher(directory, log).StartRaw(module);
         }
         var dir = directory ?? AppContext.BaseDirectory;
         var exe = Path.Combine(dir, ProcessModuleHostLauncher.HostName + ".exe");
         if (!File.Exists(exe)) throw new FileNotFoundException("Module host not found", exe);
-        var commandLine = new StringBuilder($"\"{exe}\" \"{module.Path}\"");
+        var arg = module.Path == "--shared" ? "--shared" : $"\"{module.Path}\"";
+        var commandLine = new StringBuilder($"\"{exe}\" {arg}");
 
         // An unsigned module also loses INTERACTIVE and Event Log Readers (it can't read the event logs itself). A module that ships with
         // the app keeps them: its code is ours, and it gets its event log reads from the app anyway.

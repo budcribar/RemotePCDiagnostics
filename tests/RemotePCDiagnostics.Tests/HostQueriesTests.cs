@@ -439,6 +439,42 @@ public sealed class HostQueriesTests : IDisposable
         Assert.Equal(report.Shown.Count, back.Shown.Count);
     }
 
+    [Fact]
+    public async Task Bundled_modules_share_one_module_host_and_unsigned_ones_stay_separate()
+    {
+        var raw = new ProcessModuleHostLauncher(AppContext.BaseDirectory);
+        var started = new List<string>();
+        var shared = new SharedBundledHost(m => { lock (started) started.Add(m.Path); return raw.StartRaw(m); });
+        var launcher = new DelegatingLauncher(shared.Start);
+        var server = new HostQueryServer(Backend());
+
+        using var services = new UserModeModuleProxy(Bundled("RemotePCDiagnostics.Modules.Services.dll"), launcher, hostQueries: server)
+            { IdleExit = TimeSpan.FromMilliseconds(200) };
+        using var sensors = new UserModeModuleProxy(Bundled("RemotePCDiagnostics.Modules.Sensors.dll"), launcher, hostQueries: server)
+            { IdleExit = TimeSpan.FromMilliseconds(200) };
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+        // Running two bundled user-mode modules in parallel starts a single shared module host (--shared).
+        var runs = await Task.WhenAll(services.RefreshAsync(null, cts.Token), sensors.RefreshAsync(null, cts.Token));
+        Assert.IsType<AreaReport>(runs[0].Payload);
+        Assert.IsType<SensorReport>(runs[1].Payload);
+        Assert.Equal(["--shared"], started);
+
+        // An unsigned module never shares the bundled host: it gets its own process.
+        var sampleDll = Path.Combine(AppContext.BaseDirectory, "sample-module", "SampleModule.dll");
+        var (sampleManifest, _) = ModuleManifest.ReadFromAssembly(File.ReadAllBytes(sampleDll));
+        var unsigned = new UserModeModule(sampleDll, sampleManifest, sampleManifest.ToDescriptor(sampleManifest.Slug));
+        using var unsignedProxy = new UserModeModuleProxy(unsigned, launcher) { IdleExit = TimeSpan.FromMilliseconds(200) };
+        var unsignedResult = await unsignedProxy.RefreshAsync(null, cts.Token);
+        Assert.Equal(DiagnosticStatus.Ok, unsignedResult.Status);
+        Assert.Equal(["--shared", sampleDll], started);
+    }
+
+    private sealed class DelegatingLauncher(Func<UserModeModule, IModuleHostConnection> start) : IModuleHostLauncher
+    {
+        public IModuleHostConnection Start(UserModeModule module) => start(module);
+    }
+
     private static async Task WaitUntil(Func<bool> done)
     {
         var until = DateTime.UtcNow.AddSeconds(15);
