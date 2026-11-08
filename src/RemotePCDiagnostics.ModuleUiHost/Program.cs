@@ -7,11 +7,11 @@ using RemotePCDiagnostics.ModuleUi;
 namespace RemotePCDiagnostics.ModuleUiHost;
 
 /// <summary>
-/// RemotePCDiagnostics.ModuleUiHost "&lt;module.dll&gt;" &lt;relay uri&gt; &lt;relay grpc uri&gt; &lt;id&gt; "&lt;data folder&gt;" [app pid]
+/// RemotePCDiagnostics.ModuleUiHost "&lt;module.dll&gt;" &lt;relay uri&gt; &lt;relay grpc uri&gt; &lt;id&gt; "&lt;data folder&gt;" [app pid, unused]
 /// Loads one unsigned module and renders its details UI as a remote component (RemoteComponentHost): a RemoteBlazorWebView client of the
 /// app's relay, which serves it to the module page's sandboxed frame at &lt;relay uri&gt;/&lt;id&gt;. Runs with the token the app gave it:
 /// no administrator, Medium integrity. Exits when the frame is reloaded or closed (the app starts a fresh copy each time the module page
-/// opens), or when the app or its relay goes away. Its stdin carries the IModuleUi values from the module page's ModuleUiFrame (the
+/// opens), or when the app or its relay goes away (its stdin ends). Its stdin carries the IModuleUi values from the module page's ModuleUiFrame (the
 /// module's latest result in the app), which the details UI gets as the ModuleDetails.LastResult cascading value.
 /// </summary>
 public static class Program
@@ -46,8 +46,9 @@ public static class Program
                 GrpcBaseUri = grpc,
                 Id = id,
                 RootComponent = typeof(ModuleUiRoot),
-                // This process runs with a restricted, Medium-integrity token and can't open the elevated app's process handle.
-                ParentProcessId = args.Length > 5 && int.TryParse(args[5], out var appPid) ? appPid : null,
+                // The app holds this process's stdin for as long as the module page shows it, and Windows closes the pipe when the app exits,
+                // crashes or is killed: exit then, without polling for the app (this restricted token can't open its process anyway).
+                ExitWhenInputCloses = true,
                 // WebView2 needs a user data folder this token can write; the default is next to the exe, under Program Files.
                 WebViewDataFolder = Path.Combine(args[4], "webview2"),
                 Title = Ui.Manifest.DisplayName,
