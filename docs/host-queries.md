@@ -7,8 +7,10 @@
 > implemented. Read [module-plugins.md](module-plugins.md) first: it covers how a module is built, signed, installed and loaded today.
 >
 > **Updated 2026-11-05:** modules no longer read the event logs themselves. The module host's token is tightened so it can't, and
-> `eventlog.read` returns redacted events only. See [Event logs: redacted only](#event-logs-redacted-only). (Proposal; the token change
-> isn't in code yet.)
+> `eventlog.read` returns redacted events only. See [Event logs: redacted only](#event-logs-redacted-only). The token change is in
+> code (2026-11-08): an unsigned module's host has INTERACTIVE and Event Log Readers deny-only
+> (`RestrictedModuleHostLauncher.UnsignedDenyOnly`); `eventlog.read` and redaction are still a proposal, so for now an unsigned
+> module gets no event log data at all.
 
 ## Implemented: modules that ship with the app
 
