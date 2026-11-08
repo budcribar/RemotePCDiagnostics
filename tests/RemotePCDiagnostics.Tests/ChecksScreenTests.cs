@@ -34,7 +34,8 @@ public class ChecksScreenTests
     [Fact]
     public void Labels_UseModeTheResultRanIn_WarningNeverPassed()
     {
-        Assert.Equal("Passed (short run)", CheckRows.Label(RowKind.Passed, "short run"));
+        Assert.Equal("Passed", CheckRows.Label(RowKind.Passed, "short run"));
+        Assert.Equal("Warning", CheckRows.Label(RowKind.Warning, "short run"));
         Assert.Equal("Warning (extended run)", CheckRows.Label(RowKind.Warning, "extended run"));
         Assert.Equal("Passed", CheckRows.Label(RowKind.Passed, null));
         Assert.Equal("Cancelled", CheckRows.Label(RowKind.Cancelled, "short run"));
