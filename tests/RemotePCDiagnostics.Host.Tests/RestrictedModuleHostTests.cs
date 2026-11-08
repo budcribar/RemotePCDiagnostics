@@ -21,7 +21,7 @@ public class RestrictedModuleHostTests
     }
 
     [Fact]
-    public async Task Two_hosts_started_together_each_answer_and_each_exit_when_their_stdin_closes()
+    public async Task Several_hosts_started_together_each_answer_and_each_exit_when_their_stdin_closes()
     {
         var launcher = new RestrictedModuleHostLauncher(directory: AppContext.BaseDirectory);
         var connections = await Task.WhenAll(
