@@ -148,7 +148,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     }
 
     /// <summary>A host query, or null (logged) when the app refused or couldn't answer it.</summary>
-    private async Task<T?> AskAsync<T>(Func<Task<T>> query) where T : class
+    private async Task<T?> AskAsync<T>(Func<Task<T>> query) where T : class?
     {
         try { return await query().ConfigureAwait(false); }
         catch (Plugins.HostQueryException ex) { LogWarn($"{Name}: the app didn't answer ({ex.Error}): {ex.Message}"); return null; }
