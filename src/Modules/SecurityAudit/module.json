@@ -9,5 +9,7 @@
   "outOfProcess": false,
   "hasUi": true,
   "portableUi": false,
+  // Its page reads only the module's results (and asks the module host to stop a run), so out of process the app still renders it.
+  "resultOnlyUi": true,
   "detailsReplaceReport": true
 }

@@ -82,7 +82,7 @@ while (input.ReadLine() is { } line)
                     Send(new ModuleHostMessage
                     {
                         Type = "result", Status = r.Status, Message = r.Message, Cancelled = r.Cancelled || ct.IsCancellationRequested, Report = r.Payload as AreaReport,
-                        Payload = other?.Payload, PayloadType = other?.Type,
+                        Payload = other?.Payload, PayloadType = other?.Type, PageData = ModulePageCalls.Write(module),
                     });
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -90,6 +90,21 @@ while (input.ReadLine() is { } line)
                     Send(new ModuleHostMessage { Type = "result", Status = DiagnosticStatus.Warning, Message = "Cancelled", Cancelled = true });
                 }
                 catch (Exception ex) { Send(new ModuleHostMessage { Type = "error", Message = $"{ex.GetType().Name}: {ex.Message}" }); }
+            });
+            break;
+        case "call":
+            // A click on the module's page that needs the module (ModulePageCalls), answered with "return" and the call's id. The app
+            // sends one at a time and never during a run; the module's host queries are answered meanwhile.
+            var call = request;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var value = await ModulePageCalls.InvokeAsync(module, call.Name ?? "", call.Args, CancellationToken.None);
+                    Send(new ModuleHostMessage { Type = "return", Id = call.Id, Ok = true, Value = value });
+                }
+                catch (NotSupportedException ex) { Send(new ModuleHostMessage { Type = "return", Id = call.Id, Ok = false, Error = "unknown", Reason = ex.Message }); }
+                catch (Exception ex) { Send(new ModuleHostMessage { Type = "return", Id = call.Id, Ok = false, Error = "failed", Reason = $"{ex.GetType().Name}: {ex.Message}" }); }
             });
             break;
         case "stop":
