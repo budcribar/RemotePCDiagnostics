@@ -144,7 +144,7 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : OnDemandModu
         {
             ct.ThrowIfCancellationRequested();
             progress?.Report($"Testing {d.Name}…");
-            reports.Add(await TestDeviceAsync(io, d, a, b, reference, cpu, per, WatchdogGrace, ct, log).ConfigureAwait(false));
+            reports.Add(await TestDeviceAsync(io, d, a, b, reference, cpu, per, WatchdogGrace, ct, Logger).ConfigureAwait(false));
         }
         var rep = new NpuTestReport(reports, MatrixSize, budget, Worst(reports.Select(r => r.Verdict)), null);
         Log($"{Name}: {rep.Overall}; " + string.Join("; ", reports.Select(r => $"{r.Device.Name}: {r.Verdict} {r.Message}")));
