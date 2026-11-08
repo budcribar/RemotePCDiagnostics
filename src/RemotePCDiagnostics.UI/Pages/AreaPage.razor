@@ -16,9 +16,9 @@ else
     var r = Store.Get(m.Name);
     var rep = r.Report() as AreaReport; // a per-device module (drive health) combines its devices into one report
     var busy = r.Status == DiagnosticStatus.Running;
-    var svcModule = m as IServiceRows;
+    var svcModule = m.Feature<IServiceRows>(); // also from a stand-in for a module that runs out of process
     var svcActions = svcModule is null ? null : App.ServiceActions;
-    var panels = (m as IHasAreaPanels)?.Panels ?? AreaPanels.None;
+    var panels = m.Feature<IHasAreaPanels>()?.Panels ?? AreaPanels.None;
     var memSvc = panels.HasFlag(AreaPanels.MemorySuggestions) ? App.Memory : null;
     var storageSvc = panels.HasFlag(AreaPanels.StorageCleanup) ? App.Memory : null;
     var remActions = App.Remediation;
@@ -88,7 +88,7 @@ else
                             @onclick="() => SetReview(m.Name, groupKeys, !showingReviewed)">@(showingReviewed ? "Undo group review" : "Mark group as reviewed")</button>
                         <button type="button" class="btn-small" @onclick="() => CopyGroupForCopilot(open, issueRows)">Review group with Copilot</button>
                     </div>
-                    @if (m is IHangEvidenceSource crashModule && open.Id == crashModule.HangCardId)
+                    @if (m.Feature<IHangEvidenceSource>() is { } crashModule && open.Id == crashModule.HangCardId)
                     {
                         var selected = issueRows.Where(_selectedHangGroups.Contains).ToList();
                         <button type="button" class="btn-small" disabled="@(selected.Count == 0 || _findingHangEvidence || _sendingCopilot)"
@@ -199,7 +199,7 @@ else
                                     {
                                         <div class="row-detail-text">@detail</div>
                                     }
-                                    @if (m is IHangEvidenceSource crashes && row.HangOccurrences is { Count: > 0 } occurrences)
+                                    @if (m.Feature<IHangEvidenceSource>() is { } crashes && row.HangOccurrences is { Count: > 0 } occurrences)
                                     {
                                         <label><input type="checkbox" checked="@_selectedHangGroups.Contains(row)"
                                             @onchange="e => SelectHangGroup(row, e.Value is true)" /> Include in shared timeline</label>

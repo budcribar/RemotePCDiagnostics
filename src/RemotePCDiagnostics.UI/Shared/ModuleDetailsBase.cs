@@ -12,6 +12,10 @@ public abstract class ModuleDetailsBase : StoreAwareComponent
     /// <summary>The module this UI shows.</summary>
     [Parameter] public IDiagnosticModule? DiagnosticModule { get; set; }
 
+    /// <summary>The app's services, for one a page may use when the app has it (<c>GetService</c>), such as the history store. A page
+    /// that renders in the app from results only (resultOnlyUi) uses these instead of injecting its own.</summary>
+    [Inject] protected IServiceProvider Services { get; set; } = default!;
+
     /// <summary>The module's latest result.</summary>
     protected DiagnosticResult? LatestResult => DiagnosticModule is { } m ? Store.Get(m.Name) : null;
 

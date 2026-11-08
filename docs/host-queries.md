@@ -46,8 +46,20 @@ How it works:
 - **Results:** a result whose payload isn't an `AreaReport` crosses only if its type is listed in `ModuleHostPayloads.Types` (today
   `SensorReport`), so the Temperatures & fans page gets the same result in either process. That page has `"resultOnlyUi": true`: it
   reads only the module's results, so out of process the app still renders it from the stand-in's results.
-- **Not carried over out of process yet:** the Services page's Start, Stop and Restart buttons and the Crashes page's "nearby events"
-  search (both talk to the module object in the app), and Drive health's one card per drive (out of process it reports all drives as one).
+- **Page clicks** (`ModulePageCalls`): the Services page's Start, Stop and Restart buttons and the Crashes page's "Find related
+  evidence" used to ask the module object in the app. Out of process that object is in the module host, so:
+  - what the page reads from the last run travels with the result (`pageData` on the `result` line): `serviceRows` (the services
+    behind the rows) and `hangEvidence` (`{"cardId":"hangs"}`, the card whose rows can look up evidence). The app's stand-in offers
+    them to the page (`IModuleFeatures`; pages ask `module.Feature<IServiceRows>()` instead of `module as IServiceRows`). Starting or
+    stopping a service still happens in the app, with its confirmation, as before;
+  - a click that needs the module is a call: `{"type":"call","id":1,"name":"hangEvidence","args":[...]}` to the host, which runs it
+    on the module (answering its host queries meanwhile) and sends `{"type":"return","id":1,"ok":true,"value":"..."}`. Calls wait for a
+    run in progress, start a host when none is running, and are reset after 3 minutes;
+  - both only for modules that ship with the app; an unsigned module's page data is ignored and its calls refused.
+- **Security audit** renders its page in the app from results (`"resultOnlyUi": true`; `SecurityAuditReport` is in
+  `ModuleHostPayloads.Types`), and its Cancel button asks the module host to stop the run (`IUserModeModule.Stop`, the `stop` line).
+- **Not carried over out of process yet:** Drive health's one card per drive (out of process it reports all drives as one), and the
+  Checks screen's Cancel for DISM and SFC (`ICancellableScan`).
 
 ## Why
 

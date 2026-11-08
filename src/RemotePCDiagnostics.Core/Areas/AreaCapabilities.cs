@@ -40,3 +40,21 @@ public interface ICancellableScan
 {
     void Cancel();
 }
+
+/// <summary>
+/// A module that offers some of the interfaces above through another object: the app's stand-in for a module that runs out of process
+/// (UserModeModuleProxy), which can't implement them itself because what it offers depends on the module and its last run.
+/// </summary>
+public interface IModuleFeatures
+{
+    /// <summary>The module's <typeparamref name="T"/>, or null when it offers none (now).</summary>
+    T? Feature<T>() where T : class;
+}
+
+public static class ModuleFeatureExtensions
+{
+    /// <summary>What a page asks instead of <c>module as T</c>: the module itself, or what its stand-in offers (<see cref="IModuleFeatures"/>),
+    /// so a page works the same in and out of process.</summary>
+    public static T? Feature<T>(this IDiagnosticModule? module) where T : class =>
+        module as T ?? (module as IModuleFeatures)?.Feature<T>();
+}

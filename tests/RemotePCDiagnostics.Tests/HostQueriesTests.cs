@@ -346,6 +346,54 @@ public sealed class HostQueriesTests : IDisposable
         Assert.True(proxy.IsHostRunning);
     }
 
+    [Fact]
+    public async Task Services_rows_keep_their_Start_and_Stop_buttons_out_of_process()
+    {
+        var module = Bundled("RemotePCDiagnostics.Modules.Services.dll");
+        using var proxy = new UserModeModuleProxy(module, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: new HostQueryServer(Backend()));
+        Assert.Null(proxy.Feature<IServiceRows>()); // nothing to act on before a run
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await proxy.RefreshAsync(null, cts.Token);
+        // The page asks the stand-in as it asks the module in process.
+        var rows = ((IDiagnosticModule)proxy).Feature<IServiceRows>()!;
+        Assert.True(rows.Latest["spooler"].IsRunning);
+        Assert.True(rows.Latest["wuauserv"].IsStopped);
+        Assert.Same(rows.Latest, proxy.Feature<IServiceRows>()!.Latest); // the same until the next run, so the page keeps its live overrides
+        Assert.Null(proxy.Feature<IHangEvidenceSource>());
+    }
+
+    [Fact]
+    public async Task Crashes_find_related_evidence_in_the_real_module_host()
+    {
+        var module = Bundled("RemotePCDiagnostics.Modules.Crashes.dll");
+        using var proxy = new UserModeModuleProxy(module, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: new HostQueryServer(Backend()));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        await proxy.RefreshAsync(null, cts.Token);
+        var hangs = proxy.Feature<IHangEvidenceSource>()!;
+        Assert.Equal(CrashesModule.HangsCardId, hangs.HangCardId);
+        // The call starts a fresh host when the last one has exited, and the module's event log reads go through the app meanwhile.
+        await WaitUntil(() => !proxy.IsHostRunning);
+        var text = await hangs.FindHangEvidenceAsync([new HangOccurrence(DateTimeOffset.Now.AddDays(-1), "app.exe", @"C:\app.exe", "", "Hang", Guid.NewGuid().ToString())], cts.Token);
+        Assert.StartsWith("Historical timeline.", text);
+    }
+
+    [Fact]
+    public void Security_audit_page_renders_in_the_app_when_the_audit_runs_out_of_process()
+    {
+        var manifest = ManifestOf("RemotePCDiagnostics.Modules.SecurityAudit.dll");
+        var hosting = ModuleHosting.For(manifest, ModuleProcessMode.OutOfProcess);
+        Assert.True(hosting is { OutOfProcess: true, Elevated: true });
+        Assert.Equal(new ModulePageLayout(ModuleOwnUi.InApp, false), ModulePageLayout.For(hosting, outOfProcess: true, bundled: true, hasDetails: true, frameHost: false));
+        // Its report crosses typed, so the page reads it as in process.
+        var report = new RemotePCDiagnostics.Core.Security.SecurityAuditReport(
+            [new("1100", "Account Policies", "Account lockout threshold", "Medium", "0", "10", RemotePCDiagnostics.Core.Security.AuditOutcome.Failed)],
+            Profile: new(false, false, false, "Professional"));
+        var (payload, type) = ModuleHostPayloads.Write(report)!.Value;
+        var back = Assert.IsType<RemotePCDiagnostics.Core.Security.SecurityAuditReport>(ModuleHostPayloads.Read("SecurityAudit", DiagnosticStatus.Error, "", payload, type)!.Payload);
+        Assert.Equal(report.Findings, back.Findings);
+        Assert.Equal(report.Shown.Count, back.Shown.Count);
+    }
+
     private static async Task WaitUntil(Func<bool> done)
     {
         var until = DateTime.UtcNow.AddSeconds(15);
@@ -424,6 +472,83 @@ public sealed class HostQueryDispatchTests
         var until = DateTime.UtcNow.AddSeconds(10);
         while (host.AnswerTo(1) is null && DateTime.UtcNow < until) await Task.Delay(20);
         Assert.Equal("cancelled", host.AnswerTo(1)?.Error);
+    }
+
+    private static UserModeModule Crashes(bool bundled = true) =>
+        new("x.dll", new ModuleManifest { Id = ModuleIds.Crashes, Slug = "Crashes", Capabilities = [HostCapabilities.Minidumps] },
+            BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.Crashes)) { Bundled = bundled };
+
+    private static readonly Dictionary<string, JsonElement> HangPage = new()
+    {
+        [ModulePageCalls.HangEvidence] = JsonSerializer.SerializeToElement(new { cardId = "hangs" }, ModuleHostMessage.Json),
+    };
+
+    [Fact]
+    public async Task A_call_from_the_page_answers_the_modules_queries_and_returns_its_value()
+    {
+        var host = new ScriptedHost(m => m switch
+        {
+            { Type: "refresh" } => [new() { Type = "result", Status = DiagnosticStatus.Ok, Message = "done", PageData = HangPage }],
+            { Type: "call", Name: ModulePageCalls.HangEvidence } => [FastQuery], // the module reads the app's data first
+            { Type: "answer", Id: 2 } => [new() { Type = "return", Id = 1, Ok = true, Value = JsonSerializer.SerializeToElement("timeline") }],
+            _ => [],
+        });
+        using var proxy = new UserModeModuleProxy(Crashes(), host, hostQueries: Server()) { IdleExit = Timeout.InfiniteTimeSpan };
+        await proxy.RefreshAsync(null);
+        var hangs = proxy.Feature<IHangEvidenceSource>()!;
+        Assert.Equal("hangs", hangs.HangCardId);
+        Assert.Equal("timeline", await hangs.FindHangEvidenceAsync([new HangOccurrence(DateTimeOffset.Now, "a.exe", "", "", "Hang", "")], CancellationToken.None));
+        var call = Assert.Single(host.Written, w => w.Type == "call");
+        Assert.Equal("a.exe", call.Args!.Value[0].GetProperty("app").GetString());
+        Assert.True(host.AnswerTo(2)!.Ok);
+    }
+
+    [Fact]
+    public async Task A_call_the_module_cannot_answer_shows_why_on_the_page()
+    {
+        var host = new ScriptedHost(m => m switch
+        {
+            { Type: "refresh" } => [new() { Type = "result", Status = DiagnosticStatus.Ok, Message = "done", PageData = HangPage }],
+            { Type: "call" } => [new() { Type = "return", Id = m.Id, Ok = false, Error = "failed", Reason = "the logs are busy" }],
+            _ => [],
+        });
+        using var proxy = new UserModeModuleProxy(Crashes(), host, hostQueries: Server()) { IdleExit = Timeout.InfiniteTimeSpan };
+        await proxy.RefreshAsync(null);
+        Assert.Equal("Couldn't look up the related events: the logs are busy", await proxy.Feature<IHangEvidenceSource>()!.FindHangEvidenceAsync([], CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task An_unsigned_module_gets_no_page_features_or_calls()
+    {
+        var host = new ScriptedHost(m => m switch
+        {
+            { Type: "refresh" } => [new() { Type = "result", Status = DiagnosticStatus.Ok, Message = "done", PageData = HangPage }],
+            _ => [],
+        });
+        using var proxy = new UserModeModuleProxy(Crashes(bundled: false), host) { IdleExit = Timeout.InfiniteTimeSpan };
+        await proxy.RefreshAsync(null);
+        Assert.Null(proxy.Feature<IHangEvidenceSource>());
+        await Assert.ThrowsAsync<ModuleCallException>(() => proxy.CallAsync(ModulePageCalls.HangEvidence, null));
+        Assert.DoesNotContain(host.Written, w => w.Type == "call");
+    }
+
+    [Fact]
+    public async Task Stop_asks_the_module_host_to_stop_the_run_in_progress()
+    {
+        var host = new ScriptedHost(m => m switch
+        {
+            { Type: "stop" } => [Result(cancelled: true)],
+            _ => [],
+        });
+        using var proxy = new UserModeModuleProxy(Services(), host, hostQueries: Server()) { IdleExit = Timeout.InfiniteTimeSpan };
+        proxy.Stop(); // nothing running: nothing sent
+        Assert.DoesNotContain(host.Written, w => w.Type == "stop");
+        var run = proxy.RefreshAsync(null);
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while (!host.Written.Any(w => w.Type == "refresh") && DateTime.UtcNow < until) await Task.Delay(20);
+        proxy.Stop();
+        Assert.Same(run, await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(10))));
+        Assert.True((await run).Cancelled);
     }
 
     [Fact]

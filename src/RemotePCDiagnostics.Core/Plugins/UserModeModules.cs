@@ -7,8 +7,9 @@ namespace RemotePCDiagnostics.Core.Plugins;
 
 /// <summary>
 /// The line protocol between the app and RemotePCDiagnostics.ModuleHost (one JSON object per line over the helper's stdin and stdout, which
-/// only the app holds). App to host: availability, refresh, stop, exit, answer. Host to app: ready, availability, progress, result, error,
-/// query (a host query, <see cref="IHostQueries"/>, which the app answers with the same <see cref="Id"/>).
+/// only the app holds). App to host: availability, refresh, stop, exit, answer, call. Host to app: ready, availability, progress, result,
+/// error, query (a host query, <see cref="IHostQueries"/>, which the app answers with the same <see cref="Id"/>), return (the answer to a
+/// call, <see cref="ModulePageCalls"/>, with the call's <see cref="Id"/>).
 /// </summary>
 public sealed record ModuleHostMessage
 {
@@ -35,6 +36,12 @@ public sealed record ModuleHostMessage
     public string? Error { get; init; }
     public JsonElement? Value { get; init; }
 
+    /// <summary>A call from the module's page (<see cref="ModulePageCalls"/>): its name; the arguments go in <see cref="Args"/>.</summary>
+    public string? Name { get; init; }
+    /// <summary>On a result: what the module's page needs from the module besides its report, by <see cref="ModulePageCalls"/> name
+    /// (the services behind the rows, the card that can look up freeze evidence).</summary>
+    public Dictionary<string, JsonElement>? PageData { get; init; }
+
     public static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -55,7 +62,7 @@ public sealed record ModuleHostMessage
 /// </summary>
 public static class ModuleHostPayloads
 {
-    public static readonly IReadOnlyList<Type> Types = [typeof(Sensors.SensorReport)];
+    public static readonly IReadOnlyList<Type> Types = [typeof(Sensors.SensorReport), typeof(Security.SecurityAuditReport)];
 
     public static (JsonElement Payload, string Type)? Write(object? payload) =>
         payload is not null && Types.Contains(payload.GetType())
@@ -157,6 +164,9 @@ public sealed class ProcessModuleHostLauncher(string? directory = null, ILogger?
 public interface IUserModeModule : IDiagnosticModule
 {
     UserModeModule Source { get; }
+
+    /// <summary>Asks the module host to stop the run in progress (what the module's own Cancel does in process); nothing when none is.</summary>
+    void Stop();
 }
 
 /// <summary>
@@ -165,7 +175,7 @@ public interface IUserModeModule : IDiagnosticModule
 /// those run elevated in the app.
 /// </summary>
 public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLauncher launcher, ILogger? log = null, HostQueryServer? hostQueries = null)
-    : IUserModeModule, IDisposable
+    : IUserModeModule, IModuleFeatures, IDisposable
 {
     private readonly SemaphoreSlim _write = new(1, 1);
 
@@ -305,6 +315,7 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
         try
         {
             var conn = Connect();
+            lock (_connGate) _refreshing = conn;
             await WriteAsync(conn, new ModuleHostMessage { Type = "refresh" }, CancellationToken.None).ConfigureAwait(false);
             using var queries = new Queries(CancellationToken.None);
             using var stopping = cancellationToken.Register(() =>
@@ -340,6 +351,9 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
                         else if (m.Message is { Length: > 0 }) progress?.Report(m.Message);
                         break;
                     case "result":
+                        // What the page needs besides the report: only from a module that ships with the app (it decides which rows get
+                        // the app's Start/Stop buttons). A run without any keeps the last.
+                        if (module.Bundled && m.PageData is { } pageData) SetPageData(pageData);
                         // One-click fixes run elevated in the app: only a module that ships with the app may offer them.
                         var report = m.Report is { } r ? (module.Bundled ? r : WithoutActions(r)) : null;
                         // Another payload type only from a module that ships with the app (its own page reads it).
@@ -360,7 +374,118 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
             log.Info($"Module host [{Name}]: {ex.Message}");
             return CouldNotRun.Result(Name, $"The module host stopped: {ex.Message}");
         }
+        finally
+        {
+            lock (_connGate) _refreshing = null;
+            _gate.Release();
+            Idle();
+        }
+    }
+
+    private IModuleHostConnection? _refreshing;
+
+    public void Stop()
+    {
+        IModuleHostConnection? conn;
+        lock (_connGate) conn = _refreshing;
+        if (conn is null) return;
+        log.Info($"Module host [{Name}]: asked to stop");
+        _ = WriteAsync(conn, new ModuleHostMessage { Type = "stop" }, CancellationToken.None).ContinueWith(_ => { }, TaskScheduler.Default);
+    }
+
+    /// <summary>How long a call from the module's page (<see cref="CallAsync"/>) may take; past that the host is reset.</summary>
+    public TimeSpan CallTimeout { get; init; } = TimeSpan.FromMinutes(3);
+
+    private int _lastCallId;
+
+    /// <summary>
+    /// Runs call <paramref name="name"/> on the module in the module host (<see cref="ModulePageCalls"/>), starting the host if it isn't
+    /// running, and answering the module's host queries meanwhile. Waits for a run in progress. Only for a module that ships with the app.
+    /// Throws <see cref="ModuleCallException"/> when the host can't answer.
+    /// </summary>
+    public async Task<JsonElement?> CallAsync(string name, JsonElement? args, CancellationToken cancellationToken = default)
+    {
+        if (!module.Bundled) throw new ModuleCallException("notAllowed", "only modules that ship with the app take calls from their page");
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        Busy();
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(CallTimeout);
+            var conn = Connect();
+            var id = Interlocked.Increment(ref _lastCallId);
+            using var queries = new Queries(timeout.Token);
+            log.Info($"Module host [{Name}]: call {id} {name}");
+            await WriteAsync(conn, new ModuleHostMessage { Type = "call", Id = id, Name = name, Args = args }, timeout.Token).ConfigureAwait(false);
+            while (true)
+            {
+                var m = Read(await conn.ReadLineAsync(timeout.Token).ConfigureAwait(false) ?? throw Exited());
+                switch (m)
+                {
+                    case { Type: "query" }: Answer(conn, m, queries); break;
+                    case { Type: "return" } when m.Id == id:
+                        return m.Ok == true ? m.Value : throw new ModuleCallException(m.Error ?? "failed", m.Reason ?? "the module couldn't answer");
+                    case { Type: "error" }: throw new ModuleCallException("failed", m.Message ?? "the module host failed");
+                }
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            Reset();
+            throw new ModuleCallException("timeout", $"the module didn't answer within {CallTimeout.TotalSeconds:0} s");
+        }
+        catch (IOException ex)
+        {
+            Reset();
+            throw new ModuleCallException("failed", ex.Message);
+        }
         finally { _gate.Release(); Idle(); }
+    }
+
+    private readonly object _pageGate = new();
+    private IReadOnlyDictionary<string, ServiceInfo>? _serviceRows;
+    private string? _hangCard;
+
+    private void SetPageData(Dictionary<string, JsonElement> data)
+    {
+        lock (_pageGate)
+        {
+            _serviceRows = ModulePageCalls.ReadServiceRows(data);
+            _hangCard = ModulePageCalls.ReadHangCard(data);
+        }
+    }
+
+    /// <summary>What the module's page asks of the module, served from its last run's page data and calls to the module host.</summary>
+    public T? Feature<T>() where T : class
+    {
+        if (!module.Bundled) return null;
+        lock (_pageGate)
+        {
+            if (typeof(T) == typeof(IServiceRows) && _serviceRows is { } rows) return new ServiceRowsFeature(rows) as T;
+            if (typeof(T) == typeof(IHangEvidenceSource) && _hangCard is { } card) return new HangEvidenceFeature(this, card) as T;
+        }
+        return null;
+    }
+
+    private sealed class ServiceRowsFeature(IReadOnlyDictionary<string, ServiceInfo> rows) : IServiceRows
+    {
+        public IReadOnlyDictionary<string, ServiceInfo> Latest => rows; // the same dictionary until the next run, as in process
+    }
+
+    private sealed class HangEvidenceFeature(UserModeModuleProxy proxy, string cardId) : IHangEvidenceSource
+    {
+        public string HangCardId => cardId;
+
+        public async Task<string> FindHangEvidenceAsync(IReadOnlyList<HangOccurrence> occurrences, CancellationToken ct)
+        {
+            try
+            {
+                var value = await proxy.CallAsync(ModulePageCalls.HangEvidence, JsonSerializer.SerializeToElement(occurrences, ModuleHostMessage.Json), ct)
+                    .ConfigureAwait(false);
+                return value is { ValueKind: JsonValueKind.String } v ? v.GetString() ?? "" : "";
+            }
+            catch (ModuleCallException ex) { return $"Couldn't look up the related events: {ex.Message}"; }
+        }
     }
 
     /// <summary>A line from the module host; one that isn't a message, and each query, is logged (a dropped query would leave the module
