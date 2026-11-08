@@ -45,3 +45,49 @@ public class RestrictedModuleHostTests
         }
     }
 }
+
+/// <summary>An unsigned module's host token (category WindowsReadOnly): no INTERACTIVE or Event Log Readers, so it can't read the event logs
+/// itself; a module that ships with the app keeps them.</summary>
+[Trait("Category", "WindowsReadOnly")]
+public class UnsignedModuleTokenTests
+{
+    private static bool HasGroup(Microsoft.Win32.SafeHandles.SafeAccessTokenHandle token, string sid)
+    {
+        using var id = new System.Security.Principal.WindowsIdentity(token.DangerousGetHandle());
+        // Groups leaves out deny-only ones.
+        return id.Groups!.Any(g => g.Value == sid);
+    }
+
+    private static bool CanReadApplicationLog(Microsoft.Win32.SafeHandles.SafeAccessTokenHandle token) =>
+        System.Security.Principal.WindowsIdentity.RunImpersonated(token, () =>
+        {
+            try
+            {
+                using var reader = new System.Diagnostics.Eventing.Reader.EventLogReader(
+                    new System.Diagnostics.Eventing.Reader.EventLogQuery("Application", System.Diagnostics.Eventing.Reader.PathType.LogName) { ReverseDirection = true });
+                using var e = reader.ReadEvent();
+                return true;
+            }
+            catch (UnauthorizedAccessException) { return false; }
+            catch (System.Diagnostics.Eventing.Reader.EventLogException) { return false; }
+        });
+
+    [Fact]
+    public void The_unsigned_token_has_INTERACTIVE_and_Event_Log_Readers_deny_only()
+    {
+        using var unsigned = RestrictedModuleHostLauncher.CreateToken(unsigned: true);
+        foreach (var sid in RestrictedModuleHostLauncher.UnsignedDenyOnly) Assert.False(HasGroup(unsigned, sid), sid);
+        Assert.False(HasGroup(unsigned, "S-1-5-32-544")); // Administrators, as for every module host
+    }
+
+    [Fact]
+    public void An_unsigned_module_cannot_read_the_event_log_itself_a_bundled_one_still_can()
+    {
+        using var bundled = RestrictedModuleHostLauncher.CreateToken(unsigned: false);
+        // Only meaningful where this session is interactive (the Application log grants reading to INTERACTIVE).
+        if (!HasGroup(bundled, "S-1-5-4")) return;
+        Assert.True(CanReadApplicationLog(bundled));
+        using var unsigned = RestrictedModuleHostLauncher.CreateToken(unsigned: true);
+        Assert.False(CanReadApplicationLog(unsigned));
+    }
+}

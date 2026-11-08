@@ -11,7 +11,8 @@ namespace RemotePCDiagnostics.Host;
 /// <summary>
 /// Starts RemotePCDiagnostics.ModuleHost.exe for an unsigned module with a restricted copy of the app's own token: the Administrators group
 /// deny-only, every privilege but SeChangeNotify removed, Medium integrity. Windows lets a process start a child with a restricted version
-/// of its own token, so no extra rights are needed. The host talks to the app over anonymous pipes for its stdin and stdout, which only
+/// of its own token, so no extra rights are needed. An unsigned module's host also has INTERACTIVE and Event Log Readers deny-only
+/// (<see cref="UnsignedDenyOnly"/>), so it can't read the Application or System log itself. The host talks to the app over anonymous pipes for its stdin and stdout, which only
 /// the app holds, and exits when the app closes them.
 /// </summary>
 public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.ILogger? log = null, string? directory = null) : IModuleHostLauncher
@@ -29,7 +30,9 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
         if (!File.Exists(exe)) throw new FileNotFoundException("Module host not found", exe);
         var commandLine = new StringBuilder($"\"{exe}\" \"{module.Path}\"");
 
-        using var token = RestrictedToken();
+        // An unsigned module also loses INTERACTIVE and Event Log Readers (it can't read the event logs itself). A module that ships with
+        // the app keeps them: its code is ours, and it gets its event log reads from the app anyway.
+        using var token = RestrictedToken(unsigned: !module.Bundled);
         // Every pipe end starts out non-inheritable; only the child's three ends are handed to it (CreateRestricted).
         var sa = new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf<SECURITY_ATTRIBUTES>(), bInheritHandle = false };
         SafeFileHandle? inRead = null, inWrite = null, outRead = null, outWrite = null, errRead = null, errWrite = null;
@@ -63,7 +66,8 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
                 CloseHandle(pi.hThread);
                 CloseHandle(pi.hProcess);
             }
-            if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: started pid={Pid} (restricted token, Medium integrity)", module.Manifest.Slug, pi.dwProcessId);
+            if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: started pid={Pid} (restricted token, Medium integrity{Unsigned})",
+                module.Manifest.Slug, pi.dwProcessId, module.Bundled ? "" : ", no INTERACTIVE or Event Log Readers");
         }
         catch
         {
@@ -179,7 +183,19 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
         finally { pin.Free(); Marshal.FreeHGlobal(list); }
     }
 
-    private static SafeAccessTokenHandle RestrictedToken()
+    /// <summary>The groups an unsigned module's host also gets deny-only: INTERACTIVE and Event Log Readers. The Application and System logs
+    /// grant reading to those groups (and to Administrators, already deny-only), so the module can't read the logs itself; it gets what it
+    /// needs from the app, redacted (host queries). Groups the app's token doesn't have are ignored.</summary>
+    public static readonly IReadOnlyList<string> UnsignedDenyOnly = ["S-1-5-4", "S-1-5-32-573"];
+
+    /// <summary>
+    /// The token a module host gets: a restricted copy of the app's own, Administrators deny-only, every privilege but SeChangeNotify
+    /// removed, Medium integrity, owned by the user. For an unsigned module (<paramref name="unsigned"/>) also <see cref="UnsignedDenyOnly"/>.
+    /// The caller owns the handle.
+    /// </summary>
+    public static SafeAccessTokenHandle CreateToken(bool unsigned) => RestrictedToken(unsigned);
+
+    private static SafeAccessTokenHandle RestrictedToken(bool unsigned = false)
     {
         Check(OpenProcessToken(Process.GetCurrentProcess().Handle, TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT, out var own));
         using (own)
@@ -187,11 +203,20 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
             var adminSid = new byte[SECURITY_MAX_SID_SIZE];
             var size = adminSid.Length;
             Check(CreateWellKnownSid(WinBuiltinAdministratorsSid, IntPtr.Zero, adminSid, ref size));
-            var sidHandle = GCHandle.Alloc(adminSid, GCHandleType.Pinned);
+            var sids = new List<byte[]> { adminSid };
+            if (unsigned)
+                foreach (var sddl in UnsignedDenyOnly)
+                {
+                    var sid = new System.Security.Principal.SecurityIdentifier(sddl);
+                    var bytes = new byte[sid.BinaryLength];
+                    sid.GetBinaryForm(bytes, 0);
+                    sids.Add(bytes);
+                }
+            var pins = sids.Select(b => GCHandle.Alloc(b, GCHandleType.Pinned)).ToList();
             try
             {
-                var disable = new[] { new SID_AND_ATTRIBUTES { Sid = sidHandle.AddrOfPinnedObject(), Attributes = 0 } };
-                Check(CreateRestrictedToken(own, DISABLE_MAX_PRIVILEGE | LUA_TOKEN, 1, disable, 0, IntPtr.Zero, 0, IntPtr.Zero, out var restricted));
+                var disable = pins.Select(p => new SID_AND_ATTRIBUTES { Sid = p.AddrOfPinnedObject(), Attributes = 0 }).ToArray();
+                Check(CreateRestrictedToken(own, DISABLE_MAX_PRIVILEGE | LUA_TOKEN, (uint)disable.Length, disable, 0, IntPtr.Zero, 0, IntPtr.Zero, out var restricted));
                 try
                 {
                     SetMediumIntegrity(restricted);
@@ -204,7 +229,7 @@ public sealed class RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.IL
                     throw;
                 }
             }
-            finally { sidHandle.Free(); }
+            finally { foreach (var p in pins) p.Free(); }
         }
     }
 
