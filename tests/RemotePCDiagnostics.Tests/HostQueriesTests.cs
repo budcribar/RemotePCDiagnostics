@@ -273,4 +273,82 @@ public sealed class HostQueriesTests : IDisposable
         Assert.IsType<SensorReport>(ModuleHostPayloads.Read("Sensors", DiagnosticStatus.Ok, "", payload, type)!.Payload);
         Assert.Null(ModuleHostPayloads.Read("Sensors", DiagnosticStatus.Ok, "", payload, "System.IO.FileInfo"));
     }
+
+    private const string DriveRows = """
+        [{"Name":"SAMSUNG MZVL2512","Serial":"S1","UniqueId":"U1","MediaType":"SSD","BusType":"NVMe","Health":"Healthy","Operational":"OK","SizeBytes":"512110190592","TemperatureC":"38","Wear":"3","ReadErrors":"0","WriteErrors":"0","PowerOnHours":"1200","Letters":"C"}]
+        """;
+
+    [Fact]
+    public async Task Drive_health_answers_from_the_real_module_host()
+    {
+        var module = Bundled("RemotePCDiagnostics.Modules.DriveHealth.dll");
+        var backend = Backend() with { Commands = new SystemCommandRunner(new FakeOsquery(DriveRows)) };
+        using var proxy = new UserModeModuleProxy(module, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: new HostQueryServer(backend));
+        Assert.True((await proxy.CheckAvailabilityAsync()).IsAvailable);
+        var steps = new List<string>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var r = await proxy.RefreshAsync(new Progress<string>(steps.Add), cts.Token);
+        var report = Assert.IsType<AreaReport>(r.Payload);
+        Assert.Contains(report.Cards, c => c.Title.Contains("SAMSUNG"));
+    }
+
+    [Fact]
+    public async Task A_query_the_app_never_answers_fails_instead_of_hanging()
+    {
+        var client = new HostQueriesClient(_ => { }) { AnswerTimeout = TimeSpan.FromMilliseconds(200) };
+        var ex = await Assert.ThrowsAsync<HostQueryException>(() => client.ReadDrivesAsync());
+        Assert.Equal("timedOut", ex.Error);
+    }
+
+    [Fact]
+    public async Task Two_overlapping_runs_both_finish()
+    {
+        var module = Bundled("RemotePCDiagnostics.Modules.DriveHealth.dll");
+        var backend = Backend() with { Commands = new SystemCommandRunner(new FakeOsquery(DriveRows)) };
+        using var proxy = new UserModeModuleProxy(module, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: new HostQueryServer(backend));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var a = proxy.RefreshAsync(null, cts.Token);
+        var avail = proxy.CheckAvailabilityAsync(cts.Token);
+        var b = proxy.RefreshAsync(null, cts.Token);
+        var results = await Task.WhenAll(a, b);
+        await avail;
+        Assert.All(results, r => Assert.IsType<AreaReport>(r.Payload));
+        var c = await proxy.RefreshAsync(null, cts.Token);
+        Assert.IsType<AreaReport>(c.Payload);
+    }
+
+    [Fact]
+    public async Task A_module_host_exits_after_its_run_and_starts_again_for_the_next()
+    {
+        var module = Bundled("RemotePCDiagnostics.Modules.DriveHealth.dll");
+        Assert.False(module.Manifest.KeepAlive);
+        var backend = Backend() with { Commands = new SystemCommandRunner(new FakeOsquery(DriveRows)) };
+        using var proxy = new UserModeModuleProxy(module, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: new HostQueryServer(backend))
+            { IdleExit = TimeSpan.FromMilliseconds(200) };
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        Assert.True((await proxy.CheckAvailabilityAsync(cts.Token)).IsAvailable);
+        Assert.IsType<AreaReport>((await proxy.RefreshAsync(null, cts.Token)).Payload);
+        await WaitUntil(() => !proxy.IsHostRunning);
+        Assert.IsType<AreaReport>((await proxy.RefreshAsync(null, cts.Token)).Payload);
+        await WaitUntil(() => !proxy.IsHostRunning);
+    }
+
+    [Fact]
+    public async Task The_sensors_module_host_stays_running_between_reads()
+    {
+        var module = Bundled("RemotePCDiagnostics.Modules.Sensors.dll");
+        Assert.True(module.Manifest.KeepAlive);
+        using var proxy = new UserModeModuleProxy(module, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: new HostQueryServer(Backend()))
+            { IdleExit = TimeSpan.FromMilliseconds(100) };
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await proxy.RefreshAsync(null, cts.Token);
+        await Task.Delay(1000);
+        Assert.True(proxy.IsHostRunning);
+    }
+
+    private static async Task WaitUntil(Func<bool> done)
+    {
+        var until = DateTime.UtcNow.AddSeconds(15);
+        while (!done()) { Assert.True(DateTime.UtcNow < until, "timed out"); await Task.Delay(50); }
+    }
 }

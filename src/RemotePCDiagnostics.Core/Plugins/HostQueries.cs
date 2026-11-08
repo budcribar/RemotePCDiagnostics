@@ -71,7 +71,7 @@ public sealed class HostQueryException(string error, string reason) : Exception(
 }
 
 /// <summary>Where the app's answers to host queries come from: the same services the modules use in process.</summary>
-public sealed class HostQueryBackend
+public sealed record HostQueryBackend
 {
     public ISensorProvider? Sensors { get; init; }
     public OsqueryRunner? Osquery { get; init; }
@@ -194,6 +194,9 @@ public sealed class HostQueriesClient(Action<ModuleHostMessage> send) : IHostQue
     private readonly ConcurrentDictionary<int, TaskCompletionSource<ModuleHostMessage>> _pending = new();
     private int _next;
 
+    /// <summary>How long a query waits for its answer.</summary>
+    public TimeSpan AnswerTimeout { get; init; } = HostCapabilities.Timeout + TimeSpan.FromSeconds(30);
+
     /// <summary>An answer arrived (false when nothing was waiting for it).</summary>
     public bool Complete(ModuleHostMessage answer) =>
         answer.Id is { } id && _pending.TryRemove(id, out var waiting) && waiting.TrySetResult(answer);
@@ -210,6 +213,10 @@ public sealed class HostQueriesClient(Action<ModuleHostMessage> send) : IHostQue
         var waiting = new TaskCompletionSource<ModuleHostMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[id] = waiting;
         using var cancel = ct.Register(() => { if (_pending.TryRemove(id, out var w)) w.TrySetCanceled(ct); });
+        // The app holds every query to its own limit; past that (plus a margin) the answer isn't coming, so the check gets a failure
+        // instead of waiting forever.
+        using var late = new Timer(_ => { if (_pending.TryRemove(id, out var w)) w.TrySetException(new HostQueryException("timedOut", $"the app didn't answer {capability}")); },
+            null, AnswerTimeout, Timeout.InfiniteTimeSpan);
         send(new ModuleHostMessage
         {
             Type = "query", Id = id, Capability = capability,
