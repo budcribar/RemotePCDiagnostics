@@ -162,7 +162,7 @@ public static class HostServices
         services.AddSingleton(backend);
         var hostQueries = new HostQueryServer(() => backend.Value, For<HostQueryServer>(loggers));
         var loader = new ModuleLoader(options ?? new ModuleLoaderOptions { HostVersion = HostVersion() }, plugins, log,
-            um => new UserModeModuleProxy(um, launcher, For<UserModeModuleProxy>(loggers), hostQueries));
+            um => PerDeviceModuleProxy.For(new UserModeModuleProxy(um, launcher, For<UserModeModuleProxy>(loggers), hostQueries)));
         var before = plugins.Records.Count;
         try { loader.LoadBundled(services); }
         catch (Exception ex) { log.Error($"Modules: loading the built-in module DLLs failed: {ex.GetType().Name}: {ex.Message}"); }

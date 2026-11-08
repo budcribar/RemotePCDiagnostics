@@ -292,6 +292,51 @@ public sealed class HostQueriesTests : IDisposable
         Assert.Contains(report.Cards, c => c.Title.Contains("SAMSUNG"));
     }
 
+    private const string TwoDrives = """
+        [{"Name":"SAMSUNG MZVL2512","Serial":"S1","UniqueId":"U1","MediaType":"SSD","BusType":"NVMe","Health":"Healthy","Operational":"OK","SizeBytes":"512110190592","TemperatureC":"38","Wear":"3","ReadErrors":"0","WriteErrors":"0","PowerOnHours":"1200","Letters":"C"},
+         {"Name":"WDC WD20EZRZ","Serial":"S2","UniqueId":"U2","MediaType":"HDD","BusType":"SATA","Health":"Healthy","Operational":"OK","SizeBytes":"2000398934016","TemperatureC":"33","Wear":"","ReadErrors":"0","WriteErrors":"0","PowerOnHours":"30000","Letters":"D"}]
+        """;
+
+    [Fact]
+    public async Task Drive_health_out_of_process_keeps_one_run_and_one_card_per_drive()
+    {
+        var module = Bundled("RemotePCDiagnostics.Modules.DriveHealth.dll");
+        Assert.True(module.Manifest.PerDevice);
+        var backend = Backend() with { Commands = new SystemCommandRunner(new FakeOsquery(TwoDrives)) };
+        var inner = new UserModeModuleProxy(module, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: new HostQueryServer(backend));
+        using var proxy = Assert.IsType<PerDeviceModuleProxy>(PerDeviceModuleProxy.For(inner));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var detection = await proxy.DetectAsync(cts.Token);
+        Assert.True(detection.Applies);
+        Assert.Equal(2, detection.Instances.Count);
+        var results = new List<DiagnosticResult>();
+        foreach (var drive in detection.Instances)
+        {
+            var r = await proxy.RefreshAsync(drive, null, cts.Token);
+            var one = Assert.IsType<AreaReport>(r.Payload);
+            Assert.Contains(one.Cards, c => c.Title.Contains(drive.Label.Split(' ')[0]));
+            results.Add(r with { InstanceKey = drive.Key, InstanceLabel = drive.Label });
+        }
+        // One report with a card per drive, as the module builds it in process.
+        var combined = Assert.IsType<AreaReport>(proxy.Combine(results));
+        Assert.Contains(combined.Cards, c => c.Title.Contains("SAMSUNG"));
+        Assert.Contains(combined.Cards, c => c.Title.Contains("WDC"));
+        // Its storage clean-up panel, as in process.
+        Assert.Equal(AreaPanels.StorageCleanup, ((IDiagnosticModule)proxy).Feature<IHasAreaPanels>()?.Panels);
+    }
+
+    [Fact]
+    public void Only_a_bundled_per_device_module_gets_the_per_device_stand_in()
+    {
+        var drive = Bundled("RemotePCDiagnostics.Modules.DriveHealth.dll");
+        using var bundled = new UserModeModuleProxy(drive, new ProcessModuleHostLauncher(AppContext.BaseDirectory));
+        Assert.IsType<PerDeviceModuleProxy>(PerDeviceModuleProxy.For(bundled));
+        using var unsigned = new UserModeModuleProxy(drive with { Bundled = false }, new ProcessModuleHostLauncher(AppContext.BaseDirectory));
+        Assert.Same(unsigned, PerDeviceModuleProxy.For(unsigned));
+        using var services = new UserModeModuleProxy(Bundled("RemotePCDiagnostics.Modules.Services.dll"), new ProcessModuleHostLauncher(AppContext.BaseDirectory));
+        Assert.Same(services, PerDeviceModuleProxy.For(services));
+    }
+
     [Fact]
     public async Task A_query_the_app_never_answers_fails_instead_of_hanging()
     {

@@ -43,6 +43,9 @@ Send(new ModuleHostMessage { Type = "ready", Message = module.Name });
 
 // Requests run off the reader, so it can hand the app's answers to a check that is waiting for them.
 CancellationTokenSource? running = null;
+// A per-device module: the devices it last found, and the latest result of each device run in this host (for its one report).
+IReadOnlyList<ModuleInstance>? devices = null;
+var deviceResults = new System.Collections.Concurrent.ConcurrentDictionary<string, DiagnosticResult>(StringComparer.OrdinalIgnoreCase);
 Task? refresh = null;
 Task? availability = null;
 while (input.ReadLine() is { } line)
@@ -72,17 +75,32 @@ while (input.ReadLine() is { } line)
             if (refresh is { IsCompleted: false }) { Send(new ModuleHostMessage { Type = "error", Message = "already running" }); break; }
             running = new CancellationTokenSource();
             var ct = running.Token;
+            var instance = request.Instance;
             refresh = Task.Run(async () =>
             {
                 var progress = CheckProgressExtensions.Create(p => Send(new ModuleHostMessage { Type = "progress", Message = p.Message, Step = p.Step, Total = p.Total }));
                 try
                 {
-                    var r = await module.RefreshAsync(progress, ct);
+                    DiagnosticResult r;
+                    Dictionary<string, System.Text.Json.JsonElement>? pageData;
+                    if (instance is not null && module is IPerDeviceModule perDevice)
+                    {
+                        r = await perDevice.RefreshAsync(instance, progress, ct);
+                        deviceResults[instance.Key] = r with { InstanceKey = instance.Key, InstanceLabel = instance.Label };
+                        // The devices as the module sees them now (a drive read is shared for a while, so this costs nothing after a run).
+                        try { devices = (await perDevice.DetectAsync(ct)).Instances; } catch (Exception ex) when (ex is not OperationCanceledException) { }
+                        pageData = ModulePageCalls.Write(module, devices, deviceResults);
+                    }
+                    else
+                    {
+                        r = await module.RefreshAsync(progress, ct);
+                        pageData = ModulePageCalls.Write(module);
+                    }
                     var other = r.Payload is AreaReport ? null : ModuleHostPayloads.Write(r.Payload);
                     Send(new ModuleHostMessage
                     {
                         Type = "result", Status = r.Status, Message = r.Message, Cancelled = r.Cancelled || ct.IsCancellationRequested, Report = r.Payload as AreaReport,
-                        Payload = other?.Payload, PayloadType = other?.Type, PageData = ModulePageCalls.Write(module),
+                        Payload = other?.Payload, PayloadType = other?.Type, PageData = pageData,
                     });
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -90,6 +108,20 @@ while (input.ReadLine() is { } line)
                     Send(new ModuleHostMessage { Type = "result", Status = DiagnosticStatus.Warning, Message = "Cancelled", Cancelled = true });
                 }
                 catch (Exception ex) { Send(new ModuleHostMessage { Type = "error", Message = $"{ex.GetType().Name}: {ex.Message}" }); }
+            });
+            break;
+        case "detect":
+            // A per-device module's devices (one run each). Answered off the reader: the module may ask the app for its drive list.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (module is not IDetectableModule detectable) { Send(new ModuleHostMessage { Type = "detection", Reason = "This module doesn't run per device" }); return; }
+                    var d = await detectable.DetectAsync();
+                    devices = d.Instances;
+                    Send(new ModuleHostMessage { Type = "detection", Reason = d.NotApplicableReason, Instances = [.. d.Instances] });
+                }
+                catch (Exception ex) { Send(new ModuleHostMessage { Type = "detection", Reason = $"Detection failed: {ex.Message}" }); }
             });
             break;
         case "call":

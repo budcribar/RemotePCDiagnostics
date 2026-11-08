@@ -25,10 +25,30 @@ public static class ModulePageCalls
     /// <see cref="HangOccurrence"/> (<see cref="IHangEvidenceSource.FindHangEvidenceAsync"/>), returned as text.</summary>
     public const string HangEvidence = "hangEvidence";
 
-    /// <summary>In the module host: the page data of <paramref name="module"/> after a run, or null when its page needs none.</summary>
-    public static Dictionary<string, JsonElement>? Write(IDiagnosticModule module)
+    /// <summary>Page data: the module's extra panels (<see cref="IHasAreaPanels.Panels"/>, a number).</summary>
+    public const string Panels = "panels";
+
+    /// <summary>Page data of a per-device module: <c>{"keys": [...], "report": ...}</c>, its one report of the devices with those keys
+    /// (<see cref="IInstanceSummary.Combine"/>, an <see cref="AreaReport"/>).</summary>
+    public const string Combined = "combined";
+
+    /// <summary>In the module host: the page data of <paramref name="module"/> after a run, or null when its page needs none. For a
+    /// per-device module, <paramref name="instances"/> are the devices it found and <paramref name="results"/> the latest result of each
+    /// device this host ran: what <see cref="IInstanceSummary.Combine"/> folds into one report.</summary>
+    public static Dictionary<string, JsonElement>? Write(IDiagnosticModule module, IReadOnlyList<ModuleInstance>? instances = null,
+        IReadOnlyDictionary<string, DiagnosticResult>? results = null)
     {
         Dictionary<string, JsonElement>? data = null;
+        if (module is IHasAreaPanels { Panels: not AreaPanels.None } panels)
+            (data ??= [])[Panels] = JsonSerializer.SerializeToElement((int)panels.Panels, ModuleHostMessage.Json);
+        if (module is IInstanceSummary summary && instances is { Count: > 0 })
+        {
+            // A device this host didn't run counts by its key only (its result, from an earlier host, is in the app).
+            var all = instances.Select(i => results?.GetValueOrDefault(i.Key)
+                ?? new DiagnosticResult(module.Name, DiagnosticStatus.NotRun, "", DateTimeOffset.Now) { InstanceKey = i.Key, InstanceLabel = i.Label }).ToList();
+            if (summary.Combine(all) is AreaReport report)
+                (data ??= [])[Combined] = JsonSerializer.SerializeToElement(new CombinedReport([.. instances.Select(i => i.Key)], report), ModuleHostMessage.Json);
+        }
         if (module is IServiceRows services)
             (data ??= [])[ServiceRows] = JsonSerializer.SerializeToElement(services.Latest.Values.ToList(), ModuleHostMessage.Json);
         if (module is IHangEvidenceSource hangs)
@@ -72,7 +92,27 @@ public static class ModulePageCalls
         catch (JsonException) { return null; }
     }
 
+    /// <summary>In the app: the module's extra panels from page data.</summary>
+    public static AreaPanels ReadPanels(Dictionary<string, JsonElement>? data)
+    {
+        if (data is null || !data.TryGetValue(Panels, out var e) || e.ValueKind != JsonValueKind.Number || !e.TryGetInt32(out var n)) return AreaPanels.None;
+        return (AreaPanels)n & (AreaPanels.MemorySuggestions | AreaPanels.StorageCleanup);
+    }
+
+    /// <summary>In the app: a per-device module's one report and the device keys it covers, from page data.</summary>
+    public static (HashSet<string> Keys, object? Report)? ReadCombined(Dictionary<string, JsonElement>? data)
+    {
+        if (data is null || !data.TryGetValue(Combined, out var e)) return null;
+        try
+        {
+            return e.Deserialize<CombinedReport>(ModuleHostMessage.Json) is { Keys: { } keys, Report: { } report }
+                ? (keys.ToHashSet(StringComparer.OrdinalIgnoreCase), report) : null;
+        }
+        catch (JsonException) { return null; }
+    }
+
     private sealed record HangCard(string CardId);
+    private sealed record CombinedReport(List<string> Keys, AreaReport Report);
 }
 
 /// <summary>A call from a module's page that the module host couldn't answer.</summary>
