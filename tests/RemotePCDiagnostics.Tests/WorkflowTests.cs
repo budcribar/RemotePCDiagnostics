@@ -499,8 +499,13 @@ public class WorkflowTests
         Assert.Equal("Nothing is waiting for a restart.", await after.RestartNowAsync());
         Assert.Equal(restartsBefore, sys.Calls.Count(c => c == "restart"));
         Assert.NotNull(after.State.Restarts.Last().BootedUtc);
+        Assert.NotNull(after.SettleRemaining);
+        Assert.Equal(0.0, after.SettleFraction);
+        Assert.Contains("3:00 left of 3 min", after.Status);
         gate.SetResult();
         await resume;
+        Assert.Null(after.SettleRemaining);
+        Assert.Null(after.SettleFraction);
         Assert.Equal(WorkflowStage.RestartAfter, after.State.Stage);
         sys.Uptime = TimeSpan.FromHours(1);                        // the second restart hasn't happened yet
         Assert.True(after.WaitingForRestart);                      // waiting for the second restart again

@@ -5,7 +5,7 @@
 @* Before/after performance benchmarks for a service call: shows the client what the fixes actually changed. *@
 @{
     var s = Bench.Settings;
-    var running = Bench.Running is not null;
+    var running = Bench.Running is not null || Bench.Settling is not null;
     var cmp = Bench.Comparison;
     var before = Bench.Before;
     var after = Bench.After;
@@ -76,7 +76,7 @@
 
 @if (before is not null && !running) { <UndoAllPanel /> }
 
-@if (running)
+@if (Bench.Running is not null)
 {
     <p class="status-line is-running" data-testid="bench-progress"><span class="dot dot-running"></span>@(Bench.Running == BenchmarkPhase.Before ? "Before" : "After"): @(Bench.Progress ?? "Starting…")<span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span></p>
     <div class="run-progress run-progress-indeterminate" data-testid="bench-run-progress" aria-hidden="true"><div></div></div>
@@ -89,6 +89,13 @@
             </div>
             <TestRunningVisual Slug="benchmark" TestId="bench-visual" />
         </div>
+    </div>
+}
+else if (Bench.Settling is { } settlePhase && Bench.SettleFraction is { } sf && Bench.SettleRemaining is { } rem && Bench.SettleTotal is { } total)
+{
+    <p class="status-line is-running" data-testid="bench-settle-status"><span class="dot dot-running"></span>@(settlePhase == BenchmarkPhase.Before ? "Before" : "After"): Letting Windows finish starting up…<span class="running-badge" data-testid="bench-settle-countdown"><span class="running-badge-dot"></span>@BenchmarkService.FormatCountdown(rem) left</span></p>
+    <div class="progress run-progress" data-testid="bench-settle-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@((int)Math.Ceiling(total.TotalSeconds))" aria-valuenow="@((int)Math.Round(total.TotalSeconds - rem.TotalSeconds))">
+        <div class="progress-bar" style="width:@($"{sf * 100:0.#}%")"></div>
     </div>
 }
 @if (Bench.Message is { } msg) { <p class="notice" data-testid="bench-message">@msg</p> }

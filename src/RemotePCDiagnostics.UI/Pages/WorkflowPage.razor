@@ -183,19 +183,38 @@
             @if (Flow.WaitingForRestart) { <button class="btn btn-outline" data-testid="wf-restart-now" @onclick="RestartNow">Restart now</button> }
             <button class="btn btn-stop" data-testid="wf-cancel" @onclick="Cancel">Cancel workflow</button>
         </div>
-        @if (s.Stage is WorkflowStage.BeforeBenchmark or WorkflowStage.AfterBenchmark && Bench.Running is not null)
+        @if (s.Stage is WorkflowStage.BeforeBenchmark or WorkflowStage.AfterBenchmark)
         {
-            <div class="run-progress run-progress-indeterminate wf-overall-progress" data-testid="wf-bench-progress" aria-hidden="true"><div></div></div>
-            <div class="cards">
-                <div class="card is-running card-with-visual" data-testid="wf-bench-live">
-                    <div class="card-main">
-                        <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-                        <div class="headline">@(s.Stage == WorkflowStage.BeforeBenchmark ? "Before benchmark" : "After benchmark")</div>
-                        @if (!string.IsNullOrEmpty(Bench.Progress)) { <p class="meta" data-testid="wf-bench-step">@Bench.Progress</p> }
-                    </div>
-                    <TestRunningVisual Slug="benchmark" TestId="wf-bench-visual" />
+            @if (Flow.SettleFraction is { } sf && Flow.SettleRemaining is { } rem && Flow.SettleTotal is { } total)
+            {
+                <div class="progress run-progress wf-overall-progress" data-testid="wf-settle-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@((int)Math.Ceiling(total.TotalSeconds))" aria-valuenow="@((int)Math.Round(total.TotalSeconds - rem.TotalSeconds))">
+                    <div class="progress-bar" style="width:@($"{sf * 100:0.#}%")"></div>
                 </div>
-            </div>
+                <div class="cards">
+                    <div class="card is-running card-with-visual" data-testid="wf-bench-live">
+                        <div class="card-main">
+                            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                            <div class="headline">@(s.Stage == WorkflowStage.BeforeBenchmark ? "Before benchmark" : "After benchmark")</div>
+                            <p class="meta" data-testid="wf-settle-countdown">@BenchmarkService.FormatCountdown(rem) remaining before the @(s.Stage == WorkflowStage.BeforeBenchmark ? "before" : "after") benchmark starts</p>
+                        </div>
+                        <TestRunningVisual Slug="benchmark" TestId="wf-bench-visual" />
+                    </div>
+                </div>
+            }
+            else if (Bench.Running is not null)
+            {
+                <div class="run-progress run-progress-indeterminate wf-overall-progress" data-testid="wf-bench-progress" aria-hidden="true"><div></div></div>
+                <div class="cards">
+                    <div class="card is-running card-with-visual" data-testid="wf-bench-live">
+                        <div class="card-main">
+                            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                            <div class="headline">@(s.Stage == WorkflowStage.BeforeBenchmark ? "Before benchmark" : "After benchmark")</div>
+                            @if (!string.IsNullOrEmpty(Bench.Progress)) { <p class="meta" data-testid="wf-bench-step">@Bench.Progress</p> }
+                        </div>
+                        <TestRunningVisual Slug="benchmark" TestId="wf-bench-visual" />
+                    </div>
+                </div>
+            }
         }
         @if (s.Stage == WorkflowStage.Applying && approved > 0)
         {

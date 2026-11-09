@@ -470,4 +470,42 @@ public class BenchmarkTests
         Assert.Equal("40 fewer", procs.ChangeSummary);
         Assert.Equal(2.1, Math.Round(real.OverallPercent!.Value, 1)); // (8000/7200)^(0.5/2.5) − 1
     }
+
+    [Fact]
+    public async Task SettleCountdown_FormatsTimeRemaining_UpdatesProgressAndClearsWhenDone()
+    {
+        Assert.Equal("3:00", BenchmarkService.FormatCountdown(TimeSpan.FromMinutes(3)));
+        Assert.Equal("2:05", BenchmarkService.FormatCountdown(TimeSpan.FromSeconds(124.2)));
+        Assert.Equal("0:00", BenchmarkService.FormatCountdown(TimeSpan.FromSeconds(-1)));
+
+        var ticks = new List<(TimeSpan Rem, double Frac)>();
+        await BenchmarkService.WaitWithCountdownAsync(
+            TimeSpan.FromMilliseconds(120),
+            (d, ct) => Task.Delay(d, ct),
+            (rem, frac) => ticks.Add((rem, frac)),
+            CancellationToken.None,
+            tickInterval: TimeSpan.FromMilliseconds(25));
+        Assert.True(ticks.Count >= 2);
+        Assert.Equal(0.0, ticks[0].Frac);
+        Assert.True(ticks[^1].Frac > 0.0 && ticks[^1].Frac <= 1.0);
+        Assert.True(ticks[^1].Rem < TimeSpan.FromMilliseconds(120));
+
+        // While ResumeAfterRestartAsync is settling, Settling/SettleRemaining/SettleFraction/Message are exposed and cleared afterwards.
+        var store = new MemStore { State = new BenchmarkState(Fast, RunBeforeOnStartup: true, RestartRequestedUtc: DateTimeOffset.UtcNow) };
+        var gate = new TaskCompletionSource();
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => gate.Task);
+        var resume = svc.ResumeAfterRestartAsync();
+        Assert.Equal(BenchmarkPhase.Before, svc.Settling);
+        Assert.Equal(Fast.SettleAfterRestart, svc.SettleTotal);
+        Assert.Equal(Fast.SettleAfterRestart, svc.SettleRemaining);
+        Assert.Equal(0.0, svc.SettleFraction);
+        Assert.Contains("(3:00 left)", svc.Message);
+
+        gate.SetResult();
+        await resume;
+        Assert.Null(svc.Settling);
+        Assert.Null(svc.SettleRemaining);
+        Assert.Null(svc.SettleFraction);
+        Assert.NotNull(svc.Before);
+    }
 }

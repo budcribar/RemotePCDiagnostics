@@ -36,9 +36,42 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public bool AfterPendingRestart => _state.RunAfterOnStartup;
     public bool BeforePendingRestart => _state.RunBeforeOnStartup;
     public BenchmarkPhase? Running { get; private set; }
+    public BenchmarkPhase? Settling { get; private set; }
+    public TimeSpan? SettleRemaining { get; private set; }
+    public TimeSpan? SettleTotal { get; private set; }
+    public double? SettleFraction { get; private set; }
     public string? Progress { get; private set; }
     public string? Message { get; private set; }
     public BenchmarkComparison Comparison => BenchmarkComparison.Build(Before, After);
+
+    public static string FormatCountdown(TimeSpan remaining)
+    {
+        var secs = Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds));
+        return $"{secs / 60}:{secs % 60:00}";
+    }
+
+    public static async Task WaitWithCountdownAsync(TimeSpan duration, Func<TimeSpan, CancellationToken, Task> delay,
+        Action<TimeSpan, double> onTick, CancellationToken ct, TimeSpan? tickInterval = null)
+    {
+        onTick(duration, 0.0);
+        var waitTask = delay(duration, ct);
+        if (!waitTask.IsCompleted && duration > TimeSpan.Zero)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var step = tickInterval ?? TimeSpan.FromSeconds(1);
+            while (!waitTask.IsCompleted)
+            {
+                await Task.WhenAny(waitTask, Task.Delay(step, ct)).ConfigureAwait(false);
+                if (waitTask.IsCompleted) break;
+                var elapsed = sw.Elapsed;
+                var rem = duration - elapsed;
+                if (rem < TimeSpan.Zero) rem = TimeSpan.Zero;
+                var frac = Math.Clamp(elapsed.TotalSeconds / duration.TotalSeconds, 0.0, 1.0);
+                onTick(rem, frac);
+            }
+        }
+        await waitTask.ConfigureAwait(false);
+    }
 
     private void Log(string m) => log.Info("[benchmark] " + m);
     private void LogWarn(string m) => log.Warn("[benchmark] " + m);
@@ -47,14 +80,14 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
 
     public void UpdateSettings(BenchmarkSettings s)
     {
-        if (Running is not null) return;
+        if (Running is not null || Settling is not null) return;
         Save(_state with { Settings = s with { Runs = Math.Clamp(s.Runs, 1, 5), Enabled = s.Enabled.Distinct().ToList() } });
     }
 
     /// <summary>Starts a new service call: forgets earlier results (settings are kept).</summary>
     public void Clear()
     {
-        if (Running is not null) return;
+        if (Running is not null || Settling is not null) return;
         Message = null;
         Save(new BenchmarkState(Settings));
     }
@@ -66,7 +99,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     {
         lock (_gate)
         {
-            if (Running is not null) return null;
+            if (Running is not null || Settling is not null) return null;
             Running = phase;
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         }
@@ -99,7 +132,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public async Task<RemediationResult> RestartThenRunBeforeAsync(CancellationToken ct = default)
     {
         if (remediation is null) return new(false, "Restarting isn't available from here.");
-        if (Running is not null) return new(false, "A benchmark is running.");
+        if (Running is not null || Settling is not null) return new(false, "A benchmark is running.");
         Save(new BenchmarkState(Settings, RunBeforeOnStartup: true, RestartRequestedUtc: DateTimeOffset.UtcNow));
         var r = await remediation.ExecuteAsync(new AreaAction(RemediationKind.ScheduleCleanRestart, "Restart, then benchmark"), ct).ConfigureAwait(false);
         if (!r.Success) Save(_state with { RunBeforeOnStartup = false, RestartRequestedUtc = null });
@@ -121,27 +154,53 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         return r;
     }
 
-    /// <summary>Called once at app start: if an "after" was requested before a restart, wait for start-up to settle and run it.</summary>
+    /// <summary>Called once at app start: if a "before" or "after" was requested before a restart, wait for start-up to settle and run it.</summary>
     public async Task ResumeAfterRestartAsync(CancellationToken ct = default)
     {
-        if (BeforePendingRestart)
+        if (!BeforePendingRestart && !AfterPendingRestart) return;
+        var phase = BeforePendingRestart ? BenchmarkPhase.Before : BenchmarkPhase.After;
+        var since = BeforePendingRestart ? _state.RestartRequestedUtc : null;
+        var label = phase == BenchmarkPhase.Before ? "before" : "after";
+        Save(BeforePendingRestart ? _state with { RunBeforeOnStartup = false } : _state with { RunAfterOnStartup = false }); // once only, even if this run fails
+
+        var wait = Settings.SettleAfterRestart;
+        CancellationTokenSource settleCts;
+        lock (_gate)
         {
-            var since = _state.RestartRequestedUtc;
-            Save(_state with { RunBeforeOnStartup = false }); // once only, even if this run fails
-            Message = $"Waiting {Settings.SettleAfterRestart.TotalMinutes:0} minutes for start-up to settle before the before benchmark…";
-            Raise();
-            Log("resume: before benchmark scheduled after settle");
-            await (delay ?? Task.Delay)(Settings.SettleAfterRestart, ct).ConfigureAwait(false);
-            await RunAsync(BenchmarkPhase.Before, ct, since).ConfigureAwait(false);
+            Settling = phase;
+            _cts = settleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        }
+        Log($"resume: {label} benchmark scheduled after settle");
+        try
+        {
+            await WaitWithCountdownAsync(wait, delay ?? Task.Delay, (rem, frac) =>
+            {
+                SettleRemaining = rem;
+                SettleTotal = wait;
+                SettleFraction = frac;
+                Message = $"Waiting {wait.TotalMinutes:0} minutes for start-up to settle before the {label} benchmark ({FormatCountdown(rem)} left)…";
+                Raise();
+            }, settleCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            Message = $"Stopped waiting before the {label} benchmark started.";
             return;
         }
-        if (!AfterPendingRestart) return;
-        Save(_state with { RunAfterOnStartup = false }); // once only, even if this run fails
-        Message = $"Waiting {Settings.SettleAfterRestart.TotalMinutes:0} minutes for start-up to settle before the after benchmark…";
-        Raise();
-        Log("resume: after benchmark scheduled after settle");
-        await (delay ?? Task.Delay)(Settings.SettleAfterRestart, ct).ConfigureAwait(false);
-        await RunAsync(BenchmarkPhase.After, ct).ConfigureAwait(false);
+        finally
+        {
+            lock (_gate)
+            {
+                Settling = null;
+                SettleRemaining = null;
+                SettleTotal = null;
+                SettleFraction = null;
+                if (ReferenceEquals(_cts, settleCts)) _cts = null;
+            }
+            settleCts.Dispose();
+            Raise();
+        }
+        await RunAsync(phase, ct, since).ConfigureAwait(false);
     }
 
     private void WriteEvent(BenchmarkRun run)

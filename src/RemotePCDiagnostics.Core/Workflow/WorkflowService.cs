@@ -78,6 +78,9 @@ public sealed class WorkflowService(
     public string? Status { get; private set; }
     /// <summary>0..1 progress of the DISM/SFC repair running right now (null when none runs or it hasn't reported a percent yet).</summary>
     public double? RepairFraction { get; private set; }
+    public TimeSpan? SettleRemaining { get; private set; }
+    public TimeSpan? SettleTotal { get; private set; }
+    public double? SettleFraction { get; private set; }
     public bool Busy { get; private set; }
 
     private string Actor => ServiceActor.From(session);
@@ -384,7 +387,24 @@ public sealed class WorkflowService(
     {
         var wait = bench.Settings.SettleAfterRestart;
         Note($"Restart complete. Letting Windows finish starting up ({wait.TotalMinutes:0} min)…");
-        await Delay(wait, ct).ConfigureAwait(false);
+        try
+        {
+            await BenchmarkService.WaitWithCountdownAsync(wait, Delay, (rem, frac) =>
+            {
+                SettleRemaining = rem;
+                SettleTotal = wait;
+                SettleFraction = frac;
+                Status = $"Restart complete. Letting Windows finish starting up ({BenchmarkService.FormatCountdown(rem)} left of {wait.TotalMinutes:0} min)…";
+                Raise();
+            }, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            SettleRemaining = null;
+            SettleTotal = null;
+            SettleFraction = null;
+            Raise();
+        }
     }
 
     private async Task ApplyAsync(CancellationToken ct)
