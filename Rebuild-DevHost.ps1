@@ -78,10 +78,10 @@ if (-not $dll) {
   Write-Host "PeakSWC.RemoteWebView.dll not found in Host output - the build may have failed." -ForegroundColor Red
   return
 }
-$embeds = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($dll.FullName)) -match '__remote-control-bubble'
+$embeds = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($dll.FullName)) -match 'remotecontrolready'
 Write-Host ("host dll: {0}" -f $dll.LastWriteTime)
 Write-Host ("bundle:   {0}" -f $js.LastWriteTime)
-Write-Host ("embeds control bubble: {0}" -f $embeds)
+Write-Host ("embeds control bridge: {0}" -f $embeds)
 if ($dll.LastWriteTime -ge $js.LastWriteTime -and $embeds) {
   Write-Host "OK - Host embeds the current bundle. Launch the app, then open the technician /app link in a fresh Incognito window." -ForegroundColor Green
 } else {
