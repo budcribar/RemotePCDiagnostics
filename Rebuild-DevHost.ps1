@@ -71,16 +71,19 @@ if ($errs) {
 
 # 6) Verify the Host output embeds the current bundle.
 $js  = Get-Item (Join-Path $rbwv 'src\RemoteWebView.Blazor.JS\dist\remote.blazor.desktop.js')
-$dll = Get-ChildItem -Recurse (Join-Path $rpcd 'src\RemotePCDiagnostics.Host\bin') -Filter RemoteWebView.dll -ErrorAction SilentlyContinue |
+# The RemoteWebView project's assembly name is PeakSWC.RemoteWebView.dll.
+$dll = Get-ChildItem -Recurse (Join-Path $rpcd 'src\RemotePCDiagnostics.Host\bin') -Filter PeakSWC.RemoteWebView.dll -ErrorAction SilentlyContinue |
        Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $dll) {
-  Write-Host "RemoteWebView.dll not found in Host output - the build may have failed." -ForegroundColor Red
+  Write-Host "PeakSWC.RemoteWebView.dll not found in Host output - the build may have failed." -ForegroundColor Red
   return
 }
+$embeds = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($dll.FullName)) -match '__remote-control-bubble'
 Write-Host ("host dll: {0}" -f $dll.LastWriteTime)
 Write-Host ("bundle:   {0}" -f $js.LastWriteTime)
-if ($dll.LastWriteTime -ge $js.LastWriteTime) {
+Write-Host ("embeds control bubble: {0}" -f $embeds)
+if ($dll.LastWriteTime -ge $js.LastWriteTime -and $embeds) {
   Write-Host "OK - Host embeds the current bundle. Launch the app, then open the technician /app link in a fresh Incognito window." -ForegroundColor Green
 } else {
-  Write-Host "WARNING - Host dll is older than the bundle; the embed did not refresh. Make sure the app and VS are closed, then re-run." -ForegroundColor Yellow
+  Write-Host "WARNING - Host dll is older than the bundle or missing the marker; the embed did not refresh. Make sure the app and VS are closed, then re-run." -ForegroundColor Yellow
 }
