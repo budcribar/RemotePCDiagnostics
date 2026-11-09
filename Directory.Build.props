@@ -9,12 +9,13 @@
          build from third_party/RemoteBlazorWebView/packages (NuGet.Config source) until voice is published to nuget.org. -->
     <RbwvVersion Condition="'$(RbwvVersion)' == ''">10.0.14-embedded.8</RbwvVersion>
     <RbwvLibVersion Condition="'$(RbwvLibVersion)' == ''">$(RbwvVersion)</RbwvLibVersion>
-    <!-- Local source wiring: when the RemoteBlazorWebView repo sits beside this one (…\budcribar\RemoteBlazorWebView),
-         reference its projects directly so RBWV source edits are picked up on build - no pack/publish step. Falls back to
-         the NuGet package (RbwvVersion, above) on a clean checkout where the sibling repo isn't present. Override the location
-         with -p:RbwvSourceRoot=<path>, or force the package even when the repo is present with -p:UseRbwvSource=false. -->
+    <!-- Local source wiring: reference the sibling RemoteBlazorWebView repo's projects directly so RBWV source edits are
+         picked up on build - no pack/publish step. Active ONLY for the dev solution (RemotePCDiagnostics.Dev.sln), which
+         loads those projects so VS can restore them; cross-repo ProjectReferences outside a solution that contains them
+         give NU1105 in VS. The normal solution, CI, and plain project builds stay on the NuGet package (RbwvVersion, above).
+         Force either way with -p:UseRbwvSource=true/false; point elsewhere with -p:RbwvSourceRoot=<path>. -->
     <RbwvSourceRoot Condition="'$(RbwvSourceRoot)' == ''">$(MSBuildThisFileDirectory)..\RemoteBlazorWebView</RbwvSourceRoot>
-    <UseRbwvSource Condition="'$(UseRbwvSource)' == '' and Exists('$(RbwvSourceRoot)\src\RemoteBlazorWebView.Wpf\RemoteBlazorWebView.Wpf.csproj')">true</UseRbwvSource>
+    <UseRbwvSource Condition="'$(UseRbwvSource)' == '' and '$(SolutionName)' == 'RemotePCDiagnostics.Dev' and Exists('$(RbwvSourceRoot)\src\RemoteBlazorWebView.Wpf\RemoteBlazorWebView.Wpf.csproj')">true</UseRbwvSource>
     <UseRbwvSource Condition="'$(UseRbwvSource)' == ''">false</UseRbwvSource>
   </PropertyGroup>
 </Project>
