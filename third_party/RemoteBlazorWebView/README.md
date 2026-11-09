@@ -1,7 +1,7 @@
 # RemoteBlazorWebView packages
 
-These NuGet packages are built from the RemoteBlazorWebView `codex/session-voice` branch at `f0a0f71`.
-Version `10.0.14-embedded.7` is a local integration build with opt-in WPF voice support. The root `NuGet.Config` includes this directory so a fresh checkout and CI can
+These NuGet packages are built from the RemoteBlazorWebView `net10` branch (opt-in WPF voice + runtime control transfer).
+Version `10.0.14-embedded.8` is a local integration build with opt-in WPF voice support. The root `NuGet.Config` includes this directory so a fresh checkout and CI can
 restore it. The version is set once, as `RbwvVersion` in the root `Directory.Build.props`.
 
 Included packages, all under the upstream MIT license (https://github.com/budcribar/RemoteBlazorWebView):
@@ -17,7 +17,7 @@ upstream repository root with the RemoteBlazorWebViewTutorial checkout beside it
 
 ```powershell
 foreach ($p in 'RemoteWebViewService.Lib', 'RemoteWebView', 'RemoteBlazorWebView.RemoteComponents', 'RemoteBlazorWebView.Wpf') {
-    dotnet pack src/$p -c Release -p:VersionSuffix=embedded.7 -p:GeneratePackageOnBuild=false -o <packages folder>
+    dotnet pack src/$p -c Release -p:VersionSuffix=embedded.8 -p:GeneratePackageOnBuild=false -o <packages folder>
 }
 ```
 

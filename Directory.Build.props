@@ -7,7 +7,7 @@
     <InformationalVersion Condition="'$(GITHUB_RUN_NUMBER)' == ''">$(Version)-local</InformationalVersion>
     <!-- RemoteBlazorWebView packages (Wpf, RemoteWebView, RemoteWebViewService.Lib, RemoteComponents). Local voice-enabled
          build from third_party/RemoteBlazorWebView/packages (NuGet.Config source) until voice is published to nuget.org. -->
-    <RbwvVersion Condition="'$(RbwvVersion)' == ''">10.0.14-embedded.7</RbwvVersion>
+    <RbwvVersion Condition="'$(RbwvVersion)' == ''">10.0.14-embedded.8</RbwvVersion>
     <RbwvLibVersion Condition="'$(RbwvLibVersion)' == ''">$(RbwvVersion)</RbwvLibVersion>
   </PropertyGroup>
 </Project>
