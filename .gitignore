@@ -481,8 +481,12 @@ $RECYCLE.BIN/
 # Vim temporary swap files
 *.swp
 
-# Shared portable CI publish profile
+# Shared portable and installer CI publish profiles
 !src/RemotePCDiagnostics.Host/Properties/PublishProfiles/Portable.pubxml
+!src/RemotePCDiagnostics.Host/Properties/PublishProfiles/Installer.pubxml
+
+# Keep local NuGet feed directory present on fresh checkouts (NuGet.Config references it)
+!third_party/RemoteBlazorWebView/packages/.gitkeep
 
 # Locally built RemoteBlazorWebView packages used for integration testing
 .local-packages/

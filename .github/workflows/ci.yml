@@ -21,6 +21,22 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+      - name: Ensure RemoteBlazorWebView packages
+        shell: pwsh
+        run: |
+          $pkgDir = Join-Path $env:GITHUB_WORKSPACE 'third_party/RemoteBlazorWebView/packages'
+          New-Item -ItemType Directory -Force $pkgDir | Out-Null
+          if (@(Get-ChildItem $pkgDir -Filter 'PeakSWC.RemoteBlazorWebView.RemoteComponents.*.nupkg' -ErrorAction SilentlyContinue).Count -eq 0) {
+            [xml]$props = Get-Content Directory.Build.props
+            $rbwvVer = ($props.Project.PropertyGroup.RbwvVersion | Select-Object -First 1).Trim()
+            $suffix = if ($rbwvVer -match '-(.+)$') { $Matches[1] } else { '' }
+            $srcRoot = Join-Path $env:RUNNER_TEMP 'rbwv-src/RemoteBlazorWebView'
+            git clone --branch net10 --depth 1 https://github.com/budcribar/RemoteBlazorWebView.git $srcRoot
+            $packArgs = @('pack', "$srcRoot/src/RemoteBlazorWebView.RemoteComponents", '-c', 'Release', '-p:GeneratePackageOnBuild=false', '-o', $pkgDir)
+            if ($suffix) { $packArgs += "-p:VersionSuffix=$suffix" }
+            & dotnet @packArgs
+            if ($LASTEXITCODE -ne 0) { throw "Packing RemoteComponents failed ($LASTEXITCODE)" }
+          }
       - name: Test workflow, saved-state resume, and client reports
         run: dotnet test tests/RemotePCDiagnostics.Tests/RemotePCDiagnostics.Tests.csproj -c Release --filter "FullyQualifiedName~RemotePCDiagnostics.Tests.WorkflowTests" --logger "trx;LogFileName=workflow.trx" --results-directory artifacts/workflow-tests
       - name: Verify workflow tests ran
@@ -42,7 +58,7 @@ jobs:
 
   build-test-smoke:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
@@ -52,6 +68,42 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Ensure RemoteBlazorWebView packages
+        shell: pwsh
+        run: |
+          $pkgDir = Join-Path $env:GITHUB_WORKSPACE 'third_party/RemoteBlazorWebView/packages'
+          New-Item -ItemType Directory -Force $pkgDir | Out-Null
+          if (@(Get-ChildItem $pkgDir -Filter 'PeakSWC.RemoteBlazorWebView.Wpf.*.nupkg' -ErrorAction SilentlyContinue).Count -eq 0) {
+            [xml]$props = Get-Content Directory.Build.props
+            $rbwvVer = ($props.Project.PropertyGroup.RbwvVersion | Select-Object -First 1).Trim()
+            $suffix = if ($rbwvVer -match '-(.+)$') { $Matches[1] } else { '' }
+            $work = Join-Path $env:RUNNER_TEMP 'rbwv-build'
+            $srcRoot = Join-Path $work 'RemoteBlazorWebView'
+            $tutorialStub = Join-Path $work 'RemoteBlazorWebViewTutorial'
+            New-Item -ItemType Directory -Force $tutorialStub | Out-Null
+            Set-Content -Path (Join-Path $tutorialStub 'README.md') -Value '# RemoteBlazorWebView'
+            git clone --branch net10 --depth 1 https://github.com/budcribar/RemoteBlazorWebView.git $srcRoot
+            Push-Location (Join-Path $srcRoot 'src/RemoteWebView.Blazor.JS')
+            try {
+              # Enable corepack yarn for Web.JS submodule build invoked by build:production, or use npm + webpack.
+              corepack enable
+              yarn install
+              if ($LASTEXITCODE -ne 0) { throw "yarn install failed ($LASTEXITCODE)" }
+              npm run build:production
+              if ($LASTEXITCODE -ne 0) { throw "JS bundle build failed ($LASTEXITCODE)" }
+            } finally { Pop-Location }
+            foreach ($p in 'RemoteWebViewService.Lib', 'RemoteWebView', 'RemoteBlazorWebView.RemoteComponents', 'RemoteBlazorWebView.Wpf') {
+              $packArgs = @('pack', "$srcRoot/src/$p", '-c', 'Release', '-p:GeneratePackageOnBuild=false', '-o', $pkgDir)
+              if ($suffix) { $packArgs += "-p:VersionSuffix=$suffix" }
+              & dotnet @packArgs
+              if ($LASTEXITCODE -ne 0) { throw "dotnet pack $p failed ($LASTEXITCODE)" }
+            }
+          }
 
       - name: Restore
         run: dotnet restore RemotePCDiagnostics.sln
@@ -123,6 +175,7 @@ jobs:
           if (-not $check.WaitForExit(60000)) { Stop-Process -Id $check.Id -Force; throw 'Package verification timed out' }
           if ($check.ExitCode -ne 0) { throw "Package verification failed: $($check.ExitCode)" }
           Get-Content $env:RPD_LOG_FILE
+          Remove-Item Env:RPD_LOG_FILE -ErrorAction SilentlyContinue
 
       # Tester download: only for pushes to main and tags (no job downloads it; the smoke test runs the local publish output).
       - name: Upload portable diagnostics download
@@ -132,7 +185,60 @@ jobs:
           name: RemotePCDiagnostics-win-x64
           path: artifacts/RemotePCDiagnostics-win-x64/RemotePCDiagnostics.Host.exe
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
+
+      - name: Ensure Inno Setup 6
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build and smoke-test Windows installer (Inno Setup)
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File installer/Build-Installer.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 failed ($LASTEXITCODE)" }
+
+          $setup = Get-ChildItem artifacts/installer -Filter 'RemotePCDiagnostics-Setup-*-win-x64.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'Installer executable was not produced' }
+
+          $installDir = Join-Path $env:RUNNER_TEMP 'rpd-installed'
+          $installProc = Start-Process -FilePath $setup.FullName -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SKIPWEBVIEW2 /DIR=`"$installDir`"" -Wait -PassThru
+          if ($installProc.ExitCode -ne 0) { throw "Silent install failed with exit code $($installProc.ExitCode)" }
+
+          $installedHost = Join-Path $installDir 'RemotePCDiagnostics.Host.exe'
+          $installedUiHost = Join-Path $installDir 'moduleui/RemotePCDiagnostics.ModuleUiHost.exe'
+          if (-not (Test-Path -LiteralPath $installedHost)) { throw "Installed Host missing: $installedHost" }
+          if (-not (Test-Path -LiteralPath $installedUiHost)) { throw "Installed ModuleUiHost missing: $installedUiHost" }
+          if (-not (Test-Path -LiteralPath (Join-Path $installDir 'modules'))) { throw 'modules folder was not created by installer' }
+          if (-not (Test-Path -LiteralPath (Join-Path $installDir 'checks'))) { throw 'checks folder was not created by installer' }
+
+          $env:RPD_LOG_FILE = Join-Path $env:GITHUB_WORKSPACE 'artifacts/installed-package-check.log'
+          $verify = Start-Process -FilePath $installedHost -ArgumentList '--verify-package' -WorkingDirectory $installDir -WindowStyle Hidden -PassThru
+          if (-not $verify.WaitForExit(60000)) { Stop-Process -Id $verify.Id -Force; throw 'Installed package verification timed out' }
+          if ($verify.ExitCode -ne 0) { throw "Installed package verification failed: $($verify.ExitCode)" }
+          Get-Content $env:RPD_LOG_FILE
+          Remove-Item Env:RPD_LOG_FILE -ErrorAction SilentlyContinue
+
+          $uninstaller = Join-Path $installDir 'unins000.exe'
+          if (-not (Test-Path -LiteralPath $uninstaller)) { throw "Uninstaller missing: $uninstaller" }
+          $uninstallProc = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru
+          if ($uninstallProc.ExitCode -ne 0) { throw "Silent uninstall failed with exit code $($uninstallProc.ExitCode)" }
+          for ($i = 0; $i -lt 20 -and (Test-Path -LiteralPath $installedHost); $i++) { Start-Sleep -Milliseconds 500 }
+          if (Test-Path -LiteralPath $installedHost) { throw 'Uninstaller left RemotePCDiagnostics.Host.exe behind' }
+          "Installer silent install, package check, and silent uninstall verified."
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemotePCDiagnostics-Setup-win-x64
+          path: |
+            artifacts/installer/RemotePCDiagnostics-Setup-*-win-x64.exe
+            artifacts/installer/RemotePCDiagnostics-Setup-*-win-x64.exe.sha256
+          if-no-files-found: error
+          retention-days: 14
 
       # The standalone prototypes live outside RemotePCDiagnostics.sln (tools/prototypes/Prototypes.slnx); build them so they keep compiling.
       - name: Build prototypes
@@ -177,10 +283,6 @@ jobs:
               Write-Output "::error title=$t::$($m.Replace('%', '%25'))"
             }
           }
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
 
       - name: Install Playwright
         working-directory: tests/smoke
@@ -230,3 +332,41 @@ jobs:
             artifacts/network-demo/
           if-no-files-found: warn
           retention-days: 1
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [service-workflow, build-test-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: RemotePCDiagnostics-Setup-win-x64
+          path: release-assets
+
+      - name: Download portable executable artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: RemotePCDiagnostics-win-x64
+          path: release-portable
+
+      - name: Rename portable executable for release
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          cp release-portable/RemotePCDiagnostics.Host.exe "release-assets/RemotePCDiagnostics-Portable-${tag}-win-x64.exe"
+          (cd release-assets && sha256sum "RemotePCDiagnostics-Portable-${tag}-win-x64.exe" > "RemotePCDiagnostics-Portable-${tag}-win-x64.exe.sha256")
+          ls -lh release-assets
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* --generate-notes --title "Remote PC Diagnostics $GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"
+          fi
+

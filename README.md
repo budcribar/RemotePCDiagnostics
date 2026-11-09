@@ -31,6 +31,10 @@ RemotePCDiagnostics is a single Windows desktop application (a WPF or WinForms h
 
 See [docs/architecture.md](docs/architecture.md): the projects, how they layer, the plugin contract, the privilege model and logging.
 
+## Windows installer
+
+Build the self-contained Windows `x64` Inno Setup installer (`RemotePCDiagnostics-Setup-<Version>-win-x64.exe`) with `pwsh -NoProfile -File installer/Build-Installer.ps1`. See [installer/README.md](installer/README.md) for prerequisites, WebView2 bootstrapping, silent deployment flags and uninstall options.
+
 ## License
 
 RemotePCDiagnostics is released under the [MIT License](LICENSE). The bundled copy of HardeningKitty in `third_party/HardeningKitty` keeps its own license: see [third_party/HardeningKitty/module/LICENSE](third_party/HardeningKitty/module/LICENSE).
