@@ -78,12 +78,24 @@ if (-not $dll) {
   Write-Host "PeakSWC.RemoteWebView.dll not found in Host output - the build may have failed." -ForegroundColor Red
   return
 }
-$embeds = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($dll.FullName)) -match 'remotecontrolready'
+# Content check, independent of any hard-coded marker: the bundle is embedded as a raw resource, so a slice taken
+# from the middle of the CURRENT dist bundle must appear byte-for-byte in the dll. A stale embed won't contain it.
+$bundleBytes = [IO.File]::ReadAllBytes($js.FullName)
+$dllText     = [Text.Encoding]::GetEncoding(28591).GetString([IO.File]::ReadAllBytes($dll.FullName))
+$embeds = $false
+if ($bundleBytes.Length -ge 400) {
+  # Three probes (25%, 50%, 75%) so one coincidental match can't pass a stale build.
+  $embeds = $true
+  foreach ($at in 0.25, 0.5, 0.75) {
+    $probe = [Text.Encoding]::GetEncoding(28591).GetString($bundleBytes, [int]($bundleBytes.Length * $at), 96)
+    if (-not $dllText.Contains($probe)) { $embeds = $false; break }
+  }
+}
 Write-Host ("host dll: {0}" -f $dll.LastWriteTime)
-Write-Host ("bundle:   {0}" -f $js.LastWriteTime)
-Write-Host ("embeds control bridge: {0}" -f $embeds)
-if ($dll.LastWriteTime -ge $js.LastWriteTime -and $embeds) {
+Write-Host ("bundle:   {0}  ({1:N0} bytes)" -f $js.LastWriteTime, $bundleBytes.Length)
+Write-Host ("host dll contains the current bundle: {0}" -f $embeds)
+if ($embeds) {
   Write-Host "OK - Host embeds the current bundle. Launch the app, then open the technician /app link in a fresh Incognito window." -ForegroundColor Green
 } else {
-  Write-Host "WARNING - Host dll is older than the bundle or missing the marker; the embed did not refresh. Make sure the app and VS are closed, then re-run." -ForegroundColor Yellow
+  Write-Host "WARNING - Host dll does not contain the current bundle; the embed did not refresh. Make sure the app and VS are closed, then re-run." -ForegroundColor Yellow
 }
