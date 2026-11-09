@@ -9,7 +9,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="PeakSWC.RemoteBlazorWebView.RemoteComponents" Version="$(RbwvVersion)" />
+    <!-- RemoteBlazorWebView: sibling-repo source when present (UseRbwvSource, see Directory.Build.props), else the package.
+         The package ships the [RemoteComponentContract] source generator as an analyzer; a ProjectReference does not flow it,
+         so add the generator project explicitly as an Analyzer (ModuleUi.cs uses [RemoteComponentContract]). -->
+    <PackageReference Include="PeakSWC.RemoteBlazorWebView.RemoteComponents" Version="$(RbwvVersion)" Condition="'$(UseRbwvSource)' != 'true'" />
+    <ProjectReference Include="$(RbwvSourceRoot)\src\RemoteBlazorWebView.RemoteComponents\RemoteBlazorWebView.RemoteComponents.csproj" Condition="'$(UseRbwvSource)' == 'true'" />
+    <ProjectReference Include="$(RbwvSourceRoot)\src\RemoteBlazorWebView.RemoteComponents.Generators\RemoteBlazorWebView.RemoteComponents.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" Condition="'$(UseRbwvSource)' == 'true'" />
     <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
   </ItemGroup>
 </Project>

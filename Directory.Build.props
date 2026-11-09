@@ -9,5 +9,12 @@
          build from third_party/RemoteBlazorWebView/packages (NuGet.Config source) until voice is published to nuget.org. -->
     <RbwvVersion Condition="'$(RbwvVersion)' == ''">10.0.14-embedded.8</RbwvVersion>
     <RbwvLibVersion Condition="'$(RbwvLibVersion)' == ''">$(RbwvVersion)</RbwvLibVersion>
+    <!-- Local source wiring: when the RemoteBlazorWebView repo sits beside this one (…\budcribar\RemoteBlazorWebView),
+         reference its projects directly so RBWV source edits are picked up on build - no pack/publish step. Falls back to
+         the NuGet package (RbwvVersion, above) on a clean checkout where the sibling repo isn't present. Override the location
+         with -p:RbwvSourceRoot=<path>, or force the package even when the repo is present with -p:UseRbwvSource=false. -->
+    <RbwvSourceRoot Condition="'$(RbwvSourceRoot)' == ''">$(MSBuildThisFileDirectory)..\RemoteBlazorWebView</RbwvSourceRoot>
+    <UseRbwvSource Condition="'$(UseRbwvSource)' == '' and Exists('$(RbwvSourceRoot)\src\RemoteBlazorWebView.Wpf\RemoteBlazorWebView.Wpf.csproj')">true</UseRbwvSource>
+    <UseRbwvSource Condition="'$(UseRbwvSource)' == ''">false</UseRbwvSource>
   </PropertyGroup>
 </Project>

@@ -12,7 +12,9 @@
     <RootNamespace>RemotePCDiagnostics.ModuleUiHost</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="PeakSWC.RemoteBlazorWebView.Wpf" Version="$(RbwvVersion)" />
+    <!-- RemoteBlazorWebView: sibling-repo source when present (UseRbwvSource, see Directory.Build.props), else the package. -->
+    <PackageReference Include="PeakSWC.RemoteBlazorWebView.Wpf" Version="$(RbwvVersion)" Condition="'$(UseRbwvSource)' != 'true'" />
+    <ProjectReference Include="$(RbwvSourceRoot)\src\RemoteBlazorWebView.Wpf\RemoteBlazorWebView.Wpf.csproj" Condition="'$(UseRbwvSource)' == 'true'" />
     <ProjectReference Include="..\RemotePCDiagnostics.ModuleUi\RemotePCDiagnostics.ModuleUi.csproj" />
     <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
     <!-- The app's stylesheet, served as wwwroot/app.css (index.html), so module UIs match the app. -->
