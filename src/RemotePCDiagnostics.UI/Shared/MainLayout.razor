@@ -9,6 +9,10 @@
         <span class="title"><Icon Name="health" Size="22" Class="logo" />RemotePCDiagnostics</span>
         <span class="badge badge-@Session.Mode.ToString().ToLowerInvariant()">@Session.Mode</span>
         <span class="topbar-spacer"></span>
+        @if (Session.Mode == SessionMode.Remote)
+        {
+            <SessionControlBar ShowShareLink="true" CssClass="topbar-control" />
+        }
         <ThemeSwitcher />
         <span class="pc" title="Computer name"><Icon Name="pc" Size="16" />@Session.MachineName</span>
     </header>

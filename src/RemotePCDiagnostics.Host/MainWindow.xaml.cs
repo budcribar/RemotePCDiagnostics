@@ -116,8 +116,9 @@ public partial class MainWindow : Window
         _serverUri = serverUri;
         _mirror = mirror;
         _reverseMirror = reverseMirror;
-        // Reverse-mirror demo: keep the top card hidden so the window looks like Local; a small "Remote" bubble carries the link instead.
-        RemotePanel.Visibility = reverseMirror ? Visibility.Collapsed : Visibility.Visible;
+        // The WPF top card is hidden: the Blazor SessionControlBar in the app header now carries status + the join link
+        // (Copy link), on both the owner window and the technician's browser. Kept in XAML for now; just not shown.
+        RemotePanel.Visibility = Visibility.Collapsed;
         SetRemoteState(RemoteSessionState.Connecting);
 
         RemoteBlazorWebView.ReadyToConnect += (s, e) => Dispatcher.BeginInvoke(() =>
