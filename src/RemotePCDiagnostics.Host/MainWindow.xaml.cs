@@ -136,7 +136,7 @@ public partial class MainWindow : Window
             {
                 // Tutorial "Reversing The Mirror" pattern: a plain WebView2 (no Blazor external-link handling, which otherwise opens
                 // /app in the system browser) shows the controlling /app page locally; the Blazor control hosts the app + mirrors.
-                ShowLocalController(RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id));
+                ShowLocalController(RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id)));
                 RemoteBubble.Visibility = Visibility.Visible; // small bubble carries the view-only link; no top card
                 return;
             }
@@ -153,7 +153,7 @@ public partial class MainWindow : Window
             if (_mirror)
             {
                 var activeId = e.Id != Guid.Empty ? e.Id : (_sessionId != Guid.Empty ? _sessionId : id);
-                var mirrorUrl = RemoteLinkInfo.BuildMirrorUrl(e.Url ?? serverUri, activeId);
+                var mirrorUrl = RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildMirrorUrl(e.Url ?? serverUri, activeId));
                 Logger.Info($"Navigating local WebView to mirror={mirrorUrl}");
                 try { RemoteBlazorWebView.WebView.CoreWebView2?.Navigate(mirrorUrl.ToString()); }
                 catch (Exception ex) { Logger.Error($"Mirror navigate failed: {ex}"); }
