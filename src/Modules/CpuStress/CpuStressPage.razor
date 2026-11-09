@@ -37,11 +37,13 @@
 @if (running)
 {
     <div class="progress run-progress" data-testid="cpustress-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
-    <TestRunningVisual Slug="@CpuStressModule.ModuleName" TestId="cpustress-visual" Caption="Stressing all processor cores & monitoring thermal headroom" />
     <div class="cards">
-        <div class="card is-running" data-testid="cpustress-live-time">
-            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-            <div class="headline">@(p is null ? "Starting…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
+        <div class="card is-running card-with-visual" data-testid="cpustress-live-time">
+            <div class="card-main">
+                <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                <div class="headline">@(p is null ? "Starting…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
+            </div>
+            <TestRunningVisual Slug="@CpuStressModule.ModuleName" TestId="cpustress-visual" />
         </div>
         <div class="card" data-testid="cpustress-live-temp">
             <div class="card-head"><span class="@TempDot(p)"></span><strong>CPU temperature</strong></div>

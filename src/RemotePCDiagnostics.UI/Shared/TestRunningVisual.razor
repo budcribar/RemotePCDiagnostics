@@ -1,10 +1,10 @@
-@* Sleek isometric hardware/telemetry animation shown while a long (>=30s) test or scan is running.
+@* Sleek isometric hardware/telemetry animation shown on the far right of the top running card while a long (>=30s) test or scan is running.
    Uses a static PNG frame when prefers-reduced-motion: reduce is active. *@
 <div class="running-visual" data-testid="@TestId" data-visual="@AssetSlug" aria-hidden="true">
     <div class="running-visual-frame">
         <picture>
             <source media="(prefers-reduced-motion: reduce)" srcset="@($"_content/RemotePCDiagnostics.UI/img/tests/{AssetSlug}.png")" />
-            <img class="running-visual-img" src="@($"_content/RemotePCDiagnostics.UI/img/tests/{AssetSlug}.gif")" alt="" width="400" height="225" loading="eager" decoding="async" />
+            <img class="running-visual-img" src="@($"_content/RemotePCDiagnostics.UI/img/tests/{AssetSlug}.gif")" alt="" width="220" height="124" loading="eager" decoding="async" />
         </picture>
     </div>
     @if (!string.IsNullOrWhiteSpace(Caption))

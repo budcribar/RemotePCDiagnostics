@@ -269,17 +269,24 @@
         <div class="ct-detail-body" @key="m.Name">
             @if (m is ICancellableScan && kind == RowKind.Running)
             {
-                <p role="status">Running @m.DisplayName. This can take several minutes.</p>
-                @if (r.Payload is double percent)
-                {
-                    <progress max="100" value="@percent" aria-label="@($"{m.DisplayName} scan progress")"></progress>
-                    <span role="status"> @percent.ToString("0.#")% complete</span>
-                }
-                else
-                {
-                    <progress aria-label="@($"{m.DisplayName} scan in progress")"></progress>
-                }
-                <TestRunningVisual Slug="@m.Name" TestId="checks-scan-visual" Caption="@(m.Name == ModuleSlugs.SfcVerifyOnly ? "Verifying protected Windows system files" : "Scanning Windows component store health")" />
+                <div class="cards">
+                    <div class="card is-running card-with-visual" data-testid="checks-scan-live">
+                        <div class="card-main">
+                            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                            <p role="status">Running @m.DisplayName. This can take several minutes.</p>
+                            @if (r.Payload is double percent)
+                            {
+                                <progress max="100" value="@percent" aria-label="@($"{m.DisplayName} scan progress")"></progress>
+                                <span role="status"> @percent.ToString("0.#")% complete</span>
+                            }
+                            else
+                            {
+                                <progress aria-label="@($"{m.DisplayName} scan in progress")"></progress>
+                            }
+                        </div>
+                        <TestRunningVisual Slug="@m.Name" TestId="checks-scan-visual" />
+                    </div>
+                </div>
             }
             else if (m is ICancellableScan && r.Payload is AreaReport integrity && kind != RowKind.Cancelled)
             {

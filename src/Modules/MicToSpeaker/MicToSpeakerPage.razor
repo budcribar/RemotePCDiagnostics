@@ -51,7 +51,16 @@ else
     @if (running)
     {
         <div class="run-progress run-progress-indeterminate" data-testid="m2s-run-progress" aria-hidden="true"><div></div></div>
-        <TestRunningVisual Slug="@m.Name" TestId="m2s-visual" Caption="Monitoring live microphone & speaker acoustic loop" />
+        <div class="cards">
+            <div class="card is-running card-with-visual" data-testid="m2s-live-progress">
+                <div class="card-main">
+                    <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                    <div class="headline">@(m.Settings.HalfDuplex ? "Recording, then playing back…" : "Monitoring microphone…")</div>
+                    <div class="meta">Speak now · @(m.Duration.TotalSeconds.ToString("0")) seconds</div>
+                </div>
+                <TestRunningVisual Slug="@m.Name" TestId="m2s-visual" />
+            </div>
+        </div>
     }
     @if (!running && rep?.Notice is { } notice) { <p class="notice" data-testid="m2s-notice">@notice</p> }
     @if (!running && rep is { OfferHalfDuplex: true, HalfDuplex: false })

@@ -63,12 +63,14 @@
 @if (running)
 {
     <div class="progress run-progress" data-testid="diskspeed-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
-    <TestRunningVisual Slug="@DiskSpeedModule.ModuleName" TestId="diskspeed-visual" Caption="Measuring sequential throughput & verifying data integrity" />
     <div class="cards">
-        <div class="card is-running" data-testid="diskspeed-live-step">
-            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-            <div class="headline">@(p?.PhaseText ?? "Getting ready")…</div>
-            <CardList Text="@(p is null ? "" : $"{Clock(p.Elapsed)} so far · at most {Clock(p.Duration)}")" />
+        <div class="card is-running card-with-visual" data-testid="diskspeed-live-step">
+            <div class="card-main">
+                <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                <div class="headline">@(p?.PhaseText ?? "Getting ready")…</div>
+                <CardList Text="@(p is null ? "" : $"{Clock(p.Elapsed)} so far · at most {Clock(p.Duration)}")" />
+            </div>
+            <TestRunningVisual Slug="@DiskSpeedModule.ModuleName" TestId="diskspeed-visual" />
         </div>
         <div class="card" data-testid="diskspeed-live-temp">
             <div class="card-head"><span class="dot dot-neutral"></span><strong>Drive temperature</strong></div>

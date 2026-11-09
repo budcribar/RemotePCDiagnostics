@@ -185,9 +185,17 @@
         </div>
         @if (s.Stage is WorkflowStage.BeforeBenchmark or WorkflowStage.AfterBenchmark && Bench.Running is not null)
         {
-            @if (!string.IsNullOrEmpty(Bench.Progress)) { <p class="meta" data-testid="wf-bench-step">@Bench.Progress</p> }
             <div class="run-progress run-progress-indeterminate wf-overall-progress" data-testid="wf-bench-progress" aria-hidden="true"><div></div></div>
-            <TestRunningVisual Slug="benchmark" TestId="wf-bench-visual" Caption="Measuring system performance pass" />
+            <div class="cards">
+                <div class="card is-running card-with-visual" data-testid="wf-bench-live">
+                    <div class="card-main">
+                        <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                        <div class="headline">@(s.Stage == WorkflowStage.BeforeBenchmark ? "Before benchmark" : "After benchmark")</div>
+                        @if (!string.IsNullOrEmpty(Bench.Progress)) { <p class="meta" data-testid="wf-bench-step">@Bench.Progress</p> }
+                    </div>
+                    <TestRunningVisual Slug="benchmark" TestId="wf-bench-visual" />
+                </div>
+            </div>
         }
         @if (s.Stage == WorkflowStage.Applying && approved > 0)
         {
@@ -200,7 +208,16 @@
             {
                 <div class="run-progress run-progress-indeterminate wf-check-bar" data-testid="wf-repair-progress" aria-hidden="true"><div></div></div>
             }
-            <TestRunningVisual Slug="dism-scan" TestId="wf-apply-visual" Caption="Applying approved system optimizations & repairs" />
+            <div class="cards">
+                <div class="card is-running card-with-visual" data-testid="wf-apply-live">
+                    <div class="card-main">
+                        <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                        <div class="headline">Applying fixes (@s.Outcomes.Count of @approved completed)</div>
+                        @if (Flow.Status is { } fs) { <div class="meta">@fs</div> }
+                    </div>
+                    <TestRunningVisual Slug="dism-scan" TestId="wf-apply-visual" />
+                </div>
+            </div>
         }
         @if (s.Outcomes.Count > 0)
         {

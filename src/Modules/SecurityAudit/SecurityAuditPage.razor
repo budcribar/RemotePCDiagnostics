@@ -38,7 +38,16 @@ else
     @if (running)
     {
         <div class="run-progress run-progress-indeterminate" data-testid="audit-run-progress" aria-hidden="true"><div></div></div>
-        <TestRunningVisual Slug="@m.Name" TestId="audit-visual" Caption="Auditing Windows security baseline policies (read-only)" />
+        <div class="cards">
+            <div class="card is-running card-with-visual" data-testid="audit-live-progress">
+                <div class="card-main">
+                    <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                    <div class="headline">Auditing security settings… @Elapsed</div>
+                    <div class="meta">Read-only baseline check</div>
+                </div>
+                <TestRunningVisual Slug="@m.Name" TestId="audit-visual" />
+            </div>
+        </div>
     }
     @if (!running && rep?.Notice is { } notice) { <p class="notice" data-testid="audit-notice">@notice</p> }
 

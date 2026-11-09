@@ -61,20 +61,20 @@ public class TestRunningVisualTests
         {
             var parameters = ParameterView.FromDictionary(new Dictionary<string, object?>
             {
-                [nameof(TestRunningVisual.Slug)] = ModuleSlugs.CpuStress,
-                [nameof(TestRunningVisual.TestId)] = "cpustress-visual",
-                [nameof(TestRunningVisual.Caption)] = "Stressing all processor cores",
+                [nameof(TestRunningVisual.Slug)] = ModuleSlugs.DiskSpeed,
+                [nameof(TestRunningVisual.TestId)] = "diskspeed-visual",
             });
             var output = await renderer.RenderComponentAsync<TestRunningVisual>(parameters);
             return output.ToHtmlString();
         });
 
-        Assert.Contains("data-testid=\"cpustress-visual\"", html);
-        Assert.Contains("data-visual=\"cpu-stress\"", html);
+        Assert.Contains("data-testid=\"diskspeed-visual\"", html);
+        Assert.Contains("data-visual=\"disk-speed\"", html);
         Assert.Contains("media=\"(prefers-reduced-motion: reduce)\"", html);
-        Assert.Contains("_content/RemotePCDiagnostics.UI/img/tests/cpu-stress.png", html);
-        Assert.Contains("_content/RemotePCDiagnostics.UI/img/tests/cpu-stress.gif", html);
-        Assert.Contains("Stressing all processor cores", html);
+        Assert.Contains("_content/RemotePCDiagnostics.UI/img/tests/disk-speed.png", html);
+        Assert.Contains("_content/RemotePCDiagnostics.UI/img/tests/disk-speed.gif", html);
+        Assert.Contains("width=\"220\" height=\"124\"", html);
+        Assert.DoesNotContain("running-visual-caption", html);
     }
 
     [Fact]

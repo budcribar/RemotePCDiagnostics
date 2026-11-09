@@ -75,24 +75,26 @@
 
 @if (suite is { } sp && (suiteBusy || sp.Finished))
 {
-    <section class="card suite-status" data-testid="dashboard-suite-status">
-        <div class="suite-line">
-            <strong data-testid="dashboard-suite-progress">@(suiteBusy ? sp.Headline : sp.Message)</strong>
-            @if (suiteBusy)
-            {
-                <button class="btn" data-testid="dashboard-suite-cancel" disabled="@cancelling" @onclick="CancelSuite">@(cancelling ? "Cancelling…" : "Cancel")</button>
-            }
+    <section class="card suite-status @(suiteBusy ? "card-with-visual" : "")" data-testid="dashboard-suite-status">
+        <div class="card-main">
+            <div class="suite-line">
+                <strong data-testid="dashboard-suite-progress">@(suiteBusy ? sp.Headline : sp.Message)</strong>
+                @if (suiteBusy)
+                {
+                    <button class="btn" data-testid="dashboard-suite-cancel" disabled="@cancelling" @onclick="CancelSuite">@(cancelling ? "Cancelling…" : "Cancel")</button>
+                }
+            </div>
+            <ul class="suite-steps">
+                @foreach (var st in sp.Steps)
+                {
+                    <li data-testid="dashboard-suite-step-@st.ModuleName.ToLowerInvariant()"><span class="@DotClass(StepStatus(st.State))"></span>@st.DisplayName: @StepText(st.State)</li>
+                }
+            </ul>
         </div>
-        <ul class="suite-steps">
-            @foreach (var st in sp.Steps)
-            {
-                <li data-testid="dashboard-suite-step-@st.ModuleName.ToLowerInvariant()"><span class="@DotClass(StepStatus(st.State))"></span>@st.DisplayName: @StepText(st.State)</li>
-            }
-        </ul>
         @if (suiteBusy)
         {
             var activeStep = sp.Steps.FirstOrDefault(st => st.State == StressSuiteStepState.Running);
-            <TestRunningVisual Slug="@(activeStep?.ModuleName ?? "benchmark")" TestId="dashboard-suite-visual" Caption="@(activeStep is not null ? $"Running {activeStep.DisplayName}" : sp.Headline)" />
+            <TestRunningVisual Slug="@(activeStep?.ModuleName ?? "benchmark")" TestId="dashboard-suite-visual" />
         }
     </section>
 }

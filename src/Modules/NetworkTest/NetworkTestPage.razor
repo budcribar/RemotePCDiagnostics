@@ -38,12 +38,14 @@
 {
     var live = p is null ? null : PingStats.From(p.Samples.Select(s => s.InternetMs));
     <div class="progress run-progress" data-testid="nettest-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
-    <TestRunningVisual Slug="@NetworkTestModule.ModuleName" TestId="nettest-visual" Caption="Probing router & internet latency, packet loss, and bandwidth" />
     <div class="cards">
-        <div class="card is-running" data-testid="nettest-live-progress">
-            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-            <div class="headline">@(p is null ? "Getting ready…" : $"{p.Step}…")</div>
-            <div class="meta">@(p is null ? "" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
+        <div class="card is-running card-with-visual" data-testid="nettest-live-progress">
+            <div class="card-main">
+                <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                <div class="headline">@(p is null ? "Getting ready…" : $"{p.Step}…")</div>
+                <div class="meta">@(p is null ? "" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
+            </div>
+            <TestRunningVisual Slug="@NetworkTestModule.ModuleName" TestId="nettest-visual" />
         </div>
         <div class="card" data-testid="nettest-live-latency">
             <div class="card-head"><span class="dot dot-neutral"></span><strong>Delay right now</strong></div>

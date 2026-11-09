@@ -47,16 +47,18 @@
 @if (running)
 {
     <div class="progress run-progress" data-testid="memtest-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
-    <TestRunningVisual Slug="@MemoryTestModule.ModuleName" TestId="memtest-visual" Caption="Writing and verifying bit patterns across memory blocks" />
     <div class="cards">
-        <div class="card is-running" data-testid="memtest-live-progress">
-            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-            <div class="headline">@(p is null ? "Getting ready…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
-            @if (p is not null)
-            {
-                <CardList Text="@($"Testing {HardwareInventory.FormatBytes(p.TestBytes)} · {(p.Pass == 1 ? "1 full round done" : $"{p.Pass} full rounds done")}")" />
-                @if (p.Errors > 0) { <div class="meta error-text">Problems found so far: @p.Errors.ToString("N0")</div> }
-            }
+        <div class="card is-running card-with-visual" data-testid="memtest-live-progress">
+            <div class="card-main">
+                <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                <div class="headline">@(p is null ? "Getting ready…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
+                @if (p is not null)
+                {
+                    <CardList Text="@($"Testing {HardwareInventory.FormatBytes(p.TestBytes)} · {(p.Pass == 1 ? "1 full round done" : $"{p.Pass} full rounds done")}")" />
+                    @if (p.Errors > 0) { <div class="meta error-text">Problems found so far: @p.Errors.ToString("N0")</div> }
+                }
+            </div>
+            <TestRunningVisual Slug="@MemoryTestModule.ModuleName" TestId="memtest-visual" />
         </div>
         <div class="card" data-testid="memtest-live-temp">
             <div class="card-head"><span class="dot dot-neutral"></span><strong>CPU temperature</strong></div>

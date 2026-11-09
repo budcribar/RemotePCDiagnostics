@@ -40,7 +40,16 @@ else
     @if (running)
     {
         <div class="run-progress run-progress-indeterminate" data-testid="npu-run-progress" aria-hidden="true"><div></div></div>
-        <TestRunningVisual Slug="@m.Name" TestId="npu-visual" Caption="Running neural matrix-multiply workload on NPU accelerator" />
+        <div class="cards">
+            <div class="card is-running card-with-visual" data-testid="npu-live-progress">
+                <div class="card-main">
+                    <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                    <div class="headline">Testing the NPU…</div>
+                    <div class="meta">@((int)m.Settings.Duration.TotalSeconds) s matrix-multiply workload</div>
+                </div>
+                <TestRunningVisual Slug="@m.Name" TestId="npu-visual" />
+            </div>
+        </div>
     }
     @if (!running && rep?.Notice is { } notice) { <p class="notice" data-testid="npu-notice">@notice</p> }
     @if (!running && rep is { Devices.Count: > 0 })

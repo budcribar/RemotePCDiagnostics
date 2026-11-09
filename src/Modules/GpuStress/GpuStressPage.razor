@@ -37,12 +37,14 @@
 @if (running)
 {
     <div class="progress run-progress" data-testid="gpustress-progress"><div style="width:@((p?.Fraction ?? 0) * 100)%"></div></div>
-    <TestRunningVisual Slug="@GpuStressModule.ModuleName" TestId="gpustress-visual" Caption="Running compute shader verification & thermal check" />
     <div class="cards">
-        <div class="card is-running" data-testid="gpustress-live-progress">
-            <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
-            <div class="headline">@(p is null ? "Getting ready…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
-            <div class="meta">@(p?.AdapterName ?? "")</div>
+        <div class="card is-running card-with-visual" data-testid="gpustress-live-progress">
+            <div class="card-main">
+                <div class="card-head"><span class="dot dot-running"></span><strong>Progress</strong></div>
+                <div class="headline">@(p is null ? "Getting ready…" : $"{Clock(p.Elapsed)} of {Clock(p.Duration)}")</div>
+                <div class="meta">@(p?.AdapterName ?? "")</div>
+            </div>
+            <TestRunningVisual Slug="@GpuStressModule.ModuleName" TestId="gpustress-visual" />
         </div>
         <div class="card" data-testid="gpustress-live-checks">
             <div class="card-head"><span class="@(p is { Mismatches: > 0 } ? "dot dot-error" : "dot dot-ok")"></span><strong>Answers checked</strong></div>
