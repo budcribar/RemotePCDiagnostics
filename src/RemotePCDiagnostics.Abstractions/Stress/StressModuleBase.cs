@@ -1,4 +1,97 @@
+using System.Collections.Concurrent;
+
 namespace RemotePCDiagnostics.Core.Stress;
+
+/// <summary>
+/// Custom <see cref="TaskScheduler"/> for stressor workloads: executes tasks on dedicated background threads at
+/// <see cref="ThreadPriority.BelowNormal"/> so heavy CPU, GPU, disk, and network stress loops never starve the UI thread
+/// or the <see cref="ThreadPool"/> (keeping progress updates and Stop button clicks responsive).
+/// </summary>
+public sealed class StressTaskScheduler : TaskScheduler
+{
+    private const int IdleTimeoutMs = 2000;
+    private readonly ConcurrentQueue<Task> _queue = new();
+    private readonly SemaphoreSlim _signal = new(0);
+    private int _idleWorkers;
+
+    public static StressTaskScheduler Default { get; } = new();
+    public static TaskFactory Factory { get; } = new(Default);
+
+    public static Task Run(Action action, CancellationToken cancellationToken = default) =>
+        Task.Factory.StartNew(action, cancellationToken, TaskCreationOptions.DenyChildAttach, Default);
+
+    public static Task<T> Run<T>(Func<T> function, CancellationToken cancellationToken = default) =>
+        Task.Factory.StartNew(function, cancellationToken, TaskCreationOptions.DenyChildAttach, Default);
+
+    public static Task Run(Func<Task> function, CancellationToken cancellationToken = default) =>
+        Task.Factory.StartNew(function, cancellationToken, TaskCreationOptions.DenyChildAttach, Default).Unwrap();
+
+    public static Task<T> Run<T>(Func<Task<T>> function, CancellationToken cancellationToken = default) =>
+        Task.Factory.StartNew(function, cancellationToken, TaskCreationOptions.DenyChildAttach, Default).Unwrap();
+
+    /// <summary>Runs <paramref name="threadCount"/> concurrent worker loops on dedicated <see cref="ThreadPriority.BelowNormal"/> threads.</summary>
+    public static Task RunParallel(int threadCount, Action<int> body)
+    {
+        int count = Math.Max(1, threadCount);
+        var tasks = new Task[count];
+        for (int i = 0; i < count; i++)
+        {
+            int index = i;
+            tasks[i] = Run(() => body(index));
+        }
+        return Task.WhenAll(tasks);
+    }
+
+    protected override void QueueTask(Task task)
+    {
+        if (Interlocked.Decrement(ref _idleWorkers) < 0)
+        {
+            Interlocked.Increment(ref _idleWorkers);
+            var thread = new Thread(WorkerLoop)
+            {
+                IsBackground = true,
+                Priority = ThreadPriority.BelowNormal,
+                Name = "StressWorker",
+            };
+            thread.Start();
+        }
+        _queue.Enqueue(task);
+        _signal.Release();
+    }
+
+    private void WorkerLoop()
+    {
+        try { Thread.CurrentThread.Priority = ThreadPriority.BelowNormal; } catch { }
+        while (true)
+        {
+            if (!_signal.Wait(IdleTimeoutMs))
+            {
+                int current = Volatile.Read(ref _idleWorkers);
+                if (current > 0 && Interlocked.CompareExchange(ref _idleWorkers, current - 1, current) == current)
+                    return;
+                continue;
+            }
+            if (_queue.TryDequeue(out var task))
+            {
+                try
+                {
+                    if (Thread.CurrentThread.Priority != ThreadPriority.BelowNormal)
+                        try { Thread.CurrentThread.Priority = ThreadPriority.BelowNormal; } catch { }
+                    TryExecuteTask(task);
+                }
+                finally
+                {
+                    Interlocked.Increment(ref _idleWorkers);
+                }
+            }
+        }
+    }
+
+    protected override bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued) =>
+        !Thread.CurrentThread.IsThreadPoolThread && Thread.CurrentThread.Priority <= ThreadPriority.BelowNormal && !taskWasPreviouslyQueued && TryExecuteTask(task);
+
+    protected override IEnumerable<Task> GetScheduledTasks() => _queue.ToArray();
+}
 
 /// <summary>Live progress of a stress test run with elapsed/duration fraction calculation.</summary>
 public interface IStressProgress

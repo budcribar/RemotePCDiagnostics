@@ -83,7 +83,8 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : OnDemandModu
                 var device = (await Task.Run(Devices, ct).ConfigureAwait(false)).FirstOrDefault(d => d.Id == instance.Details);
                 if (device is null) return CouldNotRun.Result(Name, $"{instance.Label} is no longer connected.");
                 var (a, b) = Inputs(MatrixSize);
-                var cpu = CpuBaseline(a, b, MatrixSize, out var reference);
+                float[] reference = [];
+                var cpu = await Stress.StressTaskScheduler.Run(() => CpuBaseline(a, b, MatrixSize, out reference), ct).ConfigureAwait(false);
                 progress?.Report($"Testing {device.Name}…");
                 var report = await TestDeviceAsync(io, device, a, b, reference, cpu, budget, WatchdogGrace, ct, Logger).ConfigureAwait(false);
                 Log($"{Name}: {device.Name}: {report.Verdict} {report.Message}");
@@ -137,7 +138,8 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : OnDemandModu
             return ToResult(new NpuTestReport([], MatrixSize, budget, NpuVerdict.NoNpu, "This PC has no NPU (AI accelerator), or Windows has no driver for it."));
         }
         var (a, b) = Inputs(MatrixSize);
-        var cpu = CpuBaseline(a, b, MatrixSize, out var reference);
+        float[] reference = [];
+        var cpu = await Stress.StressTaskScheduler.Run(() => CpuBaseline(a, b, MatrixSize, out reference), ct).ConfigureAwait(false);
         var per = budget / devices.Count;
         var reports = new List<NpuDeviceReport>();
         foreach (var d in devices)
@@ -162,7 +164,7 @@ public sealed class NpuTestModule(INpuIo io, ILogger? log = null) : OnDemandModu
         var n = (int)Math.Sqrt(a.Length);
         var req = new NpuWorkloadRequest(n, a, b, budget, MaxIterations);
         // The driver call runs on its own task; if it hangs we stop waiting (abandon it) and report, so the app never freezes.
-        var work = Task.Run(() => io.RunWorkloadAsync(d, req, ct), CancellationToken.None);
+        var work = Stress.StressTaskScheduler.Run(() => io.RunWorkloadAsync(d, req, ct), CancellationToken.None);
         NpuWorkloadResult res;
         try { res = await work.WaitAsync(budget + grace, ct).ConfigureAwait(false); }
         catch (TimeoutException)

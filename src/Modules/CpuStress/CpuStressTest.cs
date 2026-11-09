@@ -27,8 +27,9 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
         long chunks = 0, errors = 0;
         int stop = 0;
         var start = clk.Elapsed;
+        using var cancelReg = cancellationToken.Register(() => Volatile.Write(ref stop, 1));
 
-        var workers = Task.Factory.StartNew(() => Parallel.For(0, threads, new ParallelOptions { MaxDegreeOfParallelism = threads }, t =>
+        var workers = StressTaskScheduler.RunParallel(threads, t =>
         {
             int n = t;
             while (Volatile.Read(ref stop) == 0)
@@ -42,7 +43,7 @@ public sealed class CpuStressTest(ISensorProvider sensors, IStressClock? clock =
                 }
                 Interlocked.Increment(ref chunks);
             }
-        }), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        });
 
         cleanup?.Register("CPU workers", () => Volatile.Write(ref stop, 1));
 

@@ -82,8 +82,9 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
         var path = Path.Combine(folder, $"{TempFilePrefix}{Guid.NewGuid():N}.tmp");
         log.Info($"Disk speed: start drive={drive.Root} file={path} size={size} free={free} duration={duration}");
         var st = new State();
+        using var cancelReg = cancellationToken.Register(() => Interlocked.CompareExchange(ref st.Stop, StopUser, StopNone));
         cleanup?.Register("disk test file", () => DeleteTestFile(path, folder));
-        cleanup?.Register("disk test stop", () => { if (st.Stop == StopNone) st.Stop = StopUser; });
+        cleanup?.Register("disk test stop", () => Interlocked.CompareExchange(ref st.Stop, StopUser, StopNone));
         var sensorsOk = SafeAvailability();
         using var monitorStop = new CancellationTokenSource();
         var monitor = MonitorAsync(st, clk, start, duration, o, sensorsOk, progress, cancellationToken, monitorStop.Token);
@@ -94,7 +95,7 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
         var cleaned = false;
         try
         {
-            (sw, sr, rw, rr, verified, errors) = await Task.Run(() => RunIo(path, size, o, st, clk, start, duration, cancellationToken), CancellationToken.None).ConfigureAwait(false);
+            (sw, sr, rw, rr, verified, errors) = await StressTaskScheduler.Run(() => RunIo(path, size, o, st, clk, start, duration, cancellationToken), CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -151,7 +152,8 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
         long written = 0; var tw = TimeSpan.Zero; var writeLimit = duration / 2;
         for (long off = 0; off < size && !Halt() && (off == 0 || clk.Elapsed - start < writeLimit); off += block)
         {
-            for (int p = 0; p < pagesPerBlock; p++) FillPage(buf.Span.Slice(p * PageBytes, PageBytes), runSeed, off / PageBytes + p, 0);
+            for (int p = 0; p < pagesPerBlock && !Halt(); p++) FillPage(buf.Span.Slice(p * PageBytes, PageBytes), runSeed, off / PageBytes + p, 0);
+            if (Halt()) break;
             var t0 = clk.Elapsed;
             stream.Position = off;
             stream.Write(buf.Span);
@@ -159,7 +161,7 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
             written = off + block;
             st.PhaseFraction = (double)written / size;
         }
-        var t1 = clk.Elapsed; stream.Flush(); tw += clk.Elapsed - t1;
+        if (!Halt()) { var t1 = clk.Elapsed; stream.Flush(); tw += clk.Elapsed - t1; }
         double? seqW = MBps(written, tw);
 
         // Sequential read-back with verification.
@@ -171,7 +173,7 @@ public sealed class DiskSpeedTest(IDiskTestFileSystem fs, ISensorProvider sensor
             stream.Position = off;
             stream.ReadExactly(buf.Span);
             tr += clk.Elapsed - t0;
-            for (int p = 0; p < pagesPerBlock; p++) Verify(buf.Span.Slice(p * PageBytes, PageBytes), off / PageBytes + p, 0);
+            for (int p = 0; p < pagesPerBlock && !Halt(); p++) Verify(buf.Span.Slice(p * PageBytes, PageBytes), off / PageBytes + p, 0);
             read = off + block;
             st.PhaseFraction = (double)read / written;
         }

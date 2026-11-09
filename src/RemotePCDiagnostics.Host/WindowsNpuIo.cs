@@ -63,7 +63,7 @@ public sealed class WindowsNpuIo(ILogger? log = null) : INpuIo
             catch (OperationCanceledException oce) { tcs.TrySetCanceled(oce.CancellationToken); }
             catch (NpuDeviceException ex) { tcs.TrySetException(ex); }
             catch (Exception ex) { tcs.TrySetException(new NpuDeviceException(ex.Message, ex)); }
-        }) { IsBackground = true, Name = "NpuTest" };
+        }) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "NpuTest" };
         t.Start();
         return tcs.Task;
     }

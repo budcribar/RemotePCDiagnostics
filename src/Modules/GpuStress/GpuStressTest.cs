@@ -11,7 +11,7 @@ namespace RemotePCDiagnostics.Core.Stress;
 public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sensors, IStressClock? clock = null, ILogger? log = null, StressCleanup? cleanup = null)
 {
     public Task<GpuStressReport> RunAsync(GpuStressOptions o, IProgress<GpuStressProgress>? progress = null, CancellationToken cancellationToken = default) =>
-        Task.Run(() => RunCoreAsync(o, progress, cancellationToken), CancellationToken.None);
+        StressTaskScheduler.Run(() => RunCoreAsync(o, progress, cancellationToken), CancellationToken.None);
 
     private async Task<GpuStressReport> RunCoreAsync(GpuStressOptions o, IProgress<GpuStressProgress>? progress, CancellationToken ct)
     {
@@ -81,6 +81,7 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
                 seed = unchecked(seed * 1664525u + 1013904223u);
                 var result = device.RunBatch(seed, iterations);
                 batches++;
+                if (ct.IsCancellationRequested) { stopped = true; break; }
                 var (n, bad) = Verify(result.Output, seed, iterations, threads, o.ChecksPerBatch, ref sampleOffset);
                 checkedValues += n;
                 if (bad > 0)
@@ -94,7 +95,7 @@ public sealed class GpuStressTest(IGpuDeviceFactory factory, ISensorProvider sen
                 iterations = next;
 
                 progress?.Report(new GpuStressProgress(clk.Elapsed - start, duration, adapterName, batches, checkedValues, mismatches, temp, fan, sensorsOk, rate));
-                try { await clk.DelayAsync(o.Gap, ct).ConfigureAwait(false); }
+                try { await clk.DelayAsync(o.Gap, ct); } // stay on StressTaskScheduler.Default (BelowNormal priority)
                 catch (OperationCanceledException) { stopped = true; break; }
             }
         }

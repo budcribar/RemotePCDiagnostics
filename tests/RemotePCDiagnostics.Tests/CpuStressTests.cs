@@ -189,6 +189,26 @@ public class CpuStressTests
         Assert.Equal("Stopped by you", store.Get(CpuStressModule.ModuleName).Message);
         Assert.IsType<CpuStressReport>(r.Payload);
     }
+
+    [Fact]
+    public async Task StressTaskScheduler_RunsBelowNormal_OutsideThreadPool()
+    {
+        var (isPool, priority, scheduler) = await StressTaskScheduler.Run(() =>
+            (Thread.CurrentThread.IsThreadPoolThread, Thread.CurrentThread.Priority, TaskScheduler.Current));
+        Assert.False(isPool);
+        Assert.Equal(ThreadPriority.BelowNormal, priority);
+        Assert.Same(StressTaskScheduler.Default, scheduler);
+
+        var priorities = new ThreadPriority[4];
+        var poolFlags = new bool[4];
+        await StressTaskScheduler.RunParallel(4, i =>
+        {
+            priorities[i] = Thread.CurrentThread.Priority;
+            poolFlags[i] = Thread.CurrentThread.IsThreadPoolThread;
+        });
+        Assert.All(priorities, p => Assert.Equal(ThreadPriority.BelowNormal, p));
+        Assert.All(poolFlags, f => Assert.False(f));
+    }
 }
 
 internal sealed class SyncProgress<T>(Action<T> a) : IProgress<T> { public void Report(T value) => a(value); }

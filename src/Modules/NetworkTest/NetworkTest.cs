@@ -63,7 +63,7 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
                     var limit = left < _s.TransferTimeout ? left : _s.TransferTimeout;
                     if (limit > TimeSpan.FromSeconds(2))
                     {
-                        speedTask = Task.Run(async () =>
+                        speedTask = StressTaskScheduler.Run(async () =>
                         {
                             Volatile.Write(ref step, "Measuring download speed");
                             down = await speed.DownloadAsync(_s.DownloadBytes, limit, speedCts.Token).ConfigureAwait(false);

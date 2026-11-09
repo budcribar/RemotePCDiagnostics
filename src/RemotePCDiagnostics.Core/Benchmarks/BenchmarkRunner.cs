@@ -141,11 +141,11 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
 
             if (settings.IsEnabled(BenchmarkKind.CpuSingle))
                 await Step("Measuring processor speed (one core)…", async () =>
-                    list.Add(new(BenchmarkKind.CpuSingle, await RepeatAsync(settings.Runs, () => Task.Run(() => (double?)CpuScore(1, settings.CpuSingleRun, ct), ct)).ConfigureAwait(false))));
+                    list.Add(new(BenchmarkKind.CpuSingle, await RepeatAsync(settings.Runs, () => Stress.StressTaskScheduler.Run(() => (double?)CpuScore(1, settings.CpuSingleRun, ct), ct)).ConfigureAwait(false))));
 
             if (settings.IsEnabled(BenchmarkKind.CpuMulti))
                 await Step("Measuring processor speed (all cores)…", async () =>
-                    list.Add(new(BenchmarkKind.CpuMulti, await RepeatAsync(settings.Runs, () => Task.Run(() => (double?)CpuScore(Environment.ProcessorCount, settings.CpuMultiRun, ct), ct)).ConfigureAwait(false))));
+                    list.Add(new(BenchmarkKind.CpuMulti, await RepeatAsync(settings.Runs, () => Stress.StressTaskScheduler.Run(() => (double?)CpuScore(Environment.ProcessorCount, settings.CpuMultiRun, ct), ct)).ConfigureAwait(false))));
 
             if (settings.IsEnabled(BenchmarkKind.DiskLatency))
                 await Step("Measuring disk response time…", async () =>
@@ -294,7 +294,7 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
             }
             while (sw.Elapsed < duration && !ct.IsCancellationRequested);
             counts[t * 8] = units + (long)(x & 0); // keep x alive
-        }) { IsBackground = true, Priority = ThreadPriority.Normal }).ToList();
+        }) { IsBackground = true, Priority = ThreadPriority.BelowNormal }).ToList();
         workers.ForEach(w => w.Start());
         workers.ForEach(w => w.Join());
         ct.ThrowIfCancellationRequested();

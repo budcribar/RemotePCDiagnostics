@@ -14,6 +14,9 @@ for (int i = 0; i + 1 < args.Length; i += 2)
 }
 if (bytes <= 0 || seconds <= 0) { Emit(new MemTestMessage.Fail("usage: --bytes <n> --seconds <n>")); return 2; }
 
+try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.BelowNormal; } catch { }
+try { Thread.CurrentThread.Priority = ThreadPriority.BelowNormal; } catch { }
+
 var sw = Stopwatch.StartNew();
 var deadline = TimeSpan.FromSeconds(seconds);
 var blocks = new List<IMemoryBlock>();

@@ -53,6 +53,10 @@ public sealed class MemoryTest(IMemoryInfo memory, IMemTestHelperLauncher launch
         var badOffsets = new HashSet<long>(); // only touched by the reader task
         using (proc)
         {
+            using var cancelReg = cancellationToken.Register(() =>
+            {
+                if (Interlocked.CompareExchange(ref stop, StopUser, StopNone) == StopNone) proc.Kill();
+            });
             var reader = Task.Run(async () =>
             {
                 while (await proc.ReadLineAsync(CancellationToken.None).ConfigureAwait(false) is { } line)
@@ -80,14 +84,14 @@ public sealed class MemoryTest(IMemoryInfo memory, IMemTestHelperLauncher launch
                     var (t, f, critical, what) = ReadSensors();
                     temp = t; fan = f;
                     if (t is { } tv) maxT = Math.Max(maxT ?? tv, tv);
-                    if (critical && stop == StopNone) { stop = StopHot; log.Warn($"Memory test: abort, critical temperature: {what}"); proc.Kill(); }
+                    if (critical && Interlocked.CompareExchange(ref stop, StopHot, StopNone) == StopNone) { log.Warn($"Memory test: abort, critical temperature: {what}"); proc.Kill(); }
                 }
                 var elapsed = clk.Elapsed - start;
-                if (cancellationToken.IsCancellationRequested && stop == StopNone) { stop = StopUser; proc.Kill(); }
-                if (elapsed > duration + o.Grace && stop == StopNone) { stop = StopTimeout; log.Warn("Memory test: helper overran the time limit; killing it"); proc.Kill(); }
+                if (cancellationToken.IsCancellationRequested && Interlocked.CompareExchange(ref stop, StopUser, StopNone) == StopNone) proc.Kill();
+                if (elapsed > duration + o.Grace && Interlocked.CompareExchange(ref stop, StopTimeout, StopNone) == StopNone) { log.Warn("Memory test: helper overran the time limit; killing it"); proc.Kill(); }
                 progress?.Report(new MemoryTestProgress(elapsed > duration ? duration : elapsed, duration, Interlocked.Read(ref tested), Volatile.Read(ref pass), Volatile.Read(ref frac), Interlocked.Read(ref errors), temp, fan, sensorsOk));
-                if (stop != StopNone) break;
-                await Task.WhenAny(reader, clk.DelayAsync(o.SampleInterval, CancellationToken.None)).ConfigureAwait(false);
+                if (Volatile.Read(ref stop) != StopNone) break;
+                await Task.WhenAny(reader, clk.DelayAsync(o.SampleInterval, cancellationToken)).ConfigureAwait(false);
             }
             try { await reader.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false); }
             catch (Exception ex) { log.Warn($"Memory test: reading helper output: {ex.Message}"); }

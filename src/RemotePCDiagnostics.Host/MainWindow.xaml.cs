@@ -33,6 +33,9 @@ public partial class MainWindow : Window
     private DispatcherTimer? _copyResetTimer;
     public MainWindow()
     {
+        // Keep the UI dispatcher above Normal and BelowNormal stressor threads so progress renders and Stop clicks stay responsive under full load.
+        try { Thread.CurrentThread.Priority = ThreadPriority.AboveNormal; } catch { }
+
         // Local (default) or Remote. Remote when started with -u=<server uri> (RemoteBlazorWebViewTutorial convention)
         // or REMOTEPC_MODE=Remote (+ optional REMOTEPC_SERVER_URL, default https://remoteblazorwebview.com:34544).
         // See Properties/launchSettings.json for the Visual Studio profiles ("Remote (Railway, mirror)" is the default; "Remote (Railway, reverse mirror demo)", "Remote (Railway)", "Local").
