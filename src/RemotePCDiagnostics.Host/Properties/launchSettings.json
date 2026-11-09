@@ -8,12 +8,30 @@
         "REMOTEPC_MIRROR": "1"
       }
     },
+    "Remote (Railway, mirror + voice)": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "REMOTEPC_MODE": "Remote",
+        "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544",
+        "REMOTEPC_MIRROR": "1",
+        "REMOTEPC_VOICE": "1"
+      }
+    },
     "Remote (Railway, reverse mirror demo)": {
       "commandName": "Project",
       "environmentVariables": {
         "REMOTEPC_MODE": "Remote",
         "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544",
         "REMOTEPC_REVERSE_MIRROR": "1"
+      }
+    },
+    "Remote (Railway, reverse mirror + voice)": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "REMOTEPC_MODE": "Remote",
+        "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544",
+        "REMOTEPC_REVERSE_MIRROR": "1",
+        "REMOTEPC_VOICE": "1"
       }
     },
     "Remote (Railway)": {
