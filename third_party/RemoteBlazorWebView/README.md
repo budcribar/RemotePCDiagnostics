@@ -1,8 +1,7 @@
 # RemoteBlazorWebView packages
 
-These local NuGet packages are built from `budcribar/RemoteBlazorWebView` branch `net10` at `e95a3a1`
-(which includes #74 mirror-safe remote component frames, #73 and #75 `RemoteComponentHostOptions.ExitWhenInputCloses`). Version `10.0.14-embedded.5` is a local
-integration build, not a nuget.org release. The root `NuGet.Config` includes this directory so a fresh checkout and CI can
+These NuGet packages are built from the RemoteBlazorWebView `codex/session-voice` branch at `f0a0f71`.
+Version `10.0.14-embedded.7` is a local integration build with opt-in WPF voice support. The root `NuGet.Config` includes this directory so a fresh checkout and CI can
 restore it. The version is set once, as `RbwvVersion` in the root `Directory.Build.props`.
 
 Included packages, all under the upstream MIT license (https://github.com/budcribar/RemoteBlazorWebView):
@@ -14,13 +13,16 @@ Included packages, all under the upstream MIT license (https://github.com/budcri
   module UI host.
 
 To reproduce, build the JS bundle in `src/RemoteWebView.Blazor.JS` (`npm run build:production`; see its `Build.md`), then from the
-upstream repository root:
+upstream repository root with the RemoteBlazorWebViewTutorial checkout beside it:
 
 ```powershell
 foreach ($p in 'RemoteWebViewService.Lib', 'RemoteWebView', 'RemoteBlazorWebView.RemoteComponents', 'RemoteBlazorWebView.Wpf') {
-    dotnet build src/$p -c Release -p:Version=10.0.14-embedded.5
-    dotnet pack src/$p -c Release --no-build -p:Version=10.0.14-embedded.5 -o <this folder>
+    dotnet pack src/$p -c Release -p:VersionSuffix=embedded.7 -p:GeneratePackageOnBuild=false -o <packages folder>
 }
 ```
 
 Update `SHA256SUMS.txt` when replacing them. Replace this local build with a published package once available.
+
+## Voice relay
+
+Deploy the RemoteWebViewService from the same branch before enabling `REMOTEPC_VOICE=1`. Serve the controller and host over HTTPS and forward WebSocket upgrades for `/voice/{id}/signal`, preserving the public Host header. Set `Voice__StunUrl` and, for connections that need a media relay, set `Voice__TurnUrl` and `Voice__TurnSecret` to a TURN service that supports shared-secret credentials.

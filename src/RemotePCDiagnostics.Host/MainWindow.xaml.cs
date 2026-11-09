@@ -189,6 +189,8 @@ public partial class MainWindow : Window
         {
             RemoteBlazorWebView.Id = id; // Guid.Empty = new id each run; fixed via -i=<guid> or REMOTEPC_ID
             RemoteBlazorWebView.ServerUri = serverUri;
+            RemoteBlazorWebView.EnableVoice = !reverseMirror && serverUri.Scheme == Uri.UriSchemeHttps
+                && Environment.GetEnvironmentVariable("REMOTEPC_VOICE") == "1";
             RemoteBlazorWebView.EnableMirrors = mirror || reverseMirror; // the read-only /mirror page needs this in both directions
             if (reverseMirror)
             {

@@ -188,6 +188,7 @@ The Host has four Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/P
 
 Configuration (resolved by `SessionLaunchOptions`, precedence top to bottom):
 - `-u=<server url>` command-line arg: forces Remote with that server (the RemoteBlazorWebViewTutorial convention), e.g. `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`.
+- `REMOTEPC_VOICE=1` enables two-way voice in remote technician sessions over HTTPS. Use a voice-enabled RemoteWebViewService and share the usual technician link. The technician selects **Voice call**, and the person at the PC accepts in the separate **Remote voice** window. Both can mute or hang up. This applies to regular remote sessions and local mirroring. See the [relay voice configuration](third_party/RemoteBlazorWebView/README.md#voice-relay).
 - `REMOTEPC_MODE=Local|Remote` and `REMOTEPC_SERVER_URL` env vars. Remote with no URL uses the default `https://remoteblazorwebview.com:34544`.
 - `-i=<guid>` or `REMOTEPC_ID`: fixed session id. Otherwise a new id is assigned each run.
 - `-m` / `--mirror` or `REMOTEPC_MIRROR=1`: enables session mirroring in Remote mode so the person at the PC can watch what the technician is doing live in the local window.
