@@ -47,6 +47,18 @@ public static class RemoteLinkInfo
     public static Uri BuildShareUrl(Uri serverUri, Guid id, bool reverseMirror) => reverseMirror ? BuildMirrorUrl(serverUri, id) : BuildTechnicianUrl(serverUri, id);
 
     /// <summary>
+    /// Marks a page URL as the machine owner's (<c>?role=owner</c>) so the relay records this connection as the owner and
+    /// lets it reclaim control. Only the local window's own surface gets this — never the link shared with the technician.
+    /// </summary>
+    public static Uri WithOwnerRole(Uri pageUri)
+    {
+        ArgumentNullException.ThrowIfNull(pageUri);
+        var b = new UriBuilder(pageUri);
+        b.Query = string.IsNullOrEmpty(b.Query) ? "role=owner" : b.Query.TrimStart('?') + "&role=owner";
+        return b.Uri;
+    }
+
+    /// <summary>
     /// What the local window shows in remote mode, under the native panel (which has the link and Copy link): a short note for
     /// the person at the PC, styled like the panel. Never the link again.
     /// </summary>
