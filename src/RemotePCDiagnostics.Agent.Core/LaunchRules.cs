@@ -67,8 +67,8 @@ public static class LaunchRules
         WindowsCommandLine.Join([entryPath, "-u=" + server, "-i=" + session.ToString("D")]);
 
     /// <summary>The consent prompt's command line, run in the user's session.</summary>
-    public static string ConsentCommandLine(string agentExe, string technician, int timeoutSeconds) =>
-        WindowsCommandLine.Join([agentExe, "consent", "--technician=" + AgentCommandLine.CleanTechnician(technician),
+    public static string ConsentCommandLine(string agentExe, string requester, int timeoutSeconds) =>
+        WindowsCommandLine.Join([agentExe, "consent", "--requester=" + AgentCommandLine.CleanRequester(requester),
             "--timeout=" + timeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
 
     /// <summary>"Windows 11 Pro 24H2 (26100)". The registry's ProductName still says "Windows 10" on Windows 11 (build 22000 and later).</summary>

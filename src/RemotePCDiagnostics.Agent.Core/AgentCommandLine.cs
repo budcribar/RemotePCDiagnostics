@@ -14,7 +14,7 @@ public sealed record AgentArgs(
     string? Key = null,
     ConsentCeiling? Consent = null,
     AgentLifetime? Lifetime = null,
-    string Technician = "",
+    string Requester = "",
     int TimeoutSeconds = AgentCommandLine.DefaultConsentTimeoutSeconds,
     bool Pause = false,
     string? Error = null);
@@ -30,7 +30,7 @@ public static class AgentCommandLine
     public const string DefaultServer = "https://server.remoteblazorwebview.com:34544";
     public const int DefaultConsentTimeoutSeconds = 120;
     public const int MinConsentTimeoutSeconds = 10, MaxConsentTimeoutSeconds = 600;
-    public const int MaxTechnicianLength = 80;
+    public const int MaxRequesterLength = 80;
 
     public const string Usage =
         "Remote PC Diagnostics agent\n" +
@@ -100,8 +100,8 @@ public static class AgentCommandLine
                     if (l is null) return Fail("--lifetime must be persistent or session.");
                     result = result with { Lifetime = l };
                     break;
-                case "technician":
-                    result = result with { Technician = CleanTechnician(value) };
+                case "requester":
+                    result = result with { Requester = CleanRequester(value) };
                     break;
                 case "timeout":
                     if (!int.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var t)
@@ -120,7 +120,7 @@ public static class AgentCommandLine
     {
         AgentCommand.Install => option is "server" or "key" or "consent" or "lifetime" or "pause",
         AgentCommand.Uninstall => option is "pause",
-        AgentCommand.Consent => option is "technician" or "timeout",
+        AgentCommand.Consent => option is "requester" or "timeout",
         _ => false,
     };
 
@@ -137,12 +137,12 @@ public static class AgentCommandLine
         return true;
     }
 
-    /// <summary>The remote user's display name as shown in the consent prompt: printable, no quotes, at most <see cref="MaxTechnicianLength"/> characters.</summary>
-    public static string CleanTechnician(string? name)
+    /// <summary>The remote user's display name as shown in the consent prompt: printable, no quotes, at most <see cref="MaxRequesterLength"/> characters.</summary>
+    public static string CleanRequester(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return "";
         var chars = name.Where(ch => !char.IsControl(ch) && ch != '"').ToArray();
         var s = string.Join(' ', new string(chars).Split(' ', StringSplitOptions.RemoveEmptyEntries));
-        return s.Length > MaxTechnicianLength ? s[..MaxTechnicianLength].TrimEnd() : s;
+        return s.Length > MaxRequesterLength ? s[..MaxRequesterLength].TrimEnd() : s;
     }
 }

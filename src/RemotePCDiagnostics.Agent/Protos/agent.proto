@@ -87,7 +87,7 @@ message LaunchCommand {
   string request_id = 1;
   string session_id = 2;     // GUID the app must use (-i=); the remote user opens <server>/app/<session_id>
   string server_url = 3;     // relay base address the app connects to (-u=)
-  string technician = 4;     // shown in the consent prompt
+  string requester = 4;     // shown in the consent prompt
   bool require_consent = 5;  // the agent asks anyway when its own ceiling is CONSENT_ALWAYS_ASK
 }
 
@@ -129,7 +129,7 @@ message AgentList {
 message StartSessionRequest {
   string machine_id = 1;
   bool unattended = 2;      // honoured only when the agent's ceiling is CONSENT_UNATTENDED_ALLOWED
-  string technician = 3;    // display name for the consent prompt; the relay fills it from the signed-in user when auth is on
+  string requester = 3;    // display name for the consent prompt; the relay fills it from the signed-in user when auth is on
 }
 
 message StartSessionResponse {

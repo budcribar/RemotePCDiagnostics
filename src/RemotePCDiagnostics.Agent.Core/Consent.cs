@@ -16,10 +16,10 @@ public static class ConsentPolicy
     /// </summary>
     public static bool MustAsk(ConsentCeiling ceiling, bool requireConsent) => requireConsent || ceiling != ConsentCeiling.Unattended;
 
-    public static string PromptText(string? technician)
+    public static string PromptText(string? requester)
     {
-        var who = AgentCommandLine.CleanTechnician(technician);
-        if (who.Length == 0) who = "A technician";
+        var who = AgentCommandLine.CleanRequester(requester);
+        if (who.Length == 0) who = "Someone";
         return $"{who} wants to start a Remote PC Diagnostics session on this computer. Allow?";
     }
 
