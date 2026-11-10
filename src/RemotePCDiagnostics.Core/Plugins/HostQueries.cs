@@ -11,7 +11,7 @@ namespace RemotePCDiagnostics.Core.Plugins;
 /// The reads a module in user mode (RemotePCDiagnostics.ModuleHost, restricted token) asks the app for, because they need administrator
 /// rights. Each is a narrow, typed question: the module never gets administrator rights, never runs a command of its choosing in the app,
 /// and the app answers only what the module listed under <see cref="ModuleManifest.Capabilities"/>. For now only modules that ship with
-/// the app may use them (an unsigned module's answers would need redaction first; see docs/host-queries.md).
+/// the app may use them (an unsigned module's answers would need redaction first; see docs/roadmap.md, "Host queries for third-party modules").
 /// </summary>
 public interface IHostQueries
 {

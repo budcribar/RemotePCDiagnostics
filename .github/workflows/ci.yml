@@ -243,7 +243,7 @@ jobs:
         run: |
           dotnet publish tools/prototypes/NetworkUsagePrototype/NetworkUsagePrototype.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts/NetworkUsagePrototype
           if ($LASTEXITCODE -ne 0) { throw 'Network usage prototype publish failed' }
-          Copy-Item docs/network-usage-prototype.md artifacts/NetworkUsagePrototype/README.md
+          Copy-Item tools/prototypes/NetworkUsagePrototype/README.md artifacts/NetworkUsagePrototype/README.md
           & artifacts/NetworkUsagePrototype/NetworkUsagePrototype.exe --demo --out artifacts/network-demo
           if ($LASTEXITCODE -ne 0) { throw 'Network usage demo export failed' }
           $report = Get-Content artifacts/network-demo/network-usage.json -Raw | ConvertFrom-Json

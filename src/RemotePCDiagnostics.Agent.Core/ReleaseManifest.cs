@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace RemotePCDiagnostics.Agent.Core;
 
-/// <summary><c>manifest.json</c> of a release (docs/agent-design.md, "Manifest"). Only trusted after <see cref="ManifestSignature.Verify"/>.</summary>
+/// <summary><c>manifest.json</c> of a release (docs/roadmap.md, "Agent program", "Manifest"). Only trusted after <see cref="ManifestSignature.Verify"/>.</summary>
 public sealed class ReleaseManifest
 {
     public const string ProductName = "RemotePCDiagnostics";

@@ -86,7 +86,7 @@ device drivers, resource hogs, battery and power plan, network, Windows error lo
 disk, GPU and network stress tests, both audio tests, the webcam test and the NPU test), and so are the rest (sensors and fans, drive
 health, crashes, services, osquery, DISM, SFC, the security audit). `BuiltInModulesPlugin.CompiledIn` is empty. Only DISM, SFC and the
 security audit still need administrator; sensors, drive health, crashes and services read what needs administrator through host
-queries (`docs/host-queries.md`).
+queries ([Host queries](#host-queries) below).
 
 - `src/Modules/Directory.Build.props` sets each one up: `module.json` embedded, Abstractions, Core and UI referenced with
   `Private="false"` (the app supplies them, so the DLL holds only the module's own code and page).
@@ -136,3 +136,63 @@ osquery `query` (a single SELECT; `curl` and `carves` are refused), the `columns
 `gt`, `ge`, `contains`, `notContains`, `empty`, `notEmpty`, each with a `level` and a plain-text `message`). It carries no code, so it runs
 in the app unsigned and shows in the standard report view. A check that would run a script is code: it must be a signed module, or it
 runs in user mode.
+
+## Host queries
+
+What a module that ships with the app can ask the host for. The design for unsigned, third-party modules is not built; it is in
+[roadmap.md](roadmap.md#2-host-queries-for-third-party-modules).
+
+Five modules that need elevated or host-assisted reads can run out of process **in user mode** (`RemotePCDiagnostics.ModuleHost`,
+restricted token, Medium integrity) by asking the app for those reads. They still ship in process;
+the About page switches each one.
+
+| Module | `capabilities` in its module.json | What the app reads for it |
+|---|---|---|
+| Temperatures & fans (`Sensors`) | `sensors.read` | Every temperature and fan reading (LibreHardwareMonitor in the app) |
+| Drive health (`DriveHealth`) | `storage.drives`, `storage.retrims`, `osquery.select` | The drive health script's output, the last retrim per drive, `disk_info` |
+| Services (`Services`) | `osquery.select` | The `services` statement, with every service's details |
+| Crashes & unexpected restarts (`Crashes`) | `eventlog.query`, `crashes.minidumps`, `events.reviewed` | Application and System log events, the minidump list, the reviewed events |
+| Windows error log (`EventLog`) | `eventlog.query`, `events.reviewed` | Application and System log events, the reviewed events |
+
+How it works:
+
+- **Code:** `IHostQueries` in `RemotePCDiagnostics.Core.Plugins` (`HostQueries.cs`). In the module host, `UserModePlugin.Load` registers a
+  `HostQueriesClient` for a plugin whose manifest lists capabilities, and the plugin passes it to its module (for example
+  `new ServicesModule(osquery, sp.GetService<IHostQueries>())`). In the app the service isn't registered, so the module reads directly,
+  as before.
+- **Wire:** on the module host's stdin and stdout, next to the existing messages:
+
+  ```text
+  host → app   {"type":"query","id":3,"capability":"osquery.select","args":{"sql":"SELECT name, ... FROM services WHERE ...;"}}
+  app  → host  {"type":"answer","id":3,"ok":true,"value":{"sql":"...","rows":[...]}}
+  app  → host  {"type":"answer","id":4,"ok":false,"error":"notAllowed","reason":"only the app's own osquery statements can run"}
+  ```
+
+- **Checks in the app** (`HostQueryServer`), before anything runs:
+  - the module ships with the app (an unsigned module gets `notAllowed` for every query, until redaction exists);
+  - its module.json lists the capability (`notDeclared` otherwise). An unknown capability name disables the module at load;
+  - `osquery.select` runs only the app's own statements, verbatim (`HostCapabilities.AllowedSql`);
+  - `eventlog.query` reads only the System and Application logs, at most 1,000 events, with a filter of at most 2,000 characters;
+  - every query has a 2-minute limit.
+- **Results:** a result whose payload isn't an `AreaReport` crosses only if its type is listed in `ModuleHostPayloads.Types`
+  (`SensorReport`, `SecurityAuditReport`, `HardwareInventory`), so the Temperatures & fans, Security audit, and Hardware inventory pages
+  get the same result in either process. Those pages have `"resultOnlyUi": true`: they read only the module's results, so out of process
+  the app still renders them from the stand-in's results.
+- **Page clicks** (`ModulePageCalls`): the Services page's Start, Stop and Restart buttons and the Crashes page's "Find related
+  evidence" used to ask the module object in the app. Out of process that object is in the module host, so:
+  - what the page reads from the last run travels with the result (`pageData` on the `result` line): `serviceRows` (the services
+    behind the rows) and `hangEvidence` (`{"cardId":"hangs"}`, the card whose rows can look up evidence). The app's stand-in offers
+    them to the page (`IModuleFeatures`; pages ask `module.Feature<IServiceRows>()` instead of `module as IServiceRows`). Starting or
+    stopping a service still happens in the app, with its confirmation, as before;
+  - a click that needs the module is a call: `{"type":"call","id":1,"name":"hangEvidence","args":[...]}` to the host, which runs it
+    on the module (answering its host queries meanwhile) and sends `{"type":"return","id":1,"ok":true,"value":"..."}`. Calls wait for a
+    run in progress, start a host when none is running, and are reset after 3 minutes;
+  - both only for modules that ship with the app; an unsigned module's page data is ignored and its calls refused.
+- **Security audit** renders its page in the app from results (`"resultOnlyUi": true`; `SecurityAuditReport` is in
+  `ModuleHostPayloads.Types`), and its Cancel button asks the module host to stop the run (`IUserModeModule.Stop`, the `stop` line).
+- **One run per device** (`"perDevice": true`, Drive health): the app's stand-in is a `PerDeviceModuleProxy` (`IPerDeviceModule`).
+  It asks the host for the devices (`{"type":"detect"}` → `{"type":"detection","instances":[...]}`), runs each one
+  (`{"type":"refresh","instance":{...}}`), and takes the one report of all drives from the host (`pageData.combined`, with the drive
+  keys it covers). So the module keeps one result per drive in History and one card per drive on its page. Its storage clean-up panel
+  comes as `pageData.panels`.
+- **Not carried over out of process yet:** the Checks screen's Cancel for DISM and SFC (`ICancellableScan`).

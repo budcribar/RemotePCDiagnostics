@@ -20,7 +20,7 @@ public sealed record AgentArgs(
     string? Error = null);
 
 /// <summary>
-/// The agent command line (docs/agent-design.md):
+/// The agent command line (docs/roadmap.md, "Agent program"):
 /// <c>install [--server=URL] [--key=KEY] [--consent=ask|unattended] [--lifetime=persistent|session]</c>, <c>uninstall</c>, <c>status</c>,
 /// <c>run</c> and the internal <c>consent --remote user=NAME --timeout=SECONDS</c>. Options are <c>--name=value</c>; names and commands are
 /// case-insensitive. <c>--pause</c> (internal) keeps the window of an elevated relaunch open until a key is pressed.
