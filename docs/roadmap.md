@@ -7,7 +7,8 @@ starting on one. The originals are in the Git history of `docs/`.
 
 Contents: [1. Agent program](#1-agent-program) · [2. Host queries for third-party modules](#2-host-queries-for-third-party-modules) ·
 [3. Service workflow fixes still to build](#3-service-workflow-fixes-still-to-build) · [4. Remote trust model](#4-remote-trust-model) ·
-[5. Proposals](#5-proposals)
+[5. Proposals](#5-proposals) ·
+[6. Out-of-process review: open suggestions](#6-out-of-process-review-open-suggestions)
 
 ## 1. Agent program
 
@@ -1153,3 +1154,50 @@ Verdict rule of thumb: `Fail` only for clear, actionable problems (e.g. two real
 5. Phase 2: browser check, then Office/email add-in check (aligned with `OutlookBenchmark`).
 6. Phase 3 items as rule sets on modules 1–3, promoting any to a standalone module only if it needs its own data collection (e.g. call-time sampling, WSL).
 7. After each step: CI build green, unit tests on synthetic data, manual verification on at least one non-Lenovo laptop.
+
+## 6. Out-of-process review: open suggestions
+
+From `out-of-process-architecture-review.txt`, a review of the out-of-process module work (RemotePCDiagnostics PRs #28 to #33 and
+RemoteBlazorWebView PRs #68 to #74). These five suggestions were open when the review was written; they have not been checked against
+the code since, so some may already be done.
+
+### 1. UserModeModuleProxy Keeps Every Spawned ModuleHost Alive Forever (Memory / Process Count)
+
+- Where: src/RemotePCDiagnostics.Core/Plugins/UserModeModules.cs (UserModeModuleProxy.Connect)
+- Issue: Once CheckAvailabilityAsync or RefreshAsync starts a RemotePCDiagnostics.ModuleHost process for a module, _conn is kept open indefinitely until the app exits or an error resets it. With "All modules: Out of process" enabled (or as more modules default to outOfProcess: true), running "Check all" will leave a separate .NET child process resident in memory for every module for the entire life of the app.
+- Suggestion: Either shut down the child ModuleHost after an idle timeout (e.g., 30–60 seconds of inactivity after RefreshAsync completes), or share a single user-mode ModuleHost worker process across bundled user-mode modules while keeping separate processes for unsigned third-party plugins.
+
+### 2. Synchronous Blocking on Async Host Queries in ModuleHost (AnswerAsync)
+
+- Where: src/RemotePCDiagnostics.Core/Plugins/UserModeModules.cs (UserModeModuleProxy.RefreshAsync) and src/RemotePCDiagnostics.Core/Plugins/HostQueries.cs (HostQueriesClient)
+- Issue: In UserModeModuleProxy, the stdout read loop awaits AnswerAsync(conn, m, ...) inline before reading the next line from the child process:
+  ```csharp
+  case "query":
+  await AnswerAsync(conn, m, CancellationToken.None).ConfigureAwait(false);
+  break;
+  ```
+  Although HostQueriesClient supports concurrent in-flight queries via ConcurrentDictionary<int, TaskCompletionSource<...>>, the server side processes them strictly serially and blocks reading progress messages or stop acknowledgments while a slow query (up to the 2-minute HostCapabilities.Timeout, such as PowerShell drive health or osquery) is running. Furthermore, during cancellation (GraceReadAsync), AnswerAsync is called with CancellationToken.None, so a cancelling module can still block the proxy for up to 2 minutes waiting for a host query to finish.
+- Suggestion: Pass a cancellation token linked to the refresh/grace token into AnswerAsync, and dispatch AnswerAsync as a background task (bounded by a SemaphoreSlim, e.g., max 4–8 concurrent queries as described in the host queries design (section 2)) so the proxy read loop stays responsive to progress, result, and cancellation.
+
+### 3. Elevated Out-of-Process Modules (Elevated = true) Leak Standard Handles or Lose Pipe Isolation
+
+- Where: src/RemotePCDiagnostics.Host/RestrictedModuleHostLauncher.cs (Start and StartRestrictedGuiWithInput)
+- Issue:
+  - a) In StartRestrictedGuiWithInput, bInheritHandles: true is passed to CreateProcessAsUser with STARTF_USESTDHANDLES, where only hStdInput is set (hStdOutput and hStdError are IntPtr.Zero), and any other inheritable handles in the parent process at that moment are also inherited by the restricted child.
+  - b) When an admin module (DISM, SFC, SecurityAudit) is switched to out-of-process, RestrictedModuleHostLauncher delegates to ProcessModuleHostLauncher, which does not wait briefly on Dispose() for graceful stdin EOF shutdown like RestrictedModuleHostLauncher.Connection.Dispose() does (process.WaitForExit(2000) before Kill()).
+- Suggestion: In StartRestrictedGuiWithInput, bind hStdOutput and hStdError to NUL (or explicit pipes) and consider PROC_THREAD_ATTRIBUTE_HANDLE_LIST so only the intended pipe handles are inherited.
+
+### 4. ModuleUiHost Re-Creates the Module Instance and Doesn't Forward IHostQueries or Custom Payloads
+
+- Where: src/RemotePCDiagnostics.ModuleUiHost/Program.cs and src/RemotePCDiagnostics.ModuleUi/ModuleUi.cs
+- Issue:
+  - a) ModuleUiResult only carries AreaReport? Report across IModuleUi, stripping actions unconditionally (UserModeModuleProxy.WithoutActions(r)), even when module.Bundled is true, and dropping non-AreaReport payloads (like SensorReport).
+  - b) ModuleUiRoot.razor passes ui.Module (an instance created inside ModuleUiHost without IHostQueries) to DynamicComponent. As noted in the host queries design (section 2), this is why Sensors uses resultOnlyUi: true and why interactive pages (Osquery, SecurityAudit, Services, Crashes) currently show the "needs the app process" notice when switched to out-of-process.
+- Suggestion:
+  - Preserve AreaActions in ModuleUiResult.From when module.Bundled is true (or route action clicks back to the host via a callback method on IModuleUi, which ContractGenerator already supports via Task OnAction(AreaAction action)).
+  - Using [RemoteComponentContract] callbacks for module UI actions would let more built-in pages become portableUi: true without needing in-process host services.
+
+### 5. Minor Robustness Items in RemoteBlazorWebView.RemoteComponents
+
+- PID polling in RemoteComponentHost.ExitWithParent: RemoteComponentHost.IsRunning(int pid) calls Process.GetProcesses() every 2 seconds and disposes every Process object on the system just to check if parentPid exists. Instead, since RemoteComponentHost already reads Console.In via connection.RunAsync, closing connection (connection.Closed) when the parent exits—or waiting on EOF of the anonymous stdin pipe—detects parent termination immediately (even if the parent crashes or is killed by Task Manager, Windows closes the write end of the anonymous pipe) with zero polling overhead and no Process.GetProcesses() allocations.
+- Documentation drift: docs/module-plugins.md (line 71 and lines 82–85) still states that admin modules are compiled into BuiltInModulesPlugin.CompiledIn, that ModuleUiHost doesn't have the app's CSS, and that remote sessions don't support module UI frames—all three of which were upgraded in PRs #32 and #33. Updating docs/module-plugins.md to match the new state will keep the docs aligned with the code.
