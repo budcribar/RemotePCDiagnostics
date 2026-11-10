@@ -101,7 +101,19 @@ public partial class MainWindow : Window
             Logger.Info($"BlazorWebViewInitializing args='{extra}'");
         };
         RemoteBlazorWebView.BlazorWebViewInitialized += (_, e) =>
+        {
             Logger.Info($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
+            // Remote: this window shows the relay's page for the session. Reloading it (F5, Ctrl+R) makes the relay treat the
+            // session as refreshed, which restarts the app. Nothing here needs a reload, so ignore it; find, zoom and the
+            // other browser keys keep working.
+            if (e.WebView.CoreWebView2 is { } core)
+                core.NavigationStarting += (_, n) =>
+                {
+                    if (!_mirror || n.NavigationKind != Microsoft.Web.WebView2.Core.CoreWebView2NavigationKind.Reload) return;
+                    n.Cancel = true;
+                    Logger.Info("Ignored a page reload in the remote session window");
+                };
+        };
 
         if (launch.ServerUri is not null)
         {
