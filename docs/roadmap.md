@@ -1158,34 +1158,9 @@ Verdict rule of thumb: `Fail` only for clear, actionable problems (e.g. two real
 ## 6. Out-of-process review: open suggestions
 
 From `out-of-process-architecture-review.txt`, a review of the out-of-process module work (RemotePCDiagnostics PRs #28 to #33 and
-RemoteBlazorWebView PRs #68 to #74). These five suggestions were open when the review was written; they have not been checked against
-the code since, so some may already be done.
-
-### 1. UserModeModuleProxy Keeps Every Spawned ModuleHost Alive Forever (Memory / Process Count)
-
-- Where: src/RemotePCDiagnostics.Core/Plugins/UserModeModules.cs (UserModeModuleProxy.Connect)
-- Issue: Once CheckAvailabilityAsync or RefreshAsync starts a RemotePCDiagnostics.ModuleHost process for a module, _conn is kept open indefinitely until the app exits or an error resets it. With "All modules: Out of process" enabled (or as more modules default to outOfProcess: true), running "Check all" will leave a separate .NET child process resident in memory for every module for the entire life of the app.
-- Suggestion: Either shut down the child ModuleHost after an idle timeout (e.g., 30–60 seconds of inactivity after RefreshAsync completes), or share a single user-mode ModuleHost worker process across bundled user-mode modules while keeping separate processes for unsigned third-party plugins.
-
-### 2. Synchronous Blocking on Async Host Queries in ModuleHost (AnswerAsync)
-
-- Where: src/RemotePCDiagnostics.Core/Plugins/UserModeModules.cs (UserModeModuleProxy.RefreshAsync) and src/RemotePCDiagnostics.Core/Plugins/HostQueries.cs (HostQueriesClient)
-- Issue: In UserModeModuleProxy, the stdout read loop awaits AnswerAsync(conn, m, ...) inline before reading the next line from the child process:
-  ```csharp
-  case "query":
-  await AnswerAsync(conn, m, CancellationToken.None).ConfigureAwait(false);
-  break;
-  ```
-  Although HostQueriesClient supports concurrent in-flight queries via ConcurrentDictionary<int, TaskCompletionSource<...>>, the server side processes them strictly serially and blocks reading progress messages or stop acknowledgments while a slow query (up to the 2-minute HostCapabilities.Timeout, such as PowerShell drive health or osquery) is running. Furthermore, during cancellation (GraceReadAsync), AnswerAsync is called with CancellationToken.None, so a cancelling module can still block the proxy for up to 2 minutes waiting for a host query to finish.
-- Suggestion: Pass a cancellation token linked to the refresh/grace token into AnswerAsync, and dispatch AnswerAsync as a background task (bounded by a SemaphoreSlim, e.g., max 4–8 concurrent queries as described in the host queries design (section 2)) so the proxy read loop stays responsive to progress, result, and cancellation.
-
-### 3. Elevated Out-of-Process Modules (Elevated = true) Leak Standard Handles or Lose Pipe Isolation
-
-- Where: src/RemotePCDiagnostics.Host/RestrictedModuleHostLauncher.cs (Start and StartRestrictedGuiWithInput)
-- Issue:
-  - a) In StartRestrictedGuiWithInput, bInheritHandles: true is passed to CreateProcessAsUser with STARTF_USESTDHANDLES, where only hStdInput is set (hStdOutput and hStdError are IntPtr.Zero), and any other inheritable handles in the parent process at that moment are also inherited by the restricted child.
-  - b) When an admin module (DISM, SFC, SecurityAudit) is switched to out-of-process, RestrictedModuleHostLauncher delegates to ProcessModuleHostLauncher, which does not wait briefly on Dispose() for graceful stdin EOF shutdown like RestrictedModuleHostLauncher.Connection.Dispose() does (process.WaitForExit(2000) before Kill()).
-- Suggestion: In StartRestrictedGuiWithInput, bind hStdOutput and hStdError to NUL (or explicit pipes) and consider PROC_THREAD_ATTRIBUTE_HANDLE_LIST so only the intended pipe handles are inherited.
+RemoteBlazorWebView PRs #68 to #74). Checked against the code on 2026-11-10: suggestions 1 to 3 were already done (a module host exits
+two seconds after its last request unless its manifest keeps it alive; host queries are answered off the read loop, four at a time; the
+restricted child is handed only its own pipe handles, and the plain launcher waits for a clean exit before killing). These two are open.
 
 ### 4. ModuleUiHost Re-Creates the Module Instance and Doesn't Forward IHostQueries or Custom Payloads
 

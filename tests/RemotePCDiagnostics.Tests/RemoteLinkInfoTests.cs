@@ -1,4 +1,4 @@
-using RemotePCDiagnostics.Core.Session;
+﻿using RemotePCDiagnostics.Core.Session;
 using Xunit;
 
 namespace RemotePCDiagnostics.Tests;
@@ -73,5 +73,57 @@ public class RemoteLinkInfoTests
         Assert.True(RemoteLinkInfo.IsServerShutdown(new Exception("Server shut down connection")));
         Assert.False(RemoteLinkInfo.IsServerShutdown(new Exception("Connection refused")));
         Assert.False(RemoteLinkInfo.IsServerShutdown(null));
+    }
+
+    [Fact]
+    public void TheOwnersPage_IsTheAppPageWithTheOwnerRole()
+    {
+        var server = new Uri("https://remoteblazorwebview.com:34544");
+        var page = RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildRemoteUserUrl(server, Id));
+        Assert.Equal($"https://remoteblazorwebview.com:34544/app/{Id}?role=owner", page.ToString());
+    }
+
+    [Fact]
+    public void AnUnattendedOwnersPage_AsksForControlToGoToTheRemoteUser()
+    {
+        var server = new Uri("https://remoteblazorwebview.com:34544");
+        var page = RemoteLinkInfo.WithRemoteUserFirst(RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildRemoteUserUrl(server, Id)));
+        Assert.Equal($"https://remoteblazorwebview.com:34544/app/{Id}?role=owner&control=remote", page.ToString());
+    }
+
+    [Fact]
+    public void WithRemoteUserFirst_OnAPageWithoutAQuery()
+    {
+        var page = RemoteLinkInfo.WithRemoteUserFirst(new Uri($"https://x.example/app/{Id}"));
+        Assert.Equal($"https://x.example/app/{Id}?control=remote", page.ToString());
+    }
+
+    [Fact]
+    public void ASharedSession_SharesTheReadOnlyLink_NeverTheOwnersPage()
+    {
+        var server = new Uri("https://remoteblazorwebview.com:34544");
+        var shared = RemoteLinkInfo.BuildShareUrl(server, Id, true);
+        Assert.Equal($"https://remoteblazorwebview.com:34544/mirror/{Id}", shared.ToString());
+        Assert.DoesNotContain("role=owner", shared.ToString());
+    }
+
+    [Fact]
+    public void UnreachableHtml_NamesTheServer_AndEncodesIt()
+    {
+        var html = RemoteLinkInfo.UnreachableHtml(new Uri("https://remoteblazorwebview.com:34544"));
+        Assert.Contains("Remote session not connected", html);
+        Assert.Contains("remoteblazorwebview.com:34544", html);
+        Assert.StartsWith("<!DOCTYPE html>", html);
+        Assert.DoesNotContain("<script", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void OnScreenText_DoesNotAssumeWhoTheRemoteUserIs()
+    {
+        var s = new Uri("https://remoteblazorwebview.com:34544");
+        foreach (var state in Enum.GetValues<RemoteSessionState>())
+            foreach (var (mirror, reverse) in new[] { (false, false), (true, false), (false, true) })
+                Assert.DoesNotContain("technician", RemoteLinkInfo.StatusText(state, s, mirror: mirror, reverseMirror: reverse), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("technician", RemoteLinkInfo.LocalPlaceholderHtml, StringComparison.OrdinalIgnoreCase);
     }
 }
