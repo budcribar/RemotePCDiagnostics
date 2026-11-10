@@ -14,7 +14,7 @@ public sealed class StressTaskScheduler : TaskScheduler
     private readonly SemaphoreSlim _signal = new(0);
     private int _idleWorkers;
 
-    public static StressTaskScheduler Default { get; } = new();
+    public static new StressTaskScheduler Default { get; } = new(); // deliberately hides TaskScheduler.Default: callers want this scheduler
     public static TaskFactory Factory { get; } = new(Default);
 
     public static Task Run(Action action, CancellationToken cancellationToken = default) =>
