@@ -103,8 +103,10 @@ public partial class MainWindow : Window
             Logger.Info($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
 
         if (launch.ServerUri is not null)
+        {
             _unattended = launch.Unattended;
             StartRemote(launch.ServerUri, sessionCtx.SessionId, launch.Mirror, launch.ReverseMirror);
+        }
         else
             RemoteBlazorWebView.HostPage = HostPage; // Local: unchanged behavior (HostPage moved from XAML to code)
     }
