@@ -4,8 +4,7 @@
       "commandName": "Project",
       "environmentVariables": {
         "REMOTEPC_MODE": "Remote",
-        "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544",
-        "REMOTEPC_MIRROR": "1"
+        "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544"
       }
     },
     "Remote + voice": {
@@ -13,7 +12,6 @@
       "environmentVariables": {
         "REMOTEPC_MODE": "Remote",
         "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544",
-        "REMOTEPC_MIRROR": "1",
         "REMOTEPC_VOICE": "1"
       }
     },

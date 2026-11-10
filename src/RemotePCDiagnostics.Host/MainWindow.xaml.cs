@@ -24,15 +24,10 @@ public partial class MainWindow : Window
     private Uri? _serverUri;
     private Uri? _remoteUserUrl;
     private Guid _sessionId;
-    private bool _mirror;
-    private bool _reverseMirror;
     private bool _voice; // --voice / REMOTEPC_VOICE=1
     private bool _unattended; // the remote user gets control on joining (the user can take it back)
     private bool _restarting;
-    private bool _remoteUserWasConnected; // a browser reached this copy, so a later server shutdown means that tab went away
-    private Microsoft.Web.WebView2.Wpf.WebView2? _controlWebView; // --reverse-mirror: a plain WebView2 that shows the controlling /app page locally
     private DispatcherTimer? _readyTimer;
-    private DispatcherTimer? _copyResetTimer;
     public MainWindow()
     {
         // Keep the UI dispatcher above Normal and BelowNormal stressor threads so progress renders and Stop clicks stay responsive under full load.
@@ -40,12 +35,12 @@ public partial class MainWindow : Window
 
         // Local (default) or Remote. Remote when started with -u=<server uri> (RemoteBlazorWebViewTutorial convention)
         // or REMOTEPC_MODE=Remote (+ optional REMOTEPC_SERVER_URL, default https://remoteblazorwebview.com:34544).
-        // See Properties/launchSettings.json for the Visual Studio profiles: "Remote" (default), "Remote + voice" and "Local". Control moves between the user and the remote user; the --reverse-mirror switch remains for command-line use.
+        // See Properties/launchSettings.json for the Visual Studio profiles: "Remote" (default), "Remote + voice" and "Local". A remote session is shared: the app shows in this window and control moves between the user and the remote user.
         var pendingReboot = RebootResumeCoordinator.TryReadPendingStateFile();
         var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, pendingReboot);
         var mode = launch.Mode;
 
-        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Mirror, launch.ReverseMirror, launch.Unattended, launch.Voice);
+        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Unattended, launch.Voice);
         var services = new ServiceCollection().AddRemotePCDiagnosticsHost(sessionCtx, App.Log, App.Event, loggers: App.Loggers);
         var provider = _provider = services.BuildServiceProvider();
         Resources.Add("services", provider);
@@ -109,7 +104,7 @@ public partial class MainWindow : Window
             if (e.WebView.CoreWebView2 is { } core)
                 core.NavigationStarting += (_, n) =>
                 {
-                    if (!_mirror || n.NavigationKind != Microsoft.Web.WebView2.Core.CoreWebView2NavigationKind.Reload) return;
+                    if (_serverUri is null || n.NavigationKind != Microsoft.Web.WebView2.Core.CoreWebView2NavigationKind.Reload) return;
                     n.Cancel = true;
                     Logger.Info("Ignored a page reload in the remote session window");
                 };
@@ -119,7 +114,7 @@ public partial class MainWindow : Window
         {
             _unattended = launch.Unattended;
             _voice = launch.Voice;
-            StartRemote(launch.ServerUri, sessionCtx.SessionId, launch.Mirror, launch.ReverseMirror);
+            StartRemote(launch.ServerUri, sessionCtx.SessionId);
         }
         else
             RemoteBlazorWebView.HostPage = HostPage; // Local: unchanged behavior (HostPage moved from XAML to code)
@@ -129,12 +124,10 @@ public partial class MainWindow : Window
     /// Remote mode, matching RemoteBlazorWebViewTutorial (WpfApp): subscribe ReadyToConnect/Connected/Disconnected and set
     /// Id + ServerUri BEFORE HostPage (setting HostPage starts the control; ServerUri/GrpcBaseUri/Id set afterwards are rejected).
     /// </summary>
-    private void StartRemote(Uri serverUri, Guid id, bool mirror, bool reverseMirror = false)
+    private void StartRemote(Uri serverUri, Guid id)
     {
         _serverUri = serverUri;
-        _mirror = mirror;
-        _reverseMirror = reverseMirror;
-        // Status, give/take control and Copy link are in the app's header (RemoteBlazorWebView's session bar), in this
+        // Status, give/take control, Copy link and Restart are in the app's header (RemoteBlazorWebView's session bar), in this
         // window and in the remote user's browser.
         SetRemoteState(RemoteSessionState.Connecting);
 
@@ -143,60 +136,39 @@ public partial class MainWindow : Window
             _readyTimer?.Stop();
             if (_provider.GetService<ISessionContext>() is SessionContext sc && e.Id != Guid.Empty) sc.SessionId = e.Id;
             if (e.Id != Guid.Empty) _sessionId = e.Id;
-            // Demo (--reverse-mirror): the shared link is the read-only mirror page; this window opens the controlling /app page itself.
-            // Remote (mirror) and the reverse-mirror demo both control /app here, so the shared link is the read-only /mirror page.
-            _remoteUserUrl = RemoteLinkInfo.BuildShareUrl(e.Url ?? serverUri, e.Id, _mirror || _reverseMirror);
-            Logger.Info($"ReadyToConnect url={e.Url} id={e.Id} link={_remoteUserUrl} reverseMirror={_reverseMirror}");
+            var sessionId = e.Id != Guid.Empty ? e.Id : id;
+            // The link to share is the read-only /mirror page: this window holds the app's own page, and the remote user is
+            // handed control from the session bar.
+            _remoteUserUrl = RemoteLinkInfo.BuildMirrorUrl(e.Url ?? serverUri, sessionId);
+            Logger.Info($"ReadyToConnect url={e.Url} id={e.Id} link={_remoteUserUrl}");
             SetRemoteState(RemoteSessionState.Ready);
-            if (_reverseMirror)
-            {
-                // Tutorial "Reversing The Mirror" pattern: a plain WebView2 (no Blazor external-link handling, which otherwise opens
-                // /app in the system browser) shows the controlling /app page locally; the Blazor control hosts the app + mirrors.
-                ShowLocalController(RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildRemoteUserUrl(e.Url ?? serverUri, e.Id)));
-                RemoteBubble.Visibility = Visibility.Visible; // small bubble carries the view-only link; no top card
-                return;
-            }
-            if (_mirror)
-            {
-                // Remote: the user starts in control. This window shows the full, controlling /app page (as the owner, so it can
-                // always take control back); the remote user joins at the read-only /mirror link and is handed control from the
-                // session bar in the header. The control's WebView loads /app/<id> in place (RBWV), keeping in-surface voice.
-                var appUrl = RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildRemoteUserUrl(e.Url ?? serverUri, e.Id != Guid.Empty ? e.Id : id));
-                if (_unattended) appUrl = RemoteLinkInfo.WithRemoteUserFirst(appUrl);
-                Logger.Info($"Navigating local WebView to the controller {appUrl}");
-                // NavigateToUrl waits for the WebView to initialize (CoreWebView2 is usually still null at ReadyToConnect).
-                try { RemoteBlazorWebView.NavigateToUrl(appUrl); }
-                catch (Exception ex) { Logger.Error($"Controller navigate failed: {ex}"); }
-                return;
-            }
-            // The app runs in the remote user's browser; this window only needs to say so (the link is in the panel above, not repeated).
-            try { (s as IBlazorWebView)?.NavigateToString(RemoteLinkInfo.LocalPlaceholderHtml); }
-            catch (Exception ex) { Logger.Error($"NavigateToString placeholder failed: {ex}"); }
+
+            // The user starts in control. This window shows the full, controlling /app page (as the owner, so it can always
+            // take control back). The control's WebView loads /app/<id> in place (RBWV), keeping in-surface voice.
+            var appUrl = RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildRemoteUserUrl(e.Url ?? serverUri, sessionId));
+            if (_unattended) appUrl = RemoteLinkInfo.WithRemoteUserFirst(appUrl);
+            Logger.Info($"Navigating local WebView to the controller {appUrl}");
+            // NavigateToUrl waits for the WebView to initialize (CoreWebView2 is usually still null at ReadyToConnect).
+            try { RemoteBlazorWebView.NavigateToUrl(appUrl); }
+            catch (Exception ex) { Logger.Error($"Controller navigate failed: {ex}"); }
         });
         RemoteBlazorWebView.Connected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
-
-            Logger.Info($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User} mirror={_mirror} reverseMirror={_reverseMirror}");
+            Logger.Info($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User}");
             SetRemoteState(RemoteSessionState.RemoteUserConnected);
-            _remoteUserWasConnected = true;
         });
         RemoteBlazorWebView.Disconnected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
             Logger.Info($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
             SetRemoteState(_remoteUserUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected);
-            // The relay drops this client for good when the remote user's tab closes ("Server shut down connection"), and the link then
-            // only shows "Client id not found". Start a fresh copy on the same session id so the same link works again. Only after a
-            // remote user actually connected to this copy, so a relay that keeps refusing us can't cause a restart loop.
-            // Not when this window is the controller (Remote / reverse mirror): a watcher leaving doesn't end the session.
-            if (_remoteUserWasConnected && !_mirror && !_reverseMirror && RemoteLinkInfo.IsServerShutdown(e.Exception))
-                RestartWhenIdle(serverUri);
         });
-        // The remote user refreshed the browser (or pressed Restart on the "Locked" page): the server drops this client, so
-        // start a fresh copy on the same session id and close this one (RemoteBlazorWebViewTutorial does the same with Restart()).
+        // The session's page was loaded again in a browser, or Restart was pressed in the session bar: the server drops this
+        // client, so start a fresh copy on the same session id and close this one (RemoteBlazorWebViewTutorial does the same
+        // with Restart()). At once, running test or not: this is how a stuck session is recovered.
         RemoteBlazorWebView.Refreshed += (_, e) => Dispatcher.BeginInvoke(() =>
         {
             Logger.Info($"Remote Refreshed {e}");
-            RestartSameSession(serverUri, "remote user refreshed the browser");
+            RestartSameSession(serverUri, "restart requested from a browser");
         });
 
         _readyTimer = new DispatcherTimer { Interval = RemoteLinkInfo.ReadyTimeout };
@@ -214,16 +186,12 @@ public partial class MainWindow : Window
         {
             RemoteBlazorWebView.Id = id; // Guid.Empty = new id each run; fixed via -i=<guid> or REMOTEPC_ID
             RemoteBlazorWebView.ServerUri = serverUri;
-            RemoteBlazorWebView.EnableVoice = !reverseMirror && serverUri.Scheme == Uri.UriSchemeHttps
-                && _voice;
-            RemoteBlazorWebView.EnableMirrors = mirror || reverseMirror; // the read-only /mirror page needs this in both directions
-            if (mirror || reverseMirror)
-            {
-                // The admin Clients list renders each client's own card markup. In reverse mode the local window controls /app, so point
-                // that card at the read-only /mirror page (set Markup before HostPage; the library keeps a non-empty Markup as given).
-                try { RemoteBlazorWebView.Markup = RemoteLinkInfo.ToMirrorMarkup(RemoteWebView.GenMarkup(serverUri, id)); }
-                catch (Exception ex) { Logger.Error($"Reverse mirror markup failed: {ex}"); }
-            }
+            RemoteBlazorWebView.EnableVoice = serverUri.Scheme == Uri.UriSchemeHttps && _voice;
+            RemoteBlazorWebView.EnableMirrors = true; // the remote user joins at the read-only /mirror page
+            // The admin Clients list renders each client's own card markup. This window holds /app, so point that card at the
+            // read-only /mirror page (set Markup before HostPage; the library keeps a non-empty Markup as given).
+            try { RemoteBlazorWebView.Markup = RemoteLinkInfo.ToMirrorMarkup(RemoteWebView.GenMarkup(serverUri, id)); }
+            catch (Exception ex) { Logger.Error($"Client card markup failed: {ex}"); }
             RemoteBlazorWebView.HostPage = HostPage; // must be last (starts the control)
             _readyTimer.Start();
         }
@@ -235,11 +203,6 @@ public partial class MainWindow : Window
         // TODO: consent prompt + audit log before accepting a remote session (see README Safety section).
     }
 
-    /// <summary>
-    /// --reverse-mirror (tutorial "Reversing The Mirror"): put a plain WebView2 over the Blazor view and point it at the controlling
-    /// /app page, so the person here drives the app in this window while watchers open the read-only /mirror link. A plain WebView2 has
-    /// none of the Blazor control's "open off-origin links in the system browser" behavior, so /app loads in-window instead of Chrome.
-    /// </summary>
     /// <summary>Starts a new copy of the app on the same relay and session id (so the remote user's link keeps working) and closes this one.</summary>
     private void RestartSameSession(Uri serverUri, string reason)
     {
@@ -250,43 +213,13 @@ public partial class MainWindow : Window
         try
         {
             var psi = new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
-            foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id, _mirror, _reverseMirror, _unattended, _voice)) psi.ArgumentList.Add(a);
+            foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id, _unattended, _voice)) psi.ArgumentList.Add(a);
             System.Diagnostics.Process.Start(psi);
             _restarting = true;
             Logger.Info($"Restart ({reason}): started a new copy for session {id}; closing this one");
             System.Windows.Application.Current.Shutdown();
         }
         catch (Exception ex) { Logger.Warn($"Restart ({reason}) failed: {ex.Message}"); }
-    }
-
-    /// <summary>Restarts for a dropped session, but lets a running test finish first (its result still goes to the Event Log).</summary>
-    private void RestartWhenIdle(Uri serverUri)
-    {
-        const string reason = "server dropped the session after the remote user disconnected";
-        var diag = _provider.GetService<DiagnosticsService>();
-        if (diag is null || !diag.IsAnyRunning) { RestartSameSession(serverUri, reason); return; }
-        Logger.Info($"Restart ({reason}): waiting for running tests to finish");
-        var wait = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-        wait.Tick += (_, _) => { if (diag.IsAnyRunning) return; wait.Stop(); RestartSameSession(serverUri, reason); };
-        wait.Start();
-    }
-
-    private void ShowLocalController(Uri appUrl)
-    {
-        try
-        {
-            if (_controlWebView is null)
-            {
-                _controlWebView = new Microsoft.Web.WebView2.Wpf.WebView2();
-                System.Windows.Controls.Grid.SetRow(_controlWebView, 1);
-                System.Windows.Controls.Panel.SetZIndex(_controlWebView, 5); // above the Blazor view (0), below the panel (10)
-                RootGrid.Children.Add(_controlWebView);
-            }
-            Logger.Info($"Reverse mirror: showing the local controller at {appUrl}");
-            _controlWebView.Source = appUrl;
-            _controlWebView.Visibility = Visibility.Visible;
-        }
-        catch (Exception ex) { Logger.Error($"Reverse mirror: couldn't show the local controller: {ex}"); }
     }
 
     private void SetRemoteState(RemoteSessionState state)
@@ -298,21 +231,6 @@ public partial class MainWindow : Window
         if (!RemoteLinkInfo.IsWarning(state)) return;
         try { RemoteBlazorWebView.NavigateToString(RemoteLinkInfo.UnreachableHtml(_serverUri)); }
         catch (Exception ex) { Logger.Error($"Showing the unreachable notice failed: {ex}"); }
-    }
-
-    private void RemoteBubble_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
-    {
-        if (_remoteUserUrl is null) return;
-        try
-        {
-            Clipboard.SetText(_remoteUserUrl.ToString());
-            RemoteBubbleText.Text = "Link copied";
-            _copyResetTimer?.Stop();
-            _copyResetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            _copyResetTimer.Tick += (_, _) => { _copyResetTimer.Stop(); RemoteBubbleText.Text = "Remote"; };
-            _copyResetTimer.Start();
-        }
-        catch (Exception ex) { Logger.Error($"Copy link (bubble) failed: {ex}"); }
     }
 
     /// <summary>App start event text: version, machine model, admin, mode (no server URL or session id).</summary>
@@ -337,7 +255,6 @@ public partial class MainWindow : Window
     {
         base.OnClosed(e); // raise Closed first so handlers (EC fan release) run before the provider is disposed
         _readyTimer?.Stop();
-        _copyResetTimer?.Stop();
         try
         {
             _provider.GetService<DiagnosticsService>()?.CancelStressSuite();

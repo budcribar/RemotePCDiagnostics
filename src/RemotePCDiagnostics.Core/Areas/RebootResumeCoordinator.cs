@@ -77,8 +77,6 @@ public sealed record PendingRebootState(
     long PreUsedMemoryBytes,
     int PreProcessCount,
     string PreTopProcesses,
-    bool Mirror = false,
-    bool ReverseMirror = false,
     bool Unattended = false,
     bool Voice = false);
 
@@ -198,8 +196,6 @@ public sealed class RebootResumeCoordinator(
         var mode = session?.Mode ?? SessionMode.Local;
         var serverUri = session?.ServerUri;
         var sessionId = session?.SessionId ?? Guid.Empty;
-        var mirror = session?.Mirror ?? false;
-        var reverseMirror = session?.ReverseMirror ?? false;
         var unattended = session?.Unattended ?? false;
         var voice = session?.Voice ?? false;
 
@@ -213,14 +209,12 @@ public sealed class RebootResumeCoordinator(
             baseline.UsedMemoryBytes,
             baseline.ProcessCount,
             baseline.TopProcesses,
-            mirror,
-            reverseMirror,
             unattended,
             voice);
 
         SavePendingState(state);
 
-        var resumeCmd = SessionLaunchOptions.BuildResumeCommandLine(ExecutablePath, mode, serverUri, sessionId, mirror, reverseMirror, unattended, voice);
+        var resumeCmd = SessionLaunchOptions.BuildResumeCommandLine(ExecutablePath, mode, serverUri, sessionId, unattended, voice);
         LastRegisteredCommandLine = resumeCmd;
 
         var reg = await commands.RunAsync(

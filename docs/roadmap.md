@@ -52,7 +52,7 @@ drives it in the browser as before.
    - The registry is in memory. Optionally, `AGENT_ENROLLMENT_KEYS` (comma-separated) restricts which installs may register; when it isn't set, any key is accepted.
 3. **Admin site** (budcribar/RemoteWebViewAdmin).
    - A **Computers** page lists agents (online status, last seen, user, OS, versions, consent ceiling, session).
-   - **Start diagnostics** shows live progress and opens `<server>/app/<session>` when the app is ready.
+   - **Start diagnostics** shows live progress and opens `<server>/mirror/<session>` when the app is ready (a shared, unattended session: the app shows at the PC and the requester is given control on joining).
 4. **Release workflow** (`.github/workflows/release.yml`, this repo).
    - Runs on tag `v*` or manually. It builds the app and the agent, writes and signs the manifest, and publishes the GitHub release.
 
@@ -63,7 +63,7 @@ drives it in the browser as before.
 3. The agent asks for consent unless allowed to skip it. It runs `RemotePCDiagnostics.Agent.exe consent ...` in the user's session, and the person clicks Allow/Deny within 2 minutes.
 4. The agent fetches `releases/latest/download/manifest.json` and `manifest.sig`, verifies the signature, then uses the cached app or downloads the zip and checks its SHA-256. Each step is reported as `LaunchProgress`.
 5. The agent starts `RemotePCDiagnostics.Host.exe -u=<server_url> -i=<session_id>` as the signed-in user with their **elevated** token (no UAC prompt). If nobody is signed in, it reports FAILED with "Nobody is signed in".
-6. When the app shows up on the relay under `session_id`, the relay reports READY (or the agent does, once the process is up and the relay's `/status/<id>` answers). The admin site opens `/app/<session_id>`.
+6. When the app shows up on the relay under `session_id`, the relay reports READY (or the agent does, once the process is up and the relay's `/status/<id>` answers). The admin site opens `/mirror/<session_id>`.
 7. When the app exits, the agent reports ENDED. A per-session agent then removes itself.
 
 ### Manifest

@@ -175,7 +175,7 @@ tests/
 - App (Windows, WebView2 runtime required):
   - Local/bench mode: `dotnet run --project src/RemotePCDiagnostics.Host`
   - Remote mode: start a RemoteWebViewService (`dotnet tool update -g PeakSWC.RemoteWebViewService --version 10.*-*`, then `RemoteWebViewService`), and run
-    `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`. The window shows a link for the remote user's browser.
+    `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`. The window shows the app; **Copy link** in its header gives the link for the remote user's browser.
 - osquery: `osqueryi.exe` 5.24.0 is bundled from `third_party/osquery/` and copied to the Host output as `tools\osquery\osqueryi.exe` (override with `RPD_OSQUERYI_PATH`). Without it the Osquery module reports a clear "not found" error.
 - HardeningKitty: PowerShell module 0.9.4 (MIT) is bundled from `third_party/HardeningKitty/module/` and copied to the Host output as `tools\HardeningKitty\` (override with `RPD_HARDENINGKITTY_PATH`); version/hashes in `third_party/HardeningKitty/README.md`. There is no installer yet — "installed" means it ships inside the Host build/publish folder. The **Security audit** page runs it on demand only (Start/Cancel, 5-minute timeout, not auto-run, not in Run All), in read-only `Audit` mode via `powershell.exe -NoProfile -ExecutionPolicy Bypass` for that process only. A complete audit needs administrator rights (the app manifest requests them).
 
@@ -185,24 +185,24 @@ The Host has four Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/P
 
 | Profile | Settings | Behavior |
 |---|---|---|
-| **Remote** (default in Visual Studio) | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544`, `REMOTEPC_MIRROR=1` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a remote user joins from a browser. This window opens the full app with the user in control; the shared link is the read-only `/mirror/<id>` page. The user gives control to the remote user and takes it back from the session bar in the header; whoever doesn't hold control sees a live, read-only view. |
+| **Remote** (default in Visual Studio) | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a remote user joins from a browser. This window opens the full app with the user in control; the shared link is the read-only `/mirror/<id>` page. The user gives control to the remote user and takes it back from the session bar in the header; whoever doesn't hold control sees a live, read-only view. |
 | **Remote + voice** | Remote, plus `REMOTEPC_VOICE=1` (command line: `--voice`) | Same, with a voice call between the person at the PC and the remote user. |
 | **Remote (unattended)** | Remote, plus `REMOTEPC_UNATTENDED=1` (command line: `--unattended`) | The remote user gets control as soon as they open the link, with nobody at the PC handing it over. The user can still take control back. The setting survives the app's own session restarts and a reboot-and-resume. Without this setting a session is supervised: the user starts in control and gives it. |
 | **Local** | `REMOTEPC_MODE=Local` | UI renders in the app window only. Running the exe with no settings is also Local (CI uses this). |
 
 A remote session has one user (this PC, the owner), one remote user and any number of read-only viewers, all on the same link. The first person to open the link is the remote user; anyone after that only watches, with no control and no voice. Module panels follow control too: they are usable for whoever has control and read-only for everyone else. Details: RemoteBlazorWebView README, "Sharing control".
 
-The older one-way modes still work from the command line: `--reverse-mirror` (or `REMOTEPC_REVERSE_MIRROR=1`) for a read-only demo link, and Remote without `REMOTEPC_MIRROR` for a remote-only session.
+Every remote session is shared in this way. The older one-way modes (`--reverse-mirror`, and Remote without `--mirror`) are gone; those switches are ignored if passed.
 
 Configuration (resolved by `SessionLaunchOptions`, precedence top to bottom):
 - `-u=<server url>` command-line arg: forces Remote with that server (the RemoteBlazorWebViewTutorial convention), e.g. `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`.
 - `REMOTEPC_MODE=Local|Remote` and `REMOTEPC_SERVER_URL` env vars. Remote with no URL uses the default `https://remoteblazorwebview.com:34544`.
 - `-i=<guid>` or `REMOTEPC_ID`: fixed session id. Otherwise a new id is assigned each run.
-- `-m` / `--mirror` or `REMOTEPC_MIRROR=1`: enables session mirroring in Remote mode so the person at the PC can watch what the remote user is doing live in the local window.
+- `--unattended` or `REMOTEPC_UNATTENDED=1`, and `--voice` or `REMOTEPC_VOICE=1`: see the profiles above.
 
 Server address: the default is the Railway-direct address `https://remoteblazorwebview.com:34544` (Railway TCP proxy to the container's port 8443; Kestrel TLS with a Let's Encrypt cert, HTTP/2 gRPC). Alternative address: `https://server.remoteblazorwebview.com:34544` (same Railway proxy; the port is required, because plain 443 serves a `*.up.railway.app` cert that does not match). The cert on 34544 is issued to `server.remoteblazorwebview.com` and also covers `remoteblazorwebview.com` and `remoteblazor.pagetomovie.com` (Let's Encrypt, valid until 2027-01-27). `https://server.remoteblazorwebview.com` (no port) is the planned permanent name once Railway serves a matching cert on 443. Use either via `REMOTEPC_SERVER_URL` or `-u=`.
 
-How a remote user connects (shared session: the **Remote** profile, `--mirror` or `--unattended`):
+How a remote user connects (any remote session):
 1. On the customer PC, start the Host in Remote mode (elevated; UAC prompts).
 2. The window opens the full app with the person at the PC in control. The session bar in the header shows a dot (red while anyone is connected remotely), who has control, and **Copy link**. If the server isn't reached within ~15 s the window shows a short "Remote session not connected" notice instead (details in the host log / `RPD_LOG_FILE`). Note: the control's `Id`/`ServerUri` must be set before `HostPage` (which is why `HostPage` is set in code, not XAML).
 3. The user presses **Copy link** and sends the link (`<server>/mirror/<session-guid>`) to the remote user, who opens it in a browser and sees the same UI, running on the customer PC, read-only at first.

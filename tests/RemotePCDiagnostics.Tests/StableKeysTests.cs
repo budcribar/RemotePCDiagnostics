@@ -4,7 +4,6 @@ using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Optimizations;
-using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Workflow;
 
 namespace RemotePCDiagnostics.Tests;
@@ -80,12 +79,5 @@ public class StableKeysTests
         var diag = new DiagnosticsService(store, [new FakeModule("Slow", async ct => { cts.Cancel(); await Task.Delay(1000, ct); return new DiagnosticResult("Slow", DiagnosticStatus.Ok, "ok", DateTimeOffset.Now); })]);
         var r = await diag.RunAsync("Slow", null, cts.Token);
         Assert.True(r.Cancelled);
-    }
-
-    [Fact]
-    public void RemoteWindow_PlaceholderDoesNotRepeatTheLink()
-    {
-        Assert.DoesNotContain("http", RemoteLinkInfo.LocalPlaceholderHtml);
-        Assert.Contains("Keep this window open", RemoteLinkInfo.LocalPlaceholderHtml);
     }
 }

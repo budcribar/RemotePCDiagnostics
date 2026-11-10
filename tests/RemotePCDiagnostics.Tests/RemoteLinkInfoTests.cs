@@ -37,24 +37,12 @@ public class RemoteLinkInfoTests
         Assert.Equal("Connecting to server…", RemoteLinkInfo.StatusText(RemoteSessionState.Connecting, s));
         Assert.Equal("Ready. Share this link:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s));
         Assert.Equal("Remote user connected", RemoteLinkInfo.StatusText(RemoteSessionState.RemoteUserConnected, s));
-        Assert.Equal("Remote user connected — watching live below", RemoteLinkInfo.StatusText(RemoteSessionState.RemoteUserConnected, s, mirror: true));
+        Assert.Equal("Remote user disconnected", RemoteLinkInfo.StatusText(RemoteSessionState.Disconnected, s));
         var warn = RemoteLinkInfo.StatusText(RemoteSessionState.Unreachable, s);
         Assert.Equal("Couldn't reach the server yet: remoteblazorwebview.com:34544. Check your internet connection; still trying…", warn);
         Assert.True(RemoteLinkInfo.IsWarning(RemoteSessionState.Unreachable));
         Assert.False(RemoteLinkInfo.IsWarning(RemoteSessionState.Ready));
         Assert.Equal(TimeSpan.FromSeconds(15), RemoteLinkInfo.ReadyTimeout);
-    }
-
-    [Fact]
-    public void ReverseMirror_SharesTheReadOnlyMirrorLink()
-    {
-        var s = new Uri("https://remoteblazorwebview.com:34544");
-        var id = Guid.Parse("7e57c0de-0000-4000-8000-000000000001");
-        Assert.Equal("https://remoteblazorwebview.com:34544/mirror/7e57c0de-0000-4000-8000-000000000001", RemoteLinkInfo.BuildShareUrl(s, id, reverseMirror: true).ToString());
-        Assert.Equal("https://remoteblazorwebview.com:34544/app/7e57c0de-0000-4000-8000-000000000001", RemoteLinkInfo.BuildShareUrl(s, id, reverseMirror: false).ToString());
-        Assert.Equal("Demo: you're in control here. Share this view-only link:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s, reverseMirror: true));
-        Assert.Contains("can watch but not click", RemoteLinkInfo.StatusText(RemoteSessionState.RemoteUserConnected, s, reverseMirror: true));
-        Assert.Equal("Ready. Share this link:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s));
     }
 
     [Fact]
@@ -102,7 +90,7 @@ public class RemoteLinkInfoTests
     public void ASharedSession_SharesTheReadOnlyLink_NeverTheOwnersPage()
     {
         var server = new Uri("https://remoteblazorwebview.com:34544");
-        var shared = RemoteLinkInfo.BuildShareUrl(server, Id, true);
+        var shared = RemoteLinkInfo.BuildMirrorUrl(server, Id);
         Assert.Equal($"https://remoteblazorwebview.com:34544/mirror/{Id}", shared.ToString());
         Assert.DoesNotContain("role=owner", shared.ToString());
     }
@@ -122,8 +110,7 @@ public class RemoteLinkInfoTests
     {
         var s = new Uri("https://remoteblazorwebview.com:34544");
         foreach (var state in Enum.GetValues<RemoteSessionState>())
-            foreach (var (mirror, reverse) in new[] { (false, false), (true, false), (false, true) })
-                Assert.DoesNotContain("technician", RemoteLinkInfo.StatusText(state, s, mirror: mirror, reverseMirror: reverse), StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("technician", RemoteLinkInfo.LocalPlaceholderHtml, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("technician", RemoteLinkInfo.StatusText(state, s), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("technician", RemoteLinkInfo.UnreachableHtml(s), StringComparison.OrdinalIgnoreCase);
     }
 }

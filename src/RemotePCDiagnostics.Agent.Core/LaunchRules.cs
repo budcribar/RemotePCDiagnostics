@@ -62,9 +62,14 @@ public static class LaunchRules
         _ => $"Remote PC Diagnostics closed right after starting (exit code {exitCode})",
     };
 
-    /// <summary>The app's command line: <c>"&lt;entry path&gt;" -u=&lt;server&gt; -i=&lt;session&gt;</c>.</summary>
+    /// <summary>
+    /// The app's command line: <c>"&lt;entry path&gt;" -u=&lt;server&gt; -i=&lt;session&gt; --unattended</c>. A session the agent
+    /// starts is shared like any other (the app shows at the PC, the requester joins at the session's link), and unattended, so
+    /// the requester gets control on joining without anyone at the PC handing it over. This is not the agent's own "unattended"
+    /// setting, which is about skipping the consent prompt.
+    /// </summary>
     public static string AppCommandLine(string entryPath, string server, Guid session) =>
-        WindowsCommandLine.Join([entryPath, "-u=" + server, "-i=" + session.ToString("D")]);
+        WindowsCommandLine.Join([entryPath, "-u=" + server, "-i=" + session.ToString("D"), "--unattended"]);
 
     /// <summary>The consent prompt's command line, run in the user's session.</summary>
     public static string ConsentCommandLine(string agentExe, string requester, int timeoutSeconds) =>

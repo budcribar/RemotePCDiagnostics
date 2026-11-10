@@ -181,3 +181,18 @@ public class BackoffTests
         Assert.Equal(2, b.Next().TotalSeconds);
     }
 }
+
+public class LaunchRulesTests
+{
+    [Fact]
+    public void The_app_is_started_on_the_requested_session_with_control_going_to_the_requester()
+    {
+        var session = Guid.Parse("7e57c0de-0000-4000-8000-000000000001");
+        var line = LaunchRules.AppCommandLine(@"C:\Cache\1.2.3\RemotePCDiagnostics.Host.exe", "https://relay.example:34544", session);
+
+        Assert.Contains("-u=https://relay.example:34544", line);
+        Assert.Contains("-i=7e57c0de-0000-4000-8000-000000000001", line);
+        // Nobody may be at the PC to hand control over: the requester gets it on joining the session's link.
+        Assert.EndsWith(" --unattended", line);
+    }
+}
