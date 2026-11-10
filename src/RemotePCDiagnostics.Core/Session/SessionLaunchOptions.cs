@@ -96,7 +96,8 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
 
         var effectiveId = launch.Id != Guid.Empty ? launch.Id : pending.SessionId;
         var effectiveReverse = launch.ReverseMirror || pending.ReverseMirror;
-        var effectiveMirror = !effectiveReverse && (launch.Mirror || pending.Mirror);
+        var effectiveUnattended = !effectiveReverse && (launch.Unattended || pending.Unattended);
+        var effectiveMirror = !effectiveReverse && (launch.Mirror || pending.Mirror || effectiveUnattended);
         if (pending.Mode == SessionMode.Remote)
         {
             var effectiveUri = launch.ServerUri;
@@ -107,10 +108,10 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
                 effectiveUri = new Uri(DefaultServerUrl);
 
             return new(SessionMode.Remote, effectiveUri, effectiveId, PostReboot: true, Mirror: effectiveMirror, ReverseMirror: effectiveReverse,
-                Unattended: launch.Unattended && !effectiveReverse);
+                Unattended: effectiveUnattended);
         }
 
-        return launch with { Id = effectiveId, PostReboot = true, Mirror = effectiveMirror, ReverseMirror = effectiveReverse };
+        return launch with { Id = effectiveId, PostReboot = true, Mirror = effectiveMirror, ReverseMirror = effectiveReverse, Unattended = effectiveUnattended };
     }
 
     /// <summary>Marks a copy started by <see cref="RestartArguments"/>: it waits for the old copy to exit instead of leaving at once.</summary>
@@ -142,7 +143,7 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     /// Builds the Windows <c>RunOnce</c> command line so that after a reboot, <c>RemotePCDiagnostics.Host</c> restarts
     /// into the exact same session mode, relay server, remote session ID (<c>-i=&lt;guid&gt;</c>), and mirror setting.
     /// </summary>
-    public static string BuildResumeCommandLine(string executablePath, SessionMode mode, Uri? serverUri, Guid sessionId, bool mirror = false, bool reverseMirror = false)
+    public static string BuildResumeCommandLine(string executablePath, SessionMode mode, Uri? serverUri, Guid sessionId, bool mirror = false, bool reverseMirror = false, bool unattended = false)
     {
         var quotedExe = $"\"{executablePath.Trim('"')}\"";
         if (mode == SessionMode.Remote && serverUri is not null)
@@ -150,7 +151,8 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
             var urlPart = $"-u={serverUri.AbsoluteUri.TrimEnd('/')}";
             var idPart = sessionId != Guid.Empty ? $" -i={sessionId:D}" : "";
             var mirrorPart = reverseMirror ? $" {ReverseMirrorArg}" : mirror ? $" {MirrorArg}" : "";
-            return $"{quotedExe} {urlPart}{idPart}{mirrorPart} {PostRebootArg}";
+            var unattendedPart = unattended && !reverseMirror ? $" {UnattendedArg}" : "";
+            return $"{quotedExe} {urlPart}{idPart}{mirrorPart}{unattendedPart} {PostRebootArg}";
         }
         return $"{quotedExe} {PostRebootArg}";
     }

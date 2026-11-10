@@ -138,6 +138,27 @@ public class SessionLaunchOptionsTests
     }
 
     [Fact]
+    public void Unattended_FromArgOrEnv_ImpliesTheSharedSession_AndSurvivesRestartAndReboot()
+    {
+        var byArg = SessionLaunchOptions.Resolve(["-u=https://x.example", "--unattended"], _ => null);
+        Assert.True(byArg.Unattended);
+        Assert.True(byArg.Mirror);
+        Assert.True(SessionLaunchOptions.Resolve([], n => n == "REMOTEPC_MODE" ? "Remote" : n == "REMOTEPC_UNATTENDED" ? "1" : null).Unattended);
+        Assert.False(SessionLaunchOptions.Resolve(["-u=https://x.example", "--mirror"], _ => null).Unattended);
+        Assert.False(SessionLaunchOptions.Resolve(["-u=https://x.example", "--unattended", "--reverse-mirror"], _ => null).Unattended);
+
+        var id = Guid.Parse("7e57c0de-0000-4000-8000-000000000001");
+        var server = new Uri("https://remoteblazorwebview.com:34544");
+        var restart = SessionLaunchOptions.RestartArguments(server, id, mirror: true, unattended: true);
+        Assert.Contains("--unattended", restart);
+        Assert.True(SessionLaunchOptions.Resolve(restart, _ => null).Unattended);
+
+        var cmd = SessionLaunchOptions.BuildResumeCommandLine(@"C:\App\RemotePCDiagnostics.Host.exe", SessionMode.Remote, server, id, mirror: true, unattended: true);
+        Assert.Contains(" --unattended ", cmd);
+        Assert.EndsWith(" --post-reboot", cmd);
+    }
+
+    [Fact]
     public void ReverseMirror_SurvivesRestartAndReboot()
     {
         var id = Guid.Parse("7e57c0de-0000-4000-8000-000000000001");

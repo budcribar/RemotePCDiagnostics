@@ -44,7 +44,7 @@ public partial class MainWindow : Window
         var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, pendingReboot);
         var mode = launch.Mode;
 
-        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Mirror, launch.ReverseMirror);
+        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Mirror, launch.ReverseMirror, launch.Unattended);
         var services = new ServiceCollection().AddRemotePCDiagnosticsHost(sessionCtx, App.Log, App.Event, loggers: App.Loggers);
         var provider = _provider = services.BuildServiceProvider();
         Resources.Add("services", provider);

@@ -14,11 +14,13 @@ public interface ISessionContext
     bool Mirror => false;
     /// <summary>True for the demo direction (<c>--reverse-mirror</c>): the local window is in control, the shared link is read-only.</summary>
     bool ReverseMirror => false;
+    /// <summary>True for an unattended session (<c>--unattended</c>): the technician gets control on joining; the user can take it back.</summary>
+    bool Unattended => false;
 }
 
 public sealed class SessionContext : ISessionContext
 {
-    public SessionContext(SessionMode mode, Uri? serverUri = null, Guid sessionId = default, bool mirror = false, bool reverseMirror = false)
+    public SessionContext(SessionMode mode, Uri? serverUri = null, Guid sessionId = default, bool mirror = false, bool reverseMirror = false, bool unattended = false)
     {
         Mode = mode;
         ServerUri = serverUri;
@@ -27,6 +29,7 @@ public sealed class SessionContext : ISessionContext
             : (mode == SessionMode.Remote ? Guid.NewGuid() : Guid.Empty);
         Mirror = mirror;
         ReverseMirror = reverseMirror;
+        Unattended = unattended;
     }
 
     public SessionMode Mode { get; }
@@ -34,5 +37,6 @@ public sealed class SessionContext : ISessionContext
     public Guid SessionId { get; set; }
     public bool Mirror { get; }
     public bool ReverseMirror { get; }
+    public bool Unattended { get; }
     public string MachineName { get; } = Environment.MachineName;
 }
