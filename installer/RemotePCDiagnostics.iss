@@ -20,6 +20,8 @@
 #define AppName "Remote PC Diagnostics"
 #define AppPublisher "Remote PC Diagnostics"
 #define AppExeName "RemotePCDiagnostics.Host.exe"
+; Options for the desktop icon: a remote session on the public relay, shared with the technician, with a voice call.
+#define DesktopIconParameters "-u=https://remoteblazorwebview.com:34544 --mirror --voice"
 #define AppMutexName "Global\RemotePCDiagnostics.Host"
 #define WebView2ClientId "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 #define WebView2BootstrapUrl "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
@@ -76,7 +78,7 @@ Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Comment: "Diagnose, benchmark, and repair Windows PCs locally or remotely"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Comment: "Diagnose, benchmark, and repair Windows PCs locally or remotely"; Tasks: desktopicon
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#DesktopIconParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session with a technician (shared screen and voice)"; Tasks: desktopicon
 
 [Run]
 ; shellexec is required because RemotePCDiagnostics.Host.exe declares requireAdministrator in its manifest.
