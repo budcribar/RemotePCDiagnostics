@@ -17,6 +17,14 @@
         "REMOTEPC_VOICE": "1"
       }
     },
+    "Remote (unattended)": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "REMOTEPC_MODE": "Remote",
+        "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544",
+        "REMOTEPC_UNATTENDED": "1"
+      }
+    },
     "Local": {
       "commandName": "Project",
       "environmentVariables": {

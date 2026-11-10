@@ -59,6 +59,26 @@ public static class RemoteLinkInfo
     }
 
     /// <summary>
+    /// Unattended sessions: marks the owner's page so it gives control to the technician as soon as they join
+    /// (<c>control=technician</c>, read by RemoteBlazorWebView's page script). The owner can still take control back.
+    /// </summary>
+    public static Uri WithTechnicianFirst(Uri pageUri)
+    {
+        ArgumentNullException.ThrowIfNull(pageUri);
+        var b = new UriBuilder(pageUri);
+        b.Query = string.IsNullOrEmpty(b.Query) ? "control=technician" : b.Query.TrimStart('?') + "&control=technician";
+        return b.Uri;
+    }
+
+    /// <summary>What the local window shows while the relay can't be reached (once the app's page is up, its header carries the status).</summary>
+    public static string UnreachableHtml(Uri serverUri) =>
+        "<!DOCTYPE html><html><head><meta charset='utf-8'><style>" +
+        "html,body{margin:0;height:100%;background:#1f2329;color:#d0d5dd;font:15px 'Segoe UI',system-ui,sans-serif}" +
+        "main{max-width:560px;margin:72px auto;padding:0 24px;line-height:1.5}h1{font-size:18px;font-weight:600;color:#ffc857;margin:0 0 8px}" +
+        "</style></head><body><main><h1>Remote session not connected</h1><p>" +
+        System.Net.WebUtility.HtmlEncode(StatusText(RemoteSessionState.Unreachable, serverUri)) + "</p></main></body></html>";
+
+    /// <summary>
     /// What the local window shows in remote mode, under the native panel (which has the link and Copy link): a short note for
     /// the person at the PC, styled like the panel. Never the link again.
     /// </summary>

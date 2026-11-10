@@ -8,8 +8,10 @@ namespace RemotePCDiagnostics.Core.Session;
 /// Pass <c>-m</c> or <c>--mirror</c> (or <c>REMOTEPC_MIRROR=1</c>) in Remote mode so the local window mirrors what the technician is doing.
 /// Pass <c>--reverse-mirror</c> (or <c>REMOTEPC_REVERSE_MIRROR=1</c>) for the opposite, for demos: the local window is in control and the shared
 /// link is the read-only <c>/mirror/&lt;id&gt;</c> page, so someone in a browser can watch but not click.
+/// Pass <c>--unattended</c> (or <c>REMOTEPC_UNATTENDED=1</c>) so the technician gets control as soon as they join, without anyone at
+/// the PC handing it over (the user can still take it back). Without it the session is supervised: the user starts in control and gives it.
 /// </summary>
-public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid Id, bool PostReboot = false, bool Mirror = false, bool ReverseMirror = false)
+public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid Id, bool PostReboot = false, bool Mirror = false, bool ReverseMirror = false, bool Unattended = false)
 {
     public const string ModeVariable = "REMOTEPC_MODE";
     public const string ServerUrlVariable = "REMOTEPC_SERVER_URL";
@@ -19,6 +21,8 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     public const string ShortMirrorArg = "-m";
     public const string ReverseMirrorVariable = "REMOTEPC_REVERSE_MIRROR";
     public const string ReverseMirrorArg = "--reverse-mirror";
+    public const string UnattendedVariable = "REMOTEPC_UNATTENDED";
+    public const string UnattendedArg = "--unattended";
     public const string PostRebootArg = "--post-reboot";
     /// <summary>Default relay (PeakSWC.RemoteWebViewService on Railway) used when Remote mode has no explicit URL.</summary>
     public const string DefaultServerUrl = "https://remoteblazorwebview.com:34544";
@@ -48,8 +52,16 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
                 mirrorArg = ParseBool(a[9..]) ?? true;
         }
         var reverse = reverseArg ?? (ParseBool(env(ReverseMirrorVariable)) == true);
+        bool? unattendedArg = null;
+        foreach (var a in argList)
+        {
+            if (string.Equals(a, UnattendedArg, StringComparison.OrdinalIgnoreCase)) unattendedArg = true;
+            else if (a.StartsWith(UnattendedArg + "=", StringComparison.OrdinalIgnoreCase)) unattendedArg = ParseBool(a[(UnattendedArg.Length + 1)..]) ?? true;
+        }
+        // Unattended is a shared session (the app window here, the technician on the link) where the technician gets control on joining.
+        var unattended = !reverse && (unattendedArg ?? (ParseBool(env(UnattendedVariable)) == true));
         // The two directions exclude each other; reverse wins (it's the one asked for explicitly for a demo).
-        var mirror = !reverse && (mirrorArg ?? (ParseBool(env(MirrorVariable)) == true));
+        var mirror = !reverse && (unattended || (mirrorArg ?? (ParseBool(env(MirrorVariable)) == true)));
 
         var urlArg = Arg("-u=");
         var idText = Arg("-i=") ?? env(IdVariable);
@@ -61,7 +73,7 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
 
         if (!remote)
         {
-            var localOpts = new SessionLaunchOptions(SessionMode.Local, null, id, postReboot, mirror, reverse);
+            var localOpts = new SessionLaunchOptions(SessionMode.Local, null, id, postReboot, mirror, reverse, unattended);
             return ApplyPendingReboot(localOpts, pendingReboot);
         }
 
@@ -70,7 +82,7 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
         if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
             throw new ArgumentException($"Invalid remote server URL '{url}'. Set {ServerUrlVariable} (or -u=) to e.g. {DefaultServerUrl}.");
 
-        var remoteOpts = new SessionLaunchOptions(SessionMode.Remote, uri, id, postReboot, mirror, reverse);
+        var remoteOpts = new SessionLaunchOptions(SessionMode.Remote, uri, id, postReboot, mirror, reverse, unattended);
         return ApplyPendingReboot(remoteOpts, pendingReboot);
     }
 
@@ -94,7 +106,8 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
             if (effectiveUri is null)
                 effectiveUri = new Uri(DefaultServerUrl);
 
-            return new(SessionMode.Remote, effectiveUri, effectiveId, PostReboot: true, Mirror: effectiveMirror, ReverseMirror: effectiveReverse);
+            return new(SessionMode.Remote, effectiveUri, effectiveId, PostReboot: true, Mirror: effectiveMirror, ReverseMirror: effectiveReverse,
+                Unattended: launch.Unattended && !effectiveReverse);
         }
 
         return launch with { Id = effectiveId, PostReboot = true, Mirror = effectiveMirror, ReverseMirror = effectiveReverse };
@@ -114,12 +127,13 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     /// Refreshed event; the library's own Restart() starts the same <c>-u=</c>/<c>-i=</c> pair). The same session id keeps the
     /// technician's link working; <see cref="RestartedArg"/> lets the new copy wait for this one to release the one-copy lock.
     /// </summary>
-    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool mirror = false, bool reverseMirror = false)
+    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool mirror = false, bool reverseMirror = false, bool unattended = false)
     {
         if (sessionId == Guid.Empty) throw new ArgumentException("A restart needs the session id the server assigned.", nameof(sessionId));
         var list = new List<string> { $"-u={serverUri.AbsoluteUri.TrimEnd('/')}", $"-i={sessionId:D}" };
         if (reverseMirror) list.Add(ReverseMirrorArg);
         else if (mirror) list.Add(MirrorArg);
+        if (unattended && !reverseMirror) list.Add(UnattendedArg);
         list.Add(RestartedArg);
         return list;
     }

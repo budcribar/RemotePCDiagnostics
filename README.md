@@ -181,12 +181,13 @@ tests/
 
 ### Local vs Remote mode
 
-The Host has three Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/Properties/launchSettings.json`). Visual Studio starts the first one unless you pick another in the Start button dropdown:
+The Host has four Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/Properties/launchSettings.json`). Visual Studio starts the first one unless you pick another in the Start button dropdown:
 
 | Profile | Settings | Behavior |
 |---|---|---|
 | **Remote** (default in Visual Studio) | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544`, `REMOTEPC_MIRROR=1` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a technician joins from a browser. This window opens the full app with the user in control; the shared link is the read-only `/mirror/<id>` page. The user gives control to the technician and takes it back from the session bar in the header; whoever doesn't hold control sees a live, read-only view. |
 | **Remote + voice** | Remote, plus `REMOTEPC_VOICE=1` | Same, with a voice call between the user and the technician. |
+| **Remote (unattended)** | Remote, plus `REMOTEPC_UNATTENDED=1` (command line: `--unattended`) | The technician gets control as soon as they open the link, with nobody at the PC handing it over. The user can still take control back. Without this setting a session is supervised: the user starts in control and gives it. |
 | **Local** | `REMOTEPC_MODE=Local` | UI renders in the app window only. Running the exe with no settings is also Local (CI uses this). |
 
 A remote session has one user (this PC, the owner), one technician and any number of read-only viewers, all on the same link. The first person to open the link is the technician; anyone after that only watches, with no control and no voice. Module panels follow control too: they are usable for whoever has control and read-only for everyone else. Details: RemoteBlazorWebView README, "Sharing control".

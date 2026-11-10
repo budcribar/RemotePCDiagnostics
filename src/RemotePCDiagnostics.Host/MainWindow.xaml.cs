@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private Guid _sessionId;
     private bool _mirror;
     private bool _reverseMirror;
+    private bool _unattended; // the technician gets control on joining (the user can take it back)
     private bool _restarting;
     private bool _technicianWasConnected; // a browser reached this copy, so a later server shutdown means that tab went away
     private Microsoft.Web.WebView2.Wpf.WebView2? _controlWebView; // --reverse-mirror: a plain WebView2 that shows the controlling /app page locally
@@ -102,6 +103,7 @@ public partial class MainWindow : Window
             Logger.Info($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
 
         if (launch.ServerUri is not null)
+            _unattended = launch.Unattended;
             StartRemote(launch.ServerUri, sessionCtx.SessionId, launch.Mirror, launch.ReverseMirror);
         else
             RemoteBlazorWebView.HostPage = HostPage; // Local: unchanged behavior (HostPage moved from XAML to code)
@@ -116,9 +118,8 @@ public partial class MainWindow : Window
         _serverUri = serverUri;
         _mirror = mirror;
         _reverseMirror = reverseMirror;
-        // The WPF top card is hidden: the Blazor SessionControlBar in the app header now carries status + the join link
-        // (Copy link), on both the owner window and the technician's browser. Kept in XAML for now; just not shown.
-        RemotePanel.Visibility = Visibility.Collapsed;
+        // Status, give/take control and Copy link are in the app's header (RemoteBlazorWebView's session bar), in this
+        // window and in the technician's browser.
         SetRemoteState(RemoteSessionState.Connecting);
 
         RemoteBlazorWebView.ReadyToConnect += (s, e) => Dispatcher.BeginInvoke(() =>
@@ -130,9 +131,6 @@ public partial class MainWindow : Window
             // Remote (mirror) and the reverse-mirror demo both control /app here, so the shared link is the read-only /mirror page.
             _technicianUrl = RemoteLinkInfo.BuildShareUrl(e.Url ?? serverUri, e.Id, _mirror || _reverseMirror);
             Logger.Info($"ReadyToConnect url={e.Url} id={e.Id} link={_technicianUrl} reverseMirror={_reverseMirror}");
-            RemoteLinkText.Text = _technicianUrl.ToString();
-            RemoteHyperlink.NavigateUri = _technicianUrl;
-            RemoteLinkRow.Visibility = Visibility.Visible;
             SetRemoteState(RemoteSessionState.Ready);
             if (_reverseMirror)
             {
@@ -148,6 +146,7 @@ public partial class MainWindow : Window
                 // always take control back); the technician joins at the read-only /mirror link and is handed control from the
                 // session bar in the header. The control's WebView loads /app/<id> in place (RBWV), keeping in-surface voice.
                 var appUrl = RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id != Guid.Empty ? e.Id : id));
+                if (_unattended) appUrl = RemoteLinkInfo.WithTechnicianFirst(appUrl);
                 Logger.Info($"Navigating local WebView to the controller {appUrl}");
                 // NavigateToUrl waits for the WebView to initialize (CoreWebView2 is usually still null at ReadyToConnect).
                 try { RemoteBlazorWebView.NavigateToUrl(appUrl); }
@@ -235,7 +234,7 @@ public partial class MainWindow : Window
         try
         {
             var psi = new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
-            foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id, _mirror, _reverseMirror)) psi.ArgumentList.Add(a);
+            foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id, _mirror, _reverseMirror, _unattended)) psi.ArgumentList.Add(a);
             System.Diagnostics.Process.Start(psi);
             _restarting = true;
             Logger.Info($"Restart ({reason}): started a new copy for session {id}; closing this one");
@@ -277,32 +276,12 @@ public partial class MainWindow : Window
     private void SetRemoteState(RemoteSessionState state)
     {
         if (_serverUri is null) return;
-        // Reverse-mirror demo looks like Local; only pop the card up if the server can't be reached, so errors aren't hidden.
-        if (_reverseMirror) RemotePanel.Visibility = RemoteLinkInfo.IsWarning(state) ? Visibility.Visible : Visibility.Collapsed;
-        RemoteStatusText.Text = RemoteLinkInfo.StatusText(state, _serverUri, _mirror, _reverseMirror);
-        RemoteStatusText.Foreground = new SolidColorBrush(RemoteLinkInfo.IsWarning(state) ? Color.FromRgb(0xFF, 0xC8, 0x57) : Color.FromRgb(0xD0, 0xD5, 0xDD));
-    }
-
-    private void RemoteHyperlink_RequestNavigate(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
-    {
-        try { Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true }); }
-        catch (Exception ex) { Logger.Error($"Open link failed: {ex}"); }
-        e.Handled = true;
-    }
-
-    private void CopyLinkButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_technicianUrl is null) return;
-        try
-        {
-            Clipboard.SetText(_technicianUrl.ToString());
-            CopyLinkButton.Content = "Copied";
-            _copyResetTimer?.Stop();
-            _copyResetTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            _copyResetTimer.Tick += (_, _) => { _copyResetTimer.Stop(); CopyLinkButton.Content = "Copy link"; };
-            _copyResetTimer.Start();
-        }
-        catch (Exception ex) { Logger.Error($"Copy link failed: {ex}"); }
+        Logger.Info($"Remote session state: {state}");
+        // Once the app's page is up its header carries the status. Before that, the one thing to say here is that the
+        // relay can't be reached (a later ReadyToConnect replaces this page).
+        if (!RemoteLinkInfo.IsWarning(state)) return;
+        try { RemoteBlazorWebView.NavigateToString(RemoteLinkInfo.UnreachableHtml(_serverUri)); }
+        catch (Exception ex) { Logger.Error($"Showing the unreachable notice failed: {ex}"); }
     }
 
     private void RemoteBubble_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
