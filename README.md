@@ -33,7 +33,7 @@ See [docs/architecture.md](docs/architecture.md): the projects, how they layer, 
 
 ## Windows installer
 
-Run `.\publish.ps1` on Windows to build both the self-contained Inno Setup installer (`RemotePCDiagnostics-Setup-<Version>-win-x64.exe`) and portable executable and publish them as the single rolling GitHub pre-release (`.\publish.ps1 -LocalOnly` to build without uploading). See [installer/README.md](installer/README.md) for prerequisites, WebView2 bootstrapping, silent deployment flags and uninstall options.
+Run `.\publish.ps1` on Windows to build the self-contained Inno Setup installer (`RemotePCDiagnostics-Setup-<Version>-win-x64.exe`) and publish it as the single rolling GitHub pre-release (`.\publish.ps1 -LocalOnly` to build without uploading, or `-IncludePortable` to also build the single-file portable `.exe`). See [installer/README.md](installer/README.md) for prerequisites, WebView2 bootstrapping, silent deployment flags and uninstall options.
 
 ## License
 

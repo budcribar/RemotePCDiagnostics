@@ -1,8 +1,7 @@
 <#
 .SYNOPSIS
-  Builds the Remote PC Diagnostics Inno Setup installer + portable executable and
-  publishes them as the single rolling GitHub pre-release ('prerelease'), replacing
-  any previous pre-release.
+  Builds the Remote PC Diagnostics Inno Setup installer and publishes it as the
+  single rolling GitHub pre-release ('prerelease'), replacing any previous pre-release.
 
 .EXAMPLE
   .\publish.ps1
@@ -11,7 +10,7 @@
   .\publish.ps1 -LocalOnly
 
 .EXAMPLE
-  .\publish.ps1 -SkipPortable
+  .\publish.ps1 -IncludePortable
 #>
 [CmdletBinding()]
 param(
@@ -19,7 +18,7 @@ param(
     [string] $IsccPath = '',
     [string] $RbwvSourceRoot = '',
     [switch] $UseRbwvSource,
-    [switch] $SkipPortable,
+    [switch] $IncludePortable,
     [switch] $SkipVerify,
     [switch] $LocalOnly
 )
@@ -113,8 +112,8 @@ $SetupShaPath  = "$SetupExePath.sha256"
 
 $ReleaseAssets = @($SetupExePath, $SetupShaPath)
 
-# 5) Optionally build the single-file Portable executable alongside the installer.
-if (-not $SkipPortable) {
+# 5) Only build the single-file Portable executable when -IncludePortable is explicitly passed.
+if ($IncludePortable) {
     $LocalNuGetDir = Join-Path $RepoRoot 'third_party/RemoteBlazorWebView/packages'
     New-Item -ItemType Directory -Force -Path $LocalNuGetDir | Out-Null
 
