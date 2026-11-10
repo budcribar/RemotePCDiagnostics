@@ -10,13 +10,13 @@ public interface ISessionContext
     Uri? ServerUri => null;
     /// <summary>Active remote session ID (<c>/app/&lt;id&gt;</c>) when <see cref="Mode"/> is Remote; otherwise <see cref="Guid.Empty"/>.</summary>
     Guid SessionId => Guid.Empty;
-    /// <summary>True when the local window mirrors the remote technician's session (<c>-m</c> / <c>--mirror</c>).</summary>
+    /// <summary>True when the local window mirrors the remote user's session (<c>-m</c> / <c>--mirror</c>).</summary>
     bool Mirror => false;
     /// <summary>True for the demo direction (<c>--reverse-mirror</c>): the local window is in control, the shared link is read-only.</summary>
     bool ReverseMirror => false;
-    /// <summary>True for an unattended session (<c>--unattended</c>): the technician gets control on joining; the user can take it back.</summary>
+    /// <summary>True for an unattended session (<c>--unattended</c>): the remote user gets control on joining; the user can take it back.</summary>
     bool Unattended => false;
-    /// <summary>True when the session was started with a voice call between the user and the technician (<c>--voice</c>).</summary>
+    /// <summary>True when the session was started with a voice call between the user and the remote user (<c>--voice</c>).</summary>
     bool Voice => false;
 }
 

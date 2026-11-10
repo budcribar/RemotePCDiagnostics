@@ -66,7 +66,7 @@ public static class CheckRows
 public sealed record GroupRunProgress(CheckGroup Group, int Index, int Total, string Current);
 
 /// <summary>
-/// Shared state of the Checks &amp; Tests screen (one instance per app, so the local window and a remote technician see the
+/// Shared state of the Checks &amp; Tests screen (one instance per app, so the local window and a remote user see the
 /// same selection, runs and progress). Runs go through <see cref="DiagnosticsService"/> like every other page.
 /// </summary>
 public sealed class ChecksScreenState

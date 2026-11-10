@@ -53,7 +53,7 @@ public static class UserModePlugin
     {
         public Dictionary<Guid, Type> Details { get; } = [];
         public string PluginId => pluginId;
-        // Remote rules still apply in the app (actor attribution, notices); a user-mode process never acts for a technician.
+        // Remote rules still apply in the app (actor attribution, notices); a user-mode process never acts for a remote user.
         public ISessionContext Session { get; } = new SessionContext(SessionMode.Local);
         public Version HostVersion => typeof(Context).Assembly.GetName().Version ?? new Version(0, 0);
         public Version ContractVersion => Plugins.ContractVersion.Current;

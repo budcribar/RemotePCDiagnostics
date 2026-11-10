@@ -135,7 +135,7 @@ public partial class App : Application
 
         // One instance per PC (local window and remote session share it); --undo-all also waits its turn.
         _instance = new Mutex(true, InstanceMutexName, out var first);
-        // Restarted after the technician's browser refreshed: the old copy is shutting down, so wait for it.
+        // Restarted after the remote user's browser refreshed: the old copy is shutting down, so wait for it.
         if (!first && RemotePCDiagnostics.Core.Session.SessionLaunchOptions.IsRestarted(e.Args))
         {
             Log("Restarted: waiting for the previous copy to exit");

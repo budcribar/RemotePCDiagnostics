@@ -2,7 +2,7 @@ namespace RemotePCDiagnostics.Agent.Core;
 
 public enum AgentCommand { Help, Install, Uninstall, Status, Run, Consent }
 
-/// <summary>What the person who installed the agent allows (the relay and technicians can only be stricter).</summary>
+/// <summary>What the person who installed the agent allows (the relay and remote users can only be stricter).</summary>
 public enum ConsentCeiling { Ask, Unattended }
 
 public enum AgentLifetime { Persistent, Session }
@@ -22,7 +22,7 @@ public sealed record AgentArgs(
 /// <summary>
 /// The agent command line (docs/agent-design.md):
 /// <c>install [--server=URL] [--key=KEY] [--consent=ask|unattended] [--lifetime=persistent|session]</c>, <c>uninstall</c>, <c>status</c>,
-/// <c>run</c> and the internal <c>consent --technician=NAME --timeout=SECONDS</c>. Options are <c>--name=value</c>; names and commands are
+/// <c>run</c> and the internal <c>consent --remote user=NAME --timeout=SECONDS</c>. Options are <c>--name=value</c>; names and commands are
 /// case-insensitive. <c>--pause</c> (internal) keeps the window of an elevated relaunch open until a key is pressed.
 /// </summary>
 public static class AgentCommandLine
@@ -137,7 +137,7 @@ public static class AgentCommandLine
         return true;
     }
 
-    /// <summary>The technician's display name as shown in the consent prompt: printable, no quotes, at most <see cref="MaxTechnicianLength"/> characters.</summary>
+    /// <summary>The remote user's display name as shown in the consent prompt: printable, no quotes, at most <see cref="MaxTechnicianLength"/> characters.</summary>
     public static string CleanTechnician(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return "";

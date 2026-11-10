@@ -27,7 +27,7 @@ public partial class MainWindow : Window
     private bool _mirror;
     private bool _reverseMirror;
     private bool _voice; // --voice / REMOTEPC_VOICE=1
-    private bool _unattended; // the technician gets control on joining (the user can take it back)
+    private bool _unattended; // the remote user gets control on joining (the user can take it back)
     private bool _restarting;
     private bool _technicianWasConnected; // a browser reached this copy, so a later server shutdown means that tab went away
     private Microsoft.Web.WebView2.Wpf.WebView2? _controlWebView; // --reverse-mirror: a plain WebView2 that shows the controlling /app page locally
@@ -40,7 +40,7 @@ public partial class MainWindow : Window
 
         // Local (default) or Remote. Remote when started with -u=<server uri> (RemoteBlazorWebViewTutorial convention)
         // or REMOTEPC_MODE=Remote (+ optional REMOTEPC_SERVER_URL, default https://remoteblazorwebview.com:34544).
-        // See Properties/launchSettings.json for the Visual Studio profiles: "Remote" (default), "Remote + voice" and "Local". Control moves between the user and the technician; the --reverse-mirror switch remains for command-line use.
+        // See Properties/launchSettings.json for the Visual Studio profiles: "Remote" (default), "Remote + voice" and "Local". Control moves between the user and the remote user; the --reverse-mirror switch remains for command-line use.
         var pendingReboot = RebootResumeCoordinator.TryReadPendingStateFile();
         var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, pendingReboot);
         var mode = launch.Mode;
@@ -59,7 +59,7 @@ public partial class MainWindow : Window
             n => RemotePCDiagnostics.Core.History.HistoryIds.For(n, diag.Catalog));
         _ = new RemotePCDiagnostics.Core.Logging.ResultEventLogger(provider.GetRequiredService<ResultStore>(), App.Events, _ => diag.CurrentSuiteLabel, context: eventContext);
         _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.AppStart, RemotePCDiagnostics.Core.Logging.LogLevel.Information, AppStartText(mode.ToString())));
-        // Tell the person at this PC when a remote technician starts/stops/restarts a service (non-blocking).
+        // Tell the person at this PC when a remote user starts/stops/restarts a service (non-blocking).
         provider.GetRequiredService<ServiceActionService>().ActionCompleted += rec =>
         {
 
@@ -123,7 +123,7 @@ public partial class MainWindow : Window
         _mirror = mirror;
         _reverseMirror = reverseMirror;
         // Status, give/take control and Copy link are in the app's header (RemoteBlazorWebView's session bar), in this
-        // window and in the technician's browser.
+        // window and in the remote user's browser.
         SetRemoteState(RemoteSessionState.Connecting);
 
         RemoteBlazorWebView.ReadyToConnect += (s, e) => Dispatcher.BeginInvoke(() =>
@@ -147,17 +147,17 @@ public partial class MainWindow : Window
             if (_mirror)
             {
                 // Remote: the user starts in control. This window shows the full, controlling /app page (as the owner, so it can
-                // always take control back); the technician joins at the read-only /mirror link and is handed control from the
+                // always take control back); the remote user joins at the read-only /mirror link and is handed control from the
                 // session bar in the header. The control's WebView loads /app/<id> in place (RBWV), keeping in-surface voice.
                 var appUrl = RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id != Guid.Empty ? e.Id : id));
-                if (_unattended) appUrl = RemoteLinkInfo.WithTechnicianFirst(appUrl);
+                if (_unattended) appUrl = RemoteLinkInfo.WithRemoteUserFirst(appUrl);
                 Logger.Info($"Navigating local WebView to the controller {appUrl}");
                 // NavigateToUrl waits for the WebView to initialize (CoreWebView2 is usually still null at ReadyToConnect).
                 try { RemoteBlazorWebView.NavigateToUrl(appUrl); }
                 catch (Exception ex) { Logger.Error($"Controller navigate failed: {ex}"); }
                 return;
             }
-            // The app runs in the technician's browser; this window only needs to say so (the link is in the panel above, not repeated).
+            // The app runs in the remote user's browser; this window only needs to say so (the link is in the panel above, not repeated).
             try { (s as IBlazorWebView)?.NavigateToString(RemoteLinkInfo.LocalPlaceholderHtml); }
             catch (Exception ex) { Logger.Error($"NavigateToString placeholder failed: {ex}"); }
         });
@@ -172,14 +172,14 @@ public partial class MainWindow : Window
         {
             Logger.Info($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
             SetRemoteState(_technicianUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected);
-            // The relay drops this client for good when the technician's tab closes ("Server shut down connection"), and the link then
+            // The relay drops this client for good when the remote user's tab closes ("Server shut down connection"), and the link then
             // only shows "Client id not found". Start a fresh copy on the same session id so the same link works again. Only after a
-            // technician actually connected to this copy, so a relay that keeps refusing us can't cause a restart loop.
+            // remote user actually connected to this copy, so a relay that keeps refusing us can't cause a restart loop.
             // Not when this window is the controller (Remote / reverse mirror): a watcher leaving doesn't end the session.
             if (_technicianWasConnected && !_mirror && !_reverseMirror && RemoteLinkInfo.IsServerShutdown(e.Exception))
                 RestartWhenIdle(serverUri);
         });
-        // The technician refreshed the browser (or pressed Restart on the "Locked" page): the server drops this client, so
+        // The remote user refreshed the browser (or pressed Restart on the "Locked" page): the server drops this client, so
         // start a fresh copy on the same session id and close this one (RemoteBlazorWebViewTutorial does the same with Restart()).
         RemoteBlazorWebView.Refreshed += (_, e) => Dispatcher.BeginInvoke(() =>
         {
@@ -228,7 +228,7 @@ public partial class MainWindow : Window
     /// /app page, so the person here drives the app in this window while watchers open the read-only /mirror link. A plain WebView2 has
     /// none of the Blazor control's "open off-origin links in the system browser" behavior, so /app loads in-window instead of Chrome.
     /// </summary>
-    /// <summary>Starts a new copy of the app on the same relay and session id (so the technician's link keeps working) and closes this one.</summary>
+    /// <summary>Starts a new copy of the app on the same relay and session id (so the remote user's link keeps working) and closes this one.</summary>
     private void RestartSameSession(Uri serverUri, string reason)
     {
         if (_restarting) return;

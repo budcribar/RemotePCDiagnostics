@@ -209,7 +209,7 @@ public sealed class WorkflowService(
             Save(s => s with
             {
                 Stage = WorkflowStage.Review, ReviewRulesVersion = CurrentReviewRulesVersion, ReviewedUtc = DateTimeOffset.UtcNow,
-                // Ticked: what the technician chose for this fix last time, otherwise its default (everything except opt-in fixes).
+                // Ticked: what the remote user chose for this fix last time, otherwise its default (everything except opt-in fixes).
                 Fixes = fixes, Approved = fixes.Where(f => prefs?.IsTicked(f.Id, f.DefaultOn) ?? f.DefaultOn).Select(f => f.Id).ToList(),
                 Findings = findings, NotOffered = notOffered, Recommendations = FixCatalog.Recommendations(suggestions), Machine = session?.MachineName ?? Environment.MachineName, HardwareSummary = hw,
             });

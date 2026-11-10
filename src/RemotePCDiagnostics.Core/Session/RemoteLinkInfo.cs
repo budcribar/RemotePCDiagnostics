@@ -8,7 +8,7 @@ public static class RemoteLinkInfo
 {
     /// <summary>
     /// True when RemoteBlazorWebView reports that the relay sent its "shutdown" command ("Server shut down connection"): the relay
-    /// dropped this client (the technician's tab closed) and the link stops working until a copy registers the session id again.
+    /// dropped this client (the remote user's tab closed) and the link stops working until a copy registers the session id again.
     /// </summary>
     public static bool IsServerShutdown(Exception? error) =>
         error?.Message is { } m && m.Contains("shut down", StringComparison.OrdinalIgnoreCase);
@@ -16,7 +16,7 @@ public static class RemoteLinkInfo
     /// <summary>How long to wait for ReadyToConnect before showing the "couldn't reach the server" warning.</summary>
     public static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(15);
 
-    /// <summary>Technician URL <c>&lt;server&gt;/app/&lt;id&gt;</c>, safe with or without a trailing slash / path on the server URI.</summary>
+    /// <summary>Remote user URL <c>&lt;server&gt;/app/&lt;id&gt;</c>, safe with or without a trailing slash / path on the server URI.</summary>
     public static Uri BuildTechnicianUrl(Uri serverUri, Guid id)
     {
         ArgumentNullException.ThrowIfNull(serverUri);
@@ -26,7 +26,7 @@ public static class RemoteLinkInfo
         return new Uri(b.Uri, $"app/{id}");
     }
 
-    /// <summary>Mirror URL <c>&lt;server&gt;/mirror/&lt;id&gt;</c> so the local user can watch what the technician is doing in real time.</summary>
+    /// <summary>Mirror URL <c>&lt;server&gt;/mirror/&lt;id&gt;</c> so the local user can watch what the remote user is doing in real time.</summary>
     public static Uri BuildMirrorUrl(Uri serverUri, Guid id)
     {
         ArgumentNullException.ThrowIfNull(serverUri);
@@ -43,12 +43,12 @@ public static class RemoteLinkInfo
     /// </summary>
     public static string ToMirrorMarkup(string? appMarkup) => appMarkup?.Replace("/app/", "/mirror/") ?? string.Empty;
 
-    /// <summary>The link to share: the technician link normally, the read-only mirror link with <c>--reverse-mirror</c> (the local window is in control).</summary>
+    /// <summary>The link to share: the remote user link normally, the read-only mirror link with <c>--reverse-mirror</c> (the local window is in control).</summary>
     public static Uri BuildShareUrl(Uri serverUri, Guid id, bool reverseMirror) => reverseMirror ? BuildMirrorUrl(serverUri, id) : BuildTechnicianUrl(serverUri, id);
 
     /// <summary>
     /// Marks a page URL as the machine owner's (<c>?role=owner</c>) so the relay records this connection as the owner and
-    /// lets it reclaim control. Only the local window's own surface gets this — never the link shared with the technician.
+    /// lets it reclaim control. Only the local window's own surface gets this — never the link shared with the remote user.
     /// </summary>
     public static Uri WithOwnerRole(Uri pageUri)
     {
@@ -59,14 +59,14 @@ public static class RemoteLinkInfo
     }
 
     /// <summary>
-    /// Unattended sessions: marks the owner's page so it gives control to the technician as soon as they join
-    /// (<c>control=technician</c>, read by RemoteBlazorWebView's page script). The owner can still take control back.
+    /// Unattended sessions: marks the owner's page so it gives control to the remote user as soon as they join
+    /// (<c>control=remote</c>, read by RemoteBlazorWebView's page script). The owner can still take control back.
     /// </summary>
-    public static Uri WithTechnicianFirst(Uri pageUri)
+    public static Uri WithRemoteUserFirst(Uri pageUri)
     {
         ArgumentNullException.ThrowIfNull(pageUri);
         var b = new UriBuilder(pageUri);
-        b.Query = string.IsNullOrEmpty(b.Query) ? "control=technician" : b.Query.TrimStart('?') + "&control=technician";
+        b.Query = string.IsNullOrEmpty(b.Query) ? "control=remote" : b.Query.TrimStart('?') + "&control=remote";
         return b.Uri;
     }
 

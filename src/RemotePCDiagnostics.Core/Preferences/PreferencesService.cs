@@ -5,14 +5,14 @@ namespace RemotePCDiagnostics.Core.Preferences;
 
 /// <summary>
 /// Choices the people using this app make on this PC, kept between runs (%LOCALAPPDATA%\RemotePCDiagnostics\preferences.json).
-/// Shared by the local window and a remote technician, like the rest of the app's state. Null = never chosen (use the default).
+/// Shared by the local window and a remote user, like the rest of the app's state. Null = never chosen (use the default).
 /// </summary>
 public sealed record UserPreferences
 {
     /// <summary>"dark", "light" or "system".</summary>
     public string? Theme { get; init; }
 
-    /// <summary>Service workflow: fixes the technician ticked or unticked by hand (fix id → ticked). Applied the next time the checks run.</summary>
+    /// <summary>Service workflow: fixes the remote user ticked or unticked by hand (fix id → ticked). Applied the next time the checks run.</summary>
     public Dictionary<string, bool> WorkflowFixChoices { get; init; } = new(StringComparer.Ordinal);
 
     /// <summary>Service workflow review: fix areas left open.</summary>
@@ -104,7 +104,7 @@ public sealed class PreferencesService(IPreferencesStore store)
         try { Changed?.Invoke(); } catch { }
     }
 
-    /// <summary>Remembers the technician's tick for these fixes (newest last; the oldest beyond the cap are dropped).</summary>
+    /// <summary>Remembers the remote user's tick for these fixes (newest last; the oldest beyond the cap are dropped).</summary>
     public void RememberFixChoices(IEnumerable<(string Id, bool On)> choices)
     {
         Update(p =>
@@ -119,6 +119,6 @@ public sealed class PreferencesService(IPreferencesStore store)
     public void ForgetFixChoices(IEnumerable<string> ids) =>
         Update(p => p with { WorkflowFixChoices = p.WorkflowFixChoices.Where(x => !ids.Contains(x.Key)).ToDictionary(x => x.Key, x => x.Value, StringComparer.Ordinal) });
 
-    /// <summary>Ticked or not for a fix: the technician's earlier choice if there is one, otherwise the fix's default.</summary>
+    /// <summary>Ticked or not for a fix: the remote user's earlier choice if there is one, otherwise the fix's default.</summary>
     public bool IsTicked(string fixId, bool defaultOn) => Current.WorkflowFixChoices.TryGetValue(fixId, out var on) ? on : defaultOn;
 }

@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace RemotePCDiagnostics.Core.Audio;
 
-/// <summary>Plays the microphone back through the speakers (live monitor) with a capped gain and a feedback brake. The audible part is the technician's call.</summary>
+/// <summary>Plays the microphone back through the speakers (live monitor) with a capped gain and a feedback brake. The audible part is the remote user's call.</summary>
 public sealed class MicToSpeakerModule(IAudioIo io, ILogger? log = null) : AudioModuleBase(io, log)
 {
     public const string ModuleName = ModuleSlugs.MicToSpeaker;

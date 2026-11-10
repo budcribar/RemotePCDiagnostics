@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace RemotePCDiagnostics.Core.Audio;
 
-/// <summary>Settings chosen on the page (shared by the local window and a remote technician).</summary>
+/// <summary>Settings chosen on the page (shared by the local window and a remote user).</summary>
 public sealed class AudioTestSettings
 {
     /// <summary>Null = Windows default device.</summary>

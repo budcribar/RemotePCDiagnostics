@@ -21,7 +21,7 @@
 #define AppPublisher "Remote PC Diagnostics"
 #define AppExeName "RemotePCDiagnostics.Host.exe"
 ; How the shortcuts (Start menu, desktop) and the "launch now" box at the end of setup start the app: a remote session on
-; the public relay, shared with the technician, with a voice call. Running the exe with no arguments is still Local mode.
+; the public relay, shared with the remote user, with a voice call. Running the exe with no arguments is still Local mode.
 #define RemoteParameters "-u=https://remoteblazorwebview.com:34544 --mirror --voice"
 #define AppMutexName "Global\RemotePCDiagnostics.Host"
 #define WebView2ClientId "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"

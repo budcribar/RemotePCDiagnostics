@@ -293,7 +293,7 @@ public class RemediationTests
         var upCard = hogsRep.Cards.Single(c => c.Id == "uptime");
         var restartAction = upCard.Actions!.Single(a => a.Kind == RemediationKind.ScheduleCleanRestart);
 
-        // 2. Remote technician triggers ScheduleCleanRestart
+        // 2. Remote user triggers ScheduleCleanRestart
         var schedRes = await remSvc.ExecuteAsync(restartAction);
         Assert.True(schedRes.Success);
         Assert.Contains("8 GB across 2 processes", schedRes.Message);

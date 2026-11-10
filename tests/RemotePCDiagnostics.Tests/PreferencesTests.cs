@@ -47,7 +47,7 @@ public sealed class PreferencesTests : IDisposable
         Assert.True(svc.IsTicked("a", defaultOn: true));
         svc.RememberFixChoices([("a", false), ("b", true)]);
         Assert.False(svc.IsTicked("a", defaultOn: true));
-        Assert.True(svc.IsTicked("b", defaultOn: false));   // an opt-in fix the technician ticked stays ticked
+        Assert.True(svc.IsTicked("b", defaultOn: false));   // an opt-in fix the remote user ticked stays ticked
         svc.ForgetFixChoices(["a"]);
         Assert.True(svc.IsTicked("a", defaultOn: true));
 

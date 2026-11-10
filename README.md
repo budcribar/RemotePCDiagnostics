@@ -1,13 +1,13 @@
 # RemotePCDiagnostics
 
-One Blazor app that diagnoses a Windows PC, usable on the bench or remotely by a technician who is somewhere else.
+One Blazor app that diagnoses a Windows PC, usable on the bench or remotely by someone who is somewhere else: a technician, a coworker, a friend.
 
 ## Vision
 
 RemotePCDiagnostics is a single Windows desktop application (a WPF or WinForms host running a Blazor UI in a WebView) made of diagnostic modules. The same UI runs in two ways:
 
 - **Locally, on the bench.** The technician runs the app on the machine in front of them and uses it like any desktop tool.
-- **Remotely.** The app runs on the customer's PC and is hosted through [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView). The technician, in a browser elsewhere, points at a server and sees and drives the exact same UI: seeing output, triggering scans and reading results.
+- **Remotely.** The app runs on the customer's PC and is hosted through [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView). The remote user, in a browser elsewhere, points at a server and sees and drives the exact same UI: seeing output, triggering scans and reading results.
 
 ## Planned diagnostic modules
 
@@ -89,7 +89,7 @@ On **Resource hogs & uptime** (and via "See ways to use less memory" in the *Top
 | Transparency effects, Widgets | Steps |
 | Memory almost full, page-file pressure, memory compression | Info |
 
-After every action the app waits ~2.5 s and shows the measured change ("Freed about 1.0 GB. Available RAM 5.2 → 6.2 GB (used 62% → 52%)"), says so honestly when nothing changed, and says "Takes effect next launch or after a restart" for settings. Nothing is ever applied automatically; every change needs a click (local user or remote technician) and is logged as Event 1400. Protected processes (Windows core, security, shell, this app and its WebView2) and protected services are never offered.
+After every action the app waits ~2.5 s and shows the measured change ("Freed about 1.0 GB. Available RAM 5.2 → 6.2 GB (used 62% → 52%)"), says so honestly when nothing changed, and says "Takes effect next launch or after a restart" for settings. Nothing is ever applied automatically; every change needs a click (local user or remote user) and is logged as Event 1400. Protected processes (Windows core, security, shell, this app and its WebView2) and protected services are never offered.
 
 **Not yet verified on real hardware:** the Chrome/Edge Local State key names (`performance_tuning.high_efficiency_mode.state`, `performance_tuning.sleeping_tabs.enabled`) — if the key isn't present, only the settings page is offered; Visual Studio extension/Live Share detection paths; printer/Bluetooth/fingerprint detection; graceful close of every app; service start-type changes via the registry (take effect on next boot); the before/after numbers.
 
@@ -175,7 +175,7 @@ tests/
 - App (Windows, WebView2 runtime required):
   - Local/bench mode: `dotnet run --project src/RemotePCDiagnostics.Host`
   - Remote mode: start a RemoteWebViewService (`dotnet tool update -g PeakSWC.RemoteWebViewService --version 10.*-*`, then `RemoteWebViewService`), and run
-    `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`. The window shows a link for the technician's browser.
+    `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`. The window shows a link for the remote user's browser.
 - osquery: `osqueryi.exe` 5.24.0 is bundled from `third_party/osquery/` and copied to the Host output as `tools\osquery\osqueryi.exe` (override with `RPD_OSQUERYI_PATH`). Without it the Osquery module reports a clear "not found" error.
 - HardeningKitty: PowerShell module 0.9.4 (MIT) is bundled from `third_party/HardeningKitty/module/` and copied to the Host output as `tools\HardeningKitty\` (override with `RPD_HARDENINGKITTY_PATH`); version/hashes in `third_party/HardeningKitty/README.md`. There is no installer yet — "installed" means it ships inside the Host build/publish folder. The **Security audit** page runs it on demand only (Start/Cancel, 5-minute timeout, not auto-run, not in Run All), in read-only `Audit` mode via `powershell.exe -NoProfile -ExecutionPolicy Bypass` for that process only. A complete audit needs administrator rights (the app manifest requests them).
 
@@ -185,27 +185,28 @@ The Host has four Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/P
 
 | Profile | Settings | Behavior |
 |---|---|---|
-| **Remote** (default in Visual Studio) | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544`, `REMOTEPC_MIRROR=1` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a technician joins from a browser. This window opens the full app with the user in control; the shared link is the read-only `/mirror/<id>` page. The user gives control to the technician and takes it back from the session bar in the header; whoever doesn't hold control sees a live, read-only view. |
-| **Remote + voice** | Remote, plus `REMOTEPC_VOICE=1` (command line: `--voice`) | Same, with a voice call between the user and the technician. |
-| **Remote (unattended)** | Remote, plus `REMOTEPC_UNATTENDED=1` (command line: `--unattended`) | The technician gets control as soon as they open the link, with nobody at the PC handing it over. The user can still take control back. The setting survives the app's own session restarts and a reboot-and-resume. Without this setting a session is supervised: the user starts in control and gives it. |
+| **Remote** (default in Visual Studio) | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544`, `REMOTEPC_MIRROR=1` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a remote user joins from a browser. This window opens the full app with the user in control; the shared link is the read-only `/mirror/<id>` page. The user gives control to the remote user and takes it back from the session bar in the header; whoever doesn't hold control sees a live, read-only view. |
+| **Remote + voice** | Remote, plus `REMOTEPC_VOICE=1` (command line: `--voice`) | Same, with a voice call between the person at the PC and the remote user. |
+| **Remote (unattended)** | Remote, plus `REMOTEPC_UNATTENDED=1` (command line: `--unattended`) | The remote user gets control as soon as they open the link, with nobody at the PC handing it over. The user can still take control back. The setting survives the app's own session restarts and a reboot-and-resume. Without this setting a session is supervised: the user starts in control and gives it. |
 | **Local** | `REMOTEPC_MODE=Local` | UI renders in the app window only. Running the exe with no settings is also Local (CI uses this). |
 
-A remote session has one user (this PC, the owner), one technician and any number of read-only viewers, all on the same link. The first person to open the link is the technician; anyone after that only watches, with no control and no voice. Module panels follow control too: they are usable for whoever has control and read-only for everyone else. Details: RemoteBlazorWebView README, "Sharing control".
+A remote session has one user (this PC, the owner), one remote user and any number of read-only viewers, all on the same link. The first person to open the link is the remote user; anyone after that only watches, with no control and no voice. Module panels follow control too: they are usable for whoever has control and read-only for everyone else. Details: RemoteBlazorWebView README, "Sharing control".
 
-The older one-way modes still work from the command line: `--reverse-mirror` (or `REMOTEPC_REVERSE_MIRROR=1`) for a read-only demo link, and Remote without `REMOTEPC_MIRROR` for a technician-only session.
+The older one-way modes still work from the command line: `--reverse-mirror` (or `REMOTEPC_REVERSE_MIRROR=1`) for a read-only demo link, and Remote without `REMOTEPC_MIRROR` for a remote-only session.
 
 Configuration (resolved by `SessionLaunchOptions`, precedence top to bottom):
 - `-u=<server url>` command-line arg: forces Remote with that server (the RemoteBlazorWebViewTutorial convention), e.g. `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`.
 - `REMOTEPC_MODE=Local|Remote` and `REMOTEPC_SERVER_URL` env vars. Remote with no URL uses the default `https://remoteblazorwebview.com:34544`.
 - `-i=<guid>` or `REMOTEPC_ID`: fixed session id. Otherwise a new id is assigned each run.
-- `-m` / `--mirror` or `REMOTEPC_MIRROR=1`: enables session mirroring in Remote mode so the person at the PC can watch what the technician is doing live in the local window.
+- `-m` / `--mirror` or `REMOTEPC_MIRROR=1`: enables session mirroring in Remote mode so the person at the PC can watch what the remote user is doing live in the local window.
 
 Server address: the default is the Railway-direct address `https://remoteblazorwebview.com:34544` (Railway TCP proxy to the container's port 8443; Kestrel TLS with a Let's Encrypt cert, HTTP/2 gRPC). Alternative address: `https://server.remoteblazorwebview.com:34544` (same Railway proxy; the port is required, because plain 443 serves a `*.up.railway.app` cert that does not match). The cert on 34544 is issued to `server.remoteblazorwebview.com` and also covers `remoteblazorwebview.com` and `remoteblazor.pagetomovie.com` (Let's Encrypt, valid until 2027-01-27). `https://server.remoteblazorwebview.com` (no port) is the planned permanent name once Railway serves a matching cert on 443. Use either via `REMOTEPC_SERVER_URL` or `-u=`.
 
-How a technician connects (per PeakSWC.RemoteBlazorWebView / RemoteBlazorWebViewTutorial):
+How a remote user connects (shared session: the **Remote** profile, `--mirror` or `--unattended`):
 1. On the customer PC, start the Host in Remote mode (elevated; UAC prompts).
-2. The control registers with the server. A native **Remote session** panel at the top of the window shows "Connecting to server…", then "Ready. Share this link with the technician:" with a clickable link `<server>/app/<session-guid>` (opens in the default browser) and a **Copy link** button; it changes to "Technician connected" when the technician joins. If the server isn't reached within ~15 s it shows a friendly "Couldn't reach the server yet: host:port …" warning (details in the host log / `RPD_LOG_FILE`). The link is also shown in the web view, as in the tutorial. Note: the control's `Id`/`ServerUri` must be set before `HostPage` (which is why `HostPage` is set in code, not XAML).
-3. The user sends that link to the technician, who opens it in a browser and gets the same Dashboard/Osquery UI, running on the customer PC.
+2. The window opens the full app with the person at the PC in control. The session bar in the header shows a dot (red while anyone is connected remotely), who has control, and **Copy link**. If the server isn't reached within ~15 s the window shows a short "Remote session not connected" notice instead (details in the host log / `RPD_LOG_FILE`). Note: the control's `Id`/`ServerUri` must be set before `HostPage` (which is why `HostPage` is set in code, not XAML).
+3. The user presses **Copy link** and sends the link (`<server>/mirror/<session-guid>`) to the remote user, who opens it in a browser and sees the same UI, running on the customer PC, read-only at first.
+4. The user presses **Give control** to let the remote user drive, and **Take control** to get it back. In an unattended session the remote user gets control as soon as they join.
 The top bar badge shows Local or Remote. Consent prompt and audit log for remote sessions are still TODO (see Safety).
 
 ### Elevation
@@ -218,14 +219,14 @@ The Dashboard banner is one compact row: health status on the left (problem name
 **Run all checks** (quick checks only; stress tests stay out of it), **Run checks + stress tests (short)** (about 5 min) and
 **Run checks + stress tests (extended)** (about 25 min) on the right; the times are in the buttons' tooltips. Under the status, small
 text shows "Last checked …", "N on-demand tests not run" (links to Stress tests) and "security audit not run" (links to Security audit). One click, no
-confirmation (also in Remote mode; the person at the PC already let the technician in). It runs the quick checks
+confirmation (also in Remote mode; the person at the PC already let the remote user in). It runs the quick checks
 (`RunAllAsync`), then `DiagnosticsService.RunStressSuiteAsync` runs the stress tests strictly one at a time: CPU,
 Memory, Disk, GPU, Network. Short = 1 minute per test (memory in Quick mode); Extended = 5 minutes per test (memory in
 Full mode). Each test's time limit/mode is set for the run and restored afterwards. A test that isn't available on this
 PC (e.g. no graphics card) is skipped; an overheated or failed test stops the sequence and the rest are marked not run.
 Cancel stops the current test and ends the run. Both run buttons are disabled meanwhile, progress reads
 "Stress test 2 of 5: Memory", and results show "(short run)"/"(extended run)". The security audit is not included.
-Who started it (local user or remote technician) goes to the app log. Times are approximate: quick checks and the
+Who started it (local user or remote user) goes to the app log. Times are approximate: quick checks and the
 disk test's preparation/clean-up and the network test's capped transfers can add or trim a little; a test already
 started from its own page is waited for rather than restarted.
 
@@ -264,7 +265,7 @@ Audio access is behind `IAudioIo` (Core); the Windows implementation is `WasapiA
 
 - **Microphone to speaker test** plays the microphone through the speaker live for 5–30 s (default 10 s) at a capped gain (-6 dB),
   with a fade-in. It measures the microphone peak/RMS; no sound at all is a fail. Whether it was heard is up to the person at the PC:
-  "I heard it" / "I didn't hear it" sets Pass / Fail. Over a remote session the technician can't hear the PC.
+  "I heard it" / "I didn't hear it" sets Pass / Fail. Over a remote session the remote user can't hear the PC.
 
 Caveats: full duplex can howl when the microphone hears the speaker. A brake stops the monitor when the peak stays above -3 dBFS for
 250 ms or a tone-like signal keeps growing, and turns the gain down as soon as a loud tone-like signal appears; the mic-to-speaker test
@@ -369,7 +370,7 @@ but has not been exercised by automated tests.
 
 ### Themes
 
-The top bar has a **Dark / System / Light** switch (default **System**, which follows the Windows light/dark setting live via `prefers-color-scheme`). The choice is stored in the web view's `localStorage` (key `rpd-theme`; falls back to an in-memory value if storage is unavailable). In remote mode the technician's browser keeps its own choice. An inline script in `index.html` sets `data-theme` on `<html>` before first paint, so there is no flash. All colors are CSS custom properties defined in `src/RemotePCDiagnostics.UI/wwwroot/app.css` under `:root, [data-theme="light"]` and `[data-theme="dark"]`; add new colors there rather than hard-coding them in markup. The parsing/resolution rules are mirrored in C# (`Core/Theming/ThemePreference.cs`) and unit-tested.
+The top bar has a **Dark / System / Light** switch (default **System**, which follows the Windows light/dark setting live via `prefers-color-scheme`). The choice is stored in the web view's `localStorage` (key `rpd-theme`; falls back to an in-memory value if storage is unavailable). In remote mode the remote user's browser keeps its own choice. An inline script in `index.html` sets `data-theme` on `<html>` before first paint, so there is no flash. All colors are CSS custom properties defined in `src/RemotePCDiagnostics.UI/wwwroot/app.css` under `:root, [data-theme="light"]` and `[data-theme="dark"]`; add new colors there rather than hard-coding them in markup. The parsing/resolution rules are mirrored in C# (`Core/Theming/ThemePreference.cs`) and unit-tested.
 
 ### CI
 
@@ -395,7 +396,7 @@ once to the `RPD_LOG_FILE` log.
 The **History** page (sidebar, right under Dashboard) lists past results newest first: Time, Test, Result, Summary,
 Duration. Filter by test, result and time range (24 hours / 7 days / 30 days / all), sort by any column, click a row for
 measurements (and suite mode, machine, app version). Stress tests with a key measurement (peak CPU/GPU temperature, disk
-read speed, download speed) get a small trend of the last 12 runs. In Remote mode the technician sees the bench PC's history.
+read speed, download speed) get a small trend of the last 12 runs. In Remote mode the remote user sees the bench PC's history.
 
 History is read from the **Windows Event Log** (Application, source RemotePCDiagnostics, event 1100; newest first, at most
 5,000 events, XPath time filter for the chosen range) with `EventLogReader`; nothing is stored elsewhere. Retention follows

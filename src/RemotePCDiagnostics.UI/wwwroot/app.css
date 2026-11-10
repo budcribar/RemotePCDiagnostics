@@ -250,7 +250,7 @@ table.sortable td:first-child { white-space: nowrap; }
 .suite-steps li { display: inline-flex; align-items: center; gap: 6px; }
 
 /* ======================================================================
-   Polish layer (remote technician review): density, layout, contrast.
+   Polish layer (remote user review): density, layout, contrast.
    ====================================================================== */
 /* Contrast: helper/faint text >= 4.5:1 on surfaces in both themes. */
 :root:not([data-theme="dark"]) { --text-faint: #687384; --warn-text: #92400e; --chip-warn: #b45309; --chip-na: #586272; }

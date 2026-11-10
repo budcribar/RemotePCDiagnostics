@@ -3,7 +3,7 @@
 @inject IJSRuntime JS
 @inject AppServices App
 @* Dark / System / Light segmented control. Applied by window.rpdTheme (index.html); remembered on this PC (preferences.json), so it's the same
-   in the local window and for a remote technician, and survives a browser that doesn't keep localStorage. *@
+   in the local window and for a remote user, and survives a browser that doesn't keep localStorage. *@
 <div class="theme-switch" role="radiogroup" aria-label="Theme" data-testid="theme-switch">
     @foreach (var (choice, icon) in Options)
     {

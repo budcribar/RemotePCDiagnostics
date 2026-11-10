@@ -254,7 +254,7 @@
 
 @code {
     // Fix areas start collapsed: the review shows each area's ticked count; open only the ones worth checking.
-    // The areas the technician left open are remembered on this PC.
+    // The areas the remote user left open are remembered on this PC.
     private readonly HashSet<string> _openAreas = new(StringComparer.Ordinal);
     private RemotePCDiagnostics.Core.Preferences.PreferencesService? Prefs =>
         App.Preferences;

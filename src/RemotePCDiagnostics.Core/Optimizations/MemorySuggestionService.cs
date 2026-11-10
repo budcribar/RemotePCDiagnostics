@@ -205,7 +205,7 @@ public sealed record SuggestionResult(string SuggestionId, bool Success, string 
 
 /// <summary>
 /// Scans, shows and applies memory suggestions. Every change runs only from an explicit click; each is logged to the Event Log (1400)
-/// with the actor (Local/Remote technician) and, where possible, can be undone.
+/// with the actor (Local/Remote user) and, where possible, can be undone.
 /// </summary>
 public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? services = null, ServiceActionService? serviceActions = null,
     ISessionContext? session = null, Action<LogLevel, string>? events = null, ILogger? log = null, TimeSpan? settle = null, Func<DateTime>? now = null,

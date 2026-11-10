@@ -12,7 +12,7 @@ public static class ConsentPolicy
 
     /// <summary>
     /// Ask unless both sides allow skipping it: the local ceiling is <see cref="ConsentCeiling.Unattended"/> AND the relay didn't ask for
-    /// consent. The relay and technicians can only make it stricter.
+    /// consent. The relay and remote users can only make it stricter.
     /// </summary>
     public static bool MustAsk(ConsentCeiling ceiling, bool requireConsent) => requireConsent || ceiling != ConsentCeiling.Unattended;
 

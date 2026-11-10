@@ -5,12 +5,12 @@ namespace RemotePCDiagnostics.Core.Session;
 /// <summary>
 /// How the Host should run, resolved from command-line args, environment, and any pending post-reboot state.
 /// Precedence: <c>-u=&lt;url&gt;</c> arg (forces Remote) &gt; REMOTEPC_MODE / REMOTEPC_SERVER_URL env vars &gt; pending reboot state &gt; Local.
-/// Pass <c>-m</c> or <c>--mirror</c> (or <c>REMOTEPC_MIRROR=1</c>) in Remote mode so the local window mirrors what the technician is doing.
+/// Pass <c>-m</c> or <c>--mirror</c> (or <c>REMOTEPC_MIRROR=1</c>) in Remote mode so the local window mirrors what the remote user is doing.
 /// Pass <c>--reverse-mirror</c> (or <c>REMOTEPC_REVERSE_MIRROR=1</c>) for the opposite, for demos: the local window is in control and the shared
 /// link is the read-only <c>/mirror/&lt;id&gt;</c> page, so someone in a browser can watch but not click.
-/// Pass <c>--unattended</c> (or <c>REMOTEPC_UNATTENDED=1</c>) so the technician gets control as soon as they join, without anyone at
+/// Pass <c>--unattended</c> (or <c>REMOTEPC_UNATTENDED=1</c>) so the remote user gets control as soon as they join, without anyone at
 /// the PC handing it over (the user can still take it back). Without it the session is supervised: the user starts in control and gives it.
-/// Pass <c>--voice</c> (or <c>REMOTEPC_VOICE=1</c>) for a voice call between the user and the technician (needs an https relay).
+/// Pass <c>--voice</c> (or <c>REMOTEPC_VOICE=1</c>) for a voice call between the user and the remote user (needs an https relay).
 /// </summary>
 public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid Id, bool PostReboot = false, bool Mirror = false, bool ReverseMirror = false, bool Unattended = false, bool Voice = false)
 {
@@ -68,7 +68,7 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
             else if (a.StartsWith(VoiceArg + "=", StringComparison.OrdinalIgnoreCase)) voiceArg = ParseBool(a[(VoiceArg.Length + 1)..]) ?? true;
         }
         var voice = voiceArg ?? (ParseBool(env(VoiceVariable)) == true);
-        // Unattended is a shared session (the app window here, the technician on the link) where the technician gets control on joining.
+        // Unattended is a shared session (the app window here, the remote user on the link) where the remote user gets control on joining.
         var unattended = !reverse && (unattendedArg ?? (ParseBool(env(UnattendedVariable)) == true));
         // The two directions exclude each other; reverse wins (it's the one asked for explicitly for a demo).
         var mirror = !reverse && (unattended || (mirrorArg ?? (ParseBool(env(MirrorVariable)) == true)));
@@ -134,9 +134,9 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
         args.Any(a => string.Equals(a, RestartedArg, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
-    /// Arguments for the copy started when the technician's browser refreshes the remote session (RemoteBlazorWebView's
+    /// Arguments for the copy started when the remote user's browser refreshes the remote session (RemoteBlazorWebView's
     /// Refreshed event; the library's own Restart() starts the same <c>-u=</c>/<c>-i=</c> pair). The same session id keeps the
-    /// technician's link working; <see cref="RestartedArg"/> lets the new copy wait for this one to release the one-copy lock.
+    /// remote user's link working; <see cref="RestartedArg"/> lets the new copy wait for this one to release the one-copy lock.
     /// </summary>
     public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool mirror = false, bool reverseMirror = false, bool unattended = false, bool voice = false)
     {
