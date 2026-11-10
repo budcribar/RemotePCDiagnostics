@@ -49,7 +49,7 @@ public class UndoTests
     }
 
     private static ChangeRecord Rec(ChangeKind k, string target, string? prev, int minutesAgo) =>
-        new(Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(-minutesAgo), k, target, prev, $"{k} {target}", "Remote technician");
+        new(Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(-minutesAgo), k, target, prev, $"{k} {target}", "Remote user");
 
     // ---- journal ----
     [Fact]
@@ -152,7 +152,7 @@ public class UndoTests
         Assert.True((await svc.ExecuteAsync(new(RemediationKind.CleanTempFiles, "Clean"))).Success);
         var plan = Assert.Single(j.All, c => c.Kind == ChangeKind.PowerPlan);
         Assert.Equal("a1841308-3541-4fab-bc81-f71556f20b4a", plan.Previous);
-        Assert.Equal("Remote technician", plan.Actor);
+        Assert.Equal("Remote user", plan.Actor);
         Assert.Equal("42:524288000", Assert.Single(j.All, c => c.Kind == ChangeKind.TempFiles).Previous);
     }
 

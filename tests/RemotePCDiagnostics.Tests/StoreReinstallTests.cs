@@ -454,7 +454,7 @@ public class StoreReinstallTests
         var path = Path.Combine(dir, "changes.json");
         try
         {
-            var rec = StoreReinstall.Record(AppRemoval.PackageById("clipchamp")!, 2980L << 20, "Remote technician");
+            var rec = StoreReinstall.Record(AppRemoval.PackageById("clipchamp")!, 2980L << 20, "Remote user");
             new FileChangeJournal(path).Add(rec);
             Assert.Contains("\"StoreReinstall\"", File.ReadAllText(path));
             var back = Assert.Single(new FileChangeJournal(path).All);

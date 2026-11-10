@@ -1,7 +1,7 @@
 namespace RemotePCDiagnostics.Core.Session;
 
 /// <summary>States shown by the Host's native "Remote session" overlay.</summary>
-public enum RemoteSessionState { Connecting, Ready, Unreachable, TechnicianConnected, Disconnected }
+public enum RemoteSessionState { Connecting, Ready, Unreachable, RemoteUserConnected, Disconnected }
 
 /// <summary>Link building and status text for the Remote-mode overlay (no WPF dependency, unit-tested).</summary>
 public static class RemoteLinkInfo
@@ -17,7 +17,7 @@ public static class RemoteLinkInfo
     public static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(15);
 
     /// <summary>Remote user URL <c>&lt;server&gt;/app/&lt;id&gt;</c>, safe with or without a trailing slash / path on the server URI.</summary>
-    public static Uri BuildTechnicianUrl(Uri serverUri, Guid id)
+    public static Uri BuildRemoteUserUrl(Uri serverUri, Guid id)
     {
         ArgumentNullException.ThrowIfNull(serverUri);
         if (!serverUri.IsAbsoluteUri) throw new ArgumentException("Server URI must be absolute.", nameof(serverUri));
@@ -44,7 +44,7 @@ public static class RemoteLinkInfo
     public static string ToMirrorMarkup(string? appMarkup) => appMarkup?.Replace("/app/", "/mirror/") ?? string.Empty;
 
     /// <summary>The link to share: the remote user link normally, the read-only mirror link with <c>--reverse-mirror</c> (the local window is in control).</summary>
-    public static Uri BuildShareUrl(Uri serverUri, Guid id, bool reverseMirror) => reverseMirror ? BuildMirrorUrl(serverUri, id) : BuildTechnicianUrl(serverUri, id);
+    public static Uri BuildShareUrl(Uri serverUri, Guid id, bool reverseMirror) => reverseMirror ? BuildMirrorUrl(serverUri, id) : BuildRemoteUserUrl(serverUri, id);
 
     /// <summary>
     /// Marks a page URL as the machine owner's (<c>?role=owner</c>) so the relay records this connection as the owner and
@@ -86,8 +86,8 @@ public static class RemoteLinkInfo
         "<!DOCTYPE html><html><head><meta charset='utf-8'><style>" +
         "html,body{margin:0;height:100%;background:#1f2329;color:#d0d5dd;font:15px 'Segoe UI',system-ui,sans-serif}" +
         "main{max-width:560px;margin:72px auto;padding:0 24px;line-height:1.5}h1{font-size:18px;font-weight:600;color:#f2f4f7;margin:0 0 8px}" +
-        "</style></head><body><main><h1>Your technician is working on this PC</h1>" +
-        "<p>The diagnostics run in the technician's browser. Keep this window open (you can minimize it). " +
+        "</style></head><body><main><h1>Someone is working on this PC remotely</h1>" +
+        "<p>The diagnostics run in their browser. Keep this window open (you can minimize it). " +
         "Closing it ends the session.</p></main></body></html>";
 
     /// <summary>"host:port" for display (port always shown, e.g. remoteblazorwebview.com:34544 or example.com:443).</summary>
@@ -97,12 +97,12 @@ public static class RemoteLinkInfo
     {
         RemoteSessionState.Connecting => "Connecting to server…",
         RemoteSessionState.Ready when reverseMirror => "Demo: you're in control here. Share this view-only link:",
-        RemoteSessionState.Ready => "Ready. Share this link with the technician:",
+        RemoteSessionState.Ready => "Ready. Share this link:",
         RemoteSessionState.Unreachable => $"Couldn't reach the server yet: {HostAndPort(serverUri)}. Check your internet connection; still trying…",
-        RemoteSessionState.TechnicianConnected when reverseMirror => "Demo running: you're in control; anyone with the link can watch but not click",
-        RemoteSessionState.TechnicianConnected => mirror ? "Technician connected — watching live below" : "Technician connected",
+        RemoteSessionState.RemoteUserConnected when reverseMirror => "Demo running: you're in control; anyone with the link can watch but not click",
+        RemoteSessionState.RemoteUserConnected => mirror ? "Remote user connected — watching live below" : "Remote user connected",
         RemoteSessionState.Disconnected when reverseMirror => "Disconnected from the server",
-        RemoteSessionState.Disconnected => "Technician disconnected",
+        RemoteSessionState.Disconnected => "Remote user disconnected",
         _ => string.Empty,
     };
 

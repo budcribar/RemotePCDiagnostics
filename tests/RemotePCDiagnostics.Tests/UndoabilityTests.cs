@@ -10,7 +10,7 @@ namespace RemotePCDiagnostics.Tests;
 public class UndoabilityTests
 {
     private static ChangeRecord Rec(ChangeKind k, string target, string? prev, int minutesAgo) =>
-        new(Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(-minutesAgo), k, target, prev, $"{k} {target}", "Remote technician");
+        new(Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(-minutesAgo), k, target, prev, $"{k} {target}", "Remote user");
 
     [Fact]
     public void Classification_PermanentPlaceholderAndFull()
@@ -42,7 +42,7 @@ public class UndoabilityTests
     {
         var j = new MemoryChangeJournal();
         j.Add(Rec(ChangeKind.PowerPlan, "", "a1841308-3541-4fab-bc81-f71556f20b4a", 10));
-        j.Add(Undoability.Permanent("updates:1", "Windows updates installed", "Remote technician"));
+        j.Add(Undoability.Permanent("updates:1", "Windows updates installed", "Remote user"));
         var undo = new UndoService(j, new SystemCommandRunner(new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""))));
         var r = await undo.UndoAllAsync("x");
         Assert.Equal((1, 0, 1), (r.Succeeded, r.Failed, r.Skipped));

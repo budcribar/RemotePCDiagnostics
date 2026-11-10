@@ -95,7 +95,7 @@ Write-Host ("host dll: {0}" -f $dll.LastWriteTime)
 Write-Host ("bundle:   {0}  ({1:N0} bytes)" -f $js.LastWriteTime, $bundleBytes.Length)
 Write-Host ("host dll contains the current bundle: {0}" -f $embeds)
 if ($embeds) {
-  Write-Host "OK - Host embeds the current bundle. Launch the app, then open the technician /app link in a fresh Incognito window." -ForegroundColor Green
+  Write-Host "OK - Host embeds the current bundle. Launch the app, press Copy link, then open the link in a fresh Incognito window." -ForegroundColor Green
 } else {
   Write-Host "WARNING - Host dll does not contain the current bundle; the embed did not refresh. Make sure the app and VS are closed, then re-run." -ForegroundColor Yellow
 }

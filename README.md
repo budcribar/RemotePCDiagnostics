@@ -59,7 +59,7 @@ audit line (who/what/when/result) go to the log (RPD_LOG_FILE). A "Recent action
 Critical services (RPC, DCOM, LSM/SAM/LSA, Event Log, WMI, crypto, firewall/BFE, Defender/Security Center, DHCP/DNS client, NLA, NSI,
 Power, Plug and Play, profiles, user manager, Group Policy, Task Scheduler, TrustedInstaller, Remote Desktop and others — see
 `ServiceProtection.Protected`), drivers, and the app's own remote-session components show a lock and "Protected by Windows" with no
-Stop/Restart; a stopped protected service may still be started. In Remote mode actions are attributed to "Remote technician" and the
+Stop/Restart; a stopped protected service may still be started. In Remote mode actions are attributed to "Remote user" and the
 person at the PC gets a pop-up notice; the app cannot tell whether a specific click came from the local window or the remote browser.
 
 ## Checks, Stress tests and Security audit pages

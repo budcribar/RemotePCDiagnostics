@@ -78,8 +78,8 @@ Name: "{app}\checks"
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session with a technician (shared screen and voice)"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session with a technician (shared screen and voice)"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session (shared screen and voice)"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session (shared screen and voice)"; Tasks: desktopicon
 
 [Run]
 ; shellexec is required because RemotePCDiagnostics.Host.exe declares requireAdministrator in its manifest.

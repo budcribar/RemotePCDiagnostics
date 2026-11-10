@@ -26,7 +26,7 @@ public sealed record SpeakerToMicReport(AudioVerdict Verdict, string Output, str
 }
 
 public sealed record MicToSpeakerReport(string Output, string Input, double MicPeakDbfs, double MicRmsDbfs, TimeSpan Duration, bool HalfDuplex, bool RawMic,
-    bool FeedbackDetected, bool GainReduced, bool MicHeardSomething, bool? HeardByTechnician, string? Notice)
+    bool FeedbackDetected, bool GainReduced, bool MicHeardSomething, bool? HeardByListener, string? Notice)
 {
     public bool OfferHalfDuplex => FeedbackDetected;
 }

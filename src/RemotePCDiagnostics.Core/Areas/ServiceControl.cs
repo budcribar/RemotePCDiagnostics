@@ -72,7 +72,7 @@ public static class ServiceProtection
 public static class ServiceActor
 {
     public const string Local = "Local user";
-    public const string Remote = "Remote technician";
+    public const string Remote = "Remote user";
     /// <summary>In Remote mode the UI is driven from the remote user's browser, so actions are attributed to the remote user.</summary>
     public static string From(ISessionContext? session) => session?.Mode == SessionMode.Remote ? Remote : Local;
 }

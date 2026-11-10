@@ -62,7 +62,7 @@ public static class ClientReport
         if (s.AutoLogonRestoreError is { } alErr)
             sb.Append("<div class=\"alert\"><strong>Important: automatic sign-in could not be turned off.</strong> This PC may still sign in")
               .Append(s.AutoLogonUser is { Length: > 0 } au ? " to " + E(au) : "").Append(" by itself after a restart, without asking for a password. ")
-              .Append("Ask your technician to turn it off now (run netplwiz and tick \"Users must enter a user name and password\", or use Sysinternals Autologon &gt; Disable). Windows said: ")
+              .Append("Ask the person who serviced this PC to turn it off now (run netplwiz and tick \"Users must enter a user name and password\", or use Sysinternals Autologon &gt; Disable). Windows said: ")
               .Append(E(alErr)).Append("</div>");
         if (s.ResumeTaskRemoved == false)
             sb.Append("<div class=\"alert\"><strong>A scheduled task was left behind.</strong> The Task Scheduler task \"").Append(E(WorkflowService.ResumeTaskName))
@@ -153,7 +153,7 @@ public static class ClientReport
         }
         if (notApproved.Count > 0)
         {
-            sb.Append("<h2>Left as they were, by choice</h2><p class=\"meta\">Found by the checks, but your technician chose not to change these:</p><ul>");
+            sb.Append("<h2>Left as they were, by choice</h2><p class=\"meta\">Found by the checks, and left unchanged by choice:</p><ul>");
             foreach (var f in notApproved) sb.Append("<li>").Append(E(f.Title)).Append("</li>");
             sb.Append("</ul>");
         }
@@ -191,7 +191,7 @@ public static class ClientReport
                 if (s.AutoLogonRestoreError is not null)
                     sb.Append("<strong>Turned on automatic sign-in").Append(who).Append(" for the restarts, and it could NOT be turned off again</strong> (see the warning at the top).");
                 else if (s.AutoLogonEnabled)
-                    sb.Append("<strong>Turned on automatic sign-in").Append(who).Append(" for the restarts; it is still on.</strong> Ask your technician to turn it off.");
+                    sb.Append("<strong>Turned on automatic sign-in").Append(who).Append(" for the restarts; it is still on.</strong> Ask the person who serviced this PC to turn it off.");
                 else
                     sb.Append("Turned on automatic sign-in").Append(who).Append(" so the PC could sign in by itself after the restarts, then turned it off again")
                       .Append(s.AutoLogonRestoredUtc is { } back ? $" at {E(T(back))}" : "")
@@ -237,7 +237,7 @@ public static class ClientReport
                 sb.Append("</ul>");
             }
             if (permanent.Count > 0) { sb.Append("<p>Permanent (can't be undone; for example, installed updates stay installed and deleted files can't be recovered):</p><ul>"); foreach (var x in permanent) sb.Append("<li>").Append(E(x)).Append("</li>"); sb.Append("</ul>"); }
-            sb.Append("<p>To put changes back, your technician opens Remote PC Diagnostics and clicks \"Undo all changes\" (History page), or runs <code>RemotePCDiagnostics.Host.exe --undo-all</code> as administrator (add <code>--restart</code> to restart afterwards). Permanent changes are left as they are.")
+            sb.Append("<p>To put changes back, open Remote PC Diagnostics and click \"Undo all changes\" (History page), or run <code>RemotePCDiagnostics.Host.exe --undo-all</code> as administrator (add <code>--restart</code> to restart afterwards). Permanent changes are left as they are.")
               .Append(reinstall.Count > 0 ? " If an app can't be reinstalled automatically, undo says so and it can be reinstalled from the Microsoft Store by hand." : "").Append("</p>");
         }
         if (s.EarlierChanges > 0)

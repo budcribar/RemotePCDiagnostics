@@ -664,7 +664,7 @@ public class MemorySuggestionTests
         Assert.Contains("Freed about 1.0 GB", r.Message);
         Assert.Equal(1 * Gb, s.TotalFreedBytes);
         Assert.Contains("close:ChatGPT", sys.Calls);
-        Assert.Contains(events, e => e.StartsWith("Memory suggestion applied") && e.Contains("Actor: Remote technician") && e.Contains("CloseApp"));
+        Assert.Contains(events, e => e.StartsWith("Memory suggestion applied") && e.Contains("Actor: Remote user") && e.Contains("CloseApp"));
     }
 
     [Fact]

@@ -81,8 +81,8 @@ else
         {
             <p class="meta">Did the person at the PC hear the microphone through @rep.Output?</p>
             <div class="toolbar">
-                <button data-testid="m2s-heard" class="@(rep.HeardByTechnician == true ? "on" : "")" @onclick="() => m.Confirm(r, true)">I heard it</button>
-                <button data-testid="m2s-not-heard" class="@(rep.HeardByTechnician == false ? "on" : "")" @onclick="() => m.Confirm(r, false)">I didn't hear it</button>
+                <button data-testid="m2s-heard" class="@(rep.HeardByListener == true ? "on" : "")" @onclick="() => m.Confirm(r, true)">I heard it</button>
+                <button data-testid="m2s-not-heard" class="@(rep.HeardByListener == false ? "on" : "")" @onclick="() => m.Confirm(r, false)">I didn't hear it</button>
             </div>
         }
     }

@@ -121,7 +121,7 @@ public class RemediationTests
 
         var proxyRes = await svc.ExecuteAsync(ipCard.Actions!.Single(a => a.Kind == RemediationKind.DisableSystemProxy));
         Assert.True(proxyRes.Success);
-        Assert.Equal("Remote technician", svc.Recent.First().Actor);
+        Assert.Equal("Remote user", svc.Recent.First().Actor);
 
         var rowActions = ipCard.Rows.Single().Actions!;
         Assert.Equal(2, rowActions.Count);
@@ -345,6 +345,6 @@ public class RemediationTests
         Assert.Equal(1, summary.MemoryFixesCount);
         Assert.Single(summary.Fixes);
         Assert.Equal("+5 GB RAM", summary.Fixes[0].ImpactBadge);
-        Assert.Equal("Remote technician", summary.Fixes[0].Actor);
+        Assert.Equal("Remote user", summary.Fixes[0].Actor);
     }
 }

@@ -13,8 +13,8 @@ public class RemoteLinkInfoTests
     [InlineData("https://localhost:5001", "https://localhost:5001/app/11111111-2222-3333-4444-555555555555")]
     [InlineData("http://example.com/relay", "http://example.com/relay/app/11111111-2222-3333-4444-555555555555")]
     [InlineData("http://example.com/relay/?x=1", "http://example.com/relay/app/11111111-2222-3333-4444-555555555555")]
-    public void BuildTechnicianUrl_JoinsSafely(string server, string expected) =>
-        Assert.Equal(expected, RemoteLinkInfo.BuildTechnicianUrl(new Uri(server), Id).ToString());
+    public void BuildRemoteUserUrl_JoinsSafely(string server, string expected) =>
+        Assert.Equal(expected, RemoteLinkInfo.BuildRemoteUserUrl(new Uri(server), Id).ToString());
 
     [Theory]
     [InlineData("https://remoteblazorwebview.com:34544", "https://remoteblazorwebview.com:34544/mirror/11111111-2222-3333-4444-555555555555")]
@@ -23,8 +23,8 @@ public class RemoteLinkInfoTests
         Assert.Equal(expected, RemoteLinkInfo.BuildMirrorUrl(new Uri(server), Id).ToString());
 
     [Fact]
-    public void BuildTechnicianUrl_RejectsRelative() =>
-        Assert.Throws<ArgumentException>(() => RemoteLinkInfo.BuildTechnicianUrl(new Uri("/x", UriKind.Relative), Id));
+    public void BuildRemoteUserUrl_RejectsRelative() =>
+        Assert.Throws<ArgumentException>(() => RemoteLinkInfo.BuildRemoteUserUrl(new Uri("/x", UriKind.Relative), Id));
 
     [Fact]
     public void HostAndPort_IncludesDefaultPort() =>
@@ -35,9 +35,9 @@ public class RemoteLinkInfoTests
     {
         var s = new Uri("https://remoteblazorwebview.com:34544");
         Assert.Equal("Connecting to server…", RemoteLinkInfo.StatusText(RemoteSessionState.Connecting, s));
-        Assert.Equal("Ready. Share this link with the technician:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s));
-        Assert.Equal("Technician connected", RemoteLinkInfo.StatusText(RemoteSessionState.TechnicianConnected, s));
-        Assert.Equal("Technician connected — watching live below", RemoteLinkInfo.StatusText(RemoteSessionState.TechnicianConnected, s, mirror: true));
+        Assert.Equal("Ready. Share this link:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s));
+        Assert.Equal("Remote user connected", RemoteLinkInfo.StatusText(RemoteSessionState.RemoteUserConnected, s));
+        Assert.Equal("Remote user connected — watching live below", RemoteLinkInfo.StatusText(RemoteSessionState.RemoteUserConnected, s, mirror: true));
         var warn = RemoteLinkInfo.StatusText(RemoteSessionState.Unreachable, s);
         Assert.Equal("Couldn't reach the server yet: remoteblazorwebview.com:34544. Check your internet connection; still trying…", warn);
         Assert.True(RemoteLinkInfo.IsWarning(RemoteSessionState.Unreachable));
@@ -53,8 +53,8 @@ public class RemoteLinkInfoTests
         Assert.Equal("https://remoteblazorwebview.com:34544/mirror/7e57c0de-0000-4000-8000-000000000001", RemoteLinkInfo.BuildShareUrl(s, id, reverseMirror: true).ToString());
         Assert.Equal("https://remoteblazorwebview.com:34544/app/7e57c0de-0000-4000-8000-000000000001", RemoteLinkInfo.BuildShareUrl(s, id, reverseMirror: false).ToString());
         Assert.Equal("Demo: you're in control here. Share this view-only link:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s, reverseMirror: true));
-        Assert.Contains("can watch but not click", RemoteLinkInfo.StatusText(RemoteSessionState.TechnicianConnected, s, reverseMirror: true));
-        Assert.Equal("Ready. Share this link with the technician:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s));
+        Assert.Contains("can watch but not click", RemoteLinkInfo.StatusText(RemoteSessionState.RemoteUserConnected, s, reverseMirror: true));
+        Assert.Equal("Ready. Share this link:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s));
     }
 
     [Fact]

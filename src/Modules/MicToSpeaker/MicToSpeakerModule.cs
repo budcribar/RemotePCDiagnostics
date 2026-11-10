@@ -90,8 +90,8 @@ public sealed class MicToSpeakerModule(IAudioIo io, ILogger? log = null) : Audio
             { Notice: AudioVerdicts.PrivacyMessage } => (DiagnosticStatus.Error, AudioVerdicts.PrivacyMessage),
             { FeedbackDetected: true } => (DiagnosticStatus.Warning, AudioVerdicts.MessageOf(AudioVerdict.Feedback)),
             { MicHeardSomething: false } => (DiagnosticStatus.Error, "The microphone picked up no sound. Check that it isn't muted and its level isn't at zero."),
-            { HeardByTechnician: true } => (DiagnosticStatus.Ok, "Passed: the microphone picked up sound and it was heard through the speakers."),
-            { HeardByTechnician: false } => (DiagnosticStatus.Error, "The microphone picked up sound, but it wasn't heard through the speakers. Check the speaker, volume and mute."),
+            { HeardByListener: true } => (DiagnosticStatus.Ok, "Passed: the microphone picked up sound and it was heard through the speakers."),
+            { HeardByListener: false } => (DiagnosticStatus.Error, "The microphone picked up sound, but it wasn't heard through the speakers. Check the speaker, volume and mute."),
             _ => (DiagnosticStatus.Warning, "The microphone picked up sound. Did you hear it through the speakers? Choose I heard it or I didn't hear it."),
         };
         return new DiagnosticResult<MicToSpeakerReport>(Name, status, msg, DateTimeOffset.Now, r);
@@ -101,7 +101,7 @@ public sealed class MicToSpeakerModule(IAudioIo io, ILogger? log = null) : Audio
     public DiagnosticResult? Confirm(DiagnosticResult latest, bool heard)
     {
         if (latest.Payload is not MicToSpeakerReport r || r.FeedbackDetected || !r.MicHeardSomething) return null;
-        var updated = ToResult(r with { HeardByTechnician = heard });
+        var updated = ToResult(r with { HeardByListener = heard });
         Log($"{Name}: manual result heard={heard}");
         Raise(updated);
         return updated;

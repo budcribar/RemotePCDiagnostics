@@ -267,7 +267,7 @@
     private async Task RunSuite(StressSuiteMode mode)
     {
         if (Diagnostics.IsStressSuiteRunning) return;
-        Diagnostics.Log.Info($"Stress suite ({StressSuite.RunLabel(mode)}) requested from the Dashboard by the {(Session.Mode == RemotePCDiagnostics.Core.Session.SessionMode.Remote ? "remote technician" : "local user")}");
+        Diagnostics.Log.Info($"Stress suite ({StressSuite.RunLabel(mode)}) requested from the Dashboard by the {(Session.Mode == RemotePCDiagnostics.Core.Session.SessionMode.Remote ? "remote user" : "local user")}");
         cancelling = false;
         try { await Diagnostics.RunStressSuiteAsync(mode, null); }
         catch (InvalidOperationException) { /* already running: the other click won */ }

@@ -155,8 +155,8 @@ public class ServiceControlTests
         var r = await svc.ExecuteAsync(Svc("Spooler", "Print Spooler", "STOPPED"), ServiceAction.Start);
         Assert.True(r.Success);
         Assert.Equal("Print Spooler started", r.Message);
-        Assert.Equal("Remote technician", svc.Recent.Single().Actor);
-        Assert.Equal("Remote technician", seen!.Actor);
+        Assert.Equal("Remote user", svc.Recent.Single().Actor);
+        Assert.Equal("Remote user", seen!.Actor);
     }
 
     [Fact]

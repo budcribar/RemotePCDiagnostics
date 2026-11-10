@@ -84,7 +84,7 @@ public class SessionLaunchOptionsTests
 
         var pending = new PendingRebootState(
             DateTimeOffset.UtcNow,
-            "Remote technician",
+            "Remote user",
             SessionMode.Remote,
             initialCtx.ServerUri!.AbsoluteUri,
             initialCtx.SessionId,
