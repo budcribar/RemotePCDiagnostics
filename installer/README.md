@@ -32,6 +32,15 @@ Outputs are written to `artifacts/installer/`:
 - `RemotePCDiagnostics-Setup-<Version>-win-x64.exe`
 - `RemotePCDiagnostics-Setup-<Version>-win-x64.exe.sha256`
 
+## Rolling Pre-release (Single Copy, Replaced on Every Push to `main`)
+
+Every push to `main` runs `.github/workflows/ci.yml`, deletes any previous GitHub pre-release (and its tag), and publishes a single fresh **`prerelease`** pre-release containing the latest `RemotePCDiagnostics-Setup-<Version>-win-x64.exe` and portable `.exe` so no historical pre-release clutter accumulates.
+
+To build locally on Windows and immediately replace that same rolling pre-release via the GitHub CLI (`gh`):
+```powershell
+pwsh -NoProfile -File installer/Build-Installer.ps1 -PublishPreRelease
+```
+
 ## Silent / Unattended Deployment Flags
 
 - **Silent install** (Start Menu shortcut only, auto-bootstraps WebView2 if missing):

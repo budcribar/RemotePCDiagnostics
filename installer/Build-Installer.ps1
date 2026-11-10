@@ -7,7 +7,7 @@
   pwsh -NoProfile -File installer/Build-Installer.ps1
 
 .EXAMPLE
-  pwsh -NoProfile -File installer/Build-Installer.ps1 -Version 1.2.1
+  pwsh -NoProfile -File installer/Build-Installer.ps1 -PublishPreRelease
 #>
 [CmdletBinding()]
 param(
@@ -19,7 +19,8 @@ param(
     [switch] $UseRbwvSource,
     [switch] $SkipPublish,
     [switch] $SkipVerify,
-    [switch] $StageOnly
+    [switch] $StageOnly,
+    [switch] $PublishPreRelease
 )
 
 Set-StrictMode -Version Latest
@@ -243,3 +244,38 @@ Write-Host "Installer built successfully:" -ForegroundColor Green
 Write-Host "  File:   $SetupExePath ($SizeMb MB)"
 Write-Host "  SHA256: $Hash"
 Write-Host "  Hash:   $ShaFile"
+
+if ($PublishPreRelease) {
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw "GitHub CLI ('gh') is required for -PublishPreRelease. Install via 'winget install --id GitHub.cli -e' and sign in with 'gh auth login'."
+    }
+    Push-Location $RepoRoot
+    try {
+        $CommitSha = (& git rev-parse HEAD).Trim()
+        $ShortSha = $CommitSha.Substring(0, [Math]::Min(7, $CommitSha.Length))
+
+        Write-Host ""
+        Write-Host "Removing previous pre-releases so only one copy is kept ..." -ForegroundColor Cyan
+        $OldTagsJson = & gh release list --limit 50 --json tagName,isPrerelease
+        if ($LASTEXITCODE -ne 0) { throw "gh release list failed ($LASTEXITCODE)" }
+        $OldTags = @($OldTagsJson | ConvertFrom-Json | Where-Object { $_.isPrerelease -or $_.tagName -eq 'prerelease' } | ForEach-Object { $_.tagName })
+        foreach ($OldTag in $OldTags) {
+            if ($OldTag) {
+                Write-Host "  Deleting $OldTag ..."
+                & gh release delete $OldTag --cleanup-tag --yes | Out-Null
+            }
+        }
+
+        Write-Host "Creating rolling pre-release 'prerelease' ($ShortSha) ..." -ForegroundColor Cyan
+        & gh release create 'prerelease' $SetupExePath $ShaFile `
+            --prerelease `
+            --target $CommitSha `
+            --title "Remote PC Diagnostics $Version ($ShortSha)" `
+            --notes "Rolling pre-release built from commit $CommitSha."
+        if ($LASTEXITCODE -ne 0) { throw "gh release create failed ($LASTEXITCODE)" }
+        Write-Host "Rolling pre-release published." -ForegroundColor Green
+    }
+    finally {
+        Pop-Location
+    }
+}

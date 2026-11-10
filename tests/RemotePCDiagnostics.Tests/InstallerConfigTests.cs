@@ -98,5 +98,21 @@ public sealed class InstallerConfigTests
         Assert.Contains("RemotePCDiagnostics.ModuleUiHost.exe", script);
         Assert.Contains("RemotePCDiagnostics.ModuleHost.exe", script);
         Assert.Contains(ModuleLoaderOptions.BundledFolderName, script);
+        Assert.Contains("PublishPreRelease", script);
+    }
+
+    [Fact]
+    public void CiWorkflow_ReplacesSingleRollingPreReleaseOnMainPush()
+    {
+        var root = FindRepoRoot();
+        var ciPath = Path.Combine(root, ".github", "workflows", "ci.yml");
+        Assert.True(File.Exists(ciPath), $"Missing CI workflow: {ciPath}");
+
+        var ci = File.ReadAllText(ciPath);
+        Assert.Contains("github.ref == 'refs/heads/main'", ci);
+        Assert.Contains("gh release delete", ci);
+        Assert.Contains("--cleanup-tag --yes", ci);
+        Assert.Contains("gh release create prerelease", ci);
+        Assert.Contains("--prerelease", ci);
     }
 }
