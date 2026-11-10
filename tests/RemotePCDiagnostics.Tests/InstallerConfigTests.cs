@@ -109,6 +109,7 @@ public sealed class InstallerConfigTests
         Assert.True(File.Exists(ciPath), $"Missing CI workflow: {ciPath}");
 
         var ci = File.ReadAllText(ciPath);
+        Assert.Contains("branches:", ci);
         Assert.Contains("github.ref == 'refs/heads/main'", ci);
         Assert.Contains("gh release delete", ci);
         Assert.Contains("--cleanup-tag --yes", ci);
