@@ -16,6 +16,10 @@ using RemotePCDiagnostics.Host.Sensors;
 
 namespace RemotePCDiagnostics.Host;
 
+// The remote session is set up by RemoteBlazorWebView's source generator: [RemoteBlazor] generates InitializeRemoteBlazor(), which
+// sets the server, the session id, mirrors and voice, opens the app's own page in this window as the owner (shared control), and
+// restarts the app on the same session when a browser asks for it, including when this window is not responding.
+[RemoteBlazor(nameof(RemoteBlazorWebView), ShareControl = true, RestartOnRefresh = true)]
 public partial class MainWindow : Window
 {
     private static readonly ILogger Logger = HostServices.For<MainWindow>(App.Loggers);
@@ -23,10 +27,6 @@ public partial class MainWindow : Window
     private readonly ServiceProvider _provider;
     private Uri? _serverUri;
     private Uri? _remoteUserUrl;
-    private Guid _sessionId;
-    private bool _voice; // --voice / REMOTEPC_VOICE=1
-    private bool _unattended; // the remote user gets control on joining (the user can take it back)
-    private bool _restarting;
     private DispatcherTimer? _readyTimer;
     public MainWindow()
     {
@@ -110,47 +110,58 @@ public partial class MainWindow : Window
                 };
         };
 
-        if (launch.ServerUri is not null)
+        // Local when there is no server. The values come from SessionLaunchOptions (command line, environment, saved reboot state),
+        // so they are handed to the generated code instead of letting it read the command line itself.
+        bool remote;
+        try
         {
-            _unattended = launch.Unattended;
-            _voice = launch.Voice;
-            StartRemote(launch.ServerUri, sessionCtx.SessionId);
+            remote = InitializeRemoteBlazor(new RemoteBlazorStartup
+            {
+                ServerUri = launch.ServerUri,
+                Id = sessionCtx.SessionId, // Guid.Empty in Local; in Remote a fixed id (-i=<guid>, REMOTEPC_ID) or a new one
+                Unattended = launch.Unattended,
+                Voice = launch.Voice,
+                // The copy started on a restart: same server and session, same unattended/voice, marked --restarted so it waits
+                // for this copy to exit. Called on the UI thread, or on a background thread when this window is not responding.
+                RestartArguments = (server, id) =>
+                {
+                    Logger.Info($"Restart requested from a browser: starting a new copy for session {id}; this one closes");
+                    return SessionLaunchOptions.RestartArguments(server, id, launch.Unattended, launch.Voice);
+                },
+            });
         }
-        else
-            RemoteBlazorWebView.HostPage = HostPage; // Local: unchanged behavior (HostPage moved from XAML to code)
+        catch (Exception ex)
+        {
+            Logger.Error($"Remote start failed: {ex}");
+            _serverUri = launch.ServerUri;
+            SetRemoteState(RemoteSessionState.Unreachable);
+            return;
+        }
+        if (remote) WatchRemoteSession(launch.ServerUri!, sessionCtx.SessionId);
+        // Last: setting HostPage starts the control, and the server and id must be set before it (which is why it is not in the XAML).
+        RemoteBlazorWebView.HostPage = HostPage;
     }
 
     /// <summary>
-    /// Remote mode, matching RemoteBlazorWebViewTutorial (WpfApp): subscribe ReadyToConnect/Connected/Disconnected and set
-    /// Id + ServerUri BEFORE HostPage (setting HostPage starts the control; ServerUri/GrpcBaseUri/Id set afterwards are rejected).
+    /// What this app adds around the generated remote setup: the session id for the rest of the app, the log, the "can't reach
+    /// the relay" notice, and the admin site's client card. Call after InitializeRemoteBlazor() and before HostPage is set.
     /// </summary>
-    private void StartRemote(Uri serverUri, Guid id)
+    private void WatchRemoteSession(Uri serverUri, Guid id)
     {
         _serverUri = serverUri;
         // Status, give/take control, Copy link and Restart are in the app's header (RemoteBlazorWebView's session bar), in this
         // window and in the remote user's browser.
         SetRemoteState(RemoteSessionState.Connecting);
 
-        RemoteBlazorWebView.ReadyToConnect += (s, e) => Dispatcher.BeginInvoke(() =>
+        RemoteBlazorWebView.ReadyToConnect += (_, e) => Dispatcher.BeginInvoke(() =>
         {
             _readyTimer?.Stop();
             if (_provider.GetService<ISessionContext>() is SessionContext sc && e.Id != Guid.Empty) sc.SessionId = e.Id;
-            if (e.Id != Guid.Empty) _sessionId = e.Id;
-            var sessionId = e.Id != Guid.Empty ? e.Id : id;
             // The link to share is the read-only /mirror page: this window holds the app's own page, and the remote user is
             // handed control from the session bar.
-            _remoteUserUrl = RemoteLinkInfo.BuildMirrorUrl(e.Url ?? serverUri, sessionId);
+            _remoteUserUrl = RemoteLinkInfo.BuildMirrorUrl(e.Url ?? serverUri, e.Id != Guid.Empty ? e.Id : id);
             Logger.Info($"ReadyToConnect url={e.Url} id={e.Id} link={_remoteUserUrl}");
             SetRemoteState(RemoteSessionState.Ready);
-
-            // The user starts in control. This window shows the full, controlling /app page (as the owner, so it can always
-            // take control back). The control's WebView loads /app/<id> in place (RBWV), keeping in-surface voice.
-            var appUrl = RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildRemoteUserUrl(e.Url ?? serverUri, sessionId));
-            if (_unattended) appUrl = RemoteLinkInfo.WithRemoteUserFirst(appUrl);
-            Logger.Info($"Navigating local WebView to the controller {appUrl}");
-            // NavigateToUrl waits for the WebView to initialize (CoreWebView2 is usually still null at ReadyToConnect).
-            try { RemoteBlazorWebView.NavigateToUrl(appUrl); }
-            catch (Exception ex) { Logger.Error($"Controller navigate failed: {ex}"); }
         });
         RemoteBlazorWebView.Connected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
@@ -161,14 +172,6 @@ public partial class MainWindow : Window
         {
             Logger.Info($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
             SetRemoteState(_remoteUserUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected);
-        });
-        // The session's page was loaded again in a browser, or Restart was pressed in the session bar: the server drops this
-        // client, so start a fresh copy on the same session id and close this one (RemoteBlazorWebViewTutorial does the same
-        // with Restart()). At once, running test or not: this is how a stuck session is recovered.
-        RemoteBlazorWebView.Refreshed += (_, e) => Dispatcher.BeginInvoke(() =>
-        {
-            Logger.Info($"Remote Refreshed {e}");
-            RestartSameSession(serverUri, "restart requested from a browser");
         });
 
         _readyTimer = new DispatcherTimer { Interval = RemoteLinkInfo.ReadyTimeout };
@@ -182,44 +185,12 @@ public partial class MainWindow : Window
             }
         };
 
-        try
-        {
-            RemoteBlazorWebView.Id = id; // Guid.Empty = new id each run; fixed via -i=<guid> or REMOTEPC_ID
-            RemoteBlazorWebView.ServerUri = serverUri;
-            RemoteBlazorWebView.EnableVoice = serverUri.Scheme == Uri.UriSchemeHttps && _voice;
-            RemoteBlazorWebView.EnableMirrors = true; // the remote user joins at the read-only /mirror page
-            // The admin Clients list renders each client's own card markup. This window holds /app, so point that card at the
-            // read-only /mirror page (set Markup before HostPage; the library keeps a non-empty Markup as given).
-            try { RemoteBlazorWebView.Markup = RemoteLinkInfo.ToMirrorMarkup(RemoteWebView.GenMarkup(serverUri, id)); }
-            catch (Exception ex) { Logger.Error($"Client card markup failed: {ex}"); }
-            RemoteBlazorWebView.HostPage = HostPage; // must be last (starts the control)
-            _readyTimer.Start();
-        }
-        catch (Exception ex)
-        {
-            Logger.Error($"Remote start failed: {ex}");
-            SetRemoteState(RemoteSessionState.Unreachable);
-        }
+        // The admin Clients list renders each client's own card markup. This window holds /app, so point that card at the
+        // read-only /mirror page (set Markup before HostPage; the library keeps a non-empty Markup as given).
+        try { RemoteBlazorWebView.Markup = RemoteLinkInfo.ToMirrorMarkup(RemoteWebView.GenMarkup(serverUri, id)); }
+        catch (Exception ex) { Logger.Error($"Client card markup failed: {ex}"); }
+        _readyTimer.Start();
         // TODO: consent prompt + audit log before accepting a remote session (see README Safety section).
-    }
-
-    /// <summary>Starts a new copy of the app on the same relay and session id (so the remote user's link keeps working) and closes this one.</summary>
-    private void RestartSameSession(Uri serverUri, string reason)
-    {
-        if (_restarting) return;
-        var id = _sessionId != Guid.Empty ? _sessionId : RemoteBlazorWebView.Id;
-        var exe = Environment.ProcessPath;
-        if (id == Guid.Empty || exe is null) { Logger.Info($"Restart ({reason}): no session id or executable path, can't restart"); return; }
-        try
-        {
-            var psi = new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
-            foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id, _unattended, _voice)) psi.ArgumentList.Add(a);
-            System.Diagnostics.Process.Start(psi);
-            _restarting = true;
-            Logger.Info($"Restart ({reason}): started a new copy for session {id}; closing this one");
-            System.Windows.Application.Current.Shutdown();
-        }
-        catch (Exception ex) { Logger.Warn($"Restart ({reason}) failed: {ex.Message}"); }
     }
 
     private void SetRemoteState(RemoteSessionState state)

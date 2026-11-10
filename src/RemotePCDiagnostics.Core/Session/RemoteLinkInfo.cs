@@ -16,16 +16,6 @@ public static class RemoteLinkInfo
     /// <summary>How long to wait for ReadyToConnect before showing the "couldn't reach the server" warning.</summary>
     public static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(15);
 
-    /// <summary>The app's own page, <c>&lt;server&gt;/app/&lt;id&gt;</c> (the one this window shows, as the owner), safe with or without a trailing slash / path on the server URI.</summary>
-    public static Uri BuildRemoteUserUrl(Uri serverUri, Guid id)
-    {
-        ArgumentNullException.ThrowIfNull(serverUri);
-        if (!serverUri.IsAbsoluteUri) throw new ArgumentException("Server URI must be absolute.", nameof(serverUri));
-        var b = new UriBuilder(serverUri) { Query = string.Empty, Fragment = string.Empty };
-        if (!b.Path.EndsWith('/')) b.Path += "/";
-        return new Uri(b.Uri, $"app/{id}");
-    }
-
     /// <summary>The link to share, <c>&lt;server&gt;/mirror/&lt;id&gt;</c>: the read-only page the remote user joins at and is handed control from.</summary>
     public static Uri BuildMirrorUrl(Uri serverUri, Guid id)
     {
@@ -42,30 +32,6 @@ public static class RemoteLinkInfo
     /// join the session, not hit "Locked". Only the href changes.
     /// </summary>
     public static string ToMirrorMarkup(string? appMarkup) => appMarkup?.Replace("/app/", "/mirror/") ?? string.Empty;
-
-    /// <summary>
-    /// Marks a page URL as the machine owner's (<c>?role=owner</c>) so the relay records this connection as the owner and
-    /// lets it reclaim control. Only the local window's own surface gets this — never the link shared with the remote user.
-    /// </summary>
-    public static Uri WithOwnerRole(Uri pageUri)
-    {
-        ArgumentNullException.ThrowIfNull(pageUri);
-        var b = new UriBuilder(pageUri);
-        b.Query = string.IsNullOrEmpty(b.Query) ? "role=owner" : b.Query.TrimStart('?') + "&role=owner";
-        return b.Uri;
-    }
-
-    /// <summary>
-    /// Unattended sessions: marks the owner's page so it gives control to the remote user as soon as they join
-    /// (<c>control=remote</c>, read by RemoteBlazorWebView's page script). The owner can still take control back.
-    /// </summary>
-    public static Uri WithRemoteUserFirst(Uri pageUri)
-    {
-        ArgumentNullException.ThrowIfNull(pageUri);
-        var b = new UriBuilder(pageUri);
-        b.Query = string.IsNullOrEmpty(b.Query) ? "control=remote" : b.Query.TrimStart('?') + "&control=remote";
-        return b.Uri;
-    }
 
     /// <summary>What the local window shows while the relay can't be reached (once the app's page is up, its header carries the status).</summary>
     public static string UnreachableHtml(Uri serverUri) =>

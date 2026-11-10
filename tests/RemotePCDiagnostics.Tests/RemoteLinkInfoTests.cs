@@ -8,23 +8,17 @@ public class RemoteLinkInfoTests
     private static readonly Guid Id = Guid.Parse("11111111-2222-3333-4444-555555555555");
 
     [Theory]
-    [InlineData("https://remoteblazorwebview.com:34544", "https://remoteblazorwebview.com:34544/app/11111111-2222-3333-4444-555555555555")]
-    [InlineData("https://remoteblazorwebview.com:34544/", "https://remoteblazorwebview.com:34544/app/11111111-2222-3333-4444-555555555555")]
-    [InlineData("https://localhost:5001", "https://localhost:5001/app/11111111-2222-3333-4444-555555555555")]
-    [InlineData("http://example.com/relay", "http://example.com/relay/app/11111111-2222-3333-4444-555555555555")]
-    [InlineData("http://example.com/relay/?x=1", "http://example.com/relay/app/11111111-2222-3333-4444-555555555555")]
-    public void BuildRemoteUserUrl_JoinsSafely(string server, string expected) =>
-        Assert.Equal(expected, RemoteLinkInfo.BuildRemoteUserUrl(new Uri(server), Id).ToString());
-
-    [Theory]
     [InlineData("https://remoteblazorwebview.com:34544", "https://remoteblazorwebview.com:34544/mirror/11111111-2222-3333-4444-555555555555")]
     [InlineData("https://remoteblazorwebview.com:34544/", "https://remoteblazorwebview.com:34544/mirror/11111111-2222-3333-4444-555555555555")]
+    [InlineData("https://localhost:5001", "https://localhost:5001/mirror/11111111-2222-3333-4444-555555555555")]
+    [InlineData("http://example.com/relay", "http://example.com/relay/mirror/11111111-2222-3333-4444-555555555555")]
+    [InlineData("http://example.com/relay/?x=1", "http://example.com/relay/mirror/11111111-2222-3333-4444-555555555555")]
     public void BuildMirrorUrl_JoinsSafely(string server, string expected) =>
         Assert.Equal(expected, RemoteLinkInfo.BuildMirrorUrl(new Uri(server), Id).ToString());
 
     [Fact]
-    public void BuildRemoteUserUrl_RejectsRelative() =>
-        Assert.Throws<ArgumentException>(() => RemoteLinkInfo.BuildRemoteUserUrl(new Uri("/x", UriKind.Relative), Id));
+    public void BuildMirrorUrl_RejectsRelative() =>
+        Assert.Throws<ArgumentException>(() => RemoteLinkInfo.BuildMirrorUrl(new Uri("/x", UriKind.Relative), Id));
 
     [Fact]
     public void HostAndPort_IncludesDefaultPort() =>
@@ -61,29 +55,6 @@ public class RemoteLinkInfoTests
         Assert.True(RemoteLinkInfo.IsServerShutdown(new Exception("Server shut down connection")));
         Assert.False(RemoteLinkInfo.IsServerShutdown(new Exception("Connection refused")));
         Assert.False(RemoteLinkInfo.IsServerShutdown(null));
-    }
-
-    [Fact]
-    public void TheOwnersPage_IsTheAppPageWithTheOwnerRole()
-    {
-        var server = new Uri("https://remoteblazorwebview.com:34544");
-        var page = RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildRemoteUserUrl(server, Id));
-        Assert.Equal($"https://remoteblazorwebview.com:34544/app/{Id}?role=owner", page.ToString());
-    }
-
-    [Fact]
-    public void AnUnattendedOwnersPage_AsksForControlToGoToTheRemoteUser()
-    {
-        var server = new Uri("https://remoteblazorwebview.com:34544");
-        var page = RemoteLinkInfo.WithRemoteUserFirst(RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildRemoteUserUrl(server, Id)));
-        Assert.Equal($"https://remoteblazorwebview.com:34544/app/{Id}?role=owner&control=remote", page.ToString());
-    }
-
-    [Fact]
-    public void WithRemoteUserFirst_OnAPageWithoutAQuery()
-    {
-        var page = RemoteLinkInfo.WithRemoteUserFirst(new Uri($"https://x.example/app/{Id}"));
-        Assert.Equal($"https://x.example/app/{Id}?control=remote", page.ToString());
     }
 
     [Fact]

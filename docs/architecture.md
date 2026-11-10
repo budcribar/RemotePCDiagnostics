@@ -73,7 +73,10 @@ go to the Windows Event Log (Application, source RemotePCDiagnostics). Text whos
 ## Remote sessions
 
 The app runs once, on the PC, and RemoteBlazorWebView shows its UI in browsers through a relay server (`-u=<server>`). `SessionLaunchOptions`
-(Core) reads the command line and environment; `MainWindow` (Host) starts the session.
+(Core) reads the command line and environment. The session itself is set up by RemoteBlazorWebView's source generator:
+`[RemoteBlazor(nameof(RemoteBlazorWebView), ShareControl = true, RestartOnRefresh = true)]` on `MainWindow` generates
+`InitializeRemoteBlazor()`, and `MainWindow` hands it the resolved values (`RemoteBlazorStartup`). What `MainWindow` still does by hand
+is specific to this app: the session id for the rest of the app, the log, the "can't reach the relay" notice and the admin site's client card.
 
 - **Shared session** (every remote session): the app window opens the app's own page as the owner, in control. The
   join link is the read-only mirror page. The header's session bar (drawn by RemoteBlazorWebView in each browser, over the

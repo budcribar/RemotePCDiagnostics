@@ -20,6 +20,8 @@
     <PackageReference Include="PeakSWC.RemoteWebViewService.Lib" Version="$(RbwvLibVersion)" Condition="'$(UseRbwvSource)' != 'true'" />
     <ProjectReference Include="$(RbwvSourceRoot)\src\RemoteBlazorWebView.Wpf\RemoteBlazorWebView.Wpf.csproj" Condition="'$(UseRbwvSource)' == 'true'" />
     <ProjectReference Include="$(RbwvSourceRoot)\src\RemoteWebViewService.Lib\RemoteWebViewService.Lib.csproj" Condition="'$(UseRbwvSource)' == 'true'" />
+    <!-- The [RemoteBlazor] source generator (MainWindow). The package brings it as an analyzer; a project reference does not. -->
+    <ProjectReference Include="$(RbwvSourceRoot)\src\RemoteBlazorWebView.SourceGenerators\RemoteBlazorWebView.SourceGenerators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" Condition="'$(UseRbwvSource)' == 'true'" />
     <!-- Live temperatures/fans. 0.9.6 = latest stable (Oct 2026); ships a net10.0 lib. MPL-2.0. -->
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
     <PackageReference Include="NAudio.Wasapi" Version="3.3.0" />
