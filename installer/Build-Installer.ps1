@@ -156,28 +156,41 @@ Write-Host "Verified staged layout: $($ModuleDlls.Count) bundled modules + Host,
 
 $IsWindowsHost = ($env:OS -eq 'Windows_NT') -or ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows))
 if ($IsWindowsHost -and -not $SkipVerify) {
-    $HostExe = Join-Path $StageDir 'RemotePCDiagnostics.Host.exe'
-    $VerifyLog = Join-Path $OutputDir 'verify-package.log'
-    Remove-Item -LiteralPath $VerifyLog -Force -ErrorAction SilentlyContinue
+    $IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($IsAdmin) {
+        $HostExe = Join-Path $StageDir 'RemotePCDiagnostics.Host.exe'
+        $VerifyLog = Join-Path $OutputDir 'verify-package.log'
+        Remove-Item -LiteralPath $VerifyLog -Force -ErrorAction SilentlyContinue
 
-    Write-Host "Running RemotePCDiagnostics.Host.exe --verify-package ..." -ForegroundColor Cyan
-    $PrevLog = $env:RPD_LOG_FILE
-    $env:RPD_LOG_FILE = $VerifyLog
-    try {
-        $Proc = Start-Process -FilePath $HostExe -ArgumentList '--verify-package' -WorkingDirectory $StageDir -WindowStyle Hidden -PassThru
-        if (-not $Proc.WaitForExit(60000)) {
-            Stop-Process -Id $Proc.Id -Force -ErrorAction SilentlyContinue
-            throw 'RemotePCDiagnostics.Host.exe --verify-package timed out after 60 seconds.'
+        Write-Host "Running RemotePCDiagnostics.Host.exe --verify-package ..." -ForegroundColor Cyan
+        $PrevLog = $env:RPD_LOG_FILE
+        $env:RPD_LOG_FILE = $VerifyLog
+        try {
+            $Proc = Start-Process -FilePath $HostExe -ArgumentList '--verify-package' -WorkingDirectory $StageDir -WindowStyle Hidden -PassThru
+            if (-not $Proc.WaitForExit(60000)) {
+                Stop-Process -Id $Proc.Id -Force -ErrorAction SilentlyContinue
+                throw 'RemotePCDiagnostics.Host.exe --verify-package timed out after 60 seconds.'
+            }
+            if ($Proc.ExitCode -ne 0) {
+                if (Test-Path -LiteralPath $VerifyLog) { Get-Content -LiteralPath $VerifyLog | Write-Host }
+                throw "RemotePCDiagnostics.Host.exe --verify-package failed with exit code $($Proc.ExitCode)."
+            }
         }
-        if ($Proc.ExitCode -ne 0) {
-            if (Test-Path -LiteralPath $VerifyLog) { Get-Content -LiteralPath $VerifyLog | Write-Host }
-            throw "RemotePCDiagnostics.Host.exe --verify-package failed with exit code $($Proc.ExitCode)."
+        finally {
+            $env:RPD_LOG_FILE = $PrevLog
         }
+        Write-Host "Package self-verification passed." -ForegroundColor Green
     }
-    finally {
-        $env:RPD_LOG_FILE = $PrevLog
+    else {
+        # Non-elevated terminal: Host.exe declares requireAdministrator, so smoke-test the unprivileged MemTest helper directly.
+        $MemTestExe = Join-Path $StageDir 'RemotePCDiagnostics.MemTest.exe'
+        Write-Host "Running non-elevated runtime self-check via RemotePCDiagnostics.MemTest.exe ..." -ForegroundColor Cyan
+        $MemOut = & $MemTestExe --bytes 1048576 --seconds 1
+        if ($LASTEXITCODE -ne 0 -or -not ($MemOut -match '^MT DONE 1048576 ')) {
+            throw "RemotePCDiagnostics.MemTest.exe self-check failed (exit $LASTEXITCODE)."
+        }
+        Write-Host "Runtime self-check passed." -ForegroundColor Green
     }
-    Write-Host "Package self-verification passed." -ForegroundColor Green
 }
 
 if ($StageOnly) {
@@ -236,7 +249,7 @@ if (-not (Test-Path -LiteralPath $SetupExePath)) {
 
 $Hash = (Get-FileHash -LiteralPath $SetupExePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $ShaFile = "$SetupExePath.sha256"
-Set-Content -LiteralPath $ShaFile -Value "$Hash  $SetupFileName" -NoNewline -Encoding ascii
+[System.IO.File]::WriteAllText($ShaFile, "$Hash  $SetupFileName")
 
 $SizeMb = [Math]::Round((Get-Item -LiteralPath $SetupExePath).Length / 1MB, 2)
 Write-Host ""
@@ -256,9 +269,14 @@ if ($PublishPreRelease) {
 
         Write-Host ""
         Write-Host "Removing previous pre-releases so only one copy is kept ..." -ForegroundColor Cyan
-        $OldTagsJson = & gh release list --limit 50 --json tagName,isPrerelease
+        $OldTagsJson = (& gh release list --limit 50 --json tagName,isPrerelease) -join "`n"
         if ($LASTEXITCODE -ne 0) { throw "gh release list failed ($LASTEXITCODE)" }
-        $OldTags = @($OldTagsJson | ConvertFrom-Json | Where-Object { $_.isPrerelease -or $_.tagName -eq 'prerelease' } | ForEach-Object { $_.tagName })
+        $ParsedReleases = if ([string]::IsNullOrWhiteSpace($OldTagsJson)) { @() } else { @($OldTagsJson | ConvertFrom-Json) }
+        $OldTags = @(foreach ($Rel in $ParsedReleases) {
+            if ($null -ne $Rel -and ($Rel.isPrerelease -or $Rel.tagName -eq 'prerelease')) {
+                $Rel.tagName
+            }
+        })
         foreach ($OldTag in $OldTags) {
             if ($OldTag) {
                 Write-Host "  Deleting $OldTag ..."

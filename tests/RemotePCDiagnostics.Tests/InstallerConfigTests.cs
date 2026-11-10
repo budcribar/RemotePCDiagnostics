@@ -116,4 +116,25 @@ public sealed class InstallerConfigTests
         Assert.Contains("gh release create prerelease", ci);
         Assert.Contains("--prerelease", ci);
     }
+
+    [Fact]
+    public void PublishScript_BuildsInstallerAndReplacesRollingPreRelease()
+    {
+        var root = FindRepoRoot();
+        var publishPs1 = Path.Combine(root, "publish.ps1");
+        Assert.True(File.Exists(publishPs1), $"Missing root publish script: {publishPs1}");
+
+        var content = File.ReadAllText(publishPs1);
+        Assert.Contains("installer/Build-Installer.ps1", content);
+        Assert.Contains("gh release delete", content);
+        Assert.Contains("gh release create 'prerelease'", content);
+        Assert.Contains("--prerelease", content);
+
+        // Ensure BOM-free PowerShell 5.1 / ISCC compatibility (no smart quotes or non-ASCII punctuation).
+        foreach (var rel in new[] { "publish.ps1", "installer/Build-Installer.ps1", "installer/RemotePCDiagnostics.iss" })
+        {
+            var bytes = File.ReadAllBytes(Path.Combine(root, rel));
+            Assert.DoesNotContain(bytes, b => b > 127);
+        }
+    }
 }
