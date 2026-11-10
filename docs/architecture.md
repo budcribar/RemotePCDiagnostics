@@ -78,7 +78,8 @@ The app runs once, on the PC, and RemoteBlazorWebView shows its UI in browsers t
 - **Shared session** (`--mirror`, the default for the shortcuts): the app window opens the app's own page as the owner, in control. The
   join link is the read-only mirror page. The header's session bar (drawn by RemoteBlazorWebView in each browser, over the
   `rbwv-session-controls` placeholder in `MainLayout.razor`) shows a dot while anyone is connected remotely, who has control, and
-  Give control / Take control / Copy link. One owner, one remote user (the first to join), any number of read-only viewers.
+  Give control / Take control / Copy link, and Restart app (for whoever has control, and the owner: restarts the app on the same
+  session, running test or not, and each browser comes back by itself). One owner, one remote user (the first to join), any number of read-only viewers.
 - **Unattended** (`--unattended`): the same, and the remote user is given control as soon as they join. The owner can take it back.
 - **Voice** (`--voice`): a call between the person at the PC and the remote user; needs an https relay.
 - **Older one-way modes**: `--reverse-mirror` (the browser only watches), and remote without `--mirror` (only the browser uses the app;
