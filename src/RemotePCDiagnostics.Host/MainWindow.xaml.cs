@@ -149,7 +149,8 @@ public partial class MainWindow : Window
                 // session bar in the header. The control's WebView loads /app/<id> in place (RBWV), keeping in-surface voice.
                 var appUrl = RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id != Guid.Empty ? e.Id : id));
                 Logger.Info($"Navigating local WebView to the controller {appUrl}");
-                try { RemoteBlazorWebView.WebView.CoreWebView2?.Navigate(appUrl.ToString()); }
+                // NavigateToUrl waits for the WebView to initialize (CoreWebView2 is usually still null at ReadyToConnect).
+                try { RemoteBlazorWebView.NavigateToUrl(appUrl); }
                 catch (Exception ex) { Logger.Error($"Controller navigate failed: {ex}"); }
                 return;
             }
