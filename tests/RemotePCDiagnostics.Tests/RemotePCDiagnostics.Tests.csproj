@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Database.ManagedEsent" Version="3.2.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.15" />
     <Compile Include="../../tools/prototypes/NetworkUsagePrototype/SrumReader.cs" Link="Prototype/SrumReader.cs" />
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
@@ -17,7 +17,7 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
     <!-- For the sample module's Razor component (a package, not the ASP.NET Core framework: the module host started from this folder
          must still find the DI assemblies here). -->
-    <PackageReference Include="Microsoft.AspNetCore.Components" Version="10.0.14" />
+    <PackageReference Include="Microsoft.AspNetCore.Components" Version="10.0.15" />
   </ItemGroup>
 
   <ItemGroup>

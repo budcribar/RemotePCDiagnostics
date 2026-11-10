@@ -31,7 +31,7 @@
     <!-- NPU test: Direct3D 12 on the DXCore NPU adapter (MIT, managed only; d3d12.dll/dxcore.dll ship with Windows). -->
     <PackageReference Include="Vortice.Direct3D12" Version="3.8.3" />
     <!-- Start/stop/restart from the Services page (WindowsServiceControlBackend). -->
-    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.14" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.15" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
