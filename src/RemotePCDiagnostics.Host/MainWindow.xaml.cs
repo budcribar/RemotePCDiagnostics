@@ -127,7 +127,8 @@ public partial class MainWindow : Window
             if (_provider.GetService<ISessionContext>() is SessionContext sc && e.Id != Guid.Empty) sc.SessionId = e.Id;
             if (e.Id != Guid.Empty) _sessionId = e.Id;
             // Demo (--reverse-mirror): the shared link is the read-only mirror page; this window opens the controlling /app page itself.
-            _technicianUrl = RemoteLinkInfo.BuildShareUrl(e.Url ?? serverUri, e.Id, _reverseMirror);
+            // Remote (mirror) and the reverse-mirror demo both control /app here, so the shared link is the read-only /mirror page.
+            _technicianUrl = RemoteLinkInfo.BuildShareUrl(e.Url ?? serverUri, e.Id, _mirror || _reverseMirror);
             Logger.Info($"ReadyToConnect url={e.Url} id={e.Id} link={_technicianUrl} reverseMirror={_reverseMirror}");
             RemoteLinkText.Text = _technicianUrl.ToString();
             RemoteHyperlink.NavigateUri = _technicianUrl;
@@ -141,6 +142,17 @@ public partial class MainWindow : Window
                 RemoteBubble.Visibility = Visibility.Visible; // small bubble carries the view-only link; no top card
                 return;
             }
+            if (_mirror)
+            {
+                // Remote: the user starts in control. This window shows the full, controlling /app page (as the owner, so it can
+                // always take control back); the technician joins at the read-only /mirror link and is handed control from the
+                // session bar in the header. The control's WebView loads /app/<id> in place (RBWV), keeping in-surface voice.
+                var appUrl = RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildTechnicianUrl(e.Url ?? serverUri, e.Id != Guid.Empty ? e.Id : id));
+                Logger.Info($"Navigating local WebView to the controller {appUrl}");
+                try { RemoteBlazorWebView.WebView.CoreWebView2?.Navigate(appUrl.ToString()); }
+                catch (Exception ex) { Logger.Error($"Controller navigate failed: {ex}"); }
+                return;
+            }
             // The app runs in the technician's browser; this window only needs to say so (the link is in the panel above, not repeated).
             try { (s as IBlazorWebView)?.NavigateToString(RemoteLinkInfo.LocalPlaceholderHtml); }
             catch (Exception ex) { Logger.Error($"NavigateToString placeholder failed: {ex}"); }
@@ -151,14 +163,6 @@ public partial class MainWindow : Window
             Logger.Info($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User} mirror={_mirror} reverseMirror={_reverseMirror}");
             SetRemoteState(RemoteSessionState.TechnicianConnected);
             _technicianWasConnected = true;
-            if (_mirror)
-            {
-                var activeId = e.Id != Guid.Empty ? e.Id : (_sessionId != Guid.Empty ? _sessionId : id);
-                var mirrorUrl = RemoteLinkInfo.WithOwnerRole(RemoteLinkInfo.BuildMirrorUrl(e.Url ?? serverUri, activeId));
-                Logger.Info($"Navigating local WebView to mirror={mirrorUrl}");
-                try { RemoteBlazorWebView.WebView.CoreWebView2?.Navigate(mirrorUrl.ToString()); }
-                catch (Exception ex) { Logger.Error($"Mirror navigate failed: {ex}"); }
-            }
         });
         RemoteBlazorWebView.Disconnected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
@@ -167,7 +171,8 @@ public partial class MainWindow : Window
             // The relay drops this client for good when the technician's tab closes ("Server shut down connection"), and the link then
             // only shows "Client id not found". Start a fresh copy on the same session id so the same link works again. Only after a
             // technician actually connected to this copy, so a relay that keeps refusing us can't cause a restart loop.
-            if (_technicianWasConnected && !_reverseMirror && RemoteLinkInfo.IsServerShutdown(e.Exception))
+            // Not when this window is the controller (Remote / reverse mirror): a watcher leaving doesn't end the session.
+            if (_technicianWasConnected && !_mirror && !_reverseMirror && RemoteLinkInfo.IsServerShutdown(e.Exception))
                 RestartWhenIdle(serverUri);
         });
         // The technician refreshed the browser (or pressed Restart on the "Locked" page): the server drops this client, so
@@ -196,7 +201,7 @@ public partial class MainWindow : Window
             RemoteBlazorWebView.EnableVoice = !reverseMirror && serverUri.Scheme == Uri.UriSchemeHttps
                 && Environment.GetEnvironmentVariable("REMOTEPC_VOICE") == "1";
             RemoteBlazorWebView.EnableMirrors = mirror || reverseMirror; // the read-only /mirror page needs this in both directions
-            if (reverseMirror)
+            if (mirror || reverseMirror)
             {
                 // The admin Clients list renders each client's own card markup. In reverse mode the local window controls /app, so point
                 // that card at the read-only /mirror page (set Markup before HostPage; the library keeps a non-empty Markup as given).

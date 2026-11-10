@@ -185,7 +185,7 @@ The Host has three Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/
 
 | Profile | Settings | Behavior |
 |---|---|---|
-| **Remote** (default in Visual Studio) | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544`, `REMOTEPC_MIRROR=1` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a technician joins from a browser. The user starts in control and can give it to the technician and take it back from the session bar in the header; whoever doesn't hold control sees a live, read-only view. |
+| **Remote** (default in Visual Studio) | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544`, `REMOTEPC_MIRROR=1` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a technician joins from a browser. This window opens the full app with the user in control; the shared link is the read-only `/mirror/<id>` page. The user gives control to the technician and takes it back from the session bar in the header; whoever doesn't hold control sees a live, read-only view. |
 | **Remote + voice** | Remote, plus `REMOTEPC_VOICE=1` | Same, with a voice call between the user and the technician. |
 | **Local** | `REMOTEPC_MODE=Local` | UI renders in the app window only. Running the exe with no settings is also Local (CI uses this). |
 
