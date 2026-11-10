@@ -664,7 +664,7 @@ table.detail tr.row-detail td { white-space: normal; }
 [data-theme="light"] .running-visual-caption { color: #9fb2c1; }
 
 /* Session control bar (RemoteBlazorWebView SessionControlBar) placed in the header. */
-.rbwv-control-bar { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rbwv-control-bar { display: inline-flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
 .rbwv-control-status, .rbwv-voice-status { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 .rbwv-control-bar .rbwv-control-btn { min-height: 30px; padding: 4px 12px; font-size: 13px; font-weight: 600; }
 .rbwv-control-give { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }

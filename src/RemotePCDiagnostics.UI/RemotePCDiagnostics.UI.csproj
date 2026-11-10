@@ -12,10 +12,6 @@
     <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
     <!-- The IModuleUi contract and its generated ModuleUiFrame (unsigned modules' own UIs). -->
     <ProjectReference Include="..\RemotePCDiagnostics.ModuleUi\RemotePCDiagnostics.ModuleUi.csproj" />
-    <!-- SessionControlBar (RemoteBlazorWebView control-transfer/voice bar): sibling source in the Dev solution, else
-         the package. See Directory.Build.props for UseRbwvSource. No generator analyzer needed (component use only). -->
-    <PackageReference Include="PeakSWC.RemoteBlazorWebView.RemoteComponents" Version="$(RbwvVersion)" Condition="'$(UseRbwvSource)' != 'true'" />
-    <ProjectReference Include="$(RbwvSourceRoot)\src\RemoteBlazorWebView.RemoteComponents\RemoteBlazorWebView.RemoteComponents.csproj" Condition="'$(UseRbwvSource)' == 'true'" />
   </ItemGroup>
   <ItemGroup>
     <!-- Logging: ILogger plus the plain-line helpers (LoggerLines), without importing Microsoft.Extensions.Logging. -->

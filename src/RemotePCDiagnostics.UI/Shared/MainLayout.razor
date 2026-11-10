@@ -11,7 +11,8 @@
         <span class="topbar-spacer"></span>
         @if (Session.Mode == SessionMode.Remote)
         {
-            <SessionControlBar ShowShareLink="true" CssClass="topbar-control" />
+            @* RemoteBlazorWebView draws each browser's own give/take/voice bar over this placeholder. *@
+            <div id="rbwv-session-controls" class="topbar-control" data-share-link="true"></div>
         }
         <ThemeSwitcher />
         <span class="pc" title="Computer name"><Icon Name="pc" Size="16" />@Session.MachineName</span>
