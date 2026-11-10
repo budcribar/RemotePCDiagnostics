@@ -79,7 +79,8 @@ public sealed record PendingRebootState(
     string PreTopProcesses,
     bool Mirror = false,
     bool ReverseMirror = false,
-    bool Unattended = false);
+    bool Unattended = false,
+    bool Voice = false);
 
 /// <summary>Result of comparing pre-reboot vs. post-reboot resource consumption after the PC restarts.</summary>
 public sealed record PostRebootComparisonResult(
@@ -200,6 +201,7 @@ public sealed class RebootResumeCoordinator(
         var mirror = session?.Mirror ?? false;
         var reverseMirror = session?.ReverseMirror ?? false;
         var unattended = session?.Unattended ?? false;
+        var voice = session?.Voice ?? false;
 
         var state = new PendingRebootState(
             DateTimeOffset.UtcNow,
@@ -213,11 +215,12 @@ public sealed class RebootResumeCoordinator(
             baseline.TopProcesses,
             mirror,
             reverseMirror,
-            unattended);
+            unattended,
+            voice);
 
         SavePendingState(state);
 
-        var resumeCmd = SessionLaunchOptions.BuildResumeCommandLine(ExecutablePath, mode, serverUri, sessionId, mirror, reverseMirror, unattended);
+        var resumeCmd = SessionLaunchOptions.BuildResumeCommandLine(ExecutablePath, mode, serverUri, sessionId, mirror, reverseMirror, unattended, voice);
         LastRegisteredCommandLine = resumeCmd;
 
         var reg = await commands.RunAsync(

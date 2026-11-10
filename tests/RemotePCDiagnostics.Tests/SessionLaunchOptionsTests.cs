@@ -159,6 +159,23 @@ public class SessionLaunchOptionsTests
     }
 
     [Fact]
+    public void Voice_FromArgOrEnv_AndSurvivesRestartAndReboot()
+    {
+        Assert.True(SessionLaunchOptions.Resolve(["-u=https://x.example", "--mirror", "--voice"], _ => null).Voice);
+        Assert.True(SessionLaunchOptions.Resolve([], n => n == "REMOTEPC_MODE" ? "Remote" : n == "REMOTEPC_VOICE" ? "1" : null).Voice);
+        Assert.False(SessionLaunchOptions.Resolve(["-u=https://x.example", "--mirror"], _ => null).Voice);
+
+        var id = Guid.Parse("7e57c0de-0000-4000-8000-000000000001");
+        var server = new Uri("https://remoteblazorwebview.com:34544");
+        var restart = SessionLaunchOptions.RestartArguments(server, id, mirror: true, voice: true);
+        Assert.Contains("--voice", restart);
+        Assert.True(SessionLaunchOptions.Resolve(restart, _ => null).Voice);
+
+        var cmd = SessionLaunchOptions.BuildResumeCommandLine(@"C:\App\RemotePCDiagnostics.Host.exe", SessionMode.Remote, server, id, mirror: true, voice: true);
+        Assert.Contains(" --voice ", cmd);
+    }
+
+    [Fact]
     public void ReverseMirror_SurvivesRestartAndReboot()
     {
         var id = Guid.Parse("7e57c0de-0000-4000-8000-000000000001");

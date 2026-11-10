@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private Guid _sessionId;
     private bool _mirror;
     private bool _reverseMirror;
+    private bool _voice; // --voice / REMOTEPC_VOICE=1
     private bool _unattended; // the technician gets control on joining (the user can take it back)
     private bool _restarting;
     private bool _technicianWasConnected; // a browser reached this copy, so a later server shutdown means that tab went away
@@ -44,7 +45,7 @@ public partial class MainWindow : Window
         var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, pendingReboot);
         var mode = launch.Mode;
 
-        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Mirror, launch.ReverseMirror, launch.Unattended);
+        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Mirror, launch.ReverseMirror, launch.Unattended, launch.Voice);
         var services = new ServiceCollection().AddRemotePCDiagnosticsHost(sessionCtx, App.Log, App.Event, loggers: App.Loggers);
         var provider = _provider = services.BuildServiceProvider();
         Resources.Add("services", provider);
@@ -105,6 +106,7 @@ public partial class MainWindow : Window
         if (launch.ServerUri is not null)
         {
             _unattended = launch.Unattended;
+            _voice = launch.Voice;
             StartRemote(launch.ServerUri, sessionCtx.SessionId, launch.Mirror, launch.ReverseMirror);
         }
         else
@@ -201,7 +203,7 @@ public partial class MainWindow : Window
             RemoteBlazorWebView.Id = id; // Guid.Empty = new id each run; fixed via -i=<guid> or REMOTEPC_ID
             RemoteBlazorWebView.ServerUri = serverUri;
             RemoteBlazorWebView.EnableVoice = !reverseMirror && serverUri.Scheme == Uri.UriSchemeHttps
-                && Environment.GetEnvironmentVariable("REMOTEPC_VOICE") == "1";
+                && _voice;
             RemoteBlazorWebView.EnableMirrors = mirror || reverseMirror; // the read-only /mirror page needs this in both directions
             if (mirror || reverseMirror)
             {
@@ -236,7 +238,7 @@ public partial class MainWindow : Window
         try
         {
             var psi = new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
-            foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id, _mirror, _reverseMirror, _unattended)) psi.ArgumentList.Add(a);
+            foreach (var a in SessionLaunchOptions.RestartArguments(serverUri, id, _mirror, _reverseMirror, _unattended, _voice)) psi.ArgumentList.Add(a);
             System.Diagnostics.Process.Start(psi);
             _restarting = true;
             Logger.Info($"Restart ({reason}): started a new copy for session {id}; closing this one");

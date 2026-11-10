@@ -16,11 +16,13 @@ public interface ISessionContext
     bool ReverseMirror => false;
     /// <summary>True for an unattended session (<c>--unattended</c>): the technician gets control on joining; the user can take it back.</summary>
     bool Unattended => false;
+    /// <summary>True when the session was started with a voice call between the user and the technician (<c>--voice</c>).</summary>
+    bool Voice => false;
 }
 
 public sealed class SessionContext : ISessionContext
 {
-    public SessionContext(SessionMode mode, Uri? serverUri = null, Guid sessionId = default, bool mirror = false, bool reverseMirror = false, bool unattended = false)
+    public SessionContext(SessionMode mode, Uri? serverUri = null, Guid sessionId = default, bool mirror = false, bool reverseMirror = false, bool unattended = false, bool voice = false)
     {
         Mode = mode;
         ServerUri = serverUri;
@@ -30,6 +32,7 @@ public sealed class SessionContext : ISessionContext
         Mirror = mirror;
         ReverseMirror = reverseMirror;
         Unattended = unattended;
+        Voice = voice;
     }
 
     public SessionMode Mode { get; }
@@ -38,5 +41,6 @@ public sealed class SessionContext : ISessionContext
     public bool Mirror { get; }
     public bool ReverseMirror { get; }
     public bool Unattended { get; }
+    public bool Voice { get; }
     public string MachineName { get; } = Environment.MachineName;
 }

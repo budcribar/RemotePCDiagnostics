@@ -10,8 +10,9 @@ namespace RemotePCDiagnostics.Core.Session;
 /// link is the read-only <c>/mirror/&lt;id&gt;</c> page, so someone in a browser can watch but not click.
 /// Pass <c>--unattended</c> (or <c>REMOTEPC_UNATTENDED=1</c>) so the technician gets control as soon as they join, without anyone at
 /// the PC handing it over (the user can still take it back). Without it the session is supervised: the user starts in control and gives it.
+/// Pass <c>--voice</c> (or <c>REMOTEPC_VOICE=1</c>) for a voice call between the user and the technician (needs an https relay).
 /// </summary>
-public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid Id, bool PostReboot = false, bool Mirror = false, bool ReverseMirror = false, bool Unattended = false)
+public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid Id, bool PostReboot = false, bool Mirror = false, bool ReverseMirror = false, bool Unattended = false, bool Voice = false)
 {
     public const string ModeVariable = "REMOTEPC_MODE";
     public const string ServerUrlVariable = "REMOTEPC_SERVER_URL";
@@ -23,6 +24,8 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     public const string ReverseMirrorArg = "--reverse-mirror";
     public const string UnattendedVariable = "REMOTEPC_UNATTENDED";
     public const string UnattendedArg = "--unattended";
+    public const string VoiceVariable = "REMOTEPC_VOICE";
+    public const string VoiceArg = "--voice";
     public const string PostRebootArg = "--post-reboot";
     /// <summary>Default relay (PeakSWC.RemoteWebViewService on Railway) used when Remote mode has no explicit URL.</summary>
     public const string DefaultServerUrl = "https://remoteblazorwebview.com:34544";
@@ -58,6 +61,13 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
             if (string.Equals(a, UnattendedArg, StringComparison.OrdinalIgnoreCase)) unattendedArg = true;
             else if (a.StartsWith(UnattendedArg + "=", StringComparison.OrdinalIgnoreCase)) unattendedArg = ParseBool(a[(UnattendedArg.Length + 1)..]) ?? true;
         }
+        bool? voiceArg = null;
+        foreach (var a in argList)
+        {
+            if (string.Equals(a, VoiceArg, StringComparison.OrdinalIgnoreCase)) voiceArg = true;
+            else if (a.StartsWith(VoiceArg + "=", StringComparison.OrdinalIgnoreCase)) voiceArg = ParseBool(a[(VoiceArg.Length + 1)..]) ?? true;
+        }
+        var voice = voiceArg ?? (ParseBool(env(VoiceVariable)) == true);
         // Unattended is a shared session (the app window here, the technician on the link) where the technician gets control on joining.
         var unattended = !reverse && (unattendedArg ?? (ParseBool(env(UnattendedVariable)) == true));
         // The two directions exclude each other; reverse wins (it's the one asked for explicitly for a demo).
@@ -73,7 +83,7 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
 
         if (!remote)
         {
-            var localOpts = new SessionLaunchOptions(SessionMode.Local, null, id, postReboot, mirror, reverse, unattended);
+            var localOpts = new SessionLaunchOptions(SessionMode.Local, null, id, postReboot, mirror, reverse, unattended, voice);
             return ApplyPendingReboot(localOpts, pendingReboot);
         }
 
@@ -82,7 +92,7 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
         if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
             throw new ArgumentException($"Invalid remote server URL '{url}'. Set {ServerUrlVariable} (or -u=) to e.g. {DefaultServerUrl}.");
 
-        var remoteOpts = new SessionLaunchOptions(SessionMode.Remote, uri, id, postReboot, mirror, reverse, unattended);
+        var remoteOpts = new SessionLaunchOptions(SessionMode.Remote, uri, id, postReboot, mirror, reverse, unattended, voice);
         return ApplyPendingReboot(remoteOpts, pendingReboot);
     }
 
@@ -108,10 +118,10 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
                 effectiveUri = new Uri(DefaultServerUrl);
 
             return new(SessionMode.Remote, effectiveUri, effectiveId, PostReboot: true, Mirror: effectiveMirror, ReverseMirror: effectiveReverse,
-                Unattended: effectiveUnattended);
+                Unattended: effectiveUnattended, Voice: launch.Voice || pending.Voice);
         }
 
-        return launch with { Id = effectiveId, PostReboot = true, Mirror = effectiveMirror, ReverseMirror = effectiveReverse, Unattended = effectiveUnattended };
+        return launch with { Id = effectiveId, PostReboot = true, Mirror = effectiveMirror, ReverseMirror = effectiveReverse, Unattended = effectiveUnattended, Voice = launch.Voice || pending.Voice };
     }
 
     /// <summary>Marks a copy started by <see cref="RestartArguments"/>: it waits for the old copy to exit instead of leaving at once.</summary>
@@ -128,13 +138,14 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     /// Refreshed event; the library's own Restart() starts the same <c>-u=</c>/<c>-i=</c> pair). The same session id keeps the
     /// technician's link working; <see cref="RestartedArg"/> lets the new copy wait for this one to release the one-copy lock.
     /// </summary>
-    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool mirror = false, bool reverseMirror = false, bool unattended = false)
+    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool mirror = false, bool reverseMirror = false, bool unattended = false, bool voice = false)
     {
         if (sessionId == Guid.Empty) throw new ArgumentException("A restart needs the session id the server assigned.", nameof(sessionId));
         var list = new List<string> { $"-u={serverUri.AbsoluteUri.TrimEnd('/')}", $"-i={sessionId:D}" };
         if (reverseMirror) list.Add(ReverseMirrorArg);
         else if (mirror) list.Add(MirrorArg);
         if (unattended && !reverseMirror) list.Add(UnattendedArg);
+        if (voice) list.Add(VoiceArg);
         list.Add(RestartedArg);
         return list;
     }
@@ -143,7 +154,7 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     /// Builds the Windows <c>RunOnce</c> command line so that after a reboot, <c>RemotePCDiagnostics.Host</c> restarts
     /// into the exact same session mode, relay server, remote session ID (<c>-i=&lt;guid&gt;</c>), and mirror setting.
     /// </summary>
-    public static string BuildResumeCommandLine(string executablePath, SessionMode mode, Uri? serverUri, Guid sessionId, bool mirror = false, bool reverseMirror = false, bool unattended = false)
+    public static string BuildResumeCommandLine(string executablePath, SessionMode mode, Uri? serverUri, Guid sessionId, bool mirror = false, bool reverseMirror = false, bool unattended = false, bool voice = false)
     {
         var quotedExe = $"\"{executablePath.Trim('"')}\"";
         if (mode == SessionMode.Remote && serverUri is not null)
@@ -152,7 +163,8 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
             var idPart = sessionId != Guid.Empty ? $" -i={sessionId:D}" : "";
             var mirrorPart = reverseMirror ? $" {ReverseMirrorArg}" : mirror ? $" {MirrorArg}" : "";
             var unattendedPart = unattended && !reverseMirror ? $" {UnattendedArg}" : "";
-            return $"{quotedExe} {urlPart}{idPart}{mirrorPart}{unattendedPart} {PostRebootArg}";
+            var voicePart = voice ? $" {VoiceArg}" : "";
+            return $"{quotedExe} {urlPart}{idPart}{mirrorPart}{unattendedPart}{voicePart} {PostRebootArg}";
         }
         return $"{quotedExe} {PostRebootArg}";
     }
