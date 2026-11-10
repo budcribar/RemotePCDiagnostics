@@ -189,6 +189,8 @@ The Host has three Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/
 | **Remote + voice** | Remote, plus `REMOTEPC_VOICE=1` | Same, with a voice call between the user and the technician. |
 | **Local** | `REMOTEPC_MODE=Local` | UI renders in the app window only. Running the exe with no settings is also Local (CI uses this). |
 
+A remote session has one user (this PC, the owner), one technician and any number of read-only viewers, all on the same link. The first person to open the link is the technician; anyone after that only watches, with no control and no voice. Module panels follow control too: they are usable for whoever has control and read-only for everyone else. Details: RemoteBlazorWebView README, "Sharing control".
+
 The older one-way modes still work from the command line: `--reverse-mirror` (or `REMOTEPC_REVERSE_MIRROR=1`) for a read-only demo link, and Remote without `REMOTEPC_MIRROR` for a technician-only session.
 
 Configuration (resolved by `SessionLaunchOptions`, precedence top to bottom):
