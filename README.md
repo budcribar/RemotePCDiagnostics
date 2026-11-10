@@ -181,14 +181,15 @@ tests/
 
 ### Local vs Remote mode
 
-The Host has four Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/Properties/launchSettings.json`). Visual Studio starts the first one unless you pick another in the Start button dropdown:
+The Host has three Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/Properties/launchSettings.json`). Visual Studio starts the first one unless you pick another in the Start button dropdown:
 
 | Profile | Settings | Behavior |
 |---|---|---|
-| **Remote (Railway, mirror)** (default in Visual Studio) | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544`, `REMOTEPC_MIRROR=1` | Same as Remote (Railway), and the local window mirrors what the technician does in the browser. |
-| **Remote (Railway, reverse mirror demo)** | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544`, `REMOTEPC_REVERSE_MIRROR=1` | For demos: the local window is in control, and the link it shows and copies is the read-only `/mirror/<id>` page, so people watching in a browser can see everything but can't click. Command line: `--reverse-mirror`. |
-| **Remote (Railway)** | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a technician drives it from a browser. |
+| **Remote** (default in Visual Studio) | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544`, `REMOTEPC_MIRROR=1` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a technician joins from a browser. The user starts in control and can give it to the technician and take it back from the session bar in the header; whoever doesn't hold control sees a live, read-only view. |
+| **Remote + voice** | Remote, plus `REMOTEPC_VOICE=1` | Same, with a voice call between the user and the technician. |
 | **Local** | `REMOTEPC_MODE=Local` | UI renders in the app window only. Running the exe with no settings is also Local (CI uses this). |
+
+The older one-way modes still work from the command line: `--reverse-mirror` (or `REMOTEPC_REVERSE_MIRROR=1`) for a read-only demo link, and Remote without `REMOTEPC_MIRROR` for a technician-only session.
 
 Configuration (resolved by `SessionLaunchOptions`, precedence top to bottom):
 - `-u=<server url>` command-line arg: forces Remote with that server (the RemoteBlazorWebViewTutorial convention), e.g. `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`.

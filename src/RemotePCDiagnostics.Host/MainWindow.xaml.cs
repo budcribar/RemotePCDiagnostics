@@ -38,7 +38,7 @@ public partial class MainWindow : Window
 
         // Local (default) or Remote. Remote when started with -u=<server uri> (RemoteBlazorWebViewTutorial convention)
         // or REMOTEPC_MODE=Remote (+ optional REMOTEPC_SERVER_URL, default https://remoteblazorwebview.com:34544).
-        // See Properties/launchSettings.json for the Visual Studio profiles ("Remote (Railway, mirror)" is the default; "Remote (Railway, reverse mirror demo)", "Remote (Railway)", "Local").
+        // See Properties/launchSettings.json for the Visual Studio profiles: "Remote" (default), "Remote + voice" and "Local". Control moves between the user and the technician; the --reverse-mirror switch remains for command-line use.
         var pendingReboot = RebootResumeCoordinator.TryReadPendingStateFile();
         var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, pendingReboot);
         var mode = launch.Mode;
