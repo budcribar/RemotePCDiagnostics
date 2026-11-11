@@ -3,8 +3,9 @@ using RemotePCDiagnostics.Core.History;
 
 namespace RemotePCDiagnostics.Host;
 
-/// <summary>Reads RemotePCDiagnostics 1100 events from the Application log, newest first (EventLogReader + XPath).
-/// Reading the Application log needs no admin; failures surface as exceptions handled by <see cref="EventLogHistoryStore"/>.</summary>
+/// <summary>Reads RemotePCDiagnostics 1100 events, newest first (EventLogReader + XPath), from the app's own log, or from
+/// Application until the one-time move there is done (<see cref="RemotePCDiagnostics.Core.Migrations.EventLogMoveMigration"/>).
+/// Failures surface as exceptions handled by <see cref="EventLogHistoryStore"/>.</summary>
 public static class EventLogHistorySource
 {
     public static IHistoryStore Create(ILogger? log) =>
@@ -12,7 +13,9 @@ public static class EventLogHistorySource
 
     private static IEnumerable<RawHistoryEvent> Query(string xpath, int max)
     {
-        var q = new EventLogQuery(EventLogHistoryStore.LogName, PathType.LogName, xpath) { ReverseDirection = true };
+        var logName = RemotePCDiagnostics.Core.Migrations.EventLogMoveMigration.CurrentLogName(
+            new RemotePCDiagnostics.Core.Migrations.MigrationMarkers(RemotePCDiagnostics.Core.Migrations.MigrationMarkers.DefaultPath()));
+        var q = new EventLogQuery(logName, PathType.LogName, xpath) { ReverseDirection = true };
         var list = new List<RawHistoryEvent>();
         using var reader = new EventLogReader(q);
         for (var i = 0; i < max; i++)

@@ -76,7 +76,6 @@ public sealed record RawHistoryEvent(DateTimeOffset TimeCreated, string? Message
 public sealed class EventLogHistoryStore(Func<string, int, IEnumerable<RawHistoryEvent>> query, ILogger? log = null) : IHistoryStore
 {
     public const string ProviderName = "RemotePCDiagnostics";
-    public const string LogName = "Application";
     public const int MaxEvents = 5000;
 
     /// <summary>XPath for 1100 events of our provider, optionally within the last <paramref name="within"/>.</summary>

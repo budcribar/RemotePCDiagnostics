@@ -12,18 +12,14 @@ public partial class App : Application
 {
     private static readonly Lazy<EventLogSink> _events = new(() => new EventLogSink(LogFileOnly));
 
-    /// <summary>Windows Event Log (Application, source RemotePCDiagnostics); never throws or blocks.</summary>
+    /// <summary>Windows Event Log (the app's own log, source RemotePCDiagnostics); never throws or blocks.</summary>
     public static ILogSink Events => _events.Value;
 
-    private static readonly Lazy<EventLogSink> _audit = new(() =>
-        new EventLogSink(LogFileOnly, EventLogSink.AuditLogName, EventLogSink.AuditSourceName, EventLogSink.AuditLogKilobytes));
-
-    /// <summary>Writes a session audit entry to the app's own event log (Applications and Services Logs > RemotePCDiagnostics)
-    /// and the same text to the file log. Never throws or blocks.</summary>
+    /// <summary>Writes a session audit entry (events 2000-2006) to the event log and the same text to the file log. Never throws or blocks.</summary>
     public static void Audit(LogEntry entry)
     {
         LogFileOnly($"[audit {entry.EventId}] {entry.Message.Replace(Environment.NewLine, " | ")}");
-        try { _audit.Value.Write(entry); } catch { }
+        try { Events.Write(entry); } catch { }
     }
 
     /// <summary>File log: on by default at %LOCALAPPDATA%\RemotePCDiagnostics\logs\RemotePCDiagnostics.log (rolls at 5 MB, keeps 5 older files).
@@ -198,6 +194,14 @@ public partial class App : Application
             if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"History update (event log format 3): {outcome}");
         }
         catch (Exception ex) { Log($"History update (event log format 3) failed: {ex.Message}"); }
+        try
+        {
+            var outcome = new RemotePCDiagnostics.Core.Migrations.EventLogMoveMigration(new WindowsEventLogMoveIo(),
+                new RemotePCDiagnostics.Core.Migrations.MigrationMarkers(RemotePCDiagnostics.Core.Migrations.MigrationMarkers.DefaultPath()),
+                RemotePCDiagnostics.Core.Migrations.EventLogV3Migration.DefaultWorkDir(), HostServices.For<RemotePCDiagnostics.Core.Migrations.EventLogMoveMigration>(Loggers)).Run();
+            if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"Event log move to the {EventLogSink.OwnLogName} log: {outcome}");
+        }
+        catch (Exception ex) { Log($"Event log move failed: {ex.Message}"); }
     }
 
     /// <summary>
@@ -254,7 +258,6 @@ public partial class App : Application
         Log($"Exit code={e.ApplicationExitCode}");
         Event(LogEventIds.AppExit, LogLevel.Information, $"Remote PC Diagnostics exited (code {e.ApplicationExitCode}).");
         try { _events.Value.Flush(TimeSpan.FromSeconds(1)); _events.Value.Dispose(); } catch { }
-        try { if (_audit.IsValueCreated) { _audit.Value.Flush(TimeSpan.FromSeconds(1)); _audit.Value.Dispose(); } } catch { }
         try { _instance?.ReleaseMutex(); _instance?.Dispose(); } catch { }
         base.OnExit(e);
     }

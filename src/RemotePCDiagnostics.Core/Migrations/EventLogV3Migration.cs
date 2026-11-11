@@ -67,6 +67,10 @@ public enum MigrationOutcome
     Failed,
     /// <summary>Converted, cleared, written back and marked done.</summary>
     Completed,
+    /// <summary>An earlier migration has to finish first.</summary>
+    Waiting,
+    /// <summary>The event source was moved to the app's own log, but Windows follows only after the PC restarts.</summary>
+    NeedsRestart,
 }
 
 /// <summary>
