@@ -148,6 +148,72 @@ public class ChecksScreenTests
         Assert.Equal("Passed (extended run)", CheckRows.Label(CheckRows.KindOf(store.Get("CpuStress")), s.RunLabel("CpuStress")));
     }
 
+    /// <summary>An on-demand test listed on the Stress tests page (like SFC/DISM): a separate step after the stress tests.</summary>
+    private sealed class SeparateStep(string name, Func<CancellationToken, Task<DiagnosticResult>> run) : IDiagnosticModule
+    {
+        public int Runs;
+        public string Name => name;
+        public Guid Id => TestIds.For(name);
+        public bool IncludeInRunAll => false;
+#pragma warning disable CS0067
+        public event EventHandler<DiagnosticResult>? Updated;
+#pragma warning restore CS0067
+        public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
+        public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default) { Interlocked.Increment(ref Runs); return run(ct); }
+    }
+
+    private static (DiagnosticsService Svc, ChecksScreenState State, SeparateStep[] Separate) BuildWithSeparateSteps(
+        Func<FakeStressModule, CancellationToken, Task<DiagnosticResult>> stressRun, Func<CancellationToken, Task<DiagnosticResult>>? firstStep = null)
+    {
+        var store = new ResultStore();
+        var separate = new[]
+        {
+            new SeparateStep("SfcScan", firstStep ?? (_ => Task.FromResult(FakeModule.Ok("SfcScan")))),
+            new SeparateStep("DismScanHealth", _ => Task.FromResult(FakeModule.Ok("DismScanHealth"))),
+        };
+        var svc = new DiagnosticsService(store, [new FakeStressModule("CpuStress", "CPU", stressRun), separate[0], separate[1]]);
+        var s = new ChecksScreenState(svc, store);
+        s.SelectAll(CheckGroup.Stress, true);
+        return (svc, s, separate);
+    }
+
+    [Fact]
+    public async Task StressRun_CancelledFromOutsideThisPage_DoesNotStartTheSeparateSteps()
+    {
+        var gate = new TaskCompletionSource();
+        var (svc, s, separate) = BuildWithSeparateSteps(async (m, ct) =>
+        {
+            gate.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+            return FakeModule.Ok(m.Name);
+        });
+        Assert.Equal(["CpuStress", "SfcScan", "DismScanHealth"], s.StressModules.Select(m => m.Name));
+        var run = s.RunGroupAsync(CheckGroup.Stress);
+        await gate.Task;
+        svc.CancelStressSuite(); // the Dashboard's Cancel and a stress test's own Stop button: not ChecksScreenState.Stop
+        await run;
+        Assert.Null(s.RunningGroup);
+        Assert.All(separate, step => Assert.Equal(0, step.Runs));
+    }
+
+    [Fact]
+    public async Task StressRun_SeparateStepStoppedByTheUser_DoesNotStartTheNextOne()
+    {
+        var (_, s, separate) = BuildWithSeparateSteps((m, _) => Task.FromResult(FakeModule.Ok(m.Name)),
+            _ => Task.FromResult(new DiagnosticResult("SfcScan", DiagnosticStatus.Warning, "Cancelled", DateTimeOffset.Now) { Cancelled = true }));
+        await s.RunGroupAsync(CheckGroup.Stress);
+        Assert.Equal(1, separate[0].Runs);
+        Assert.Equal(0, separate[1].Runs);
+    }
+
+    [Fact]
+    public async Task StressRun_Finished_RunsTheSeparateSteps()
+    {
+        var (_, s, separate) = BuildWithSeparateSteps((m, _) => Task.FromResult(FakeModule.Ok(m.Name)));
+        await s.RunGroupAsync(CheckGroup.Stress);
+        Assert.All(separate, step => Assert.Equal(1, step.Runs));
+    }
+
     [Fact]
     public async Task Stop_CancelsAndKeepsLastCompletedResult()
     {
