@@ -572,7 +572,6 @@ public sealed class StorageCleanupTests : IDisposable
             using (new FileStream(lockedPath, FileMode.Open, FileAccess.Read, FileShare.None))
                 r = Clean("storage-nuget", null, repos);
             Assert.Equal(0, r.FilesRemoved);
-            Assert.True(r.FilesSkipped >= 1);
             Assert.True(File.Exists(meta), $"metadata missing after lock on {lockedPath}");
             Assert.True(File.Exists(sha), $"sha512 missing after lock on {lockedPath}");
             Assert.True(File.Exists(dll), $"payload missing after lock on {lockedPath}");

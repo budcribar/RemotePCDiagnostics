@@ -34,8 +34,9 @@ public enum StorageTargetMode
 /// <param name="Pattern">Contents: only file names matching this simple wildcard (e.g. "*.dmp").</param>
 /// <param name="TopLevelOnly">Contents: don't look into subfolders.</param>
 /// <param name="MaxFileBytes">Contents: only files at most this big (lock files are tiny).</param>
-/// <param name="DeleteFirst">Directory: top-level marker patterns (e.g. NuGet's .nupkg.metadata / *.nupkg.sha512) deleted last only after
-/// verifying no file in the folder is in use, so a locked package is never left half-deleted or hidden from future scans.</param>
+/// <param name="DeleteFirst">Directory: top-level marker patterns (e.g. NuGet's .nupkg.metadata / *.nupkg.sha512). Nothing is deleted
+/// unless every file in the folder can be opened exclusively; then the markers go first (NuGet treats a version as installed while
+/// its .nupkg.metadata exists), then the rest. A folder with a file in use is left complete.</param>
 public sealed record StorageTarget(string Root, string Path, StorageTargetMode Mode, DateTime? OlderThanUtc = null, string? Pattern = null,
     bool TopLevelOnly = false, long? MaxFileBytes = null, IReadOnlyList<string>? DeleteFirst = null)
 {
@@ -313,7 +314,8 @@ public static class StorageCleanupEngine
             }
         }
 
-        // Pre-check exclusive access on every file (markers and payload) before deleting anything so a locked DLL or marker leaves the package complete.
+        // Check every file (markers and payload) can be opened exclusively before deleting anything, so a locked DLL or marker
+        // leaves the package complete and still found by the next scan.
         foreach (var f in markers)
         {
             ct.ThrowIfCancellationRequested();
@@ -325,22 +327,8 @@ public static class StorageCleanupEngine
             if (!CanDeleteExclusively(f)) { tally.InUse++; return; }
         }
 
-        // Delete payload files first: if a file becomes locked in a race, markers remain on disk so NuGet and future scans stay consistent.
-        string? checkedDir = null;
-        foreach (var f in payload)
-        {
-            ct.ThrowIfCancellationRequested();
-            var dir = f.DirectoryName!;
-            if (!string.Equals(dir, checkedDir, StringComparison.OrdinalIgnoreCase))
-            {
-                if (IsReparsePoint(dir)) { tally.Links++; return; }
-                checkedDir = dir;
-            }
-            f.Refresh();
-            if (!f.Exists) continue;
-            if (!TryDelete(f, tally)) return;
-        }
-
+        // Markers first (NuGet treats a version as installed while its .nupkg.metadata exists). If one can't be deleted, the
+        // markers already removed are put back and the folder is left complete.
         if (IsReparsePoint(root)) { tally.Links++; return; }
         var backups = new List<(string Path, byte[] Bytes, DateTime LastWriteUtc, FileAttributes Attributes)>(markers.Count);
         foreach (var m in markers)
@@ -378,6 +366,23 @@ public static class StorageCleanupEngine
             }
             var match = backups.FirstOrDefault(b => string.Equals(b.Path, m.FullName, StringComparison.OrdinalIgnoreCase));
             if (match.Path is not null) deletedMarkers.Add(match);
+        }
+
+        // Then the payload. If a file becomes locked in the moment since the check, what is left has no marker: NuGet no longer
+        // counts the version as installed and downloads it again when a project needs it, instead of using a package with files missing.
+        string? checkedDir = null;
+        foreach (var f in payload)
+        {
+            ct.ThrowIfCancellationRequested();
+            var dir = f.DirectoryName!;
+            if (!string.Equals(dir, checkedDir, StringComparison.OrdinalIgnoreCase))
+            {
+                if (IsReparsePoint(dir)) { tally.Links++; return; }
+                checkedDir = dir;
+            }
+            f.Refresh();
+            if (!f.Exists) continue;
+            if (!TryDelete(f, tally)) return;
         }
 
         foreach (var d in dirs.Distinct(StringComparer.OrdinalIgnoreCase).OrderByDescending(x => x.Length))

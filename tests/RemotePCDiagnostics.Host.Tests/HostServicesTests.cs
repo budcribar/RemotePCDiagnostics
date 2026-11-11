@@ -259,6 +259,13 @@ public class HostServicesTests
     [InlineData("boot optimization", "Windows (C:)", new char[0])]
     [InlineData("storage tier optimization", "Windows (C:)", new char[0])]
     [InlineData("", "Windows (C:)", new char[0])]
+    [InlineData("défragmentation", "Windows (C:)", new char[0])]   // French
+    [InlineData("desfragmentación", "Windows (C:)", new char[0])]  // Spanish
+    [InlineData("Defragmentierung", "Windows (C:)", new char[0])]  // German
+    [InlineData("deframmentazione", "Windows (C:)", new char[0])]  // Italian
+    [InlineData("analyse", "Windows (C:)", new char[0])]
+    [InlineData("erneutes Trimmen", "Windows (C:)", new[] { 'C' })]
+    [InlineData("optimisation", "Windows (C:)", new[] { 'C' })]    // a wording the list doesn't know still counts
     public void Defrag_event_258_counts_only_retrim_operations(string operation, string volume, char[] expected)
     {
         Assert.Equal(expected, WindowsRetrimEvents.RetrimLetters([operation, volume]));

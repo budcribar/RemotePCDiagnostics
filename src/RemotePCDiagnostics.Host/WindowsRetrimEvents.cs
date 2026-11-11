@@ -37,22 +37,28 @@ public sealed partial class WindowsRetrimEvents(ILogger? log = null) : IWindowsR
         return list;
     }
 
-    /// <summary>True when Defrag event 258's operation field (<c>data[0]</c>) represents an SSD retrim rather than analysis, defragmentation,
-    /// slab/free-space consolidation, shrink estimation, boot optimization or storage tier optimization.</summary>
+    // Word stems of the storage optimizer's other operations, without accents: defragmentation (also désfrag-, deframm-), analysis,
+    // slab and free space consolidation, shrink estimation, boot optimization, storage tier optimization.
+    private static readonly string[] NotRetrim = ["frag", "framm", "anal", "slab", "consolid", "konsolid", "shrink", "boot", "tier"];
+
+    /// <summary>
+    /// Whether Defrag event 258's operation field (<c>data[0]</c>) is an SSD retrim. Windows writes the operation in its display
+    /// language, so this goes by what it is not: an operation named like one of the optimizer's other jobs (compared without
+    /// accents, so "défragmentation" and "desfragmentación" are recognised) doesn't count. Anything with "trim" in it counts. A
+    /// wording that matches neither - another language's word for retrim, as far as this can tell - counts too, as it did before
+    /// the other jobs were filtered out; on such a PC a date may come from an operation this list doesn't know.
+    /// </summary>
     public static bool IsRetrimOperation(string? operation)
     {
         if (string.IsNullOrWhiteSpace(operation)) return false;
-        if (operation.Contains("defrag", StringComparison.OrdinalIgnoreCase)
-            || operation.Contains("analy", StringComparison.OrdinalIgnoreCase)
-            || operation.Contains("slab", StringComparison.OrdinalIgnoreCase)
-            || operation.Contains("consolid", StringComparison.OrdinalIgnoreCase)
-            || operation.Contains("konsolid", StringComparison.OrdinalIgnoreCase)
-            || operation.Contains("shrink", StringComparison.OrdinalIgnoreCase)
-            || operation.Contains("boot", StringComparison.OrdinalIgnoreCase)
-            || operation.Contains("tier", StringComparison.OrdinalIgnoreCase))
-            return false;
-        return operation.Any(c => c > 127) || operation.Contains("trim", StringComparison.OrdinalIgnoreCase);
+        var plain = WithoutAccents(operation);
+        if (plain.Contains("trim", StringComparison.OrdinalIgnoreCase)) return true;
+        return !NotRetrim.Any(stem => plain.Contains(stem, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static string WithoutAccents(string s) =>
+        string.Concat(s.Normalize(System.Text.NormalizationForm.FormD)
+            .Where(c => System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.NonSpacingMark));
 
     /// <summary>Drive letters from a Defrag 258 event's data (<c>[operation, volume, ...]</c>), or empty when the operation isn't a retrim.</summary>
     public static IReadOnlyList<char> RetrimLetters(IReadOnlyList<string> data) =>
