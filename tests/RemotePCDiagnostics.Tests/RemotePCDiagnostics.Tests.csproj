@@ -7,6 +7,8 @@
     <IsPackable>false</IsPackable>
     <!-- xunit.v3 test projects are executables. -->
     <OutputType>Exe</OutputType>
+    <!-- xUnit1051 (pass TestContext.Current.CancellationToken to every async call) is new advice in xunit.v3; the tests pass their own tokens. -->
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
