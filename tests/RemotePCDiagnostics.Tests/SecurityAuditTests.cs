@@ -81,7 +81,7 @@ public sealed class SecurityAuditTests : IDisposable
             "1103,Account Policies,Reversible passwords,High,1,0,Failed,Critical\n";
         var findings = HardeningKittyCsv.Parse(csv);
         Assert.Equal([AuditOutcome.Failed, AuditOutcome.Failed], findings.Select(f => f.Outcome));
-        var report = new SecurityAuditReport(findings, HomePc: true);
+        var report = new SecurityAuditReport(findings, Profile: new PcProfile(false, false, false, "Core"));
         Assert.Equal(2, report.HighRisk);
         Assert.Equal(DiagnosticStatus.Error, report.Status);
         Assert.StartsWith("2 high-risk · ", report.Summary);

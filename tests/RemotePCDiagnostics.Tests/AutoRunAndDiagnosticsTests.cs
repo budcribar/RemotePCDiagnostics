@@ -61,7 +61,7 @@ public class AutoRunTests
         var presentSvc = new DiagnosticsService(presentStore, [presentMod]);
         Assert.DoesNotContain(presentSvc.Modules, m => m.Name == "SlowPresent");
         var presentTasks = AutoRun.Start(presentSvc, _ => null, null, "SlowPresent");
-        Assert.Single(presentTasks);
+        _ = Assert.Single(presentTasks);
         applicable.SetResult(ModuleDetection.For([new ModuleInstance("dev-1", "Device 1")]));
         var presentResults = await Task.WhenAll(presentTasks).WaitAsync(Wait);
         Assert.Equal(DiagnosticStatus.Ok, Assert.Single(presentResults).Status);
@@ -77,7 +77,7 @@ public class AutoRunTests
         var absentSvc = new DiagnosticsService(absentStore, [absentMod]);
         Assert.DoesNotContain(absentSvc.Modules, m => m.Name == "SlowDetect");
         var absentTasks = AutoRun.Start(absentSvc, _ => null, null, "SlowDetect");
-        Assert.Single(absentTasks);
+        _ = Assert.Single(absentTasks);
         notApplicable.SetResult(ModuleDetection.NotApplicable("none here"));
         var absentResults = await Task.WhenAll(absentTasks).WaitAsync(Wait);
         Assert.Equal(DiagnosticStatus.NotRun, Assert.Single(absentResults).Status);

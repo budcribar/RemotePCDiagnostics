@@ -145,7 +145,7 @@ public class DriveHealthTests
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<ProcessResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var reads = 0;
-        var launcher = new FakeLauncher((_, _, ct) =>
+        var launcher = new DelegateLauncher((_, _, _, ct) =>
         {
             Interlocked.Increment(ref reads);
             started.TrySetResult();

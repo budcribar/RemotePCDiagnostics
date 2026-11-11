@@ -86,7 +86,7 @@ public class SrumReaderTests
     }
 
     [Fact]
-    public void DecodeIdentity_AndHeaderPageSize_HandleMalformedDataWithoutThrowing()
+    public void DecodeIdentity_HandlesMalformedDataWithoutThrowing()
     {
         var localSystem = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
         var validSidBytes = new byte[localSystem.BinaryLength];
@@ -98,7 +98,11 @@ public class SrumReaderTests
         Assert.Equal("Malformed SID 13", SrumReader.DecodeIdentity(13, 3, [99, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0]));
         Assert.Equal("Malformed SID 14", SrumReader.DecodeIdentity(14, 3, [1, 5, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0]));
         Assert.Equal(@"C:\Windows\System32\svchost.exe", SrumReader.DecodeIdentity(15, 0, Encoding.Unicode.GetBytes("C:\\Windows\\System32\\svchost.exe\0")));
+    }
 
+    [Fact]
+    public void ParseHeaderPageSize_HandlesValidAndMalformedHeaders()
+    {
         var header = new byte[240];
         BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(4, 4), 0x89ABCDEFu);
         BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(236, 4), 4096);

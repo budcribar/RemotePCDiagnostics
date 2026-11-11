@@ -120,7 +120,8 @@ public class DiskSpeedTests
     public async Task FullRun_Passes_VerifiesData_AndCleansUp()
     {
         var fs = new FakeDiskFs();
-        var r = await new DiskSpeedTest(fs, NoSensors(), new FakeStressClock()).RunAsync(Opts());
+        var r = await new DiskSpeedTest(fs, NoSensors(), new FakeStressClock())
+            .RunAsync(Opts() with { SampleInterval = TimeSpan.FromMilliseconds(100), MaxRandomPhase = TimeSpan.FromSeconds(1) });
         Assert.Equal(DiskSpeedOutcome.Passed, r.Outcome);
         Assert.Equal("Passed", r.Headline);
         Assert.Equal(64 * MB, r.TestBytes);
@@ -133,7 +134,8 @@ public class DiskSpeedTests
     public async Task Corruption_IsDetected_AndFileStillDeleted()
     {
         var fs = new FakeDiskFs { Wrap = s => new CorruptingStream(s, 5 * MB + 123) };
-        var r = await new DiskSpeedTest(fs, NoSensors(), new FakeStressClock()).RunAsync(Opts());
+        var r = await new DiskSpeedTest(fs, NoSensors(), new FakeStressClock())
+            .RunAsync(Opts() with { SampleInterval = TimeSpan.FromMilliseconds(100), MaxRandomPhase = TimeSpan.FromSeconds(1) });
         Assert.Equal(DiskSpeedOutcome.DataErrors, r.Outcome);
         Assert.Equal("Data errors found", r.Headline);
         Assert.True(r.DataErrors >= 1);

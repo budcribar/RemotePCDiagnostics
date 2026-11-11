@@ -650,7 +650,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
             var total = StorageCleanupCatalog.All.Count + 3;
             p.ReportStep(1, total, "Finding developer projects…");
             var roots = (await DevProjects.FindAsync(logger, c).ConfigureAwait(false)).Select(r => r.Path).ToList();
-            return await Task.Run(() => ScanStorageCleanups(caller is { } ctx ? ctx.Self.ReadDevices() : [], logger, c, roots, p, 1, total), c).ConfigureAwait(false);
+            return await Task.Run(() => ScanStorageCleanups(caller?.Self.ReadDevices(), logger, c, roots, p, 1, total), c).ConfigureAwait(false);
         });
         var prior = s_cleanupCaller.Value;
         s_cleanupCaller.Value = (this, progress);

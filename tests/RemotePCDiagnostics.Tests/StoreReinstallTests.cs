@@ -551,7 +551,7 @@ public class StoreReinstallTests
 
         var xbox = svc.Suggestions.Single(x => x.Id == "remove-xbox");
         Assert.True((await svc.ApplyAsync(xbox, xbox.Actions[0])).Success);
-        Assert.Equal(4, j.All.Count); // StoreReinstall + GameDvrEnabled + XblAuthManager + XblTask
+        Assert.Equal(5, j.All.Count); // StoreReinstall + GameDvrEnabled + AppCaptureEnabled + XblAuthManager + XblTask
 
         // First undo attempt: winget fails (offline), while registry, service, and task are restored and removed from journal.
         sys.WingetResult = WingetResult.Exited(1);

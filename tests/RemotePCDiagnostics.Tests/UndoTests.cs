@@ -221,7 +221,7 @@ public class UndoTests
         public List<string> Calls = [];
         public MemoryReading ReadMemory() => new(16L << 30, 8L << 30);
         public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> s, CancellationToken ct) =>
-            Task.FromResult(new MemorySnapshot(ReadMemory(), [], SearchHighlights: new(null, 1)));
+            Task.FromResult(new MemorySnapshot(ReadMemory(), [], Feeds: new WindowsFeedsInfo(WindowsFeeds.Windows11Build, HighlightsPolicy: null, HighlightsToggle: 1)));
         public int? ReadDword(RegistrySetting s) => Reg.TryGetValue(s.Target, out var v) ? v : null;
         public void WriteDword(RegistrySetting s, int value)
         {

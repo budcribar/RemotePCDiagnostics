@@ -224,32 +224,6 @@ public class BenchmarkTests
 
     private sealed class SyncProgress(Action<string> a) : IProgress<string> { public void Report(string v) => a(v); }
 
-    [Fact]
-    public void CpuScore_MoreThreadsMoreWork()
-    {
-        var threads = Math.Clamp(Environment.ProcessorCount, 2, 4);
-        if (Environment.ProcessorCount < 2)
-        {
-            // On a single-core runner, zero-duration runs still execute one work unit per thread.
-            var oneUnit = BenchmarkRunner.CpuScore(1, TimeSpan.Zero);
-            var multiUnit = BenchmarkRunner.CpuScore(threads, TimeSpan.Zero);
-            Assert.True(oneUnit > 0);
-            Assert.True(multiUnit > 0);
-            return;
-        }
-
-        _ = BenchmarkRunner.CpuScore(threads, TimeSpan.FromMilliseconds(15)); // JIT warm-up
-        double single = 0, multi = 0;
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            single = BenchmarkRunner.CpuScore(1, TimeSpan.FromMilliseconds(120));
-            multi = BenchmarkRunner.CpuScore(threads, TimeSpan.FromMilliseconds(120));
-            if (multi > single * 1.15) break;
-        }
-        Assert.True(single > 0);
-        Assert.True(multi > single, $"Expected {threads}-thread score ({multi:F1}) > 1-thread score ({single:F1}).");
-    }
-
     // ---- service: persistence, restart flow ----
     private sealed class MemStore : IBenchmarkStore
     {
@@ -565,5 +539,38 @@ public class BenchmarkTests
         Assert.Null(svc.SettleRemaining);
         Assert.Null(svc.SettleFraction);
         Assert.NotNull(svc.Before);
+    }
+}
+
+[CollectionDefinition("CpuScore", DisableParallelization = true)]
+public sealed class CpuScoreCollection;
+
+[Collection("CpuScore")]
+public class BenchmarkCpuScoreTests
+{
+    [Fact]
+    public void CpuScore_MoreThreadsMoreWork()
+    {
+        var threads = Math.Clamp(Environment.ProcessorCount, 2, 4);
+        if (Environment.ProcessorCount < 2)
+        {
+            // On a single-core runner, zero-duration runs still execute one work unit per thread.
+            var oneUnit = BenchmarkRunner.CpuScore(1, TimeSpan.Zero);
+            var multiUnit = BenchmarkRunner.CpuScore(threads, TimeSpan.Zero);
+            Assert.True(oneUnit > 0);
+            Assert.True(multiUnit > 0);
+            return;
+        }
+
+        _ = BenchmarkRunner.CpuScore(threads, TimeSpan.FromMilliseconds(15)); // JIT warm-up
+        double single = 0, multi = 0;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            single = BenchmarkRunner.CpuScore(1, TimeSpan.FromMilliseconds(120));
+            multi = BenchmarkRunner.CpuScore(threads, TimeSpan.FromMilliseconds(120));
+            if (multi > single * 1.15) break;
+        }
+        Assert.True(single > 0);
+        Assert.True(multi > single, $"Expected {threads}-thread score ({multi:F1}) > 1-thread score ({single:F1}).");
     }
 }
