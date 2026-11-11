@@ -73,22 +73,40 @@ internal sealed class OfficeSuggestions(SuggestionContext c)
     internal ActionOutcome UndoPdfDefaultPrinter(UndoEntry u)
     {
         (bool Ok, string Message) printer;
-        try { printer = DefaultPrinter.Restore(c.Sys, DefaultPrinter.JournalTarget, u.Target); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { c.Log("Undo default printer: " + ex.Message); printer = (false, "Windows didn't allow changing the default printer back."); }
-        if (printer.Ok) try { c.JournalStore?.RemoveLatest(ChangeKind.DefaultPrinter, DefaultPrinter.JournalTarget); } catch { }
-        var modeOk = true;
-        foreach (var item in RegistryUndo.Decode(u.Previous))
+        var printerRestoredNow = false;
+        if (string.IsNullOrEmpty(u.Target))
+        {
+            printer = (true, "Default printer restored.");
+        }
+        else
+        {
+            try { printer = DefaultPrinter.Restore(c.Sys, DefaultPrinter.JournalTarget, u.Target); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { c.Log("Undo default printer: " + ex.Message); printer = (false, "Windows didn't allow changing the default printer back."); }
+            if (printer.Ok)
+            {
+                printerRestoredNow = true;
+                try { c.JournalStore?.RemoveLatest(ChangeKind.DefaultPrinter, DefaultPrinter.JournalTarget); } catch { }
+            }
+        }
+        var modeItems = RegistryUndo.Decode(u.Previous);
+        var remMode = new List<RegistryUndo.Item>();
+        foreach (var item in modeItems)
         {
             bool ok;
             try { ok = RegistryAllowlist.Restore(c.Sys, item.Target, item.Previous, item.CreatedKey, c.Logger).Ok; }
             catch (Exception ex) when (ex is not OperationCanceledException) { c.Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
             if (ok) { try { c.JournalStore?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
-            else modeOk = false;
+            else remMode.Add(item);
         }
-        if (!printer.Ok) return new(false, printer.Message + (modeOk ? "" : " The \"Let Windows manage my default printer\" setting couldn't be put back either."));
-        return modeOk
-            ? new(true, printer.Message + " The \"Let Windows manage my default printer\" setting is back as it was.")
-            : new(false, printer.Message + " But the \"Let Windows manage my default printer\" setting couldn't be put back.");
+        var modeOk = remMode.Count == 0;
+        if (!printer.Ok || !modeOk)
+        {
+            if (printerRestoredNow || remMode.Count < modeItems.Count)
+                c.AddUndo(u with { Target = printer.Ok ? "" : u.Target, Previous = RegistryUndo.Encode(remMode) });
+            if (!printer.Ok) return new(false, printer.Message + (modeOk ? "" : " The \"Let Windows manage my default printer\" setting couldn't be put back either."));
+            return new(false, printer.Message + " But the \"Let Windows manage my default printer\" setting couldn't be put back.");
+        }
+        return new(true, printer.Message + " The \"Let Windows manage my default printer\" setting is back as it was.");
     }
 
     /// <summary>

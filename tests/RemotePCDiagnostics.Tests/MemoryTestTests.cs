@@ -297,13 +297,21 @@ public class MemoryTestTests
         finally { Directory.Delete(dir, true); }
     }
 
+}
+
+[Collection("CpuScore")]
+public class MemoryTestRealHelperTests
+{
+    private const long MB = MemorySizing.MB;
+    private static SequenceSensorProvider NoSensors() => new(_ => throw new PlatformNotSupportedException(), available: false);
+
     [Fact]
     public async Task RealHelperProcess_RunsSweep_AndReportsDone()
     {
-        // 1.2 GB "available" → Quick's plan is under the floor, so it tests 256 MB; the real helper runs for ~3 s.
+        // 1.2 GB "available" → Quick's plan is under the floor, so it tests 256 MB; run isolated so Normal-priority xUnit workers do not starve the BelowNormal helper.
         var logs = new List<string>();
         var test = new MemoryTest(new FakeMemoryInfo(1229 * MB), new ProcessMemTestHelperLauncher(AppContext.BaseDirectory), NoSensors(), log: new LineLogger(l => { lock (logs) logs.Add(l); }));
-        var r = await test.RunAsync(new MemoryTestOptions { Mode = MemoryTestMode.Quick, Duration = TimeSpan.FromSeconds(3), SampleInterval = TimeSpan.FromMilliseconds(200) });
+        var r = await test.RunAsync(new MemoryTestOptions { Mode = MemoryTestMode.Quick, Duration = TimeSpan.FromSeconds(5), SampleInterval = TimeSpan.FromMilliseconds(200) });
         Assert.True(r.Outcome == MemoryTestOutcome.Passed, string.Join("\n", logs));
         Assert.Equal(256 * MB, r.TestBytes);
         Assert.True(r.Passes >= 1);

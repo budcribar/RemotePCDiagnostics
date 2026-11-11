@@ -65,6 +65,16 @@ public class EventLogTests
         var rep = Assert.IsType<AreaReport>(r.Payload);
         Assert.NotNull(rep.Cards.Single(c => c.Id == "apps").ErrorText);
         Assert.DoesNotContain("denied", r.Message);
+        Assert.Contains("couldn't read app errors", r.Message);
+    }
+
+    [Fact]
+    public void OneLogNull_OtherEmpty_DoesNotSayNoErrors()
+    {
+        var rep = EventLogModule.Build(null, []);
+        Assert.Equal(DiagnosticStatus.Warning, rep.Status);
+        Assert.DoesNotContain("No errors in the last", rep.Summary);
+        Assert.Equal("Last 7 days: couldn't read Windows errors, 0 app errors", rep.Summary);
     }
 
     [Fact]
@@ -103,5 +113,10 @@ public class EventLogTests
     }
 
     [Fact]
-    public void Critical_Warns() => Assert.Equal(DiagnosticStatus.Warning, EventLogModule.Build(Errs("Kernel-Power", 1, level: 1), []).Status);
+    public void Critical_Warns_IncludingLogCard()
+    {
+        var rep = EventLogModule.Build(Errs("Kernel-Power", 1, level: 1), []);
+        Assert.Equal(DiagnosticStatus.Warning, rep.Status);
+        Assert.Equal(AreaLevel.Warning, rep.Cards.Single(c => c.Id == "system").Level);
+    }
 }

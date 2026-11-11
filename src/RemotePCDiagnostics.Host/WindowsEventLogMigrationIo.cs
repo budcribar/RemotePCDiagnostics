@@ -10,11 +10,14 @@ public sealed class WindowsEventLogMigrationIo(ILogger? log) : IEventLogMigratio
 {
     public bool IsElevated => App.IsAdministrator();
 
-    public IReadOnlyList<RawLogEvent> ReadOurEvents()
+    public IReadOnlyList<RawLogEvent> ReadOurEvents() => ReadOurEvents(EventLogSink.LogName);
+
+    /// <summary>Every event of the app's source in a log, oldest first, without the sink's "Build:" line.</summary>
+    public static IReadOnlyList<RawLogEvent> ReadOurEvents(string logName, string extraFilter = "")
     {
         var list = new List<RawLogEvent>();
         if (!OperatingSystem.IsWindows()) return list;
-        var q = new EventLogQuery(EventLogSink.LogName, PathType.LogName, $"*[System[Provider[@Name='{EventLogSink.SourceName}']]]");
+        var q = new EventLogQuery(logName, PathType.LogName, $"*[System[Provider[@Name='{EventLogSink.SourceName}']{extraFilter}]]");
         using var reader = new EventLogReader(q);
         for (var rec = reader.ReadEvent(); rec is not null; rec = reader.ReadEvent())
         {

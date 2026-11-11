@@ -41,6 +41,29 @@ public sealed class InstallerConfigTests
     }
 
     [Fact]
+    public void PortablePublishProfile_BundlesSelfContainedMemTestModuleHostAndModuleUiHost()
+    {
+        var root = FindRepoRoot();
+        var pubxmlPath = Path.Combine(root, "src", "RemotePCDiagnostics.Host", "Properties", "PublishProfiles", "Portable.pubxml");
+        Assert.True(File.Exists(pubxmlPath), $"Missing publish profile: {pubxmlPath}");
+
+        var doc = XDocument.Load(pubxmlPath);
+        string? Prop(string name) => doc.Descendants(name).FirstOrDefault()?.Value;
+
+        Assert.Equal("Release", Prop("Configuration"));
+        Assert.Equal("win-x64", Prop("RuntimeIdentifier"));
+        Assert.Equal("true", Prop("SelfContained"));
+        Assert.Equal("true", Prop("PublishSingleFile"));
+        Assert.Equal("true", Prop("IncludeAllContentForSelfExtract"));
+
+        var raw = File.ReadAllText(pubxmlPath);
+        Assert.Contains("RemotePCDiagnostics.MemTest.csproj", raw);
+        Assert.Contains("RemotePCDiagnostics.ModuleHost.csproj", raw);
+        Assert.Contains("RemotePCDiagnostics.ModuleUiHost.csproj", raw);
+        Assert.Contains(@"moduleui\", raw);
+    }
+
+    [Fact]
     public void InnoSetupScript_StaysInSyncWithHostAndWorkflowContracts()
     {
         var root = FindRepoRoot();

@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private Uri? _serverUri;
     private Uri? _remoteUserUrl;
     private DispatcherTimer? _readyTimer;
+    private readonly SessionAudit _audit = new(App.Audit);
     public MainWindow()
     {
         // Keep the UI dispatcher above Normal and BelowNormal stressor threads so progress renders and Stop clicks stay responsive under full load.
@@ -137,7 +138,7 @@ public partial class MainWindow : Window
             SetRemoteState(RemoteSessionState.Unreachable);
             return;
         }
-        if (remote) WatchRemoteSession(launch.ServerUri!, sessionCtx.SessionId);
+        if (remote) WatchRemoteSession(launch.ServerUri!, sessionCtx.SessionId, launch.Unattended);
         // Last: setting HostPage starts the control, and the server and id must be set before it (which is why it is not in the XAML).
         RemoteBlazorWebView.HostPage = HostPage;
     }
@@ -146,7 +147,7 @@ public partial class MainWindow : Window
     /// What this app adds around the generated remote setup: the session id for the rest of the app, the log, the "can't reach
     /// the relay" notice, and the admin site's client card. Call after InitializeRemoteBlazor() and before HostPage is set.
     /// </summary>
-    private void WatchRemoteSession(Uri serverUri, Guid id)
+    private void WatchRemoteSession(Uri serverUri, Guid id, bool unattended)
     {
         _serverUri = serverUri;
         // Status, give/take control, Copy link and Restart are in the app's header (RemoteBlazorWebView's session bar), in this
@@ -162,7 +163,12 @@ public partial class MainWindow : Window
             _remoteUserUrl = RemoteLinkInfo.BuildMirrorUrl(e.Url ?? serverUri, e.Id != Guid.Empty ? e.Id : id);
             Logger.Info($"ReadyToConnect url={e.Url} id={e.Id} link={_remoteUserUrl}");
             SetRemoteState(RemoteSessionState.Ready);
+            _audit.Started(unattended);
         });
+        // The audit trail (the app's own event log): who joined, each time control moved, who left. Consent is the person at
+        // this PC sharing the link and giving control (supervised), or the unattended setting chosen when it was set up.
+        RemoteBlazorWebView.ParticipantsChanged += (_, e) =>
+            _audit.Update([.. e.Participants.Select(p => new SessionParticipant(p.ClientId, p.IsOwner, p.HasControl, p.UserName))]);
         RemoteBlazorWebView.Connected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
             Logger.Info($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User}");
@@ -171,6 +177,7 @@ public partial class MainWindow : Window
         RemoteBlazorWebView.Disconnected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
             Logger.Info($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
+            _audit.Ended(e.Exception?.Message ?? "");
             SetRemoteState(_remoteUserUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected);
         });
 
@@ -190,7 +197,6 @@ public partial class MainWindow : Window
         try { RemoteBlazorWebView.Markup = RemoteLinkInfo.ToMirrorMarkup(RemoteWebView.GenMarkup(serverUri, id)); }
         catch (Exception ex) { Logger.Error($"Client card markup failed: {ex}"); }
         _readyTimer.Start();
-        // TODO: consent prompt + audit log before accepting a remote session (see README Safety section).
     }
 
     private void SetRemoteState(RemoteSessionState state)
@@ -226,6 +232,7 @@ public partial class MainWindow : Window
     {
         base.OnClosed(e); // raise Closed first so handlers (EC fan release) run before the provider is disposed
         _readyTimer?.Stop();
+        _audit.Ended("The app was closed");
         try
         {
             _provider.GetService<DiagnosticsService>()?.CancelStressSuite();

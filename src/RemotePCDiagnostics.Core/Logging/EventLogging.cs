@@ -15,6 +15,8 @@ public enum LogLevel { Information, Warning, Error }
 public static class LogEventIds
 {
     public const int AppStart = 1000, AppExit = 1001;
+    /// <summary>Written while the app's events move to its own log, to see which log Windows puts them in.</summary>
+    public const int LogMoveProbe = 1002;
     public const int TestResult = 1100, SuiteStarted = 1110, SuiteFinished = 1111;
     public const int FanDiagnostic = 1200;
     public const int SensorDriver = 1300;

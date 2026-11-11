@@ -5,9 +5,9 @@
     <!-- The SDK appends the Git revision to InformationalVersion. CI retries stay distinguishable. -->
     <InformationalVersion Condition="'$(GITHUB_RUN_NUMBER)' != ''">$(Version)-ci.$(GITHUB_RUN_NUMBER).$(GITHUB_RUN_ATTEMPT)</InformationalVersion>
     <InformationalVersion Condition="'$(GITHUB_RUN_NUMBER)' == ''">$(Version)-local</InformationalVersion>
-    <!-- RemoteBlazorWebView packages (Wpf, RemoteWebView, RemoteWebViewService.Lib, RemoteComponents). Local voice-enabled
-         build from third_party/RemoteBlazorWebView/packages (NuGet.Config source) until voice is published to nuget.org. -->
-    <RbwvVersion Condition="'$(RbwvVersion)' == ''">10.0.14-embedded.8</RbwvVersion>
+    <!-- RemoteBlazorWebView packages (Wpf, RemoteWebView, RemoteWebViewService.Lib, RemoteComponents), from nuget.org since
+         10.0.15. third_party/RemoteBlazorWebView/packages holds the earlier local 10.0.14-embedded.8 build and is no longer used. -->
+    <RbwvVersion Condition="'$(RbwvVersion)' == ''">10.0.15</RbwvVersion>
     <RbwvLibVersion Condition="'$(RbwvLibVersion)' == ''">$(RbwvVersion)</RbwvLibVersion>
     <!-- Local source wiring: reference the sibling RemoteBlazorWebView repo's projects directly so RBWV source edits are
          picked up on build - no pack/publish step. Active ONLY for the dev solution (RemotePCDiagnostics.Dev.sln), which

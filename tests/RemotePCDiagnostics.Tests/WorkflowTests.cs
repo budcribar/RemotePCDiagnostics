@@ -843,6 +843,8 @@ public class WorkflowTests
     {
         Assert.Equal("Power plan switched to Balanced (was High performance)",
             Undoability.Describe(ChangeRecord.New(ChangeKind.PowerPlan, "", "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c", "Power plan switched to Balanced", "x")));
+        Assert.Equal("Power plan switched to Balanced (was Power saver)",
+            Undoability.Describe(ChangeRecord.New(ChangeKind.PowerPlan, "", "a1841308-3541-4fab-bc81-f71556f20b4a", "Power plan switched to Balanced", "x")));
         Assert.Equal("Public DNS set on Wi-Fi (was 192.168.1.1, 8.8.4.4)",
             Undoability.Describe(ChangeRecord.New(ChangeKind.AdapterDns, "Wi-Fi", "192.168.1.1,8.8.4.4", "Public DNS set on Wi-Fi", "x")));
         Assert.Equal("Windows Search set to Manual (was Automatic)",

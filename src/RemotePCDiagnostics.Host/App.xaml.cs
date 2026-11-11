@@ -12,8 +12,15 @@ public partial class App : Application
 {
     private static readonly Lazy<EventLogSink> _events = new(() => new EventLogSink(LogFileOnly));
 
-    /// <summary>Windows Event Log (Application, source RemotePCDiagnostics); never throws or blocks.</summary>
+    /// <summary>Windows Event Log (the app's own log, source RemotePCDiagnostics); never throws or blocks.</summary>
     public static ILogSink Events => _events.Value;
+
+    /// <summary>Writes a session audit entry (events 2000-2006) to the event log and the same text to the file log. Never throws or blocks.</summary>
+    public static void Audit(LogEntry entry)
+    {
+        LogFileOnly($"[audit {entry.EventId}] {entry.Message.Replace(Environment.NewLine, " | ")}");
+        try { Events.Write(entry); } catch { }
+    }
 
     /// <summary>File log: on by default at %LOCALAPPDATA%\RemotePCDiagnostics\logs\RemotePCDiagnostics.log (rolls at 5 MB, keeps 5 older files).
     /// Setting RPD_LOG_FILE sends it to that path instead, without rolling (CI).</summary>
@@ -88,9 +95,18 @@ public partial class App : Application
         // Packaging check: no window, machine scans, journal changes or instance mutex.
         if (e.Args.Contains("--verify-package"))
         {
-            var required = new[] { "tools/osquery/osqueryi.exe", "tools/HardeningKitty/HardeningKitty.psd1",
+            var required = new List<string>
+            {
+                "tools/osquery/osqueryi.exe", "tools/HardeningKitty/HardeningKitty.psd1",
                 "tools/HardeningKitty/HardeningKitty.psm1", "RemotePCDiagnostics.MemTest.exe",
-                "RemotePCDiagnostics.MemTest.runtimeconfig.json", "wwwroot/index.html" };
+                "RemotePCDiagnostics.ModuleHost.exe", "moduleui/RemotePCDiagnostics.ModuleUiHost.exe",
+                "wwwroot/index.html",
+            };
+            foreach (var stem in new[] { "RemotePCDiagnostics.MemTest", "RemotePCDiagnostics.ModuleHost", "moduleui/RemotePCDiagnostics.ModuleUiHost" })
+            {
+                if (File.Exists(Path.Combine(AppContext.BaseDirectory, stem + ".dll")))
+                    required.Add(stem + ".runtimeconfig.json");
+            }
             var missing = required.Where(p => !File.Exists(Path.Combine(AppContext.BaseDirectory, p)))
                 .Concat(BuiltInModulesPlugin.MissingModuleDlls(RemotePCDiagnostics.Core.Plugins.ModuleLoaderOptions.DefaultBundledFolder())
                     .Select(slug => $"{RemotePCDiagnostics.Core.Plugins.ModuleLoaderOptions.BundledFolderName}/ (module {slug})")).ToArray();
@@ -105,7 +121,14 @@ public partial class App : Application
                     using var helper = System.Diagnostics.Process.Start(start)!;
                     var output = helper.StandardOutput.ReadToEndAsync();
                     if (!helper.WaitForExit(15000)) { helper.Kill(); valid = false; }
-                    else valid = helper.ExitCode == 0 && output.GetAwaiter().GetResult().Contains("MT DONE 1048576 ");
+                    else
+                    {
+                        var done = output.GetAwaiter().GetResult().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                            .Select(RemotePCDiagnostics.Core.Stress.MemTestMessage.Parse)
+                            .OfType<RemotePCDiagnostics.Core.Stress.MemTestMessage.Done>()
+                            .LastOrDefault();
+                        valid = helper.ExitCode == 0 && done is { Bytes: 1048576, Passes: > 0, Errors: 0 };
+                    }
                 }
                 catch (Exception ex) { LogFileOnly($"Package helper failed: {ex.Message}"); valid = false; }
             }
@@ -187,6 +210,14 @@ public partial class App : Application
             if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"History update (event log format 3): {outcome}");
         }
         catch (Exception ex) { Log($"History update (event log format 3) failed: {ex.Message}"); }
+        try
+        {
+            var outcome = new RemotePCDiagnostics.Core.Migrations.EventLogMoveMigration(new WindowsEventLogMoveIo(),
+                new RemotePCDiagnostics.Core.Migrations.MigrationMarkers(RemotePCDiagnostics.Core.Migrations.MigrationMarkers.DefaultPath()),
+                RemotePCDiagnostics.Core.Migrations.EventLogV3Migration.DefaultWorkDir(), HostServices.For<RemotePCDiagnostics.Core.Migrations.EventLogMoveMigration>(Loggers)).Run();
+            if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"Event log move to the {EventLogSink.OwnLogName} log: {outcome}");
+        }
+        catch (Exception ex) { Log($"Event log move failed: {ex.Message}"); }
     }
 
     /// <summary>

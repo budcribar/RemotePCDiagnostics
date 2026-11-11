@@ -68,13 +68,13 @@ public sealed class DiagnosticsService
     /// A test that hangs keeps running in the background, since a stuck thread can't be killed safely.</summary>
     private async Task<(DiagnosticResult? Result, string Message)> RunWithWatchdogAsync(IStressSuiteModule m, CancellationToken suiteCt)
     {
-        try { return await RunWatchedAsync(m, suiteCt).ConfigureAwait(false); }
-        finally { await CleanupStressAsync(m).ConfigureAwait(false); }
+        var run = StartRun(m, null, suiteCt, out var cleanupOnce);
+        try { return await RunWatchedAsync(m, run, suiteCt).ConfigureAwait(false); }
+        finally { await (cleanupOnce is not null ? cleanupOnce() : CleanupStressAsync(m)).ConfigureAwait(false); }
     }
 
-    private async Task<(DiagnosticResult? Result, string Message)> RunWatchedAsync(IStressSuiteModule m, CancellationToken suiteCt)
+    private async Task<(DiagnosticResult? Result, string Message)> RunWatchedAsync(IStressSuiteModule m, Task<DiagnosticResult> run, CancellationToken suiteCt)
     {
-        var run = RunAsync(m, null, suiteCt);
         var limit = StressHangLimitOverride ?? (m.Duration + StressHangGrace);
         using (var d1 = CancellationTokenSource.CreateLinkedTokenSource(suiteCt))
         {
@@ -107,6 +107,7 @@ public sealed class DiagnosticsService
     private readonly List<IDiagnosticModule> _modules = new();
     private readonly ResultStore _store;
     private readonly ConcurrentDictionary<string, Task<DiagnosticResult>> _inFlight = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Func<Task>> _inFlightCleanups = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, CheckProgress> _progress = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
 
@@ -183,6 +184,7 @@ public sealed class DiagnosticsService
     };
 
     private readonly ConcurrentDictionary<Guid, ModuleDetection> _detections = new();
+    private readonly Dictionary<Guid, Task<ModuleDetection>> _detectionTasks = new();
 
     /// <summary>What the module's last DetectAsync said, or null before detection finished (and for modules that don't detect).</summary>
     public ModuleDetection? DetectionOf(Guid moduleId) => _detections.GetValueOrDefault(moduleId);
@@ -192,21 +194,64 @@ public sealed class DiagnosticsService
         _detections.TryGetValue(module.Id, out var d) ? d.Instances.Where(i => i.Applies).ToList() : [];
 
     /// <summary>Runs DetectAsync again for every detectable module (the host calls it on device arrival and removal).</summary>
-    public Task RedetectAsync() => Task.WhenAll(_modules.OfType<IDetectableModule>().Select(DetectAsync));
+    public Task RedetectAsync()
+    {
+        List<Task<ModuleDetection>> tasks;
+        lock (_gate)
+        {
+            tasks = new List<Task<ModuleDetection>>();
+            foreach (var d in _modules.OfType<IDetectableModule>())
+            {
+                _detectionTasks.TryGetValue(d.Id, out var prev);
+                tasks.Add(StartDetectTaskLocked(d, prev is { IsCompleted: false } ? prev : null));
+            }
+        }
+        return Task.WhenAll(tasks);
+    }
 
-    private async Task DetectAsync(IDetectableModule m)
+    private Task<ModuleDetection> EnsureDetectedAsync(IDetectableModule m, CancellationToken ct = default)
+    {
+        Task<ModuleDetection> task;
+        lock (_gate)
+        {
+            if (!_detectionTasks.TryGetValue(m.Id, out var existing))
+                existing = StartDetectTaskLocked(m);
+            task = existing;
+        }
+        return ct.CanBeCanceled ? task.WaitAsync(ct) : task;
+    }
+
+    private Task<ModuleDetection> StartDetectTaskLocked(IDetectableModule m, Task? after = null)
     {
         Interlocked.Increment(ref _detecting);
+        var task = Task.Run(async () =>
+        {
+            try
+            {
+                if (after is not null)
+                {
+                    try { await after.ConfigureAwait(false); } catch { }
+                }
+                return await DetectCoreAsync(m).ConfigureAwait(false);
+            }
+            finally { Interlocked.Decrement(ref _detecting); }
+        }, CancellationToken.None);
+        _detectionTasks[m.Id] = task;
+        return task;
+    }
+
+    private async Task<ModuleDetection> DetectCoreAsync(IDetectableModule m)
+    {
         ModuleDetection detection;
         try { detection = await m.DetectAsync().ConfigureAwait(false); }
         catch (Exception ex) { detection = ModuleDetection.NotApplicable($"Detection failed: {ex.Message}"); }
-        finally { Interlocked.Decrement(ref _detecting); }
         _detections[m.Id] = detection;
         Catalog.SetApplies(m.Id, detection.Applies);
         Volatile.Write(ref _visible, null);
         try { ModulesChanged?.Invoke(this, EventArgs.Empty); } catch { }
         _store.Touch(m.Name); // store-aware pages re-render
         try { Log.Info(detection.Applies ? $"{m.Name}: {detection.Instances.Count(i => i.Applies)} instance(s)" : $"{m.Name}: doesn't apply ({detection.NotApplicableReason})"); } catch { }
+        return detection;
     }
 
     /// <summary>True while hardware detection for a gated module is still running (pages show "looking…" instead of "not found").</summary>
@@ -219,7 +264,11 @@ public sealed class DiagnosticsService
     /// <summary>Runs each gated module's detection once in the background; never blocks the caller, never throws.</summary>
     private void StartHardwareDetection()
     {
-        foreach (var d in _modules.OfType<IDetectableModule>()) _ = Task.Run(() => DetectAsync(d));
+        lock (_gate)
+        {
+            foreach (var d in _modules.OfType<IDetectableModule>())
+                if (!_detectionTasks.ContainsKey(d.Id)) _ = StartDetectTaskLocked(d);
+        }
         foreach (var g in _modules.OfType<IHardwareGatedModule>())
         {
             Interlocked.Increment(ref _detecting);
@@ -327,7 +376,11 @@ public sealed class DiagnosticsService
             }
             ct.ThrowIfCancellationRequested();
             // Per-device gating needs to know this module's devices (SharesDevices).
-            if (module is IDetectableModule detectable && !_detections.ContainsKey(module.Id)) await DetectAsync(detectable).ConfigureAwait(false);
+            if (module is IDetectableModule detectable)
+            {
+                var detection = await EnsureDetectedAsync(detectable, ct).ConfigureAwait(false);
+                if (!detection.Applies) return DiagnosticResult.NotRun(module.Name);
+            }
             if (GateFor(d, ran) is { } gate)
             {
                 var r = ModuleOrdering.GateResult(module.Name, gate);
@@ -383,7 +436,7 @@ public sealed class DiagnosticsService
     private DependencyGate? GateForDependency(Guid dep, IReadOnlyDictionary<Guid, DiagnosticResult?> ranInThisRun)
     {
         var name = Catalog.Get(dep)?.DisplayName ?? dep.ToString("D");
-        if (ranInThisRun.TryGetValue(dep, out var r))
+        if (ranInThisRun.TryGetValue(dep, out var r) && r?.Status != DiagnosticStatus.NotRun)
             return ModuleOrdering.Passed(r) ? null : new DependencyGate(GateKind.Skipped, $"{name} did not pass", dep);
         var state = Catalog.StateOf(dep);
         var runnable = Modules.FirstOrDefault(m => m.Id == dep);
@@ -432,7 +485,10 @@ public sealed class DiagnosticsService
     public bool IsAnyRunning => !_inFlight.IsEmpty || IsStressSuiteRunning;
 
     /// <summary>Starts a run unless one is already in progress, in which case the in-flight task is returned (no double-runs).</summary>
-    private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance = null, bool gateInstances = false)
+    private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance = null, bool gateInstances = false) =>
+        StartRun(module, progress, ct, out _, onlyInstance, gateInstances);
+
+    private Task<DiagnosticResult> StartRun(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, out Func<Task>? cleanupOnce, string? onlyInstance = null, bool gateInstances = false)
     {
         Task<DiagnosticResult> task;
         lock (_gate)
@@ -442,6 +498,18 @@ public sealed class DiagnosticsService
                 MarkRunning(module);
                 var tcs = new TaskCompletionSource<DiagnosticResult>(TaskCreationOptions.RunContinuationsAsynchronously);
                 _inFlight[module.Name] = existing = tcs.Task;
+                Func<Task>? cleanup = null;
+                if (module is IStressSuiteModule stress)
+                {
+                    var cleanupGate = new object();
+                    Task? cleanupTask = null;
+                    cleanup = () =>
+                    {
+                        lock (cleanupGate) return cleanupTask ??= CleanupStressAsync(stress);
+                    };
+                    _inFlightCleanups[module.Name] = cleanup;
+                }
+                cleanupOnce = cleanup;
                 _ = Task.Run(async () =>
                 {
                     DiagnosticResult? res = null;
@@ -450,8 +518,12 @@ public sealed class DiagnosticsService
                     catch (Exception ex) { err = ex; }
                     finally
                     {
-                        if (module is IStressSuiteModule stress) await CleanupStressAsync(stress).ConfigureAwait(false);
-                        _inFlight.TryRemove(module.Name, out _);
+                        if (cleanup is not null) await cleanup().ConfigureAwait(false);
+                        lock (_gate)
+                        {
+                            _inFlight.TryRemove(module.Name, out _);
+                            _inFlightCleanups.Remove(module.Name);
+                        }
                     }
                     if (err is not null) tcs.SetException(err);
                     else tcs.SetResult(res!);
@@ -459,6 +531,7 @@ public sealed class DiagnosticsService
                 return existing;
             }
             task = existing;
+            cleanupOnce = _inFlightCleanups.GetValueOrDefault(module.Name);
         }
         if (progress is not null)
         {
@@ -488,6 +561,18 @@ public sealed class DiagnosticsService
         DiagnosticResult result;
         try
         {
+            if (module is IDetectableModule detectable)
+            {
+                var detection = await EnsureDetectedAsync(detectable, ct).ConfigureAwait(false);
+                if (!detection.Applies && onlyInstance is null)
+                {
+                    _progress.TryRemove(module.Name, out _);
+                    try { ProgressChanged?.Invoke(this, (module.Name, null)); } catch { }
+                    var notRun = DiagnosticResult.NotRun(module.Name);
+                    _store.Set(notRun);
+                    return notRun;
+                }
+            }
             var availability = await module.CheckAvailabilityAsync(ct).ConfigureAwait(false);
             result = !availability.IsAvailable ? CouldNotRun.Result(module.Name, availability.Reason ?? "Couldn't run")
                 : module is IPerDeviceModule perDevice ? await RunInstancesAsync(perDevice, trackedProgress, ct, onlyInstance, gateInstances).ConfigureAwait(false)
@@ -513,7 +598,7 @@ public sealed class DiagnosticsService
     /// module's result also counts the latest stored result of each other instance.</summary>
     private async Task<DiagnosticResult> RunInstancesAsync(IPerDeviceModule module, ICheckProgress progress, CancellationToken ct, string? onlyInstance = null, bool gateInstances = false)
     {
-        if (!_detections.ContainsKey(module.Id)) await DetectAsync(module).ConfigureAwait(false);
+        await EnsureDetectedAsync(module, ct).ConfigureAwait(false);
         var all = InstancesOf(module);
         var instances = onlyInstance is null ? all : all.Where(i => string.Equals(i.Key, onlyInstance, StringComparison.OrdinalIgnoreCase)).ToList();
         if (instances.Count == 0)

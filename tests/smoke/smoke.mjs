@@ -20,7 +20,9 @@ if (!browser) throw new Error(`Could not connect to WebView2 CDP on port ${port}
 
 let page;
 for (let i = 0; i < 30 && !page; i++) {
-  page = browser.contexts().flatMap(c => c.pages()).find(p => p.url().startsWith('https://0.0.0.0') || p.url().includes('index.html') || p.url().startsWith('http'));
+  const pages = browser.contexts().flatMap(c => c.pages());
+  page = pages.find(p => p.url().startsWith('https://0.0.0.1') || p.url().startsWith('https://0.0.0.0') || p.url().includes('index.html'))
+    ?? pages.find(p => p.url().startsWith('http'));
   if (!page) await sleep(1000);
 }
 if (!page) throw new Error('No WebView2 page found');
@@ -40,15 +42,24 @@ try {
 
   // Theme switcher: each choice must update data-theme / data-theme-choice on <html>.
   const attr = n => page.evaluate(k => document.documentElement.getAttribute(k), n);
-  for (const [choice, expected] of [['dark', 'dark'], ['light', 'light']]) {
-    await page.getByTestId(`theme-${choice}`).click();
-    await page.waitForFunction(t => document.documentElement.getAttribute('data-theme') === t, expected, { timeout: 10_000 });
-    console.log(`Theme ${choice}: data-theme=${await attr('data-theme')}`);
-    await page.screenshot({ path: `${outDir}/dashboard-${choice}.png`, fullPage: true });
+  const initialChoice = await attr('data-theme-choice');
+  const restoreChoice = ['dark', 'light', 'system'].includes(initialChoice) ? initialChoice : 'system';
+  try {
+    for (const [choice, expected] of [['dark', 'dark'], ['light', 'light']]) {
+      await page.getByTestId(`theme-${choice}`).click();
+      await page.waitForFunction(t => document.documentElement.getAttribute('data-theme') === t, expected, { timeout: 10_000 });
+      console.log(`Theme ${choice}: data-theme=${await attr('data-theme')}`);
+      await page.screenshot({ path: `${outDir}/dashboard-${choice}.png`, fullPage: true });
+    }
+    await page.getByTestId('theme-system').click();
+    await page.waitForFunction(() => document.documentElement.getAttribute('data-theme-choice') === 'system', null, { timeout: 10_000 });
+    console.log(`Theme system: data-theme=${await attr('data-theme')}`);
+  } finally {
+    if ((await attr('data-theme-choice').catch(() => null)) !== restoreChoice) {
+      await page.getByTestId(`theme-${restoreChoice}`).click().catch(() => {});
+      await page.waitForFunction(c => document.documentElement.getAttribute('data-theme-choice') === c, restoreChoice, { timeout: 10_000 }).catch(() => {});
+    }
   }
-  await page.getByTestId('theme-system').click();
-  await page.waitForFunction(() => document.documentElement.getAttribute('data-theme-choice') === 'system', null, { timeout: 10_000 });
-  console.log(`Theme system: data-theme=${await attr('data-theme')}`);
 
   // Sidebar: Checks, Stress tests and Security audit are separate items.
   for (const id of ['nav-checks', 'nav-stress', 'nav-security-audit']) await page.getByTestId(id).waitFor({ state: 'visible', timeout: 10_000 });

@@ -244,6 +244,16 @@ public class DefaultPrinterTests
         Assert.Equal(Pdf, sys.Default);
         Assert.False(sys.Reg.ContainsKey(Mode)); // mode put back anyway
         Assert.Equal(ChangeKind.DefaultPrinter, Assert.Single(j.All).Kind); // kept, so Undo all can retry if it's re-added
+
+        // Printer comes back: retry restores the printer without touching Mode again.
+        sys.Printers[Hp] = "WSD-5b2c7a10-0000-0000-0000-000000000000";
+        sys.Calls.Clear();
+        var retry = await svc.UndoAsync(svc.UndoFor(Id)!);
+        Assert.True(retry.Success, retry.Message);
+        Assert.Equal(Hp, sys.Default);
+        Assert.DoesNotContain(sys.Calls, c => c.StartsWith("write:") || c.StartsWith("delete:"));
+        Assert.Empty(j.All);
+        Assert.Null(svc.UndoFor(Id));
     }
 
     // ---- UndoService (Undo all) ----

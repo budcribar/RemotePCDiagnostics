@@ -71,7 +71,7 @@ public sealed record ModuleHostMessage
 public static class ModuleHostPayloads
 {
     public static readonly IReadOnlyList<Type> Types =
-        [typeof(Sensors.SensorReport), typeof(Security.SecurityAuditReport), typeof(Osquery.HardwareInventory)];
+        [typeof(Sensors.SensorReport), typeof(Security.SecurityAuditReport), typeof(Osquery.HardwareInventory), typeof(double)];
 
     public static (JsonElement Payload, string Type)? Write(object? payload) =>
         payload is not null && Types.Contains(payload.GetType())
@@ -144,27 +144,62 @@ public sealed class SharedBundledHost(Func<UserModeModule, IModuleHostConnection
     private sealed class Group(Func<UserModeModule, IModuleHostConnection> startRaw)
     {
         private readonly object _gate = new();
-        private readonly SemaphoreSlim _writeGate = new(1, 1);
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, VirtualConnection> _active = new(StringComparer.OrdinalIgnoreCase);
         private IModuleHostConnection? _raw;
+        private Task _writeTail = Task.CompletedTask;
+
+        private Task EnqueueWriteLocked(IModuleHostConnection raw, string line, CancellationToken ct)
+        {
+            var previous = _writeTail;
+            var current = RunWriteAsync(previous, raw, line, ct);
+            _writeTail = WaitQuietlyAsync(previous, current);
+            return current;
+        }
+
+        private static async Task RunWriteAsync(Task previous, IModuleHostConnection raw, string line, CancellationToken ct)
+        {
+            await previous.WaitAsync(ct).ConfigureAwait(false);
+            await raw.WriteLineAsync(line, ct).ConfigureAwait(false);
+        }
+
+        private static async Task WaitQuietlyAsync(Task previous, Task current)
+        {
+            try { await previous.ConfigureAwait(false); } catch { }
+            try { await current.ConfigureAwait(false); } catch { }
+        }
 
         public IModuleHostConnection Open(UserModeModule module)
         {
+            VirtualConnection[] stale = [];
+            VirtualConnection? replaced = null;
+            IModuleHostConnection? deadRaw = null;
+            VirtualConnection vc;
             lock (_gate)
             {
                 if (_raw is null || _raw.HasExited)
                 {
-                    try { _raw?.Dispose(); } catch { }
+                    stale = [.. _active.Values];
                     _active.Clear();
+                    deadRaw = _raw;
+                    _writeTail = Task.CompletedTask;
                     _raw = startRaw(module with { Path = "--shared" });
                     var captured = _raw;
                     _ = Task.Run(() => ReadLoopAsync(captured));
                 }
-                var vc = new VirtualConnection(this, _raw, module.Path);
-                if (_active.TryRemove(module.Path, out var prev)) prev.CompleteInbox();
+                vc = new VirtualConnection(this, _raw, module.Path);
+                if (_active.TryRemove(module.Path, out replaced) && !_raw.HasExited)
+                {
+                    _ = EnqueueWriteLocked(_raw, new ModuleHostMessage { Type = "exit", Module = module.Path }.ToLine(), CancellationToken.None);
+                }
                 _active[module.Path] = vc;
-                return vc;
             }
+            foreach (var s in stale) s.CompleteInbox();
+            replaced?.CompleteInbox();
+            if (deadRaw is not null)
+            {
+                try { deadRaw.Dispose(); } catch { }
+            }
+            return vc;
         }
 
         private async Task ReadLoopAsync(IModuleHostConnection raw)
@@ -174,31 +209,51 @@ public sealed class SharedBundledHost(Func<UserModeModule, IModuleHostConnection
                 while (await raw.ReadLineAsync(CancellationToken.None).ConfigureAwait(false) is { } line)
                 {
                     var m = ModuleHostMessage.Parse(line);
-                    if (m?.Module is { Length: > 0 } mod && _active.TryGetValue(mod, out var vc))
+                    if (m?.Module is { Length: > 0 } mod && _active.TryGetValue(mod, out var vc) && ReferenceEquals(vc.Raw, raw))
                         vc.Deliver(line);
                 }
             }
             catch { }
             finally
             {
-                foreach (var vc in _active.Values) vc.CompleteInbox();
+                VirtualConnection[] victims;
+                lock (_gate)
+                {
+                    victims = _active.Where(kv => ReferenceEquals(kv.Value.Raw, raw))
+                        .Where(kv => _active.TryRemove(kv))
+                        .Select(kv => kv.Value)
+                        .ToArray();
+                    if (ReferenceEquals(_raw, raw))
+                    {
+                        _raw = null;
+                        _writeTail = Task.CompletedTask;
+                    }
+                }
+                foreach (var vc in victims) vc.CompleteInbox();
             }
         }
 
-        public async Task WriteRawAsync(IModuleHostConnection raw, string line, CancellationToken ct)
+        public Task WriteRawAsync(IModuleHostConnection raw, string line, CancellationToken ct)
         {
-            await _writeGate.WaitAsync(ct).ConfigureAwait(false);
-            try { await raw.WriteLineAsync(line, ct).ConfigureAwait(false); }
-            finally { _writeGate.Release(); }
+            lock (_gate) return EnqueueWriteLocked(raw, line, ct);
         }
 
         public void Kill(IModuleHostConnection raw)
         {
+            VirtualConnection[] victims;
             lock (_gate)
             {
-                if (_raw == raw) { _raw = null; _active.Clear(); }
+                victims = _active.Where(kv => ReferenceEquals(kv.Value.Raw, raw))
+                    .Where(kv => _active.TryRemove(kv))
+                    .Select(kv => kv.Value)
+                    .ToArray();
+                if (ReferenceEquals(_raw, raw))
+                {
+                    _raw = null;
+                    _writeTail = Task.CompletedTask;
+                }
             }
-            foreach (var vc in _active.Values) vc.CompleteInbox();
+            foreach (var vc in victims) vc.CompleteInbox();
             raw.Kill();
         }
 
@@ -207,21 +262,22 @@ public sealed class SharedBundledHost(Func<UserModeModule, IModuleHostConnection
             IModuleHostConnection? toDispose = null;
             lock (_gate)
             {
-                _active.TryRemove(new KeyValuePair<string, VirtualConnection>(modulePath, vc));
-                if (_raw == raw && _active.IsEmpty)
+                var removed = _active.TryRemove(new KeyValuePair<string, VirtualConnection>(modulePath, vc));
+                if (!removed) return;
+                if (ReferenceEquals(_raw, raw) && _active.IsEmpty)
                 {
                     toDispose = _raw;
                     _raw = null;
+                    _writeTail = Task.CompletedTask;
+                }
+                else if (ReferenceEquals(_raw, raw) && !raw.HasExited)
+                {
+                    _ = EnqueueWriteLocked(raw, new ModuleHostMessage { Type = "exit", Module = modulePath }.ToLine(), CancellationToken.None);
                 }
             }
             if (toDispose is not null)
             {
                 try { toDispose.Dispose(); } catch { }
-            }
-            else if (!raw.HasExited)
-            {
-                _ = WriteRawAsync(raw, new ModuleHostMessage { Type = "exit", Module = modulePath }.ToLine(), CancellationToken.None)
-                    .ContinueWith(_ => { }, TaskScheduler.Default);
             }
         }
     }
@@ -231,6 +287,7 @@ public sealed class SharedBundledHost(Func<UserModeModule, IModuleHostConnection
         private readonly System.Threading.Channels.Channel<string> _inbox = System.Threading.Channels.Channel.CreateUnbounded<string>();
         private int _disposed;
 
+        internal IModuleHostConnection Raw => raw;
         public void Deliver(string line) => _inbox.Writer.TryWrite(line);
         public void CompleteInbox() => _inbox.Writer.TryComplete();
 
@@ -405,7 +462,7 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
     public string Name => module.Manifest.Slug;
     public string DisplayName => module.Descriptor.DisplayName;
     public bool IncludeInRunAll => module.Descriptor.Kind == ModuleKind.Check; // the app's own descriptor for a module that ships with it
-    public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
+    public event EventHandler<DiagnosticResult>? Updated;
 
     /// <summary>How long the host gets to answer an availability check, and to stop after being asked.</summary>
     public TimeSpan AnswerTimeout { get; init; } = TimeSpan.FromSeconds(30);
@@ -415,6 +472,7 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
     public TimeSpan IdleExit { get; init; } = TimeSpan.FromSeconds(2);
 
     private Timer? _idle;
+    private bool _disposed;
 
     /// <summary>True while a module host is running for this module.</summary>
     public bool IsHostRunning { get { lock (_connGate) return _conn is { HasExited: false }; } }
@@ -425,6 +483,7 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
         if (module.Manifest.KeepAlive) return;
         lock (_connGate)
         {
+            if (_disposed) return;
             _idle?.Dispose();
             _idle = new Timer(_ =>
             {
@@ -537,6 +596,23 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
                         if (m.Total is > 1) progress.ReportStep(m.Step ?? 0, m.Total.Value, m.Message ?? "");
                         else if (m.Message is { Length: > 0 }) progress?.Report(m.Message);
                         break;
+                    case "updated":
+                    {
+                        var updatedReport = m.Report is { } ur ? (module.Bundled ? ur : WithoutActions(ur)) : null;
+                        DiagnosticResult updatedResult;
+                        if (updatedReport is null && module.Bundled && m.Payload is { } up && m.PayloadType is { } ut
+                            && ModuleHostPayloads.Read(Name, m.Status ?? DiagnosticStatus.Running, m.Message ?? "", up, ut) is { } typedUpdate)
+                            updatedResult = typedUpdate;
+                        else if (updatedReport is not null)
+                            updatedResult = new DiagnosticResult<AreaReport>(Name, m.Status ?? DiagnosticStatus.Running, m.Message ?? "", m.When ?? DateTimeOffset.Now, updatedReport);
+                        else
+                            updatedResult = new DiagnosticResult(Name, m.Status ?? DiagnosticStatus.Running, m.Message ?? "", m.When ?? DateTimeOffset.Now);
+                        if (m.When is { } when) updatedResult = updatedResult with { Timestamp = when };
+                        var inst = m.Instance ?? instance;
+                        if (inst is not null) updatedResult = updatedResult with { InstanceKey = inst.Key, InstanceLabel = inst.Label };
+                        Updated?.Invoke(this, updatedResult with { Cancelled = m.Cancelled == true });
+                        break;
+                    }
                     case "result":
                         // What the page needs besides the report: only from a module that ships with the app (it decides which rows get
                         // the app's Start/Stop buttons). A run without any keeps the last.
@@ -732,7 +808,17 @@ public sealed class UserModeModuleProxy(UserModeModule module, IModuleHostLaunch
     }
 
     /// <summary>Ends the module host (closing its stdin).</summary>
-    public void Dispose() { Busy(); Reset(); }
+    public void Dispose()
+    {
+        lock (_connGate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _idle?.Dispose();
+            _idle = null;
+        }
+        Reset();
+    }
 
     private void Reset() { lock (_connGate) { _conn?.Dispose(); _conn = null; } }
     private static IOException Exited() => new("the module host exited");
@@ -751,7 +837,7 @@ public sealed class PerDeviceModuleProxy(UserModeModuleProxy inner) : IPerDevice
     public string Name => inner.Name;
     public string DisplayName => inner.DisplayName;
     public bool IncludeInRunAll => inner.IncludeInRunAll;
-    public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
+    public event EventHandler<DiagnosticResult>? Updated { add => inner.Updated += value; remove => inner.Updated -= value; }
     public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => inner.CheckAvailabilityAsync(cancellationToken);
     public Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default) => inner.RefreshAsync(progress, cancellationToken);
     public Task<DiagnosticResult> RefreshAsync(ModuleInstance instance, IProgress<string>? progress, CancellationToken ct = default) => inner.RefreshAsync(instance, progress, ct);

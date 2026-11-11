@@ -47,6 +47,27 @@ Planned components are used under their own licenses and need to be confirmed be
 
 Running diagnostics on a customer's PC remotely needs the customer's consent, a clear audit log and read-only operations by default.
 
+**Consent.** In a supervised session the person at the PC shares the link and gives control from the session bar; they can
+take it back at any time, and the remote user cannot take it. Only this app's own window is the owner: the relay checks a
+secret the app made for the session, so adding `?role=owner` to the link does nothing. An unattended session gives the remote
+user control when they join; choosing that mode when the session is set up is the consent. On a relay that requires sign-in,
+the remote user must be signed in and in the session's group.
+
+**Session audit.** Every remote session is recorded in the app's own event log: **Event Viewer > Applications and Services
+Logs > RemotePCDiagnostics** (see "Windows Event Log" below). PowerShell:
+`Get-WinEvent -FilterHashtable @{LogName='RemotePCDiagnostics';Id=2000,2001,2002,2003,2004,2005,2006} -MaxEvents 50 | Format-List TimeCreated,Id,Message`
+
+| ID | Content |
+|----|---------|
+| 2000 | Session started (supervised or unattended) |
+| 2001 / 2002 | The remote user / a read-only viewer joined, with their signed-in name |
+| 2003 / 2004 | Control moved to the remote user (name) / back to the person at this PC |
+| 2005 | The remote user or a viewer left |
+| 2006 | Session ended (reason) |
+
+Names come from the relay's sign-in; without it they read "(not signed in)". What a remote user changes (services, fixes)
+is in the same log's 1100 events, which say who did it. The same lines go to the file log as `[audit N]`.
+
 ## Starting, stopping and restarting services
 
 On the **Services** page, open any services list: each row has **Start** (when stopped) or **Stop** / **Restart** (when running).
@@ -398,20 +419,29 @@ Duration. Filter by test, result and time range (24 hours / 7 days / 30 days / a
 measurements (and suite mode, machine, app version). Stress tests with a key measurement (peak CPU/GPU temperature, disk
 read speed, download speed) get a small trend of the last 12 runs. In Remote mode the remote user sees the bench PC's history.
 
-History is read from the **Windows Event Log** (Application, source RemotePCDiagnostics, event 1100; newest first, at most
+History is read from the **Windows Event Log** (the RemotePCDiagnostics log, source RemotePCDiagnostics, event 1100; newest first, at most
 5,000 events, XPath time filter for the chosen range) with `EventLogReader`; nothing is stored elsewhere. Retention follows
-the Application log's size settings (Event Viewer > Application > Properties). The app never clears the log. If the log
+the log's size (20 MB). The app never clears the log. If the log
 can't be read or the source isn't registered yet, the page says so ("run the app once as administrator so it can register
 the event source"). Events written by older builds are parsed as far as possible; unparseable ones are skipped.
 
 ### Windows Event Log
 
-Results also go to the Windows Event Log: **Event Viewer > Windows Logs > Application**, filter by source
-**RemotePCDiagnostics**. PowerShell:
-`Get-WinEvent -FilterHashtable @{LogName='Application';ProviderName='RemotePCDiagnostics'} -MaxEvents 50 | Format-List TimeCreated,Id,LevelDisplayName,Message`
+Results also go to the Windows Event Log, in the app's own log: **Event Viewer > Applications and Services Logs >
+RemotePCDiagnostics** (source **RemotePCDiagnostics**; 20 MB, oldest entries overwritten when full). PowerShell:
+`Get-WinEvent -LogName RemotePCDiagnostics -MaxEvents 50 | Format-List TimeCreated,Id,LevelDisplayName,Message`
+
+Earlier versions wrote to **Windows Logs > Application**. On a PC with such events the app moves once: it copies its events
+into the new log (each keeps its original time in its text) and registers its source there. Windows may keep sending the
+source's events to Application until the PC restarts; the app checks at each start, keeps reading History from Application
+until then, and adds whatever was written in between. Nothing is cleared: the old copies stay in Application until Windows
+overwrites them (Event Viewer shows them with a "description cannot be found" note). Progress is in the file log
+("Event log move") and `%ProgramData%\RemotePCDiagnostics\migration\logmove.json`.
 
 | ID | Content |
 |----|---------|
+| 1002 | Written during the one-time move to the app's own log, to see where Windows puts events |
+| 2000 - 2006 | Session audit (see "Safety") |
 | 1000 / 1001 | App start (version, machine model, admin yes/no, Local/Remote mode) / app exit |
 | 1100 | One event per finished test (every module and stress test), stable `Key: value` lines: `Test result` (module), `Module id` (the module's permanent GUID), `Test`, `Instance id` and `Instance` (for a per-device test: the drive, GPU or webcam), `Outcome` (OK/Warning/Critical/Cancelled/Couldn't run/Skipped/Blocked), `Summary`, `Duration`, `Stress suite`, `Finished` (ISO 8601), `Machine`, `App version`, `Format: 3`, then `Measurements:` (`  Name=value`, numbers only) and human-readable `Details:`; security audit lists only failed/warning item IDs and titles (max 25). The History page reads these back. |
 | 1110 / 1111 | Stress suite started / finished (outcome and per-test states) |

@@ -28,11 +28,16 @@ public class JsonCheckTests
 
     [Theory]
     [InlineData("DELETE FROM x", "must be a SELECT")]
+    [InlineData("SELECT1 FROM x", "must be a SELECT")]
+    [InlineData("WITHOUT ROWID", "must be a SELECT")]
     [InlineData("SELECT 1; SELECT 2", "one statement")]
     [InlineData("SELECT * FROM curl WHERE url = 'http://x'", "may not use")]
     [InlineData("SELECT * FROM main.curl WHERE url = 'http://x'", "may not use")]
     [InlineData("SELECT * FROM \"curl\" WHERE url = 'http://x'", "may not use")]
     [InlineData("WITH a AS (SELECT 1) SELECT * FROM a", null)]
+    [InlineData("WITH\r\n  a AS (SELECT 1)\r\nSELECT * FROM a", null)]
+    [InlineData("SELECT\n  *\nFROM services;", null)]
+    [InlineData("SELECT\t*\tFROM services", null)]
     [InlineData("SELECT * FROM services;", null)]
     public void Only_a_single_read_only_select_is_accepted(string query, string? problem)
     {

@@ -293,24 +293,23 @@ public class NpuVisibilityTests
             Task.FromResult(new DiagnosticResult(Name, DiagnosticStatus.Ok, "ok", DateTimeOffset.Now));
     }
 
-    private static readonly ResultStore Store = new();
-
-    private static async Task<(DiagnosticsService Svc, NpuTestModule M)> Start(INpuIo io)
+    private static async Task<(DiagnosticsService Svc, NpuTestModule M, ResultStore Store)> Start(INpuIo io)
     {
+        var store = new ResultStore();
         var m = new NpuTestModule(io);
-        var svc = new DiagnosticsService(Store, [new Other(), m]);
+        var svc = new DiagnosticsService(store, [new Other(), m]);
         await m.DetectPresenceAsync().WaitAsync(TimeSpan.FromSeconds(10));
         for (var i = 0; i < 200 && svc.IsDetectingHardware; i++) await Task.Delay(10);
-        return (svc, m);
+        return (svc, m, store);
     }
 
     [Fact]
     public async Task Visible_with_an_npu()
     {
-        var (svc, m) = await Start(new ListIo(() => [Npu]));
+        var (svc, m, store) = await Start(new ListIo(() => [Npu]));
         Assert.True(m.IsPresent);
         Assert.Contains(svc.Modules, x => x is INpuTestModule);
-        Assert.Contains(new ChecksScreenState(svc, Store).StressModules, x => x.Name == NpuTestModule.ModuleName);
+        Assert.Contains(new ChecksScreenState(svc, store).StressModules, x => x.Name == NpuTestModule.ModuleName);
         var r = await svc.RunAsync(NpuTestModule.ModuleName);
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
     }
@@ -318,11 +317,11 @@ public class NpuVisibilityTests
     [Fact]
     public async Task Hidden_without_an_npu_and_cannot_run()
     {
-        var (svc, m) = await Start(new ListIo(() => []));
+        var (svc, m, store) = await Start(new ListIo(() => []));
         Assert.False(m.IsPresent);
         Assert.DoesNotContain(svc.Modules, x => x is INpuTestModule);
         Assert.Contains(svc.Modules, x => x.Name == "Other");
-        var screen = new ChecksScreenState(svc, Store);
+        var screen = new ChecksScreenState(svc, store);
         Assert.DoesNotContain(screen.StressModules, x => x.Name == NpuTestModule.ModuleName);
         Assert.DoesNotContain(screen.ChecksModules, x => x.Name == NpuTestModule.ModuleName);
         await Assert.ThrowsAsync<ArgumentException>(() => svc.RunAsync(NpuTestModule.ModuleName));
@@ -331,7 +330,7 @@ public class NpuVisibilityTests
     [Fact]
     public async Task Hidden_when_detection_throws()
     {
-        var (svc, m) = await Start(new ListIo(() => throw new InvalidOperationException("WMI broke")));
+        var (svc, m, _) = await Start(new ListIo(() => throw new InvalidOperationException("WMI broke")));
         Assert.False(m.IsPresent);
         Assert.DoesNotContain(svc.Modules, x => x is INpuTestModule);
         Assert.False(svc.IsDetectingHardware);

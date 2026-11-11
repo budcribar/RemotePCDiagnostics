@@ -375,7 +375,7 @@ else
             return string.Join("\n", new[] { fields, row.EventCopyText ?? row.Detail, evidence }.Where(text => !string.IsNullOrWhiteSpace(text)));
         });
         return $$"""
-            Help a technician triage this group of Windows diagnostic findings.
+            Help someone triage this group of Windows diagnostic findings.
             - Start with the issues that warrant attention and explain why. Identify related or repeated events where the evidence supports a connection.
             - Cite the event IDs, error codes, app names, or timestamps that support your conclusions. Separate confirmed observations from suspected causes.
             - Give prioritized, read-only checks first. For each check, explain what result would confirm or rule out a suspected cause. Flag any suggested repair that requires administrator access, a restart, or a configuration change.

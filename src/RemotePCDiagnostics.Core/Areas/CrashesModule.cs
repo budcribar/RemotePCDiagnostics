@@ -47,21 +47,45 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             {
                 ReviewedCards = Build(events.Where(e => reviewed.Contains(EventReviews.Key(e))).Concat(runtimeEvents).ToList()).Cards
             };
-        if (!includeSystemCrashes || events is null)
+        if (!includeSystemCrashes)
             return appReport;
 
         progress.ReportStep(3, total, "Checking for blue screens and unexpected restarts…");
         var sysEvents = await _log.QueryAsync("System", BsodHistoryModule.Query, BsodHistoryModule.MaxEvents, ct).ConfigureAwait(false);
-
-        if (sysEvents is null)
-            return appReport;
-
         var dumps = await DumpsAsync(ct).ConfigureAwait(false);
-        var bsodReport = BsodHistoryModule.BuildReviewed(sysEvents, dumps);
-        var combinedCards = bsodReport.Cards.Concat(appReport.Cards).ToList();
-        var combinedStatus = (DiagnosticStatus)Math.Max((int)bsodReport.Status, (int)appReport.Status);
-        var combinedSummary = $"{bsodReport.Summary} · {appReport.Summary}";
-        return new(combinedCards, combinedSummary, combinedStatus, ReviewedCards: (bsodReport.ReviewedCards ?? []).Concat(appReport.ReviewedCards ?? []).ToList());
+
+        if (events is null && sysEvents is null && dumps.Count == 0)
+            return AreaReport.Failed(FailedMessage);
+
+        AreaReport bsodReport;
+        if (sysEvents is null)
+        {
+            const string sysFailed = "Couldn't read blue screen and shutdown history on this PC.";
+            var dumpCard = BsodHistoryModule.Build([], dumps).Cards.Single(c => c.Id == "minidumps");
+            bsodReport = new(
+                [AreaCard.Failed("bsods", "Blue screen crashes (BSOD)", sysFailed), AreaCard.Failed("power", "Unexpected power losses & resets", sysFailed), dumpCard],
+                "Couldn't read blue screen and shutdown history",
+                DiagnosticStatus.Warning);
+        }
+        else
+        {
+            bsodReport = BsodHistoryModule.Build(sysEvents.Where(e => !reviewed.Contains(EventReviews.Key(e))).ToList(), dumps) with
+            {
+                ReviewedCards = BsodHistoryModule.Build(sysEvents.Where(e => reviewed.Contains(EventReviews.Key(e))).ToList(), dumps).Cards
+            };
+        }
+
+        var appSection = events is null
+            ? new AreaReport(
+                [AreaCard.Failed("crashes", "Apps that closed unexpectedly", FailedMessage), AreaCard.Failed(HangsCardId, "Apps that stopped responding", FailedMessage)],
+                "Couldn't read app crash reports",
+                DiagnosticStatus.Warning)
+            : appReport;
+
+        var combinedCards = bsodReport.Cards.Concat(appSection.Cards).ToList();
+        var combinedStatus = (DiagnosticStatus)Math.Max((int)bsodReport.Status, (int)appSection.Status);
+        var combinedSummary = $"{bsodReport.Summary} · {appSection.Summary}";
+        return new(combinedCards, combinedSummary, combinedStatus, ReviewedCards: (bsodReport.ReviewedCards ?? []).Concat(appSection.ReviewedCards ?? []).ToList());
     }
 
     public sealed record Incident(DateTimeOffset Time, string App, string Version, bool IsCrash, string Part, string Message)

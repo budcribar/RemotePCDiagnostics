@@ -26,10 +26,11 @@ public static class HostServices
     /// (<see cref="App.Log"/>); <paramref name="logEvent"/> writes a Windows Event Log entry (<see cref="App.Event"/>).
     /// <paramref name="modulesFolder"/> overrides where module DLLs are loaded from (tests pass an empty folder so the PC's installed modules don't matter).
     /// <paramref name="loggers"/> backs every class's ILogger (<see cref="App.Loggers"/>), one category per class.
-    /// <paramref name="bundledModulesFolder"/> overrides where the modules that ship with the app are loaded from (default builtin-modules\ next to the exe).</summary>
+    /// <paramref name="bundledModulesFolder"/> overrides where the modules that ship with the app are loaded from (default builtin-modules\ next to the exe).
+    /// <paramref name="checksFolder"/> overrides where custom JSON checks are loaded from.</summary>
     public static IServiceCollection AddRemotePCDiagnosticsHost(this IServiceCollection services, SessionContext session,
         Action<string> log, Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent, string? modulesFolder = null,
-        Microsoft.Extensions.Logging.ILoggerFactory? loggers = null, string? bundledModulesFolder = null)
+        Microsoft.Extensions.Logging.ILoggerFactory? loggers = null, string? bundledModulesFolder = null, string? checksFolder = null)
     {
         services.AddRemoteWpfBlazorWebView();
         // ILogger<T> over the app's file and Event Log sinks (after the WebView's own logging registration, so this one wins).
@@ -91,8 +92,9 @@ public static class HostServices
             HostVersion = HostVersion(),
             ModulesFolder = modulesFolder ?? ModuleLoaderOptions.DefaultModulesFolder(),
             BundledFolder = bundledModulesFolder ?? ModuleLoaderOptions.DefaultBundledFolder(),
+            ChecksFolder = checksFolder ?? (modulesFolder is not null ? System.IO.Path.Combine(modulesFolder, "checks") : null),
             // Only the person at the PC can turn unsigned modules on (a marker in the admin-only modules folder); never in a remote session.
-            AllowUnsigned = session.Mode == SessionMode.Local && UnsignedModulesSetting.IsOn(),
+            AllowUnsigned = session.Mode == SessionMode.Local && UnsignedModulesSetting.IsOn(modulesFolder),
             // In or out of process for each module that ships with the app (About page; process-mode.json in the same admin-only folder).
             ProcessModes = ModuleProcessModeSetting.Read(modulesFolder ?? ModuleLoaderOptions.DefaultModulesFolder()),
         }));
@@ -102,7 +104,9 @@ public static class HostServices
             services.AddSingleton<IModuleUiFrames>(sp =>
             {
                 var frames = new ModuleUiFrames(L<ModuleUiFrames>(), remoteRelay: session.Mode == SessionMode.Remote ? session.ServerUri : null);
-                AppDomain.CurrentDomain.ProcessExit += (_, _) => frames.Dispose(); // the UI processes never outlive the app
+                EventHandler onExit = (_, _) => frames.Dispose(); // the UI processes never outlive the app
+                AppDomain.CurrentDomain.ProcessExit += onExit;
+                frames.OnDisposed = () => AppDomain.CurrentDomain.ProcessExit -= onExit;
                 return frames;
             });
         services.AddSingleton(sp =>
@@ -169,7 +173,7 @@ public static class HostServices
         catch (Exception ex) { log.Error($"Modules: loading the built-in module DLLs failed: {ex.GetType().Name}: {ex.Message}"); }
         try { loader.LoadAll(services); }
         catch (Exception ex) { log.Error($"Modules: loading plugins failed: {ex.GetType().Name}: {ex.Message}"); }
-        LoadJsonChecks(services, plugins, For<RemotePCDiagnostics.Core.Checks.JsonCheckModule>(loggers));
+        LoadJsonChecks(services, plugins, For<RemotePCDiagnostics.Core.Checks.JsonCheckModule>(loggers), options?.ChecksFolder);
         foreach (var r in plugins.Records.Skip(before))
         {
             if (r.Source == ModuleSource.BuiltIn && r.State == PluginState.Loaded) continue; // shipped with the app: only a failure is news

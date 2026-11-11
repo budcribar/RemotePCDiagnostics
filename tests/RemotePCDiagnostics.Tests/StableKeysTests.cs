@@ -47,8 +47,11 @@ public class StableKeysTests
             "ExtensionBlock", "BrowserLocalStateValue", "ScheduledTask", "StoreReinstall", "SecuritySetting",
         ];
         var json = new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } };
+        Assert.Equal(pinned.Length, pinned.Distinct().Count());
         foreach (var name in pinned)
             Assert.Equal(name, JsonSerializer.Deserialize<ChangeKind>($"\"{name}\"", json).ToString());
+        foreach (var kind in Enum.GetValues<ChangeKind>())
+            Assert.Contains(kind.ToString(), pinned);
     }
 
     [Fact]

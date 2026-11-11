@@ -734,6 +734,14 @@ public class MemorySuggestionTests
         Assert.True(BrowserPrefs.ReadMemorySaver(sys.LocalState, BrowserKind.Chrome));
         await s.UndoAsync(s.Undos.Single());
         Assert.Equal(ChromeOff, sys.LocalState);
+
+        // Subsequent Local State changes (e.g. background_mode) are preserved when Memory Saver is undone.
+        Assert.True((await s.ApplyAsync(sug, act)).Success);
+        sys.LocalState = BrowserBackground.SetBackgroundMode(sys.LocalState, false);
+        await s.UndoAsync(s.Undos.Single());
+        Assert.False(BrowserPrefs.ReadMemorySaver(sys.LocalState, BrowserKind.Chrome));
+        Assert.True(BrowserBackground.TryReadBackgroundMode(sys.LocalState, out var bg) && bg == false);
+        Assert.Contains("\"other\":1", sys.LocalState);
     }
 
     [Fact]

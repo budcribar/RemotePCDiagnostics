@@ -24,21 +24,31 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
         AdapterTotals? before = null, after = null;
         var sensorsOk = SafeAvailability();
         string? gw = null;
-        using var speedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var speedCts = CancellationTokenSource.CreateLinkedTokenSource(runCts.Token);
+        var ctsGate = new object();
+        CancellationTokenSource? runCtsRef = runCts, speedCtsRef = speedCts;
         Task? speedTask = null;
-        cleanup?.Register("network speed test", () => { try { speedCts.Cancel(); } catch (ObjectDisposedException) { } });
+        cleanup?.Register("network test", () =>
+        {
+            lock (ctsGate)
+            {
+                try { speedCtsRef?.Cancel(); } catch (ObjectDisposedException) { }
+                try { runCtsRef?.Cancel(); } catch (ObjectDisposedException) { }
+            }
+        });
         string step = "Checking your connection";
 
         try
         {
             gw = SafeGateway();
-            before = await SafeCounters(cancellationToken).ConfigureAwait(false);
+            before = await SafeCounters(runCts.Token).ConfigureAwait(false);
             log.Info($"Network test: start gateway={gw ?? "(none)"} hosts={string.Join(",", _s.PublicHosts)} server={_s.SpeedServer} duration={duration} counters={before}");
             int hostIdx = 0;
             while (true)
             {
                 var elapsed = clk.Elapsed - start;
-                if (cancellationToken.IsCancellationRequested) { stopped = true; break; }
+                if (runCts.IsCancellationRequested) { stopped = true; break; }
                 if (elapsed >= duration) break;
 
                 if (sensorsOk)
@@ -50,11 +60,11 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
                 }
 
                 var host = _s.PublicHosts.Count == 0 ? "1.1.1.1" : _s.PublicHosts[hostIdx++ % _s.PublicHosts.Count];
-                var pInternet = pinger.PingAsync(host, o.PingTimeout, cancellationToken);
-                var pGateway = gw is null ? Task.FromResult(new PingReply(false, null)) : pinger.PingAsync(gw, o.PingTimeout, cancellationToken);
+                var pInternet = pinger.PingAsync(host, o.PingTimeout, runCts.Token);
+                var pGateway = gw is null ? Task.FromResult(new PingReply(false, null)) : pinger.PingAsync(gw, o.PingTimeout, runCts.Token);
                 PingReply ri, rg;
                 try { ri = await pInternet.ConfigureAwait(false); rg = await pGateway.ConfigureAwait(false); }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { stopped = true; break; }
+                catch (OperationCanceledException) when (runCts.IsCancellationRequested) { stopped = true; break; }
                 samples.Add(new NetworkSample(elapsed, rg.Success ? rg.RoundTripMs : null, ri.Success ? ri.RoundTripMs : null, gw is not null));
 
                 if (o.RunSpeedTest && speedTask is null && elapsed >= o.SpeedTestDelay)
@@ -76,9 +86,13 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
                 }
 
                 progress?.Report(new NetworkTestProgress(elapsed, duration, Volatile.Read(ref step), samples.ToList(), temp, fan, sensorsOk));
-                try { await clk.DelayAsync(o.Interval, cancellationToken).ConfigureAwait(false); }
+                try { await clk.DelayAsync(o.Interval, runCts.Token).ConfigureAwait(false); }
                 catch (OperationCanceledException) { stopped = true; break; }
             }
+        }
+        catch (OperationCanceledException) when (runCts.IsCancellationRequested)
+        {
+            stopped = true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -94,6 +108,9 @@ public sealed class NetworkTest(IPinger pinger, IGatewayResolver gateway, ISpeed
                 catch (OperationCanceledException) { }
                 catch (Exception ex) { log.Warn($"Network test: speed test error: {ex.Message}"); }
             }
+            lock (ctsGate) { speedCtsRef = null; runCtsRef = null; }
+            speedCts.Dispose();
+            runCts.Dispose();
         }
         if (!stopped && !hot && !failed) after = await SafeCounters(CancellationToken.None).ConfigureAwait(false);
 

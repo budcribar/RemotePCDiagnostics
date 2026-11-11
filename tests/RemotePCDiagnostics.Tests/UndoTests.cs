@@ -213,4 +213,67 @@ public class UndoTests
         await svc.ScanAsync();
         Assert.Empty(memJournal.All);
     }
+
+    private sealed class RegSys : IMemorySystem
+    {
+        public Dictionary<string, int> Reg = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> FailTargets = new(StringComparer.OrdinalIgnoreCase);
+        public List<string> Calls = [];
+        public MemoryReading ReadMemory() => new(16L << 30, 8L << 30);
+        public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> s, CancellationToken ct) =>
+            Task.FromResult(new MemorySnapshot(ReadMemory(), [], Feeds: new WindowsFeedsInfo(WindowsFeeds.Windows11Build, HighlightsPolicy: null, HighlightsToggle: 1)));
+        public int? ReadDword(RegistrySetting s) => Reg.TryGetValue(s.Target, out var v) ? v : null;
+        public void WriteDword(RegistrySetting s, int value)
+        {
+            Calls.Add($"write:{s.Target}={value}");
+            if (FailTargets.Contains(s.Target)) throw new UnauthorizedAccessException();
+            Reg[s.Target] = value;
+        }
+        public void DeleteDword(RegistrySetting s)
+        {
+            Calls.Add($"delete:{s.Target}");
+            if (FailTargets.Contains(s.Target)) throw new UnauthorizedAccessException();
+            Reg.Remove(s.Target);
+        }
+        public Task<ActionOutcome> CloseAppAsync(string p, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public Task<ActionOutcome> ForceCloseAppAsync(string p, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public Task<ActionOutcome> RunCommandAsync(string f, IReadOnlyList<string> a, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public byte[]? GetStartupApproved(string n) => null;
+        public void SetStartupApproved(string n, byte[]? v) { }
+        public bool IsBrowserRunning(BrowserKind k) => false;
+        public string? ReadBrowserLocalState(BrowserKind k) => null;
+        public void WriteBrowserLocalState(BrowserKind k, string json) { }
+        public void OpenUri(string uri) { }
+        public string GetServiceStartType(string n) => "Automatic";
+        public void SetServiceStartType(string n, string t) { }
+    }
+
+    [Fact]
+    public async Task UndoRegistry_PartialFailure_PrunesSucceededItems_OnRetry()
+    {
+        var sys = new RegSys { Reg = { [RegistryAllowlist.SearchHighlightsToggle.Target] = 1 } };
+        var j = new MemoryChangeJournal();
+        var svc = new MemorySuggestionService(sys, session: new SessionContext(SessionMode.Remote), settle: TimeSpan.Zero, journal: j);
+        await svc.ScanAsync();
+        var s = svc.Suggestions.Single(x => x.Id == "search-highlights");
+        Assert.True((await svc.ApplyAsync(s, s.Actions[0])).Success);
+        Assert.Equal(2, j.All.Count); // HKLM policy + HKCU toggle
+
+        // Fail HKLM policy delete while HKCU toggle restore succeeds.
+        sys.FailTargets.Add(RegistryAllowlist.SearchHighlightsPolicy.Target);
+        sys.Calls.Clear();
+        var first = await svc.UndoAsync(svc.UndoFor("search-highlights")!);
+        Assert.False(first.Success);
+        Assert.Equal(1, sys.Reg[RegistryAllowlist.SearchHighlightsToggle.Target]);
+        Assert.Equal(RegistryAllowlist.SearchHighlightsPolicy.Target, Assert.Single(j.All).Target);
+
+        // Retry with admin access: only the remaining HKLM policy is touched; HKCU toggle is not written again.
+        sys.FailTargets.Clear();
+        sys.Calls.Clear();
+        var second = await svc.UndoAsync(svc.UndoFor("search-highlights")!);
+        Assert.True(second.Success, second.Message);
+        Assert.Equal([$"delete:{RegistryAllowlist.SearchHighlightsPolicy.Target}"], sys.Calls);
+        Assert.Empty(j.All);
+        Assert.Null(svc.UndoFor("search-highlights"));
+    }
 }

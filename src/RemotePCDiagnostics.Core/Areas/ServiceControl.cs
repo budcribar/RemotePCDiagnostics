@@ -144,6 +144,8 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         var actor = Actor;
         Log($"{actor} requested {action} of '{s.Name}' ({s.Label})");
         ServiceActionResult result;
+        IReadOnlyList<DependentService> journaledStoppedDeps = [];
+        var journalParentStopped = false;
         var opts = OptionsFor(s);
         var allowed = action == ServiceAction.Start ? opts.CanStart : action == ServiceAction.Stop ? opts.CanStop : opts.CanRestart;
         if (!allowed && !opts.IsProtected && StatusText(SafeState(s.Name)) is { Length: > 0 } live && live != s.Status)
@@ -159,10 +161,28 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         }
         else
         {
-            result = await RunAsync(s, action, ct).ConfigureAwait(false);
+            (result, journaledStoppedDeps, journalParentStopped) = await RunAsync(s, action, ct).ConfigureAwait(false);
         }
-        if (result.Success && action is ServiceAction.Start or ServiceAction.Stop)
-            try { journal?.Add(Changes.ChangeRecord.New(Changes.ChangeKind.ServiceRunning, s.Name, action == ServiceAction.Stop ? "Running" : "Stopped", $"{s.Label} {(action == ServiceAction.Stop ? "stopped" : "started")}", actor)); } catch { }
+        if (journal is not null)
+        {
+            try
+            {
+                var nowUtc = DateTimeOffset.UtcNow;
+                if (action == ServiceAction.Start && result.Success)
+                {
+                    journal.Add(new(Guid.NewGuid(), nowUtc, Changes.ChangeKind.ServiceRunning, s.Name, "Stopped", $"{s.Label} started", actor));
+                }
+                else if (journalParentStopped || journaledStoppedDeps.Count > 0)
+                {
+                    // Reverse order so UndoAllAsync (which replays last-added first) starts the parent first, then direct dependents, then leaf dependents.
+                    foreach (var d in Enumerable.Reverse(journaledStoppedDeps))
+                        journal.Add(new(Guid.NewGuid(), nowUtc, Changes.ChangeKind.ServiceRunning, d.Name, "Running", $"{d.Label} stopped (depends on {s.Label})", actor));
+                    if (journalParentStopped)
+                        journal.Add(new(Guid.NewGuid(), nowUtc, Changes.ChangeKind.ServiceRunning, s.Name, "Running", $"{s.Label} stopped", actor));
+                }
+            }
+            catch { }
+        }
         var rec = new ServiceActionRecord(DateTime.Now, actor, action, s.Name, s.Label, result.Success, result.Message);
         lock (_gate)
         {
@@ -179,13 +199,14 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         try { return backend.GetState(name); } catch (Exception ex) { LogError($"GetState({name}) failed: {ex}"); return ServiceState.Unknown; }
     }
 
-    private async Task<ServiceActionResult> RunAsync(ServiceInfo s, ServiceAction action, CancellationToken ct)
+    private async Task<(ServiceActionResult Result, IReadOnlyList<DependentService> StoppedDeps, bool ParentStopped)> RunAsync(ServiceInfo s, ServiceAction action, CancellationToken ct)
     {
         var verb = Lower(action);
         string step = verb;
+        IReadOnlyList<DependentService> deps = [];
+        var stopped = false;
         try
         {
-            IReadOnlyList<DependentService> deps = [];
             if (action != ServiceAction.Start) deps = backend.GetRunningDependents(s.Name);
             if (action is ServiceAction.Stop or ServiceAction.Restart)
             {
@@ -194,8 +215,9 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
                 if (!await backend.WaitForStateAsync(s.Name, ServiceState.Stopped, Timeout, ct).ConfigureAwait(false))
                 {
                     LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to stop");
-                    return new(false, $"Couldn't {verb} {s.Label}: it didn't respond in time.", SafeState(s.Name));
+                    return (new(false, $"Couldn't {verb} {s.Label}: it didn't respond in time.", SafeState(s.Name)), [], false);
                 }
+                stopped = true;
             }
             if (action is ServiceAction.Start or ServiceAction.Restart)
             {
@@ -204,33 +226,52 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
                 if (!await backend.WaitForStateAsync(s.Name, ServiceState.Running, Timeout, ct).ConfigureAwait(false))
                 {
                     LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for '{s.Name}' to start");
-                    return new(false, $"Couldn't {verb} {s.Label}: it didn't respond in time.", SafeState(s.Name));
+                    return (new(false, $"Couldn't {verb} {s.Label}: it didn't respond in time.", SafeState(s.Name)),
+                        stopped ? deps : [], stopped);
                 }
                 if (action == ServiceAction.Restart)
                 {
+                    var failedDeps = new List<DependentService>();
                     foreach (var d in deps)
                     {
                         try
                         {
                             backend.Start(d.Name);
-                            await backend.WaitForStateAsync(d.Name, ServiceState.Running, Timeout, ct).ConfigureAwait(false);
+                            if (!await backend.WaitForStateAsync(d.Name, ServiceState.Running, Timeout, ct).ConfigureAwait(false))
+                            {
+                                LogWarn($"Timed out after {Timeout.TotalSeconds:0}s waiting for dependent '{d.Name}' to start");
+                                failedDeps.Add(d);
+                            }
                         }
-                        catch (Exception ex) when (ex is not OperationCanceledException) { LogError($"Restarting dependent '{d.Name}' failed: {ex}"); }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            LogError($"Restarting dependent '{d.Name}' failed: {ex}");
+                            failedDeps.Add(d);
+                        }
+                    }
+                    if (failedDeps.Count > 0)
+                    {
+                        var names = string.Join(", ", failedDeps.Select(d => d.Label));
+                        return (new(false, $"{s.Label} restarted, but couldn't start dependent {(failedDeps.Count == 1 ? "service" : "services")}: {names}.", SafeState(s.Name)),
+                            failedDeps, false);
                     }
                 }
             }
-            return new(true, $"{s.Label} {Past(action)}", SafeState(s.Name));
+            return (new(true, $"{s.Label} {Past(action)}", SafeState(s.Name)),
+                action == ServiceAction.Stop ? deps : [], action == ServiceAction.Stop);
         }
         catch (OperationCanceledException)
         {
             Log($"{action} of '{s.Name}' cancelled during {step}");
-            return new(false, $"Stopped waiting for {s.Label}. Windows may still finish the change in the background.", SafeState(s.Name));
+            return (new(false, $"Stopped waiting for {s.Label}. Windows may still finish the change in the background.", SafeState(s.Name)),
+                stopped && step == "start" ? deps : [], stopped && step == "start");
         }
         catch (Exception ex)
         {
             LogError($"{action} of '{s.Name}' failed during {step}: {ex}");
             var why = s.IsDisabled && step == "start" ? "it's turned off (disabled)" : "Windows didn't allow it";
-            return new(false, $"Couldn't {verb} {s.Label}: {why}.", SafeState(s.Name));
+            return (new(false, $"Couldn't {verb} {s.Label}: {why}.", SafeState(s.Name)),
+                stopped && step == "start" ? deps : [], stopped && step == "start");
         }
     }
 

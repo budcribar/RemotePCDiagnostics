@@ -7,15 +7,31 @@ const dialogs = readFileSync(new URL('../../src/RemotePCDiagnostics.UI/wwwroot/d
 // Blazor stops these bubbled events within its event delegation layer. Verify every action
 // island declares both event boundaries; browser fixture tests below cover native modal behavior.
 const area = readFileSync(new URL('../../src/RemotePCDiagnostics.UI/Pages/AreaPage.razor', import.meta.url), 'utf8');
-const actionIslands = [...area.matchAll(/<(?:div|td) class="svc-actions"[^>]*@onclick:stopPropagation="true"[^>]*>/g)];
-assert.ok(actionIslands.length > 0, 'AreaPage must contain action islands');
-for (const [island] of actionIslands) {
+const interactiveBlocks = [
+  ...area.matchAll(/<SummaryCard\b[\s\S]*?<\/SummaryCard>/g),
+  ...area.matchAll(/<tr\b(?:[^>"']|"[^"]*"|'[^']*')*@onclick(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?<\/tr>/g),
+];
+const nestedIslands = interactiveBlocks.flatMap(([block]) =>
+  [...block.matchAll(/<(?:div|td)\b(?:[^>"']|"[^"]*"|'[^']*')*\bclass="[^"]*\bsvc-actions\b[^"]*"(?:[^>"']|"[^"]*"|'[^']*')*>/g)].map(m => m[0])
+);
+const stopPropIslands = [...area.matchAll(/<(?:div|td)\b(?:[^>"']|"[^"]*"|'[^']*')*@(?:onclick|onkeydown):stopPropagation="true"(?:[^>"']|"[^"]*"|'[^']*')*>/g)].map(m => m[0]);
+const actionIslands = [...new Set([...nestedIslands, ...stopPropIslands])];
+assert.ok(nestedIslands.length >= 3, 'AreaPage must contain nested action islands');
+for (const island of actionIslands) {
+  assert.match(island, /@onclick:stopPropagation="true"/, 'nested click actions must not activate their parent');
   assert.match(island, /@onkeydown:stopPropagation="true"/, 'nested keyboard actions must not activate their parent');
 }
 const checks = readFileSync(new URL('../../src/RemotePCDiagnostics.UI/Pages/ChecksPage.razor', import.meta.url), 'utf8');
-assert.match(checks, /data-testid="checks-select-@m\.Name\.ToLowerInvariant\(\)"[^\r\n]*@onkeydown:stopPropagation="true"/,
-  'keyboard selection must not activate the enclosing check row');
-const browser = await chromium.launch({ channel: 'msedge', headless: true });
+const selectButtons = [...checks.matchAll(/<button\b(?:[^>"']|"[^"]*"|'[^']*')*data-testid="checks-select-@m\.Name\.ToLowerInvariant\(\)"(?:[^>"']|"[^"]*"|'[^']*')*>/g)].map(m => m[0]);
+assert.equal(selectButtons.length, 1, 'ChecksPage must contain the row selection checkbox button');
+assert.match(selectButtons[0], /@onclick:stopPropagation="true"/, 'click selection must not activate the enclosing check row');
+assert.match(selectButtons[0], /@onkeydown:stopPropagation="true"/, 'keyboard selection must not activate the enclosing check row');
+let browser;
+try {
+  browser = await chromium.launch({ channel: 'msedge', headless: true });
+} catch {
+  browser = await chromium.launch({ headless: true });
+}
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   await page.setContent(`<style>${css}</style><div class="app"><header class="topbar"><button class="nav-toggle">Menu</button><span class="title">RemotePCDiagnostics</span><span class="badge">Remote</span><span class="topbar-spacer"></span><div class="theme-switch"><button>Dark</button><button>System</button><button>Light</button></div><span class="pc">DESKTOP-TEST01</span></header><nav class="rail"><a href="#">Dashboard</a><a href="#">Checks &amp; tests</a></nav><main class="content"><div class="ct-detail-head"><strong>Services</strong><button>Run just this</button></div><button id="open">Open details</button><div class="cards"><div class="card"><div class="headline">IP, gateway, DNS &amp; proxy</div><button>Flush DNS &amp; renew IP</button></div></div><div id="confirm-slot"></div><div id="drawer-slot"></div></main></div>`);

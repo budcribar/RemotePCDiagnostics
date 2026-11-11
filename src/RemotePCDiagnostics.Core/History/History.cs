@@ -76,7 +76,6 @@ public sealed record RawHistoryEvent(DateTimeOffset TimeCreated, string? Message
 public sealed class EventLogHistoryStore(Func<string, int, IEnumerable<RawHistoryEvent>> query, ILogger? log = null) : IHistoryStore
 {
     public const string ProviderName = "RemotePCDiagnostics";
-    public const string LogName = "Application";
     public const int MaxEvents = 5000;
 
     /// <summary>XPath for 1100 events of our provider, optionally within the last <paramref name="within"/>.</summary>
@@ -365,21 +364,19 @@ public static class HistoryQuery
         current.Col == col ? (col, !current.Desc) : (col, col is HistoryColumn.Time or HistoryColumn.Duration);
 
     /// <summary>Key measurement per stress test for the trend list: (measurement, friendly label, unit).</summary>
-    public static (string Name, string Label, string Unit)? TrendKey(string module) => module switch
-    {
-        ModuleSlugs.CpuStress => ("MaxCpuTemperatureC", "Peak CPU temperature", "°C"),
-        ModuleSlugs.MemoryTest => ("MaxCpuTemperatureC", "Peak CPU temperature", "°C"),
-        ModuleSlugs.GpuStress => ("MaxGpuTemperatureC", "Peak GPU temperature", "°C"),
-        ModuleSlugs.DiskSpeed => ("SequentialReadMBps", "Read speed", "MB/s"),
-        ModuleSlugs.NetworkTest => ("DownloadMbps", "Download speed", "Mbps"),
-        _ => null,
-    };
+    public static (string Name, string Label, string Unit)? TrendKey(string module) =>
+        string.Equals(module, ModuleSlugs.CpuStress, StringComparison.OrdinalIgnoreCase) ? ("MaxCpuTemperatureC", "Peak CPU temperature", "°C")
+        : string.Equals(module, ModuleSlugs.MemoryTest, StringComparison.OrdinalIgnoreCase) ? ("MaxCpuTemperatureC", "Peak CPU temperature", "°C")
+        : string.Equals(module, ModuleSlugs.GpuStress, StringComparison.OrdinalIgnoreCase) ? ("MaxGpuTemperatureC", "Peak GPU temperature", "°C")
+        : string.Equals(module, ModuleSlugs.DiskSpeed, StringComparison.OrdinalIgnoreCase) ? ("SequentialReadMBps", "Read speed", "MB/s")
+        : string.Equals(module, ModuleSlugs.NetworkTest, StringComparison.OrdinalIgnoreCase) ? ("DownloadMbps", "Download speed", "Mbps")
+        : null;
 
     /// <summary>Last <paramref name="max"/> values of the module's key measurement, oldest first (runs without it are skipped).</summary>
     public static IReadOnlyList<(DateTimeOffset Time, double Value)> Trend(IEnumerable<HistoryEntry> entries, string module, int max = 12)
     {
         if (TrendKey(module) is not { } key) return [];
-        return entries.Where(e => e.Module == module)
+        return entries.Where(e => string.Equals(e.Module, module, StringComparison.OrdinalIgnoreCase))
             .Select(e => (e.TimeUtc, V: double.TryParse(e.Measurement(key.Name), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : (double?)null))
             .Where(x => x.V is not null).OrderBy(x => x.TimeUtc).TakeLast(max).Select(x => (x.TimeUtc, x.V!.Value)).ToList();
     }

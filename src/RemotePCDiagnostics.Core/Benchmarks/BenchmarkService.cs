@@ -109,7 +109,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         try
         {
             var settings = Settings;
-            var prog = new Progress<string>(p => { Progress = p; Raise(); });
+            var prog = new SyncProgress(p => { Progress = p; Raise(); });
             var run = await runner.RunAsync(phase, settings, phase == BenchmarkPhase.After ? Before?.TimeUtc : null, prog, cts.Token,
                 phase == BenchmarkPhase.Before ? bootsSince : null).ConfigureAwait(false);
             Save(phase == BenchmarkPhase.Before ? _state with { Before = run, After = null, RunBeforeOnStartup = false } : _state with { After = run });
@@ -123,6 +123,11 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             cts.Dispose();
             Raise();
         }
+    }
+
+    private sealed class SyncProgress(Action<string> onReport) : IProgress<string>
+    {
+        public void Report(string value) => onReport(value);
     }
 
     /// <summary>
