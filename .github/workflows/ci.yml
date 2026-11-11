@@ -43,7 +43,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Packing RemoteComponents failed ($LASTEXITCODE)" }
           }
       - name: Test workflow, saved-state resume, and client reports
-        run: dotnet test tests/RemotePCDiagnostics.Tests/RemotePCDiagnostics.Tests.csproj -c Release --filter "FullyQualifiedName~RemotePCDiagnostics.Tests.WorkflowTests" --logger "trx;LogFileName=workflow.trx" --results-directory artifacts/workflow-tests
+        run: dotnet test --project tests/RemotePCDiagnostics.Tests/RemotePCDiagnostics.Tests.csproj -c Release --filter-class "RemotePCDiagnostics.Tests.WorkflowTests" --report-xunit-trx --report-xunit-trx-filename workflow.trx --results-directory artifacts/workflow-tests
       - name: Verify workflow tests ran
         shell: pwsh
         run: |
@@ -172,7 +172,7 @@ jobs:
           if (-not ($out -match '^MT DONE 67108864 \d+ 0$')) { throw "memory test helper did not report a clean DONE" }
 
       - name: Unit tests
-        run: dotnet test RemotePCDiagnostics.sln -c Release --no-build --logger "trx;LogFileName=unit.trx" --results-directory artifacts/test-results
+        run: dotnet test --solution RemotePCDiagnostics.sln -c Release --no-build --report-xunit-trx --results-directory artifacts/test-results
 
       - name: Ensure Inno Setup 6
         shell: pwsh
