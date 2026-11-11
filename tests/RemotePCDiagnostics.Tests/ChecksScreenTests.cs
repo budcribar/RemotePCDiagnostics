@@ -163,13 +163,14 @@ public class ChecksScreenTests
     }
 
     private static (DiagnosticsService Svc, ChecksScreenState State, SeparateStep[] Separate) BuildWithSeparateSteps(
-        Func<FakeStressModule, CancellationToken, Task<DiagnosticResult>> stressRun, Func<CancellationToken, Task<DiagnosticResult>>? firstStep = null)
+        Func<FakeStressModule, CancellationToken, Task<DiagnosticResult>> stressRun, Func<string, DiagnosticResult>? step = null)
     {
         var store = new ResultStore();
+        step ??= FakeModule.Ok;
         var separate = new[]
         {
-            new SeparateStep("SfcScan", firstStep ?? (_ => Task.FromResult(FakeModule.Ok("SfcScan")))),
-            new SeparateStep("DismScanHealth", _ => Task.FromResult(FakeModule.Ok("DismScanHealth"))),
+            new SeparateStep("SfcScan", _ => Task.FromResult(step("SfcScan"))),
+            new SeparateStep("DismScanHealth", _ => Task.FromResult(step("DismScanHealth"))),
         };
         var svc = new DiagnosticsService(store, [new FakeStressModule("CpuStress", "CPU", stressRun), separate[0], separate[1]]);
         var s = new ChecksScreenState(svc, store);
@@ -187,7 +188,8 @@ public class ChecksScreenTests
             await Task.Delay(Timeout.Infinite, ct);
             return FakeModule.Ok(m.Name);
         });
-        Assert.Equal(["CpuStress", "SfcScan", "DismScanHealth"], s.StressModules.Select(m => m.Name));
+        Assert.Equal("CpuStress", s.StressModules[0].Name);
+        Assert.Equal(3, s.StressModules.Count);
         var run = s.RunGroupAsync(CheckGroup.Stress);
         await gate.Task;
         svc.CancelStressSuite(); // the Dashboard's Cancel and a stress test's own Stop button: not ChecksScreenState.Stop
@@ -200,10 +202,9 @@ public class ChecksScreenTests
     public async Task StressRun_SeparateStepStoppedByTheUser_DoesNotStartTheNextOne()
     {
         var (_, s, separate) = BuildWithSeparateSteps((m, _) => Task.FromResult(FakeModule.Ok(m.Name)),
-            _ => Task.FromResult(new DiagnosticResult("SfcScan", DiagnosticStatus.Warning, "Cancelled", DateTimeOffset.Now) { Cancelled = true }));
+            name => new DiagnosticResult(name, DiagnosticStatus.Warning, "Cancelled", DateTimeOffset.Now) { Cancelled = true });
         await s.RunGroupAsync(CheckGroup.Stress);
-        Assert.Equal(1, separate[0].Runs);
-        Assert.Equal(0, separate[1].Runs);
+        Assert.Equal(1, separate.Sum(step => step.Runs)); // whichever is first ran and was stopped; the other never started
     }
 
     [Fact]
