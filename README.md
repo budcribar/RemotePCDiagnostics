@@ -192,7 +192,7 @@ tests/
 
 ### How to run
 
-- Tests (any OS): `dotnet test tests/RemotePCDiagnostics.Tests`
+- Tests (any OS): `dotnet test --project tests/RemotePCDiagnostics.Tests` (xunit.v3 on Microsoft.Testing.Platform, switched on in `global.json`)
 - App (Windows, WebView2 runtime required):
   - Local/bench mode: `dotnet run --project src/RemotePCDiagnostics.Host`
   - Remote mode: start a RemoteWebViewService (`dotnet tool update -g PeakSWC.RemoteWebViewService --version 10.*-*`, then `RemoteWebViewService`), and run
@@ -399,7 +399,7 @@ An experimental [network usage history prototype](tools/prototypes/NetworkUsageP
 
 The dedicated **Service workflow (simulated restarts)** job runs `WorkflowTests` separately and uploads `service-workflow-results`. It checks review/approval, restart sequencing, saved workflow and benchmark JSON loaded into fresh service instances after each simulated restart, client reporting, cancellation, and sign-in cleanup. OS actions and measurements use fakes: this job does not reboot the runner, configure automatic sign-in, install updates, or delete user files. It does not validate the real Windows restart/resume task or registry integration.
 
-Run this coverage locally with `dotnet test tests/RemotePCDiagnostics.Tests/RemotePCDiagnostics.Tests.csproj -c Release --filter FullyQualifiedName~RemotePCDiagnostics.Tests.WorkflowTests`.
+Run this coverage locally with `dotnet test --project tests/RemotePCDiagnostics.Tests/RemotePCDiagnostics.Tests.csproj -c Release --filter-class RemotePCDiagnostics.Tests.WorkflowTests`.
 
 `.github/workflows/ci.yml` runs on `windows-latest` for push, pull request and manual dispatch: it builds the solution in Release with .NET 10, runs the unit tests, then launches the WPF Host with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` and uses Playwright (`tests/smoke/smoke.mjs`, `connectOverCDP`) to check the app stays up and the Dashboard renders. A screenshot, `host.log` (written when `RPD_LOG_FILE` is set) and test results are uploaded as the `ci-artifacts` artifact. Run locally on Windows: build, start the Host with that env var, then `cd tests/smoke && npm install && node smoke.mjs`.
 

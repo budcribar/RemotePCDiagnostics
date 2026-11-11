@@ -8,7 +8,10 @@ namespace RemotePCDiagnostics.Tests;
 /// <summary>A fact that runs on Windows only (skipped elsewhere): it talks to the real PC.</summary>
 public sealed class WindowsFactAttribute : FactAttribute
 {
-    public WindowsFactAttribute() { if (!OperatingSystem.IsWindows()) Skip = "Needs Windows."; }
+    // xunit.v3 records where each test is declared; a derived attribute passes the caller's file and line on.
+    public WindowsFactAttribute([System.Runtime.CompilerServices.CallerFilePath] string? sourceFilePath = null,
+        [System.Runtime.CompilerServices.CallerLineNumber] int sourceLineNumber = -1) : base(sourceFilePath, sourceLineNumber)
+    { if (!OperatingSystem.IsWindows()) Skip = "Needs Windows."; }
 }
 
 /// <summary>
@@ -39,7 +42,7 @@ public class WindowsReadOnlyTests
     [Fact]
     public void Every_embedded_script_is_listed_here_and_loads()
     {
-        var listed = ReadOnlyScripts.Select(r => (string)r[0]).Concat(Changing).Append(SearchIndex).Order(StringComparer.Ordinal).ToList();
+        var listed = ReadOnlyScripts.Select(r => (string)((ITheoryDataRow)r).GetData()[0]!).Concat(Changing).Append(SearchIndex).Order(StringComparer.Ordinal).ToList();
         Assert.Equal(listed, PowerShellScripts.Names);
         Assert.All(PowerShellScripts.Names, n => Assert.False(string.IsNullOrWhiteSpace(PowerShellScripts.Get(n))));
         Assert.Throws<InvalidOperationException>(() => PowerShellScripts.Get("NoSuchScript"));
@@ -90,5 +93,7 @@ public class WindowsReadOnlyTests
 /// <summary>A theory that runs on Windows only (skipped elsewhere).</summary>
 public sealed class WindowsTheoryAttribute : TheoryAttribute
 {
-    public WindowsTheoryAttribute() { if (!OperatingSystem.IsWindows()) Skip = "Needs Windows."; }
+    public WindowsTheoryAttribute([System.Runtime.CompilerServices.CallerFilePath] string? sourceFilePath = null,
+        [System.Runtime.CompilerServices.CallerLineNumber] int sourceLineNumber = -1) : base(sourceFilePath, sourceLineNumber)
+    { if (!OperatingSystem.IsWindows()) Skip = "Needs Windows."; }
 }
