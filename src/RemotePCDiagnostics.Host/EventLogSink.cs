@@ -15,13 +15,24 @@ public sealed class EventLogSink : ILogSink, IDisposable
     public const string SourceName = "RemotePCDiagnostics";
     private const int MaxQueued = 1000;
     private readonly BlockingCollection<LogEntry> _queue = new(new ConcurrentQueue<LogEntry>(), MaxQueued);
+    /// <summary>The session audit's own log (Event Viewer > Applications and Services Logs > RemotePCDiagnostics) and its source.
+    /// A source belongs to one log, so the audit has its own source.</summary>
+    public const string AuditLogName = "RemotePCDiagnostics", AuditSourceName = "RemotePCDiagnostics Audit";
+    /// <summary>Size of the audit log (a multiple of 64 KB); the oldest entries are overwritten when it is full.</summary>
+    public const int AuditLogKilobytes = 20480;
     private readonly Action<string> _note;
     private readonly Thread? _worker;
+    private readonly string _logName, _sourceName;
+    private readonly int _maxKilobytes;
     private volatile bool _failed;
 
-    public EventLogSink(Action<string> note)
+    /// <param name="maxKilobytes">When above zero, the log's size is set to this (a log of the app's own only).</param>
+    public EventLogSink(Action<string> note, string logName = LogName, string sourceName = SourceName, int maxKilobytes = 0)
     {
         _note = note;
+        _logName = logName;
+        _sourceName = sourceName;
+        _maxKilobytes = maxKilobytes;
         if (!OperatingSystem.IsWindows()) { _failed = true; return; }
         _worker = new Thread(Run) { IsBackground = true, Name = "EventLogSink", Priority = ThreadPriority.BelowNormal };
         _worker.Start();
@@ -40,10 +51,19 @@ public sealed class EventLogSink : ILogSink, IDisposable
             if (!OperatingSystem.IsWindows()) return;
             try
             {
-                if (!EventLog.SourceExists(SourceName)) EventLog.CreateEventSource(new EventSourceCreationData(SourceName, LogName));
+                if (!EventLog.SourceExists(_sourceName)) EventLog.CreateEventSource(new EventSourceCreationData(_sourceName, _logName));
             }
-            catch (Exception ex) { Fail($"source '{SourceName}' could not be created (needs administrator the first time): {ex.GetType().Name}: {ex.Message}"); return; }
-            using var log = new EventLog(LogName) { Source = SourceName };
+            catch (Exception ex) { Fail($"source '{_sourceName}' could not be created (needs administrator the first time): {ex.GetType().Name}: {ex.Message}"); return; }
+            using var log = new EventLog(_logName) { Source = _sourceName };
+            if (_maxKilobytes > 0)
+            {
+                try
+                {
+                    if (log.MaximumKilobytes != _maxKilobytes) log.MaximumKilobytes = _maxKilobytes;
+                    log.ModifyOverflowPolicy(OverflowAction.OverwriteAsNeeded, 0);
+                }
+                catch (Exception ex) { try { _note($"Event log '{_logName}' size could not be set: {ex.GetType().Name}: {ex.Message}"); } catch { } }
+            }
             foreach (var e in _queue.GetConsumingEnumerable())
             {
                 try
@@ -61,7 +81,7 @@ public sealed class EventLogSink : ILogSink, IDisposable
     {
         if (_failed) return;
         _failed = true;
-        try { _note($"Windows Event Log disabled: {why}"); } catch { }
+        try { _note($"Windows Event Log ({_logName}) disabled: {why}"); } catch { }
         try { while (_queue.TryTake(out _)) { } } catch { }
     }
 

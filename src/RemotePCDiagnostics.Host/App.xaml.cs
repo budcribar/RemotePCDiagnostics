@@ -15,6 +15,17 @@ public partial class App : Application
     /// <summary>Windows Event Log (Application, source RemotePCDiagnostics); never throws or blocks.</summary>
     public static ILogSink Events => _events.Value;
 
+    private static readonly Lazy<EventLogSink> _audit = new(() =>
+        new EventLogSink(LogFileOnly, EventLogSink.AuditLogName, EventLogSink.AuditSourceName, EventLogSink.AuditLogKilobytes));
+
+    /// <summary>Writes a session audit entry to the app's own event log (Applications and Services Logs > RemotePCDiagnostics)
+    /// and the same text to the file log. Never throws or blocks.</summary>
+    public static void Audit(LogEntry entry)
+    {
+        LogFileOnly($"[audit {entry.EventId}] {entry.Message.Replace(Environment.NewLine, " | ")}");
+        try { _audit.Value.Write(entry); } catch { }
+    }
+
     /// <summary>File log: on by default at %LOCALAPPDATA%\RemotePCDiagnostics\logs\RemotePCDiagnostics.log (rolls at 5 MB, keeps 5 older files).
     /// Setting RPD_LOG_FILE sends it to that path instead, without rolling (CI).</summary>
     private static readonly Lazy<RollingFileLog> _file = new(() =>
@@ -243,6 +254,7 @@ public partial class App : Application
         Log($"Exit code={e.ApplicationExitCode}");
         Event(LogEventIds.AppExit, LogLevel.Information, $"Remote PC Diagnostics exited (code {e.ApplicationExitCode}).");
         try { _events.Value.Flush(TimeSpan.FromSeconds(1)); _events.Value.Dispose(); } catch { }
+        try { if (_audit.IsValueCreated) { _audit.Value.Flush(TimeSpan.FromSeconds(1)); _audit.Value.Dispose(); } } catch { }
         try { _instance?.ReleaseMutex(); _instance?.Dispose(); } catch { }
         base.OnExit(e);
     }

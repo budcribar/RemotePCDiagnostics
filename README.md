@@ -47,6 +47,27 @@ Planned components are used under their own licenses and need to be confirmed be
 
 Running diagnostics on a customer's PC remotely needs the customer's consent, a clear audit log and read-only operations by default.
 
+**Consent.** In a supervised session the person at the PC shares the link and gives control from the session bar; they can
+take it back at any time, and the remote user cannot take it. Only this app's own window is the owner: the relay checks a
+secret the app made for the session, so adding `?role=owner` to the link does nothing. An unattended session gives the remote
+user control when they join; choosing that mode when the session is set up is the consent. On a relay that requires sign-in,
+the remote user must be signed in and in the session's group.
+
+**Session audit.** Every remote session is recorded in the app's own event log: **Event Viewer > Applications and Services
+Logs > RemotePCDiagnostics** (source **RemotePCDiagnostics Audit**, 20 MB, oldest entries overwritten). PowerShell:
+`Get-WinEvent -LogName RemotePCDiagnostics -MaxEvents 50 | Format-List TimeCreated,Id,Message`
+
+| ID | Content |
+|----|---------|
+| 2000 | Session started (supervised or unattended) |
+| 2001 / 2002 | The remote user / a read-only viewer joined, with their signed-in name |
+| 2003 / 2004 | Control moved to the remote user (name) / back to the person at this PC |
+| 2005 | The remote user or a viewer left |
+| 2006 | Session ended (reason) |
+
+Names come from the relay's sign-in; without it they read "(not signed in)". What a remote user changes (services, fixes)
+is in the Application log's 1100 events, which say who did it. The same lines go to the file log as `[audit N]`.
+
 ## Starting, stopping and restarting services
 
 On the **Services** page, open any services list: each row has **Start** (when stopped) or **Stop** / **Restart** (when running).
