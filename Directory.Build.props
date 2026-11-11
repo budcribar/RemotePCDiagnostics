@@ -7,7 +7,7 @@
     <InformationalVersion Condition="'$(GITHUB_RUN_NUMBER)' == ''">$(Version)-local</InformationalVersion>
     <!-- RemoteBlazorWebView packages (Wpf, RemoteWebView, RemoteWebViewService.Lib, RemoteComponents), from nuget.org since
          10.0.15. third_party/RemoteBlazorWebView/packages holds the earlier local 10.0.14-embedded.8 build and is no longer used. -->
-    <RbwvVersion Condition="'$(RbwvVersion)' == ''">10.0.15</RbwvVersion>
+    <RbwvVersion Condition="'$(RbwvVersion)' == ''">10.0.15.1</RbwvVersion>
     <RbwvLibVersion Condition="'$(RbwvLibVersion)' == ''">$(RbwvVersion)</RbwvLibVersion>
     <!-- Local source wiring: reference the sibling RemoteBlazorWebView repo's projects directly so RBWV source edits are
          picked up on build - no pack/publish step. Active ONLY for the dev solution (RemotePCDiagnostics.Dev.sln), which
