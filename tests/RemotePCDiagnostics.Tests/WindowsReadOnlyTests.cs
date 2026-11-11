@@ -29,7 +29,6 @@ public class WindowsReadOnlyTests
         { "DefenderExclusions", true },
         { "DockDevices", true },
         { "MemoryProbe", true },
-        { "DockDevices", true },          // JSON, "[]" when nothing is attached
     };
 
     /// <summary>Scripts that change the PC: never run by a test.</summary>
