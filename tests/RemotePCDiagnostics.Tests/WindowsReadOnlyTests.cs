@@ -42,7 +42,7 @@ public class WindowsReadOnlyTests
     [Fact]
     public void Every_embedded_script_is_listed_here_and_loads()
     {
-        var listed = ReadOnlyScripts.Select(r => (string)r.GetData()[0]!).Concat(Changing).Append(SearchIndex).Order(StringComparer.Ordinal).ToList();
+        var listed = ReadOnlyScripts.Select(r => (string)((ITheoryDataRow)r).GetData()[0]!).Concat(Changing).Append(SearchIndex).Order(StringComparer.Ordinal).ToList();
         Assert.Equal(listed, PowerShellScripts.Names);
         Assert.All(PowerShellScripts.Names, n => Assert.False(string.IsNullOrWhiteSpace(PowerShellScripts.Get(n))));
         Assert.Throws<InvalidOperationException>(() => PowerShellScripts.Get("NoSuchScript"));
