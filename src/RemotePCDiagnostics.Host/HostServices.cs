@@ -39,6 +39,7 @@ public static class HostServices
         services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(Microsoft.Extensions.Logging.Logger<>));
         ILogger L<T>() => For<T>(loggerFactory); // each class logs under its own category
         services.AddSingleton<ISessionContext>(session);
+        services.AddSingleton<RemoteUsers>(); // the top bar's "N Remote Users" badge
         if (session.Mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
         services.AddSingleton<ResultStore>();
         services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = L<OsqueryRunner>() }));
