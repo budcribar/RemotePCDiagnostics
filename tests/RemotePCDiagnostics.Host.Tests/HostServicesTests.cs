@@ -228,7 +228,7 @@ public class HostServicesTests
             RemotePCDiagnostics.Core.Plugins.UnsignedModulesSetting.Set(true, modulesDir);
             var checkId = Guid.NewGuid();
             System.IO.File.WriteAllText(System.IO.Path.Combine(checksDir, "custom.json"),
-                $$"""{"id":"{{checkId}}","slug":"custom.check","displayName":"Custom check","query":"SELECT 1;"}""");
+                $$"""{"id":"{{checkId}}","slug":"custom.check","displayName":"Custom check","query":"SELECT 1 AS n;","columns":[{"name":"n","title":"N"}]}""");
 
             using var local = new ServiceCollection()
                 .AddRemotePCDiagnosticsHost(new SessionContext(SessionMode.Local), _ => { }, (_, _, _) => { }, modulesDir, checksFolder: checksDir)
