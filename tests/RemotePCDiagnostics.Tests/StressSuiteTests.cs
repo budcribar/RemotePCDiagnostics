@@ -120,16 +120,28 @@ public class StressSuiteTests
     }
 
     [Fact]
-    public async Task StopsOnError_RestNotRun()
+    public async Task ContinuesAfterError_RestStillRun_AndTheFailureIsNamed()
     {
         var (svc, _, mods, _) = Build(n => n == "MemoryTest" ? (_, _) => Task.FromResult(new DiagnosticResult(n, DiagnosticStatus.Error, "errors found", DateTimeOffset.Now)) : null);
         var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null);
-        Assert.Equal(StressSuiteOutcome.StoppedOnProblem, r.Outcome);
-        Assert.Equal(new[] { StressSuiteStepState.Passed, StressSuiteStepState.Problem, StressSuiteStepState.NotRun, StressSuiteStepState.NotRun, StressSuiteStepState.NotRun },
+        // A failed test does not end the run: one run shows every failure.
+        Assert.Equal(StressSuiteOutcome.Completed, r.Outcome);
+        Assert.Equal(new[] { StressSuiteStepState.Passed, StressSuiteStepState.Problem, StressSuiteStepState.Passed, StressSuiteStepState.Passed, StressSuiteStepState.Passed },
             r.Steps.Select(s => s.State).ToArray());
-        Assert.Empty(mods[2].DurationsSeen);
-        Assert.Contains("Memory", r.Message);
-        Assert.Contains("remaining tests were not run", r.Message);
+        Assert.All(mods, m => Assert.Single(m.DurationsSeen));
+        Assert.Contains("The Memory test found a problem (errors found)", r.Message);
+        Assert.DoesNotContain("not run", r.Message);
+    }
+
+    [Fact]
+    public async Task ContinuesAfterError_EveryFailureIsListed()
+    {
+        var (svc, _, mods, _) = Build(n => n is "CpuStress" or "MemoryTest" ? (_, _) => Task.FromResult(new DiagnosticResult(n, DiagnosticStatus.Error, "bad", DateTimeOffset.Now)) : null);
+        var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null);
+        Assert.Equal(StressSuiteOutcome.Completed, r.Outcome);
+        Assert.Equal(2, r.Steps.Count(s => s.State == StressSuiteStepState.Problem));
+        Assert.All(mods, m => Assert.Single(m.DurationsSeen));
+        Assert.Contains("2 tests found a problem: CPU (bad); Memory (bad)", r.Message);
     }
 
     [Fact]
@@ -291,10 +303,10 @@ public class StressSuiteTests
 
         var bad = await Run(new FakeHelperLauncher(h => { h.Send(new MemTestMessage.Allocated(256 * MemorySizing.MB));
             h.Send(new MemTestMessage.BadWord(4096, 0, 8)); h.Send(new MemTestMessage.Done(256 * MemorySizing.MB, 1, 1)); h.Exit(); }), 16 * MemorySizing.GB);
-        Assert.Equal(StressSuiteOutcome.StoppedOnProblem, bad.Outcome);
+        Assert.Equal(StressSuiteOutcome.Completed, bad.Outcome); // a failed test does not end the run
         Assert.Equal(StressSuiteStepState.Problem, bad.Steps[1].State);
         Assert.Contains("found a problem (Memory errors found)", bad.Message);
-        Assert.Equal(StressSuiteStepState.NotRun, bad.Steps[2].State);
+        Assert.Equal(StressSuiteStepState.Passed, bad.Steps[2].State);
     }
 
     [Fact]
