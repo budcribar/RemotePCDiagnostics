@@ -1,8 +1,8 @@
 # Architecture
 
 How the app is put together, as built. [module-plugins.md](module-plugins.md) covers plugins and host queries in detail,
-[sensor-thresholds.md](sensor-thresholds.md) has the sources for the sensor alert limits, and [roadmap.md](roadmap.md) holds
-everything that is planned but not built.
+[sensor-thresholds.md](sensor-thresholds.md) has the sources for the sensor alert limits, [roadmap.md](roadmap.md) holds
+everything that is planned but not built, and [marketing-plan.md](marketing-plan.md) covers monetization, Microsoft Store distribution, and the user/admin gRPC split.
 
 ## Projects
 
