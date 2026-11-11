@@ -367,6 +367,9 @@ public sealed class ChecksScreenState
                     {
                         var res = await _diag.RunStressSuiteAsync(Mode, p, cts.Token, stress, runQuickChecks: false).ConfigureAwait(false);
                         lock (_gate) { LastSuiteResult = res; errors.Insert(0, res.Message); }
+                        // Cancelled from anywhere (this page's Stop, the Dashboard's Cancel, the test's own Stop button): the
+                        // whole run stops, so the separate steps ticked after the stress tests are not started.
+                        if (res.Outcome == StressSuiteOutcome.Cancelled) cts.Cancel();
                     }
                     catch (Exception ex) when (!(ex is OperationCanceledException && cts.IsCancellationRequested))
                     {
@@ -377,7 +380,12 @@ public sealed class ChecksScreenState
                 for (var i = 0; i < separate.Count && !cts.IsCancellationRequested; i++)
                 {
                     SetProgress(g, stress.Count + i + 1, total, separate[i]);
-                    try { await _diag.RunAsync(separate[i].Name, null, cts.Token).ConfigureAwait(false); } catch (Exception ex) { Failed(separate[i], ex); }
+                    try
+                    {
+                        var r = await _diag.RunAsync(separate[i].Name, null, cts.Token).ConfigureAwait(false);
+                        if (CheckRows.KindOf(r) == RowKind.Cancelled) cts.Cancel(); // stopped from its own page: the rest are not started
+                    }
+                    catch (Exception ex) { Failed(separate[i], ex); }
                 }
             }
         }
