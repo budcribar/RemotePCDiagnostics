@@ -6,6 +6,9 @@
     <title>RemotePCDiagnostics</title>
     <base href="/" />
     <meta name="color-scheme" content="light dark" />
+    <!-- The top bar has the session bar's placeholder (MainLayout.razor): RemoteBlazorWebView 10.0.16+ then waits for it
+         instead of showing its floating bar for a moment while the app starts. -->
+    <meta name="rbwv-session-controls" content="slot" />
     <script>
         // Theme: apply before first paint (no flash). Choice: dark | system | light (default system), kept in localStorage when available.
         (function () {
