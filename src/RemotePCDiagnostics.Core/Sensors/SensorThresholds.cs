@@ -19,7 +19,7 @@ public static class SensorThresholds
 
     public static SensorThreshold? For(SensorReading r)
     {
-        if (r.SensorType != SensorKind.Temperature || r.IsApproximate) return null;
+        if (r.SensorType != SensorKind.Temperature || r.IsApproximate || r.IsLimit) return null;
         var hw = r.HardwareName; var s = r.SensorName;
         return r.HardwareType switch
         {
@@ -28,8 +28,8 @@ public static class SensorThresholds
             HardwareKind.Gpu when r.IsFromWindows => WindowsGpu,
             HardwareKind.Gpu when Has(hw, "NVIDIA") || Has(hw, "GeForce") || Has(hw, "RTX") => NvidiaGpu,
             HardwareKind.Gpu when (Has(hw, "AMD") || Has(hw, "Radeon")) && (Has(s, "Hot Spot") || Has(s, "Hotspot") || Has(s, "Junction")) => AmdGpuJunction,
-            HardwareKind.Storage when Has(hw, "NVMe") || Has(hw, "SSD") || Has(hw, "Solid State") => Ssd,
-            HardwareKind.Storage when Has(hw, "HDD") || Has(hw, "BarraCuda") || Has(hw, "Hard Disk") => Hdd,
+            HardwareKind.Storage when !IsSecondaryStorageSensor(s) && (Has(s, "Composite") || IsSsdModel(hw)) => Ssd,
+            HardwareKind.Storage when !IsSecondaryStorageSensor(s) && (Has(hw, "HDD") || Has(hw, "BarraCuda") || Has(hw, "Hard Disk")) => Hdd,
             _ => null,
         };
     }
@@ -41,6 +41,14 @@ public static class SensorThresholds
         : value >= t.Critical ? SensorLevel.Critical
         : value >= t.Warning ? SensorLevel.Warning
         : SensorLevel.Ok;
+
+    private static bool IsSecondaryStorageSensor(string sensorName) => sensorName.Contains('#');
+
+    private static bool IsSsdModel(string hw) =>
+        Has(hw, "NVMe") || Has(hw, "SSD") || Has(hw, "Solid State")
+        || Has(hw, "MZVL") || Has(hw, "MZAL") || Has(hw, "MZQL") || Has(hw, "PM9")
+        || Has(hw, "SN5") || Has(hw, "SN7") || Has(hw, "SN8")
+        || Has(hw, "KIOXIA") || Has(hw, "SK hynix") || Has(hw, "Optane");
 
     private static bool Has(string s, string v) => s.Contains(v, StringComparison.OrdinalIgnoreCase);
 }

@@ -222,45 +222,56 @@ internal sealed class AppRemovalSuggestions(SuggestionContext c)
         var undo = AppRemoval.Undo.Decode(u.Previous);
         if (undo.IsEmpty) return new(false, "The original settings weren't recorded.");
         var failed = 0;
+        var succeeded = 0;
         var reinstalled = new List<string>();
         var notReinstalled = new List<string>();
+        var remReinstall = new List<string>();
         foreach (var family in undo.Reinstall ?? Array.Empty<string>())
         {
             var r = await StoreReinstall.ReinstallAsync(c.Sys, family, null, ct, c.Logger).ConfigureAwait(false);
-            if (r.Success) { reinstalled.Add(r.Message); try { c.JournalStore?.RemoveLatest(ChangeKind.StoreReinstall, family); } catch { } }
-            else { notReinstalled.Add(r.Message); failed++; }
+            if (r.Success) { succeeded++; reinstalled.Add(r.Message); try { c.JournalStore?.RemoveLatest(ChangeKind.StoreReinstall, family); } catch { } }
+            else { notReinstalled.Add(r.Message); remReinstall.Add(family); failed++; }
         }
         var settings = undo.Registry.Count + undo.Services.Count + undo.Tasks.Count > 0;
-        foreach (var item in Enumerable.Reverse(undo.Registry)) // last written first: the first write is the one that created any keys
+        var remRegistry = new List<RegistryUndo.Item>();
+        for (var i = undo.Registry.Count - 1; i >= 0; i--) // last written first: the first write is the one that created any keys
         {
+            var item = undo.Registry[i];
             bool ok;
             try { ok = RegistryAllowlist.Restore(c.Sys, item.Target, item.Previous, item.CreatedKey, c.Logger).Ok; }
             catch (Exception ex) when (ex is not OperationCanceledException) { c.Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
-            if (ok) { try { c.JournalStore?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } } else failed++;
+            if (ok) { succeeded++; try { c.JournalStore?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
+            else { remRegistry.Insert(0, item); failed++; }
         }
+        var remServices = new List<RegistryUndo.Item>();
         foreach (var svc in undo.Services)
         {
-            if (!AppRemoval.XboxServices.Contains(svc.Target, StringComparer.OrdinalIgnoreCase) || !MemorySuggestionService.StartTypes.Contains(svc.Previous)) { failed++; continue; }
+            if (!AppRemoval.XboxServices.Contains(svc.Target, StringComparer.OrdinalIgnoreCase) || !MemorySuggestionService.StartTypes.Contains(svc.Previous)) { remServices.Add(svc); failed++; continue; }
             try
             {
                 c.Sys.SetServiceStartType(svc.Target, svc.Previous!);
                 ServiceDelayedStart.Restore(c.Sys, svc.Target, svc.Extra, c.Logger);
+                succeeded++;
                 try { c.JournalStore?.RemoveLatest(ChangeKind.ServiceStartType, svc.Target); } catch { }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException) { c.Log($"Undo {svc.Target}: {ex.Message}"); failed++; }
+            catch (Exception ex) when (ex is not OperationCanceledException) { c.Log($"Undo {svc.Target}: {ex.Message}"); remServices.Add(svc); failed++; }
         }
+        var remTasks = new List<string>();
         foreach (var t in undo.Tasks)
         {
-            if (!ScheduledTaskAllowlist.IsAllowed(t)) { failed++; continue; }
+            if (!ScheduledTaskAllowlist.IsAllowed(t)) { remTasks.Add(t); failed++; continue; }
             try
             {
                 var state = await c.Sys.GetScheduledTaskStateAsync(t, ct).ConfigureAwait(false);
                 var on = state == ScheduledTaskAllowlist.Missing || ScheduledTaskAllowlist.IsEnabledState(state)
                     || ScheduledTaskAllowlist.IsEnabledState(await c.Sys.SetScheduledTaskEnabledAsync(t, true, ct).ConfigureAwait(false));
-                if (on) { try { c.JournalStore?.RemoveLatest(ChangeKind.ScheduledTask, t); } catch { } } else failed++;
+                if (on) { succeeded++; try { c.JournalStore?.RemoveLatest(ChangeKind.ScheduledTask, t); } catch { } }
+                else { remTasks.Add(t); failed++; }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException) { c.Log($"Undo task {t}: {ex.Message}"); failed++; }
+            catch (Exception ex) when (ex is not OperationCanceledException) { c.Log($"Undo task {t}: {ex.Message}"); remTasks.Add(t); failed++; }
         }
+        if (failed > 0 && succeeded > 0)
+            c.AddUndo(u with { Previous = new AppRemoval.Undo(remRegistry, remServices, remTasks, remReinstall.Count > 0 ? remReinstall : null).Encode() });
         var store = string.Concat(reinstalled.Concat(notReinstalled).Select(m => " " + m));
         var apps = undo.Reinstall is { Count: > 0 } ? store : u.Type switch
         {

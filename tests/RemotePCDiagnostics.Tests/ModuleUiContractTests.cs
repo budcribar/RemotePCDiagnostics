@@ -50,6 +50,14 @@ public class ModuleUiContractTests
         Assert.False(back.Cancelled);
     }
 
+    private static string FindRepoRoot()
+    {
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "RemotePCDiagnostics.sln")))
+                return d.FullName;
+        throw new DirectoryNotFoundException("Could not find RemotePCDiagnostics.sln above " + AppContext.BaseDirectory);
+    }
+
     [Fact]
     public async Task The_app_theme_reaches_the_module_ui()
     {
@@ -57,7 +65,7 @@ public class ModuleUiContractTests
         Assert.Equal("dark", receiver.Theme);
         Assert.Null(receiver.LastResult);
         // The UI host serves the app's stylesheet and applies the choice the way the app does.
-        var dir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "RemotePCDiagnostics.ModuleUiHost");
+        var dir = Path.Combine(FindRepoRoot(), "src", "RemotePCDiagnostics.ModuleUiHost");
         var index = File.ReadAllText(Path.Combine(dir, "wwwroot", "index.html"));
         Assert.Contains("href=\"app.css\"", index);
         Assert.Contains("window.rpdTheme", index);

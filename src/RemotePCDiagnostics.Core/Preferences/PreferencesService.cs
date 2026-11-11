@@ -107,11 +107,26 @@ public sealed class PreferencesService(IPreferencesStore store)
     /// <summary>Remembers the remote user's tick for these fixes (newest last; the oldest beyond the cap are dropped).</summary>
     public void RememberFixChoices(IEnumerable<(string Id, bool On)> choices)
     {
+        var updates = new List<(string Id, bool On)>();
+        var updatedIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (id, on) in choices)
+        {
+            if (updatedIds.Add(id)) updates.Add((id, on));
+            else
+            {
+                updates.RemoveAll(x => string.Equals(x.Id, id, StringComparison.Ordinal));
+                updates.Add((id, on));
+            }
+        }
         Update(p =>
         {
-            var d = new Dictionary<string, bool>(p.WorkflowFixChoices, StringComparer.Ordinal);
-            foreach (var (id, on) in choices) { d.Remove(id); d[id] = on; } // re-inserted, so usually the newest are last
-            var keep = d.Skip(Math.Max(0, d.Count - UserPreferences.MaxFixChoices)).ToDictionary(x => x.Key, x => x.Value, StringComparer.Ordinal);
+            var ordered = new List<(string Id, bool On)>(p.WorkflowFixChoices.Count + updates.Count);
+            foreach (var kv in p.WorkflowFixChoices)
+                if (!updatedIds.Contains(kv.Key)) ordered.Add((kv.Key, kv.Value));
+            ordered.AddRange(updates);
+            var skip = Math.Max(0, ordered.Count - UserPreferences.MaxFixChoices);
+            var keep = new Dictionary<string, bool>(Math.Min(ordered.Count, UserPreferences.MaxFixChoices), StringComparer.Ordinal);
+            for (var i = skip; i < ordered.Count; i++) keep[ordered[i].Id] = ordered[i].On;
             return p with { WorkflowFixChoices = keep };
         });
     }

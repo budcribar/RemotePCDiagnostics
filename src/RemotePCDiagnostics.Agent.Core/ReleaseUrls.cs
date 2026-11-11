@@ -37,10 +37,32 @@ public static class ReleaseUrls
     /// <summary>Resolves a Location header against the request URL and checks it.</summary>
     public static Uri? ResolveRedirect(Uri requestUri, Uri? location)
     {
-        if (location is null) return null;
-        var target = location.IsAbsoluteUri ? location : new Uri(requestUri, location);
+        if (requestUri is null || !requestUri.IsAbsoluteUri || location is null) return null;
+        var raw = location.OriginalString;
+        if (string.IsNullOrEmpty(raw) || raw.Length > 4096 || raw.Any(char.IsWhiteSpace) || raw.Contains('\\') || raw.Contains('#'))
+            return null;
+        Uri? target;
+        if (location.IsAbsoluteUri)
+        {
+            target = location;
+        }
+        else
+        {
+            if (raw.StartsWith("//", StringComparison.Ordinal)) return null;
+            var q = raw.IndexOf('?');
+            var relPath = q >= 0 ? raw[..q] : raw;
+            if (HasDotOrEncodedTraversal(relPath)) return null;
+            if (!Uri.TryCreate(requestUri, location, out target)) return null;
+            if (target.Host == "github.com" && relPath.Contains('%')) return null;
+        }
         return IsAllowedRedirect(target) ? target : null;
     }
+
+    private static bool HasDotOrEncodedTraversal(string path) =>
+        path.Split('/').Any(s => s is "." or "..")
+        || path.Contains("%2e", StringComparison.OrdinalIgnoreCase)
+        || path.Contains("%2f", StringComparison.OrdinalIgnoreCase)
+        || path.Contains("%5c", StringComparison.OrdinalIgnoreCase);
 
     private static bool TryStrict(string? url, out Uri uri)
     {
@@ -53,8 +75,7 @@ public static class ReleaseUrls
         var path = pathStart < 0 ? "/" : url[pathStart..];
         var q = path.IndexOf('?');
         if (q >= 0) path = path[..q];
-        if (path.Contains("/./", StringComparison.Ordinal) || path.Contains("/../", StringComparison.Ordinal) || path.EndsWith("/..", StringComparison.Ordinal)
-            || path.EndsWith("/.", StringComparison.Ordinal)) return false;
+        if (HasDotOrEncodedTraversal(path)) return false;
         if (u.Host == "github.com" && path.Contains('%')) return false;
         uri = u;
         return true;

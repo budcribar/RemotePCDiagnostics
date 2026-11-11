@@ -138,4 +138,33 @@ public class DriveHealthTests
         Assert.Equal(DiagnosticStatus.Error, r.Status);
         Assert.Equal("Couldn't check drive health on this PC.", r.Message);
     }
+
+    [Fact]
+    public async Task CancellingOneCaller_DoesNotPoisonConcurrentSharedRead()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<ProcessResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var launcher = new FakeLauncher((_, _, ct) =>
+        {
+            Interlocked.Increment(ref reads);
+            started.TrySetResult();
+            return release.Task.WaitAsync(ct);
+        });
+        var m = new DriveHealthModule(new SystemCommandRunner(launcher), new OsqueryRunner(Path.GetTempPath(), launcher: launcher, fileExists: _ => true));
+        var instance = DriveHealthModule.Instances([DriveHealth.FromRow(new Dictionary<string, string> { ["Name"] = "Samsung SSD 980 1TB", ["Serial"] = "S1" })])[0].Instance;
+
+        using var ctsA = new CancellationTokenSource();
+        var detectTask = m.DetectAsync(ctsA.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var refreshTask = m.RefreshAsync(instance, null, CancellationToken.None);
+
+        ctsA.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => detectTask);
+
+        release.SetResult(ScriptedLauncher.Ok(Healthy));
+        var r = await refreshTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+        Assert.Equal(1, reads);
+    }
 }

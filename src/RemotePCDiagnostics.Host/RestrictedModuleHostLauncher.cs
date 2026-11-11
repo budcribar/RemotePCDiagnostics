@@ -108,10 +108,10 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
     /// Starts a GUI process (a module's UI host) with the same restricted token, Medium integrity and no pipes. Its window is shown
     /// normally; the caller owns the returned process.
     /// </summary>
-    public static Process StartRestrictedGui(string exe, string arguments, string workingDirectory)
+    public static Process StartRestrictedGui(string exe, string arguments, string workingDirectory, bool unsigned = false)
     {
         if (!File.Exists(exe)) throw new FileNotFoundException("UI host not found", exe);
-        using var token = RestrictedToken();
+        using var token = RestrictedToken(unsigned);
         var si = new STARTUPINFO { cb = Marshal.SizeOf<STARTUPINFO>() };
         Check(CreateProcessAsUser(token, null, new StringBuilder($"\"{exe}\" {arguments}"), IntPtr.Zero, IntPtr.Zero, false, CREATE_UNICODE_ENVIRONMENT,
             IntPtr.Zero, workingDirectory, ref si, out var pi));
@@ -130,10 +130,10 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
     /// <see cref="StartRestrictedGui"/> with a pipe on the process's stdin (only stdin is inherited), for the app to send it lines (a module's
     /// UI host gets the module's latest result this way). Closing the returned writer ends the input.
     /// </summary>
-    public static (Process Process, StreamWriter Input) StartRestrictedGuiWithInput(string exe, string arguments, string workingDirectory)
+    public static (Process Process, StreamWriter Input) StartRestrictedGuiWithInput(string exe, string arguments, string workingDirectory, bool unsigned = false)
     {
         if (!File.Exists(exe)) throw new FileNotFoundException("UI host not found", exe);
-        using var token = RestrictedToken();
+        using var token = RestrictedToken(unsigned);
         var sa = new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf<SECURITY_ATTRIBUTES>(), bInheritHandle = false };
         Check(CreatePipe(out var inRead, out var inWrite, ref sa, 0));
         try
@@ -163,6 +163,8 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
         }
     }
 
+    private static readonly object InheritLock = new();
+
     /// <summary>
     /// CreateProcessAsUser with the restricted token that hands the child exactly <paramref name="inherit"/> (PROC_THREAD_ATTRIBUTE_HANDLE_LIST)
     /// and no other handle of the app's. The handles are inheritable only for the call. Without the list, a host started at the same moment
@@ -185,14 +187,17 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
                     (IntPtr)(IntPtr.Size * handles.Length), IntPtr.Zero, IntPtr.Zero));
                 var si = new STARTUPINFOEX { StartupInfo = startup, lpAttributeList = list };
                 si.StartupInfo.cb = Marshal.SizeOf<STARTUPINFOEX>();
-                foreach (var h in inherit) Check(SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT));
-                try
+                lock (InheritLock)
                 {
-                    Check(CreateProcessAsUser(token, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, flags | EXTENDED_STARTUPINFO_PRESENT,
-                        IntPtr.Zero, directory, ref si, out var pi));
-                    return pi;
+                    foreach (var h in inherit) Check(SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT));
+                    try
+                    {
+                        Check(CreateProcessAsUser(token, null, commandLine, IntPtr.Zero, IntPtr.Zero, true, flags | EXTENDED_STARTUPINFO_PRESENT,
+                            IntPtr.Zero, directory, ref si, out var pi));
+                        return pi;
+                    }
+                    finally { foreach (var h in inherit) SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0); }
                 }
-                finally { foreach (var h in inherit) SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0); }
             }
             finally { DeleteProcThreadAttributeList(list); }
         }
@@ -302,12 +307,14 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
 
     private sealed class Connection(Process process, StreamWriter input, StreamReader output, StreamReader error) : IModuleHostConnection
     {
+        private int _disposed;
         public async Task WriteLineAsync(string line, CancellationToken ct) => await input.WriteLineAsync(line.AsMemory(), ct).ConfigureAwait(false);
         public Task<string?> ReadLineAsync(CancellationToken ct) => output.ReadLineAsync(ct).AsTask();
         public bool HasExited { get { try { return process.HasExited; } catch { return true; } } }
         public void Kill() { try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { } }
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
             try { input.Dispose(); } catch { } // closing stdin ends the host
             try { if (!process.WaitForExit(2000)) Kill(); } catch { }
             try { output.Dispose(); error.Dispose(); process.Dispose(); } catch { }

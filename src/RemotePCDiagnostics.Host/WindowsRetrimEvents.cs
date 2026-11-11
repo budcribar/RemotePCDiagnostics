@@ -30,13 +30,33 @@ public sealed partial class WindowsRetrimEvents(ILogger? log = null) : IWindowsR
                 if (e is null) break;
                 if (e.TimeCreated is not { } t) continue;
                 var data = e.Properties.Select(p => p.Value?.ToString() ?? "").ToList();
-                if (data.Count > 0 && data[0].Contains("defrag", StringComparison.OrdinalIgnoreCase)) continue;
-                foreach (var c in Letters(data)) list.Add((c, new DateTimeOffset(t)));
+                foreach (var c in RetrimLetters(data)) list.Add((c, new DateTimeOffset(t)));
             }
         }
         catch (Exception ex) { log.Info($"retrim events (Application/{Provider}/{EventId}) unreadable: {ex.Message}"); }
         return list;
     }
+
+    /// <summary>True when Defrag event 258's operation field (<c>data[0]</c>) represents an SSD retrim rather than analysis, defragmentation,
+    /// slab/free-space consolidation, shrink estimation, boot optimization or storage tier optimization.</summary>
+    public static bool IsRetrimOperation(string? operation)
+    {
+        if (string.IsNullOrWhiteSpace(operation)) return false;
+        if (operation.Contains("defrag", StringComparison.OrdinalIgnoreCase)
+            || operation.Contains("analy", StringComparison.OrdinalIgnoreCase)
+            || operation.Contains("slab", StringComparison.OrdinalIgnoreCase)
+            || operation.Contains("consolid", StringComparison.OrdinalIgnoreCase)
+            || operation.Contains("konsolid", StringComparison.OrdinalIgnoreCase)
+            || operation.Contains("shrink", StringComparison.OrdinalIgnoreCase)
+            || operation.Contains("boot", StringComparison.OrdinalIgnoreCase)
+            || operation.Contains("tier", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return operation.Any(c => c > 127) || operation.Contains("trim", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Drive letters from a Defrag 258 event's data (<c>[operation, volume, ...]</c>), or empty when the operation isn't a retrim.</summary>
+    public static IReadOnlyList<char> RetrimLetters(IReadOnlyList<string> data) =>
+        data.Count < 2 || !IsRetrimOperation(data[0]) ? [] : [.. Letters(data.Skip(1))];
 
     /// <summary>Drive letters named in the event data: "(C:)", "Windows (C:)", "C:" or "C:\".</summary>
     public static IEnumerable<char> Letters(IEnumerable<string> data) =>

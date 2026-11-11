@@ -17,26 +17,28 @@ public sealed class WindowsSystemSettings(ILogger? log = null) : ISystemSettings
 
     public int? GetFastStartup()
     {
-        using var k = OpenLocalMachine().OpenSubKey(PowerKey);
+        using var lm = OpenLocalMachine();
+        using var k = lm.OpenSubKey(PowerKey);
         return k?.GetValue("HiberbootEnabled") is int v ? v : null;
     }
 
     public void SetFastStartup(int value)
     {
-        using var k = OpenLocalMachine().OpenSubKey(PowerKey, writable: true) ?? throw new InvalidOperationException("The power settings key is missing.");
+        using var lm = OpenLocalMachine();
+        using var k = lm.OpenSubKey(PowerKey, writable: true) ?? throw new InvalidOperationException("The power settings key is missing.");
         k.SetValue("HiberbootEnabled", value, RegistryValueKind.DWord);
     }
 
     public int? GetUserProxyEnable()
     {
-        using var root = OpenSignedInUserHive();
+        using var root = OpenSignedInUserHive(writable: false);
         using var k = root?.OpenSubKey(InternetSettingsKey);
         return k?.GetValue("ProxyEnable") is int v ? v : null;
     }
 
     public void SetUserProxyEnable(int value)
     {
-        using var root = OpenSignedInUserHive() ?? throw new InvalidOperationException("Nobody is signed in at this PC's desktop.");
+        using var root = OpenSignedInUserHive(writable: true) ?? throw new InvalidOperationException("Nobody is signed in at this PC's desktop.");
         using var k = root.CreateSubKey(InternetSettingsKey, writable: true);
         k.SetValue("ProxyEnable", value, RegistryValueKind.DWord);
     }
@@ -46,7 +48,8 @@ public sealed class WindowsSystemSettings(ILogger? log = null) : ISystemSettings
         if (!SystemSettingsRules.IsAdapterName(alias)) return null;
         using var config = FindAdapterConfiguration(alias);
         if (config?["SettingID"] is not string guid) return null;
-        using var k = OpenLocalMachine().OpenSubKey(TcpipInterfacesKey + guid);
+        using var lm = OpenLocalMachine();
+        using var k = lm.OpenSubKey(TcpipInterfacesKey + guid);
         var servers = k?.GetValue("NameServer") as string ?? "";
         return string.Join(",", servers.Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
@@ -67,13 +70,21 @@ public sealed class WindowsSystemSettings(ILogger? log = null) : ISystemSettings
     {
         var escaped = alias.Replace("\\", "\\\\").Replace("'", "\\'");
         using var adapters = new ManagementObjectSearcher($"SELECT Index FROM Win32_NetworkAdapter WHERE NetConnectionID = '{escaped}'");
-        foreach (ManagementObject adapter in adapters.Get())
+        using var adapterResults = adapters.Get();
+        foreach (ManagementObject adapter in adapterResults)
         {
             using (adapter)
             {
                 if (adapter["Index"] is not uint index) continue;
                 using var configs = new ManagementObjectSearcher($"SELECT * FROM Win32_NetworkAdapterConfiguration WHERE Index = {index}");
-                foreach (ManagementObject config in configs.Get()) return config;
+                using var configResults = configs.Get();
+                ManagementObject? found = null;
+                foreach (ManagementObject config in configResults)
+                {
+                    if (found is null) found = config;
+                    else config.Dispose();
+                }
+                if (found is not null) return found;
             }
         }
         return null;
@@ -82,13 +93,13 @@ public sealed class WindowsSystemSettings(ILogger? log = null) : ISystemSettings
     private static RegistryKey OpenLocalMachine() => RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
 
     /// <summary>The signed-in user's HKEY_USERS\&lt;SID&gt; (HKCU when that is this process's own account), or null when nobody is signed in.</summary>
-    private RegistryKey? OpenSignedInUserHive()
+    private RegistryKey? OpenSignedInUserHive(bool writable = false)
     {
         using var user = WindowsMemorySystem.SignedInUser.Open(log);
         if (user is null) return null;
         if (user.IsCurrentProcessUser) return RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default);
         if (!Core.Optimizations.StoreReinstall.IsValidSid(user.Sid)) { log.Warn($"Signed-in user: unexpected SID {user.Sid}"); return null; }
         using var users = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default);
-        return users.OpenSubKey(user.Sid, writable: true);
+        return users.OpenSubKey(user.Sid, writable);
     }
 }

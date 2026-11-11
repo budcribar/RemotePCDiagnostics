@@ -23,12 +23,26 @@ public static class AppCache
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
         var line = text.Trim();
+        if (line.Contains('\n') || line.Contains('\r')) return null;
         var space = line.IndexOf(' ');
         if (space != 64) return null;
         var hash = line[..64];
         var name = line[65..].TrimStart('*', ' ');
         if (!ReleaseManifest.IsSha256Hex(hash) || !string.Equals(name, fileName, StringComparison.OrdinalIgnoreCase)) return null;
         return hash.ToLowerInvariant();
+    }
+
+    /// <summary>True when <paramref name="text"/> is a well-formed <c>sha256sum</c> record for a safe file name with <paramref name="extension"/>.</summary>
+    public static bool IsValidRecord(string? text, string extension)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var line = text.Trim();
+        if (line.Contains('\n') || line.Contains('\r')) return false;
+        var space = line.IndexOf(' ');
+        if (space != 64) return false;
+        var hash = line[..64];
+        var name = line[65..].TrimStart('*', ' ');
+        return ReleaseManifest.IsSha256Hex(hash) && ReleaseManifest.IsSafeFileName(name, extension);
     }
 
     /// <summary>True when <paramref name="folder"/> holds exactly the manifest's verified release (same version and zip SHA-256, program present
@@ -46,31 +60,50 @@ public static class AppCache
 
     /// <summary>The cached version to report in AgentHello/Heartbeat: the highest valid-looking version folder with both records; "" when none.</summary>
     public static string PickCachedVersion(IEnumerable<CachedFolder> folders) =>
-        folders.Where(f => ReleaseManifest.IsSafeVersion(f.Name) && f.EntryExists && f.ZipRecord is not null && f.EntryRecord is not null)
+        folders.Where(f => ReleaseManifest.IsSafeVersion(f.Name) && f.EntryExists
+                    && IsValidRecord(f.ZipRecord, ".zip") && IsValidRecord(f.EntryRecord, ".exe"))
                .Select(f => f.Name)
                .OrderByDescending(n => n, Comparer<string>.Create(CompareVersions))
                .FirstOrDefault() ?? "";
 
-    /// <summary>Compares the numeric parts, then the suffix ("1.10.0" &gt; "1.9.0"; "1.2.0" &gt; "1.2.0-beta").</summary>
+    /// <summary>Compares the numeric parts, then the prerelease suffix ("1.10.0" &gt; "1.9.0"; "1.2.0" &gt; "1.2.0-beta"; "+build" metadata ignored per SemVer).</summary>
     public static int CompareVersions(string a, string b)
     {
-        static (long[] Nums, string Suffix) Split(string v)
+        static (long[] Nums, string Pre) Split(string v)
         {
-            var cut = v.IndexOfAny(['-', '+']);
-            var core = cut < 0 ? v : v[..cut];
+            var plus = v.IndexOf('+');
+            var withoutBuild = plus < 0 ? v : v[..plus];
+            var dash = withoutBuild.IndexOf('-');
+            var core = dash < 0 ? withoutBuild : withoutBuild[..dash];
             var nums = core.Split('.').Select(p => long.TryParse(p, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n) ? n : 0).ToArray();
-            return (nums, cut < 0 ? "" : v[cut..]);
+            return (nums, dash < 0 ? "" : withoutBuild[(dash + 1)..]);
         }
-        var (an, asfx) = Split(a);
-        var (bn, bsfx) = Split(b);
+        var (an, apre) = Split(a);
+        var (bn, bpre) = Split(b);
         for (var i = 0; i < Math.Max(an.Length, bn.Length); i++)
         {
             var c = (i < an.Length ? an[i] : 0).CompareTo(i < bn.Length ? bn[i] : 0);
             if (c != 0) return c;
         }
-        if (asfx.Length == 0 && bsfx.Length > 0) return 1;
-        if (bsfx.Length == 0 && asfx.Length > 0) return -1;
-        return string.CompareOrdinal(asfx, bsfx);
+        if (apre.Length == 0 && bpre.Length == 0) return 0;
+        if (apre.Length == 0) return 1;
+        if (bpre.Length == 0) return -1;
+        var ap = apre.Split('.');
+        var bp = bpre.Split('.');
+        for (var i = 0; i < Math.Max(ap.Length, bp.Length); i++)
+        {
+            if (i >= ap.Length) return -1;
+            if (i >= bp.Length) return 1;
+            var aIsNum = long.TryParse(ap[i], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var ai);
+            var bIsNum = long.TryParse(bp[i], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var bi);
+            int c;
+            if (aIsNum && bIsNum) c = ai.CompareTo(bi);
+            else if (aIsNum) return -1;
+            else if (bIsNum) return 1;
+            else c = string.CompareOrdinal(ap[i], bp[i]);
+            if (c != 0) return c;
+        }
+        return 0;
     }
 
     /// <summary>"45 of 129 MB" style progress text and percent.</summary>

@@ -21,7 +21,9 @@ internal sealed class FakeDiskFs : IDiskTestFileSystem
     public long GetFreeBytes(string driveRoot) => Free;
     public void CreateDirectory(string path) => Touched.Add(path);
     public IEnumerable<string> FindFiles(string directory, string searchPattern) =>
-        Files.Keys.Where(k => k.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) && Path.GetFileName(k).StartsWith("rpd-speedtest-") && k.EndsWith(".tmp")).ToList();
+        Files.Keys.Where(k =>
+            k.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+            System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(searchPattern, Path.GetFileName(k), ignoreCase: true)).ToList();
     public bool FileExists(string path) => Files.ContainsKey(path);
     public void DeleteFile(string path) { Deleted.Add(path); Files.Remove(path); }
     public void DeleteDirectoryIfEmpty(string path) { }
@@ -156,6 +158,8 @@ public class DiskSpeedTests
         var stale = Path.Combine(fs.Folder, "rpd-speedtest-0123456789abcdef0123456789abcdef.tmp");
         var other = Path.Combine(fs.Folder, "notes.txt");
         fs.Files[stale] = new KeepOpenStream(); fs.Files[other] = new KeepOpenStream();
+        Assert.Equal([stale], fs.FindFiles(fs.Folder, DiskSpeedTest.TempFilePattern));
+        Assert.Equal([other], fs.FindFiles(fs.Folder, "*.txt"));
         await new DiskSpeedTest(fs, NoSensors(), new FakeStressClock()).RunAsync(Opts());
         Assert.False(fs.Files.ContainsKey(stale));
         Assert.True(fs.Files.ContainsKey(other));
@@ -175,11 +179,13 @@ public class DiskSpeedTests
     [Fact]
     public async Task StopToken_StopsEarly_AndCleansUp()
     {
-        var fs = new FakeDiskFs();
+        using var cancelled = new ManualResetEventSlim();
+        int writes = 0;
+        var fs = new FakeDiskFs { Wrap = s => new SlowWriteStream(s, () => { if (++writes == 2) cancelled.Wait(TimeSpan.FromSeconds(5)); }) };
         using var cts = new CancellationTokenSource();
         int n = 0;
         var r = await new DiskSpeedTest(fs, NoSensors(), new FakeStressClock())
-            .RunAsync(Opts() with { RequestedSizeBytes = 256 * MB, MinTestBytes = 4 * MB }, new SyncProgress<DiskSpeedProgress>(_ => { if (++n == 2) cts.Cancel(); }), cts.Token);
+            .RunAsync(Opts() with { RequestedSizeBytes = 256 * MB, MinTestBytes = 4 * MB }, new SyncProgress<DiskSpeedProgress>(_ => { if (++n == 2) { cts.Cancel(); cancelled.Set(); } }), cts.Token);
         Assert.Equal(DiskSpeedOutcome.StoppedByUser, r.Outcome);
         Assert.Equal("Stopped by you", r.Headline);
         AssertCleaned(fs, r);
@@ -208,14 +214,17 @@ public class DiskSpeedTests
     [Fact]
     public async Task CriticalTemperature_Aborts_AndCleansUp()
     {
-        var fs = new FakeDiskFs();
+        using var overheated = new ManualResetEventSlim();
+        int writes = 0;
+        var fs = new FakeDiskFs { Wrap = s => new SlowWriteStream(s, () => { if (++writes == 2) overheated.Wait(TimeSpan.FromSeconds(5)); }) };
         // Samsung 990 PRO critical is 70°C (SensorThresholds.Ssd); second read is critical.
         var sensors = new SequenceSensorProvider(i => new SensorSnapshot(
         [
             new("Samsung SSD 990 PRO 2TB NVMe", HardwareKind.Storage, "Temperature", SensorKind.Temperature, i >= 2 ? 71 : 45, 40, 71, "°C"),
             new("Nuvoton", HardwareKind.Motherboard, "Fan #1", SensorKind.Fan, 900, 900, 900, "RPM"),
         ], true));
-        var r = await new DiskSpeedTest(fs, sensors, new FakeStressClock()).RunAsync(Opts() with { RequestedSizeBytes = 256 * MB, MinTestBytes = 4 * MB });
+        var progress = new SyncProgress<DiskSpeedProgress>(p => { if (p.DriveTemperatureC >= 71) overheated.Set(); });
+        var r = await new DiskSpeedTest(fs, sensors, new FakeStressClock()).RunAsync(Opts() with { RequestedSizeBytes = 256 * MB, MinTestBytes = 4 * MB }, progress);
         Assert.Equal(DiskSpeedOutcome.Overheated, r.Outcome);
         Assert.Equal("Stopped: drive got too hot", r.Headline);
         Assert.Equal(71, r.MaxDriveTemperatureC);
@@ -226,7 +235,7 @@ public class DiskSpeedTests
     public async Task TimeLimit_EndsRun()
     {
         var fs = new FakeDiskFs();
-        var clock = new FakeStressClock();
+        var clock = new FakeStressClock(maxElapsed: TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(1));
         var r = await new DiskSpeedTest(fs, NoSensors(), clock).RunAsync(Opts() with { MaxRandomPhase = TimeSpan.FromMinutes(10) });
         Assert.NotEqual(DiskSpeedOutcome.StoppedByUser, r.Outcome);
         Assert.InRange(r.Ran, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(2));

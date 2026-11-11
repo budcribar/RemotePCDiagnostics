@@ -33,24 +33,58 @@ public class AutoRunTests
 
     private sealed class SlowDetectModule(string name, Task<ModuleDetection> detection) : IDetectableModule
     {
+        public int DetectCalls;
+        public int RefreshCalls;
         public string Name => name;
         public Guid Id => TestIds.For(name);
         public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
         public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) => Task.FromResult(ModuleAvailability.Available);
-        public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default) => Task.FromResult(FakeModule.Ok(name));
-        public Task<ModuleDetection> DetectAsync(CancellationToken ct = default) => detection;
+        public Task<DiagnosticResult> RefreshAsync(IProgress<string>? p, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref RefreshCalls);
+            return Task.FromResult(FakeModule.Ok(name));
+        }
+        public Task<ModuleDetection> DetectAsync(CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref DetectCalls);
+            return detection;
+        }
     }
 
     [Fact]
-    public void Start_IncludesDetectableModule_WhoseDetectionIsStillRunning()
+    public async Task Start_IncludesDetectableModule_WhoseDetectionIsStillRunning()
     {
         // Drive health detects its drives at launch; auto-run used to skip it because Modules hides it until detection finishes.
-        var detection = new TaskCompletionSource<ModuleDetection>();
-        var svc = new DiagnosticsService(new ResultStore(), [new SlowDetectModule("SlowDetect", detection.Task)]);
-        Assert.DoesNotContain(svc.Modules, m => m.Name == "SlowDetect");
-        var tasks = AutoRun.Start(svc, _ => null, null, "SlowDetect");
-        Assert.Single(tasks);
-        detection.SetResult(ModuleDetection.NotApplicable("none here"));
+        var applicable = new TaskCompletionSource<ModuleDetection>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var presentMod = new SlowDetectModule("SlowPresent", applicable.Task);
+        var presentStore = new ResultStore();
+        var presentSvc = new DiagnosticsService(presentStore, [presentMod]);
+        Assert.DoesNotContain(presentSvc.Modules, m => m.Name == "SlowPresent");
+        var presentTasks = AutoRun.Start(presentSvc, _ => null, null, "SlowPresent");
+        Assert.Single(presentTasks);
+        applicable.SetResult(ModuleDetection.For([new ModuleInstance("dev-1", "Device 1")]));
+        var presentResults = await Task.WhenAll(presentTasks).WaitAsync(Wait);
+        Assert.Equal(DiagnosticStatus.Ok, Assert.Single(presentResults).Status);
+        Assert.Equal(DiagnosticStatus.Ok, presentStore.Get("SlowPresent").Status);
+        Assert.Equal(1, presentMod.DetectCalls);
+        Assert.Equal(1, presentMod.RefreshCalls);
+        Assert.Contains(presentSvc.Modules, m => m.Name == "SlowPresent");
+
+        // When detection resolves to NotApplicable, RefreshAsync must not run or store a bogus Ok, and DetectAsync runs only once.
+        var notApplicable = new TaskCompletionSource<ModuleDetection>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var absentMod = new SlowDetectModule("SlowDetect", notApplicable.Task);
+        var absentStore = new ResultStore();
+        var absentSvc = new DiagnosticsService(absentStore, [absentMod]);
+        Assert.DoesNotContain(absentSvc.Modules, m => m.Name == "SlowDetect");
+        var absentTasks = AutoRun.Start(absentSvc, _ => null, null, "SlowDetect");
+        Assert.Single(absentTasks);
+        notApplicable.SetResult(ModuleDetection.NotApplicable("none here"));
+        var absentResults = await Task.WhenAll(absentTasks).WaitAsync(Wait);
+        Assert.Equal(DiagnosticStatus.NotRun, Assert.Single(absentResults).Status);
+        Assert.Equal(DiagnosticStatus.NotRun, absentStore.Get("SlowDetect").Status);
+        Assert.Equal(1, absentMod.DetectCalls);
+        Assert.Equal(0, absentMod.RefreshCalls);
+        Assert.DoesNotContain(absentSvc.Modules, m => m.Name == "SlowDetect");
     }
 
     [Fact]

@@ -34,8 +34,8 @@ public enum StorageTargetMode
 /// <param name="Pattern">Contents: only file names matching this simple wildcard (e.g. "*.dmp").</param>
 /// <param name="TopLevelOnly">Contents: don't look into subfolders.</param>
 /// <param name="MaxFileBytes">Contents: only files at most this big (lock files are tiny).</param>
-/// <param name="DeleteFirst">Directory: file name patterns in the folder's top level deleted first; if one of them can't be deleted,
-/// the folder is left untouched (NuGet treats a version as installed while its .nupkg.metadata exists).</param>
+/// <param name="DeleteFirst">Directory: top-level marker patterns (e.g. NuGet's .nupkg.metadata / *.nupkg.sha512) deleted last only after
+/// verifying no file in the folder is in use, so a locked package is never left half-deleted or hidden from future scans.</param>
 public sealed record StorageTarget(string Root, string Path, StorageTargetMode Mode, DateTime? OlderThanUtc = null, string? Pattern = null,
     bool TopLevelOnly = false, long? MaxFileBytes = null, IReadOnlyList<string>? DeleteFirst = null)
 {
@@ -244,18 +244,159 @@ public static class StorageCleanupEngine
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { tally.InUse++; return false; }
     }
 
+    private static bool CanDeleteExclusively(FileInfo f)
+    {
+        FileAttributes attrs = 0;
+        var clearedReadOnly = false;
+        try
+        {
+            f.Refresh();
+            if (!f.Exists) return true;
+            if ((f.Attributes & FileAttributes.ReparsePoint) != 0) return false;
+            attrs = f.Attributes;
+            if ((attrs & FileAttributes.ReadOnly) != 0)
+            {
+                f.Attributes = attrs & ~FileAttributes.ReadOnly;
+                clearedReadOnly = true;
+            }
+            using var _ = new FileStream(f.FullName, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+        finally
+        {
+            if (clearedReadOnly)
+            {
+                try { f.Refresh(); if (f.Exists) f.Attributes = attrs; } catch { }
+            }
+        }
+    }
+
+    private static bool IsMarker(string name, IReadOnlyList<string> patterns)
+    {
+        foreach (var p in patterns)
+            if (FileSystemName.MatchesSimpleExpression(p, name)) return true;
+        return false;
+    }
+
+    private static void DeleteAtomicFolder(StorageTarget t, IReadOnlyList<string> markerPatterns, Tally tally, CancellationToken ct)
+    {
+        if (!System.IO.Directory.Exists(t.Path) || IsReparsePoint(t.Path)) return;
+        var root = Normalize(t.Path);
+        var dirs = new List<string>();
+        var markers = new List<FileInfo>();
+        var payload = new List<FileInfo>();
+        var pending = new Stack<string>();
+        pending.Push(t.Path);
+        var n = 0;
+        while (pending.TryPop(out var dir))
+        {
+            ct.ThrowIfCancellationRequested();
+            List<FileSystemInfo> entries;
+            try { entries = new DirectoryInfo(dir).EnumerateFileSystemInfos().ToList(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { tally.InUse++; return; }
+            var normDir = Normalize(dir);
+            dirs.Add(normDir);
+            var isTop = string.Equals(normDir, root, StringComparison.OrdinalIgnoreCase);
+            foreach (var e in entries)
+            {
+                if ((++n & 1023) == 0) ct.ThrowIfCancellationRequested();
+                if ((e.Attributes & FileAttributes.ReparsePoint) != 0) { tally.Links++; continue; }
+                if (e is DirectoryInfo d) { pending.Push(d.FullName); continue; }
+                var f = (FileInfo)e;
+                if (IsProtectedFile(f.Name)) { tally.Protected++; continue; }
+                if (isTop && IsMarker(f.Name, markerPatterns)) markers.Add(f);
+                else payload.Add(f);
+            }
+        }
+
+        // Pre-check exclusive access on every file (markers and payload) before deleting anything so a locked DLL or marker leaves the package complete.
+        foreach (var f in markers)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!CanDeleteExclusively(f)) { tally.InUse++; return; }
+        }
+        foreach (var f in payload)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!CanDeleteExclusively(f)) { tally.InUse++; return; }
+        }
+
+        // Delete payload files first: if a file becomes locked in a race, markers remain on disk so NuGet and future scans stay consistent.
+        string? checkedDir = null;
+        foreach (var f in payload)
+        {
+            ct.ThrowIfCancellationRequested();
+            var dir = f.DirectoryName!;
+            if (!string.Equals(dir, checkedDir, StringComparison.OrdinalIgnoreCase))
+            {
+                if (IsReparsePoint(dir)) { tally.Links++; return; }
+                checkedDir = dir;
+            }
+            f.Refresh();
+            if (!f.Exists) continue;
+            if (!TryDelete(f, tally)) return;
+        }
+
+        if (IsReparsePoint(root)) { tally.Links++; return; }
+        var backups = new List<(string Path, byte[] Bytes, DateTime LastWriteUtc, FileAttributes Attributes)>(markers.Count);
+        foreach (var m in markers)
+        {
+            try
+            {
+                m.Refresh();
+                if (m.Exists) backups.Add((m.FullName, System.IO.File.ReadAllBytes(m.FullName), m.LastWriteTimeUtc, m.Attributes));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { tally.InUse++; return; }
+        }
+
+        var deletedMarkers = new List<(string Path, byte[] Bytes, DateTime LastWriteUtc, FileAttributes Attributes)>(markers.Count);
+        for (var i = 0; i < markers.Count; i++)
+        {
+            var m = markers[i];
+            m.Refresh();
+            if (!m.Exists) continue;
+            if (!TryDelete(m, tally))
+            {
+                foreach (var b in deletedMarkers)
+                {
+                    try
+                    {
+                        System.IO.File.WriteAllBytes(b.Path, b.Bytes);
+                        System.IO.File.SetLastWriteTimeUtc(b.Path, b.LastWriteUtc);
+                        var normalAttrs = b.Attributes & ~FileAttributes.ReparsePoint;
+                        if (normalAttrs != 0) System.IO.File.SetAttributes(b.Path, normalAttrs);
+                        tally.Files--;
+                        tally.Bytes -= b.Bytes.Length;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                }
+                return;
+            }
+            var match = backups.FirstOrDefault(b => string.Equals(b.Path, m.FullName, StringComparison.OrdinalIgnoreCase));
+            if (match.Path is not null) deletedMarkers.Add(match);
+        }
+
+        foreach (var d in dirs.Distinct(StringComparer.OrdinalIgnoreCase).OrderByDescending(x => x.Length))
+        {
+            try
+            {
+                if (!System.IO.Directory.Exists(d) || IsReparsePoint(d) || System.IO.Directory.EnumerateFileSystemEntries(d).Any()) continue;
+                System.IO.Directory.Delete(d, recursive: false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
     private static void Delete(StorageTarget t, Tally tally, CancellationToken ct)
     {
-        if (t.Mode == StorageTargetMode.Directory && t.DeleteFirst is { Count: > 0 } first && System.IO.Directory.Exists(t.Path))
+        if (t.Mode == StorageTargetMode.Directory && t.DeleteFirst is { Count: > 0 } first)
         {
-            foreach (var pattern in first)
-            {
-                List<FileInfo> markers;
-                try { markers = new DirectoryInfo(t.Path).EnumerateFiles(pattern, new EnumerationOptions { RecurseSubdirectories = false, MatchType = MatchType.Simple, AttributesToSkip = 0 }).ToList(); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { tally.InUse++; return; }
-                foreach (var m in markers)
-                    if (!TryDelete(m, tally)) return; // can't remove the marker: leave the folder exactly as it is
-            }
+            DeleteAtomicFolder(t, first, tally, ct);
+            return;
         }
 
         var touched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

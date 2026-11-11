@@ -41,7 +41,10 @@ public class UndoabilityTests
     public async Task UndoAll_ReportsPermanentChangesAsLeftAsIs_NotFailures_AndForgetsThem()
     {
         var j = new MemoryChangeJournal();
-        j.Add(Rec(ChangeKind.PowerPlan, "", "a1841308-3541-4fab-bc81-f71556f20b4a", 10));
+        var powerSaver = Rec(ChangeKind.PowerPlan, "", "a1841308-3541-4fab-bc81-f71556f20b4a", 10);
+        Assert.EndsWith("(was Power saver)", Undoability.Describe(powerSaver));
+        Assert.EndsWith("(was Power saver)", Undoability.Describe(powerSaver with { Previous = "A1841308-3541-4FAB-BC81-F71556F20B4A" }));
+        j.Add(powerSaver);
         j.Add(Undoability.Permanent("updates:1", "Windows updates installed", "Remote user"));
         var undo = new UndoService(j, new SystemCommandRunner(new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""))));
         var r = await undo.UndoAllAsync("x");

@@ -76,7 +76,7 @@ public sealed class UserModeModuleTests : IDisposable
     public async Task A_missing_module_host_is_a_couldnt_run_result_not_a_crash()
     {
         var (manifest, _) = ModuleManifest.ReadFromAssembly(File.ReadAllBytes(Path.Combine(Modules, "SampleModule.dll")));
-        var proxy = new UserModeModuleProxy(new UserModeModule(Path.Combine(Modules, "SampleModule.dll"), manifest, manifest.ToDescriptor(manifest.Slug)),
+        using var proxy = new UserModeModuleProxy(new UserModeModule(Path.Combine(Modules, "SampleModule.dll"), manifest, manifest.ToDescriptor(manifest.Slug)),
             new ProcessModuleHostLauncher(Path.Combine(_root, "nowhere")));
         Assert.False((await proxy.CheckAvailabilityAsync()).IsAvailable);
         var r = await proxy.RefreshAsync(null);
@@ -113,5 +113,139 @@ public sealed class UserModeModuleTests : IDisposable
         Assert.Equal(DiagnosticStatus.Warning, back.Status);
         Assert.Equal("s", back.Report!.Summary);
         Assert.Null(ModuleHostMessage.Parse("not json"));
+    }
+
+    [Fact]
+    public async Task Shared_host_completes_stranded_readers_on_kill_and_leaves_reopened_host_alone()
+    {
+        var raws = new List<FakeRawConnection>();
+        var shared = new SharedBundledHost(_ =>
+        {
+            var raw = new FakeRawConnection();
+            raws.Add(raw);
+            return raw;
+        });
+        var (manifest, _) = ModuleManifest.ReadFromAssembly(File.ReadAllBytes(Path.Combine(Modules, "SampleModule.dll")));
+        var modA = new UserModeModule("a.dll", manifest, manifest.ToDescriptor("a")) { Bundled = true };
+        var modB = new UserModeModule("b.dll", manifest, manifest.ToDescriptor("b")) { Bundled = true };
+
+        using var vcA = shared.Start(modA);
+        using var vcB = shared.Start(modB);
+        var readA = vcA.ReadLineAsync(CancellationToken.None);
+        var readB = vcB.ReadLineAsync(CancellationToken.None);
+
+        // Kill on one virtual connection completes all active readers on that raw host immediately.
+        vcA.Kill();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        Assert.Null(await readA.WaitAsync(cts.Token));
+        Assert.Null(await readB.WaitAsync(cts.Token));
+
+        // Opening a fresh virtual connection starts a second raw host; the first raw host's read loop exiting afterwards must not close the new inbox.
+        using var vcA2 = shared.Start(modA);
+        Assert.Equal(2, raws.Count);
+        raws[0].EndOutput();
+        await Task.Delay(50);
+
+        raws[1].PushOutput(new ModuleHostMessage { Type = "availability", Available = true, Module = "a.dll" }.ToLine());
+        var reply = ModuleHostMessage.Parse((await vcA2.ReadLineAsync(cts.Token))!);
+        Assert.Equal("availability", reply?.Type);
+    }
+
+    [Fact]
+    public async Task Shared_host_orders_virtual_exit_strictly_before_reopened_refresh_and_ignores_superseded_dispose()
+    {
+        var raw = new FakeRawConnection();
+        var shared = new SharedBundledHost(_ => raw);
+        var (manifest, _) = ModuleManifest.ReadFromAssembly(File.ReadAllBytes(Path.Combine(Modules, "SampleModule.dll")));
+        var modA = new UserModeModule("a.dll", manifest, manifest.ToDescriptor("a")) { Bundled = true };
+        var modB = new UserModeModule("b.dll", manifest, manifest.ToDescriptor("b")) { Bundled = true };
+
+        using var keepAlive = shared.Start(modB);
+        var firstWriteGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        raw.HoldNextWrite(firstWriteGate.Task);
+
+        var vc1 = shared.Start(modA);
+        var slowWrite = vc1.WriteLineAsync(new ModuleHostMessage { Type = "refresh" }.ToLine(), CancellationToken.None);
+        vc1.Dispose(); // queues exit behind slowWrite
+
+        using var vc2 = shared.Start(modA);
+        var nextRefresh = vc2.WriteLineAsync(new ModuleHostMessage { Type = "refresh" }.ToLine(), CancellationToken.None);
+
+        firstWriteGate.SetResult();
+        await Task.WhenAll(slowWrite, nextRefresh);
+
+        var types = raw.WrittenLines.Select(l => ModuleHostMessage.Parse(l)!.Type).ToArray();
+        Assert.Equal(["refresh", "exit", "refresh"], types);
+
+        // Superseded connection: opening vc3 while vc2 is still open sends one exit now; disposing vc2 afterwards must not send a second exit.
+        raw.ClearWritten();
+        using var vc3 = shared.Start(modA);
+        vc2.Dispose();
+        await vc3.WriteLineAsync(new ModuleHostMessage { Type = "availability" }.ToLine(), CancellationToken.None);
+        var afterSupersede = raw.WrittenLines.Select(l => ModuleHostMessage.Parse(l)!.Type).ToArray();
+        Assert.Equal(["exit", "availability"], afterSupersede);
+    }
+
+    [Fact]
+    public async Task Proxy_forwards_live_updated_messages_during_refresh()
+    {
+        var (manifest, _) = ModuleManifest.ReadFromAssembly(File.ReadAllBytes(Path.Combine(Modules, "SampleModule.dll")));
+        var raw = new FakeRawConnection(onWrite: (r, line) =>
+        {
+            if (ModuleHostMessage.Parse(line)?.Type == "refresh")
+            {
+                var (payload, payloadType) = ModuleHostPayloads.Write(42.5d)!.Value;
+                r.PushOutput(new ModuleHostMessage { Type = "updated", Status = DiagnosticStatus.Running, Message = "Scan 42.5% complete", Payload = payload, PayloadType = payloadType }.ToLine());
+                r.PushOutput(new ModuleHostMessage { Type = "result", Status = DiagnosticStatus.Ok, Message = "Done", Report = new AreaReport([], "Done", DiagnosticStatus.Ok) }.ToLine());
+            }
+        });
+        using var proxy = new UserModeModuleProxy(new UserModeModule("x.dll", manifest, BuiltInModules.Descriptors.First()) { Bundled = true },
+            new DelegateLauncher(_ => raw));
+        var updates = new List<DiagnosticResult>();
+        proxy.Updated += (_, u) => updates.Add(u);
+
+        var final = await proxy.RefreshAsync(null);
+        Assert.Equal(DiagnosticStatus.Ok, final.Status);
+        var live = Assert.Single(updates);
+        Assert.Equal(DiagnosticStatus.Running, live.Status);
+        Assert.Equal(42.5d, Assert.IsType<DiagnosticResult<double>>(live).Data);
+    }
+
+    private sealed class DelegateLauncher(Func<UserModeModule, IModuleHostConnection> start) : IModuleHostLauncher
+    {
+        public IModuleHostConnection Start(UserModeModule module) => start(module);
+    }
+
+    private sealed class FakeRawConnection(Action<FakeRawConnection, string>? onWrite = null) : IModuleHostConnection
+    {
+        private readonly System.Threading.Channels.Channel<string> _out = System.Threading.Channels.Channel.CreateUnbounded<string>();
+        private readonly List<string> _written = [];
+        private Task? _holdNext;
+        private bool _exited;
+
+        public IReadOnlyList<string> WrittenLines { get { lock (_written) return [.. _written]; } }
+        public void ClearWritten() { lock (_written) _written.Clear(); }
+        public void HoldNextWrite(Task gate) { lock (_written) _holdNext = gate; }
+        public void PushOutput(string line) => _out.Writer.TryWrite(line);
+        public void EndOutput() { _exited = true; _out.Writer.TryComplete(); }
+
+        public async Task WriteLineAsync(string line, CancellationToken ct)
+        {
+            Task? hold;
+            lock (_written) { hold = _holdNext; _holdNext = null; }
+            if (hold is not null) await hold.WaitAsync(ct);
+            lock (_written) _written.Add(line);
+            onWrite?.Invoke(this, line);
+        }
+
+        public async Task<string?> ReadLineAsync(CancellationToken ct)
+        {
+            try { return await _out.Reader.ReadAsync(ct); }
+            catch (System.Threading.Channels.ChannelClosedException) { return null; }
+        }
+
+        public bool HasExited => _exited;
+        public void Kill() => _exited = true;
+        public void Dispose() => EndOutput();
     }
 }

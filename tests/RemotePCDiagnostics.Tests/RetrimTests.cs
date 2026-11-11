@@ -94,6 +94,13 @@ public class RetrimTests
         {
             new RetrimLog(path).Record("C:", Now);
             Assert.Equal(Now, new RetrimLog(path).All()['C']);
+
+            // Corrupt JSON on disk is ignored cleanly rather than crashing reads or subsequent writes.
+            File.WriteAllText(path, "{not-valid-json");
+            var recovered = new RetrimLog(path);
+            Assert.Empty(recovered.All());
+            recovered.Record("D:", Now);
+            Assert.Equal(Now, new RetrimLog(path).All()['D']);
         }
         finally { File.Delete(path); }
     }

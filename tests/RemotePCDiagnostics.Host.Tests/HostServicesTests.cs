@@ -126,7 +126,7 @@ public class HostServicesTests
             foreach (var d in BuiltInModules.Descriptors.Where(d => d.MergedInto is null))
             {
                 Assert.True(registered.TryGetValue(d.Id, out var m), $"{d.Slug} is not registered");
-                if (m is RemotePCDiagnostics.Core.Plugins.UserModeModuleProxy proxy)
+                if (m is RemotePCDiagnostics.Core.Plugins.IUserModeModule proxy)
                 {
                     // Its manifest asks to run out of process (module host), so only a stand-in is in the app.
                     Assert.True(proxy.Source.Bundled && proxy.Source.Manifest.OutOfProcess, $"{d.Slug} should not be a user-mode stand-in");
@@ -213,5 +213,54 @@ public class HostServicesTests
             Assert.NotNull(local.GetService<RemotePCDiagnostics.Core.Areas.ICopilotHandoff>());
             Assert.Null(remote.GetService<RemotePCDiagnostics.Core.Areas.ICopilotHandoff>());
         }
+    }
+
+    [Fact]
+    public void Custom_checks_folder_and_unsigned_marker_honor_overridden_folders()
+    {
+        var tempRoot = System.IO.Directory.CreateDirectory(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "rpcd-host-isolation-" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            var modulesDir = System.IO.Path.Combine(tempRoot, "modules");
+            var checksDir = System.IO.Path.Combine(tempRoot, "checks");
+            System.IO.Directory.CreateDirectory(modulesDir);
+            System.IO.Directory.CreateDirectory(checksDir);
+            RemotePCDiagnostics.Core.Plugins.UnsignedModulesSetting.Set(true, modulesDir);
+            var checkId = Guid.NewGuid();
+            System.IO.File.WriteAllText(System.IO.Path.Combine(checksDir, "custom.json"),
+                $$"""{"id":"{{checkId}}","slug":"custom.check","displayName":"Custom check","query":"SELECT 1;"}""");
+
+            using var local = new ServiceCollection()
+                .AddRemotePCDiagnosticsHost(new SessionContext(SessionMode.Local), _ => { }, (_, _, _) => { }, modulesDir, checksFolder: checksDir)
+                .BuildServiceProvider();
+            Assert.Contains(local.GetServices<IDiagnosticModule>(), m => m.Id == checkId);
+
+            // Remote sessions never enable unsigned modules even when the marker is present in modulesDir.
+            using var remote = new ServiceCollection()
+                .AddRemotePCDiagnosticsHost(new SessionContext(SessionMode.Remote, new Uri("https://relay.invalid")), _ => { }, (_, _, _) => { }, modulesDir, checksFolder: System.IO.Path.Combine(tempRoot, "empty-checks"))
+                .BuildServiceProvider();
+            Assert.DoesNotContain(remote.GetServices<IDiagnosticModule>(), m => m.Id == checkId);
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(tempRoot, true); } catch { }
+        }
+    }
+
+    [Theory]
+    [InlineData("retrim", "Windows (C:)", new[] { 'C' })]
+    [InlineData("TRIM", "(D:)", new[] { 'D' })]
+    [InlineData("retrim", @"E:\", new[] { 'E' })]
+    [InlineData("analysis", "Windows (C:)", new char[0])]
+    [InlineData("defragmentation", "Windows (C:)", new char[0])]
+    [InlineData("slab consolidation", "Windows (C:)", new char[0])]
+    [InlineData("free space consolidation", "Windows (C:)", new char[0])]
+    [InlineData("shrink estimation", "Windows (C:)", new char[0])]
+    [InlineData("boot optimization", "Windows (C:)", new char[0])]
+    [InlineData("storage tier optimization", "Windows (C:)", new char[0])]
+    [InlineData("", "Windows (C:)", new char[0])]
+    public void Defrag_event_258_counts_only_retrim_operations(string operation, string volume, char[] expected)
+    {
+        Assert.Equal(expected, WindowsRetrimEvents.RetrimLetters([operation, volume]));
     }
 }

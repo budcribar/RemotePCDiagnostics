@@ -94,7 +94,7 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
         var critical = all.Where(e => e.Level == 1).ToList();
         // Yellow only for critical problems or 5+ errors from the same source; routine/isolated errors stay green but listed.
         static (string Source, string Channel) Key(WinEvent e) => (e.Source.ToUpperInvariant(), e.Channel.ToUpperInvariant());
-        var repeated = all.Where(e => e.Level == 2).GroupBy(Key).Where(g => g.Count() >= RepeatErrors).Select(g => g.Key).ToHashSet();
+        var repeated = all.Where(e => e.Level is 1 or 2).GroupBy(Key).Where(g => g.Count() >= RepeatErrors).Select(g => g.Key).ToHashSet();
         var cards = new List<AreaCard>
         {
             new("critical", "Critical problems", critical.Count > 0 ? AreaLevel.Error : AreaLevel.Ok,
@@ -105,7 +105,7 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
         };
         AreaCard LogCard(string id, string title, IReadOnlyList<WinEvent>? events, string what) => events is null
             ? AreaCard.Failed(id, title, $"Couldn't read {what}.")
-            : new(id, title, events.Any(e => e.Level == 2 && repeated.Contains(Key(e))) ? AreaLevel.Warning : AreaLevel.Ok,
+            : new(id, title, events.Any(e => e.Level == 1 || (e.Level == 2 && repeated.Contains(Key(e)))) ? AreaLevel.Warning : AreaLevel.Ok,
                 events.Count == 0 ? "No errors" : AreaModuleBase.Plural(events.Count, "error") + (events.Count >= MaxPerLog ? " or more" : ""),
                 $"In the last {Days} days", GroupedCols, GroupedRows(events),
                 Note: "Most PCs log some errors; they only matter if they repeat or match a problem you're seeing. Identical errors are grouped; click a row for the full message.");
@@ -123,13 +123,13 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
                 Detail: SourceDetail(g), ReviewKeys: g.Select(EventReviews.Key).ToList())).ToList(),
             Note: "Click a source to see what it reported."));
 
-        var summary = all.Count == 0 && critical.Count == 0
+        var summary = system is not null && app is not null && all.Count == 0
             ? $"No errors in the last {Days} days"
             : $"Last {Days} days: " + string.Join(", ", new[]
             {
                 critical.Count > 0 ? AreaModuleBase.Plural(critical.Count, "critical problem") : null,
-                system is not null ? $"{system.Count(e => e.Level == 2)} Windows errors" : null,
-                app is not null ? $"{app.Count(e => e.Level == 2)} app errors" : null,
+                system is not null ? $"{system.Count(e => e.Level == 2)} Windows errors" : "couldn't read Windows errors",
+                app is not null ? $"{app.Count(e => e.Level == 2)} app errors" : "couldn't read app errors",
             }.Where(x => x is not null));
         var status = critical.Count > 0 || repeated.Count > 0 || system is null || app is null ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;
         return new(cards, summary, status);

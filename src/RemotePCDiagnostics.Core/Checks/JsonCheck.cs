@@ -81,7 +81,9 @@ public sealed record JsonCheck
         if (string.IsNullOrWhiteSpace(Slug) || !Slug.Contains('.')) return "slug must be vendor.name";
         if (string.IsNullOrWhiteSpace(Query)) return "no query";
         var q = Query.Trim().TrimEnd(';').Trim();
-        if (!(q.StartsWith("select ", StringComparison.OrdinalIgnoreCase) || q.StartsWith("with ", StringComparison.OrdinalIgnoreCase)))
+        static bool StartsWithKeyword(string sql, string keyword) =>
+            sql.Length > keyword.Length && sql.StartsWith(keyword, StringComparison.OrdinalIgnoreCase) && char.IsWhiteSpace(sql[keyword.Length]);
+        if (!(StartsWithKeyword(q, "select") || StartsWithKeyword(q, "with")))
             return "the query must be a SELECT";
         if (q.Contains(';') || q.StartsWith('.')) return "the query must be one statement";
         var words = q.Split([' ', '\t', '\r', '\n', ',', '(', ')', '"', '\'', '`', '[', ']', '/', '*', '=', '.'], StringSplitOptions.RemoveEmptyEntries);

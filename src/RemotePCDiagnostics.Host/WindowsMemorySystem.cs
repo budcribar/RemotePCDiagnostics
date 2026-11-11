@@ -634,33 +634,28 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
 
     // One cache for the whole app: several WindowsMemorySystem instances exist (memory page, benchmarks, --undo-all).
     private static StorageCleanupCache? s_cleanupCache;
-    private static IProgress<string>? s_cleanupProgress;
+    private static readonly AsyncLocal<(WindowsMemorySystem Self, IProgress<string>? Progress)?> s_cleanupCaller = new();
     private static readonly object s_cleanupGate = new();
 
     public Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, CancellationToken ct) => ScanStorageCleanupsAsync(refresh, null, ct);
 
-    public Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, IProgress<string>? progress, CancellationToken ct)
+    public async Task<IReadOnlyList<StorageCleanupItem>> ScanStorageCleanupsAsync(bool refresh, IProgress<string>? progress, CancellationToken ct)
     {
         StorageCleanupCache cache;
-        lock (s_cleanupGate) s_cleanupProgress = progress;
         lock (s_cleanupGate) cache = s_cleanupCache ??= new(async c =>
         {
-            IProgress<string>? p;
-            lock (s_cleanupGate) p = s_cleanupProgress;
+            var caller = s_cleanupCaller.Value;
+            var p = caller?.Progress;
+            var logger = caller?.Self.Logger;
             var total = StorageCleanupCatalog.All.Count + 3;
             p.ReportStep(1, total, "Finding developer projects…");
-            var roots = (await DevProjects.FindAsync(Logger, c).ConfigureAwait(false)).Select(r => r.Path).ToList();
-            return await Task.Run(() => ScanStorageCleanups(ReadDevices(), Logger, c, roots, p, 1, total), c).ConfigureAwait(false);
+            var roots = (await DevProjects.FindAsync(logger, c).ConfigureAwait(false)).Select(r => r.Path).ToList();
+            return await Task.Run(() => ScanStorageCleanups(caller is { } ctx ? ctx.Self.ReadDevices() : [], logger, c, roots, p, 1, total), c).ConfigureAwait(false);
         });
-        return cache.GetAsync(refresh, ct);
-    }
-
-    private static void KeepGate() { Action _ = (() =>
-        {
-
-
-        });
-
+        var prior = s_cleanupCaller.Value;
+        s_cleanupCaller.Value = (this, progress);
+        try { return await cache.GetAsync(refresh, ct).ConfigureAwait(false); }
+        finally { s_cleanupCaller.Value = prior; }
     }
 
     private const string PersonalizeKey = @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
@@ -697,7 +692,8 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
         {
             var rows = new List<PageFileSize>();
             using var searcher = new ManagementObjectSearcher("SELECT Name, InitialSize, MaximumSize FROM Win32_PageFileSetting");
-            foreach (ManagementObject o in searcher.Get())
+            using var results = searcher.Get();
+            foreach (ManagementObject o in results)
                 using (o) rows.Add(new((string)o["Name"], Convert.ToUInt32(o["InitialSize"] ?? 0u), Convert.ToUInt32(o["MaximumSize"] ?? 0u)));
             return rows.Count == 0 ? null : Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(rows)));
         }
@@ -725,24 +721,29 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
             SetAutomaticPageFile(false);
             foreach (var row in rows)
             {
-                using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_PageFileSetting");
                 ManagementObject? existing = null;
-                foreach (ManagementObject o in searcher.Get())
+                try
                 {
-                    if (existing is null && string.Equals(o["Name"] as string, row.Name, StringComparison.OrdinalIgnoreCase)) existing = o; else o.Dispose();
-                }
-                if (existing is null)
-                {
-                    using var cls = new ManagementClass("Win32_PageFileSetting");
-                    existing = cls.CreateInstance();
-                    existing["Name"] = row.Name;
-                }
-                using (existing)
-                {
+                    using (var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_PageFileSetting"))
+                    using (var results = searcher.Get())
+                    {
+                        foreach (ManagementObject o in results)
+                        {
+                            if (existing is null && string.Equals(o["Name"] as string, row.Name, StringComparison.OrdinalIgnoreCase)) existing = o;
+                            else o.Dispose();
+                        }
+                    }
+                    if (existing is null)
+                    {
+                        using var cls = new ManagementClass("Win32_PageFileSetting");
+                        existing = cls.CreateInstance();
+                        existing["Name"] = row.Name;
+                    }
                     existing["InitialSize"] = row.InitialSize;
                     existing["MaximumSize"] = row.MaximumSize;
                     existing.Put();
                 }
+                finally { existing?.Dispose(); }
             }
             Log($"Restore page file: {rows.Count} setting(s)");
             return new ActionOutcome(true, "Custom page file size restored (takes effect after a restart).");
@@ -757,7 +758,8 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
     private static void SetAutomaticPageFile(bool automatic)
     {
         using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_ComputerSystem");
-        foreach (ManagementObject cs in searcher.Get())
+        using var results = searcher.Get();
+        foreach (ManagementObject cs in results)
             using (cs) { cs["AutomaticManagedPagefile"] = automatic; cs.Put(); }
     }
 

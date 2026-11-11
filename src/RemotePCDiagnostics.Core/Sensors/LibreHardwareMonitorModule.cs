@@ -37,11 +37,13 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
             g.MissingLabel)).ToList());
     }
 
-    public static DiagnosticStatus ToStatus(SensorReport report, SensorSnapshot snap) => report.Level switch
+    public static DiagnosticStatus ToStatus(SensorReport report, SensorSnapshot snap) => ToStatus(report);
+
+    public static DiagnosticStatus ToStatus(SensorReport report) => report.Level switch
     {
         SensorLevel.Critical => DiagnosticStatus.Error,
         SensorLevel.Warning => DiagnosticStatus.Warning,
-        _ when snap.Readings.Count == 0 => DiagnosticStatus.Warning,
+        _ when report.Snapshot.Readings.Count == 0 => DiagnosticStatus.Warning,
         _ => DiagnosticStatus.Ok,
     };
 

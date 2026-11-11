@@ -53,6 +53,16 @@ public sealed class PreferencesTests : IDisposable
 
         svc.RememberFixChoices(Enumerable.Range(0, UserPreferences.MaxFixChoices + 50).Select(i => ($"x{i}", true)));
         Assert.Equal(UserPreferences.MaxFixChoices, svc.Current.WorkflowFixChoices.Count);
+
+        var lru = new PreferencesService(new MemoryPreferencesStore());
+        lru.RememberFixChoices(Enumerable.Range(0, UserPreferences.MaxFixChoices).Select(i => ($"item-{i}", true)));
+        lru.RememberFixChoices([("item-0", false)]); // touched: moves to most-recently-used position
+        lru.RememberFixChoices([($"item-{UserPreferences.MaxFixChoices}", true)]);
+        Assert.Equal(UserPreferences.MaxFixChoices, lru.Current.WorkflowFixChoices.Count);
+        Assert.True(lru.Current.WorkflowFixChoices.TryGetValue("item-0", out var item0On));
+        Assert.False(item0On);
+        Assert.False(lru.Current.WorkflowFixChoices.ContainsKey("item-1")); // oldest untouched item evicted
+        Assert.True(lru.Current.WorkflowFixChoices.ContainsKey($"item-{UserPreferences.MaxFixChoices}"));
     }
 
     [Fact]

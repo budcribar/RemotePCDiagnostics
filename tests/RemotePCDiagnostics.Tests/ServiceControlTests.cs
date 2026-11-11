@@ -1,4 +1,6 @@
+using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Tests;
@@ -12,7 +14,9 @@ public class ServiceControlTests
         public Dictionary<string, List<DependentService>> Dependents { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<string> Calls { get; } = [];
         public bool NeverReaches { get; set; }
+        public HashSet<string> NeverReachesServices { get; } = new(StringComparer.OrdinalIgnoreCase);
         public bool ThrowOnStart { get; set; }
+        public HashSet<string> ThrowOnStartServices { get; } = new(StringComparer.OrdinalIgnoreCase);
         public bool BlockUntilCancelled { get; set; }
 
         public ServiceState GetState(string name) => States.TryGetValue(name, out var s) ? s : ServiceState.NotFound;
@@ -22,13 +26,13 @@ public class ServiceControlTests
         public void Start(string name)
         {
             Calls.Add("start:" + name);
-            if (ThrowOnStart) throw new InvalidOperationException("Cannot start service Spooler on computer '.' (raw)");
-            if (!NeverReaches) States[name] = ServiceState.Running;
+            if (ThrowOnStart || ThrowOnStartServices.Contains(name)) throw new InvalidOperationException($"Cannot start service {name} on computer '.' (raw)");
+            if (!NeverReaches && !NeverReachesServices.Contains(name)) States[name] = ServiceState.Running;
         }
         public void Stop(string name)
         {
             Calls.Add("stop:" + name);
-            if (NeverReaches) return;
+            if (NeverReaches || NeverReachesServices.Contains(name)) return;
             foreach (var d in GetRunningDependents(name)) States[d.Name] = ServiceState.Stopped;
             States[name] = ServiceState.Stopped;
         }
@@ -43,11 +47,11 @@ public class ServiceControlTests
     private static ServiceInfo Svc(string name, string display, string status, string start = "DEMAND_START", string desc = "") =>
         new(name, display, status, start, "LocalSystem", desc);
 
-    private static (ServiceActionService svc, FakeBackend be, List<string> log) Make(SessionMode mode = SessionMode.Local)
+    private static (ServiceActionService svc, FakeBackend be, List<string> log) Make(SessionMode mode = SessionMode.Local, IChangeJournal? journal = null)
     {
         var be = new FakeBackend();
         var log = new List<string>();
-        return (new ServiceActionService(be, new SessionContext(mode), new LineLogger(log.Add), TimeSpan.FromSeconds(1)), be, log);
+        return (new ServiceActionService(be, new SessionContext(mode), new LineLogger(log.Add), TimeSpan.FromSeconds(1), journal), be, log);
     }
 
     [Theory]
@@ -211,5 +215,52 @@ public class ServiceControlTests
     {
         var rep = ServicesModule.Build([Svc("Spooler", "Print Spooler", "RUNNING")]);
         Assert.Equal("Spooler", rep.Cards.Single(c => c.Id == "running").Rows.Single().Key);
+    }
+
+    [Fact]
+    public async Task Stop_WithRunningDependents_JournalsAll_AndUndoRestartsParentBeforeDependents()
+    {
+        var journal = new MemoryChangeJournal();
+        var (svc, be, _) = Make(SessionMode.Remote, journal);
+        be.States["LanmanServer"] = ServiceState.Running;
+        be.States["MidDep"] = ServiceState.Running;
+        be.States["LeafDep"] = ServiceState.Running;
+        be.States["AlreadyStopped"] = ServiceState.Stopped;
+        be.Dependents["LanmanServer"] = [new("MidDep", "Mid Service"), new("LeafDep", "Leaf Service"), new("AlreadyStopped", "Stopped Service")];
+
+        var r = await svc.ExecuteAsync(Svc("LanmanServer", "Server", "RUNNING"), ServiceAction.Stop);
+        Assert.True(r.Success);
+        Assert.Equal(["LeafDep", "MidDep", "LanmanServer"], journal.All.Select(c => c.Target));
+        Assert.All(journal.All, c => Assert.Equal((ChangeKind.ServiceRunning, "Running", "Remote user"), (c.Kind, c.Previous, c.Actor)));
+
+        be.Calls.Clear();
+        var undo = await new UndoService(journal, new SystemCommandRunner(new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""))), services: be).UndoAllAsync("Remote user");
+        Assert.Equal(3, undo.Succeeded);
+        Assert.Empty(journal.All);
+        Assert.Equal(["start:LanmanServer", "wait:LanmanServer:Running", "start:MidDep", "wait:MidDep:Running", "start:LeafDep", "wait:LeafDep:Running"], be.Calls);
+    }
+
+    [Fact]
+    public async Task Restart_DependentFailureOrTimeout_SurfacesPlainMessage_AndJournalsStoppedDependents()
+    {
+        var journal = new MemoryChangeJournal();
+        var (svc, be, log) = Make(SessionMode.Local, journal);
+        be.States["Spooler"] = ServiceState.Running;
+        be.States["DepThrow"] = ServiceState.Running;
+        be.States["DepSlow"] = ServiceState.Running;
+        be.States["DepOk"] = ServiceState.Running;
+        be.Dependents["Spooler"] = [new("DepOk", "Healthy Dependent"), new("DepThrow", "Broken Dependent"), new("DepSlow", "Slow Dependent")];
+        be.ThrowOnStartServices.Add("DepThrow");
+        be.NeverReachesServices.Add("DepSlow");
+
+        var r = await svc.ExecuteAsync(Svc("Spooler", "Print Spooler", "RUNNING"), ServiceAction.Restart);
+        Assert.False(r.Success);
+        Assert.Contains("Broken Dependent", r.Message);
+        Assert.Contains("Slow Dependent", r.Message);
+        Assert.DoesNotContain("Healthy Dependent", r.Message);
+        Assert.DoesNotContain("computer", r.Message); // no raw exception text
+        Assert.Contains(log, l => l.Contains("InvalidOperationException"));
+        Assert.Equal(["DepSlow", "DepThrow"], journal.All.Select(c => c.Target));
+        Assert.All(journal.All, c => Assert.Equal("Running", c.Previous));
     }
 }
