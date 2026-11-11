@@ -666,6 +666,7 @@ public sealed class DiagnosticsService
             .Select(n => _modules.FirstOrDefault(m => string.Equals(m.Name, n, StringComparison.OrdinalIgnoreCase)) as IStressSuiteModule)
             .Where(m => m is not null).Cast<IStressSuiteModule>().ToList();
         var steps = modules.Select(m => new StressSuiteStep(m.Name, m.SuiteName, StressSuiteStepState.Pending)).ToArray();
+        var failed = new bool[steps.Length]; // the test found a problem (Error), as opposed to a warning
         var label = StressSuite.RunLabel(mode);
         void Report(int index, bool finished, string? message)
         {
@@ -760,17 +761,38 @@ public sealed class DiagnosticsService
                     Log.Warn($"Stress suite: {m.Name} skipped (couldn't run: {r.Message})");
                     continue;
                 }
-                if (r.Status == DiagnosticStatus.Error || m.IsOverheatedResult(r))
+                if (m.IsOverheatedResult(r))
                 {
-                    var hot = m.IsOverheatedResult(r);
+                    // Too hot is the one result that ends the run: more load on a PC that just overheated is not safe.
                     steps[i] = steps[i] with { State = StressSuiteStepState.Problem, Message = r.Message };
-                    return Finish(StressSuiteOutcome.StoppedOnProblem, (hot
-                        ? $"Stress tests stopped: the PC got too hot during the {m.SuiteName} test. The remaining tests were not run."
-                        : $"Stress tests stopped: the {m.SuiteName} test found a problem ({r.Message}). The remaining tests were not run.") + SkippedNote(i), i + 1);
+                    return Finish(StressSuiteOutcome.StoppedOnProblem,
+                        $"Stress tests stopped: the PC got too hot during the {m.SuiteName} test. The remaining tests were not run." + ProblemNote(i) + SkippedNote(i), i + 1);
                 }
+                // A test that found a problem does not end the run: the rest still run, so one run shows every failure.
                 steps[i] = steps[i] with { State = r.Status == DiagnosticStatus.Ok ? StressSuiteStepState.Passed : StressSuiteStepState.Problem, Message = r.Message };
+                if (r.Status == DiagnosticStatus.Error)
+                {
+                    failed[i] = true;
+                    Log.Warn($"Stress suite: {m.Name} found a problem ({r.Message}); continuing with the remaining tests");
+                }
             }
-            return Finish(StressSuiteOutcome.Completed, $"Stress tests finished ({label})." + SkippedNote(steps.Length), steps.Length);
+            return Finish(StressSuiteOutcome.Completed, $"Stress tests finished ({label})." + ProblemNote(steps.Length) + SkippedNote(steps.Length), steps.Length);
+
+            // " The Memory test found a problem (Memory errors found)." / " 2 tests found a problem: Memory (...); Disk (...)." for the
+            // failed (Error) steps so far. Warnings are shown on their rows and are not repeated here.
+            string ProblemNote(int upTo)
+            {
+                var parts = new List<(string Name, string Message)>();
+                for (var k = 0; k < upTo && k < steps.Length; k++)
+                    if (failed[k])
+                        parts.Add((steps[k].DisplayName, steps[k].Message ?? ""));
+                return parts.Count switch
+                {
+                    0 => "",
+                    1 => $" The {parts[0].Name} test found a problem ({parts[0].Message}).",
+                    _ => $" {parts.Count} tests found a problem: {string.Join("; ", parts.Select(x => $"{x.Name} ({x.Message})"))}.",
+                };
+            }
 
             // " Skipped: Memory (couldn't run: not enough free memory)." for steps skipped so far (not "not available" ones).
             string SkippedNote(int upTo)
