@@ -163,9 +163,10 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
             case ChangeKind.BrowserSettings:
                 if (memory is null || c.Previous is null) return Fail("The original setting wasn't recorded.");
-                var kind = Enum.Parse<BrowserKind>(c.Target);
+                if (!Enum.TryParse<BrowserKind>(c.Target, out var kind)) return Fail("The browser wasn't recognized.");
                 if (memory.IsBrowserRunning(kind)) return Fail($"Close {BrowserPrefs.Label(kind)} first, then undo.");
-                memory.WriteBrowserLocalState(kind, c.Previous);
+                if (!BrowserSuggestions.TryRestoreMemorySaver(memory, kind, c.Previous))
+                    return Fail($"Couldn't restore the {BrowserPrefs.FeatureName(kind)} setting in {BrowserPrefs.Label(kind)}.");
                 return Ok("Browser setting restored.");
 
             case ChangeKind.BrowserLocalStateValue:

@@ -66,11 +66,19 @@ public class HomeAuditProfileTests
         }
     }
 
+    private static string FindRepoRoot()
+    {
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "RemotePCDiagnostics.sln")))
+                return d.FullName;
+        throw new DirectoryNotFoundException("Could not find RemotePCDiagnostics.sln above " + AppContext.BaseDirectory);
+    }
+
     [Fact]
     public void Every_relevant_id_is_in_the_bundled_baseline()
     {
-        var csv = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "third_party", "HardeningKitty", "module", "lists", "finding_list_0x6d69636b_machine.csv");
-        if (!File.Exists(csv)) return; // the baseline isn't next to the test output on every build
+        var csv = Path.Combine(FindRepoRoot(), "third_party", "HardeningKitty", "module", "lists", "finding_list_0x6d69636b_machine.csv");
+        Assert.True(File.Exists(csv), $"Bundled HardeningKitty baseline missing at {csv}");
         var ids = File.ReadLines(csv).Skip(1).Select(l => l.Split(',')[0].Trim()).ToHashSet();
         foreach (var id in HomeAuditProfile.RelevantIds) Assert.Contains(id, ids);
     }

@@ -26,7 +26,8 @@ public class WindowsSettingsReadTests
         if (adapter is null) return; // no connected adapter on this PC
         var dns = settings.GetAdapterDns(adapter.Name);
         Assert.NotNull(dns);
-        Assert.All(dns.Split(',', StringSplitOptions.RemoveEmptyEntries), s => Assert.True(System.Net.IPAddress.TryParse(s, out _), s));
+        if (dns.Length > 0)
+            Assert.All(dns.Split(',', StringSplitOptions.RemoveEmptyEntries), s => Assert.True(System.Net.IPAddress.TryParse(s, out _), s));
     }
 
     [Fact]
@@ -39,8 +40,9 @@ public class WindowsSettingsReadTests
         Assert.All(doc.RootElement.EnumerateArray(), e =>
         {
             Assert.Contains(".sys", e.GetProperty("Name").GetString(), StringComparison.OrdinalIgnoreCase);
-            Assert.True(e.GetProperty("InitialSize").GetUInt32() >= 0);
-            Assert.True(e.GetProperty("MaximumSize").GetUInt32() >= 0);
+            var initial = e.GetProperty("InitialSize").GetUInt32();
+            var max = e.GetProperty("MaximumSize").GetUInt32();
+            Assert.True(max >= initial, $"MaximumSize ({max}) < InitialSize ({initial})");
         });
     }
 }

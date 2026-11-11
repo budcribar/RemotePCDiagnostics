@@ -283,4 +283,53 @@ public sealed class HistoryTests
         Assert.Equal(0, summary.ServicesAdjustedCount);
         Assert.StartsWith($"Done: {service} stopped until the next restart.", summary.Fixes[0].Summary);
     }
+
+    [Fact]
+    public async Task Summary_DeduplicatesAcrossMinuteBoundary_AndPreservesDistinctRunsInSameMinute()
+    {
+        var backend = new StubServiceBackend();
+        var svcActions = new ServiceActionService(backend, new SessionContext(SessionMode.Local));
+        var info = new ServiceInfo("Spooler", "Print Spooler", "RUNNING", "AUTO_START", "LocalSystem", "");
+        await svcActions.ExecuteAsync(info, ServiceAction.Stop);
+
+        var liveUtc = new DateTimeOffset(svcActions.Recent[0].When).ToUniversalTime();
+        var crossMinuteUtc = liveUtc.Second >= 30
+            ? liveUtc.AddSeconds(60 - liveUtc.Second)
+            : liveUtc.AddSeconds(-(liveUtc.Second + 1));
+        Assert.NotEqual(liveUtc.UtcDateTime.Minute, crossMinuteUtc.UtcDateTime.Minute);
+
+        var persistedCrossMinute = new HistoryEntry(crossMinuteUtc, HistorySummary.ServiceFixModuleId, "Service (Stop)", "OK",
+            "Print Spooler stopped", 1.0, null, [new("Action", "Stop"), new("Actor", "Local user"), new("Service", "Spooler")], "PC1", "1.0");
+        var deduped = HistorySummary.Build([persistedCrossMinute], services: svcActions, range: HistoryRange.All);
+        Assert.Single(deduped.Fixes);
+        Assert.Equal(1, deduped.TotalFixesCount);
+        Assert.Equal(1, deduped.ServicesAdjustedCount);
+
+        // A second distinct stop in the same minute must not be dropped when neither (or only the first) is persisted.
+        backend.State = ServiceState.Running;
+        await svcActions.ExecuteAsync(info, ServiceAction.Stop);
+        Assert.Equal(2, svcActions.Recent.Count);
+
+        var bothLive = HistorySummary.Build([], services: svcActions, range: HistoryRange.All);
+        Assert.Equal(2, bothLive.Fixes.Count);
+        Assert.Equal(2, bothLive.ServicesAdjustedCount);
+
+        var onePersistedOneLive = HistorySummary.Build([persistedCrossMinute], services: svcActions, range: HistoryRange.All);
+        Assert.Equal(2, onePersistedOneLive.Fixes.Count);
+        Assert.Equal(2, onePersistedOneLive.ServicesAdjustedCount);
+    }
+
+    [Fact]
+    public void Trend_And_TrendKey_MatchModuleCaseInsensitively()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var list = new[]
+        {
+            E(now.AddHours(-1), "cpustress", m: [("MaxCpuTemperatureC", "72.5")]),
+            E(now, "CPUSTRESS", m: [("MaxCpuTemperatureC", "79")]),
+        };
+        Assert.NotNull(HistoryQuery.TrendKey("cpustress"));
+        Assert.Equal(new[] { 72.5, 79.0 }, HistoryQuery.Trend(list, "cpustress").Select(p => p.Value));
+        Assert.Equal(new[] { 72.5, 79.0 }, HistoryQuery.Trend(list, "CpuStress").Select(p => p.Value));
+    }
 }

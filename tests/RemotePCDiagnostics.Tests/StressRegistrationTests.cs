@@ -42,4 +42,44 @@ public class StressRegistrationTests
         await cleanup.RunAsync();
         Assert.Equal(0, cleanup.Pending);
     }
+
+    [Fact]
+    public async Task NetworkTest_RegistersCleanup_StopsActiveTransfers_AndPostRunCleanupIsHarmless()
+    {
+        var cleanup = new StressCleanup();
+        var o = new NetworkTestOptions { Duration = TimeSpan.FromSeconds(10), Interval = TimeSpan.FromSeconds(1), SpeedTestDelay = TimeSpan.FromSeconds(1) };
+        var test = new NetworkTest(new FakePinger((_, _) => 10), new FakeGateway("192.168.1.1"), new FakeSpeed(),
+            new FakeCounters(new AdapterTotals(0, 0), new AdapterTotals(0, 0)), SequenceSensorProvider.Unavail(), null, new FakeStressClock(), null, cleanup);
+        var finished = await test.RunAsync(o);
+        Assert.Equal(NetworkTestOutcome.Stable, finished.Outcome);
+        Assert.Equal(1, cleanup.Pending);
+        await cleanup.RunAsync();
+        Assert.Equal(0, cleanup.Pending);
+
+        var downloadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var blockingSpeed = new BlockingSpeedTester(downloadStarted);
+        var activeCleanup = new StressCleanup();
+        var running = new NetworkTest(new FakePinger((_, _) => 10), new FakeGateway("192.168.1.1"), blockingSpeed,
+            new FakeCounters(new AdapterTotals(0, 0)), SequenceSensorProvider.Unavail(), null, new FakeStressClock(), null, activeCleanup)
+            .RunAsync(o with { Duration = TimeSpan.FromMinutes(1), SpeedTestDelay = TimeSpan.Zero });
+        await downloadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await activeCleanup.RunAsync();
+        var cancelled = await running.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(NetworkTestOutcome.StoppedByUser, cancelled.Outcome);
+        Assert.True(blockingSpeed.DownloadCancelled);
+    }
+
+    private sealed class BlockingSpeedTester(TaskCompletionSource started) : ISpeedTester
+    {
+        public bool DownloadCancelled;
+        public async Task<TransferResult> DownloadAsync(long maxBytes, TimeSpan timeout, CancellationToken ct)
+        {
+            started.TrySetResult();
+            try { await Task.Delay(Timeout.Infinite, ct); }
+            catch (OperationCanceledException) { DownloadCancelled = true; throw; }
+            return new TransferResult(0, TimeSpan.Zero);
+        }
+        public Task<TransferResult> UploadAsync(long bytes, TimeSpan timeout, CancellationToken ct) =>
+            Task.FromResult(new TransferResult(0, TimeSpan.Zero));
+    }
 }

@@ -79,16 +79,19 @@ internal sealed class SuggestionContext(IMemorySystem sys, IChangeJournal? journ
     {
         var items = RegistryUndo.Decode(u.Previous);
         if (items.Count == 0) return new(false, "The original setting wasn't recorded.");
-        var failed = new List<string>();
-        foreach (var item in Enumerable.Reverse(items)) // last written first: the first write is the one that created any keys
+        var remaining = new List<RegistryUndo.Item>();
+        for (var i = items.Count - 1; i >= 0; i--) // last written first: the first write is the one that created any keys
         {
+            var item = items[i];
             bool ok;
             try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Logger).Ok; }
             catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
             if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
-            else failed.Add(item.Target);
+            else remaining.Insert(0, item);
         }
-        return failed.Count == 0
+        if (remaining.Count > 0 && remaining.Count < items.Count)
+            AddUndo(u with { Previous = RegistryUndo.Encode(remaining) });
+        return remaining.Count == 0
             ? new(true, done ?? $"{u.Label} turned back on. Takes full effect after a restart.")
             : new(false, $"Windows didn't allow turning {u.Label} back on (administrator rights needed).");
     }

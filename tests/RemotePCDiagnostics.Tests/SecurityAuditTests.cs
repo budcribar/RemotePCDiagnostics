@@ -74,6 +74,20 @@ public sealed class SecurityAuditTests : IDisposable
     }
 
     [Fact]
+    public void Critical_severity_classifies_as_failed_and_counts_as_high_risk()
+    {
+        const string csv = "ID,Category,Name,Severity,Result,Recommended,TestResult,SeverityFinding\n" +
+            "1000,Features,SMBv1,Critical,Enabled,Disabled,,\n" +
+            "1103,Account Policies,Reversible passwords,High,1,0,Failed,Critical\n";
+        var findings = HardeningKittyCsv.Parse(csv);
+        Assert.Equal([AuditOutcome.Failed, AuditOutcome.Failed], findings.Select(f => f.Outcome));
+        var report = new SecurityAuditReport(findings, Profile: new PcProfile(false, false, false, "Core"));
+        Assert.Equal(2, report.HighRisk);
+        Assert.Equal(DiagnosticStatus.Error, report.Status);
+        Assert.StartsWith("2 high-risk · ", report.Summary);
+    }
+
+    [Fact]
     public void Arguments_bypass_policy_for_process_only_and_escape_quotes()
     {
         var a = SecurityAuditModule.BuildArguments(@"C:\a'b\HardeningKitty.psd1", @"C:\t\r.csv");

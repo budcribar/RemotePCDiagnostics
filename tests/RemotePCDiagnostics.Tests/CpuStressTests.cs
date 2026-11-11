@@ -5,7 +5,7 @@ using RemotePCDiagnostics.Core.Stress;
 namespace RemotePCDiagnostics.Tests;
 
 /// <summary>Manual clock: each delay advances time instantly (with a tiny real pause so workers make progress).</summary>
-internal sealed class FakeStressClock : IStressClock
+internal sealed class FakeStressClock(Func<int, CancellationToken, Task>? beforeDelay = null, TimeSpan? maxElapsed = null) : IStressClock
 {
     private long _ticks;
     public TimeSpan Elapsed => TimeSpan.FromTicks(Interlocked.Read(ref _ticks));
@@ -14,9 +14,19 @@ internal sealed class FakeStressClock : IStressClock
     public async Task DelayAsync(TimeSpan delay, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        await Task.Delay(2, ct);
-        Interlocked.Add(ref _ticks, delay.Ticks);
-        Interlocked.Increment(ref Delays);
+        var step = Interlocked.Increment(ref Delays);
+        if (beforeDelay is not null) await beforeDelay(step, ct);
+        else await Task.Delay(2, ct);
+        if (maxElapsed is { } cap)
+        {
+            while (true)
+            {
+                var cur = Interlocked.Read(ref _ticks);
+                var next = Math.Min(cap.Ticks, cur + delay.Ticks);
+                if (Interlocked.CompareExchange(ref _ticks, next, cur) == cur) break;
+            }
+        }
+        else Interlocked.Add(ref _ticks, delay.Ticks);
     }
 }
 
@@ -37,10 +47,27 @@ internal sealed class SequenceSensorProvider(Func<int, SensorSnapshot> read, boo
 internal sealed class FaultyWorkload(int failOnCall) : ICpuWorkload
 {
     private int _calls;
+    private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task ReachedTargetCall => _reached.Task;
     public ulong Compute(ulong seed, int iterations)
     {
         var v = DeterministicCpuWorkload.Instance.Compute(seed, iterations);
-        return Interlocked.Increment(ref _calls) == failOnCall ? v ^ 1 : v;
+        var call = Interlocked.Increment(ref _calls);
+        if (call >= failOnCall) _reached.TrySetResult();
+        return call == failOnCall ? v ^ 1 : v;
+    }
+}
+
+internal sealed class SignalingWorkload(int signalAtCall) : ICpuWorkload
+{
+    private int _calls;
+    private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task ReachedTargetCall => _reached.Task;
+    public ulong Compute(ulong seed, int iterations)
+    {
+        var v = DeterministicCpuWorkload.Instance.Compute(seed, iterations);
+        if (Interlocked.Increment(ref _calls) >= signalAtCall) _reached.TrySetResult();
+        return v;
     }
 }
 
@@ -64,8 +91,14 @@ public class CpuStressTests
     [Fact]
     public async Task ParallelChecksums_HealthyWorkload_HasNoErrors()
     {
-        var test = new CpuStressTest(SequenceSensorProvider.Unavail(), new FakeStressClock());
-        var r = await test.RunAsync(Opts() with { Threads = Environment.ProcessorCount });
+        var options = Opts() with { Threads = Environment.ProcessorCount };
+        var workload = new SignalingWorkload(options.SeedCount + 1);
+        var clock = new FakeStressClock(async (step, ct) =>
+        {
+            if (step == 1) await workload.ReachedTargetCall.WaitAsync(TimeSpan.FromSeconds(10), ct);
+        });
+        var test = new CpuStressTest(SequenceSensorProvider.Unavail(), clock, workload);
+        var r = await test.RunAsync(options);
         Assert.Equal(0, r.Errors);
         Assert.True(r.ChunksDone > 0);
     }
@@ -130,7 +163,12 @@ public class CpuStressTests
     [Fact]
     public async Task ChecksumMismatch_ReportsPossibleCpuErrors()
     {
-        var r = await new CpuStressTest(SequenceSensorProvider.Unavail(), new FakeStressClock(), new FaultyWorkload(failOnCall: 4 + 3)).RunAsync(Opts());
+        var workload = new FaultyWorkload(failOnCall: 4 + 3);
+        var clock = new FakeStressClock(async (step, ct) =>
+        {
+            if (step == 1) await workload.ReachedTargetCall.WaitAsync(TimeSpan.FromSeconds(10), ct);
+        });
+        var r = await new CpuStressTest(SequenceSensorProvider.Unavail(), clock, workload).RunAsync(Opts());
         Assert.Equal(CpuStressOutcome.ComputationErrors, r.Outcome);
         Assert.Equal(1, r.Errors);
         Assert.Equal("Possible CPU errors found", r.Headline);

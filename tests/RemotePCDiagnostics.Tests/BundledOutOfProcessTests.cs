@@ -112,9 +112,11 @@ public sealed class BundledOutOfProcessTests : IDisposable
         var (manifest, _) = ModuleManifest.ReadFromAssembly(File.ReadAllBytes(Dll("RemotePCDiagnostics.Modules.BatteryPower.dll")));
         var descriptor = BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.BatteryPower);
 
-        var bundled = await new UserModeModuleProxy(new UserModeModule("x.dll", manifest, descriptor) { Bundled = true }, launcher).RefreshAsync(null);
+        using var bundledProxy = new UserModeModuleProxy(new UserModeModule("x.dll", manifest, descriptor) { Bundled = true }, launcher);
+        var bundled = await bundledProxy.RefreshAsync(null);
         Assert.NotNull(Assert.IsType<AreaReport>(bundled.Payload).Cards[0].Actions);
-        var unsigned = await new UserModeModuleProxy(new UserModeModule("x.dll", manifest, descriptor), launcher).RefreshAsync(null);
+        using var unsignedProxy = new UserModeModuleProxy(new UserModeModule("x.dll", manifest, descriptor), launcher);
+        var unsigned = await unsignedProxy.RefreshAsync(null);
         Assert.Null(Assert.IsType<AreaReport>(unsigned.Payload).Cards[0].Actions);
     }
 

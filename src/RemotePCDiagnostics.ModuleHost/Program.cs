@@ -75,7 +75,7 @@ if (args[0] == "--shared")
             continue;
         if (request.Type == "exit")
         {
-            if (sessions.TryGetValue(request.Module, out var s)) s.CancelRunning();
+            if (sessions.TryGetValue(request.Module, out var s)) s.ExitVirtual();
             continue;
         }
         var session = GetOrCreateSession(request.Module);
@@ -114,21 +114,59 @@ else
     return 0;
 }
 
-internal sealed class ModuleSession(IDiagnosticModule module, HostQueriesClient queries, Action<ModuleHostMessage> send)
+internal sealed class ModuleSession
 {
+    private sealed class RunState
+    {
+        public CancellationTokenSource Cts { get; } = new();
+        public volatile bool Abandoned;
+    }
+
+    private readonly IDiagnosticModule _module;
+    private readonly HostQueriesClient _queries;
+    private readonly Action<ModuleHostMessage> _send;
     private readonly object _gate = new();
-    private CancellationTokenSource? _running;
+    private RunState? _currentRun;
+    private CancellationTokenSource _sessionCts = new();
     private IReadOnlyList<ModuleInstance>? _devices;
     private readonly ConcurrentDictionary<string, DiagnosticResult> _deviceResults = new(StringComparer.OrdinalIgnoreCase);
     private Task? _refresh;
     private Task? _availability;
+
+    public ModuleSession(IDiagnosticModule module, HostQueriesClient queries, Action<ModuleHostMessage> send)
+    {
+        _module = module;
+        _queries = queries;
+        _send = send;
+        _module.Updated += OnUpdated;
+    }
+
+    private void OnUpdated(object? sender, DiagnosticResult r)
+    {
+        RunState? run;
+        lock (_gate) run = _currentRun;
+        if (run is null || run.Abandoned || run.Cts.IsCancellationRequested) return;
+        var other = r.Payload is AreaReport ? null : ModuleHostPayloads.Write(r.Payload);
+        _send(new ModuleHostMessage
+        {
+            Type = "updated",
+            Status = r.Status,
+            Message = r.Message,
+            Cancelled = r.Cancelled,
+            When = r.Timestamp,
+            Report = r.Payload as AreaReport,
+            Payload = other?.Payload,
+            PayloadType = other?.Type,
+            Instance = r.InstanceKey is { } key ? new ModuleInstance(key, r.InstanceLabel ?? key) : null,
+        });
+    }
 
     public void Handle(ModuleHostMessage request)
     {
         switch (request.Type)
         {
             case "answer":
-                if (!queries.Complete(request)) Console.Error.WriteLine($"answer {request.Id} arrived with no query waiting for it");
+                if (!_queries.Complete(request)) Console.Error.WriteLine($"answer {request.Id} arrived with no query waiting for it");
                 break;
             case "availability":
                 Task? previous;
@@ -140,42 +178,60 @@ internal sealed class ModuleSession(IDiagnosticModule module, HostQueriesClient 
                         if (previous is not null) await previous.ConfigureAwait(false);
                         try
                         {
-                            var a = await module.CheckAvailabilityAsync();
-                            send(new ModuleHostMessage { Type = "availability", Available = a.IsAvailable, Reason = a.Reason });
+                            var a = await _module.CheckAvailabilityAsync();
+                            _send(new ModuleHostMessage { Type = "availability", Available = a.IsAvailable, Reason = a.Reason });
                         }
-                        catch (Exception ex) { send(new ModuleHostMessage { Type = "availability", Available = false, Reason = ex.Message }); }
+                        catch (Exception ex) { _send(new ModuleHostMessage { Type = "availability", Available = false, Reason = ex.Message }); }
                     });
                 }
                 break;
             case "refresh":
-                CancellationToken ct;
                 lock (_gate)
                 {
-                    if (_refresh is { IsCompleted: false }) { send(new ModuleHostMessage { Type = "error", Message = "already running" }); break; }
-                    _running = new CancellationTokenSource();
-                    ct = _running.Token;
+                    Task? cancelling = null;
+                    if (_refresh is { IsCompleted: false })
+                    {
+                        if (_currentRun is not { Abandoned: true })
+                        {
+                            _send(new ModuleHostMessage { Type = "error", Message = "already running" });
+                            break;
+                        }
+                        cancelling = _refresh;
+                    }
+                    var run = new RunState();
+                    _currentRun = run;
+                    var ct = run.Cts.Token;
                     var instance = request.Instance;
+                    void SendIfCurrent(ModuleHostMessage msg)
+                    {
+                        if (!run.Abandoned) _send(msg);
+                    }
                     _refresh = Task.Run(async () =>
                     {
-                        var progress = CheckProgressExtensions.Create(p => send(new ModuleHostMessage { Type = "progress", Message = p.Message, Step = p.Step, Total = p.Total }));
+                        if (cancelling is not null)
+                        {
+                            try { await cancelling.ConfigureAwait(false); } catch { }
+                        }
+                        if (run.Abandoned) return;
+                        var progress = CheckProgressExtensions.Create(p => SendIfCurrent(new ModuleHostMessage { Type = "progress", Message = p.Message, Step = p.Step, Total = p.Total }));
                         try
                         {
                             DiagnosticResult r;
                             Dictionary<string, System.Text.Json.JsonElement>? pageData;
-                            if (instance is not null && module is IPerDeviceModule perDevice)
+                            if (instance is not null && _module is IPerDeviceModule perDevice)
                             {
                                 r = await perDevice.RefreshAsync(instance, progress, ct);
                                 _deviceResults[instance.Key] = r with { InstanceKey = instance.Key, InstanceLabel = instance.Label };
                                 try { _devices = (await perDevice.DetectAsync(ct)).Instances; } catch (Exception ex) when (ex is not OperationCanceledException) { }
-                                pageData = ModulePageCalls.Write(module, _devices, _deviceResults);
+                                pageData = ModulePageCalls.Write(_module, _devices, _deviceResults);
                             }
                             else
                             {
-                                r = await module.RefreshAsync(progress, ct);
-                                pageData = ModulePageCalls.Write(module);
+                                r = await _module.RefreshAsync(progress, ct);
+                                pageData = ModulePageCalls.Write(_module);
                             }
                             var other = r.Payload is AreaReport ? null : ModuleHostPayloads.Write(r.Payload);
-                            send(new ModuleHostMessage
+                            SendIfCurrent(new ModuleHostMessage
                             {
                                 Type = "result", Status = r.Status, Message = r.Message, Cancelled = r.Cancelled || ct.IsCancellationRequested, Report = r.Payload as AreaReport,
                                 Payload = other?.Payload, PayloadType = other?.Type, PageData = pageData,
@@ -183,9 +239,9 @@ internal sealed class ModuleSession(IDiagnosticModule module, HostQueriesClient 
                         }
                         catch (OperationCanceledException) when (ct.IsCancellationRequested)
                         {
-                            send(new ModuleHostMessage { Type = "result", Status = DiagnosticStatus.Warning, Message = "Cancelled", Cancelled = true });
+                            SendIfCurrent(new ModuleHostMessage { Type = "result", Status = DiagnosticStatus.Warning, Message = "Cancelled", Cancelled = true });
                         }
-                        catch (Exception ex) { send(new ModuleHostMessage { Type = "error", Message = $"{ex.GetType().Name}: {ex.Message}" }); }
+                        catch (Exception ex) { SendIfCurrent(new ModuleHostMessage { Type = "error", Message = $"{ex.GetType().Name}: {ex.Message}" }); }
                     });
                 }
                 break;
@@ -194,25 +250,29 @@ internal sealed class ModuleSession(IDiagnosticModule module, HostQueriesClient 
                 {
                     try
                     {
-                        if (module is not IDetectableModule detectable) { send(new ModuleHostMessage { Type = "detection", Reason = "This module doesn't run per device" }); return; }
+                        if (_module is not IDetectableModule detectable) { _send(new ModuleHostMessage { Type = "detection", Reason = "This module doesn't run per device" }); return; }
                         var d = await detectable.DetectAsync();
                         _devices = d.Instances;
-                        send(new ModuleHostMessage { Type = "detection", Reason = d.NotApplicableReason, Instances = [.. d.Instances] });
+                        _send(new ModuleHostMessage { Type = "detection", Reason = d.NotApplicableReason, Instances = [.. d.Instances] });
                     }
-                    catch (Exception ex) { send(new ModuleHostMessage { Type = "detection", Reason = $"Detection failed: {ex.Message}" }); }
+                    catch (Exception ex) { _send(new ModuleHostMessage { Type = "detection", Reason = $"Detection failed: {ex.Message}" }); }
                 });
                 break;
             case "call":
                 var call = request;
+                CancellationToken callCt;
+                lock (_gate) callCt = _sessionCts.Token;
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        var value = await ModulePageCalls.InvokeAsync(module, call.Name ?? "", call.Args, CancellationToken.None);
-                        send(new ModuleHostMessage { Type = "return", Id = call.Id, Ok = true, Value = value });
+                        var value = await ModulePageCalls.InvokeAsync(_module, call.Name ?? "", call.Args, callCt);
+                        if (!callCt.IsCancellationRequested)
+                            _send(new ModuleHostMessage { Type = "return", Id = call.Id, Ok = true, Value = value });
                     }
-                    catch (NotSupportedException ex) { send(new ModuleHostMessage { Type = "return", Id = call.Id, Ok = false, Error = "unknown", Reason = ex.Message }); }
-                    catch (Exception ex) { send(new ModuleHostMessage { Type = "return", Id = call.Id, Ok = false, Error = "failed", Reason = $"{ex.GetType().Name}: {ex.Message}" }); }
+                    catch (OperationCanceledException) when (callCt.IsCancellationRequested) { }
+                    catch (NotSupportedException ex) { if (!callCt.IsCancellationRequested) _send(new ModuleHostMessage { Type = "return", Id = call.Id, Ok = false, Error = "unknown", Reason = ex.Message }); }
+                    catch (Exception ex) { if (!callCt.IsCancellationRequested) _send(new ModuleHostMessage { Type = "return", Id = call.Id, Ok = false, Error = "failed", Reason = $"{ex.GetType().Name}: {ex.Message}" }); }
                 });
                 break;
             case "stop":
@@ -225,13 +285,40 @@ internal sealed class ModuleSession(IDiagnosticModule module, HostQueriesClient 
     {
         lock (_gate)
         {
-            try { _running?.Cancel(); } catch (ObjectDisposedException) { }
+            try { _currentRun?.Cts.Cancel(); } catch (ObjectDisposedException) { }
         }
+    }
+
+    public void ExitVirtual()
+    {
+        _queries.FailAll("the app closed the module host");
+        CancellationTokenSource oldSession;
+        lock (_gate)
+        {
+            if (_currentRun is { } run)
+            {
+                run.Abandoned = true;
+                try { run.Cts.Cancel(); } catch (ObjectDisposedException) { }
+            }
+            oldSession = _sessionCts;
+            _sessionCts = new CancellationTokenSource();
+        }
+        try { oldSession.Cancel(); } catch (ObjectDisposedException) { }
     }
 
     public void Shutdown()
     {
-        queries.FailAll("the app closed the module host");
-        CancelRunning();
+        _queries.FailAll("the app closed the module host");
+        CancellationTokenSource session;
+        lock (_gate)
+        {
+            if (_currentRun is { } run)
+            {
+                run.Abandoned = true;
+                try { run.Cts.Cancel(); } catch (ObjectDisposedException) { }
+            }
+            session = _sessionCts;
+        }
+        try { session.Cancel(); } catch (ObjectDisposedException) { }
     }
 }

@@ -224,9 +224,6 @@ public class BenchmarkTests
 
     private sealed class SyncProgress(Action<string> a) : IProgress<string> { public void Report(string v) => a(v); }
 
-    [Fact]
-    public void CpuScore_MoreThreadsMoreWork() => Assert.True(BenchmarkRunner.CpuScore(1, TimeSpan.FromMilliseconds(100)) > 0);
-
     // ---- service: persistence, restart flow ----
     private sealed class MemStore : IBenchmarkStore
     {
@@ -242,29 +239,36 @@ public class BenchmarkTests
         var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
         var runner = new SystemCommandRunner(launcher);
         var statePath = Path.Combine(Path.GetTempPath(), "rpd-bench-reboot-" + Guid.NewGuid().ToString("N") + ".json");
-        var rem = new RemediationService(runner, new SessionContext(SessionMode.Remote), rebootResume: new RebootResumeCoordinator(runner, stateFilePath: statePath, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe"));
-        var events = new List<string>();
-        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, new SessionContext(SessionMode.Remote), (_, t) => events.Add(t));
-        svc.UpdateSettings(Fast);
-        await svc.RunAsync(BenchmarkPhase.Before);
-        Assert.NotNull(store.State!.Before);
+        try
+        {
+            var rem = new RemediationService(runner, new SessionContext(SessionMode.Remote), rebootResume: new RebootResumeCoordinator(runner, stateFilePath: statePath, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe"));
+            var events = new List<string>();
+            var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, new SessionContext(SessionMode.Remote), (_, t) => events.Add(t));
+            svc.UpdateSettings(Fast);
+            await svc.RunAsync(BenchmarkPhase.Before);
+            Assert.NotNull(store.State!.Before);
 
-        var r = await svc.RestartThenRunAfterAsync();
-        Assert.True(r.Success);
-        Assert.True(store.State.RunAfterOnStartup);
-        Assert.Contains(launcher.Calls, c => c.Args.Contains("/r"));
+            var r = await svc.RestartThenRunAfterAsync();
+            Assert.True(r.Success);
+            Assert.True(store.State.RunAfterOnStartup);
+            Assert.Contains(launcher.Calls, c => c.Args.Contains("/r"));
 
-        // "App restarts": a new service instance loads the saved state.
-        var delays = new List<TimeSpan>();
-        var svc2 = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, delay: (d, _) => { delays.Add(d); return Task.CompletedTask; });
-        Assert.NotNull(svc2.Before);
-        await svc2.ResumeAfterRestartAsync();
-        Assert.Equal([Fast.SettleAfterRestart], delays);
-        Assert.NotNull(svc2.After);
-        Assert.False(store.State.RunAfterOnStartup);
-        await svc2.ResumeAfterRestartAsync(); // only once
-        Assert.Single(delays);
-        Assert.Contains(events, e => e.Contains("Performance benchmark (Before)"));
+            // "App restarts": a new service instance loads the saved state.
+            var delays = new List<TimeSpan>();
+            var svc2 = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, delay: (d, _) => { delays.Add(d); return Task.CompletedTask; });
+            Assert.NotNull(svc2.Before);
+            await svc2.ResumeAfterRestartAsync();
+            Assert.Equal([Fast.SettleAfterRestart], delays);
+            Assert.NotNull(svc2.After);
+            Assert.False(store.State.RunAfterOnStartup);
+            await svc2.ResumeAfterRestartAsync(); // only once
+            Assert.Single(delays);
+            Assert.Contains(events, e => e.Contains("Performance benchmark (Before)"));
+        }
+        finally
+        {
+            if (File.Exists(statePath)) File.Delete(statePath);
+        }
     }
 
     [Fact]
@@ -274,30 +278,37 @@ public class BenchmarkTests
         var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
         var runner = new SystemCommandRunner(launcher);
         var statePath = Path.Combine(Path.GetTempPath(), "rpd-bench-reboot-" + Guid.NewGuid().ToString("N") + ".json");
-        var rem = new RemediationService(runner, new SessionContext(SessionMode.Remote), rebootResume: new RebootResumeCoordinator(runner, stateFilePath: statePath, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe"));
-        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, new SessionContext(SessionMode.Remote));
-        svc.UpdateSettings(Fast);
+        try
+        {
+            var rem = new RemediationService(runner, new SessionContext(SessionMode.Remote), rebootResume: new RebootResumeCoordinator(runner, stateFilePath: statePath, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe"));
+            var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, new SessionContext(SessionMode.Remote));
+            svc.UpdateSettings(Fast);
 
-        var r = await svc.RestartThenRunBeforeAsync();
-        Assert.True(r.Success);
-        Assert.True(store.State!.RunBeforeOnStartup);
-        Assert.NotNull(store.State.RestartRequestedUtc);
-        Assert.Contains(launcher.Calls, c => c.Args.Contains("/r"));
+            var r = await svc.RestartThenRunBeforeAsync();
+            Assert.True(r.Success);
+            Assert.True(store.State!.RunBeforeOnStartup);
+            Assert.NotNull(store.State.RestartRequestedUtc);
+            Assert.Contains(launcher.Calls, c => c.Args.Contains("/r"));
 
-        var delays = new List<TimeSpan>();
-        var svc2 = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, delay: (d, _) => { delays.Add(d); return Task.CompletedTask; });
-        Assert.True(svc2.BeforePendingRestart);
-        await svc2.ResumeAfterRestartAsync();
-        Assert.Equal([Fast.SettleAfterRestart], delays);
-        Assert.NotNull(svc2.Before);
-        Assert.False(store.State.RunBeforeOnStartup);
-        // The fake log only has a start-up from yesterday, before the restart: it must not count.
-        var boot = svc2.Before!.Get(BenchmarkKind.BootTime);
-        Assert.NotNull(boot);
-        Assert.Empty(boot!.Samples);
-        Assert.Contains("after the restart", boot.Note);
-        await svc2.ResumeAfterRestartAsync(); // only once
-        Assert.Single(delays);
+            var delays = new List<TimeSpan>();
+            var svc2 = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, delay: (d, _) => { delays.Add(d); return Task.CompletedTask; });
+            Assert.True(svc2.BeforePendingRestart);
+            await svc2.ResumeAfterRestartAsync();
+            Assert.Equal([Fast.SettleAfterRestart], delays);
+            Assert.NotNull(svc2.Before);
+            Assert.False(store.State.RunBeforeOnStartup);
+            // The fake log only has a start-up from yesterday, before the restart: it must not count.
+            var boot = svc2.Before!.Get(BenchmarkKind.BootTime);
+            Assert.NotNull(boot);
+            Assert.Empty(boot!.Samples);
+            Assert.Contains("after the restart", boot.Note);
+            await svc2.ResumeAfterRestartAsync(); // only once
+            Assert.Single(delays);
+        }
+        finally
+        {
+            if (File.Exists(statePath)) File.Delete(statePath);
+        }
     }
 
     [Fact]
@@ -307,7 +318,11 @@ public class BenchmarkTests
         var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store);
         svc.UpdateSettings(Fast with { Runs = 9 });
         Assert.Equal(5, svc.Settings.Runs); // clamped
+        var observedProgress = new List<string>();
+        svc.Changed += () => { if (svc.Progress is { } p) observedProgress.Add(p); };
         await svc.RunAsync(BenchmarkPhase.Before);
+        Assert.NotEmpty(observedProgress);
+        Assert.Null(svc.Progress);
         await svc.RunAsync(BenchmarkPhase.After);
         Assert.NotNull(svc.After);
         await svc.RunAsync(BenchmarkPhase.Before);
@@ -315,7 +330,24 @@ public class BenchmarkTests
         svc.Clear();
         Assert.Null(svc.Before);
         Assert.Equal(5, svc.Settings.Runs);
-        Assert.False((await new BenchmarkService(new BenchmarkRunner(new FakeProbes()), new MemStore()).RestartThenRunAfterAsync()).Success); // no remediation / no before
+
+        var noRemediation = await new BenchmarkService(new BenchmarkRunner(new FakeProbes()), new MemStore()).RestartThenRunAfterAsync();
+        Assert.False(noRemediation.Success);
+        Assert.Equal("Restarting isn't available from here.", noRemediation.Message);
+
+        var statePath = Path.Combine(Path.GetTempPath(), "rpd-bench-reboot-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var runner = new SystemCommandRunner(new ScriptedLauncher((_, _) => ScriptedLauncher.Ok("")));
+            var rem = new RemediationService(runner, new SessionContext(SessionMode.Remote), rebootResume: new RebootResumeCoordinator(runner, stateFilePath: statePath, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe"));
+            var noBefore = await new BenchmarkService(new BenchmarkRunner(new FakeProbes()), new MemStore(), rem).RestartThenRunAfterAsync();
+            Assert.False(noBefore.Success);
+            Assert.Equal("Run the before benchmark first.", noBefore.Message);
+        }
+        finally
+        {
+            if (File.Exists(statePath)) File.Delete(statePath);
+        }
     }
 
     [Fact]
@@ -507,5 +539,38 @@ public class BenchmarkTests
         Assert.Null(svc.SettleRemaining);
         Assert.Null(svc.SettleFraction);
         Assert.NotNull(svc.Before);
+    }
+}
+
+[CollectionDefinition("CpuScore", DisableParallelization = true)]
+public sealed class CpuScoreCollection;
+
+[Collection("CpuScore")]
+public class BenchmarkCpuScoreTests
+{
+    [Fact]
+    public void CpuScore_MoreThreadsMoreWork()
+    {
+        var threads = Math.Clamp(Environment.ProcessorCount, 2, 4);
+        if (Environment.ProcessorCount < 2)
+        {
+            // On a single-core runner, zero-duration runs still execute one work unit per thread.
+            var oneUnit = BenchmarkRunner.CpuScore(1, TimeSpan.Zero);
+            var multiUnit = BenchmarkRunner.CpuScore(threads, TimeSpan.Zero);
+            Assert.True(oneUnit > 0);
+            Assert.True(multiUnit > 0);
+            return;
+        }
+
+        _ = BenchmarkRunner.CpuScore(threads, TimeSpan.FromMilliseconds(15)); // JIT warm-up
+        double single = 0, multi = 0;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            single = BenchmarkRunner.CpuScore(1, TimeSpan.FromMilliseconds(120));
+            multi = BenchmarkRunner.CpuScore(threads, TimeSpan.FromMilliseconds(120));
+            if (multi > single * 1.15) break;
+        }
+        Assert.True(single > 0);
+        Assert.True(multi > single, $"Expected {threads}-thread score ({multi:F1}) > 1-thread score ({single:F1}).");
     }
 }

@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Logging;
@@ -120,25 +122,136 @@ internal sealed class BrowserSuggestions(SuggestionContext c)
         if (!Enum.TryParse<BrowserKind>(u.Target, out var kind) || BrowserBackground.DecodeUndo(u.Previous) is not { } undo)
             return new(false, "The original setting wasn't recorded.");
         var name = BrowserPrefs.Label(kind);
+        var regItems = undo.Registry ?? [];
+        var remRegistry = new List<RegistryUndo.Item>();
         var failed = new List<string>();
-        foreach (var item in undo.Registry ?? [])
+        var succeeded = 0;
+        foreach (var item in regItems)
         {
             bool ok;
             try { ok = RegistryAllowlist.Restore(c.Sys, item.Target, item.Previous, item.CreatedKey, c.Logger).Ok; }
             catch (Exception ex) when (ex is not OperationCanceledException) { c.Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
-            if (ok) { try { c.JournalStore?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
-            else failed.Add("Startup Boost");
+            if (ok) { succeeded++; try { c.JournalStore?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
+            else { remRegistry.Add(item); failed.Add("Startup Boost"); }
         }
+        var remLocalState = undo.LocalStateChanged;
+        string? localStateError = null;
         if (undo.LocalStateChanged)
         {
             var target = BrowserBackground.Target(kind);
             var (ok, message) = await BrowserBackground.RestoreAsync(c.Sys, target, undo.LocalStatePrevious, ct).ConfigureAwait(false);
-            if (ok) { try { c.JournalStore?.RemoveLatest(ChangeKind.BrowserLocalStateValue, target); } catch { } }
-            else return new(false, message + (failed.Count > 0 ? " Startup Boost couldn't be turned back on either (administrator rights needed)." : ""));
+            if (ok)
+            {
+                remLocalState = false;
+                succeeded++;
+                try { c.JournalStore?.RemoveLatest(ChangeKind.BrowserLocalStateValue, target); } catch { }
+            }
+            else localStateError = message;
         }
-        return failed.Count == 0
-            ? new(true, $"{name} may run in the background again" + (undo.Registry?.Count > 0 ? " (Startup Boost policy removed; Edge is no longer \"managed\")" : "") + ". Takes full effect the next time you sign in.")
-            : new(false, "Windows didn't allow turning Startup Boost back on (administrator rights needed).");
+        if (localStateError is not null || failed.Count > 0)
+        {
+            if (succeeded > 0)
+                c.AddUndo(u with { Previous = BrowserBackground.EncodeUndo(new(remLocalState, remLocalState ? undo.LocalStatePrevious : null, remRegistry)) });
+            if (localStateError is not null)
+                return new(false, localStateError + (failed.Count > 0 ? " Startup Boost couldn't be turned back on either (administrator rights needed)." : ""));
+            return new(false, "Windows didn't allow turning Startup Boost back on (administrator rights needed).");
+        }
+        return new(true, $"{name} may run in the background again" + (regItems.Count > 0 ? " (Startup Boost policy removed; Edge is no longer \"managed\")" : "") + ". Takes full effect the next time you sign in.");
+    }
+
+    internal static string? CaptureMemorySaverPrevious(string? json, BrowserKind kind)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return json;
+        try
+        {
+            if (JsonNode.Parse(json) is not JsonObject root || root["performance_tuning"] is not JsonObject perf)
+                return json;
+            if (kind == BrowserKind.Chrome)
+            {
+                if (perf["high_efficiency_mode"] is { } he)
+                    return new JsonObject { ["high_efficiency_mode"] = he.DeepClone() }.ToJsonString();
+            }
+            else
+            {
+                if (perf["sleeping_tabs"] is JsonObject st && st["enabled"] is not null)
+                    return new JsonObject { ["sleeping_tabs"] = st.DeepClone() }.ToJsonString();
+                if (perf["efficiency_mode"] is JsonObject em && em["state"] is not null)
+                    return new JsonObject { ["efficiency_mode"] = em.DeepClone() }.ToJsonString();
+            }
+            return json;
+        }
+        catch (JsonException) { return json; }
+    }
+
+    /// <summary>
+    /// Restores only the memory-saver section inside the current <c>Local State</c> JSON without overwriting sibling settings
+    /// (such as <c>background_mode.enabled</c>, profiles, or encryption keys). Accepts both section-only snapshots and legacy
+    /// full-file <c>Local State</c> snapshots with a root <c>performance_tuning</c> object.
+    /// </summary>
+    internal static bool TryRestoreMemorySaver(IMemorySystem sys, BrowserKind kind, string? previous)
+    {
+        if (string.IsNullOrWhiteSpace(previous)) return false;
+        JsonObject prevObj;
+        try
+        {
+            if (JsonNode.Parse(previous) is not JsonObject parsed) return false;
+            prevObj = parsed;
+        }
+        catch (JsonException) { return false; }
+
+        string? sectionKey = null;
+        JsonNode? sectionNode = null;
+        if (kind == BrowserKind.Chrome)
+        {
+            if (prevObj["high_efficiency_mode"] is { } he) { sectionKey = "high_efficiency_mode"; sectionNode = he.DeepClone(); }
+            else if (prevObj["performance_tuning"] is JsonObject lp && lp["high_efficiency_mode"] is { } lhe) { sectionKey = "high_efficiency_mode"; sectionNode = lhe.DeepClone(); }
+            else if (prevObj["state"] is not null || prevObj["enabled"] is not null) { sectionKey = "high_efficiency_mode"; sectionNode = prevObj.DeepClone(); }
+        }
+        else
+        {
+            if (prevObj["sleeping_tabs"] is { } st) { sectionKey = "sleeping_tabs"; sectionNode = st.DeepClone(); }
+            else if (prevObj["efficiency_mode"] is { } em) { sectionKey = "efficiency_mode"; sectionNode = em.DeepClone(); }
+            else if (prevObj["performance_tuning"] is JsonObject lp)
+            {
+                if (lp["sleeping_tabs"] is { } lst) { sectionKey = "sleeping_tabs"; sectionNode = lst.DeepClone(); }
+                else if (lp["efficiency_mode"] is { } lem) { sectionKey = "efficiency_mode"; sectionNode = lem.DeepClone(); }
+            }
+        }
+        if (sectionKey is null || sectionNode is null) return false;
+
+        var currentJson = sys.ReadBrowserLocalState(kind);
+        JsonObject currentRoot;
+        if (string.IsNullOrWhiteSpace(currentJson))
+        {
+            currentRoot = new JsonObject();
+        }
+        else
+        {
+            try
+            {
+                if (JsonNode.Parse(currentJson) is not JsonObject parsedCurrent) return false;
+                currentRoot = parsedCurrent;
+            }
+            catch (JsonException) { return false; }
+        }
+
+        if (currentRoot["performance_tuning"] is not JsonObject curPerf)
+        {
+            curPerf = new JsonObject();
+            currentRoot["performance_tuning"] = curPerf;
+        }
+        if (curPerf[sectionKey] is JsonObject curSec && sectionNode is JsonObject prevSec)
+        {
+            foreach (var kv in prevSec)
+                curSec[kv.Key] = kv.Value?.DeepClone();
+        }
+        else
+        {
+            curPerf[sectionKey] = sectionNode;
+        }
+
+        sys.WriteBrowserLocalState(kind, currentRoot.ToJsonString());
+        return true;
     }
 
     internal ActionOutcome EnableMemorySaver(MemorySuggestion s, MemoryAction a)
@@ -148,17 +261,19 @@ internal sealed class BrowserSuggestions(SuggestionContext c)
         var json = c.Sys.ReadBrowserLocalState(kind);
         var updated = BrowserPrefs.EnableMemorySaver(json, kind);
         if (updated is null) return new(false, $"Couldn't find the {BrowserPrefs.FeatureName(kind)} setting; use {BrowserPrefs.Label(kind)}'s settings page.");
+        var previous = CaptureMemorySaverPrevious(json, kind);
         c.Sys.WriteBrowserLocalState(kind, updated);
-        c.AddUndo(new(s.Id, BrowserPrefs.Label(kind), a.Type, a.Target, json));
-        c.Journal(ChangeKind.BrowserSettings, a.Target, json, $"{BrowserPrefs.FeatureName(kind)} turned on in {BrowserPrefs.Label(kind)}");
+        c.AddUndo(new(s.Id, BrowserPrefs.Label(kind), a.Type, a.Target, previous));
+        c.Journal(ChangeKind.BrowserSettings, a.Target, previous, $"{BrowserPrefs.FeatureName(kind)} turned on in {BrowserPrefs.Label(kind)}");
         return new(true, $"{BrowserPrefs.FeatureName(kind)} turned on for {BrowserPrefs.Label(kind)}.");
     }
 
     internal ActionOutcome UndoMemorySaver(UndoEntry u)
     {
-        var kind = Enum.Parse<BrowserKind>(u.Target);
+        if (!Enum.TryParse<BrowserKind>(u.Target, out var kind)) return new(false, "The browser wasn't recognized.");
         if (c.Sys.IsBrowserRunning(kind)) return new(false, $"Close {BrowserPrefs.Label(kind)} first, then undo.");
-        c.Sys.WriteBrowserLocalState(kind, u.Previous!);
+        if (!TryRestoreMemorySaver(c.Sys, kind, u.Previous))
+            return new(false, $"Couldn't restore the {BrowserPrefs.FeatureName(kind)} setting for {BrowserPrefs.Label(kind)}.");
         return new(true, $"{BrowserPrefs.FeatureName(kind)} setting restored for {BrowserPrefs.Label(kind)}.");
     }
 
