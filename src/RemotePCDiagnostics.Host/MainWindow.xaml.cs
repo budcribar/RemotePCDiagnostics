@@ -168,7 +168,10 @@ public partial class MainWindow : Window
         // The audit trail (the app's own event log): who joined, each time control moved, who left. Consent is the person at
         // this PC sharing the link and giving control (supervised), or the unattended setting chosen when it was set up.
         RemoteBlazorWebView.ParticipantsChanged += (_, e) =>
+        {
             _audit.Update([.. e.Participants.Select(p => new SessionParticipant(p.ClientId, p.IsOwner, p.HasControl, p.UserName))]);
+            _provider.GetService<RemoteUsers>()?.Set(e.Participants.Count(p => !p.IsOwner)); // the top bar's badge
+        };
         RemoteBlazorWebView.Connected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
             Logger.Info($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User}");
@@ -178,6 +181,7 @@ public partial class MainWindow : Window
         {
             Logger.Info($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
             _audit.Ended(e.Exception?.Message ?? "");
+            _provider.GetService<RemoteUsers>()?.Set(0);
             SetRemoteState(_remoteUserUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected);
         });
 
