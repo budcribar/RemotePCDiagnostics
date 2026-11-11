@@ -11,7 +11,15 @@ namespace RemotePCDiagnostics.Tests;
 /// and renders cleanly through <see cref="TestRunningVisual"/>.</summary>
 public class TestRunningVisualTests
 {
-    private static string RepoRoot => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+    private static string RepoRoot
+    {
+        get
+        {
+            for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+                if (File.Exists(Path.Combine(d.FullName, "RemotePCDiagnostics.sln"))) return d.FullName;
+            throw new DirectoryNotFoundException("Could not locate repository root containing RemotePCDiagnostics.sln.");
+        }
+    }
     private static string AssetsDir => Path.Combine(RepoRoot, "src", "RemotePCDiagnostics.UI", "wwwroot", "img", "tests");
 
     public static TheoryData<string, string> ModuleToAssetCases => new()
@@ -23,6 +31,7 @@ public class TestRunningVisualTests
         { ModuleSlugs.NetworkTest, "network-test" },
         { ModuleSlugs.NpuTest, "npu-test" },
         { ModuleSlugs.MicToSpeaker, "audio-test" },
+        { ModuleSlugs.SpeakerToMic, "audio-test" },
         { ModuleSlugs.SfcVerifyOnly, "sfc-scan" },
         { ModuleSlugs.DismScanHealth, "dism-scan" },
         { ModuleSlugs.SecurityAudit, "security-audit" },
@@ -75,6 +84,21 @@ public class TestRunningVisualTests
         Assert.Contains("_content/RemotePCDiagnostics.UI/img/tests/disk-speed.gif", html);
         Assert.Contains("width=\"220\" height=\"124\"", html);
         Assert.DoesNotContain("running-visual-caption", html);
+
+        var withCaption = await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var parameters = ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                [nameof(TestRunningVisual.Slug)] = ModuleSlugs.SpeakerToMic,
+                [nameof(TestRunningVisual.Caption)] = "Playing test tone",
+            });
+            var output = await renderer.RenderComponentAsync<TestRunningVisual>(parameters);
+            return output.ToHtmlString();
+        });
+
+        Assert.Contains("data-visual=\"audio-test\"", withCaption);
+        Assert.Contains("running-visual-caption", withCaption);
+        Assert.Contains("Playing test tone", withCaption);
     }
 
     [Fact]

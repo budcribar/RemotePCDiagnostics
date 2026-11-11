@@ -96,19 +96,71 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     /// <summary>The drives as last read: health (or the osquery list with <see cref="Notice"/>), retrim dates, and when.</summary>
     private sealed record DriveRead(List<DriveHealth>? Drives, IReadOnlyDictionary<char, RetrimRecord>? Retrims, DateTimeOffset Now, string? Notice, DateTimeOffset ReadAt);
 
+    private sealed class SharedRead
+    {
+        public readonly CancellationTokenSource Cts = new();
+        public readonly DateTimeOffset StartedAt;
+        public readonly Task<DriveRead> Task;
+        public int Waiters;
+
+        public SharedRead(DateTimeOffset startedAt, Func<CancellationToken, Task<DriveRead>> start)
+        {
+            StartedAt = startedAt;
+            var cts = Cts;
+            Task = start(cts.Token);
+            _ = Task.ContinueWith(_ => cts.Dispose(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+    }
+
+    private DateTimeOffset Now() => (clock ?? (() => DateTimeOffset.Now))();
+
     private readonly object _readGate = new();
-    private Task<DriveRead>? _lastRead;
-    private DateTimeOffset _lastReadAt;
+    private SharedRead? _sharedRead;
     private volatile DriveRead? _latest;
 
     /// <summary>Reads every drive once; a read finished (or started) in the last <see cref="ReuseReadFor"/> is shared.</summary>
-    private Task<DriveRead> ReadDrivesCachedAsync(IProgress<string>? progress, CancellationToken ct)
+    private async Task<DriveRead> ReadDrivesCachedAsync(IProgress<string>? progress, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+        SharedRead shared;
         lock (_readGate)
         {
-            if (_lastRead is { IsFaulted: false, IsCanceled: false } t && DateTimeOffset.Now - _lastReadAt < ReuseReadFor) return t;
-            _lastReadAt = DateTimeOffset.Now;
-            return _lastRead = ReadDrivesAsync(progress, ct);
+            var now = Now();
+            if (_sharedRead is { Task: { IsFaulted: false, IsCanceled: false } } existing && now - existing.StartedAt < ReuseReadFor)
+                shared = existing;
+            else
+                shared = _sharedRead = new SharedRead(now, token => ReadDrivesAsync(progress, token));
+            shared.Waiters++;
+        }
+        var decremented = false;
+        try
+        {
+            return ct.CanBeCanceled ? await shared.Task.WaitAsync(ct).ConfigureAwait(false) : await shared.Task.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            CancellationTokenSource? toCancel = null;
+            lock (_readGate)
+            {
+                decremented = true;
+                if (--shared.Waiters == 0 && !shared.Task.IsCompleted)
+                {
+                    if (ReferenceEquals(_sharedRead, shared)) _sharedRead = null;
+                    toCancel = shared.Cts;
+                }
+            }
+            if (toCancel is not null)
+            {
+                try { toCancel.Cancel(); } catch (ObjectDisposedException) { }
+            }
+            throw;
+        }
+        finally
+        {
+            if (!decremented)
+            {
+                lock (_readGate) shared.Waiters--;
+            }
         }
     }
 
@@ -121,7 +173,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
 
     private async Task<DriveRead> ReadDrivesCoreAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        var now = (clock ?? (() => DateTimeOffset.Now))();
+        var now = Now();
         progress.ReportStep(1, 2, "Checking drive health and SMART status…");
         var pr = host is null ? await commands.RunPowerShellAsync(Script, ct).ConfigureAwait(false)
             : await Plugins.HostQueryExtensions.AskAsync(host, Name, Logger, h => h.ReadDrivesAsync(ct)).ConfigureAwait(false);
@@ -134,17 +186,17 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
         if (drives is { Count: > 0 })
         {
             progress.ReportStep(2, 2, "Checking SSD optimization history…");
-            return new(drives, await ReadRetrimsAsync(ct).ConfigureAwait(false), now, null, DateTimeOffset.Now);
+            return new(drives, await ReadRetrimsAsync(ct).ConfigureAwait(false), now, null, now);
         }
 
         LogWarn($"{Name}: Windows storage health unavailable; falling back to osquery disk_info (no health data)");
         progress.ReportStep(2, 2, "Reading drive list…");
         var q = host is null ? await osquery.RunQueryAsync(HardwareInventory.DiskSql, ct).ConfigureAwait(false)
             : await Plugins.HostQueryExtensions.AskAsync(host, Name, Logger, h => h.SelectAsync(HardwareInventory.DiskSql, ct)).ConfigureAwait(false);
-        if (q is not { Success: true }) return new(null, null, now, null, DateTimeOffset.Now);
+        if (q is not { Success: true }) return new(null, null, now, null, now);
         var fallback = q.Rows!.Select(DiskInfo.FromRow)
             .Select(d => new DriveHealth(d.HardwareModel, d.Serial, "", d.Type, "", "", d.SizeBytes, null, null, null, null, null)).ToList();
-        return new(fallback, null, DateTimeOffset.Now, "Windows didn't report drive health on this PC, so only the drive list is shown.", DateTimeOffset.Now);
+        return new(fallback, null, now, "Windows didn't report drive health on this PC, so only the drive list is shown.", now);
     }
 
 

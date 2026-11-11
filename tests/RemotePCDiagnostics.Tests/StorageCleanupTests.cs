@@ -562,11 +562,25 @@ public sealed class StorageCleanupTests : IDisposable
         NuGetPackage("2.0.0");
         var superseded = NuGetPackage("1.0.0");
         var repos = Repos();
-        StorageCleanResult r;
-        using (new FileStream(P(superseded, "example.1.0.0.nupkg.sha512"), FileMode.Open, FileAccess.Read, FileShare.None))
-            r = Clean("storage-nuget", null, repos);
-        Assert.True(File.Exists(P(superseded, "lib", "net8.0", "Example.dll")));
-        Assert.True(r.FilesSkipped >= 1);
+        var meta = P(superseded, ".nupkg.metadata");
+        var sha = P(superseded, "example.1.0.0.nupkg.sha512");
+        var dll = P(superseded, "lib", "net8.0", "Example.dll");
+
+        foreach (var lockedPath in new[] { sha, meta, dll })
+        {
+            StorageCleanResult r;
+            using (new FileStream(lockedPath, FileMode.Open, FileAccess.Read, FileShare.None))
+                r = Clean("storage-nuget", null, repos);
+            Assert.Equal(0, r.FilesRemoved);
+            Assert.True(File.Exists(meta), $"metadata missing after lock on {lockedPath}");
+            Assert.True(File.Exists(sha), $"sha512 missing after lock on {lockedPath}");
+            Assert.True(File.Exists(dll), $"payload missing after lock on {lockedPath}");
+        }
+
+        // Still discoverable on a subsequent scan once unlocked.
+        var cleaned = Clean("storage-nuget", null, repos);
+        Assert.False(Directory.Exists(superseded));
+        Assert.Equal(3, cleaned.FilesRemoved);
     }
 
     // ---- locked files, links, allowlist, apps ----

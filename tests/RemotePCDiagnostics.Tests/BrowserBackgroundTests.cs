@@ -413,4 +413,74 @@ public class BrowserBackgroundTests
         Assert.Equal(UndoSupport.Full, Undoability.Of(MemoryActionType.StopBrowserBackground));
         Assert.False(MemoryFeedback.IsDeferred(MemoryActionType.StopBrowserBackground)); // ends the background processes now
     }
+
+    [Fact]
+    public async Task EnableMemorySaver_StopBackground_UndoMemorySaver_PreservesBackgroundAndOtherLocalStateKeys()
+    {
+        var initial = """{"background_mode":{"enabled":true},"performance_tuning":{"high_efficiency_mode":{"state":0}},"profiles":{"last_used":"Default"}}""";
+        var sys = new Sys
+        {
+            Default = BrowserKind.Edge,
+            Running = [],
+            LocalState = { [BrowserKind.Chrome] = initial },
+            Startup = [new(ChromeAutoLaunch, ChromeCmd, true)],
+        };
+        var (_, j, svc) = Make(sys);
+
+        var memSug = new MemorySuggestion("browser-chrome", "Turn on Chrome Memory Saver", "", null, SuggestionRisk.Low, SuggestionKind.Automated, [],
+            [new(MemoryActionType.EnableBrowserMemorySaver, "Chrome", "Turn on")]);
+        Assert.True((await svc.ApplyAsync(memSug, memSug.Actions[0])).Success);
+        Assert.True(BrowserPrefs.ReadMemorySaver(sys.LocalState[BrowserKind.Chrome], BrowserKind.Chrome));
+
+        await svc.ScanAsync();
+        var bgSug = svc.Suggestions.Single(x => x.Id == ChromeId);
+        Assert.True((await svc.ApplyAsync(bgSug, bgSug.Actions[0])).Success);
+        Assert.True(BrowserBackground.TryReadBackgroundMode(sys.LocalState[BrowserKind.Chrome], out var bgAfterStop) && bgAfterStop == false);
+
+        // Undo Memory Saver only: background_mode.enabled must remain false and profiles must remain intact.
+        var memUndo = svc.UndoFor("browser-chrome")!;
+        Assert.True((await svc.UndoAsync(memUndo)).Success);
+        Assert.False(BrowserPrefs.ReadMemorySaver(sys.LocalState[BrowserKind.Chrome], BrowserKind.Chrome));
+        Assert.True(BrowserBackground.TryReadBackgroundMode(sys.LocalState[BrowserKind.Chrome], out var bgAfterUndo) && bgAfterUndo == false);
+        Assert.Contains("\"last_used\":\"Default\"", sys.LocalState[BrowserKind.Chrome]);
+
+        // Legacy full-file journal entry in UndoService also patches only high_efficiency_mode without clobbering background_mode.
+        sys.LocalState[BrowserKind.Chrome] = """{"background_mode":{"enabled":false},"performance_tuning":{"high_efficiency_mode":{"state":2}},"os_crypt":{"encrypted_key":"NEW"}}""";
+        var legacyJournal = new MemoryChangeJournal();
+        legacyJournal.Add(ChangeRecord.New(ChangeKind.BrowserSettings, "Chrome", initial, "Memory Saver turned on in Chrome", "x"));
+        var undoAll = await new UndoService(legacyJournal, new SystemCommandRunner(new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""))), sys).UndoAllAsync("x");
+        Assert.Equal(1, undoAll.Succeeded);
+        Assert.False(BrowserPrefs.ReadMemorySaver(sys.LocalState[BrowserKind.Chrome], BrowserKind.Chrome));
+        Assert.True(BrowserBackground.TryReadBackgroundMode(sys.LocalState[BrowserKind.Chrome], out var bgAfterLegacy) && bgAfterLegacy == false);
+        Assert.Contains("\"encrypted_key\":\"NEW\"", sys.LocalState[BrowserKind.Chrome]);
+    }
+
+    [Fact]
+    public async Task Undo_PartialFailure_PrunesCompletedStep_SoRetryDoesNotRepeat()
+    {
+        var (sys, j, svc) = Make();
+        await svc.ScanAsync();
+        var s = svc.Suggestions.Single(x => x.Id == EdgeId);
+        Assert.True((await svc.ApplyAsync(s, s.Actions[0])).Success);
+
+        // Edge window opens before undo: policy registry undo succeeds, Local State undo fails.
+        sys.Running.Add(BrowserKind.Edge);
+        sys.Window.Add(BrowserKind.Edge);
+        sys.Calls.Clear();
+        var first = await svc.UndoAsync(svc.UndoFor(EdgeId)!);
+        Assert.False(first.Success);
+        Assert.False(sys.Reg.ContainsKey(Boost));
+        Assert.Contains("delete:" + Boost, sys.Calls);
+        Assert.Single(j.All, c => c.Kind == ChangeKind.BrowserLocalStateValue);
+
+        // Close window and retry: Startup Boost must not be deleted a second time.
+        sys.Running.Clear();
+        sys.Window.Clear();
+        sys.Calls.Clear();
+        var second = await svc.UndoAsync(svc.UndoFor(EdgeId)!);
+        Assert.True(second.Success, second.Message);
+        Assert.DoesNotContain(sys.Calls, c => c.StartsWith("delete:", StringComparison.Ordinal) || c.StartsWith("write:", StringComparison.Ordinal));
+        Assert.Empty(j.All);
+        Assert.Null(svc.UndoFor(EdgeId));
+    }
 }

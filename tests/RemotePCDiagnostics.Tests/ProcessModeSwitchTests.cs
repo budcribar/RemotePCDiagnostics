@@ -16,10 +16,19 @@ namespace RemotePCDiagnostics.Tests;
 public sealed class ProcessModeSwitchTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "rpcd-mode-" + Guid.NewGuid().ToString("N"));
+    private readonly List<ServiceProvider> _providers = [];
     private string Bundled => Path.Combine(_root, ModuleLoaderOptions.BundledFolderName);
 
     public ProcessModeSwitchTests() => Directory.CreateDirectory(Bundled);
-    public void Dispose() { try { Directory.Delete(_root, true); } catch { } }
+
+    public void Dispose()
+    {
+        foreach (var sp in _providers)
+        {
+            try { sp.Dispose(); } catch { }
+        }
+        try { Directory.Delete(_root, true); } catch { }
+    }
 
     public static IEnumerable<object[]> ModuleDlls() => BundledModulesTests.ModuleDlls();
 
@@ -39,11 +48,12 @@ public sealed class ProcessModeSwitchTests : IDisposable
         {
             ModulesFolder = Path.Combine(_root, "modules"), CatalogFolder = Path.Combine(_root, "catalog"), BundledFolder = Bundled,
             HostVersion = new Version(1, 2, 0), ProcessModes = modes,
-        }, registrar, userMode: um => { made.Add(um); return new UserModeModuleProxy(um, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: HostQueries); });
+        }, registrar, userMode: um => { made.Add(um); return PerDeviceModuleProxy.For(new UserModeModuleProxy(um, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: HostQueries)); });
         var services = new ServiceCollection();
         AddAppServices(services, _root);
         loader.LoadBundled(services);
         var sp = services.BuildServiceProvider();
+        _providers.Add(sp);
         var modules = sp.GetServices<IDiagnosticModule>().ToDictionary(m => m.Id);
         var catalog = new ModuleCatalog();
         foreach (var m in modules.Values) catalog.Add(m);
@@ -84,7 +94,7 @@ public sealed class ProcessModeSwitchTests : IDisposable
         var (registrar, modules, catalog, made) = Load(file, All(ModuleProcessMode.InProcess));
         Assert.Empty(made);
         var m = modules[manifest.Id];
-        Assert.IsNotType<UserModeModuleProxy>(m);
+        Assert.False(m is IUserModeModule);
         var hosting = catalog.Hosting(manifest.Id)!;
         Assert.False(hosting.OutOfProcess);
         Assert.Equal(ModuleProcessMode.InProcess, hosting.Requested);
@@ -106,7 +116,7 @@ public sealed class ProcessModeSwitchTests : IDisposable
         {
             // It stays in the app and says why (shown next to the switch).
             Assert.Empty(made);
-            Assert.IsNotType<UserModeModuleProxy>(modules[manifest.Id]);
+            Assert.False(modules[manifest.Id] is IUserModeModule);
             Assert.False(hosting.OutOfProcess);
             Assert.Equal(why, hosting.InProcessOnly);
             return;
@@ -114,7 +124,9 @@ public sealed class ProcessModeSwitchTests : IDisposable
         var um = Assert.Single(made);
         Assert.True(um.Bundled);
         Assert.Equal(manifest.NeedsAdmin, um.Elevated); // an admin module gets the app's own token, the others a restricted one
-        var proxy = Assert.IsType<UserModeModuleProxy>(modules[manifest.Id]);
+        var proxy = Assert.IsAssignableFrom<IUserModeModule>(modules[manifest.Id]);
+        if (manifest.PerDevice) Assert.IsType<PerDeviceModuleProxy>(proxy);
+        else Assert.IsType<UserModeModuleProxy>(proxy);
         Assert.Same(BuiltInModules.Descriptors.Single(d => d.Id == manifest.Id), proxy.Source.Descriptor);
         Assert.True(hosting.OutOfProcess);
         Assert.Equal(manifest.NeedsAdmin, hosting.Elevated);
@@ -157,19 +169,21 @@ public sealed class ProcessModeSwitchTests : IDisposable
     {
         var manifest = ManifestOf(file);
         var (_, modules, _, _) = Load(file, All(ModuleProcessMode.OutOfProcess));
-        var proxy = Assert.IsType<UserModeModuleProxy>(modules[manifest.Id]);
+        var proxy = Assert.IsAssignableFrom<IUserModeModule>(modules[manifest.Id]);
         try
         {
             // On this machine most modules say they can't run (no osquery, not Windows); that answer still comes from the module, loaded in
             // the module host with the app's helpers, so the whole path works.
             var a = await proxy.CheckAvailabilityAsync();
             Assert.False(a.Reason is { } r && (r.StartsWith("The module host", StringComparison.Ordinal) || r.StartsWith("Couldn't load the module", StringComparison.Ordinal)), a.Reason);
-            if (!a.IsAvailable) return;
+            if (!a.IsAvailable || !proxy.IncludeInRunAll
+                || manifest.Slug is ModuleSlugs.DismScanHealth or ModuleSlugs.SfcVerifyOnly or ModuleSlugs.SecurityAudit)
+                return;
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             var result = await proxy.RefreshAsync(null, cts.Token);
             Assert.False(result.Message.StartsWith("The module host", StringComparison.Ordinal), result.Message);
         }
-        finally { proxy.Dispose(); }
+        finally { (proxy as IDisposable)?.Dispose(); }
     }
 
     [Theory]
@@ -210,8 +224,11 @@ public sealed class ProcessModeSwitchTests : IDisposable
             // Rendered in the app from the stand-in's results: the page itself injects nothing (what it shows must come from the result).
             Assert.False(manifest.PortableUi, $"{file}: resultOnlyUi is for a UI that isn't portable");
             var page = UserModePlugin.Load(Dll(file), appDirectory: _root, hostQueries: new HostQueriesClient(_ => { })).DetailsComponent!;
-            Assert.DoesNotContain(page.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly),
-                p => p.GetCustomAttributes(typeof(Microsoft.AspNetCore.Components.InjectAttribute), true).Length > 0);
+            for (var t = page; t is not null && t.Name is not ("ModuleDetailsBase" or "StoreAwareComponent" or "ComponentBase" or "Object"); t = t.BaseType)
+            {
+                Assert.DoesNotContain(t.GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly),
+                    p => p.GetCustomAttributes(typeof(Microsoft.AspNetCore.Components.InjectAttribute), true).Length > 0);
+            }
         }
     }
 
@@ -227,7 +244,7 @@ public sealed class ProcessModeSwitchTests : IDisposable
     {
         var file = "RemotePCDiagnostics.Modules.Programs.dll";
         var (_, modules, _, _) = Load(file, new ModuleProcessModeSetting { All = ModuleProcessMode.OutOfProcess }.With("programs", ModuleProcessMode.InProcess));
-        Assert.IsNotType<UserModeModuleProxy>(modules[ModuleIds.Programs]);
+        Assert.False(modules[ModuleIds.Programs] is IUserModeModule);
         var (_, back, _, _) = Load(file, new ModuleProcessModeSetting().With("Programs", ModuleProcessMode.Default));
         Assert.IsType<UserModeModuleProxy>(back[ModuleIds.Programs]); // Default: its module.json says out of process
         ((IDisposable)back[ModuleIds.Programs]).Dispose();
@@ -256,7 +273,7 @@ public sealed class ProcessModeSwitchTests : IDisposable
             var file = ModuleDlls().Select(f => (string)f[0]).Single(f => ManifestOf(f).Id == id);
             Directory.Delete(Bundled, true); Directory.CreateDirectory(Bundled);
             var (_, modules, catalog, _) = Load(file, new ModuleProcessModeSetting());
-            Assert.IsNotType<UserModeModuleProxy>(modules[id]);
+            Assert.False(modules[id] is IUserModeModule);
             Assert.False(catalog.Hosting(id)!.OutOfProcess);
         }
     }

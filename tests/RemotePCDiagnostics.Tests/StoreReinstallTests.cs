@@ -538,4 +538,40 @@ public class StoreReinstallTests
         Assert.Contains("Removed apps that undo reinstalls from the Microsoft Store", html);
         Assert.DoesNotContain("Permanent (can't be undone", html);
     }
+
+    [Fact]
+    public async Task XboxUndo_WhenStoreReinstallFails_PrunesCompletedSettingsSteps_OnRetry()
+    {
+        var sys = With("Microsoft.GamingApp");
+        sys.Reg[RegistryAllowlist.GameDvrEnabled.Target] = 1;
+        sys.Services["XblAuthManager"] = "Automatic";
+        sys.Tasks[XblTask] = "Ready";
+        var (j, svc) = Make(sys);
+        await svc.ScanAsync();
+
+        var xbox = svc.Suggestions.Single(x => x.Id == "remove-xbox");
+        Assert.True((await svc.ApplyAsync(xbox, xbox.Actions[0])).Success);
+        Assert.Equal(5, j.All.Count); // StoreReinstall + GameDvrEnabled + AppCaptureEnabled + XblAuthManager + XblTask
+
+        // First undo attempt: winget fails (offline), while registry, service, and task are restored and removed from journal.
+        sys.WingetResult = WingetResult.Exited(1);
+        var first = await svc.UndoAsync(svc.UndoFor("remove-xbox")!);
+        Assert.False(first.Success);
+        Assert.Equal(1, sys.Reg[RegistryAllowlist.GameDvrEnabled.Target]);
+        Assert.Equal("Automatic", sys.Services["XblAuthManager"]);
+        Assert.Equal("Ready", sys.Tasks[XblTask]);
+        Assert.Equal(ChangeKind.StoreReinstall, Assert.Single(j.All).Kind);
+
+        // Simulate a new unrelated change to GameDvrEnabled before retrying the Xbox undo.
+        sys.Reg[RegistryAllowlist.GameDvrEnabled.Target] = 0;
+        j.Add(ChangeRecord.New(ChangeKind.RegistryValue, RegistryAllowlist.GameDvrEnabled.Target, "1", "Game DVR off again", "x"));
+
+        // Retry undo once online: only StoreReinstall runs; GameDvrEnabled and its new journal entry stay untouched.
+        sys.WingetResult = WingetResult.Exited(0);
+        var second = await svc.UndoAsync(svc.UndoFor("remove-xbox")!);
+        Assert.True(second.Success, second.Message);
+        Assert.Equal(0, sys.Reg[RegistryAllowlist.GameDvrEnabled.Target]);
+        Assert.Equal(ChangeKind.RegistryValue, Assert.Single(j.All).Kind);
+        Assert.Null(svc.UndoFor("remove-xbox"));
+    }
 }

@@ -163,9 +163,15 @@ public class WebcamTests
     [Fact]
     public async Task Module_cancel_stops_capture()
     {
-        var m = new WebcamTestModule(new FakeIo(async (_, ct) => { await Task.Delay(Timeout.Infinite, ct); return null!; }));
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var m = new WebcamTestModule(new FakeIo(async (_, ct) =>
+        {
+            started.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+            return null!;
+        }));
         var t = m.RefreshAsync(null);
-        await Task.Delay(50);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         m.Cancel();
         var r = await t.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(r.Cancelled);

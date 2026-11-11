@@ -329,7 +329,7 @@ public class StressSuiteTests
     {
         var (svc, _, mods, _) = Build();
         await svc.RunStressSuiteAsync(StressSuiteMode.Short, null);
-        Assert.All(mods, m => Assert.Equal(2, m.CleanupCalls)); // once when the run ends, once from the suite's watchdog wrapper (idempotent)
+        Assert.All(mods, m => Assert.Equal(1, m.CleanupCalls));
     }
 
     [Fact]
@@ -341,7 +341,7 @@ public class StressSuiteTests
         svc.StressStopGrace = TimeSpan.FromMilliseconds(100);
         var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null).WaitAsync(TimeSpan.FromSeconds(20));
         Assert.Equal(StressSuiteStepState.Skipped, r.Steps.Single(s => s.ModuleName == "MemoryTest").State);
-        Assert.True(mods[1].CleanupCalls >= 1);
+        Assert.Equal(1, mods[1].CleanupCalls);
         hang.TrySetResult(FakeModule.Ok("MemoryTest"));
     }
 
@@ -355,7 +355,7 @@ public class StressSuiteTests
         svc.CancelStressSuite();
         var r = await run.WaitAsync(TimeSpan.FromSeconds(20));
         Assert.Equal(StressSuiteOutcome.Cancelled, r.Outcome);
-        Assert.True(mods[0].CleanupCalls >= 1);
+        Assert.Equal(1, mods[0].CleanupCalls);
     }
 
     [Fact]

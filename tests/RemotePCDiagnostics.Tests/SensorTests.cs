@@ -43,6 +43,12 @@ public class SensorThresholdTests
     {
         Assert.Equal(SensorLevel.Warning, SensorThresholds.Evaluate(T(HardwareKind.Storage, "Samsung SSD 990 PRO 2TB", 65, "Temperature")));
         Assert.Equal(SensorLevel.Critical, SensorThresholds.Evaluate(T(HardwareKind.Storage, "WD NVMe drive", 70, "Temperature")));
+        Assert.Equal(SensorLevel.Ok, SensorThresholds.Evaluate(T(HardwareKind.Storage, "SAMSUNG MZAL8512HDLU-00BL2", 50, "Composite Temperature")));
+        Assert.Equal(SensorLevel.Warning, SensorThresholds.Evaluate(T(HardwareKind.Storage, "SAMSUNG MZAL8512HDLU-00BL2", 65, "Composite Temperature")));
+        Assert.Equal(SensorLevel.Critical, SensorThresholds.Evaluate(T(HardwareKind.Storage, "SAMSUNG MZAL8512HDLU-00BL2", 70, "Composite Temperature")));
+        Assert.Equal(SensorLevel.Critical, SensorThresholds.Evaluate(T(HardwareKind.Storage, "SAMSUNG MZAL8512HDLU-00BL2", 70, "Temperature")));
+        Assert.Equal(SensorLevel.Neutral, SensorThresholds.Evaluate(T(HardwareKind.Storage, "SAMSUNG MZAL8512HDLU-00BL2", 75, "Temperature #1")));
+        Assert.Equal(SensorLevel.Neutral, SensorThresholds.Evaluate(T(HardwareKind.Storage, "SAMSUNG MZAL8512HDLU-00BL2", 84, "Critical Temperature")));
         Assert.Equal(SensorLevel.Warning, SensorThresholds.Evaluate(T(HardwareKind.Storage, "Seagate BarraCuda 2TB", 50, "Temperature")));
         Assert.Equal(SensorLevel.Neutral, SensorThresholds.Evaluate(T(HardwareKind.Storage, "Generic Disk", 90, "Temperature")));
         Assert.Equal(SensorLevel.Neutral, SensorThresholds.Evaluate(T(HardwareKind.Motherboard, "Nuvoton NCT6798D", 95, "VRM")));
@@ -154,12 +160,23 @@ public class SensorNoDataTests
     }
 
     [Fact]
-    public void AllEmpty_NoMissingLine_FriendlyMessage()
+    public async Task AllEmpty_NoMissingLine_FriendlyMessage()
     {
-        var rep = LibreHardwareMonitorModule.BuildReport(new SensorSnapshot([T(HardwareKind.Cpu, "Core", 0)], IsElevated: true));
+        var raw = new SensorSnapshot([T(HardwareKind.Cpu, "Core", 0)], IsElevated: false);
+        var rep = LibreHardwareMonitorModule.BuildReport(raw);
         Assert.Empty(rep.VisibleGroups);
         Assert.Null(rep.MissingText);
-        Assert.Equal("No temperature or fan sensors found", LibreHardwareMonitorModule.Summarize(rep));
+        Assert.Equal("No sensors found. Try running the app as administrator.", LibreHardwareMonitorModule.Summarize(rep));
+        Assert.Equal(DiagnosticStatus.Warning, LibreHardwareMonitorModule.ToStatus(rep, raw));
+
+        var refresh = await new LibreHardwareMonitorModule(new FakeSensorProvider(raw)).RefreshAsync(null);
+        Assert.Equal(DiagnosticStatus.Warning, refresh.Status);
+        Assert.Contains("administrator", refresh.Message);
+
+        var elevatedRaw = new SensorSnapshot([T(HardwareKind.Cpu, "Core", 0)], IsElevated: true);
+        var elevatedRep = LibreHardwareMonitorModule.BuildReport(elevatedRaw);
+        Assert.Equal("No temperature or fan sensors found", LibreHardwareMonitorModule.Summarize(elevatedRep));
+        Assert.Equal(DiagnosticStatus.Warning, LibreHardwareMonitorModule.ToStatus(elevatedRep, elevatedRaw));
     }
 
     [Fact]
@@ -191,14 +208,19 @@ public class SensorFriendlyNameTests
     [Fact]
     public void DriveLimits_ExcludedFromHottestAndStatus()
     {
+        // Sanity check: on this OEM NVMe drive, 84 °C on Composite Temperature WOULD be Critical if not a limit sensor.
+        Assert.Equal(SensorLevel.Critical, SensorThresholds.Evaluate(D("Composite Temperature", 84)));
+        Assert.Equal(SensorLevel.Ok, SensorThresholds.Evaluate(D("Composite Temperature", 50)));
+
         var rep = LibreHardwareMonitorModule.BuildReport(new SensorSnapshot(
             [D("Composite Temperature", 50), D("Temperature #1", 48), D("Warning Temperature", 82), D("Critical Temperature", 84)], IsElevated: true));
         var g = rep.Groups.First(x => x.Id == "storage");
         Assert.Equal(50, g.Hottest);
+        Assert.Equal(SensorLevel.Ok, g.Readings.Single(r => r.Reading.SensorName == "Composite Temperature").Level);
         Assert.True(D("Critical Temperature", 84).IsLimit);
         Assert.False(D("Critical Temperature", 84).IsLive);
         Assert.All(g.Readings.Where(r => r.Reading.IsLimit), r => Assert.Equal(SensorLevel.Neutral, r.Level));
-        Assert.NotEqual(SensorLevel.Critical, rep.Level);
+        Assert.Equal(SensorLevel.Ok, rep.Level);
     }
 }
 

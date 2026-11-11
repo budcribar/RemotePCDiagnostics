@@ -130,13 +130,55 @@ public static class HistorySummary
         int servicesAdjusted = 0;
 
         var fixList = new List<FixHistoryItem>();
-        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var persistedUnmatched = new List<(DateTimeOffset TimeUtc, string Summary)>();
+
+        static string NormalizeSummary(string? s) => (s ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
+
+        IReadOnlyList<(T Item, DateTimeOffset TimeUtc)> ExcludeAlreadyPersisted<T>(IEnumerable<T> items, Func<T, (DateTimeOffset TimeUtc, string Summary)> project)
+        {
+            var candidates = new List<(T Item, DateTimeOffset TimeUtc, string Summary)>();
+            foreach (var item in items)
+            {
+                var (tUtc, summary) = project(item);
+                if (InRange(tUtc)) candidates.Add((item, tUtc, NormalizeSummary(summary)));
+            }
+            if (candidates.Count == 0 || persistedUnmatched.Count == 0)
+                return candidates.Select(c => (c.Item, c.TimeUtc)).ToList();
+
+            var pairs = new List<(int PersistedIdx, int CandidateIdx, double DiffSeconds)>();
+            for (var pIdx = 0; pIdx < persistedUnmatched.Count; pIdx++)
+            {
+                var (pTime, pSummary) = persistedUnmatched[pIdx];
+                for (var cIdx = 0; cIdx < candidates.Count; cIdx++)
+                {
+                    if (!string.Equals(pSummary, candidates[cIdx].Summary, StringComparison.OrdinalIgnoreCase)) continue;
+                    var diff = Math.Abs((pTime - candidates[cIdx].TimeUtc).TotalSeconds);
+                    if (diff <= 60) pairs.Add((pIdx, cIdx, diff));
+                }
+            }
+            pairs.Sort((a, b) => a.DiffSeconds.CompareTo(b.DiffSeconds));
+            var usedPersisted = new HashSet<int>();
+            var matchedCandidates = new HashSet<int>();
+            foreach (var (pIdx, cIdx, _) in pairs)
+            {
+                if (usedPersisted.Contains(pIdx) || matchedCandidates.Contains(cIdx)) continue;
+                usedPersisted.Add(pIdx);
+                matchedCandidates.Add(cIdx);
+            }
+            foreach (var pIdx in usedPersisted.OrderByDescending(i => i))
+                persistedUnmatched.RemoveAt(pIdx);
+
+            var remaining = new List<(T Item, DateTimeOffset TimeUtc)>(candidates.Count - matchedCandidates.Count);
+            for (var i = 0; i < candidates.Count; i++)
+                if (!matchedCandidates.Contains(i)) remaining.Add((candidates[i].Item, candidates[i].TimeUtc));
+            return remaining;
+        }
 
         var memEntries = new List<(DateTimeOffset TimeUtc, string Summary)>();
         foreach (var e in persistedFixEntries)
         {
             if (string.Equals(e.Module, MemoryFixModuleId, StringComparison.OrdinalIgnoreCase))
-                memEntries.Add((e.TimeUtc, e.Summary.Trim()));
+                memEntries.Add((e.TimeUtc, NormalizeSummary(e.Summary)));
         }
         if (memory is not null)
         {
@@ -144,18 +186,18 @@ public static class HistorySummary
             {
                 var tUtc = new DateTimeOffset(m.When).ToUniversalTime();
                 if (InRange(tUtc))
-                    memEntries.Add((tUtc, m.Message.Trim()));
+                    memEntries.Add((tUtc, NormalizeSummary(m.Message)));
             }
         }
 
         bool IsDuplicateOfMemoryFix(DateTimeOffset svcTime, string svcSummary)
         {
-            var s = svcSummary.Trim();
+            var s = NormalizeSummary(svcSummary);
             if (s.Length == 0) return false;
             var donePrefix = "Done: " + s + " until the next restart";
             foreach (var (memTime, memSummary) in memEntries)
             {
-                if (Math.Abs((memTime - svcTime).TotalSeconds) <= 15 &&
+                if (Math.Abs((memTime - svcTime).TotalSeconds) <= 30 &&
                     (string.Equals(memSummary, s, StringComparison.OrdinalIgnoreCase) ||
                      memSummary.StartsWith(donePrefix, StringComparison.OrdinalIgnoreCase)))
                 {
@@ -199,18 +241,14 @@ public static class HistorySummary
 
             var badge = FormatImpactBadge(fb, mb, up, rf);
             fixList.Add(new(e.TimeUtc, e.Test, actor, ok, e.Summary, badge));
-            seenKeys.Add(DedupKey(e.TimeUtc, e.Summary));
+            persistedUnmatched.Add((e.TimeUtc, NormalizeSummary(e.Summary)));
         }
 
         // 2. Live in-session RemediationService records (if not already persisted in the Event Log list)
         if (remediation is not null)
         {
-            foreach (var r in remediation.Recent)
+            foreach (var (r, tUtc) in ExcludeAlreadyPersisted(remediation.Recent, r => (new DateTimeOffset(r.When).ToUniversalTime(), r.Message)))
             {
-                var tUtc = new DateTimeOffset(r.When).ToUniversalTime();
-                if (!InRange(tUtc)) continue;
-                if (!seenKeys.Add(DedupKey(tUtc, r.Message))) continue;
-
                 totalFixes++;
                 if (r.Success) okFixes++;
                 diskBytes += r.FreedDiskBytes;
@@ -232,12 +270,8 @@ public static class HistorySummary
         if (memory is not null)
         {
             long parsedMemFromRecent = 0;
-            foreach (var m in memory.Recent)
+            foreach (var (m, tUtc) in ExcludeAlreadyPersisted(memory.Recent, m => (new DateTimeOffset(m.When).ToUniversalTime(), m.Message)))
             {
-                var tUtc = new DateTimeOffset(m.When).ToUniversalTime();
-                if (!InRange(tUtc)) continue;
-                if (!seenKeys.Add(DedupKey(tUtc, m.Message))) continue;
-
                 totalFixes++;
                 if (m.Success)
                 {
@@ -258,13 +292,9 @@ public static class HistorySummary
         // 4. Live in-session ServiceActionService records
         if (services is not null)
         {
-            foreach (var s in services.Recent)
+            var nonMemServices = services.Recent.Where(s => !IsDuplicateOfMemoryFix(new DateTimeOffset(s.When).ToUniversalTime(), s.Message));
+            foreach (var (s, tUtc) in ExcludeAlreadyPersisted(nonMemServices, s => (new DateTimeOffset(s.When).ToUniversalTime(), s.Message)))
             {
-                var tUtc = new DateTimeOffset(s.When).ToUniversalTime();
-                if (!InRange(tUtc)) continue;
-                if (IsDuplicateOfMemoryFix(tUtc, s.Message)) continue;
-                if (!seenKeys.Add(DedupKey(tUtc, s.Message))) continue;
-
                 totalFixes++;
                 if (s.Success)
                 {
@@ -368,9 +398,6 @@ public static class HistorySummary
         if (files > 0) return $"{AreaModuleBase.Plural(files, "file")} cleaned";
         return null;
     }
-
-    private static string DedupKey(DateTimeOffset tUtc, string summary) =>
-        $"{tUtc.UtcDateTime:yyyy-MM-ddTHH:mm}|{summary.Trim()}";
 
     public static long ParseFreedBytesFromText(string? text)
     {

@@ -12,19 +12,27 @@ public class AppCacheVersionTests
     [InlineData("1.2", "1.2.0", 0)]
     [InlineData("2.0.0", "10.0.0", -1)]
     [InlineData("1.2.0-alpha", "1.2.0-beta", -1)]
+    [InlineData("1.2.0+build1", "1.2.0", 0)]
+    [InlineData("1.2.0+build1", "1.2.0-beta", 1)]
+    [InlineData("1.2.0-beta+build1", "1.2.0", -1)]
+    [InlineData("1.2.0-beta.10", "1.2.0-beta.2", 1)]
     public void Versions_compare_by_number_then_suffix(string a, string b, int sign) =>
         Assert.Equal(sign, Math.Sign(AppCache.CompareVersions(a, b)));
 
     [Fact]
     public void The_reported_cached_version_is_the_highest_complete_one()
     {
+        var validZip = AppCache.FormatRecord(new string('a', 64), "RemotePCDiagnostics-1.0.zip");
+        var validEntry = AppCache.FormatRecord(new string('b', 64), "RemotePCDiagnostics.Host.exe");
         var folders = new[]
         {
-            new CachedFolder("1.9.0", true, "z", "e"),
-            new CachedFolder("1.10.0", true, "z", "e"),
-            new CachedFolder("2.0.0", false, "z", "e"),          // program missing
-            new CachedFolder("3.0.0.partial", true, "z", "e"),   // staging folder, not a version
-            new CachedFolder("1.11.0", true, null, "e"),         // no zip record
+            new CachedFolder("1.9.0", true, validZip, validEntry),
+            new CachedFolder("1.10.0", true, validZip, validEntry),
+            new CachedFolder("2.0.0", false, validZip, validEntry),       // program missing
+            new CachedFolder("3.0.0.partial", true, validZip, validEntry),// staging folder, not a version
+            new CachedFolder("1.11.0", true, null, validEntry),           // no zip record
+            new CachedFolder("1.12.0", true, "corrupt", validEntry),      // malformed zip sha256 record
+            new CachedFolder("1.13.0", true, validZip, "corrupt"),        // malformed entry sha256 record
         };
         Assert.Equal("1.10.0", AppCache.PickCachedVersion(folders));
         Assert.Equal("", AppCache.PickCachedVersion([]));
@@ -38,6 +46,7 @@ public class AppCacheVersionTests
         Assert.Equal(new string('a', 64) + " *app.zip\n", record);
         Assert.Equal(new string('a', 64), AppCache.ParseRecord(record, "APP.zip"));
         Assert.Null(AppCache.ParseRecord(record, "other.zip"));
+        Assert.Null(AppCache.ParseRecord(record + "extra line", "app.zip"));
         Assert.Null(AppCache.ParseRecord("abc *app.zip", "app.zip"));
         Assert.Null(AppCache.ParseRecord(null, "app.zip"));
     }
@@ -54,6 +63,37 @@ public class AppCacheVersionTests
         Assert.False(AppCache.IsUsable(m, new CachedFolder(m.Version, true, AppCache.FormatRecord(new string('c', 64), m.File), entry)));
         Assert.False(AppCache.IsUsable(m, null));
         Assert.Equal(["1.0.0", "1.2.3.partial"], AppCache.FoldersToDelete(["1.0.0", m.Version, "1.2.3.partial"], m.Version));
+    }
+}
+
+public class ReleaseUrlsTests
+{
+    private static readonly Uri Request = new(ReleaseUrls.ManifestUrl);
+
+    [Theory]
+    [InlineData("/budcribar/RemotePCDiagnostics/releases/download/v1.2.3/manifest.json")]
+    [InlineData("https://objects.githubusercontent.com/github-production-release-asset/123?X-Amz-Algorithm=AWS4")]
+    [InlineData("https://release-assets.githubusercontent.com/github-production-release-asset/456?sp=r")]
+    public void Valid_redirects_resolve(string location)
+    {
+        var resolved = ReleaseUrls.ResolveRedirect(Request, new Uri(location, UriKind.RelativeOrAbsolute));
+        Assert.NotNull(resolved);
+    }
+
+    [Theory]
+    [InlineData("../download/v1.0.0/manifest.json")]
+    [InlineData("./manifest.json")]
+    [InlineData("/budcribar/RemotePCDiagnostics/releases/download/../latest/manifest.json")]
+    [InlineData("/budcribar/RemotePCDiagnostics/releases/%2e%2e/other")]
+    [InlineData("https://objects.githubusercontent.com/github-production-release-asset/%2e%2e/secret")]
+    [InlineData("//evil.example/manifest.json")]
+    [InlineData("http://objects.githubusercontent.com/asset")]
+    [InlineData("https://evil.example/manifest.json")]
+    [InlineData("https://github.com/other/repo/releases/download/v1/x.zip")]
+    [InlineData("/budcribar\\RemotePCDiagnostics/releases/download/v1/x.zip")]
+    public void Unsafe_redirects_are_rejected(string location)
+    {
+        Assert.Null(ReleaseUrls.ResolveRedirect(Request, new Uri(location, UriKind.RelativeOrAbsolute)));
     }
 }
 

@@ -55,6 +55,7 @@ public sealed class ModuleUiFrames(Microsoft.Extensions.Logging.ILogger? log = n
         }
     }
     private int _disposed;
+    internal Action? OnDisposed { get; set; }
 
     public async Task<RemoteComponentSession> OpenAsync(UserModeModule module, CancellationToken cancellationToken = default)
     {
@@ -73,13 +74,13 @@ public sealed class ModuleUiFrames(Microsoft.Extensions.Logging.ILogger? log = n
 
         // One UI process per module: the page opening again starts a fresh one (the relay treats a reload as a restart).
         if (_running.TryRemove(module.Manifest.Id, out var previous)) previous.Stop();
-        var (process, input) = RestrictedModuleHostLauncher.StartRestrictedGuiWithInput(exe, arguments, dir);
+        var (process, input) = RestrictedModuleHostLauncher.StartRestrictedGuiWithInput(exe, arguments, dir, unsigned: !module.Bundled);
         // The contract has no callbacks, so nothing is read back from the process.
         var running = new Running(process, new RemoteComponentConnection(null, input));
         _running.AddOrUpdate(module.Manifest.Id, running, (_, prev) => { prev.Stop(); return running; });
         if (_disposed != 0 && _running.TryRemove(module.Manifest.Id, out var raced)) { raced.Stop(); ObjectDisposedException.ThrowIf(true, this); }
-        if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module UI [{Slug}]: started pid={Pid} (restricted token, Medium integrity) on {Relay}, log {Log}",
-            module.Manifest.Slug, process.Id, baseUri, data + "\\module-ui.log");
+        if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module UI [{Slug}]: started pid={Pid} (restricted token, Medium integrity{Unsigned}) on {Relay}, log {Log}",
+            module.Manifest.Slug, process.Id, module.Bundled ? "" : ", no INTERACTIVE or Event Log Readers", baseUri, data + "\\module-ui.log");
         // The relay's /{id} page waits for the UI process to connect, so the frame can load right away.
         return new RemoteComponentSession(page, running.Connection, () =>
         {
@@ -113,6 +114,8 @@ public sealed class ModuleUiFrames(Microsoft.Extensions.Logging.ILogger? log = n
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        OnDisposed?.Invoke();
+        OnDisposed = null;
         foreach (var r in _running.Values) r.Stop();
         _running.Clear();
         if (_relay is { } relay)

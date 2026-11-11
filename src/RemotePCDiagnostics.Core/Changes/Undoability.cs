@@ -86,7 +86,7 @@ public static class Undoability
     {
         null or "" => "",
         "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c" => "High performance",
-        "a1841308-3bce-4d0d-9ff0-5c3e3b8f1b4b" => "Power saver",
+        "a1841308-3541-4fab-bc81-f71556f20b4a" => "Power saver",
         "e9a42b02-d5df-448d-aa00-03f14749eb61" => "Ultimate Performance",
         "381b4222-f694-41f0-9685-ff5bb260df2e" => "Balanced",
         _ => "a custom power plan",

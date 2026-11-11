@@ -49,8 +49,9 @@ public sealed record SecurityAuditReport(IReadOnlyList<AuditFinding> Findings, s
     public int Failed => Shown.Count(f => f.Outcome == AuditOutcome.Failed);
     public int NotChecked => Shown.Count(f => f.Outcome == AuditOutcome.NotChecked);
 
-    /// <summary>Failed checks the baseline rates High: the ones that make this PC clearly less safe.</summary>
-    public int HighRisk => Shown.Count(f => f.Outcome == AuditOutcome.Failed && f.Severity.Equals("High", StringComparison.OrdinalIgnoreCase));
+    /// <summary>Failed checks the baseline rates High or Critical: the ones that make this PC clearly less safe.</summary>
+    public int HighRisk => Shown.Count(f => f.Outcome == AuditOutcome.Failed
+        && (f.Severity.Equals("High", StringComparison.OrdinalIgnoreCase) || f.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>
     /// Critical only for high-risk failures. The baseline is strict (enterprise hardening), so a typical home PC fails
@@ -157,7 +158,7 @@ public static class HardeningKittyCsv
         return list;
     }
 
-    /// <summary>Passed → Passed; failed Low → Warning; failed Medium/High → Failed; otherwise Not checked.</summary>
+    /// <summary>Passed → Passed; failed Low → Warning; failed Medium/High/Critical → Failed; otherwise Not checked.</summary>
     public static AuditOutcome Classify(string testResult, string severity, string findingSeverity)
     {
         if (testResult.Equals("Passed", StringComparison.OrdinalIgnoreCase)) return AuditOutcome.Passed;
@@ -167,7 +168,10 @@ public static class HardeningKittyCsv
         {
             if (severity.Equals("Passed", StringComparison.OrdinalIgnoreCase)) return AuditOutcome.Passed;
             if (severity.Equals("Low", StringComparison.OrdinalIgnoreCase)) return AuditOutcome.Warning;
-            if (severity.Equals("Medium", StringComparison.OrdinalIgnoreCase) || severity.Equals("High", StringComparison.OrdinalIgnoreCase)) return AuditOutcome.Failed;
+            if (severity.Equals("Medium", StringComparison.OrdinalIgnoreCase)
+                || severity.Equals("High", StringComparison.OrdinalIgnoreCase)
+                || severity.Equals("Critical", StringComparison.OrdinalIgnoreCase))
+                return AuditOutcome.Failed;
         }
         return AuditOutcome.NotChecked;
     }

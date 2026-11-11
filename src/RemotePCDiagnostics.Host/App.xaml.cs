@@ -88,9 +88,18 @@ public partial class App : Application
         // Packaging check: no window, machine scans, journal changes or instance mutex.
         if (e.Args.Contains("--verify-package"))
         {
-            var required = new[] { "tools/osquery/osqueryi.exe", "tools/HardeningKitty/HardeningKitty.psd1",
+            var required = new List<string>
+            {
+                "tools/osquery/osqueryi.exe", "tools/HardeningKitty/HardeningKitty.psd1",
                 "tools/HardeningKitty/HardeningKitty.psm1", "RemotePCDiagnostics.MemTest.exe",
-                "RemotePCDiagnostics.MemTest.runtimeconfig.json", "wwwroot/index.html" };
+                "RemotePCDiagnostics.ModuleHost.exe", "moduleui/RemotePCDiagnostics.ModuleUiHost.exe",
+                "wwwroot/index.html",
+            };
+            foreach (var stem in new[] { "RemotePCDiagnostics.MemTest", "RemotePCDiagnostics.ModuleHost", "moduleui/RemotePCDiagnostics.ModuleUiHost" })
+            {
+                if (File.Exists(Path.Combine(AppContext.BaseDirectory, stem + ".dll")))
+                    required.Add(stem + ".runtimeconfig.json");
+            }
             var missing = required.Where(p => !File.Exists(Path.Combine(AppContext.BaseDirectory, p)))
                 .Concat(BuiltInModulesPlugin.MissingModuleDlls(RemotePCDiagnostics.Core.Plugins.ModuleLoaderOptions.DefaultBundledFolder())
                     .Select(slug => $"{RemotePCDiagnostics.Core.Plugins.ModuleLoaderOptions.BundledFolderName}/ (module {slug})")).ToArray();
@@ -105,7 +114,14 @@ public partial class App : Application
                     using var helper = System.Diagnostics.Process.Start(start)!;
                     var output = helper.StandardOutput.ReadToEndAsync();
                     if (!helper.WaitForExit(15000)) { helper.Kill(); valid = false; }
-                    else valid = helper.ExitCode == 0 && output.GetAwaiter().GetResult().Contains("MT DONE 1048576 ");
+                    else
+                    {
+                        var done = output.GetAwaiter().GetResult().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                            .Select(RemotePCDiagnostics.Core.Stress.MemTestMessage.Parse)
+                            .OfType<RemotePCDiagnostics.Core.Stress.MemTestMessage.Done>()
+                            .LastOrDefault();
+                        valid = helper.ExitCode == 0 && done is { Bytes: 1048576, Passes: > 0, Errors: 0 };
+                    }
                 }
                 catch (Exception ex) { LogFileOnly($"Package helper failed: {ex.Message}"); valid = false; }
             }

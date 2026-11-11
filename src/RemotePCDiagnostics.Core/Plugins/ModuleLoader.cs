@@ -14,6 +14,8 @@ public sealed record ModuleLoaderOptions
     public string ModulesFolder { get; init; } = DefaultModulesFolder();
     /// <summary>%ProgramData%\RemotePCDiagnostics\catalog: each plugin's module.json and strings, kept after the DLL is removed.</summary>
     public string CatalogFolder { get; init; } = DefaultCatalogFolder();
+    /// <summary>%ProgramFiles%\RemotePCDiagnostics\checks: custom JSON checks. Null uses the default folder.</summary>
+    public string? ChecksFolder { get; init; }
     /// <summary>The project's module signing public key (PEM, ECDSA P-256). Empty: no module counts as signed.</summary>
     public string? PublicKeyPem { get; init; } = ModuleSigningKey.PublicKeyPem;
     public Version HostVersion { get; init; } = new(0, 0);
@@ -247,7 +249,7 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
 /// <summary>Registers one ready-made module (the user-mode stand-in).</summary>
 internal sealed class SingleModulePlugin(IDiagnosticModule module) : IModulePlugin
 {
-    public void Register(IServiceCollection services, IPluginContext context) => services.AddSingleton(module);
+    public void Register(IServiceCollection services, IPluginContext context) => services.AddSingleton<IDiagnosticModule>(_ => module);
 }
 
 /// <summary>A module the user-mode module host runs out of process: an unsigned plugin, or a module that ships with the app and asks to

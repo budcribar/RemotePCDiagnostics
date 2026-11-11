@@ -27,6 +27,7 @@ public class WindowsReadOnlyTests
         { "FastStartupState", true },
         { "IpConfig", true },
         { "DefenderExclusions", true },
+        { "DockDevices", true },
         { "MemoryProbe", true },
     };
 
