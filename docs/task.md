@@ -13,41 +13,34 @@ Persistent tracker for shipping **Remote PC Diagnostics** to paying Repair Shops
 
 ## Step 1: $0 Microsoft Store Registration & Public OSS Release *(DONE — Store Pending Verification)*
 - [x] Open **free Microsoft Store Developer account** at `https://storedeveloper.microsoft.com` ($0 — submitted, pending verification; **MSIX signing covers `Host.exe` + all unsigned NuGet `.dll`s for $0 with zero GitHub-star gate and zero SmartScreen warning**)
-- [x] Enable GitHub 2FA, switch `budcribar/RemotePCDiagnostics` to **Public** under the MIT License, add [Privacy & security policy](../README.md#privacy--security-policy) (documenting read-only CIS `HardeningKitty` baseline scope and zero telemetry), and publish rolling GitHub Actions installers ([ci.yml](../.github/workflows/ci.yml))
-- [x] Submit initial **SignPath Foundation** OSS inquiry *(declined for now solely pending organic GitHub stars / Reddit / YouTube mentions — **reapply after Step 5 community posts**, or fund $9.99/mo Azure Artifact Signing out of Customer #1's $25/mo subscription)*
+- [x] Enable GitHub 2FA, switch `budcribar/RemotePCDiagnostics` to **Public** under the MIT License, add [Privacy & security policy](../README.md#privacy--security-policy), and publish rolling GitHub Actions installers ([ci.yml](../.github/workflows/ci.yml))
+- [x] Submit initial **SignPath Foundation** OSS inquiry *(declined pending organic GitHub stars / Reddit / YouTube mentions — **reapply after Step 5 community posts**, or fund $9.99/mo Azure Artifact Signing out of Customer #1's $25/mo subscription)*
 
 ## Step 2: Ship `ShopBranding` Before/After Reports & Dongle-Free Buyer QR Certificates *(DONE — `7d9804a` & `16b9ce1`)*
 - [x] Extend [ClientReport.cs](../src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs) to accept [ShopBranding.cs](../src/RemotePCDiagnostics.Core/Workflow/ShopBranding.cs)
 - [x] Build **1-Page Buyer Hardware QA QR Certificate** mode ([HardwareQaCertificate.cs](../src/RemotePCDiagnostics.Core/Workflow/HardwareQaCertificate.cs), [QrCodeSvg.cs](../src/RemotePCDiagnostics.Core/Workflow/QrCodeSvg.cs), and [BrandingCertificatePage.razor](../src/RemotePCDiagnostics.UI/Pages/BrandingCertificatePage.razor))
 - [x] Finish **Bench Refurbisher QA Suite** in `RemotePCDiagnostics` (`7d9804a`): WHEA hardware error roll-up, interactive Keyboard NKRO + Display Dead-Pixel/Touch check, and 1-click 10-Minute Hardware Intake / QA Check
-- [x] Ship **Hosted QR Verification (`GET /r/{id}`) + Multi-Tenant Shop Auth/Branding** in [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView) (`16b9ce1` on `net10`, [item2-hosted-qa-and-shop-auth-spec.md](item2-hosted-qa-and-shop-auth-spec.md))
+- [x] Ship **Hosted QR Verification (`GET /r/{id}`) + Multi-Tenant Shop Auth/Branding** in [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView) (`16b9ce1` on `net10`)
 
 ## Step 3: Desktop Shop Relay Integration + Stripe Billing & Multi-Tech Team Invites *(DONE — `ef59232` & `7fef1a0`)*
-- [x] Connect Desktop Client to Shop Relay & Hosted QR Certificates (`ef59232` on `RemotePCDiagnostics` `main`):
-  - [x] `-g=<group>` (`REMOTEPC_GROUP`) across [SessionLaunchOptions.cs](../src/RemotePCDiagnostics.Core/Session/SessionLaunchOptions.cs), [RebootResumeCoordinator.cs](../src/RemotePCDiagnostics.Core/Areas/RebootResumeCoordinator.cs), [WindowsWorkflowSystem.cs](../src/RemotePCDiagnostics.Host/WindowsWorkflowSystem.cs), and [MainWindow.xaml.cs](../src/RemotePCDiagnostics.Host/MainWindow.xaml.cs)
-  - [x] **"Connect to Technician"** top-bar dialog + live shop logo/phone trust banner ([MainLayout.razor](../src/RemotePCDiagnostics.UI/Shared/MainLayout.razor))
-  - [x] 1-click **"Publish Hosted QR Link"** (`POST /api/reports` with `Bearer rpd_live_...`) on [BrandingCertificatePage.razor](../src/RemotePCDiagnostics.UI/Pages/BrandingCertificatePage.razor) and [WorkflowPage.razor](../src/RemotePCDiagnostics.UI/Pages/WorkflowPage.razor)
-- [x] Wire **Stripe Checkout, Billing Portal, Signed Webhooks & Multi-Tech Team Invites** (`7fef1a0` on `RemoteBlazorWebView` `net10`, [item3b-stripe-and-team-invites-spec.md](item3b-stripe-and-team-invites-spec.md))
+- [x] Connect Desktop Client to Shop Relay & Hosted QR Certificates (`ef59232` on `RemotePCDiagnostics` `main`)
+- [x] Wire **Stripe Checkout, Billing Portal, Signed Webhooks & Multi-Tech Team Invites** (`7fef1a0` on `RemoteBlazorWebView` `net10`)
 
-## Step 4: Microsoft Store `asInvoker` + MSIX Packaging & Relay Launch Hardening *(ACTIVE — Parallel Split)*
-- [x] **NEXT #1 *(DONE — `RemotePCDiagnostics` `main`)*:** Switch to `asInvoker`, Add Elevated Admin Repair Mode & Build `.msix` Store Package:
-  - [x] Switch [app.manifest](../src/RemotePCDiagnostics.Host/app.manifest) on `Host.exe` from `requireAdministrator` to `asInvoker` + add runtime elevation detection (`IElevationContext` / `ElevationService`) and clear admin badges in UI when running un-elevated
-  - [x] Add **"Enable Admin Repair Mode"** UAC flow + Named-Pipe elevated helper (`RemotePCDiagnostics.Admin`, `--mode=helper --parent-pid=<pid>` with `PipeSecurity` ACLs, client process verification, and Win32 Job Object exit tie-in)
-  - [x] Add [AppxManifest.template.xml](../msix/AppxManifest.template.xml) (`runFullTrust` + `allowElevation`), Store visual assets, zero-`.sys`-driver CI assertion ([Build-Msix.ps1](../msix/Build-Msix.ps1)), and automated `MakeAppx.exe` `.msix` build in [ci.yml](../.github/workflows/ci.yml) ready for $0 Partner Center upload
-- [ ] **NEXT #2 *(Ready for Parallel Bot #2 in `RemoteBlazorWebView` `net10` — Full Spec in [item4b-relay-production-and-demo-spec.md](item4b-relay-production-and-demo-spec.md) / `doc/ShopRelayProductionAndDemoSpec.md`)*:** Production Relay Landing Page, Live Sample QR Certificate, Rate Limiting & Container Deploy:
-  - [ ] Public `GET /welcome` landing/pricing page + auto-seeded live sample certificate at `GET /r/DEMO-LATITUDE-7420`
-  - [ ] Built-in `Microsoft.AspNetCore.RateLimiting` (`429` protection on `/signup`, `/login`, `/invite/{token}`, and `/api/reports`)
-  - [ ] `GET /api/shop/health` SQLite WAL readiness probe + `ShopMaintenanceService` expired-report/invite sweep + turnkey `deploy/docker-compose.shop.yml` & `deploy/fly.toml.example`
+## Step 4: Microsoft Store `asInvoker` + MSIX Packaging & Relay Launch Hardening *(DONE — `3b37765` & `924d5cf`)*
+- [x] Switch [app.manifest](../src/RemotePCDiagnostics.Host/app.manifest) to `asInvoker`, build `RemotePCDiagnostics.Admin` Named-Pipe helper + **"Enable Admin Repair Mode"**, and publish Store-ready `.msix` (`runFullTrust` + `allowElevation`, zero `.sys` drivers) on rolling GitHub Releases (`3b37765`)
+- [x] Ship public `GET /welcome` page, auto-seeded `/r/DEMO-LATITUDE-7420`, `429` rate limiting, `/api/shop/health`, `ShopMaintenanceService`, and `deploy/docker-compose.shop.yml` + `deploy/fly.toml.example` (`924d5cf` on `RemoteBlazorWebView` `net10`)
 
-## Step 5: Outbound Sales to First 25 Founding Shops *(Weeks 4–5)*
-- [ ] Deploy live relay container & verify live sample **Hardware QA Certificate** (`/r/DEMO-LATITUDE-7420`)
-- [ ] Record 60-second silent-friendly **Store → Group Code → Before/After Report** Loom/GIF demo
-- [ ] Send 10 messages/day to eBay/Swappa/BackMarket laptop refurbishers (target: first 10 trials)
-- [ ] Post MIT open-source bench tool showcase on Technibble, `r/computertechs`, and The Tech Tribe *(also builds the organic stars/discussions needed to reapply to SignPath Foundation for $0)*
-- [ ] DM 15 PC repair / refurbishment YouTubers with free lifetime white-labeled Pro accounts
+## Step 5 & 6: Partner Center Store Kit, Outbound Sales Pack & Unattended MSP Fleet Tier *(ACTIVE — Parallel Split)*
+- [ ] **NEXT #1 *(In Progress — Bot #1 in `RemotePCDiagnostics` `main`)*:** Partner Center Submission Pack, Automated Store Screenshots, Outbound Sales Kit & Client Fleet Agent (`-g=<group>` + Windows Service + `winget` Manifest):
+  - [ ] Generate crisp `1920x1080` Partner Center Store PNG screenshots automatically in CI + write `msix/PartnerCenter-Submission-Guide.md` (exact listing text, privacy answers, and `Policy 10.2.9` reviewer notes)
+  - [ ] Write `docs/outbound-sales-kit.md` (copy-paste eBay/Swappa/BackMarket refurbisher DMs, Technibble & `r/computertechs` MIT showcase posts, and YouTuber lifetime Pro outreach)
+  - [ ] Complete `RemotePCDiagnostics.Agent` (`src/RemotePCDiagnostics.Agent/RemotePCDiagnostics.Agent.csproj` Windows Service + `LaunchCommand.group` -> `-g=<group>` in `LaunchRules.AppCommandLine` + `winget/` manifest templates)
+- [ ] **NEXT #2 *(Ready for Parallel Bot #2 in `RemoteBlazorWebView` `net10` — Full Spec in [item5-store-sales-and-msp-fleet-spec.md](item5-store-sales-and-msp-fleet-spec.md) / `doc/ShopMspFleetAndAgentScopingSpec.md`)*:** Multi-Tenant MSP Fleet Scoping & `/shop` Fleet Computers Portal:
+  - [ ] Add `group` field to `agent.proto` (`LaunchCommand` & `AgentInfo`) and `IAgentTenantPolicy` in `RemoteWebViewService.Lib`
+  - [ ] Scope `AgentRegistry`, `AgentHubService`, and `AgentAdminService` by tenant `GroupSlug` via `ShopAgentTenantPolicy` (requiring active `"msp"` tier for `rpd_live_...` fleet enrollment)
+  - [ ] Add **Fleet Computers** table, `POST /shop/computers/{machineId}/start`, and 1-click **RMM PowerShell Install Snippet** on `/shop`
 
-## Step 6: Unattended MSP Fleet Tier & Standalone Installer Signing *(Post-First Paying Customers)*
-- [ ] Reapply to **SignPath Foundation** ($0) once community stars/mentions land — or turn on **$9.99/mo Azure Artifact Signing** funded by Customer #1 ($25/mo) to sign standalone [RemotePCDiagnostics.iss](../installer/RemotePCDiagnostics.iss) (`RemotePCDiagnostics-Setup.exe`)
-- [ ] Build `RemotePCDiagnostics.Agent.exe` Windows Service (`--mode=service`, combining `AgentHub.Connect` from [agent.proto](../src/RemotePCDiagnostics.Agent/Protos/agent.proto) + Named-Pipe admin gRPC)
-- [ ] Scope `AgentAdmin` by tenant `Group` and add 1-click RMM snippet generator on **Computers** page
-- [ ] Publish `BudCribar.RemotePCDiagnostics.Agent` to `microsoft/winget-pkgs` with `namazso.PawnIO` in `PackageDependencies`
+## Post-Launch Operational Milestones *(Owner Actions)*
+- [ ] Deploy live relay (`deploy/fly.toml.example` or `deploy/docker-compose.shop.yml`) & set `ShopIdentity:Stripe:*` keys
+- [ ] Upload `RemotePCDiagnostics-1.2.0-win-x64.msix` + CI Store screenshots to Partner Center once Microsoft Store developer verification completes ($0 signing)
+- [ ] Send daily refurbisher outreach & community posts from `docs/outbound-sales-kit.md`, then reapply to **SignPath Foundation** ($0) once community stars/mentions land (or fund $9.99/mo Azure Artifact Signing from Customer #1)
