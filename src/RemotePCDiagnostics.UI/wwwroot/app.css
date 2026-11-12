@@ -729,12 +729,26 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; gap:
 .relay-published-banner { flex-wrap: wrap; overflow-wrap: anywhere; }
 .relay-published-banner a { font-weight: 600; word-break: break-all; }
 
-@media (max-width: 1060px) {
+/* ---------- Admin Repair Mode (Store Policy 10.2.9 asInvoker + Elevated Helper) ---------- */
+.admin-mode-slot { display: inline-flex; align-items: center; flex: none; max-width: 100%; }
+.admin-mode-pill { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; flex: none; max-width: 100%; }
+.admin-mode-standard { border-color: var(--warn-border); background: var(--warn-bg); color: var(--warn-text); font-weight: 600; }
+.admin-mode-standard:hover:not(:disabled) { border-color: var(--chip-warn); color: var(--warn-text); filter: brightness(1.04); }
+[data-theme="dark"] .admin-mode-standard { background: rgba(245, 184, 0, .1); border-color: rgba(245, 184, 0, .45); color: var(--chip-warn); }
+[data-theme="dark"] .admin-mode-standard:hover:not(:disabled) { border-color: var(--chip-warn); box-shadow: 0 0 12px rgba(245, 184, 0, .2); }
+.admin-mode-ready { padding: 4px 11px; border-radius: 99px; background: var(--ok-bg); border: 1px solid var(--ok-border); color: var(--chip-ok); font-size: 12.5px; font-weight: 600; }
+[data-theme="dark"] .admin-mode-ready { background: rgba(34, 229, 138, .08); border-color: rgba(34, 229, 138, .38); color: var(--chip-ok); }
+.admin-mode-modal { width: min(520px, calc(100vw - 24px)); }
+.wf-admin-callout { margin: 10px 0 14px; }
+
+@media (max-width: 1260px) {
   .app { grid-template-rows: auto minmax(0, 1fr); }
   .topbar { flex-wrap: wrap; padding: 8px 16px; gap: 8px 10px; min-height: 56px; }
 }
 @media (max-width: 600px) {
   .app { grid-template-rows: auto auto minmax(0, 1fr); }
+  .admin-mode-pill, .connect-tech-btn { white-space: normal; text-align: left; }
 }
+
 
 

@@ -129,6 +129,8 @@ $OutputDir = (Resolve-Path -LiteralPath $OutputDir).Path
 # Validate staged file layout (runs on both Windows and non-Windows build hosts).
 $RequiredFiles = @(
     'RemotePCDiagnostics.Host.exe'
+    'RemotePCDiagnostics.Admin.exe'
+    'RemotePCDiagnostics.Admin.runtimeconfig.json'
     'RemotePCDiagnostics.MemTest.exe'
     'RemotePCDiagnostics.MemTest.runtimeconfig.json'
     'RemotePCDiagnostics.ModuleHost.exe'
@@ -152,45 +154,32 @@ $ModuleDlls = @(Get-ChildItem -LiteralPath (Join-Path $StageDir 'builtin-modules
 if ($ModuleDlls.Count -lt 24) {
     throw "Expected at least 24 bundled module DLLs in '$StageDir/builtin-modules', found $($ModuleDlls.Count)."
 }
-Write-Host "Verified staged layout: $($ModuleDlls.Count) bundled modules + Host, MemTest, ModuleHost, and ModuleUiHost." -ForegroundColor Green
+Write-Host "Verified staged layout: $($ModuleDlls.Count) bundled modules + Host, Admin, MemTest, ModuleHost, and ModuleUiHost." -ForegroundColor Green
 
 $IsWindowsHost = ($env:OS -eq 'Windows_NT') -or ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows))
 if ($IsWindowsHost -and -not $SkipVerify) {
-    $IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    if ($IsAdmin) {
-        $HostExe = Join-Path $StageDir 'RemotePCDiagnostics.Host.exe'
-        $VerifyLog = Join-Path $OutputDir 'verify-package.log'
-        Remove-Item -LiteralPath $VerifyLog -Force -ErrorAction SilentlyContinue
+    $HostExe = Join-Path $StageDir 'RemotePCDiagnostics.Host.exe'
+    $VerifyLog = Join-Path $OutputDir 'verify-package.log'
+    Remove-Item -LiteralPath $VerifyLog -Force -ErrorAction SilentlyContinue
 
-        Write-Host "Running RemotePCDiagnostics.Host.exe --verify-package ..." -ForegroundColor Cyan
-        $PrevLog = $env:RPD_LOG_FILE
-        $env:RPD_LOG_FILE = $VerifyLog
-        try {
-            $Proc = Start-Process -FilePath $HostExe -ArgumentList '--verify-package' -WorkingDirectory $StageDir -WindowStyle Hidden -PassThru
-            if (-not $Proc.WaitForExit(60000)) {
-                Stop-Process -Id $Proc.Id -Force -ErrorAction SilentlyContinue
-                throw 'RemotePCDiagnostics.Host.exe --verify-package timed out after 60 seconds.'
-            }
-            if ($Proc.ExitCode -ne 0) {
-                if (Test-Path -LiteralPath $VerifyLog) { Get-Content -LiteralPath $VerifyLog | Write-Host }
-                throw "RemotePCDiagnostics.Host.exe --verify-package failed with exit code $($Proc.ExitCode)."
-            }
+    Write-Host "Running RemotePCDiagnostics.Host.exe --verify-package ..." -ForegroundColor Cyan
+    $PrevLog = $env:RPD_LOG_FILE
+    $env:RPD_LOG_FILE = $VerifyLog
+    try {
+        $Proc = Start-Process -FilePath $HostExe -ArgumentList '--verify-package' -WorkingDirectory $StageDir -WindowStyle Hidden -PassThru
+        if (-not $Proc.WaitForExit(60000)) {
+            Stop-Process -Id $Proc.Id -Force -ErrorAction SilentlyContinue
+            throw 'RemotePCDiagnostics.Host.exe --verify-package timed out after 60 seconds.'
         }
-        finally {
-            $env:RPD_LOG_FILE = $PrevLog
+        if ($Proc.ExitCode -ne 0) {
+            if (Test-Path -LiteralPath $VerifyLog) { Get-Content -LiteralPath $VerifyLog | Write-Host }
+            throw "RemotePCDiagnostics.Host.exe --verify-package failed with exit code $($Proc.ExitCode)."
         }
-        Write-Host "Package self-verification passed." -ForegroundColor Green
     }
-    else {
-        # Non-elevated terminal: Host.exe declares requireAdministrator, so smoke-test the unprivileged MemTest helper directly.
-        $MemTestExe = Join-Path $StageDir 'RemotePCDiagnostics.MemTest.exe'
-        Write-Host "Running non-elevated runtime self-check via RemotePCDiagnostics.MemTest.exe ..." -ForegroundColor Cyan
-        $MemOut = & $MemTestExe --bytes 1048576 --seconds 1
-        if ($LASTEXITCODE -ne 0 -or -not ($MemOut -match '^MT DONE 1048576 ')) {
-            throw "RemotePCDiagnostics.MemTest.exe self-check failed (exit $LASTEXITCODE)."
-        }
-        Write-Host "Runtime self-check passed." -ForegroundColor Green
+    finally {
+        $env:RPD_LOG_FILE = $PrevLog
     }
+    Write-Host "Package self-verification passed." -ForegroundColor Green
 }
 
 if ($StageOnly) {

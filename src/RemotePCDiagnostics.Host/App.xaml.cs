@@ -81,11 +81,8 @@ public partial class App : Application
     private const string InstanceMutexName = @"Global\RemotePCDiagnostics.Host";
     private static Mutex? _instance;
 
-    public static bool IsAdministrator()
-    {
-        using var id = WindowsIdentity.GetCurrent();
-        return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
-    }
+    public static bool IsAdministrator() =>
+        RemotePCDiagnostics.Core.Session.ElevationService.DetectProcessElevated();
 
     public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, RemotePCDiagnostics.Core.Optimizations.IMemorySystem memory) =>
         HostServices.CreateUndoService(journal, commands, memory, HostServices.For<UndoService>(Loggers), Event);
@@ -99,10 +96,11 @@ public partial class App : Application
             {
                 "tools/osquery/osqueryi.exe", "tools/HardeningKitty/HardeningKitty.psd1",
                 "tools/HardeningKitty/HardeningKitty.psm1", "RemotePCDiagnostics.MemTest.exe",
-                "RemotePCDiagnostics.ModuleHost.exe", "moduleui/RemotePCDiagnostics.ModuleUiHost.exe",
+                "RemotePCDiagnostics.ModuleHost.exe", "RemotePCDiagnostics.Admin.exe",
+                "moduleui/RemotePCDiagnostics.ModuleUiHost.exe",
                 "wwwroot/index.html",
             };
-            foreach (var stem in new[] { "RemotePCDiagnostics.MemTest", "RemotePCDiagnostics.ModuleHost", "moduleui/RemotePCDiagnostics.ModuleUiHost" })
+            foreach (var stem in new[] { "RemotePCDiagnostics.MemTest", "RemotePCDiagnostics.ModuleHost", "RemotePCDiagnostics.Admin", "moduleui/RemotePCDiagnostics.ModuleUiHost" })
             {
                 if (File.Exists(Path.Combine(AppContext.BaseDirectory, stem + ".dll")))
                     required.Add(stem + ".runtimeconfig.json");
@@ -132,22 +130,35 @@ public partial class App : Application
                 }
                 catch (Exception ex) { LogFileOnly($"Package helper failed: {ex.Message}"); valid = false; }
             }
+            if (valid)
+            {
+                try
+                {
+                    var adminStart = new System.Diagnostics.ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Admin.exe"), "--self-check")
+                    { UseShellExecute = false, CreateNoWindow = true };
+                    using var adminHelper = System.Diagnostics.Process.Start(adminStart)!;
+                    if (!adminHelper.WaitForExit(10000)) { adminHelper.Kill(); valid = false; }
+                    else valid = adminHelper.ExitCode == 0;
+                }
+                catch (Exception ex) { LogFileOnly($"Admin helper self-check failed: {ex.Message}"); valid = false; }
+            }
             Shutdown(valid ? ExitOk : 1);
             return;
         }
-        Log($"Startup build={RemotePCDiagnostics.Core.AppBuildInfo.Version} pid={Environment.ProcessId} args={string.Join(' ', e.Args)}");
+        var isAdmin = IsAdministrator();
+        Log($"Startup build={RemotePCDiagnostics.Core.AppBuildInfo.Version} pid={Environment.ProcessId} elevated={isAdmin} args={string.Join(' ', e.Args)}");
         DispatcherUnhandledException += (_, ex) => Log($"Unhandled: {ex.Exception}");
         AppDomain.CurrentDomain.UnhandledException += (_, ex) => Log($"Fatal: {ex.ExceptionObject}");
         base.OnStartup(e);
 
-        // Everything this app does needs administrator rights: without them, leave right away (app and --undo-all alike).
-        if (!IsAdministrator())
+        // Headless --undo-all reverts system-wide changes in ProgramData and requires Administrator privileges.
+        if (e.Args.Any(a => a.Equals("--undo-all", StringComparison.OrdinalIgnoreCase)) && !isAdmin)
         {
-            Log("Not running as administrator: requesting elevation before loading WebView");
+            Log("--undo-all invoked without administrator rights: requesting elevation");
             if (!TryElevate(e.Args))
             {
                 MessageBox.Show(
-                    "Remote PC Diagnostics requires administrator privileges to run.",
+                    "Reverting system-wide changes (--undo-all) requires administrator privileges.",
                     "Administrator Privileges Required",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -157,8 +168,19 @@ public partial class App : Application
         }
 
         // One instance per PC (local window and remote session share it); --undo-all also waits its turn.
-        _instance = new Mutex(true, InstanceMutexName, out var first);
-        // Restarted after the remote user's browser refreshed: the old copy is shutting down, so wait for it.
+        // If an elevated instance already holds Global\RemotePCDiagnostics.Host with an admin-only DACL, opening the mutex from a standard user throws UnauthorizedAccessException.
+        var first = false;
+        try
+        {
+            _instance = new Mutex(true, InstanceMutexName, out first);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Log("Another (elevated) instance already owns the instance mutex: exiting");
+            Shutdown(ExitAlreadyRunning);
+            return;
+        }
+        // Restarted after the remote user's browser refreshed or elevated relaunch: the old copy is shutting down, so wait for it.
         if (!first && RemotePCDiagnostics.Core.Session.SessionLaunchOptions.IsRestarted(e.Args))
         {
             Log("Restarted: waiting for the previous copy to exit");
@@ -167,8 +189,11 @@ public partial class App : Application
         }
         if (!first) { Log("Another instance is already running: exiting"); _instance.Dispose(); _instance = null; Shutdown(ExitAlreadyRunning); return; }
 
-        // Before anything reads the undo journal, workflow or resume state: secure their folder and move them out of %LOCALAPPDATA%.
-        SecureProtectedState();
+        if (isAdmin)
+        {
+            // Before anything reads the undo journal, workflow or resume state: secure their folder and move them out of %LOCALAPPDATA%.
+            SecureProtectedState();
+        }
 
         if (e.Args.Any(a => a.Equals("--undo-all", StringComparison.OrdinalIgnoreCase)))
         {
@@ -176,8 +201,11 @@ public partial class App : Application
             return;
         }
 
-        // One-time history update (event log format 3) before anything else writes events; the marker makes it a no-op afterwards.
-        RunStartupMigrations();
+        if (isAdmin)
+        {
+            // One-time history update (event log format 3) before anything else writes events; the marker makes it a no-op afterwards.
+            RunStartupMigrations();
+        }
 
         MainWindow = new RemotePCDiagnostics.Host.MainWindow();
         MainWindow.Show();

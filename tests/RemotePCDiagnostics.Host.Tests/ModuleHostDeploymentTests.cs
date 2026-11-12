@@ -11,10 +11,15 @@ namespace RemotePCDiagnostics.Host.Tests;
 /// </summary>
 public class ModuleHostDeploymentTests
 {
-    [Fact]
-    public void Module_host_next_to_the_app_uses_the_aspnetcore_shared_framework()
+    [Theory]
+    [InlineData("RemotePCDiagnostics.ModuleHost")]
+    [InlineData("RemotePCDiagnostics.Admin")]
+    public void Sidecar_helper_next_to_the_app_uses_the_aspnetcore_shared_framework(string helperName)
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.ModuleHost.runtimeconfig.json");
+        var exePath = Path.Combine(AppContext.BaseDirectory, helperName + ".exe");
+        Assert.True(File.Exists(exePath), $"{exePath} is missing");
+
+        var path = Path.Combine(AppContext.BaseDirectory, helperName + ".runtimeconfig.json");
         Assert.True(File.Exists(path), $"{path} is missing");
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
         var options = doc.RootElement.GetProperty("runtimeOptions");

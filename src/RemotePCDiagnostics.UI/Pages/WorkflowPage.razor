@@ -29,6 +29,35 @@
     }
 </ol>
 
+@if (App.Elevation is { HasAdminCapabilities: false })
+{
+    <section class="banner banner-warn wf-admin-callout" role="region" aria-label="Administrator repair permissions" data-testid="wf-admin-callout">
+        <span class="banner-icon"><Icon Name="sec" Size="20" /></span>
+        <div class="banner-text">
+            <div class="banner-title">Standard User Mode</div>
+            <div class="banner-sub">
+                Diagnostic checks run without UAC. Enable <strong>Admin Repair Mode</strong> to apply system repairs (DISM, SFC, network resets), or <strong>Relaunch as Administrator</strong> for unattended multi-reboot sign-in and scheduled tasks.
+            </div>
+        </div>
+        <div class="banner-actions">
+            <button type="button"
+                    class="btn btn-outline"
+                    data-testid="wf-relaunch-admin-btn"
+                    disabled="@_adminActionBusy"
+                    @onclick="RelaunchWorkflowAsAdminAsync">
+                Relaunch as Administrator
+            </button>
+            <button type="button"
+                    class="btn btn-primary"
+                    data-testid="wf-enable-admin-btn"
+                    disabled="@_adminActionBusy"
+                    @onclick="EnableWorkflowAdminModeAsync">
+                Enable Admin Repair Mode
+            </button>
+        </div>
+    </section>
+}
+
 @if (status is { } st && s.Stage is not (WorkflowStage.Idle or WorkflowStage.Review)) { <p class="status-line" data-testid="wf-status"><span class="dot dot-@(s.IsRunning || Flow.Busy ? "running" : "ok")"></span>@st</p> }
 @if (s.Error is { } err) { <p class="notice notice-error" data-testid="wf-error">@err</p> }
 @if (_message is { } m) { <p class="notice" data-testid="wf-message">@m</p> }
@@ -340,7 +369,7 @@
 
     private AutoLogonStatus? _logon;
     private string _user = "", _password = "";
-    private bool _clientSignsIn, _starting, _showPassword;
+    private bool _clientSignsIn, _starting, _showPassword, _adminActionBusy;
     private string? _message, _startError;
     private ElementReference _passwordBox;
 
@@ -351,6 +380,7 @@
         Flow.Changed += OnChanged;
         Bench.Changed += OnChanged;
         if (Prefs is not null) Prefs.Changed += OnChanged;
+        if (App.Elevation is { } elev) elev.Changed += OnChanged;
         LoadLogon();
         foreach (var a in Prefs?.Current.WorkflowOpenAreas ?? []) _openAreas.Add(a);
         if (Flow.State.Stage == WorkflowStage.Idle && !Flow.Busy && Flow.HasCompletedCheckModuleResults)
@@ -368,8 +398,51 @@
         Flow.Changed -= OnChanged;
         Bench.Changed -= OnChanged;
         if (Prefs is not null) Prefs.Changed -= OnChanged;
+        if (App.Elevation is { } elev) elev.Changed -= OnChanged;
         _password = "";
         _showPassword = false;
+    }
+
+    private async Task EnableWorkflowAdminModeAsync()
+    {
+        if (App.Elevation is not { } elev || _adminActionBusy)
+            return;
+
+        _adminActionBusy = true;
+        try
+        {
+            var res = await elev.EnableAdminModeAsync();
+            _message = res.Message;
+        }
+        catch (Exception ex)
+        {
+            _message = $"Could not enable Admin Repair Mode: {ex.Message}";
+        }
+        finally
+        {
+            _adminActionBusy = false;
+        }
+    }
+
+    private async Task RelaunchWorkflowAsAdminAsync()
+    {
+        if (App.Elevation is not { } elev || _adminActionBusy)
+            return;
+
+        _adminActionBusy = true;
+        try
+        {
+            var res = await elev.RelaunchElevatedAsync();
+            _message = res.Message;
+        }
+        catch (Exception ex)
+        {
+            _message = $"Could not relaunch as Administrator: {ex.Message}";
+        }
+        finally
+        {
+            _adminActionBusy = false;
+        }
     }
 
     private void ResetWorkflow()

@@ -82,7 +82,7 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: 
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session (shared screen and voice)"; Tasks: desktopicon
 
 [Run]
-; shellexec is required because RemotePCDiagnostics.Host.exe declares requireAdministrator in its manifest.
+; shellexec launches RemotePCDiagnostics.Host.exe (asInvoker) as the interactive desktop user at the end of setup.
 Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent shellexec
 
 [UninstallRun]

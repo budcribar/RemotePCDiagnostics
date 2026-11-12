@@ -26,4 +26,5 @@ public sealed record AppServices(
     BenchQaRunner? BenchQa = null,
     ShopRelayClient? ShopRelay = null,
     ISessionRelauncher? Relauncher = null,
-    RemoteSessionHealth? RemoteHealth = null);
+    RemoteSessionHealth? RemoteHealth = null,
+    IElevationContext? Elevation = null);

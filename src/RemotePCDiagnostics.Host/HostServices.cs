@@ -39,6 +39,9 @@ public static class HostServices
         services.AddSingleton(typeof(Microsoft.Extensions.Logging.ILogger<>), typeof(Microsoft.Extensions.Logging.Logger<>));
         ILogger L<T>() => For<T>(loggerFactory); // each class logs under its own category
         services.AddSingleton<ISessionContext>(session);
+        services.AddSingleton<ElevationService>(sp => new ElevationService(sp.GetRequiredService<ISessionContext>(), L<ElevationService>()));
+        services.AddSingleton<IElevationContext>(sp => sp.GetRequiredService<ElevationService>());
+        services.AddSingleton<IElevatedCommandBridge>(sp => sp.GetRequiredService<ElevationService>());
         services.AddSingleton<RemoteUsers>(); // the top bar's "N Remote Users" badge
         if (session.Mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
         services.AddSingleton<ResultStore>();
@@ -46,7 +49,10 @@ public static class HostServices
         // Read-only EC fan diagnostic, active only on Lenovo IdeaPad 1 15ALC7 (82R4) with PawnIO installed.
         services.AddSingleton<IEcFanSource>(_ => LenovoEcFanSource.Create(loggerFactory.CreateLogger(typeof(LenovoEcFanSource).FullName!)));
         services.AddSingleton<ISensorProvider, LhmSensorProvider>();
-        services.AddSingleton(new SystemCommandRunner(log: L<SystemCommandRunner>()));
+        services.AddSingleton(sp => new SystemCommandRunner(
+            log: L<SystemCommandRunner>(),
+            elevatedBridge: sp.GetRequiredService<IElevatedCommandBridge>(),
+            isProcessElevated: () => sp.GetRequiredService<IElevationContext>().IsProcessElevated));
         // One Windows memory/startup adapter for the whole app (undo and memory suggestions share it).
         services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), L<WindowsMemorySystem>()));
         // Its role interfaces resolve to the same instance, so a consumer can take only the part it uses.
@@ -166,7 +172,8 @@ public static class HostServices
             sp.GetService<RemotePCDiagnostics.Core.Workflow.BenchQaRunner>(),
             sp.GetService<RemotePCDiagnostics.Core.Workflow.ShopRelayClient>(),
             sp.GetService<ISessionRelauncher>(),
-            sp.GetService<RemoteSessionHealth>()));
+            sp.GetService<RemoteSessionHealth>(),
+            sp.GetService<IElevationContext>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
         return services;

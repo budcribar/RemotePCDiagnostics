@@ -62,10 +62,16 @@ public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDi
         if (_computer is not null || _openError is not null) return;
         try
         {
+            var elevated = IsElevated();
             var c = new Computer
             {
-                IsCpuEnabled = true, IsGpuEnabled = true, IsMotherboardEnabled = true,
-                IsStorageEnabled = true, IsMemoryEnabled = true, IsControllerEnabled = true,
+                IsCpuEnabled = true,
+                IsGpuEnabled = true,
+                // SuperIO / embedded-controller probes require ring-0 driver access; skip in un-elevated Store launches.
+                IsMotherboardEnabled = elevated,
+                IsStorageEnabled = true,
+                IsMemoryEnabled = true,
+                IsControllerEnabled = elevated,
             };
             c.Open();
             _computer = c;
@@ -118,12 +124,8 @@ public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDi
         _ => HardwareKind.Other,
     };
 
-    private static bool IsElevated()
-    {
-        if (!OperatingSystem.IsWindows()) return false;
-        using var id = WindowsIdentity.GetCurrent();
-        return new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
-    }
+    private static bool IsElevated() =>
+        OperatingSystem.IsWindows() && RemotePCDiagnostics.Core.Session.ElevationService.DetectProcessElevated();
 
     public void Dispose() { lock (_gate) { _computer?.Close(); _computer = null; } try { ecFan.Dispose(); } catch { } }
 }
