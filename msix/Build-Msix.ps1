@@ -275,4 +275,4 @@ Write-Host "  File:     $MsixPath ($SizeMb MB)"
 Write-Host "  Identity: $IdentityName ($Publisher) v$FourPartVersion"
 Write-Host "  SHA256:   $Hash"
 Write-Host "  Hash:     $ShaFile"
-Write-Host "  Note:     Upload directly to Microsoft Partner Center for $0 Store signing (no local EV cert required)."
+Write-Host '  Note:     Upload directly to Microsoft Partner Center for $0 Store signing (no local EV cert required).'
