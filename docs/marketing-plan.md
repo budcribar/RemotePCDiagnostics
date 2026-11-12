@@ -61,9 +61,9 @@ Instead:
 | Tier | Price | Target User | Included |
 | :--- | :--- | :--- | :--- |
 | **Community (Free)** | **\$0** | Consumers, DIY bench users, evaluation | All local checks, sensors, stress/audio/webcam/NPU tests, and local fixes. Ad-hoc supervised remote sessions via direct link capped at 15 minutes (no TURN voice, standard report footer). |
-| **Personal / Family Tech** | **\$19 / year** *(or \$15 30-day pass)* | Prosumers helping family & friends | Personal support group code on the Admin portal, unlimited supervised remote sessions with WebRTC voice (`--voice`), remote reboot-and-resume workflow, up to 5 enrolled family PCs. |
-| **Solo Tech & Refurbisher** | **\$39 / month** *(or \$390 / year)* | Solo repair techs, mobile IT, laptop refurbishers | Dedicated shop group code (`acme-repair`), unlimited remote sessions + voice, **white-labeled Before/After Service Reports**, **Hosted Hardware QA Certificates** (QR/URL per serial), up to 50 enrolled `Agent` endpoints. |
-| **Shop / Small MSP** | **\$99–\$199 / month** | Multi-tech repair shops, internal IT desks, MSPs | 3–10 technician seats in one or more groups, relay SSO/group authentication, 250–1,000 enrolled `Agent` endpoints, centralized session/remediation audit log retention, custom shop JSON checks & signed plugin deployment, unbranded reports. |
+| **Solo 1-Session** | **\$15 / month** *(or \$149 / year)* | Solo/part-time techs & family helpers | **1 concurrent remote session** with WebRTC voice (`--voice`), dedicated `Group` code, remote reboot-and-resume workflow, **white-labeled Before/After Service Reports**, **unlimited local USB bench runs**, up to 10 enrolled `Agent` PCs. *(Matches `PC-Doctor Remote 1` on annual price while adding Windows remediation + voice + unlimited bench runs).* |
+| **Solo Shop & Refurbisher** | **\$39 / month** *(or \$390 / year; **\$25/mo Founding Shop**)* | Independent repair shops, mobile IT, laptop refurbishers | **5 concurrent remote sessions** + voice, **unlimited simultaneous local USB bench QA runs** (zero hardware dongles), **Hosted Hardware QA Buyer QR Certificates** (`reports.<domain>/r/<id>`), white-labeled Before/After Service Reports, up to 50 enrolled `Agent` PCs. *(Beats `PC-Doctor Remote 3` at \$399/yr and undercuts `Remote 10` at \$1,199/yr by ~70% on bench work).* |
+| **Shop / Small MSP** | **\$99–\$199 / month** | Multi-tech repair shops, internal IT desks, MSPs | 3–10 technician seats sharing shop branding, **15–50 concurrent remote sessions**, **unlimited bench QA runs**, 250–1,000 enrolled `Agent` endpoints, centralized audit log retention, custom shop JSON checks & signed plugin deployment, unbranded reports. *(Vs. \$5,299/yr for `PC-Doctor Remote 50`).* |
 
 ### Keeping ~97% of Revenue on PC (Store Policies `10.8.1` & `10.8.6`)
 
@@ -173,19 +173,37 @@ Do **not** buy Google or Facebook ads—ad clicks for *"PC diagnostics"* or *"PC
 
 ---
 
-### 4.5 First 5 Concrete Steps (\$0 Out-of-Pocket Execution Plan)
+### 4.5 Competitor Battlecard: PC-Doctor Service Center Remote (`pcdremote.com`)
 
-Ordered so you spend **\$0 up front** and get a sellable product into buyers' hands within Week 1–2:
+`PC-Doctor Service Center` (`pcdservicecenter.com` / `pcdremote.com`) is the main legacy incumbent in repair-shop diagnostics—which directly validates that independent shops and refurbishers pay recurring SaaS fees for remote hardware testing and branded reports.
+
+| Dimension | PC-Doctor (`pcdremote.com` + `Service Center 17`) | `RemotePCDiagnostics` |
+| :--- | :--- | :--- |
+| **Bench Hardware Pricing** | **\$399–\$449 per physical USB dongle** (1 PC at a time; 3-pack = **\$1,199**; version upgrades = **\$309**; Drive Erase = **+\$99.99**) | **\$0 hardware dongle cost** — run **unlimited simultaneous bench PCs** off standard \$5 USB sticks on any \$25–\$39/mo shop plan |
+| **Cloud Remote Pricing** | `Remote 1`: **\$149/yr** (1 session)<br>`Remote 3`: **\$399/yr** (3 sessions)<br>`Remote 10`: **\$1,199/yr** (10 sessions)<br>`Remote 50`: **\$5,299/yr** (50 sessions) | `Solo 1-Session`: **\$15/mo (\$149/yr)** (1 remote + unlimited bench)<br>`Founding / Solo Shop`: **\$25–\$39/mo (\$390/yr)** (**5 remote** + **unlimited bench**)<br>`Shop / MSP`: **\$99–\$199/mo** (15–50 remote + fleet `Agent`) |
+| **What Happens When Hardware Passes (~80% of Slow PCs)?** | **Stops at *"Hardware Passed / No Trouble Found."*** Does **not** repair Windows or benchmark software speedups | **Diagnoses *and* Fixes Windows** (`WorkflowService.cs`): benchmarks Before $\rightarrow$ applies `DISM`/`SFC`/startup/service/storage fixes across reboots $\rightarrow$ benchmarks After $\rightarrow$ proves exact % speedup with 1-click Undo (`ProtectedState`) |
+| **Customer Onboarding & Voice** | Browser URL download of raw `.exe` client (SmartScreen friction); **no built-in voice call** | **Zero-SmartScreen Microsoft Store install** + shop logo trust banner on connect + **built-in WebRTC voice (`--voice`)** |
+| **Refurbisher Deliverable** | Technician-oriented cloud diagnostic log | **Buyer-facing 1-page Hardware QA Certificate + scannable QR badge** built for eBay / BackMarket / Swappa listing photos |
+| **Unattended Recurring Care** | Ad-hoc per-session links only (no persistent MSP agent) | Persistent **`Agent.exe` (`AgentHub` + `winget`)** for \$15/mo residential/SMB recurring care plans |
+| **Modern Windows 11 / AI-PC Stack** | Closed-source; homepage still touts *"Windows 7 to Windows 10 compatible"*; uses physical audio loopback plugs | **Copilot+ NPU (`DXCore`)**, **dongle-free WASAPI speaker-to-mic acoustic loopback**, `osquery` SQL, CIS `HardeningKitty`, and **MIT open-source + shop plugins** |
+| **Where PC-Doctor Still Wins *(Do Not Fight Head-On)*** | Bootable Linux/offline USB for **dead/no-POST OS** machines, macOS/ChromeOS/Android testing, NIST 800-88 Drive Wipe, 30-year OEM pedigree | Position `RemotePCDiagnostics` for **booting Windows 10/11 remote support, tune-up proof, and multi-laptop bench QA** (shops can keep free `MemTest86` / `ShredOS` on Ventoy for no-boot/wipe edge cases) |
+
+---
+
+### 4.6 First 5 Concrete Steps (\$0 Out-of-Pocket Execution Plan)
+
+Ordered so you spend **\$0 up front** and get a sellable, PC-Doctor-beating product into buyers' hands within Week 1–2:
 
 1. **Step 1 — \$0 Store Registration & Free SignPath Foundation Prep *(Day 1 — Async Lead Time)*:**
    - Open your **free Microsoft Store Developer account** at `storedeveloper.microsoft.com` (\$0 for both Individual and Company accounts).
    - Enable GitHub 2FA, switch `budcribar/RemotePCDiagnostics` to **Public**, add the required `## Code signing policy` section to `README.md` (describing `SecurityAuditModule` / `HardeningKitty` strictly as local Windows CIS configuration compliance), publish one unsigned release from GitHub Actions, and apply to **SignPath Foundation** (`signpath.org/apply.html` — \$0) for standalone installer signing.
-2. **Step 2 — Ship White-Labeled `ClientReport` + Hosted Hardware QA Certificate *(Week 1 — \$0)*:**
-   - Extend `src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs` with shop logo/contact headers + technician notes, build the **1-page Hardware QA Certificate** (Model/Serial + Battery % + SMART + Stress + Audio Loopback + Webcam + QR link) + quick Keyboard/Dead-Pixel bench check, and add a hosted report endpoint (`reports.<domain>/r/<id>`).
-   - *Why this comes second:* Refurbishers run bench checks locally off a USB stick—giving you a sellable \$39/mo product and a live sample QR certificate in **Week 1** before Microsoft Store certification even finishes.
-3. **Step 3 — Wire `ASP.NET Core Identity` Shop Signup, Branding Upload, `Group` Onboarding & Stripe Checkout *(Week 2 — \$0)*:**
-   - Implement `ShopIdentityAuthorization : IRelayAuthorization` + `IUserService` using **MIT `ASP.NET Core Identity` + SQLite/PostgreSQL**, with a 2-step signup wizard (Shop Name/`Group` slug + skippable Logo/Phone/Website/Warranty upload) and **Stripe Checkout** (\$0/mo fixed cost).
-   - Add `-g=<group>` to `SessionLaunchOptions.cs` + **"Connect to Technician"** in `MainLayout.razor`, validate active tenant groups on `RemoteWebViewService`, and serve `GET /api/shops/{group}/branding` so client apps display the shop's logo on connect and embed it inline in reports.
+2. **Step 2 — Ship `ShopBranding` Before/After Reports + Dongle-Free Buyer QR Certificates *(Week 1 — \$0)*:**
+   - Extend `src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs` to accept `ShopBranding` (embedding inline `data:image/webp;base64,...` shop logo, phone/URL, warranty footer, and technician notes—turning Windows remediation + Before/After speedup proof into the weapon PC-Doctor lacks).
+   - Build the **1-page Buyer Hardware QA QR Certificate** (Model/Serial + Battery % + SMART + Thermal Stress + Dongle-Free WASAPI Audio Loopback + Webcam + GPU/NPU + QR verification link at `reports.<domain>/r/<id>`), plus the Keyboard/Dead-Pixel check, BSOD/WHEA analyzer, and 1-click **"10-Minute Hardware Intake / QA Check"** preset supporting **unlimited simultaneous USB bench runs** (beating PC-Doctor's \$449 1-PC USB dongle limit in Week 1).
+3. **Step 3 — Wire `ASP.NET Core Identity` Shop Auth, 2-Step Branding Signup, Session Concurrency & Stripe *(Week 2 — \$0)*:**
+   - Implement `ShopIdentityAuthorization : IRelayAuthorization` + `ShopUserService : IUserService` using **MIT `ASP.NET Core Identity` + SQLite (WAL) / PostgreSQL** (Passkeys + Google/Microsoft OAuth, zero extra containers).
+   - Build the **2-step, 60-second signup wizard** (Step 1: account + Shop Name/`Group` slug; Step 2, skippable: resize Shop Logo to `< 40 KB` WebP `data:` URI + Phone, Website, Warranty Footer), expose `GET /api/shops/{group}/branding` (live shop logo banner on client connect), enforce **per-tier concurrent remote session caps** (`1` on \$15/mo Solo, `5` on \$25/\$39/mo Shop + unlimited bench report uploads) in `ClientIPCService`, and connect **Stripe Checkout** (\$0/mo fixed cost).
+   - Add `-g=<group>` to `SessionLaunchOptions.cs` (including `RestartArguments` and `PendingRebootState`) + the **"Connect to Technician"** dialog in `MainLayout.razor` / `MainWindow.xaml.cs`.
 4. **Step 4 — De-Elevate `Host.exe` (`asInvoker`), Build `Admin.exe --mode=helper` & Publish Free MSIX to Microsoft Store *(Weeks 3–4 — \$0)*:**
    - Switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker`, move privileged operations into the Named-Pipe gRPC helper (`--mode=helper --parent-pid=<pid>`), verify zero `.sys` drivers in publish output, and upload to Partner Center as an **MSIX** (`runFullTrust` + `allowElevation`). **Microsoft signs all your `.exe`s and every unsigned NuGet `.dll` for \$0.** *(If Partner Center ever declines `allowElevation`, publish `runFullTrust`-only MSIX for \$0 immediately, and turn on \$9.99/mo Azure Artifact Signing + `Policy 10.2.9` Win32 installer only after your first \$25/mo Founding Shop pays you).*
 5. **Step 5 — Record the 60-Second Demo & Close Your First 10–25 Founding Shops (\$25/mo) *(Weeks 4–5 — Before Building `Agent.exe`)*:**
