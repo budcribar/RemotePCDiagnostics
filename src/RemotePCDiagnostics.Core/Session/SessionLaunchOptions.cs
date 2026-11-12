@@ -5,6 +5,8 @@ namespace RemotePCDiagnostics.Core.Session;
 /// <summary>
 /// How the Host should run, resolved from command-line args, environment, and any pending post-reboot state.
 /// Precedence: <c>-u=&lt;url&gt;</c> arg (forces Remote) &gt; REMOTEPC_MODE / REMOTEPC_SERVER_URL env vars &gt; pending reboot state &gt; Local.
+/// The pending reboot state (the session saved by "Schedule clean restart") counts only when the PC has restarted since it was saved
+/// and it is recent (<see cref="CanResume"/>): a restart that was called off must not bring a later start up in the old remote session.
 /// A remote session is shared: the app shows in the window at the PC with the person there in control, and the remote user joins
 /// at the session's link and is handed control.
 /// Pass <c>--unattended</c> (or <c>REMOTEPC_UNATTENDED=1</c>) so the remote user gets control as soon as they join, without anyone at
@@ -21,12 +23,42 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     public const string VoiceVariable = "REMOTEPC_VOICE";
     public const string VoiceArg = "--voice";
     public const string PostRebootArg = "--post-reboot";
+    /// <summary>Marks the start made by the service workflow's own resume task (which also passes <see cref="PostRebootArg"/>).</summary>
+    public const string WorkflowArg = "--workflow";
+    /// <summary>A saved session older than this is not resumed, restart or not.</summary>
+    public static readonly TimeSpan PendingRebootMaxAge = TimeSpan.FromHours(48);
+
+    /// <summary>True when Windows started after <paramref name="pending"/> was saved: the boot time is later than the save, or the
+    /// PC has been up for less time than it had been then (which also holds if the clock was changed in between).</summary>
+    public static bool RestartedSince(PendingRebootState pending, DateTimeOffset nowUtc, TimeSpan uptime) =>
+        nowUtc - uptime > pending.InitiatedAtUtc || (pending.PreUptimeSeconds > 0 && uptime.TotalSeconds < pending.PreUptimeSeconds);
+
+    /// <summary>True when the saved session should be picked up again: the PC restarted since it was saved, and it is recent.</summary>
+    public static bool CanResume(PendingRebootState pending, DateTimeOffset nowUtc, TimeSpan uptime) =>
+        RestartedSince(pending, nowUtc, uptime) && nowUtc - pending.InitiatedAtUtc <= PendingRebootMaxAge;
     /// <summary>Default relay (PeakSWC.RemoteWebViewService on Railway) used when Remote mode has no explicit URL.</summary>
     public const string DefaultServerUrl = "https://remoteblazorwebview.com:34544";
 
-    public static SessionLaunchOptions Resolve(IEnumerable<string> args, Func<string, string?> env, PendingRebootState? pendingReboot = null)
+    /// <param name="nowUtc">The time now (tests); default the clock.</param>
+    /// <param name="uptime">How long Windows has been up (tests); default the system's.</param>
+    public static SessionLaunchOptions Resolve(IEnumerable<string> args, Func<string, string?> env, PendingRebootState? pendingReboot = null,
+        DateTimeOffset? nowUtc = null, TimeSpan? uptime = null)
     {
         var argList = args as IReadOnlyList<string> ?? args.ToList();
+        if (pendingReboot is not null && !CanResume(pendingReboot, nowUtc ?? DateTimeOffset.UtcNow, uptime ?? TimeSpan.FromMilliseconds(Environment.TickCount64)))
+        {
+            // The restart the session was saved for did not happen (or happened long ago): nothing is restored from it. If this
+            // start is the resume entry that restart left behind (it runs at the next sign-in, restart or not), its server and
+            // session id are the saved ones too, so they are dropped and the app starts as it would by hand. The service
+            // workflow's resume task is not part of this: it decides for itself whether its restart happened.
+            var staleResume = argList.Any(a => string.Equals(a, PostRebootArg, StringComparison.OrdinalIgnoreCase))
+                && !argList.Any(a => string.Equals(a, WorkflowArg, StringComparison.OrdinalIgnoreCase));
+            if (staleResume)
+                argList = argList.Where(a => !a.StartsWith("-u=", StringComparison.OrdinalIgnoreCase) && !a.StartsWith("-i=", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(a, PostRebootArg, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(a, UnattendedArg, StringComparison.OrdinalIgnoreCase) && !string.Equals(a, VoiceArg, StringComparison.OrdinalIgnoreCase)).ToList();
+            pendingReboot = null;
+        }
         string? Arg(string prefix) => argList.FirstOrDefault(a => a.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))?[prefix.Length..];
 
         static bool? ParseBool(string? v) => v?.Trim() switch
@@ -78,6 +110,8 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     /// <summary>
     /// Ensures that when <c>RemotePCDiagnostics</c> restarts after a scheduled reboot, it reuses the exact same
     /// <see cref="Id"/> (and remote <see cref="ServerUri"/>, unattended and voice settings) that it had before the reboot.
+    /// Applies <paramref name="pending"/> as given: whether the reboot happened is the caller's check (<see cref="CanResume"/>;
+    /// <see cref="Resolve"/> makes it).
     /// </summary>
     public static SessionLaunchOptions ApplyPendingReboot(SessionLaunchOptions launch, PendingRebootState? pending)
     {
