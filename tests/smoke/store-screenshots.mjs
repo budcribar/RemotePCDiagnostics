@@ -123,11 +123,9 @@ try {
     const frame = document.querySelector('[data-testid="qa-preview-frame"]');
     if (!main || !phys || !brand || !cert || !frame) return null;
     main.scrollTop = 0;
-    const mainRect = main.getBoundingClientRect();
-    const certOffset = cert.getBoundingClientRect().top - mainRect.top;
-    // Place qa-cert-card ~530px down main.content (~y=582) so ~500px of the Live Buyer QR Certificate preview
-    // sits on the lower half while Physical Keyboard/Display QA + Shop Branding sit on the upper half.
-    main.scrollTop = Math.max(0, certOffset - 530);
+    // Place qa-preview-frame at y=730 so ~350px of the Live Buyer QR Certificate (header + SVG QR code)
+    // is visible on the lower third while ~240px of Physical Keyboard/Display QA + Shop Branding sit above it.
+    main.scrollTop = Math.max(0, Math.round(frame.getBoundingClientRect().top - 730));
     const pr = phys.getBoundingClientRect();
     const br = brand.getBoundingClientRect();
     const fr = frame.getBoundingClientRect();
@@ -139,7 +137,7 @@ try {
       frameBottom: Math.round(fr.bottom),
     };
   });
-  if (!bounds || bounds.physBottom < 180 || bounds.brandTop < 50 || bounds.frameTop > 800) {
+  if (!bounds || bounds.physBottom < 180 || bounds.brandTop < 50 || bounds.frameTop > 850) {
     throw new Error(`Unexpected /certificates screenshot framing bounds: ${JSON.stringify(bounds)}`);
   }
   try {
