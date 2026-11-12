@@ -6,14 +6,14 @@
 @inject ISessionContext Session
 @{
     var effectiveBranding = BuildCurrentBranding();
-    var snap = HardwareQaCertificate.Capture(Store, Session.MachineName, DateTimeOffset.Now, effectiveBranding);
+    var snap = HardwareQaCertificate.Capture(Store, Session.MachineName, DateTimeOffset.Now, effectiveBranding, physicalQa: ActivePhysicalQa.Current);
     var certHtml = HardwareQaCertificate.BuildHtml(snap);
     var verdictChip = snap.Verdict switch
     {
         HardwareQaVerdict.CertifiedPass => "ok",
-        HardwareQaVerdict.PassedWithNotes => "warning",
-        HardwareQaVerdict.AttentionRequired => "error",
-        _ => "neutral",
+        HardwareQaVerdict.PassedWithNotes => "warn",
+        HardwareQaVerdict.AttentionRequired => "err",
+        _ => "na",
     };
     var verdictLabel = snap.Verdict switch
     {
@@ -22,6 +22,8 @@
         HardwareQaVerdict.AttentionRequired => "Attention required",
         _ => "Bench intake snapshot",
     };
+    var benchRunning = ActiveBenchQa.IsRunning;
+    var benchBusyElsewhere = !benchRunning && Diagnostics.IsAnyStressRunning;
 }
 
 <div class="toolbar">
@@ -29,6 +31,51 @@
     <h1 data-testid="branding-title">QA Certificate &amp; Shop Branding</h1>
 </div>
 <p class="meta">White-label your client service reports (with measured before/after Windows speedups) and export 1-page scannable Buyer Hardware QA QR Certificates for refurbished PCs with zero hardware dongles.</p>
+
+<section class="card wf-section bench-qa-banner" data-testid="bench-qa-banner" style="margin-bottom: 16px">
+    <div class="toolbar" style="margin-bottom: 6px">
+        <div>
+            <strong>10-Minute Hardware Intake / QA Check</strong>
+            <span class="meta"> · Hands-free refurbisher bench pass (SMBIOS, SMART, battery, WHEA, DISM/SFC, short thermal stress, audio &amp; webcam → auto-saved QR certificate)</span>
+        </div>
+        <div class="banner-actions">
+            <button type="button"
+                    class="btn btn-primary"
+                    data-testid="bench-qa-start"
+                    disabled="@(benchRunning || benchBusyElsewhere)"
+                    @onclick="StartBenchQa">
+                <Icon Name="@(benchRunning ? "refresh" : "play")" Size="14" />
+                @(benchRunning ? $"Running QA ({ActiveBenchQa.CompletedSteps}/{Math.Max(1, ActiveBenchQa.TotalSteps)})…" : "Start 10-min QA check")
+            </button>
+            @if (benchRunning)
+            {
+                <button type="button" class="btn btn-outline" data-testid="bench-qa-stop" @onclick="StopBenchQa">Stop</button>
+            }
+        </div>
+    </div>
+    <div class="bench-qa-options">
+        <label class="bench-kind meta">
+            <input type="checkbox" data-testid="bench-qa-include-stress" @bind="_includeStress" disabled="@benchRunning" />
+            <span>Short thermal-guarded stress (CPU, RAM, Disk, GPU — offline bench safe)</span>
+        </label>
+        <label class="bench-kind meta">
+            <input type="checkbox" data-testid="bench-qa-include-audio" @bind="_includeAudioCamera" disabled="@benchRunning" />
+            <span>Dongle-free WASAPI speaker→mic loopback &amp; webcam check</span>
+        </label>
+    </div>
+    @if (benchRunning && ActiveBenchQa.TotalSteps > 0)
+    {
+        <div class="progress wf-overall-progress" style="max-width:none;margin:10px 0 6px" data-testid="bench-qa-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@ActiveBenchQa.TotalSteps" aria-valuenow="@ActiveBenchQa.CompletedSteps">
+            <div style="width:@($"{ActiveBenchQa.ProgressFraction * 100:0.#}%")"></div>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ActiveBenchQa.Status))
+    {
+        <p class="meta" style="margin:6px 0 0" data-testid="bench-qa-status">@ActiveBenchQa.Status</p>
+    }
+</section>
+
+<PhysicalBenchQaCard Service="ActivePhysicalQa" />
 
 <details class="card wf-section" open data-testid="branding-card" style="margin-bottom: 16px">
     <summary style="cursor:pointer;font-weight:600;padding:4px 0">
@@ -124,9 +171,9 @@
             <a class="btn btn-outline" href="stress">Stress tests</a>
         </div>
     </div>
-    @if (_savedCertPath is not null)
+    @if ((_savedCertPath ?? ActiveBenchQa.LastSavedCertificatePath) is { } shownCertPath)
     {
-        <p class="meta" data-testid="qa-saved-path">Certificate saved on this PC: @_savedCertPath (open in any browser and press Ctrl+P to print or save as a 1-page PDF).</p>
+        <p class="meta" data-testid="qa-saved-path">Certificate saved on this PC: @shownCertPath (open in any browser and press Ctrl+P to print or save as a 1-page PDF).</p>
     }
     else if (_saveError is not null)
     {
@@ -137,6 +184,14 @@
 
 @code {
     private const long MaxLogoUploadBytes = 56_320; // 55 KB raw -> ~75 KB base64 (< 80,000 char cap)
+
+    private readonly PhysicalBenchQaService _fallbackPhysicalQa = new();
+    private BenchQaRunner? _fallbackBenchQa;
+    private PhysicalBenchQaService ActivePhysicalQa => App.PhysicalQa ?? _fallbackPhysicalQa;
+    private BenchQaRunner ActiveBenchQa => App.BenchQa ?? (_fallbackBenchQa ??= new BenchQaRunner(Diagnostics, Store, App.Workflow, App.Preferences, ActivePhysicalQa));
+
+    private bool _includeStress = true;
+    private bool _includeAudioCamera = true;
 
     private string _shopName = "";
     private string? _logoDataUri;
@@ -158,7 +213,30 @@
     {
         base.OnInitialized();
         LoadFromPreferences(App.Preferences?.Current.Branding);
+        ActivePhysicalQa.Changed += OnBenchStateChanged;
+        ActiveBenchQa.Changed += OnBenchStateChanged;
     }
+
+    private void OnBenchStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public override void Dispose()
+    {
+        ActivePhysicalQa.Changed -= OnBenchStateChanged;
+        ActiveBenchQa.Changed -= OnBenchStateChanged;
+        base.Dispose();
+    }
+
+    private Task StartBenchQa()
+    {
+        _savedCertPath = null;
+        _saveError = null;
+        var current = BuildCurrentBranding();
+        App.Preferences?.Update(p => p with { Branding = current.HasAny ? current : null });
+        _ = ActiveBenchQa.RunIntakeAsync(_includeStress, _includeAudioCamera);
+        return Task.CompletedTask;
+    }
+
+    private void StopBenchQa() => ActiveBenchQa.Cancel();
 
     private void LoadFromPreferences(ShopBranding? b)
     {
@@ -276,7 +354,7 @@
         if (App.Workflow is null) return;
         var current = BuildCurrentBranding();
         App.Preferences?.Update(p => p with { Branding = current.HasAny ? current : null });
-        var path = App.Workflow.SaveHardwareQaCertificate(out _, out _, current);
+        var path = App.Workflow.SaveHardwareQaCertificate(out _, out _, current, ActivePhysicalQa.Current);
         if (path is not null) _savedCertPath = path;
         else _saveError = "Could not write the HTML certificate to disk on this PC.";
     }

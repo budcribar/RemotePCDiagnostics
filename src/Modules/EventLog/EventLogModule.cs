@@ -23,7 +23,7 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
         Log($"{Name}: source=wevtutil (windows_events needs the osquery event subscriber) system={system?.Count.ToString() ?? "failed"} application={app?.Count.ToString() ?? "failed"}");
         if (excludeCrashEvents)
         {
-            system = system?.Where(e => !BsodHistoryModule.IsBugCheckEvent(e) && !BsodHistoryModule.IsPowerLossEvent(e)).ToList();
+            system = system?.Where(e => !BsodHistoryModule.IsBugCheckEvent(e) && !BsodHistoryModule.IsPowerLossEvent(e) && !BsodHistoryModule.IsWheaEvent(e)).ToList();
             app = app?.Where(e => !(e.EventId is 1000 or 1002 && (e.Provider.Contains("Application Error", StringComparison.OrdinalIgnoreCase) || e.Provider.Contains("Application Hang", StringComparison.OrdinalIgnoreCase)))).ToList();
         }
         var reviewed = await EventReviews.ReadAsync(host, ct).ConfigureAwait(false);

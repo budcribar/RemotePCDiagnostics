@@ -63,7 +63,8 @@ public static class HardwareQaCertificate
         DateTimeOffset? generated = null,
         ShopBranding? branding = null,
         string? operatingSystem = null,
-        bool includeNpuWhenNotRun = false)
+        bool includeNpuWhenNotRun = false,
+        PhysicalBenchQaSnapshot? physicalQa = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         var when = generated ?? DateTimeOffset.Now;
@@ -112,12 +113,15 @@ public static class HardwareQaCertificate
             BuildAreaItem("battery", "Battery & power health", store.Get(ModuleSlugs.BatteryPower)),
             BuildAreaItem("smart", "Storage S.M.A.R.T. health", store.Get(ModuleSlugs.DriveHealth)),
             BuildSensorsItem(store.Get(ModuleSlugs.Sensors)),
+            BuildStabilityItem(store),
             BuildSimpleItem("cpu-stress", "CPU stress verification", store.Get(ModuleSlugs.CpuStress)),
             BuildSimpleItem("ram-test", "Memory (RAM) verification", store.Get(ModuleSlugs.MemoryTest)),
             BuildDiskSpeedItem(store.Get(ModuleSlugs.DiskSpeed)),
             BuildSimpleItem("gpu-stress", "Graphics (GPU) stress verification", store.Get(ModuleSlugs.GpuStress)),
             BuildAudioItem(store.Get(ModuleSlugs.SpeakerToMic), store.Get(ModuleSlugs.MicToSpeaker)),
             BuildSimpleItem("webcam", "Camera frame & exposure check", store.Get(ModuleSlugs.Webcam)),
+            BuildKeyboardItem(physicalQa),
+            BuildDisplayItem(physicalQa),
         };
 
         var npu = store.Get(ModuleSlugs.NpuTest);
@@ -454,6 +458,121 @@ public static class HardwareQaCertificate
         return new HardwareQaItem("integrity", "Windows image & SFC integrity", worst,
             $"DISM: {dism.Message} · SFC: {sfc.Message}", dism.Cancelled && sfc.Cancelled);
     }
+
+    private static HardwareQaItem BuildStabilityItem(ResultStore store)
+    {
+        const string id = "stability";
+        const string label = "Crash & WHEA hardware log (30d)";
+
+        var crashes = store.Get(ModuleSlugs.Crashes);
+        if (crashes.Status != DiagnosticStatus.NotRun && crashes.Report() is AreaReport crashRep)
+        {
+            var sysCards = crashRep.Cards.Where(c => c.Id is "bsods" or "power" or "whea").ToList();
+            if (sysCards.Count > 0)
+            {
+                if (sysCards.All(c => c.ErrorText is not null))
+                    return new HardwareQaItem(id, label, DiagnosticStatus.Warning, "Couldn't read blue screen and WHEA history", crashes.Cancelled);
+
+                var readable = sysCards.Where(c => c.ErrorText is null).ToList();
+                var status = AreaReport.Worst(readable.Select(c => c.Level));
+                if (sysCards.Any(c => c.ErrorText is not null) && status == DiagnosticStatus.Ok)
+                    status = DiagnosticStatus.Warning;
+                return new HardwareQaItem(id, label, status, SummarizeStabilityCards(sysCards), crashes.Cancelled);
+            }
+        }
+
+        var bsod = store.Get(ModuleSlugs.BsodHistory);
+        if (bsod.Status == DiagnosticStatus.NotRun)
+            return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, "Not run yet");
+        if (bsod.Report() is AreaReport bsodRep)
+        {
+            var sysCards = bsodRep.Cards.Where(c => c.Id is "bsods" or "power" or "whea").ToList();
+            if (sysCards.Count > 0)
+            {
+                var readable = sysCards.Where(c => c.ErrorText is null).ToList();
+                var status = readable.Count > 0 ? AreaReport.Worst(readable.Select(c => c.Level)) : bsod.Status;
+                return new HardwareQaItem(id, label, status, SummarizeStabilityCards(sysCards), bsod.Cancelled);
+            }
+            return BuildAreaItem(id, label, bsod);
+        }
+        return BuildSimpleItem(id, label, bsod);
+    }
+
+    private static string SummarizeStabilityCards(IReadOnlyList<AreaCard> sysCards)
+    {
+        var bsod = sysCards.FirstOrDefault(c => c.Id == "bsods");
+        var power = sysCards.FirstOrDefault(c => c.Id == "power");
+        var whea = sysCards.FirstOrDefault(c => c.Id == "whea");
+        var parts = new List<string>(3);
+        if (bsod is { Rows.Count: > 0 }) parts.Add(bsod.Headline);
+        if (power is { Rows.Count: > 0 }) parts.Add(power.Headline);
+        if (whea is { Rows.Count: > 0 }) parts.Add($"WHEA: {whea.Headline}");
+        return parts.Count == 0
+            ? "No BSODs, unexpected power losses, or WHEA hardware errors"
+            : string.Join(" · ", parts);
+    }
+
+    private static HardwareQaItem BuildKeyboardItem(PhysicalBenchQaSnapshot? qa)
+    {
+        const string id = "keyboard";
+        const string label = "Keyboard matrix & rollover";
+        var outcome = qa?.KeyboardOutcome ?? PhysicalCheckOutcome.NotRun;
+        var status = MapPhysicalOutcome(outcome);
+        if (status == DiagnosticStatus.NotRun)
+        {
+            var summary = qa is { UniqueKeysPressed: > 0 }
+                ? $"In progress ({qa.UniqueKeysPressed} {(qa.UniqueKeysPressed == 1 ? "key" : "keys")} pressed · {qa.PeakKeyRollover}-key rollover) — mark Pass or Fail"
+                : "Not run yet (interactive bench check)";
+            return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, summary);
+        }
+
+        var parts = new List<string>(3);
+        if (qa is { UniqueKeysPressed: > 0 })
+            parts.Add($"{qa.UniqueKeysPressed} {(qa.UniqueKeysPressed == 1 ? "key" : "keys")} verified");
+        if (qa is { PeakKeyRollover: > 0 })
+            parts.Add($"{qa.PeakKeyRollover}-key rollover");
+        if (!string.IsNullOrWhiteSpace(qa?.KeyboardNotes))
+            parts.Add(qa.KeyboardNotes.Trim());
+        if (parts.Count == 0)
+            parts.Add(status == DiagnosticStatus.Ok ? "Verified by technician" : status == DiagnosticStatus.Warning ? "Passed with note" : "Failed inspection");
+
+        return new HardwareQaItem(id, label, status, string.Join(" · ", parts));
+    }
+
+    private static HardwareQaItem BuildDisplayItem(PhysicalBenchQaSnapshot? qa)
+    {
+        const string id = "display";
+        const string label = "Display dead-pixel & touch check";
+        var outcome = qa?.DisplayOutcome ?? PhysicalCheckOutcome.NotRun;
+        var status = MapPhysicalOutcome(outcome);
+        if (status == DiagnosticStatus.NotRun)
+        {
+            var summary = qa is { SolidColorsInspected: > 0 }
+                ? $"In progress ({qa.SolidColorsInspected} test {(qa.SolidColorsInspected == 1 ? "pattern" : "patterns")} inspected) — mark Pass or Fail"
+                : "Not run yet (interactive bench check)";
+            return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, summary);
+        }
+
+        var parts = new List<string>(3);
+        if (qa is { SolidColorsInspected: > 0 })
+            parts.Add($"{qa.SolidColorsInspected} test {(qa.SolidColorsInspected == 1 ? "pattern" : "patterns")} inspected");
+        if (qa is { MaxTouchPoints: > 0 })
+            parts.Add($"{qa.MaxTouchPoints}-point touch verified");
+        if (!string.IsNullOrWhiteSpace(qa?.DisplayNotes))
+            parts.Add(qa.DisplayNotes.Trim());
+        if (parts.Count == 0)
+            parts.Add(status == DiagnosticStatus.Ok ? "Panel verified clean" : status == DiagnosticStatus.Warning ? "Minor blemish noted" : "Panel defect detected");
+
+        return new HardwareQaItem(id, label, status, string.Join(" · ", parts));
+    }
+
+    private static DiagnosticStatus MapPhysicalOutcome(PhysicalCheckOutcome outcome) => outcome switch
+    {
+        PhysicalCheckOutcome.Passed => DiagnosticStatus.Ok,
+        PhysicalCheckOutcome.PassedWithNote => DiagnosticStatus.Warning,
+        PhysicalCheckOutcome.Failed => DiagnosticStatus.Error,
+        _ => DiagnosticStatus.NotRun,
+    };
 
     private static DiagnosticStatus CombineStatus(DiagnosticStatus a, DiagnosticStatus b)
     {

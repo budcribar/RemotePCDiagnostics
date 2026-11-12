@@ -1,0 +1,520 @@
+@using RemotePCDiagnostics.Core.Workflow
+@implements IDisposable
+@{
+    var snap = ActiveService.Current;
+    var kbChip = OutcomeChip(snap.KeyboardOutcome);
+    var kbLabel = OutcomeLabel(snap.KeyboardOutcome);
+    var dispChip = OutcomeChip(snap.DisplayOutcome);
+    var dispLabel = OutcomeLabel(snap.DisplayOutcome);
+    var activePattern = Patterns[_patternIndex];
+}
+
+<section class="card wf-section" data-testid="physical-qa-card" style="margin-bottom: 16px">
+    <div class="toolbar" style="margin-bottom: 8px">
+        <div>
+            <strong>Interactive bench QA: Keyboard &amp; Display</strong>
+            <span class="meta"> · Quick technician verification rolled onto the 1-page Buyer QR Certificate</span>
+        </div>
+    </div>
+
+    <div class="phys-qa-grid">
+        <div class="phys-qa-pane">
+            <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                <strong>Keyboard matrix &amp; rollover (NKRO)</strong>
+                <span class="chip chip-@kbChip" data-testid="keyboard-status-chip">@kbLabel</span>
+                <button type="button"
+                        class="btn-small @(_capturingKeys ? "btn-primary" : "")"
+                        data-testid="keyboard-capture-toggle"
+                        @onclick="ToggleKeyCapture">
+                    @(_capturingKeys ? "Capturing keys (click to release)" : "Capture keys")
+                </button>
+            </div>
+
+            <div class="kb-zone @(_capturingKeys ? "kb-zone-active" : "")"
+                 tabindex="0"
+                 role="application"
+                 aria-label="Keyboard rollover and key matrix capture zone"
+                 data-testid="keyboard-test-zone"
+                 @ref="_keyZoneRef"
+                 @onclick="ActivateKeyZone"
+                 @onblur="OnKeyZoneBlur"
+                 @onkeydown="OnKeyDown"
+                 @onkeydown:preventDefault="_capturingKeys"
+                 @onkeyup="OnKeyUp">
+                <div class="meta kb-zone-hint">
+                    @if (_capturingKeys)
+                    {
+                        <span><strong>Active capture:</strong> sweep across every row &amp; hold a multi-key chord (Tab, Space &amp; F-keys are captured safely). Click outside to release focus.</span>
+                    }
+                    else
+                    {
+                        <span>Click here or press <strong>Capture keys</strong> to test laptop keys and simultaneous rollover without scrolling the page.</span>
+                    }
+                </div>
+
+                <div class="kb-matrix" aria-hidden="true">
+                    @foreach (var row in KeyRows)
+                    {
+                        <div class="kb-row">
+                            @foreach (var key in row)
+                            {
+                                var isHeld = _heldKeys.Contains(key.Code);
+                                var isHit = _pressedKeys.Contains(key.Code) || (_hydratedAllHit && snap.UniqueKeysPressed > 0);
+                                <span class="kb-key @(key.Wide ? "kb-key-wide" : "") @(key.Space ? "kb-key-space" : "") @(isHeld ? "kb-key-held" : isHit ? "kb-key-hit" : "")"
+                                      title="@key.Code">@key.Label</span>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <div class="kb-stats meta">
+                    <span><strong data-testid="keyboard-unique-count">@snap.UniqueKeysPressed</strong> unique keys pressed</span>
+                    <span> · </span>
+                    <span><strong data-testid="keyboard-rollover-count">@snap.PeakKeyRollover</strong>-key peak rollover</span>
+                    @if (_heldKeys.Count > 0)
+                    {
+                        <span> · <strong>@_heldKeys.Count</strong> held now</span>
+                    }
+                    @if (!string.IsNullOrEmpty(_lastKeyDisplay))
+                    {
+                        <span> · Last: <code>@_lastKeyDisplay</code></span>
+                    }
+                </div>
+            </div>
+
+            <label class="phys-qa-note">
+                <span class="meta">Optional keyboard note (e.g. sticky right-arrow cap, US ANSI layout)</span>
+                <input data-testid="keyboard-notes"
+                       value="@_keyboardNotes"
+                       @oninput="OnKeyboardNotesInput"
+                       maxlength="240"
+                       placeholder="Optional keyboard note…" />
+            </label>
+
+            <div class="phys-qa-actions">
+                <button type="button" class="btn-small btn-primary" data-testid="keyboard-pass" @onclick="() => SetKeyboardOutcome(PhysicalCheckOutcome.Passed)">Pass keyboard</button>
+                <button type="button" class="btn-small" data-testid="keyboard-note-btn" @onclick="() => SetKeyboardOutcome(PhysicalCheckOutcome.PassedWithNote)">Pass with note</button>
+                <button type="button" class="btn-small" data-testid="keyboard-fail" @onclick="() => SetKeyboardOutcome(PhysicalCheckOutcome.Failed)">Fail keyboard</button>
+                <button type="button" class="btn-small" data-testid="keyboard-reset" @onclick="ResetKeyboard">Reset</button>
+            </div>
+        </div>
+
+        <div class="phys-qa-pane"
+             @ontouchstart="OnTouchEvent"
+             @ontouchmove="OnTouchEvent">
+            <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                <strong>Display dead-pixel &amp; touch check</strong>
+                <span class="chip chip-@dispChip" data-testid="display-status-chip">@dispLabel</span>
+            </div>
+
+            <p class="meta" style="margin-top: 0">
+                Inspect pure black, white, RGB subpixels, and 50% gray uniformity full-screen for stuck/dead pixels, pressure spots, or backlight bleed. Touchscreens record multi-finger contact count automatically.
+            </p>
+
+            <div class="display-swatches" aria-hidden="true">
+                @for (var i = 0; i < Patterns.Length; i++)
+                {
+                    var p = Patterns[i];
+                    var seen = _inspectedPatterns.Contains(i) || i < snap.SolidColorsInspected;
+                    <span class="display-swatch @(seen ? "display-swatch-seen" : "")"
+                          style="background:@p.Hex"
+                          title="@p.Name (@p.Hex)"></span>
+                }
+            </div>
+
+            <div class="kb-stats meta" style="margin: 8px 0">
+                <span><strong data-testid="display-colors-count">@snap.SolidColorsInspected</strong> / @Patterns.Length test patterns inspected</span>
+                <span> · </span>
+                <span><strong data-testid="display-touch-count">@snap.MaxTouchPoints</strong> max touch points</span>
+            </div>
+
+            <div style="margin-bottom: 8px">
+                <button type="button" class="btn btn-outline" style="width:auto" data-testid="display-test-launch" @onclick="LaunchDisplayOverlay">
+                    <Icon Name="eye" Size="14" /> Launch full-screen color check
+                </button>
+            </div>
+
+            <label class="phys-qa-note">
+                <span class="meta">Optional display / touch note (e.g. minor lid scuff, IPS glow normal, 10-point touch OK)</span>
+                <input data-testid="display-notes"
+                       value="@_displayNotes"
+                       @oninput="OnDisplayNotesInput"
+                       maxlength="240"
+                       placeholder="Optional display note…" />
+            </label>
+
+            <div class="phys-qa-actions">
+                <button type="button" class="btn-small btn-primary" data-testid="display-pass" @onclick="() => SetDisplayOutcome(PhysicalCheckOutcome.Passed)">Pass display</button>
+                <button type="button" class="btn-small" data-testid="display-note-btn" @onclick="() => SetDisplayOutcome(PhysicalCheckOutcome.PassedWithNote)">Note blemish</button>
+                <button type="button" class="btn-small" data-testid="display-fail" @onclick="() => SetDisplayOutcome(PhysicalCheckOutcome.Failed)">Fail display</button>
+                <button type="button" class="btn-small" data-testid="display-reset" @onclick="ResetDisplay">Reset</button>
+            </div>
+        </div>
+    </div>
+</section>
+
+@if (_displayOverlayOpen)
+{
+    <div class="display-qa-overlay"
+         style="background:@activePattern.Hex;color:@activePattern.ForegroundHex"
+         tabindex="0"
+         role="dialog"
+         aria-modal="true"
+         aria-label="Full-screen display dead-pixel and touch inspection"
+         data-testid="display-test-overlay"
+         @ref="_overlayRef"
+         @onclick="NextPattern"
+         @onkeydown="OnOverlayKeyDown"
+         @onkeydown:preventDefault="true"
+         @ontouchstart="OnTouchEvent"
+         @ontouchmove="OnTouchEvent">
+        <div class="display-qa-hud"
+             @onclick:stopPropagation="true"
+             @onkeydown:stopPropagation="true">
+            <div class="display-qa-hud-title">
+                <strong>Pattern @(_patternIndex + 1) of @Patterns.Length: @activePattern.Name (@activePattern.Hex)</strong>
+                @if (snap.MaxTouchPoints > 0)
+                {
+                    <span> · @snap.MaxTouchPoints-pt touch verified</span>
+                }
+            </div>
+            <div class="display-qa-hud-sub">Click anywhere, Space, or → for next pattern · ← previous · Touch with multiple fingers · Esc to exit</div>
+            <div class="display-qa-hud-actions">
+                <button type="button" class="btn-small" data-testid="display-overlay-prev" @onclick="PrevPattern">Prev</button>
+                <button type="button" class="btn-small" data-testid="display-overlay-next" @onclick="NextPattern">Next</button>
+                <button type="button" class="btn-small btn-primary" data-testid="display-overlay-pass" @onclick="PassDisplayFromOverlay">Pass &amp; exit</button>
+                <button type="button" class="btn-small" data-testid="display-overlay-exit" @onclick="CloseDisplayOverlay">Exit</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public PhysicalBenchQaService? Service { get; set; }
+
+    private readonly PhysicalBenchQaService _fallbackService = new();
+    private PhysicalBenchQaService? _subscribedService;
+    private PhysicalBenchQaService ActiveService => Service ?? _fallbackService;
+
+    private ElementReference _keyZoneRef;
+    private ElementReference _overlayRef;
+    private bool _shouldFocusKeyZone;
+    private bool _shouldFocusOverlay;
+
+    private bool _capturingKeys;
+    private bool _hydratedAllHit;
+    private readonly HashSet<string> _pressedKeys = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _heldKeys = new(StringComparer.OrdinalIgnoreCase);
+    private int _peakRollover;
+    private string? _lastKeyDisplay;
+    private string _keyboardNotes = "";
+
+    private bool _displayOverlayOpen;
+    private int _patternIndex;
+    private readonly HashSet<int> _inspectedPatterns = [];
+    private string _displayNotes = "";
+
+    private sealed record KeyPill(string Code, string Label, bool Wide = false, bool Space = false);
+    private sealed record DisplayPattern(string Name, string Hex, string ForegroundHex);
+
+    private static readonly DisplayPattern[] Patterns =
+    [
+        new("Pure Black (stuck subpixels & backlight bleed)", "#000000", "#f8fafc"),
+        new("Pure White (dead pixels & dark spots)", "#FFFFFF", "#0f172a"),
+        new("Pure Red (red subpixels)", "#FF0000", "#ffffff"),
+        new("Pure Green (green subpixels)", "#00FF00", "#0f172a"),
+        new("Pure Blue (blue subpixels)", "#0000FF", "#ffffff"),
+        new("50% Uniformity Gray (panel mura & pressure marks)", "#808080", "#ffffff"),
+    ];
+
+    private static readonly KeyPill[][] KeyRows =
+    [
+        [
+            new("Escape", "Esc"), new("F1", "F1"), new("F2", "F2"), new("F3", "F3"), new("F4", "F4"),
+            new("F5", "F5"), new("F6", "F6"), new("F7", "F7"), new("F8", "F8"),
+            new("F9", "F9"), new("F10", "F10"), new("F11", "F11"), new("F12", "F12"), new("Delete", "Del"),
+        ],
+        [
+            new("Backquote", "`"), new("Digit1", "1"), new("Digit2", "2"), new("Digit3", "3"), new("Digit4", "4"),
+            new("Digit5", "5"), new("Digit6", "6"), new("Digit7", "7"), new("Digit8", "8"), new("Digit9", "9"),
+            new("Digit0", "0"), new("Minus", "-"), new("Equal", "="), new("Backspace", "Bksp", Wide: true),
+        ],
+        [
+            new("Tab", "Tab", Wide: true), new("KeyQ", "Q"), new("KeyW", "W"), new("KeyE", "E"), new("KeyR", "R"),
+            new("KeyT", "T"), new("KeyY", "Y"), new("KeyU", "U"), new("KeyI", "I"), new("KeyO", "O"),
+            new("KeyP", "P"), new("BracketLeft", "["), new("BracketRight", "]"), new("Backslash", "\\"),
+        ],
+        [
+            new("CapsLock", "Caps", Wide: true), new("KeyA", "A"), new("KeyS", "S"), new("KeyD", "D"), new("KeyF", "F"),
+            new("KeyG", "G"), new("KeyH", "H"), new("KeyJ", "J"), new("KeyK", "K"), new("KeyL", "L"),
+            new("Semicolon", ";"), new("Quote", "'"), new("Enter", "Enter", Wide: true),
+        ],
+        [
+            new("ShiftLeft", "Shift", Wide: true), new("KeyZ", "Z"), new("KeyX", "X"), new("KeyC", "C"), new("KeyV", "V"),
+            new("KeyB", "B"), new("KeyN", "N"), new("KeyM", "M"), new("Comma", ","), new("Period", "."),
+            new("Slash", "/"), new("ShiftRight", "RShift", Wide: true),
+        ],
+        [
+            new("ControlLeft", "Ctrl"), new("MetaLeft", "Win"), new("AltLeft", "Alt"),
+            new("Space", "Space", Space: true),
+            new("AltRight", "RAlt"), new("ControlRight", "RCtrl"),
+            new("ArrowLeft", "←"), new("ArrowUp", "↑"), new("ArrowDown", "↓"), new("ArrowRight", "→"),
+        ],
+    ];
+
+    protected override void OnParametersSet()
+    {
+        var target = ActiveService;
+        if (!ReferenceEquals(_subscribedService, target))
+        {
+            if (_subscribedService is not null)
+                _subscribedService.Changed -= OnServiceChanged;
+            _subscribedService = target;
+            _subscribedService.Changed += OnServiceChanged;
+
+            var snap = target.Current;
+            _keyboardNotes = snap.KeyboardNotes ?? "";
+            _displayNotes = snap.DisplayNotes ?? "";
+            _peakRollover = snap.PeakKeyRollover;
+            _hydratedAllHit = snap.UniqueKeysPressed > 0 && _pressedKeys.Count == 0;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_shouldFocusKeyZone)
+        {
+            _shouldFocusKeyZone = false;
+            try { await _keyZoneRef.FocusAsync(); } catch { }
+        }
+        if (_shouldFocusOverlay && _displayOverlayOpen)
+        {
+            _shouldFocusOverlay = false;
+            try { await _overlayRef.FocusAsync(); } catch { }
+        }
+    }
+
+    private void OnServiceChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        if (_subscribedService is not null)
+        {
+            _subscribedService.Changed -= OnServiceChanged;
+            _subscribedService = null;
+        }
+    }
+
+    private void ToggleKeyCapture()
+    {
+        _capturingKeys = !_capturingKeys;
+        if (_capturingKeys)
+            _shouldFocusKeyZone = true;
+        else
+            _heldKeys.Clear();
+    }
+
+    private void ActivateKeyZone()
+    {
+        if (!_capturingKeys)
+        {
+            _capturingKeys = true;
+            _shouldFocusKeyZone = true;
+        }
+    }
+
+    private void OnKeyZoneBlur()
+    {
+        _capturingKeys = false;
+        _heldKeys.Clear();
+    }
+
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        if (!_capturingKeys) return;
+
+        var id = NormalizeKeyCode(e);
+        if (string.IsNullOrEmpty(id)) return;
+
+        _hydratedAllHit = false;
+        _pressedKeys.Add(id);
+        _heldKeys.Add(id);
+        if (_heldKeys.Count > _peakRollover)
+            _peakRollover = _heldKeys.Count;
+
+        _lastKeyDisplay = string.IsNullOrWhiteSpace(e.Code) || string.Equals(e.Code, e.Key, StringComparison.OrdinalIgnoreCase)
+            ? e.Key
+            : $"{e.Key} ({e.Code})";
+
+        var uniqueCount = Math.Max(_pressedKeys.Count, ActiveService.Current.UniqueKeysPressed);
+        var peak = Math.Max(_peakRollover, ActiveService.Current.PeakKeyRollover);
+        ActiveService.Update(s => s with
+        {
+            UniqueKeysPressed = uniqueCount,
+            PeakKeyRollover = peak,
+        });
+    }
+
+    private void OnKeyUp(KeyboardEventArgs e)
+    {
+        var id = NormalizeKeyCode(e);
+        if (!string.IsNullOrEmpty(id))
+            _heldKeys.Remove(id);
+    }
+
+    private static string NormalizeKeyCode(KeyboardEventArgs e) =>
+        !string.IsNullOrWhiteSpace(e.Code) ? e.Code.Trim() : (e.Key?.Trim() ?? "");
+
+    private void OnKeyboardNotesInput(ChangeEventArgs e)
+    {
+        _keyboardNotes = e.Value?.ToString() ?? "";
+        var trimmed = string.IsNullOrWhiteSpace(_keyboardNotes) ? null : _keyboardNotes.Trim();
+        ActiveService.Update(s => s with { KeyboardNotes = trimmed });
+    }
+
+    private void SetKeyboardOutcome(PhysicalCheckOutcome outcome)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(_keyboardNotes) ? null : _keyboardNotes.Trim();
+        ActiveService.Update(s => s with
+        {
+            KeyboardOutcome = outcome,
+            KeyboardNotes = trimmed,
+            UniqueKeysPressed = Math.Max(s.UniqueKeysPressed, _pressedKeys.Count),
+            PeakKeyRollover = Math.Max(s.PeakKeyRollover, _peakRollover),
+        });
+    }
+
+    private void ResetKeyboard()
+    {
+        _pressedKeys.Clear();
+        _heldKeys.Clear();
+        _hydratedAllHit = false;
+        _peakRollover = 0;
+        _lastKeyDisplay = null;
+        _keyboardNotes = "";
+        ActiveService.Update(s => s with
+        {
+            KeyboardOutcome = PhysicalCheckOutcome.NotRun,
+            UniqueKeysPressed = 0,
+            PeakKeyRollover = 0,
+            KeyboardNotes = null,
+        });
+    }
+
+    private void LaunchDisplayOverlay()
+    {
+        _patternIndex = 0;
+        _displayOverlayOpen = true;
+        _shouldFocusOverlay = true;
+        RecordPatternInspected(0);
+    }
+
+    private void CloseDisplayOverlay()
+    {
+        _displayOverlayOpen = false;
+    }
+
+    private void PassDisplayFromOverlay()
+    {
+        _displayOverlayOpen = false;
+        SetDisplayOutcome(PhysicalCheckOutcome.Passed);
+    }
+
+    private void NextPattern()
+    {
+        _patternIndex = (_patternIndex + 1) % Patterns.Length;
+        RecordPatternInspected(_patternIndex);
+    }
+
+    private void PrevPattern()
+    {
+        _patternIndex = (_patternIndex - 1 + Patterns.Length) % Patterns.Length;
+        RecordPatternInspected(_patternIndex);
+    }
+
+    private void RecordPatternInspected(int index)
+    {
+        _inspectedPatterns.Add(index);
+        var count = Math.Max(_inspectedPatterns.Count, ActiveService.Current.SolidColorsInspected);
+        ActiveService.Update(s => s with { SolidColorsInspected = Math.Min(Patterns.Length, count) });
+    }
+
+    private void OnOverlayKeyDown(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "Escape":
+                CloseDisplayOverlay();
+                break;
+            case "ArrowLeft":
+            case "Backspace":
+                PrevPattern();
+                break;
+            case " ":
+            case "Spacebar":
+            case "ArrowRight":
+            case "Enter":
+                NextPattern();
+                break;
+        }
+    }
+
+    private void OnTouchEvent(TouchEventArgs e)
+    {
+        var points = Math.Max(e.Touches?.Length ?? 0, e.TargetTouches?.Length ?? 0);
+        if (points <= 0) return;
+        if (points > ActiveService.Current.MaxTouchPoints)
+        {
+            ActiveService.Update(s => s with { MaxTouchPoints = Math.Max(s.MaxTouchPoints, points) });
+        }
+    }
+
+    private void OnDisplayNotesInput(ChangeEventArgs e)
+    {
+        _displayNotes = e.Value?.ToString() ?? "";
+        var trimmed = string.IsNullOrWhiteSpace(_displayNotes) ? null : _displayNotes.Trim();
+        ActiveService.Update(s => s with { DisplayNotes = trimmed });
+    }
+
+    private void SetDisplayOutcome(PhysicalCheckOutcome outcome)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(_displayNotes) ? null : _displayNotes.Trim();
+        ActiveService.Update(s => s with
+        {
+            DisplayOutcome = outcome,
+            DisplayNotes = trimmed,
+            SolidColorsInspected = Math.Max(s.SolidColorsInspected, _inspectedPatterns.Count),
+        });
+    }
+
+    private void ResetDisplay()
+    {
+        _displayOverlayOpen = false;
+        _patternIndex = 0;
+        _inspectedPatterns.Clear();
+        _displayNotes = "";
+        ActiveService.Update(s => s with
+        {
+            DisplayOutcome = PhysicalCheckOutcome.NotRun,
+            SolidColorsInspected = 0,
+            MaxTouchPoints = 0,
+            DisplayNotes = null,
+        });
+    }
+
+    private static string OutcomeChip(PhysicalCheckOutcome outcome) => outcome switch
+    {
+        PhysicalCheckOutcome.Passed => "ok",
+        PhysicalCheckOutcome.PassedWithNote => "warn",
+        PhysicalCheckOutcome.Failed => "err",
+        _ => "na",
+    };
+
+    private static string OutcomeLabel(PhysicalCheckOutcome outcome) => outcome switch
+    {
+        PhysicalCheckOutcome.Passed => "Passed",
+        PhysicalCheckOutcome.PassedWithNote => "Passed w/ note",
+        PhysicalCheckOutcome.Failed => "Failed",
+        _ => "Not tested",
+    };
+}

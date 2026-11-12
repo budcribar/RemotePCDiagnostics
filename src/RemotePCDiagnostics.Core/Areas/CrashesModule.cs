@@ -63,7 +63,12 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             const string sysFailed = "Couldn't read blue screen and shutdown history on this PC.";
             var dumpCard = BsodHistoryModule.Build([], dumps).Cards.Single(c => c.Id == "minidumps");
             bsodReport = new(
-                [AreaCard.Failed("bsods", "Blue screen crashes (BSOD)", sysFailed), AreaCard.Failed("power", "Unexpected power losses & resets", sysFailed), dumpCard],
+                [
+                    AreaCard.Failed("bsods", "Blue screen crashes (BSOD)", sysFailed),
+                    AreaCard.Failed("power", "Unexpected power losses & resets", sysFailed),
+                    AreaCard.Failed("whea", "Hardware error events (WHEA)", sysFailed),
+                    dumpCard
+                ],
                 "Couldn't read blue screen and shutdown history",
                 DiagnosticStatus.Warning);
         }
