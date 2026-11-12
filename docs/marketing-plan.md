@@ -77,13 +77,25 @@ Under **Microsoft Store Policies `10.8.1` and `10.8.6`**, non-game PC applicatio
 
 ## 4. Commercial Readiness, Product Gaps & Sales Playbook
 
-### 4.1 Realistic Odds & Unit Economics
+### 4.1 Realistic Odds, Unit Economics & \$0 Bootstrap Budget
 
 - **Consumer B2C utility sales (<10% odds):** Consumers expect hardware diagnostics to be free (`HWiNFO`, `OCCT`, `CrystalDiskInfo`, `Microsoft PC Manager`), while paid consumer tune-up utilities are crowded out by high-ad-spend scareware.
 - **Vertical B2B Micro-SaaS for Repair Shops, Solo Techs & Laptop Refurbishers (~50–65% odds of \$2k–\$10k/mo MRR in 6–12 months):**
   - **1-Job ROI:** A solo technician charging \$129 for a remote tune-up—or an eBay/BackMarket refurbisher earning +\$35 per laptop from a verified Hardware QA QR certificate—recovers a **\$39–\$99/month** subscription on a single job.
   - **90%+ Gross Margin:** Unlike full-desktop 60 fps video streaming tools, `RemoteBlazorWebView` relays lightweight UI diffs while heavy CPU/GPU/NPU benchmarks run on the endpoint. Fifty to a hundred small shops (\$3k–\$7k/mo MRR) run comfortably on modest cloud infrastructure.
   - **Positioning Discipline:** Do **not** pitch this as *"a cheaper TeamViewer"* (`RemoteBlazorWebView` mirrors the diagnostic app's UI, not the whole Windows desktop). Pitch it as **"Zero-SmartScreen Store Onboarding + Automated Bench/Remote Diagnostics + Client Proof-of-Work Reports."**
+
+#### \$0 Out-of-Pocket Bootstrap Budget (Until Customer #1 Pays You)
+
+You do **not** need to spend \$9.99/month on code signing before making money:
+
+| Item | Up-Front Cost | How It Works |
+| :--- | :--- | :--- |
+| **Microsoft Store Developer Account** | **\$0** | Both Individual and Company developer registrations are permanently free at `storedeveloper.microsoft.com` (Microsoft eliminated the \$19 and \$99 onboarding fees in Sept 2025 / May 2026). |
+| **Microsoft Store Code Signing (incl. unsigned NuGet DLLs)** | **\$0** | Upload as an **MSIX package**—Microsoft automatically signs your `.exe`s **and** every unsigned NuGet `.dll` (`LibreHardwareMonitorLib.dll`, `Vortice.*.dll`, `NAudio.Wasapi.dll`) for free with Microsoft's Store certificate. *(Pre-signing inner `.dll`s is only required for unpacked `Policy 10.2.9` `.exe` installers).* |
+| **GitHub / USB Bench / `winget` Installer Signing** | **\$0** | **SignPath Foundation** (`signpath.org`) signs your `.exe`s and Inno Setup installer for free; SignPath's terms explicitly allow bundling unsigned upstream OSS NuGet `.dll`s inside a signed installer, and Windows SmartScreen only checks the outer installer/`.exe` signatures. |
+| **Billing & Checkout** | **\$0 / mo** | **Stripe Checkout** has \$0 monthly fixed fees (only ~2.9% + \$0.30 when a shop pays). |
+| **Optional Post-Revenue Upgrade (`Policy 10.2.9` Win32)** | **\$9.99 / mo *(later)*** | Turn on month-to-month **Azure Artifact Signing** (formerly Trusted Signing) *only after* your first \$25/mo Founding Shop customer is already covering it 2.5x over, if you ever want your own publisher name on UAC or an unpacked `Policy 10.2.9` Store installer. |
 
 ---
 
@@ -97,7 +109,7 @@ Roughly 85% of the core diagnostic engine is already built; closing B2B subscrip
    - **White-Labeled Service Report + Share Link:** Extend `src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs` with shop logo/contact headers, custom technician notes, and a 1-click **"Publish Report Link"** (`reports.<domain>/r/<short-id>`) ready to paste into repair invoices.
    - **Hardware QA Certificate Mode (for Refurbishers):** A 1-page pass/fail sheet combining **Model/Serial (`osquery`) + Battery Wear % + SMART SSD Health/Power-On Hours + Thermal Stress Pass + Speaker/Mic Loopback Pass + Webcam Pass + GPU/NPU Pass**, with a printable QR sticker/link. Enterprise refurbishment suites (Blancco, PC-Doctor) charge thousands per year for this exact deliverable.
 3. **Store `Group` Onboarding & User/Admin Privilege Split:**
-   - Add `-g=<group>` to `SessionLaunchOptions` + the **"Connect to Technician"** top-bar dialog in `MainLayout.razor`, switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker`, and ship `RemotePCDiagnostics.Admin` (`--mode=helper`) in the `Policy 10.2.9` Win32 Store installer.
+   - Add `-g=<group>` to `SessionLaunchOptions` + the **"Connect to Technician"** top-bar dialog in `MainLayout.razor`, switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker`, and ship `RemotePCDiagnostics.Admin` (`--mode=helper`) inside a **\$0 Microsoft-signed MSIX** (`runFullTrust` + `allowElevation`)—upgrading to a self-signed `Policy 10.2.9` Win32 installer later only if needed once revenue-positive.
 4. **Finish the `RemotePCDiagnostics.Agent.exe` Service Binary *(Unlocks the \$99–\$199/mo MSP Tier)*:**
    - Build the Windows Service executable (`docs/roadmap.md#1-agent-program`) hosting both `AgentHub.Connect` and `--mode=service` Named-Pipe admin gRPC, and publish it to `winget` (`BudCribar.RemotePCDiagnostics.Agent`).
 5. **Two High-Demand Bench Modules Used Daily by Techs & Refurbishers:**
@@ -110,9 +122,9 @@ Roughly 85% of the core diagnostic engine is already built; closing B2B subscrip
 
 ### 4.3 Phased Go-To-Market (GTM) Rollout
 
-#### Phase 1: Foundation, Signing & Zero-Friction Distribution (Weeks 1–4)
+#### Phase 1: \$0 Foundation, Free Signing & Store Distribution (Weeks 1–4)
 
-1. **Trusted Code Signing & Store Win32 Packaging (`Policy 10.2.9`):** Set up Azure Trusted Signing (~\$9.99/month) or SignPath Foundation (available for MIT open-source projects) to Authenticode-sign every `.exe` and `.dll` (`Host.exe`, `Admin.exe`, built-in module DLLs, `osqueryi.exe`, and the Inno Setup installer) so the unpacked Win32 installer passes both SmartScreen and Microsoft Store `Policy 10.2.9` certification without needing MSIX `rescap:allowElevation` review.
+1. **\$0 Store & Open-Source Signing:** Register a free Microsoft Store Developer account (`storedeveloper.microsoft.com`), package the Store build as **MSIX** (free Microsoft signing for all `.exe` and NuGet `.dll` files), and apply to **SignPath Foundation** (`signpath.org/apply.html`) for free signing of standalone GitHub Release / `winget` installers. *(Defer \$9.99/mo Azure Artifact Signing until post-revenue).*
 2. **Microsoft Store Listing (ASO):**
    - Target high-intent, non-spammy search terms (up to 7 search phrases per Policy `10.1.3`): *PC diagnostics*, *hardware stress test*, *SSD drive health*, *webcam microphone test*, *remote PC support*, *laptop battery check*, *system repair*.
    - Keep screenshots and copy strictly factual (Policy `10.1.1`): highlight transparent Windows native tools (`osquery`, `DISM`, `SFC`), thermal-safe stress testing, and explicit local-owner session controls.
@@ -156,23 +168,24 @@ Do **not** buy Google or Facebook ads—ad clicks for *"PC diagnostics"* or *"PC
 
 #### Pricing Wedge for First 25 Customers
 
-- Offer a **"Founding Shop Tier" (\$25/month locked for life, normally \$39/month)** to the first 25 shops who upload their logo and run 5 real customer machines. Twenty-five Founding Shops generate **\$625/month MRR** (covering Azure Trusted Signing + cloud relay costs ~20x over), real shop testimonials, and direct feedback on what makes them renew.
+- Offer a **"Founding Shop Tier" (\$25/month locked for life, normally \$39/month)** to the first 25 shops who upload their logo and run 5 real customer machines. Twenty-five Founding Shops generate **\$625/month MRR** (covering hosting costs ~20x over), real shop testimonials, and direct feedback on what makes them renew.
 
 ---
 
-### 4.5 First 5 Concrete Steps (Immediate Execution Plan)
+### 4.5 First 5 Concrete Steps (\$0 Out-of-Pocket Execution Plan)
 
-Ordered to get a sellable product into buyers' hands **before** spending months on background service plumbing:
+Ordered so you spend **\$0 up front** and get a sellable product into buyers' hands within Week 1–2:
 
-1. **Step 1 — Start Identity Verification & Code Signing *(Day 1 — Async Lead Time)*:**
-   - Open a **Microsoft Partner Center Company account** and set up **Azure Trusted Signing** (~\$9.99/mo) or apply to **SignPath Foundation** (free for MIT open-source). Identity verification takes several business days in the background—kick it off first so nothing blocks Store submission later.
-2. **Step 2 — Ship White-Labeled `ClientReport` + Hosted Hardware QA Certificate *(Week 1)*:**
+1. **Step 1 — \$0 Store Registration & Free SignPath Foundation Prep *(Day 1 — Async Lead Time)*:**
+   - Open your **free Microsoft Store Developer account** at `storedeveloper.microsoft.com` (\$0 for both Individual and Company accounts).
+   - Enable GitHub 2FA, switch `budcribar/RemotePCDiagnostics` to **Public**, add the required `## Code signing policy` section to `README.md` (describing `SecurityAuditModule` / `HardeningKitty` strictly as local Windows CIS configuration compliance), publish one unsigned release from GitHub Actions, and apply to **SignPath Foundation** (`signpath.org/apply.html` — \$0) for standalone installer signing.
+2. **Step 2 — Ship White-Labeled `ClientReport` + Hosted Hardware QA Certificate *(Week 1 — \$0)*:**
    - Extend `src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs` with shop logo/contact headers + technician notes, build the **1-page Hardware QA Certificate** (Model/Serial + Battery % + SMART + Stress + Audio Loopback + Webcam + QR link) + quick Keyboard/Dead-Pixel bench check, and add a hosted report endpoint (`reports.<domain>/r/<id>`).
-   - *Why this comes second:* Refurbishers run bench checks locally off a USB stick—meaning you have a sellable product and a live sample QR certificate in **Week 1** even before Microsoft Store certification finishes.
-3. **Step 3 — Wire Multi-Tenant `Group` Onboarding + Minimal Stripe Checkout *(Week 2)*:**
-   - Add `-g=<group>` to `SessionLaunchOptions.cs` + the **"Connect to Technician"** dialog in `MainLayout.razor`, validate active tenant groups on `RemoteWebViewService`, and attach a simple **Stripe Checkout / Billing Portal** flow to claim a shop `Group` code and upload a shop logo.
-4. **Step 4 — De-Elevate `Host.exe` (`asInvoker`), Build `Admin.exe --mode=helper` & Submit to the Microsoft Store (`Policy 10.2.9`) *(Weeks 3–4)*:**
-   - Switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker`, move privileged operations into the Named-Pipe gRPC helper (`--mode=helper --parent-pid=<pid>`), verify zero `.sys` drivers in publish output, Authenticode-sign `installer/RemotePCDiagnostics.iss`, and submit the Win32 installer URL to Partner Center under `Policy 10.2.9`.
+   - *Why this comes second:* Refurbishers run bench checks locally off a USB stick—giving you a sellable \$39/mo product and a live sample QR certificate in **Week 1** before Microsoft Store certification even finishes.
+3. **Step 3 — Wire Multi-Tenant `Group` Onboarding + \$0-Fixed-Fee Stripe Checkout *(Week 2)*:**
+   - Add `-g=<group>` to `SessionLaunchOptions.cs` + the **"Connect to Technician"** dialog in `MainLayout.razor`, validate active tenant groups on `RemoteWebViewService`, and attach **Stripe Checkout / Billing Portal** (\$0/mo fixed cost) to claim a shop `Group` code and upload a shop logo.
+4. **Step 4 — De-Elevate `Host.exe` (`asInvoker`), Build `Admin.exe --mode=helper` & Publish Free MSIX to Microsoft Store *(Weeks 3–4 — \$0)*:**
+   - Switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker`, move privileged operations into the Named-Pipe gRPC helper (`--mode=helper --parent-pid=<pid>`), verify zero `.sys` drivers in publish output, and upload to Partner Center as an **MSIX** (`runFullTrust` + `allowElevation`). **Microsoft signs all your `.exe`s and every unsigned NuGet `.dll` for \$0.** *(If Partner Center ever declines `allowElevation`, publish `runFullTrust`-only MSIX for \$0 immediately, and turn on \$9.99/mo Azure Artifact Signing + `Policy 10.2.9` Win32 installer only after your first \$25/mo Founding Shop pays you).*
 5. **Step 5 — Record the 60-Second Demo & Close Your First 10–25 Founding Shops (\$25/mo) *(Weeks 4–5 — Before Building `Agent.exe`)*:**
    - Host 1 live sample Hardware QA Certificate, record the 60-second Store-to-Report Loom/GIF, send 10 refurbisher messages/day, post the open-source showcase on Technibble / `r/computertechs`, and DM 15 repair YouTubers. **Defer building the unattended `Agent.exe` Windows Service (`--mode=service`) and `winget` RMM bundle until your first paying shops ask for recurring fleet monitoring.**
 
@@ -249,17 +262,17 @@ Rather than maintaining separate consumer and MSP codebases, build **one shared 
 - **`--mode=helper --parent-pid=<pid>` (On-Demand Elevated Helper):** Spawned via `ShellExecute` (`Verb = "runas"`) only when a local user clicks **"Enable Admin Repair Mode"** (one standard Windows UAC prompt). Hosts the Named-Pipe gRPC admin server and exits automatically as soon as `Host.exe` closes.
 - **`--mode=service` (Always-On MSP Windows Service):** Runs as `LocalSystem`, combining the `AgentHub.Connect` outbound relay stream (`roadmap.md#1-agent-program`) with the exact same Named-Pipe gRPC admin server—unlocking unattended access and zero-UAC admin repairs.
 
-#### Channel 1 — Walk-In / Break-Fix Customers: Microsoft Store via Unpacked Win32 Installer (`Policy 10.2.9`)
+#### Channel 1 — Walk-In / Break-Fix Customers: Microsoft Store (\$0 MSIX First $\rightarrow$ Optional `Policy 10.2.9` Win32 Later)
 
-| Store Packaging Choice | Needs `rescap:allowElevation` Approval? | Verdict |
-| :--- | :--- | :--- |
-| **Recommended: Unpacked Win32 Installer (`Policy 10.2.9`, `.exe` / `.msi`)** | **No** | **Highest approval odds.** Submits a versioned HTTPS URL to the Authenticode-signed Inno Setup installer (`installer/RemotePCDiagnostics.iss`). Installs outside an MSIX container into `%ProgramFiles%`, so `Host.exe` (`asInvoker`) can spawn `Admin.exe --mode=helper` via `Verb = "runas"` natively with zero MSIX restricted-capability gatekeeping while giving customers one-click Microsoft Store installation. |
-| **Alternative: MSIX Package (`rescap:allowElevation`)** | **Yes** (manual Partner Center review) | **Fallback only.** Microsoft documents `allowElevation` for *"Microsoft partners or enterprise organizations to maintain existing desktop functionality."* Requires a Partner Center justification (~5+ business days, Company account) explaining why `DISM`/`SFC`/SCM have no non-admin API. Free Microsoft package signing, but higher review friction. |
+| Store Packaging Choice | Up-Front Cost | Needs `rescap:allowElevation`? | Verdict |
+| :--- | :--- | :--- | :--- |
+| **Stage 1 (\$0 Pre-Revenue Bootstrap): MSIX Package** | **\$0** | **Yes** (or `runFullTrust` only) | **Start here at \$0.** Microsoft automatically signs your `.exe`s **and every unsigned NuGet `.dll`** (`LibreHardwareMonitorLib.dll`, `Vortice.*.dll`, `NAudio.Wasapi.dll`) for free. Submit with `runFullTrust` + `allowElevation` (justifying `DISM`/`SFC`/SCM); if ever declined pre-revenue, ship `runFullTrust`-only MSIX immediately for \$0. |
+| **Stage 2 (Post-Revenue Upgrade): Unpacked Win32 Installer (`Policy 10.2.9`)** | **\$9.99/mo** (Azure Artifact Signing) | **No** | **Turn on only after Customer #1 pays you.** Submits a versioned HTTPS URL to your signed Inno Setup installer (`installer/RemotePCDiagnostics.iss`). Installs outside an MSIX container into `%ProgramFiles%`, bypassing `rescap:allowElevation` gatekeeping and showing your own publisher name on UAC. |
 
 - **Keep drivers and NT services 100% out of the Store package:** Exclude `PawnIO_setup.exe`, verify zero `.sys` files exist in `dotnet publish`, and do **not** register a Windows NT Service in the Store build (`Policy 10.2.4`).
 - **Still unlocks ~90% of technician repair work:** Even without `PawnIO`, UAC-elevating `Admin.exe --mode=helper` unlocks `DISM`, `SFC`, Windows Service start/stop/restart, protected Event Logs, `HKLM` inspection/fixes, `HardeningKitty` security baselines, and admin NVMe/SATA SMART health, while temperatures use the built-in ACPI + WDDM fallbacks.
 
-#### Channel 2 — Managed MSP Endpoints: Silent `winget` / RMM Fleet Deployment
+#### Channel 2 — Managed MSP Endpoints: Silent `winget` / RMM Fleet Deployment (\$0 Signing via SignPath Foundation)
 
 Employees on MSP-managed corporate PCs (law firms, clinics, accounting offices) are typically **Standard Users without local Admin passwords**—they *cannot* click "Yes" on a UAC prompt. Meanwhile, every MSP already runs a management agent (**Microsoft Intune**, **NinjaOne**, **Datto RMM**, or **ConnectWise ScreenConnect**) as `NT AUTHORITY\SYSTEM` across every managed machine.
 
@@ -286,11 +299,12 @@ Because the RMM runs as `SYSTEM`, **zero windows, zero installers, and zero UAC 
 
 | Feature | Channel 1: Microsoft Store (Walk-In / Break-Fix) | Channel 2: `winget` / RMM Agent (MSP Fleet) |
 | :--- | :--- | :--- |
-| **How it's installed** | Customer clicks **Install** in Microsoft Store (`Policy 10.2.9` Win32) | MSP pushes 1 silent `winget` command via Intune / NinjaOne / ScreenConnect |
+| **How it's installed** | Customer clicks **Install** in Microsoft Store (\$0 MSIX $\rightarrow$ optional `10.2.9` Win32) | MSP pushes 1 silent `winget` command via Intune / NinjaOne / ScreenConnect |
+| **Code signing cost** | **\$0** (Microsoft signs MSIX + all NuGet `.dll`s) | **\$0** (**SignPath Foundation** signs `.exe`s + installer; unsigned NuGet `.dll`s allowed inside) |
 | **How tech finds the PC** | Customer enters tech's `Group` code in **Connect to Technician** | PC is permanently listed in tech's `Group` on **Computers** (`AgentHub`) |
 | **How Admin repairs run** | On-demand `Admin.exe --mode=helper` (**1 UAC click** by local user) | Always-on `Admin.exe --mode=service` (**Zero UAC**, works on Standard-User PCs) |
 | **Kernel Driver (`PawnIO`)** | Excluded (uses WDDM GPU + APU + ACPI thermal fallbacks) | Auto-installed via `winget` dependency (full CPU MSRs + SuperIO/EC fans) |
-| **Monetization** | Free Store app (0% Store fee); tech pays \$39–\$49/mo SaaS seat | Tech / MSP pays \$99–\$299/mo SaaS fleet subscription |
+| **Monetization** | Free Store app (0% Store fee); tech pays \$25–\$39/mo SaaS seat | Tech / MSP pays \$99–\$199/mo SaaS fleet subscription |
 
 ---
 
@@ -302,20 +316,20 @@ To pass Microsoft Store review (Policies v7.20) and prevent Local Privilege Esca
    - Change `src/RemotePCDiagnostics.Host/app.manifest` from `requireAdministrator` to `asInvoker`. Store reviewers automatically reject apps that prompt for UAC on launch.
    - If the user is a Standard User—or clicks **No** on UAC—the app must keep running cleanly in read-only diagnostic mode without crashes or nag loops. Admin actions must carry a shield badge and prompt for UAC **only** when clicked.
 2. **No Store NT Service & Automatic Helper Exit (`10.2.4`, `10.4.2`):**
-   - Never register a persistent Windows NT Service or Scheduled Task from the Store installer.
+   - Never register a persistent Windows NT Service or Scheduled Task from the Store build.
    - Per `10.4.2`, all app-started processes must exit when the UI closes. Pass `--parent-pid=<HostPid>` and bind `Admin.exe --mode=helper` to a Windows Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) so the elevated helper terminates immediately if `Host.exe` closes or crashes.
 3. **Zero Local Privilege Escalation (EoP) Surface (`10.2`):**
    - **Named Pipes only** (`ListenNamedPipe("RemotePCDiagnostics.Admin.<SessionId>")`)—never `127.0.0.1` TCP, which untrusted local processes or browser tabs could hit via SSRF/DNS rebinding.
-   - Apply strict `PipeSecurity` ACLs (interactive user SID + `Administrators`/`SYSTEM`, denying `Anonymous` and `AppContainer`), and call `GetNamedPipeClientProcessId` on connect to verify the caller executable path and Authenticode signature match `Host.exe`.
+   - Apply strict `PipeSecurity` ACLs (interactive user SID + `Administrators`/`SYSTEM`, denying `Anonymous` and `AppContainer`), and call `GetNamedPipeClientProcessId` on connect to verify the caller process carries your exact **MSIX Package Identity** (for MSIX builds) or **Authenticode signature** (for Win32 builds).
    - **Fixed domain `.proto` allowlist** (`RunDismScanHealth`, `RunDismRestoreHealth`, `RunSfcScanNow`, `ControlService`, `ApplyCatalogFix`, `UndoChange`, `QueryAdminSensors`, `QueryEventLog`) with `ServiceProtection.Protected`, `HostCapabilities.AllowedSql`, and fix-catalog checks enforced server-side. **Never** expose generic `RunCommand` or `RunPowerShell` RPCs.
 4. **No Downloaded or Unsigned Code in the Elevated Helper (`10.2.2`):**
-   - `Admin.exe` executes only compiled-in or Authenticode-verified built-in modules. Unsigned third-party plugins remain strictly isolated inside the non-elevated `RemotePCDiagnostics.ModuleHost` process (`docs/module-plugins.md`).
+   - `Admin.exe` executes only compiled-in or verified built-in modules. Unsigned third-party plugins remain strictly isolated inside the non-elevated `RemotePCDiagnostics.ModuleHost` process (`docs/module-plugins.md`).
 5. **Explicit Local User Consent, Supported Windows APIs & Audit Trail (`10.2.8`):**
    - Require explicit local consent (e.g., clicking **"Enable Admin Repair Mode"** locally to trigger UAC, plus displaying a live local repair log) before a remote technician can mutate system settings, and write tamper-evident Windows Event Log entries (`2000–2006`, `1100`, `1400`) from the privileged backend.
    - Never write undocumented Windows user-choice protected registry keys (such as `UCPD.sys`-guarded default browser, file association, or taskbar pinning keys).
-6. **Full Authenticode Signing & Offline Silent Installer (`10.2.9`):**
-   - Sign every shipped `.exe` and `.dll` (`Host.exe`, `Admin.exe`, built-in module `.dll`s, bundled `osqueryi.exe`, and the Inno Setup installer) with a certificate chaining to a Microsoft Trusted Root CA.
-   - Support silent install switches (`/VERYSILENT /SUPPRESSMSGBOXES`) and rely on Windows 11's inbox WebView2 (or an offline evergreen bundle) rather than downloading `MicrosoftEdgeWebview2Setup.exe` during installation (`10.2.9` forbids downloader stubs).
+6. **Signing Rules by Package Type (MSIX vs. `Policy 10.2.9` Win32):**
+   - **MSIX (\$0):** No pre-signing required—Microsoft signs all `.exe` and third-party NuGet `.dll` files in the package upon certification.
+   - **Unpacked Win32 (`Policy 10.2.9`, post-revenue optional):** Every shipped `.exe` and `.dll` (`Host.exe`, `Admin.exe`, NuGet `.dll`s, bundled `osqueryi.exe`, and the Inno Setup installer) must be pre-signed with a Trusted Root CA cert (e.g., Azure Artifact Signing), support `/VERYSILENT /SUPPRESSMSGBOXES`, and avoid runtime web downloader stubs.
 
 ---
 
@@ -361,10 +375,10 @@ sequenceDiagram
 
 ---
 
-### 5.6 Recommended 5-Phase Implementation Order
+### 5.6 Recommended Engineering Build Order (Revenue-First, \$0 Out-of-Pocket)
 
-1. **Phase 1 — Multi-Tenant `Group` Onboarding:** Add `-g=<group>` to `SessionLaunchOptions` (including `RestartArguments` and `PendingRebootState`), add the **"Connect to Technician"** dialog in `Host`/`UI`, and enforce active tenant `Group` validation and `AgentAdmin` group scoping on the relay.
-2. **Phase 2 — De-Elevate `Host.exe` (`asInvoker`):** Switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker` and update `HostServices` so admin-only modules and one-click fixes gracefully badge/disable themselves until an elevated backend connects.
-3. **Phase 3 — `RemotePCDiagnostics.Admin` (`--mode=helper`):** Build the Named-Pipe gRPC elevated helper with `PipeSecurity` ACLs, `GetNamedPipeClientProcessId` Authenticode verification, Job Object / `--parent-pid` lifecycle exit, and the local **"Enable Admin Repair Mode"** UAC flow.
-4. **Phase 4 — Store `Policy 10.2.9` Installer & `--mode=service` MSP Agent:** Add Authenticode signing and offline silent-install packaging to `installer/RemotePCDiagnostics.iss` for Microsoft Store submission, then wire `--mode=service` into `RemotePCDiagnostics.Agent.Core` and publish `BudCribar.RemotePCDiagnostics.Agent` (with `namazso.PawnIO` dependency) to `winget`.
-5. **Phase 5 — Commercial Deliverables & Bench Completion:** Add self-serve tenant signup + Stripe Billing on `RemoteWebViewAdmin`, upgrade `ClientReport.cs` with shop white-labeling + hosted Hardware QA QR Certificates, ship the BSOD/WHEA and Keyboard/Display bench modules, and add the 1-click **"10-Minute Hardware Intake / QA Check"** preset.
+1. **Phase 1 — Commercial Deliverables & Bench Checks (Week 1):** Upgrade `ClientReport.cs` with shop white-labeling + hosted share links, add the **1-page Hardware QA QR Certificate**, ship the Keyboard/Display + BSOD/WHEA bench modules, and add the 1-click **"10-Minute Hardware Intake / QA Check"** preset.
+2. **Phase 2 — Multi-Tenant `Group` Onboarding & Stripe Checkout (Week 2):** Add `-g=<group>` to `SessionLaunchOptions` (including `RestartArguments` and `PendingRebootState`), add the **"Connect to Technician"** dialog in `Host`/`UI`, enforce active tenant `Group` validation on `RemoteWebViewService`, and add \$0-fixed-fee Stripe Checkout on `RemoteWebViewAdmin`.
+3. **Phase 3 — De-Elevate `Host.exe` (`asInvoker`) & Build `Admin.exe --mode=helper` (Week 3):** Switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker`, gracefully badge admin-only modules/fixes when un-elevated, and build the Named-Pipe gRPC helper (`PipeSecurity` ACLs, `GetNamedPipeClientProcessId` MSIX Package Identity / Authenticode check, Job Object / `--parent-pid` exit, and local **"Enable Admin Repair Mode"** UAC flow).
+4. **Phase 4 — \$0 MSIX Store Launch + SignPath Foundation USB/`winget` Release (Week 4):** Package and submit the driverless **MSIX** (`runFullTrust` + `allowElevation`) to Partner Center for free Microsoft Store signing, and wire **SignPath Foundation** into GitHub Actions for free signing of standalone USB bench / `winget` installers.
+5. **Phase 5 — `--mode=service` MSP Fleet Agent (Post-First Paying Customers):** Wire `--mode=service` into `RemotePCDiagnostics.Agent.Core`, scope `AgentAdmin` by tenant `Group`, and publish `BudCribar.RemotePCDiagnostics.Agent` (with `namazso.PawnIO` dependency) to `winget`.
