@@ -75,9 +75,42 @@ Under **Microsoft Store Policies `10.8.1` and `10.8.6`**, non-game PC applicatio
 
 ---
 
-## 4. Go-To-Market (GTM) Plan
+## 4. Commercial Readiness, Product Gaps & Sales Playbook
 
-### Phase 1: Foundation, Signing & Zero-Friction Distribution (Weeks 1–4)
+### 4.1 Realistic Odds & Unit Economics
+
+- **Consumer B2C utility sales (<10% odds):** Consumers expect hardware diagnostics to be free (`HWiNFO`, `OCCT`, `CrystalDiskInfo`, `Microsoft PC Manager`), while paid consumer tune-up utilities are crowded out by high-ad-spend scareware.
+- **Vertical B2B Micro-SaaS for Repair Shops, Solo Techs & Laptop Refurbishers (~50–65% odds of \$2k–\$10k/mo MRR in 6–12 months):**
+  - **1-Job ROI:** A solo technician charging \$129 for a remote tune-up—or an eBay/BackMarket refurbisher earning +\$35 per laptop from a verified Hardware QA QR certificate—recovers a **\$39–\$99/month** subscription on a single job.
+  - **90%+ Gross Margin:** Unlike full-desktop 60 fps video streaming tools, `RemoteBlazorWebView` relays lightweight UI diffs while heavy CPU/GPU/NPU benchmarks run on the endpoint. Fifty to a hundred small shops (\$3k–\$7k/mo MRR) run comfortably on modest cloud infrastructure.
+  - **Positioning Discipline:** Do **not** pitch this as *"a cheaper TeamViewer"* (`RemoteBlazorWebView` mirrors the diagnostic app's UI, not the whole Windows desktop). Pitch it as **"Zero-SmartScreen Store Onboarding + Automated Bench/Remote Diagnostics + Client Proof-of-Work Reports."**
+
+---
+
+### 4.2 Six Must-Have Additions to Close Paying Customers
+
+Roughly 85% of the core diagnostic engine is already built; closing B2B subscriptions requires adding the **commercial wrapper**:
+
+1. **Self-Serve Tenant Signup, Billing & Group Claiming *(The Cash Register)*:**
+   - Add self-serve shop registration + **Stripe Billing** to `RemoteWebViewAdmin` / `RemoteWebViewService` so a technician can pay \$39–\$199/mo, claim a unique `Group` code (e.g., `acme-repair`), upload shop branding (logo, phone, website), manage `enrollment_key`s, and have relay sessions automatically gated if billing lapses.
+2. **Upgrade `ClientReport.cs` into White-Labeled Hosted Reports & Hardware QA Certificates *(The #1 Sales Hook)*:**
+   - **White-Labeled Service Report + Share Link:** Extend `src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs` with shop logo/contact headers, custom technician notes, and a 1-click **"Publish Report Link"** (`reports.<domain>/r/<short-id>`) ready to paste into repair invoices.
+   - **Hardware QA Certificate Mode (for Refurbishers):** A 1-page pass/fail sheet combining **Model/Serial (`osquery`) + Battery Wear % + SMART SSD Health/Power-On Hours + Thermal Stress Pass + Speaker/Mic Loopback Pass + Webcam Pass + GPU/NPU Pass**, with a printable QR sticker/link. Enterprise refurbishment suites (Blancco, PC-Doctor) charge thousands per year for this exact deliverable.
+3. **Store `Group` Onboarding & User/Admin Privilege Split:**
+   - Add `-g=<group>` to `SessionLaunchOptions` + the **"Connect to Technician"** top-bar dialog in `MainLayout.razor`, switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker`, and ship `RemotePCDiagnostics.Admin` (`--mode=helper`) in the `Policy 10.2.9` Win32 Store installer.
+4. **Finish the `RemotePCDiagnostics.Agent.exe` Service Binary *(Unlocks the \$99–\$199/mo MSP Tier)*:**
+   - Build the Windows Service executable (`docs/roadmap.md#1-agent-program`) hosting both `AgentHub.Connect` and `--mode=service` Named-Pipe admin gRPC, and publish it to `winget` (`BudCribar.RemotePCDiagnostics.Agent`).
+5. **Two High-Demand Bench Modules Used Daily by Techs & Refurbishers:**
+   - **BSOD / Crash & WHEA Analyzer:** Parse `%SystemRoot%\Minidump` headers + `Kernel-Power` (Event 41) + `WHEA-Logger` hardware error logs into plain English (e.g., *"3 blue screens in 14 days caused by `nvlddmkm.sys`"*).
+   - **Keyboard Rollover + Display Dead-Pixel / Touch Test:** A 60-second interactive key-matrix check and full-screen solid-color cycle in `RemotePCDiagnostics.UI` to complete 100% of a laptop refurbisher's physical checklist.
+6. **One-Click "10-Minute Hardware Intake / QA Check" Preset:**
+   - Alongside `WorkflowService`'s existing measure $\rightarrow$ fix $\rightarrow$ reboot $\rightarrow$ re-measure tune-up flow, add a hands-free bench preset (Inventory $\rightarrow$ SMART $\rightarrow$ Battery $\rightarrow$ 3-min Thermal Stress $\rightarrow$ Audio Loopback $\rightarrow$ Webcam $\rightarrow$ BSOD check $\rightarrow$ QA Certificate) so refurbishers can test 10 laptops on a bench simultaneously with minimal clicks.
+
+---
+
+### 4.3 Phased Go-To-Market (GTM) Rollout
+
+#### Phase 1: Foundation, Signing & Zero-Friction Distribution (Weeks 1–4)
 
 1. **Trusted Code Signing & Store Win32 Packaging (`Policy 10.2.9`):** Set up Azure Trusted Signing (~\$9.99/month) or SignPath Foundation (available for MIT open-source projects) to Authenticode-sign every `.exe` and `.dll` (`Host.exe`, `Admin.exe`, built-in module DLLs, `osqueryi.exe`, and the Inno Setup installer) so the unpacked Win32 installer passes both SmartScreen and Microsoft Store `Policy 10.2.9` certification without needing MSIX `rescap:allowElevation` review.
 2. **Microsoft Store Listing (ASO):**
@@ -85,19 +118,49 @@ Under **Microsoft Store Policies `10.8.1` and `10.8.6`**, non-game PC applicatio
    - Keep screenshots and copy strictly factual (Policy `10.1.1`): highlight transparent Windows native tools (`osquery`, `DISM`, `SFC`), thermal-safe stress testing, and explicit local-owner session controls.
 3. **`winget` Packages for Technicians & MSP RMMs:** Publish `BudCribar.RemotePCDiagnostics` and `BudCribar.RemotePCDiagnostics.Agent` (declaring `namazso.PawnIO` under `PackageDependencies`) to `microsoft/winget-pkgs` so MSPs can deploy unattended fleet access, zero-UAC admin repairs, and full `PawnIO` hardware sensors silently with a single RMM command.
 
-### Phase 2: Repair Shop & Refurbisher Wedge (Weeks 5–10)
+#### Phase 2: Repair Shop & Refurbisher Wedge (Weeks 5–10)
 
-1. **Ship the Two "Money Deliverables":**
-   - **White-Label Client Service Report** (shop logo, technician notes, before/after RAM, disk space recovered, DISM/SFC status, drive health).
-   - **Serial-Number Hardware QA Certificate** (shareable hosted card + printable sticker/PDF with QR link for refurbished laptops).
-2. **Targeted Community Seeding:**
-   - Share technical write-ups and free bench tools in independent repair and MSP communities (`r/computertechs`, `r/msp`, Technibble, Discord repair servers, and refurbished-hardware seller groups).
-   - Pitch independent YouTube PC repair / refurbishment channels—live thermal + speaker-to-mic + webcam + before/after report workflows film well on camera.
+1. **Ship the Two "Money Deliverables":** White-Label Client Service Reports and Serial-Number Hardware QA Certificates with hosted verification links.
+2. **Direct Outbound + Community Seeding:** Execute the segment-by-segment sales playbook in [Section 4.4](#44-tactical-b2b-sales-playbook-how-to-get-your-first-50-paying-shops) to sign the first 25 "Founding Shop" subscribers (\$25/mo locked for life in exchange for feedback and testimonials).
 
-### Phase 3: Product-Led Viral Loop & Fleet Retention (Months 3–6)
+#### Phase 3: Product-Led Viral Loop & Fleet Retention (Months 3–6)
 
-1. **Report Footer Attribution:** Every free and lower-tier exported Service Report / QA Certificate includes a clean *"Diagnosed & Verified with Remote PC Diagnostics"* badge linking to the product page. Every customer or laptop buyer becomes a warm impression.
-2. **One-Click Tenant Agent Builder:** On the paid Admin Portal's **Computers** page, give subscribed shops a single button to download an installer pre-bound to their tenant enrollment key (`--key=<tenant_key>`) for persistent customer care plans.
+1. **Report Footer Attribution:** Every free and lower-tier exported Service Report / QA Certificate includes a clean *"Diagnosed & Verified with Remote PC Diagnostics"* badge linking to the product page. Every customer invoice or refurbished laptop listing becomes a warm impression.
+2. **One-Click Tenant Agent Builder:** On the paid Admin Portal's **Computers** page, give subscribed shops a single button (and copyable `winget` RMM snippet) pre-bound to their tenant `group` and `enrollment_key` for recurring customer care plans.
+
+---
+
+### 4.4 Tactical B2B Sales Playbook (How to Get Your First 50 Paying Shops)
+
+Do **not** buy Google or Facebook ads—ad clicks for "PC repair" target broken-PC consumers, not technicians. Sell directly where technicians and refurbishers already hang out:
+
+#### Wedge 1 — Laptop Refurbishers on eBay, BackMarket, Swappa & Whatnot *(Fastest Cold-Outreach Close)*
+
+- **Why they convert fastest:** You can see *every* mid-sized refurbisher publicly on eBay right now (search *"ThinkPad T14 Grade A refurbished"* or *"Dell Latitude 5420 refurbished"*, filter by sellers with 200–10,000 feedback who paste plain-text battery/SSD specs in descriptions instead of Blancco certificates).
+- **How to pitch them:**
+  1. Run your **10-Minute Hardware QA Check** on a real laptop and generate a clean hosted **Hardware QA Certificate** (`Model/Serial + Battery 89% + NVMe 99% + Stress/Audio/Webcam Verified`).
+  2. Message or email 10 refurbisher storefronts a day (their business email/phone is usually listed in eBay Business Seller Info or their matching Shopify domain) with a 4-sentence pitch linking directly to that sample certificate:
+     > *"Saw your ThinkPad T14 listings—noticed you manually type battery and SSD specs in each description. I built an MIT-open-source Windows tool that tests Battery, SMART, Stress/Thermals, Webcam, Mic/Speakers, and Keyboard in 10 minutes off a USB stick and prints a QR-verified Hardware QA Certificate buyers can click right in your eBay photos (like Carfax for refurbs, without Blancco's \$3k contract). Free locally forever, \$39/mo for hosted QR certificates with your store logo—want a 30-day free login?"*
+
+#### Wedge 2 — Independent PC Repair Shops & Solo Mobile Techs *(Recurring Core)*
+
+- **Where to find them:**
+  1. **Google Maps ("computer repair" in mid-sized cities):** Skip Geek Squad/uBreakiFix franchises; target 1–5 person independent shops with 50+ Google reviews.
+  2. **Peer communities:** **Technibble** forums, `r/computertechs`, `r/msp` (vendor promo threads / open-source tool showcases), **The Tech Tribe**, and PC repair Discord servers.
+- **Lead with the "No-SmartScreen + Invoice Proof" 60-second GIF/video demo:**
+  - Show two things side by side in a 60-second Loom/YouTube clip:
+    1. Customer installs from the Microsoft Store (zero SmartScreen warning), types `acme-repair`, and pops onto the shop's dashboard with live voice in 15 seconds.
+    2. At the end of the tune-up, 1 click produces a **branded Before/After PDF/link** with the shop's logo showing boot/memory/disk improvements and exact changes made.
+  - **Pitch angle:** *"Customers don't understand what `DISM` and `SFC` did, so they question a \$129 tune-up bill. Hand them an objective Before/After report with your shop logo on every job."*
+
+#### Wedge 3 — PC Repair & Refurbishment YouTubers *(Scalable Inbound)*
+
+- Small-to-mid repair channels (*Salem Techsperts*, *Parts-People*, *Electronics Repair School*, ThinkPad refurbishment & homelab channels) constantly test customer laptops on camera using 5 separate tools (`CrystalDiskInfo`, `FurMark`, `HWiNFO`, camera app, browser mic test).
+- **Offer free lifetime Pro accounts** with their channel logo preloaded on the QA Certificate. One organic video showing all bench tests + thermal stress + audio loopback in a single clean open-source app drives hundreds of shop trials.
+
+#### Pricing Wedge for First 25 Customers
+
+- Offer a **"Founding Shop Tier" (\$25/month locked for life, normally \$39/month)** for the first 25 shops who join, upload their logo, and run at least 5 real client sessions. Early shop owners will tell you every rough edge in a week and give you real quotes for your landing page.
 
 ---
 
@@ -284,9 +347,10 @@ sequenceDiagram
 
 ---
 
-### 5.6 Recommended 4-Phase Implementation Order
+### 5.6 Recommended 5-Phase Implementation Order
 
 1. **Phase 1 — Multi-Tenant `Group` Onboarding:** Add `-g=<group>` to `SessionLaunchOptions` (including `RestartArguments` and `PendingRebootState`), add the **"Connect to Technician"** dialog in `Host`/`UI`, and enforce active tenant `Group` validation and `AgentAdmin` group scoping on the relay.
 2. **Phase 2 — De-Elevate `Host.exe` (`asInvoker`):** Switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker` and update `HostServices` so admin-only modules and one-click fixes gracefully badge/disable themselves until an elevated backend connects.
 3. **Phase 3 — `RemotePCDiagnostics.Admin` (`--mode=helper`):** Build the Named-Pipe gRPC elevated helper with `PipeSecurity` ACLs, `GetNamedPipeClientProcessId` Authenticode verification, Job Object / `--parent-pid` lifecycle exit, and the local **"Enable Admin Repair Mode"** UAC flow.
 4. **Phase 4 — Store `Policy 10.2.9` Installer & `--mode=service` MSP Agent:** Add Authenticode signing and offline silent-install packaging to `installer/RemotePCDiagnostics.iss` for Microsoft Store submission, then wire `--mode=service` into `RemotePCDiagnostics.Agent.Core` and publish `BudCribar.RemotePCDiagnostics.Agent` (with `namazso.PawnIO` dependency) to `winget`.
+5. **Phase 5 — Commercial Deliverables & Bench Completion:** Add self-serve tenant signup + Stripe Billing on `RemoteWebViewAdmin`, upgrade `ClientReport.cs` with shop white-labeling + hosted Hardware QA QR Certificates, ship the BSOD/WHEA and Keyboard/Display bench modules, and add the 1-click **"10-Minute Hardware Intake / QA Check"** preset.
