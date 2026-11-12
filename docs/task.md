@@ -11,8 +11,8 @@ Persistent tracker for shipping **Remote PC Diagnostics** to paying Repair Shops
 
 ---
 
-## Step 1: $0 Microsoft Store Registration & Public OSS Release *(DONE — Store Pending Verification)*
-- [x] Open **free Microsoft Store Developer account** at `https://storedeveloper.microsoft.com` ($0 — submitted, pending verification; **MSIX signing covers `Host.exe` + all unsigned NuGet `.dll`s for $0 with zero GitHub-star gate and zero SmartScreen warning**)
+## Step 1: $0 Microsoft Store Registration & Public OSS Release *(DONE — Partner Center Reinstated!)*
+- [x] Open **free Microsoft Store Developer account** at `https://storedeveloper.microsoft.com` ($0 — reinstated by Microsoft, live within 24h, publish within 90 days; **MSIX signing covers `Host.exe` + all unsigned NuGet `.dll`s for $0 with zero GitHub-star gate and zero SmartScreen warning**)
 - [x] Enable GitHub 2FA, switch `budcribar/RemotePCDiagnostics` to **Public** under the MIT License, add [Privacy & security policy](../README.md#privacy--security-policy), and publish rolling GitHub Actions installers ([ci.yml](../.github/workflows/ci.yml))
 - [x] Submit initial **SignPath Foundation** OSS inquiry *(declined pending organic GitHub stars / Reddit / YouTube mentions — **reapply after Step 5 community posts**, or fund $9.99/mo Azure Artifact Signing out of Customer #1's $25/mo subscription)*
 
@@ -31,16 +31,16 @@ Persistent tracker for shipping **Remote PC Diagnostics** to paying Repair Shops
 - [x] Ship public `GET /welcome` page, auto-seeded `/r/DEMO-LATITUDE-7420`, `429` rate limiting, `/api/shop/health`, `ShopMaintenanceService`, and `deploy/docker-compose.shop.yml` + `deploy/fly.toml.example` (`924d5cf` on `RemoteBlazorWebView` `net10`)
 
 ## Step 5 & 6: Partner Center Store Kit, Outbound Sales Pack & Unattended MSP Fleet Tier *(ACTIVE — Parallel Split)*
-- [ ] **NEXT #1 *(In Progress — Bot #1 in `RemotePCDiagnostics` `main`)*:** Partner Center Submission Pack, Automated Store Screenshots, Outbound Sales Kit & Client Fleet Agent (`-g=<group>` + Windows Service + `winget` Manifest):
-  - [ ] Generate crisp `1920x1080` Partner Center Store PNG screenshots automatically in CI + write `msix/PartnerCenter-Submission-Guide.md` (exact listing text, privacy answers, and `Policy 10.2.9` reviewer notes)
-  - [ ] Write `docs/outbound-sales-kit.md` (copy-paste eBay/Swappa/BackMarket refurbisher DMs, Technibble & `r/computertechs` MIT showcase posts, and YouTuber lifetime Pro outreach)
-  - [ ] Complete `RemotePCDiagnostics.Agent` (`src/RemotePCDiagnostics.Agent/RemotePCDiagnostics.Agent.csproj` Windows Service + `LaunchCommand.group` -> `-g=<group>` in `LaunchRules.AppCommandLine` + `winget/` manifest templates)
-- [ ] **NEXT #2 *(Ready for Parallel Bot #2 in `RemoteBlazorWebView` `net10` — Full Spec in [item5-store-sales-and-msp-fleet-spec.md](item5-store-sales-and-msp-fleet-spec.md) / `doc/ShopMspFleetAndAgentScopingSpec.md`)*:** Multi-Tenant MSP Fleet Scoping & `/shop` Fleet Computers Portal:
+- [x] **NEXT #1 *(Completed in `RemotePCDiagnostics` `main`)*:** Partner Center Submission Pack, Automated Store Screenshots, Outbound Sales Kit & Client Fleet Agent (`-g=<group>` + Windows Service + `winget` Manifest):
+  - [x] Generate crisp `1920x1080` Partner Center Store PNG screenshots automatically in CI (`partner-center-screenshots` artifact via [store-screenshots.mjs](../tests/smoke/store-screenshots.mjs)) + wire 1-click `workflow_dispatch` MSIX identity inputs (`msix_identity_name` & `msix_publisher`) + write [PartnerCenter-Submission-Guide.md](../msix/PartnerCenter-Submission-Guide.md)
+  - [x] Write [outbound-sales-kit.md](outbound-sales-kit.md) (copy-paste eBay/Swappa/BackMarket refurbisher DMs, Technibble & `r/computertechs` MIT showcase posts, YouTuber lifetime Pro outreach, and 60s silent-friendly demo storyboard)
+  - [x] Complete `RemotePCDiagnostics.Agent` ([RemotePCDiagnostics.Agent.csproj](../src/RemotePCDiagnostics.Agent/RemotePCDiagnostics.Agent.csproj) Windows Service + `LaunchCommand.group` -> `-g=<group>` in `LaunchRules.AppCommandLine` + standalone GitHub Release artifact + [winget/](../winget/README.md) manifest templates)
+- [ ] **NEXT #2 *(Parallel Bot #2 in `RemoteBlazorWebView` `net10` — Full Spec in [item5-store-sales-and-msp-fleet-spec.md](item5-store-sales-and-msp-fleet-spec.md) / `doc/ShopMspFleetAndAgentScopingSpec.md`)*:** Multi-Tenant MSP Fleet Scoping & `/shop` Fleet Computers Portal:
   - [ ] Add `group` field to `agent.proto` (`LaunchCommand` & `AgentInfo`) and `IAgentTenantPolicy` in `RemoteWebViewService.Lib`
   - [ ] Scope `AgentRegistry`, `AgentHubService`, and `AgentAdminService` by tenant `GroupSlug` via `ShopAgentTenantPolicy` (requiring active `"msp"` tier for `rpd_live_...` fleet enrollment)
   - [ ] Add **Fleet Computers** table, `POST /shop/computers/{machineId}/start`, and 1-click **RMM PowerShell Install Snippet** on `/shop`
 
 ## Post-Launch Operational Milestones *(Owner Actions)*
 - [ ] Deploy live relay (`deploy/fly.toml.example` or `deploy/docker-compose.shop.yml`) & set `ShopIdentity:Stripe:*` keys
-- [ ] Upload `RemotePCDiagnostics-1.2.0-win-x64.msix` + CI Store screenshots to Partner Center once Microsoft Store developer verification completes ($0 signing)
-- [ ] Send daily refurbisher outreach & community posts from `docs/outbound-sales-kit.md`, then reapply to **SignPath Foundation** ($0) once community stars/mentions land (or fund $9.99/mo Azure Artifact Signing from Customer #1)
+- [ ] Run 1-click GitHub Actions `workflow_dispatch` with Partner Center `msix_identity_name` + `msix_publisher`, then upload `RemotePCDiagnostics-1.2.0-win-x64.msix` + `partner-center-screenshots` to Partner Center ($0 signing)
+- [ ] Send daily refurbisher outreach & community posts from [outbound-sales-kit.md](outbound-sales-kit.md), then reapply to **SignPath Foundation** ($0) once community stars/mentions land (or fund $9.99/mo Azure Artifact Signing from Customer #1)
