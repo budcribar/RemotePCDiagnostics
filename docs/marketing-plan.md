@@ -34,9 +34,9 @@ Instead:
 
 - **Pain today:** Paying \$60–\$150/month per technician for generic remote-desktop tools, talking anxious clients past Windows Defender SmartScreen warnings on `.exe` downloads, manually running `dism`, `sfc`, SMART checks, and HWiNFO, then typing up an invoice summary by hand to justify a \$99–\$149 tune-up fee.
 - **Why they buy:**
-  - **Zero-SmartScreen client onboarding:** *"Open the Microsoft Store, install Remote PC Diagnostics, and read me the session link"* works on the first try.
+  - **Zero-SmartScreen, no-URL client onboarding:** *"Open the Microsoft Store, install Remote PC Diagnostics, click **Connect to Technician**, and enter **`acme-repair`**"*—the customer's PC immediately appears on the technician's Admin website without reading long session URLs over the phone, while one shared relay isolates multiple shops by group.
   - **Tangible proof of work:** Automated **white-labeled Before/After Client Service Reports** (with the shop's logo, RAM/storage freed, integrity repairs, and benchmark deltas) justify the shop's service charge to the end customer.
-  - **Enrolled fleet (`Computers` dashboard):** Persistent `RemotePCDiagnostics.Agent` installs keep retainer clients one click away without heavyweight RMM bloat.
+  - **Enrolled fleet (`Computers` dashboard):** Persistent `RemotePCDiagnostics.Agent` installs keep retainer clients one click away in the same technician group without heavyweight RMM bloat.
 
 ### Segment B — Laptop Refurbishers & Used-PC Resellers *(High-Margin Vertical Wedge)*
 
@@ -50,7 +50,7 @@ Instead:
 - **Pain today:** Consumer tune-up tools rely on dark patterns and fake "critical error" counts; helping a parent or friend troubleshoot a slow PC over the phone is frustrating.
 - **Why they use & share it:**
   - 100% honest, ad-free local checks and stress tests build 5-star Microsoft Store ratings and organic search ranking.
-  - A low-cost annual or one-time personal pass unlocks unlimited voice-enabled remote sessions and reboot-and-resume workflows for helping family computers.
+  - A low-cost annual or one-time personal pass unlocks a personal group code, unlimited voice-enabled remote sessions, and reboot-and-resume workflows for helping family computers.
 
 ---
 
@@ -60,10 +60,10 @@ Instead:
 
 | Tier | Price | Target User | Included |
 | :--- | :--- | :--- | :--- |
-| **Community (Free)** | **\$0** | Consumers, DIY bench users, evaluation | All local checks, sensors, stress/audio/webcam/NPU tests, and local fixes. Ad-hoc supervised remote sessions capped at 15 minutes (no TURN voice, standard report footer). |
-| **Personal / Family Tech** | **\$19 / year** *(or \$15 30-day pass)* | Prosumers helping family & friends | Unlimited supervised remote sessions with WebRTC voice (`--voice`), remote reboot-and-resume service workflow, up to 5 enrolled family PCs. |
-| **Solo Tech & Refurbisher** | **\$39 / month** *(or \$390 / year)* | Solo repair techs, mobile IT, laptop refurbishers | Unlimited remote sessions + voice, **white-labeled Before/After Service Reports** (custom logo/header), **Hosted Hardware QA Certificates** (QR/URL per serial), up to 50 enrolled `Agent` endpoints. |
-| **Shop / Small MSP** | **\$99–\$199 / month** | Multi-tech repair shops, internal IT desks, MSPs | 3–10 technician seats, relay SSO/group authentication, 250–1,000 enrolled `Agent` endpoints, centralized session/remediation audit log retention, custom shop JSON checks & signed plugin deployment, unbranded reports. |
+| **Community (Free)** | **\$0** | Consumers, DIY bench users, evaluation | All local checks, sensors, stress/audio/webcam/NPU tests, and local fixes. Ad-hoc supervised remote sessions via direct link capped at 15 minutes (no TURN voice, standard report footer). |
+| **Personal / Family Tech** | **\$19 / year** *(or \$15 30-day pass)* | Prosumers helping family & friends | Personal support group code on the Admin portal, unlimited supervised remote sessions with WebRTC voice (`--voice`), remote reboot-and-resume workflow, up to 5 enrolled family PCs. |
+| **Solo Tech & Refurbisher** | **\$39 / month** *(or \$390 / year)* | Solo repair techs, mobile IT, laptop refurbishers | Dedicated shop group code (`acme-repair`), unlimited remote sessions + voice, **white-labeled Before/After Service Reports**, **Hosted Hardware QA Certificates** (QR/URL per serial), up to 50 enrolled `Agent` endpoints. |
+| **Shop / Small MSP** | **\$99–\$199 / month** | Multi-tech repair shops, internal IT desks, MSPs | 3–10 technician seats in one or more groups, relay SSO/group authentication, 250–1,000 enrolled `Agent` endpoints, centralized session/remediation audit log retention, custom shop JSON checks & signed plugin deployment, unbranded reports. |
 
 ### Keeping ~97% of Revenue on PC (Store Policies `10.8.1` & `10.8.6`)
 
@@ -197,3 +197,46 @@ Any elevated helper or `LocalSystem` service that listens for IPC calls is scrut
    - In `--mode=helper`, pass a parent process handle or monitor the Named Pipe connection and terminate the elevated helper immediately if `RemotePCDiagnostics.Host` exits or crashes, leaving zero orphaned elevated processes.
 5. **Remote Consent & Audit Enforcement in the Privileged Layer:**
    - Keep writing Event IDs `2000–2006` (session lifecycle) and `1100` / `1400` (service/remediation actions) from the privileged backend so neither a compromised UI nor a remote user can suppress the local audit trail.
+
+---
+
+### 5.5 Multi-Tenant Group Onboarding & Single-Relay Isolation
+
+Instead of asking a customer on the phone to read back a long `/mirror/<guid>` URL, one shared `RemoteWebViewService` relay can host many independent technicians and repair shops by routing sessions through **Group codes**:
+
+```mermaid
+sequenceDiagram
+    participant Cust as Customer PC (Store App)
+    participant Relay as Shared Relay (RemoteWebViewService)
+    participant Admin as Technician (Admin Website)
+
+    Note over Cust: Opens in Local mode from Microsoft Store
+    Cust->>Cust: Clicks "Connect to Technician"<br/>Enters group "acme-repair" (+ optional name)
+    Cust->>Cust: Relaunches with -u=<relay> -g=acme-repair --voice --restarted
+    Cust->>Relay: CreateWebView(Group="acme-repair", OwnerKey=...)
+    Note over Relay: SessionAccessHandler lets local window<br/>open /app/{id} via OwnerKey without login
+    Admin->>Relay: GetClients(Oid) -> GetUserGroups(Oid) = ["acme-repair"]
+    Relay-->>Admin: Streams ONLY clients where Group == "acme-repair"
+    Admin->>Relay: Clicks client card -> opens /mirror/{id}
+    Note over Relay: Other technicians outside "acme-repair"<br/>never see the card and get HTTP 403 on /mirror/{id}
+```
+
+#### What Already Exists in `RemoteBlazorWebView`
+
+- **Admin Client List Filtering (`ClientIPCService.GetClients`):** Queries `IUserService.GetUserGroups(request.Oid)` for the signed-in technician and returns only connected sessions where `groups.Contains(x.Group)`.
+- **Cross-Group URL Isolation (`SessionAccessHandler`):** Refuses (`403 Forbidden`) any signed-in user outside `state.Group` even if they obtain a `/mirror/{id}` link, while allowing the customer's local `MainWindow` to open `/app/{id}` unauthenticated via `OwnerKey`.
+- **Client Property (`BlazorWebView.Group`):** Already transmitted in `CreateWebViewRequest.Group` (currently defaulting to `"test"`).
+
+#### Required Wiring in `RemotePCDiagnostics` & the Relay
+
+1. **In-App "Connect to Technician" Flow (Handling Store Launch + `HostPage` Ordering):**
+   - Microsoft Store launches `RemotePCDiagnostics.Host.exe` with no arguments (Local mode), and `BlazorWebView.Group` must be assigned *before* `RemoteBlazorWebView.HostPage` is set.
+   - Add a **"Connect to Technician"** button/dialog in the top bar accepting the technician's **Group / Shop Code** (e.g., `acme-repair`) and an optional **Customer Label** (e.g., *"Mary — Front Desk"*, rendered into `RemoteBlazorWebView.Markup` so busy shops can tell waiting PCs apart).
+   - Submitting saves the group preference and uses the existing `--restarted` handoff (`SessionLaunchOptions`) to relaunch with `-u=<relay> -g=<group> --voice --restarted`, setting `RemoteBlazorWebView.Group = launch.Group` before `HostPage` in `MainWindow.xaml.cs`.
+   - Persist `Group` in `SessionLaunchOptions.RestartArguments` and `PendingRebootState` so browser-triggered restarts and mid-workflow Windows reboots reconnect directly into the same technician's group.
+2. **Group Validation & Anti-Spam on Connect:**
+   - Entering a group name only *publishes* the customer's own session into that group (unauthenticated clients can never list a group's computers).
+   - Validate `request.Group` on the relay against registered active tenant groups (or map short rotating/static 6-character support codes like `ACME42` $\rightarrow$ `acme-repair`) so customer typos fail fast with a clear *"Unknown technician code"* message rather than stranding the session in a nonexistent group.
+3. **Unified Group Scoping for `RemotePCDiagnostics.Agent` (`agent.proto`):**
+   - Bind each tenant `enrollment_key` on the relay to its owning `group`, filter `AgentAdmin.GetAgents` / `WatchAgents` by `IUserService.GetUserGroups(oid)`, and pass `-g=<group>` in `LaunchCommand`. Both ad-hoc Microsoft Store sessions (**Clients** page) and persistent enrolled endpoints (**Computers** page) then share one multi-tenant relay and authorization model.
+
