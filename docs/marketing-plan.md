@@ -79,11 +79,11 @@ Under **Microsoft Store Policies `10.8.1` and `10.8.6`**, non-game PC applicatio
 
 ### Phase 1: Foundation, Signing & Zero-Friction Distribution (Weeks 1–4)
 
-1. **Trusted Code Signing:** Set up Microsoft Trusted Signing (~\$10/month) or SignPath Foundation (available for MIT open-source projects) so every `.exe` and `.dll` passes SmartScreen and Store Win32 checks cleanly.
+1. **Trusted Code Signing & Store Win32 Packaging (`Policy 10.2.9`):** Set up Azure Trusted Signing (~\$9.99/month) or SignPath Foundation (available for MIT open-source projects) to Authenticode-sign every `.exe` and `.dll` (`Host.exe`, `Admin.exe`, built-in module DLLs, `osqueryi.exe`, and the Inno Setup installer) so the unpacked Win32 installer passes both SmartScreen and Microsoft Store `Policy 10.2.9` certification without needing MSIX `rescap:allowElevation` review.
 2. **Microsoft Store Listing (ASO):**
    - Target high-intent, non-spammy search terms (up to 7 search phrases per Policy `10.1.3`): *PC diagnostics*, *hardware stress test*, *SSD drive health*, *webcam microphone test*, *remote PC support*, *laptop battery check*, *system repair*.
    - Keep screenshots and copy strictly factual (Policy `10.1.1`): highlight transparent Windows native tools (`osquery`, `DISM`, `SFC`), thermal-safe stress testing, and explicit local-owner session controls.
-3. **`winget` Package:** Publish `RemotePCDiagnostics` (and `RemotePCDiagnostics.Agent`) to `microsoft/winget-pkgs` so technicians can deploy from any terminal with `winget install`.
+3. **`winget` Packages for Technicians & MSP RMMs:** Publish `BudCribar.RemotePCDiagnostics` and `BudCribar.RemotePCDiagnostics.Agent` (declaring `namazso.PawnIO` under `PackageDependencies`) to `microsoft/winget-pkgs` so MSPs can deploy unattended fleet access, zero-UAC admin repairs, and full `PawnIO` hardware sensors silently with a single RMM command.
 
 ### Phase 2: Repair Shop & Refurbisher Wedge (Weeks 5–10)
 
@@ -145,58 +145,100 @@ flowchart LR
 
 ---
 
-### 5.2 Approaches That Do *Not* Work (OS & Store Policy Pitfalls)
+### 5.2 Approaches That Do *Not* Work (OS, Driver License & Store Policy Pitfalls)
 
-Before choosing a packaging path, avoid three dead ends:
+Before locking in the packaging design, avoid four dead ends:
 
 1. **Downloading an Extension `.dll` to add Admin functionality fails on both Windows and Store rules:**
-   - **OS boundary:** Windows UAC tokens exist at the **process (`.exe`)** boundary, never at the DLL boundary. If a Store-approved user-mode server downloads and loads `AdminExtension.dll` into `AssemblyLoadContext`, that code **still runs as a standard user** (`Access Denied` on `sfc`, `dism`, `HKLM`, and SCM). Conversely, if the host process was *already* elevated, hiding the code in a downloaded DLL didn't avoid Store elevation review—and created an elevated remote-code-loading risk.
+   - **OS boundary:** Windows UAC tokens exist at the **process (`.exe`)** boundary, never at the DLL boundary. If a user-mode server downloads and loads `AdminExtension.dll` into `AssemblyLoadContext`, that code **still runs as a standard user** (`Access Denied` on `sfc`, `dism`, `HKLM`, and SCM). Conversely, if the host process was *already* elevated, hiding code in a downloaded DLL didn't avoid Store elevation review—and created an elevated remote-code-loading risk.
    - **Store Policy `10.2.2`:** Explicitly prohibits changing or extending core/privileged functionality after certification via *"dynamic inclusion of code"*.
    - **Filesystem boundary:** MSIX `WindowsApps` directories are immutable, and `%ProgramFiles%\RemotePCDiagnostics\modules` requires prior elevation to write.
 2. **A separate user-mode gRPC server is unnecessary for non-admin hardware access:**
-   - Packaged WPF apps in the Microsoft Store declare `runFullTrust` and run at `Medium` integrity (normal Win32 user mode, **not** inside a UWP AppContainer). `RemotePCDiagnostics.Host` already has direct access to non-admin WMI, `osqueryi.exe`, WASAPI, WinRT camera, GPU, and NPU APIs without an extra user-mode gRPC hop.
-3. **Having a Store MSIX app download and install a Windows Service in-app violates Policy `10.1.5`:**
-   - Store Policy `10.1.5` allows post-install add-ons *with user consent*, **"excluding non-Microsoft drivers or NT services."** Any NT service must either be installed by the Store package itself or installed independently by the user/IT admin outside the Store app (with optional external service support disclosed per Policy `10.2.4`).
-4. **Never bundle or silent-install uncertified kernel drivers (`PawnIO` / `WinRing0`):**
-   - Keep `LhmSensorProvider`'s existing graceful fallback to ACPI thermal zones and WDDM GPU temperature counters whenever `PawnIO` is absent. Only WHCP-certified drivers are ever considered under Store Policy `10.2.4`.
+   - Desktop WPF apps in the Microsoft Store run at `Medium` integrity (normal Win32 user mode, **not** inside a UWP AppContainer). `RemotePCDiagnostics.Host` already has direct access to non-admin WMI, `osqueryi.exe`, WASAPI, WinRT camera, GPU, and NPU APIs without an extra user-mode gRPC hop.
+3. **An in-app Store paywall link that downloads an external NT Service or `PawnIO` gets rejected:**
+   - **Store Policy `10.1.5`:** Allows post-install add-ons with user consent **"excluding non-Microsoft drivers or NT services."**
+   - **Store Policy `10.3.1`:** Requires providing test credentials so Store reviewers can exercise paid/gated flows—putting a prohibited service/driver download behind a paywall still fails certification (and public `winget` URLs cannot be paywalled anyway).
+4. **Bundling `PawnIO` (or extracting `PawnIO.sys`) violates Store rules and `PawnIO`'s redistribution license:**
+   - **Store Policy `10.2.4`:** Prohibits dependencies on non-Microsoft drivers or NT services (exceptions are considered case-by-case *only* for WHCP-certified hardware vendor drivers; `PawnIO` is attestation-signed, not WHCP-certified).
+   - **`PawnIO` license & symlink safety:** The official signed `PawnIO` binary is proprietary freeware whose redistribution permission covers *only* the unmodified `PawnIO_setup.exe` installer—extracting `PawnIO.sys` directly violates its license and causes `\\.\PawnIO` device symlink collisions across tools.
+   - **Clean fallback already built:** `LibreHardwareMonitorLib` `0.9.6` in `RemotePCDiagnostics.Host.csproj` already removed legacy `WinRing0.sys` (embedding only inert user-mode PawnIO bytecode blobs used by `LenovoEcFanSource`), and `LhmSensorProvider.Read` falls back automatically to WDDM GPU temperatures (`D3dkmtGpuTemperatureSource`), APU shared-die temps, and WMI/ACPI thermal zones when `PawnIO` is absent.
 
 ---
 
-### 5.3 Viable Microsoft Store Delivery Paths
+### 5.3 Recommended Strategy: One Codebase, One Dual-Mode Binary, Two Channels
 
-Build **one shared elevated gRPC server executable** (`RemotePCDiagnostics.Admin.exe` / `RemotePCDiagnostics.Agent.exe`) that can run either as an **on-demand elevated child process** (`--mode=helper`) or as a **Windows Service** (`--mode=service`). That supports all three compliant Store strategies:
+Rather than maintaining separate consumer and MSP codebases, build **one shared `RemotePCDiagnostics.Admin` / `Agent` executable** (`net10.0-windows`) that runs in two CLI modes alongside `RemotePCDiagnostics.Host` (`asInvoker`):
 
-| Option | Package Type | How Admin Runs | Store Review Friction | Best Fit |
-| :--- | :--- | :--- | :--- | :--- |
-| **Option A (Fastest Full-Feature Store Path)** | **Unpacked Win32 Installer (`Policy 10.2.9`)** | Your signed Inno Setup `.exe` (`RemotePCDiagnostics.iss`) hosted at a versioned HTTPS URL. Store runs `/VERYSILENT`; **1 UAC prompt at install is allowed by `10.2.9`** and registers the service + user-mode UI. | **Low–Medium** (Requires Company account + Trusted Root CA signature on *every* PE `.exe`/`.dll`, standalone offline installer—no web downloader stubs). | Single one-click Store install with 100% admin & unattended capability out of the box. |
-| **Option B (Cleanest Pure MSIX)** | **Single MSIX + `rescap:allowElevation`** | `Host.exe` launches in user mode (`asInvoker`, 0 prompts). `Admin.exe --mode=helper` is bundled inside the same MSIX and spawned via `ShellExecute` (`Verb = "runas"`) only when the user starts admin scans/fixes, exiting when the UI closes. | **Medium** (Requires Partner Center capability justification for `runFullTrust` + `allowElevation`; much easier than `localSystemServices`). | Consumer-friendly MSIX with clean Store uninstall and zero background service when idle. |
-| **Option C (Zero-Elevation Store Funnel + Companion Agent)** | **Pure User-Mode MSIX (`runFullTrust` only) + External `Agent` MSI/EXE** | Store MSIX never elevates; runs all ~18 user-mode checks/stress/media tests standalone (`Policy 10.1.2`). If a technician/admin installs `RemotePCDiagnostics.Agent` via `winget`/website, the Store app detects the Named Pipe and unlocks admin features (`Policy 10.2.4` disclosure). | **Lowest** (Standard `runFullTrust` desktop submission; fastest Store certification). | Freemium consumer Store app + MSP/Repair Shop `winget`/MSI agent deployment. |
-| **Option D (Packaged MSIX Service)** | **Single MSIX + `<desktop6:Service>`** | Service declared in `Package.appxmanifest` with `rescap:packagedServices` + `rescap:localSystemServices`. (`LocalService` alone cannot run DISM/SFC or control SCM.) | **High** (`localSystemServices` undergoes ~5+ business day security review and requires a strong EoP whitepaper). | Only if strict single-file MSIX *with* zero runtime UAC prompts is required for enterprise Store deployment. |
+- **`--mode=helper --parent-pid=<pid>` (On-Demand Elevated Helper):** Spawned via `ShellExecute` (`Verb = "runas"`) only when a local user clicks **"Enable Admin Repair Mode"** (one standard Windows UAC prompt). Hosts the Named-Pipe gRPC admin server and exits automatically as soon as `Host.exe` closes.
+- **`--mode=service` (Always-On MSP Windows Service):** Runs as `LocalSystem`, combining the `AgentHub.Connect` outbound relay stream (`roadmap.md#1-agent-program`) with the exact same Named-Pipe gRPC admin server—unlocking unattended access and zero-UAC admin repairs.
 
-### Recommended Rollout Sequence
+#### Channel 1 — Walk-In / Break-Fix Customers: Microsoft Store via Unpacked Win32 Installer (`Policy 10.2.9`)
 
-1. **Split `RemotePCDiagnostics.Host` (`asInvoker`) from the Named-Pipe gRPC Admin Backend** so the app launches cleanly as a Standard User, runs every non-admin check/stress test, and badges admin-only repairs ("Requires Administrator").
-2. **Ship to the Microsoft Store via Option A (Win32 Installer under `10.2.9`) or Option B (MSIX + `allowElevation`)**—note that for Option A, `RemotePCDiagnostics.iss` must bundle or rely on Windows 11's inbox WebView2 rather than downloading `MicrosoftEdgeWebview2Setup.exe` at install time (`10.2.9` forbids downloader stubs).
-3. **Ship `RemotePCDiagnostics.Agent` via `winget` and the Admin Portal** using the exact same gRPC admin implementation in `--mode=service` for paid repair-shop/MSP fleets.
+| Store Packaging Choice | Needs `rescap:allowElevation` Approval? | Verdict |
+| :--- | :--- | :--- |
+| **Recommended: Unpacked Win32 Installer (`Policy 10.2.9`, `.exe` / `.msi`)** | **No** | **Highest approval odds.** Submits a versioned HTTPS URL to the Authenticode-signed Inno Setup installer (`installer/RemotePCDiagnostics.iss`). Installs outside an MSIX container into `%ProgramFiles%`, so `Host.exe` (`asInvoker`) can spawn `Admin.exe --mode=helper` via `Verb = "runas"` natively with zero MSIX restricted-capability gatekeeping while giving customers one-click Microsoft Store installation. |
+| **Alternative: MSIX Package (`rescap:allowElevation`)** | **Yes** (manual Partner Center review) | **Fallback only.** Microsoft documents `allowElevation` for *"Microsoft partners or enterprise organizations to maintain existing desktop functionality."* Requires a Partner Center justification (~5+ business days, Company account) explaining why `DISM`/`SFC`/SCM have no non-admin API. Free Microsoft package signing, but higher review friction. |
+
+- **Keep drivers and NT services 100% out of the Store package:** Exclude `PawnIO_setup.exe`, verify zero `.sys` files exist in `dotnet publish`, and do **not** register a Windows NT Service in the Store build (`Policy 10.2.4`).
+- **Still unlocks ~90% of technician repair work:** Even without `PawnIO`, UAC-elevating `Admin.exe --mode=helper` unlocks `DISM`, `SFC`, Windows Service start/stop/restart, protected Event Logs, `HKLM` inspection/fixes, `HardeningKitty` security baselines, and admin NVMe/SATA SMART health, while temperatures use the built-in ACPI + WDDM fallbacks.
+
+#### Channel 2 — Managed MSP Endpoints: Silent `winget` / RMM Fleet Deployment
+
+Employees on MSP-managed corporate PCs (law firms, clinics, accounting offices) are typically **Standard Users without local Admin passwords**—they *cannot* click "Yes" on a UAC prompt. Meanwhile, every MSP already runs a management agent (**Microsoft Intune**, **NinjaOne**, **Datto RMM**, or **ConnectWise ScreenConnect**) as `NT AUTHORITY\SYSTEM` across every managed machine.
+
+The MSP technician pastes **one silent background command** into Intune, NinjaOne, or ScreenConnect:
+
+```powershell
+winget install --id BudCribar.RemotePCDiagnostics.Agent --silent --accept-package-agreements --accept-source-agreements --override "install --server=https://relay.yourdomain.com --group=acme-msp --key=<enrollment-key> --consent=unattended"
+```
+
+Because the RMM runs as `SYSTEM`, **zero windows, zero installers, and zero UAC prompts appear on the employee's screen.** Within ~15 seconds, three capabilities unlock automatically:
+
+1. **Full `PawnIO` Hardware & EC Fan Sensors:**
+   - The `winget` manifest for `BudCribar.RemotePCDiagnostics.Agent` declares `namazso.PawnIO` under `Dependencies: PackageDependencies:`.
+   - `winget` automatically downloads, SHA-256 verifies, and silently executes `PawnIO_setup.exe -install -silent` from the official `winget` repository before installing the agent—respecting `PawnIO`'s redistribution license and avoiding Store restrictions.
+   - `PawnIoProbe.Check` detects `\\.\PawnIO`, enabling `LhmSensorProvider` and `LenovoEcFanSource` to read Intel/Ryzen CPU MSR die temperatures, voltages, motherboard SuperIO fans, and Lenovo ACPI EC fan RPMs.
+2. **Unattended `AgentHub` Fleet Access:**
+   - `RemotePCDiagnostics.Agent.exe install ...` writes `%ProgramData%\RemotePCDiagnostics\agent.json` (`group=acme-msp`, enrollment key, `consent=unattended`, writable only by `SYSTEM`/Admins) and starts the `RemotePCDiagnosticsAgent` Windows NT Service.
+   - The service holds an outbound `AgentHub.Connect` gRPC stream (`src/RemotePCDiagnostics.Agent/Protos/agent.proto`) to the relay, so every office PC appears **Online** under `acme-msp`'s **Computers** tab on `RemoteWebViewAdmin`. Clicking **Start diagnostics** verifies `manifest.json` + `manifest.sig`, launches the cached app, and opens `/mirror/<session_id>` in the technician's browser.
+3. **Zero-UAC Admin Repairs on Locked-Down Employee PCs:**
+   - Because `RemotePCDiagnosticsAgent` is already running as `LocalSystem`, it hosts the Named-Pipe gRPC admin server (`--mode=service`) continuously.
+   - When `Host.exe` (`asInvoker`) launches on the employee's desktop, it connects directly to that Named Pipe instead of calling `ShellExecute("runas")`—giving the technician full `DISM`, `SFC`, Service, Registry, `HardeningKitty`, and `PawnIO` capabilities even when a restricted Standard User is signed in.
+
+#### Side-by-Side Channel Summary
+
+| Feature | Channel 1: Microsoft Store (Walk-In / Break-Fix) | Channel 2: `winget` / RMM Agent (MSP Fleet) |
+| :--- | :--- | :--- |
+| **How it's installed** | Customer clicks **Install** in Microsoft Store (`Policy 10.2.9` Win32) | MSP pushes 1 silent `winget` command via Intune / NinjaOne / ScreenConnect |
+| **How tech finds the PC** | Customer enters tech's `Group` code in **Connect to Technician** | PC is permanently listed in tech's `Group` on **Computers** (`AgentHub`) |
+| **How Admin repairs run** | On-demand `Admin.exe --mode=helper` (**1 UAC click** by local user) | Always-on `Admin.exe --mode=service` (**Zero UAC**, works on Standard-User PCs) |
+| **Kernel Driver (`PawnIO`)** | Excluded (uses WDDM GPU + APU + ACPI thermal fallbacks) | Auto-installed via `winget` dependency (full CPU MSRs + SuperIO/EC fans) |
+| **Monetization** | Free Store app (0% Store fee); tech pays \$39–\$49/mo SaaS seat | Tech / MSP pays \$99–\$299/mo SaaS fleet subscription |
 
 ---
 
-### 5.4 Mandatory Security Controls for Microsoft Approval (`Policy 10.2`)
+### 5.4 Mandatory Microsoft Store Certification & Security Rules (`Policies 10.1–10.4`)
 
-Any elevated helper or `LocalSystem` service that listens for IPC calls is scrutinized for **Local Privilege Escalation (EoP)**. Implement these five controls from day one:
+To pass Microsoft Store review (Policies v7.20) and prevent Local Privilege Escalation (EoP), enforce six strict rules on the Store build and elevated helper:
 
-1. **Named Pipes Only — Never Localhost TCP:**
-   - Host Kestrel gRPC on a Named Pipe (`ListenNamedPipe("RemotePCDiagnostics.Admin")`), never `127.0.0.1:<port>`. Local TCP ports are reachable by untrusted processes and browser SSRF/DNS-rebinding attacks.
-2. **Caller Process & Identity Verification:**
-   - Apply explicit `PipeSecurity` ACLs (restricting access to interactive logged-on users and Administrators/SYSTEM, rejecting `Anonymous` and `AppContainer` SIDs unless intended).
-   - On connection, call `GetNamedPipeClientProcessId` and verify that the calling process binary carries your **exact MSIX Package Identity** (for MSIX builds) or **exact Authenticode certificate chain/thumbprint** (for Win32 builds).
-3. **Narrow, Strongly Typed `.proto` Surface (No Generic Command Execution):**
-   - Never expose `RunCommand(string exe, string args)` or `RunPowerShell(string script)`.
-   - Expose fixed domain RPCs (`RunDismScanHealth`, `RunDismRestoreHealth`, `RunSfcScanNow`, `ControlService`, `ApplyCatalogFix`, `UndoChange`, `QueryAdminSensors`, `QueryEventLog`) and enforce `ServiceProtection.Protected`, `HostCapabilities.AllowedSql`, and fix-catalog allowlists **inside the elevated server**.
-4. **Helper Lifecycle Tie-In (`Policy 10.4.2`):**
-   - In `--mode=helper`, pass a parent process handle or monitor the Named Pipe connection and terminate the elevated helper immediately if `RemotePCDiagnostics.Host` exits or crashes, leaving zero orphaned elevated processes.
-5. **Remote Consent & Audit Enforcement in the Privileged Layer:**
-   - Keep writing Event IDs `2000–2006` (session lifecycle) and `1100` / `1400` (service/remediation actions) from the privileged backend so neither a compromised UI nor a remote user can suppress the local audit trail.
+1. **Zero UAC at Startup & Full Standard-User Mode (`10.1.2`, `10.3`, `10.4.2`):**
+   - Change `src/RemotePCDiagnostics.Host/app.manifest` from `requireAdministrator` to `asInvoker`. Store reviewers automatically reject apps that prompt for UAC on launch.
+   - If the user is a Standard User—or clicks **No** on UAC—the app must keep running cleanly in read-only diagnostic mode without crashes or nag loops. Admin actions must carry a shield badge and prompt for UAC **only** when clicked.
+2. **No Store NT Service & Automatic Helper Exit (`10.2.4`, `10.4.2`):**
+   - Never register a persistent Windows NT Service or Scheduled Task from the Store installer.
+   - Per `10.4.2`, all app-started processes must exit when the UI closes. Pass `--parent-pid=<HostPid>` and bind `Admin.exe --mode=helper` to a Windows Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) so the elevated helper terminates immediately if `Host.exe` closes or crashes.
+3. **Zero Local Privilege Escalation (EoP) Surface (`10.2`):**
+   - **Named Pipes only** (`ListenNamedPipe("RemotePCDiagnostics.Admin.<SessionId>")`)—never `127.0.0.1` TCP, which untrusted local processes or browser tabs could hit via SSRF/DNS rebinding.
+   - Apply strict `PipeSecurity` ACLs (interactive user SID + `Administrators`/`SYSTEM`, denying `Anonymous` and `AppContainer`), and call `GetNamedPipeClientProcessId` on connect to verify the caller executable path and Authenticode signature match `Host.exe`.
+   - **Fixed domain `.proto` allowlist** (`RunDismScanHealth`, `RunDismRestoreHealth`, `RunSfcScanNow`, `ControlService`, `ApplyCatalogFix`, `UndoChange`, `QueryAdminSensors`, `QueryEventLog`) with `ServiceProtection.Protected`, `HostCapabilities.AllowedSql`, and fix-catalog checks enforced server-side. **Never** expose generic `RunCommand` or `RunPowerShell` RPCs.
+4. **No Downloaded or Unsigned Code in the Elevated Helper (`10.2.2`):**
+   - `Admin.exe` executes only compiled-in or Authenticode-verified built-in modules. Unsigned third-party plugins remain strictly isolated inside the non-elevated `RemotePCDiagnostics.ModuleHost` process (`docs/module-plugins.md`).
+5. **Explicit Local User Consent, Supported Windows APIs & Audit Trail (`10.2.8`):**
+   - Require explicit local consent (e.g., clicking **"Enable Admin Repair Mode"** locally to trigger UAC, plus displaying a live local repair log) before a remote technician can mutate system settings, and write tamper-evident Windows Event Log entries (`2000–2006`, `1100`, `1400`) from the privileged backend.
+   - Never write undocumented Windows user-choice protected registry keys (such as `UCPD.sys`-guarded default browser, file association, or taskbar pinning keys).
+6. **Full Authenticode Signing & Offline Silent Installer (`10.2.9`):**
+   - Sign every shipped `.exe` and `.dll` (`Host.exe`, `Admin.exe`, built-in module `.dll`s, bundled `osqueryi.exe`, and the Inno Setup installer) with a certificate chaining to a Microsoft Trusted Root CA.
+   - Support silent install switches (`/VERYSILENT /SUPPRESSMSGBOXES`) and rely on Windows 11's inbox WebView2 (or an offline evergreen bundle) rather than downloading `MicrosoftEdgeWebview2Setup.exe` during installation (`10.2.9` forbids downloader stubs).
 
 ---
 
@@ -240,3 +282,11 @@ sequenceDiagram
 3. **Unified Group Scoping for `RemotePCDiagnostics.Agent` (`agent.proto`):**
    - Bind each tenant `enrollment_key` on the relay to its owning `group`, filter `AgentAdmin.GetAgents` / `WatchAgents` by `IUserService.GetUserGroups(oid)`, and pass `-g=<group>` in `LaunchCommand`. Both ad-hoc Microsoft Store sessions (**Clients** page) and persistent enrolled endpoints (**Computers** page) then share one multi-tenant relay and authorization model.
 
+---
+
+### 5.6 Recommended 4-Phase Implementation Order
+
+1. **Phase 1 — Multi-Tenant `Group` Onboarding:** Add `-g=<group>` to `SessionLaunchOptions` (including `RestartArguments` and `PendingRebootState`), add the **"Connect to Technician"** dialog in `Host`/`UI`, and enforce active tenant `Group` validation and `AgentAdmin` group scoping on the relay.
+2. **Phase 2 — De-Elevate `Host.exe` (`asInvoker`):** Switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker` and update `HostServices` so admin-only modules and one-click fixes gracefully badge/disable themselves until an elevated backend connects.
+3. **Phase 3 — `RemotePCDiagnostics.Admin` (`--mode=helper`):** Build the Named-Pipe gRPC elevated helper with `PipeSecurity` ACLs, `GetNamedPipeClientProcessId` Authenticode verification, Job Object / `--parent-pid` lifecycle exit, and the local **"Enable Admin Repair Mode"** UAC flow.
+4. **Phase 4 — Store `Policy 10.2.9` Installer & `--mode=service` MSP Agent:** Add Authenticode signing and offline silent-install packaging to `installer/RemotePCDiagnostics.iss` for Microsoft Store submission, then wire `--mode=service` into `RemotePCDiagnostics.Agent.Core` and publish `BudCribar.RemotePCDiagnostics.Agent` (with `namazso.PawnIO` dependency) to `winget`.
