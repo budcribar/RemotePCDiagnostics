@@ -638,12 +638,20 @@ public sealed class WorkflowService(
     }
 
     /// <summary>Builds and saves a 1-page Buyer Hardware QA Certificate from the latest diagnostic results.</summary>
-    public string? SaveHardwareQaCertificate(out HardwareQaSnapshot snapshot, out string html, ShopBranding? overrideBranding = null)
+    public string? SaveHardwareQaCertificate(ShopBranding? overrideBranding = null, PhysicalBenchQaSnapshot? physicalQa = null) =>
+        SaveHardwareQaCertificate(out _, out _, overrideBranding, physicalQa);
+
+    /// <summary>Builds and saves a 1-page Buyer Hardware QA Certificate from the latest diagnostic results.</summary>
+    public string? SaveHardwareQaCertificate(
+        out HardwareQaSnapshot snapshot,
+        out string html,
+        ShopBranding? overrideBranding = null,
+        PhysicalBenchQaSnapshot? physicalQa = null)
     {
         var when = DateTimeOffset.Now;
         var branding = ResolveBranding(overrideBranding);
         var machine = !string.IsNullOrWhiteSpace(session?.MachineName) ? session.MachineName : State.Machine;
-        snapshot = HardwareQaCertificate.Capture(results, machine, when, branding);
+        snapshot = HardwareQaCertificate.Capture(results, machine, when, branding, physicalQa: physicalQa);
         html = HardwareQaCertificate.BuildHtml(snapshot);
         string? path = null;
         try

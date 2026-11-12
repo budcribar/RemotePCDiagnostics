@@ -114,9 +114,11 @@ try {
   console.log('History page:', await page.getByTestId('history-empty').count() ? 'empty state' : `${await page.getByTestId('history-row').count()} row(s)`);
   await page.screenshot({ path: `${outDir}/history.png`, fullPage: true });
 
-  // QA Certificate & Shop Branding page: renders live 1-page QR certificate preview.
+  // QA Certificate & Shop Branding page: renders live 1-page QR certificate preview, 10-min QA preset, and physical QA checks.
   await page.getByTestId('nav-certificates').click();
   await page.getByTestId('branding-title').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('bench-qa-start').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('physical-qa-card').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('qa-preview-frame').waitFor({ state: 'visible', timeout: 15_000 });
   console.log('QA Certificate ID:', await page.getByTestId('qa-live-id').innerText());
   await page.screenshot({ path: `${outDir}/certificates.png`, fullPage: true });

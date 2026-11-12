@@ -20,4 +20,6 @@ public sealed record AppServices(
     WorkflowService? Workflow = null,
     PluginRegistrar? Plugins = null,
     IModuleUiFrames? ModuleUiFrames = null,
-    SupportDiagnostics? SupportDiagnostics = null);
+    SupportDiagnostics? SupportDiagnostics = null,
+    PhysicalBenchQaService? PhysicalQa = null,
+    BenchQaRunner? BenchQa = null);
