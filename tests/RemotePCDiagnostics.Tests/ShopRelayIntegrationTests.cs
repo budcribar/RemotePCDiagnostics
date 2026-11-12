@@ -335,4 +335,42 @@ public class ShopRelayIntegrationTests
         Assert.Contains("-u=\"https://relay.example\"", preview.CommandLinePreview);
         Assert.Contains("-g=\"acme-pc\"", preview.CommandLinePreview);
     }
+
+    [Fact]
+    public async Task ShopRelayClient_ShopApiBaseUrl_RoutesProductionRelayToAdminPortal_AndKeepsLoopbackAllInOne()
+    {
+        Assert.Equal("https://admin.remoteblazorwebview.com", ShopRelayClient.ShopApiBaseUrl(new Uri("https://remoteblazorwebview.com:34544")));
+        Assert.Equal("https://admin.remoteblazorwebview.com", ShopRelayClient.ShopApiBaseUrl(new Uri("https://server.remoteblazorwebview.com:34544/")));
+        Assert.Equal("https://admin.remoteblazorwebview.com", ShopRelayClient.ShopApiBaseUrl(new Uri("https://admin.remoteblazorwebview.com/")));
+        Assert.Equal("http://127.0.0.1:53817", ShopRelayClient.ShopApiBaseUrl(new Uri("http://127.0.0.1:53817/")));
+        Assert.Equal("http://localhost:5000", ShopRelayClient.ShopApiBaseUrl(new Uri("http://localhost:5000/")));
+        Assert.Equal("https://relay.example:8443", ShopRelayClient.ShopApiBaseUrl(new Uri("https://relay.example:8443/")));
+        Assert.Equal("https://staging-admin.example.com", ShopRelayClient.ShopApiBaseUrl(new Uri("https://remoteblazorwebview.com:34544"), envOverride: "https://staging-admin.example.com/"));
+
+        // Verify FetchBrandingAsync and PublishReportAsync route *.remoteblazorwebview.com:34544 HTTP calls to https://admin.remoteblazorwebview.com (port 443).
+        var adminHandler = new StubHttpHandler((req, _) =>
+        {
+            if (req.Method == HttpMethod.Get)
+            {
+                Assert.Equal("https://admin.remoteblazorwebview.com/api/shops/acme-pc/branding", req.RequestUri!.ToString());
+                return Task.FromResult(JsonResponse(HttpStatusCode.OK, """{"group":"acme-pc","active":true,"shopName":"Acme PC"}"""));
+            }
+
+            Assert.Equal(HttpMethod.Post, req.Method);
+            Assert.Equal("https://admin.remoteblazorwebview.com/api/reports", req.RequestUri!.ToString());
+            return Task.FromResult(JsonResponse(HttpStatusCode.Created, """{"id":"QA-20261112-ABCD","url":"/r/QA-20261112-ABCD","shortHash":"0123456789ab"}"""));
+        });
+
+        var client = new ShopRelayClient(new HttpClient(adminHandler));
+        var branding = Assert.IsType<ShopRelayBrandingResult.Found>(
+            await client.FetchBrandingAsync(new Uri("https://remoteblazorwebview.com:34544"), "acme-pc"));
+        Assert.Equal("https://admin.remoteblazorwebview.com/r", branding.Branding.SafeVerificationBaseUrl);
+
+        var pub = Assert.IsType<ShopReportPublishResult.Published>(
+            await client.PublishReportAsync(
+                new Uri("https://server.remoteblazorwebview.com:34544"),
+                "rpd_live_test_key_12345",
+                new ShopReportUploadRequest("QA-20261112-ABCD", ShopRelayClient.KindQaCertificate, "Hardware QA", "<!doctype html><html></html>")));
+        Assert.Equal("https://admin.remoteblazorwebview.com/r/QA-20261112-ABCD", pub.Url);
+    }
 }
