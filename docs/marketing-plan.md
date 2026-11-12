@@ -132,35 +132,49 @@ Roughly 85% of the core diagnostic engine is already built; closing B2B subscrip
 
 ### 4.4 Tactical B2B Sales Playbook (How to Get Your First 50 Paying Shops)
 
-Do **not** buy Google or Facebook ads—ad clicks for "PC repair" target broken-PC consumers, not technicians. Sell directly where technicians and refurbishers already hang out:
+Do **not** buy Google or Facebook ads—ad clicks for *"PC diagnostics"* or *"PC repair"* attract consumers with broken computers looking for free help, not technicians. Use three zero-ad-spend channels where every lead is already a buyer:
 
 #### Wedge 1 — Laptop Refurbishers on eBay, BackMarket, Swappa & Whatnot *(Fastest Cold-Outreach Close)*
 
-- **Why they convert fastest:** You can see *every* mid-sized refurbisher publicly on eBay right now (search *"ThinkPad T14 Grade A refurbished"* or *"Dell Latitude 5420 refurbished"*, filter by sellers with 200–10,000 feedback who paste plain-text battery/SSD specs in descriptions instead of Blancco certificates).
-- **How to pitch them:**
-  1. Run your **10-Minute Hardware QA Check** on a real laptop and generate a clean hosted **Hardware QA Certificate** (`Model/Serial + Battery 89% + NVMe 99% + Stress/Audio/Webcam Verified`).
-  2. Message or email 10 refurbisher storefronts a day (their business email/phone is usually listed in eBay Business Seller Info or their matching Shopify domain) with a 4-sentence pitch linking directly to that sample certificate:
-     > *"Saw your ThinkPad T14 listings—noticed you manually type battery and SSD specs in each description. I built an MIT-open-source Windows tool that tests Battery, SMART, Stress/Thermals, Webcam, Mic/Speakers, and Keyboard in 10 minutes off a USB stick and prints a QR-verified Hardware QA Certificate buyers can click right in your eBay photos (like Carfax for refurbs, without Blancco's \$3k contract). Free locally forever, \$39/mo for hosted QR certificates with your store logo—want a 30-day free login?"*
+- **Where to pull 200 leads in 1 hour:** Search eBay, Swappa, and BackMarket for *"ThinkPad T14 Grade A refurbished"* or *"Dell Latitude 5420 refurbished"*. Filter for sellers with **200–10,000 feedback** who manually type `"Battery: Good, 512GB SSD"` in plain text instead of attaching a QA report. Pull their contact email/phone from eBay Business Seller Info or their matching Shopify storefront.
+- **Prep 1 live asset & send 10 messages/day:** Run the 10-minute QA check on a real laptop, host one live sample **Hardware QA Certificate** (`Serial + Battery 89% + NVMe 99% + Thermal Stress Pass + Webcam/Mic/Speaker Loopback Pass + QR Code`), and send:
+  > *"Hey [Name] — saw your ThinkPad T14 listings and noticed you type battery/SSD health manually in each description. I built an MIT-open-source Windows tool that tests Battery, SMART, Thermal Stress, Webcam, Mic-to-Speaker loopback, and Keyboard in 10 minutes off a USB stick and prints a QR-verified Hardware QA Certificate buyers can scan right in your listing photos (like Carfax for laptops, without Blancco's \$3k contract). Here's a live sample: [link]. Local tool is free forever; hosted QR certificates with your logo are \$39/mo. Want a free 30-day shop login?"*
 
 #### Wedge 2 — Independent PC Repair Shops & Solo Mobile Techs *(Recurring Core)*
 
-- **Where to find them:**
-  1. **Google Maps ("computer repair" in mid-sized cities):** Skip Geek Squad/uBreakiFix franchises; target 1–5 person independent shops with 50+ Google reviews.
-  2. **Peer communities:** **Technibble** forums, `r/computertechs`, `r/msp` (vendor promo threads / open-source tool showcases), **The Tech Tribe**, and PC repair Discord servers.
-- **Lead with the "No-SmartScreen + Invoice Proof" 60-second GIF/video demo:**
-  - Show two things side by side in a 60-second Loom/YouTube clip:
-    1. Customer installs from the Microsoft Store (zero SmartScreen warning), types `acme-repair`, and pops onto the shop's dashboard with live voice in 15 seconds.
-    2. At the end of the tune-up, 1 click produces a **branded Before/After PDF/link** with the shop's logo showing boot/memory/disk improvements and exact changes made.
-  - **Pitch angle:** *"Customers don't understand what `DISM` and `SFC` did, so they question a \$129 tune-up bill. Hand them an objective Before/After report with your shop logo on every job."*
+- **Record one 60-second silent-friendly Loom/GIF demo:**
+  - **0:00–0:25:** Customer opens Microsoft Store (zero SmartScreen warning), clicks Install, types `acme-repair`, and appears on the technician's browser dashboard with live voice.
+  - **0:25–0:60:** Technician runs the workflow and clicks **Publish Report** $\rightarrow$ outputs a branded **Before/After Service Report** (`ClientReport.cs`) with the shop's logo, boot/RAM/disk improvements, and plain-English summary of fixes applied.
+- **Two distribution motions:**
+  1. **Technician Communities (Lead with the Free MIT Tool—Never Hard-Sell):** Post in **Technibble** (*Computer Repair Tools*), `r/computertechs`, **The Tech Tribe**, and `r/msp` open-source/vendor threads: *"I got tired of juggling CrystalDiskInfo + FurMark + HWiNFO + manual tune-up notes, so I open-sourced an all-in-one Windows bench & before/after report tool (MIT, no ads, runs off USB or Store). Looking for 15 shop owners to roast it."* Technicians respect inspectable MIT code; your hosted relay + white-label report tier converts naturally when they ask about remote sessions and custom branding.
+  2. **Local Google Maps Outbound:** Target independent 1-to-5 person `"computer repair"` shops with 50+ reviews (skip Geek Squad/uBreakiFix franchises). Email the owner the 60-second GIF with one hook: *"Stop talking elderly clients past SmartScreen warnings or explaining what `DISM`/`SFC` did on a \$129 tune-up invoice."*
 
-#### Wedge 3 — PC Repair & Refurbishment YouTubers *(Scalable Inbound)*
+#### Wedge 3 — PC Repair & Refurbishment YouTubers *(Inbound Multiplier)*
 
-- Small-to-mid repair channels (*Salem Techsperts*, *Parts-People*, *Electronics Repair School*, ThinkPad refurbishment & homelab channels) constantly test customer laptops on camera using 5 separate tools (`CrystalDiskInfo`, `FurMark`, `HWiNFO`, camera app, browser mic test).
-- **Offer free lifetime Pro accounts** with their channel logo preloaded on the QA Certificate. One organic video showing all bench tests + thermal stress + audio loopback in a single clean open-source app drives hundreds of shop trials.
+- Mid-sized repair creators (*Salem Techsperts*, *Parts-People*, *Electronics Repair School*, ThinkPad refurbishment/flipping channels) film laptop diagnostics weekly across 5 separate utilities.
+- DM 15 creators offering a **free lifetime white-labeled Pro account** preloaded with their channel logo on the Hardware QA Certificate. Live thermal curves, speaker-to-mic loopback visuals, and a printable scorecard film well on camera—one video from a 50k-subscriber repair channel can drive 100+ shop trials.
 
 #### Pricing Wedge for First 25 Customers
 
-- Offer a **"Founding Shop Tier" (\$25/month locked for life, normally \$39/month)** for the first 25 shops who join, upload their logo, and run at least 5 real client sessions. Early shop owners will tell you every rough edge in a week and give you real quotes for your landing page.
+- Offer a **"Founding Shop Tier" (\$25/month locked for life, normally \$39/month)** to the first 25 shops who upload their logo and run 5 real customer machines. Twenty-five Founding Shops generate **\$625/month MRR** (covering Azure Trusted Signing + cloud relay costs ~20x over), real shop testimonials, and direct feedback on what makes them renew.
+
+---
+
+### 4.5 First 5 Concrete Steps (Immediate Execution Plan)
+
+Ordered to get a sellable product into buyers' hands **before** spending months on background service plumbing:
+
+1. **Step 1 — Start Identity Verification & Code Signing *(Day 1 — Async Lead Time)*:**
+   - Open a **Microsoft Partner Center Company account** and set up **Azure Trusted Signing** (~\$9.99/mo) or apply to **SignPath Foundation** (free for MIT open-source). Identity verification takes several business days in the background—kick it off first so nothing blocks Store submission later.
+2. **Step 2 — Ship White-Labeled `ClientReport` + Hosted Hardware QA Certificate *(Week 1)*:**
+   - Extend `src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs` with shop logo/contact headers + technician notes, build the **1-page Hardware QA Certificate** (Model/Serial + Battery % + SMART + Stress + Audio Loopback + Webcam + QR link) + quick Keyboard/Dead-Pixel bench check, and add a hosted report endpoint (`reports.<domain>/r/<id>`).
+   - *Why this comes second:* Refurbishers run bench checks locally off a USB stick—meaning you have a sellable product and a live sample QR certificate in **Week 1** even before Microsoft Store certification finishes.
+3. **Step 3 — Wire Multi-Tenant `Group` Onboarding + Minimal Stripe Checkout *(Week 2)*:**
+   - Add `-g=<group>` to `SessionLaunchOptions.cs` + the **"Connect to Technician"** dialog in `MainLayout.razor`, validate active tenant groups on `RemoteWebViewService`, and attach a simple **Stripe Checkout / Billing Portal** flow to claim a shop `Group` code and upload a shop logo.
+4. **Step 4 — De-Elevate `Host.exe` (`asInvoker`), Build `Admin.exe --mode=helper` & Submit to the Microsoft Store (`Policy 10.2.9`) *(Weeks 3–4)*:**
+   - Switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker`, move privileged operations into the Named-Pipe gRPC helper (`--mode=helper --parent-pid=<pid>`), verify zero `.sys` drivers in publish output, Authenticode-sign `installer/RemotePCDiagnostics.iss`, and submit the Win32 installer URL to Partner Center under `Policy 10.2.9`.
+5. **Step 5 — Record the 60-Second Demo & Close Your First 10–25 Founding Shops (\$25/mo) *(Weeks 4–5 — Before Building `Agent.exe`)*:**
+   - Host 1 live sample Hardware QA Certificate, record the 60-second Store-to-Report Loom/GIF, send 10 refurbisher messages/day, post the open-source showcase on Technibble / `r/computertechs`, and DM 15 repair YouTubers. **Defer building the unattended `Agent.exe` Windows Service (`--mode=service`) and `winget` RMM bundle until your first paying shops ask for recurring fleet monitoring.**
 
 ---
 
