@@ -152,6 +152,97 @@
     </div>
 </details>
 
+<section class="card wf-section relay-publish-card" data-testid="relay-publish-card" style="margin-bottom: 16px">
+    <div class="toolbar" style="margin-bottom: 6px">
+        <div>
+            <strong>Hosted QR Verification &amp; Relay Sync</strong>
+            <span class="meta"> · Pull shop branding from your relay or publish tamper-evident QR certificates to live <code>/r/{id}</code> buyer verification URLs</span>
+        </div>
+        <div class="banner-actions">
+            <button type="button"
+                    class="btn btn-outline"
+                    data-testid="relay-pull-branding"
+                    disabled="@(_pullingBranding || _publishingCert)"
+                    @onclick="PullBrandingFromRelayAsync">
+                <Icon Name="refresh" Size="14" />
+                @(_pullingBranding ? "Pulling branding…" : "Pull Branding from Relay")
+            </button>
+            <button type="button"
+                    class="btn btn-primary"
+                    data-testid="publish-hosted-cert"
+                    disabled="@(_publishingCert || _pullingBranding)"
+                    @onclick="PublishHostedCertificateAsync">
+                <Icon Name="cert" Size="14" />
+                @(_publishingCert ? "Publishing…" : "Publish Hosted QR Certificate")
+            </button>
+        </div>
+    </div>
+
+    <div class="relay-publish-grid">
+        <label class="connect-tech-field">
+            <span class="meta">Relay Server URL</span>
+            <input data-testid="relay-server-url"
+                   @bind="_relayServerUrl"
+                   @bind:event="oninput"
+                   maxlength="240"
+                   placeholder="https://remoteblazorwebview.com:34544"
+                   autocomplete="url" />
+        </label>
+        <label class="connect-tech-field">
+            <span class="meta">Shop Group Slug</span>
+            <input data-testid="relay-group-slug"
+                   @bind="_relayGroupSlug"
+                   @bind:event="oninput"
+                   maxlength="64"
+                   placeholder="e.g. acme-pc"
+                   autocomplete="off" />
+        </label>
+        <label class="connect-tech-field">
+            <span class="meta">Shop API Key (<code>rpd_live_…</code> — kept local, never in HTML)</span>
+            <div class="relay-key-row">
+                <input type="@(_showApiKey ? "text" : "password")"
+                       data-testid="relay-api-key"
+                       @bind="_relayApiKey"
+                       @bind:event="oninput"
+                       maxlength="160"
+                       placeholder="rpd_live_..."
+                       autocomplete="off" />
+                <button type="button"
+                        class="btn-small"
+                        data-testid="relay-api-key-toggle"
+                        aria-label="@(_showApiKey ? "Hide API key" : "Show API key")"
+                        title="@(_showApiKey ? "Hide API key" : "Show API key")"
+                        aria-pressed="@(_showApiKey ? "true" : "false")"
+                        @onclick="() => _showApiKey = !_showApiKey">
+                    <Icon Name="@(_showApiKey ? "eye-off" : "eye")" Size="12" />
+                </button>
+            </div>
+        </label>
+    </div>
+
+    @if (_relayMessage is not null)
+    {
+        <p class="meta" style="margin: 8px 0 0" data-testid="relay-sync-status">@_relayMessage</p>
+    }
+    @if (_publishError is not null)
+    {
+        <p class="notice notice-error" role="alert" data-testid="publish-cert-error">@_publishError</p>
+    }
+    @if (_publishedCertUrl is not null)
+    {
+        <div class="svc-result-ok relay-published-banner" style="margin-top: 10px; margin-bottom: 0">
+            <div>
+                <strong>Hosted QR certificate live:</strong>
+                <a href="@_publishedCertUrl" target="_blank" rel="noopener noreferrer" data-testid="published-cert-url">@_publishedCertUrl</a>
+                @if (!string.IsNullOrWhiteSpace(_publishedCertShortHash))
+                {
+                    <span class="chip chip-ok" style="margin-left: 8px">SHA-256 @_publishedCertShortHash</span>
+                }
+            </div>
+        </div>
+    }
+</section>
+
 <section class="card wf-section" data-testid="qa-cert-card">
     <div class="toolbar" style="margin-bottom: 8px">
         <div>
@@ -186,8 +277,10 @@
     private const long MaxLogoUploadBytes = 56_320; // 55 KB raw -> ~75 KB base64 (< 80,000 char cap)
 
     private readonly PhysicalBenchQaService _fallbackPhysicalQa = new();
+    private readonly ShopRelayClient _fallbackRelay = new();
     private BenchQaRunner? _fallbackBenchQa;
     private PhysicalBenchQaService ActivePhysicalQa => App.PhysicalQa ?? _fallbackPhysicalQa;
+    private ShopRelayClient ActiveRelay => App.ShopRelay ?? _fallbackRelay;
     private BenchQaRunner ActiveBenchQa => App.BenchQa ?? (_fallbackBenchQa ??= new BenchQaRunner(Diagnostics, Store, App.Workflow, App.Preferences, ActivePhysicalQa));
 
     private bool _includeStress = true;
@@ -204,6 +297,17 @@
     private string _warrantyFooter = "";
     private string _verificationBaseUrl = "";
 
+    private string _relayServerUrl = "";
+    private string _relayGroupSlug = "";
+    private string _relayApiKey = "";
+    private bool _showApiKey;
+    private bool _pullingBranding;
+    private bool _publishingCert;
+    private string? _relayMessage;
+    private string? _publishError;
+    private string? _publishedCertUrl;
+    private string? _publishedCertShortHash;
+
     private string? _logoError;
     private string? _statusMessage;
     private string? _savedCertPath;
@@ -212,7 +316,14 @@
     protected override void OnInitialized()
     {
         base.OnInitialized();
-        LoadFromPreferences(App.Preferences?.Current.Branding);
+        var prefs = App.Preferences?.Current;
+        LoadFromPreferences(prefs?.Branding);
+        _relayServerUrl = !string.IsNullOrWhiteSpace(prefs?.RelayServerUrl)
+            ? prefs!.RelayServerUrl!
+            : Environment.GetEnvironmentVariable("REMOTEPC_RELAY_URL")
+                ?? (Session.ServerUri is { } su ? ShopRelayClient.BaseUrl(su) : SessionLaunchOptions.DefaultServerUrl);
+        _relayGroupSlug = Session.Group ?? prefs?.ShopGroupSlug ?? "";
+        _relayApiKey = prefs?.ShopApiKey ?? "";
         ActivePhysicalQa.Changed += OnBenchStateChanged;
         ActiveBenchQa.Changed += OnBenchStateChanged;
     }
@@ -223,6 +334,7 @@
     {
         ActivePhysicalQa.Changed -= OnBenchStateChanged;
         ActiveBenchQa.Changed -= OnBenchStateChanged;
+        _showApiKey = false;
         base.Dispose();
     }
 
@@ -231,7 +343,7 @@
         _savedCertPath = null;
         _saveError = null;
         var current = BuildCurrentBranding();
-        App.Preferences?.Update(p => p with { Branding = current.HasAny ? current : null });
+        PersistRelayAndBranding(current);
         _ = ActiveBenchQa.RunIntakeAsync(_includeStress, _includeAudioCamera);
         return Task.CompletedTask;
     }
@@ -265,6 +377,148 @@
         WarrantyFooter = _warrantyFooter,
         VerificationBaseUrl = _verificationBaseUrl,
     }.Normalized();
+
+    private void PersistRelayAndBranding(ShopBranding branding)
+    {
+        var savedBranding = branding.HasAny ? branding : null;
+        var cleanServer = ShopRelayClient.TryParseRelayUri(_relayServerUrl, out var parsedUri) && parsedUri is not null
+            ? ShopRelayClient.BaseUrl(parsedUri)
+            : (string.IsNullOrWhiteSpace(_relayServerUrl) ? null : _relayServerUrl.Trim());
+        var cleanGroup = SessionLaunchOptions.NormalizeGroup(_relayGroupSlug);
+        var cleanKey = string.IsNullOrWhiteSpace(_relayApiKey) ? null : _relayApiKey.Trim();
+
+        App.Preferences?.Update(p => p with
+        {
+            Branding = savedBranding,
+            RelayServerUrl = cleanServer,
+            ShopGroupSlug = cleanGroup,
+            ShopApiKey = cleanKey,
+        });
+    }
+
+    private async Task PullBrandingFromRelayAsync()
+    {
+        _relayMessage = null;
+        _publishError = null;
+
+        var normalizedGroup = SessionLaunchOptions.NormalizeGroup(_relayGroupSlug);
+        if (string.IsNullOrEmpty(normalizedGroup))
+        {
+            _publishError = "Enter a shop group slug (for example, acme-pc) to pull branding from the relay.";
+            return;
+        }
+
+        if (!ShopRelayClient.TryParseRelayUri(_relayServerUrl, out var relayUri) || relayUri is null)
+        {
+            _publishError = "Enter a valid http:// or https:// relay server URL.";
+            return;
+        }
+
+        _pullingBranding = true;
+        try
+        {
+            var result = await ActiveRelay.FetchBrandingAsync(relayUri, normalizedGroup);
+            switch (result)
+            {
+                case ShopRelayBrandingResult.Found found:
+                    var preservedNotes = _techNotes;
+                    LoadFromPreferences(found.Branding);
+                    if (!string.IsNullOrWhiteSpace(preservedNotes))
+                        _techNotes = preservedNotes;
+                    _relayGroupSlug = found.GroupSlug;
+                    var merged = BuildCurrentBranding();
+                    PersistRelayAndBranding(merged);
+                    if (App.Workflow is { State.Stage: WorkflowStage.Done } wf)
+                        wf.RefreshReportBranding(merged.HasAny ? merged : null);
+                    _relayMessage = $"Pulled live branding for '{found.Branding.ShopName ?? found.GroupSlug}' ({found.GroupSlug}).";
+                    break;
+
+                case ShopRelayBrandingResult.NotFoundOrInactive:
+                    _publishError = "Shop group not found or subscription inactive.";
+                    break;
+
+                case ShopRelayBrandingResult.NetworkError err:
+                    _publishError = $"Could not reach relay server: {err.Message}";
+                    break;
+            }
+        }
+        finally
+        {
+            _pullingBranding = false;
+        }
+    }
+
+    private async Task PublishHostedCertificateAsync()
+    {
+        _publishError = null;
+        _relayMessage = null;
+        _publishedCertUrl = null;
+        _publishedCertShortHash = null;
+
+        if (!ShopRelayClient.TryParseRelayUri(_relayServerUrl, out var relayUri) || relayUri is null)
+        {
+            _publishError = "Enter a valid http:// or https:// relay server URL before publishing.";
+            return;
+        }
+
+        var trimmedKey = _relayApiKey.Trim();
+        if (!trimmedKey.StartsWith(ShopRelayClient.ApiKeyPrefix, StringComparison.Ordinal) || trimmedKey.Length <= ShopRelayClient.ApiKeyPrefix.Length)
+        {
+            _publishError = "Enter a valid Shop API key starting with 'rpd_live_' (from your relay /shop portal).";
+            return;
+        }
+
+        // Ensure the certificate's embedded QR badge encodes {relayBase}/r/{id}?h={shortHash} before building the HTML!
+        var relayVerifyBase = $"{ShopRelayClient.BaseUrl(relayUri)}/r";
+        if (string.IsNullOrWhiteSpace(_verificationBaseUrl))
+            _verificationBaseUrl = relayVerifyBase;
+
+        var branding = BuildCurrentBranding();
+        if (branding.SafeVerificationBaseUrl is null)
+        {
+            branding = (branding with { VerificationBaseUrl = relayVerifyBase }).Normalized();
+            _verificationBaseUrl = branding.VerificationBaseUrl ?? relayVerifyBase;
+        }
+
+        PersistRelayAndBranding(branding);
+
+        var snapshot = HardwareQaCertificate.Capture(Store, Session.MachineName, DateTimeOffset.Now, branding, physicalQa: ActivePhysicalQa.Current);
+        var html = HardwareQaCertificate.BuildHtml(snapshot);
+        var uploadReq = ShopRelayClient.CreateQaCertificateRequest(snapshot, html);
+
+        _publishingCert = true;
+        try
+        {
+            var result = await ActiveRelay.PublishReportAsync(relayUri, trimmedKey, uploadReq);
+            switch (result)
+            {
+                case ShopReportPublishResult.Published pub:
+                    _publishedCertUrl = pub.Url;
+                    _publishedCertShortHash = pub.ShortHash;
+                    break;
+
+                case ShopReportPublishResult.Unauthorized:
+                    _publishError = "Shop API key was rejected (401 Unauthorized). Check your rpd_live_... key in the relay /shop portal.";
+                    break;
+
+                case ShopReportPublishResult.PaymentRequired:
+                    _publishError = "Shop subscription or trial is inactive (402 Payment Required). Activate billing on the relay /shop portal to publish hosted QR links.";
+                    break;
+
+                case ShopReportPublishResult.InvalidRequest inv:
+                    _publishError = $"Relay rejected certificate upload: {inv.Error}";
+                    break;
+
+                case ShopReportPublishResult.NetworkError net:
+                    _publishError = $"Could not upload certificate to relay: {net.Message}";
+                    break;
+            }
+        }
+        finally
+        {
+            _publishingCert = false;
+        }
+    }
 
     private async Task OnLogoSelected(InputFileChangeEventArgs e)
     {
@@ -330,11 +584,11 @@
     private void SaveBranding()
     {
         var normalized = BuildCurrentBranding();
+        PersistRelayAndBranding(normalized);
         var saved = normalized.HasAny ? normalized : null;
-        App.Preferences?.Update(p => p with { Branding = saved });
         if (App.Workflow is { State.Stage: WorkflowStage.Done } wf)
             wf.RefreshReportBranding(saved);
-        _statusMessage = saved is not null ? "Saved shop branding for reports and QA certificates." : "Saved (unbranded).";
+        _statusMessage = saved is not null ? "Saved shop branding and relay settings." : "Saved (unbranded).";
     }
 
     private void ResetBranding()
@@ -353,7 +607,7 @@
         _saveError = null;
         if (App.Workflow is null) return;
         var current = BuildCurrentBranding();
-        App.Preferences?.Update(p => p with { Branding = current.HasAny ? current : null });
+        PersistRelayAndBranding(current);
         var path = App.Workflow.SaveHardwareQaCertificate(out _, out _, current, ActivePhysicalQa.Current);
         if (path is not null) _savedCertPath = path;
         else _saveError = "Could not write the HTML certificate to disk on this PC.";

@@ -701,3 +701,40 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; gap:
 .display-qa-hud-actions button { background: rgba(30, 41, 59, 0.92); color: #f8fafc; border-color: rgba(255, 255, 255, 0.28); }
 .display-qa-hud-actions button.btn-primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
+/* ---------- Shop Relay Integration ("Connect to Technician", Trust Pill & Hosted QR Publishing) ---------- */
+.connect-tech-btn { white-space: nowrap; flex: none; }
+.shop-trust-pill { display: inline-flex; align-items: center; gap: 7px; padding: 3px 10px; border-radius: 99px; background: var(--ok-bg); border: 1px solid var(--ok-border); color: var(--ok-fg); font-size: 12.5px; max-width: 380px; min-width: 0; overflow: hidden; }
+[data-theme="dark"] .shop-trust-pill { color: var(--chip-ok); border-color: var(--ok-border); }
+.shop-trust-logo { max-height: 20px; max-width: 56px; object-fit: contain; border-radius: 4px; background: #fff; padding: 1px 2px; flex: none; }
+.shop-trust-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+.shop-group-badge { padding: 1px 7px; font-size: 11px; font-family: var(--font-num); }
+.shop-trust-phone { white-space: nowrap; font-family: var(--font-num); font-size: 12px; opacity: .9; }
+.shop-warning-banner { margin-bottom: 14px; }
+
+.connect-tech-modal { width: min(500px, calc(100vw - 24px)); }
+.connect-tech-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.connect-tech-head h3 { margin: 0; }
+.connect-tech-fields { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.connect-tech-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.connect-tech-field input { width: 100%; box-sizing: border-box; }
+.connect-tech-preview { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--ok-border); background: var(--ok-bg); margin: 10px 0; display: flex; flex-direction: column; gap: 8px; }
+.connect-tech-preview-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.connect-tech-preview-logo { max-height: 38px; max-width: 120px; object-fit: contain; border-radius: 6px; background: #fff; padding: 2px 4px; border: 1px solid var(--border); }
+.connect-tech-preview-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-strong); }
+.connect-tech-preview-details { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0; color: var(--text); }
+
+.relay-publish-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 10px 16px; margin-top: 10px; }
+.relay-key-row { display: flex; gap: 6px; align-items: center; }
+.relay-key-row input { flex: 1 1 auto; min-width: 0; }
+.relay-published-banner { flex-wrap: wrap; overflow-wrap: anywhere; }
+.relay-published-banner a { font-weight: 600; word-break: break-all; }
+
+@media (max-width: 1060px) {
+  .app { grid-template-rows: auto minmax(0, 1fr); }
+  .topbar { flex-wrap: wrap; padding: 8px 16px; gap: 8px 10px; min-height: 56px; }
+}
+@media (max-width: 600px) {
+  .app { grid-template-rows: auto auto minmax(0, 1fr); }
+}
+
+

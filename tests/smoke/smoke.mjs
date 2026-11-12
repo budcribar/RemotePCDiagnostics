@@ -40,6 +40,16 @@ try {
     console.log(`Button ${id}:`, (await page.getByTestId(id).textContent())?.trim());
   }
 
+  // Top-bar "Connect to Technician" button opens the shop relay verification dialog and closes cleanly.
+  await page.getByTestId('connect-tech-open').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.getByTestId('connect-tech-open').click();
+  await page.getByTestId('connect-tech-dialog').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.getByTestId('connect-tech-group').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.getByTestId('connect-tech-server').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.getByTestId('connect-tech-close').click();
+  await page.getByTestId('connect-tech-dialog').waitFor({ state: 'detached', timeout: 10_000 });
+  console.log('Connect to Technician dialog: open/close OK');
+
   // Theme switcher: each choice must update data-theme / data-theme-choice on <html>.
   const attr = n => page.evaluate(k => document.documentElement.getAttribute(k), n);
   const initialChoice = await attr('data-theme-choice');
@@ -114,11 +124,14 @@ try {
   console.log('History page:', await page.getByTestId('history-empty').count() ? 'empty state' : `${await page.getByTestId('history-row').count()} row(s)`);
   await page.screenshot({ path: `${outDir}/history.png`, fullPage: true });
 
-  // QA Certificate & Shop Branding page: renders live 1-page QR certificate preview, 10-min QA preset, and physical QA checks.
+  // QA Certificate & Shop Branding page: renders live 1-page QR certificate preview, 10-min QA preset, physical QA checks, and hosted relay publishing controls.
   await page.getByTestId('nav-certificates').click();
   await page.getByTestId('branding-title').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('bench-qa-start').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('physical-qa-card').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('relay-server-url').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('relay-api-key').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('publish-hosted-cert').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('qa-preview-frame').waitFor({ state: 'visible', timeout: 15_000 });
   console.log('QA Certificate ID:', await page.getByTestId('qa-live-id').innerText());
   await page.screenshot({ path: `${outDir}/certificates.png`, fullPage: true });

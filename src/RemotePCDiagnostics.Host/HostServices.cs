@@ -152,6 +152,10 @@ public static class HostServices
             sp.GetService<RemotePCDiagnostics.Core.Preferences.PreferencesService>(),
             sp.GetService<RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaService>(),
             L<RemotePCDiagnostics.Core.Workflow.BenchQaRunner>()));
+        services.AddSingleton(_ => new RemotePCDiagnostics.Core.Workflow.ShopRelayClient(log: L<RemotePCDiagnostics.Core.Workflow.ShopRelayClient>()));
+        services.AddSingleton<RemoteSessionHealth>();
+        services.AddSingleton(sp => new DesktopSessionRelauncher(sp.GetRequiredService<ISessionContext>(), L<DesktopSessionRelauncher>()));
+        services.AddSingleton<ISessionRelauncher>(sp => sp.GetRequiredService<DesktopSessionRelauncher>());
         // The optional host services pages may use (instead of injecting IServiceProvider).
         services.AddSingleton(sp => new RemotePCDiagnostics.UI.AppServices(sp.GetService<RemediationService>(), sp.GetService<ServiceActionService>(),
             sp.GetService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(), sp.GetService<RemotePCDiagnostics.Core.Areas.ICopilotHandoff>(),
@@ -159,7 +163,10 @@ public static class HostServices
             sp.GetService<PluginRegistrar>(), sp.GetService<IModuleUiFrames>(),
             new SupportDiagnostics(new RemotePCDiagnostics.Core.Osquery.SystemProcessLauncher()),
             sp.GetService<RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaService>(),
-            sp.GetService<RemotePCDiagnostics.Core.Workflow.BenchQaRunner>()));
+            sp.GetService<RemotePCDiagnostics.Core.Workflow.BenchQaRunner>(),
+            sp.GetService<RemotePCDiagnostics.Core.Workflow.ShopRelayClient>(),
+            sp.GetService<ISessionRelauncher>(),
+            sp.GetService<RemoteSessionHealth>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
         return services;

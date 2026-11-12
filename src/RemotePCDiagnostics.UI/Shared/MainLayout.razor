@@ -1,5 +1,6 @@
 @inherits LayoutComponentBase
 @implements IDisposable
+@using RemotePCDiagnostics.Core.Workflow
 @inject ISessionContext Session
 @inject NavigationManager Nav
 @inject AppServices App
@@ -11,12 +12,34 @@
         @if (Session.Mode == SessionMode.Remote)
         {
             <span class="badge badge-remote">@RemoteUsers.Label(Remote.Count)</span>
+            @if (_activeRemoteBranding is { } trustBrand && !string.IsNullOrWhiteSpace(Session.Group))
+            {
+                <span class="shop-trust-pill" data-testid="shop-trust-banner" title="Verified repair shop on relay">
+                    @if (trustBrand.SafeLogoDataUri is { } trustLogo)
+                    {
+                        <img src="@trustLogo" alt="" class="shop-trust-logo" />
+                    }
+                    <strong class="shop-trust-name">@(trustBrand.ShopName ?? Session.Group)</strong>
+                    <span class="badge shop-group-badge">@Session.Group</span>
+                    @if (!string.IsNullOrWhiteSpace(trustBrand.Phone))
+                    {
+                        <span class="shop-trust-phone">@trustBrand.Phone</span>
+                    }
+                </span>
+            }
         }
         else
         {
             <span class="badge badge-local">Local</span>
         }
         <span class="topbar-spacer"></span>
+        <button type="button"
+                class="btn-small connect-tech-btn"
+                data-testid="connect-tech-open"
+                @onclick="OpenConnectDialog">
+            <Icon Name="net" Size="14" />
+            <span>@(Session.Mode == SessionMode.Remote ? "Shop connection" : "Connect to Technician")</span>
+        </button>
         @if (Session.Mode == SessionMode.Remote)
         {
             @* RemoteBlazorWebView draws each browser's own give/take/voice bar over this placeholder. *@
@@ -26,17 +49,150 @@
         <span class="pc" title="Computer name"><Icon Name="pc" Size="16" />@Session.MachineName</span>
     </header>
     <NavRail />
-    <main class="content">@Body</main>
+    <main class="content">
+        @if (BuildShopWarningBanner() is { } shopWarning)
+        {
+            <section class="banner banner-warn shop-warning-banner" role="alert" data-testid="shop-session-warning">
+                <span class="banner-icon"><Icon Name="crash" Size="20" /></span>
+                <div class="banner-text">
+                    <div class="banner-title">@shopWarning.Title</div>
+                    <div class="banner-sub">@shopWarning.Detail</div>
+                </div>
+                <div class="banner-actions">
+                    <button type="button" class="btn btn-outline" @onclick="OpenConnectDialog">Check shop code</button>
+                </div>
+            </section>
+        }
+        @Body
+    </main>
+
+    @if (_connectDialogOpen)
+    {
+        <div class="svc-modal-backdrop" @onclick="CloseConnectDialog"></div>
+        <div class="svc-modal connect-tech-modal"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="connect-tech-heading"
+             tabindex="-1"
+             data-testid="connect-tech-dialog"
+             @onkeydown="OnDialogKeyDown">
+            <div class="connect-tech-head">
+                <h3 id="connect-tech-heading">Connect to Technician</h3>
+                <button type="button" class="btn-small" data-testid="connect-tech-close" aria-label="Close dialog" @onclick="CloseConnectDialog">Close</button>
+            </div>
+            <p class="meta">Enter your repair shop's code to verify their identity and open a shared remote diagnostic session.</p>
+
+            <div class="connect-tech-fields">
+                <label class="connect-tech-field">
+                    <span class="meta">Shop Code (Group)</span>
+                    <input data-testid="connect-tech-group"
+                           @bind="_dialogGroup"
+                           @bind:event="oninput"
+                           maxlength="64"
+                           placeholder="e.g. acme-pc"
+                           autocomplete="off" />
+                </label>
+                <label class="connect-tech-field">
+                    <span class="meta">Relay Server URL</span>
+                    <input data-testid="connect-tech-server"
+                           @bind="_dialogServerUrl"
+                           @bind:event="oninput"
+                           maxlength="240"
+                           placeholder="https://remoteblazorwebview.com:34544"
+                           autocomplete="url" />
+                </label>
+            </div>
+
+            @if (_dialogError is not null)
+            {
+                <p class="notice notice-error" role="alert" data-testid="connect-tech-error">@_dialogError</p>
+            }
+
+            @if (_verifiedBranding is { } vb && _verifiedGroupSlug is { } vg)
+            {
+                <div class="connect-tech-preview" data-testid="connect-tech-preview">
+                    <div class="connect-tech-preview-head">
+                        @if (vb.SafeLogoDataUri is { } logo)
+                        {
+                            <img src="@logo" alt="Verified shop logo" class="connect-tech-preview-logo" />
+                        }
+                        <div class="connect-tech-preview-meta">
+                            <strong>@(vb.ShopName ?? vg)</strong>
+                            <span class="chip chip-ok">Verified · @vg</span>
+                        </div>
+                    </div>
+                    <div class="connect-tech-preview-details meta">
+                        @if (!string.IsNullOrWhiteSpace(vb.Phone))
+                        {
+                            <span>Phone: <strong>@vb.Phone</strong></span>
+                        }
+                        @if (vb.SafeWebsiteHref is { } href)
+                        {
+                            <span>Website: <a href="@href" target="_blank" rel="noopener noreferrer">@(vb.Website ?? href)</a></span>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(vb.Address))
+                        {
+                            <span>Address: @vb.Address</span>
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (_dialogStatus is not null)
+            {
+                <p class="notice" role="status" data-testid="connect-tech-status">@_dialogStatus</p>
+            }
+
+            <div class="buttons">
+                <button type="button"
+                        class="btn btn-outline"
+                        style="width:auto"
+                        data-testid="connect-tech-verify"
+                        disabled="@(_dialogBusy || string.IsNullOrWhiteSpace(_dialogGroup))"
+                        @onclick="VerifyShopAsync">
+                    @(_verifying ? "Verifying…" : "Verify Shop")
+                </button>
+                <button type="button"
+                        class="btn btn-primary"
+                        data-testid="connect-tech-launch"
+                        disabled="@(_dialogBusy || string.IsNullOrWhiteSpace(_dialogGroup))"
+                        @onclick="LaunchRemoteSessionAsync">
+                    @(_launching ? "Connecting…" : "Connect Remote Session")
+                </button>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
+    private readonly ShopRelayClient _fallbackRelay = new();
+    private ShopRelayClient ActiveRelay => App.ShopRelay ?? _fallbackRelay;
+
     private bool _navigationOpen;
+    private bool _connectDialogOpen;
+    private string _dialogGroup = "";
+    private string _dialogServerUrl = "";
+    private bool _verifying;
+    private bool _launching;
+    private bool _dialogBusy => _verifying || _launching;
+    private string? _dialogError;
+    private string? _dialogStatus;
+    private ShopBranding? _verifiedBranding;
+    private string? _verifiedGroupSlug;
+    private string? _verifiedServerBase;
+
+    private ShopBranding? _activeRemoteBranding;
+    private bool _remoteGroupInactive;
+    private string? _remoteBrandingNetworkError;
 
     // After the workflow's restart the app is relaunched (on the start page): go straight back to the Service workflow page.
     protected override void OnInitialized()
     {
         Nav.LocationChanged += CloseNavigation;
         Remote.Changed += RemoteUsersChanged;
+        if (App.RemoteHealth is { } health)
+            health.Changed += RemoteHealthChanged;
+
         try
         {
             if (App.Workflow is { ShouldOpenWorkflowPage: true }
@@ -44,6 +200,251 @@
                 Nav.NavigateTo("workflow", replace: true);
         }
         catch { }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Session.Mode == SessionMode.Remote
+            && Session.ServerUri is { } serverUri
+            && !string.IsNullOrWhiteSpace(Session.Group))
+        {
+            await RefreshActiveRemoteShopAsync(serverUri, Session.Group);
+        }
+    }
+
+    private async Task RefreshActiveRemoteShopAsync(Uri serverUri, string groupSlug)
+    {
+        var result = await ActiveRelay.FetchBrandingAsync(serverUri, groupSlug);
+        switch (result)
+        {
+            case ShopRelayBrandingResult.Found found:
+                _activeRemoteBranding = found.Branding;
+                _remoteGroupInactive = false;
+                _remoteBrandingNetworkError = null;
+                ApplyBrandingFallbackToPreferences(serverUri, found.GroupSlug, found.Branding);
+                break;
+
+            case ShopRelayBrandingResult.NotFoundOrInactive:
+                _activeRemoteBranding = null;
+                _remoteGroupInactive = true;
+                _remoteBrandingNetworkError = null;
+                break;
+
+            case ShopRelayBrandingResult.NetworkError err:
+                _remoteBrandingNetworkError = err.Message;
+                break;
+        }
+    }
+
+    private void ApplyBrandingFallbackToPreferences(Uri serverUri, string groupSlug, ShopBranding branding)
+    {
+        if (App.Preferences is not { } prefs) return;
+        var current = prefs.Current;
+        var cleanServer = ShopRelayClient.BaseUrl(serverUri);
+        var shouldImportBranding = current.Branding is null || !current.Branding.HasAny;
+        if (shouldImportBranding
+            || !string.Equals(current.RelayServerUrl, cleanServer, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(current.ShopGroupSlug, groupSlug, StringComparison.Ordinal))
+        {
+            prefs.Update(p => p with
+            {
+                RelayServerUrl = string.IsNullOrWhiteSpace(p.RelayServerUrl) ? cleanServer : p.RelayServerUrl,
+                ShopGroupSlug = string.IsNullOrWhiteSpace(p.ShopGroupSlug) ? groupSlug : p.ShopGroupSlug,
+                Branding = (p.Branding is null || !p.Branding.HasAny) && branding.HasAny ? branding : p.Branding,
+            });
+        }
+    }
+
+    private (string Title, string Detail)? BuildShopWarningBanner()
+    {
+        if (Session.Mode != SessionMode.Remote || string.IsNullOrWhiteSpace(Session.Group))
+            return null;
+
+        var issue = App.RemoteHealth?.Issue ?? RemoteRelayIssueKind.None;
+        if (_remoteGroupInactive || issue == RemoteRelayIssueKind.GroupInactive)
+        {
+            return (
+                $"Shop code \"{Session.Group}\" is not found or subscription is inactive",
+                "The relay reported that this shop group is not active. Ask your technician to confirm their shop code or renew their relay plan.");
+        }
+
+        if (issue == RemoteRelayIssueKind.SessionLimitReached
+            || (issue == RemoteRelayIssueKind.CreateFailedOrDenied && _activeRemoteBranding is not null))
+        {
+            return (
+                $"Shop \"{Session.Group}\" has reached its concurrent remote session limit",
+                "All active remote technician slots on this shop's plan are currently in use. Ask the shop to close an finished session or upgrade their plan tier.");
+        }
+
+        if (issue == RemoteRelayIssueKind.RelayUnreachable || _remoteBrandingNetworkError is not null)
+        {
+            return (
+                $"Could not verify shop \"{Session.Group}\" on the relay",
+                _remoteBrandingNetworkError ?? "Check your internet connection and relay server URL.");
+        }
+
+        return null;
+    }
+
+    private string DefaultRelayServerUrl()
+    {
+        var prefs = App.Preferences?.Current;
+        if (!string.IsNullOrWhiteSpace(prefs?.RelayServerUrl))
+            return prefs.RelayServerUrl!;
+        var envRelay = Environment.GetEnvironmentVariable("REMOTEPC_RELAY_URL")
+            ?? Environment.GetEnvironmentVariable(SessionLaunchOptions.ServerUrlVariable);
+        if (!string.IsNullOrWhiteSpace(envRelay))
+            return envRelay.Trim();
+        if (Session.ServerUri is { } activeUri)
+            return ShopRelayClient.BaseUrl(activeUri);
+        return SessionLaunchOptions.DefaultServerUrl;
+    }
+
+    private void OpenConnectDialog()
+    {
+        var prefs = App.Preferences?.Current;
+        _dialogGroup = Session.Group ?? prefs?.ShopGroupSlug ?? "";
+        _dialogServerUrl = DefaultRelayServerUrl();
+        _dialogError = null;
+        _dialogStatus = null;
+        if (_activeRemoteBranding is not null && !string.IsNullOrWhiteSpace(Session.Group) && Session.ServerUri is not null)
+        {
+            _verifiedBranding = _activeRemoteBranding;
+            _verifiedGroupSlug = Session.Group;
+            _verifiedServerBase = ShopRelayClient.BaseUrl(Session.ServerUri);
+        }
+        else
+        {
+            _verifiedBranding = null;
+            _verifiedGroupSlug = null;
+            _verifiedServerBase = null;
+        }
+        _connectDialogOpen = true;
+    }
+
+    private void CloseConnectDialog()
+    {
+        if (_launching) return;
+        _connectDialogOpen = false;
+    }
+
+    private void OnDialogKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            CloseConnectDialog();
+    }
+
+    private async Task<bool> VerifyShopAsync()
+    {
+        _dialogError = null;
+        _dialogStatus = null;
+
+        var normalizedGroup = SessionLaunchOptions.NormalizeGroup(_dialogGroup);
+        if (string.IsNullOrEmpty(normalizedGroup))
+        {
+            _dialogError = "Enter a shop code (for example, acme-pc).";
+            return false;
+        }
+
+        if (!ShopRelayClient.TryParseRelayUri(_dialogServerUrl, out var serverUri) || serverUri is null)
+        {
+            _dialogError = "Enter a valid http:// or https:// relay server URL.";
+            return false;
+        }
+
+        _verifying = true;
+        try
+        {
+            var result = await ActiveRelay.FetchBrandingAsync(serverUri, normalizedGroup);
+            switch (result)
+            {
+                case ShopRelayBrandingResult.Found found:
+                    _verifiedBranding = found.Branding;
+                    _verifiedGroupSlug = found.GroupSlug;
+                    _verifiedServerBase = ShopRelayClient.BaseUrl(serverUri);
+                    _dialogGroup = found.GroupSlug;
+                    return true;
+
+                case ShopRelayBrandingResult.NotFoundOrInactive:
+                    _verifiedBranding = null;
+                    _verifiedGroupSlug = null;
+                    _verifiedServerBase = null;
+                    _dialogError = "Shop group not found or subscription inactive.";
+                    return false;
+
+                case ShopRelayBrandingResult.NetworkError err:
+                    _verifiedBranding = null;
+                    _verifiedGroupSlug = null;
+                    _verifiedServerBase = null;
+                    _dialogError = $"Could not reach relay server: {err.Message}";
+                    return false;
+
+                default:
+                    return false;
+            }
+        }
+        finally
+        {
+            _verifying = false;
+        }
+    }
+
+    private async Task LaunchRemoteSessionAsync()
+    {
+        _dialogError = null;
+        _dialogStatus = null;
+
+        var normalizedGroup = SessionLaunchOptions.NormalizeGroup(_dialogGroup);
+        if (string.IsNullOrEmpty(normalizedGroup))
+        {
+            _dialogError = "Enter a shop code (for example, acme-pc).";
+            return;
+        }
+
+        if (!ShopRelayClient.TryParseRelayUri(_dialogServerUrl, out var serverUri) || serverUri is null)
+        {
+            _dialogError = "Enter a valid http:// or https:// relay server URL.";
+            return;
+        }
+
+        var cleanServer = ShopRelayClient.BaseUrl(serverUri);
+        if (_verifiedBranding is null
+            || !string.Equals(_verifiedGroupSlug, normalizedGroup, StringComparison.Ordinal)
+            || !string.Equals(_verifiedServerBase, cleanServer, StringComparison.OrdinalIgnoreCase))
+        {
+            var ok = await VerifyShopAsync();
+            if (!ok) return;
+        }
+
+        var finalGroup = _verifiedGroupSlug ?? normalizedGroup;
+        var verifiedBranding = _verifiedBranding;
+
+        _launching = true;
+        try
+        {
+            App.Preferences?.Update(p => p with
+            {
+                RelayServerUrl = cleanServer,
+                ShopGroupSlug = finalGroup,
+                Branding = (p.Branding is null || !p.Branding.HasAny) && verifiedBranding is { HasAny: true }
+                    ? verifiedBranding
+                    : p.Branding,
+            });
+
+            var relauncher = App.Relauncher ?? new DesktopSessionRelauncher(Session);
+            var outcome = relauncher.RequestRemoteSession(serverUri, finalGroup);
+            _dialogStatus = outcome.Message;
+            if (!outcome.RelaunchedDesktopProcess && verifiedBranding is not null)
+                _activeRemoteBranding = verifiedBranding;
+        }
+        catch (Exception ex)
+        {
+            _dialogError = $"Could not launch remote session: {ex.Message}";
+        }
+        finally
+        {
+            _launching = false;
+        }
     }
 
     // Phone layout: picking a page from the menu closes it, so the chosen page isn't pushed below the open menu.
@@ -55,10 +456,13 @@
     }
 
     private void RemoteUsersChanged() => _ = InvokeAsync(StateHasChanged);
+    private void RemoteHealthChanged() => _ = InvokeAsync(StateHasChanged);
 
     public void Dispose()
     {
         Nav.LocationChanged -= CloseNavigation;
         Remote.Changed -= RemoteUsersChanged;
+        if (App.RemoteHealth is { } health)
+            health.Changed -= RemoteHealthChanged;
     }
 }

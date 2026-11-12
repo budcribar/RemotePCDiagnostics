@@ -31,6 +31,15 @@ public sealed record UserPreferences
     /// <summary>White-label shop or refurbisher branding applied to client service reports and 1-page buyer Hardware QA certificates.</summary>
     public Workflow.ShopBranding? Branding { get; init; }
 
+    /// <summary>Preferred shop relay server URL (e.g. <c>https://relay.example.com</c>) for remote sessions and hosted QR certificate publishing.</summary>
+    public string? RelayServerUrl { get; init; }
+
+    /// <summary>Normalized shop tenant slug (e.g. <c>acme-pc</c>) for remote technician sessions and branding lookup.</summary>
+    public string? ShopGroupSlug { get; init; }
+
+    /// <summary>Shop API key (<c>rpd_live_...</c>) used exclusively as a Bearer header when publishing hosted reports/certificates; never embedded in HTML.</summary>
+    public string? ShopApiKey { get; init; }
+
     /// <summary>Most remembered fix choices; the oldest are dropped first (fix ids from long-gone apps shouldn't pile up).</summary>
     public const int MaxFixChoices = 500;
 }

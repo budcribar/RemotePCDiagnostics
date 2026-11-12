@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private static readonly ILogger Logger = HostServices.For<MainWindow>(App.Loggers);
     private const string HostPage = @"wwwroot\index.html";
     private readonly ServiceProvider _provider;
+    private readonly string? _group;
     private Uri? _serverUri;
     private Uri? _remoteUserUrl;
     private DispatcherTimer? _readyTimer;
@@ -40,10 +41,12 @@ public partial class MainWindow : Window
         var pendingReboot = RebootResumeCoordinator.TryReadPendingStateFile();
         var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, pendingReboot);
         var mode = launch.Mode;
+        _group = launch.Group;
 
-        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Unattended, launch.Voice);
+        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Unattended, launch.Voice, launch.Group);
         var services = new ServiceCollection().AddRemotePCDiagnosticsHost(sessionCtx, App.Log, App.Event, loggers: App.Loggers);
         var provider = _provider = services.BuildServiceProvider();
+        provider.GetService<DesktopSessionRelauncher>()?.BindWindowClose(() => Dispatcher.BeginInvoke(Close));
         Resources.Add("services", provider);
         Closed += (_, _) => { try { provider.GetService<IEcFanSource>()?.Dispose(); } catch { } }; // release the PawnIO EC module handle
         provider.GetRequiredService<ChecksScreenState>(); // start tracking results (run mode labels, last completed) from launch
@@ -82,7 +85,7 @@ public partial class MainWindow : Window
         _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>().ResumeAfterRestartAsync(); } catch (Exception ex) { Logger.Warn($"Benchmark resume failed: {ex.Message}"); } });
 
         InitializeComponent();
-        Logger.Info($"MainWindow initialized, mode={mode} server={launch.ServerUri}");
+        Logger.Info($"MainWindow initialized, mode={mode} server={launch.ServerUri} group={launch.Group}");
 
         // CI/diagnostics: pass WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS (e.g. --remote-debugging-port=9222) explicitly
         // and log WebView2 startup so failures show up in host.log.
@@ -116,18 +119,22 @@ public partial class MainWindow : Window
         bool remote;
         try
         {
+            // Group MUST be set before InitializeRemoteBlazor / HostPage (setting Group after HostPage throws ArgumentException).
+            if (launch.Mode == SessionMode.Remote && !string.IsNullOrWhiteSpace(launch.Group))
+                RemoteBlazorWebView.Group = launch.Group;
+
             remote = InitializeRemoteBlazor(new RemoteBlazorStartup
             {
                 ServerUri = launch.ServerUri,
                 Id = sessionCtx.SessionId, // Guid.Empty in Local; in Remote a fixed id (-i=<guid>, REMOTEPC_ID) or a new one
                 Unattended = launch.Unattended,
                 Voice = launch.Voice,
-                // The copy started on a restart: same server and session, same unattended/voice, marked --restarted so it waits
+                // The copy started on a restart: same server, session, and shop group, same unattended/voice, marked --restarted so it waits
                 // for this copy to exit. Called on the UI thread, or on a background thread when this window is not responding.
                 RestartArguments = (server, id) =>
                 {
-                    Logger.Info($"Restart requested from a browser: starting a new copy for session {id}; this one closes");
-                    return SessionLaunchOptions.RestartArguments(server, id, launch.Unattended, launch.Voice);
+                    Logger.Info($"Restart requested from a browser: starting a new copy for session {id} (group={launch.Group}); this one closes");
+                    return SessionLaunchOptions.RestartArguments(server, id, launch.Unattended, launch.Voice, launch.Group);
                 },
             });
         }
@@ -135,11 +142,12 @@ public partial class MainWindow : Window
         {
             Logger.Error($"Remote start failed: {ex}");
             _serverUri = launch.ServerUri;
-            SetRemoteState(RemoteSessionState.Unreachable);
+            provider.GetService<RemoteSessionHealth>()?.ReportFailure(RemoteSessionState.Unreachable, ex.Message);
+            SetRemoteState(RemoteSessionState.Unreachable, ex.Message);
             return;
         }
         if (remote) WatchRemoteSession(launch.ServerUri!, sessionCtx.SessionId, launch.Unattended);
-        // Last: setting HostPage starts the control, and the server and id must be set before it (which is why it is not in the XAML).
+        // Last: setting HostPage starts the control, and the server, group and id must be set before it (which is why it is not in the XAML).
         RemoteBlazorWebView.HostPage = HostPage;
     }
 
@@ -162,6 +170,7 @@ public partial class MainWindow : Window
             // handed control from the session bar.
             _remoteUserUrl = RemoteLinkInfo.BuildMirrorUrl(e.Url ?? serverUri, e.Id != Guid.Empty ? e.Id : id);
             Logger.Info($"ReadyToConnect url={e.Url} id={e.Id} link={_remoteUserUrl}");
+            _provider.GetService<RemoteSessionHealth>()?.ReportReady();
             SetRemoteState(RemoteSessionState.Ready);
             _audit.Started(unattended);
         });
@@ -175,6 +184,7 @@ public partial class MainWindow : Window
         RemoteBlazorWebView.Connected += (_, e) => Dispatcher.BeginInvoke(() =>
         {
             Logger.Info($"Remote Connected id={e.Id} ip={e.IpAddress} user={e.User}");
+            _provider.GetService<RemoteSessionHealth>()?.ReportConnected();
             SetRemoteState(RemoteSessionState.RemoteUserConnected);
         });
         RemoteBlazorWebView.Disconnected += (_, e) => Dispatcher.BeginInvoke(() =>
@@ -182,7 +192,9 @@ public partial class MainWindow : Window
             Logger.Info($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
             _audit.Ended(e.Exception?.Message ?? "");
             _provider.GetService<RemoteUsers>()?.Set(0);
-            SetRemoteState(_remoteUserUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected);
+            var nextState = _remoteUserUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected;
+            _provider.GetService<RemoteSessionHealth>()?.ReportFailure(nextState, e.Exception?.Message);
+            SetRemoteState(nextState, e.Exception?.Message);
         });
 
         _readyTimer = new DispatcherTimer { Interval = RemoteLinkInfo.ReadyTimeout };
@@ -192,6 +204,7 @@ public partial class MainWindow : Window
             if (_remoteUserUrl is null)
             {
                 Logger.Warn($"No ReadyToConnect after {RemoteLinkInfo.ReadyTimeout.TotalSeconds}s (server={serverUri})");
+                _provider.GetService<RemoteSessionHealth>()?.ReportFailure(RemoteSessionState.Unreachable, null);
                 SetRemoteState(RemoteSessionState.Unreachable);
             }
         };
@@ -203,13 +216,50 @@ public partial class MainWindow : Window
         _readyTimer.Start();
     }
 
-    private void SetRemoteState(RemoteSessionState state)
+    private void SetRemoteState(RemoteSessionState state, string? errorDetail = null)
     {
         if (_serverUri is null) return;
         Logger.Info($"Remote session state: {state}");
         // Once the app's page is up its header carries the status. Before that, the one thing to say here is that the
         // relay can't be reached (a later ReadyToConnect replaces this page).
         if (!RemoteLinkInfo.IsWarning(state)) return;
+        if (!string.IsNullOrWhiteSpace(_group) && state == RemoteSessionState.Unreachable)
+        {
+            var issue = RemoteSessionHealth.ClassifyError(errorDetail, state);
+            try { RemoteBlazorWebView.NavigateToString(RemoteSessionHealth.BuildShopRelayDeniedHtml(_serverUri, _group, issue)); }
+            catch (Exception ex) { Logger.Error($"Showing the shop relay notice failed: {ex}"); }
+
+            // Disambiguate generic client CreateFailed errors into GroupInactive (404) vs SessionLimitReached (active shop).
+            if (issue is RemoteRelayIssueKind.CreateFailedOrDenied or RemoteRelayIssueKind.RelayUnreachable
+                && _provider.GetService<RemotePCDiagnostics.Core.Workflow.ShopRelayClient>() is { } relayClient)
+            {
+                var uri = _serverUri;
+                var grp = _group;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var brandingResult = await relayClient.FetchBrandingAsync(uri, grp).ConfigureAwait(false);
+                        var refined = brandingResult switch
+                        {
+                            RemotePCDiagnostics.Core.Workflow.ShopRelayBrandingResult.NotFoundOrInactive => RemoteRelayIssueKind.GroupInactive,
+                            RemotePCDiagnostics.Core.Workflow.ShopRelayBrandingResult.Found when issue == RemoteRelayIssueKind.CreateFailedOrDenied => RemoteRelayIssueKind.SessionLimitReached,
+                            _ => issue,
+                        };
+                        if (refined == issue || _remoteUserUrl is not null) return;
+                        _provider.GetService<RemoteSessionHealth>()?.ReportFailure(state, refined == RemoteRelayIssueKind.GroupInactive ? "group_inactive" : "session_limit_reached");
+                        _ = Dispatcher.BeginInvoke(() =>
+                        {
+                            if (_remoteUserUrl is not null) return;
+                            try { RemoteBlazorWebView.NavigateToString(RemoteSessionHealth.BuildShopRelayDeniedHtml(uri, grp, refined)); }
+                            catch { }
+                        });
+                    }
+                    catch { }
+                });
+            }
+            return;
+        }
         try { RemoteBlazorWebView.NavigateToString(RemoteLinkInfo.UnreachableHtml(_serverUri)); }
         catch (Exception ex) { Logger.Error($"Showing the unreachable notice failed: {ex}"); }
     }
