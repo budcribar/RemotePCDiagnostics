@@ -122,8 +122,8 @@ public sealed class BenchQaRunner(
                     {
                         var finishedCount = p.Steps.Count(s => s.State is StressSuiteStepState.Passed or StressSuiteStepState.Problem or StressSuiteStepState.Skipped);
                         CompletedSteps = baseSteps + Math.Min(finishedCount, suiteStressSlugs.Count);
-                        if (!p.Finished && p.CurrentModule is { Length: > 0 } current)
-                            Status = $"Short hardware stress ({p.CurrentIndex}/{p.Total}): {current}…";
+                        if (!p.Finished && p.CurrentDisplayName is { Length: > 0 } current)
+                            Status = $"Short hardware stress ({p.Index}/{p.Total}): {current}…";
                         Raise();
                     });
 
