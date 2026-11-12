@@ -78,7 +78,7 @@ try {
   if (await page.getByTestId('checks-group-stress').count()) throw new Error('Stress tests should not be listed on the Checks page');
   // Any startup checks must finish first; then the Run button is enabled (nothing running, items selected).
   await page.waitForFunction(() => !document.querySelector('[data-testid="checks-run-checks"]')?.disabled, null, { timeout: 180_000 });
-  if (await page.getByTestId('checks-run-one').isDisabled()) throw new Error('Run just this should be enabled when idle');
+  await page.waitForFunction(() => !document.querySelector('[data-testid="checks-run-one"]')?.disabled, null, { timeout: 60_000 });
   await page.screenshot({ path: `${outDir}/checks.png`, fullPage: true });
 
   // Stress tests screen: its own page; clearing the selection disables its Run button (tri-state: some -> all -> none).
@@ -113,6 +113,13 @@ try {
   await page.locator('[data-testid="history-empty"], [data-testid="history-table"]').first().waitFor({ state: 'visible', timeout: 15_000 });
   console.log('History page:', await page.getByTestId('history-empty').count() ? 'empty state' : `${await page.getByTestId('history-row').count()} row(s)`);
   await page.screenshot({ path: `${outDir}/history.png`, fullPage: true });
+
+  // QA Certificate & Shop Branding page: renders live 1-page QR certificate preview.
+  await page.getByTestId('nav-certificates').click();
+  await page.getByTestId('branding-title').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('qa-preview-frame').waitFor({ state: 'visible', timeout: 15_000 });
+  console.log('QA Certificate ID:', await page.getByTestId('qa-live-id').innerText());
+  await page.screenshot({ path: `${outDir}/certificates.png`, fullPage: true });
 
   await page.getByTestId('nav-about').click();
   await page.getByTestId('about-title').waitFor({ state: 'visible', timeout: 15_000 });

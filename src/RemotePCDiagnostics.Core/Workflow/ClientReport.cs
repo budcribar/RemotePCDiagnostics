@@ -13,31 +13,52 @@ public static class ClientReport
 {
     private static string E(string? s) => WebUtility.HtmlEncode(s ?? "");
 
-    public static string Build(WorkflowState s, BenchmarkRun? before, BenchmarkRun? after, BenchmarkComparison cmp, DateTimeOffset generated)
+    public static string Build(WorkflowState s, BenchmarkRun? before, BenchmarkRun? after, BenchmarkComparison cmp, DateTimeOffset generated, ShopBranding? branding = null)
     {
+        var b = (branding ?? s.Branding)?.Normalized();
         var applied = s.Outcomes.Where(o => o.Success && !o.Skipped).ToList();
         var failed = s.Outcomes.Where(o => !o.Success && !o.Skipped).ToList();
         var skipped = s.Outcomes.Where(o => o.Skipped).ToList();
         var notApproved = s.Fixes.Where(f => !s.IsApproved(f.Id)).ToList();
         var attempted = s.Outcomes.Select(o => o.FixId).ToHashSet();
         List<WorkflowFix> notAttempted = s.StartedUtc is null ? [] : s.Fixes.Where(f => s.IsApproved(f.Id) && !attempted.Contains(f.Id)).ToList();
+        var pageTitle = b?.ShopName is { Length: > 0 } sn ? $"{sn} – PC service report – {s.Machine}" : $"PC service report – {s.Machine}";
         var sb = new StringBuilder();
         sb.Append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
-          .Append("<title>PC service report – ").Append(E(s.Machine)).Append("</title><style>")
+          .Append("<title>").Append(E(pageTitle)).Append("</title><style>")
           .Append("body{font-family:Segoe UI,system-ui,sans-serif;color:#1f2937;max-width:860px;margin:32px auto;padding:0 20px;line-height:1.5}")
           .Append("h1{font-size:26px;margin:0 0 4px}h2{font-size:18px;margin:28px 0 8px;border-bottom:1px solid #e5e7eb;padding-bottom:4px}")
           .Append(".meta{color:#6b7280;font-size:14px}.hero{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;padding:16px 20px;margin:20px 0}")
           .Append(".hero.same{background:#f3f4f6;border-color:#e5e7eb}.hero.worse{background:#fff7ed;border-color:#fed7aa}.hero strong{font-size:22px;display:block}")
+          .Append(".shop-header{display:flex;align-items:center;gap:16px;padding-bottom:14px;margin-bottom:16px;border-bottom:2px solid #e5e7eb}")
+          .Append(".shop-logo{max-height:56px;max-width:180px;object-fit:contain;border-radius:6px}.shop-name{font-size:20px;font-weight:700;color:#111827}")
+          .Append(".tech-notes{background:#f8fafc;border:1px solid #cbd5e1;border-left:4px solid #2563eb;border-radius:8px;padding:12px 16px;margin:16px 0;white-space:pre-line}")
+          .Append(".warranty{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;margin:24px 0 8px;font-size:14px}")
           .Append("table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:8px;border-bottom:1px solid #e5e7eb;vertical-align:top}")
           .Append("th{font-size:12px;text-transform:uppercase;color:#6b7280}.better{color:#047857;font-weight:600}.worse{color:#b45309;font-weight:600}.same{color:#6b7280}")
           .Append("ul{padding-left:20px}li{margin:3px 0}.note{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;margin:8px 0;font-size:14px}")
           .Append(".alert{background:#fef2f2;border:2px solid #dc2626;color:#7f1d1d;border-radius:8px;padding:12px 16px;margin:12px 0}")
-          .Append("@media print{body{margin:0}.hero{break-inside:avoid}}</style></head><body>");
+          .Append("@media print{body{margin:0}.hero,.tech-notes,.warranty{break-inside:avoid}}</style></head><body>");
+
+        if (b?.HasHeader == true)
+        {
+            sb.Append("<header class=\"shop-header\" data-testid=\"report-shop-header\">");
+            if (b.SafeLogoDataUri is { } logo)
+                sb.Append("<img class=\"shop-logo\" data-testid=\"report-shop-logo\" src=\"").Append(E(logo)).Append("\" alt=\"").Append(E(b.ShopName ?? "Shop logo")).Append("\">");
+            sb.Append("<div>");
+            if (b.ShopName is { Length: > 0 } shop)
+                sb.Append("<div class=\"shop-name\" data-testid=\"report-shop-name\">").Append(E(shop)).Append("</div>");
+            var contacts = HardwareQaCertificate.BuildContactParts(b);
+            if (contacts.Count > 0)
+                sb.Append("<div class=\"meta\" data-testid=\"report-shop-contact\">").Append(string.Join(" · ", contacts)).Append("</div>");
+            sb.Append("</div></header>");
+        }
 
         sb.Append("<h1>PC service report</h1><div class=\"meta\">").Append(E(s.Machine));
         if (s.HardwareSummary.Length > 0) sb.Append(" · ").Append(E(s.HardwareSummary));
         sb.Append("<br>").Append(E(generated.ToString("dddd, MMMM d, yyyy h:mm tt", System.Globalization.CultureInfo.InvariantCulture)));
-        if (s.Actor is { Length: > 0 } a) sb.Append(" · by ").Append(E(a));
+        if (b?.TechnicianName is { Length: > 0 } techName) sb.Append(" · Technician: ").Append(E(techName));
+        else if (s.Actor is { Length: > 0 } a) sb.Append(" · by ").Append(E(a));
         sb.Append("</div>");
 
         // Headline
@@ -57,6 +78,9 @@ public static class ClientReport
         if (before is not null && after is not null) sb.Append(" Measured before and after, each time right after a fresh restart.");
         if (s.Stage == WorkflowStage.Failed && s.Error is { Length: > 0 } err) sb.Append("<div>").Append(E(err)).Append("</div>");
         sb.Append("</div>");
+
+        if (b?.TechnicianNotes is { Length: > 0 } techNotes)
+            sb.Append("<div class=\"tech-notes\" data-testid=\"report-tech-notes\"><strong>Technician notes</strong><div>").Append(E(techNotes)).Append("</div></div>");
 
         // Anything the service itself couldn't put back goes first, where nobody can miss it.
         if (s.AutoLogonRestoreError is { } alErr)
@@ -245,7 +269,12 @@ public static class ClientReport
               .Append(" this app made on this PC before this service.</p>");
         if (stopped && applied.Count > 0) sb.Append("<p class=\"meta\">Fixes applied before the service stopped stay in place until they're undone.</p>");
 
-        sb.Append("<p class=\"meta\">Generated by Remote PC Diagnostics.</p></body></html>");
+        if (b?.WarrantyFooter is { Length: > 0 } warranty)
+            sb.Append("<div class=\"warranty\" data-testid=\"report-warranty-footer\"><strong>Service warranty &amp; policy:</strong> ").Append(E(warranty)).Append("</div>");
+
+        sb.Append("<p class=\"meta\">").Append(b?.ShopName is { Length: > 0 } footerShop
+            ? $"Prepared by {E(footerShop)} using Remote PC Diagnostics."
+            : "Generated by Remote PC Diagnostics.").Append("</p></body></html>");
 
         string T(DateTimeOffset t) => t.ToOffset(generated.Offset).ToString("MMM d, h:mm tt", System.Globalization.CultureInfo.InvariantCulture);
 
