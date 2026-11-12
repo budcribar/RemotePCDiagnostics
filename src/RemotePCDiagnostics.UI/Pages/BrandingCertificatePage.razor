@@ -468,8 +468,8 @@
             return;
         }
 
-        // Ensure the certificate's embedded QR badge encodes {relayBase}/r/{id}?h={shortHash} before building the HTML!
-        var relayVerifyBase = $"{ShopRelayClient.BaseUrl(relayUri)}/r";
+        // Ensure the certificate's embedded QR badge encodes {shopApiBase}/r/{id}?h={shortHash} before building the HTML!
+        var relayVerifyBase = $"{ShopRelayClient.ShopApiBaseUrl(relayUri)}/r";
         if (string.IsNullOrWhiteSpace(_verificationBaseUrl))
             _verificationBaseUrl = relayVerifyBase;
 

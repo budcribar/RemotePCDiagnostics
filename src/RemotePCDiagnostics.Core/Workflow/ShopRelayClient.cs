@@ -71,6 +71,8 @@ public sealed partial class ShopRelayClient(HttpClient? httpClient = null, ILogg
     public const string ApiKeyPrefix = "rpd_live_";
     public const string KindQaCertificate = "qa_certificate";
     public const string KindServiceReport = "service_report";
+    public const string DefaultShopPortalUrl = "https://admin.remoteblazorwebview.com";
+    public const string ShopPortalUrlEnvVar = "REMOTEPC_SHOP_PORTAL_URL";
 
     private static readonly HttpClient SharedHttpClient = new(new SocketsHttpHandler
     {
@@ -113,7 +115,29 @@ public sealed partial class ShopRelayClient(HttpClient? httpClient = null, ILogg
         return new UriBuilder(relayServerUri) { Query = "", Fragment = "" }.Uri.AbsoluteUri.TrimEnd('/');
     }
 
-    /// <summary>Fetches live shop branding and active status from <c>GET {relayBase}/api/shops/{group}/branding</c>.</summary>
+    /// <summary>
+    /// Resolves the HTTP base URL for shop branding, report uploads, and <c>/r/{id}</c> verification links:
+    /// maps <c>remoteblazorwebview.com</c> and <c>*.remoteblazorwebview.com</c> (including <c>:34544</c>) to
+    /// <c>https://admin.remoteblazorwebview.com</c> on port 443, while keeping loopback and custom hosts all-in-one.
+    /// </summary>
+    public static string ShopApiBaseUrl(Uri relayServerUri, string? envOverride = null)
+    {
+        ArgumentNullException.ThrowIfNull(relayServerUri);
+        var overrideRaw = envOverride ?? Environment.GetEnvironmentVariable(ShopPortalUrlEnvVar);
+        if (!string.IsNullOrWhiteSpace(overrideRaw) && TryParseRelayUri(overrideRaw, out var overrideUri) && overrideUri is not null)
+            return BaseUrl(overrideUri);
+
+        var host = relayServerUri.Host;
+        if (string.Equals(host, "remoteblazorwebview.com", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".remoteblazorwebview.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return DefaultShopPortalUrl;
+        }
+
+        return BaseUrl(relayServerUri);
+    }
+
+    /// <summary>Fetches live shop branding and active status from <c>GET {shopApiBase}/api/shops/{group}/branding</c>.</summary>
     public async Task<ShopRelayBrandingResult> FetchBrandingAsync(Uri relayServerUri, string groupSlug, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(relayServerUri);
@@ -121,7 +145,7 @@ public sealed partial class ShopRelayClient(HttpClient? httpClient = null, ILogg
         if (string.IsNullOrEmpty(normalizedGroup))
             return new ShopRelayBrandingResult.NetworkError("Enter a shop code first.");
 
-        var relayBase = BaseUrl(relayServerUri);
+        var relayBase = ShopApiBaseUrl(relayServerUri);
         var requestUri = new Uri($"{relayBase}/api/shops/{Uri.EscapeDataString(normalizedGroup)}/branding", UriKind.Absolute);
 
         try
@@ -207,7 +231,7 @@ public sealed partial class ShopRelayClient(HttpClient? httpClient = null, ILogg
         if (string.IsNullOrWhiteSpace(request.Html))
             return new ShopReportPublishResult.InvalidRequest("empty_html");
 
-        var relayBase = BaseUrl(relayServerUri);
+        var relayBase = ShopApiBaseUrl(relayServerUri);
         var endpoint = new Uri($"{relayBase}/api/reports", UriKind.Absolute);
 
         try
