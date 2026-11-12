@@ -191,7 +191,7 @@ jobs:
           New-Item -ItemType Directory -Force artifacts | Out-Null
           Copy-Item $csv artifacts/hardeningkitty-ci-report.csv
 
-      - name: Verify memory test helper in Host output
+      - name: Verify memory test and admin repair helpers in Host output
         shell: pwsh
         run: |
           $exe = Get-ChildItem src/RemotePCDiagnostics.Host/bin/Release -Recurse -Filter RemotePCDiagnostics.Host.exe | Select-Object -First 1
@@ -200,6 +200,11 @@ jobs:
           $out = & $mt --bytes 67108864 --seconds 2
           $out | Select-Object -Last 2
           if (-not ($out -match '^MT DONE 67108864 \d+ 0$')) { throw "memory test helper did not report a clean DONE" }
+
+          $adminExe = Join-Path $exe.DirectoryName 'RemotePCDiagnostics.Admin.exe'
+          if (-not (Test-Path $adminExe)) { throw "RemotePCDiagnostics.Admin.exe missing from Host output: $adminExe" }
+          & $adminExe --self-check
+          if ($LASTEXITCODE -ne 0) { throw "RemotePCDiagnostics.Admin.exe --self-check exited $LASTEXITCODE" }
 
       - name: Unit tests
         run: dotnet test --solution RemotePCDiagnostics.sln -c Release --no-build --report-xunit-trx --results-directory artifacts/test-results
@@ -226,8 +231,10 @@ jobs:
           if ($installProc.ExitCode -ne 0) { throw "Silent install failed with exit code $($installProc.ExitCode)" }
 
           $installedHost = Join-Path $installDir 'RemotePCDiagnostics.Host.exe'
+          $installedAdmin = Join-Path $installDir 'RemotePCDiagnostics.Admin.exe'
           $installedUiHost = Join-Path $installDir 'moduleui/RemotePCDiagnostics.ModuleUiHost.exe'
           if (-not (Test-Path -LiteralPath $installedHost)) { throw "Installed Host missing: $installedHost" }
+          if (-not (Test-Path -LiteralPath $installedAdmin)) { throw "Installed Admin helper missing: $installedAdmin" }
           if (-not (Test-Path -LiteralPath $installedUiHost)) { throw "Installed ModuleUiHost missing: $installedUiHost" }
           if (-not (Test-Path -LiteralPath (Join-Path $installDir 'modules'))) { throw 'modules folder was not created by installer' }
           if (-not (Test-Path -LiteralPath (Join-Path $installDir 'checks'))) { throw 'checks folder was not created by installer' }
@@ -255,6 +262,26 @@ jobs:
           path: |
             artifacts/installer/RemotePCDiagnostics-Setup-*-win-x64.exe
             artifacts/installer/RemotePCDiagnostics-Setup-*-win-x64.exe.sha256
+          if-no-files-found: error
+          retention-days: 5
+
+      - name: Build Microsoft Store MSIX package
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File msix/Build-Msix.ps1 -SkipPublish
+          if ($LASTEXITCODE -ne 0) { throw "Build-Msix.ps1 failed ($LASTEXITCODE)" }
+          $msix = Get-ChildItem artifacts/msix -Filter 'RemotePCDiagnostics-*-win-x64.msix' | Select-Object -First 1
+          if (-not $msix) { throw 'MSIX package was not produced' }
+          "Built MSIX: $($msix.FullName) ($([Math]::Round($msix.Length / 1MB, 2)) MB)"
+
+      - name: Upload Microsoft Store MSIX package
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemotePCDiagnostics-Msix-win-x64
+          path: |
+            artifacts/msix/RemotePCDiagnostics-*-win-x64.msix
+            artifacts/msix/RemotePCDiagnostics-*-win-x64.msix.sha256
           if-no-files-found: error
           retention-days: 5
 
@@ -318,7 +345,8 @@ jobs:
           $art = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
           New-Item -ItemType Directory -Force $art | Out-Null
           $exe = Get-Item artifacts/installer-stage/RemotePCDiagnostics.Host.exe
-          # Runners are already elevated, so the requireAdministrator manifest does not prompt.
+          # Launch Host in simulated Standard User mode (asInvoker) so Playwright exercises both un-elevated diagnostics and live Admin.exe Named-Pipe connection.
+          $env:RPD_SIMULATE_STANDARD_USER = '1'
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
           $env:RPD_LOG_FILE = Join-Path $art 'host.log'
           $p = Start-Process -FilePath $exe.FullName -WorkingDirectory $exe.DirectoryName -WindowStyle Hidden -PassThru
@@ -339,6 +367,7 @@ jobs:
               Get-Content (Join-Path $art 'host.log') -ErrorAction SilentlyContinue
             }
           } finally {
+            Remove-Item Env:RPD_SIMULATE_STANDARD_USER -ErrorAction SilentlyContinue
             if ($p.HasExited) {
               "Host exited with code $($p.ExitCode)"
             } else {
@@ -382,6 +411,12 @@ jobs:
           name: RemotePCDiagnostics-Setup-win-x64
           path: release-assets
 
+      - name: Download Microsoft Store MSIX artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: RemotePCDiagnostics-Msix-win-x64
+          path: release-assets
+
       - name: Publish release or rolling pre-release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -390,6 +425,7 @@ jobs:
         run: |
           short_sha="${GITHUB_SHA::7}"
           setup_file=$(basename release-assets/RemotePCDiagnostics-Setup-*-win-x64.exe)
+          msix_file=$(basename release-assets/RemotePCDiagnostics-*-win-x64.msix)
           ver="${setup_file#RemotePCDiagnostics-Setup-}"
           ver="${ver%-win-x64.exe}"
 
@@ -402,22 +438,23 @@ jobs:
 
           {
             if [[ -n "$target_tag" ]]; then
-              echo "Windows x64 self-contained installer (\`${setup_file}\`) built by GitHub Actions from commit \`${GITHUB_SHA}\`."
+              echo "Windows x64 self-contained installer (\`${setup_file}\`) and Microsoft Store MSIX package (\`${msix_file}\`) built by GitHub Actions from commit \`${GITHUB_SHA}\`."
             else
-              echo "Rolling pre-release Windows x64 self-contained installer (\`${setup_file}\`) built from \`main\` commit \`${GITHUB_SHA}\`."
+              echo "Rolling pre-release Windows x64 self-contained installer (\`${setup_file}\`) and Microsoft Store MSIX package (\`${msix_file}\`) built from \`main\` commit \`${GITHUB_SHA}\`."
             fi
             cat <<'EOF'
 
           ### Overview
-          **Remote PC Diagnostics** is an MIT-licensed Windows 10/11 desktop diagnostic and service-workflow application usable locally on the bench or remotely via [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView). It includes hardware inventory, SMART/drive health, live sensors, thermal-safe CPU/RAM/disk/GPU/network stress tests, audio/webcam/NPU checks, read-only local CIS baseline checks, guided Windows repair (`DISM` / `SFC`) with before/after benchmarking, and client HTML service reports.
+          **Remote PC Diagnostics** is an MIT-licensed Windows 10/11 desktop diagnostic and service-workflow application usable locally on the bench or remotely via [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView). It launches in Standard User (`asInvoker`) mode with zero immediate UAC prompt and includes an on-demand elevated repair helper (`RemotePCDiagnostics.Admin.exe`), hardware inventory, SMART/drive health, live sensors, thermal-safe CPU/RAM/disk/GPU/network stress tests, Buyer Hardware QA QR certificates, guided Windows repair (`DISM` / `SFC`) with before/after benchmarking, and client HTML service reports.
 
           ### Installation & Uninstallation
           - **Interactive install:** Run `RemotePCDiagnostics-Setup-*-win-x64.exe`.
           - **Silent install:** `RemotePCDiagnostics-Setup-*-win-x64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`
+          - **Microsoft Store MSIX upload:** Upload `RemotePCDiagnostics-*-win-x64.msix` to Microsoft Partner Center (`runFullTrust` + `allowElevation`, zero `.sys` drivers).
           - **Uninstall:** Uninstall **Remote PC Diagnostics** from **Windows Settings > Apps > Installed apps**, or run `unins000.exe` in the installation folder (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` supported).
 
           ### Privacy & security policy
-          Standalone GitHub Release installers are built automatically by GitHub Actions (`.sha256` checksum attached) and are currently unsigned prior to Microsoft Store MSIX release.
+          Standalone GitHub Release installers and MSIX packages are built automatically by GitHub Actions (`.sha256` checksums attached); Partner Center signs the MSIX package with Microsoft's Store certificate on Store submission.
 
           This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. See the full [Privacy & security policy](https://github.com/budcribar/RemotePCDiagnostics#privacy--security-policy) for details.
           EOF

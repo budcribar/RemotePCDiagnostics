@@ -33,6 +33,31 @@
             <span class="badge badge-local">Local</span>
         }
         <span class="topbar-spacer"></span>
+        @if (App.Elevation is { } elevation)
+        {
+            <span class="admin-mode-slot" data-testid="admin-mode-badge">
+                @if (elevation.HasAdminCapabilities)
+                {
+                    <span class="badge admin-mode-pill admin-mode-ready"
+                          data-testid="admin-mode-ready"
+                          title="@(elevation.IsProcessElevated ? "Running with Administrator privileges" : "Connected to elevated Admin Repair helper")">
+                        <Icon Name="cert" Size="14" />
+                        <span>Admin Repair Ready</span>
+                    </span>
+                }
+                else
+                {
+                    <button type="button"
+                            class="btn-small admin-mode-pill admin-mode-standard"
+                            data-testid="enable-admin-mode"
+                            title="Diagnostics and bench QA run without UAC. Click to unlock elevated system repairs."
+                            @onclick="OpenAdminDialog">
+                        <Icon Name="sec" Size="14" />
+                        <span>Standard User · Enable Admin Repair</span>
+                    </button>
+                }
+            </span>
+        }
         <button type="button"
                 class="btn-small connect-tech-btn"
                 data-testid="connect-tech-open"
@@ -65,6 +90,57 @@
         }
         @Body
     </main>
+
+    @if (_adminDialogOpen && App.Elevation is { } adminElevation)
+    {
+        <div class="svc-modal-backdrop" @onclick="CloseAdminDialog"></div>
+        <div class="svc-modal admin-mode-modal"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="admin-mode-heading"
+             tabindex="-1"
+             data-testid="admin-mode-dialog"
+             @onkeydown="OnAdminDialogKeyDown">
+            <div class="connect-tech-head">
+                <h3 id="admin-mode-heading">Enable Admin Repair Mode</h3>
+                <button type="button" class="btn-small" data-testid="admin-mode-close" aria-label="Close dialog" @onclick="CloseAdminDialog">Close</button>
+            </div>
+            <p class="meta">
+                Remote PC Diagnostics launches in <strong>Standard User Mode</strong> with zero UAC prompts so hardware inventory, stress tests, live temperatures, and Bench QA QR certificates work immediately.
+            </p>
+            <ul class="card-list">
+                <li><strong>Enable Admin Repair Mode</strong> starts a lightweight elevated helper once (1 UAC prompt) to unlock DISM, SFC, network stack resets, and system repair tools without closing this window.</li>
+                <li><strong>Relaunch as Administrator</strong> restarts the full app elevated while preserving any active remote technician session — recommended for unattended multi-reboot Service Workflows.</li>
+            </ul>
+
+            @if (_adminDialogError is not null)
+            {
+                <p class="notice notice-error" role="alert" data-testid="admin-mode-error">@_adminDialogError</p>
+            }
+            @if (_adminDialogStatus is not null)
+            {
+                <p class="notice" role="status" data-testid="admin-mode-status">@_adminDialogStatus</p>
+            }
+
+            <div class="buttons">
+                <button type="button"
+                        class="btn btn-outline"
+                        style="width:auto"
+                        data-testid="admin-mode-relaunch-btn"
+                        disabled="@(_adminBusy || adminElevation.IsProcessElevated)"
+                        @onclick="RelaunchElevatedFromDialogAsync">
+                    @(_adminRelaunching ? "Relaunching…" : "Relaunch as Administrator")
+                </button>
+                <button type="button"
+                        class="btn btn-primary"
+                        data-testid="admin-mode-enable-btn"
+                        disabled="@(_adminBusy || adminElevation.HasAdminCapabilities)"
+                        @onclick="EnableAdminModeFromDialogAsync">
+                    @(_adminEnabling ? "Enabling…" : "Enable Admin Repair Mode")
+                </button>
+            </div>
+        </div>
+    }
 
     @if (_connectDialogOpen)
     {
@@ -169,6 +245,13 @@
     private ShopRelayClient ActiveRelay => App.ShopRelay ?? _fallbackRelay;
 
     private bool _navigationOpen;
+    private bool _adminDialogOpen;
+    private bool _adminEnabling;
+    private bool _adminRelaunching;
+    private bool _adminBusy => _adminEnabling || _adminRelaunching;
+    private string? _adminDialogError;
+    private string? _adminDialogStatus;
+
     private bool _connectDialogOpen;
     private string _dialogGroup = "";
     private string _dialogServerUrl = "";
@@ -192,6 +275,8 @@
         Remote.Changed += RemoteUsersChanged;
         if (App.RemoteHealth is { } health)
             health.Changed += RemoteHealthChanged;
+        if (App.Elevation is { } elevation)
+            elevation.Changed += ElevationChanged;
 
         try
         {
@@ -447,6 +532,91 @@
         }
     }
 
+    private void OpenAdminDialog()
+    {
+        _adminDialogError = null;
+        _adminDialogStatus = null;
+        _adminDialogOpen = true;
+    }
+
+    private void CloseAdminDialog()
+    {
+        if (_adminBusy) return;
+        _adminDialogOpen = false;
+    }
+
+    private void OnAdminDialogKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            CloseAdminDialog();
+    }
+
+    private async Task EnableAdminModeFromDialogAsync()
+    {
+        if (App.Elevation is not { } elevation || _adminBusy)
+            return;
+
+        _adminDialogError = null;
+        _adminDialogStatus = null;
+        _adminEnabling = true;
+        try
+        {
+            var result = await elevation.EnableAdminModeAsync();
+            if (result.Success)
+            {
+                _adminDialogOpen = false;
+                _adminDialogError = null;
+                _adminDialogStatus = null;
+            }
+            else if (result.Cancelled)
+            {
+                _adminDialogStatus = result.Message;
+            }
+            else
+            {
+                _adminDialogError = result.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            _adminDialogError = $"Could not enable Admin Repair Mode: {ex.Message}";
+        }
+        finally
+        {
+            _adminEnabling = false;
+        }
+    }
+
+    private async Task RelaunchElevatedFromDialogAsync()
+    {
+        if (App.Elevation is not { } elevation || _adminBusy)
+            return;
+
+        _adminDialogError = null;
+        _adminDialogStatus = null;
+        _adminRelaunching = true;
+        try
+        {
+            var result = await elevation.RelaunchElevatedAsync();
+            if (result.Success || result.Cancelled)
+            {
+                _adminDialogStatus = result.Message;
+            }
+            else
+            {
+                _adminDialogError = result.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            _adminDialogError = $"Could not relaunch as Administrator: {ex.Message}";
+        }
+        finally
+        {
+            _adminRelaunching = false;
+        }
+    }
+
     // Phone layout: picking a page from the menu closes it, so the chosen page isn't pushed below the open menu.
     private void CloseNavigation(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
     {
@@ -457,6 +627,7 @@
 
     private void RemoteUsersChanged() => _ = InvokeAsync(StateHasChanged);
     private void RemoteHealthChanged() => _ = InvokeAsync(StateHasChanged);
+    private void ElevationChanged() => _ = InvokeAsync(StateHasChanged);
 
     public void Dispose()
     {
@@ -464,5 +635,7 @@
         Remote.Changed -= RemoteUsersChanged;
         if (App.RemoteHealth is { } health)
             health.Changed -= RemoteHealthChanged;
+        if (App.Elevation is { } elevation)
+            elevation.Changed -= ElevationChanged;
     }
 }

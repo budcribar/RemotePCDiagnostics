@@ -30,10 +30,10 @@ Persistent tracker for shipping **Remote PC Diagnostics** to paying Repair Shops
 - [x] Wire **Stripe Checkout, Billing Portal, Signed Webhooks & Multi-Tech Team Invites** (`7fef1a0` on `RemoteBlazorWebView` `net10`, [item3b-stripe-and-team-invites-spec.md](item3b-stripe-and-team-invites-spec.md))
 
 ## Step 4: Microsoft Store `asInvoker` + MSIX Packaging & Relay Launch Hardening *(ACTIVE — Parallel Split)*
-- [ ] **NEXT #1 *(In Progress — Bot #1 in `RemotePCDiagnostics` `main`)*:** Switch to `asInvoker`, Add Elevated Admin Repair Mode & Build `.msix` Store Package:
-  - [ ] Switch [app.manifest](../src/RemotePCDiagnostics.Host/app.manifest) on `Host.exe` from `requireAdministrator` to `asInvoker` + add runtime elevation detection (`IElevationContext`) and clear admin badges in UI when running un-elevated
-  - [ ] Add **"Enable Admin Repair Mode"** UAC flow + Named-Pipe elevated helper (`RemotePCDiagnostics.Admin`, `--mode=helper --parent-pid=<pid>` with `PipeSecurity` ACLs, client process verification, and Win32 Job Object exit tie-in)
-  - [ ] Add `AppxManifest.xml` (`runFullTrust` + `allowElevation`), Store visual assets, zero-`.sys`-driver CI assertion, and automated `MakeAppx.exe` `.msix` build in [ci.yml](../.github/workflows/ci.yml) ready for $0 Partner Center upload
+- [x] **NEXT #1 *(DONE — `RemotePCDiagnostics` `main`)*:** Switch to `asInvoker`, Add Elevated Admin Repair Mode & Build `.msix` Store Package:
+  - [x] Switch [app.manifest](../src/RemotePCDiagnostics.Host/app.manifest) on `Host.exe` from `requireAdministrator` to `asInvoker` + add runtime elevation detection (`IElevationContext` / `ElevationService`) and clear admin badges in UI when running un-elevated
+  - [x] Add **"Enable Admin Repair Mode"** UAC flow + Named-Pipe elevated helper (`RemotePCDiagnostics.Admin`, `--mode=helper --parent-pid=<pid>` with `PipeSecurity` ACLs, client process verification, and Win32 Job Object exit tie-in)
+  - [x] Add [AppxManifest.template.xml](../msix/AppxManifest.template.xml) (`runFullTrust` + `allowElevation`), Store visual assets, zero-`.sys`-driver CI assertion ([Build-Msix.ps1](../msix/Build-Msix.ps1)), and automated `MakeAppx.exe` `.msix` build in [ci.yml](../.github/workflows/ci.yml) ready for $0 Partner Center upload
 - [ ] **NEXT #2 *(Ready for Parallel Bot #2 in `RemoteBlazorWebView` `net10` — Full Spec in [item4b-relay-production-and-demo-spec.md](item4b-relay-production-and-demo-spec.md) / `doc/ShopRelayProductionAndDemoSpec.md`)*:** Production Relay Landing Page, Live Sample QR Certificate, Rate Limiting & Container Deploy:
   - [ ] Public `GET /welcome` landing/pricing page + auto-seeded live sample certificate at `GET /r/DEMO-LATITUDE-7420`
   - [ ] Built-in `Microsoft.AspNetCore.RateLimiting` (`429` protection on `/signup`, `/login`, `/invite/{token}`, and `/api/reports`)

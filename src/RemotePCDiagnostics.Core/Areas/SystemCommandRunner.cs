@@ -1,11 +1,18 @@
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>Runs built-in Windows tools (PowerShell, wevtutil) for areas osquery can't cover. Logs every call; never throws except on cancellation.</summary>
-public sealed class SystemCommandRunner(IProcessLauncher? launcher = null, ILogger? log = null, TimeSpan? timeout = null)
+public sealed class SystemCommandRunner(
+    IProcessLauncher? launcher = null,
+    ILogger? log = null,
+    TimeSpan? timeout = null,
+    IElevatedCommandBridge? elevatedBridge = null,
+    Func<bool>? isProcessElevated = null)
 {
     private readonly IProcessLauncher _launcher = launcher ?? new SystemProcessLauncher();
+    private readonly Func<bool> _isProcessElevated = isProcessElevated ?? ElevationService.DetectProcessElevated;
     public TimeSpan Timeout { get; } = timeout ?? TimeSpan.FromSeconds(60);
     public ILogger? Log { get; } = log;
 
@@ -38,12 +45,34 @@ public sealed class SystemCommandRunner(IProcessLauncher? launcher = null, ILogg
     public async Task<ProcessResult?> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan? timeout, CancellationToken ct, Action<string>? outputLine = null)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        var effectiveTimeout = timeout ?? Timeout;
+
+        if (!_isProcessElevated()
+            && elevatedBridge is { IsConnected: true }
+            && AdminCommandAllowlist.TryResolveSystemTool(fileName, out _))
+        {
+            try
+            {
+                var bridged = await elevatedBridge.RunElevatedAsync(fileName, arguments, effectiveTimeout, ct, outputLine).ConfigureAwait(false);
+                if (bridged is not null)
+                {
+                    LogResult("[admin-helper] ", fileName, arguments, bridged, sw.ElapsedMilliseconds);
+                    return bridged.TimedOut ? null : bridged;
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                Write($"[admin-helper] command {Path.GetFileName(fileName)} bridge call failed, falling back to direct execution: {ex.Message}");
+            }
+        }
+
         ProcessResult pr;
         try
         {
             pr = outputLine is not null && _launcher is SystemProcessLauncher system
-                ? await system.RunAsync(fileName, arguments, timeout ?? Timeout, ct, outputLine).ConfigureAwait(false)
-                : await _launcher.RunAsync(fileName, arguments, timeout ?? Timeout, ct).ConfigureAwait(false);
+                ? await system.RunAsync(fileName, arguments, effectiveTimeout, ct, outputLine).ConfigureAwait(false)
+                : await _launcher.RunAsync(fileName, arguments, effectiveTimeout, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
@@ -51,11 +80,16 @@ public sealed class SystemCommandRunner(IProcessLauncher? launcher = null, ILogg
             Write($"command {Path.GetFileName(fileName)} failed to start: {ex.Message}");
             return null;
         }
-        var head = pr.StdOut.Length > 1024 ? pr.StdOut[..1024] : pr.StdOut;
-        Write($"command {Path.GetFileName(fileName)} {string.Join(' ', arguments.Select(a => a.Length > 200 ? a[..200] + "…" : a))} " +
-              $"exit={pr.ExitCode} timedOut={pr.TimedOut} ms={sw.ElapsedMilliseconds} stdout_len={pr.StdOut.Length} " +
-              $"stderr=\"{pr.StdErr.Trim()}\" stdout_head=\"{head.Replace("\r", "").Replace("\n", " ")}\"");
+        LogResult("", fileName, arguments, pr, sw.ElapsedMilliseconds);
         return pr.TimedOut ? null : pr;
+    }
+
+    private void LogResult(string prefix, string fileName, IReadOnlyList<string> arguments, ProcessResult pr, long elapsedMs)
+    {
+        var head = pr.StdOut.Length > 1024 ? pr.StdOut[..1024] : pr.StdOut;
+        Write($"{prefix}command {Path.GetFileName(fileName)} {string.Join(' ', arguments.Select(a => a.Length > 200 ? a[..200] + "…" : a))} " +
+              $"exit={pr.ExitCode} timedOut={pr.TimedOut} ms={elapsedMs} stdout_len={pr.StdOut.Length} " +
+              $"stderr=\"{pr.StdErr.Trim()}\" stdout_head=\"{head.Replace("\r", "").Replace("\n", " ")}\"");
     }
 
     private void Write(string s) { try { Log.Line(s); } catch { } }

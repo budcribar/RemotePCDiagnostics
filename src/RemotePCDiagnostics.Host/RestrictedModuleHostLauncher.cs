@@ -48,7 +48,17 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
 
         // An unsigned module also loses INTERACTIVE and Event Log Readers (it can't read the event logs itself). A module that ships with
         // the app keeps them: its code is ours, and it gets its event log reads from the app anyway.
-        using var token = RestrictedToken(unsigned: !module.Bundled);
+        SafeAccessTokenHandle token;
+        try
+        {
+            token = RestrictedToken(unsigned: !module.Bundled);
+        }
+        catch (Win32Exception ex) when (module.Bundled && !Environment.IsPrivilegedProcess)
+        {
+            if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: packaged/standard-user token ({Error}); starting with standard-user token", module.Manifest.Slug, ex.NativeErrorCode);
+            return new ProcessModuleHostLauncher(directory, log).StartRaw(module);
+        }
+        using var tokenScope = token;
         // Every pipe end starts out non-inheritable; only the child's three ends are handed to it (CreateRestricted).
         var sa = new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf<SECURITY_ATTRIBUTES>(), bInheritHandle = false };
         SafeFileHandle? inRead = null, inWrite = null, outRead = null, outWrite = null, errRead = null, errWrite = null;
@@ -68,6 +78,14 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
             try
             {
                 pi = CreateRestricted(token, commandLine, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, dir, si, inRead, outWrite, errWrite);
+            }
+            catch (Win32Exception ex) when (module.Bundled && !Environment.IsPrivilegedProcess)
+            {
+                inRead.Dispose(); inWrite.Dispose();
+                outRead.Dispose(); outWrite.Dispose();
+                errRead.Dispose(); errWrite.Dispose();
+                if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: CreateProcessAsUser rejected packaged/standard-user token ({Error}); starting with standard-user token", module.Manifest.Slug, ex.NativeErrorCode);
+                return new ProcessModuleHostLauncher(directory, log).StartRaw(module);
             }
             finally
             {

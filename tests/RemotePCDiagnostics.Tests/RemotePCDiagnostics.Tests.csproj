@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -47,6 +47,8 @@
     <ProjectReference Include="..\..\samples\SampleModuleUi\SampleModuleUi.csproj" ReferenceOutputAssembly="false" />
     <!-- The user-mode module host, started for real by the proxy tests (RemotePCDiagnostics.ModuleHost.dll lands in the test output). -->
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.ModuleHost\RemotePCDiagnostics.ModuleHost.csproj" />
+    <!-- On-demand elevated repair helper for CLI parsing and real-process named-pipe integration tests. -->
+    <ProjectReference Include="..\..\src\RemotePCDiagnostics.Admin\RemotePCDiagnostics.Admin.csproj" />
   </ItemGroup>
 
   <Target Name="CopySampleModule" AfterTargets="Build">
