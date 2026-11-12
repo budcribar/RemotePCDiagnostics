@@ -15,14 +15,14 @@ public static class ClientReport
 
     public static string Build(WorkflowState s, BenchmarkRun? before, BenchmarkRun? after, BenchmarkComparison cmp, DateTimeOffset generated, ShopBranding? branding = null)
     {
-        var b = (branding ?? s.Branding)?.Normalized();
+        var brand = (branding ?? s.Branding)?.Normalized();
         var applied = s.Outcomes.Where(o => o.Success && !o.Skipped).ToList();
         var failed = s.Outcomes.Where(o => !o.Success && !o.Skipped).ToList();
         var skipped = s.Outcomes.Where(o => o.Skipped).ToList();
         var notApproved = s.Fixes.Where(f => !s.IsApproved(f.Id)).ToList();
         var attempted = s.Outcomes.Select(o => o.FixId).ToHashSet();
         List<WorkflowFix> notAttempted = s.StartedUtc is null ? [] : s.Fixes.Where(f => s.IsApproved(f.Id) && !attempted.Contains(f.Id)).ToList();
-        var pageTitle = b?.ShopName is { Length: > 0 } sn ? $"{sn} – PC service report – {s.Machine}" : $"PC service report – {s.Machine}";
+        var pageTitle = brand?.ShopName is { Length: > 0 } sn ? $"{sn} – PC service report – {s.Machine}" : $"PC service report – {s.Machine}";
         var sb = new StringBuilder();
         sb.Append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
           .Append("<title>").Append(E(pageTitle)).Append("</title><style>")
@@ -40,15 +40,15 @@ public static class ClientReport
           .Append(".alert{background:#fef2f2;border:2px solid #dc2626;color:#7f1d1d;border-radius:8px;padding:12px 16px;margin:12px 0}")
           .Append("@media print{body{margin:0}.hero,.tech-notes,.warranty{break-inside:avoid}}</style></head><body>");
 
-        if (b?.HasHeader == true)
+        if (brand?.HasHeader == true)
         {
             sb.Append("<header class=\"shop-header\" data-testid=\"report-shop-header\">");
-            if (b.SafeLogoDataUri is { } logo)
-                sb.Append("<img class=\"shop-logo\" data-testid=\"report-shop-logo\" src=\"").Append(E(logo)).Append("\" alt=\"").Append(E(b.ShopName ?? "Shop logo")).Append("\">");
+            if (brand.SafeLogoDataUri is { } logo)
+                sb.Append("<img class=\"shop-logo\" data-testid=\"report-shop-logo\" src=\"").Append(E(logo)).Append("\" alt=\"").Append(E(brand.ShopName ?? "Shop logo")).Append("\">");
             sb.Append("<div>");
-            if (b.ShopName is { Length: > 0 } shop)
+            if (brand.ShopName is { Length: > 0 } shop)
                 sb.Append("<div class=\"shop-name\" data-testid=\"report-shop-name\">").Append(E(shop)).Append("</div>");
-            var contacts = HardwareQaCertificate.BuildContactParts(b);
+            var contacts = HardwareQaCertificate.BuildContactParts(brand);
             if (contacts.Count > 0)
                 sb.Append("<div class=\"meta\" data-testid=\"report-shop-contact\">").Append(string.Join(" · ", contacts)).Append("</div>");
             sb.Append("</div></header>");
@@ -57,7 +57,7 @@ public static class ClientReport
         sb.Append("<h1>PC service report</h1><div class=\"meta\">").Append(E(s.Machine));
         if (s.HardwareSummary.Length > 0) sb.Append(" · ").Append(E(s.HardwareSummary));
         sb.Append("<br>").Append(E(generated.ToString("dddd, MMMM d, yyyy h:mm tt", System.Globalization.CultureInfo.InvariantCulture)));
-        if (b?.TechnicianName is { Length: > 0 } techName) sb.Append(" · Technician: ").Append(E(techName));
+        if (brand?.TechnicianName is { Length: > 0 } techName) sb.Append(" · Technician: ").Append(E(techName));
         else if (s.Actor is { Length: > 0 } a) sb.Append(" · by ").Append(E(a));
         sb.Append("</div>");
 
@@ -79,7 +79,7 @@ public static class ClientReport
         if (s.Stage == WorkflowStage.Failed && s.Error is { Length: > 0 } err) sb.Append("<div>").Append(E(err)).Append("</div>");
         sb.Append("</div>");
 
-        if (b?.TechnicianNotes is { Length: > 0 } techNotes)
+        if (brand?.TechnicianNotes is { Length: > 0 } techNotes)
             sb.Append("<div class=\"tech-notes\" data-testid=\"report-tech-notes\"><strong>Technician notes</strong><div>").Append(E(techNotes)).Append("</div></div>");
 
         // Anything the service itself couldn't put back goes first, where nobody can miss it.
@@ -269,10 +269,10 @@ public static class ClientReport
               .Append(" this app made on this PC before this service.</p>");
         if (stopped && applied.Count > 0) sb.Append("<p class=\"meta\">Fixes applied before the service stopped stay in place until they're undone.</p>");
 
-        if (b?.WarrantyFooter is { Length: > 0 } warranty)
+        if (brand?.WarrantyFooter is { Length: > 0 } warranty)
             sb.Append("<div class=\"warranty\" data-testid=\"report-warranty-footer\"><strong>Service warranty &amp; policy:</strong> ").Append(E(warranty)).Append("</div>");
 
-        sb.Append("<p class=\"meta\">").Append(b?.ShopName is { Length: > 0 } footerShop
+        sb.Append("<p class=\"meta\">").Append(brand?.ShopName is { Length: > 0 } footerShop
             ? $"Prepared by {E(footerShop)} using Remote PC Diagnostics."
             : "Generated by Remote PC Diagnostics.").Append("</p></body></html>");
 
