@@ -34,7 +34,7 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
     {
         var exe = Environment.ProcessPath ?? throw new InvalidOperationException("No process path");
         var full = SessionLaunchOptions.BuildResumeCommandLine(exe, session.Mode, session.ServerUri, session.SessionId, session.Unattended, session.Voice);
-        var args = full[$"\"{exe.Trim('"')}\"".Length..].Trim() + " --workflow";
+        var args = full[$"\"{exe.Trim('"')}\"".Length..].Trim() + " " + SessionLaunchOptions.WorkflowArg;
         var user = $"{Environment.UserDomainName}\\{Environment.UserName}";
         var script =
             "$ErrorActionPreference='Stop';" +

@@ -238,22 +238,31 @@ public sealed class RebootResumeCoordinator(
         Log("Cleared pending reboot state and RunOnce entry.");
     }
 
+    /// <summary>How long after a restart was scheduled (it runs 60 seconds later) a PC that has still not restarted counts as
+    /// "the restart was called off": the saved session and the resume entry are then removed.</summary>
+    public static readonly TimeSpan AbandonedAfter = TimeSpan.FromMinutes(10);
+
     /// <summary>
     /// Checks if a pre-reboot snapshot is pending after a reboot, measures current post-reboot resources,
     /// records the reduction in <paramref name="remediation"/> (and Event Log 1100), and refreshes the <c>ResourceHogs</c> diagnostic check.
+    /// Nothing is recorded unless Windows really restarted since the snapshot (<see cref="SessionLaunchOptions.RestartedSince"/>):
+    /// how the app was started, or how much time has passed, does not show that.
     /// </summary>
+    /// <param name="nowUtc">The time now (tests); default the clock.</param>
     public async Task<PostRebootComparisonResult?> CompletePostRebootIfPendingAsync(
         RemediationService remediation,
         DiagnosticsService? diagnostics = null,
-        bool postRebootArgPresent = false,
         ResourceBaselineSnapshot? postBaselineOverride = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        DateTimeOffset? nowUtc = null)
     {
         var pending = LoadPendingState();
         if (pending is null) return null;
 
+        var now = nowUtc ?? DateTimeOffset.UtcNow;
+
         // Expire stale snapshots older than 48 hours.
-        if ((DateTimeOffset.UtcNow - pending.InitiatedAtUtc) > TimeSpan.FromHours(48))
+        if ((now - pending.InitiatedAtUtc) > SessionLaunchOptions.PendingRebootMaxAge)
         {
             await CancelPendingRebootAsync(ct).ConfigureAwait(false);
             return null;
@@ -268,13 +277,20 @@ public sealed class RebootResumeCoordinator(
 
         var post = postBaselineOverride ?? await CaptureBaselineAsync(ct).ConfigureAwait(false);
 
-        // Confirm that a reboot actually happened (either --post-reboot arg was passed by RunOnce, or system uptime reset below pre-reboot uptime).
-        bool rebootConfirmed = postRebootArgPresent
-            || (pending.PreUptimeSeconds > 0 && post.UptimeSeconds < pending.PreUptimeSeconds)
-            || (DateTimeOffset.UtcNow - pending.InitiatedAtUtc) >= TimeSpan.FromMinutes(2);
-
-        if (!rebootConfirmed)
+        // Confirm that a reboot actually happened: Windows started after the snapshot was saved. (osquery can come back without an
+        // uptime, which reads as 0 here; the system's own counter is used then.)
+        var uptime = TimeSpan.FromSeconds(post.UptimeSeconds > 0 ? post.UptimeSeconds : Environment.TickCount64 / 1000);
+        if (!SessionLaunchOptions.RestartedSince(pending, now, uptime))
+        {
+            // Still counting down (the app itself was restarted in the meantime): leave everything for the start after the reboot.
+            // Long past the countdown: the restart was called off outside the app, so the resume entry must not fire at a later sign-in.
+            if (now - pending.InitiatedAtUtc > AbandonedAfter)
+            {
+                await CancelPendingRebootAsync(ct).ConfigureAwait(false);
+                Log("The scheduled restart did not happen; cleared the saved session and the resume entry.");
+            }
             return null;
+        }
 
         await CancelPendingRebootAsync(ct).ConfigureAwait(false);
 

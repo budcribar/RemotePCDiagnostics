@@ -272,6 +272,29 @@ public class RemediationTests
         Assert.Equal(0, summary.CriticalRunsCount);
     }
 
+    [Theory]
+    [InlineData(1, false)]  // the app was restarted during the 60-second countdown: keep everything for the start after the reboot
+    [InlineData(30, true)]  // half an hour on and still no restart: it was called off, so the resume entry goes
+    public async Task ScheduledRestart_ThatHasNotHappened_RecordsNothing(int minutesLater, bool cleared)
+    {
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var runner = new SystemCommandRunner(launcher);
+        var session = new SessionContext(SessionMode.Remote, new Uri("https://remoteblazorwebview.com:34544"), Guid.NewGuid(), unattended: true);
+        var coordinator = new RebootResumeCoordinator(runner, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe");
+        var remSvc = new RemediationService(runner, session, rebootResume: coordinator);
+        var saved = await coordinator.PrepareForRebootAsync("Remote user", session, new ResourceBaselineSnapshot(172_800, 8L << 30, 180, "chrome.exe (4 GB)").Encode());
+        launcher.Calls.Clear();
+
+        // The PC has only been up longer: no restart since the session was saved.
+        var stillUp = new ResourceBaselineSnapshot(172_800 + minutesLater * 60, 8L << 30, 180, "chrome.exe (4 GB)");
+        var comparison = await coordinator.CompletePostRebootIfPendingAsync(remSvc, postBaselineOverride: stillUp, nowUtc: saved.InitiatedAtUtc.AddMinutes(minutesLater));
+
+        Assert.Null(comparison);
+        Assert.Empty(remSvc.Recent);
+        Assert.Equal(cleared, coordinator.LoadPendingState() is null);
+        Assert.Equal(cleared, launcher.Calls.Any(c => c.File.EndsWith("reg.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains("delete") && c.Args.Contains(RebootResumeCoordinator.RunOnceValueName)));
+    }
+
     [Fact]
     public async Task RemoteReboot_RegistersRunOnceWithSameSessionStream_AndLogsPostRebootResourceReductionInHistory()
     {
@@ -323,7 +346,6 @@ public class RemediationTests
         var comparison = await coordinator.CompletePostRebootIfPendingAsync(
             remSvc,
             diagnostics: null,
-            postRebootArgPresent: true,
             postBaselineOverride: postBaseline);
 
         Assert.NotNull(comparison);

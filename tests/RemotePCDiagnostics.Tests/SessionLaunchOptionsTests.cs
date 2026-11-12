@@ -73,8 +73,9 @@ public class SessionLaunchOptionsTests
         var initialCtx = new SessionContext(SessionMode.Remote, new Uri("https://remoteblazorwebview.com:34544"), unattended: true, voice: true);
         Assert.NotEqual(Guid.Empty, initialCtx.SessionId);
 
+        var saved = new DateTimeOffset(2026, 3, 2, 10, 0, 0, TimeSpan.Zero);
         var pending = new PendingRebootState(
-            DateTimeOffset.UtcNow,
+            saved,
             "Remote user",
             SessionMode.Remote,
             initialCtx.ServerUri!.AbsoluteUri,
@@ -86,7 +87,8 @@ public class SessionLaunchOptionsTests
             Unattended: initialCtx.Unattended,
             Voice: initialCtx.Voice);
 
-        var resumed = SessionLaunchOptions.Resolve([], Env(), pending);
+        // Three minutes later Windows has been up for one: it restarted after the session was saved.
+        var resumed = SessionLaunchOptions.Resolve([], Env(), pending, nowUtc: saved.AddMinutes(3), uptime: TimeSpan.FromMinutes(1));
         Assert.Equal(SessionMode.Remote, resumed.Mode);
         Assert.Equal(initialCtx.ServerUri, resumed.ServerUri);
         Assert.Equal(initialCtx.SessionId, resumed.Id);
@@ -94,6 +96,84 @@ public class SessionLaunchOptionsTests
         Assert.True(resumed.Unattended);
         Assert.True(resumed.Voice);
     }
+
+    private static readonly DateTimeOffset Saved = new(2026, 3, 2, 10, 0, 0, TimeSpan.Zero);
+    private static readonly Guid SavedId = Guid.Parse("bfdffa8b-70ac-4740-bdb1-c7f62a0b598f");
+
+    /// <summary>A remote, unattended session saved by "Schedule clean restart" at <see cref="Saved"/>, when the PC had been up two days.</summary>
+    private static PendingRebootState SavedRemoteSession() => new(Saved, "Remote user", SessionMode.Remote, "https://remoteblazorwebview.com:34544",
+        SavedId, PreUptimeSeconds: 172_800, PreUsedMemoryBytes: 8L << 30, PreProcessCount: 180, PreTopProcesses: "chrome.exe (4 GB)", Unattended: true, Voice: true);
+
+    [Theory]
+    [InlineData(1, 172_860)]      // a minute later, still counting down: the PC has simply been up a minute longer
+    [InlineData(3 * 60, 183_600)] // three hours later, never restarted (the restart was called off)
+    public void SavedSession_IsNotRestored_WhenThePcHasNotRestartedSince(int minutesLater, int uptimeSeconds)
+    {
+        // Started by hand, no arguments: the app must come up Local, not in the old remote, unattended session.
+        var o = SessionLaunchOptions.Resolve([], Env(), SavedRemoteSession(), nowUtc: Saved.AddMinutes(minutesLater), uptime: TimeSpan.FromSeconds(uptimeSeconds));
+        Assert.Equal(SessionMode.Local, o.Mode);
+        Assert.Null(o.ServerUri);
+        Assert.Equal(Guid.Empty, o.Id);
+        Assert.False(o.PostReboot);
+        Assert.False(o.Unattended);
+        Assert.False(o.Voice);
+    }
+
+    [Fact]
+    public void SavedSession_IsNotRestored_WhenItIsOlderThanTwoDays()
+    {
+        // The PC did restart, but three days later (shut down over a weekend): too old to pick the session up again.
+        var o = SessionLaunchOptions.Resolve([], Env(), SavedRemoteSession(), nowUtc: Saved.AddDays(3), uptime: TimeSpan.FromMinutes(2));
+        Assert.Equal(SessionMode.Local, o.Mode);
+        Assert.False(o.PostReboot);
+        Assert.False(o.Unattended);
+    }
+
+    [Fact]
+    public void TheResumeEntry_AfterARealRestart_ResumesTheSession()
+    {
+        string[] runOnce = ["-u=https://remoteblazorwebview.com:34544", $"-i={SavedId}", "--unattended", "--voice", "--post-reboot"];
+        var o = SessionLaunchOptions.Resolve(runOnce, Env(), SavedRemoteSession(), nowUtc: Saved.AddMinutes(4), uptime: TimeSpan.FromMinutes(2));
+        Assert.Equal(SessionMode.Remote, o.Mode);
+        Assert.Equal(SavedId, o.Id);
+        Assert.True(o.PostReboot);
+        Assert.True(o.Unattended);
+        Assert.True(o.Voice);
+    }
+
+    [Fact]
+    public void TheResumeEntry_WithoutARestart_StartsLocal()
+    {
+        // The restart was called off; the RunOnce entry it left runs at the next sign-in with the old server and session id.
+        string[] runOnce = ["-u=https://remoteblazorwebview.com:34544", $"-i={SavedId}", "--unattended", "--voice", "--post-reboot"];
+        var o = SessionLaunchOptions.Resolve(runOnce, Env(), SavedRemoteSession(), nowUtc: Saved.AddHours(5), uptime: TimeSpan.FromSeconds(172_800 + 5 * 3600));
+        Assert.Equal(SessionMode.Local, o.Mode);
+        Assert.Equal(Guid.Empty, o.Id);
+        Assert.False(o.PostReboot);
+        Assert.False(o.Unattended);
+        Assert.False(o.Voice);
+    }
+
+    [Fact]
+    public void TheWorkflowResumeTask_KeepsItsSession_WhateverTheSavedSessionSays()
+    {
+        // The service workflow's task passes the same arguments plus --workflow, and checks its own restart: a stale clean-restart
+        // file must neither be restored nor take the task's session away.
+        string[] task = ["-u=https://relay.example", $"-i={SavedId}", "--post-reboot", "--workflow"];
+        var o = SessionLaunchOptions.Resolve(task, Env(), SavedRemoteSession(), nowUtc: Saved.AddHours(5), uptime: TimeSpan.FromSeconds(172_800 + 5 * 3600));
+        Assert.Equal(SessionMode.Remote, o.Mode);
+        Assert.Equal(new Uri("https://relay.example"), o.ServerUri);
+        Assert.Equal(SavedId, o.Id);
+        Assert.True(o.PostReboot);   // from the argument
+        Assert.False(o.Unattended);  // not from the stale file
+    }
+
+    [Theory]
+    [InlineData(4, 120, true)]        // up two minutes, saved four minutes ago: started after the save
+    [InlineData(4, 172_800 + 240, false)] // up since before the save
+    [InlineData(-30, 120, true)]      // the clock was set back half an hour, but the PC has been up far less than it had been
+    public void RestartedSince_GoesByWhenWindowsStarted(int minutesSinceSave, int uptimeSeconds, bool expected) =>
+        Assert.Equal(expected, SessionLaunchOptions.RestartedSince(SavedRemoteSession(), Saved.AddMinutes(minutesSinceSave), TimeSpan.FromSeconds(uptimeSeconds)));
 
     [Fact]
     public void RestartArguments_KeepServerAndSession_AndMarkTheRestart()
