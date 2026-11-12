@@ -103,10 +103,11 @@ You do **not** need to spend \$9.99/month on code signing before making money:
 
 Roughly 85% of the core diagnostic engine is already built; closing B2B subscriptions requires adding the **commercial wrapper**:
 
-1. **Self-Serve Tenant Signup, Billing & Group Claiming *(The Cash Register)*:**
-   - Add self-serve shop registration + **Stripe Billing** to `RemoteWebViewAdmin` / `RemoteWebViewService` so a technician can pay \$39–\$199/mo, claim a unique `Group` code (e.g., `acme-repair`), upload shop branding (logo, phone, website), manage `enrollment_key`s, and have relay sessions automatically gated if billing lapses.
+1. **Open-Source Shop Auth (`ASP.NET Core Identity`), Branding Onboarding & Stripe Billing *(The Cash Register)*:**
+   - Replace/supplement Azure AD B2C (retired by Microsoft for new tenants in May 2025) with in-process **`ASP.NET Core Identity` (.NET 10, MIT license)** backed by SQLite (WAL mode) or PostgreSQL—zero extra auth containers or hosting cost, with built-in Passkeys/2FA and free *"Sign in with Google / Microsoft"* OAuth.
+   - Use a **2-step, 60-second signup flow** (Step 1: account + Shop Name $\rightarrow$ live `Group` slug check like `acme-pc-repair`; Step 2, skippable/editable in Settings: upload Shop Logo resized to `< 40 KB` WebP `data:` URI + Phone, Website, Address, and Warranty Footer) wired to **Stripe Checkout** (`trialing`/`active` gates `IUserService.GetUserGroups`).
 2. **Upgrade `ClientReport.cs` into White-Labeled Hosted Reports & Hardware QA Certificates *(The #1 Sales Hook)*:**
-   - **White-Labeled Service Report + Share Link:** Extend `src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs` with shop logo/contact headers, custom technician notes, and a 1-click **"Publish Report Link"** (`reports.<domain>/r/<short-id>`) ready to paste into repair invoices.
+   - **White-Labeled Service Report + Share Link:** Extend `src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs` to accept `ShopBranding` (embedding the shop's inline `data:image/webp;base64,...` logo, contact header, warranty footer, and technician notes so offline HTML/PDFs never break), plus a 1-click **"Publish Report Link"** (`reports.<domain>/r/<short-id>`).
    - **Hardware QA Certificate Mode (for Refurbishers):** A 1-page pass/fail sheet combining **Model/Serial (`osquery`) + Battery Wear % + SMART SSD Health/Power-On Hours + Thermal Stress Pass + Speaker/Mic Loopback Pass + Webcam Pass + GPU/NPU Pass**, with a printable QR sticker/link. Enterprise refurbishment suites (Blancco, PC-Doctor) charge thousands per year for this exact deliverable.
 3. **Store `Group` Onboarding & User/Admin Privilege Split:**
    - Add `-g=<group>` to `SessionLaunchOptions` + the **"Connect to Technician"** top-bar dialog in `MainLayout.razor`, switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker`, and ship `RemotePCDiagnostics.Admin` (`--mode=helper`) inside a **\$0 Microsoft-signed MSIX** (`runFullTrust` + `allowElevation`)—upgrading to a self-signed `Policy 10.2.9` Win32 installer later only if needed once revenue-positive.
@@ -182,8 +183,9 @@ Ordered so you spend **\$0 up front** and get a sellable product into buyers' ha
 2. **Step 2 — Ship White-Labeled `ClientReport` + Hosted Hardware QA Certificate *(Week 1 — \$0)*:**
    - Extend `src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs` with shop logo/contact headers + technician notes, build the **1-page Hardware QA Certificate** (Model/Serial + Battery % + SMART + Stress + Audio Loopback + Webcam + QR link) + quick Keyboard/Dead-Pixel bench check, and add a hosted report endpoint (`reports.<domain>/r/<id>`).
    - *Why this comes second:* Refurbishers run bench checks locally off a USB stick—giving you a sellable \$39/mo product and a live sample QR certificate in **Week 1** before Microsoft Store certification even finishes.
-3. **Step 3 — Wire Multi-Tenant `Group` Onboarding + \$0-Fixed-Fee Stripe Checkout *(Week 2)*:**
-   - Add `-g=<group>` to `SessionLaunchOptions.cs` + the **"Connect to Technician"** dialog in `MainLayout.razor`, validate active tenant groups on `RemoteWebViewService`, and attach **Stripe Checkout / Billing Portal** (\$0/mo fixed cost) to claim a shop `Group` code and upload a shop logo.
+3. **Step 3 — Wire `ASP.NET Core Identity` Shop Signup, Branding Upload, `Group` Onboarding & Stripe Checkout *(Week 2 — \$0)*:**
+   - Implement `ShopIdentityAuthorization : IRelayAuthorization` + `IUserService` using **MIT `ASP.NET Core Identity` + SQLite/PostgreSQL**, with a 2-step signup wizard (Shop Name/`Group` slug + skippable Logo/Phone/Website/Warranty upload) and **Stripe Checkout** (\$0/mo fixed cost).
+   - Add `-g=<group>` to `SessionLaunchOptions.cs` + **"Connect to Technician"** in `MainLayout.razor`, validate active tenant groups on `RemoteWebViewService`, and serve `GET /api/shops/{group}/branding` so client apps display the shop's logo on connect and embed it inline in reports.
 4. **Step 4 — De-Elevate `Host.exe` (`asInvoker`), Build `Admin.exe --mode=helper` & Publish Free MSIX to Microsoft Store *(Weeks 3–4 — \$0)*:**
    - Switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker`, move privileged operations into the Named-Pipe gRPC helper (`--mode=helper --parent-pid=<pid>`), verify zero `.sys` drivers in publish output, and upload to Partner Center as an **MSIX** (`runFullTrust` + `allowElevation`). **Microsoft signs all your `.exe`s and every unsigned NuGet `.dll` for \$0.** *(If Partner Center ever declines `allowElevation`, publish `runFullTrust`-only MSIX for \$0 immediately, and turn on \$9.99/mo Azure Artifact Signing + `Policy 10.2.9` Win32 installer only after your first \$25/mo Founding Shop pays you).*
 5. **Step 5 — Record the 60-Second Demo & Close Your First 10–25 Founding Shops (\$25/mo) *(Weeks 4–5 — Before Building `Agent.exe`)*:**
@@ -360,6 +362,20 @@ sequenceDiagram
 - **Cross-Group URL Isolation (`SessionAccessHandler`):** Refuses (`403 Forbidden`) any signed-in user outside `state.Group` even if they obtain a `/mirror/{id}` link, while allowing the customer's local `MainWindow` to open `/app/{id}` unauthenticated via `OwnerKey`.
 - **Client Property (`BlazorWebView.Group`):** Already transmitted in `CreateWebViewRequest.Group` (currently defaulting to `"test"`).
 
+#### Open-Source Shop Auth & Branding Architecture (`ASP.NET Core Identity`)
+
+Rather than deploying a separate heavyweight Java/Go auth server (like Keycloak or Authentik, which adds 512 MB–1 GB+ of container RAM and still cannot host shop branding or report metadata) or relying on Azure AD B2C (retired by Microsoft for new tenants in May 2025), plug **in-process `ASP.NET Core Identity` (.NET 10, MIT license)** backed by **SQLite (WAL mode) or PostgreSQL** directly into `RemoteWebViewService.Lib`'s existing authorization seams:
+
+1. **Drop-In `IRelayAuthorization` + `IUserService` Provider (~60 Lines):**
+   - Add `ShopIdentityAuthorization : IRelayAuthorization` (`"Authorization:Provider": "ShopIdentity"`) with cookie/JWT auth, Passkeys/2FA, and free *"Sign in with Google / Microsoft"* OAuth.
+   - Implement `IUserService.GetUserGroups(oid)` (mapping `ClaimTypes.NameIdentifier` in `ClaimsPrincipalExtensions.GetUserObjectId`) to return `[shop.GroupSlug]` **only while `ShopTenant.SubscriptionStatus` is `trialing` or `active`**—so `SessionAccessHandler` automatically blocks expired accounts with zero session-routing changes.
+2. **2-Step, 60-Second Shop Signup + Branding Upload:**
+   - **Step 1 (Account & Group Slug):** Email/Password (or Google/Microsoft) + **Shop Name** (`Acme PC Repair`) $\rightarrow$ live uniqueness check auto-fills `GroupSlug` (`acme-pc-repair`).
+   - **Step 2 ("Brand Your Client Reports" — skippable, editable anytime in Settings):** Upload **Shop Logo** (resized to `<= 400x120 px` WebP/PNG, `< 40 KB`, stored alongside a pre-encoded `data:image/webp;base64,...` URI), plus `Phone`, `WebsiteUrl`, `Address`, `DefaultTechName`, and `WarrantyFooter` *(e.g., "90-Day Hardware & Tune-Up Warranty — Call (555) 019-2834")*. Multi-tech shops (\$99/mo) can invite extra technician emails to the same `ShopTenant`.
+3. **Live Client Trust Header & Offline-Proof HTML/PDF Reports:**
+   - Expose a read-only `GET /api/shops/{group}/branding` endpoint so when a customer installs from the Microsoft Store and enters `acme-pc-repair`, the app header immediately shows **"Connected to [Shop Logo] Acme PC Repair · (555) 019-2834"**.
+   - Pass `ShopBranding` (including the inline `data:image/webp;base64,...` logo) directly into `ClientReport.Build` and the **Hardware QA Certificate** so downloaded HTML files, printed PDFs, and hosted QR certificates never suffer from broken external image links.
+
 #### Required Wiring in `RemotePCDiagnostics` & the Relay
 
 1. **In-App "Connect to Technician" Flow (Handling Store Launch + `HostPage` Ordering):**
@@ -377,8 +393,8 @@ sequenceDiagram
 
 ### 5.6 Recommended Engineering Build Order (Revenue-First, \$0 Out-of-Pocket)
 
-1. **Phase 1 — Commercial Deliverables & Bench Checks (Week 1):** Upgrade `ClientReport.cs` with shop white-labeling + hosted share links, add the **1-page Hardware QA QR Certificate**, ship the Keyboard/Display + BSOD/WHEA bench modules, and add the 1-click **"10-Minute Hardware Intake / QA Check"** preset.
-2. **Phase 2 — Multi-Tenant `Group` Onboarding & Stripe Checkout (Week 2):** Add `-g=<group>` to `SessionLaunchOptions` (including `RestartArguments` and `PendingRebootState`), add the **"Connect to Technician"** dialog in `Host`/`UI`, enforce active tenant `Group` validation on `RemoteWebViewService`, and add \$0-fixed-fee Stripe Checkout on `RemoteWebViewAdmin`.
+1. **Phase 1 — Commercial Deliverables & Bench Checks (Week 1):** Upgrade `ClientReport.cs` with `ShopBranding` white-labeling + hosted share links, add the **1-page Hardware QA QR Certificate**, ship the Keyboard/Display + BSOD/WHEA bench modules, and add the 1-click **"10-Minute Hardware Intake / QA Check"** preset.
+2. **Phase 2 — `ASP.NET Core Identity` Shop Auth, Branding Upload, `Group` Onboarding & Stripe Checkout (Week 2):** Build `ShopIdentityAuthorization : IRelayAuthorization` + 2-step `ShopBranding` signup + `GET /api/shops/{group}/branding` + \$0-fixed-fee Stripe Checkout, add `-g=<group>` to `SessionLaunchOptions` (including `RestartArguments` and `PendingRebootState`), and add **"Connect to Technician"** in `Host`/`UI`.
 3. **Phase 3 — De-Elevate `Host.exe` (`asInvoker`) & Build `Admin.exe --mode=helper` (Week 3):** Switch `src/RemotePCDiagnostics.Host/app.manifest` to `asInvoker`, gracefully badge admin-only modules/fixes when un-elevated, and build the Named-Pipe gRPC helper (`PipeSecurity` ACLs, `GetNamedPipeClientProcessId` MSIX Package Identity / Authenticode check, Job Object / `--parent-pid` exit, and local **"Enable Admin Repair Mode"** UAC flow).
 4. **Phase 4 — \$0 MSIX Store Launch + SignPath Foundation USB/`winget` Release (Week 4):** Package and submit the driverless **MSIX** (`runFullTrust` + `allowElevation`) to Partner Center for free Microsoft Store signing, and wire **SignPath Foundation** into GitHub Actions for free signing of standalone USB bench / `winget` installers.
 5. **Phase 5 — `--mode=service` MSP Fleet Agent (Post-First Paying Customers):** Wire `--mode=service` into `RemotePCDiagnostics.Agent.Core`, scope `AgentAdmin` by tenant `Group`, and publish `BudCribar.RemotePCDiagnostics.Agent` (with `namazso.PawnIO` dependency) to `winget`.
