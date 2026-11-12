@@ -116,6 +116,8 @@ public sealed record WorkflowState
     public IReadOnlyList<RepairFinding> RepairFindings { get; init; } = [];
     /// <summary>A repair asked for a restart (exit code 3010 or "restart" in its output); the workflow's restart after the fixes covers it.</summary>
     public bool RepairRebootPending { get; init; }
+    /// <summary>Shop branding &amp; technician notes snapshotted when the client report was generated.</summary>
+    public ShopBranding? Branding { get; init; }
 
     public bool IsApproved(string id) => Approved.Contains(id);
     public bool IsRunning => Stage is WorkflowStage.RestartBefore or WorkflowStage.BeforeBenchmark or WorkflowStage.Applying
@@ -179,6 +181,9 @@ public interface IWorkflowSystem
     void DisableAutoLogon(AutoLogonBackup? backup);
     /// <summary>Where the client report for <paramref name="when"/> is saved (full path).</summary>
     string ReportFile(DateTimeOffset when);
+    /// <summary>Where a 1-page buyer Hardware QA certificate is saved (full path).</summary>
+    string CertificateFile(DateTimeOffset when, string certificateId) =>
+        Path.Combine(Path.GetDirectoryName(ReportFile(when)) ?? Path.GetTempPath(), $"Hardware QA Certificate {certificateId}.html");
     /// <summary>Saves the client report to <paramref name="path"/> (from <see cref="ReportFile"/>).</summary>
     void SaveReport(string path, string html);
 }

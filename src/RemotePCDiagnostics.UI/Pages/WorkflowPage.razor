@@ -172,7 +172,10 @@
         @* The next action and the run's date come before the tall report frame, so they're visible without scrolling. *@
         <div class="toolbar wf-done-actions">
             @if (s.FinishedUtc is { } fin) { <span class="meta" data-testid="wf-finished">Workflow finished @fin.ToLocalTime().ToString("g")</span> }
-            <button class="btn btn-outline" data-testid="wf-new" @onclick="Flow.Reset">New workflow</button>
+            <div class="banner-actions">
+                <a class="btn btn-outline" href="certificates" data-testid="wf-branding-link"><Icon Name="cert" Size="12" /> QA &amp; branding</a>
+                <button class="btn btn-outline" data-testid="wf-new" @onclick="Flow.Reset">New workflow</button>
+            </div>
         </div>
         <p class="meta" data-testid="wf-report-path">@(s.ReportPath is { } p ? $"Report saved on this PC: {p}" : "The report couldn't be saved as a file; it's shown below.")</p>
         <iframe class="wf-report" data-testid="wf-report" sandbox="allow-same-origin" title="Client report" srcdoc="@ReportHtml(s)"></iframe>
@@ -286,7 +289,7 @@
 
     /// <summary>The report exactly as it was saved (so page and file agree); rebuilt only for runs saved by an older version.</summary>
     private string ReportHtml(WorkflowState s) =>
-        s.ReportHtml ?? ClientReport.Build(s, Bench.Before, Bench.After, Bench.Comparison, s.FinishedUtc?.ToLocalTime() ?? DateTimeOffset.Now);
+        s.ReportHtml ?? ClientReport.Build(s, Bench.Before, Bench.After, Bench.Comparison, s.FinishedUtc?.ToLocalTime() ?? DateTimeOffset.Now, s.Branding ?? Prefs?.Current.Branding);
 
     private AutoLogonStatus? _logon;
     private string _user = "", _password = "";

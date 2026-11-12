@@ -241,6 +241,9 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
     public string ReportFile(DateTimeOffset when) =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments), "Remote PC Diagnostics", $"Service report {when.LocalDateTime:yyyy-MM-dd HHmm}.html");
 
+    public string CertificateFile(DateTimeOffset when, string certificateId) =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments), "Remote PC Diagnostics", $"Hardware QA Certificate {certificateId}.html");
+
     public void SaveReport(string path, string html)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);

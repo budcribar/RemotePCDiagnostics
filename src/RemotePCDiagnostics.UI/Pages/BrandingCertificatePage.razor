@@ -1,0 +1,283 @@
+@page "/certificates"
+@using Microsoft.AspNetCore.Components.Forms
+@using RemotePCDiagnostics.Core.Workflow
+@inherits StoreAwareComponent
+@inject AppServices App
+@inject ISessionContext Session
+@{
+    var effectiveBranding = BuildCurrentBranding();
+    var snap = HardwareQaCertificate.Capture(Store, Session.MachineName, DateTimeOffset.Now, effectiveBranding);
+    var certHtml = HardwareQaCertificate.BuildHtml(snap);
+    var verdictChip = snap.Verdict switch
+    {
+        HardwareQaVerdict.CertifiedPass => "ok",
+        HardwareQaVerdict.PassedWithNotes => "warning",
+        HardwareQaVerdict.AttentionRequired => "error",
+        _ => "neutral",
+    };
+    var verdictLabel = snap.Verdict switch
+    {
+        HardwareQaVerdict.CertifiedPass => "Certified pass",
+        HardwareQaVerdict.PassedWithNotes => "Passed with notes",
+        HardwareQaVerdict.AttentionRequired => "Attention required",
+        _ => "Bench intake snapshot",
+    };
+}
+
+<div class="toolbar">
+    <span class="icon-badge page-icon"><Icon Name="cert" Size="20" /></span>
+    <h1 data-testid="branding-title">QA Certificate &amp; Shop Branding</h1>
+</div>
+<p class="meta">White-label your client service reports (with measured before/after Windows speedups) and export 1-page scannable Buyer Hardware QA QR Certificates for refurbished PCs with zero hardware dongles.</p>
+
+<details class="card wf-section" open data-testid="branding-card" style="margin-bottom: 16px">
+    <summary style="cursor:pointer;font-weight:600;padding:4px 0">
+        Shop branding &amp; warranty settings
+        @if (!string.IsNullOrWhiteSpace(_shopName)) { <span class="meta"> — @_shopName</span> }
+        else { <span class="meta"> — unbranded (optional)</span> }
+    </summary>
+    <div style="margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 16px;">
+        <label class="wf-field" style="flex-direction:column;align-items:stretch">
+            <span class="meta">Shop / business name</span>
+            <input data-testid="branding-shop-name" @bind="_shopName" @bind:event="oninput" maxlength="120" placeholder="e.g. Acme PC Repair &amp; Refurb" style="width:100%" />
+        </label>
+        <label class="wf-field" style="flex-direction:column;align-items:stretch">
+            <span class="meta">Technician name</span>
+            <input data-testid="branding-tech-name" @bind="_techName" @bind:event="oninput" maxlength="80" placeholder="e.g. Alex Rivera" style="width:100%" />
+        </label>
+        <label class="wf-field" style="flex-direction:column;align-items:stretch">
+            <span class="meta">Phone</span>
+            <input data-testid="branding-phone" @bind="_phone" @bind:event="oninput" maxlength="60" placeholder="(555) 019-2834" style="width:100%" />
+        </label>
+        <label class="wf-field" style="flex-direction:column;align-items:stretch">
+            <span class="meta">Email</span>
+            <input data-testid="branding-email" @bind="_email" @bind:event="oninput" maxlength="120" placeholder="service@acmepc.example" style="width:100%" />
+        </label>
+        <label class="wf-field" style="flex-direction:column;align-items:stretch">
+            <span class="meta">Website</span>
+            <input data-testid="branding-website" @bind="_website" @bind:event="oninput" maxlength="200" placeholder="https://acmepc.example" style="width:100%" />
+        </label>
+        <label class="wf-field" style="flex-direction:column;align-items:stretch">
+            <span class="meta">Location / address</span>
+            <input data-testid="branding-address" @bind="_address" @bind:event="oninput" maxlength="200" placeholder="120 Main St, Suite B" style="width:100%" />
+        </label>
+    </div>
+
+    <div style="margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px;">
+        <label class="meta">
+            Shop logo (PNG, JPEG, WebP, or GIF, up to 55 KB — embedded offline in HTML/PDF):
+            <InputFile OnChange="OnLogoSelected" accept="image/png,image/jpeg,image/webp,image/gif" data-testid="branding-logo-input" />
+        </label>
+        @if (ShopBranding.SanitizeLogoDataUri(_logoDataUri) is { } safeLogo)
+        {
+            <img src="@safeLogo" alt="Shop logo preview" data-testid="branding-logo-preview" style="max-height:42px;max-width:140px;object-fit:contain;border:1px solid var(--border);border-radius:6px;padding:2px;background:#fff" />
+            <button type="button" class="btn-small" data-testid="branding-logo-clear" @onclick="ClearLogo">Remove logo</button>
+        }
+    </div>
+    @if (_logoError is not null)
+    {
+        <p class="notice notice-error" role="alert" data-testid="branding-logo-error">@_logoError</p>
+    }
+
+    <div style="margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px 16px;">
+        <label style="display:flex;flex-direction:column;gap:4px">
+            <span class="meta">Warranty / return policy footer (shown on service reports &amp; QA certificates)</span>
+            <input data-testid="branding-warranty" @bind="_warrantyFooter" @bind:event="oninput" maxlength="500" placeholder="e.g. Backed by our 90-Day Parts &amp; Labor Warranty." style="width:100%" />
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px">
+            <span class="meta">Hosted QR verification base URL (optional)</span>
+            <input data-testid="branding-verify-url" @bind="_verificationBaseUrl" @bind:event="oninput" maxlength="200" placeholder="Leave blank for offline self-verifying QR payload" style="width:100%" />
+        </label>
+    </div>
+
+    <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px">
+        <span class="meta">Technician QA / service notes</span>
+        <textarea data-testid="branding-notes" @bind="_techNotes" @bind:event="oninput" rows="2" maxlength="2000" placeholder="Optional bench summary (e.g. thermal paste replaced, BIOS updated, passed 25-min extended burn-in)." style="width:100%;font-family:inherit;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit"></textarea>
+    </label>
+
+    <div class="toolbar" style="margin-top: 12px">
+        <button type="button" class="btn btn-primary" data-testid="branding-save" @onclick="SaveBranding">Save shop branding</button>
+        <button type="button" class="btn btn-outline" data-testid="branding-clear" @onclick="ResetBranding">Clear branding</button>
+        @if (_statusMessage is not null)
+        {
+            <span class="meta" data-testid="branding-status">@_statusMessage</span>
+        }
+    </div>
+</details>
+
+<section class="card wf-section" data-testid="qa-cert-card">
+    <div class="toolbar" style="margin-bottom: 8px">
+        <div>
+            <strong data-testid="qa-live-id">@snap.CertificateId</strong>
+            <span> · </span>
+            <span class="chip chip-@verdictChip" data-testid="qa-live-verdict">@verdictLabel</span>
+            <span class="meta"> · @snap.TestedCount of @snap.Items.Count subsystems checked</span>
+        </div>
+        <div class="banner-actions">
+            @if (App.Workflow is not null)
+            {
+                <button type="button" class="btn btn-primary" data-testid="qa-save-html" @onclick="SaveCertificate">
+                    <Icon Name="cert" Size="14" /> Save 1-page HTML certificate
+                </button>
+            }
+            <a class="btn btn-outline" href="checks">Checks</a>
+            <a class="btn btn-outline" href="stress">Stress tests</a>
+        </div>
+    </div>
+    @if (_savedCertPath is not null)
+    {
+        <p class="meta" data-testid="qa-saved-path">Certificate saved on this PC: @_savedCertPath (open in any browser and press Ctrl+P to print or save as a 1-page PDF).</p>
+    }
+    else if (_saveError is not null)
+    {
+        <p class="notice notice-error" role="alert">@_saveError</p>
+    }
+    <iframe class="wf-report" data-testid="qa-preview-frame" sandbox="allow-same-origin" title="Hardware QA certificate preview" srcdoc="@certHtml"></iframe>
+</section>
+
+@code {
+    private const long MaxLogoUploadBytes = 56_320; // 55 KB raw -> ~75 KB base64 (< 80,000 char cap)
+
+    private string _shopName = "";
+    private string? _logoDataUri;
+    private string _phone = "";
+    private string _email = "";
+    private string _website = "";
+    private string _address = "";
+    private string _techName = "";
+    private string _techNotes = "";
+    private string _warrantyFooter = "";
+    private string _verificationBaseUrl = "";
+
+    private string? _logoError;
+    private string? _statusMessage;
+    private string? _savedCertPath;
+    private string? _saveError;
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        LoadFromPreferences(App.Preferences?.Current.Branding);
+    }
+
+    private void LoadFromPreferences(ShopBranding? b)
+    {
+        _shopName = b?.ShopName ?? "";
+        _logoDataUri = b?.SafeLogoDataUri;
+        _phone = b?.Phone ?? "";
+        _email = b?.Email ?? "";
+        _website = b?.Website ?? "";
+        _address = b?.Address ?? "";
+        _techName = b?.TechnicianName ?? "";
+        _techNotes = b?.TechnicianNotes ?? "";
+        _warrantyFooter = b?.WarrantyFooter ?? "";
+        _verificationBaseUrl = b?.VerificationBaseUrl ?? "";
+    }
+
+    private ShopBranding BuildCurrentBranding() => new ShopBranding
+    {
+        ShopName = _shopName,
+        LogoDataUri = _logoDataUri,
+        Phone = _phone,
+        Email = _email,
+        Website = _website,
+        Address = _address,
+        TechnicianName = _techName,
+        TechnicianNotes = _techNotes,
+        WarrantyFooter = _warrantyFooter,
+        VerificationBaseUrl = _verificationBaseUrl,
+    }.Normalized();
+
+    private async Task OnLogoSelected(InputFileChangeEventArgs e)
+    {
+        _logoError = null;
+        _statusMessage = null;
+        var file = e.File;
+        if (file is null) return;
+
+        if (file.Size > MaxLogoUploadBytes)
+        {
+            _logoError = $"Logo image is {file.Size / 1024:0} KB; please choose a PNG, JPEG, WebP, or GIF under 55 KB.";
+            return;
+        }
+
+        var mime = file.ContentType?.ToLowerInvariant() switch
+        {
+            "image/png" => "image/png",
+            "image/jpeg" or "image/jpg" => "image/jpeg",
+            "image/webp" => "image/webp",
+            "image/gif" => "image/gif",
+            _ => Path.GetExtension(file.Name).ToLowerInvariant() switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".webp" => "image/webp",
+                ".gif" => "image/gif",
+                _ => null,
+            },
+        };
+
+        if (mime is null)
+        {
+            _logoError = "Unsupported image type. Please choose a PNG, JPEG, WebP, or GIF file.";
+            return;
+        }
+
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxLogoUploadBytes);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var uri = $"data:{mime};base64,{Convert.ToBase64String(ms.ToArray())}";
+            var safe = ShopBranding.SanitizeLogoDataUri(uri);
+            if (safe is null)
+            {
+                _logoError = "Could not validate the selected logo image.";
+                return;
+            }
+            _logoDataUri = safe;
+        }
+        catch (Exception ex)
+        {
+            _logoError = $"Could not read logo file: {ex.Message}";
+        }
+    }
+
+    private void ClearLogo()
+    {
+        _logoDataUri = null;
+        _logoError = null;
+    }
+
+    private void SaveBranding()
+    {
+        var normalized = BuildCurrentBranding();
+        var saved = normalized.HasAny ? normalized : null;
+        App.Preferences?.Update(p => p with { Branding = saved });
+        if (App.Workflow is { State.Stage: WorkflowStage.Done } wf)
+            wf.RefreshReportBranding(saved);
+        _statusMessage = saved is not null ? "Saved shop branding for reports and QA certificates." : "Saved (unbranded).";
+    }
+
+    private void ResetBranding()
+    {
+        LoadFromPreferences(null);
+        _logoError = null;
+        App.Preferences?.Update(p => p with { Branding = null });
+        if (App.Workflow is { State.Stage: WorkflowStage.Done } wf)
+            wf.RefreshReportBranding(null);
+        _statusMessage = "Cleared shop branding.";
+    }
+
+    private void SaveCertificate()
+    {
+        _savedCertPath = null;
+        _saveError = null;
+        if (App.Workflow is null) return;
+        var current = BuildCurrentBranding();
+        App.Preferences?.Update(p => p with { Branding = current.HasAny ? current : null });
+        var path = App.Workflow.SaveHardwareQaCertificate(out _, out _, current);
+        if (path is not null) _savedCertPath = path;
+        else _saveError = "Could not write the HTML certificate to disk on this PC.";
+    }
+}

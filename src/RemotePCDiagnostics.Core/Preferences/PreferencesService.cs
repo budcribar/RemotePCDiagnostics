@@ -28,6 +28,9 @@ public sealed record UserPreferences
     /// <see cref="FilePreferencesStore.Load"/>); never written. Remove with the format 3 migration.</summary>
     public List<string>? SelectedModules { get; init; }
 
+    /// <summary>White-label shop or refurbisher branding applied to client service reports and 1-page buyer Hardware QA certificates.</summary>
+    public Workflow.ShopBranding? Branding { get; init; }
+
     /// <summary>Most remembered fix choices; the oldest are dropped first (fix ids from long-gone apps shouldn't pile up).</summary>
     public const int MaxFixChoices = 500;
 }

@@ -621,17 +621,73 @@ public sealed class WorkflowService(
             earlier = journal?.All.Count(c => !mine.Contains(c.Id)) ?? 0;
         }
         catch (Exception ex) { Log("journal read: " + ex.Message); }
-        Save(s => s with { FinishedUtc = when.ToUniversalTime(), EarlierChanges = earlier });
+        var branding = ResolveBranding(State.Branding);
+        Save(s => s with { FinishedUtc = when.ToUniversalTime(), EarlierChanges = earlier, Branding = branding });
+        return SaveAndStoreReport(when, branding);
+    }
+
+    /// <summary>Re-renders and re-saves the current workflow's client report after shop branding or per-report technician notes are edited.</summary>
+    public string? RefreshReportBranding(ShopBranding? overrideBranding = null)
+    {
+        var when = State.FinishedUtc?.ToLocalTime() ?? DateTimeOffset.Now;
+        var branding = ResolveBranding(overrideBranding ?? State.Branding);
+        Save(s => s with { Branding = branding });
+        var path = SaveAndStoreReport(when, branding, preferredPath: State.ReportPath);
+        Changed?.Invoke();
+        return path;
+    }
+
+    /// <summary>Builds and saves a 1-page Buyer Hardware QA Certificate from the latest diagnostic results.</summary>
+    public string? SaveHardwareQaCertificate(out HardwareQaSnapshot snapshot, out string html, ShopBranding? overrideBranding = null)
+    {
+        var when = DateTimeOffset.Now;
+        var branding = ResolveBranding(overrideBranding);
+        var machine = !string.IsNullOrWhiteSpace(session?.MachineName) ? session.MachineName : State.Machine;
+        snapshot = HardwareQaCertificate.Capture(results, machine, when, branding);
+        html = HardwareQaCertificate.BuildHtml(snapshot);
         string? path = null;
-        try { path = sys.ReportFile(when); } catch (Exception ex) { Log("report path: " + ex.Message); }
-        var html = path is null ? null : ClientReport.Build(State with { ReportPath = path }, bench.Before, bench.After, bench.Comparison, when);
+        try
+        {
+            path = sys.CertificateFile(when, snapshot.CertificateId);
+            sys.SaveReport(path, html);
+        }
+        catch (Exception ex)
+        {
+            LogWarn("qa certificate save failed: " + ex.Message);
+            path = null;
+        }
+        return path;
+    }
+
+    private ShopBranding? ResolveBranding(ShopBranding? reportSpecific)
+    {
+        var global = prefs?.Current.Branding?.Normalized();
+        var specific = reportSpecific?.Normalized();
+        if (global is null) return specific?.HasAny == true ? specific : null;
+        if (specific is null) return global.HasAny ? global : null;
+        var merged = global with
+        {
+            TechnicianName = specific.TechnicianName ?? global.TechnicianName,
+            TechnicianNotes = specific.TechnicianNotes ?? global.TechnicianNotes,
+        };
+        return merged.HasAny ? merged : null;
+    }
+
+    private string? SaveAndStoreReport(DateTimeOffset when, ShopBranding? branding, string? preferredPath = null)
+    {
+        string? path = preferredPath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            try { path = sys.ReportFile(when); } catch (Exception ex) { Log("report path: " + ex.Message); path = null; }
+        }
+        var html = path is null ? null : ClientReport.Build(State with { ReportPath = path, Branding = branding }, bench.Before, bench.After, bench.Comparison, when, branding);
         if (path is not null)
         {
             try { sys.SaveReport(path, html!); }
             catch (Exception ex) { LogWarn("report save failed: " + ex.Message); path = null; }
         }
-        if (path is null) html = ClientReport.Build(State with { ReportPath = null }, bench.Before, bench.After, bench.Comparison, when);
-        Save(s => s with { ReportPath = path, ReportHtml = html });
+        if (path is null) html = ClientReport.Build(State with { ReportPath = null, Branding = branding }, bench.Before, bench.After, bench.Comparison, when, branding);
+        Save(s => s with { ReportPath = path, ReportHtml = html, Branding = branding });
         return path;
     }
 
