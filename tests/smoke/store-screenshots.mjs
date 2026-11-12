@@ -108,26 +108,50 @@ try {
   await page.getByTestId('branding-phone').fill('(512) 555-0194');
   await page.getByTestId('branding-website').fill('https://apexrefurb.example');
   await page.getByTestId('branding-warranty').fill('Backed by our 90-Day Parts & Labor Hardware Warranty.');
-  await sleep(300);
+  await page.getByTestId('keyboard-pass').click();
+  await page.getByTestId('display-pass').click();
+  // Collapse the form inputs into the compact summary ("Shop branding & warranty settings — Apex Refurb & PC Repair")
+  // so Physical Keyboard/Display QA, Shop Branding, and the Live Buyer QR Certificate preview all fit in one 1080p frame.
+  await page.locator('[data-testid="branding-card"] > summary').click();
+  await sleep(350);
 
-  // Frame Physical Keyboard/Display QA, Shop Branding, and Live Buyer QR Certificate preview together inside 1920x1080.
-  await page.evaluate(() => {
+  const bounds = await page.evaluate(() => {
     const main = document.querySelector('main.content');
     const phys = document.querySelector('[data-testid="physical-qa-card"]');
+    const brand = document.querySelector('[data-testid="branding-card"]');
     const cert = document.querySelector('[data-testid="qa-cert-card"]');
-    if (!main || !phys || !cert) return;
+    const frame = document.querySelector('[data-testid="qa-preview-frame"]');
+    if (!main || !phys || !brand || !cert || !frame) return null;
     main.scrollTop = 0;
     const mainRect = main.getBoundingClientRect();
-    const physTop = phys.getBoundingClientRect().top - mainRect.top;
-    const certTop = cert.getBoundingClientRect().top - mainRect.top;
-    // Scroll so physical-qa-card starts near the top of main.content, maximizing visible height of qa-preview-frame while keeping Shop Branding & Physical QA in view.
-    const desiredScroll = Math.max(0, Math.min(physTop - 8, certTop - 520));
-    main.scrollTop = desiredScroll;
+    const certOffset = cert.getBoundingClientRect().top - mainRect.top;
+    // Place qa-cert-card ~530px down main.content (~y=582) so ~500px of the Live Buyer QR Certificate preview
+    // sits on the lower half while Physical Keyboard/Display QA + Shop Branding sit on the upper half.
+    main.scrollTop = Math.max(0, certOffset - 530);
+    const pr = phys.getBoundingClientRect();
+    const br = brand.getBoundingClientRect();
+    const fr = frame.getBoundingClientRect();
+    return {
+      physBottom: Math.round(pr.bottom),
+      brandTop: Math.round(br.top),
+      brandBottom: Math.round(br.bottom),
+      frameTop: Math.round(fr.top),
+      frameBottom: Math.round(fr.bottom),
+    };
   });
+  if (!bounds || bounds.physBottom < 180 || bounds.brandTop < 50 || bounds.frameTop > 800) {
+    throw new Error(`Unexpected /certificates screenshot framing bounds: ${JSON.stringify(bounds)}`);
+  }
   try {
     await capture1080p('02-bench-qa-and-qr-certificate.png');
   } finally {
+    const isOpen = await page.locator('[data-testid="branding-card"]').evaluate(el => el.hasAttribute('open')).catch(() => true);
+    if (!isOpen) {
+      await page.locator('[data-testid="branding-card"] > summary').click().catch(() => {});
+    }
     await page.getByTestId('branding-clear').click().catch(() => {});
+    await page.getByTestId('keyboard-reset').click().catch(() => {});
+    await page.getByTestId('display-reset').click().catch(() => {});
     await resetMainScroll();
   }
 
