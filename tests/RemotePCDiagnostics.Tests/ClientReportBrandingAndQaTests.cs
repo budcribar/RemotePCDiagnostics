@@ -169,13 +169,14 @@ public class ClientReportBrandingAndQaTests
         Assert.StartsWith("https://reports.metrorefurb.example/cert/QA-20261112-", snap.QrPayload);
 
         var html = HardwareQaCertificate.BuildHtml(snap);
+        var decodedHtml = System.Net.WebUtility.HtmlDecode(html);
         Assert.Contains("CERTIFIED HARDWARE PASS", html);
-        Assert.Contains("Metro Refurbished Laptops — Hardware QA Certificate", html);
+        Assert.Contains("Metro Refurbished Laptops — Hardware QA Certificate", decodedHtml);
         Assert.Contains("8H9K2L3", html);
-        Assert.Contains("Seq read 3120 MB/s · Seq write 1850 MB/s", html);
-        Assert.Contains("Speaker→Mic: Tone detected (+24 dB SNR) · Mic→Speaker: Confirmed audible", html);
+        Assert.Contains("Seq read 3120 MB/s · Seq write 1850 MB/s", decodedHtml);
+        Assert.Contains("Speaker→Mic: Tone detected (+24 dB SNR) · Mic→Speaker: Confirmed audible", decodedHtml);
         Assert.Contains("<svg ", html);
-        Assert.Contains("1-Year Refurbisher Hardware Guarantee", html);
+        Assert.Contains("1-Year Refurbisher Hardware Guarantee", decodedHtml);
 
         // UserPreferences round-trip serialization preserves ShopBranding.
         var prefsStore = new MemoryPreferencesStore();

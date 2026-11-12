@@ -43,14 +43,11 @@ RemotePCDiagnostics is released under the [MIT License](LICENSE). The bundled co
 
 Planned components are used under their own licenses and need to be confirmed before shipping: osquery (Apache-2.0 or GPL-2.0, used under Apache-2.0), LibreHardwareMonitor (MPL-2.0), HardeningKitty (MIT), NAudio (MIT), Vortice.Direct3D12 (MIT; the NPU test). This is not legal advice.
 
-## Code signing policy
+## Privacy & security policy
 
-Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org). *(Builds published prior to SignPath onboarding completion are unsigned).*
-
-- **Team roles:**
-  - Authors, committers, and reviewers: [@budcribar](https://github.com/budcribar)
-  - Approvers: [@budcribar](https://github.com/budcribar)
-- **Signed artifact scope:** Only binaries built from this repository's own MIT-licensed source code (`RemotePCDiagnostics.*.exe`, `RemotePCDiagnostics.*.dll`, built-in diagnostic modules, and the Inno Setup installer `RemotePCDiagnostics-Setup-*-win-x64.exe`) are signed under this project's certificate. Bundled upstream open-source tools and libraries (`osqueryi.exe`, `HardeningKitty`, and NuGet dependencies) retain their upstream distribution status inside the installer. The optional **Security audit** module evaluates local Windows configuration settings against published CIS and Microsoft hardening baselines in read-only mode (`HardeningKitty`) and does not perform network port scanning, active vulnerability scanning, or exploitation.
+- **Build provenance & signing status:** Standalone GitHub Release installers (`RemotePCDiagnostics-Setup-*-win-x64.exe`) are built automatically from public `main` commits on GitHub Actions alongside a `.sha256` checksum and are currently unsigned while Microsoft Store MSIX packaging is finalized.
+- **Maintainer:** [@budcribar](https://github.com/budcribar)
+- **Bundled tools & read-only security baseline scope:** Built-in binaries (`RemotePCDiagnostics.*.exe`, `RemotePCDiagnostics.*.dll`) are compiled from this repository's MIT-licensed source code alongside bundled open-source dependencies (`osqueryi.exe`, `HardeningKitty`, and NuGet packages). The optional **Security audit** module evaluates local Windows configuration settings against published CIS and Microsoft hardening baselines strictly in read-only mode (`HardeningKitty`) and does not perform network port scanning, active vulnerability scanning, or exploitation.
 - **Privacy policy:** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
   - **Local mode (default when running `RemotePCDiagnostics.Host.exe` directly):** Runs locally on the machine with no telemetry, analytics, or background data collection.
   - **User-initiated Remote session (`-u=<server>` or Start Menu remote shortcut):** Connects to the user-specified [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView) relay server to share the diagnostic UI (and optional WebRTC voice when `--voice` is passed) under explicit local owner consent and Windows Event Log auditing.

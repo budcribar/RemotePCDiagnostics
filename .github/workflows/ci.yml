@@ -416,10 +416,10 @@ jobs:
           - **Silent install:** `RemotePCDiagnostics-Setup-*-win-x64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`
           - **Uninstall:** Uninstall **Remote PC Diagnostics** from **Windows Settings > Apps > Installed apps**, or run `unins000.exe` in the installation folder (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` supported).
 
-          ### Code signing policy
-          Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org). *(Builds published prior to SignPath onboarding completion are unsigned).*
+          ### Privacy & security policy
+          Standalone GitHub Release installers are built automatically by GitHub Actions (`.sha256` checksum attached) and are currently unsigned prior to Microsoft Store MSIX release.
 
-          This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. See the full [Code signing policy](https://github.com/budcribar/RemotePCDiagnostics#code-signing-policy) for team roles, artifact scope, and privacy details.
+          This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. See the full [Privacy & security policy](https://github.com/budcribar/RemotePCDiagnostics#privacy--security-policy) for details.
           EOF
           } | sed 's/^          //' > release-notes.md
 
