@@ -2,7 +2,7 @@
 
 How **Remote PC Diagnostics** makes money, reaches paying users, and ships through the Microsoft Store and direct channels without compromising security or running afoul of Windows and Store policies.
 
-Related docs: [architecture.md](architecture.md) (as-built projects and privilege model), [module-plugins.md](module-plugins.md) (signed/unsigned plugin boundaries and host queries), and [roadmap.md](roadmap.md) (planned `RemotePCDiagnostics.Agent` service and workflow items).
+Related docs: [task.md](task.md) (live launch & monetization checklist), [architecture.md](architecture.md) (as-built projects and privilege model), [module-plugins.md](module-plugins.md) (signed/unsigned plugin boundaries and host queries), and [roadmap.md](roadmap.md) (planned `RemotePCDiagnostics.Agent` service and workflow items).
 
 ---
 
@@ -92,10 +92,10 @@ You do **not** need to spend \$9.99/month on code signing before making money:
 | Item | Up-Front Cost | How It Works |
 | :--- | :--- | :--- |
 | **Microsoft Store Developer Account** | **\$0** | Both Individual and Company developer registrations are permanently free at `storedeveloper.microsoft.com` (Microsoft eliminated the \$19 and \$99 onboarding fees in Sept 2025 / May 2026). |
-| **Microsoft Store Code Signing (incl. unsigned NuGet DLLs)** | **\$0** | Upload as an **MSIX package**—Microsoft automatically signs your `.exe`s **and** every unsigned NuGet `.dll` (`LibreHardwareMonitorLib.dll`, `Vortice.*.dll`, `NAudio.Wasapi.dll`) for free with Microsoft's Store certificate. *(Pre-signing inner `.dll`s is only required for unpacked `Policy 10.2.9` `.exe` installers).* |
-| **GitHub / USB Bench / `winget` Installer Signing** | **\$0** | **SignPath Foundation** (`signpath.org`) signs your `.exe`s and Inno Setup installer for free; SignPath's terms explicitly allow bundling unsigned upstream OSS NuGet `.dll`s inside a signed installer, and Windows SmartScreen only checks the outer installer/`.exe` signatures. |
+| **Microsoft Store Code Signing (incl. unsigned NuGet DLLs)** | **\$0** | Upload as an **MSIX package**—Microsoft automatically signs your `.exe`s **and** every unsigned NuGet `.dll` (`LibreHardwareMonitorLib.dll`, `Vortice.*.dll`, `NAudio.Wasapi.dll`) for free with Microsoft's Store certificate and **zero GitHub-star gate** (installable via Store UI or `winget install --source msstore`). |
+| **Standalone USB / GitHub Installer Signing** | **\$0** | Bench technicians can install via Microsoft Store / `winget --source msstore` (0 SmartScreen) or run the portable/Inno Setup USB build on their own bench; reapply to **SignPath Foundation** (`signpath.org`, \$0) once Step 5 community posts (`r/computertechs`, Technibble, YouTube) build organic stars/mentions. |
 | **Billing & Checkout** | **\$0 / mo** | **Stripe Checkout** has \$0 monthly fixed fees (only ~2.9% + \$0.30 when a shop pays). |
-| **Optional Post-Revenue Upgrade (`Policy 10.2.9` Win32)** | **\$9.99 / mo *(later)*** | Turn on month-to-month **Azure Artifact Signing** (formerly Trusted Signing) *only after* your first \$25/mo Founding Shop customer is already covering it 2.5x over, if you ever want your own publisher name on UAC or an unpacked `Policy 10.2.9` Store installer. |
+| **Optional Post-Revenue Upgrade (`Policy 10.2.9` / Standalone `.exe`)** | **\$9.99 / mo *(later)*** | Turn on month-to-month **Azure Artifact Signing** (formerly Trusted Signing) *only after* your first \$25/mo Founding Shop customer is already covering it 2.5x over—signing standalone USB/`.exe` installers and `winget` Agent builds immediately out of revenue without waiting on SignPath. |
 
 ---
 
@@ -194,9 +194,9 @@ Do **not** buy Google or Facebook ads—ad clicks for *"PC diagnostics"* or *"PC
 
 Ordered so you spend **\$0 up front** and get a sellable, PC-Doctor-beating product into buyers' hands within Week 1–2:
 
-1. **Step 1 — \$0 Store Registration & Free SignPath Foundation Prep *(Day 1 — Async Lead Time)*:**
-   - Open your **free Microsoft Store Developer account** at `storedeveloper.microsoft.com` (\$0 for both Individual and Company accounts).
-   - Enable GitHub 2FA, switch `budcribar/RemotePCDiagnostics` to **Public**, add the required `## Code signing policy` section to `README.md` (describing `SecurityAuditModule` / `HardeningKitty` strictly as local Windows CIS configuration compliance), publish one unsigned release from GitHub Actions, and apply to **SignPath Foundation** (`signpath.org/apply.html` — \$0) for standalone installer signing.
+1. **Step 1 — \$0 Store Registration & Public OSS Release *(Done — Partner Center Pending Verification)*:**
+   - Open your **free Microsoft Store Developer account** at `storedeveloper.microsoft.com` (\$0 for both Individual and Company accounts — *submitted, pending verification*).
+   - `budcribar/RemotePCDiagnostics` is **Public** under the MIT License with automated GitHub Actions pre-release installers (`RemotePCDiagnostics-Setup-*-win-x64.exe`). *(SignPath Foundation requires organic GitHub stars and community mentions before issuing a free Foundation cert, so **Microsoft Store MSIX** handles 100% of \$0 customer-facing code signing at launch; reapply to SignPath Foundation after Step 5 community posts or fund \$9.99/mo Azure Artifact Signing out of Customer #1's \$25/mo revenue).*
 2. **Step 2 — Ship `ShopBranding` Before/After Reports + Dongle-Free Buyer QR Certificates *(Week 1 — \$0)*:**
    - Extend `src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs` to accept `ShopBranding` (embedding inline `data:image/webp;base64,...` shop logo, phone/URL, warranty footer, and technician notes—turning Windows remediation + Before/After speedup proof into the weapon PC-Doctor lacks).
    - Build the **1-page Buyer Hardware QA QR Certificate** (Model/Serial + Battery % + SMART + Thermal Stress + Dongle-Free WASAPI Audio Loopback + Webcam + GPU/NPU + QR verification link at `reports.<domain>/r/<id>`), plus the Keyboard/Dead-Pixel check, BSOD/WHEA analyzer, and 1-click **"10-Minute Hardware Intake / QA Check"** preset supporting **unlimited simultaneous USB bench runs** (beating PC-Doctor's \$449 1-PC USB dongle limit in Week 1).
