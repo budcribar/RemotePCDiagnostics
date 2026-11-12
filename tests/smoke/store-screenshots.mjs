@@ -122,14 +122,24 @@ try {
     const cert = document.querySelector('[data-testid="qa-cert-card"]');
     const frame = document.querySelector('[data-testid="qa-preview-frame"]');
     if (!main || !phys || !brand || !cert || !frame) return null;
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
     main.scrollTop = 0;
-    // Place qa-preview-frame at y=730 so ~350px of the Live Buyer QR Certificate (header + SVG QR code)
-    // is visible on the lower third while ~240px of Physical Keyboard/Display QA + Shop Branding sit above it.
-    main.scrollTop = Math.max(0, Math.round(frame.getBoundingClientRect().top - 730));
+    // Closed-loop scroll adjustment so qa-preview-frame lands at y=720 (~360px of Live Buyer QR Certificate
+    // visible on the lower third while ~225px of Physical Keyboard/Display QA + Shop Branding sit above it).
+    for (let i = 0; i < 6; i++) {
+      const delta = Math.round(frame.getBoundingClientRect().top - 720);
+      if (Math.abs(delta) <= 2) break;
+      const prev = main.scrollTop;
+      main.scrollTop = Math.max(0, prev + delta);
+      if (main.scrollTop === prev) break;
+    }
     const pr = phys.getBoundingClientRect();
     const br = brand.getBoundingClientRect();
     const fr = frame.getBoundingClientRect();
     return {
+      scrollTop: Math.round(main.scrollTop),
       physBottom: Math.round(pr.bottom),
       brandTop: Math.round(br.top),
       brandBottom: Math.round(br.bottom),
@@ -137,6 +147,7 @@ try {
       frameBottom: Math.round(fr.bottom),
     };
   });
+  console.log('/certificates screenshot framing bounds:', JSON.stringify(bounds));
   if (!bounds || bounds.physBottom < 180 || bounds.brandTop < 50 || bounds.frameTop > 850) {
     throw new Error(`Unexpected /certificates screenshot framing bounds: ${JSON.stringify(bounds)}`);
   }
