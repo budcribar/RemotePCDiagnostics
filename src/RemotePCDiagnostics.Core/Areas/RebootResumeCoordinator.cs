@@ -78,7 +78,8 @@ public sealed record PendingRebootState(
     int PreProcessCount,
     string PreTopProcesses,
     bool Unattended = false,
-    bool Voice = false);
+    bool Voice = false,
+    string? Group = null);
 
 /// <summary>Result of comparing pre-reboot vs. post-reboot resource consumption after the PC restarts.</summary>
 public sealed record PostRebootComparisonResult(
@@ -198,6 +199,7 @@ public sealed class RebootResumeCoordinator(
         var sessionId = session?.SessionId ?? Guid.Empty;
         var unattended = session?.Unattended ?? false;
         var voice = session?.Voice ?? false;
+        var group = SessionLaunchOptions.NormalizeGroup(session?.Group);
 
         var state = new PendingRebootState(
             DateTimeOffset.UtcNow,
@@ -210,11 +212,12 @@ public sealed class RebootResumeCoordinator(
             baseline.ProcessCount,
             baseline.TopProcesses,
             unattended,
-            voice);
+            voice,
+            group);
 
         SavePendingState(state);
 
-        var resumeCmd = SessionLaunchOptions.BuildResumeCommandLine(ExecutablePath, mode, serverUri, sessionId, unattended, voice);
+        var resumeCmd = SessionLaunchOptions.BuildResumeCommandLine(ExecutablePath, mode, serverUri, sessionId, unattended, voice, group);
         LastRegisteredCommandLine = resumeCmd;
 
         var reg = await commands.RunAsync(
@@ -222,7 +225,7 @@ public sealed class RebootResumeCoordinator(
             ["add", RunOnceRegistryKey, "/v", RunOnceValueName, "/t", "REG_SZ", "/d", resumeCmd, "/f"],
             ct).ConfigureAwait(false);
 
-        Log($"Prepared reboot resume: mode={mode} sessionId={sessionId} preMem={baseline.UsedMemoryBytes} preProcs={baseline.ProcessCount} regExit={reg?.ExitCode} cmd='{resumeCmd}'");
+        Log($"Prepared reboot resume: mode={mode} sessionId={sessionId} group={group} preMem={baseline.UsedMemoryBytes} preProcs={baseline.ProcessCount} regExit={reg?.ExitCode} cmd='{resumeCmd}'");
         return state;
     }
 

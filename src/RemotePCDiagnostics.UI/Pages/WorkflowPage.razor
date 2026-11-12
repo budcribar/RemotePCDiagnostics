@@ -7,6 +7,7 @@
 @inject BenchmarkService Bench
 @inject DiagnosticsService Diagnostics
 @inject AppServices App
+@inject ISessionContext Session
 @* Service workflow: the tech reviews once; the rest (restarts, benchmarks, fixes, report) runs by itself. *@
 @{
     var s = Flow.State;
@@ -173,10 +174,38 @@
         <div class="toolbar wf-done-actions">
             @if (s.FinishedUtc is { } fin) { <span class="meta" data-testid="wf-finished">Workflow finished @fin.ToLocalTime().ToString("g")</span> }
             <div class="banner-actions">
+                @if (CanPublishHostedReport)
+                {
+                    <button type="button"
+                            class="btn btn-primary"
+                            data-testid="publish-hosted-report"
+                            disabled="@_publishingReport"
+                            @onclick="() => PublishHostedReportAsync(s)">
+                        <Icon Name="cert" Size="12" />
+                        @(_publishingReport ? "Publishing…" : "Publish Hosted Service Report")
+                    </button>
+                }
                 <a class="btn btn-outline" href="certificates" data-testid="wf-branding-link"><Icon Name="cert" Size="12" /> QA &amp; branding</a>
-                <button class="btn btn-outline" data-testid="wf-new" @onclick="Flow.Reset">New workflow</button>
+                <button class="btn btn-outline" data-testid="wf-new" @onclick="ResetWorkflow">New workflow</button>
             </div>
         </div>
+        @if (_publishReportError is not null)
+        {
+            <p class="notice notice-error" role="alert" data-testid="publish-report-error">@_publishReportError</p>
+        }
+        @if (_publishedReportUrl is not null)
+        {
+            <div class="svc-result-ok relay-published-banner">
+                <div>
+                    <strong>Hosted service report live:</strong>
+                    <a href="@_publishedReportUrl" target="_blank" rel="noopener noreferrer" data-testid="published-report-url">@_publishedReportUrl</a>
+                    @if (!string.IsNullOrWhiteSpace(_publishedReportShortHash))
+                    {
+                        <span class="chip chip-ok" style="margin-left: 8px">SHA-256 @_publishedReportShortHash</span>
+                    }
+                </div>
+            </div>
+        }
         <p class="meta" data-testid="wf-report-path">@(s.ReportPath is { } p ? $"Report saved on this PC: {p}" : "The report couldn't be saved as a file; it's shown below.")</p>
         <iframe class="wf-report" data-testid="wf-report" sandbox="allow-same-origin" title="Client report" srcdoc="@ReportHtml(s)"></iframe>
         break;
@@ -291,6 +320,24 @@
     private string ReportHtml(WorkflowState s) =>
         s.ReportHtml ?? ClientReport.Build(s, Bench.Before, Bench.After, Bench.Comparison, s.FinishedUtc?.ToLocalTime() ?? DateTimeOffset.Now, s.Branding ?? Prefs?.Current.Branding);
 
+    private readonly ShopRelayClient _fallbackRelay = new();
+    private ShopRelayClient ActiveRelay => App.ShopRelay ?? _fallbackRelay;
+
+    private string? ConfiguredRelayServerUrl =>
+        !string.IsNullOrWhiteSpace(Prefs?.Current.RelayServerUrl)
+            ? Prefs!.Current.RelayServerUrl
+            : Session.ServerUri?.ToString();
+
+    private bool CanPublishHostedReport =>
+        Prefs?.Current.ShopApiKey is { Length: > 0 } key
+        && key.Trim().StartsWith(ShopRelayClient.ApiKeyPrefix, StringComparison.Ordinal)
+        && ShopRelayClient.TryParseRelayUri(ConfiguredRelayServerUrl, out _);
+
+    private bool _publishingReport;
+    private string? _publishedReportUrl;
+    private string? _publishedReportShortHash;
+    private string? _publishReportError;
+
     private AutoLogonStatus? _logon;
     private string _user = "", _password = "";
     private bool _clientSignsIn, _starting, _showPassword;
@@ -303,6 +350,7 @@
     {
         Flow.Changed += OnChanged;
         Bench.Changed += OnChanged;
+        if (Prefs is not null) Prefs.Changed += OnChanged;
         LoadLogon();
         foreach (var a in Prefs?.Current.WorkflowOpenAreas ?? []) _openAreas.Add(a);
         if (Flow.State.Stage == WorkflowStage.Idle && !Flow.Busy && Flow.HasCompletedCheckModuleResults)
@@ -315,7 +363,72 @@
     }
 
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
-    public void Dispose() { Flow.Changed -= OnChanged; Bench.Changed -= OnChanged; _password = ""; _showPassword = false; }
+    public void Dispose()
+    {
+        Flow.Changed -= OnChanged;
+        Bench.Changed -= OnChanged;
+        if (Prefs is not null) Prefs.Changed -= OnChanged;
+        _password = "";
+        _showPassword = false;
+    }
+
+    private void ResetWorkflow()
+    {
+        _publishedReportUrl = null;
+        _publishedReportShortHash = null;
+        _publishReportError = null;
+        Flow.Reset();
+    }
+
+    private async Task PublishHostedReportAsync(WorkflowState s)
+    {
+        _publishReportError = null;
+        _publishedReportUrl = null;
+        _publishedReportShortHash = null;
+
+        var apiKey = Prefs?.Current.ShopApiKey?.Trim() ?? "";
+        if (!ShopRelayClient.TryParseRelayUri(ConfiguredRelayServerUrl, out var relayUri) || relayUri is null)
+        {
+            _publishReportError = "Configure a valid Relay Server URL on the QA & branding page first.";
+            return;
+        }
+
+        var html = ReportHtml(s);
+        var uploadReq = ShopRelayClient.CreateServiceReportRequest(Session.MachineName, html, s.FinishedUtc ?? DateTimeOffset.UtcNow);
+
+        _publishingReport = true;
+        try
+        {
+            var result = await ActiveRelay.PublishReportAsync(relayUri, apiKey, uploadReq);
+            switch (result)
+            {
+                case ShopReportPublishResult.Published pub:
+                    _publishedReportUrl = pub.Url;
+                    _publishedReportShortHash = pub.ShortHash;
+                    break;
+
+                case ShopReportPublishResult.Unauthorized:
+                    _publishReportError = "Shop API key was rejected (401 Unauthorized). Check your rpd_live_... key on QA & branding.";
+                    break;
+
+                case ShopReportPublishResult.PaymentRequired:
+                    _publishReportError = "Shop subscription or trial is inactive (402 Payment Required). Renew billing on the relay /shop portal.";
+                    break;
+
+                case ShopReportPublishResult.InvalidRequest inv:
+                    _publishReportError = $"Relay rejected service report upload: {inv.Error}";
+                    break;
+
+                case ShopReportPublishResult.NetworkError net:
+                    _publishReportError = $"Could not upload service report to relay: {net.Message}";
+                    break;
+            }
+        }
+        finally
+        {
+            _publishingReport = false;
+        }
+    }
 
     private void RunChecks() { _message = null; _ = Flow.RunChecksAsync(forceRerun: _forceRerunNext); _forceRerunNext = false; }
     private bool _forceRerunNext;

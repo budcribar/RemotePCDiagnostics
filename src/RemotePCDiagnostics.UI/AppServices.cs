@@ -2,6 +2,7 @@ using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Plugins;
 using RemotePCDiagnostics.Core.Preferences;
+using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Workflow;
 using RemotePCDiagnostics.ModuleUi;
 
@@ -22,4 +23,7 @@ public sealed record AppServices(
     IModuleUiFrames? ModuleUiFrames = null,
     SupportDiagnostics? SupportDiagnostics = null,
     PhysicalBenchQaService? PhysicalQa = null,
-    BenchQaRunner? BenchQa = null);
+    BenchQaRunner? BenchQa = null,
+    ShopRelayClient? ShopRelay = null,
+    ISessionRelauncher? Relauncher = null,
+    RemoteSessionHealth? RemoteHealth = null);

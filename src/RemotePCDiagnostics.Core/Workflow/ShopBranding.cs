@@ -41,7 +41,8 @@ public sealed partial record ShopBranding
         HasHeader
         || !string.IsNullOrWhiteSpace(TechnicianName)
         || !string.IsNullOrWhiteSpace(TechnicianNotes)
-        || !string.IsNullOrWhiteSpace(WarrantyFooter);
+        || !string.IsNullOrWhiteSpace(WarrantyFooter)
+        || SafeVerificationBaseUrl is not null;
 
     public ShopBranding Normalized() => new()
     {
@@ -81,7 +82,8 @@ public sealed partial record ShopBranding
         var candidate = trimmed.Contains("://", StringComparison.Ordinal) ? trimmed : "https://" + trimmed;
         if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)) return null;
         if (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp) return null;
-        if (string.IsNullOrWhiteSpace(uri.Host) || !uri.Host.Contains('.', StringComparison.Ordinal) && !string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(uri.Host)
+            || (!uri.Host.Contains('.', StringComparison.Ordinal) && !string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase) && !uri.IsLoopback))
             return null;
         return uri.AbsoluteUri;
     }

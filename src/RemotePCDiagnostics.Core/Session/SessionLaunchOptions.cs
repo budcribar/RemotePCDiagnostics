@@ -13,11 +13,19 @@ namespace RemotePCDiagnostics.Core.Session;
 /// the PC handing it over (the user can still take it back).
 /// Pass <c>--voice</c> (or <c>REMOTEPC_VOICE=1</c>) for a voice call between the user and the remote user (needs an https relay).
 /// </summary>
-public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid Id, bool PostReboot = false, bool Unattended = false, bool Voice = false)
+public sealed record SessionLaunchOptions(
+    SessionMode Mode,
+    Uri? ServerUri,
+    Guid Id,
+    bool PostReboot = false,
+    bool Unattended = false,
+    bool Voice = false,
+    string? Group = null)
 {
     public const string ModeVariable = "REMOTEPC_MODE";
     public const string ServerUrlVariable = "REMOTEPC_SERVER_URL";
     public const string IdVariable = "REMOTEPC_ID";
+    public const string GroupVariable = "REMOTEPC_GROUP";
     public const string UnattendedVariable = "REMOTEPC_UNATTENDED";
     public const string UnattendedArg = "--unattended";
     public const string VoiceVariable = "REMOTEPC_VOICE";
@@ -27,6 +35,14 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     public const string WorkflowArg = "--workflow";
     /// <summary>A saved session older than this is not resumed, restart or not.</summary>
     public static readonly TimeSpan PendingRebootMaxAge = TimeSpan.FromHours(48);
+
+    /// <summary>Normalizes a relay shop group slug to lowercase trimmed text, or <c>null</c> when empty.</summary>
+    public static string? NormalizeGroup(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim().Trim('"').Trim();
+        return trimmed.Length == 0 ? null : trimmed.ToLowerInvariant();
+    }
 
     /// <summary>True when Windows started after <paramref name="pending"/> was saved: the boot time is later than the save, or the
     /// PC has been up for less time than it had been then (which also holds if the clock was changed in between).</summary>
@@ -38,6 +54,9 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
         RestartedSince(pending, nowUtc, uptime) && nowUtc - pending.InitiatedAtUtc <= PendingRebootMaxAge;
     /// <summary>Default relay (PeakSWC.RemoteWebViewService on Railway) used when Remote mode has no explicit URL.</summary>
     public const string DefaultServerUrl = "https://remoteblazorwebview.com:34544";
+
+    public static SessionLaunchOptions Parse(IEnumerable<string> args, Func<string, string?>? env = null) =>
+        Resolve(args, env ?? (_ => null));
 
     /// <param name="nowUtc">The time now (tests); default the clock.</param>
     /// <param name="uptime">How long Windows has been up (tests); default the system's.</param>
@@ -54,9 +73,28 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
             var staleResume = argList.Any(a => string.Equals(a, PostRebootArg, StringComparison.OrdinalIgnoreCase))
                 && !argList.Any(a => string.Equals(a, WorkflowArg, StringComparison.OrdinalIgnoreCase));
             if (staleResume)
-                argList = argList.Where(a => !a.StartsWith("-u=", StringComparison.OrdinalIgnoreCase) && !a.StartsWith("-i=", StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(a, PostRebootArg, StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(a, UnattendedArg, StringComparison.OrdinalIgnoreCase) && !string.Equals(a, VoiceArg, StringComparison.OrdinalIgnoreCase)).ToList();
+            {
+                var filtered = new List<string>(argList.Count);
+                for (var i = 0; i < argList.Count; i++)
+                {
+                    var a = argList[i];
+                    if (string.Equals(a, "-g", StringComparison.OrdinalIgnoreCase) || string.Equals(a, "--group", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (i + 1 < argList.Count && !argList[i + 1].StartsWith('-')) i++;
+                        continue;
+                    }
+                    if (a.StartsWith("-u=", StringComparison.OrdinalIgnoreCase)
+                        || a.StartsWith("-i=", StringComparison.OrdinalIgnoreCase)
+                        || a.StartsWith("-g=", StringComparison.OrdinalIgnoreCase)
+                        || a.StartsWith("--group=", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(a, PostRebootArg, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(a, UnattendedArg, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(a, VoiceArg, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    filtered.Add(a);
+                }
+                argList = filtered;
+            }
             pendingReboot = null;
         }
         string? Arg(string prefix) => argList.FirstOrDefault(a => a.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))?[prefix.Length..];
@@ -84,6 +122,20 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
         // Unattended: the remote user gets control on joining.
         var unattended = unattendedArg ?? (ParseBool(env(UnattendedVariable)) == true);
 
+        string? groupArg = null;
+        for (var i = 0; i < argList.Count; i++)
+        {
+            var a = argList[i];
+            if (a.StartsWith("-g=", StringComparison.OrdinalIgnoreCase))
+                groupArg = a[3..];
+            else if (a.StartsWith("--group=", StringComparison.OrdinalIgnoreCase))
+                groupArg = a[8..];
+            else if ((string.Equals(a, "-g", StringComparison.OrdinalIgnoreCase) || string.Equals(a, "--group", StringComparison.OrdinalIgnoreCase))
+                     && i + 1 < argList.Count && !argList[i + 1].StartsWith('-'))
+                groupArg = argList[++i];
+        }
+        var group = NormalizeGroup(groupArg) ?? NormalizeGroup(env(GroupVariable));
+
         var urlArg = Arg("-u=");
         var idText = Arg("-i=") ?? env(IdVariable);
         var id = Guid.TryParse(idText, out var g) ? g : Guid.Empty; // Guid.Empty = server assigns a new id each run unless restored from pendingReboot
@@ -94,7 +146,7 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
 
         if (!remote)
         {
-            var localOpts = new SessionLaunchOptions(SessionMode.Local, null, id, postReboot, unattended, voice);
+            var localOpts = new SessionLaunchOptions(SessionMode.Local, null, id, postReboot, unattended, voice, group);
             return ApplyPendingReboot(localOpts, pendingReboot);
         }
 
@@ -103,13 +155,13 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
         if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
             throw new ArgumentException($"Invalid remote server URL '{url}'. Set {ServerUrlVariable} (or -u=) to e.g. {DefaultServerUrl}.");
 
-        var remoteOpts = new SessionLaunchOptions(SessionMode.Remote, uri, id, postReboot, unattended, voice);
+        var remoteOpts = new SessionLaunchOptions(SessionMode.Remote, uri, id, postReboot, unattended, voice, group);
         return ApplyPendingReboot(remoteOpts, pendingReboot);
     }
 
     /// <summary>
     /// Ensures that when <c>RemotePCDiagnostics</c> restarts after a scheduled reboot, it reuses the exact same
-    /// <see cref="Id"/> (and remote <see cref="ServerUri"/>, unattended and voice settings) that it had before the reboot.
+    /// <see cref="Id"/> (and remote <see cref="ServerUri"/>, shop <see cref="Group"/>, unattended and voice settings) that it had before the reboot.
     /// Applies <paramref name="pending"/> as given: whether the reboot happened is the caller's check (<see cref="CanResume"/>;
     /// <see cref="Resolve"/> makes it).
     /// </summary>
@@ -119,6 +171,7 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
 
         var effectiveId = launch.Id != Guid.Empty ? launch.Id : pending.SessionId;
         var effectiveUnattended = launch.Unattended || pending.Unattended;
+        var effectiveGroup = NormalizeGroup(launch.Group) ?? NormalizeGroup(pending.Group);
         if (pending.Mode == SessionMode.Remote)
         {
             var effectiveUri = launch.ServerUri;
@@ -129,10 +182,17 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
                 effectiveUri = new Uri(DefaultServerUrl);
 
             return new(SessionMode.Remote, effectiveUri, effectiveId, PostReboot: true,
-                Unattended: effectiveUnattended, Voice: launch.Voice || pending.Voice);
+                Unattended: effectiveUnattended, Voice: launch.Voice || pending.Voice, Group: effectiveGroup);
         }
 
-        return launch with { Id = effectiveId, PostReboot = true, Unattended = effectiveUnattended, Voice = launch.Voice || pending.Voice };
+        return launch with
+        {
+            Id = effectiveId,
+            PostReboot = true,
+            Unattended = effectiveUnattended,
+            Voice = launch.Voice || pending.Voice,
+            Group = effectiveGroup,
+        };
     }
 
     /// <summary>Marks a copy started by <see cref="RestartArguments"/>: it waits for the old copy to exit instead of leaving at once.</summary>
@@ -149,10 +209,11 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
     /// the session's page was loaded again, or Restart was pressed in the session bar). The same session id keeps the
     /// remote user's link working; <see cref="RestartedArg"/> lets the new copy wait for this one to release the one-copy lock.
     /// </summary>
-    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool unattended = false, bool voice = false)
+    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool unattended = false, bool voice = false, string? group = null)
     {
         if (sessionId == Guid.Empty) throw new ArgumentException("A restart needs the session id the server assigned.", nameof(sessionId));
         var list = new List<string> { $"-u={serverUri.AbsoluteUri.TrimEnd('/')}", $"-i={sessionId:D}" };
+        if (NormalizeGroup(group) is { } normalizedGroup) list.Add($"-g={normalizedGroup}");
         if (unattended) list.Add(UnattendedArg);
         if (voice) list.Add(VoiceArg);
         list.Add(RestartedArg);
@@ -161,18 +222,19 @@ public sealed record SessionLaunchOptions(SessionMode Mode, Uri? ServerUri, Guid
 
     /// <summary>
     /// Builds the Windows <c>RunOnce</c> command line so that after a reboot, <c>RemotePCDiagnostics.Host</c> restarts
-    /// into the exact same session mode, relay server, remote session ID (<c>-i=&lt;guid&gt;</c>), and unattended and voice settings.
+    /// into the exact same session mode, relay server, remote session ID (<c>-i=&lt;guid&gt;</c>), shop group (<c>-g=&lt;group&gt;</c>), and unattended and voice settings.
     /// </summary>
-    public static string BuildResumeCommandLine(string executablePath, SessionMode mode, Uri? serverUri, Guid sessionId, bool unattended = false, bool voice = false)
+    public static string BuildResumeCommandLine(string executablePath, SessionMode mode, Uri? serverUri, Guid sessionId, bool unattended = false, bool voice = false, string? group = null)
     {
         var quotedExe = $"\"{executablePath.Trim('"')}\"";
         if (mode == SessionMode.Remote && serverUri is not null)
         {
             var urlPart = $"-u={serverUri.AbsoluteUri.TrimEnd('/')}";
             var idPart = sessionId != Guid.Empty ? $" -i={sessionId:D}" : "";
+            var groupPart = NormalizeGroup(group) is { } normalizedGroup ? $" -g={normalizedGroup}" : "";
             var unattendedPart = unattended ? $" {UnattendedArg}" : "";
             var voicePart = voice ? $" {VoiceArg}" : "";
-            return $"{quotedExe} {urlPart}{idPart}{unattendedPart}{voicePart} {PostRebootArg}";
+            return $"{quotedExe} {urlPart}{idPart}{groupPart}{unattendedPart}{voicePart} {PostRebootArg}";
         }
         return $"{quotedExe} {PostRebootArg}";
     }
