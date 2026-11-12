@@ -17,35 +17,30 @@ Persistent tracker for shipping **Remote PC Diagnostics** to paying Repair Shops
 - [x] Submit initial **SignPath Foundation** OSS inquiry *(declined for now solely pending organic GitHub stars / Reddit / YouTube mentions — **reapply after Step 5 community posts**, or fund $9.99/mo Azure Artifact Signing out of Customer #1's $25/mo subscription)*
 
 ## Step 2: Ship `ShopBranding` Before/After Reports & Dongle-Free Buyer QR Certificates *(DONE — `7d9804a` & `16b9ce1`)*
-- [x] Extend [ClientReport.cs](../src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs) to accept [ShopBranding.cs](../src/RemotePCDiagnostics.Core/Workflow/ShopBranding.cs) (inline `data:image/...` logo, shop name, phone/URL, warranty footer, technician notes—proving Before/After Windows speedups where PC-Doctor stops at *"Hardware Passed"*)
-- [x] Build **1-Page Buyer Hardware QA QR Certificate** mode ([HardwareQaCertificate.cs](../src/RemotePCDiagnostics.Core/Workflow/HardwareQaCertificate.cs), [QrCodeSvg.cs](../src/RemotePCDiagnostics.Core/Workflow/QrCodeSvg.cs), and [BrandingCertificatePage.razor](../src/RemotePCDiagnostics.UI/Pages/BrandingCertificatePage.razor): Model/Serial + Battery % + SMART SSD + Thermal Stress + Dongle-Free WASAPI Audio Loopback + Webcam + GPU/NPU + scannable eBay/BackMarket QR badge with zero new NuGet DLLs)
-- [x] Finish **Bench Refurbisher QA Suite** in `RemotePCDiagnostics` (`7d9804a`):
-  - [x] Interactive **Keyboard NKRO + Display Dead-Pixel / Touch** check ([PhysicalBenchQa.cs](../src/RemotePCDiagnostics.Core/Workflow/PhysicalBenchQa.cs), [PhysicalBenchQaCard.razor](../src/RemotePCDiagnostics.UI/Shared/PhysicalBenchQaCard.razor)) rolled up onto [HardwareQaCertificate.cs](../src/RemotePCDiagnostics.Core/Workflow/HardwareQaCertificate.cs)
-  - [x] **WHEA Hardware Error** roll-up across [BsodHistoryModule.cs](../src/RemotePCDiagnostics.Core/Areas/BsodHistoryModule.cs), [CrashesModule.cs](../src/RemotePCDiagnostics.Core/Areas/CrashesModule.cs), and [EventLogModule.cs](../src/Modules/EventLog/EventLogModule.cs)
-  - [x] 1-click **"10-Minute Hardware Intake / QA Check"** offline-safe bench preset ([BenchQaRunner.cs](../src/RemotePCDiagnostics.Core/Workflow/BenchQaRunner.cs))
-- [x] Ship **Hosted QR Verification (`GET /r/{id}`) + Multi-Tenant Shop Auth/Branding** in [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView) (`16b9ce1` on `net10`, [item2-hosted-qa-and-shop-auth-spec.md](item2-hosted-qa-and-shop-auth-spec.md)):
-  - [x] `ShopIdentityAuthorization : IRelayAuthorization` + `ShopUserService : IUserService` backed by SQLite (`WAL` mode)
-  - [x] 2-step `/signup`, `/login`, `/shop` portal + public `GET /api/shops/{group}/branding`
-  - [x] `POST /api/reports` (`Bearer rpd_live_...` or cookie) + CSP-sandboxed `GET /r/{id}` & `GET /cert/{id}` QR verification pages
-  - [x] `IShopSessionPolicy` enforcing active `Group` + per-tier concurrent remote session caps (`1` Solo, `5` Shop, `25` MSP)
+- [x] Extend [ClientReport.cs](../src/RemotePCDiagnostics.Core/Workflow/ClientReport.cs) to accept [ShopBranding.cs](../src/RemotePCDiagnostics.Core/Workflow/ShopBranding.cs)
+- [x] Build **1-Page Buyer Hardware QA QR Certificate** mode ([HardwareQaCertificate.cs](../src/RemotePCDiagnostics.Core/Workflow/HardwareQaCertificate.cs), [QrCodeSvg.cs](../src/RemotePCDiagnostics.Core/Workflow/QrCodeSvg.cs), and [BrandingCertificatePage.razor](../src/RemotePCDiagnostics.UI/Pages/BrandingCertificatePage.razor))
+- [x] Finish **Bench Refurbisher QA Suite** in `RemotePCDiagnostics` (`7d9804a`): WHEA hardware error roll-up, interactive Keyboard NKRO + Display Dead-Pixel/Touch check, and 1-click 10-Minute Hardware Intake / QA Check
+- [x] Ship **Hosted QR Verification (`GET /r/{id}`) + Multi-Tenant Shop Auth/Branding** in [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView) (`16b9ce1` on `net10`, [item2-hosted-qa-and-shop-auth-spec.md](item2-hosted-qa-and-shop-auth-spec.md))
 
-## Step 3: Desktop Shop Relay Integration + Stripe Billing & Multi-Tech Team Invites *(ACTIVE — Parallel Split)*
-- [x] **NEXT #1 *(DONE in `RemotePCDiagnostics` `main`)*:** Connect Desktop Client to `16b9ce1` Shop Relay & Hosted QR Certificates:
-  - [x] Add `-g=<group>` (`REMOTEPC_GROUP`) to [SessionLaunchOptions.cs](../src/RemotePCDiagnostics.Core/Session/SessionLaunchOptions.cs), persisted across browser restarts (`RestartArguments`), reboot resume ([RebootResumeCoordinator.cs](../src/RemotePCDiagnostics.Core/Areas/RebootResumeCoordinator.cs)), and workflow restarts ([WindowsWorkflowSystem.cs](../src/RemotePCDiagnostics.Host/WindowsWorkflowSystem.cs)), setting `RemoteBlazorWebView.Group` before `HostPage` in [MainWindow.xaml.cs](../src/RemotePCDiagnostics.Host/MainWindow.xaml.cs)
-  - [x] Add **"Connect to Technician"** top-bar dialog ([MainLayout.razor](../src/RemotePCDiagnostics.UI/Shared/MainLayout.razor)) validating `GET /api/shops/{group}/branding`, showing live shop logo + phone trust banner, and surfacing clear messages when a group is inactive or at session limit
-  - [x] Add 1-click **"Publish Hosted QR Link"** (`POST /api/reports` with `Bearer rpd_live_...` stored in `UserPreferences`) on [BrandingCertificatePage.razor](../src/RemotePCDiagnostics.UI/Pages/BrandingCertificatePage.razor) and [WorkflowPage.razor](../src/RemotePCDiagnostics.UI/Pages/WorkflowPage.razor) so printed QR codes point straight to live `/r/{id}` verification URLs
-- [ ] **NEXT #2 *(Ready for Parallel Bot #2 in `RemoteBlazorWebView` `net10` — Full Spec in [item3b-stripe-and-team-invites-spec.md](item3b-stripe-and-team-invites-spec.md) / `doc/ShopBillingAndTeamInvitesSpec.md`)*:** Wire **Stripe Checkout, Billing Portal, Signed Webhooks & Multi-Tech Team Invites**:
-  - [ ] Pure-`HttpClient` `POST /shop/billing/checkout` + `POST /shop/billing/portal` ($0/mo fixed fee: $15/mo Solo, $25/mo Founding Shop, $39/mo Shop, $99+/mo MSP)
-  - [ ] `HMACSHA256`-verified `POST /api/stripe/webhook` with 5-minute replay window + `ProcessedStripeEvents` idempotency updating `ShopTenants` (`PlanTier`, `SubscriptionStatus`, `MaxConcurrentSessions`)
-  - [ ] `ShopInvites` table + `/shop/team/invite`, `/invite/{token}`, `/shop/team/{userId}/remove`, per-tier seat caps (`1` / `3` / `10`), and `owner` vs `tech` role enforcement
+## Step 3: Desktop Shop Relay Integration + Stripe Billing & Multi-Tech Team Invites *(DONE — `ef59232` & `7fef1a0`)*
+- [x] Connect Desktop Client to Shop Relay & Hosted QR Certificates (`ef59232` on `RemotePCDiagnostics` `main`):
+  - [x] `-g=<group>` (`REMOTEPC_GROUP`) across [SessionLaunchOptions.cs](../src/RemotePCDiagnostics.Core/Session/SessionLaunchOptions.cs), [RebootResumeCoordinator.cs](../src/RemotePCDiagnostics.Core/Areas/RebootResumeCoordinator.cs), [WindowsWorkflowSystem.cs](../src/RemotePCDiagnostics.Host/WindowsWorkflowSystem.cs), and [MainWindow.xaml.cs](../src/RemotePCDiagnostics.Host/MainWindow.xaml.cs)
+  - [x] **"Connect to Technician"** top-bar dialog + live shop logo/phone trust banner ([MainLayout.razor](../src/RemotePCDiagnostics.UI/Shared/MainLayout.razor))
+  - [x] 1-click **"Publish Hosted QR Link"** (`POST /api/reports` with `Bearer rpd_live_...`) on [BrandingCertificatePage.razor](../src/RemotePCDiagnostics.UI/Pages/BrandingCertificatePage.razor) and [WorkflowPage.razor](../src/RemotePCDiagnostics.UI/Pages/WorkflowPage.razor)
+- [x] Wire **Stripe Checkout, Billing Portal, Signed Webhooks & Multi-Tech Team Invites** (`7fef1a0` on `RemoteBlazorWebView` `net10`, [item3b-stripe-and-team-invites-spec.md](item3b-stripe-and-team-invites-spec.md))
 
-## Step 4: User/Admin Split & $0 Microsoft Store MSIX Submission *(Weeks 3–4)*
-- [ ] Change [app.manifest](../src/RemotePCDiagnostics.Host/app.manifest) on `Host.exe` from `requireAdministrator` to `asInvoker` and gracefully badge admin-only modules/fixes when un-elevated
-- [ ] Build `RemotePCDiagnostics.Admin` (`--mode=helper --parent-pid=<pid>`) with Named-Pipe gRPC, `PipeSecurity` ACLs, `GetNamedPipeClientProcessId` MSIX Package Identity / Authenticode check, Job Object exit tie-in, and local **"Enable Admin Repair Mode"** UAC flow
-- [ ] Verify zero `.sys` driver files in publish output and upload **MSIX** (`runFullTrust` + `allowElevation`) to Partner Center so Microsoft signs all `.exe`s and unsigned NuGet `.dll`s for **$0** *(installable by both end customers in Microsoft Store and technicians via `winget install --source msstore`)*
+## Step 4: Microsoft Store `asInvoker` + MSIX Packaging & Relay Launch Hardening *(ACTIVE — Parallel Split)*
+- [ ] **NEXT #1 *(In Progress — Bot #1 in `RemotePCDiagnostics` `main`)*:** Switch to `asInvoker`, Add Elevated Admin Repair Mode & Build `.msix` Store Package:
+  - [ ] Switch [app.manifest](../src/RemotePCDiagnostics.Host/app.manifest) on `Host.exe` from `requireAdministrator` to `asInvoker` + add runtime elevation detection (`IElevationContext`) and clear admin badges in UI when running un-elevated
+  - [ ] Add **"Enable Admin Repair Mode"** UAC flow + Named-Pipe elevated helper (`RemotePCDiagnostics.Admin`, `--mode=helper --parent-pid=<pid>` with `PipeSecurity` ACLs, client process verification, and Win32 Job Object exit tie-in)
+  - [ ] Add `AppxManifest.xml` (`runFullTrust` + `allowElevation`), Store visual assets, zero-`.sys`-driver CI assertion, and automated `MakeAppx.exe` `.msix` build in [ci.yml](../.github/workflows/ci.yml) ready for $0 Partner Center upload
+- [ ] **NEXT #2 *(Ready for Parallel Bot #2 in `RemoteBlazorWebView` `net10` — Full Spec in [item4b-relay-production-and-demo-spec.md](item4b-relay-production-and-demo-spec.md) / `doc/ShopRelayProductionAndDemoSpec.md`)*:** Production Relay Landing Page, Live Sample QR Certificate, Rate Limiting & Container Deploy:
+  - [ ] Public `GET /welcome` landing/pricing page + auto-seeded live sample certificate at `GET /r/DEMO-LATITUDE-7420`
+  - [ ] Built-in `Microsoft.AspNetCore.RateLimiting` (`429` protection on `/signup`, `/login`, `/invite/{token}`, and `/api/reports`)
+  - [ ] `GET /api/shop/health` SQLite WAL readiness probe + `ShopMaintenanceService` expired-report/invite sweep + turnkey `deploy/docker-compose.shop.yml` & `deploy/fly.toml.example`
 
 ## Step 5: Outbound Sales to First 25 Founding Shops *(Weeks 4–5)*
-- [ ] Generate and host 1 live sample **Hardware QA Certificate** from a real laptop
+- [ ] Deploy live relay container & verify live sample **Hardware QA Certificate** (`/r/DEMO-LATITUDE-7420`)
 - [ ] Record 60-second silent-friendly **Store → Group Code → Before/After Report** Loom/GIF demo
 - [ ] Send 10 messages/day to eBay/Swappa/BackMarket laptop refurbishers (target: first 10 trials)
 - [ ] Post MIT open-source bench tool showcase on Technibble, `r/computertechs`, and The Tech Tribe *(also builds the organic stars/discussions needed to reapply to SignPath Foundation for $0)*
