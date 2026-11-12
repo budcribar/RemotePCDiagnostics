@@ -1,6 +1,7 @@
 <Project>
   <!-- One version for every assembly (shown in History details and written to the Event Log). Bump on release. -->
   <PropertyGroup>
+    <Product>Remote PC Diagnostics</Product>
     <Version>1.2.0</Version>
     <!-- The SDK appends the Git revision to InformationalVersion. CI retries stay distinguishable. -->
     <InformationalVersion Condition="'$(GITHUB_RUN_NUMBER)' != ''">$(Version)-ci.$(GITHUB_RUN_NUMBER).$(GITHUB_RUN_ATTEMPT)</InformationalVersion>

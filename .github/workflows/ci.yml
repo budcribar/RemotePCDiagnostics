@@ -9,6 +9,12 @@ on:
       - 'build-*'
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optional version tag to publish as a full GitHub Release (e.g. v1.2.0). Leave empty for rolling pre-release.'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -218,7 +224,7 @@ jobs:
           "Installer silent install, package check, and silent uninstall verified."
 
       - name: Upload Windows installer
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: RemotePCDiagnostics-Setup-win-x64
@@ -226,7 +232,7 @@ jobs:
             artifacts/installer/RemotePCDiagnostics-Setup-*-win-x64.exe
             artifacts/installer/RemotePCDiagnostics-Setup-*-win-x64.exe.sha256
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 5
 
       # The standalone prototypes live outside RemotePCDiagnostics.sln (tools/prototypes/Prototypes.slnx); build them so they keep compiling.
       - name: Build prototypes
@@ -335,12 +341,12 @@ jobs:
           retention-days: 1
 
   release:
-    name: Publish rolling pre-release
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    name: Publish GitHub release
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || inputs.release_tag != ''))
     needs: [service-workflow, build-test-smoke]
     runs-on: ubuntu-latest
     concurrency:
-      group: rolling-prerelease
+      group: github-release
       cancel-in-progress: false
     permissions:
       contents: write
@@ -351,26 +357,66 @@ jobs:
           name: RemotePCDiagnostics-Setup-win-x64
           path: release-assets
 
-      - name: Replace rolling GitHub pre-release (keep single copy)
+      - name: Publish release or rolling pre-release
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          GIT_REF: ${{ github.ref }}
         run: |
-          # Delete all existing pre-releases (and their tags) so only one current pre-release is kept.
-          gh release list --repo "$GITHUB_REPOSITORY" --limit 50 --json tagName,isPrerelease --jq '.[] | select(.isPrerelease or .tagName == "prerelease") | .tagName' | while read -r old_tag; do
-            [ -z "$old_tag" ] && continue
-            gh release delete "$old_tag" --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
-          done
-
           short_sha="${GITHUB_SHA::7}"
           setup_file=$(basename release-assets/RemotePCDiagnostics-Setup-*-win-x64.exe)
           ver="${setup_file#RemotePCDiagnostics-Setup-}"
           ver="${ver%-win-x64.exe}"
 
-          gh release create prerelease release-assets/* \
-            --prerelease \
-            --target "$GITHUB_SHA" \
-            --title "Remote PC Diagnostics ${ver} (${short_sha})" \
-            --notes "Rolling pre-release built from \`main\` commit ${GITHUB_SHA}." \
-            --repo "$GITHUB_REPOSITORY"
+          target_tag=""
+          if [[ "$GIT_REF" == refs/tags/v* ]]; then
+            target_tag="${GIT_REF#refs/tags/}"
+          elif [[ -n "$INPUT_RELEASE_TAG" ]]; then
+            target_tag="$INPUT_RELEASE_TAG"
+          fi
 
+          {
+            if [[ -n "$target_tag" ]]; then
+              echo "Windows x64 self-contained installer (\`${setup_file}\`) built by GitHub Actions from commit \`${GITHUB_SHA}\`."
+            else
+              echo "Rolling pre-release Windows x64 self-contained installer (\`${setup_file}\`) built from \`main\` commit \`${GITHUB_SHA}\`."
+            fi
+            cat <<'EOF'
 
+          ### Overview
+          **Remote PC Diagnostics** is an MIT-licensed Windows 10/11 desktop diagnostic and service-workflow application usable locally on the bench or remotely via [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView). It includes hardware inventory, SMART/drive health, live sensors, thermal-safe CPU/RAM/disk/GPU/network stress tests, audio/webcam/NPU checks, read-only local CIS baseline checks, guided Windows repair (`DISM` / `SFC`) with before/after benchmarking, and client HTML service reports.
+
+          ### Installation & Uninstallation
+          - **Interactive install:** Run `RemotePCDiagnostics-Setup-*-win-x64.exe`.
+          - **Silent install:** `RemotePCDiagnostics-Setup-*-win-x64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`
+          - **Uninstall:** Uninstall **Remote PC Diagnostics** from **Windows Settings > Apps > Installed apps**, or run `unins000.exe` in the installation folder (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` supported).
+
+          ### Code signing policy
+          Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org). *(Builds published prior to SignPath onboarding completion are unsigned).*
+
+          This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. See the full [Code signing policy](https://github.com/budcribar/RemotePCDiagnostics#code-signing-policy) for team roles, artifact scope, and privacy details.
+          EOF
+          } | sed 's/^          //' > release-notes.md
+
+          if [[ -n "$target_tag" ]]; then
+            gh release delete "$target_tag" --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+            gh release create "$target_tag" release-assets/* \
+              --latest \
+              --target "$GITHUB_SHA" \
+              --title "Remote PC Diagnostics ${ver}" \
+              --notes-file release-notes.md \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            # Delete all existing pre-releases (and their tags) so only one current pre-release is kept.
+            gh release list --repo "$GITHUB_REPOSITORY" --limit 50 --json tagName,isPrerelease --jq '.[] | select(.isPrerelease or .tagName == "prerelease") | .tagName' | while read -r old_tag; do
+              [ -z "$old_tag" ] && continue
+              gh release delete "$old_tag" --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
+            done
+
+            gh release create prerelease release-assets/* \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "Remote PC Diagnostics ${ver} (${short_sha})" \
+              --notes-file release-notes.md \
+              --repo "$GITHUB_REPOSITORY"
+          fi
