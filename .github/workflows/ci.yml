@@ -15,6 +15,16 @@ on:
         required: false
         type: string
         default: ''
+      msix_identity_name:
+        description: 'Optional Partner Center Package/Identity/Name (e.g. 12345BudCribar.RemotePCDiagnostics). Falls back to vars.MSIX_IDENTITY_NAME.'
+        required: false
+        type: string
+        default: ''
+      msix_publisher:
+        description: 'Optional Partner Center Package/Identity/Publisher (e.g. CN=00000000-0000-0000-0000-000000000000). Falls back to vars.MSIX_PUBLISHER.'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -267,8 +277,18 @@ jobs:
 
       - name: Build Microsoft Store MSIX package
         shell: pwsh
+        env:
+          INPUT_MSIX_IDENTITY_NAME: ${{ inputs.msix_identity_name || vars.MSIX_IDENTITY_NAME }}
+          INPUT_MSIX_PUBLISHER: ${{ inputs.msix_publisher || vars.MSIX_PUBLISHER }}
         run: |
-          pwsh -NoProfile -File msix/Build-Msix.ps1 -SkipPublish
+          $msixArgs = @('-NoProfile', '-File', 'msix/Build-Msix.ps1', '-SkipPublish')
+          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_MSIX_IDENTITY_NAME)) {
+            $msixArgs += @('-IdentityName', $env:INPUT_MSIX_IDENTITY_NAME.Trim())
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_MSIX_PUBLISHER)) {
+            $msixArgs += @('-Publisher', $env:INPUT_MSIX_PUBLISHER.Trim())
+          }
+          pwsh @msixArgs
           if ($LASTEXITCODE -ne 0) { throw "Build-Msix.ps1 failed ($LASTEXITCODE)" }
           $msix = Get-ChildItem artifacts/msix -Filter 'RemotePCDiagnostics-*-win-x64.msix' | Select-Object -First 1
           if (-not $msix) { throw 'MSIX package was not produced' }
@@ -282,6 +302,61 @@ jobs:
           path: |
             artifacts/msix/RemotePCDiagnostics-*-win-x64.msix
             artifacts/msix/RemotePCDiagnostics-*-win-x64.msix.sha256
+          if-no-files-found: error
+          retention-days: 5
+
+      - name: Publish and smoke-test standalone MSP Fleet Agent (RemotePCDiagnostics.Agent)
+        shell: pwsh
+        run: |
+          [xml]$props = Get-Content Directory.Build.props
+          $ver = ($props.Project.PropertyGroup | ForEach-Object { $_['Version'] } | Where-Object { $_ } | Select-Object -First 1).InnerText.Trim()
+          $pubDir = Join-Path $env:RUNNER_TEMP 'agent-publish'
+          if (Test-Path $pubDir) { Remove-Item $pubDir -Recurse -Force }
+          dotnet publish src/RemotePCDiagnostics.Agent/RemotePCDiagnostics.Agent.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o $pubDir
+          if ($LASTEXITCODE -ne 0) { throw "Agent publish failed ($LASTEXITCODE)" }
+
+          $publishedExe = Join-Path $pubDir 'RemotePCDiagnostics.Agent.exe'
+          if (-not (Test-Path -LiteralPath $publishedExe)) { throw "Published Agent missing: $publishedExe" }
+
+          $agentOutDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts/agent'
+          New-Item -ItemType Directory -Force $agentOutDir | Out-Null
+          $agentFileName = "RemotePCDiagnostics.Agent-$ver-win-x64.exe"
+          $agentDest = Join-Path $agentOutDir $agentFileName
+          Copy-Item -LiteralPath $publishedExe -Destination $agentDest -Force
+
+          $hash = (Get-FileHash -LiteralPath $agentDest -Algorithm SHA256).Hash.ToLowerInvariant()
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText("$agentDest.sha256", "$hash  $agentFileName", $utf8NoBom)
+
+          $checkOut = & $agentDest --self-check
+          $checkOut
+          if ($LASTEXITCODE -ne 0) { throw "Agent --self-check failed ($LASTEXITCODE)" }
+
+          $helpOut = & $agentDest help
+          if ($LASTEXITCODE -ne 0 -or ($helpOut -join "`n") -notmatch 'RemotePCDiagnostics\.Agent\.exe install') {
+            throw "Agent help output unexpected ($LASTEXITCODE)"
+          }
+
+          $env:RPD_AGENT_CONFIG_PATH = Join-Path $env:RUNNER_TEMP 'rpd-agent-ci/agent.json'
+          try {
+            $statusOut = & $agentDest status
+            $statusOut
+            if ($LASTEXITCODE -ne 0 -or ($statusOut -join "`n") -notmatch 'RemotePCDiagnosticsAgent') {
+              throw "Agent status failed ($LASTEXITCODE)"
+            }
+          } finally {
+            Remove-Item Env:RPD_AGENT_CONFIG_PATH -ErrorAction SilentlyContinue
+          }
+          "Built standalone Agent: $agentDest ($([Math]::Round((Get-Item $agentDest).Length / 1MB, 2)) MB, sha256=$hash)"
+
+      - name: Upload standalone MSP Fleet Agent
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemotePCDiagnostics-Agent-win-x64
+          path: |
+            artifacts/agent/RemotePCDiagnostics.Agent-*-win-x64.exe
+            artifacts/agent/RemotePCDiagnostics.Agent-*-win-x64.exe.sha256
           if-no-files-found: error
           retention-days: 5
 
@@ -356,11 +431,20 @@ jobs:
             $env:APP_PID = $p.Id
             $env:CDP_PORT = '9222'
             $env:ARTIFACT_DIR = $art
+            $env:STORE_SCREENSHOT_DIR = Join-Path $art 'store-screenshots'
             Push-Location tests/smoke
-            try { node smoke.mjs 2>&1 | Tee-Object -FilePath (Join-Path $art 'smoke.txt'); $code = $LASTEXITCODE } finally { Pop-Location }
+            try {
+              node smoke.mjs 2>&1 | Tee-Object -FilePath (Join-Path $art 'smoke.txt')
+              $code = $LASTEXITCODE
+              if ($code -eq 0) {
+                node store-screenshots.mjs 2>&1 | Tee-Object -FilePath (Join-Path $art 'store-screenshots.txt')
+                $code = $LASTEXITCODE
+              }
+            } finally { Pop-Location }
             if ($code -ne 0) {
               # Surface the failure as annotations (readable without downloading logs).
               Get-Content (Join-Path $art 'smoke.txt') -Tail 12 -ErrorAction SilentlyContinue | ForEach-Object { "::error title=smoke::" + ([string]$_).Replace('%', '%25') }
+              Get-Content (Join-Path $art 'store-screenshots.txt') -Tail 12 -ErrorAction SilentlyContinue | ForEach-Object { "::error title=store-screenshots::" + ([string]$_).Replace('%', '%25') }
               Get-Content (Join-Path $art 'host.log') -ErrorAction SilentlyContinue | Select-String -Pattern 'error|exception|fail' | Select-Object -Last 8 | ForEach-Object { "::warning title=host.log::" + ([string]$_).Replace('%', '%25') }
               Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Select-Object ProcessId, CommandLine | Format-List | Out-File (Join-Path $art 'webview2-processes.txt')
               netstat -ano | Select-String ':9222' | Out-File (Join-Path $art 'netstat-9222.txt')
@@ -368,6 +452,7 @@ jobs:
             }
           } finally {
             Remove-Item Env:RPD_SIMULATE_STANDARD_USER -ErrorAction SilentlyContinue
+            Remove-Item Env:STORE_SCREENSHOT_DIR -ErrorAction SilentlyContinue
             if ($p.HasExited) {
               "Host exited with code $($p.ExitCode)"
             } else {
@@ -376,6 +461,14 @@ jobs:
             }
           }
           exit $code
+
+      - name: Upload Partner Center Store screenshots (1920x1080)
+        uses: actions/upload-artifact@v4
+        with:
+          name: partner-center-screenshots
+          path: artifacts/store-screenshots/*.png
+          if-no-files-found: error
+          retention-days: 14
 
       # Logs, test results and smoke screenshots only (no binaries or publish output), and only when the job failed.
       - name: Upload artifacts
@@ -417,6 +510,12 @@ jobs:
           name: RemotePCDiagnostics-Msix-win-x64
           path: release-assets
 
+      - name: Download standalone MSP Fleet Agent artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: RemotePCDiagnostics-Agent-win-x64
+          path: release-assets
+
       - name: Publish release or rolling pre-release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -426,6 +525,7 @@ jobs:
           short_sha="${GITHUB_SHA::7}"
           setup_file=$(basename release-assets/RemotePCDiagnostics-Setup-*-win-x64.exe)
           msix_file=$(basename release-assets/RemotePCDiagnostics-*-win-x64.msix)
+          agent_file=$(basename release-assets/RemotePCDiagnostics.Agent-*-win-x64.exe)
           ver="${setup_file#RemotePCDiagnostics-Setup-}"
           ver="${ver%-win-x64.exe}"
 
@@ -438,9 +538,9 @@ jobs:
 
           {
             if [[ -n "$target_tag" ]]; then
-              echo "Windows x64 self-contained installer (\`${setup_file}\`) and Microsoft Store MSIX package (\`${msix_file}\`) built by GitHub Actions from commit \`${GITHUB_SHA}\`."
+              echo "Windows x64 self-contained installer (\`${setup_file}\`), Microsoft Store MSIX package (\`${msix_file}\`), and standalone MSP Fleet Agent (\`${agent_file}\`) built by GitHub Actions from commit \`${GITHUB_SHA}\`."
             else
-              echo "Rolling pre-release Windows x64 self-contained installer (\`${setup_file}\`) and Microsoft Store MSIX package (\`${msix_file}\`) built from \`main\` commit \`${GITHUB_SHA}\`."
+              echo "Rolling pre-release Windows x64 self-contained installer (\`${setup_file}\`), Microsoft Store MSIX package (\`${msix_file}\`), and standalone MSP Fleet Agent (\`${agent_file}\`) built from \`main\` commit \`${GITHUB_SHA}\`."
             fi
             cat <<'EOF'
 
@@ -450,11 +550,12 @@ jobs:
           ### Installation & Uninstallation
           - **Interactive install:** Run `RemotePCDiagnostics-Setup-*-win-x64.exe`.
           - **Silent install:** `RemotePCDiagnostics-Setup-*-win-x64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`
-          - **Microsoft Store MSIX upload:** Upload `RemotePCDiagnostics-*-win-x64.msix` to Microsoft Partner Center (`runFullTrust` + `allowElevation`, zero `.sys` drivers).
+          - **Microsoft Store MSIX upload:** Upload `RemotePCDiagnostics-*-win-x64.msix` to Microsoft Partner Center (`runFullTrust` + `allowElevation`, zero `.sys` drivers, no background service bundled).
+          - **MSP / RMM Fleet Agent (standalone Windows Service):** `RemotePCDiagnostics.Agent-*-win-x64.exe install --server=https://relay.yourshop.com --key=rpd_live_YOUR_KEY --consent=ask --lifetime=persistent` (`status` and `uninstall` subcommands included).
           - **Uninstall:** Uninstall **Remote PC Diagnostics** from **Windows Settings > Apps > Installed apps**, or run `unins000.exe` in the installation folder (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` supported).
 
           ### Privacy & security policy
-          Standalone GitHub Release installers and MSIX packages are built automatically by GitHub Actions (`.sha256` checksums attached); Partner Center signs the MSIX package with Microsoft's Store certificate on Store submission.
+          Standalone GitHub Release installers, MSIX packages, and Fleet Agent binaries are built automatically by GitHub Actions (`.sha256` checksums attached); Partner Center signs the MSIX package with Microsoft's Store certificate on Store submission.
 
           This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. See the full [Privacy & security policy](https://github.com/budcribar/RemotePCDiagnostics#privacy--security-policy) for details.
           EOF

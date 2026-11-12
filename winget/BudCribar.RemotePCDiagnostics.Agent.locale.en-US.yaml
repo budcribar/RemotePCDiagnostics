@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+PackageIdentifier: BudCribar.RemotePCDiagnostics.Agent
+PackageVersion: 1.2.0
+PackageLocale: en-US
+Publisher: Bud Cribar
+PublisherUrl: https://github.com/budcribar
+PublisherSupportUrl: https://github.com/budcribar/RemotePCDiagnostics/issues
+PrivacyUrl: https://github.com/budcribar/RemotePCDiagnostics#privacy--security-policy
+Author: Bud Cribar
+PackageName: Remote PC Diagnostics Agent
+PackageUrl: https://github.com/budcribar/RemotePCDiagnostics
+License: MIT
+LicenseUrl: https://github.com/budcribar/RemotePCDiagnostics/blob/main/LICENSE
+ShortDescription: Outbound Windows Service enrollment agent for Remote PC Diagnostics MSP & IT fleets.
+Description: >-
+  Lightweight outbound gRPC Windows Service agent for Managed Service Providers (MSPs) and internal IT helpdesks
+  using Remote PC Diagnostics. Enrolls Windows 10/11 endpoints with a tenant-scoped Shop Relay enrollment key,
+  enforces local user consent or unattended policy ceilings, and launches Remote PC Diagnostics in the active
+  console session with zero inbound firewall ports.
+Moniker: remotepcdiagnostics-agent
+Tags:
+  - diagnostics
+  - hardware
+  - helpdesk
+  - msp
+  - repair
+  - rmm
+  - support
+ReleaseNotesUrl: https://github.com/budcribar/RemotePCDiagnostics/releases
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

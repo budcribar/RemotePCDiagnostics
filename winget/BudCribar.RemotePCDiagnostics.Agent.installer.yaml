@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+# Template for microsoft/winget-pkgs submission once standalone Authenticode code signing
+# (SignPath Foundation $0 OSS or Azure Artifact Signing) is active on GitHub Releases.
+# Note: namazso.PawnIO is declared under PackageDependencies for WHQL-signed CPU/motherboard
+# temperature sensors; MSPs on strict zero-driver endpoints can pass `winget install --skip-dependencies`.
+
+PackageIdentifier: BudCribar.RemotePCDiagnostics.Agent
+PackageVersion: 1.2.0
+Platform:
+  - Windows.Desktop
+MinimumOSVersion: 10.0.19041.0
+InstallerType: exe
+Scope: machine
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+InstallerSwitches:
+  Silent: install --consent=ask --lifetime=persistent
+  SilentWithProgress: install --consent=ask --lifetime=persistent
+UpgradeBehavior: install
+ElevationRequirement: elevationRequired
+Dependencies:
+  PackageDependencies:
+    - PackageIdentifier: namazso.PawnIO
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/budcribar/RemotePCDiagnostics/releases/download/v1.2.0/RemotePCDiagnostics.Agent-1.2.0-win-x64.exe
+    # Replace with exact SHA-256 from RemotePCDiagnostics.Agent-1.2.0-win-x64.exe.sha256 via `wingetcreate update`:
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+ManifestType: installer
+ManifestVersion: 1.6.0

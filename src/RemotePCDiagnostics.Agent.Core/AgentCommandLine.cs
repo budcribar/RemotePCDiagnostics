@@ -17,12 +17,13 @@ public sealed record AgentArgs(
     string Requester = "",
     int TimeoutSeconds = AgentCommandLine.DefaultConsentTimeoutSeconds,
     bool Pause = false,
-    string? Error = null);
+    string? Error = null,
+    bool SelfCheck = false);
 
 /// <summary>
 /// The agent command line (docs/roadmap.md, "Agent program"):
 /// <c>install [--server=URL] [--key=KEY] [--consent=ask|unattended] [--lifetime=persistent|session]</c>, <c>uninstall</c>, <c>status</c>,
-/// <c>run</c> and the internal <c>consent --remote user=NAME --timeout=SECONDS</c>. Options are <c>--name=value</c>; names and commands are
+/// <c>run [--self-check]</c> and the internal <c>consent --requester=NAME --timeout=SECONDS</c>. Options are <c>--name=value</c>; names and commands are
 /// case-insensitive. <c>--pause</c> (internal) keeps the window of an elevated relaunch open until a key is pressed.
 /// </summary>
 public static class AgentCommandLine
@@ -47,6 +48,12 @@ public static class AgentCommandLine
     {
         if (args.Count == 0) return new AgentArgs(AgentCommand.Help);
         var verb = args[0].Trim().ToLowerInvariant();
+        if (verb == "--self-check")
+        {
+            return args.Count == 1
+                ? new AgentArgs(AgentCommand.Run, SelfCheck: true)
+                : Fail($"Unexpected argument '{args[1]}'.");
+        }
         AgentCommand command;
         switch (verb)
         {
@@ -75,6 +82,12 @@ public static class AgentCommandLine
             {
                 if (value is not null) return Fail("--pause takes no value.");
                 result = result with { Pause = true };
+                continue;
+            }
+            if (name == "self-check")
+            {
+                if (value is not null) return Fail("--self-check takes no value.");
+                result = result with { SelfCheck = true };
                 continue;
             }
             if (value is null) return Fail($"--{name} needs a value (--{name}=...).");
@@ -120,6 +133,7 @@ public static class AgentCommandLine
     {
         AgentCommand.Install => option is "server" or "key" or "consent" or "lifetime" or "pause",
         AgentCommand.Uninstall => option is "pause",
+        AgentCommand.Run => option is "self-check",
         AgentCommand.Consent => option is "requester" or "timeout",
         _ => false,
     };

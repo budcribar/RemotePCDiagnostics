@@ -178,6 +178,10 @@ $MsixSysDrivers = @(Get-ChildItem -LiteralPath $MsixStageDir -Recurse -Filter '*
 if ($MsixSysDrivers.Count -gt 0) {
     throw "MSIX stage unexpectedly contains .sys driver files."
 }
+$MsixAgentBins = @(Get-ChildItem -LiteralPath $MsixStageDir -Recurse -Filter 'RemotePCDiagnostics.Agent*.exe' -ErrorAction SilentlyContinue)
+if ($MsixAgentBins.Count -gt 0) {
+    throw "Store Policy 10.2.4 separation violation: RemotePCDiagnostics.Agent.exe must NOT be bundled inside the Microsoft Store MSIX."
+}
 
 $MsixAssetsDest = Join-Path $MsixStageDir 'Assets'
 New-Item -ItemType Directory -Force -Path $MsixAssetsDest | Out-Null

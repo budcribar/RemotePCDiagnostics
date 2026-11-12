@@ -1,5 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Channels;
+using Grpc.Core;
+using PeakSWC.RemoteWebView.Agent;
+using RemotePCDiagnostics.Agent;
 
 namespace RemotePCDiagnostics.Agent.Core.Tests;
 
@@ -232,7 +236,364 @@ public class LaunchRulesTests
 
         Assert.Contains("-u=https://relay.example:34544", line);
         Assert.Contains("-i=7e57c0de-0000-4000-8000-000000000001", line);
+        Assert.DoesNotContain("-g=", line);
         // Nobody may be at the PC to hand control over: the requester gets it on joining the session's link.
         Assert.EndsWith(" --unattended", line);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Blank_or_null_group_omits_group_flag(string? group)
+    {
+        var session = Guid.Parse("7e57c0de-0000-4000-8000-000000000002");
+        var line = LaunchRules.AppCommandLine(@"C:\Program Files\Remote PC Diagnostics\RemotePCDiagnostics.Host.exe", "https://relay.example:34544", session, group);
+
+        Assert.StartsWith("\"C:\\Program Files\\Remote PC Diagnostics\\RemotePCDiagnostics.Host.exe\" ", line);
+        Assert.DoesNotContain("-g=", line);
+        Assert.EndsWith("-i=7e57c0de-0000-4000-8000-000000000002 --unattended", line);
+    }
+
+    [Fact]
+    public void Group_slug_is_trimmed_lowercased_and_placed_right_before_unattended()
+    {
+        var session = Guid.Parse("7e57c0de-0000-4000-8000-000000000003");
+        var line = LaunchRules.AppCommandLine(@"C:\Program Files\Remote PC Diagnostics\RemotePCDiagnostics.Host.exe", "https://relay.example:34544", session, "  Acme-MSP  ");
+
+        Assert.StartsWith("\"C:\\Program Files\\Remote PC Diagnostics\\RemotePCDiagnostics.Host.exe\" ", line);
+        Assert.Contains("-u=https://relay.example:34544", line);
+        Assert.Contains("-i=7e57c0de-0000-4000-8000-000000000003", line);
+        Assert.EndsWith(" -g=acme-msp --unattended", line);
+    }
+}
+
+public class AgentCommandLineTests
+{
+    [Fact]
+    public void Self_check_flag_parses_in_top_level_and_run_subcommand()
+    {
+        var topLevel = AgentCommandLine.Parse(["--self-check"]);
+        Assert.Null(topLevel.Error);
+        Assert.Equal(AgentCommand.Run, topLevel.Command);
+        Assert.True(topLevel.SelfCheck);
+
+        var runSub = AgentCommandLine.Parse(["run", "--self-check"]);
+        Assert.Null(runSub.Error);
+        Assert.Equal(AgentCommand.Run, runSub.Command);
+        Assert.True(runSub.SelfCheck);
+    }
+}
+
+public class AgentHubWorkerTests
+{
+    [Fact]
+    public async Task Fleet_launch_with_group_passes_group_flag_and_reports_progress_stages()
+    {
+        var machineGuid = Guid.Parse("7e57c0de-0000-4000-8000-000000000010");
+        var sessionGuid = Guid.Parse("7e57c0de-0000-4000-8000-000000000011");
+        var config = AgentConfig.ForInstall(
+            existing: null,
+            new AgentArgs(AgentCommand.Install, Server: "https://relay.example:34544", Key: "rpd_live_fleet_key", Consent: ConsentCeiling.Unattended),
+            machineGuid);
+
+        var proc = new FakeLaunchedProcess();
+        var platform = new FakeAgentPlatform
+        {
+            HostExePath = @"C:\Program Files\Remote PC Diagnostics\RemotePCDiagnostics.Host.exe",
+            RelayConnectedResult = true,
+            ProcessFactory = (_, cmdLine) =>
+            {
+                proc.StartedCommandLine = cmdLine;
+                return (proc, null);
+            },
+        };
+
+        var hub = new FakeAgentHubClient();
+        var worker = new AgentHubWorker(config, platform, new AgentSessionOptions
+        {
+            HeartbeatInterval = TimeSpan.FromMinutes(5),
+            StatusPollInterval = TimeSpan.FromMilliseconds(10),
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var runTask = worker.RunSingleConnectionAsync(hub, cts.Token);
+
+        var first = await hub.ReadAgentMessageAsync(cts.Token);
+        Assert.Equal(AgentMessage.BodyOneofCase.Hello, first.BodyCase);
+        Assert.Equal(machineGuid.ToString("D"), first.Hello.MachineId);
+        Assert.Equal("rpd_live_fleet_key", first.Hello.EnrollmentKey);
+        Assert.Equal(ConsentMode.ConsentUnattendedAllowed, first.Hello.ConsentCeiling);
+        Assert.Equal(Lifetime.Persistent, first.Hello.Lifetime);
+
+        var cmd = new LaunchCommand
+        {
+            RequestId = "req-1",
+            SessionId = sessionGuid.ToString("D"),
+            ServerUrl = "https://relay.example:34544",
+            Requester = "Alice Tech",
+            RequireConsent = false,
+            Group = "Acme-MSP",
+        };
+        Assert.Equal("Acme-MSP", cmd.Group);
+        await hub.SendHubCommandAsync(new HubCommand { Launch = cmd }, cts.Token);
+
+        var stages = new List<LaunchStage>();
+        while (true)
+        {
+            var msg = await hub.ReadAgentMessageAsync(cts.Token);
+            if (msg.BodyCase != AgentMessage.BodyOneofCase.Progress)
+                continue;
+            stages.Add(msg.Progress.Stage);
+            if (msg.Progress.Stage == LaunchStage.StageReady)
+            {
+                proc.CompleteExit(0);
+            }
+            if (msg.Progress.Stage == LaunchStage.StageEnded)
+                break;
+        }
+
+        hub.CompleteServerStream();
+        await runTask;
+
+        Assert.Equal(
+            [LaunchStage.StageQueued, LaunchStage.StageStarting, LaunchStage.StageReady, LaunchStage.StageEnded],
+            stages);
+        Assert.NotNull(proc.StartedCommandLine);
+        Assert.Contains("-g=acme-msp --unattended", proc.StartedCommandLine);
+    }
+
+    [Fact]
+    public async Task Declined_consent_reports_StageDeclined_and_never_starts_host()
+    {
+        var machineGuid = Guid.Parse("7e57c0de-0000-4000-8000-000000000020");
+        var sessionGuid = Guid.Parse("7e57c0de-0000-4000-8000-000000000021");
+        var config = AgentConfig.ForInstall(
+            existing: null,
+            new AgentArgs(AgentCommand.Install, Server: "https://relay.example:34544", Consent: ConsentCeiling.Ask),
+            machineGuid);
+
+        var hostStarted = false;
+        var platform = new FakeAgentPlatform
+        {
+            ConsentResult = ConsentOutcome.Declined,
+            ProcessFactory = (_, _) =>
+            {
+                hostStarted = true;
+                return (new FakeLaunchedProcess(), null);
+            },
+        };
+
+        var hub = new FakeAgentHubClient();
+        var worker = new AgentHubWorker(config, platform, new AgentSessionOptions
+        {
+            HeartbeatInterval = TimeSpan.FromMinutes(5),
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var runTask = worker.RunSingleConnectionAsync(hub, cts.Token);
+
+        var hello = await hub.ReadAgentMessageAsync(cts.Token);
+        Assert.Equal(AgentMessage.BodyOneofCase.Hello, hello.BodyCase);
+
+        await hub.SendHubCommandAsync(new HubCommand
+        {
+            Launch = new LaunchCommand
+            {
+                RequestId = "req-decline",
+                SessionId = sessionGuid.ToString("D"),
+                ServerUrl = "https://relay.example:34544",
+                Requester = "Bob Tech",
+                RequireConsent = true,
+                Group = "shop-west",
+            },
+        }, cts.Token);
+
+        var stages = new List<LaunchStage>();
+        while (true)
+        {
+            var msg = await hub.ReadAgentMessageAsync(cts.Token);
+            if (msg.BodyCase != AgentMessage.BodyOneofCase.Progress)
+                continue;
+            stages.Add(msg.Progress.Stage);
+            if (msg.Progress.Stage == LaunchStage.StageDeclined)
+                break;
+        }
+
+        hub.CompleteServerStream();
+        await runTask;
+
+        Assert.Equal([LaunchStage.StageQueued, LaunchStage.StageWaitingForConsent, LaunchStage.StageDeclined], stages);
+        Assert.False(hostStarted);
+    }
+
+    [Fact]
+    public async Task Cancel_command_aborts_pending_consent_and_reports_StageFailed()
+    {
+        var machineGuid = Guid.Parse("7e57c0de-0000-4000-8000-000000000030");
+        var sessionGuid = Guid.Parse("7e57c0de-0000-4000-8000-000000000031");
+        var config = AgentConfig.ForInstall(
+            existing: null,
+            new AgentArgs(AgentCommand.Install, Server: "https://relay.example:34544", Consent: ConsentCeiling.Ask),
+            machineGuid);
+
+        var consentEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var platform = new FakeAgentPlatform
+        {
+            ConsentHandler = async (_, _, ct) =>
+            {
+                consentEntered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                return ConsentOutcome.Allowed;
+            },
+        };
+
+        var hub = new FakeAgentHubClient();
+        var worker = new AgentHubWorker(config, platform, new AgentSessionOptions
+        {
+            HeartbeatInterval = TimeSpan.FromMinutes(5),
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var runTask = worker.RunSingleConnectionAsync(hub, cts.Token);
+
+        _ = await hub.ReadAgentMessageAsync(cts.Token); // Hello
+
+        await hub.SendHubCommandAsync(new HubCommand
+        {
+            Launch = new LaunchCommand
+            {
+                RequestId = "req-cancel",
+                SessionId = sessionGuid.ToString("D"),
+                ServerUrl = "https://relay.example:34544",
+                Requester = "Bob Tech",
+                RequireConsent = true,
+            },
+        }, cts.Token);
+
+        await consentEntered.Task.WaitAsync(cts.Token);
+        await hub.SendHubCommandAsync(new HubCommand
+        {
+            Cancel = new CancelCommand { RequestId = "req-cancel" },
+        }, cts.Token);
+
+        LaunchProgress? terminal = null;
+        while (terminal is null)
+        {
+            var msg = await hub.ReadAgentMessageAsync(cts.Token);
+            if (msg.BodyCase == AgentMessage.BodyOneofCase.Progress && msg.Progress.Stage == LaunchStage.StageFailed)
+                terminal = msg.Progress;
+        }
+
+        hub.CompleteServerStream();
+        await runTask;
+
+        Assert.Equal("Launch cancelled", terminal.Detail);
+    }
+
+    private sealed class FakeLaunchedProcess : IAgentLaunchedProcess
+    {
+        private readonly TaskCompletionSource<uint> _exitTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string? StartedCommandLine { get; set; }
+        public bool HasExited => _exitTcs.Task.IsCompleted;
+        public uint ExitCode => _exitTcs.Task.IsCompletedSuccessfully ? _exitTcs.Task.Result : 0;
+
+        public void CompleteExit(uint code) => _exitTcs.TrySetResult(code);
+
+        public async Task WaitForExitAsync(CancellationToken ct) =>
+            await _exitTcs.Task.WaitAsync(ct);
+
+        public void Kill() => _exitTcs.TrySetResult(1);
+        public void Dispose() { }
+    }
+
+    private sealed class FakeAgentPlatform : IAgentPlatform
+    {
+        public string MachineName { get; init; } = "BENCH-PC-01";
+        public string SignedInUser { get; init; } = @"CONTOSO\tech";
+        public string HostExePath { get; init; } = @"C:\RemotePCDiagnostics\RemotePCDiagnostics.Host.exe";
+        public ConsentOutcome ConsentResult { get; init; } = ConsentOutcome.Allowed;
+        public Func<string, int, CancellationToken, Task<ConsentOutcome>>? ConsentHandler { get; init; }
+        public bool? RelayConnectedResult { get; init; } = true;
+        public Func<string, string, (IAgentLaunchedProcess?, string?)>? ProcessFactory { get; init; }
+
+        public string GetOsVersion() => "Windows 11 Pro 24H2 (build 26100)";
+        public string GetActiveSignedInUser() => SignedInUser;
+        public string GetAgentVersion() => "1.2.0-test";
+        public string GetCachedOrInstalledAppVersion() => "1.2.0";
+
+        public Task<ConsentOutcome> RequestConsentAsync(string requester, int timeoutSeconds, CancellationToken ct) =>
+            ConsentHandler is not null ? ConsentHandler(requester, timeoutSeconds, ct) : Task.FromResult(ConsentResult);
+
+        public Task<(string? ExePath, string? Error)> ResolveHostExecutableAsync(
+            Func<LaunchStage, string, int, Task> reportStageAsync,
+            CancellationToken ct) =>
+            Task.FromResult<(string?, string?)>((HostExePath, null));
+
+        public (IAgentLaunchedProcess? Process, string? Error) StartHostProcess(string hostExePath, string fullCommandLine) =>
+            ProcessFactory is not null ? ProcessFactory(hostExePath, fullCommandLine) : (new FakeLaunchedProcess(), null);
+
+        public Task<bool?> CheckRelaySessionConnectedAsync(string statusUrl, CancellationToken ct) =>
+            Task.FromResult(RelayConnectedResult);
+
+        public Task RemoveSelfAfterSessionAsync() => Task.CompletedTask;
+    }
+
+    private sealed class FakeAgentHubClient : AgentHub.AgentHubClient
+    {
+        private readonly Channel<AgentMessage> _toServer = Channel.CreateUnbounded<AgentMessage>();
+        private readonly Channel<HubCommand> _toAgent = Channel.CreateUnbounded<HubCommand>();
+
+        public ValueTask SendHubCommandAsync(HubCommand command, CancellationToken ct) =>
+            _toAgent.Writer.WriteAsync(command, ct);
+
+        public ValueTask<AgentMessage> ReadAgentMessageAsync(CancellationToken ct) =>
+            _toServer.Reader.ReadAsync(ct);
+
+        public void CompleteServerStream() => _toAgent.Writer.TryComplete();
+
+        public override AsyncDuplexStreamingCall<AgentMessage, HubCommand> Connect(
+            Metadata? headers = null,
+            DateTime? deadline = null,
+            CancellationToken cancellationToken = default) =>
+            Connect(new CallOptions(headers, deadline, cancellationToken));
+
+        public override AsyncDuplexStreamingCall<AgentMessage, HubCommand> Connect(CallOptions options)
+        {
+            var reqWriter = new ChannelClientStreamWriter<AgentMessage>(_toServer.Writer);
+            var respReader = new ChannelAsyncStreamReader<HubCommand>(_toAgent.Reader, options.CancellationToken);
+            return new AsyncDuplexStreamingCall<AgentMessage, HubCommand>(
+                reqWriter,
+                respReader,
+                Task.FromResult(new Metadata()),
+                () => Status.DefaultSuccess,
+                () => new Metadata(),
+                () => { });
+        }
+
+        private sealed class ChannelClientStreamWriter<T>(ChannelWriter<T> writer) : IClientStreamWriter<T>
+        {
+            public WriteOptions? WriteOptions { get; set; }
+            public Task WriteAsync(T message) => writer.WriteAsync(message).AsTask();
+            public Task CompleteAsync()
+            {
+                writer.TryComplete();
+                return Task.CompletedTask;
+            }
+        }
+
+        private sealed class ChannelAsyncStreamReader<T>(ChannelReader<T> reader, CancellationToken callCt) : IAsyncStreamReader<T>
+        {
+            private T? _current;
+            public T Current => _current!;
+
+            public async Task<bool> MoveNext(CancellationToken cancellationToken)
+            {
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(callCt, cancellationToken);
+                if (!await reader.WaitToReadAsync(linked.Token).ConfigureAwait(false))
+                    return false;
+                return reader.TryRead(out _current);
+            }
+        }
     }
 }
