@@ -43,6 +43,19 @@ RemotePCDiagnostics is released under the [MIT License](LICENSE). The bundled co
 
 Planned components are used under their own licenses and need to be confirmed before shipping: osquery (Apache-2.0 or GPL-2.0, used under Apache-2.0), LibreHardwareMonitor (MPL-2.0), HardeningKitty (MIT), NAudio (MIT), Vortice.Direct3D12 (MIT; the NPU test). This is not legal advice.
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org). *(Builds published prior to SignPath onboarding completion are unsigned).*
+
+- **Team roles:**
+  - Authors, committers, and reviewers: [@budcribar](https://github.com/budcribar)
+  - Approvers: [@budcribar](https://github.com/budcribar)
+- **Signed artifact scope:** Only binaries built from this repository's own MIT-licensed source code (`RemotePCDiagnostics.*.exe`, `RemotePCDiagnostics.*.dll`, built-in diagnostic modules, and the Inno Setup installer `RemotePCDiagnostics-Setup-*-win-x64.exe`) are signed under this project's certificate. Bundled upstream open-source tools and libraries (`osqueryi.exe`, `HardeningKitty`, and NuGet dependencies) retain their upstream distribution status inside the installer. The optional **Security audit** module evaluates local Windows configuration settings against published CIS and Microsoft hardening baselines in read-only mode (`HardeningKitty`) and does not perform network port scanning, active vulnerability scanning, or exploitation.
+- **Privacy policy:** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
+  - **Local mode (default when running `RemotePCDiagnostics.Host.exe` directly):** Runs locally on the machine with no telemetry, analytics, or background data collection.
+  - **User-initiated Remote session (`-u=<server>` or Start Menu remote shortcut):** Connects to the user-specified [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView) relay server to share the diagnostic UI (and optional WebRTC voice when `--voice` is passed) under explicit local owner consent and Windows Event Log auditing.
+  - **User-initiated on-demand checks & repairs:** Starting the **Network stability test** pings configured gateway/DNS hosts (`1.1.1.1`, `8.8.8.8`) and transfers capped test payloads against `https://speed.cloudflare.com` ([Cloudflare Privacy Policy](https://www.cloudflare.com/privacypolicy/)) or a user-configured `REMOTEPC_SPEEDTEST_URL`. Approving **DISM RestoreHealth** runs Windows `dism.exe`, which may retrieve official repair files from Windows Update ([Microsoft Privacy Statement](https://privacy.microsoft.com/privacystatement)). During installation, if the Microsoft Edge WebView2 Runtime is missing (and `/SKIPWEBVIEW2` is not specified), the installer offers Microsoft's official WebView2 Evergreen Bootstrapper ([Microsoft Privacy Statement](https://privacy.microsoft.com/privacystatement)).
+
 ## Safety
 
 Running diagnostics on a customer's PC remotely needs the customer's consent, a clear audit log and read-only operations by default.
@@ -153,25 +166,23 @@ been exercised with fakes.
 
 ## Status
 
-Idea stage. This repository currently holds only this README.
+Active development — Windows x64 self-contained installer (`RemotePCDiagnostics-Setup-<Version>-win-x64.exe`) and portable builds are built and smoke-tested on GitHub Actions (see [Releases](https://github.com/budcribar/RemotePCDiagnostics/releases)).
 
 ## Scaffold (foundation)
 
 ### Download a build for testing
 
-After a successful GitHub Actions **CI** run, download the **RemotePCDiagnostics-win-x64** artifact from the run's **Artifacts** section. Extract GitHub's ZIP and run `RemotePCDiagnostics.Host.exe`. This is a single self-contained executable for Windows x64: testers do not need the .NET SDK or runtime. The Microsoft Edge WebView2 runtime is still required, and Windows requests administrator permission at launch.
+Download the latest `RemotePCDiagnostics-Setup-*-win-x64.exe` Windows installer (and `.sha256` checksum) from [GitHub Releases](https://github.com/budcribar/RemotePCDiagnostics/releases), or build a portable folder locally:
 
-The executable extracts its bundled runtime, helper programs, audit scripts and web assets to the .NET extraction cache on first launch. Keep the downloaded executable in a stable location while testing restart/resume workflows. CI verifies the bundled files and runs its UI smoke test against this published executable.
+The portable executable extracts its bundled runtime, helper programs, audit scripts and web assets to the .NET extraction cache on first launch. Keep the downloaded executable in a stable location while testing restart/resume workflows. CI verifies the bundled files and runs its UI smoke test against the published executable.
 
-To create the same build locally:
+To create a portable build locally:
 
 ```powershell
 dotnet publish src/RemotePCDiagnostics.Host/RemotePCDiagnostics.Host.csproj -c Release -r win-x64 --self-contained true -p:PublishProfile=Portable -p:DebugType=None -p:DebugSymbols=false -o artifacts/RemotePCDiagnostics-win-x64
 ```
 
 `RemotePCDiagnostics.Host.exe --verify-package` checks the extracted helper and web files and runs a one-second, 1 MB helper self-test, then exits without opening the UI or running machine scans. Exit code 0 means the package check passed.
-
-> Stubs only. No real diagnostics yet, and no installer exists yet.
 
 ### Layout
 
