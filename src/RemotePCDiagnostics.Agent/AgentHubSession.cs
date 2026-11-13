@@ -36,6 +36,11 @@ public sealed class AgentSessionOptions
     public TimeSpan StatusPollInterval { get; init; } = LaunchRules.StatusPollInterval;
     public int ConsentTimeoutSeconds { get; init; } = AgentCommandLine.DefaultConsentTimeoutSeconds;
     public Action<string>? Log { get; init; }
+    /// <summary>
+    /// Relay link opened, refreshed, or dropped. <c>group</c> is the shop slug when one is known.
+    /// Called from the connection tasks; must not throw (exceptions are ignored).
+    /// </summary>
+    public Action<bool, string?>? LinkChanged { get; init; }
 }
 
 /// <summary>
@@ -199,6 +204,8 @@ public sealed class AgentHubWorker(
     private CancellationTokenSource? _activeLaunchCts;
     private bool _sessionRunning;
     private string _runningSessionId = "";
+    private string? _shopGroup = AgentLayout.NormalizeShopGroup(config.Group);
+    private bool _linkAnnounced;
     private volatile bool _stopAfterSingleSession;
 
     /// <summary>
@@ -303,6 +310,7 @@ public sealed class AgentHubWorker(
 
         await WriteMessageAsync(new AgentMessage { Hello = hello }, token).ConfigureAwait(false);
         Log($"Sent AgentHello (machine={hello.MachineName}, user='{hello.SignedInUser}', version={hello.AgentVersion}).");
+        AnnounceLink(true);
 
         var heartbeatTask = PumpHeartbeatsAsync(WriteMessageAsync, token);
         Task? activeLaunchTask = null;
@@ -332,6 +340,8 @@ public sealed class AgentHubWorker(
             {
                 try { await activeLaunchTask.ConfigureAwait(false); } catch { }
             }
+            // After the launch task, so a late "connected" from a launch that already started cannot stick.
+            AnnounceLink(false);
             try { await call.RequestStream.CompleteAsync().ConfigureAwait(false); } catch { }
         }
     }
@@ -361,6 +371,7 @@ public sealed class AgentHubWorker(
                     CachedAppVersion = platform.GetCachedOrInstalledAppVersion(),
                 };
                 await writeAsync(new AgentMessage { Heartbeat = hb }, ct).ConfigureAwait(false);
+                AnnounceLink(true);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -442,6 +453,9 @@ public sealed class AgentHubWorker(
         CancellationToken launchCt,
         CancellationTokenSource streamCts)
     {
+        RememberGroup(launch.Group);
+        AnnounceLink(true);
+
         await ReportProgressSafeAsync(
             writeAsync,
             launch.RequestId,
@@ -682,6 +696,27 @@ public sealed class AgentHubWorker(
         {
             // Stream closed while sending progress.
         }
+    }
+
+    private void RememberGroup(string? group)
+    {
+        var normalized = AgentLayout.NormalizeShopGroup(group);
+        if (normalized is null) return;
+        lock (_stateGate) _shopGroup = normalized;
+    }
+
+    private void AnnounceLink(bool connected)
+    {
+        string? group;
+        lock (_stateGate)
+        {
+            if (connected) _linkAnnounced = true;
+            else if (!_linkAnnounced) return;
+            if (!connected) _linkAnnounced = false;
+            group = _shopGroup;
+        }
+        try { _options.LinkChanged?.Invoke(connected, group); }
+        catch { /* The badge file must not take down the stream. */ }
     }
 
     private void Log(string message) =>

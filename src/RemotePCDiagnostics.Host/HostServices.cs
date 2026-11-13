@@ -43,6 +43,7 @@ public static class HostServices
         services.AddSingleton<IElevationContext>(sp => sp.GetRequiredService<ElevationService>());
         services.AddSingleton<IElevatedCommandBridge>(sp => sp.GetRequiredService<ElevationService>());
         services.AddSingleton<RemoteUsers>(); // the top bar's "N Remote Users" badge
+        services.AddSingleton(_ => AgentModeHost.CreateMonitor()); // Local only / agent link, separate from the session badge
         if (session.Mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
         services.AddSingleton<ResultStore>();
         services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = L<OsqueryRunner>() }));

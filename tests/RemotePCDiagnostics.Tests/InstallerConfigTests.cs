@@ -105,6 +105,12 @@ public sealed class InstallerConfigTests
         Assert.Contains(@"{localappdata}\RemotePCDiagnostics", iss);
         Assert.Contains("/CLEANSTATE", iss);
         Assert.Contains("MB_DEFBUTTON2", iss);
+
+        // Uninstalling Setup also removes an agent installed by install-agent-*.cmd or Install-Computer.cmd.
+        Assert.Contains(@"RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe", iss);
+        Assert.Contains("Exec(AgentExe, 'uninstall'", iss);
+        Assert.Contains("delete RemotePCDiagnosticsAgent", iss);
+        Assert.Contains(@"agent.json", iss);
     }
 
     [Fact]

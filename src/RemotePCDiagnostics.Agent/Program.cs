@@ -106,12 +106,7 @@ public static class Program
 
         try
         {
-            using var platform = new WindowsAgentPlatform();
-            var worker = new AgentHubWorker(config, platform, new AgentSessionOptions
-            {
-                Log = Console.WriteLine,
-            });
-            await worker.RunLoopAsync(cts.Token).ConfigureAwait(false);
+            await AgentRunLoop.RunAsync(config, Console.WriteLine, cts.Token).ConfigureAwait(false);
             return ExitOk;
         }
         finally

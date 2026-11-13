@@ -396,10 +396,15 @@ public class AgentHubWorkerTests
         };
 
         var hub = new FakeAgentHubClient();
+        var links = new List<(bool Connected, string? Group)>();
         var worker = new AgentHubWorker(config, platform, new AgentSessionOptions
         {
             HeartbeatInterval = TimeSpan.FromMinutes(5),
             StatusPollInterval = TimeSpan.FromMilliseconds(10),
+            LinkChanged = (connected, group) =>
+            {
+                lock (links) links.Add((connected, group));
+            },
         });
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -447,6 +452,11 @@ public class AgentHubWorkerTests
             stages);
         Assert.NotNull(proc.StartedCommandLine);
         Assert.Contains("-g=acme-msp --unattended", proc.StartedCommandLine);
+        lock (links)
+        {
+            Assert.Contains(links, x => x.Connected && x.Group == "acme-msp");
+            Assert.False(links[^1].Connected);
+        }
     }
 
     [Fact]

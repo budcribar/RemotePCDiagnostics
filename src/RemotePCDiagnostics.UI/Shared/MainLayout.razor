@@ -1,10 +1,12 @@
 @inherits LayoutComponentBase
 @implements IDisposable
+@using RemotePCDiagnostics.Agent.Core
 @using RemotePCDiagnostics.Core.Workflow
 @inject ISessionContext Session
 @inject NavigationManager Nav
 @inject AppServices App
 @inject RemoteUsers Remote
+@inject AgentModeMonitor AgentLink
 <div class="app @(_navigationOpen ? "nav-open" : "")">
     <header class="topbar">
         <button class="nav-toggle" aria-label="Toggle navigation" aria-controls="main-navigation" aria-expanded="@(_navigationOpen ? "true" : "false")" @onclick="() => _navigationOpen = !_navigationOpen">Menu</button>
@@ -32,6 +34,10 @@
         {
             <span class="badge badge-local">Local</span>
         }
+        @{
+            var agentLink = AgentLink.Current;
+        }
+        <span class="@agentLink.CssClass" data-testid="agent-mode-badge" title="@agentLink.Tooltip">@agentLink.Label</span>
         <span class="topbar-spacer"></span>
         @if (App.Elevation is { } elevation)
         {
@@ -273,6 +279,7 @@
     {
         Nav.LocationChanged += CloseNavigation;
         Remote.Changed += RemoteUsersChanged;
+        AgentLink.Changed += AgentLinkChanged;
         if (App.RemoteHealth is { } health)
             health.Changed += RemoteHealthChanged;
         if (App.Elevation is { } elevation)
@@ -626,6 +633,7 @@
     }
 
     private void RemoteUsersChanged() => _ = InvokeAsync(StateHasChanged);
+    private void AgentLinkChanged() => _ = InvokeAsync(StateHasChanged);
     private void RemoteHealthChanged() => _ = InvokeAsync(StateHasChanged);
     private void ElevationChanged() => _ = InvokeAsync(StateHasChanged);
 
@@ -633,6 +641,7 @@
     {
         Nav.LocationChanged -= CloseNavigation;
         Remote.Changed -= RemoteUsersChanged;
+        AgentLink.Changed -= AgentLinkChanged;
         if (App.RemoteHealth is { } health)
             health.Changed -= RemoteHealthChanged;
         if (App.Elevation is { } elevation)

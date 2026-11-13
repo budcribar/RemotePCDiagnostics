@@ -35,6 +35,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
+    <ProjectReference Include="..\RemotePCDiagnostics.Agent.Core\RemotePCDiagnostics.Agent.Core.csproj" />
     <ProjectReference Include="..\RemotePCDiagnostics.UI\RemotePCDiagnostics.UI.csproj" />
     <!-- Memory test helper process (RemotePCDiagnostics.MemTest.exe is copied next to the Host exe). -->
     <ProjectReference Include="..\RemotePCDiagnostics.MemTest\RemotePCDiagnostics.MemTest.csproj" />
