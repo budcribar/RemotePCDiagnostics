@@ -278,7 +278,7 @@ begin
     once it has seen this install and later finds it gone. install-agent / Install-Computer.cmd only call
     "Agent.exe install ... --lifetime=persistent", so this same uninstall command is what removes them. }
   AgentDir := ExpandConstant('{autopf}\RemotePCDiagnosticsAgent');
-  AgentExe := AgentDir + '\RemotePCDiagnostics.Agent.exe';
+  AgentExe := ExpandConstant('{autopf}\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe');
   if FileExists(AgentExe) then
   begin
     Log('Removing Remote PC Diagnostics Agent: ' + AgentExe);
