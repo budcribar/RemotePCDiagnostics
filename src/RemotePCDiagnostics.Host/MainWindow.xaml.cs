@@ -166,6 +166,7 @@ public partial class MainWindow : Window
         RemoteBlazorWebView.ReadyToConnect += (_, e) => Dispatcher.BeginInvoke(() =>
         {
             _readyTimer?.Stop();
+            HideNativeFallbackCard();
             if (_provider.GetService<ISessionContext>() is SessionContext sc && e.Id != Guid.Empty) sc.SessionId = e.Id;
             // The link to share is the read-only /mirror page: this window holds the app's own page, and the remote user is
             // handed control from the session bar.
@@ -217,6 +218,30 @@ public partial class MainWindow : Window
         _readyTimer.Start();
     }
 
+    private UIElement? _fallbackCard;
+
+    /// <summary>
+    /// Handles synchronous exceptions thrown by <c>RemoteWebView.Client()</c> on the WPF UI thread during <c>Loaded</c>
+    /// (for example when the relay times out or rejects <c>CreateWebView</c>) so the window stays open with a clear notice.
+    /// </summary>
+    public bool TryHandleRemoteStartupException(Exception ex)
+    {
+        if (_serverUri is null || _remoteUserUrl is not null) return false;
+        var text = ex.ToString();
+        var isRemoteStartup = text.Contains("PeakSWC.RemoteWebView", StringComparison.Ordinal)
+            || text.Contains("PeakSWC.RemoteBlazorWebView", StringComparison.Ordinal)
+            || text.Contains("Grpc.", StringComparison.Ordinal)
+            || text.Contains("Timeout waiting for server to start", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("WebView Create failed", StringComparison.OrdinalIgnoreCase);
+        if (!isRemoteStartup) return false;
+
+        _readyTimer?.Stop();
+        Logger.Error($"Remote startup failed on UI dispatcher: {ex.Message}");
+        _provider.GetService<RemoteSessionHealth>()?.ReportFailure(RemoteSessionState.Unreachable, ex.Message);
+        SetRemoteState(RemoteSessionState.Unreachable, ex.Message);
+        return true;
+    }
+
     private void SetRemoteState(RemoteSessionState state, string? errorDetail = null)
     {
         if (_serverUri is null) return;
@@ -224,11 +249,10 @@ public partial class MainWindow : Window
         // Once the app's page is up its header carries the status. Before that, the one thing to say here is that the
         // relay can't be reached (a later ReadyToConnect replaces this page).
         if (!RemoteLinkInfo.IsWarning(state)) return;
+        var issue = RemoteSessionHealth.ClassifyError(errorDetail, state);
         if (!string.IsNullOrWhiteSpace(_group) && state == RemoteSessionState.Unreachable)
         {
-            var issue = RemoteSessionHealth.ClassifyError(errorDetail, state);
-            try { RemoteBlazorWebView.NavigateToString(RemoteSessionHealth.BuildShopRelayDeniedHtml(_serverUri, _group, issue)); }
-            catch (Exception ex) { Logger.Error($"Showing the shop relay notice failed: {ex}"); }
+            ShowRelayNotice(RemoteSessionHealth.BuildShopRelayDeniedHtml(_serverUri, _group, issue), _serverUri, _group, issue);
 
             // Disambiguate generic client CreateFailed errors into GroupInactive (404) vs SessionLimitReached (active shop).
             if (issue is RemoteRelayIssueKind.CreateFailedOrDenied or RemoteRelayIssueKind.RelayUnreachable
@@ -252,8 +276,7 @@ public partial class MainWindow : Window
                         _ = Dispatcher.BeginInvoke(() =>
                         {
                             if (_remoteUserUrl is not null) return;
-                            try { RemoteBlazorWebView.NavigateToString(RemoteSessionHealth.BuildShopRelayDeniedHtml(uri, grp, refined)); }
-                            catch { }
+                            ShowRelayNotice(RemoteSessionHealth.BuildShopRelayDeniedHtml(uri, grp, refined), uri, grp, refined);
                         });
                     }
                     catch { }
@@ -261,8 +284,138 @@ public partial class MainWindow : Window
             }
             return;
         }
-        try { RemoteBlazorWebView.NavigateToString(RemoteLinkInfo.UnreachableHtml(_serverUri)); }
-        catch (Exception ex) { Logger.Error($"Showing the unreachable notice failed: {ex}"); }
+        var defaultHtml = issue != RemoteRelayIssueKind.RelayUnreachable
+            ? RemoteSessionHealth.BuildShopRelayDeniedHtml(_serverUri, "default", issue)
+            : RemoteLinkInfo.UnreachableHtml(_serverUri);
+        ShowRelayNotice(defaultHtml, _serverUri, _group, issue);
+    }
+
+    private void ShowRelayNotice(string html, Uri serverUri, string? groupSlug, RemoteRelayIssueKind issue)
+    {
+        try
+        {
+            RemoteBlazorWebView.NavigateToString(html);
+            return;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"WebView notice unavailable ({ex.GetType().Name}); showing native fallback card");
+        }
+        ShowNativeFallbackCard(serverUri, groupSlug, issue);
+    }
+
+    private void HideNativeFallbackCard()
+    {
+        if (_fallbackCard is null) return;
+        RootGrid.Children.Remove(_fallbackCard);
+        _fallbackCard = null;
+        RemoteBlazorWebView.Visibility = Visibility.Visible;
+    }
+
+    private void ShowNativeFallbackCard(Uri serverUri, string? groupSlug, RemoteRelayIssueKind issue)
+    {
+        HideNativeFallbackCard();
+        var server = RemoteLinkInfo.HostAndPort(serverUri);
+        var groupLabel = string.IsNullOrWhiteSpace(groupSlug) ? "default" : groupSlug;
+        var (headline, explanation) = issue switch
+        {
+            RemoteRelayIssueKind.GroupInactive => (
+                $"Shop code \"{groupLabel}\" is not active",
+                "This repair shop code was not found on the relay or its subscription/trial is currently inactive."),
+            RemoteRelayIssueKind.SessionLimitReached => (
+                $"Shop \"{groupLabel}\" is at its active session limit",
+                "All concurrent remote support slots for this plan are currently in use. Close an idle session or try again shortly."),
+            RemoteRelayIssueKind.CreateFailedOrDenied => (
+                "Could not start remote session on the relay",
+                $"The relay ({server}) declined the session request for group \"{groupLabel}\". Verify the shop code or open in Local Mode."),
+            _ => (
+                $"Can't reach relay {server}",
+                $"Remote PC Diagnostics could not connect to {server}. Check your internet connection, retry, or open in Local Mode."),
+        };
+
+        var stack = new System.Windows.Controls.StackPanel { MaxWidth = 560 };
+        stack.Children.Add(new System.Windows.Controls.TextBlock
+        {
+            Text = headline,
+            FontSize = 18,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0xFB, 0xBF, 0x24)),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 10),
+        });
+        stack.Children.Add(new System.Windows.Controls.TextBlock
+        {
+            Text = explanation,
+            FontSize = 14,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x9F, 0xB0, 0xC0)),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 14),
+        });
+        stack.Children.Add(new System.Windows.Controls.TextBlock
+        {
+            Text = $"Relay: {server}  ·  Group: {groupLabel}",
+            FontSize = 12.5,
+            Foreground = new SolidColorBrush(Color.FromRgb(0xCB, 0xD5, 0xE1)),
+            Margin = new Thickness(0, 0, 0, 18),
+        });
+
+        var actions = new System.Windows.Controls.WrapPanel();
+        var retryBtn = new System.Windows.Controls.Button
+        {
+            Content = "Retry remote session",
+            Padding = new Thickness(14, 7, 14, 7),
+            Margin = new Thickness(0, 0, 10, 0),
+        };
+        retryBtn.Click += (_, _) => RelaunchSelf(keepRemoteArgs: true);
+        var localBtn = new System.Windows.Controls.Button
+        {
+            Content = "Open in Local Mode",
+            Padding = new Thickness(14, 7, 14, 7),
+        };
+        localBtn.Click += (_, _) => RelaunchSelf(keepRemoteArgs: false);
+        actions.Children.Add(retryBtn);
+        actions.Children.Add(localBtn);
+        stack.Children.Add(actions);
+
+        var card = new System.Windows.Controls.Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0x16, 0x1C, 0x23)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x3B, 0x2E, 0x14)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(28, 24, 28, 24),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(24),
+            Child = stack,
+        };
+        var host = new System.Windows.Controls.Grid
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0x0F, 0x14, 0x19)),
+        };
+        host.Children.Add(card);
+        System.Windows.Controls.Grid.SetRow(host, 1);
+        RemoteBlazorWebView.Visibility = Visibility.Collapsed;
+        RootGrid.Children.Add(host);
+        _fallbackCard = host;
+    }
+
+    private void RelaunchSelf(bool keepRemoteArgs)
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(exe)) return;
+        try
+        {
+            var session = _provider.GetService<ISessionContext>();
+            IReadOnlyList<string> args = keepRemoteArgs && _serverUri is not null
+                ? SessionLaunchOptions.RestartArguments(_serverUri, Guid.NewGuid(), session?.Unattended ?? false, session?.Voice ?? false, _group)
+                : ["--restarted"];
+            var psi = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
+            foreach (var arg in args) psi.ArgumentList.Add(arg);
+            Process.Start(psi);
+            Close();
+        }
+        catch (Exception ex) { Logger.Error($"Relaunch failed: {ex.Message}"); }
     }
 
     /// <summary>App start event text: version, machine model, admin, mode (no server URL or session id).</summary>

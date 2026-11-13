@@ -147,12 +147,19 @@ public partial class App : Application
         }
         var isAdmin = IsAdministrator();
         Log($"Startup build={RemotePCDiagnostics.Core.AppBuildInfo.Version} pid={Environment.ProcessId} elevated={isAdmin} args={string.Join(' ', e.Args)}");
-        DispatcherUnhandledException += (_, ex) => Log($"Unhandled: {ex.Exception}");
+        DispatcherUnhandledException += (_, ex) =>
+        {
+            Log($"Unhandled: {ex.Exception}");
+            if (Current?.MainWindow is RemotePCDiagnostics.Host.MainWindow mw && mw.TryHandleRemoteStartupException(ex.Exception))
+                ex.Handled = true;
+        };
         AppDomain.CurrentDomain.UnhandledException += (_, ex) => Log($"Fatal: {ex.ExceptionObject}");
         base.OnStartup(e);
 
+        var isUndoAll = e.Args.Any(a => a.Equals("--undo-all", StringComparison.OrdinalIgnoreCase));
+
         // Headless --undo-all reverts system-wide changes in ProgramData and requires Administrator privileges.
-        if (e.Args.Any(a => a.Equals("--undo-all", StringComparison.OrdinalIgnoreCase)) && !isAdmin)
+        if (isUndoAll && !isAdmin)
         {
             Log("--undo-all invoked without administrator rights: requesting elevation");
             if (!TryElevate(e.Args))
@@ -177,6 +184,7 @@ public partial class App : Application
         catch (UnauthorizedAccessException)
         {
             Log("Another (elevated) instance already owns the instance mutex: exiting");
+            if (!isUndoAll) TryActivateExistingWindow();
             Shutdown(ExitAlreadyRunning);
             return;
         }
@@ -187,7 +195,15 @@ public partial class App : Application
             try { first = _instance.WaitOne(RemotePCDiagnostics.Core.Session.SessionLaunchOptions.RestartWait); }
             catch (AbandonedMutexException) { first = true; } // the old copy ended without releasing it: we own it now
         }
-        if (!first) { Log("Another instance is already running: exiting"); _instance.Dispose(); _instance = null; Shutdown(ExitAlreadyRunning); return; }
+        if (!first)
+        {
+            Log("Another instance is already running: exiting");
+            if (!isUndoAll) TryActivateExistingWindow();
+            _instance.Dispose();
+            _instance = null;
+            Shutdown(ExitAlreadyRunning);
+            return;
+        }
 
         if (isAdmin)
         {
@@ -296,6 +312,33 @@ public partial class App : Application
             return false;
         }
     }
+
+    private static void TryActivateExistingWindow()
+    {
+        try
+        {
+            using var current = System.Diagnostics.Process.GetCurrentProcess();
+            foreach (var proc in System.Diagnostics.Process.GetProcessesByName(current.ProcessName))
+            {
+                using (proc)
+                {
+                    if (proc.Id == current.Id || proc.MainWindowHandle == IntPtr.Zero) continue;
+                    ShowWindowAsync(proc.MainWindowHandle, SwRestore);
+                    SetForegroundWindow(proc.MainWindowHandle);
+                    return;
+                }
+            }
+        }
+        catch { }
+    }
+
+    private const int SwRestore = 9;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
 
     protected override void OnExit(ExitEventArgs e)
     {
