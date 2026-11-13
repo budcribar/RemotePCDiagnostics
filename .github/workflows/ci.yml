@@ -416,6 +416,88 @@ jobs:
           if-no-files-found: error
           retention-days: 5
 
+      - name: Build and smoke-test TestShop demo bundle installer (RPCD + RPCDA)
+        shell: pwsh
+        run: |
+          [xml]$props = Get-Content Directory.Build.props
+          $ver = ($props.Project.PropertyGroup | ForEach-Object { $_['Version'] } | Where-Object { $_ } | Select-Object -First 1).InnerText.Trim()
+          $agentExe = Join-Path $env:GITHUB_WORKSPACE "artifacts/agent/RemotePCDiagnostics.Agent-$ver-win-x64.exe"
+          if (-not (Test-Path -LiteralPath $agentExe)) { throw "Agent EXE missing for bundle: $agentExe" }
+
+          $bundleBaseName = "RemotePCDiagnostics-TestShop-Setup-$ver-win-x64"
+          pwsh -NoProfile -File installer/Build-Installer.ps1 `
+            -Version $ver `
+            -SkipPublish `
+            -SkipVerify `
+            -OutputBaseName $bundleBaseName `
+            -RemoteServerUrl 'https://server.remoteblazorwebview.com:34544' `
+            -ShopGroup 'test-shop' `
+            -AgentExePath $agentExe `
+            -AgentServerUrl 'https://server.remoteblazorwebview.com:34544' `
+            -AgentEnrollmentKey 'test-shop' `
+            -AgentConsent 'unattended'
+          if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 for TestShop bundle failed ($LASTEXITCODE)" }
+
+          $bundleExe = Join-Path $env:GITHUB_WORKSPACE "artifacts/installer/$bundleBaseName.exe"
+          if (-not (Test-Path -LiteralPath $bundleExe)) { throw "TestShop bundle missing: $bundleExe" }
+          if (-not (Test-Path -LiteralPath "$bundleExe.sha256")) { throw "TestShop bundle sha256 missing: $bundleExe.sha256" }
+
+          $installDir = Join-Path $env:RUNNER_TEMP 'rpd-testshop-bundle'
+          if (Test-Path -LiteralPath $installDir) { Remove-Item -LiteralPath $installDir -Recurse -Force }
+          $installLog = Join-Path $env:GITHUB_WORKSPACE 'artifacts/testshop-bundle-install.log'
+          $installProc = Start-Process -FilePath $bundleExe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SKIPWEBVIEW2 /DIR=`"$installDir`" /LOG=`"$installLog`"" -Wait -PassThru
+          if ($installProc.ExitCode -ne 0) {
+            if (Test-Path $installLog) { Get-Content $installLog -Tail 120 | Write-Host }
+            throw "TestShop bundle silent install failed with exit code $($installProc.ExitCode)"
+          }
+
+          $installedHost = Join-Path $installDir 'RemotePCDiagnostics.Host.exe'
+          try {
+            if (-not (Test-Path -LiteralPath $installedHost)) { throw "TestShop bundle did not install $installedHost" }
+            $installedAgent = 'C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe'
+            $installedCfg = 'C:\ProgramData\RemotePCDiagnostics\agent.json'
+            if (-not (Test-Path -LiteralPath $installedAgent)) { throw "TestShop bundle did not install $installedAgent" }
+            if (-not (Test-Path -LiteralPath $installedCfg)) { throw "TestShop bundle did not write $installedCfg" }
+            $cfgJson = Get-Content -LiteralPath $installedCfg -Raw | ConvertFrom-Json
+            if ($cfgJson.key -ne 'test-shop' -or $cfgJson.group -ne 'test-shop' -or $cfgJson.consent -ne 'unattended' -or $cfgJson.lifetime -ne 'persistent' -or $cfgJson.server -ne 'https://server.remoteblazorwebview.com:34544') {
+              throw "Unexpected agent.json written by TestShop bundle: $(Get-Content -LiteralPath $installedCfg -Raw)"
+            }
+            $svc = Get-Service -Name 'RemotePCDiagnosticsAgent' -ErrorAction SilentlyContinue
+            if ($null -eq $svc -or $svc.Status -ne 'Running') {
+              throw "Expected RemotePCDiagnosticsAgent service Running after TestShop bundle install, got: $($svc.Status)"
+            }
+          } finally {
+            $uninstaller = Join-Path $installDir 'unins000.exe'
+            if (Test-Path -LiteralPath $uninstaller) {
+              $uninstallProc = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru
+              if ($uninstallProc.ExitCode -ne 0) { throw "TestShop bundle silent uninstall failed with exit code $($uninstallProc.ExitCode)" }
+            }
+          }
+
+          for ($i = 0; $i -lt 20 -and (Test-Path -LiteralPath $installedHost); $i++) { Start-Sleep -Milliseconds 500 }
+          if (Test-Path -LiteralPath $installedHost) { throw 'TestShop bundle uninstall left RemotePCDiagnostics.Host.exe behind' }
+          if (Test-Path -LiteralPath 'C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe') {
+            throw 'TestShop bundle uninstall left C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe behind'
+          }
+          if (Test-Path -LiteralPath 'C:\ProgramData\RemotePCDiagnostics\agent.json') {
+            throw 'TestShop bundle uninstall left C:\ProgramData\RemotePCDiagnostics\agent.json behind'
+          }
+          if ($null -ne (Get-Service -Name 'RemotePCDiagnosticsAgent' -ErrorAction SilentlyContinue)) {
+            throw 'TestShop bundle uninstall left RemotePCDiagnosticsAgent service behind'
+          }
+          "TestShop demo bundle install (RPCD + RPCDA) + service verification + clean uninstall passed."
+
+      - name: Upload TestShop demo bundle installer
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemotePCDiagnostics-TestShop-Setup-win-x64
+          path: |
+            artifacts/installer/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe
+            artifacts/installer/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe.sha256
+          if-no-files-found: error
+          retention-days: 5
+
       # The standalone prototypes live outside RemotePCDiagnostics.sln (tools/prototypes/Prototypes.slnx); build them so they keep compiling.
       - name: Build prototypes
         run: dotnet build tools/prototypes/Prototypes.slnx -c Release
@@ -560,6 +642,12 @@ jobs:
           name: RemotePCDiagnostics-Setup-win-x64
           path: release-assets
 
+      - name: Download TestShop demo bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: RemotePCDiagnostics-TestShop-Setup-win-x64
+          path: release-assets
+
       - name: Download Microsoft Store MSIX artifact
         uses: actions/download-artifact@v4
         with:
@@ -580,6 +668,7 @@ jobs:
         run: |
           short_sha="${GITHUB_SHA::7}"
           setup_file=$(basename release-assets/RemotePCDiagnostics-Setup-*-win-x64.exe)
+          testshop_file=$(basename release-assets/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe)
           msix_file=$(basename release-assets/RemotePCDiagnostics-*-win-x64.msix)
           agent_file=$(basename release-assets/RemotePCDiagnostics.Agent-*-win-x64.exe)
           agent_msi_file=$(basename release-assets/RemotePCDiagnostics.Agent-*-win-x64.msi)
@@ -595,9 +684,9 @@ jobs:
 
           {
             if [[ -n "$target_tag" ]]; then
-              echo "Windows x64 self-contained installer (\`${setup_file}\`), Microsoft Store MSIX package (\`${msix_file}\`), and standalone MSP Fleet Agent (\`${agent_msi_file}\` / \`${agent_file}\`) built by GitHub Actions from commit \`${GITHUB_SHA}\`."
+              echo "Windows x64 self-contained installer (\`${setup_file}\`), Test-Shop demo bundle (\`${testshop_file}\`), Microsoft Store MSIX package (\`${msix_file}\`), and standalone MSP Fleet Agent (\`${agent_msi_file}\` / \`${agent_file}\`) built by GitHub Actions from commit \`${GITHUB_SHA}\`."
             else
-              echo "Rolling pre-release Windows x64 self-contained installer (\`${setup_file}\`), Microsoft Store MSIX package (\`${msix_file}\`), and standalone MSP Fleet Agent (\`${agent_msi_file}\` / \`${agent_file}\`) built from \`main\` commit \`${GITHUB_SHA}\`."
+              echo "Rolling pre-release Windows x64 self-contained installer (\`${setup_file}\`), Test-Shop demo bundle (\`${testshop_file}\`), Microsoft Store MSIX package (\`${msix_file}\`), and standalone MSP Fleet Agent (\`${agent_msi_file}\` / \`${agent_file}\`) built from \`main\` commit \`${GITHUB_SHA}\`."
             fi
             cat <<'EOF'
 
@@ -607,6 +696,7 @@ jobs:
           ### Installation & Uninstallation
           - **Interactive install:** Run `RemotePCDiagnostics-Setup-*-win-x64.exe`.
           - **Silent install:** `RemotePCDiagnostics-Setup-*-win-x64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`
+          - **Test-Shop Demo Bundle (RPCD + RPCDA):** Run `RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe` to install both the desktop app (`RemotePCDiagnostics.Host.exe`) and the persistent `RemotePCDiagnosticsAgent` Windows Service pre-configured for demo group `test-shop`.
           - **Microsoft Store MSIX upload:** Upload `RemotePCDiagnostics-*-win-x64.msix` to Microsoft Partner Center (`runFullTrust` + `allowElevation`, zero `.sys` drivers, no background service bundled).
           - **MSP / RMM Fleet Agent (Windows Installer `.msi`):** Download a pre-configured `RemotePCDiagnostics-Agent.<mode>.<key>.pkg.msi` from your admin portal and double-click to install, or deploy silently via RMM/Intune/GPO: `msiexec /i RemotePCDiagnostics.Agent-*-win-x64.msi /qn ENROLLMENT_KEY=rpd_live_YOUR_KEY CONSENT=ask LIFETIME=persistent`.
           - **MSP / RMM Fleet Agent (standalone `.exe` CLI):** `RemotePCDiagnostics.Agent-*-win-x64.exe install --server=https://server.remoteblazorwebview.com:34544 --key=rpd_live_YOUR_KEY --consent=ask --lifetime=persistent` (`status` and `uninstall` subcommands included).

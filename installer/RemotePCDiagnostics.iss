@@ -17,12 +17,47 @@
   #define OutputDir "..\artifacts\installer"
 #endif
 
+#ifndef OutputBaseName
+  #define OutputBaseName "RemotePCDiagnostics-Setup-" + AppVersion + "-win-x64"
+#endif
+#ifndef RemoteServerUrl
+  #define RemoteServerUrl "https://remoteblazorwebview.com:34544"
+#endif
+#ifndef ShopGroup
+  #define ShopGroup ""
+#endif
+#ifndef AgentExePath
+  #define AgentExePath ""
+#endif
+#ifndef AgentServerUrl
+  #define AgentServerUrl "https://server.remoteblazorwebview.com:34544"
+#endif
+#ifndef AgentEnrollmentKey
+  #define AgentEnrollmentKey ""
+#endif
+#ifndef AgentConsent
+  #define AgentConsent "unattended"
+#endif
+
 #define AppName "Remote PC Diagnostics"
 #define AppPublisher "Remote PC Diagnostics"
 #define AppExeName "RemotePCDiagnostics.Host.exe"
 ; How the shortcuts (Start menu, desktop) and the "launch now" box at the end of setup start the app: a remote session on
 ; the public relay, shared with the remote user, with a voice call. Running the exe with no arguments is still Local mode.
-#define RemoteParameters "-u=https://remoteblazorwebview.com:34544 --voice"
+#if ShopGroup != ""
+  #define RemoteParameters "-u=" + RemoteServerUrl + " -g=" + ShopGroup + " --voice"
+#else
+  #define RemoteParameters "-u=" + RemoteServerUrl + " --voice"
+#endif
+#if AgentExePath != ""
+  #define AgentInstallParams "install --server=" + AgentServerUrl + " --consent=" + AgentConsent + " --lifetime=persistent"
+  #if AgentEnrollmentKey != ""
+    #define AgentInstallParams AgentInstallParams + " --key=" + AgentEnrollmentKey
+  #endif
+  #if ShopGroup != ""
+    #define AgentInstallParams AgentInstallParams + " --group=" + ShopGroup
+  #endif
+#endif
 #define AppMutexName "Global\RemotePCDiagnostics.Host"
 #define WebView2ClientId "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 #define WebView2BootstrapUrl "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
@@ -58,7 +93,7 @@ SetupIconFile={#RepoRoot}\src\RemotePCDiagnostics.Host\Assets\diagnostics.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
 OutputDir={#OutputDir}
-OutputBaseFilename=RemotePCDiagnostics-Setup-{#AppVersion}-win-x64
+OutputBaseFilename={#OutputBaseName}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -76,12 +111,19 @@ Name: "{app}\checks"
 
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#if AgentExePath != ""
+Source: "{#AgentExePath}"; DestDir: "{tmp}"; DestName: "RemotePCDiagnostics.Agent.exe"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session (shared screen and voice)"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session (shared screen and voice)"; Tasks: desktopicon
 
 [Run]
+#if AgentExePath != ""
+; Stage Agent.exe in {tmp} and invoke 'install' so any running RemotePCDiagnosticsAgent service is stopped cleanly before updating Program Files.
+Filename: "{tmp}\RemotePCDiagnostics.Agent.exe"; Parameters: "{#AgentInstallParams}"; StatusMsg: "Installing and starting Remote PC Diagnostics Agent service..."; Flags: runhidden waituntilterminated
+#endif
 ; shellexec + runasoriginaluser launches RemotePCDiagnostics.Host.exe (asInvoker) as the interactive desktop user at the end of setup.
 Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent shellexec runasoriginaluser
 
@@ -229,13 +271,14 @@ end;
 
 procedure RemoveInstalledAgent();
 var
-  AgentExe, ProgramDataDir: String;
-  ResultCode: Integer;
+  AgentDir, AgentExe, ProgramDataDir: String;
+  I, ResultCode: Integer;
 begin
   { Setup can run the agent's own uninstall. MSIX cannot (no custom uninstall action); the service removes itself
     once it has seen this install and later finds it gone. install-agent / Install-Computer.cmd only call
     "Agent.exe install ... --lifetime=persistent", so this same uninstall command is what removes them. }
-  AgentExe := ExpandConstant('{autopf}\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe');
+  AgentDir := ExpandConstant('{autopf}\RemotePCDiagnosticsAgent');
+  AgentExe := AgentDir + '\RemotePCDiagnostics.Agent.exe';
   if FileExists(AgentExe) then
   begin
     Log('Removing Remote PC Diagnostics Agent: ' + AgentExe);
@@ -254,6 +297,17 @@ begin
   Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "RemotePCDiagnosticsAgent" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnosticsAgent');
   RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnosticsAgent');
+
+  for I := 1 to 10 do
+  begin
+    if not FileExists(AgentExe) then
+      Break;
+    if DeleteFile(AgentExe) then
+      Break;
+    Sleep(200);
+  end;
+  if DirExists(AgentDir) then
+    DelTree(AgentDir, True, True, True);
 
   ProgramDataDir := ExpandConstant('{commonappdata}\RemotePCDiagnostics');
   if FileExists(ProgramDataDir + '\agent.json') then

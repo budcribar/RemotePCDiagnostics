@@ -14,6 +14,13 @@ param(
     [string] $Version = '',
     [string] $StageDir = '',
     [string] $OutputDir = '',
+    [string] $OutputBaseName = '',
+    [string] $RemoteServerUrl = '',
+    [string] $ShopGroup = '',
+    [string] $AgentExePath = '',
+    [string] $AgentServerUrl = '',
+    [string] $AgentEnrollmentKey = '',
+    [string] $AgentConsent = '',
     [string] $IsccPath = '',
     [string] $RbwvSourceRoot = '',
     [switch] $UseRbwvSource,
@@ -217,20 +224,52 @@ function Find-IsccExecutable {
 $Iscc = Find-IsccExecutable -ExplicitPath $IsccPath
 $IssFile = Join-Path $PSScriptRoot 'RemotePCDiagnostics.iss'
 
-Write-Host "Compiling installer with Inno Setup ($Iscc) ..." -ForegroundColor Cyan
-& $Iscc `
-    "/DAppVersion=$Version" `
-    "/DAppNumericVersion=$NumericVersion" `
-    "/DRepoRoot=$RepoRoot" `
-    "/DPublishDir=$StageDir" `
-    "/DOutputDir=$OutputDir" `
-    $IssFile
+if ([string]::IsNullOrWhiteSpace($OutputBaseName)) {
+    $OutputBaseName = "RemotePCDiagnostics-Setup-$Version-win-x64"
+}
+
+$IsccArgs = @(
+    "/DAppVersion=$Version"
+    "/DAppNumericVersion=$NumericVersion"
+    "/DRepoRoot=$RepoRoot"
+    "/DPublishDir=$StageDir"
+    "/DOutputDir=$OutputDir"
+    "/DOutputBaseName=$OutputBaseName"
+)
+
+if (-not [string]::IsNullOrWhiteSpace($RemoteServerUrl)) {
+    $IsccArgs += "/DRemoteServerUrl=$RemoteServerUrl"
+}
+if (-not [string]::IsNullOrWhiteSpace($ShopGroup)) {
+    $IsccArgs += "/DShopGroup=$ShopGroup"
+}
+if (-not [string]::IsNullOrWhiteSpace($AgentExePath)) {
+    if (-not (Test-Path -LiteralPath $AgentExePath)) {
+        throw "Specified AgentExePath was not found: $AgentExePath"
+    }
+    $ResolvedAgentExe = (Resolve-Path -LiteralPath $AgentExePath).Path
+    $IsccArgs += "/DAgentExePath=$ResolvedAgentExe"
+}
+if (-not [string]::IsNullOrWhiteSpace($AgentServerUrl)) {
+    $IsccArgs += "/DAgentServerUrl=$AgentServerUrl"
+}
+if (-not [string]::IsNullOrWhiteSpace($AgentEnrollmentKey)) {
+    $IsccArgs += "/DAgentEnrollmentKey=$AgentEnrollmentKey"
+}
+if (-not [string]::IsNullOrWhiteSpace($AgentConsent)) {
+    $IsccArgs += "/DAgentConsent=$AgentConsent"
+}
+
+$IsccArgs += $IssFile
+
+Write-Host "Compiling installer '$OutputBaseName.exe' with Inno Setup ($Iscc) ..." -ForegroundColor Cyan
+& $Iscc @IsccArgs
 
 if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup compilation failed with exit code $LASTEXITCODE."
 }
 
-$SetupFileName = "RemotePCDiagnostics-Setup-$Version-win-x64.exe"
+$SetupFileName = "$OutputBaseName.exe"
 $SetupExePath = Join-Path $OutputDir $SetupFileName
 if (-not (Test-Path -LiteralPath $SetupExePath)) {
     throw "Expected installer output was not created: $SetupExePath"
@@ -238,7 +277,8 @@ if (-not (Test-Path -LiteralPath $SetupExePath)) {
 
 $Hash = (Get-FileHash -LiteralPath $SetupExePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $ShaFile = "$SetupExePath.sha256"
-[System.IO.File]::WriteAllText($ShaFile, "$Hash  $SetupFileName")
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($ShaFile, "$Hash  $SetupFileName", $Utf8NoBom)
 
 $SizeMb = [Math]::Round((Get-Item -LiteralPath $SetupExePath).Length / 1MB, 2)
 Write-Host ""
