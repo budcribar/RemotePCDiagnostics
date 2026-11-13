@@ -13,10 +13,10 @@ namespace RemotePCDiagnostics.Agent;
 /// </summary>
 public static class AgentPaths
 {
-    public const string ServiceName = "RemotePCDiagnosticsAgent";
+    public const string ServiceName = AgentLayout.ServiceName;
     public const string ServiceDisplayName = "Remote PC Diagnostics Agent";
     public const string ServiceDescription = "Maintains an outbound diagnostic enrollment connection so authorized technicians can start Remote PC Diagnostics sessions.";
-    public const string ConfigPathEnvVar = "RPD_AGENT_CONFIG_PATH";
+    public const string ConfigPathEnvVar = AgentLayout.ConfigPathEnvVar;
     public const string HostExeEnvVar = "RPD_AGENT_HOST_EXE";
 
     public static string GetAgentVersion()
@@ -31,33 +31,76 @@ public static class AgentPaths
         return asm.GetName().Version?.ToString(3) ?? "1.2.0";
     }
 
-    public static string ProgramDataDir()
+    public static string ProgramDataDir() => AgentLayout.ProgramDataDirectory();
+
+    public static string ConfigPath() => AgentLayout.ConfigPath();
+
+    public static string StatusPath() => AgentLayout.StatusPath();
+
+    public static string HostWatchPath() => AgentLayout.HostWatchPath();
+
+    public static string AppCacheRootDir() => AgentLayout.AppCacheDirectory();
+
+    public static string DefaultInstallDir() => AgentLayout.DefaultInstallDirectory();
+
+    public static string DefaultInstalledAgentExe() => AgentLayout.DefaultAgentExe();
+
+    /// <summary>
+    /// Writes <c>agent-status.json</c> so a standard user can read the link state. The file has no enrollment key.
+    /// </summary>
+    public static void WriteReadableStatus(AgentLinkStatus status) =>
+        WriteUsersCanRead(StatusPath(), status.ToJson());
+
+    public static void WriteHostWatch(AgentHostWatchState state) =>
+        WriteUsersCanRead(HostWatchPath(), state.ToJson());
+
+    public static AgentHostWatchState ReadHostWatch()
     {
-        var customConfig = Environment.GetEnvironmentVariable(ConfigPathEnvVar)?.Trim();
-        if (!string.IsNullOrEmpty(customConfig))
+        try
         {
-            var parent = Path.GetDirectoryName(Path.GetFullPath(customConfig));
-            if (!string.IsNullOrEmpty(parent))
-                return parent;
+            var path = HostWatchPath();
+            if (!File.Exists(path)) return new AgentHostWatchState();
+            return AgentHostWatchState.Parse(File.ReadAllText(path));
         }
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "RemotePCDiagnostics");
+        catch
+        {
+            return new AgentHostWatchState();
+        }
     }
 
-    public static string ConfigPath()
+    private static void WriteUsersCanRead(string path, string contents)
     {
-        var custom = Environment.GetEnvironmentVariable(ConfigPathEnvVar)?.Trim();
-        if (!string.IsNullOrEmpty(custom))
-            return Path.GetFullPath(custom);
-        return Path.Combine(ProgramDataDir(), "agent.json");
+        var dir = Path.GetDirectoryName(path) ?? ProgramDataDir();
+        Directory.CreateDirectory(dir);
+        var tempPath = path + ".tmp";
+        File.WriteAllText(tempPath, contents);
+        if (OperatingSystem.IsWindows())
+            TryApplyUsersCanReadFileAcl(tempPath);
+        File.Move(tempPath, path, overwrite: true);
+        if (OperatingSystem.IsWindows())
+            TryApplyUsersCanReadFileAcl(path);
     }
 
-    public static string AppCacheRootDir() => Path.Combine(ProgramDataDir(), "app");
-
-    public static string DefaultInstallDir() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "RemotePCDiagnosticsAgent");
-
-    public static string DefaultInstalledAgentExe() =>
-        Path.Combine(DefaultInstallDir(), "RemotePCDiagnostics.Agent.exe");
+    private static void TryApplyUsersCanReadFileAcl(string filePath)
+    {
+        try
+        {
+            var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+            var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
+            var fileInfo = new FileInfo(filePath);
+            var security = new FileSecurity();
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(users, FileSystemRights.Read, AccessControlType.Allow));
+            fileInfo.SetAccessControl(security);
+        }
+        catch
+        {
+            // A non-Windows test, or a folder we cannot relabel, keeps the default ACL.
+        }
+    }
 
     public static AgentConfig? TryLoadConfig(out string? readError)
     {

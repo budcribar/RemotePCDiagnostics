@@ -227,6 +227,43 @@ begin
   end;
 end;
 
+procedure RemoveInstalledAgent();
+var
+  AgentExe, ProgramDataDir: String;
+  ResultCode: Integer;
+begin
+  { Setup can run the agent's own uninstall. MSIX cannot (no custom uninstall action); the service removes itself
+    once it has seen this install and later finds it gone. install-agent / Install-Computer.cmd only call
+    "Agent.exe install ... --lifetime=persistent", so this same uninstall command is what removes them. }
+  AgentExe := ExpandConstant('{autopf}\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe');
+  if FileExists(AgentExe) then
+  begin
+    Log('Removing Remote PC Diagnostics Agent: ' + AgentExe);
+    if Exec(AgentExe, 'uninstall', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      Log('Agent uninstall finished with exit code ' + IntToStr(ResultCode) + '.')
+    else
+      Log('Could not start the agent uninstaller. Removing the service and enrollment key directly.');
+  end
+  else
+    Log('Agent executable not found at ' + AgentExe + '. Removing any leftover service and enrollment key.');
+
+  { Idempotent if uninstall already did this. Covers a missing exe or an uninstall that did not start. }
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop RemotePCDiagnosticsAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'delete RemotePCDiagnosticsAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "RemotePCDiagnostics Agent" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "RemotePCDiagnosticsAgent" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnosticsAgent');
+  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnosticsAgent');
+
+  ProgramDataDir := ExpandConstant('{commonappdata}\RemotePCDiagnostics');
+  if FileExists(ProgramDataDir + '\agent.json') then
+    DeleteFile(ProgramDataDir + '\agent.json');
+  if FileExists(ProgramDataDir + '\agent-status.json') then
+    DeleteFile(ProgramDataDir + '\agent-status.json');
+  if FileExists(ProgramDataDir + '\agent-host.json') then
+    DeleteFile(ProgramDataDir + '\agent-host.json');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ProgramDataDir: String;
@@ -234,6 +271,9 @@ var
   HasStateDirs: Boolean;
   ShouldClean: Boolean;
 begin
+  if CurUninstallStep = usUninstall then
+    RemoveInstalledAgent();
+
   if CurUninstallStep = usPostUninstall then
   begin
     if RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\RunOnce', '{#RebootRunOnceValueName}') then

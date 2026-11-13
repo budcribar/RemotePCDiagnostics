@@ -19,11 +19,12 @@ public sealed record AgentArgs(
     bool Pause = false,
     string? Error = null,
     bool SelfCheck = false,
-    bool FromMsi = false);
+    bool FromMsi = false,
+    string? Group = null);
 
 /// <summary>
 /// The agent command line (docs/roadmap.md, "Agent program"):
-/// <c>install [--server=URL] [--key=KEY] [--consent=ask|unattended] [--lifetime=persistent|session] [--from-msi=PATH]</c>, <c>uninstall</c>, <c>status</c>,
+/// <c>install [--server=URL] [--key=KEY] [--group=SHOP] [--consent=ask|unattended] [--lifetime=persistent|session] [--from-msi=PATH]</c>, <c>uninstall</c>, <c>status</c>,
 /// <c>run [--self-check]</c> and the internal <c>consent --requester=NAME --timeout=SECONDS</c>. Options are <c>--name=value</c>; names and commands are
 /// case-insensitive. <c>--pause</c> (internal) keeps the window of an elevated relaunch open until a key is pressed.
 /// </summary>
@@ -38,7 +39,7 @@ public static class AgentCommandLine
         "Remote PC Diagnostics agent\n" +
         "\n" +
         "  RemotePCDiagnostics.Agent.exe install [--server=" + DefaultServer + "] [--key=<enrollment key>]\n" +
-        "                                        [--consent=ask|unattended] [--lifetime=persistent|session]\n" +
+        "                                        [--group=<shop>] [--consent=ask|unattended] [--lifetime=persistent|session]\n" +
         "  RemotePCDiagnostics.Agent.exe uninstall\n" +
         "  RemotePCDiagnostics.Agent.exe status\n" +
         "  RemotePCDiagnostics.Agent.exe run        (what the service runs; also usable in a console for testing)\n" +
@@ -74,6 +75,7 @@ public static class AgentCommandLine
         string? keyRaw = null;
         string? consentRaw = null;
         string? lifetimeRaw = null;
+        string? groupRaw = null;
 
         for (var i = 1; i < args.Count; i++)
         {
@@ -115,6 +117,9 @@ public static class AgentCommandLine
                     break;
                 case "lifetime":
                     lifetimeRaw = value;
+                    break;
+                case "group":
+                    groupRaw = value;
                     break;
                 case "requester":
                     result = result with { Requester = CleanRequester(value) };
@@ -175,6 +180,13 @@ public static class AgentCommandLine
             result = result with { Lifetime = l };
         }
 
+        if (groupRaw is not null && (!fromMsi || !string.IsNullOrWhiteSpace(groupRaw)))
+        {
+            var group = AgentLayout.NormalizeShopGroup(groupRaw);
+            if (group is null) return Fail("--group must be a shop code of 1 to 64 characters, without quotes or slashes.");
+            result = result with { Group = group };
+        }
+
         return result;
 
         static AgentArgs Fail(string error) => new(AgentCommand.Help, Error: error);
@@ -182,7 +194,7 @@ public static class AgentCommandLine
 
     private static bool Allowed(AgentCommand command, string option) => command switch
     {
-        AgentCommand.Install => option is "server" or "key" or "consent" or "lifetime" or "from-msi" or "pause",
+        AgentCommand.Install => option is "server" or "key" or "group" or "consent" or "lifetime" or "from-msi" or "pause",
         AgentCommand.Uninstall => option is "pause",
         AgentCommand.Run => option is "self-check",
         AgentCommand.Consent => option is "requester" or "timeout",

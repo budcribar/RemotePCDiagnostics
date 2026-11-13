@@ -37,6 +37,7 @@ winget install --id BudCribar.RemotePCDiagnostics.Agent --exact --skip-dependenc
 ```powershell
 & "$env:ProgramFiles\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe" status
 & "$env:ProgramFiles\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe" uninstall
+# uninstall stops and deletes the service, startup entries and scheduled tasks that launch the agent, the enrollment key, and the agent files. The desktop app's undo journal is left in place.
 ```
 
 ---
