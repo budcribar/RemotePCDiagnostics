@@ -132,33 +132,8 @@ internal static class AgentServiceInstaller
 
         try
         {
-            if (ServiceExists())
-            {
-                StopServiceIfRunning(TimeSpan.FromSeconds(15));
-                var (delCode, delOut) = RunSc($"delete {AgentPaths.ServiceName}");
-                if (delCode != 0 && ServiceExists())
-                    throw new InvalidOperationException($"sc.exe delete failed ({delCode}): {delOut}");
-                Console.WriteLine($"Stopped and removed Windows Service '{AgentPaths.ServiceName}'.");
-            }
-            else
-            {
-                Console.WriteLine($"Windows Service '{AgentPaths.ServiceName}' is not installed.");
-            }
-
-            var cfgPath = AgentPaths.ConfigPath();
-            if (File.Exists(cfgPath))
-            {
-                try
-                {
-                    File.Delete(cfgPath);
-                    Console.WriteLine($"Removed '{cfgPath}'.");
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine($"Note: could not delete '{cfgPath}': {ex.Message}");
-                }
-            }
-
+            foreach (var line in RemoveInstalledAgent(stopService: true))
+                Console.WriteLine(line);
             return PauseIfRequested(args, ExitOk);
         }
         catch (Exception ex)
@@ -169,35 +144,104 @@ internal static class AgentServiceInstaller
     }
 
     /// <summary>
-    /// Removes <c>agent.json</c>, cached app downloads, and the Windows Service after a one-shot <c>--lifetime=session</c> run.
-    /// Never touches the user/system change journal so any applied fixes remain undoable later.
+    /// Removes the service, startup entries, enrollment key, and agent files.
+    /// <paramref name="stopService"/> is false when this process is the service (waiting on ourselves would deadlock).
+    /// The protected state folder (undo journal, workflow, benchmarks) is not deleted.
+    /// </summary>
+    internal static List<string> RemoveInstalledAgent(bool stopService)
+    {
+        var lines = new List<string>();
+        if (OperatingSystem.IsWindows())
+        {
+            if (stopService && ServiceExists())
+            {
+                StopServiceIfRunning(TimeSpan.FromSeconds(15));
+                var (delCode, delOut) = RunSc($"delete {AgentPaths.ServiceName}");
+                if (delCode != 0 && ServiceExists())
+                    throw new InvalidOperationException($"sc.exe delete failed ({delCode}): {delOut}");
+                lines.Add($"Stopped and removed Windows Service '{AgentPaths.ServiceName}'.");
+            }
+            else if (stopService)
+            {
+                lines.Add($"Windows Service '{AgentPaths.ServiceName}' is not installed.");
+            }
+            else
+            {
+                try { RunSc($"delete {AgentPaths.ServiceName}"); } catch { /* The process is the service; SCM drops it when we exit. */ }
+            }
+
+            try { lines.AddRange(AgentStartupCleanup.RemoveAll()); }
+            catch (Exception ex) { lines.Add("Note: startup cleanup did not finish: " + ex.Message); }
+        }
+
+        var installDir = AgentPaths.DefaultInstallDir();
+        var scheduleInstallDir = AgentRemoval.ShouldScheduleInstallDirectoryDelete(Environment.ProcessPath, installDir);
+        var deleted = AgentRemoval.DeleteOwnedFiles(
+            AgentPaths.ProgramDataDir(),
+            installDir,
+            deleteInstallDirectory: !scheduleInstallDir,
+            extraFiles: [AgentPaths.ConfigPath(), AgentPaths.StatusPath(), AgentPaths.HostWatchPath()]);
+        foreach (var path in deleted.Removed)
+            lines.Add($"Removed '{path}'.");
+        if (scheduleInstallDir)
+        {
+            AgentStartupCleanup.ScheduleInstallDirectoryDelete(installDir);
+            lines.Add($"Scheduled removal of '{installDir}' after this process exits.");
+        }
+        return lines;
+    }
+
+    /// <summary>
+    /// Starts <c>uninstall</c> in another process. Used when the service notices the desktop app is gone:
+    /// this process cannot wait for itself to stop.
+    /// </summary>
+    internal static bool TryBeginSelfRemoval(Action<string>? log)
+    {
+        if (Interlocked.Exchange(ref _selfRemovalStarted, 1) == 1)
+            return true;
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe) || !File.Exists(exe))
+                exe = AgentPaths.DefaultInstalledAgentExe();
+            if (string.IsNullOrWhiteSpace(exe) || !File.Exists(exe))
+            {
+                Interlocked.Exchange(ref _selfRemovalStarted, 0);
+                return false;
+            }
+            var started = Process.Start(new ProcessStartInfo
+            {
+                FileName = exe,
+                Arguments = "uninstall",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+            if (started is null)
+            {
+                Interlocked.Exchange(ref _selfRemovalStarted, 0);
+                return false;
+            }
+            log?.Invoke("Started agent uninstall.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Interlocked.Exchange(ref _selfRemovalStarted, 0);
+            log?.Invoke("Could not start agent uninstall: " + ex.Message);
+            return false;
+        }
+    }
+
+    private static int _selfRemovalStarted;
+
+    /// <summary>
+    /// Removes the enrollment key, cached app, startup entries, and the Windows Service after a one-shot
+    /// <c>--lifetime=session</c> run. Never touches the change journal, so a later session can still undo.
     /// </summary>
     public static void CleanupPerSessionAgentBestEffort()
     {
-        try
-        {
-            var cfg = AgentPaths.ConfigPath();
-            if (File.Exists(cfg))
-                File.Delete(cfg);
-        }
-        catch { }
-
-        try
-        {
-            var appRoot = AgentPaths.AppCacheRootDir();
-            if (Directory.Exists(appRoot))
-                Directory.Delete(appRoot, recursive: true);
-        }
-        catch { }
-
-        if (OperatingSystem.IsWindows())
-        {
-            try
-            {
-                RunSc($"delete {AgentPaths.ServiceName}");
-            }
-            catch { }
-        }
+        try { RemoveInstalledAgent(stopService: false); }
+        catch { /* The session is already over. Leftovers are removed by a later uninstall. */ }
     }
 
     public static string QueryServiceStatusText()
@@ -375,7 +419,6 @@ internal sealed class AgentWindowsService : ServiceBase
     private readonly AgentConfig _config;
     private CancellationTokenSource? _cts;
     private Task? _workerTask;
-    private WindowsAgentPlatform? _platform;
 
     public AgentWindowsService(AgentConfig config)
     {
@@ -389,22 +432,18 @@ internal sealed class AgentWindowsService : ServiceBase
     protected override void OnStart(string[] args)
     {
         _cts = new CancellationTokenSource();
-        _platform = new WindowsAgentPlatform();
         var logFile = Path.Combine(AgentPaths.ProgramDataDir(), "logs", "RemotePCDiagnostics.Agent.log");
-        var worker = new AgentHubWorker(_config, _platform, new AgentSessionOptions
-        {
-            Log = line => AppendLogLineSafe(logFile, line),
-        });
 
         _workerTask = Task.Run(async () =>
         {
             try
             {
-                await worker.RunLoopAsync(_cts.Token).ConfigureAwait(false);
+                await AgentRunLoop.RunAsync(_config, line => AppendLogLineSafe(logFile, line), _cts.Token).ConfigureAwait(false);
             }
             finally
             {
                 // If per-session lifetime ended naturally, tell SCM the service has stopped cleanly.
+                // A desktop-install self-removal cancels this token and lets the child uninstall stop us.
                 if (!_cts.IsCancellationRequested)
                 {
                     try { Stop(); } catch { }
@@ -424,7 +463,6 @@ internal sealed class AgentWindowsService : ServiceBase
         {
             try { _workerTask.Wait(TimeSpan.FromSeconds(10)); } catch { }
         }
-        _platform?.Dispose();
         _cts?.Dispose();
     }
 

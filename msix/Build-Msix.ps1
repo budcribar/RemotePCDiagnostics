@@ -183,6 +183,9 @@ if ($MsixAgentBins.Count -gt 0) {
     throw "Store Policy 10.2.4 separation violation: RemotePCDiagnostics.Agent.exe must NOT be bundled inside the Microsoft Store MSIX."
 }
 
+# MSIX has no custom uninstall action, so removing the Store app cannot stop the Windows service or delete the enrollment key.
+# The agent is not in this package. After it has seen this package (or the Setup exe), DesktopInstallWatch removes the agent once that install is gone.
+
 $MsixAssetsDest = Join-Path $MsixStageDir 'Assets'
 New-Item -ItemType Directory -Force -Path $MsixAssetsDest | Out-Null
 Copy-Item -Path (Join-Path $AssetsSourceDir '*.png') -Destination $MsixAssetsDest -Force

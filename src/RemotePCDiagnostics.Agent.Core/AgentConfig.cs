@@ -13,6 +13,8 @@ public sealed class AgentConfig
     [JsonPropertyName("consent")] public string Consent { get; set; } = "ask";
     /// <summary><c>persistent</c> or <c>session</c>.</summary>
     [JsonPropertyName("lifetime")] public string Lifetime { get; set; } = "persistent";
+    /// <summary>Shop group slug when <c>--group</c> or a later launch supplied one. Empty when unknown. Not the enrollment key.</summary>
+    [JsonPropertyName("group")] public string Group { get; set; } = "";
 
     /// <summary>Anything other than an explicit "unattended" means ask (the safe reading of a damaged file).</summary>
     [JsonIgnore] public ConsentCeiling ConsentCeiling => string.Equals(Consent, "unattended", StringComparison.OrdinalIgnoreCase) ? ConsentCeiling.Unattended : ConsentCeiling.Ask;
@@ -35,6 +37,7 @@ public sealed class AgentConfig
             c.Key ??= "";
             c.Consent = ConsentText(c.ConsentCeiling);
             c.Lifetime = LifetimeText(c.AgentLifetime);
+            c.Group = AgentLayout.NormalizeShopGroup(c.Group) ?? "";
             return c;
         }
         catch (JsonException) { return null; }
@@ -53,10 +56,13 @@ public sealed class AgentConfig
         Key = args.Key ?? existing?.Key ?? "",
         Consent = ConsentText(args.Consent ?? existing?.ConsentCeiling ?? ConsentCeiling.Ask),
         Lifetime = LifetimeText(args.Lifetime ?? existing?.AgentLifetime ?? AgentLifetime.Persistent),
+        Group = AgentLayout.NormalizeShopGroup(args.Group) ?? AgentLayout.NormalizeShopGroup(existing?.Group) ?? "",
     };
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true)]
 [JsonSerializable(typeof(AgentConfig))]
 [JsonSerializable(typeof(ReleaseManifest))]
+[JsonSerializable(typeof(AgentLinkStatus))]
+[JsonSerializable(typeof(AgentHostWatchState))]
 public partial class AgentJsonContext : JsonSerializerContext;

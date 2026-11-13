@@ -439,5 +439,6 @@ public sealed class AdminHelperAndElevationTests
         var scriptText = File.ReadAllText(buildMsixPath);
         Assert.Contains("*.sys", scriptText);
         Assert.Contains("makeappx", scriptText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("no custom uninstall action", scriptText);
     }
 }
