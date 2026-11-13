@@ -18,11 +18,12 @@ public sealed record AgentArgs(
     int TimeoutSeconds = AgentCommandLine.DefaultConsentTimeoutSeconds,
     bool Pause = false,
     string? Error = null,
-    bool SelfCheck = false);
+    bool SelfCheck = false,
+    bool FromMsi = false);
 
 /// <summary>
 /// The agent command line (docs/roadmap.md, "Agent program"):
-/// <c>install [--server=URL] [--key=KEY] [--consent=ask|unattended] [--lifetime=persistent|session]</c>, <c>uninstall</c>, <c>status</c>,
+/// <c>install [--server=URL] [--key=KEY] [--consent=ask|unattended] [--lifetime=persistent|session] [--from-msi=PATH]</c>, <c>uninstall</c>, <c>status</c>,
 /// <c>run [--self-check]</c> and the internal <c>consent --requester=NAME --timeout=SECONDS</c>. Options are <c>--name=value</c>; names and commands are
 /// case-insensitive. <c>--pause</c> (internal) keeps the window of an elevated relaunch open until a key is pressed.
 /// </summary>
@@ -68,6 +69,12 @@ public static class AgentCommandLine
 
         var result = new AgentArgs(command);
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        string? fromMsiRaw = null;
+        string? serverRaw = null;
+        string? keyRaw = null;
+        string? consentRaw = null;
+        string? lifetimeRaw = null;
+
         for (var i = 1; i < args.Count; i++)
         {
             var a = args[i];
@@ -94,24 +101,20 @@ public static class AgentCommandLine
 
             switch (name)
             {
+                case "from-msi":
+                    fromMsiRaw = value;
+                    break;
                 case "server":
-                    if (!TryNormalizeServer(value, out var server)) return Fail($"--server must be an https:// address, not '{value}'.");
-                    result = result with { Server = server };
+                    serverRaw = value;
                     break;
                 case "key":
-                    value = value.Trim();
-                    if (value.Length == 0 || value.Length > 256 || value.Any(char.IsControl)) return Fail("--key must be 1 to 256 printable characters.");
-                    result = result with { Key = value };
+                    keyRaw = value;
                     break;
                 case "consent":
-                    ConsentCeiling? c = value.Trim().ToLowerInvariant() switch { "ask" => ConsentCeiling.Ask, "unattended" => ConsentCeiling.Unattended, _ => null };
-                    if (c is null) return Fail("--consent must be ask or unattended.");
-                    result = result with { Consent = c };
+                    consentRaw = value;
                     break;
                 case "lifetime":
-                    AgentLifetime? l = value.Trim().ToLowerInvariant() switch { "persistent" => AgentLifetime.Persistent, "session" => AgentLifetime.Session, _ => null };
-                    if (l is null) return Fail("--lifetime must be persistent or session.");
-                    result = result with { Lifetime = l };
+                    lifetimeRaw = value;
                     break;
                 case "requester":
                     result = result with { Requester = CleanRequester(value) };
@@ -124,6 +127,54 @@ public static class AgentCommandLine
                     break;
             }
         }
+
+        var fromMsi = fromMsiRaw is not null;
+        if (fromMsi)
+        {
+            if (!AgentMsiParameters.TryParseFileName(fromMsiRaw, out var msiMeta, out var msiError))
+                return Fail(msiError ?? "Invalid --from-msi value.");
+
+            result = result with { FromMsi = true };
+            if (msiMeta is not null)
+            {
+                result = result with
+                {
+                    Server = msiMeta.Server,
+                    Key = msiMeta.Key,
+                    Consent = msiMeta.Consent,
+                    Lifetime = msiMeta.Lifetime,
+                };
+            }
+        }
+
+        if (serverRaw is not null && (!fromMsi || !string.IsNullOrWhiteSpace(serverRaw)))
+        {
+            if (!TryNormalizeServer(serverRaw, out var server)) return Fail($"--server must be an https:// address, not '{serverRaw}'.");
+            result = result with { Server = server };
+        }
+
+        if (keyRaw is not null && (!fromMsi || !string.IsNullOrWhiteSpace(keyRaw)))
+        {
+            var trimmedKey = keyRaw.Trim();
+            if (trimmedKey.Length == 0 || trimmedKey.Length > 256 || trimmedKey.Any(char.IsControl))
+                return Fail("--key must be 1 to 256 printable characters.");
+            result = result with { Key = trimmedKey };
+        }
+
+        if (consentRaw is not null && (!fromMsi || !string.IsNullOrWhiteSpace(consentRaw)))
+        {
+            ConsentCeiling? c = consentRaw.Trim().ToLowerInvariant() switch { "ask" => ConsentCeiling.Ask, "unattended" => ConsentCeiling.Unattended, _ => null };
+            if (c is null) return Fail("--consent must be ask or unattended.");
+            result = result with { Consent = c };
+        }
+
+        if (lifetimeRaw is not null && (!fromMsi || !string.IsNullOrWhiteSpace(lifetimeRaw)))
+        {
+            AgentLifetime? l = lifetimeRaw.Trim().ToLowerInvariant() switch { "persistent" => AgentLifetime.Persistent, "session" => AgentLifetime.Session, _ => null };
+            if (l is null) return Fail("--lifetime must be persistent or session.");
+            result = result with { Lifetime = l };
+        }
+
         return result;
 
         static AgentArgs Fail(string error) => new(AgentCommand.Help, Error: error);
@@ -131,7 +182,7 @@ public static class AgentCommandLine
 
     private static bool Allowed(AgentCommand command, string option) => command switch
     {
-        AgentCommand.Install => option is "server" or "key" or "consent" or "lifetime" or "pause",
+        AgentCommand.Install => option is "server" or "key" or "consent" or "lifetime" or "from-msi" or "pause",
         AgentCommand.Uninstall => option is "pause",
         AgentCommand.Run => option is "self-check",
         AgentCommand.Consent => option is "requester" or "timeout",

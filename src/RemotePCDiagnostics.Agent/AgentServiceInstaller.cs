@@ -59,6 +59,13 @@ internal static class AgentServiceInstaller
         {
             var existing = AgentPaths.TryLoadConfig(out _);
             var merged = AgentConfig.ForInstall(existing, args, Guid.NewGuid());
+            if (args.FromMsi && string.IsNullOrWhiteSpace(merged.Key))
+            {
+                Console.Error.WriteLine(
+                    "No enrollment key was provided. Download the pre-configured MSI installer from your Remote PC Diagnostics portal, " +
+                    "or run msiexec /i <package.msi> ENROLLMENT_KEY=<your_key>.");
+                return PauseIfRequested(args, ExitError);
+            }
             AgentPaths.WriteSecuredConfig(merged);
 
             // Stop any running instance first so the installed binary can be updated cleanly.

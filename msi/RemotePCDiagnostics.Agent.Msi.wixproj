@@ -1,0 +1,18 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputName Condition="'$(MsiOutputName)' != ''">$(MsiOutputName)</OutputName>
+    <OutputName Condition="'$(MsiOutputName)' == ''">RemotePCDiagnostics.Agent</OutputName>
+    <AppNumericVersion Condition="'$(AppNumericVersion)' == ''">1.2.0</AppNumericVersion>
+    <AgentExePath Condition="'$(AgentExePath)' == ''">$(MSBuildThisFileDirectory)..\artifacts\agent\RemotePCDiagnostics.Agent.exe</AgentExePath>
+    <IconPath Condition="'$(IconPath)' == ''">$(MSBuildThisFileDirectory)..\src\RemotePCDiagnostics.Host\Assets\diagnostics.ico</IconPath>
+    <!-- ICE validation requires Windows msi.dll; run full ICE validation on Windows and skip only on non-Windows hosts. -->
+    <SuppressValidation Condition="'$(OS)' != 'Windows_NT'">true</SuppressValidation>
+    <DefineConstants>$(DefineConstants);AppNumericVersion=$(AppNumericVersion);AgentExePath=$(AgentExePath);IconPath=$(IconPath)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+  </ItemGroup>
+</Project>

@@ -347,7 +347,61 @@ jobs:
           } finally {
             Remove-Item Env:RPD_AGENT_CONFIG_PATH -ErrorAction SilentlyContinue
           }
-          "Built standalone Agent: $agentDest ($([Math]::Round((Get-Item $agentDest).Length / 1MB, 2)) MB, sha256=$hash)"
+          "Built standalone Agent EXE: $agentDest ($([Math]::Round((Get-Item $agentDest).Length / 1MB, 2)) MB, sha256=$hash)"
+
+          pwsh -NoProfile -File msi/Build-AgentMsi.ps1 -Version $ver -SkipPublish -AgentExePath $agentDest -OutputDir $agentOutDir
+          if ($LASTEXITCODE -ne 0) { throw "Build-AgentMsi.ps1 failed ($LASTEXITCODE)" }
+
+          $agentMsi = Join-Path $agentOutDir "RemotePCDiagnostics.Agent-$ver-win-x64.msi"
+          if (-not (Test-Path -LiteralPath $agentMsi)) { throw "Agent MSI missing: $agentMsi" }
+          if (-not (Test-Path -LiteralPath "$agentMsi.sha256")) { throw "Agent MSI sha256 missing: $agentMsi.sha256" }
+
+          $smokeDir = Join-Path $env:RUNNER_TEMP 'rpd-msi-smoke'
+          if (Test-Path $smokeDir) { Remove-Item $smokeDir -Recurse -Force }
+          New-Item -ItemType Directory -Force $smokeDir | Out-Null
+          $b64Loopback = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes('http://127.0.0.1:9')).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+          $tokenizedMsi = Join-Path $smokeDir "RemotePCDiagnostics-Agent.as.rpd_inv_cismoketest123456.h.$b64Loopback.pkg (1).msi"
+          Copy-Item -LiteralPath $agentMsi -Destination $tokenizedMsi -Force
+
+          $installLog = Join-Path $smokeDir 'msi-install.log'
+          $installProc = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', "`"$tokenizedMsi`"", '/qn', '/norestart', '/l*v', "`"$installLog`"") -Wait -PassThru
+          if ($installProc.ExitCode -ne 0) {
+            if (Test-Path $installLog) { Get-Content $installLog -Tail 120 | Write-Host }
+            throw "MSI install smoke-test failed with exit code $($installProc.ExitCode)"
+          }
+
+          try {
+            $installedExe = 'C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe'
+            $installedCfg = 'C:\ProgramData\RemotePCDiagnostics\agent.json'
+            if (-not (Test-Path -LiteralPath $installedExe)) { throw "MSI did not install $installedExe" }
+            if (-not (Test-Path -LiteralPath $installedCfg)) { throw "MSI did not write $installedCfg" }
+            $cfgJson = Get-Content -LiteralPath $installedCfg -Raw | ConvertFrom-Json
+            if ($cfgJson.key -ne 'rpd_inv_cismoketest123456' -or $cfgJson.consent -ne 'ask' -or $cfgJson.lifetime -ne 'session' -or $cfgJson.server -ne 'http://127.0.0.1:9') {
+              throw "Unexpected agent.json written by MSI: $(Get-Content -LiteralPath $installedCfg -Raw)"
+            }
+            $svc = Get-Service -Name 'RemotePCDiagnosticsAgent' -ErrorAction SilentlyContinue
+            if ($null -eq $svc -or $svc.Status -ne 'Running') {
+              throw "Expected RemotePCDiagnosticsAgent service Running after MSI install, got: $($svc.Status)"
+            }
+          } finally {
+            $uninstallLog = Join-Path $smokeDir 'msi-uninstall.log'
+            $uninstallProc = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', "`"$tokenizedMsi`"", '/qn', '/norestart', '/l*v', "`"$uninstallLog`"") -Wait -PassThru
+            if ($uninstallProc.ExitCode -ne 0) {
+              if (Test-Path $uninstallLog) { Get-Content $uninstallLog -Tail 120 | Write-Host }
+              throw "MSI uninstall smoke-test failed with exit code $($uninstallProc.ExitCode)"
+            }
+          }
+
+          if (Test-Path -LiteralPath 'C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe') {
+            throw 'MSI uninstall left behind C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe'
+          }
+          if (Test-Path -LiteralPath 'C:\ProgramData\RemotePCDiagnostics\agent.json') {
+            throw 'MSI uninstall left behind C:\ProgramData\RemotePCDiagnostics\agent.json'
+          }
+          if ($null -ne (Get-Service -Name 'RemotePCDiagnosticsAgent' -ErrorAction SilentlyContinue)) {
+            throw 'MSI uninstall left behind RemotePCDiagnosticsAgent service'
+          }
+          "MSI install + tokenized filename enrollment + clean uninstall smoke-test passed."
 
       - name: Upload standalone MSP Fleet Agent
         if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch'
@@ -357,6 +411,8 @@ jobs:
           path: |
             artifacts/agent/RemotePCDiagnostics.Agent-*-win-x64.exe
             artifacts/agent/RemotePCDiagnostics.Agent-*-win-x64.exe.sha256
+            artifacts/agent/RemotePCDiagnostics.Agent-*-win-x64.msi
+            artifacts/agent/RemotePCDiagnostics.Agent-*-win-x64.msi.sha256
           if-no-files-found: error
           retention-days: 5
 
@@ -526,6 +582,7 @@ jobs:
           setup_file=$(basename release-assets/RemotePCDiagnostics-Setup-*-win-x64.exe)
           msix_file=$(basename release-assets/RemotePCDiagnostics-*-win-x64.msix)
           agent_file=$(basename release-assets/RemotePCDiagnostics.Agent-*-win-x64.exe)
+          agent_msi_file=$(basename release-assets/RemotePCDiagnostics.Agent-*-win-x64.msi)
           ver="${setup_file#RemotePCDiagnostics-Setup-}"
           ver="${ver%-win-x64.exe}"
 
@@ -538,9 +595,9 @@ jobs:
 
           {
             if [[ -n "$target_tag" ]]; then
-              echo "Windows x64 self-contained installer (\`${setup_file}\`), Microsoft Store MSIX package (\`${msix_file}\`), and standalone MSP Fleet Agent (\`${agent_file}\`) built by GitHub Actions from commit \`${GITHUB_SHA}\`."
+              echo "Windows x64 self-contained installer (\`${setup_file}\`), Microsoft Store MSIX package (\`${msix_file}\`), and standalone MSP Fleet Agent (\`${agent_msi_file}\` / \`${agent_file}\`) built by GitHub Actions from commit \`${GITHUB_SHA}\`."
             else
-              echo "Rolling pre-release Windows x64 self-contained installer (\`${setup_file}\`), Microsoft Store MSIX package (\`${msix_file}\`), and standalone MSP Fleet Agent (\`${agent_file}\`) built from \`main\` commit \`${GITHUB_SHA}\`."
+              echo "Rolling pre-release Windows x64 self-contained installer (\`${setup_file}\`), Microsoft Store MSIX package (\`${msix_file}\`), and standalone MSP Fleet Agent (\`${agent_msi_file}\` / \`${agent_file}\`) built from \`main\` commit \`${GITHUB_SHA}\`."
             fi
             cat <<'EOF'
 
@@ -551,8 +608,9 @@ jobs:
           - **Interactive install:** Run `RemotePCDiagnostics-Setup-*-win-x64.exe`.
           - **Silent install:** `RemotePCDiagnostics-Setup-*-win-x64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`
           - **Microsoft Store MSIX upload:** Upload `RemotePCDiagnostics-*-win-x64.msix` to Microsoft Partner Center (`runFullTrust` + `allowElevation`, zero `.sys` drivers, no background service bundled).
-          - **MSP / RMM Fleet Agent (standalone Windows Service):** `RemotePCDiagnostics.Agent-*-win-x64.exe install --server=https://relay.yourshop.com --key=rpd_live_YOUR_KEY --consent=ask --lifetime=persistent` (`status` and `uninstall` subcommands included).
-          - **Uninstall:** Uninstall **Remote PC Diagnostics** from **Windows Settings > Apps > Installed apps**, or run `unins000.exe` in the installation folder (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` supported).
+          - **MSP / RMM Fleet Agent (Windows Installer `.msi`):** Download a pre-configured `RemotePCDiagnostics-Agent.<mode>.<key>.pkg.msi` from your admin portal and double-click to install, or deploy silently via RMM/Intune/GPO: `msiexec /i RemotePCDiagnostics.Agent-*-win-x64.msi /qn ENROLLMENT_KEY=rpd_live_YOUR_KEY CONSENT=ask LIFETIME=persistent`.
+          - **MSP / RMM Fleet Agent (standalone `.exe` CLI):** `RemotePCDiagnostics.Agent-*-win-x64.exe install --server=https://server.remoteblazorwebview.com:34544 --key=rpd_live_YOUR_KEY --consent=ask --lifetime=persistent` (`status` and `uninstall` subcommands included).
+          - **Uninstall:** Uninstall **Remote PC Diagnostics** or **Remote PC Diagnostics Agent** from **Windows Settings > Apps > Installed apps**.
 
           ### Privacy & security policy
           Standalone GitHub Release installers, MSIX packages, and Fleet Agent binaries are built automatically by GitHub Actions (`.sha256` checksums attached); Partner Center signs the MSIX package with Microsoft's Store certificate on Store submission.

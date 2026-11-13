@@ -283,6 +283,92 @@ public class AgentCommandLineTests
         Assert.Equal(AgentCommand.Run, runSub.Command);
         Assert.True(runSub.SelfCheck);
     }
+
+    [Theory]
+    [InlineData(@"C:\Users\Jane\Downloads\RemotePCDiagnostics-Agent.as.rpd_inv_Abc123_-XYZ.pkg.msi", "rpd_inv_Abc123_-XYZ", ConsentCeiling.Ask, AgentLifetime.Session)]
+    [InlineData(@"C:\Users\Jane\Downloads\RemotePCDiagnostics-Agent.as.rpd_inv_Abc123_-XYZ.pkg (1).msi", "rpd_inv_Abc123_-XYZ", ConsentCeiling.Ask, AgentLifetime.Session)]
+    [InlineData(@"C:\Users\Jane\Downloads\RemotePCDiagnostics-Agent.ap.rpd_live_9876543210abcdef.pkg(2).msi", "rpd_live_9876543210abcdef", ConsentCeiling.Ask, AgentLifetime.Persistent)]
+    [InlineData(@"/tmp/RemotePCDiagnostics-Agent.up.rpd_live_fleet_key.pkg-1.msi", "rpd_live_fleet_key", ConsentCeiling.Unattended, AgentLifetime.Persistent)]
+    [InlineData(@"RemotePCDiagnostics-Agent.us.rpd_inv_onetimetoken.pkg - Copy.msi", "rpd_inv_onetimetoken", ConsentCeiling.Unattended, AgentLifetime.Session)]
+    public void From_msi_extracts_tokenized_filename_and_ignores_empty_msi_properties(
+        string msiPath,
+        string expectedKey,
+        ConsentCeiling expectedConsent,
+        AgentLifetime expectedLifetime)
+    {
+        var parsed = AgentCommandLine.Parse([
+            "install",
+            $"--from-msi={msiPath}",
+            "--server=",
+            "--key=",
+            "--consent=",
+            "--lifetime=",
+        ]);
+
+        Assert.Null(parsed.Error);
+        Assert.Equal(AgentCommand.Install, parsed.Command);
+        Assert.True(parsed.FromMsi);
+        Assert.Equal(AgentCommandLine.DefaultServer, parsed.Server);
+        Assert.Equal(expectedKey, parsed.Key);
+        Assert.Equal(expectedConsent, parsed.Consent);
+        Assert.Equal(expectedLifetime, parsed.Lifetime);
+    }
+
+    [Fact]
+    public void Custom_relay_server_round_trips_through_msi_filename_and_explicit_msi_properties_override()
+    {
+        var fileName = AgentMsiParameters.FormatFileName(
+            "https://relay.example.com:34544/",
+            "rpd_live_shop_token_01",
+            ConsentCeiling.Ask,
+            AgentLifetime.Persistent);
+
+        Assert.StartsWith("RemotePCDiagnostics-Agent.ap.rpd_live_shop_token_01.h.", fileName);
+        Assert.EndsWith(".pkg.msi", fileName);
+
+        var parsed = AgentCommandLine.Parse([
+            "install",
+            $"--from-msi=C:\\Downloads\\{fileName.Replace(".pkg.msi", ".pkg (3).msi")}",
+            "--server=",
+            "--key=",
+            "--consent=",
+            "--lifetime=",
+        ]);
+
+        Assert.Null(parsed.Error);
+        Assert.Equal("https://relay.example.com:34544", parsed.Server);
+        Assert.Equal("rpd_live_shop_token_01", parsed.Key);
+        Assert.Equal(ConsentCeiling.Ask, parsed.Consent);
+        Assert.Equal(AgentLifetime.Persistent, parsed.Lifetime);
+
+        var overridden = AgentCommandLine.Parse([
+            "install",
+            @"--from-msi=C:\Cache\RemotePCDiagnostics.Agent-1.2.0-win-x64.msi",
+            "--server=https://custom.relay.example:34544",
+            "--key=rpd_live_override",
+            "--consent=unattended",
+            "--lifetime=persistent",
+        ]);
+
+        Assert.Null(overridden.Error);
+        Assert.True(overridden.FromMsi);
+        Assert.Equal("https://custom.relay.example:34544", overridden.Server);
+        Assert.Equal("rpd_live_override", overridden.Key);
+        Assert.Equal(ConsentCeiling.Unattended, overridden.Consent);
+        Assert.Equal(AgentLifetime.Persistent, overridden.Lifetime);
+    }
+
+    [Theory]
+    [InlineData(@"C:\Downloads\RemotePCDiagnostics-Agent.xx.rpd_live_key.pkg.msi")]
+    [InlineData(@"C:\Downloads\RemotePCDiagnostics-Agent.as.rpd_live_key.msi")]
+    [InlineData(@"C:\Downloads\RemotePCDiagnostics-Agent.as..pkg.msi")]
+    [InlineData(@"C:\Downloads\RemotePCDiagnostics-Agent.as.rpd_live_key.h.not!!valid.pkg.msi")]
+    public void Malformed_tokenized_msi_filename_is_rejected(string msiPath)
+    {
+        var parsed = AgentCommandLine.Parse(["install", $"--from-msi={msiPath}"]);
+        Assert.NotNull(parsed.Error);
+        Assert.Equal(AgentCommand.Help, parsed.Command);
+    }
 }
 
 public class AgentHubWorkerTests
