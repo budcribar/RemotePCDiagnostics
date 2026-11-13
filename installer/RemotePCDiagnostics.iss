@@ -82,8 +82,8 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: 
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session (shared screen and voice)"; Tasks: desktopicon
 
 [Run]
-; shellexec launches RemotePCDiagnostics.Host.exe (asInvoker) as the interactive desktop user at the end of setup.
-Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent shellexec
+; shellexec + runasoriginaluser launches RemotePCDiagnostics.Host.exe (asInvoker) as the interactive desktop user at the end of setup.
+Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent shellexec runasoriginaluser
 
 [UninstallRun]
 ; Remove the post-reboot workflow continuation scheduled task if an interrupted workflow left one registered.
