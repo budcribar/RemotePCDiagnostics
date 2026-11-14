@@ -355,13 +355,15 @@ public sealed class AgentHubWorker(
         {
             while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
             {
-                bool running;
-                string sessionId;
+                bool internalRunning;
+                string internalSessionId;
                 lock (_stateGate)
                 {
-                    running = _sessionRunning;
-                    sessionId = _runningSessionId;
+                    internalRunning = _sessionRunning;
+                    internalSessionId = _runningSessionId;
                 }
+
+                var (running, sessionId) = ResolveSessionStatus(internalRunning, internalSessionId);
 
                 var hb = new Heartbeat
                 {
@@ -378,6 +380,101 @@ public sealed class AgentHubWorker(
         {
             // Normal stream shutdown.
         }
+    }
+
+    internal static (bool Running, string SessionId) ResolveSessionStatus(
+        bool internalRunning,
+        string internalSessionId,
+        string? activeSessionPath = null,
+        Func<int, (bool Alive, string Name)>? processChecker = null,
+        Func<bool>? hostProcessRunningChecker = null,
+        Action<string>? fileDeleter = null)
+    {
+        var running = internalRunning;
+        var sessionId = internalSessionId ?? "";
+        var sessionPath = activeSessionPath ?? AgentLayout.ActiveSessionPath();
+
+        if (File.Exists(sessionPath))
+        {
+            ActiveSessionInfo? info = null;
+            try
+            {
+                var json = File.ReadAllText(sessionPath);
+                info = ActiveSessionInfo.Parse(json);
+            }
+            catch { }
+
+            var processAlive = false;
+            if (info is not null && info.ProcessId > 0)
+            {
+                if (processChecker is not null)
+                {
+                    try
+                    {
+                        var (alive, name) = processChecker(info.ProcessId);
+                        processAlive = alive && name.Contains("RemotePCDiagnostics.Host", StringComparison.OrdinalIgnoreCase);
+                    }
+                    catch
+                    {
+                        processAlive = false;
+                    }
+                }
+                else
+                {
+                    try
+                    {
+                        using var proc = Process.GetProcessById(info.ProcessId);
+                        if (!proc.HasExited && proc.ProcessName.Contains("RemotePCDiagnostics.Host", StringComparison.OrdinalIgnoreCase))
+                        {
+                            processAlive = true;
+                        }
+                    }
+                    catch
+                    {
+                        processAlive = false;
+                    }
+                }
+            }
+
+            if (processAlive)
+            {
+                running = true;
+                if (!string.IsNullOrEmpty(info?.SessionId))
+                {
+                    sessionId = info.SessionId;
+                }
+                else if (string.IsNullOrEmpty(sessionId))
+                {
+                    sessionId = info?.SessionId ?? "";
+                }
+            }
+            else
+            {
+                try
+                {
+                    if (fileDeleter is not null)
+                    {
+                        fileDeleter(sessionPath);
+                    }
+                    else if (File.Exists(sessionPath))
+                    {
+                        File.Delete(sessionPath);
+                    }
+                }
+                catch { }
+            }
+        }
+
+        var isHostRunning = hostProcessRunningChecker is not null
+            ? hostProcessRunningChecker()
+            : DesktopInstallProbe.HostProcessRunning();
+
+        if (isHostRunning)
+        {
+            running = true;
+        }
+
+        return (running, sessionId);
     }
 
     private Task HandleLaunchCommand(

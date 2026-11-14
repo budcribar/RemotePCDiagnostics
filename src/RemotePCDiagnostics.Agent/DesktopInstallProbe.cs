@@ -71,7 +71,7 @@ internal static class DesktopInstallProbe
             HostProcessRunning());
     }
 
-    private static bool HostProcessRunning()
+    internal static bool HostProcessRunning()
     {
         try
         {

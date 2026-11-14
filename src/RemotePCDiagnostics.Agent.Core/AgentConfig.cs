@@ -89,4 +89,5 @@ public sealed class AgentConfig
 [JsonSerializable(typeof(ReleaseManifest))]
 [JsonSerializable(typeof(AgentLinkStatus))]
 [JsonSerializable(typeof(AgentHostWatchState))]
+[JsonSerializable(typeof(ActiveSessionInfo))]
 public partial class AgentJsonContext : JsonSerializerContext;

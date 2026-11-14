@@ -1,6 +1,7 @@
 using System.IO;
 using System.Security.Principal;
 using System.Windows;
+using RemotePCDiagnostics.Agent.Core;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
@@ -342,6 +343,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        ActiveSessionInfo.TryDelete(expectedProcessId: Environment.ProcessId);
         Log($"Exit code={e.ApplicationExitCode}");
         Event(LogEventIds.AppExit, LogLevel.Information, $"Remote PC Diagnostics exited (code {e.ApplicationExitCode}).");
         try { _events.Value.Flush(TimeSpan.FromSeconds(1)); _events.Value.Dispose(); } catch { }

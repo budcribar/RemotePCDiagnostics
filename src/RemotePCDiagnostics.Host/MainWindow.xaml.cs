@@ -5,6 +5,7 @@ using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using PeakSWC.RemoteBlazorWebView;
 using PeakSWC.RemoteWebView;
+using RemotePCDiagnostics.Agent.Core;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
@@ -43,6 +44,13 @@ public partial class MainWindow : Window
         _group = launch.Group;
 
         var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Unattended, launch.Voice, launch.Group, launch.Admin);
+        ActiveSessionInfo.TryWrite(new ActiveSessionInfo(
+            Process.GetCurrentProcess().Id,
+            Running: true,
+            SessionId: sessionCtx.Mode == SessionMode.Remote ? sessionCtx.SessionId.ToString() : null,
+            Group: launch.Group,
+            Mode: launch.Mode.ToString(),
+            StartedUtc: DateTimeOffset.UtcNow));
         var services = new ServiceCollection().AddRemotePCDiagnosticsHost(sessionCtx, App.Log, App.Event, loggers: App.Loggers);
         var provider = _provider = services.BuildServiceProvider();
         var diag = provider.GetRequiredService<DiagnosticsService>();
@@ -195,7 +203,17 @@ public partial class MainWindow : Window
         {
             _readyTimer?.Stop();
             HideNativeFallbackCard();
-            if (_provider.GetService<ISessionContext>() is SessionContext sc && e.Id != Guid.Empty) sc.SessionId = e.Id;
+            if (_provider.GetService<ISessionContext>() is SessionContext sc && e.Id != Guid.Empty)
+            {
+                sc.SessionId = e.Id;
+                ActiveSessionInfo.TryWrite(new ActiveSessionInfo(
+                    Process.GetCurrentProcess().Id,
+                    Running: true,
+                    SessionId: e.Id.ToString(),
+                    Group: _group,
+                    Mode: SessionMode.Remote.ToString(),
+                    StartedUtc: DateTimeOffset.UtcNow));
+            }
             // The link to share is the read-only /mirror page: this window holds the app's own page, and the remote user is
             // handed control from the session bar.
             _remoteUserUrl = RemoteLinkInfo.BuildMirrorUrl(e.Url ?? serverUri, e.Id != Guid.Empty ? e.Id : id);
@@ -467,6 +485,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         base.OnClosed(e); // raise Closed first so handlers (EC fan release) run before the provider is disposed
+        ActiveSessionInfo.TryDelete(expectedProcessId: Environment.ProcessId);
         _readyTimer?.Stop();
         _audit.Ended("The app was closed");
         try

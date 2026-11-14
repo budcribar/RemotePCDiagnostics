@@ -14,6 +14,7 @@ public static class AgentLayout
     public const string ConfigFileName = "agent.json";
     public const string StatusFileName = "agent-status.json";
     public const string HostWatchFileName = "agent-host.json";
+    public const string ActiveSessionFileName = "active-session.json";
     public const string AppCacheFolderName = "app";
     public const string AgentLogFileName = "RemotePCDiagnostics.Agent.log";
     public const string ConfigPathEnvVar = "RPD_AGENT_CONFIG_PATH";
@@ -50,6 +51,7 @@ public static class AgentLayout
 
     public static string StatusPath() => Path.Combine(ProgramDataDirectory(), StatusFileName);
     public static string HostWatchPath() => Path.Combine(ProgramDataDirectory(), HostWatchFileName);
+    public static string ActiveSessionPath() => Path.Combine(ProgramDataDirectory(), "active-session.json");
     public static string AppCacheDirectory() => Path.Combine(ProgramDataDirectory(), AppCacheFolderName);
     public static string AgentLogPath() => Path.Combine(ProgramDataDirectory(), "logs", AgentLogFileName);
 
