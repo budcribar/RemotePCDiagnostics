@@ -29,15 +29,12 @@
                     }
                 </span>
             }
+            <span class="@AgentLink.Current.CssClass" data-testid="agent-mode-badge" title="@AgentLink.Current.Tooltip">@AgentLink.Current.Label</span>
         }
         else
         {
             <span class="badge badge-local">Local</span>
         }
-        @{
-            var agentLink = AgentLink.Current;
-        }
-        <span class="@agentLink.CssClass" data-testid="agent-mode-badge" title="@agentLink.Tooltip">@agentLink.Label</span>
         <span class="topbar-spacer"></span>
         @if (App.Elevation is { } elevation && elevation.HasAdminCapabilities)
         {
@@ -50,15 +47,15 @@
                 </span>
             </span>
         }
-        <button type="button"
-                class="btn-small connect-tech-btn"
-                data-testid="connect-tech-open"
-                @onclick="OpenConnectDialog">
-            <Icon Name="net" Size="14" />
-            <span>@(Session.Mode == SessionMode.Remote ? "Shop connection" : "Connect to Technician")</span>
-        </button>
         @if (Session.Mode == SessionMode.Remote)
         {
+            <button type="button"
+                    class="btn-small connect-tech-btn"
+                    data-testid="connect-tech-open"
+                    @onclick="OpenConnectDialog">
+                <Icon Name="net" Size="14" />
+                <span>Shop connection</span>
+            </button>
             @* RemoteBlazorWebView draws each browser's own give/take/voice bar over this placeholder. *@
             <div id="rbwv-session-controls" class="topbar-control" data-share-link="true" data-restart="true"></div>
         }
