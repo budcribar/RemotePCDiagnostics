@@ -6,8 +6,7 @@
   "entryType": "RemotePCDiagnostics.Modules.Programs.ProgramsPlugin",
   "needsAdmin": false,
   "hasUi": true,
-  // Runs in its own user-mode process (RemotePCDiagnostics.ModuleHost), and its UI in the module UI host, framed on the module page.
-  "outOfProcess": true,
+  "outOfProcess": false,
   "portableUi": true,
   "detailsReplaceReport": false
 }

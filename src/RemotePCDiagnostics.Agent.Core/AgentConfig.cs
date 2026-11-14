@@ -46,12 +46,36 @@ public sealed class AgentConfig
     public string ToJson() => JsonSerializer.Serialize(this, AgentJsonContext.Default.AgentConfig);
 
     /// <summary>
+    /// Stable machine identifier for the agent on this Windows installation.
+    /// Uses HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid so reinstalls and service updates
+    /// maintain the same identity on the admin relay portal instead of creating duplicate computer entries.
+    /// </summary>
+    public static Guid ResolveDefaultMachineId()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Cryptography");
+                var val = key?.GetValue("MachineGuid") as string;
+                if (Guid.TryParse(val, out var guid) && guid != Guid.Empty)
+                    return guid;
+            }
+            catch
+            {
+                // Fall back to random Guid if registry access fails
+            }
+        }
+        return Guid.NewGuid();
+    }
+
+    /// <summary>
     /// The configuration <c>install</c> writes: the machine id is kept from an existing file (so a reinstall is the same computer on
     /// the admin site), options given on the command line win, then the existing values, then the defaults (consent ask, persistent).
     /// </summary>
-    public static AgentConfig ForInstall(AgentConfig? existing, AgentArgs args, Guid newMachineId) => new()
+    public static AgentConfig ForInstall(AgentConfig? existing, AgentArgs args, Guid? fallbackMachineId = null) => new()
     {
-        MachineId = existing?.MachineId ?? newMachineId.ToString("D"),
+        MachineId = existing?.MachineId ?? (fallbackMachineId ?? ResolveDefaultMachineId()).ToString("D"),
         Server = args.Server ?? existing?.Server ?? AgentCommandLine.DefaultServer,
         Key = args.Key ?? existing?.Key ?? "",
         Consent = ConsentText(args.Consent ?? existing?.ConsentCeiling ?? ConsentCeiling.Ask),

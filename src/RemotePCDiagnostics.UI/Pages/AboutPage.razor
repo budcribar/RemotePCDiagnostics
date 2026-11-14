@@ -47,7 +47,7 @@
         <h2>Built-in modules</h2>
         <p>Modules that ship with the app as their own DLLs (builtin-modules folder next to the app). @BuiltInDlls.Count(p => p.State == PluginState.Loaded) of @BuiltInDlls.Count loaded.</p>
         <table class="about-plugins">
-            <thead><tr><th>Module</th><th>File</th><th>State</th><th>Runs</th></tr></thead>
+            <thead><tr><th>Module</th><th>File</th><th>State</th></tr></thead>
             <tbody>
             @foreach (var p in BuiltInDlls)
             {
@@ -55,39 +55,10 @@
                     <td><strong>@(p.DisplayName ?? p.PluginId)</strong>@if (p.ModuleId is { } id) {<div class="meta">@id</div>}</td>
                     <td class="meta" style="overflow-wrap:anywhere">@System.IO.Path.GetFileName(p.Path)</td>
                     <td>@p.State@if (p.Reason is { Length: > 0 }) {<div class="meta">@p.Reason</div>}</td>
-                    <td data-testid="about-module-process">
-                        @(p.Hosting?.Describe() ?? "In process")
-                        @if (p.Hosting?.InProcessOnly is { } stays) {<div class="meta">Stays in process: @stays</div>}
-                        @if (CanSwitch && p.Hosting is { CanRunOutOfProcess: true } && Slug(p) is { } slug)
-                        {
-                            <div><select data-testid="about-module-process-mode" aria-label="Where @(p.DisplayName ?? slug) runs"
-                                         value="@_modes.Modules.GetValueOrDefault(slug)" @onchange="e => SetMode(slug, e)">
-                                <option value="@ModuleProcessMode.Default">Default</option>
-                                <option value="@ModuleProcessMode.InProcess">In process</option>
-                                <option value="@ModuleProcessMode.OutOfProcess">Out of process</option>
-                            </select></div>
-                        }
-                    </td>
                 </tr>
             }
             </tbody>
         </table>
-        @if (CanSwitch)
-        {
-            <p data-testid="about-process-mode">
-                <label>All modules that ship with the app:
-                    <select data-testid="about-process-mode-all" value="@_modes.All" @onchange="e => SetMode(null, e)">
-                        <option value="@ModuleProcessMode.Default">As each module says</option>
-                        <option value="@ModuleProcessMode.InProcess">In process</option>
-                        <option value="@ModuleProcessMode.OutOfProcess">Out of process</option>
-                    </select>
-                </label>
-            </p>
-            <p class="meta">Out of process, a module runs in its own process (RemotePCDiagnostics.ModuleHost): in user mode, or with the app's
-                administrator rights when it needs them. Its page looks the same either way. Takes effect the next time the app starts. Only
-                someone at this PC can change this.@if (_modesSaved) {<strong> Saved: restart the app to apply.</strong>}</p>
-            @if (_modesError is not null) { <div class="notice notice-error">@_modesError</div> }
-        }
     </section>
 }
 
@@ -113,25 +84,6 @@
         var on = e.Value is true;
         try { UnsignedModulesSetting.Set(on); _unsigned = on; _unsignedError = null; }
         catch (Exception ex) { _unsignedError = $"Couldn't change the setting: {ex.Message}"; }
-    }
-
-    private ModuleProcessModeSetting _modes = ModuleProcessModeSetting.Read();
-    private string? _modesError;
-    private bool _modesSaved;
-
-    /// <summary>The process-mode switch, like unsigned modules, is for the person at this PC.</summary>
-    private bool CanSwitch => Session.Mode == SessionMode.Local;
-
-    private static string? Slug(PluginRecord p) =>
-        p.ModuleId is { } id ? RemotePCDiagnostics.Core.BuiltInModules.Descriptors.FirstOrDefault(d => d.Id == id)?.Slug : null;
-
-    /// <summary>Sets one module's mode (or every module's, for a null slug) and saves it for the next start.</summary>
-    private void SetMode(string? slug, ChangeEventArgs e)
-    {
-        if (!CanSwitch || !Enum.TryParse<ModuleProcessMode>(e.Value?.ToString(), out var mode)) return;
-        var next = slug is null ? _modes with { All = mode } : _modes.With(slug, mode);
-        try { next.Save(); _modes = next; _modesError = null; _modesSaved = true; }
-        catch (Exception ex) { _modesError = $"Couldn't change the setting: {ex.Message}"; }
     }
 
     private IReadOnlyList<PluginRecord> BuiltInDlls =>

@@ -1,3 +1,4 @@
+using RemotePCDiagnostics.Agent.Core;
 using RemotePCDiagnostics.Core.Areas;
 
 namespace RemotePCDiagnostics.Core.Session;
@@ -45,6 +46,45 @@ public sealed record SessionLaunchOptions(
         if (string.IsNullOrWhiteSpace(value)) return null;
         var trimmed = value.Trim().Trim('"').Trim();
         return trimmed.Length == 0 ? null : trimmed.ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// If the machine is enrolled in a shop via RemotePCDiagnostics Agent, returns the agent's enrolled group slug.
+    /// Checks <c>agent-status.json</c> first (unprivileged readable), falling back to <c>agent.json</c>.
+    /// </summary>
+    public static string? TryResolveAgentEnrolledGroup()
+    {
+        try
+        {
+            var statusPath = AgentLayout.StatusPath();
+            if (File.Exists(statusPath))
+            {
+                var json = File.ReadAllText(statusPath);
+                var status = AgentLinkStatus.Parse(json);
+                if (NormalizeGroup(status?.Group) is { } g) return g;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        try
+        {
+            var configPath = AgentLayout.ConfigPath();
+            if (File.Exists(configPath))
+            {
+                var json = File.ReadAllText(configPath);
+                var config = AgentConfig.Parse(json);
+                if (NormalizeGroup(config?.Group) is { } g) return g;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return null;
     }
 
     /// <summary>True when Windows started after <paramref name="pending"/> was saved: the boot time is later than the save, or the
@@ -146,6 +186,11 @@ public sealed record SessionLaunchOptions(
 
         var modeText = env(ModeVariable);
         var remote = urlArg is not null || string.Equals(modeText?.Trim(), "Remote", StringComparison.OrdinalIgnoreCase);
+
+        if (remote && group is null && pendingReboot?.Group is null)
+        {
+            group = TryResolveAgentEnrolledGroup();
+        }
 
         bool? adminArg = null;
         foreach (var a in argList)

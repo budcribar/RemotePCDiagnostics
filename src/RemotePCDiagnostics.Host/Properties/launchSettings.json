@@ -5,6 +5,7 @@
       "environmentVariables": {
         "REMOTEPC_MODE": "Remote",
         "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544",
+        "REMOTEPC_GROUP": "test-shop",
         "REMOTEPC_ADMIN": "1"
       }
     },
@@ -13,6 +14,7 @@
       "environmentVariables": {
         "REMOTEPC_MODE": "Remote",
         "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544",
+        "REMOTEPC_GROUP": "test-shop",
         "REMOTEPC_VOICE": "1",
         "REMOTEPC_ADMIN": "1"
       }
@@ -22,6 +24,7 @@
       "environmentVariables": {
         "REMOTEPC_MODE": "Remote",
         "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544",
+        "REMOTEPC_GROUP": "test-shop",
         "REMOTEPC_UNATTENDED": "1",
         "REMOTEPC_ADMIN": "1"
       }

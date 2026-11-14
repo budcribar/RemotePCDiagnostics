@@ -58,7 +58,7 @@ internal static class AgentServiceInstaller
         try
         {
             var existing = AgentPaths.TryLoadConfig(out _);
-            var merged = AgentConfig.ForInstall(existing, args, Guid.NewGuid());
+            var merged = AgentConfig.ForInstall(existing, args);
             if (args.FromMsi && string.IsNullOrWhiteSpace(merged.Key))
             {
                 Console.Error.WriteLine(

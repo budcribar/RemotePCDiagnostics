@@ -146,5 +146,19 @@ public sealed class LhmSensorProvider(
     private static bool IsElevated() =>
         OperatingSystem.IsWindows() && ElevationService.DetectProcessElevated();
 
+    /// <summary>Resets the cached Computer instance and diagnostic state so sensors can be re-evaluated with updated elevation or privileges.</summary>
+    public void Reset()
+    {
+        lock (_gate)
+        {
+            try { _computer?.Close(); } catch { }
+            _computer = null;
+            _openError = null;
+            _loggedRead = false;
+            _fallbackLogged = false;
+            _gpuLogged = false;
+        }
+    }
+
     public void Dispose() { lock (_gate) { _computer?.Close(); _computer = null; } try { ecFan.Dispose(); } catch { } }
 }

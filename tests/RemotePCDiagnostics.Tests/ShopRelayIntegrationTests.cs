@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using RemotePCDiagnostics.Agent.Core;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Benchmarks;
@@ -87,6 +88,31 @@ public class ShopRelayIntegrationTests
         var staleResolved = SessionLaunchOptions.Resolve(staleArgs, Env(), pending, nowUtc: saved.AddHours(2), uptime: TimeSpan.FromSeconds(107_200));
         Assert.Equal(SessionMode.Local, staleResolved.Mode);
         Assert.Null(staleResolved.Group);
+    }
+
+    [Fact]
+    public void SessionLaunchOptions_FallsBackToAgentEnrolledGroupWhenRemoteHasNoGroup()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "rpcd-agent-group-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var oldEnv = Environment.GetEnvironmentVariable(AgentLayout.ConfigPathEnvVar);
+        try
+        {
+            var configPath = Path.Combine(tempDir, AgentLayout.ConfigFileName);
+            Environment.SetEnvironmentVariable(AgentLayout.ConfigPathEnvVar, configPath);
+
+            var statusPath = Path.Combine(tempDir, AgentLayout.StatusFileName);
+            File.WriteAllText(statusPath, "{\"group\": \"auto-enrolled-shop\", \"connected\": true}");
+
+            var resolved = SessionLaunchOptions.Resolve(["-u=https://relay.example"], _ => null);
+            Assert.Equal(SessionMode.Remote, resolved.Mode);
+            Assert.Equal("auto-enrolled-shop", resolved.Group);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AgentLayout.ConfigPathEnvVar, oldEnv);
+            try { Directory.Delete(tempDir, true); } catch { }
+        }
     }
 
     [Fact]

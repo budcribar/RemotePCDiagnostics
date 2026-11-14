@@ -6,6 +6,5 @@
   "entryType": "RemotePCDiagnostics.Modules.DeviceDrivers.DeviceDriversPlugin",
   "needsAdmin": false,
   "hasUi": false,
-  // Runs in its own user-mode process (RemotePCDiagnostics.ModuleHost).
-  "outOfProcess": true
+  "outOfProcess": false
 }

@@ -45,13 +45,42 @@ public partial class MainWindow : Window
         var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Unattended, launch.Voice, launch.Group, launch.Admin);
         var services = new ServiceCollection().AddRemotePCDiagnosticsHost(sessionCtx, App.Log, App.Event, loggers: App.Loggers);
         var provider = _provider = services.BuildServiceProvider();
+        var diag = provider.GetRequiredService<DiagnosticsService>();
         provider.GetService<DesktopSessionRelauncher>()?.BindWindowClose(() => Dispatcher.BeginInvoke(Close));
-        provider.GetService<ElevationService>()?.BindWindowClose(() => Dispatcher.BeginInvoke(Close));
+        var elevation = provider.GetService<ElevationService>();
+        if (elevation is not null)
+        {
+            elevation.BindWindowClose(() => Dispatcher.BeginInvoke(Close));
+            elevation.Changed += () =>
+            {
+                if (elevation.IsAdminHelperConnected)
+                {
+                    if (provider.GetService<ISensorProvider>() is LhmSensorProvider lhm)
+                    {
+                        lhm.Reset();
+                    }
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            while (diag.IsRunning(LibreHardwareMonitorModule.ModuleName))
+                            {
+                                await Task.Delay(250).ConfigureAwait(false);
+                            }
+                            await diag.RunAsync(LibreHardwareMonitorModule.ModuleName).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Warn($"Sensors refresh on elevation failed: {ex.Message}");
+                        }
+                    });
+                }
+            };
+        }
         Resources.Add("services", provider);
         Closed += (_, _) => { try { provider.GetService<IEcFanSource>()?.Dispose(); } catch { } }; // release the PawnIO EC module handle
         provider.GetRequiredService<ChecksScreenState>(); // start tracking results (run mode labels, last completed) from launch
         // One Windows Event Log entry per finished test (every module and run path), see ResultEventLogger.
-        var diag = provider.GetRequiredService<DiagnosticsService>();
         var eventContext = new RemotePCDiagnostics.Core.Logging.ResultEventContext(
             n => diag.Catalog.DisplayName(n),
             () => _machine.Value, RemotePCDiagnostics.Core.AppBuildInfo.Version,
