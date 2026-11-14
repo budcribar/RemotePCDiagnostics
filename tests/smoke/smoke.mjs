@@ -114,13 +114,17 @@ try {
   console.log('Checks and Stress tests pages: run buttons OK');
   await page.screenshot({ path: `${outDir}/stress.png`, fullPage: true });
 
-  // Interactive tests: own sidebar item and page.
+  // Interactive tests: own sidebar item and page; list of tests with selection and details pane.
   await page.getByTestId('nav-interactive').click();
   await page.getByTestId('interactive-title').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('interactive-guidance-banner').waitFor({ state: 'visible', timeout: 10_000 });
-  await page.getByTestId('physical-qa-card').waitFor({ state: 'visible', timeout: 10_000 });
-  await page.getByTestId('interactive-media-card').waitFor({ state: 'visible', timeout: 10_000 });
-  console.log('Interactive tests page: loaded OK');
+  await page.getByTestId('interactive-workspace').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.getByTestId('interactive-group').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.getByTestId('interactive-detail').waitFor({ state: 'visible', timeout: 10_000 });
+  if (await page.getByTestId('interactive-run-selected').isDisabled()) throw new Error('Run selected (interactive) should be enabled when idle');
+  for (let i = 0; i < 2 && !(await page.getByTestId('interactive-run-selected').isDisabled()); i++) await page.getByTestId('interactive-select-all').click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="interactive-run-selected"]')?.disabled === true, null, { timeout: 10_000 });
+  console.log('Interactive tests page: loaded and selection OK');
   await page.screenshot({ path: `${outDir}/interactive.png`, fullPage: true });
 
   // Security audit: own sidebar item and page (not started here).
