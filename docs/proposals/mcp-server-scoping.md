@@ -292,3 +292,15 @@ The agent heartbeat is the wrong pipe for tools. `Heartbeat` carries signed-in u
 5. **Admin-site AI session last**: `agent.proto`, relay ticket check, Stripe tier (trial versus MSP, and 402 when inactive), then the Computers-page button in RemoteWebViewAdmin. Remote sessions stay on the read-only tool list.
 
 Steps 1–4 are this repo. Step 5 is this repo plus `budcribar/RemoteBlazorWebView` and `budcribar/RemoteWebViewAdmin`. Stopping after step 4 still gives a shop a local AI technician on the bench, which is the useful first deployment.
+
+## Known issue: installer --verify-package failure on main (found 2026-11-14)
+
+`build-test-smoke` on `main` has failed on every push from `2910d51` ("Host admin IPC in Agent, add launcher mode, and replace Admin helper") through `0598222`. That is CI runs 600 through 610, eleven in a row. The failure is consistent, not a flake, and it is the same step each time. The first of them is run 600, at 2026-11-13 5:34 PM MT. The last green run is 599, commit `d388321`, at 8:55 AM MT the same day, the commit immediately before `2910d51`.
+
+The failing step is `installer/Build-Installer.ps1` running `RemotePCDiagnostics.Host.exe --verify-package` on the staged installer. The log line is `Package base: ...\artifacts\installer-stage\; missing: ` with nothing after `missing:`, then `Exit code=1`. Every file that check lists is present. A later check inside `--verify-package` still returns 1, and the log does not name which one. The MemTest probe and `RemotePCDiagnostics.Agent.exe --self-check` can both fail that way without an exception line: a non-zero exit or a MemTest result that is not the expected `Done` message sets the process exit to 1 and moves on.
+
+Unit tests in that job pass (1856, 100, and 42). The HardeningKitty audit and the Host output checks pass. The Service workflow job passes.
+
+Best guess, unconfirmed: `2910d51` removed the separate Admin helper and moved admin IPC into the Agent (`AgentAdminHost`, `AdminPipeProtocol` in `AdminPipeProtocol.cs`). That commit edits `installer/Build-Installer.ps1`, `installer/RemotePCDiagnostics.iss`, `publish.ps1`, and `App.OnStartup` in `src/RemotePCDiagnostics.Host/App.xaml.cs`. The file list and the self-check process in `--verify-package` were switched from `RemotePCDiagnostics.Admin.exe` to `RemotePCDiagnostics.Agent.exe`, which matches the empty `missing:` list. What is not confirmed is whether `Agent.exe --self-check` still probes the old helper or its pipe, and whether that probe is the check that returns 1.
+
+This matters for the MCP plan. The read-only tools are meant to use the same in-agent admin IPC (`AdminPipeServer`, `IElevatedCommandBridge.ReadSensorsAsync`, `AdminPipeFraming.OpReadSensors`). The safety model and `--verify-package` both have to cover that path: the package check should say which probe failed, and a tool host must not treat a broken helper pipe as a silent success. A separate fix PR is in progress. This proposal does not change the installer.
