@@ -38,6 +38,16 @@
                 </button>
             </div>
 
+            <label class="kb-layout-picker">
+                Keyboard layout
+                <select data-testid="keyboard-layout" @bind="_layoutId">
+                    @foreach (var candidate in LayoutCandidates)
+                    {
+                        <option value="@candidate.Id">@candidate.Name</option>
+                    }
+                </select>
+            </label>
+
             <div class="kb-zone @(_capturingKeys ? "kb-zone-active" : "")"
                  tabindex="0"
                  role="application"
@@ -60,20 +70,20 @@
                     }
                 </div>
 
-                <div class="kb-matrix" aria-hidden="true">
-                    @foreach (var row in KeyRows)
+                <svg class="kb-layout" viewBox="@KeyboardViewBox" aria-hidden="true" focusable="false">
+                    @foreach (var key in Layout.Caps)
                     {
-                        <div class="kb-row">
-                            @foreach (var key in row)
-                            {
-                                var isHeld = _heldKeys.Contains(key.Code);
-                                var isHit = _pressedKeys.Contains(key.Code) || (_hydratedAllHit && snap.UniqueKeysPressed > 0);
-                                <span class="kb-key @(key.Wide ? "kb-key-wide" : "") @(key.Space ? "kb-key-space" : "") @(isHeld ? "kb-key-held" : isHit ? "kb-key-hit" : "")"
-                                      title="@key.Code">@key.Label</span>
-                            }
-                        </div>
+                        var held = _heldKeys.Contains(key.Code);
+                        var hit = _pressedKeys.Contains(key.Code);
+                        <g class="kb-cap @(held ? "kb-cap-held" : hit ? "kb-cap-hit" : "")">
+                            <title>@key.Code</title>
+                            <path d="@key.Path" />
+                            <foreignObject x="@key.LabelX" y="@key.Y" width="@key.Width" height="38">
+                                <div class="kb-cap-label">@key.Label</div>
+                            </foreignObject>
+                        </g>
                     }
-                </div>
+                </svg>
 
                 <div class="kb-stats meta">
                     <span><strong data-testid="keyboard-unique-count">@snap.UniqueKeysPressed</strong> unique keys pressed</span>
@@ -222,7 +232,6 @@
     private bool _shouldFocusOverlay;
 
     private bool _capturingKeys;
-    private bool _hydratedAllHit;
     private readonly HashSet<string> _pressedKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _heldKeys = new(StringComparer.OrdinalIgnoreCase);
     private int _peakRollover;
@@ -266,7 +275,6 @@
         }
     }
 
-    private sealed record KeyPill(string Code, string Label, bool Wide = false, bool Space = false);
     private sealed record DisplayPattern(string Name, string Hex, string ForegroundHex);
 
     private static readonly DisplayPattern[] Patterns =
@@ -279,40 +287,10 @@
         new("50% Uniformity Gray (panel mura & pressure marks)", "#808080", "#ffffff"),
     ];
 
-    private static readonly KeyPill[][] KeyRows =
-    [
-        [
-            new("Escape", "Esc"), new("F1", "F1"), new("F2", "F2"), new("F3", "F3"), new("F4", "F4"),
-            new("F5", "F5"), new("F6", "F6"), new("F7", "F7"), new("F8", "F8"),
-            new("F9", "F9"), new("F10", "F10"), new("F11", "F11"), new("F12", "F12"), new("Delete", "Del"),
-        ],
-        [
-            new("Backquote", "`"), new("Digit1", "1"), new("Digit2", "2"), new("Digit3", "3"), new("Digit4", "4"),
-            new("Digit5", "5"), new("Digit6", "6"), new("Digit7", "7"), new("Digit8", "8"), new("Digit9", "9"),
-            new("Digit0", "0"), new("Minus", "-"), new("Equal", "="), new("Backspace", "Bksp", Wide: true),
-        ],
-        [
-            new("Tab", "Tab", Wide: true), new("KeyQ", "Q"), new("KeyW", "W"), new("KeyE", "E"), new("KeyR", "R"),
-            new("KeyT", "T"), new("KeyY", "Y"), new("KeyU", "U"), new("KeyI", "I"), new("KeyO", "O"),
-            new("KeyP", "P"), new("BracketLeft", "["), new("BracketRight", "]"), new("Backslash", "\\"),
-        ],
-        [
-            new("CapsLock", "Caps", Wide: true), new("KeyA", "A"), new("KeyS", "S"), new("KeyD", "D"), new("KeyF", "F"),
-            new("KeyG", "G"), new("KeyH", "H"), new("KeyJ", "J"), new("KeyK", "K"), new("KeyL", "L"),
-            new("Semicolon", ";"), new("Quote", "'"), new("Enter", "Enter", Wide: true),
-        ],
-        [
-            new("ShiftLeft", "Shift", Wide: true), new("KeyZ", "Z"), new("KeyX", "X"), new("KeyC", "C"), new("KeyV", "V"),
-            new("KeyB", "B"), new("KeyN", "N"), new("KeyM", "M"), new("Comma", ","), new("Period", "."),
-            new("Slash", "/"), new("ShiftRight", "RShift", Wide: true),
-        ],
-        [
-            new("ControlLeft", "Ctrl"), new("MetaLeft", "Win"), new("AltLeft", "Alt"),
-            new("Space", "Space", Space: true),
-            new("AltRight", "RAlt"), new("ControlRight", "RCtrl"),
-            new("ArrowLeft", "←"), new("ArrowUp", "↑"), new("ArrowDown", "↓"), new("ArrowRight", "→"),
-        ],
-    ];
+    private static readonly IReadOnlyList<KeyboardLayout> LayoutCandidates = KeyboardLayout.GetCandidates();
+    private string _layoutId = LayoutCandidates[0].Id;
+    private KeyboardLayout Layout => LayoutCandidates.First(layout => layout.Id == _layoutId);
+    private string KeyboardViewBox => $"0 0 {Layout.Width} 252";
 
     protected override void OnParametersSet()
     {
@@ -328,7 +306,6 @@
             _keyboardNotes = snap.KeyboardNotes ?? "";
             _displayNotes = snap.DisplayNotes ?? "";
             _peakRollover = snap.PeakKeyRollover;
-            _hydratedAllHit = snap.UniqueKeysPressed > 0 && _pressedKeys.Count == 0;
         }
     }
 
@@ -396,7 +373,6 @@
         var id = NormalizeKeyCode(e);
         if (string.IsNullOrEmpty(id)) return;
 
-        _hydratedAllHit = false;
         _pressedKeys.Add(id);
         _heldKeys.Add(id);
         if (_heldKeys.Count > _peakRollover)
@@ -448,7 +424,6 @@
     {
         _pressedKeys.Clear();
         _heldKeys.Clear();
-        _hydratedAllHit = false;
         _peakRollover = 0;
         _lastKeyDisplay = null;
         _keyboardNotes = "";

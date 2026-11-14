@@ -103,6 +103,8 @@ The sidebar has three separate items after Service workflow:
 
 Each list has a select-all box, "N of M selected", status pills and a **Run selected** button that turns into **Stop** while running. The Stress tests page has a **Short / Extended** switch (about 1 min / 5 min per test); tests run one at a time and stop automatically if the PC gets too hot or a test fails. Clicking a row (or Enter/Space) opens its details on the right, with **Run just this**. Stopping a run never hides the previous result, and labels show which mode a result came from, e.g. "Passed (short run)". The divider between the list and the details can be dragged or moved with the arrow keys; its position is remembered. Below about 900 px the details stack under the list. Results are still written to the Windows Event Log and appear in History as before.
 
+For contributor instructions on adding laptop models and SVG variants, see [Extending the keyboard test](docs/keyboard-layouts.md).
+
 ## Ways to use less memory
 
 On **Resource hogs & uptime** (and via "See ways to use less memory" in the *Top memory consumers* drawer) the app lists suggestions based on what is actually running and installed, sorted by estimated saving, with RAM in use, a "Potential savings" total (only the Close-app suggestions) and "Total freed this session".

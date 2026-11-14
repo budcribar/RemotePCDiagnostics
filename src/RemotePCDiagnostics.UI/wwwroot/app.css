@@ -738,13 +738,15 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; gap:
 .kb-zone { padding: 10px 12px; border: 1px dashed var(--border-strong); border-radius: 8px; background: var(--surface); cursor: pointer; outline: none; }
 .kb-zone-active, .kb-zone:focus-visible { border-style: solid; border-color: var(--accent); box-shadow: var(--glow-soft); }
 .kb-zone-hint { margin-bottom: 8px; }
-.kb-matrix { display: flex; flex-direction: column; gap: 4px; user-select: none; }
-.kb-row { display: flex; flex-wrap: wrap; gap: 3px; }
-.kb-key { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); font-size: 11px; font-family: var(--font-num); line-height: 1; box-sizing: border-box; }
-.kb-key-wide { min-width: 42px; }
-.kb-key-space { flex: 1 1 90px; }
-.kb-key-hit { background: var(--ok-bg); color: var(--chip-ok); border-color: var(--chip-ok); font-weight: 700; }
-.kb-key-held { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 700; box-shadow: var(--glow); }
+.kb-layout-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--text-muted); margin-block: 8px; }
+.kb-layout-picker select { max-width: 100%; font: inherit; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; }
+.kb-layout { display: block; width: 100%; max-width: 820px; height: auto; user-select: none; }
+.kb-cap path { fill: var(--surface-2); stroke: var(--border); }
+.kb-cap-label { height: 100%; display: grid; place-items: center; font: 14px var(--font-num); color: var(--text-muted); }
+.kb-cap-hit path { fill: var(--ok-bg); stroke: var(--chip-ok); }
+.kb-cap-hit .kb-cap-label { color: var(--chip-ok); font-weight: 700; }
+.kb-cap-held path { fill: var(--accent); stroke: var(--accent); }
+.kb-cap-held .kb-cap-label { color: var(--accent-fg); font-weight: 700; }
 .kb-stats { margin-top: 8px; margin-bottom: 0; }
 .phys-qa-note { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 .phys-qa-note input { width: 100%; box-sizing: border-box; }
