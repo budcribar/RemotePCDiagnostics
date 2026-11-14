@@ -38,6 +38,7 @@ internal static class AgentAdminHost
                         Arguments = WindowsCommandLine.Join(forwarded),
                         UseShellExecute = true,
                         Verb = "runas",
+                        WindowStyle = ProcessWindowStyle.Hidden,
                         WorkingDirectory = AppContext.BaseDirectory,
                     };
                     using var proc = Process.Start(psi);

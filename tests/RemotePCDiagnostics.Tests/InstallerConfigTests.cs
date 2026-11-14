@@ -75,6 +75,9 @@ public sealed class InstallerConfigTests
 
         var iss = File.ReadAllText(issPath);
 
+        // Main application executable contract.
+        Assert.Contains(@"#define AppExeName ""RemotePCDiagnostics.Host.exe""", iss);
+
         // Install directory and plugin/check drop folders expected by ModuleLoader and JsonCheck.
         var modulesSubfolder = Path.GetFileName(ModuleLoaderOptions.DefaultModulesFolder());
         Assert.Contains(@"DefaultDirName={autopf}\RemotePCDiagnostics", iss);

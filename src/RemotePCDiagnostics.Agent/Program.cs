@@ -21,6 +21,11 @@ public static class Program
             return ExitBadArguments;
         }
 
+        if (parsed.Command is AgentCommand.Launch or AgentCommand.Helper)
+        {
+            Win32Session.SuppressConsoleWindow();
+        }
+
         switch (parsed.Command)
         {
             case AgentCommand.Help:
@@ -98,6 +103,7 @@ public static class Program
 
         if (Win32Session.IsStartedByServiceControlManager())
         {
+            Win32Session.SuppressConsoleWindow();
             ServiceBase.Run(new AgentWindowsService(config));
             return ExitOk;
         }

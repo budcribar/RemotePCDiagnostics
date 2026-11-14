@@ -19,6 +19,31 @@ internal static class Win32Session
     private const uint MB_DEFBUTTON2 = 0x00000100;
     private const uint MB_SETFOREGROUND = 0x00010000;
     private const uint MB_TOPMOST = 0x00040000;
+    private const int SW_HIDE = 0;
+
+    /// <summary>
+    /// Hides and detaches the console window allocated for this process when running in non-console modes
+    /// (such as launcher mode, helper mode, or Windows Service mode).
+    /// </summary>
+    public static void SuppressConsoleWindow()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        try
+        {
+            var hWnd = GetConsoleWindow();
+            if (hWnd != IntPtr.Zero)
+            {
+                ShowWindow(hWnd, SW_HIDE);
+            }
+            FreeConsole();
+        }
+        catch
+        {
+            // Best effort; ignore failures if running under headless/restricted environments.
+        }
+    }
 
     /// <summary>
     /// True only when started directly by the Windows Service Control Manager (<c>services.exe</c> in Session 0),
@@ -613,4 +638,13 @@ internal static class Win32Session
         string lpText,
         string lpCaption,
         uint uType);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetConsoleWindow();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool FreeConsole();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
