@@ -59,10 +59,16 @@ public class ChecksScreenTests
         Assert.Equal("checks", s.PageFor("B"));
         Assert.Equal("stress", s.PageFor("MemoryTest"));
         Assert.Equal("security-audit", s.PageFor("SecurityAudit"));
+        Assert.Equal("interactive", s.PageFor("Webcam"));
+        Assert.Equal("interactive", s.PageFor("SpeakerToMic"));
+        Assert.Equal("interactive", s.PageFor("MicToSpeaker"));
         Assert.Equal("checks", s.PageFor("Unknown"));
         Assert.Equal(CheckGroup.Checks, s.GroupOf("a"));
         Assert.Equal(CheckGroup.Stress, s.GroupOf("CpuStress"));
         Assert.Null(s.GroupOf("SecurityAudit"));
+        Assert.Null(s.GroupOf("Webcam"));
+        Assert.Null(s.GroupOf("SpeakerToMic"));
+        Assert.Null(s.GroupOf("MicToSpeaker"));
     }
 
     [Theory]

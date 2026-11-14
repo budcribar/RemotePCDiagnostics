@@ -74,8 +74,8 @@ try {
     }
   }
 
-  // Sidebar: Checks, Stress tests and Security audit are separate items.
-  for (const id of ['nav-checks', 'nav-stress', 'nav-security-audit']) await page.getByTestId(id).waitFor({ state: 'visible', timeout: 10_000 });
+  // Sidebar: Checks, Stress tests, Interactive tests and Security audit are separate items.
+  for (const id of ['nav-checks', 'nav-stress', 'nav-interactive', 'nav-security-audit']) await page.getByTestId(id).waitFor({ state: 'visible', timeout: 10_000 });
 
   // Checks screen: loads, the list expands/collapses, a row opens the detail pane, Run buttons enable correctly. Stress tests are never started here.
   await page.getByTestId('nav-checks').click();
@@ -104,6 +104,15 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-testid="checks-run-stress"]')?.disabled === true, null, { timeout: 10_000 });
   console.log('Checks and Stress tests pages: run buttons OK');
   await page.screenshot({ path: `${outDir}/stress.png`, fullPage: true });
+
+  // Interactive tests: own sidebar item and page.
+  await page.getByTestId('nav-interactive').click();
+  await page.getByTestId('interactive-title').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('interactive-guidance-banner').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.getByTestId('physical-qa-card').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.getByTestId('interactive-media-card').waitFor({ state: 'visible', timeout: 10_000 });
+  console.log('Interactive tests page: loaded OK');
+  await page.screenshot({ path: `${outDir}/interactive.png`, fullPage: true });
 
   // Security audit: own sidebar item and page (not started here).
   await page.getByTestId('nav-security-audit').click();

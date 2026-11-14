@@ -130,6 +130,12 @@ public class ModuleCatalogTests
         Assert.True(new ModuleDescriptor(Guid.NewGuid(), "b", "B", ModuleKind.OnDemand).OnStressPage);
         Assert.False(new ModuleDescriptor(Guid.NewGuid(), "c", "C", ModuleKind.Check).OnStressPage);
         Assert.False(BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.SecurityAudit).OnStressPage);
+        Assert.False(BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.Webcam).OnStressPage);
+        Assert.False(BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.SpeakerToMic).OnStressPage);
+        Assert.False(BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.MicToSpeaker).OnStressPage);
+        Assert.Equal("interactive", BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.Webcam).Page);
+        Assert.Equal("interactive", BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.SpeakerToMic).Page);
+        Assert.Equal("interactive", BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.MicToSpeaker).Page);
         Assert.True(ModuleGroups.Rank(ModuleGroups.Cpu) < ModuleGroups.Rank(ModuleGroups.Network));
         Assert.Equal(ModuleGroups.Rank(ModuleGroups.Other), ModuleGroups.Rank("contoso.custom"));
     }

@@ -159,15 +159,23 @@ public sealed class ChecksScreenState
 
     public IReadOnlyList<IDiagnosticModule> ChecksModules => _diag.Modules.Where(m => m.IncludeInRunAll).ToList();
 
-    /// <summary>Stress tests page: stress tests in suite order, then the audio, webcam and NPU tests (separate steps that run on their own
-    /// after them when selected). The security audit is not here: it has its own page.</summary>
+    private static readonly HashSet<string> ExcludedFromStress = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ModuleSlugs.Webcam,
+        ModuleSlugs.MicToSpeaker,
+        ModuleSlugs.SpeakerToMic
+    };
+
+    /// <summary>Stress tests page: automated hardware stress tests in suite order, then automated on-demand scans (e.g. NPU, DISM, SFC).
+    /// Interactive media tests (audio, webcam) are on the interactive tests page.</summary>
     /// <remarks>Built from the catalog: stress tests in suite order, then on-demand tests by group and order.</remarks>
     public IReadOnlyList<IDiagnosticModule> StressModules
     {
         get
         {
             var order = _diag.StressOrder.ToList();
-            var listed = _diag.Modules.Select(m => (Module: m, Descriptor: _diag.Catalog.Get(m.Id))).Where(x => x.Descriptor is { OnStressPage: true }).ToList();
+            var listed = _diag.Modules.Select(m => (Module: m, Descriptor: _diag.Catalog.Get(m.Id)))
+                .Where(x => x.Descriptor is { OnStressPage: true } && !ExcludedFromStress.Contains(x.Module.Name)).ToList();
             var stress = listed.Where(x => x.Descriptor!.Kind == ModuleKind.StressTest)
                 .OrderBy(x => order.FindIndex(n => string.Equals(n, x.Module.Name, StringComparison.OrdinalIgnoreCase)) is var i and >= 0 ? i : int.MaxValue)
                 .ThenBy(x => ModuleGroups.Rank(x.Descriptor!.Group)).ThenBy(x => x.Descriptor!.Order);
@@ -177,13 +185,13 @@ public sealed class ChecksScreenState
         }
     }
 
-    /// <summary>On-demand tests (security audit, audio, webcam, NPU, SFC/DISM): listed with the stress tests but never part of the stress run,
+    /// <summary>On-demand tests (e.g. NPU, SFC/DISM): listed with the stress tests but never part of the stress run,
     /// and not ticked by default.</summary>
     public static bool IsSeparateStep(IDiagnosticModule m) => m is not IStressSuiteModule && !m.IncludeInRunAll;
 
     public IReadOnlyList<IDiagnosticModule> Modules(CheckGroup g) => g == CheckGroup.Checks ? ChecksModules : StressModules;
 
-    public const string ChecksRoute = "checks", StressRoute = "stress", SecurityAuditRoute = "security-audit";
+    public const string ChecksRoute = "checks", StressRoute = "stress", SecurityAuditRoute = "security-audit", InteractiveRoute = "interactive";
 
     /// <summary>Which list a page address shows: "stress" (any case, with or without query/fragment/trailing slash) is Stress tests,
     /// anything else (e.g. "checks") is Checks.</summary>

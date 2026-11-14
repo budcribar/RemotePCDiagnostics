@@ -178,15 +178,17 @@ public class WebcamTests
     }
 
     [Fact]
-    public async Task Webcam_is_separate_step_after_audio_and_not_selected()
+    public async Task Webcam_is_on_interactive_page_and_not_on_stress()
     {
         var store = new ResultStore();
         var svc = new DiagnosticsService(store, [new WebcamTestModule(new FakeIo((r, _) => Feed(r, i => Scene(i)))), new RemotePCDiagnostics.Core.Audio.SpeakerToMicModule(new RemotePCDiagnostics.Core.Audio.NullAudioIo())]);
         await svc.RedetectAsync();
         Assert.Empty(await svc.RunAllAsync());
         var screen = new ChecksScreenState(svc, store);
-        var names = screen.StressModules.Select(m => m.Name).ToList();
-        Assert.True(names.IndexOf(WebcamTestModule.ModuleName) > names.IndexOf(RemotePCDiagnostics.Core.Audio.SpeakerToMicModule.ModuleName));
+        Assert.DoesNotContain(screen.StressModules, m => m.Name == WebcamTestModule.ModuleName);
+        Assert.DoesNotContain(screen.StressModules, m => m.Name == RemotePCDiagnostics.Core.Audio.SpeakerToMicModule.ModuleName);
+        Assert.Equal("interactive", screen.PageFor(WebcamTestModule.ModuleName));
+        Assert.Equal("interactive", screen.PageFor(RemotePCDiagnostics.Core.Audio.SpeakerToMicModule.ModuleName));
         Assert.False(screen.IsSelected(WebcamTestModule.ModuleName));
         Assert.True(ChecksScreenState.IsSeparateStep(svc.Modules[0]));
     }

@@ -263,7 +263,10 @@ public class AudioTests
         var r = await svc.RunAsync(SpeakerToMicModule.ModuleName);
         Assert.Equal(DiagnosticStatus.Warning, r.Status);
         var screen = new ChecksScreenState(svc, store);
-        Assert.Contains(screen.StressModules, m => m.Name == SpeakerToMicModule.ModuleName);
+        Assert.DoesNotContain(screen.StressModules, m => m.Name == SpeakerToMicModule.ModuleName);
+        Assert.DoesNotContain(screen.StressModules, m => m.Name == MicToSpeakerModule.ModuleName);
+        Assert.Equal("interactive", screen.PageFor(SpeakerToMicModule.ModuleName));
+        Assert.Equal("interactive", screen.PageFor(MicToSpeakerModule.ModuleName));
         Assert.False(screen.IsSelected(SpeakerToMicModule.ModuleName));
         Assert.False(screen.IsSelected(MicToSpeakerModule.ModuleName));
         Assert.True(ChecksScreenState.IsSeparateStep(svc.Modules[0]));

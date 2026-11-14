@@ -100,14 +100,20 @@ public class HostServicesTests
             Assert.Equal("LibreHardwareMonitorPage", diag.Catalog.Get(ModuleIds.Sensors)!.DetailsComponent?.Name);
             Assert.Equal("SecurityAuditPage", diag.Catalog.Get(ModuleIds.SecurityAudit)!.DetailsComponent?.Name);
 
-            // Same Stress tests list as before it was data-driven: suite order, then audio, webcam, NPU, then SFC/DISM.
+            // Same Stress tests list as before it was data-driven: suite order, then NPU, then SFC/DISM. (Audio and webcam are on interactive page).
             var screen = provider.GetRequiredService<ChecksScreenState>();
             string[] expected = [ModuleSlugs.CpuStress, ModuleSlugs.MemoryTest, ModuleSlugs.DiskSpeed, ModuleSlugs.GpuStress, ModuleSlugs.NetworkTest,
-                ModuleSlugs.SpeakerToMic, ModuleSlugs.MicToSpeaker, ModuleSlugs.Webcam, ModuleSlugs.NpuTest, ModuleSlugs.DismScanHealth, ModuleSlugs.SfcVerifyOnly];
+                ModuleSlugs.NpuTest, ModuleSlugs.DismScanHealth, ModuleSlugs.SfcVerifyOnly];
             var shown = screen.StressModules.Select(m => m.Name).ToList();
             Assert.Equal(expected.Where(shown.Contains), shown); // the NPU test is hidden until its hardware is found
             Assert.DoesNotContain(ModuleSlugs.SecurityAudit, shown);
+            Assert.DoesNotContain(ModuleSlugs.SpeakerToMic, shown);
+            Assert.DoesNotContain(ModuleSlugs.MicToSpeaker, shown);
+            Assert.DoesNotContain(ModuleSlugs.Webcam, shown);
             Assert.Equal("security-audit", screen.PageFor(ModuleSlugs.SecurityAudit));
+            Assert.Equal("interactive", screen.PageFor(ModuleSlugs.Webcam));
+            Assert.Equal("interactive", screen.PageFor(ModuleSlugs.SpeakerToMic));
+            Assert.Equal("interactive", screen.PageFor(ModuleSlugs.MicToSpeaker));
             Assert.NotNull(provider.GetRequiredService<RemotePCDiagnostics.UI.AppServices>().Remediation);
         }
     }
