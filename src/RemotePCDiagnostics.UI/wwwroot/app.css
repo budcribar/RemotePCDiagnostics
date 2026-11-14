@@ -702,7 +702,8 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; gap:
 .display-qa-hud-actions button.btn-primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
 /* ---------- Shop Relay Integration ("Shop Info" Modal & Hosted QR Publishing) ---------- */
-.connect-tech-btn { white-space: nowrap; flex: none; }
+.connect-tech-btn { white-space: nowrap; flex: none; display: inline-flex; align-items: center; gap: 6px; }
+.shop-users-badge { padding: 1px 6px; font-size: 11px; font-family: var(--font-num); border-radius: 99px; background: var(--accent); color: var(--accent-fg); line-height: 1.2; font-weight: 600; }
 .shop-warning-banner { margin-bottom: 14px; }
 
 .connect-tech-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }

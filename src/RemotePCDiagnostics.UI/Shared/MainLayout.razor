@@ -13,7 +13,6 @@
         <span class="title"><Icon Name="health" Size="22" Class="logo" />RemotePCDiagnostics</span>
         @if (Session.Mode == SessionMode.Remote)
         {
-            <span class="badge badge-remote">@RemoteUsers.Label(Remote.Count)</span>
             <span class="@AgentLink.Current.CssClass" data-testid="agent-mode-badge" title="@AgentLink.Current.Tooltip">@AgentLink.Current.Label</span>
         }
         else
@@ -38,10 +37,14 @@
             <button type="button"
                     class="btn-small connect-tech-btn"
                     data-testid="connect-tech-open"
-                    title="View connected repair shop information"
+                    title="@ShopConnectionTooltip"
                     @onclick="OpenShopInfoDialog">
                 <Icon Name="net" Size="14" />
                 <span>Shop connection</span>
+                @if (Remote.Count > 0)
+                {
+                    <span class="badge shop-users-badge" data-testid="shop-users-count">@Remote.Count</span>
+                }
             </button>
             @* RemoteBlazorWebView draws each browser's own give/take/voice bar over this placeholder. *@
             <div id="rbwv-session-controls" class="topbar-control" data-share-link="true" data-restart="true"></div>
@@ -105,6 +108,13 @@
                 </div>
 
                 <div class="shop-info-details">
+                    <div class="shop-info-row">
+                        <span class="shop-info-label">Active Session</span>
+                        <span class="shop-info-value" data-testid="shop-info-users">
+                            <strong>@RemoteUsers.Label(Remote.Count)</strong>
+                        </span>
+                    </div>
+
                     <div class="shop-info-row">
                         <span class="shop-info-label">Shop Code</span>
                         <strong class="shop-info-value" data-testid="shop-info-group-value">@(EffectiveShopGroup ?? "—")</strong>
@@ -205,6 +215,10 @@
     private string? EffectiveAddress => ActiveShopBranding?.Address;
 
     private string? EffectiveEmail => ActiveShopBranding?.Email;
+
+    private string ShopConnectionTooltip => Remote.Count > 0
+        ? $"Shop connection · {RemoteUsers.Label(Remote.Count)} connected. Click for shop details."
+        : "Shop connection · Waiting for technician to join. Click for shop details.";
 
     // After the workflow's restart the app is relaunched (on the start page): go straight back to the Service workflow page.
     protected override void OnInitialized()
