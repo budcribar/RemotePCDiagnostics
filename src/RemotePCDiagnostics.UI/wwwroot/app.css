@@ -671,6 +671,65 @@ table.detail tr.row-detail td { white-space: normal; }
 .rbwv-control-give:hover:not(:disabled) { filter: brightness(1.08); color: var(--accent-fg); }
 .rbwv-voice-end { color: #ff9b9b; }
 
+/* Control status (compact state indicator: 🟢 In control / 🔴 Remote control) */
+.rbwv-control-bar .rbwv-control-dot { display: none; }
+.rbwv-control-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.rbwv-control-status.rbwv-in-control {
+    color: var(--ok-fg, #15803d);
+}
+[data-theme="dark"] .rbwv-control-status.rbwv-in-control {
+    color: var(--chip-ok, #22c55e);
+}
+.rbwv-control-status.rbwv-remote-control {
+    color: var(--err-fg, #b91c1c);
+}
+[data-theme="dark"] .rbwv-control-status.rbwv-remote-control {
+    color: var(--chip-err, #f87171);
+}
+
+/* Hide Restart app on the local desktop host (visible only to remote technician) */
+.rpd-desktop-host .rbwv-control-restart,
+.rpd-desktop-host .rbwv-control-question,
+.rpd-desktop-host .rbwv-control-confirm,
+.rpd-desktop-host .rbwv-control-cancel {
+    display: none !important;
+}
+
+/* Voice status idle icon (Option A: compact phone handset icon with tooltip) */
+.rbwv-voice-status.rbwv-voice-idle {
+    font-size: 0 !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: var(--surface-2, rgba(255, 255, 255, 0.08));
+    color: var(--text-muted);
+    cursor: default;
+    position: relative;
+    vertical-align: middle;
+}
+.rbwv-voice-status.rbwv-voice-idle::before {
+    content: '';
+    display: block;
+    width: 14px;
+    height: 14px;
+    background-color: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z'/%3E%3C/svg%3E") no-repeat center / contain;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z'/%3E%3C/svg%3E") no-repeat center / contain;
+}
+.rbwv-voice-status.rbwv-voice-idle:hover {
+    color: var(--accent);
+}
+
 /* ---------- Bench Refurbisher QA Suite (10-min intake, keyboard rollover & display dead-pixel overlay) ---------- */
 a.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; border: 1px solid var(--border-strong); border-radius: 8px; font-size: 13px; box-sizing: border-box; cursor: pointer; transition: background-color .15s, border-color .15s, box-shadow .15s, color .15s; }
 .bench-qa-options { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }

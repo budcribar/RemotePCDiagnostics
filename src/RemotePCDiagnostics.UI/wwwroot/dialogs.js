@@ -56,6 +56,121 @@
         const dialog = top();
         if (dialog && !dialog.contains(event.target)) focusFirst(dialog);
     });
-    new MutationObserver(refresh).observe(document.body, { childList: true, subtree: true });
+
+    function markDesktopHost() {
+        if ((window.chrome && window.chrome.webview) || (window.RemoteBlazor && window.RemoteBlazor.isOwner)) {
+            document.documentElement.classList.add('rpd-desktop-host');
+        }
+    }
+
+    function updateVoiceStatus() {
+        const statuses = document.querySelectorAll('.rbwv-voice-status');
+        for (const el of statuses) {
+            const text = (el.textContent || '').trim();
+            const isIdle = text === 'Waiting for a voice call';
+            if (isIdle) {
+                el.classList.add('rbwv-voice-idle');
+                el.setAttribute('title', 'Voice ready · Waiting for incoming call');
+                el.setAttribute('aria-label', 'Voice ready · Waiting for incoming call');
+            } else {
+                el.classList.remove('rbwv-voice-idle');
+                if (el.getAttribute('title') === 'Voice ready · Waiting for incoming call') {
+                    el.removeAttribute('title');
+                    el.removeAttribute('aria-label');
+                }
+            }
+        }
+    }
+
+    function updateControlStatus() {
+        const statuses = document.querySelectorAll('.rbwv-control-status');
+        if (statuses.length === 0) return;
+
+        let inControl = null;
+        if (window.RemoteControl && typeof window.RemoteControl.getState === 'function') {
+            const state = window.RemoteControl.getState();
+            if (state) {
+                if (state.restarting) {
+                    for (const el of statuses) {
+                        if (el.textContent !== 'Restarting…') {
+                            el.textContent = 'Restarting…';
+                            el.classList.remove('rbwv-in-control', 'rbwv-remote-control');
+                        }
+                    }
+                    return;
+                }
+                inControl = state.iHaveControl;
+            }
+        }
+
+        for (const el of statuses) {
+            let isLocal = inControl;
+            if (isLocal === null) {
+                const current = (el.textContent || '').trim();
+                if (current.includes('You have control') || current === 'In control' || current.includes('🟢')) {
+                    isLocal = true;
+                } else if (current.includes('has control') || current === 'Remote control' || current.includes('🔴')) {
+                    isLocal = false;
+                }
+            }
+
+            if (isLocal === true) {
+                if (el.textContent !== '🟢 In control') {
+                    el.textContent = '🟢 In control';
+                    el.classList.add('rbwv-in-control');
+                    el.classList.remove('rbwv-remote-control');
+                    el.title = 'You have control';
+                }
+            } else if (isLocal === false) {
+                if (el.textContent !== '🔴 Remote control') {
+                    el.textContent = '🔴 Remote control';
+                    el.classList.add('rbwv-remote-control');
+                    el.classList.remove('rbwv-in-control');
+                    el.title = 'Remote technician has control';
+                }
+            }
+        }
+    }
+
+    let voiceHooked = false;
+    function hookVoice() {
+        if (voiceHooked) return;
+        if (window.RemoteVoice && typeof window.RemoteVoice.subscribe === 'function') {
+            voiceHooked = true;
+            try {
+                window.RemoteVoice.subscribe(() => {
+                    updateVoiceStatus();
+                });
+            } catch (e) { }
+        }
+    }
+
+    let controlHooked = false;
+    function hookControl() {
+        if (controlHooked) return;
+        if (window.RemoteControl && typeof window.RemoteControl.subscribe === 'function') {
+            controlHooked = true;
+            try {
+                window.RemoteControl.subscribe(() => {
+                    updateControlStatus();
+                });
+            } catch (e) { }
+        }
+    }
+
+    new MutationObserver(() => {
+        refresh();
+        markDesktopHost();
+        updateVoiceStatus();
+        updateControlStatus();
+        hookVoice();
+        hookControl();
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+
     refresh();
+    markDesktopHost();
+    updateVoiceStatus();
+    updateControlStatus();
+    hookVoice();
+    hookControl();
 })();

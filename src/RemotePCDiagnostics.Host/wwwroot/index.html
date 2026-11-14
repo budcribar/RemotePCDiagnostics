@@ -25,6 +25,14 @@
         })();
     </script>
     <script>
+        // Desktop host: detect local process environment and mark html element.
+        (function () {
+            if ((window.chrome && window.chrome.webview) || (window.RemoteBlazor && window.RemoteBlazor.isOwner)) {
+                document.documentElement.classList.add('rpd-desktop-host');
+            }
+        })();
+    </script>
+    <script>
         // Checks & tests splitter: drag or arrow keys, clamped 28-75%, kept in localStorage.
         window.rpdSplit = (function () {
             var KEY = 'rpd-split', MIN = 28, MAX = 75;
