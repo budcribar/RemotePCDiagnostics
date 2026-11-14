@@ -11,9 +11,11 @@ namespace RemotePCDiagnostics.Core.Sensors;
 public sealed class LhmSensorProvider(
     IEcFanSource ecFan,
     IElevatedCommandBridge? elevatedBridge = null,
-    ILogger? logger = null) : ISensorProvider, IDisposable
+    ILogger? logger = null,
+    Func<bool>? isLocalProcessElevated = null) : ISensorProvider, IDisposable
 {
     private readonly ILogger? _logger = logger;
+    private readonly Func<bool> _isLocalElevated = isLocalProcessElevated ?? IsLocalProcessElevated;
     private readonly object _gate = new();
     private Computer? _computer;
     private string? _openError;
@@ -37,7 +39,7 @@ public sealed class LhmSensorProvider(
     {
         lock (_gate)
         {
-            if (elevatedBridge is { IsConnected: true } && !IsLocalProcessElevated())
+            if (elevatedBridge is { IsConnected: true } && !_isLocalElevated())
             {
                 try
                 {
@@ -84,7 +86,7 @@ public sealed class LhmSensorProvider(
         if (_computer is not null || _openError is not null) return;
         try
         {
-            var elevated = IsLocalProcessElevated();
+            var elevated = _isLocalElevated();
             var c = new Computer
             {
                 IsCpuEnabled = true,
@@ -149,7 +151,7 @@ public sealed class LhmSensorProvider(
         OperatingSystem.IsWindows() && ElevationService.DetectProcessElevated();
 
     private bool IsElevated() =>
-        IsLocalProcessElevated() || elevatedBridge is { IsConnected: true };
+        _isLocalElevated() || elevatedBridge is { IsConnected: true };
 
     /// <summary>Resets the cached Computer instance and diagnostic state so sensors can be re-evaluated with updated elevation or privileges.</summary>
     public void Reset()

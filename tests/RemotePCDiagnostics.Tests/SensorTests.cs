@@ -340,7 +340,7 @@ public class LhmSensorProviderElevationTests
         var remoteSnap = new SensorSnapshot([expectedReading], IsElevated: false, Note: "old note");
 
         var bridge = new FakeElevatedBridge(isConnected: true, _ => Task.FromResult<SensorSnapshot?>(remoteSnap));
-        using var provider = new LhmSensorProvider(new NoEcFanSource(), elevatedBridge: bridge);
+        using var provider = new LhmSensorProvider(new NoEcFanSource(), elevatedBridge: bridge, isLocalProcessElevated: () => false);
 
         var result = provider.Read();
 
@@ -362,7 +362,7 @@ public class LhmSensorProviderElevationTests
     private static void RunRemoteFallback()
     {
         var bridge = new FakeElevatedBridge(isConnected: true, _ => Task.FromException<SensorSnapshot?>(new IOException("pipe broken")));
-        using var provider = new LhmSensorProvider(new NoEcFanSource(), elevatedBridge: bridge);
+        using var provider = new LhmSensorProvider(new NoEcFanSource(), elevatedBridge: bridge, isLocalProcessElevated: () => false);
 
         var result = provider.Read();
 
