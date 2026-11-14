@@ -102,6 +102,16 @@ public sealed record ModuleProcessModeSetting
 
     public static string PathIn(string? modulesFolder = null) => Path.Combine(modulesFolder ?? ModuleLoaderOptions.DefaultModulesFolder(), FileName);
 
+    public static void PurgeLegacySetting(string? modulesFolder = null)
+    {
+        try
+        {
+            var path = PathIn(modulesFolder);
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch { }
+    }
+
     /// <summary>The saved setting; the default (every module as its module.json says) when there is none or it can't be read.</summary>
     public static ModuleProcessModeSetting Read(string? modulesFolder = null)
     {

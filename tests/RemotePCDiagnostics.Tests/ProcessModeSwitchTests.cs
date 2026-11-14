@@ -245,8 +245,8 @@ public sealed class ProcessModeSwitchTests : IDisposable
         var file = "RemotePCDiagnostics.Modules.Programs.dll";
         var (_, modules, _, _) = Load(file, new ModuleProcessModeSetting { All = ModuleProcessMode.OutOfProcess }.With("programs", ModuleProcessMode.InProcess));
         Assert.False(modules[ModuleIds.Programs] is IUserModeModule);
-        var (_, back, _, _) = Load(file, new ModuleProcessModeSetting().With("Programs", ModuleProcessMode.Default));
-        Assert.IsType<UserModeModuleProxy>(back[ModuleIds.Programs]); // Default: its module.json says out of process
+        var (_, back, _, _) = Load(file, new ModuleProcessModeSetting().With("Programs", ModuleProcessMode.OutOfProcess));
+        Assert.IsType<UserModeModuleProxy>(back[ModuleIds.Programs]);
         ((IDisposable)back[ModuleIds.Programs]).Dispose();
     }
 

@@ -45,33 +45,32 @@ public sealed class BundledOutOfProcessTests : IDisposable
 
     [Theory]
     [MemberData(nameof(Dlls))]
-    public void The_manifest_asks_for_out_of_process(string file)
+    public void The_manifest_asks_for_in_process(string file)
     {
         var (manifest, _) = ModuleManifest.ReadFromAssembly(File.ReadAllBytes(Dll(file)));
-        Assert.True(manifest.OutOfProcess);
+        Assert.False(manifest.OutOfProcess);
         Assert.Equal(file != "RemotePCDiagnostics.Modules.DeviceDrivers.dll", manifest.HasUi);
     }
 
     public static IEnumerable<object[]> Dlls() => OutOfProcessDlls.Select(f => new object[] { f });
 
     [Fact]
-    public void Out_of_process_modules_register_a_stand_in_and_keep_the_app_descriptor()
+    public void Bundled_modules_load_in_process_and_keep_the_app_descriptor()
     {
         var (registrar, services, made) = Load();
         Assert.Equal(4, registrar.Records.Count);
         Assert.All(registrar.Records, r => Assert.Equal(PluginState.Loaded, r.State));
-        Assert.Equal(3, registrar.Records.Count(r => r.UserMode));
-        Assert.All(made, um => Assert.True(um.Bundled));
+        Assert.Equal(0, registrar.Records.Count(r => r.UserMode));
+        Assert.Empty(made);
 
         using var sp = services.BuildServiceProvider();
         var modules = sp.GetServices<IDiagnosticModule>().ToDictionary(m => m.Id);
         foreach (var id in new[] { ModuleIds.Programs, ModuleIds.BatteryPower, ModuleIds.DeviceDrivers })
         {
-            var proxy = Assert.IsType<UserModeModuleProxy>(modules[id]);
+            var m = modules[id];
+            Assert.False(m is IUserModeModule);
             var builtIn = BuiltInModules.Descriptors.Single(d => d.Id == id);
-            Assert.Equal(builtIn.Slug, proxy.Name);
-            Assert.Same(builtIn, proxy.Source.Descriptor);
-            Assert.True(proxy.IncludeInRunAll);
+            Assert.Equal(builtIn.Slug, m.Name);
         }
         // A module without the flag still loads in the app process.
         Assert.IsNotType<UserModeModuleProxy>(modules[ModuleIds.EventLog]);
@@ -80,19 +79,17 @@ public sealed class BundledOutOfProcessTests : IDisposable
         foreach (var m in modules.Values) catalog.Add(m);
         registrar.ApplyTo(catalog);
         Assert.Equal(ModuleSource.BuiltIn, catalog.Get(ModuleIds.Programs)!.Source);
-        // Its own UI isn't the app's to render: the module page frames it from the module UI host.
-        Assert.Null(catalog.Get(ModuleIds.Programs)!.DetailsComponent);
+        Assert.NotNull(catalog.Get(ModuleIds.Programs)!.DetailsComponent);
     }
 
     [Fact]
-    public async Task A_bundled_module_runs_in_the_real_module_host()
+    public async Task A_user_mode_module_runs_in_the_real_module_host()
     {
-        var (_, services, _) = Load();
-        using var sp = services.BuildServiceProvider();
-        var programs = (UserModeModuleProxy)sp.GetServices<IDiagnosticModule>().Single(m => m.Id == ModuleIds.Programs);
+        var (manifest, _) = ModuleManifest.ReadFromAssembly(File.ReadAllBytes(Dll("RemotePCDiagnostics.Modules.Programs.dll")));
+        var descriptor = BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.Programs);
+        using var programs = new UserModeModuleProxy(new UserModeModule(Dll("RemotePCDiagnostics.Modules.Programs.dll"), manifest, descriptor) { Bundled = true }, new ProcessModuleHostLauncher(AppContext.BaseDirectory));
         try
         {
-            // No osquery next to the test host's module host here, so the module itself (loaded in the host with the app's helpers) says so.
             var a = await programs.CheckAvailabilityAsync();
             Assert.False(a.IsAvailable);
             Assert.Equal(OsqueryAreaModuleBase.ToolMissingMessage, a.Reason);

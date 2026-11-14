@@ -95,18 +95,18 @@ public static class HostServices
         var plugins = new PluginRegistrar(session, HostVersion(), L<PluginRegistrar>());
         services.AddSingleton(plugins);
         plugins.Register(services, new BuiltInModulesPlugin(), BuiltInModulesPlugin.Id, ModuleSource.BuiltIn);
-        // The modules that ship with the app (builtin-modules\ next to the exe, in-process), then module DLLs from
-        // %ProgramFiles%\RemotePCDiagnostics\modules (signed ones load in-process; unsigned ones never do).
+        var effectiveModulesFolder = modulesFolder ?? ModuleLoaderOptions.DefaultModulesFolder();
+        ModuleProcessModeSetting.PurgeLegacySetting(effectiveModulesFolder);
         services.AddSingleton(LoadModulePlugins(services, plugins, logEvent, loggerFactory, new ModuleLoaderOptions
         {
             HostVersion = HostVersion(),
-            ModulesFolder = modulesFolder ?? ModuleLoaderOptions.DefaultModulesFolder(),
+            ModulesFolder = effectiveModulesFolder,
             BundledFolder = bundledModulesFolder ?? ModuleLoaderOptions.DefaultBundledFolder(),
             ChecksFolder = checksFolder ?? (modulesFolder is not null ? System.IO.Path.Combine(modulesFolder, "checks") : null),
             // Only the person at the PC can turn unsigned modules on (a marker in the admin-only modules folder); never in a remote session.
             AllowUnsigned = session.Mode == SessionMode.Local && UnsignedModulesSetting.IsOn(modulesFolder),
-            // In or out of process for each module that ships with the app (About page; process-mode.json in the same admin-only folder).
-            ProcessModes = ModuleProcessModeSetting.Read(modulesFolder ?? ModuleLoaderOptions.DefaultModulesFolder()),
+            // All test modules run in-process in user mode (privileged actions run via Agent helper).
+            ProcessModes = new ModuleProcessModeSetting { All = ModuleProcessMode.InProcess },
         }));
         // Modules' own UIs that run in the module UI host, framed on the module page: through a relay in the app in Local mode, through
         // the session's relay in Remote mode (modules that ship with the app only).
