@@ -350,4 +350,75 @@ public class BenchQaAndWheaTests
         Assert.False(runner.IsRunning);
         Assert.Equal("Bench QA intake stopped.", runner.Status);
     }
+
+    [Fact]
+    public void HardwareQaCertificate_IncludesSecurityAuditAndFixedTableLayoutCss()
+    {
+        var now = new DateTimeOffset(2026, 11, 14, 12, 0, 0, TimeSpan.Zero);
+        var store = new ResultStore();
+        store.Set(new DiagnosticResult(ModuleSlugs.Osquery, DiagnosticStatus.Ok, "Hardware collected", now));
+        store.Set(new DiagnosticResult(ModuleSlugs.BatteryPower, DiagnosticStatus.Ok, "95% health", now));
+        store.Set(new DiagnosticResult(ModuleSlugs.DriveHealth, DiagnosticStatus.Ok, "Healthy", now));
+        store.Set(new DiagnosticResult(ModuleSlugs.Sensors, DiagnosticStatus.Ok, "Temps OK", now));
+
+        // When not run yet
+        var snapNotRun = HardwareQaCertificate.Capture(store, "BENCH-SEC-01", now);
+        var secItemNotRun = snapNotRun.Items.Single(i => i.Id == "security");
+        Assert.Equal(DiagnosticStatus.NotRun, secItemNotRun.Status);
+        Assert.Equal("Not run yet", secItemNotRun.Summary);
+        Assert.Equal(HardwareQaVerdict.CertifiedPass, snapNotRun.Verdict);
+
+        // When security audit reports warnings
+        store.Set(new DiagnosticResult(ModuleSlugs.SecurityAudit, DiagnosticStatus.Warning, "Score: 78 · 4 warnings", now));
+        var snapWarn = HardwareQaCertificate.Capture(store, "BENCH-SEC-01", now);
+        var secItemWarn = snapWarn.Items.Single(i => i.Id == "security");
+        Assert.Equal(DiagnosticStatus.Warning, secItemWarn.Status);
+        Assert.Equal("Score: 78 · 4 warnings", secItemWarn.Summary);
+        Assert.Equal(HardwareQaVerdict.PassedWithNotes, snapWarn.Verdict);
+
+        var html = HardwareQaCertificate.BuildHtml(snapWarn);
+        Assert.Contains("table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12.5px}", html);
+        Assert.Contains("th:nth-child(1),td:nth-child(1){width:32%}th:nth-child(2),td:nth-child(2){width:16%}th:nth-child(3),td:nth-child(3){width:52%}", html);
+        Assert.Contains("td{text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb;vertical-align:middle;overflow-wrap:anywhere;word-break:break-word;overflow:hidden}", html);
+        Assert.Contains("body{overflow-x:hidden;", html);
+        Assert.Contains(".cert-shell{overflow:hidden;", html);
+        Assert.Contains(".qr-card{display:flex;align-items:center;gap:10px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;width:270px;flex-shrink:0}", html);
+        Assert.Contains(".qr-box{width:84px;height:84px;flex-shrink:0}", html);
+        Assert.Contains("Windows security &amp; baseline audit", html);
+    }
+
+    [Fact]
+    public async Task BenchQaRunner_RunsSecurityAudit_WhenIncluded()
+    {
+        var store = new ResultStore();
+        var ran = new ConcurrentQueue<string>();
+
+        IDiagnosticModule Quick(string slug) => new FakeModule(slug, _ =>
+        {
+            ran.Enqueue(slug);
+            return Task.FromResult(FakeModule.Ok(slug));
+        });
+
+        IDiagnosticModule OnDemand(string slug) => new OnDemandFakeModule(slug, _ =>
+        {
+            ran.Enqueue(slug);
+            return Task.FromResult(FakeModule.Ok(slug));
+        });
+
+        var diag = new DiagnosticsService(store, [
+            Quick(ModuleSlugs.Osquery),
+            OnDemand(ModuleSlugs.SecurityAudit),
+        ]);
+
+        var runner = new BenchQaRunner(diag, store);
+        var task = runner.StartBenchQaAsync(includeStress: false, includeAudioCamera: false, includeSecurityAudit: true);
+        await task;
+
+        Assert.False(runner.IsRunning);
+        Assert.Equal(runner.TotalSteps, runner.CompletedSteps);
+        var executed = ran.ToArray();
+        Assert.Contains(ModuleSlugs.Osquery, executed);
+        Assert.Contains(ModuleSlugs.SecurityAudit, executed);
+        Assert.Equal(DiagnosticStatus.Ok, store.Get(ModuleSlugs.SecurityAudit).Status);
+    }
 }
