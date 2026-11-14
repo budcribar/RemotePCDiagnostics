@@ -230,4 +230,69 @@ public class SessionLaunchOptionsTests
         var cmd = SessionLaunchOptions.BuildResumeCommandLine(@"C:\App\RemotePCDiagnostics.Host.exe", SessionMode.Remote, server, id, voice: true);
         Assert.Contains(" --voice ", cmd);
     }
+
+    [Fact]
+    public void Admin_RemoteSessionsDefaultToAdmin_UnlessOverridden()
+    {
+        // Default remote session enables admin
+        var remoteDefault = SessionLaunchOptions.Resolve(["-u=https://x.example"], _ => null);
+        Assert.True(remoteDefault.Admin);
+
+        // Explicit --no-admin flag
+        var remoteNoAdmin = SessionLaunchOptions.Resolve(["-u=https://x.example", "--no-admin"], _ => null);
+        Assert.False(remoteNoAdmin.Admin);
+
+        // Explicit --admin=false
+        var remoteAdminFalse = SessionLaunchOptions.Resolve(["-u=https://x.example", "--admin=false"], _ => null);
+        Assert.False(remoteAdminFalse.Admin);
+
+        // Explicit env REMOTEPC_ADMIN=0
+        var remoteEnvNoAdmin = SessionLaunchOptions.Resolve([], n => n == "REMOTEPC_MODE" ? "Remote" : n == "REMOTEPC_ADMIN" ? "0" : null);
+        Assert.False(remoteEnvNoAdmin.Admin);
+
+        // Remote Admin launch profile settings
+        var remoteAdminProfile = SessionLaunchOptions.Resolve([], n => n == "REMOTEPC_MODE" ? "Remote" : n == "REMOTEPC_ADMIN" ? "1" : null);
+        Assert.True(remoteAdminProfile.Admin);
+    }
+
+    [Fact]
+    public void Admin_LocalSessionsDefaultToUser_UnlessOverridden()
+    {
+        // Local session defaults to standard user (Admin == false)
+        var localDefault = SessionLaunchOptions.Resolve([], _ => null);
+        Assert.False(localDefault.Admin);
+
+        // Local User profile (REMOTEPC_MODE=Local, REMOTEPC_ADMIN=0)
+        var localUser = SessionLaunchOptions.Resolve([], n => n == "REMOTEPC_MODE" ? "Local" : n == "REMOTEPC_ADMIN" ? "0" : null);
+        Assert.False(localUser.Admin);
+
+        // Local Admin profile (REMOTEPC_MODE=Local, REMOTEPC_ADMIN=1)
+        var localAdminProfile = SessionLaunchOptions.Resolve([], n => n == "REMOTEPC_MODE" ? "Local" : n == "REMOTEPC_ADMIN" ? "1" : null);
+        Assert.True(localAdminProfile.Admin);
+
+        // Local Admin via CLI --admin
+        var localAdminArg = SessionLaunchOptions.Resolve(["--admin"], _ => null);
+        Assert.True(localAdminArg.Admin);
+    }
+
+    [Fact]
+    public void Admin_SurvivesRestartAndReboot()
+    {
+        var id = Guid.Parse("7e57c0de-0000-4000-8000-000000000001");
+        var server = new Uri("https://remoteblazorwebview.com:34544");
+
+        var restartAdmin = SessionLaunchOptions.RestartArguments(server, id, admin: true);
+        Assert.Contains("--admin", restartAdmin);
+        Assert.True(SessionLaunchOptions.Resolve(restartAdmin, _ => null).Admin);
+
+        var restartNoAdmin = SessionLaunchOptions.RestartArguments(server, id, admin: false);
+        Assert.Contains("--no-admin", restartNoAdmin);
+        Assert.False(SessionLaunchOptions.Resolve(restartNoAdmin, _ => null).Admin);
+
+        var cmdRemoteAdmin = SessionLaunchOptions.BuildResumeCommandLine(@"C:\App\RemotePCDiagnostics.Host.exe", SessionMode.Remote, server, id, admin: true);
+        Assert.Contains(" --admin ", cmdRemoteAdmin);
+
+        var cmdLocalAdmin = SessionLaunchOptions.BuildResumeCommandLine(@"C:\App\RemotePCDiagnostics.Host.exe", SessionMode.Local, null, Guid.Empty, admin: true);
+        Assert.Contains(" --admin ", cmdLocalAdmin);
+    }
 }

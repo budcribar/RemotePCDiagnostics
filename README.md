@@ -210,14 +210,15 @@ tests/
 
 ### Local vs Remote mode
 
-The Host has four Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/Properties/launchSettings.json`). Visual Studio starts the first one unless you pick another in the Start button dropdown:
+The Host has five Visual Studio launch profiles (`src/RemotePCDiagnostics.Host/Properties/launchSettings.json`). Visual Studio starts the first one unless you pick another in the Start button dropdown:
 
 | Profile | Settings | Behavior |
 |---|---|---|
-| **Remote** (default in Visual Studio) | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and a remote user joins from a browser. This window opens the full app with the user in control; the shared link is the read-only `/mirror/<id>` page. The user gives control to the remote user and takes it back from the session bar in the header; whoever doesn't hold control sees a live, read-only view. |
-| **Remote + voice** | Remote, plus `REMOTEPC_VOICE=1` (command line: `--voice`) | Same, with a voice call between the person at the PC and the remote user. |
-| **Remote (unattended)** | Remote, plus `REMOTEPC_UNATTENDED=1` (command line: `--unattended`) | The remote user gets control as soon as they open the link, with nobody at the PC handing it over. The user can still take control back. The setting survives the app's own session restarts and a reboot-and-resume. Without this setting a session is supervised: the user starts in control and gives it. |
-| **Local** | `REMOTEPC_MODE=Local` | UI renders in the app window only. Running the exe with no settings is also Local (CI uses this). |
+| **Remote Admin** (default in Visual Studio) | `REMOTEPC_MODE=Remote`, `REMOTEPC_SERVER_URL=https://remoteblazorwebview.com:34544`, `REMOTEPC_ADMIN=1` | The app registers with the relay server (PeakSWC.RemoteWebViewService hosted on Railway) and automatically starts the elevated Agent helper for full admin repair capabilities. A remote user joins from a browser. This window opens the full app with the user in control; the shared link is the read-only `/mirror/<id>` page. The user gives control to the remote user and takes it back from the session bar in the header; whoever doesn't hold control sees a live, read-only view. |
+| **Remote Admin + voice** | Remote Admin, plus `REMOTEPC_VOICE=1` (command line: `--voice`) | Same, with a voice call between the person at the PC and the remote user. |
+| **Remote Admin (unattended)** | Remote Admin, plus `REMOTEPC_UNATTENDED=1` (command line: `--unattended`) | The remote user gets control as soon as they open the link, with nobody at the PC handing it over. The user can still take control back. The setting survives the app's own session restarts and a reboot-and-resume. Without this setting a session is supervised: the user starts in control and gives it. |
+| **Local Admin** | `REMOTEPC_MODE=Local`, `REMOTEPC_ADMIN=1` | UI renders in the app window only and automatically launches the elevated Agent helper for administrative repair capabilities. |
+| **Local User** | `REMOTEPC_MODE=Local`, `REMOTEPC_ADMIN=0` | UI renders in the app window only and runs in standard user mode without launching the Agent helper. |
 
 A remote session has one user (this PC, the owner), one remote user and any number of read-only viewers, all on the same link. The first person to open the link is the remote user; anyone after that only watches, with no control and no voice. Module panels follow control too: they are usable for whoever has control and read-only for everyone else. Details: RemoteBlazorWebView README, "Sharing control".
 
@@ -227,6 +228,7 @@ Configuration (resolved by `SessionLaunchOptions`, precedence top to bottom):
 - `-u=<server url>` command-line arg: forces Remote with that server (the RemoteBlazorWebViewTutorial convention), e.g. `dotnet run --project src/RemotePCDiagnostics.Host -- -u=https://localhost:5001`.
 - `REMOTEPC_MODE=Local|Remote` and `REMOTEPC_SERVER_URL` env vars. Remote with no URL uses the default `https://remoteblazorwebview.com:34544`.
 - `-i=<guid>` or `REMOTEPC_ID`: fixed session id. Otherwise a new id is assigned each run.
+- `--admin` / `--no-admin` or `REMOTEPC_ADMIN=1|0`: controls whether Host connects to the elevated Agent helper (defaults to admin enabled for Remote sessions).
 - `--unattended` or `REMOTEPC_UNATTENDED=1`, and `--voice` or `REMOTEPC_VOICE=1`: see the profiles above.
 
 Server address: the default is the Railway-direct address `https://remoteblazorwebview.com:34544` (Railway TCP proxy to the container's port 8443; Kestrel TLS with a Let's Encrypt cert, HTTP/2 gRPC). Alternative address: `https://server.remoteblazorwebview.com:34544` (same Railway proxy; the port is required, because plain 443 serves a `*.up.railway.app` cert that does not match). The cert on 34544 is issued to `server.remoteblazorwebview.com` and also covers `remoteblazorwebview.com` and `remoteblazor.pagetomovie.com` (Let's Encrypt, valid until 2027-01-27). `https://server.remoteblazorwebview.com` (no port) is the planned permanent name once Railway serves a matching cert on 443. Use either via `REMOTEPC_SERVER_URL` or `-u=`.

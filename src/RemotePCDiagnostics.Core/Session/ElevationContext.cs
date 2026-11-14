@@ -88,6 +88,21 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
                 catch { }
             });
         }
+        else if (_session.Admin && !IsProcessElevated)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    await EnableAdminModeAsync(cts.Token).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _log?.Warn($"[elevation] Auto-start admin helper failed: {ex.Message}");
+                }
+            });
+        }
     }
 
     public bool IsProcessElevated => _isProcessElevated();
@@ -173,6 +188,12 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
 
             var pipeName = $"rpd-admin-{Guid.NewGuid():N}";
             var helperExe = Path.Combine(_baseDirectory, AdminHelperExeName);
+            if (!File.Exists(helperExe) && !OperatingSystem.IsWindows())
+            {
+                var noExt = Path.Combine(_baseDirectory, "RemotePCDiagnostics.Agent");
+                if (File.Exists(noExt))
+                    helperExe = noExt;
+            }
             var clientSid = TryGetCurrentUserSid();
             var request = new AdminHelperStartRequest(helperExe, pipeName, Environment.ProcessId, clientSid);
 
@@ -188,7 +209,7 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
                 if (!File.Exists(helperExe))
                 {
                     var msg = $"Admin repair helper executable was not found at '{helperExe}'.";
-                    _log.Warn($"[elevation] {msg}");
+                    _log?.Warn($"[elevation] {msg}");
                     return new ElevationResult(false, false, msg);
                 }
 

@@ -16,11 +16,20 @@ public interface ISessionContext
     bool Voice => false;
     /// <summary>Optional normalized relay shop tenant slug (<c>-g=&lt;group&gt;</c> / <c>REMOTEPC_GROUP</c>) when connected to a shop relay.</summary>
     string? Group => null;
+    /// <summary>True when the session should ensure admin repair capabilities (starts elevated helper if unelevated).</summary>
+    bool Admin => false;
 }
 
 public sealed class SessionContext : ISessionContext
 {
-    public SessionContext(SessionMode mode, Uri? serverUri = null, Guid sessionId = default, bool unattended = false, bool voice = false, string? group = null)
+    public SessionContext(
+        SessionMode mode,
+        Uri? serverUri = null,
+        Guid sessionId = default,
+        bool unattended = false,
+        bool voice = false,
+        string? group = null,
+        bool admin = false)
     {
         Mode = mode;
         ServerUri = serverUri;
@@ -30,6 +39,7 @@ public sealed class SessionContext : ISessionContext
         Unattended = unattended;
         Voice = voice;
         Group = NormalizeGroup(group);
+        Admin = admin;
     }
 
     public SessionMode Mode { get; }
@@ -38,6 +48,7 @@ public sealed class SessionContext : ISessionContext
     public bool Unattended { get; }
     public bool Voice { get; }
     public string? Group { get; }
+    public bool Admin { get; }
     public string MachineName { get; } = Environment.MachineName;
 
     private static string? NormalizeGroup(string? value)

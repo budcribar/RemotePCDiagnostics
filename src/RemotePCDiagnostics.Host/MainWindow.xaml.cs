@@ -36,13 +36,13 @@ public partial class MainWindow : Window
 
         // Local (default) or Remote. Remote when started with -u=<server uri> (RemoteBlazorWebViewTutorial convention)
         // or REMOTEPC_MODE=Remote (+ optional REMOTEPC_SERVER_URL, default https://remoteblazorwebview.com:34544).
-        // See Properties/launchSettings.json for the Visual Studio profiles: "Remote" (default), "Remote + voice" and "Local". A remote session is shared: the app shows in this window and control moves between the user and the remote user.
+        // See Properties/launchSettings.json for the Visual Studio profiles: "Remote Admin" (default), "Remote Admin + voice", "Remote Admin (unattended)", "Local Admin", and "Local User". A remote session is shared: the app shows in this window and control moves between the user and the remote user.
         var pendingReboot = RebootResumeCoordinator.TryReadPendingStateFile();
         var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, pendingReboot);
         var mode = launch.Mode;
         _group = launch.Group;
 
-        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Unattended, launch.Voice, launch.Group);
+        var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Unattended, launch.Voice, launch.Group, launch.Admin);
         var services = new ServiceCollection().AddRemotePCDiagnosticsHost(sessionCtx, App.Log, App.Event, loggers: App.Loggers);
         var provider = _provider = services.BuildServiceProvider();
         provider.GetService<DesktopSessionRelauncher>()?.BindWindowClose(() => Dispatcher.BeginInvoke(Close));
@@ -134,7 +134,7 @@ public partial class MainWindow : Window
                 RestartArguments = (server, id) =>
                 {
                     Logger.Info($"Restart requested from a browser: starting a new copy for session {id} (group={launch.Group}); this one closes");
-                    return SessionLaunchOptions.RestartArguments(server, id, launch.Unattended, launch.Voice, launch.Group);
+                    return SessionLaunchOptions.RestartArguments(server, id, launch.Unattended, launch.Voice, launch.Group, launch.Admin);
                 },
             });
         }
@@ -407,7 +407,7 @@ public partial class MainWindow : Window
         {
             var session = _provider.GetService<ISessionContext>();
             IReadOnlyList<string> args = keepRemoteArgs && _serverUri is not null
-                ? SessionLaunchOptions.RestartArguments(_serverUri, Guid.NewGuid(), session?.Unattended ?? false, session?.Voice ?? false, _group)
+                ? SessionLaunchOptions.RestartArguments(_serverUri, Guid.NewGuid(), session?.Unattended ?? false, session?.Voice ?? false, _group, session?.Admin)
                 : ["--restarted"];
             var psi = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
             foreach (var arg in args) psi.ArgumentList.Add(arg);

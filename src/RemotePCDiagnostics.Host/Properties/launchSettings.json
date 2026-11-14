@@ -1,32 +1,43 @@
 {
   "profiles": {
-    "Remote": {
-      "commandName": "Project",
-      "environmentVariables": {
-        "REMOTEPC_MODE": "Remote",
-        "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544"
-      }
-    },
-    "Remote + voice": {
+    "Remote Admin": {
       "commandName": "Project",
       "environmentVariables": {
         "REMOTEPC_MODE": "Remote",
         "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544",
-        "REMOTEPC_VOICE": "1"
+        "REMOTEPC_ADMIN": "1"
       }
     },
-    "Remote (unattended)": {
+    "Remote Admin + voice": {
       "commandName": "Project",
       "environmentVariables": {
         "REMOTEPC_MODE": "Remote",
         "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544",
-        "REMOTEPC_UNATTENDED": "1"
+        "REMOTEPC_VOICE": "1",
+        "REMOTEPC_ADMIN": "1"
       }
     },
-    "Local": {
+    "Remote Admin (unattended)": {
       "commandName": "Project",
       "environmentVariables": {
-        "REMOTEPC_MODE": "Local"
+        "REMOTEPC_MODE": "Remote",
+        "REMOTEPC_SERVER_URL": "https://remoteblazorwebview.com:34544",
+        "REMOTEPC_UNATTENDED": "1",
+        "REMOTEPC_ADMIN": "1"
+      }
+    },
+    "Local Admin": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "REMOTEPC_MODE": "Local",
+        "REMOTEPC_ADMIN": "1"
+      }
+    },
+    "Local User": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "REMOTEPC_MODE": "Local",
+        "REMOTEPC_ADMIN": "0"
       }
     }
   }

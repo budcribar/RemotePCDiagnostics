@@ -20,7 +20,8 @@ public sealed record SessionLaunchOptions(
     bool PostReboot = false,
     bool Unattended = false,
     bool Voice = false,
-    string? Group = null)
+    string? Group = null,
+    bool Admin = false)
 {
     public const string ModeVariable = "REMOTEPC_MODE";
     public const string ServerUrlVariable = "REMOTEPC_SERVER_URL";
@@ -30,6 +31,8 @@ public sealed record SessionLaunchOptions(
     public const string UnattendedArg = "--unattended";
     public const string VoiceVariable = "REMOTEPC_VOICE";
     public const string VoiceArg = "--voice";
+    public const string AdminVariable = "REMOTEPC_ADMIN";
+    public const string AdminArg = "--admin";
     public const string PostRebootArg = "--post-reboot";
     /// <summary>Marks the start made by the service workflow's own resume task (which also passes <see cref="PostRebootArg"/>).</summary>
     public const string WorkflowArg = "--workflow";
@@ -144,9 +147,18 @@ public sealed record SessionLaunchOptions(
         var modeText = env(ModeVariable);
         var remote = urlArg is not null || string.Equals(modeText?.Trim(), "Remote", StringComparison.OrdinalIgnoreCase);
 
+        bool? adminArg = null;
+        foreach (var a in argList)
+        {
+            if (string.Equals(a, AdminArg, StringComparison.OrdinalIgnoreCase)) adminArg = true;
+            else if (a.StartsWith(AdminArg + "=", StringComparison.OrdinalIgnoreCase)) adminArg = ParseBool(a[(AdminArg.Length + 1)..]) ?? true;
+            else if (string.Equals(a, "--no-admin", StringComparison.OrdinalIgnoreCase)) adminArg = false;
+        }
+        var admin = adminArg ?? (ParseBool(env(AdminVariable)) ?? remote);
+
         if (!remote)
         {
-            var localOpts = new SessionLaunchOptions(SessionMode.Local, null, id, postReboot, unattended, voice, group);
+            var localOpts = new SessionLaunchOptions(SessionMode.Local, null, id, postReboot, unattended, voice, group, admin);
             return ApplyPendingReboot(localOpts, pendingReboot);
         }
 
@@ -155,7 +167,7 @@ public sealed record SessionLaunchOptions(
         if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
             throw new ArgumentException($"Invalid remote server URL '{url}'. Set {ServerUrlVariable} (or -u=) to e.g. {DefaultServerUrl}.");
 
-        var remoteOpts = new SessionLaunchOptions(SessionMode.Remote, uri, id, postReboot, unattended, voice, group);
+        var remoteOpts = new SessionLaunchOptions(SessionMode.Remote, uri, id, postReboot, unattended, voice, group, admin);
         return ApplyPendingReboot(remoteOpts, pendingReboot);
     }
 
@@ -182,7 +194,7 @@ public sealed record SessionLaunchOptions(
                 effectiveUri = new Uri(DefaultServerUrl);
 
             return new(SessionMode.Remote, effectiveUri, effectiveId, PostReboot: true,
-                Unattended: effectiveUnattended, Voice: launch.Voice || pending.Voice, Group: effectiveGroup);
+                Unattended: effectiveUnattended, Voice: launch.Voice || pending.Voice, Group: effectiveGroup, Admin: launch.Admin);
         }
 
         return launch with
@@ -209,13 +221,14 @@ public sealed record SessionLaunchOptions(
     /// the session's page was loaded again, or Restart was pressed in the session bar). The same session id keeps the
     /// remote user's link working; <see cref="RestartedArg"/> lets the new copy wait for this one to release the one-copy lock.
     /// </summary>
-    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool unattended = false, bool voice = false, string? group = null)
+    public static IReadOnlyList<string> RestartArguments(Uri serverUri, Guid sessionId, bool unattended = false, bool voice = false, string? group = null, bool? admin = null)
     {
         if (sessionId == Guid.Empty) throw new ArgumentException("A restart needs the session id the server assigned.", nameof(sessionId));
         var list = new List<string> { $"-u={serverUri.AbsoluteUri.TrimEnd('/')}", $"-i={sessionId:D}" };
         if (NormalizeGroup(group) is { } normalizedGroup) list.Add($"-g={normalizedGroup}");
         if (unattended) list.Add(UnattendedArg);
         if (voice) list.Add(VoiceArg);
+        if (admin.HasValue) list.Add(admin.Value ? AdminArg : "--no-admin");
         list.Add(RestartedArg);
         return list;
     }
@@ -224,7 +237,7 @@ public sealed record SessionLaunchOptions(
     /// Builds the Windows <c>RunOnce</c> command line so that after a reboot, <c>RemotePCDiagnostics.Host</c> restarts
     /// into the exact same session mode, relay server, remote session ID (<c>-i=&lt;guid&gt;</c>), shop group (<c>-g=&lt;group&gt;</c>), and unattended and voice settings.
     /// </summary>
-    public static string BuildResumeCommandLine(string executablePath, SessionMode mode, Uri? serverUri, Guid sessionId, bool unattended = false, bool voice = false, string? group = null)
+    public static string BuildResumeCommandLine(string executablePath, SessionMode mode, Uri? serverUri, Guid sessionId, bool unattended = false, bool voice = false, string? group = null, bool? admin = null)
     {
         var quotedExe = $"\"{executablePath.Trim('"')}\"";
         if (mode == SessionMode.Remote && serverUri is not null)
@@ -234,8 +247,10 @@ public sealed record SessionLaunchOptions(
             var groupPart = NormalizeGroup(group) is { } normalizedGroup ? $" -g={normalizedGroup}" : "";
             var unattendedPart = unattended ? $" {UnattendedArg}" : "";
             var voicePart = voice ? $" {VoiceArg}" : "";
-            return $"{quotedExe} {urlPart}{idPart}{groupPart}{unattendedPart}{voicePart} {PostRebootArg}";
+            var adminPart = admin.HasValue ? (admin.Value ? $" {AdminArg}" : " --no-admin") : "";
+            return $"{quotedExe} {urlPart}{idPart}{groupPart}{unattendedPart}{voicePart}{adminPart} {PostRebootArg}";
         }
-        return $"{quotedExe} {PostRebootArg}";
+        var localAdminPart = admin == true ? $" {AdminArg}" : "";
+        return $"{quotedExe}{localAdminPart} {PostRebootArg}";
     }
 }
