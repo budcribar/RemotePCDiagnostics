@@ -8,7 +8,6 @@ using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Stress;
-using RemotePCDiagnostics.Host.Sensors;
 
 namespace RemotePCDiagnostics.Host;
 

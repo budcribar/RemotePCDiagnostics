@@ -211,10 +211,10 @@ jobs:
           $out | Select-Object -Last 2
           if (-not ($out -match '^MT DONE 67108864 \d+ 0$')) { throw "memory test helper did not report a clean DONE" }
 
-          $adminExe = Join-Path $exe.DirectoryName 'RemotePCDiagnostics.Admin.exe'
-          if (-not (Test-Path $adminExe)) { throw "RemotePCDiagnostics.Admin.exe missing from Host output: $adminExe" }
+          $adminExe = Join-Path $exe.DirectoryName 'RemotePCDiagnostics.Agent.exe'
+          if (-not (Test-Path $adminExe)) { throw "RemotePCDiagnostics.Agent.exe missing from Host output: $adminExe" }
           & $adminExe --self-check
-          if ($LASTEXITCODE -ne 0) { throw "RemotePCDiagnostics.Admin.exe --self-check exited $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0) { throw "RemotePCDiagnostics.Agent.exe --self-check exited $LASTEXITCODE" }
 
       - name: Unit tests
         run: dotnet test --solution RemotePCDiagnostics.sln -c Release --no-build --report-xunit-trx --results-directory artifacts/test-results
@@ -241,7 +241,7 @@ jobs:
           if ($installProc.ExitCode -ne 0) { throw "Silent install failed with exit code $($installProc.ExitCode)" }
 
           $installedHost = Join-Path $installDir 'RemotePCDiagnostics.Host.exe'
-          $installedAdmin = Join-Path $installDir 'RemotePCDiagnostics.Admin.exe'
+          $installedAdmin = Join-Path $installDir 'RemotePCDiagnostics.Agent.exe'
           $installedUiHost = Join-Path $installDir 'moduleui/RemotePCDiagnostics.ModuleUiHost.exe'
           if (-not (Test-Path -LiteralPath $installedHost)) { throw "Installed Host missing: $installedHost" }
           if (-not (Test-Path -LiteralPath $installedAdmin)) { throw "Installed Admin helper missing: $installedAdmin" }
@@ -558,7 +558,7 @@ jobs:
           $art = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
           New-Item -ItemType Directory -Force $art | Out-Null
           $exe = Get-Item artifacts/installer-stage/RemotePCDiagnostics.Host.exe
-          # Launch Host in simulated Standard User mode (asInvoker) so Playwright exercises both un-elevated diagnostics and live Admin.exe Named-Pipe connection.
+          # Launch Host in simulated Standard User mode (asInvoker) so Playwright exercises both un-elevated diagnostics and live Agent.exe Named-Pipe connection.
           $env:RPD_SIMULATE_STANDARD_USER = '1'
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
           $env:RPD_LOG_FILE = Join-Path $art 'host.log'
@@ -691,7 +691,7 @@ jobs:
             cat <<'EOF'
 
           ### Overview
-          **Remote PC Diagnostics** is an MIT-licensed Windows 10/11 desktop diagnostic and service-workflow application usable locally on the bench or remotely via [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView). It launches in Standard User (`asInvoker`) mode with zero immediate UAC prompt and includes an on-demand elevated repair helper (`RemotePCDiagnostics.Admin.exe`), hardware inventory, SMART/drive health, live sensors, thermal-safe CPU/RAM/disk/GPU/network stress tests, Buyer Hardware QA QR certificates, guided Windows repair (`DISM` / `SFC`) with before/after benchmarking, and client HTML service reports.
+          **Remote PC Diagnostics** is an MIT-licensed Windows 10/11 desktop diagnostic and service-workflow application usable locally on the bench or remotely via [RemoteBlazorWebView](https://github.com/budcribar/RemoteBlazorWebView). It launches in Standard User (`asInvoker`) mode with zero immediate UAC prompt and includes an on-demand elevated repair helper (`RemotePCDiagnostics.Agent.exe`), hardware inventory, SMART/drive health, live sensors, thermal-safe CPU/RAM/disk/GPU/network stress tests, Buyer Hardware QA QR certificates, guided Windows repair (`DISM` / `SFC`) with before/after benchmarking, and client HTML service reports.
 
           ### Installation & Uninstallation
           - **Interactive install:** Run `RemotePCDiagnostics-Setup-*-win-x64.exe`.

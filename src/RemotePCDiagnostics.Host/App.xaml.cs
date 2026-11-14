@@ -96,11 +96,11 @@ public partial class App : Application
             {
                 "tools/osquery/osqueryi.exe", "tools/HardeningKitty/HardeningKitty.psd1",
                 "tools/HardeningKitty/HardeningKitty.psm1", "RemotePCDiagnostics.MemTest.exe",
-                "RemotePCDiagnostics.ModuleHost.exe", "RemotePCDiagnostics.Admin.exe",
+                "RemotePCDiagnostics.ModuleHost.exe", "RemotePCDiagnostics.Agent.exe",
                 "moduleui/RemotePCDiagnostics.ModuleUiHost.exe",
                 "wwwroot/index.html",
             };
-            foreach (var stem in new[] { "RemotePCDiagnostics.MemTest", "RemotePCDiagnostics.ModuleHost", "RemotePCDiagnostics.Admin", "moduleui/RemotePCDiagnostics.ModuleUiHost" })
+            foreach (var stem in new[] { "RemotePCDiagnostics.MemTest", "RemotePCDiagnostics.ModuleHost", "RemotePCDiagnostics.Agent", "moduleui/RemotePCDiagnostics.ModuleUiHost" })
             {
                 if (File.Exists(Path.Combine(AppContext.BaseDirectory, stem + ".dll")))
                     required.Add(stem + ".runtimeconfig.json");
@@ -134,13 +134,13 @@ public partial class App : Application
             {
                 try
                 {
-                    var adminStart = new System.Diagnostics.ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Admin.exe"), "--self-check")
+                    var agentStart = new System.Diagnostics.ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Agent.exe"), "--self-check")
                     { UseShellExecute = false, CreateNoWindow = true };
-                    using var adminHelper = System.Diagnostics.Process.Start(adminStart)!;
-                    if (!adminHelper.WaitForExit(10000)) { adminHelper.Kill(); valid = false; }
-                    else valid = adminHelper.ExitCode == 0;
+                    using var agentHelper = System.Diagnostics.Process.Start(agentStart)!;
+                    if (!agentHelper.WaitForExit(10000)) { agentHelper.Kill(); valid = false; }
+                    else valid = agentHelper.ExitCode == 0;
                 }
-                catch (Exception ex) { LogFileOnly($"Admin helper self-check failed: {ex.Message}"); valid = false; }
+                catch (Exception ex) { LogFileOnly($"Agent helper self-check failed: {ex.Message}"); valid = false; }
             }
             Shutdown(valid ? ExitOk : 1);
             return;

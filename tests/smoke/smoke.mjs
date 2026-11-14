@@ -50,21 +50,8 @@ try {
   await page.getByTestId('connect-tech-dialog').waitFor({ state: 'detached', timeout: 10_000 });
   console.log('Connect to Technician dialog: open/close OK');
 
-  const simulateStandardUser = process.env.RPD_SIMULATE_STANDARD_USER === '1';
-  await page.getByTestId('admin-mode-badge').waitFor({ state: 'visible', timeout: 10_000 });
-  if (simulateStandardUser) {
-    await page.getByTestId('enable-admin-mode').waitFor({ state: 'visible', timeout: 10_000 });
-    await page.getByTestId('enable-admin-mode').click();
-    await page.getByTestId('admin-mode-dialog').waitFor({ state: 'visible', timeout: 10_000 });
-    await page.getByTestId('admin-mode-enable-btn').waitFor({ state: 'visible', timeout: 10_000 });
-    await page.getByTestId('admin-mode-relaunch-btn').waitFor({ state: 'visible', timeout: 10_000 });
-    await page.getByTestId('admin-mode-close').click();
-    await page.getByTestId('admin-mode-dialog').waitFor({ state: 'detached', timeout: 10_000 });
-    console.log('Standard User Mode badge + dialog: open/close OK');
-  } else {
-    await page.getByTestId('admin-mode-ready').waitFor({ state: 'visible', timeout: 10_000 });
-    console.log('Admin Repair Ready badge: visible');
-  }
+  await page.getByTestId('admin-mode-ready').waitFor({ state: 'visible', timeout: 10_000 });
+  console.log('Admin Repair Ready badge: visible');
 
   // Theme switcher: each choice must update data-theme / data-theme-choice on <html>.
   const attr = n => page.evaluate(k => document.documentElement.getAttribute(k), n);
@@ -160,10 +147,7 @@ try {
     await page.getByTestId('wf-enable-admin-btn').waitFor({ state: 'visible', timeout: 10_000 });
     await page.screenshot({ path: `${outDir}/workflow-standard-user.png`, fullPage: true });
 
-    await page.getByTestId('enable-admin-mode').click();
-    await page.getByTestId('admin-mode-dialog').waitFor({ state: 'visible', timeout: 10_000 });
-    await page.getByTestId('admin-mode-enable-btn').click();
-    await page.getByTestId('admin-mode-dialog').waitFor({ state: 'detached', timeout: 25_000 });
+    await page.getByTestId('wf-enable-admin-btn').click();
     await page.getByTestId('admin-mode-ready').waitFor({ state: 'visible', timeout: 15_000 });
     await page.getByTestId('wf-admin-callout').waitFor({ state: 'detached', timeout: 15_000 });
     console.log('Admin Repair Mode helper connected over Named Pipe; UI switched to Admin Repair Ready');

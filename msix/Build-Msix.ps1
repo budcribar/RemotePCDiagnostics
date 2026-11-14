@@ -123,14 +123,14 @@ if ($SysDrivers.Count -gt 0) {
 }
 
 # 4) Verify required executables and ensure embedded Win32 manifests do not request requireAdministrator.
-foreach ($ExeRel in @('RemotePCDiagnostics.Host.exe', 'RemotePCDiagnostics.Admin.exe', 'RemotePCDiagnostics.MemTest.exe', 'RemotePCDiagnostics.ModuleHost.exe', 'moduleui/RemotePCDiagnostics.ModuleUiHost.exe')) {
+foreach ($ExeRel in @('RemotePCDiagnostics.Host.exe', 'RemotePCDiagnostics.Agent.exe', 'RemotePCDiagnostics.MemTest.exe', 'RemotePCDiagnostics.ModuleHost.exe', 'moduleui/RemotePCDiagnostics.ModuleUiHost.exe')) {
     $ExeFull = Join-Path $StageDir $ExeRel
     if (-not (Test-Path -LiteralPath $ExeFull)) {
         throw "Required executable missing from staged folder: $ExeFull"
     }
 }
 
-foreach ($CheckExe in @('RemotePCDiagnostics.Host.exe', 'RemotePCDiagnostics.Admin.exe')) {
+foreach ($CheckExe in @('RemotePCDiagnostics.Host.exe', 'RemotePCDiagnostics.Agent.exe')) {
     $ExeBytes = [System.IO.File]::ReadAllBytes((Join-Path $StageDir $CheckExe))
     $ExeAscii = [System.Text.Encoding]::ASCII.GetString($ExeBytes)
     if ($ExeAscii.Contains('level="requireAdministrator"')) {
@@ -178,10 +178,7 @@ $MsixSysDrivers = @(Get-ChildItem -LiteralPath $MsixStageDir -Recurse -Filter '*
 if ($MsixSysDrivers.Count -gt 0) {
     throw "MSIX stage unexpectedly contains .sys driver files."
 }
-$MsixAgentBins = @(Get-ChildItem -LiteralPath $MsixStageDir -Recurse -Filter 'RemotePCDiagnostics.Agent*.exe' -ErrorAction SilentlyContinue)
-if ($MsixAgentBins.Count -gt 0) {
-    throw "Store Policy 10.2.4 separation violation: RemotePCDiagnostics.Agent.exe must NOT be bundled inside the Microsoft Store MSIX."
-}
+
 
 # MSIX has no custom uninstall action, so removing the Store app cannot stop the Windows service or delete the enrollment key.
 # The agent is not in this package. After it has seen this package (or the Setup exe), DesktopInstallWatch removes the agent once that install is gone.

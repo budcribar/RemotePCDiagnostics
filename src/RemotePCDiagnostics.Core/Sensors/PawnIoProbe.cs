@@ -1,6 +1,6 @@
 using Microsoft.Win32;
 
-namespace RemotePCDiagnostics.Host.Sensors;
+namespace RemotePCDiagnostics.Core.Sensors;
 
 /// <summary>
 /// LibreHardwareMonitorLib 0.9.5+ reads CPU temperature registers (AMD SMN / MSRs) through the separately installed,

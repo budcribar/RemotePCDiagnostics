@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Principal;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Sensors;
 
 namespace RemotePCDiagnostics.Core.Session;
 
@@ -18,7 +19,7 @@ public sealed record AdminHelperStartRequest(
 
 /// <summary>
 /// Tracks whether <c>RemotePCDiagnostics.Host</c> launched elevated or in Microsoft Store <c>asInvoker</c> standard-user mode,
-/// and manages the on-demand <c>RemotePCDiagnostics.Admin</c> Named-Pipe elevated repair helper or full elevated Host relaunch.
+/// and manages the on-demand <c>RemotePCDiagnostics.Agent</c> Named-Pipe elevated repair helper or full elevated Host relaunch.
 /// </summary>
 public interface IElevationContext
 {
@@ -35,7 +36,9 @@ public interface IElevationContext
 public sealed class ElevationService : IElevationContext, IElevatedCommandBridge, IDisposable
 {
     public const string SimulateStandardUserEnvVar = "RPD_SIMULATE_STANDARD_USER";
-    public const string AdminHelperExeName = "RemotePCDiagnostics.Admin.exe";
+    public const string AdminHelperExeName = "RemotePCDiagnostics.Agent.exe";
+    public const string AdminPipeEnvVar = "RPD_ADMIN_PIPE";
+    public const string AdminPipeArgPrefix = "--admin-pipe=";
     private const int ErrorCancelled = 1223; // ERROR_CANCELLED when user declines UAC prompt
 
     private readonly ISessionContext _session;
@@ -60,7 +63,8 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         string? baseDirectory = null,
         Func<bool>? isProcessElevated = null,
         Func<AdminHelperStartRequest, CancellationToken, Task<AdminPipeClient>>? customConnector = null,
-        Func<IReadOnlyList<string>, CancellationToken, Task<ElevationResult>>? customRelauncher = null)
+        Func<IReadOnlyList<string>, CancellationToken, Task<ElevationResult>>? customRelauncher = null,
+        string? initialPipeName = null)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _log = log;
@@ -68,6 +72,22 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         _isProcessElevated = isProcessElevated ?? DetectProcessElevated;
         _customConnector = customConnector;
         _customRelauncher = customRelauncher;
+
+        var initialPipe = !string.IsNullOrWhiteSpace(initialPipeName)
+            ? initialPipeName
+            : TryResolveInitialPipeName();
+        if (!string.IsNullOrEmpty(initialPipe))
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    await TryConnectPipeAsync(initialPipe, TimeSpan.FromSeconds(8), cts.Token).ConfigureAwait(false);
+                }
+                catch { }
+            });
+        }
     }
 
     public bool IsProcessElevated => _isProcessElevated();
@@ -301,6 +321,57 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
             return null;
 
         return await client.RunElevatedAsync(fileName, arguments, timeout, ct, outputLine).ConfigureAwait(false);
+    }
+
+    public async Task<SensorSnapshot?> ReadSensorsAsync(CancellationToken ct = default)
+    {
+        AdminPipeClient? client;
+        lock (_stateLock)
+            client = _client;
+
+        if (client is not { IsConnected: true })
+            return null;
+
+        return await client.ReadSensorsAsync(ct).ConfigureAwait(false);
+    }
+
+    public static string? TryResolveInitialPipeName(IReadOnlyList<string>? args = null)
+    {
+        if (args is not null)
+        {
+            foreach (var a in args)
+            {
+                if (a.StartsWith(AdminPipeArgPrefix, StringComparison.OrdinalIgnoreCase))
+                    return a[AdminPipeArgPrefix.Length..].Trim();
+            }
+        }
+        var fromEnv = Environment.GetEnvironmentVariable(AdminPipeEnvVar)?.Trim();
+        return !string.IsNullOrEmpty(fromEnv) ? fromEnv : null;
+    }
+
+    public async Task<bool> TryConnectPipeAsync(string pipeName, TimeSpan timeout, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(pipeName)) return false;
+        try
+        {
+            var client = await AdminPipeClient.ConnectAsync(pipeName, timeout, ct, _log).ConfigureAwait(false);
+            AdminPipeClient? previous;
+            lock (_stateLock)
+            {
+                previous = _client;
+                _client = client;
+            }
+            previous?.Dispose();
+            client.Disconnected += OnHelperDisconnected;
+            _log?.Info($"[elevation] Connected to initial admin pipe '{pipeName}' (helperPid={client.HelperPid}, elevated={client.HelperIsElevated}).");
+            NotifyChanged();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log?.Warn($"[elevation] Could not connect to initial admin pipe '{pipeName}': {ex.Message}");
+            return false;
+        }
     }
 
     private Process? StartAdminHelperProcess(AdminHelperStartRequest request)

@@ -38,7 +38,7 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 }
 
 # 1) Stop running app processes so output assemblies aren't locked.
-Get-Process RemotePCDiagnostics.Host, RemotePCDiagnostics.Admin, RemotePCDiagnostics.ModuleHost, RemotePCDiagnostics.ModuleUiHost -ErrorAction SilentlyContinue |
+Get-Process RemotePCDiagnostics.Host, RemotePCDiagnostics.Agent, RemotePCDiagnostics.ModuleHost, RemotePCDiagnostics.ModuleUiHost -ErrorAction SilentlyContinue |
     ForEach-Object {
         Write-Host "Stopping running process $($_.ProcessName) ($($_.Id)) ..." -ForegroundColor Yellow
         $_ | Stop-Process -Force

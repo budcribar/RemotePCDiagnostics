@@ -2,7 +2,7 @@ using System.Management;
 using LibreHardwareMonitor.PawnIo;
 using RemotePCDiagnostics.Core.Sensors;
 
-namespace RemotePCDiagnostics.Host.Sensors;
+namespace RemotePCDiagnostics.Core.Sensors;
 
 /// <summary>
 /// Host wiring for <see cref="EcFanMonitor"/>: WMI model check, PawnIO detection, LibreHardwareMonitorLib 0.9.6's public

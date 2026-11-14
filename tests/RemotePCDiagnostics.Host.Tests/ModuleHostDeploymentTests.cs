@@ -13,7 +13,7 @@ public class ModuleHostDeploymentTests
 {
     [Theory]
     [InlineData("RemotePCDiagnostics.ModuleHost")]
-    [InlineData("RemotePCDiagnostics.Admin")]
+    [InlineData("RemotePCDiagnostics.Agent")]
     public void Sidecar_helper_next_to_the_app_uses_the_aspnetcore_shared_framework(string helperName)
     {
         var exePath = Path.Combine(AppContext.BaseDirectory, helperName + ".exe");

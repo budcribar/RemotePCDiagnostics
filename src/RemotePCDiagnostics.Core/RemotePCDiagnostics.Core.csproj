@@ -10,6 +10,8 @@
     <!-- UserModePlugin builds a plugin's own container inside a user-mode process. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.15" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
+    <PackageReference Include="System.Management" Version="10.0.2" />
   </ItemGroup>
   <ItemGroup>
     <!-- Fixed PowerShell scripts, loaded by name (PowerShellScripts.Get). -->

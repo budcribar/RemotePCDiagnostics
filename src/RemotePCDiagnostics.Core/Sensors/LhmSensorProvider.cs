@@ -1,14 +1,19 @@
 using System.Security.Principal;
 using LibreHardwareMonitor.Hardware;
 using RemotePCDiagnostics.Core;
+using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Sensors;
+using RemotePCDiagnostics.Core.Session;
 
-namespace RemotePCDiagnostics.Host.Sensors;
+namespace RemotePCDiagnostics.Core.Sensors;
 
 /// <summary>ISensorProvider backed by LibreHardwareMonitorLib. Many sensors (CPU MSRs, SuperIO fans) need admin.</summary>
-public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDisposable
+public sealed class LhmSensorProvider(
+    IEcFanSource ecFan,
+    IElevatedCommandBridge? elevatedBridge = null,
+    ILogger? logger = null) : ISensorProvider, IDisposable
 {
-    private static readonly ILogger Logger = HostServices.For<LhmSensorProvider>(App.Loggers);
+    private readonly ILogger? _logger = logger;
     private readonly object _gate = new();
     private Computer? _computer;
     private string? _openError;
@@ -32,25 +37,40 @@ public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDi
     {
         lock (_gate)
         {
+            if (elevatedBridge is { IsConnected: true } && !IsElevated())
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                    var remote = elevatedBridge.ReadSensorsAsync(cts.Token).GetAwaiter().GetResult();
+                    if (remote is { Readings.Count: > 0 })
+                        return remote;
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Warn($"Failed to read sensors from elevated helper: {ex.Message}");
+                }
+            }
+
             EnsureOpen();
             if (_computer is null) throw new InvalidOperationException("Temperature monitoring couldn't start on this PC.");
             var list = new List<SensorReading>();
             foreach (var hw in _computer.Hardware) Collect(hw, list);
             if (!_loggedRead) { _loggedRead = true; LogInventory(_computer, "first read"); }
             if (!_fallbackLogged && !list.Any(r => r.HardwareType == HardwareKind.Cpu && r.SensorType == SensorKind.Temperature))
-                Logger.Info("LibreHardwareMonitor: no usable CPU temperature (sensor missing or 0). LHM 0.9.5+ needs the PawnIO driver for low-level CPU access; using ACPI thermal zone fallback if available.");
+                _logger?.Info("LibreHardwareMonitor: no usable CPU temperature (sensor missing or 0). LHM 0.9.5+ needs the PawnIO driver for low-level CPU access; using ACPI thermal zone fallback if available.");
             var first = !_fallbackLogged; _fallbackLogged = true;
             var firstGpu = !_gpuLogged; _gpuLogged = true;
-            if (firstGpu) Logger.Info($"GPU temperature: LHM valid GPU temperature={(list.Any(r => r.HardwareType == HardwareKind.Gpu && r.SensorType == SensorKind.Temperature && r.IsLive) ? "yes" : "no")}; fallback sources={string.Join(", ", _gpuSources.Select(s => s.Name))}");
-            list = GpuTemperatureFallback.Apply(list, _gpuSources, firstGpu ? Logger : null);
+            if (firstGpu) _logger?.Info($"GPU temperature: LHM valid GPU temperature={(list.Any(r => r.HardwareType == HardwareKind.Gpu && r.SensorType == SensorKind.Temperature && r.IsLive) ? "yes" : "no")}; fallback sources={string.Join(", ", _gpuSources.Select(s => s.Name))}");
+            list = GpuTemperatureFallback.Apply(list, _gpuSources, firstGpu ? _logger : null);
             // CPU fallbacks (only when LHM has no valid CPU temp): APU shared die from the Windows GPU reading, then ACPI thermal zone.
             var cpuName = _computer.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Cpu)?.Name;
-            list = CpuTemperatureFallback.ApplyApuDie(list, cpuName, first ? Logger : null);
-            list = ThermalZoneFallback.Apply(list, _zones, first ? Logger : null);
+            list = CpuTemperatureFallback.ApplyApuDie(list, cpuName, first ? _logger : null);
+            list = ThermalZoneFallback.Apply(list, _zones, first ? _logger : null);
             // EC fan diagnostic (82R4 only; empty elsewhere or until a plausible reading). Never throws.
             if (!list.Any(r => r.SensorType == SensorKind.Fan && r.HasData)) list.AddRange(ecFan.Read());
             var driver = _driver.Value;
-            if (first) Logger.Info($"CPU sensor driver (PawnIO, needed by LHM 0.9.5+ for Ryzen/Intel CPU temperatures): {driver.Detail}");
+            if (first) _logger?.Info($"CPU sensor driver (PawnIO, needed by LHM 0.9.5+ for Ryzen/Intel CPU temperatures): {driver.Detail}");
             var cpuNote = CpuTemperatureFallback.Note(list, driver.Available);
             var elevated = IsElevated();
             return new SensorSnapshot(list, elevated, elevated ? null : "Some readings need administrator rights and may be missing.", cpuNote);
@@ -77,7 +97,7 @@ public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDi
             _computer = c;
             LogInventory(c, "opened");
         }
-        catch (Exception ex) { _openError = ex.Message; Logger.Error($"LibreHardwareMonitor open failed: {ex}"); }
+        catch (Exception ex) { _openError = ex.Message; _logger?.Error($"LibreHardwareMonitor open failed: {ex}"); }
     }
 
     private static void Collect(IHardware hw, List<SensorReading> list)
@@ -90,13 +110,12 @@ public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDi
             if (sk is null) continue;
             var reading = new SensorReading(hw.Name, kind, s.Name, sk.Value, s.Value, s.Min, s.Max, SensorReading.UnitFor(sk.Value));
             if (reading.HasData) list.Add(reading); // 0 °C / null = sensor not really supported here
-
         }
         foreach (var sub in hw.SubHardware) Collect(sub, list);
     }
 
     /// <summary>Log-only dump of everything the library exposes (never shown in the UI).</summary>
-    private static void LogInventory(Computer c, string when)
+    private void LogInventory(Computer c, string when)
     {
         try
         {
@@ -108,9 +127,9 @@ public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDi
                 foreach (var sub in hw.SubHardware) Dump(sub, indent + "  ");
             }
             foreach (var hw in c.Hardware) Dump(hw, "  ");
-            Logger.Line(sb.ToString());
+            _logger?.Info(sb.ToString());
         }
-        catch (Exception ex) { Logger.Warn($"LibreHardwareMonitor inventory log failed: {ex.Message}"); }
+        catch (Exception ex) { _logger?.Warn($"LibreHardwareMonitor inventory log failed: {ex.Message}"); }
     }
 
     private static HardwareKind Map(HardwareType t) => t switch
@@ -125,7 +144,7 @@ public sealed class LhmSensorProvider(IEcFanSource ecFan) : ISensorProvider, IDi
     };
 
     private static bool IsElevated() =>
-        OperatingSystem.IsWindows() && RemotePCDiagnostics.Core.Session.ElevationService.DetectProcessElevated();
+        OperatingSystem.IsWindows() && ElevationService.DetectProcessElevated();
 
     public void Dispose() { lock (_gate) { _computer?.Close(); _computer = null; } try { ecFan.Dispose(); } catch { } }
 }

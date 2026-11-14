@@ -48,7 +48,8 @@
     <!-- The user-mode module host, started for real by the proxy tests (RemotePCDiagnostics.ModuleHost.dll lands in the test output). -->
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.ModuleHost\RemotePCDiagnostics.ModuleHost.csproj" />
     <!-- On-demand elevated repair helper for CLI parsing and real-process named-pipe integration tests. -->
-    <ProjectReference Include="..\..\src\RemotePCDiagnostics.Admin\RemotePCDiagnostics.Admin.csproj" />
+    <ProjectReference Include="..\..\src\RemotePCDiagnostics.Agent\RemotePCDiagnostics.Agent.csproj" />
+    <ProjectReference Include="..\..\src\RemotePCDiagnostics.Agent.Core\RemotePCDiagnostics.Agent.Core.csproj" />
   </ItemGroup>
 
   <Target Name="CopySampleModule" AfterTargets="Build">

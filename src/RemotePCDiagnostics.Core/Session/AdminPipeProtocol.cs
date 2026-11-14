@@ -11,12 +11,13 @@ using System.Text.Json.Serialization;
 using Microsoft.Win32.SafeHandles;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Sensors;
 
 namespace RemotePCDiagnostics.Core.Session;
 
 /// <summary>
 /// Bridges allowlisted system repair commands from an un-elevated <c>RemotePCDiagnostics.Host</c> process
-/// to the connected <c>RemotePCDiagnostics.Admin</c> Named-Pipe helper when Admin Repair Mode is enabled.
+/// to the connected <c>RemotePCDiagnostics.Agent</c> Named-Pipe helper when Admin Repair Mode is enabled.
 /// </summary>
 public interface IElevatedCommandBridge
 {
@@ -28,6 +29,8 @@ public interface IElevatedCommandBridge
         TimeSpan timeout,
         CancellationToken ct,
         Action<string>? outputLine = null);
+
+    Task<SensorSnapshot?> ReadSensorsAsync(CancellationToken ct = default);
 }
 
 public static class AdminCommandAllowlist
@@ -113,7 +116,8 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("stdOut")] string StdOut = "",
     [property: JsonPropertyName("stdErr")] string StdErr = "",
     [property: JsonPropertyName("timedOut")] bool TimedOut = false,
-    [property: JsonPropertyName("error")] string? Error = null);
+    [property: JsonPropertyName("error")] string? Error = null,
+    [property: JsonPropertyName("sensors")] SensorSnapshot? Sensors = null);
 
 /// <summary>
 /// Length-prefixed (4-byte little-endian int32 + UTF-8 JSON) framing over Named Pipes with zero third-party dependencies.
@@ -123,6 +127,7 @@ public static class AdminPipeFraming
     public const int MaxFrameBytes = 16 * 1024 * 1024; // 16 MB cap against malformed/unbounded frames
     public const string OpPing = "ping";
     public const string OpRunCommand = "run_command";
+    public const string OpReadSensors = "read_sensors";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -295,6 +300,17 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         return new ProcessResult(response.ExitCode, response.StdOut, response.StdErr, response.TimedOut);
     }
 
+    public async Task<SensorSnapshot?> ReadSensorsAsync(CancellationToken ct = default)
+    {
+        var response = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpReadSensors), ct).ConfigureAwait(false);
+        if (!response.Ok || response.Sensors is null)
+        {
+            _log?.Warn($"[admin-pipe] ReadSensors failed: {response.Error ?? "no data"}");
+            return null;
+        }
+        return response.Sensors;
+    }
+
     private async Task<AdminPipeResponse> SendAsync(AdminPipeRequest request, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -338,12 +354,12 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
 
 public sealed record AdminPipeServerOptions
 {
-    public required string PipeName { get; init; }
-    public int? ExpectedClientPid { get; init; }
-    public string? ExpectedClientExePath { get; init; }
-    public string? AllowedClientSid { get; init; }
-    public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(30);
-    public Func<NamedPipeServerStream, (bool Allowed, string? Reason)>? CustomClientVerifier { get; init; }
+    public required string PipeName { get; set; }
+    public int? ExpectedClientPid { get; set; }
+    public string? ExpectedClientExePath { get; set; }
+    public string? AllowedClientSid { get; set; }
+    public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(30);
+    public Func<NamedPipeServerStream, (bool Allowed, string? Reason)>? CustomClientVerifier { get; set; }
 }
 
 /// <summary>
@@ -354,8 +370,20 @@ public sealed record AdminPipeServerOptions
 public sealed class AdminPipeServer(
     AdminPipeServerOptions options,
     IProcessLauncher? launcher = null,
+    Func<CancellationToken, Task<SensorSnapshot?>>? sensorReader = null,
     ILogger? log = null) : IAsyncDisposable, IDisposable
 {
+    public AdminPipeServer(
+        AdminPipeServerOptions options,
+        IProcessLauncher? launcher,
+        ILogger? log) : this(options, launcher, (Func<CancellationToken, Task<SensorSnapshot?>>?)null, log) { }
+
+    public AdminPipeServer(
+        AdminPipeServerOptions options,
+        IProcessLauncher? launcher,
+        Func<SensorSnapshot?>? syncSensorReader,
+        ILogger? log = null) : this(options, launcher, syncSensorReader is null ? null : _ => Task.FromResult(syncSensorReader()), log) { }
+
     private readonly IProcessLauncher _launcher = launcher ?? new SystemProcessLauncher();
     private NamedPipeServerStream? _server;
     private int _disposed;
@@ -469,6 +497,41 @@ public sealed class AdminPipeServer(
                     HelperPid: Environment.ProcessId,
                     ExitCode: -1,
                     Error: ex.Message);
+            }
+        }
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpReadSensors, StringComparison.OrdinalIgnoreCase))
+        {
+            if (sensorReader is null)
+            {
+                return new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    Error: "Sensor provider is not configured in admin helper.");
+            }
+
+            try
+            {
+                var snapshot = await sensorReader(ct).ConfigureAwait(false);
+                return new AdminPipeResponse(
+                    Ok: snapshot is not null,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: 0,
+                    Sensors: snapshot);
+            }
+            catch (Exception ex)
+            {
+                return new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: -1,
+                    Error: $"Failed to read sensors: {ex.Message}");
             }
         }
 

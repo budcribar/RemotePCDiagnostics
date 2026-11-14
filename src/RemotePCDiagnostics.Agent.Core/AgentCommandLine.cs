@@ -1,6 +1,6 @@
 namespace RemotePCDiagnostics.Agent.Core;
 
-public enum AgentCommand { Help, Install, Uninstall, Status, Run, Consent }
+public enum AgentCommand { Help, Install, Uninstall, Status, Run, Consent, Launch, Helper }
 
 /// <summary>What the person who installed the agent allows (the relay and remote users can only be stricter).</summary>
 public enum ConsentCeiling { Ask, Unattended }
@@ -20,7 +20,11 @@ public sealed record AgentArgs(
     string? Error = null,
     bool SelfCheck = false,
     bool FromMsi = false,
-    string? Group = null);
+    string? Group = null,
+    IReadOnlyList<string>? ForwardedArgs = null,
+    int ParentPid = 0,
+    string? PipeName = null,
+    string? ClientSid = null);
 
 /// <summary>
 /// The agent command line (docs/roadmap.md, "Agent program"):
@@ -38,6 +42,8 @@ public static class AgentCommandLine
     public const string Usage =
         "Remote PC Diagnostics agent\n" +
         "\n" +
+        "  RemotePCDiagnostics.Agent.exe [options]  (launches Remote PC Diagnostics with elevated background worker)\n" +
+        "  RemotePCDiagnostics.Agent.exe --launch [options]\n" +
         "  RemotePCDiagnostics.Agent.exe install [--server=" + DefaultServer + "] [--key=<enrollment key>]\n" +
         "                                        [--group=<shop>] [--consent=ask|unattended] [--lifetime=persistent|session]\n" +
         "  RemotePCDiagnostics.Agent.exe uninstall\n" +
@@ -48,7 +54,15 @@ public static class AgentCommandLine
 
     public static AgentArgs Parse(IReadOnlyList<string> args)
     {
-        if (args.Count == 0) return new AgentArgs(AgentCommand.Help);
+        if (args.Count == 0) return new AgentArgs(AgentCommand.Launch, ForwardedArgs: []);
+
+        if (args.Any(a => a.StartsWith("--mode=helper", StringComparison.OrdinalIgnoreCase) || string.Equals(a, "--mode", StringComparison.OrdinalIgnoreCase)))
+        {
+            if (TryParseHelperArguments(args, out var parentPid, out var pipeName, out var clientSid))
+                return new AgentArgs(AgentCommand.Helper, ParentPid: parentPid, PipeName: pipeName, ClientSid: clientSid);
+            return Fail("Invalid helper arguments.");
+        }
+
         var verb = args[0].Trim().ToLowerInvariant();
         if (verb == "--self-check")
         {
@@ -56,6 +70,13 @@ public static class AgentCommandLine
                 ? new AgentArgs(AgentCommand.Run, SelfCheck: true)
                 : Fail($"Unexpected argument '{args[1]}'.");
         }
+
+        if (verb == "--launch")
+        {
+            var forwarded = args.Skip(1).ToList();
+            return new AgentArgs(AgentCommand.Launch, ForwardedArgs: forwarded);
+        }
+
         AgentCommand command;
         switch (verb)
         {
@@ -65,7 +86,13 @@ public static class AgentCommandLine
             case "run": command = AgentCommand.Run; break;
             case "consent": command = AgentCommand.Consent; break;
             case "help" or "-h" or "--help" or "/?" or "-?": return new AgentArgs(AgentCommand.Help);
-            default: return Fail($"Unknown command '{args[0]}'.");
+            default:
+                if (verb.StartsWith('-'))
+                {
+                    // Parameter meant for Host (e.g. -u=..., --voice, etc.)
+                    return new AgentArgs(AgentCommand.Launch, ForwardedArgs: args.ToArray());
+                }
+                return Fail($"Unknown command '{args[0]}'.");
         }
 
         var result = new AgentArgs(command);
@@ -221,5 +248,55 @@ public static class AgentCommandLine
         var chars = name.Where(ch => !char.IsControl(ch) && ch != '"').ToArray();
         var s = string.Join(' ', new string(chars).Split(' ', StringSplitOptions.RemoveEmptyEntries));
         return s.Length > MaxRequesterLength ? s[..MaxRequesterLength].TrimEnd() : s;
+    }
+
+    public static bool TryParseHelperArguments(
+        IReadOnlyList<string> args,
+        out int parentPid,
+        out string pipeName,
+        out string? clientSid)
+    {
+        parentPid = 0;
+        pipeName = "";
+        clientSid = null;
+        string? mode = null;
+
+        for (var i = 0; i < args.Count; i++)
+        {
+            var arg = args[i];
+            if (TryReadOption(args, ref i, "--mode", out var m))
+                mode = m;
+            else if (TryReadOption(args, ref i, "--parent-pid", out var pidText) && int.TryParse(pidText, out var parsedPid))
+                parentPid = parsedPid;
+            else if (TryReadOption(args, ref i, "--pipe", out var p))
+                pipeName = p;
+            else if (TryReadOption(args, ref i, "--client-sid", out var sid))
+                clientSid = sid;
+        }
+
+        return string.Equals(mode, "helper", StringComparison.OrdinalIgnoreCase)
+            && parentPid > 0
+            && !string.IsNullOrWhiteSpace(pipeName)
+            && !pipeName.Contains('\\')
+            && !pipeName.Contains('/');
+    }
+
+    private static bool TryReadOption(IReadOnlyList<string> args, ref int index, string prefix, out string value)
+    {
+        var current = args[index];
+        var eqPrefix = prefix + "=";
+        if (current.StartsWith(eqPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            value = current[eqPrefix.Length..].Trim();
+            return true;
+        }
+        if (string.Equals(current, prefix, StringComparison.OrdinalIgnoreCase) && index + 1 < args.Count)
+        {
+            index++;
+            value = args[index].Trim();
+            return true;
+        }
+        value = "";
+        return false;
     }
 }

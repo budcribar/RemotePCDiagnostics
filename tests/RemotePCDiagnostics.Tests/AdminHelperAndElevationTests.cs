@@ -3,6 +3,7 @@ using System.IO.Pipes;
 using System.Xml.Linq;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Tests;
@@ -59,6 +60,11 @@ public sealed class AdminHelperAndElevationTests
                     outputLine(line);
             }
             return Task.FromResult(result);
+        }
+
+        public Task<SensorSnapshot?> ReadSensorsAsync(CancellationToken ct = default)
+        {
+            return Task.FromResult<SensorSnapshot?>(null);
         }
     }
 
@@ -292,7 +298,7 @@ public sealed class AdminHelperAndElevationTests
     [Fact]
     public void AdminHelperCli_ParsesValidFlagsAndRejectsInvalidArguments()
     {
-        Assert.True(RemotePCDiagnostics.Admin.Program.TryParseArguments(
+        Assert.True(RemotePCDiagnostics.Agent.Core.AgentCommandLine.TryParseHelperArguments(
             ["--mode=helper", "--parent-pid=4321", "--pipe=rpd-admin-123", "--client-sid=S-1-5-18"],
             out var pid1,
             out var pipe1,
@@ -301,7 +307,7 @@ public sealed class AdminHelperAndElevationTests
         Assert.Equal("rpd-admin-123", pipe1);
         Assert.Equal("S-1-5-18", sid1);
 
-        Assert.True(RemotePCDiagnostics.Admin.Program.TryParseArguments(
+        Assert.True(RemotePCDiagnostics.Agent.Core.AgentCommandLine.TryParseHelperArguments(
             ["--mode", "helper", "--parent-pid", "99", "--pipe", "rpd-admin-abc"],
             out var pid2,
             out var pipe2,
@@ -310,16 +316,16 @@ public sealed class AdminHelperAndElevationTests
         Assert.Equal("rpd-admin-abc", pipe2);
         Assert.Null(sid2);
 
-        Assert.False(RemotePCDiagnostics.Admin.Program.TryParseArguments(["--mode=service", "--parent-pid=99", "--pipe=ok"], out _, out _, out _));
-        Assert.False(RemotePCDiagnostics.Admin.Program.TryParseArguments(["--mode=helper", "--parent-pid=0", "--pipe=ok"], out _, out _, out _));
-        Assert.False(RemotePCDiagnostics.Admin.Program.TryParseArguments(["--mode=helper", "--parent-pid=99", @"--pipe=..\evil"], out _, out _, out _));
+        Assert.False(RemotePCDiagnostics.Agent.Core.AgentCommandLine.TryParseHelperArguments(["--mode=service", "--parent-pid=99", "--pipe=ok"], out _, out _, out _));
+        Assert.False(RemotePCDiagnostics.Agent.Core.AgentCommandLine.TryParseHelperArguments(["--mode=helper", "--parent-pid=0", "--pipe=ok"], out _, out _, out _));
+        Assert.False(RemotePCDiagnostics.Agent.Core.AgentCommandLine.TryParseHelperArguments(["--mode=helper", "--parent-pid=99", @"--pipe=..\evil"], out _, out _, out _));
     }
 
     [Fact]
     public async Task RealAdminHelperProcess_ConnectsAnswersPingAndExitsCleanlyWhenPipeCloses()
     {
-        var adminExe = Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Admin.exe");
-        var adminDll = Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Admin.dll");
+        var adminExe = Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Agent.exe");
+        var adminDll = Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Agent.dll");
 
         ProcessStartInfo BuildPsi(params string[] args)
         {
@@ -386,11 +392,11 @@ public sealed class AdminHelperAndElevationTests
     {
         var root = FindRepoRoot();
 
-        // Both Host and Admin manifests must launch asInvoker (Microsoft Store Policy 10.2.9).
+        // Both Host and Agent manifests must launch asInvoker (Microsoft Store Policy 10.2.9).
         foreach (var rel in new[]
         {
             Path.Combine("src", "RemotePCDiagnostics.Host", "app.manifest"),
-            Path.Combine("src", "RemotePCDiagnostics.Admin", "app.manifest"),
+            Path.Combine("src", "RemotePCDiagnostics.Agent", "app.manifest"),
         })
         {
             var full = Path.Combine(root, rel);

@@ -44,6 +44,12 @@ public static class Program
                     return RunSelfCheck();
                 return await RunAgentAsync().ConfigureAwait(false);
 
+            case AgentCommand.Launch:
+                return await AgentAdminHost.RunLauncherModeAsync(parsed).ConfigureAwait(false);
+
+            case AgentCommand.Helper:
+                return await AgentAdminHost.RunHelperModeAsync(parsed).ConfigureAwait(false);
+
             default:
                 Console.Write(AgentCommandLine.Usage);
                 return ExitBadArguments;

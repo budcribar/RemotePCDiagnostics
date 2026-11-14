@@ -1,7 +1,7 @@
 using System.Management;
 using RemotePCDiagnostics.Core.Sensors;
 
-namespace RemotePCDiagnostics.Host.Sensors;
+namespace RemotePCDiagnostics.Core.Sensors;
 
 /// <summary>root\WMI MSAcpi_ThermalZoneTemperature (needs admin). Values are tenths of Kelvin.</summary>
 public sealed class WmiThermalZoneReader : IThermalZoneReader

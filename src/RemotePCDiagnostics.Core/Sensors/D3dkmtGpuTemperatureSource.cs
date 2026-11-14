@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using RemotePCDiagnostics.Core.Sensors;
 
-namespace RemotePCDiagnostics.Host.Sensors;
+namespace RemotePCDiagnostics.Core.Sensors;
 
 /// <summary>
 /// GPU temperature from the WDDM kernel thunk, the same data Task Manager shows:

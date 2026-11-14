@@ -136,8 +136,8 @@ $OutputDir = (Resolve-Path -LiteralPath $OutputDir).Path
 # Validate staged file layout (runs on both Windows and non-Windows build hosts).
 $RequiredFiles = @(
     'RemotePCDiagnostics.Host.exe'
-    'RemotePCDiagnostics.Admin.exe'
-    'RemotePCDiagnostics.Admin.runtimeconfig.json'
+    'RemotePCDiagnostics.Agent.exe'
+    'RemotePCDiagnostics.Agent.runtimeconfig.json'
     'RemotePCDiagnostics.MemTest.exe'
     'RemotePCDiagnostics.MemTest.runtimeconfig.json'
     'RemotePCDiagnostics.ModuleHost.exe'

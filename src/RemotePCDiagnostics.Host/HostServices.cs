@@ -12,7 +12,6 @@ using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Stress;
-using RemotePCDiagnostics.Host.Sensors;
 
 namespace RemotePCDiagnostics.Host;
 
@@ -49,7 +48,10 @@ public static class HostServices
         services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = L<OsqueryRunner>() }));
         // Read-only EC fan diagnostic, active only on Lenovo IdeaPad 1 15ALC7 (82R4) with PawnIO installed.
         services.AddSingleton<IEcFanSource>(_ => LenovoEcFanSource.Create(loggerFactory.CreateLogger(typeof(LenovoEcFanSource).FullName!)));
-        services.AddSingleton<ISensorProvider, LhmSensorProvider>();
+        services.AddSingleton<ISensorProvider>(sp => new LhmSensorProvider(
+            sp.GetRequiredService<IEcFanSource>(),
+            sp.GetService<IElevatedCommandBridge>(),
+            L<LhmSensorProvider>()));
         services.AddSingleton(sp => new SystemCommandRunner(
             log: L<SystemCommandRunner>(),
             elevatedBridge: sp.GetRequiredService<IElevatedCommandBridge>(),

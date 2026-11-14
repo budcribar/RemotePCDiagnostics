@@ -9,9 +9,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ApplicationIcon>..\RemotePCDiagnostics.Host\Assets\diagnostics.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyTitle>Remote PC Diagnostics Agent</AssemblyTitle>
     <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
 
   <ItemGroup>
     <Protobuf Include="Protos\agent.proto" GrpcServices="Client" />
@@ -29,6 +34,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RemotePCDiagnostics.Agent.Core\RemotePCDiagnostics.Agent.Core.csproj" />
+    <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

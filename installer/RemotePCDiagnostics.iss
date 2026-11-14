@@ -41,7 +41,7 @@
 
 #define AppName "Remote PC Diagnostics"
 #define AppPublisher "Remote PC Diagnostics"
-#define AppExeName "RemotePCDiagnostics.Host.exe"
+#define AppExeName "RemotePCDiagnostics.Agent.exe"
 ; How the shortcuts (Start menu, desktop) and the "launch now" box at the end of setup start the app: a remote session on
 ; the public relay, shared with the remote user, with a voice call. Running the exe with no arguments is still Local mode.
 #if ShopGroup != ""
