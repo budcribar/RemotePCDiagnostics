@@ -47,7 +47,10 @@ public sealed class BenchQaRunner(
 
     public event Action? Changed;
 
-    public async Task RunIntakeAsync(bool includeStress = true, bool includeAudioCamera = true, CancellationToken ct = default)
+    public Task StartBenchQaAsync(bool includeStress = true, bool includeAudioCamera = true, bool includeSecurityAudit = false, CancellationToken ct = default) =>
+        Task.Run(() => RunIntakeAsync(includeStress, includeAudioCamera, includeSecurityAudit, ct), ct);
+
+    public async Task RunIntakeAsync(bool includeStress = true, bool includeAudioCamera = true, bool includeSecurityAudit = false, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(diag);
         ArgumentNullException.ThrowIfNull(store);
@@ -75,8 +78,12 @@ public sealed class BenchQaRunner(
         if (diag.CanRun(ModuleSlugs.NpuTest))
             peripheralSlugs.Add(ModuleSlugs.NpuTest);
 
+        var securitySlugs = new List<string>();
+        if (includeSecurityAudit && diag.CanRun(ModuleSlugs.SecurityAudit))
+            securitySlugs.Add(ModuleSlugs.SecurityAudit);
+
         var saveStep = workflow is not null ? 1 : 0;
-        TotalSteps = 1 + integrityToConsider.Count + suiteStressSlugs.Count + plainStressSlugs.Count + peripheralSlugs.Count + saveStep;
+        TotalSteps = 1 + integrityToConsider.Count + suiteStressSlugs.Count + plainStressSlugs.Count + peripheralSlugs.Count + securitySlugs.Count + saveStep;
         CompletedSteps = 0;
         LastSavedCertificatePath = null;
         Status = "Running hardware inventory, SMART, battery, driver & WHEA checks…";
@@ -84,7 +91,7 @@ public sealed class BenchQaRunner(
 
         try
         {
-            log.Info($"[bench-qa] Starting 10-minute hardware intake (stress={includeStress}, audioCamera={includeAudioCamera})");
+            log.Info($"[bench-qa] Starting 10-minute hardware intake (stress={includeStress}, audioCamera={includeAudioCamera}, securityAudit={includeSecurityAudit})");
 
             // Step 1: Standard read-only checks (Osquery, Sensors, DriveHealth, BatteryPower, DeviceDrivers, Crashes/WHEA, etc.)
             await diag.RunAllAsync(token).ConfigureAwait(false);
@@ -164,7 +171,18 @@ public sealed class BenchQaRunner(
                 Raise();
             }
 
-            // Step 5: Automatically save the 1-page HTML QR Certificate
+            // Step 5: Windows security & baseline audit (HardeningKitty) when requested
+            foreach (var slug in securitySlugs)
+            {
+                token.ThrowIfCancellationRequested();
+                Status = $"Running {diag.Catalog.DisplayName(slug)}…";
+                Raise();
+                await RunModuleSafeAsync(slug, token).ConfigureAwait(false);
+                CompletedSteps++;
+                Raise();
+            }
+
+            // Step 6: Automatically save the 1-page HTML QR Certificate
             token.ThrowIfCancellationRequested();
             if (workflow is not null)
             {

@@ -5,9 +5,8 @@
 @inject AppServices App
 @inject ISessionContext Session
 @{
-    var effectiveBranding = BuildCurrentBranding();
-    var snap = HardwareQaCertificate.Capture(Store, Session.MachineName, DateTimeOffset.Now, effectiveBranding, physicalQa: ActivePhysicalQa.Current);
-    var certHtml = HardwareQaCertificate.BuildHtml(snap);
+    var snap = EnsureCertificateSnapshot();
+    var certHtml = _cachedCertHtml;
     var verdictChip = snap.Verdict switch
     {
         HardwareQaVerdict.CertifiedPass => "ok",
@@ -61,6 +60,10 @@
         <label class="bench-kind meta">
             <input type="checkbox" data-testid="bench-qa-include-audio" @bind="_includeAudioCamera" disabled="@benchRunning" />
             <span>Dongle-free WASAPI speaker→mic loopback &amp; webcam check</span>
+        </label>
+        <label class="bench-kind meta">
+            <input type="checkbox" data-testid="bench-qa-include-security" @bind="_includeSecurityAudit" disabled="@benchRunning" />
+            <span>Windows security &amp; baseline audit (HardeningKitty)</span>
         </label>
     </div>
     @if (benchRunning && ActiveBenchQa.TotalSteps > 0)
@@ -285,6 +288,40 @@
 
     private bool _includeStress = true;
     private bool _includeAudioCamera = true;
+    private bool _includeSecurityAudit;
+
+    private DateTimeOffset _certGeneratedAt = DateTimeOffset.Now;
+    private HardwareQaSnapshot? _cachedSnap;
+    private string _cachedCertHtml = "";
+    private int _lastBenchCompletedSteps = -1;
+    private bool _wasBenchRunning;
+    private long _lastPreviewUpdateTicks;
+
+    private HardwareQaSnapshot EnsureCertificateSnapshot(bool force = false)
+    {
+        var benchRunning = ActiveBenchQa.IsRunning;
+        var nowTicks = Environment.TickCount64;
+
+        if (!force && _cachedSnap is not null)
+        {
+            if (benchRunning)
+            {
+                // During bench QA: do not update on progress ticks (e.g. streaming DISM/SFC percentage lines).
+                // Only update when completed steps change or at least 1000ms have elapsed.
+                var stepChanged = ActiveBenchQa.CompletedSteps != _lastBenchCompletedSteps;
+                var debounceElapsed = nowTicks - _lastPreviewUpdateTicks >= 1000;
+                if (!stepChanged && !debounceElapsed)
+                    return _cachedSnap;
+            }
+        }
+
+        _lastPreviewUpdateTicks = nowTicks;
+        _lastBenchCompletedSteps = ActiveBenchQa.CompletedSteps;
+        var effectiveBranding = BuildCurrentBranding();
+        _cachedSnap = HardwareQaCertificate.Capture(Store, Session.MachineName, _certGeneratedAt, effectiveBranding, physicalQa: ActivePhysicalQa.Current);
+        _cachedCertHtml = HardwareQaCertificate.BuildHtml(_cachedSnap);
+        return _cachedSnap;
+    }
 
     private string _shopName = "";
     private string? _logoDataUri;
@@ -324,11 +361,31 @@
                 ?? (Session.ServerUri is { } su ? ShopRelayClient.BaseUrl(su) : SessionLaunchOptions.DefaultServerUrl);
         _relayGroupSlug = Session.Group ?? prefs?.ShopGroupSlug ?? "";
         _relayApiKey = prefs?.ShopApiKey ?? "";
+        _certGeneratedAt = DateTimeOffset.Now;
         ActivePhysicalQa.Changed += OnBenchStateChanged;
         ActiveBenchQa.Changed += OnBenchStateChanged;
+        EnsureCertificateSnapshot(force: true);
     }
 
-    private void OnBenchStateChanged() => _ = InvokeAsync(StateHasChanged);
+    private void OnBenchStateChanged()
+    {
+        var isRunning = ActiveBenchQa.IsRunning;
+        if (_wasBenchRunning && !isRunning)
+        {
+            _certGeneratedAt = DateTimeOffset.Now;
+            EnsureCertificateSnapshot(force: true);
+        }
+        else if (!_wasBenchRunning && isRunning)
+        {
+            EnsureCertificateSnapshot(force: true);
+        }
+        else if (isRunning && ActiveBenchQa.CompletedSteps != _lastBenchCompletedSteps)
+        {
+            EnsureCertificateSnapshot(force: true);
+        }
+        _wasBenchRunning = isRunning;
+        _ = InvokeAsync(StateHasChanged);
+    }
 
     public override void Dispose()
     {
@@ -342,9 +399,11 @@
     {
         _savedCertPath = null;
         _saveError = null;
+        _certGeneratedAt = DateTimeOffset.Now;
         var current = BuildCurrentBranding();
         PersistRelayAndBranding(current);
-        _ = ActiveBenchQa.RunIntakeAsync(_includeStress, _includeAudioCamera);
+        EnsureCertificateSnapshot(force: true);
+        _ = ActiveBenchQa.StartBenchQaAsync(_includeStress, _includeAudioCamera, _includeSecurityAudit);
         return Task.CompletedTask;
     }
 
@@ -431,6 +490,8 @@
                     if (App.Workflow is { State.Stage: WorkflowStage.Done } wf)
                         wf.RefreshReportBranding(merged.HasAny ? merged : null);
                     _relayMessage = $"Pulled live branding for '{found.Branding.ShopName ?? found.GroupSlug}' ({found.GroupSlug}).";
+                    _certGeneratedAt = DateTimeOffset.Now;
+                    EnsureCertificateSnapshot(force: true);
                     break;
 
                 case ShopRelayBrandingResult.NotFoundOrInactive:
@@ -583,22 +644,26 @@
 
     private void SaveBranding()
     {
+        _certGeneratedAt = DateTimeOffset.Now;
         var normalized = BuildCurrentBranding();
         PersistRelayAndBranding(normalized);
         var saved = normalized.HasAny ? normalized : null;
         if (App.Workflow is { State.Stage: WorkflowStage.Done } wf)
             wf.RefreshReportBranding(saved);
         _statusMessage = saved is not null ? "Saved shop branding and relay settings." : "Saved (unbranded).";
+        EnsureCertificateSnapshot(force: true);
     }
 
     private void ResetBranding()
     {
+        _certGeneratedAt = DateTimeOffset.Now;
         LoadFromPreferences(null);
         _logoError = null;
         App.Preferences?.Update(p => p with { Branding = null });
         if (App.Workflow is { State.Stage: WorkflowStage.Done } wf)
             wf.RefreshReportBranding(null);
         _statusMessage = "Cleared shop branding.";
+        EnsureCertificateSnapshot(force: true);
     }
 
     private void SaveCertificate()
@@ -606,10 +671,15 @@
         _savedCertPath = null;
         _saveError = null;
         if (App.Workflow is null) return;
+        _certGeneratedAt = DateTimeOffset.Now;
         var current = BuildCurrentBranding();
         PersistRelayAndBranding(current);
         var path = App.Workflow.SaveHardwareQaCertificate(out _, out _, current, ActivePhysicalQa.Current);
-        if (path is not null) _savedCertPath = path;
+        if (path is not null)
+        {
+            _savedCertPath = path;
+            EnsureCertificateSnapshot(force: true);
+        }
         else _saveError = "Could not write the HTML certificate to disk on this PC.";
     }
 }

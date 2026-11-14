@@ -130,6 +130,7 @@ public static class HardwareQaCertificate
 
         items.Add(BuildAreaItem("drivers", "Device drivers", store.Get(ModuleSlugs.DeviceDrivers)));
         items.Add(BuildIntegrityItem(store.Get(ModuleSlugs.DismScanHealth), store.Get(ModuleSlugs.SfcVerifyOnly)));
+        items.Add(BuildSimpleItem("security", "Windows security & baseline audit", store.Get(ModuleSlugs.SecurityAudit)));
 
         var verdict = ComputeVerdict(items);
         var digestHex = ComputeVerificationHash(when, resolvedMachine, vendorModel, serial, verdict, items);
@@ -185,22 +186,24 @@ public static class HardwareQaCertificate
         sb.Append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
           .Append("<title>").Append(E(shopTitle)).Append(" – ").Append(E(s.ManufacturerModel != "Not reported" ? s.ManufacturerModel : s.MachineName)).Append(" (").Append(E(s.CertificateId)).Append(")</title><style>")
           .Append("@page{size:auto;margin:10mm}")
-          .Append("*{box-sizing:border-box}body{font-family:Segoe UI,system-ui,-apple-system,sans-serif;color:#111827;max-width:860px;margin:20px auto;padding:0 18px;line-height:1.4;background:#fff}")
-          .Append(".cert-shell{border:2px solid #e5e7eb;border-radius:14px;padding:20px 22px}")
+          .Append("*{box-sizing:border-box}body{overflow-x:hidden;font-family:Segoe UI,system-ui,-apple-system,sans-serif;color:#111827;max-width:860px;margin:20px auto;padding:0 18px;line-height:1.4;background:#fff}")
+          .Append(".cert-shell{overflow:hidden;border:2px solid #e5e7eb;border-radius:14px;padding:20px 22px}")
           .Append(".top-row{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;border-bottom:1px solid #e5e7eb;padding-bottom:14px;margin-bottom:14px}")
           .Append(".brand-block{display:flex;align-items:center;gap:14px;min-width:0}")
           .Append(".shop-logo{max-height:54px;max-width:160px;object-fit:contain;border-radius:6px}")
           .Append("h1{font-size:21px;margin:0;line-height:1.2}.sub{color:#4b5563;font-size:12.5px;margin-top:3px}")
-          .Append(".qr-card{display:flex;align-items:center;gap:10px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;flex-shrink:0}")
+          .Append(".qr-card{display:flex;align-items:center;gap:10px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;width:270px;flex-shrink:0}")
           .Append(".qr-box{width:84px;height:84px;flex-shrink:0}.qr-box svg{width:100%;height:100%;display:block}")
-          .Append(".qr-meta{font-size:11px;color:#374151;max-width:155px}.qr-id{font-weight:700;font-family:Consolas,monospace;font-size:12px;color:#111827}")
+          .Append(".qr-meta{font-size:11px;color:#374151;width:155px;overflow:hidden}.qr-id{font-weight:700;font-family:Consolas,monospace;font-size:12px;color:#111827}")
           .Append(".verdict{display:flex;justify-content:space-between;align-items:center;gap:12px;border-radius:10px;padding:12px 16px;margin-bottom:14px;background:")
           .Append(badgeBg).Append(";border:1.5px solid ").Append(badgeBorder).Append(";color:").Append(badgeFg).Append('}')
           .Append(".verdict strong{font-size:17px;letter-spacing:.02em;display:block}.verdict span{font-size:13px}")
           .Append(".specs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12.5px}")
           .Append(".spec-k{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#64748b;font-weight:600}.spec-v{font-weight:600;color:#0f172a;overflow-wrap:anywhere}")
-          .Append("table{width:100%;border-collapse:collapse;font-size:12.5px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb;vertical-align:middle}")
-          .Append("th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;background:#f9fafb}")
+          .Append("table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12.5px}")
+          .Append("th:nth-child(1),td:nth-child(1){width:32%}th:nth-child(2),td:nth-child(2){width:16%}th:nth-child(3),td:nth-child(3){width:52%}")
+          .Append("th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;background:#f9fafb;text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb;vertical-align:middle}")
+          .Append("td{text-align:left;padding:6px 8px;border-bottom:1px solid #e5e7eb;vertical-align:middle;overflow-wrap:anywhere;word-break:break-word;overflow:hidden}")
           .Append(".pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap}")
           .Append(".pill-ok{background:#d1fae5;color:#065f46}.pill-warn{background:#fef3c7;color:#92400e}.pill-err{background:#fee2e2;color:#991b1b}.pill-na{background:#f1f5f9;color:#475569}")
           .Append(".notes{background:#f8fafc;border-left:3px solid #3b82f6;padding:8px 12px;margin-top:12px;font-size:12.5px;border-radius:0 8px 8px 0}")
