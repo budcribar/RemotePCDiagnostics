@@ -168,7 +168,7 @@ try {
   await page.locator('#main-navigation a[title="Dashboard"]').click();
   await page.getByTestId('dashboard-title').waitFor({ state: 'visible', timeout: 15_000 });
   await resetMainScroll();
-  const connectBtn = page.getByTestId('connect-tech-open');
+  const connectBtn = page.getByTestId('shop-connection-pill');
   if (await connectBtn.isVisible().catch(() => false)) {
     await connectBtn.click();
     await page.getByTestId('shop-info-dialog').waitFor({ state: 'visible', timeout: 10_000 });

@@ -40,8 +40,8 @@ try {
     console.log(`Button ${id}:`, (await page.getByTestId(id).textContent())?.trim());
   }
 
-  // Top-bar shop connection button opens the read-only shop info modal and closes cleanly when present (Remote mode).
-  const connectTechBtn = page.getByTestId('connect-tech-open');
+  // Top-bar shop connection pill opens the read-only shop info modal and closes cleanly when present.
+  const connectTechBtn = page.getByTestId('shop-connection-pill');
   if (await connectTechBtn.isVisible().catch(() => false)) {
     await connectTechBtn.click();
     await page.getByTestId('shop-info-dialog').waitFor({ state: 'visible', timeout: 10_000 });

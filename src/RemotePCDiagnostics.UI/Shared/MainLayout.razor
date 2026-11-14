@@ -1,6 +1,7 @@
 @inherits LayoutComponentBase
 @implements IDisposable
 @using RemotePCDiagnostics.Agent.Core
+@using RemotePCDiagnostics.Core.Session
 @using RemotePCDiagnostics.Core.Workflow
 @inject ISessionContext Session
 @inject NavigationManager Nav
@@ -11,14 +12,19 @@
     <header class="topbar">
         <button class="nav-toggle" aria-label="Toggle navigation" aria-controls="main-navigation" aria-expanded="@(_navigationOpen ? "true" : "false")" @onclick="() => _navigationOpen = !_navigationOpen">Menu</button>
         <span class="title"><Icon Name="health" Size="22" Class="logo" />RemotePCDiagnostics</span>
-        @if (Session.Mode == SessionMode.Remote)
-        {
-            <span class="@AgentLink.Current.CssClass" data-testid="agent-mode-badge" title="@AgentLink.Current.Tooltip">@AgentLink.Current.Label</span>
-        }
-        else
-        {
-            <span class="badge badge-local">Local</span>
-        }
+        <button type="button"
+                class="agent-shop-pill @AgentPillCssClass"
+                data-testid="shop-connection-pill"
+                title="@AgentPillTooltip"
+                aria-label="@AgentPillTooltip"
+                @onclick="OpenConnectDialog">
+            <Icon Name="net" Size="14" />
+            <span class="agent-shop-pill-label" data-testid="agent-mode-badge" title="@AgentPillTooltip">@AgentPillLabel</span>
+            @if (Remote.Count > 0)
+            {
+                <span class="badge shop-users-badge" data-testid="shop-users-count">@Remote.Count</span>
+            }
+        </button>
         <span class="topbar-spacer"></span>
         @if (App.Elevation is { } elevation && elevation.HasAdminCapabilities)
         {
@@ -34,18 +40,6 @@
         }
         @if (Session.Mode == SessionMode.Remote)
         {
-            <button type="button"
-                    class="btn-small connect-tech-btn"
-                    data-testid="connect-tech-open"
-                    title="@ShopConnectionTooltip"
-                    @onclick="OpenShopInfoDialog">
-                <Icon Name="net" Size="14" />
-                <span>Shop connection</span>
-                @if (Remote.Count > 0)
-                {
-                    <span class="badge shop-users-badge" data-testid="shop-users-count">@Remote.Count</span>
-                }
-            </button>
             @* RemoteBlazorWebView draws each browser's own give/take/voice bar over this placeholder. *@
             <div id="rbwv-session-controls" class="topbar-control" data-restart="true"></div>
         }
@@ -215,10 +209,29 @@
     private string? EffectiveAddress => ActiveShopBranding?.Address;
 
     private string? EffectiveEmail => ActiveShopBranding?.Email;
+    
+    private bool IsAgentConnected =>
+        AgentShopPillState.IsConnected(Session.Mode, AgentLink.Current.Kind);
 
-    private string ShopConnectionTooltip => Remote.Count > 0
-        ? $"Shop connection · {RemoteUsers.Label(Remote.Count)} connected. Click for shop details."
-        : "Shop connection · Waiting for technician to join. Click for shop details.";
+    private bool IsAgentInstalledNotConnected =>
+        AgentShopPillState.IsInstalledNotConnected(Session.Mode, AgentLink.Current.Kind);
+
+    private string AgentPillLabel =>
+        AgentShopPillState.FormatLabel(Session.Mode, AgentLink.Current.Kind);
+
+    private string AgentPillCssClass =>
+        AgentShopPillState.FormatCssClass(Session.Mode, AgentLink.Current.Kind);
+
+    private string AgentPillTooltip =>
+        AgentShopPillState.FormatTooltip(
+            Session.Mode,
+            AgentLink.Current.Kind,
+            ActiveShopBranding?.ShopName,
+            Remote.Count);
+
+    private string ShopConnectionTooltip => AgentPillTooltip;
+
+    private void OpenConnectDialog() => OpenShopInfoDialog();
 
     // After the workflow's restart the app is relaunched (on the start page): go straight back to the Service workflow page.
     protected override void OnInitialized()
@@ -327,16 +340,18 @@
     private void OpenShopInfoDialog()
     {
         _shopInfoDialogOpen = true;
-        if (_activeRemoteBranding is null
-            && Session.Mode == SessionMode.Remote
-            && Session.ServerUri is { } serverUri
-            && !string.IsNullOrWhiteSpace(Session.Group))
+        if (_activeRemoteBranding is null)
         {
-            _ = InvokeAsync(async () =>
+            var serverUri = Session.ServerUri ?? (Uri.TryCreate(App.Preferences?.Current?.RelayServerUrl, UriKind.Absolute, out var u) ? u : null);
+            var group = ActiveShopGroup;
+            if (serverUri is not null && !string.IsNullOrWhiteSpace(group))
             {
-                await RefreshActiveRemoteShopAsync(serverUri, Session.Group);
-                StateHasChanged();
-            });
+                _ = InvokeAsync(async () =>
+                {
+                    await RefreshActiveRemoteShopAsync(serverUri, group);
+                    StateHasChanged();
+                });
+            }
         }
     }
 
