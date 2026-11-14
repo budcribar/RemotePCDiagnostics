@@ -164,20 +164,19 @@ try {
     await resetMainScroll();
   }
 
-  // 3) 03-connect-to-technician.png — Top-bar shop connection modal open showing Shop Code (-g) verification (when available)
+  // 3) 03-connect-to-technician.png — Top-bar shop connection modal open showing Shop Info (when available)
   await page.locator('#main-navigation a[title="Dashboard"]').click();
   await page.getByTestId('dashboard-title').waitFor({ state: 'visible', timeout: 15_000 });
   await resetMainScroll();
   const connectBtn = page.getByTestId('connect-tech-open');
   if (await connectBtn.isVisible().catch(() => false)) {
     await connectBtn.click();
-    await page.getByTestId('connect-tech-dialog').waitFor({ state: 'visible', timeout: 10_000 });
-    await page.getByTestId('connect-tech-group').fill('apex-pc-repair');
+    await page.getByTestId('shop-info-dialog').waitFor({ state: 'visible', timeout: 10_000 });
     try {
       await capture1080p('03-connect-to-technician.png');
     } finally {
-      await page.getByTestId('connect-tech-close').click().catch(() => {});
-      await page.getByTestId('connect-tech-dialog').waitFor({ state: 'detached', timeout: 10_000 }).catch(() => {});
+      await page.getByTestId('shop-info-close').click().catch(() => {});
+      await page.getByTestId('shop-info-dialog').waitFor({ state: 'detached', timeout: 10_000 }).catch(() => {});
     }
   }
 

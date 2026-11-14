@@ -40,16 +40,14 @@ try {
     console.log(`Button ${id}:`, (await page.getByTestId(id).textContent())?.trim());
   }
 
-  // Top-bar shop connection button opens the shop relay verification dialog and closes cleanly when present (Remote mode).
+  // Top-bar shop connection button opens the read-only shop info modal and closes cleanly when present (Remote mode).
   const connectTechBtn = page.getByTestId('connect-tech-open');
   if (await connectTechBtn.isVisible().catch(() => false)) {
     await connectTechBtn.click();
-    await page.getByTestId('connect-tech-dialog').waitFor({ state: 'visible', timeout: 10_000 });
-    await page.getByTestId('connect-tech-group').waitFor({ state: 'visible', timeout: 10_000 });
-    await page.getByTestId('connect-tech-server').waitFor({ state: 'visible', timeout: 10_000 });
-    await page.getByTestId('connect-tech-close').click();
-    await page.getByTestId('connect-tech-dialog').waitFor({ state: 'detached', timeout: 10_000 });
-    console.log('Shop connection dialog: open/close OK');
+    await page.getByTestId('shop-info-dialog').waitFor({ state: 'visible', timeout: 10_000 });
+    await page.getByTestId('shop-info-close').click();
+    await page.getByTestId('shop-info-dialog').waitFor({ state: 'detached', timeout: 10_000 });
+    console.log('Shop info dialog: open/close OK');
   }
 
   await page.getByTestId('admin-mode-ready').waitFor({ state: 'visible', timeout: 10_000 });
