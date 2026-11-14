@@ -4,6 +4,7 @@ using System.Windows;
 using RemotePCDiagnostics.Agent.Core;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Logging;
 
@@ -93,57 +94,15 @@ public partial class App : Application
         // Packaging check: no window, machine scans, journal changes or instance mutex.
         if (e.Args.Contains("--verify-package"))
         {
-            var required = new List<string>
+            var code = PackageVerifier.Run(AppContext.BaseDirectory, LogFileOnly);
+            var modulesMissing = BuiltInModulesPlugin.MissingModuleDlls(RemotePCDiagnostics.Core.Plugins.ModuleLoaderOptions.DefaultBundledFolder())
+                .Select(slug => $"{RemotePCDiagnostics.Core.Plugins.ModuleLoaderOptions.BundledFolderName}/ (module {slug})").ToArray();
+            if (modulesMissing.Length > 0)
             {
-                "tools/osquery/osqueryi.exe", "tools/HardeningKitty/HardeningKitty.psd1",
-                "tools/HardeningKitty/HardeningKitty.psm1", "RemotePCDiagnostics.MemTest.exe",
-                "RemotePCDiagnostics.ModuleHost.exe", "RemotePCDiagnostics.Agent.exe",
-                "moduleui/RemotePCDiagnostics.ModuleUiHost.exe",
-                "wwwroot/index.html",
-            };
-            foreach (var stem in new[] { "RemotePCDiagnostics.MemTest", "RemotePCDiagnostics.ModuleHost", "RemotePCDiagnostics.Agent", "moduleui/RemotePCDiagnostics.ModuleUiHost" })
-            {
-                if (File.Exists(Path.Combine(AppContext.BaseDirectory, stem + ".dll")))
-                    required.Add(stem + ".runtimeconfig.json");
+                LogFileOnly($"Package check 'bundled modules' failed. Expected every built-in module DLL. Found missing: {string.Join(", ", modulesMissing)}.");
+                code = 1;
             }
-            var missing = required.Where(p => !File.Exists(Path.Combine(AppContext.BaseDirectory, p)))
-                .Concat(BuiltInModulesPlugin.MissingModuleDlls(RemotePCDiagnostics.Core.Plugins.ModuleLoaderOptions.DefaultBundledFolder())
-                    .Select(slug => $"{RemotePCDiagnostics.Core.Plugins.ModuleLoaderOptions.BundledFolderName}/ (module {slug})")).ToArray();
-            LogFileOnly($"Package base: {AppContext.BaseDirectory}; missing: {string.Join(", ", missing)}");
-            var valid = missing.Length == 0;
-            if (valid)
-            {
-                try
-                {
-                    var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.MemTest.exe"), "--bytes 1048576 --seconds 1")
-                    { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
-                    using var helper = System.Diagnostics.Process.Start(start)!;
-                    var output = helper.StandardOutput.ReadToEndAsync();
-                    if (!helper.WaitForExit(15000)) { helper.Kill(); valid = false; }
-                    else
-                    {
-                        var done = output.GetAwaiter().GetResult().Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-                            .Select(RemotePCDiagnostics.Core.Stress.MemTestMessage.Parse)
-                            .OfType<RemotePCDiagnostics.Core.Stress.MemTestMessage.Done>()
-                            .LastOrDefault();
-                        valid = helper.ExitCode == 0 && done is { Bytes: 1048576, Passes: > 0, Errors: 0 };
-                    }
-                }
-                catch (Exception ex) { LogFileOnly($"Package helper failed: {ex.Message}"); valid = false; }
-            }
-            if (valid)
-            {
-                try
-                {
-                    var agentStart = new System.Diagnostics.ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Agent.exe"), "--self-check")
-                    { UseShellExecute = false, CreateNoWindow = true };
-                    using var agentHelper = System.Diagnostics.Process.Start(agentStart)!;
-                    if (!agentHelper.WaitForExit(10000)) { agentHelper.Kill(); valid = false; }
-                    else valid = agentHelper.ExitCode == 0;
-                }
-                catch (Exception ex) { LogFileOnly($"Agent helper self-check failed: {ex.Message}"); valid = false; }
-            }
-            Shutdown(valid ? ExitOk : 1);
+            Shutdown(code == 0 ? ExitOk : 1);
             return;
         }
         var isAdmin = IsAdministrator();
