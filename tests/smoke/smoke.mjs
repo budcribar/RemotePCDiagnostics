@@ -50,8 +50,17 @@ try {
     console.log('Shop info dialog: open/close OK');
   }
 
-  await page.getByTestId('admin-mode-ready').waitFor({ state: 'visible', timeout: 10_000 });
-  console.log('Advanced Mode badge: visible');
+  // Simulated standard user (RPD_SIMULATE_STANDARD_USER=1) is not treated as elevated, so the
+  // Advanced Mode badge stays hidden until Admin Repair Mode connects the Agent helper.
+  // That connection is exercised later from the service workflow page.
+  const simulateStandardUser = process.env.RPD_SIMULATE_STANDARD_USER === '1';
+  if (!simulateStandardUser) {
+    await page.getByTestId('admin-mode-ready').waitFor({ state: 'visible', timeout: 10_000 });
+    console.log('Advanced Mode badge: visible');
+  } else {
+    await page.getByTestId('admin-mode-ready').waitFor({ state: 'hidden', timeout: 10_000 });
+    console.log('Simulated standard user: Advanced Mode badge hidden until the helper connects');
+  }
 
   // Theme switcher: each choice must update data-theme / data-theme-choice on <html>.
   const attr = n => page.evaluate(k => document.documentElement.getAttribute(k), n);
