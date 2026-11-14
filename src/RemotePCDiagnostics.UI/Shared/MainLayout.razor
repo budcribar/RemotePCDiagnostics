@@ -41,9 +41,10 @@
             <span class="admin-mode-slot" data-testid="admin-mode-badge">
                 <span class="badge admin-mode-pill admin-mode-ready"
                       data-testid="admin-mode-ready"
-                      title="@(elevation.IsProcessElevated ? "Running with Administrator privileges" : "Connected to elevated Admin Repair helper")">
+                      title="@(elevation.IsProcessElevated ? "Running with Administrator privileges" : "Elevated helper connected. Low-level hardware sensors and system repairs are unlocked.")"
+                      aria-label="@(elevation.IsProcessElevated ? "Running with Administrator privileges" : "Elevated helper connected. Low-level hardware sensors and system repairs are unlocked.")">
                     <Icon Name="cert" Size="14" />
-                    <span>Admin Repair Ready</span>
+                    <span>Advanced Mode</span>
                 </span>
             </span>
         }

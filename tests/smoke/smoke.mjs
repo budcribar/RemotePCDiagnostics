@@ -53,7 +53,7 @@ try {
   }
 
   await page.getByTestId('admin-mode-ready').waitFor({ state: 'visible', timeout: 10_000 });
-  console.log('Admin Repair Ready badge: visible');
+  console.log('Advanced Mode badge: visible');
 
   // Theme switcher: each choice must update data-theme / data-theme-choice on <html>.
   const attr = n => page.evaluate(k => document.documentElement.getAttribute(k), n);
@@ -152,7 +152,7 @@ try {
     await page.getByTestId('wf-enable-admin-btn').click();
     await page.getByTestId('admin-mode-ready').waitFor({ state: 'visible', timeout: 15_000 });
     await page.getByTestId('wf-admin-callout').waitFor({ state: 'detached', timeout: 15_000 });
-    console.log('Admin Repair Mode helper connected over Named Pipe; UI switched to Admin Repair Ready');
+    console.log('Admin Repair Mode helper connected over Named Pipe; UI switched to Advanced Mode');
   }
 
   await page.getByTestId('nav-about').click();
