@@ -85,6 +85,40 @@ public class LibreHardwareMonitorModuleTests
     }
 
     [Fact]
+    public void Summarize_WhenElevatedAndZeroFans_DisplaysFanSpeedNotReportedWithoutAdminWarning()
+    {
+        var snapshot = new SensorSnapshot([
+            new("AMD Ryzen 7 5700U", HardwareKind.Cpu, "Core (Tctl/Tdie)", SensorKind.Temperature, 50, 40, 60, "°C"),
+            new("AMD Radeon Graphics", HardwareKind.Gpu, "GPU Core", SensorKind.Temperature, 45, 35, 55, "°C"),
+            new("Samsung SSD 990 PRO 2TB", HardwareKind.Storage, "Temperature", SensorKind.Temperature, 40, 30, 45, "°C"),
+        ], IsElevated: true);
+
+        var report = LibreHardwareMonitorModule.BuildReport(snapshot);
+        var summary = LibreHardwareMonitorModule.Summarize(report);
+
+        Assert.Contains("fan speed not reported", summary);
+        Assert.DoesNotContain("administrator rights", summary);
+        Assert.Equal("CPU 50°C · GPU 45°C · Storage 40°C · fan speed not reported", summary);
+    }
+
+    [Fact]
+    public void Summarize_WhenNotElevatedAndZeroFans_AppendsAdminWarning()
+    {
+        var snapshot = new SensorSnapshot([
+            new("AMD Ryzen 7 5700U", HardwareKind.Cpu, "Core (Tctl/Tdie)", SensorKind.Temperature, 50, 40, 60, "°C"),
+            new("AMD Radeon Graphics", HardwareKind.Gpu, "GPU Core", SensorKind.Temperature, 45, 35, 55, "°C"),
+            new("Samsung SSD 990 PRO 2TB", HardwareKind.Storage, "Temperature", SensorKind.Temperature, 40, 30, 45, "°C"),
+        ], IsElevated: false);
+
+        var report = LibreHardwareMonitorModule.BuildReport(snapshot);
+        var summary = LibreHardwareMonitorModule.Summarize(report);
+
+        Assert.Contains("fan speed not reported", summary);
+        Assert.Contains("(some sensors need administrator rights)", summary);
+        Assert.Equal("CPU 50°C · GPU 45°C · Storage 40°C · fan speed not reported (some sensors need administrator rights)", summary);
+    }
+
+    [Fact]
     public async Task EmptyNotElevated_IsWarningWithAdminHint()
     {
         var m = new LibreHardwareMonitorModule(new FakeSensorProvider(new SensorSnapshot([], false)));
@@ -273,3 +307,68 @@ public class ThermalZoneFallbackTests
         Assert.Equal(SensorLevel.Neutral, rep2.Level);
     }
 }
+
+public class LhmSensorProviderElevationTests
+{
+    private sealed class FakeElevatedBridge(bool isConnected, Func<CancellationToken, Task<SensorSnapshot?>>? onRead = null) : RemotePCDiagnostics.Core.Session.IElevatedCommandBridge
+    {
+        public bool IsConnected { get; set; } = isConnected;
+        public int ReadCount { get; private set; }
+
+        public Task<RemotePCDiagnostics.Core.Osquery.ProcessResult?> RunElevatedAsync(
+            string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine = null) =>
+            throw new NotSupportedException();
+
+        public Task<SensorSnapshot?> ReadSensorsAsync(CancellationToken ct = default)
+        {
+            ReadCount++;
+            return onRead != null ? onRead(ct) : Task.FromResult<SensorSnapshot?>(null);
+        }
+    }
+
+    [Fact]
+    public void Read_WhenElevatedBridgeConnected_ReturnsRemoteSnapshotAsElevated()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        RunRemoteElevated();
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void RunRemoteElevated()
+    {
+        var expectedReading = new SensorReading("Lenovo", HardwareKind.Controller, "Fan 1", SensorKind.Fan, 2500, 2000, 3000, "RPM");
+        var remoteSnap = new SensorSnapshot([expectedReading], IsElevated: false, Note: "old note");
+
+        var bridge = new FakeElevatedBridge(isConnected: true, _ => Task.FromResult<SensorSnapshot?>(remoteSnap));
+        using var provider = new LhmSensorProvider(new NoEcFanSource(), elevatedBridge: bridge);
+
+        var result = provider.Read();
+
+        Assert.Equal(1, bridge.ReadCount);
+        Assert.True(result.IsElevated);
+        Assert.Null(result.Note);
+        Assert.Single(result.Readings);
+        Assert.Equal(expectedReading, result.Readings[0]);
+    }
+
+    [Fact]
+    public void Read_WhenElevatedBridgeConnected_AndRemoteFails_LocalFallbackHasElevatedTrue()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        RunRemoteFallback();
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void RunRemoteFallback()
+    {
+        var bridge = new FakeElevatedBridge(isConnected: true, _ => Task.FromException<SensorSnapshot?>(new IOException("pipe broken")));
+        using var provider = new LhmSensorProvider(new NoEcFanSource(), elevatedBridge: bridge);
+
+        var result = provider.Read();
+
+        Assert.Equal(1, bridge.ReadCount);
+        Assert.True(result.IsElevated);
+        Assert.Null(result.Note);
+    }
+}
+

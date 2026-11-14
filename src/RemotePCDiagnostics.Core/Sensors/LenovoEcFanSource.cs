@@ -18,11 +18,45 @@ public static class LenovoEcFanSource
         return new EcFanMonitor(ReadModel, CheckPawnIo, () => new PawnIoEcPortIo(), new GlobalEcMutex(), log);
     }
 
-    /// <summary>Win32_ComputerSystemProduct.Name, e.g. "82R4" (Lenovo machine type).</summary>
+    /// <summary>Win32_ComputerSystemProduct Name/Version or Win32_ComputerSystem Model, e.g. "82R4000PUS", "IdeaPad 1 15ALC7", "82R4".</summary>
     private static string? ReadModel()
     {
-        using var s = new ManagementObjectSearcher("SELECT Name FROM Win32_ComputerSystemProduct");
-        foreach (var o in s.Get()) using (o) return o["Name"]?.ToString();
+        if (!OperatingSystem.IsWindows()) return null;
+        try
+        {
+            using var s = new ManagementObjectSearcher("SELECT Name, Version FROM Win32_ComputerSystemProduct");
+            foreach (var o in s.Get())
+            {
+                using (o)
+                {
+                    var name = o["Name"]?.ToString()?.Trim();
+                    var version = o["Version"]?.ToString()?.Trim();
+                    if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(version))
+                        return $"{name} {version}";
+                    if (!string.IsNullOrEmpty(name))
+                        return name;
+                    if (!string.IsNullOrEmpty(version))
+                        return version;
+                }
+            }
+        }
+        catch { }
+
+        try
+        {
+            using var s2 = new ManagementObjectSearcher("SELECT Model FROM Win32_ComputerSystem");
+            foreach (var o in s2.Get())
+            {
+                using (o)
+                {
+                    var model = o["Model"]?.ToString()?.Trim();
+                    if (!string.IsNullOrEmpty(model))
+                        return model;
+                }
+            }
+        }
+        catch { }
+
         return null;
     }
 

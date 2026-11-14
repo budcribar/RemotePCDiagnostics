@@ -109,6 +109,17 @@ public sealed class EcFanPlausibility
 public sealed class EcFanMonitor : IEcFanSource
 {
     public const string SupportedModel = "82R4";
+
+    /// <summary>
+    /// Checks whether the reported model corresponds to supported Lenovo IdeaPad 1 15ALC7 variants (e.g. "82R4", "82R4000PUS", "IdeaPad 1 15ALC7").
+    /// </summary>
+    public static bool IsSupportedModel(string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model)) return false;
+        var trimmed = model.Trim();
+        return trimmed.StartsWith(SupportedModel, StringComparison.OrdinalIgnoreCase)
+            || trimmed.Contains("15ALC7", StringComparison.OrdinalIgnoreCase);
+    }
     public const string HardwareName = "Laptop controller";
     public const string CpuFanName = "CPU fan (from laptop controller)";
     public const string Fan2Name = "Fan 2 (from laptop controller)";
@@ -188,7 +199,7 @@ public sealed class EcFanMonitor : IEcFanSource
         _initDone = true;
         string? model;
         try { model = _model()?.Trim(); } catch (Exception ex) { LogWarn($"Fan diagnostic: model check failed: {ex.Message}"); return; }
-        if (!string.Equals(model, SupportedModel, StringComparison.OrdinalIgnoreCase)) return; // other models: stay silent and off
+        if (!IsSupportedModel(model)) return; // other models: stay silent and off
         (bool Available, string Detail) pawn;
         try { pawn = _pawnIo(); } catch (Exception ex) { pawn = (false, ex.Message); }
         Log($"Fan diagnostic: model={model} (Lenovo IdeaPad 1 15ALC7); PawnIO {(pawn.Available ? "available" : "not available")}: {pawn.Detail}");

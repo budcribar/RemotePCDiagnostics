@@ -71,6 +71,38 @@ public class EcFanTests
         Assert.Empty(rig.Ports.Writes);
     }
 
+    [Theory]
+    [InlineData("82R4")]
+    [InlineData("82R4000PUS")]
+    [InlineData("IdeaPad 1 15ALC7")]
+    [InlineData("LENOVO IdeaPad 1 15ALC7")]
+    [InlineData("82R4000PUS IdeaPad 1 15ALC7")]
+    public void SupportedModels_EnableWhenPawnIoAvailable(string model)
+    {
+        var rig = new Rig();
+        using var m = rig.Build(model: model, pawn: true);
+        var readings = m.Read();
+        Assert.True(m.IsEnabled);
+        Assert.NotEmpty(readings);
+        Assert.Contains(readings, r => r.SensorName == EcFanMonitor.CpuFanName);
+    }
+
+    [Theory]
+    [InlineData("82R4", true)]
+    [InlineData("82R4000PUS", true)]
+    [InlineData("IdeaPad 1 15ALC7", true)]
+    [InlineData("LENOVO IdeaPad 1 15ALC7", true)]
+    [InlineData("82R4000PUS IdeaPad 1 15ALC7", true)]
+    [InlineData("82R3", false)]
+    [InlineData("82R5", false)]
+    [InlineData("ThinkPad T14", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void IsSupportedModel_MatchesLenovoIdeaPadVariants(string? model, bool expected)
+    {
+        Assert.Equal(expected, EcFanMonitor.IsSupportedModel(model));
+    }
+
     [Fact]
     public void Model82R4_WithoutPawnIo_IsOffAndLogged()
     {

@@ -37,14 +37,16 @@ public sealed class LhmSensorProvider(
     {
         lock (_gate)
         {
-            if (elevatedBridge is { IsConnected: true } && !IsElevated())
+            if (elevatedBridge is { IsConnected: true } && !IsLocalProcessElevated())
             {
                 try
                 {
-                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
                     var remote = elevatedBridge.ReadSensorsAsync(cts.Token).GetAwaiter().GetResult();
-                    if (remote is { Readings.Count: > 0 })
-                        return remote;
+                    if (remote is not null)
+                    {
+                        return remote with { IsElevated = true, Note = null };
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -82,7 +84,7 @@ public sealed class LhmSensorProvider(
         if (_computer is not null || _openError is not null) return;
         try
         {
-            var elevated = IsElevated();
+            var elevated = IsLocalProcessElevated();
             var c = new Computer
             {
                 IsCpuEnabled = true,
@@ -143,8 +145,11 @@ public sealed class LhmSensorProvider(
         _ => HardwareKind.Other,
     };
 
-    private static bool IsElevated() =>
+    private static bool IsLocalProcessElevated() =>
         OperatingSystem.IsWindows() && ElevationService.DetectProcessElevated();
+
+    private bool IsElevated() =>
+        IsLocalProcessElevated() || elevatedBridge is { IsConnected: true };
 
     /// <summary>Resets the cached Computer instance and diagnostic state so sensors can be re-evaluated with updated elevation or privileges.</summary>
     public void Reset()
