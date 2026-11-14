@@ -165,6 +165,7 @@ public static class HostServices
         services.AddSingleton<RemoteSessionHealth>();
         services.AddSingleton(sp => new DesktopSessionRelauncher(sp.GetRequiredService<ISessionContext>(), L<DesktopSessionRelauncher>()));
         services.AddSingleton<ISessionRelauncher>(sp => sp.GetRequiredService<DesktopSessionRelauncher>());
+        services.AddSingleton<IFullscreenService, FullscreenService>();
         // The optional host services pages may use (instead of injecting IServiceProvider).
         services.AddSingleton(sp => new RemotePCDiagnostics.UI.AppServices(sp.GetService<RemediationService>(), sp.GetService<ServiceActionService>(),
             sp.GetService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(), sp.GetService<RemotePCDiagnostics.Core.Areas.ICopilotHandoff>(),
@@ -176,7 +177,8 @@ public static class HostServices
             sp.GetService<RemotePCDiagnostics.Core.Workflow.ShopRelayClient>(),
             sp.GetService<ISessionRelauncher>(),
             sp.GetService<RemoteSessionHealth>(),
-            sp.GetService<IElevationContext>()));
+            sp.GetService<IElevationContext>(),
+            sp.GetService<IFullscreenService>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
         return services;

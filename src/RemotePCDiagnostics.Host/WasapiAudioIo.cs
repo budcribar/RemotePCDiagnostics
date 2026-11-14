@@ -25,6 +25,32 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
     private void Log(string m) => log.Info("Audio: " + m);
     private void LogWarn(string m) => log.Warn("Audio: " + m);
 
+    private void EnsureSpeakerUnmutedAndAudible(MMDevice dev)
+    {
+        try
+        {
+            var vol = dev.AudioEndpointVolume;
+            if (vol is not null)
+            {
+                if (vol.Mute)
+                {
+                    vol.Mute = false;
+                    Log($"Speakers on '{dev.FriendlyName}' were muted. Unmuted for audio test.");
+                }
+                if (vol.MasterVolumeLevelScalar < 0.5f)
+                {
+                    var prev = vol.MasterVolumeLevelScalar;
+                    vol.MasterVolumeLevelScalar = 0.5f;
+                    Log($"Speaker volume on '{dev.FriendlyName}' was {prev:P0}. Turned up to 50% for audio test.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogWarn($"Could not inspect/adjust speaker volume: {ex.Message}");
+        }
+    }
+
     public IReadOnlyList<AudioDevice> ListDevices()
     {
         var list = new List<AudioDevice>();
@@ -68,6 +94,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
             using var en = new MMDeviceEnumerator();
             using var outDev = Device(en, r.OutputId, DataFlow.Render);
             using var inDev = Device(en, r.InputId, DataFlow.Capture);
+            EnsureSpeakerUnmutedAndAudible(outDev);
             string? note = null;
             var toneTime = TimeSpan.FromSeconds((double)r.Tone.Length / r.SampleRate);
 
@@ -126,6 +153,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
             using var en = new MMDeviceEnumerator();
             using var outDev = Device(en, r.OutputId, DataFlow.Render);
             using var inDev = Device(en, r.InputId, DataFlow.Capture);
+            EnsureSpeakerUnmutedAndAudible(outDev);
             using var stop = new CancellationTokenSource();
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, stop.Token);
             var queue = new ConcurrentQueue<float[]>();

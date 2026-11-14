@@ -1,5 +1,8 @@
+@using Microsoft.JSInterop
 @using RemotePCDiagnostics.Core.Workflow
 @implements IDisposable
+@inject AppServices App
+@inject IJSRuntime JS
 @{
     var snap = ActiveService.Current;
     var kbChip = OutcomeChip(snap.KeyboardOutcome);
@@ -9,16 +12,21 @@
     var activePattern = Patterns[_patternIndex];
 }
 
-<section class="card wf-section" data-testid="physical-qa-card" style="margin-bottom: 16px">
-    <div class="toolbar" style="margin-bottom: 8px">
-        <div>
-            <strong>Interactive bench QA: Keyboard &amp; Display</strong>
-            <span class="meta"> · Quick technician verification rolled onto the 1-page Buyer QR Certificate</span>
-        </div>
-    </div>
+@if (CardShell)
+{
+    @:<section class="card wf-section" data-testid="physical-qa-card" style="margin-bottom: 16px">
+    @:<div class="toolbar" style="margin-bottom: 8px">
+    @:    <div>
+    @:        <strong>Interactive bench QA: Keyboard &amp; Display</strong>
+    @:        <span class="meta"> · Quick technician verification rolled onto the 1-page Buyer QR Certificate</span>
+    @:    </div>
+    @:</div>
+    @:<div class="phys-qa-grid">
+}
 
-    <div class="phys-qa-grid">
-        <div class="phys-qa-pane">
+@if (FilterSection is null or "keyboard")
+{
+    <div class="phys-qa-pane" data-testid="interactive-keyboard-pane">
             <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
                 <strong>Keyboard matrix &amp; rollover (NKRO)</strong>
                 <span class="chip chip-@kbChip" data-testid="keyboard-status-chip">@kbLabel</span>
@@ -98,8 +106,11 @@
                 <button type="button" class="btn-small" data-testid="keyboard-reset" @onclick="ResetKeyboard">Reset</button>
             </div>
         </div>
+    }
 
-        <div class="phys-qa-pane"
+    @if (FilterSection is null or "display")
+    {
+        <div class="phys-qa-pane" data-testid="interactive-display-pane"
              @ontouchstart="OnTouchEvent"
              @ontouchmove="OnTouchEvent">
             <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
@@ -150,8 +161,13 @@
                 <button type="button" class="btn-small" data-testid="display-reset" @onclick="ResetDisplay">Reset</button>
             </div>
         </div>
-    </div>
-</section>
+    }
+
+    @if (CardShell)
+    {
+        @:</div>
+        @:</section>
+    }
 
 @if (_displayOverlayOpen)
 {
@@ -164,12 +180,14 @@
          data-testid="display-test-overlay"
          @ref="_overlayRef"
          @onclick="NextPattern"
+         @onmousemove="OnOverlayMouseMove"
          @onkeydown="OnOverlayKeyDown"
          @onkeydown:preventDefault="true"
          @ontouchstart="OnTouchEvent"
          @ontouchmove="OnTouchEvent">
-        <div class="display-qa-hud"
+        <div class="display-qa-hud @(_hudVisible ? "display-qa-hud-visible" : "display-qa-hud-hidden")"
              @onclick:stopPropagation="true"
+             @onmousemove:stopPropagation="true"
              @onkeydown:stopPropagation="true">
             <div class="display-qa-hud-title">
                 <strong>Pattern @(_patternIndex + 1) of @Patterns.Length: @activePattern.Name (@activePattern.Hex)</strong>
@@ -191,6 +209,8 @@
 
 @code {
     [Parameter] public PhysicalBenchQaService? Service { get; set; }
+    [Parameter] public string? FilterSection { get; set; }
+    [Parameter] public bool CardShell { get; set; } = true;
 
     private readonly PhysicalBenchQaService _fallbackService = new();
     private PhysicalBenchQaService? _subscribedService;
@@ -213,6 +233,38 @@
     private int _patternIndex;
     private readonly HashSet<int> _inspectedPatterns = [];
     private string _displayNotes = "";
+    private bool _hudVisible;
+    private CancellationTokenSource? _hudTimerCts;
+
+    private void StartHudTimer()
+    {
+        _hudTimerCts?.Cancel();
+        _hudTimerCts?.Dispose();
+        _hudTimerCts = new CancellationTokenSource();
+        var token = _hudTimerCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(6000, token).ConfigureAwait(false);
+                if (!token.IsCancellationRequested)
+                {
+                    _hudVisible = true;
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+            catch (OperationCanceledException) { }
+        }, token);
+    }
+
+    private void OnOverlayMouseMove()
+    {
+        if (!_hudVisible)
+        {
+            _hudVisible = true;
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
 
     private sealed record KeyPill(string Code, string Label, bool Wide = false, bool Space = false);
     private sealed record DisplayPattern(string Name, string Hex, string ForegroundHex);
@@ -298,6 +350,14 @@
 
     public void Dispose()
     {
+        _hudTimerCts?.Cancel();
+        _hudTimerCts?.Dispose();
+        _hudTimerCts = null;
+        if (_displayOverlayOpen)
+        {
+            _displayOverlayOpen = false;
+            App.Fullscreen?.RequestFullscreen(false);
+        }
         if (_subscribedService is not null)
         {
             _subscribedService.Changed -= OnServiceChanged;
@@ -406,29 +466,43 @@
         _patternIndex = 0;
         _displayOverlayOpen = true;
         _shouldFocusOverlay = true;
+        _hudVisible = false;
+        StartHudTimer();
+        App.Fullscreen?.RequestFullscreen(true);
+        try { _ = JS.InvokeVoidAsync("eval", "if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();"); } catch { }
         RecordPatternInspected(0);
     }
 
     private void CloseDisplayOverlay()
     {
         _displayOverlayOpen = false;
+        _hudTimerCts?.Cancel();
+        App.Fullscreen?.RequestFullscreen(false);
+        try { _ = JS.InvokeVoidAsync("eval", "if (document.exitFullscreen && document.fullscreenElement) document.exitFullscreen();"); } catch { }
     }
 
     private void PassDisplayFromOverlay()
     {
         _displayOverlayOpen = false;
+        _hudTimerCts?.Cancel();
+        App.Fullscreen?.RequestFullscreen(false);
+        try { _ = JS.InvokeVoidAsync("eval", "if (document.exitFullscreen && document.fullscreenElement) document.exitFullscreen();"); } catch { }
         SetDisplayOutcome(PhysicalCheckOutcome.Passed);
     }
 
     private void NextPattern()
     {
         _patternIndex = (_patternIndex + 1) % Patterns.Length;
+        _hudVisible = false;
+        StartHudTimer();
         RecordPatternInspected(_patternIndex);
     }
 
     private void PrevPattern()
     {
         _patternIndex = (_patternIndex - 1 + Patterns.Length) % Patterns.Length;
+        _hudVisible = false;
+        StartHudTimer();
         RecordPatternInspected(_patternIndex);
     }
 

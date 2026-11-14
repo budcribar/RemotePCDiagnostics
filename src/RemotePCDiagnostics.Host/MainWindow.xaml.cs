@@ -86,6 +86,11 @@ public partial class MainWindow : Window
             };
         }
         Resources.Add("services", provider);
+        var fullscreenService = provider.GetService<IFullscreenService>();
+        if (fullscreenService is not null)
+        {
+            fullscreenService.FullscreenChanged += enable => Dispatcher.BeginInvoke(() => SetFullscreen(enable));
+        }
         Closed += (_, _) => { try { provider.GetService<IEcFanSource>()?.Dispose(); } catch { } }; // release the PawnIO EC module handle
         provider.GetRequiredService<ChecksScreenState>(); // start tracking results (run mode labels, last completed) from launch
         // One Windows Event Log entry per finished test (every module and run path), see ResultEventLogger.
@@ -516,4 +521,31 @@ public partial class MainWindow : Window
         return model.Length > 0 ? $"{Environment.MachineName} ({model})" : Environment.MachineName;
     });
 
+    private WindowStyle _savedStyle = WindowStyle.SingleBorderWindow;
+    private WindowState _savedState = WindowState.Normal;
+    private ResizeMode _savedResize = ResizeMode.CanResize;
+    private bool _isFullscreen;
+
+    private void SetFullscreen(bool enable)
+    {
+        if (enable == _isFullscreen) return;
+        _isFullscreen = enable;
+        if (enable)
+        {
+            _savedStyle = WindowStyle;
+            _savedState = WindowState;
+            _savedResize = ResizeMode;
+
+            WindowStyle = WindowStyle.None;
+            ResizeMode = ResizeMode.NoResize;
+            WindowState = WindowState.Normal;
+            WindowState = WindowState.Maximized;
+        }
+        else
+        {
+            WindowStyle = _savedStyle;
+            ResizeMode = _savedResize;
+            WindowState = _savedState;
+        }
+    }
 }

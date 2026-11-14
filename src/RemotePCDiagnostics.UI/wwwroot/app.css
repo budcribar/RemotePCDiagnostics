@@ -752,8 +752,13 @@ a.btn { display: inline-flex; align-items: center; justify-content: center; gap:
 .display-swatches { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .display-swatch { width: 28px; height: 20px; border-radius: 5px; border: 1px solid var(--border-strong); display: inline-block; }
 .display-swatch-seen { outline: 2px solid var(--chip-ok); outline-offset: 1px; }
-.display-qa-overlay { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: flex-end; justify-content: center; padding: 20px; cursor: pointer; user-select: none; touch-action: none; outline: none; box-sizing: border-box; }
-.display-qa-hud { background: rgba(15, 23, 42, 0.84); color: #f8fafc; border: 1px solid rgba(255, 255, 255, 0.24); border-radius: 12px; padding: 10px 14px; max-width: min(680px, 94vw); backdrop-filter: blur(6px); cursor: default; display: flex; flex-direction: column; gap: 6px; }
+.display-qa-overlay { position: fixed; inset: 0; z-index: 2147483647; display: flex; align-items: flex-end; justify-content: center; padding: 20px; cursor: pointer; user-select: none; touch-action: none; outline: none; box-sizing: border-box; }
+body:has(.display-qa-overlay) #rbwv-control-bar,
+body:has(.display-qa-overlay) .rbwv-control-bar,
+body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
+.display-qa-hud { background: rgba(15, 23, 42, 0.84); color: #f8fafc; border: 1px solid rgba(255, 255, 255, 0.24); border-radius: 12px; padding: 10px 14px; max-width: min(680px, 94vw); backdrop-filter: blur(6px); cursor: default; display: flex; flex-direction: column; gap: 6px; transition: opacity 0.35s ease, transform 0.35s ease; }
+.display-qa-hud-hidden { opacity: 0 !important; pointer-events: none !important; transform: translateY(16px); }
+.display-qa-hud-visible { opacity: 1 !important; pointer-events: auto !important; transform: translateY(0); }
 .display-qa-hud-title { font-size: 13.5px; }
 .display-qa-hud-sub { font-size: 12px; opacity: 0.88; }
 .display-qa-hud-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }

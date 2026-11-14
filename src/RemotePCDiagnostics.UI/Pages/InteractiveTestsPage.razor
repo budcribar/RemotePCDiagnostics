@@ -1,25 +1,31 @@
 @page "/interactive"
+@using Microsoft.JSInterop
 @using RemotePCDiagnostics.Core.Audio
 @using RemotePCDiagnostics.Core.Webcam
 @using RemotePCDiagnostics.Core.Workflow
 @inherits StoreAwareComponent
 @inject ISessionContext Session
+@inject IJSRuntime JS
 @inject AppServices App
 
 @{
     var camResult = Store.Get(ModuleSlugs.Webcam);
     var camRep = camResult.Payload as WebcamReport;
     var camRunning = camResult.Status == DiagnosticStatus.Running;
-    var camChip = OutcomeChip(camResult.Status);
-    var camLabel = OutcomeLabel(camResult.Status);
 
-    var currentAudioSlug = _audioMode == AudioTestKind.MicToSpeaker ? ModuleSlugs.MicToSpeaker : ModuleSlugs.SpeakerToMic;
-    var audioResult = Store.Get(currentAudioSlug);
-    var m2sRep = Store.Get(ModuleSlugs.MicToSpeaker).Payload as MicToSpeakerReport;
-    var s2mRep = Store.Get(ModuleSlugs.SpeakerToMic).Payload as SpeakerToMicReport;
-    var audioRunning = audioResult.Status == DiagnosticStatus.Running;
-    var audioChip = OutcomeChip(audioResult.Status);
-    var audioLabel = OutcomeLabel(audioResult.Status);
+    var s2mResult = Store.Get(ModuleSlugs.SpeakerToMic);
+    var s2mRep = s2mResult.Payload as SpeakerToMicReport;
+    var s2mRunning = s2mResult.Status == DiagnosticStatus.Running;
+
+    var m2sResult = Store.Get(ModuleSlugs.MicToSpeaker);
+    var m2sRep = m2sResult.Payload as MicToSpeakerReport;
+    var m2sRunning = m2sResult.Status == DiagnosticStatus.Running;
+
+    var kbSnap = ActivePhysicalQa.Current;
+    var anyRunning = camRunning || s2mRunning || m2sRunning;
+
+    var allSelected = _selected.Count == AllTestIds.Length;
+    var mixedSelected = _selected.Count > 0 && _selected.Count < AllTestIds.Length;
 }
 
 <div class="ct-page">
@@ -33,7 +39,7 @@
         <div class="banner-text">
             <div class="banner-title" data-testid="interactive-banner-title">Hands-on physical hardware verification</div>
             <div class="banner-sub" data-testid="interactive-banner-desc">
-                These tests verify physical hardware components (keyboard switches, LCD pixels &amp; touch digitizer, camera feed, and microphone/speakers) and require hands-on local interaction at the PC.
+                Select and run interactive hardware tests (keyboard matrix, LCD uniformity &amp; touch digitizer, live webcam feed, and microphone/speaker loopback).
             </div>
             @if (Session.Mode == SessionMode.Remote)
             {
@@ -44,273 +50,490 @@
         </div>
     </section>
 
-    @* Area 1 & 2: Keyboard matrix / rollover (NKRO) and Display dead-pixel / touchscreen checks *@
-    <PhysicalBenchQaCard Service="ActivePhysicalQa" />
-
-    @* Area 3 & 4: Webcam video stream & Audio playback/recording verification *@
-    <section class="card wf-section" data-testid="interactive-media-card" style="margin-bottom: 16px">
-        <div class="toolbar" style="margin-bottom: 8px">
-            <div>
-                <strong>Interactive media QA: Camera &amp; Audio</strong>
-                <span class="meta"> · Live feed preview, microphone recording &amp; speaker verification</span>
-            </div>
-        </div>
-
-        <div class="phys-qa-grid">
-            @* Pane 3: Webcam test *@
-            <div class="phys-qa-pane" data-testid="interactive-webcam-pane">
-                <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
-                    <strong>Webcam test</strong>
-                    <span class="chip chip-@camChip" data-testid="webcam-status-chip">@camLabel</span>
-                    @if (camRunning)
-                    {
-                        <button type="button" class="btn-small" data-testid="webcam-cancel-btn" @onclick="CancelWebcam">Cancel</button>
-                    }
-                    else
-                    {
-                        <button type="button"
-                                class="btn-small btn-primary"
-                                data-testid="webcam-start-btn"
-                                disabled="@Diagnostics.IsStressSuiteRunning"
-                                @onclick="StartWebcamAsync">
-                            @(camResult.Status == DiagnosticStatus.NotRun ? "Start test" : "Run again")
-                        </button>
-                    }
-                </div>
-
-                <p class="meta" style="margin-top: 0">
-                    Opens the camera to inspect live video feed, capture resolution, frame rate, stalls, and brightness. A live preview window opens on the PC screen.
-                </p>
-
-                <div class="toolbar" style="margin-bottom: 4px; flex-wrap: wrap">
-                    <label class="meta">Camera
-                        <select data-testid="webcam-device-select" disabled="@camRunning" @onchange="OnCamDeviceChange">
-                            @if (_camDevices.Count == 0)
-                            {
-                                <option value="">None found</option>
-                            }
-                            else
-                            {
-                                foreach (var d in _camDevices)
-                                {
-                                    <option value="@d.Id" selected="@(d.Id == _selectedCamId)">@d.Label</option>
-                                }
-                            }
-                        </select>
-                    </label>
-                    <label class="meta">Length
-                        <select data-testid="webcam-duration-select" disabled="@camRunning" @onchange="OnCamDurationChange">
-                            @foreach (var d in CamDurationChoices)
-                            {
-                                <option value="@((int)d.TotalSeconds)" selected="@(d == _camDuration)">@((int)d.TotalSeconds) s</option>
-                            }
-                        </select>
-                    </label>
-                    <button type="button" class="btn-small" data-testid="webcam-refresh-btn" disabled="@camRunning" @onclick="RefreshWebcamDevicesAsync">Refresh devices</button>
-                </div>
-
-                <p data-testid="webcam-status" class="@(camRunning ? "status-line is-running" : camResult.Status == DiagnosticStatus.Error && camRep is null ? "status-line error-text" : "status-line")">
-                    <span class="@DotClass(camResult.Status)"></span>
-                    <span>@(camRunning ? "Capturing from the camera…" : camResult.Status == DiagnosticStatus.NotRun ? "Not run yet. Press Start test to begin." : camResult.Message)</span>
-                    @if (camRunning)
-                    {
-                        <span class="running-badge" data-testid="webcam-running-badge"><span class="running-badge-dot"></span>Running</span>
-                    }
-                </p>
-                @if (camRunning)
-                {
-                    <div class="run-progress run-progress-indeterminate" data-testid="webcam-run-progress" aria-hidden="true"><div></div></div>
-                }
-
-                @if (!camRunning && camRep?.Notice is { } camNotice)
-                {
-                    <p class="notice" data-testid="webcam-notice">@camNotice</p>
-                }
-
-                @if (!camRunning && camRep is not null && camRep.Stats.Frames > 0)
-                {
-                    <table class="detail" data-testid="webcam-table">
-                        <tr><th>Camera</th><td>@camRep.Device@(camRep.Bus switch { WebcamBus.BuiltIn => " (built-in)", WebcamBus.Usb => " (USB)", _ => "" })</td></tr>
-                        <tr><th>Resolution</th><td>@camRep.Width × @camRep.Height@(camRep.Format is { } f ? $" ({f})" : "")@(camRep.RequestedFps > 0 ? $", {camRep.RequestedFps:0.#} fps requested" : "")</td></tr>
-                        <tr><th>Frames</th><td>@camRep.Stats.Frames in @camRep.Duration.TotalSeconds.ToString("0") s · @camRep.Stats.Fps.ToString("0.#") fps</td></tr>
-                        <tr><th>Stalls / dropped</th><td>@camRep.Stats.Stalls stall(s) · ~@camRep.Stats.EstimatedDropped frame(s) dropped</td></tr>
-                        <tr><th>Brightness / contrast</th><td>@camRep.Stats.MeanBrightness.ToString("0") / @camRep.Stats.MeanContrast.ToString("0.0") (0–255)</td></tr>
-                        <tr><th>Sharpness</th><td>@camRep.Stats.Sharpness.ToString("0.0")</td></tr>
-                    </table>
-                }
-
-                <label class="phys-qa-note">
-                    <span class="meta">Optional webcam note (e.g. 1080p stream clear, lens clean, autofocus tested)</span>
-                    <input data-testid="webcam-notes"
-                           value="@_webcamNotes"
-                           @oninput="OnWebcamNotesInput"
-                           maxlength="240"
-                           placeholder="Optional webcam note…" />
-                </label>
-
-                <div class="phys-qa-actions">
-                    <button type="button" class="btn-small btn-primary" data-testid="webcam-pass" @onclick="() => SetWebcamOutcome(DiagnosticStatus.Ok)">Pass camera</button>
-                    <button type="button" class="btn-small" data-testid="webcam-note-btn" @onclick="() => SetWebcamOutcome(DiagnosticStatus.Warning)">Pass with note</button>
-                    <button type="button" class="btn-small" data-testid="webcam-fail" @onclick="() => SetWebcamOutcome(DiagnosticStatus.Error)">Fail camera</button>
-                    <button type="button" class="btn-small" data-testid="webcam-reset" @onclick="ResetWebcam">Reset</button>
-                </div>
-            </div>
-
-            @* Pane 4: Audio tests (Mic & Speakers) *@
-            <div class="phys-qa-pane" data-testid="interactive-audio-pane">
-                <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
-                    <strong>Audio tests (Microphone &amp; Speakers)</strong>
-                    <span class="chip chip-@audioChip" data-testid="audio-status-chip">@audioLabel</span>
-                    <div class="theme-switch" role="group" aria-label="Audio test mode" style="margin-left: auto">
-                        <button type="button"
-                                class="@(_audioMode == AudioTestKind.MicToSpeaker ? "on" : "")"
-                                data-testid="audio-mode-m2s"
-                                @onclick="() => SetAudioMode(AudioTestKind.MicToSpeaker)">
-                            Mic to speaker
-                        </button>
-                        <button type="button"
-                                class="@(_audioMode == AudioTestKind.SpeakerToMic ? "on" : "")"
-                                data-testid="audio-mode-s2m"
-                                @onclick="() => SetAudioMode(AudioTestKind.SpeakerToMic)">
-                            Loopback tone
-                        </button>
+    <div class="ct-workspace" data-testid="interactive-workspace">
+        <section class="ct-list" aria-label="Interactive tests">
+            <div class="card ct-group" data-testid="interactive-group">
+                <div class="ct-group-head">
+                    <button class="ct-check" role="checkbox" aria-checked="@(mixedSelected ? "mixed" : allSelected ? "true" : "false")"
+                            aria-label="Select all interactive tests"
+                            data-testid="interactive-select-all" @onclick="ToggleSelectAll">
+                        @(mixedSelected ? "–" : allSelected ? "✓" : "")
+                    </button>
+                    <div class="ct-group-title">
+                        <div class="ct-group-line">
+                            <strong>Interactive checks</strong>
+                            <span class="meta" data-testid="interactive-selected-count">@_selected.Count of @AllTestIds.Length selected</span>
+                        </div>
+                        <div class="meta">Run selected tests together or interact individually · click any test to open controls</div>
+                    </div>
+                    <div class="ct-group-actions">
+                        @if (anyRunning)
+                        {
+                            <button class="btn btn-stop" data-testid="interactive-stop" @onclick="StopRunning">Stop</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-primary" data-testid="interactive-run-selected" disabled="@(_selected.Count == 0)"
+                                    @onclick="RunSelectedAsync">
+                                <Icon Name="play" Size="12" /> Run selected (@_selected.Count)
+                            </button>
+                        }
                     </div>
                 </div>
 
-                @if (_audioMode == AudioTestKind.MicToSpeaker)
-                {
+                <div class="ct-rows">
+                    @* 1. Keyboard matrix *@
+                    @{
+                        var kbIsSel = _selectedTestId == "keyboard";
+                        var kbChip = OutcomeChip(kbSnap.KeyboardOutcome);
+                        var kbDot = DotKind(kbSnap.KeyboardOutcome);
+                        var kbLabel = OutcomeLabel(kbSnap.KeyboardOutcome);
+                        var kbSummary = kbSnap.KeyboardNotes ?? (kbSnap.UniqueKeysPressed > 0 ? $"{kbSnap.UniqueKeysPressed} unique keys, {kbSnap.PeakKeyRollover}-key peak rollover" : "Test key switches and NKRO simultaneous rollover");
+                    }
+                    <div class="ct-row @(kbIsSel ? "selected" : "")" role="button" tabindex="0" aria-pressed="@(kbIsSel ? "true" : "false")"
+                         data-testid="interactive-row-keyboard" @onclick='() => SelectTest("keyboard")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("keyboard") ? "true" : "false")"
+                                aria-label="Include Keyboard matrix test"
+                                data-testid="interactive-check-keyboard"
+                                @onclick='() => ToggleItem("keyboard")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("keyboard") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@kbDot"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Keyboard matrix &amp; rollover (NKRO)</div>
+                            <div class="ct-row-summary meta" title="@kbSummary">@kbSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@kbChip" data-testid="interactive-status-keyboard">@kbLabel</span>
+                        </div>
+                    </div>
+
+                    @* 2. Display test *@
+                    @{
+                        var dispIsSel = _selectedTestId == "display";
+                        var dispChip = OutcomeChip(kbSnap.DisplayOutcome);
+                        var dispDot = DotKind(kbSnap.DisplayOutcome);
+                        var dispLabel = OutcomeLabel(kbSnap.DisplayOutcome);
+                        var dispSummary = kbSnap.DisplayNotes ?? (kbSnap.SolidColorsInspected > 0 ? $"{kbSnap.SolidColorsInspected} color patterns, {kbSnap.MaxTouchPoints}-pt touch" : "Inspect pure black, white, RGB and uniformity");
+                    }
+                    <div class="ct-row @(dispIsSel ? "selected" : "")" role="button" tabindex="0" aria-pressed="@(dispIsSel ? "true" : "false")"
+                         data-testid="interactive-row-display" @onclick='() => SelectTest("display")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("display") ? "true" : "false")"
+                                aria-label="Include Display test"
+                                data-testid="interactive-check-display"
+                                @onclick='() => ToggleItem("display")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("display") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@dispDot"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Display dead-pixel &amp; touch check</div>
+                            <div class="ct-row-summary meta" title="@dispSummary">@dispSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@dispChip" data-testid="interactive-status-display">@dispLabel</span>
+                        </div>
+                    </div>
+
+                    @* 3. Webcam test *@
+                    @{
+                        var camIsSel = _selectedTestId == "webcam";
+                        var camChip = OutcomeChip(camResult.Status);
+                        var camDot = DotKind(camResult.Status);
+                        var camLabel = OutcomeLabel(camResult.Status);
+                        var camSummary = camRunning ? "Capturing from camera…" : camResult.Status == DiagnosticStatus.NotRun ? "Inspect live camera feed, resolution, and frame rate" : camResult.Message;
+                    }
+                    <div class="ct-row @(camIsSel ? "selected" : "") @(camRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(camIsSel ? "true" : "false")"
+                         data-testid="interactive-row-webcam" @onclick='() => SelectTest("webcam")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("webcam") ? "true" : "false")"
+                                aria-label="Include Webcam test"
+                                data-testid="interactive-check-webcam"
+                                @onclick='() => ToggleItem("webcam")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("webcam") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@camDot"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Webcam video stream</div>
+                            <div class="ct-row-summary meta" title="@camSummary">@camSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@camChip" data-testid="interactive-status-webcam">@camLabel</span>
+                        </div>
+                    </div>
+
+                    @* 4. Speaker to Microphone Loopback *@
+                    @{
+                        var s2mIsSel = _selectedTestId == "speakertomic";
+                        var s2mChip = OutcomeChip(s2mResult.Status);
+                        var s2mDot = DotKind(s2mResult.Status);
+                        var s2mLabel = OutcomeLabel(s2mResult.Status);
+                        var s2mSummary = s2mRunning ? "Playing tone & listening…" : s2mResult.Status == DiagnosticStatus.NotRun ? "Automatic speaker output to microphone verification" : s2mResult.Message;
+                    }
+                    <div class="ct-row @(s2mIsSel ? "selected" : "") @(s2mRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(s2mIsSel ? "true" : "false")"
+                         data-testid="interactive-row-speakertomic" @onclick='() => SelectTest("speakertomic")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("speakertomic") ? "true" : "false")"
+                                aria-label="Include Speaker to Microphone test"
+                                data-testid="interactive-check-speakertomic"
+                                @onclick='() => ToggleItem("speakertomic")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("speakertomic") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@s2mDot"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Speaker to mic loopback test</div>
+                            <div class="ct-row-summary meta" title="@s2mSummary">@s2mSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@s2mChip" data-testid="interactive-status-speakertomic">@s2mLabel</span>
+                        </div>
+                    </div>
+
+                    @* 5. Microphone to Speaker Monitoring *@
+                    @{
+                        var m2sIsSel = _selectedTestId == "mictospeaker";
+                        var m2sChip = OutcomeChip(m2sResult.Status);
+                        var m2sDot = DotKind(m2sResult.Status);
+                        var m2sLabel = OutcomeLabel(m2sResult.Status);
+                        var m2sSummary = m2sRunning ? "Monitoring microphone…" : m2sResult.Status == DiagnosticStatus.NotRun ? "Live speech playback through speakers with feedback brake" : m2sResult.Message;
+                    }
+                    <div class="ct-row @(m2sIsSel ? "selected" : "") @(m2sRunning ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(m2sIsSel ? "true" : "false")"
+                         data-testid="interactive-row-mictospeaker" @onclick='() => SelectTest("mictospeaker")'>
+                        <button class="ct-check" role="checkbox" aria-checked="@(_selected.Contains("mictospeaker") ? "true" : "false")"
+                                aria-label="Include Mic to Speaker test"
+                                data-testid="interactive-check-mictospeaker"
+                                @onclick='() => ToggleItem("mictospeaker")' @onclick:stopPropagation="true">
+                            @(_selected.Contains("mictospeaker") ? "✓" : "")
+                        </button>
+                        <span class="dot dot-@m2sDot"></span>
+                        <div class="ct-row-text">
+                            <div class="ct-row-name">Mic to speaker live monitor</div>
+                            <div class="ct-row-summary meta" title="@m2sSummary">@m2sSummary</div>
+                        </div>
+                        <div class="ct-row-side">
+                            <span class="chip chip-@m2sChip" data-testid="interactive-status-mictospeaker">@m2sLabel</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <div class="ct-splitter" role="separator" aria-orientation="vertical" aria-label="Resize panes" tabindex="0" data-testid="interactive-splitter">
+            <span class="ct-grip"></span>
+        </div>
+
+        <section class="ct-detail" aria-label="Interactive test details" data-testid="interactive-detail">
+            @if (_selectedTestId == "keyboard")
+            {
+                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="keyboard" CardShell="false" />
+            }
+            else if (_selectedTestId == "display")
+            {
+                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="display" CardShell="false" />
+            }
+            else if (_selectedTestId == "webcam")
+            {
+                <div class="phys-qa-pane" data-testid="interactive-webcam-pane">
+                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                        <strong>Webcam test</strong>
+                        <span class="chip chip-@camChip" data-testid="webcam-status-chip">@camLabel</span>
+                        @if (camRunning)
+                        {
+                            <button type="button" class="btn-small" data-testid="webcam-cancel-btn" @onclick="CancelWebcam">Cancel</button>
+                        }
+                        else
+                        {
+                            <button type="button"
+                                    class="btn-small btn-primary"
+                                    data-testid="webcam-start-btn"
+                                    disabled="@Diagnostics.IsStressSuiteRunning"
+                                    @onclick="StartWebcamAsync">
+                                @(camResult.Status == DiagnosticStatus.NotRun ? "Start test" : "Run again")
+                            </button>
+                        }
+                    </div>
+
                     <p class="meta" style="margin-top: 0">
-                        Plays the microphone through the speakers so someone at the PC can speak and hear themselves live (or recorded in half-duplex). Capped volume and automatic feedback brake.
+                        Opens the camera to inspect live video feed, capture resolution, frame rate, stalls, and brightness. A live preview window opens on the PC screen.
                     </p>
-                }
-                else
-                {
+
+                    <div class="toolbar" style="margin-bottom: 4px; flex-wrap: wrap">
+                        <label class="meta">Camera
+                            <select data-testid="webcam-device-select" disabled="@camRunning" @onchange="OnCamDeviceChange">
+                                @if (_camDevices.Count == 0)
+                                {
+                                    <option value="">None found</option>
+                                }
+                                else
+                                {
+                                    foreach (var d in _camDevices)
+                                    {
+                                        <option value="@d.Id" selected="@(d.Id == _selectedCamId)">@d.Label</option>
+                                    }
+                                }
+                            </select>
+                        </label>
+                        <label class="meta">Length
+                            <select data-testid="webcam-duration-select" disabled="@camRunning" @onchange="OnCamDurationChange">
+                                @foreach (var d in CamDurationChoices)
+                                {
+                                    <option value="@((int)d.TotalSeconds)" selected="@(d == _camDuration)">@((int)d.TotalSeconds) s</option>
+                                }
+                            </select>
+                        </label>
+                        <button type="button" class="btn-small" data-testid="webcam-refresh-btn" disabled="@camRunning" @onclick="RefreshWebcamDevicesAsync">Refresh devices</button>
+                    </div>
+
+                    <p data-testid="webcam-status" class="@(camRunning ? "status-line is-running" : camResult.Status == DiagnosticStatus.Error && camRep is null ? "status-line error-text" : "status-line")">
+                        <span class="@DotClass(camResult.Status)"></span>
+                        <span>@(camRunning ? "Capturing from the camera…" : camResult.Status == DiagnosticStatus.NotRun ? "Not run yet. Press Start test to begin." : camResult.Message)</span>
+                        @if (camRunning)
+                        {
+                            <span class="running-badge" data-testid="webcam-running-badge"><span class="running-badge-dot"></span>Running</span>
+                        }
+                    </p>
+                    @if (camRunning)
+                    {
+                        <div class="run-progress run-progress-indeterminate" data-testid="webcam-run-progress" aria-hidden="true"><div></div></div>
+                    }
+
+                    @if (!camRunning && camRep?.Notice is { } camNotice)
+                    {
+                        <p class="notice" data-testid="webcam-notice">@camNotice</p>
+                    }
+
+                    @if (!camRunning && camRep is not null && camRep.Stats.Frames > 0)
+                    {
+                        <table class="detail" data-testid="webcam-table">
+                            <tr><th>Camera</th><td>@camRep.Device@(camRep.Bus switch { WebcamBus.BuiltIn => " (built-in)", WebcamBus.Usb => " (USB)", _ => "" })</td></tr>
+                            <tr><th>Resolution</th><td>@camRep.Width × @camRep.Height@(camRep.Format is { } f ? $" ({f})" : "")@(camRep.RequestedFps > 0 ? $", {camRep.RequestedFps:0.#} fps requested" : "")</td></tr>
+                            <tr><th>Frames</th><td>@camRep.Stats.Frames in @camRep.Duration.TotalSeconds.ToString("0") s · @camRep.Stats.Fps.ToString("0.#") fps</td></tr>
+                            <tr><th>Stalls / dropped</th><td>@camRep.Stats.Stalls stall(s) · ~@camRep.Stats.EstimatedDropped frame(s) dropped</td></tr>
+                            <tr><th>Brightness / contrast</th><td>@camRep.Stats.MeanBrightness.ToString("0") / @camRep.Stats.MeanContrast.ToString("0.0") (0–255)</td></tr>
+                            <tr><th>Sharpness</th><td>@camRep.Stats.Sharpness.ToString("0.0")</td></tr>
+                        </table>
+                    }
+
+                    <label class="phys-qa-note">
+                        <span class="meta">Optional webcam note (e.g. 1080p stream clear, lens clean, autofocus tested)</span>
+                        <input data-testid="webcam-notes"
+                               value="@_webcamNotes"
+                               @oninput="OnWebcamNotesInput"
+                               maxlength="240"
+                               placeholder="Optional webcam note…" />
+                    </label>
+
+                    <div class="phys-qa-actions">
+                        <button type="button" class="btn-small btn-primary" data-testid="webcam-pass" @onclick="() => SetWebcamOutcome(DiagnosticStatus.Ok)">Pass camera</button>
+                        <button type="button" class="btn-small" data-testid="webcam-note-btn" @onclick="() => SetWebcamOutcome(DiagnosticStatus.Warning)">Pass with note</button>
+                        <button type="button" class="btn-small" data-testid="webcam-fail" @onclick="() => SetWebcamOutcome(DiagnosticStatus.Error)">Fail camera</button>
+                        <button type="button" class="btn-small" data-testid="webcam-reset" @onclick="ResetWebcam">Reset</button>
+                    </div>
+                </div>
+            }
+            else if (_selectedTestId == "speakertomic")
+            {
+                <div class="phys-qa-pane" data-testid="interactive-speakertomic-pane">
+                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                        <strong>Speaker to mic loopback test</strong>
+                        <span class="chip chip-@s2mChip" data-testid="speakertomic-status-chip">@s2mLabel</span>
+                        @if (s2mRunning)
+                        {
+                            <button type="button" class="btn-small" data-testid="speakertomic-cancel-btn" @onclick="CancelSpeakerToMic">Cancel</button>
+                        }
+                        else
+                        {
+                            <button type="button"
+                                    class="btn-small btn-primary"
+                                    data-testid="speakertomic-start-btn"
+                                    disabled="@Diagnostics.IsStressSuiteRunning"
+                                    @onclick="StartSpeakerToMicAsync">
+                                @(s2mResult.Status == DiagnosticStatus.NotRun ? "Start test" : "Run again")
+                            </button>
+                        }
+                    </div>
+
                     <p class="meta" style="margin-top: 0">
                         Plays a short 1 kHz tone through the speakers while the microphone listens to verify speaker output and microphone capture automatically.
                     </p>
-                }
 
-                <div class="toolbar" style="margin-bottom: 4px; flex-wrap: wrap">
-                    <label class="meta">Speaker
-                        <select data-testid="audio-output-select" disabled="@audioRunning" @onchange="OnAudioOutputChange">
-                            @DeviceOptions(_outputs, _selectedOutputId)
-                        </select>
-                    </label>
-                    <label class="meta">Microphone
-                        <select data-testid="audio-input-select" disabled="@audioRunning" @onchange="OnAudioInputChange">
-                            @DeviceOptions(_inputs, _selectedInputId)
-                        </select>
-                    </label>
-                    <label class="meta" title="Plays the tone twice or records then plays back, for PCs that cannot do both simultaneously.">
-                        <input type="checkbox" data-testid="audio-halfduplex" checked="@_audioHalfDuplex" disabled="@audioRunning"
-                               @onchange="e => _audioHalfDuplex = e.Value is true" /> Half-duplex
-                    </label>
-                    @if (audioRunning)
-                    {
-                        <button type="button" class="btn-small" data-testid="audio-cancel-btn" @onclick="CancelAudio">Cancel</button>
-                    }
-                    else
-                    {
-                        <button type="button"
-                                class="btn-small btn-primary"
-                                data-testid="audio-start-btn"
-                                disabled="@Diagnostics.IsStressSuiteRunning"
-                                @onclick="StartAudioAsync">
-                            @(audioResult.Status == DiagnosticStatus.NotRun ? "Start test" : "Run again")
-                        </button>
-                    }
-                    <button type="button" class="btn-small" data-testid="audio-refresh-btn" disabled="@audioRunning" @onclick="RefreshAudioDevicesAsync">Refresh devices</button>
-                </div>
-
-                <p data-testid="audio-status" class="@(audioRunning ? "status-line is-running" : audioResult.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
-                    <span class="@DotClass(audioResult.Status)"></span>
-                    <span>@(audioRunning ? (_audioMode == AudioTestKind.MicToSpeaker ? (_audioHalfDuplex ? "Recording, then playing it back… speak now." : "Playing the microphone through the speaker… speak now.") : "Playing the test tone and listening…") : audioResult.Status == DiagnosticStatus.NotRun ? "Not run yet. Press Start test to begin." : audioResult.Message)</span>
-                    @if (audioRunning)
-                    {
-                        <span class="running-badge" data-testid="audio-running-badge"><span class="running-badge-dot"></span>Running</span>
-                    }
-                </p>
-                @if (audioRunning)
-                {
-                    <div class="run-progress run-progress-indeterminate" data-testid="audio-run-progress" aria-hidden="true"><div></div></div>
-                }
-
-                @if (_audioMode == AudioTestKind.MicToSpeaker && !audioRunning && m2sRep is not null)
-                {
-                    @if (m2sRep.Notice is { } m2sNotice)
-                    {
-                        <p class="notice" data-testid="audio-m2s-notice">@m2sNotice</p>
-                    }
-                    <div class="kb-stats meta" style="margin: 4px 0">
-                        <span>Microphone peak: <strong>@Db(m2sRep.MicPeakDbfs)</strong></span>
-                        <span> · RMS: <strong>@Db(m2sRep.MicRmsDbfs)</strong></span>
-                        @if (m2sRep.FeedbackDetected)
-                        {
-                            <span> · <strong class="error-text">Feedback detected</strong></span>
-                        }
+                    <div class="toolbar" style="margin-bottom: 4px; flex-wrap: wrap">
+                        <label class="meta">Speaker
+                            <select data-testid="speakertomic-output-select" disabled="@s2mRunning" @onchange="OnAudioOutputChange">
+                                @DeviceOptions(_outputs, _selectedOutputId)
+                            </select>
+                        </label>
+                        <label class="meta">Microphone
+                            <select data-testid="speakertomic-input-select" disabled="@s2mRunning" @onchange="OnAudioInputChange">
+                                @DeviceOptions(_inputs, _selectedInputId)
+                            </select>
+                        </label>
+                        <label class="meta" title="Plays the tone twice or records then plays back, for PCs that cannot do both simultaneously.">
+                            <input type="checkbox" data-testid="speakertomic-halfduplex" checked="@_audioHalfDuplex" disabled="@s2mRunning"
+                                   @onchange="e => _audioHalfDuplex = e.Value is true" /> Half-duplex
+                        </label>
+                        <button type="button" class="btn-small" data-testid="speakertomic-refresh-btn" disabled="@s2mRunning" @onclick="RefreshAudioDevicesAsync">Refresh devices</button>
                     </div>
-                    @if (m2sRep.MicHeardSomething && !m2sRep.FeedbackDetected)
+
+                    <p data-testid="speakertomic-status" class="@(s2mRunning ? "status-line is-running" : s2mResult.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
+                        <span class="@DotClass(s2mResult.Status)"></span>
+                        <span>@(s2mRunning ? "Playing the test tone and listening…" : s2mResult.Status == DiagnosticStatus.NotRun ? "Not run yet. Press Start test to begin." : s2mResult.Message)</span>
+                        @if (s2mRunning)
+                        {
+                            <span class="running-badge" data-testid="speakertomic-running-badge"><span class="running-badge-dot"></span>Running</span>
+                        }
+                    </p>
+                    @if (s2mRunning)
                     {
-                        <div class="toolbar" style="margin-top: 4px; align-items: center">
-                            <span class="meta">Did the person at the PC hear the microphone through @m2sRep.Output?</span>
-                            <button type="button"
-                                    class="btn-small @(m2sRep.HeardByListener == true ? "btn-primary" : "")"
-                                    data-testid="audio-heard"
-                                    @onclick="() => ConfirmAudioHeard(true)">
-                                I heard it
-                            </button>
-                            <button type="button"
-                                    class="btn-small @(m2sRep.HeardByListener == false ? "btn-primary" : "")"
-                                    data-testid="audio-not-heard"
-                                    @onclick="() => ConfirmAudioHeard(false)">
-                                I didn't hear it
-                            </button>
+                        <div class="run-progress run-progress-indeterminate" data-testid="speakertomic-run-progress" aria-hidden="true"><div></div></div>
+                    }
+
+                    @if (!s2mRunning && s2mRep is not null)
+                    {
+                        @if (s2mRep.Notice is { } s2mNotice)
+                        {
+                            <p class="notice" data-testid="speakertomic-notice">@s2mNotice</p>
+                        }
+                        <div class="kb-stats meta" style="margin: 4px 0">
+                            <span>Tone: <strong>@(s2mRep.Mic.ToneDetected ? "Detected" : "Not detected")</strong> (SNR @s2mRep.Mic.SnrDb.ToString("0.0") dB)</span>
+                            <span> · Output: <strong>@Db(s2mRep.Loopback?.PeakDbfs ?? s2mRep.Mic.PeakDbfs)</strong></span>
+                            <span> · Raw mic: <strong>@(s2mRep.RawMic ? "Yes" : "No")</strong></span>
                         </div>
                     }
-                }
 
-                @if (_audioMode == AudioTestKind.SpeakerToMic && !audioRunning && s2mRep is not null)
-                {
-                    @if (s2mRep.Notice is { } s2mNotice)
-                    {
-                        <p class="notice" data-testid="audio-s2m-notice">@s2mNotice</p>
-                    }
-                    <div class="kb-stats meta" style="margin: 4px 0">
-                        <span>Tone: <strong>@(s2mRep.Mic.ToneDetected ? "Detected" : "Not detected")</strong> (SNR @s2mRep.Mic.SnrDb.ToString("0.0") dB)</span>
-                        <span> · Output: <strong>@Db(s2mRep.Loopback?.PeakDbfs ?? s2mRep.Mic.PeakDbfs)</strong></span>
-                        <span> · Raw mic: <strong>@(s2mRep.RawMic ? "Yes" : "No")</strong></span>
+                    <label class="phys-qa-note">
+                        <span class="meta">Optional audio note (e.g. speakers clear, tone detected at high SNR)</span>
+                        <input data-testid="speakertomic-notes"
+                               value="@_audioNotes"
+                               @oninput="OnAudioNotesInput"
+                               maxlength="240"
+                               placeholder="Optional audio note…" />
+                    </label>
+
+                    <div class="phys-qa-actions">
+                        <button type="button" class="btn-small btn-primary" data-testid="speakertomic-pass" @onclick="() => SetAudioOutcome(ModuleSlugs.SpeakerToMic, DiagnosticStatus.Ok)">Pass audio</button>
+                        <button type="button" class="btn-small" data-testid="speakertomic-note-btn" @onclick="() => SetAudioOutcome(ModuleSlugs.SpeakerToMic, DiagnosticStatus.Warning)">Pass with note</button>
+                        <button type="button" class="btn-small" data-testid="speakertomic-fail" @onclick="() => SetAudioOutcome(ModuleSlugs.SpeakerToMic, DiagnosticStatus.Error)">Fail audio</button>
+                        <button type="button" class="btn-small" data-testid="speakertomic-reset" @onclick="ResetAudio">Reset</button>
                     </div>
-                }
-
-                <label class="phys-qa-note">
-                    <span class="meta">Optional audio note (e.g. microphone clear, speakers balanced)</span>
-                    <input data-testid="audio-notes"
-                           value="@_audioNotes"
-                           @oninput="OnAudioNotesInput"
-                           maxlength="240"
-                           placeholder="Optional audio note…" />
-                </label>
-
-                <div class="phys-qa-actions">
-                    <button type="button" class="btn-small btn-primary" data-testid="audio-pass" @onclick="() => SetAudioOutcome(DiagnosticStatus.Ok)">Pass audio</button>
-                    <button type="button" class="btn-small" data-testid="audio-note-btn" @onclick="() => SetAudioOutcome(DiagnosticStatus.Warning)">Pass with note</button>
-                    <button type="button" class="btn-small" data-testid="audio-fail" @onclick="() => SetAudioOutcome(DiagnosticStatus.Error)">Fail audio</button>
-                    <button type="button" class="btn-small" data-testid="audio-reset" @onclick="ResetAudio">Reset</button>
                 </div>
-            </div>
-        </div>
-    </section>
+            }
+            else if (_selectedTestId == "mictospeaker")
+            {
+                <div class="phys-qa-pane" data-testid="interactive-mictospeaker-pane">
+                    <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
+                        <strong>Mic to speaker live monitor</strong>
+                        <span class="chip chip-@m2sChip" data-testid="mictospeaker-status-chip">@m2sLabel</span>
+                        @if (m2sRunning)
+                        {
+                            <button type="button" class="btn-small" data-testid="mictospeaker-cancel-btn" @onclick="CancelMicToSpeaker">Cancel</button>
+                        }
+                        else
+                        {
+                            <button type="button"
+                                    class="btn-small btn-primary"
+                                    data-testid="mictospeaker-start-btn"
+                                    disabled="@Diagnostics.IsStressSuiteRunning"
+                                    @onclick="StartMicToSpeakerAsync">
+                                @(m2sResult.Status == DiagnosticStatus.NotRun ? "Start monitor" : "Run again")
+                            </button>
+                        }
+                    </div>
+
+                    <p class="meta" style="margin-top: 0">
+                        Plays the microphone through the speakers so someone at the PC can speak and hear themselves live (or recorded in half-duplex). Capped volume and automatic feedback brake.
+                    </p>
+
+                    <div class="toolbar" style="margin-bottom: 4px; flex-wrap: wrap">
+                        <label class="meta">Speaker
+                            <select data-testid="mictospeaker-output-select" disabled="@m2sRunning" @onchange="OnAudioOutputChange">
+                                @DeviceOptions(_outputs, _selectedOutputId)
+                            </select>
+                        </label>
+                        <label class="meta">Microphone
+                            <select data-testid="mictospeaker-input-select" disabled="@m2sRunning" @onchange="OnAudioInputChange">
+                                @DeviceOptions(_inputs, _selectedInputId)
+                            </select>
+                        </label>
+                        <label class="meta" title="Plays the tone twice or records then plays back, for PCs that cannot do both simultaneously.">
+                            <input type="checkbox" data-testid="mictospeaker-halfduplex" checked="@_audioHalfDuplex" disabled="@m2sRunning"
+                                   @onchange="e => _audioHalfDuplex = e.Value is true" /> Half-duplex
+                        </label>
+                        <button type="button" class="btn-small" data-testid="mictospeaker-refresh-btn" disabled="@m2sRunning" @onclick="RefreshAudioDevicesAsync">Refresh devices</button>
+                    </div>
+
+                    <p data-testid="mictospeaker-status" class="@(m2sRunning ? "status-line is-running" : m2sResult.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
+                        <span class="@DotClass(m2sResult.Status)"></span>
+                        <span>@(m2sRunning ? (_audioHalfDuplex ? "Recording, then playing it back… speak now." : "Playing the microphone through the speaker… speak now.") : m2sResult.Status == DiagnosticStatus.NotRun ? "Not run yet. Press Start monitor to begin." : m2sResult.Message)</span>
+                        @if (m2sRunning)
+                        {
+                            <span class="running-badge" data-testid="mictospeaker-running-badge"><span class="running-badge-dot"></span>Running</span>
+                        }
+                    </p>
+                    @if (m2sRunning)
+                    {
+                        <div class="run-progress run-progress-indeterminate" data-testid="mictospeaker-run-progress" aria-hidden="true"><div></div></div>
+                    }
+
+                    @if (!m2sRunning && m2sRep is not null)
+                    {
+                        @if (m2sRep.Notice is { } m2sNotice)
+                        {
+                            <p class="notice" data-testid="mictospeaker-notice">@m2sNotice</p>
+                        }
+                        <div class="kb-stats meta" style="margin: 4px 0">
+                            <span>Microphone peak: <strong>@Db(m2sRep.MicPeakDbfs)</strong></span>
+                            <span> · RMS: <strong>@Db(m2sRep.MicRmsDbfs)</strong></span>
+                            @if (m2sRep.FeedbackDetected)
+                            {
+                                <span> · <strong class="error-text">Feedback detected</strong></span>
+                            }
+                        </div>
+                        @if (m2sRep.MicHeardSomething && !m2sRep.FeedbackDetected)
+                        {
+                            <div class="toolbar" style="margin-top: 4px; align-items: center">
+                                <span class="meta">Did the person at the PC hear the microphone through @m2sRep.Output?</span>
+                                <button type="button"
+                                        class="btn-small @(m2sRep.HeardByListener == true ? "btn-primary" : "")"
+                                        data-testid="audio-heard"
+                                        @onclick="() => ConfirmAudioHeard(true)">
+                                    I heard it
+                                </button>
+                                <button type="button"
+                                        class="btn-small @(m2sRep.HeardByListener == false ? "btn-primary" : "")"
+                                        data-testid="audio-not-heard"
+                                        @onclick="() => ConfirmAudioHeard(false)">
+                                    I didn't hear it
+                                </button>
+                            </div>
+                        }
+                    }
+
+                    <label class="phys-qa-note">
+                        <span class="meta">Optional monitor note (e.g. microphone clear, no latency or echo)</span>
+                        <input data-testid="mictospeaker-notes"
+                               value="@_audioNotes"
+                               @oninput="OnAudioNotesInput"
+                               maxlength="240"
+                               placeholder="Optional audio note…" />
+                    </label>
+
+                    <div class="phys-qa-actions">
+                        <button type="button" class="btn-small btn-primary" data-testid="mictospeaker-pass" @onclick="() => SetAudioOutcome(ModuleSlugs.MicToSpeaker, DiagnosticStatus.Ok)">Pass audio</button>
+                        <button type="button" class="btn-small" data-testid="mictospeaker-note-btn" @onclick="() => SetAudioOutcome(ModuleSlugs.MicToSpeaker, DiagnosticStatus.Warning)">Pass with note</button>
+                        <button type="button" class="btn-small" data-testid="mictospeaker-fail" @onclick="() => SetAudioOutcome(ModuleSlugs.MicToSpeaker, DiagnosticStatus.Error)">Fail audio</button>
+                        <button type="button" class="btn-small" data-testid="mictospeaker-reset" @onclick="ResetAudio">Reset</button>
+                    </div>
+                </div>
+            }
+        </section>
+    </div>
 </div>
 
 @code {
     private readonly PhysicalBenchQaService _fallbackPhysicalQa = new();
     private PhysicalBenchQaService ActivePhysicalQa => App.PhysicalQa ?? _fallbackPhysicalQa;
 
-    private void OnWebcamNotesInput(ChangeEventArgs e) => _webcamNotes = e.Value?.ToString() ?? "";
-    private void OnAudioNotesInput(ChangeEventArgs e) => _audioNotes = e.Value?.ToString() ?? "";
-
-    private enum AudioTestKind { MicToSpeaker, SpeakerToMic }
-    private AudioTestKind _audioMode = AudioTestKind.MicToSpeaker;
+    private static readonly string[] AllTestIds = ["keyboard", "display", "webcam", "speakertomic", "mictospeaker"];
+    private readonly HashSet<string> _selected = new(["keyboard", "display", "webcam", "speakertomic", "mictospeaker"], StringComparer.OrdinalIgnoreCase);
+    private string _selectedTestId = "keyboard";
 
     private static readonly TimeSpan[] CamDurationChoices = [TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10)];
     private IReadOnlyList<WebcamDevice> _camDevices = [];
@@ -329,6 +552,71 @@
     {
         base.OnInitialized();
         LoadDevices();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try { await JS.InvokeVoidAsync("rpdSplit.init"); } catch { }
+    }
+
+    private void SelectTest(string id)
+    {
+        _selectedTestId = id;
+    }
+
+    private void ToggleItem(string id)
+    {
+        if (_selected.Contains(id)) _selected.Remove(id);
+        else _selected.Add(id);
+    }
+
+    private void ToggleSelectAll()
+    {
+        if (_selected.Count == AllTestIds.Length)
+            _selected.Clear();
+        else
+        {
+            _selected.Clear();
+            foreach (var id in AllTestIds) _selected.Add(id);
+        }
+    }
+
+    private async Task RunSelectedAsync()
+    {
+        if (Diagnostics.IsStressSuiteRunning) return;
+
+        if (_selected.Contains("speakertomic"))
+        {
+            _selectedTestId = "speakertomic";
+            await StartSpeakerToMicAsync();
+        }
+        else if (_selected.Contains("webcam"))
+        {
+            _selectedTestId = "webcam";
+            await StartWebcamAsync();
+        }
+        else if (_selected.Contains("mictospeaker"))
+        {
+            _selectedTestId = "mictospeaker";
+            await StartMicToSpeakerAsync();
+        }
+        else if (_selected.Contains("keyboard"))
+        {
+            _selectedTestId = "keyboard";
+        }
+        else if (_selected.Contains("display"))
+        {
+            _selectedTestId = "display";
+        }
+    }
+
+    private void StopRunning()
+    {
+        CancelWebcam();
+        CancelSpeakerToMic();
+        CancelMicToSpeaker();
+        Diagnostics.CancelStressSuite();
     }
 
     private void LoadDevices()
@@ -418,10 +706,7 @@
         }
     }
 
-    private void CancelWebcam()
-    {
-        GetWebcamModule()?.Cancel();
-    }
+    private void CancelWebcam() => GetWebcamModule()?.Cancel();
 
     private void SetWebcamOutcome(DiagnosticStatus status)
     {
@@ -441,11 +726,6 @@
     {
         _webcamNotes = "";
         Store.Set(DiagnosticResult.NotRun(ModuleSlugs.Webcam));
-    }
-
-    private void SetAudioMode(AudioTestKind mode)
-    {
-        _audioMode = mode;
     }
 
     private void OnAudioOutputChange(ChangeEventArgs e)
@@ -468,47 +748,50 @@
         await Diagnostics.RedetectAsync();
     }
 
-    private async Task StartAudioAsync()
+    private Task StartSpeakerToMicAsync()
     {
-        if (Diagnostics.IsStressSuiteRunning) return;
-        if (_audioMode == AudioTestKind.MicToSpeaker)
+        if (Diagnostics.IsStressSuiteRunning) return Task.CompletedTask;
+        var m = GetSpeakerToMicModule();
+        if (m is not null)
         {
-            var m = GetMicToSpeakerModule();
-            if (m is not null)
-            {
-                m.Settings.OutputId = _selectedOutputId;
-                m.Settings.InputId = _selectedInputId;
-                m.Settings.HalfDuplex = _audioHalfDuplex;
-                _ = Diagnostics.RunAsync(m.Name);
-            }
-            else
-            {
-                _ = Diagnostics.RunAsync(ModuleSlugs.MicToSpeaker);
-            }
+            m.Settings.OutputId = _selectedOutputId;
+            m.Settings.InputId = _selectedInputId;
+            m.Settings.HalfDuplex = _audioHalfDuplex;
+            _ = Diagnostics.RunAsync(m.Name);
         }
         else
         {
-            var m = GetSpeakerToMicModule();
-            if (m is not null)
-            {
-                m.Settings.OutputId = _selectedOutputId;
-                m.Settings.InputId = _selectedInputId;
-                m.Settings.HalfDuplex = _audioHalfDuplex;
-                _ = Diagnostics.RunAsync(m.Name);
-            }
-            else
-            {
-                _ = Diagnostics.RunAsync(ModuleSlugs.SpeakerToMic);
-            }
+            _ = Diagnostics.RunAsync(ModuleSlugs.SpeakerToMic);
         }
+        return Task.CompletedTask;
     }
+
+    private void CancelSpeakerToMic() => GetSpeakerToMicModule()?.Cancel();
+
+    private Task StartMicToSpeakerAsync()
+    {
+        if (Diagnostics.IsStressSuiteRunning) return Task.CompletedTask;
+        var m = GetMicToSpeakerModule();
+        if (m is not null)
+        {
+            m.Settings.OutputId = _selectedOutputId;
+            m.Settings.InputId = _selectedInputId;
+            m.Settings.HalfDuplex = _audioHalfDuplex;
+            _ = Diagnostics.RunAsync(m.Name);
+        }
+        else
+        {
+            _ = Diagnostics.RunAsync(ModuleSlugs.MicToSpeaker);
+        }
+        return Task.CompletedTask;
+    }
+
+    private void CancelMicToSpeaker() => GetMicToSpeakerModule()?.Cancel();
 
     private void CancelAudio()
     {
-        if (_audioMode == AudioTestKind.MicToSpeaker)
-            GetMicToSpeakerModule()?.Cancel();
-        else
-            GetSpeakerToMicModule()?.Cancel();
+        CancelSpeakerToMic();
+        CancelMicToSpeaker();
     }
 
     private void ConfirmAudioHeard(bool heard)
@@ -530,9 +813,8 @@
         }
     }
 
-    private void SetAudioOutcome(DiagnosticStatus status)
+    private void SetAudioOutcome(string slug, DiagnosticStatus status)
     {
-        var slug = _audioMode == AudioTestKind.MicToSpeaker ? ModuleSlugs.MicToSpeaker : ModuleSlugs.SpeakerToMic;
         var r = Store.Get(slug);
         var note = string.IsNullOrWhiteSpace(_audioNotes) ? null : _audioNotes.Trim();
         var msg = note ?? (status switch
@@ -551,6 +833,9 @@
         Store.Set(DiagnosticResult.NotRun(ModuleSlugs.MicToSpeaker));
         Store.Set(DiagnosticResult.NotRun(ModuleSlugs.SpeakerToMic));
     }
+
+    private void OnWebcamNotesInput(ChangeEventArgs e) => _webcamNotes = e.Value?.ToString() ?? "";
+    private void OnAudioNotesInput(ChangeEventArgs e) => _audioNotes = e.Value?.ToString() ?? "";
 
     private static RenderFragment DeviceOptions(IReadOnlyList<AudioDevice> devices, string? selected) => builder =>
     {
@@ -588,6 +873,14 @@
         _ => "na",
     };
 
+    private static string OutcomeChip(PhysicalCheckOutcome outcome) => outcome switch
+    {
+        PhysicalCheckOutcome.Passed => "ok",
+        PhysicalCheckOutcome.PassedWithNote => "warn",
+        PhysicalCheckOutcome.Failed => "err",
+        _ => "na",
+    };
+
     private static string OutcomeLabel(DiagnosticStatus status) => status switch
     {
         DiagnosticStatus.Ok => "Passed",
@@ -595,6 +888,31 @@
         DiagnosticStatus.Error => "Failed",
         DiagnosticStatus.Running => "Running…",
         _ => "Not tested",
+    };
+
+    private static string OutcomeLabel(PhysicalCheckOutcome outcome) => outcome switch
+    {
+        PhysicalCheckOutcome.Passed => "Passed",
+        PhysicalCheckOutcome.PassedWithNote => "Passed w/ note",
+        PhysicalCheckOutcome.Failed => "Failed",
+        _ => "Not tested",
+    };
+
+    private static string DotKind(DiagnosticStatus status) => status switch
+    {
+        DiagnosticStatus.Ok => "ok",
+        DiagnosticStatus.Warning => "warning",
+        DiagnosticStatus.Error => "critical",
+        DiagnosticStatus.Running => "running",
+        _ => "na",
+    };
+
+    private static string DotKind(PhysicalCheckOutcome outcome) => outcome switch
+    {
+        PhysicalCheckOutcome.Passed => "ok",
+        PhysicalCheckOutcome.PassedWithNote => "warning",
+        PhysicalCheckOutcome.Failed => "critical",
+        _ => "na",
     };
 
     private static string Db(double v) => v <= AudioMath.SilenceDbfs ? "silent" : $"{v:0.0} dBFS";

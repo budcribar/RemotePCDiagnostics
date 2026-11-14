@@ -27,4 +27,5 @@ public sealed record AppServices(
     ShopRelayClient? ShopRelay = null,
     ISessionRelauncher? Relauncher = null,
     RemoteSessionHealth? RemoteHealth = null,
-    IElevationContext? Elevation = null);
+    IElevationContext? Elevation = null,
+    IFullscreenService? Fullscreen = null);
