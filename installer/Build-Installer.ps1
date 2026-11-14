@@ -138,12 +138,16 @@ $RequiredFiles = @(
     'RemotePCDiagnostics.Host.exe'
     'RemotePCDiagnostics.Agent.exe'
     'RemotePCDiagnostics.Agent.runtimeconfig.json'
+    'RemotePCDiagnostics.Agent.deps.json'
     'RemotePCDiagnostics.MemTest.exe'
     'RemotePCDiagnostics.MemTest.runtimeconfig.json'
+    'RemotePCDiagnostics.MemTest.deps.json'
     'RemotePCDiagnostics.ModuleHost.exe'
     'RemotePCDiagnostics.ModuleHost.runtimeconfig.json'
+    'RemotePCDiagnostics.ModuleHost.deps.json'
     'moduleui/RemotePCDiagnostics.ModuleUiHost.exe'
     'moduleui/RemotePCDiagnostics.ModuleUiHost.runtimeconfig.json'
+    'moduleui/RemotePCDiagnostics.ModuleUiHost.deps.json'
     'moduleui/wwwroot/index.html'
     'moduleui/wwwroot/app.css'
     'tools/osquery/osqueryi.exe'
@@ -161,7 +165,7 @@ $ModuleDlls = @(Get-ChildItem -LiteralPath (Join-Path $StageDir 'builtin-modules
 if ($ModuleDlls.Count -lt 24) {
     throw "Expected at least 24 bundled module DLLs in '$StageDir/builtin-modules', found $($ModuleDlls.Count)."
 }
-Write-Host "Verified staged layout: $($ModuleDlls.Count) bundled modules + Host, Admin, MemTest, ModuleHost, and ModuleUiHost." -ForegroundColor Green
+Write-Host "Verified staged layout: $($ModuleDlls.Count) bundled modules + Host, Agent, MemTest, ModuleHost, and ModuleUiHost." -ForegroundColor Green
 
 $IsWindowsHost = ($env:OS -eq 'Windows_NT') -or ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows))
 if ($IsWindowsHost -and -not $SkipVerify) {

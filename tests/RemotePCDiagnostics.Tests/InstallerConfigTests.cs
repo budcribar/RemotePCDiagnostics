@@ -36,6 +36,9 @@ public sealed class InstallerConfigTests
 
         var raw = File.ReadAllText(pubxmlPath);
         Assert.Contains("RemotePCDiagnostics.ModuleUiHost.csproj", raw);
+        Assert.Contains("RemotePCDiagnostics.Agent.csproj", raw);
+        Assert.Contains("Grpc.Tools", raw);
+        Assert.Contains("RemotePCDiagnostics.Agent.deps.json", raw);
         Assert.Contains("--self-contained true", raw);
         Assert.Contains("moduleui", raw);
     }
@@ -123,6 +126,7 @@ public sealed class InstallerConfigTests
         var script = File.ReadAllText(scriptPath);
         Assert.Contains("-p:PublishProfile=Installer", script);
         Assert.Contains("--verify-package", script);
+        Assert.Contains("RemotePCDiagnostics.Agent.deps.json", script);
         Assert.Contains("RemotePCDiagnostics.iss", script);
         Assert.Contains("RemotePCDiagnostics.ModuleUiHost.exe", script);
         Assert.Contains("RemotePCDiagnostics.ModuleHost.exe", script);
