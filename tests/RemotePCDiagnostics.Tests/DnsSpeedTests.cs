@@ -5,27 +5,44 @@ namespace RemotePCDiagnostics.Tests;
 
 public class DnsSpeedTests
 {
-    /// <summary>Answers after a per-server delay (or not at all when the delay is null).</summary>
+    /// <summary>Reports a fixed per-server latency (or no answer when the latency is null). No wall-clock wait.</summary>
     private sealed class FakeTransport(Dictionary<string, int?> delayMs) : IDnsTransport
     {
+        private readonly FixedClock _clock = new();
         public List<string> Asked = [];
-        public async Task<byte[]> QueryAsync(IPAddress server, byte[] query, TimeSpan timeout, CancellationToken ct)
+        public IDnsClock Clock => _clock;
+
+        public Task<byte[]> QueryAsync(IPAddress server, byte[] query, TimeSpan timeout, CancellationToken ct)
         {
+            ct.ThrowIfCancellationRequested();
             lock (Asked) Asked.Add(server.ToString());
-            if (delayMs[server.ToString()] is not { } d) throw new OperationCanceledException();
-            await Task.Delay(d, ct);
+            if (delayMs[server.ToString()] is not { } d) return Task.FromException<byte[]>(new OperationCanceledException());
+            _clock.Advance(d);
             var reply = (byte[])query.Clone();
             reply[2] |= 0x80; // response bit
-            return reply;
+            return Task.FromResult(reply);
         }
     }
+
+    /// <summary>Monotonic clock the transport advances by the scripted latency. 5 ms and 6 ms stay 5 and 6.</summary>
+    private sealed class FixedClock : IDnsClock
+    {
+        private long _nowMs;
+        public long GetTimestamp() => _nowMs;
+        public void Advance(double ms) => _nowMs += (long)ms;
+        public double ElapsedMilliseconds(long startedAt) => _nowMs - startedAt;
+    }
+
+    private static DnsSpeedTest Measured(FakeTransport transport) => new(transport, clock: transport.Clock);
 
     [Fact]
     public async Task PublicClearlyFaster_IsSuggested_WithNumbers()
     {
-        // Delays several Windows timer ticks (~15.6 ms) apart, so Task.Delay rounding can't make Cloudflare and Google tie.
         var t = new FakeTransport(new() { ["192.168.1.1"] = 150, ["1.1.1.1"] = 10, ["8.8.8.8"] = 60 });
-        var c = (await new DnsSpeedTest(t).CompareAsync("192.168.1.1, fe80::1", default))!;
+        var c = (await Measured(t).CompareAsync("192.168.1.1, fe80::1", default))!;
+        Assert.Equal(150, c.Current.MedianMs);
+        Assert.Equal(10, c.Cloudflare.MedianMs);
+        Assert.Equal(60, c.Google.MedianMs);
         Assert.True(c.PublicIsFaster);
         Assert.Equal("Cloudflare", c.Best!.Name);
         Assert.Equal(DnsSpeedTest.Lookups * 3, t.Asked.Count);
@@ -35,8 +52,12 @@ public class DnsSpeedTests
     [Fact]
     public async Task CurrentAsFast_NotSuggested()
     {
+        // 5 ms vs 6 ms stays exact on the scripted clock. A Windows timer tick is about 15.6 ms, so Task.Delay could reorder them.
         var t = new FakeTransport(new() { ["192.168.1.1"] = 5, ["1.1.1.1"] = 6, ["8.8.8.8"] = 120 });
-        var c = (await new DnsSpeedTest(t).CompareAsync("192.168.1.1", default))!;
+        var c = (await Measured(t).CompareAsync("192.168.1.1", default))!;
+        Assert.Equal(5, c.Current.MedianMs);
+        Assert.Equal(6, c.Cloudflare.MedianMs);
+        Assert.Equal(120, c.Google.MedianMs);
         Assert.False(c.PublicIsFaster);
         Assert.Contains("as fast or faster", c.Text);
     }
@@ -45,10 +66,12 @@ public class DnsSpeedTests
     public async Task NoAnswers_CountAsUnavailable()
     {
         var t = new FakeTransport(new() { ["192.168.1.1"] = 5, ["1.1.1.1"] = null, ["8.8.8.8"] = null });
-        var c = (await new DnsSpeedTest(t).CompareAsync("192.168.1.1", default))!;
+        var c = (await Measured(t).CompareAsync("192.168.1.1", default))!;
+        Assert.Equal(5, c.Current.MedianMs);
         Assert.Null(c.Cloudflare.MedianMs);
+        Assert.Null(c.Google.MedianMs);
         Assert.False(c.PublicIsFaster);
-        Assert.Null(await new DnsSpeedTest(t).CompareAsync("fe80::1", default)); // no IPv4 server to compare
+        Assert.Null(await Measured(t).CompareAsync("fe80::1", default)); // no IPv4 server to compare
     }
 
     [Fact]

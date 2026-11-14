@@ -10,6 +10,16 @@ public interface IDnsTransport
     Task<byte[]> QueryAsync(IPAddress server, byte[] query, TimeSpan timeout, CancellationToken ct);
 }
 
+/// <summary>Timing source around one DNS query. Production uses a stopwatch; tests report a fixed latency.</summary>
+public interface IDnsClock
+{
+    /// <summary>A timestamp immediately before the query is sent.</summary>
+    long GetTimestamp();
+
+    /// <summary>Milliseconds elapsed since <paramref name="startedAt"/> (a value from <see cref="GetTimestamp"/>).</summary>
+    double ElapsedMilliseconds(long startedAt);
+}
+
 public sealed class UdpDnsTransport : IDnsTransport
 {
     public async Task<byte[]> QueryAsync(IPAddress server, byte[] query, TimeSpan timeout, CancellationToken ct)
@@ -53,12 +63,21 @@ public sealed record DnsComparison(DnsServerTiming Current, DnsServerTiming Clou
     }
 }
 
-public sealed class DnsSpeedTest(IDnsTransport? transport = null, ILogger? log = null)
+public sealed class DnsSpeedTest(IDnsTransport? transport = null, ILogger? log = null, IDnsClock? clock = null)
 {
     public static readonly IPAddress CloudflareIp = IPAddress.Parse("1.1.1.1"), GoogleIp = IPAddress.Parse("8.8.8.8");
     public const int Lookups = 12;
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(2);
     private readonly IDnsTransport _t = transport ?? new UdpDnsTransport();
+    private readonly IDnsClock _clock = clock ?? StopwatchClock;
+    private static readonly IDnsClock StopwatchClock = new StopwatchDnsClock();
+
+    /// <summary>Wall-clock measurement, same values <see cref="Stopwatch"/> reports.</summary>
+    private sealed class StopwatchDnsClock : IDnsClock
+    {
+        public long GetTimestamp() => Stopwatch.GetTimestamp();
+        public double ElapsedMilliseconds(long startedAt) => Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
+    }
 
     public static string? ServerName(string? address) => address?.Trim() switch
     {
@@ -109,11 +128,11 @@ public sealed class DnsSpeedTest(IDnsTransport? transport = null, ILogger? log =
     private async Task<double?> TimeOneAsync(IPAddress server, string name, CancellationToken ct)
     {
         var (query, id) = BuildQuery(name);
-        var sw = Stopwatch.StartNew();
+        var started = _clock.GetTimestamp();
         try
         {
             var answer = await _t.QueryAsync(server, query, Timeout, ct).ConfigureAwait(false);
-            return IsAnswerTo(answer, id) ? sw.Elapsed.TotalMilliseconds : null;
+            return IsAnswerTo(answer, id) ? _clock.ElapsedMilliseconds(started) : null;
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return null; }
         catch (SocketException) { return null; }
