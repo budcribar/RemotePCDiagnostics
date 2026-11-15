@@ -90,14 +90,19 @@ public sealed class InstallerConfigTests
         Assert.Contains("CloseApplications=yes", iss);
         Assert.Contains("PrivilegesRequired=admin", iss);
 
-        // Start Menu + optional Desktop shortcut task.
-        Assert.Contains(@"Name: ""desktopicon""", iss);
+        // Start Menu and Desktop shortcuts auto-created directly (frictionless setup without tasks).
         Assert.Contains(@"Name: ""{autoprograms}\{#AppName}""", iss);
         Assert.Contains(@"Name: ""{autodesktop}\{#AppName}""", iss);
-        Assert.Contains("Tasks: desktopicon", iss);
+        Assert.DoesNotContain("Tasks: desktopicon", iss);
 
-        // Post-install launch must use shellexec because Host manifest requires Administrator.
-        Assert.Contains("postinstall skipifsilent shellexec", iss);
+        // Direct Progress -> Auto-Launch: skip wizard friction and auto-launch on completion with shellexec runasoriginaluser.
+        Assert.Contains("DisableWelcomePage=yes", iss);
+        Assert.Contains("DisableDirPage=yes", iss);
+        Assert.Contains("DisableReadyPage=yes", iss);
+        Assert.Contains("DisableFinishedPage=yes", iss);
+        Assert.Contains("ShouldSkipPage", iss);
+        Assert.Contains("skipifsilent shellexec runasoriginaluser", iss);
+        Assert.DoesNotContain("postinstall", iss);
 
         // WebView2 Evergreen Runtime check & bootstrapper.
         Assert.Contains("{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}", iss);

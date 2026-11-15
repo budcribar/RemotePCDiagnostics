@@ -22,15 +22,58 @@ public class WindowsRepairTests
     }
 
     [Theory]
+    [InlineData("0x800f0915", "payload")]
     [InlineData("0x800f081f", "source")]
     [InlineData("0x800f0906", "internet")]
+    [InlineData("0x800f0907", "policy")]
     [InlineData("0x800f0954", "policy")]
+    [InlineData("0x80073712", "component store")]
+    [InlineData("0x80070002", "path")]
     public void Dism_KnownErrors_HavePlainHints(string code, string word)
     {
         var (st, sum, _) = WindowsRepair.ParseDism($"Error: {code}\nThe operation failed.", 1);
         Assert.Equal(DiagnosticStatus.Error, st);
-        Assert.Contains(code, sum);
+        Assert.Contains(code, sum, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(word, sum, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Dism_NegativeExitCode_FormatsAsHexWithoutNegativeDecimal()
+    {
+        // Exit code -2146498283 is 0x800F0915 (DISM_E_SOURCE_NOT_FOUND)
+        const int exitCode = -2146498283;
+        var (st, sum, _) = WindowsRepair.ParseDism("The operation failed.", exitCode);
+        Assert.Equal(DiagnosticStatus.Error, st);
+        Assert.Contains("0x800F0915", sum);
+        Assert.DoesNotContain("-2146498283", sum);
+        Assert.Contains("payload", sum, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Dism_WithDismLogExcerpt_ExtractsFailedPackageAndActionableSummary()
+    {
+        const string excerpt = @"
+2026-11-15 12:34:56, Error DISM DISM Package Manager: PID=1234 TID=5678 Failed to download payload for package: Package_for_RollupFix~31bf3856ad364e35~amd64~~19041.3570.1.7 - CPackageManagerRestoreHealthHandler::DownloadPackagePayload(hr:0x800f0915)
+2026-11-15 12:34:56, Error DISM DISM Package Manager: PID=1234 TID=5678 The repair content could not be found anywhere: Package_for_RollupFix~31bf3856ad364e35~amd64~~19041.3570.1.7 - CPackageManagerRestoreHealthHandler::DownloadPackagePayload(hr:0x800f0915)";
+
+        var summary = WindowsRepair.SummarizeDism(excerpt);
+        Assert.Contains("Package_for_RollupFix~31bf3856ad364e35~amd64~~19041.3570.1.7", summary);
+        Assert.Contains("Missing repair payload", summary);
+
+        var (st, sum, _) = WindowsRepair.ParseDism("The operation failed.", -2146498283, excerpt);
+        Assert.Equal(DiagnosticStatus.Error, st);
+        Assert.Contains("Package_for_RollupFix~31bf3856ad364e35~amd64~~19041.3570.1.7", sum);
+        Assert.Contains("0x800F0915", sum);
+    }
+
+    [Fact]
+    public void Dism_GenericNegativeExitCode_FormatsHex()
+    {
+        const int exitCode = unchecked((int)0x80004005); // E_FAIL
+        var (st, sum, _) = WindowsRepair.ParseDism("Unknown failure", exitCode);
+        Assert.Equal(DiagnosticStatus.Error, st);
+        Assert.Contains("0x80004005", sum);
+        Assert.DoesNotContain(exitCode.ToString(), sum);
     }
 
     [Fact]

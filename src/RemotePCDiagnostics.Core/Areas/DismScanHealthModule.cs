@@ -48,8 +48,10 @@ public sealed class DismScanHealthModule(SystemCommandRunner commands) : Windows
     protected override void AddProblemEvidence(List<AreaRow> rows)
     {
         var cbs = ReadLogEvidence(_cbsPath, _cbsOffset);
+        var dism = ReadLogEvidence(_dismPath, _dismOffset);
         rows.Add(new(AreaLevel.Neutral, ["CBS summary", SummarizeCbs(cbs)]));
         rows.Add(new(AreaLevel.Neutral, ["CBS findings during scan", cbs]));
-        rows.Add(new(AreaLevel.Neutral, ["DISM log errors during scan", ReadLogEvidence(_dismPath, _dismOffset)]));
+        rows.Add(new(AreaLevel.Neutral, ["DISM summary", WindowsRepair.SummarizeDism(dism)]));
+        rows.Add(new(AreaLevel.Neutral, ["DISM log errors during scan", dism]));
     }
 }

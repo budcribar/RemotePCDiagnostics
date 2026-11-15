@@ -88,7 +88,6 @@ PrivilegesRequired=admin
 AppMutex={#AppMutexName}
 CloseApplications=yes
 RestartApplications=no
-LicenseFile={#RepoRoot}\LICENSE
 SetupIconFile={#RepoRoot}\src\RemotePCDiagnostics.Host\Assets\diagnostics.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
@@ -97,12 +96,27 @@ OutputBaseFilename={#OutputBaseName}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
+WizardResizable=no
+WizardSizePercent=100,100
+WizardImageFile={#RepoRoot}\installer\WizardImage.bmp
+WizardSmallImageFile={#RepoRoot}\installer\WizardSmallImage.bmp
+DisableWelcomePage=yes
+DisableDirPage=yes
+DisableReadyPage=yes
+DisableFinishedPage=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
-[Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+[LangOptions]
+DialogFontName=Segoe UI
+DialogFontSize=9
+TitleFontName=Segoe UI
+TitleFontSize=11
+WelcomeFontName=Segoe UI
+WelcomeFontSize=12
+CopyrightFontName=Segoe UI
+CopyrightFontSize=8
 
 [Dirs]
 ; Plugin and declarative-check drop folders discovered by ModuleLoader and JsonCheck under %ProgramFiles%\RemotePCDiagnostics.
@@ -119,7 +133,7 @@ Source: "{#AgentExePath}"; DestDir: "{tmp}"; DestName: "RemotePCDiagnostics.Agen
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session (shared screen and voice)"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session (shared screen and voice)"; Tasks: desktopicon
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session (shared screen and voice)"
 
 [Run]
 #if AgentExePath != ""
@@ -127,7 +141,7 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "
 Filename: "{tmp}\RemotePCDiagnostics.Agent.exe"; Parameters: "{#AgentInstallParams}"; StatusMsg: "Installing and starting Remote PC Diagnostics Agent service..."; Flags: runhidden waituntilterminated
 #endif
 ; shellexec + runasoriginaluser launches RemotePCDiagnostics.Host.exe (asInvoker) as the interactive desktop user at the end of setup.
-Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent shellexec runasoriginaluser
+Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; WorkingDir: "{app}"; Flags: nowait skipifsilent shellexec runasoriginaluser
 
 [UninstallRun]
 ; Remove the post-reboot workflow continuation scheduled task if an interrupted workflow left one registered.
@@ -137,6 +151,12 @@ Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""{#WorkflowResumeTaskN
 var
   DownloadPage: TDownloadWizardPage;
   WebView2BootstrapperPath: String;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  { Direct Progress: skip all wizard pages except wpInstalling }
+  Result := (PageID <> wpInstalling);
+end;
 
 function CmdLineParamExists(const Value: String): Boolean;
 var
@@ -180,48 +200,21 @@ end;
 
 procedure InitializeWizard();
 begin
+  WizardForm.Font.Name := 'Segoe UI';
+  WizardForm.StatusLabel.Font.Name := 'Segoe UI';
+  WizardForm.FilenameLabel.Font.Name := 'Segoe UI';
+  WizardForm.PageNameLabel.Font.Name := 'Segoe UI';
+  WizardForm.PageDescriptionLabel.Font.Name := 'Segoe UI';
+  WizardForm.CancelButton.Font.Name := 'Segoe UI';
+  WizardForm.Bevel.Visible := False;
+
   WebView2BootstrapperPath := '';
   DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing), SetupMessage(msgPreparingDesc), @OnDownloadProgress);
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
-var
-  BundledBootstrapper: String;
 begin
   Result := True;
-  if (CurPageID = wpReady) and (not CmdLineParamExists('/SKIPWEBVIEW2')) and (not IsWebView2Installed()) then
-  begin
-    BundledBootstrapper := ExpandConstant('{src}\MicrosoftEdgeWebview2Setup.exe');
-    if FileExists(BundledBootstrapper) then
-    begin
-      WebView2BootstrapperPath := BundledBootstrapper;
-      Log('Using local WebView2 bootstrapper: ' + WebView2BootstrapperPath);
-    end
-    else if not WizardSilent() then
-    begin
-      DownloadPage.Clear;
-      DownloadPage.Add('{#WebView2BootstrapUrl}', 'MicrosoftEdgeWebview2Setup.exe', '');
-      DownloadPage.Show;
-      try
-        try
-          DownloadPage.Download;
-          WebView2BootstrapperPath := ExpandConstant('{tmp}\MicrosoftEdgeWebview2Setup.exe');
-        except
-          if DownloadPage.AbortedByUser then
-            Log('WebView2 download cancelled by user.')
-          else
-            SuppressibleMsgBox(
-              'Microsoft Edge WebView2 Runtime is required, and downloading the bootstrapper failed:' + #13#10#13#10 +
-              AddPeriod(GetExceptionMessage) + #13#10#13#10 +
-              'Connect to the internet and try again, or place MicrosoftEdgeWebview2Setup.exe next to this Setup executable.',
-              mbCriticalError, MB_OK, IDOK);
-          Result := False;
-        end;
-      finally
-        DownloadPage.Hide;
-      end;
-    end;
-  end;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

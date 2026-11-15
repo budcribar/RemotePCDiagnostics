@@ -39,25 +39,117 @@ public static class WindowsRepair
 
     private static bool RebootText(string s) => Has(s, "reboot") || Has(s, "restart the computer") || Has(s, "restart your computer") || Has(s, "pending") && Has(s, "restart");
 
+    public static string? ExtractFailedPackage(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var m = Regex.Match(text, @"(?im)(?:Failed to download payload for package|The repair content could not be found anywhere|Failed to finalize and optimize the package|Failed to restore package|Failed processing package)\s*:?\s*(?<pkg>[A-Za-z0-9_\.~-]+)");
+        if (m.Success) return m.Groups["pkg"].Value.Trim();
+        var fallback = Regex.Match(text, @"(?im)\b(?<pkg>(?:Package_for_|Microsoft-Windows-)[A-Za-z0-9_\.~-]+)");
+        return fallback.Success ? fallback.Groups["pkg"].Value.Trim() : null;
+    }
+
+    public static string SummarizeDism(string? dismExcerpt)
+    {
+        if (string.IsNullOrWhiteSpace(dismExcerpt)) return "No DISM log excerpt available.";
+
+        var findings = new List<string>();
+
+        var packageMatches = Regex.Matches(dismExcerpt,
+            @"(?im)(?:Failed to download payload for package|The repair content could not be found anywhere|Failed to finalize and optimize the package|Failed to restore package|Failed processing package)\s*:?\s*(?<pkg>[A-Za-z0-9_\.~-]+)");
+        var packages = packageMatches
+            .Select(m => m.Groups["pkg"].Value.Trim())
+            .Where(p => p.StartsWith("Package_", StringComparison.OrdinalIgnoreCase) || p.StartsWith("Microsoft-Windows-", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var errorLineMatches = Regex.Matches(dismExcerpt,
+            @"(?im)\b(?<msg>The repair content could not be found anywhere|Failed to download payload for package[^\r\n,]+|Failed to get provider[^\r\n,]+|Failed to find directory[^\r\n,]+)")
+            .Select(m => m.Groups["msg"].Value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (packages.Count > 0)
+        {
+            var pkgList = string.Join(", ", packages.Take(3)) + (packages.Count > 3 ? $" (+{packages.Count - 3} more)" : "");
+            if (errorLineMatches.Any(m => m.Contains("repair content could not be found", StringComparison.OrdinalIgnoreCase) || m.Contains("Failed to download payload", StringComparison.OrdinalIgnoreCase)))
+            {
+                findings.Add($"Missing repair payload for package: {pkgList}");
+            }
+            else
+            {
+                findings.Add($"Package repair failed: {pkgList}");
+            }
+        }
+        else if (errorLineMatches.Count > 0)
+        {
+            findings.AddRange(errorLineMatches.Take(3));
+        }
+
+        var codes = Regex.Matches(dismExcerpt, @"(?i)\b0x8[0-9a-f]{7}\b")
+            .Select(m => m.Value.ToUpperInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(5)
+            .ToList();
+
+        if (findings.Count > 0)
+        {
+            var summary = string.Join("; ", findings);
+            if (codes.Count > 0 && !summary.Contains("0x", StringComparison.OrdinalIgnoreCase))
+                summary += $" ({string.Join(", ", codes)})";
+            return summary;
+        }
+
+        if (codes.Count > 0)
+            return $"DISM recorded servicing errors ({string.Join(", ", codes)}). The excerpt did not identify a specific package.";
+
+        return dismExcerpt.Contains('\n')
+            ? "The DISM excerpt did not identify a specific failed package. See the log excerpts for context."
+            : dismExcerpt;
+    }
+
     /// <summary>DISM /RestoreHealth output (English) + exit code → status and plain summary.</summary>
-    public static (DiagnosticStatus Status, string Summary, bool Reboot) ParseDism(string output, int? exitCode)
+    public static (DiagnosticStatus Status, string Summary, bool Reboot) ParseDism(string output, int? exitCode, string? dismExcerpt = null)
     {
         var o = output ?? "";
         var reboot = exitCode == RebootRequiredExitCode || RebootText(o);
+        var pkg = ExtractFailedPackage(dismExcerpt) ?? ExtractFailedPackage(o);
+        var pkgSuffix = pkg is not null ? $" Failed package: {pkg}." : "";
+
         string? Hint()
         {
-            if (Has(o, "0x800f081f") || exitCode == unchecked((int)0x800f081f)) return "Windows couldn't find the files it needs to repair itself (0x800f081f). Repair needs a matching Windows installation source (ISO / /Source) or Windows Update.";
-            if (Has(o, "0x800f0906") || exitCode == unchecked((int)0x800f0906)) return "Windows couldn't download the repair files (0x800f0906). Check the internet connection and that Windows Update is reachable, then try again.";
-            if (Has(o, "0x800f0954") || exitCode == unchecked((int)0x800f0954)) return "Downloading repair files is blocked by policy (0x800f0954), e.g. WSUS or Group Policy. Allow Windows Update as a repair source or supply a /Source.";
+            if (Has(o, "0x800f0915") || exitCode == unchecked((int)0x800f0915))
+                return "Windows could not find the repair content/payload (0x800F0915). The required package files are missing from Windows Update and WinSxS. Repair needs a matching Windows ISO / installation source specified (/Source) or a Servicing Stack update.";
+            if (Has(o, "0x800f081f") || exitCode == unchecked((int)0x800f081f))
+                return "Windows couldn't find the files it needs to repair itself (0x800f081f). Repair needs a matching Windows installation source (ISO / /Source) or Windows Update.";
+            if (Has(o, "0x800f0906") || exitCode == unchecked((int)0x800f0906))
+                return "Windows couldn't download the repair files (0x800f0906). Check the internet connection and that Windows Update is reachable, then try again.";
+            if (Has(o, "0x800f0907") || exitCode == unchecked((int)0x800f0907))
+                return "The repair source is blocked by Group Policy (0x800F0907). Network access to Windows Update or the specified repair source is prohibited by policy.";
+            if (Has(o, "0x800f0954") || exitCode == unchecked((int)0x800f0954))
+                return "Downloading repair files is blocked by policy (0x800f0954), e.g. WSUS or Group Policy. Allow Windows Update as a repair source or supply a /Source.";
+            if (Has(o, "0x80073712") || exitCode == unchecked((int)0x80073712))
+                return "The Windows component store is corrupted (0x80073712). A required component manifest is missing or damaged. Repair needs a matching Windows installation source (ISO / /Source).";
+            if (Has(o, "0x80070002") || exitCode == unchecked((int)0x80070002) || Has(o, "0x80070003") || exitCode == unchecked((int)0x80070003))
+                return "Windows could not find the specified file or path for repair (0x80070002/0x80070003). Check that the repair source path is valid and accessible.";
             return null;
         }
-        if (Hint() is { } h) return (DiagnosticStatus.Error, h, reboot);
+
+        if (Hint() is { } h) return (DiagnosticStatus.Error, h + pkgSuffix, reboot);
         if ((exitCode is 0 or RebootRequiredExitCode) && Has(o, "restore operation completed successfully"))
             return (DiagnosticStatus.Ok, reboot ? "Windows component store repaired; a restart finishes the repair." : "Windows component store repaired.", reboot);
         if ((exitCode is 0 or RebootRequiredExitCode) && o.Length == 0)
             return (DiagnosticStatus.Ok, "DISM reported success.", reboot);
         if (exitCode is null) return (DiagnosticStatus.Error, "DISM didn't finish (no exit code). Run the app as administrator and try again.", reboot);
-        return (DiagnosticStatus.Error, $"DISM couldn't repair the component store (exit code {exitCode}). See the DISM log excerpt.", reboot);
+
+        var codeStr = exitCode.Value < 0 ? $"0x{unchecked((uint)exitCode.Value):X8}" : exitCode.Value.ToString();
+        var dismSummary = !string.IsNullOrWhiteSpace(dismExcerpt) ? SummarizeDism(dismExcerpt) : null;
+        var summary = dismSummary is not null
+            && !dismSummary.StartsWith("No DISM log", StringComparison.OrdinalIgnoreCase)
+            && !dismSummary.StartsWith("The DISM excerpt did not", StringComparison.OrdinalIgnoreCase)
+            ? $"DISM couldn't repair the component store (exit code {codeStr}): {dismSummary}"
+            : $"DISM couldn't repair the component store (exit code {codeStr}).{pkgSuffix} See the DISM log excerpt.";
+
+        return (DiagnosticStatus.Error, summary, reboot);
     }
 
     /// <summary>SFC /scannow output (may be localized), exit code and the CBS.log [SR] lines written during the run → status and summary.</summary>
@@ -103,7 +195,8 @@ public static class WindowsRepair
         ct.ThrowIfCancellationRequested();
         var output = CleanOutput(pr?.StdOut + "\n" + pr?.StdErr);
         var srLines = componentStore ? [] : WindowsIntegrityModule.ReadNewLines(cbsPath, cbsOffset).Where(l => l.Contains("[SR]", StringComparison.Ordinal)).ToList();
-        var (status, summary, reboot) = componentStore ? ParseDism(output, pr?.ExitCode) : ParseSfc(output, pr?.ExitCode, srLines);
+        var dismExcerpt = componentStore ? WindowsIntegrityModule.ReadLogEvidence(dismPath, dismOffset) : null;
+        var (status, summary, reboot) = componentStore ? ParseDism(output, pr?.ExitCode, dismExcerpt) : ParseSfc(output, pr?.ExitCode, srLines);
         var details = new List<(string, string)>
         {
             ("Command", $"{Path.GetFileName(exe)} {string.Join(' ', args)}"),
@@ -115,10 +208,19 @@ public static class WindowsRepair
             var cbs = WindowsIntegrityModule.ReadLogEvidence(cbsPath, cbsOffset);
             details.Add(("CBS summary", WindowsIntegrityModule.SummarizeCbs(cbs)));
             details.Add(("CBS log excerpt", cbs));
-            if (componentStore) details.Add(("DISM log excerpt", WindowsIntegrityModule.ReadLogEvidence(dismPath, dismOffset)));
+            if (componentStore && dismExcerpt is not null)
+            {
+                details.Add(("DISM summary", SummarizeDism(dismExcerpt)));
+                details.Add(("DISM log excerpt", dismExcerpt));
+            }
         }
         if (reboot) details.Add(("Restart", "Windows asked for a restart to finish; the workflow's restart after the fixes covers it."));
+        var exitCodeDisplay = pr is null
+            ? "No exit code (didn't finish)"
+            : pr.ExitCode < 0
+                ? $"Exit code 0x{unchecked((uint)pr.ExitCode):X8}"
+                : $"Exit code {pr.ExitCode}";
         return new(componentStore ? DismId : SfcId, componentStore ? DismTitle : SfcTitle, status, summary,
-            pr is null ? "No exit code (didn't finish)" : $"Exit code {pr.ExitCode}", reboot, details);
+            exitCodeDisplay, reboot, details);
     }
 }
