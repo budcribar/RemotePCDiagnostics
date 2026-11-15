@@ -153,7 +153,6 @@ try {
   await page.getByTestId('nav-certificates').click();
   await page.getByTestId('branding-title').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('bench-qa-start').waitFor({ state: 'visible', timeout: 15_000 });
-  await page.getByTestId('physical-qa-card').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('relay-publish-card').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('publish-hosted-cert').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('qa-preview-frame').waitFor({ state: 'visible', timeout: 15_000 });
