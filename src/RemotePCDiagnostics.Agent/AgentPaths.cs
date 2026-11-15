@@ -143,6 +143,7 @@ public static class AgentPaths
         if (OperatingSystem.IsWindows() && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(ConfigPathEnvVar)))
         {
             TryApplyParentDirectoryAcl(dir);
+            EnsureSessionsDirectory();
         }
 
         var tempPath = path + ".tmp";
@@ -158,6 +159,41 @@ public static class AgentPaths
         if (OperatingSystem.IsWindows())
         {
             TryApplyAdminSystemOnlyFileAcl(path);
+        }
+    }
+
+    public static string EnsureSessionsDirectory()
+    {
+        var dir = AgentLayout.SessionsDirectory();
+        Directory.CreateDirectory(dir);
+        if (OperatingSystem.IsWindows() && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(ConfigPathEnvVar)))
+        {
+            TryApplyUsersCanModifyDirectoryAcl(dir);
+        }
+        return dir;
+    }
+
+    public static void TryApplyUsersCanModifyDirectoryAcl(string dirPath)
+    {
+        try
+        {
+            var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+            var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
+            const InheritanceFlags all = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+
+            var dirInfo = new DirectoryInfo(dirPath);
+            var security = new DirectorySecurity();
+            security.SetOwner(admins);
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(users, FileSystemRights.Modify, all, PropagationFlags.None, AccessControlType.Allow));
+            dirInfo.SetAccessControl(security);
+        }
+        catch
+        {
+            // Non-elevated test directories or restricted filesystems keep default ACLs.
         }
     }
 

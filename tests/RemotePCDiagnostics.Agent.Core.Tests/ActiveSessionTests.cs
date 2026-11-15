@@ -95,6 +95,34 @@ public class ActiveSessionTests
     }
 
     [Fact]
+    public void ActiveSessionInfo_TryWrite_CreatesSubdirectoryIfMissing()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"active-session-dir-{Guid.NewGuid()}");
+        var tempFile = Path.Combine(tempDir, "sessions", "active-session.json");
+        try
+        {
+            var info = new ActiveSessionInfo(
+                ProcessId: 12345,
+                Running: true,
+                SessionId: "sess-dir-test",
+                Group: "g",
+                Mode: "Remote",
+                StartedUtc: DateTimeOffset.UtcNow);
+
+            Assert.True(ActiveSessionInfo.TryWrite(info, tempFile));
+            Assert.True(File.Exists(tempFile));
+
+            Assert.True(ActiveSessionInfo.TryDelete(tempFile, expectedProcessId: 12345));
+            Assert.False(File.Exists(tempFile));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void AgentLayout_ActiveSessionPath_EndsWithActiveSessionJson()
     {
         var path = AgentLayout.ActiveSessionPath();
@@ -230,5 +258,19 @@ public class ActiveSessionTests
 
         Assert.True(running);
         Assert.Equal("", sessionId);
+    }
+
+    [Fact]
+    public void AgentLayout_SessionsDirectory_EndsWithSessions()
+    {
+        var path = AgentLayout.SessionsDirectory();
+        Assert.EndsWith(AgentLayout.SessionsFolderName, path);
+    }
+
+    [Fact]
+    public void AgentLayout_LegacyActiveSessionPath_EndsWithActiveSessionJson()
+    {
+        var path = AgentLayout.LegacyActiveSessionPath();
+        Assert.EndsWith(AgentLayout.ActiveSessionFileName, path);
     }
 }

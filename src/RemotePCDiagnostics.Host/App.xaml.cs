@@ -202,6 +202,7 @@ public partial class App : Application
             if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"State move to {ProtectedState.Folder()}: {outcome}");
         }
         catch (Exception ex) { Log($"State move to {ProtectedState.Folder()} failed: {ex.Message}"); }
+        try { RemotePCDiagnostics.Agent.AgentPaths.EnsureSessionsDirectory(); } catch { }
     }
 
     private static void RunStartupMigrations()

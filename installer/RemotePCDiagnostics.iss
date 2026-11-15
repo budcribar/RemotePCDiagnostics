@@ -108,6 +108,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; Plugin and declarative-check drop folders discovered by ModuleLoader and JsonCheck under %ProgramFiles%\RemotePCDiagnostics.
 Name: "{app}\modules"
 Name: "{app}\checks"
+; Shared sessions folder under %ProgramData% so standard user Host instances can publish active-session.json
+Name: "{commonappdata}\RemotePCDiagnostics\sessions"; Permissions: users-modify
 
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -316,6 +318,10 @@ begin
     DeleteFile(ProgramDataDir + '\agent-status.json');
   if FileExists(ProgramDataDir + '\agent-host.json') then
     DeleteFile(ProgramDataDir + '\agent-host.json');
+  if FileExists(ProgramDataDir + '\active-session.json') then
+    DeleteFile(ProgramDataDir + '\active-session.json');
+  if DirExists(ProgramDataDir + '\sessions') then
+    DelTree(ProgramDataDir + '\sessions', True, True, True);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
