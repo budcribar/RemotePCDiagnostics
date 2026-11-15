@@ -13,7 +13,7 @@ public class DefenderExclusionTests
     {
         public List<string> Scripts = [];
         public string ReadBack = """{"Paths":["D:\\work","C:\\Users\\user\\.nuget\\packages"],"Procs":["C:\\VS\\MSBuild.exe"]}""";
-        public bool Fail;
+        public bool Fail { get; set; }
         public DefenderInfo? Defender = defender;
         public MemoryReading ReadMemory() => new(16L << 30, 8L << 30);
         public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> s, CancellationToken ct) =>

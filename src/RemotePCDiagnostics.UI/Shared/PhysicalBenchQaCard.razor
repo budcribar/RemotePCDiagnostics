@@ -10,23 +10,10 @@
     var dispChip = OutcomeChip(snap.DisplayOutcome);
     var dispLabel = OutcomeLabel(snap.DisplayOutcome);
     var activePattern = Patterns[_patternIndex];
-}
-
-@if (CardShell)
-{
-    @:<section class="card wf-section" data-testid="physical-qa-card" style="margin-bottom: 16px">
-    @:<div class="toolbar" style="margin-bottom: 8px">
-    @:    <div>
-    @:        <strong>Interactive bench QA: Keyboard &amp; Display</strong>
-    @:        <span class="meta"> · Quick technician verification rolled onto the 1-page Buyer QR Certificate</span>
-    @:    </div>
-    @:</div>
-    @:<div class="phys-qa-grid">
-}
-
-@if (FilterSection is null or "keyboard")
-{
-    <div class="phys-qa-pane" data-testid="interactive-keyboard-pane">
+    RenderFragment panesMarkup = @<text>
+        @if (FilterSection is null or "keyboard")
+        {
+            <div class="phys-qa-pane" data-testid="interactive-keyboard-pane">
             <div class="card-head" style="margin-bottom: 8px; flex-wrap: wrap">
                 <strong>Keyboard matrix &amp; rollover (NKRO)</strong>
                 <span class="chip chip-@kbChip" data-testid="keyboard-status-chip">@kbLabel</span>
@@ -172,12 +159,27 @@
             </div>
         </div>
     }
+    </text>;
+}
 
-    @if (CardShell)
-    {
-        @:</div>
-        @:</section>
-    }
+@if (CardShell)
+{
+    <section class="card wf-section" data-testid="physical-qa-card" style="margin-bottom: 16px">
+        <div class="toolbar" style="margin-bottom: 8px">
+            <div>
+                <strong>Interactive bench QA: Keyboard &amp; Display</strong>
+                <span class="meta"> · Quick technician verification rolled onto the 1-page Buyer QR Certificate</span>
+            </div>
+        </div>
+        <div class="phys-qa-grid">
+            @panesMarkup
+        </div>
+    </section>
+}
+else
+{
+    @panesMarkup
+}
 
 @if (_displayOverlayOpen)
 {

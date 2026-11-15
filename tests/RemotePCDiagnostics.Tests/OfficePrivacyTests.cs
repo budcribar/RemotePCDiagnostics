@@ -17,7 +17,7 @@ public class OfficePrivacyTests
         public HashSet<string> Denied = new(StringComparer.OrdinalIgnoreCase);
         public List<string> Calls = [];
         public bool Installed = true;
-        public int? DisconnectedState;
+        public int? DisconnectedState { get; set; }
         public MemoryReading ReadMemory() => new(16L << 30, 8L << 30);
         public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> s, CancellationToken ct) =>
             Task.FromResult(new MemorySnapshot(ReadMemory(), [],

@@ -113,7 +113,7 @@ public class WebcamTests
         var (tw, th) = WebcamMath.LumaFromBgra(bgra, w, h, w * 4, dest);
         Assert.Equal((160, 90), (tw, th));
         Assert.All(dest, v => Assert.InRange(v, 254, 255));
-        Assert.Equal(WebcamDevice.GuessBus(@"\\?\USB#VID_046D&PID_085B", false), WebcamBus.Usb);
+        Assert.Equal(WebcamBus.Usb, WebcamDevice.GuessBus(@"\\?\USB#VID_046D&PID_085B", false));
         Assert.Equal(WebcamBus.BuiltIn, WebcamDevice.GuessBus("x", true));
     }
 
