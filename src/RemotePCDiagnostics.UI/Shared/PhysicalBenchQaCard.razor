@@ -197,8 +197,7 @@ else
          aria-label="Full-screen display dead-pixel and touch inspection"
          data-testid="display-test-overlay"
          @ref="_overlayRef"
-         @onclick="NextPattern"
-         @onmousemove="OnOverlayMouseMove"
+         @onclick="OnOverlayClick"
          @onkeydown="OnOverlayKeyDown"
          @onkeydown:preventDefault="true"
          @ontouchstart="OnTouchEvent"
@@ -230,6 +229,7 @@ else
     [Parameter] public string? FilterSection { get; set; }
     [Parameter] public bool CardShell { get; set; } = true;
     [Parameter] public bool IsRemoteDisplay { get; set; }
+    [Parameter] public bool AutoLaunchDisplay { get; set; }
     [Parameter] public Action<string, PhysicalCheckOutcome>? OnOutcomeChanged { get; set; }
 
     private readonly PhysicalBenchQaService _fallbackService = new();
@@ -240,6 +240,7 @@ else
     private ElementReference _overlayRef;
     private bool _shouldFocusKeyZone;
     private bool _shouldFocusOverlay;
+    private bool _hasAutoLaunchedDisplay;
 
     private bool _capturingKeys;
     private readonly HashSet<string> _pressedKeys = new(StringComparer.OrdinalIgnoreCase);
@@ -261,6 +262,7 @@ else
         _hudTimerCts?.Dispose();
         _hudTimerCts = new CancellationTokenSource();
         var token = _hudTimerCts.Token;
+        _hudVisible = false;
         _ = Task.Run(async () =>
         {
             try
@@ -276,12 +278,11 @@ else
         }, token);
     }
 
-    private void OnOverlayMouseMove()
+    private void OnOverlayClick()
     {
-        if (!_hudVisible)
+        if (_hudVisible)
         {
-            _hudVisible = true;
-            _ = InvokeAsync(StateHasChanged);
+            NextPattern();
         }
     }
 
@@ -317,6 +318,17 @@ else
             _displayNotes = snap.DisplayNotes ?? "";
             _peakRollover = snap.PeakKeyRollover;
         }
+
+        if (FilterSection is null or "keyboard" && !IsRemoteDisplay && !_capturingKeys)
+        {
+            _capturingKeys = true;
+            _shouldFocusKeyZone = true;
+        }
+
+        if (!AutoLaunchDisplay)
+        {
+            _hasAutoLaunchedDisplay = false;
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -330,6 +342,12 @@ else
         {
             _shouldFocusOverlay = false;
             try { await _overlayRef.FocusAsync(); } catch { }
+        }
+        if (AutoLaunchDisplay && FilterSection == "display" && !_hasAutoLaunchedDisplay && !_displayOverlayOpen && !IsRemoteDisplay)
+        {
+            _hasAutoLaunchedDisplay = true;
+            LaunchDisplayOverlay();
+            StateHasChanged();
         }
     }
 
@@ -399,6 +417,14 @@ else
             UniqueKeysPressed = uniqueCount,
             PeakKeyRollover = peak,
         });
+
+        if (Layout.Caps.Count > 0 && Layout.Caps.All(c => _pressedKeys.Contains(c.Code)))
+        {
+            if (ActiveService.Current.KeyboardOutcome != PhysicalCheckOutcome.Passed)
+            {
+                SetKeyboardOutcome(PhysicalCheckOutcome.Passed);
+            }
+        }
     }
 
     private void OnKeyUp(KeyboardEventArgs e)
@@ -478,7 +504,12 @@ else
 
     private void NextPattern()
     {
-        _patternIndex = (_patternIndex + 1) % Patterns.Length;
+        if (_patternIndex >= Patterns.Length - 1)
+        {
+            PassDisplayFromOverlay();
+            return;
+        }
+        _patternIndex++;
         _hudVisible = false;
         StartHudTimer();
         RecordPatternInspected(_patternIndex);
@@ -508,13 +539,13 @@ else
                 break;
             case "ArrowLeft":
             case "Backspace":
-                PrevPattern();
+                if (_hudVisible) PrevPattern();
                 break;
             case " ":
             case "Spacebar":
             case "ArrowRight":
             case "Enter":
-                NextPattern();
+                if (_hudVisible) NextPattern();
                 break;
         }
     }

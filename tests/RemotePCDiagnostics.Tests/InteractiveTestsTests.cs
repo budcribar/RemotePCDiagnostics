@@ -110,6 +110,50 @@ public class InteractiveTestsTests
         Assert.Contains("data-testid=\"keyboard-capture-toggle\"", content);
         Assert.Contains("data-testid=\"display-test-launch\"", content);
         Assert.Contains("disabled=\"@IsRemoteDisplay\"", content);
+
+        // Overlay timing enforcement: mousemove must not prematurely show HUD
+        Assert.DoesNotContain("@onmousemove=\"OnOverlayMouseMove\"", content);
+        Assert.Contains("@onclick=\"OnOverlayClick\"", content);
+        Assert.Contains("AutoLaunchDisplay", content);
+    }
+
+    [Fact]
+    public void PhysicalBenchQaService_StateTransitions_SupportInteractiveBatchWorkflow()
+    {
+        var svc = new PhysicalBenchQaService();
+        Assert.Equal(PhysicalCheckOutcome.NotRun, svc.Current.KeyboardOutcome);
+        Assert.Equal(PhysicalCheckOutcome.NotRun, svc.Current.DisplayOutcome);
+
+        var triggered = false;
+        svc.Changed += () => triggered = true;
+
+        svc.Update(s => s with { KeyboardOutcome = PhysicalCheckOutcome.Passed, UniqueKeysPressed = 84 });
+        Assert.True(triggered);
+        Assert.Equal(PhysicalCheckOutcome.Passed, svc.Current.KeyboardOutcome);
+        Assert.Equal(84, svc.Current.UniqueKeysPressed);
+
+        triggered = false;
+        svc.Update(s => s with { KeyboardOutcome = PhysicalCheckOutcome.NotRun });
+        Assert.True(triggered);
+        Assert.Equal(PhysicalCheckOutcome.NotRun, svc.Current.KeyboardOutcome);
+
+        svc.Update(s => s with { DisplayOutcome = PhysicalCheckOutcome.Passed, SolidColorsInspected = 6 });
+        Assert.Equal(PhysicalCheckOutcome.Passed, svc.Current.DisplayOutcome);
+        Assert.Equal(6, svc.Current.SolidColorsInspected);
+    }
+
+    [Fact]
+    public void InteractiveTestsPage_MarkupContainsAllTestIds_AndRunsInCorrectSequence()
+    {
+        var pagePath = Path.Combine(FindRepoRoot(), "src", "RemotePCDiagnostics.UI", "Pages", "InteractiveTestsPage.razor");
+        Assert.True(File.Exists(pagePath));
+        var content = File.ReadAllText(pagePath);
+
+        // Sequence must loop over AllTestIds in list order
+        Assert.Contains("foreach (var id in AllTestIds)", content);
+        Assert.Contains("WaitForPhysicalQaAsync(\"keyboard\"", content);
+        Assert.Contains("WaitForPhysicalQaAsync(\"display\"", content);
+        Assert.Contains("AutoLaunchDisplay=\"_isBatchRunning\"", content);
     }
 
     [Fact]

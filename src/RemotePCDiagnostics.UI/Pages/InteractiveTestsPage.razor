@@ -241,7 +241,7 @@
             }
             else if (_selectedTestId == "display")
             {
-                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="display" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" OnOutcomeChanged="OnPhysicalQaOutcomeCompleted" />
+                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="display" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" AutoLaunchDisplay="_isBatchRunning" OnOutcomeChanged="OnPhysicalQaOutcomeCompleted" />
             }
             else if (_selectedTestId == "webcam")
             {
@@ -653,11 +653,12 @@
         }
     }
 
+    private string? _waitingTestId;
     private TaskCompletionSource<bool>? _interactiveWaitTcs;
 
     private void OnPhysicalQaOutcomeCompleted(string section, PhysicalCheckOutcome outcome)
     {
-        if (outcome != PhysicalCheckOutcome.NotRun)
+        if (outcome != PhysicalCheckOutcome.NotRun && (_waitingTestId == null || string.Equals(section, _waitingTestId, StringComparison.OrdinalIgnoreCase)))
             _interactiveWaitTcs?.TrySetResult(true);
     }
 
@@ -665,17 +666,23 @@
     {
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _interactiveWaitTcs = tcs;
+        _waitingTestId = testId;
 
-        var startUtc = DateTimeOffset.UtcNow;
-        var initialOutcome = testId == "keyboard"
-            ? ActivePhysicalQa.Current.KeyboardOutcome
-            : ActivePhysicalQa.Current.DisplayOutcome;
+        // Reset the target test outcome to NotRun for this run so stale previous results do not skip the test
+        if (testId == "keyboard")
+        {
+            ActivePhysicalQa.Update(s => s with { KeyboardOutcome = PhysicalCheckOutcome.NotRun });
+        }
+        else if (testId == "display")
+        {
+            ActivePhysicalQa.Update(s => s with { DisplayOutcome = PhysicalCheckOutcome.NotRun });
+        }
 
         void OnChanged()
         {
             var snap = ActivePhysicalQa.Current;
             var currentOutcome = testId == "keyboard" ? snap.KeyboardOutcome : snap.DisplayOutcome;
-            if (currentOutcome != PhysicalCheckOutcome.NotRun && (snap.UpdatedUtc >= startUtc || currentOutcome != initialOutcome))
+            if (currentOutcome is PhysicalCheckOutcome.Passed or PhysicalCheckOutcome.PassedWithNote or PhysicalCheckOutcome.Failed)
             {
                 tcs.TrySetResult(true);
             }
@@ -691,7 +698,10 @@
         {
             ActivePhysicalQa.Changed -= OnChanged;
             if (ReferenceEquals(_interactiveWaitTcs, tcs))
+            {
                 _interactiveWaitTcs = null;
+                _waitingTestId = null;
+            }
         }
     }
 
@@ -705,39 +715,31 @@
 
         try
         {
-            if (_selected.Contains("webcam") && !ct.IsCancellationRequested)
+            foreach (var id in AllTestIds)
             {
-                _selectedTestId = "webcam";
-                StateHasChanged();
-                await StartWebcamAsync();
-            }
+                if (!_selected.Contains(id) || ct.IsCancellationRequested) continue;
 
-            if (_selected.Contains("speakertomic") && !ct.IsCancellationRequested)
-            {
-                _selectedTestId = "speakertomic";
+                _selectedTestId = id;
                 StateHasChanged();
-                await StartSpeakerToMicAsync();
-            }
 
-            if (_selected.Contains("mictospeaker") && !ct.IsCancellationRequested)
-            {
-                _selectedTestId = "mictospeaker";
-                StateHasChanged();
-                await StartMicToSpeakerAsync();
-            }
-
-            if (_selected.Contains("keyboard") && !ct.IsCancellationRequested)
-            {
-                _selectedTestId = "keyboard";
-                StateHasChanged();
-                await WaitForPhysicalQaAsync("keyboard", ct);
-            }
-
-            if (_selected.Contains("display") && !ct.IsCancellationRequested)
-            {
-                _selectedTestId = "display";
-                StateHasChanged();
-                await WaitForPhysicalQaAsync("display", ct);
+                switch (id)
+                {
+                    case "keyboard":
+                        await WaitForPhysicalQaAsync("keyboard", ct);
+                        break;
+                    case "display":
+                        await WaitForPhysicalQaAsync("display", ct);
+                        break;
+                    case "webcam":
+                        await StartWebcamAsync();
+                        break;
+                    case "speakertomic":
+                        await StartSpeakerToMicAsync();
+                        break;
+                    case "mictospeaker":
+                        await StartMicToSpeakerAsync();
+                        break;
+                }
             }
         }
         catch (OperationCanceledException) { }
