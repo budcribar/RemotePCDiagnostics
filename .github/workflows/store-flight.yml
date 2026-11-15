@@ -1,0 +1,235 @@
+name: Microsoft Store & Package Flight Publishing
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Publish target: "flight" (Package Flight) or "submission" (Production Store Submission)'
+        type: choice
+        options:
+          - flight
+          - submission
+        default: flight
+      flight_name:
+        description: 'Package flight name in Partner Center (e.g. Beta or Prerelease)'
+        type: string
+        default: 'Beta'
+      run_id:
+        description: 'Optional CI workflow run ID to fetch existing MSIX artifact from (leave empty to build from current commit)'
+        type: string
+        default: ''
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: store-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-store:
+    name: Publish to Microsoft Store / Flight
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'release' && (startsWith(github.event.release.tag_name, 'v') || contains(github.event.release.tag_name, '-store')))
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Determine publishing target and parameters
+        id: prep
+        shell: pwsh
+        run: |
+          $event = '${{ github.event_name }}'
+          if ($event -eq 'workflow_dispatch') {
+            $target = '${{ inputs.target }}'
+            $flightName = '${{ inputs.flight_name }}'
+            $runId = '${{ inputs.run_id }}'.Trim()
+          } else {
+            $tagName = '${{ github.event.release.tag_name }}'
+            # If tag indicates a flight/preview, default to flight target; otherwise production submission
+            if ($tagName -match '-flight|-beta|-preview|-prerelease') {
+              $target = 'flight'
+              $flightName = 'Beta'
+            } else {
+              $target = 'submission'
+              $flightName = ''
+            }
+            $runId = ''
+          }
+
+          if ([string]::IsNullOrWhiteSpace($target)) { $target = 'flight' }
+          if ($target -eq 'flight' -and [string]::IsNullOrWhiteSpace($flightName)) { $flightName = 'Beta' }
+
+          Write-Host "Publishing Event: $event"
+          Write-Host "Target:           $target"
+          Write-Host "Flight Name:      $flightName"
+          Write-Host "Artifact Run ID:  $(if ($runId) { $runId } else { '<None - build from commit or release>' })"
+
+          "target=$target" >> $env:GITHUB_OUTPUT
+          "flight_name=$flightName" >> $env:GITHUB_OUTPUT
+          "run_id=$runId" >> $env:GITHUB_OUTPUT
+
+      - name: Download MSIX artifact from CI workflow run
+        if: steps.prep.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: RemotePCDiagnostics-Msix-win-x64
+          run-id: ${{ steps.prep.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts/msix
+
+      - name: Download MSIX from GitHub Release assets
+        if: github.event_name == 'release' && steps.prep.outputs.run_id == ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/msix | Out-Null
+          try {
+            Write-Host "Attempting to download MSIX package from release $env:TAG_NAME..."
+            gh release download $env:TAG_NAME --pattern "*.msix*" --dir artifacts/msix
+            $found = Get-ChildItem artifacts/msix -Filter '*.msix'
+            if ($found) {
+              Write-Host "Downloaded MSIX from release: $($found[0].FullName)"
+            }
+          } catch {
+            Write-Host "No MSIX package found on GitHub release assets; will build from commit."
+          }
+
+      - name: Build MSIX package from commit if not already present
+        shell: pwsh
+        env:
+          INPUT_MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          INPUT_MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+        run: |
+          $existing = Get-ChildItem -Path artifacts/msix -Filter 'RemotePCDiagnostics-*-win-x64.msix' -ErrorAction SilentlyContinue |
+            Where-Object { -not $_.Name.EndsWith('.sha256') } | Select-Object -First 1
+
+          if ($existing) {
+            Write-Host "Found existing MSIX package: $($existing.FullName) ($([Math]::Round($existing.Length / 1MB, 2)) MB)"
+            return
+          }
+
+          Write-Host "No MSIX package present; building package via msix/Build-Msix.ps1..."
+          $msixArgs = @('-NoProfile', '-File', 'msix/Build-Msix.ps1')
+          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_MSIX_IDENTITY_NAME)) {
+            $msixArgs += @('-IdentityName', $env:INPUT_MSIX_IDENTITY_NAME.Trim())
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_MSIX_PUBLISHER)) {
+            $msixArgs += @('-Publisher', $env:INPUT_MSIX_PUBLISHER.Trim())
+          }
+
+          pwsh @msixArgs
+          if ($LASTEXITCODE -ne 0) {
+            throw "Build-Msix.ps1 failed with exit code $LASTEXITCODE"
+          }
+
+          $built = Get-ChildItem artifacts/msix -Filter 'RemotePCDiagnostics-*-win-x64.msix' |
+            Where-Object { -not $_.Name.EndsWith('.sha256') } | Select-Object -First 1
+          if (-not $built) {
+            throw 'Build-Msix.ps1 completed but no MSIX package was found in artifacts/msix'
+          }
+          Write-Host "Successfully built MSIX: $($built.FullName) ($([Math]::Round($built.Length / 1MB, 2)) MB)"
+
+      - name: Validate package and prepare publishing metadata
+        id: pkg_info
+        shell: pwsh
+        run: |
+          $msix = Get-ChildItem -Path artifacts/msix -Filter 'RemotePCDiagnostics-*-win-x64.msix' |
+            Where-Object { -not $_.Name.EndsWith('.sha256') } | Select-Object -First 1
+
+          if (-not $msix) {
+            throw "No MSIX package found in artifacts/msix to publish."
+          }
+
+          $hash = (Get-FileHash -LiteralPath $msix.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sizeMb = [Math]::Round($msix.Length / 1MB, 2)
+
+          Write-Host "=========================================="
+          Write-Host "Package File:   $($msix.FullName)"
+          Write-Host "Package Size:   $sizeMb MB"
+          Write-Host "Package SHA256: $hash"
+          Write-Host "=========================================="
+
+          "msix_path=$($msix.FullName)" >> $env:GITHUB_OUTPUT
+          "msix_name=$($msix.Name)" >> $env:GITHUB_OUTPUT
+          "msix_size=$sizeMb" >> $env:GITHUB_OUTPUT
+          "msix_sha256=$hash" >> $env:GITHUB_OUTPUT
+
+      - name: Publish to Microsoft Partner Center
+        shell: pwsh
+        env:
+          STORE_TENANT_ID: ${{ secrets.STORE_TENANT_ID }}
+          STORE_CLIENT_ID: ${{ secrets.STORE_CLIENT_ID }}
+          STORE_CLIENT_SECRET: ${{ secrets.STORE_CLIENT_SECRET }}
+          STORE_APP_ID: ${{ secrets.STORE_APP_ID }}
+        run: |
+          $target = '${{ steps.prep.outputs.target }}'
+          $flightName = '${{ steps.prep.outputs.flight_name }}'
+          $msixPath = '${{ steps.pkg_info.outputs.msix_path }}'
+
+          $publishParams = @{
+            TenantId           = $env:STORE_TENANT_ID
+            ClientId           = $env:STORE_CLIENT_ID
+            ClientSecret       = $env:STORE_CLIENT_SECRET
+            AppId              = $env:STORE_APP_ID
+            MsixPath           = $msixPath
+            Target             = $target
+            FlightName         = $flightName
+            DeletePendingDraft = $true
+          }
+
+          pwsh -NoProfile -File scripts/publish-store-flight.ps1 @publishParams
+
+      - name: Generate Workflow Summary
+        if: always()
+        shell: pwsh
+        run: |
+          $target = '${{ steps.prep.outputs.target }}'
+          $flightName = '${{ steps.prep.outputs.flight_name }}'
+          $pkgName = '${{ steps.pkg_info.outputs.msix_name }}'
+          $pkgSize = '${{ steps.pkg_info.outputs.msix_size }}'
+          $pkgHash = '${{ steps.pkg_info.outputs.msix_sha256 }}'
+          $runId = '${{ steps.prep.outputs.run_id }}'
+          $eventName = '${{ github.event_name }}'
+          $refName = '${{ github.ref_name }}'
+          $commitSha = '${{ github.sha }}'
+          $appId = '${{ secrets.STORE_APP_ID }}'
+          if ([string]::IsNullOrWhiteSpace($appId)) { $appId = '(Configured via secret)' }
+
+          $lines = @(
+            "## Microsoft Store Publishing Report",
+            "",
+            "| Property | Value |",
+            "|---|---|",
+            "| **Publishing Target** | $target |"
+          )
+          if ($target -eq 'flight') {
+            $lines += "| **Package Flight** | $flightName |"
+          }
+          $lines += "| **Partner Center App ID** | $appId |"
+          if ($pkgName) {
+            $lines += "| **Package Name** | $pkgName |"
+            $lines += "| **Package Size** | $pkgSize MB |"
+            $lines += "| **SHA256 Checksum** | ``$pkgHash`` |"
+          }
+          $lines += "| **Triggered By** | $eventName |"
+          $lines += "| **Git Ref / Commit** | $refName ($commitSha) |"
+          if ($runId) {
+            $lines += "| **Source CI Run ID** | $runId |"
+          }
+
+          ($lines -join [Environment]::NewLine) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
