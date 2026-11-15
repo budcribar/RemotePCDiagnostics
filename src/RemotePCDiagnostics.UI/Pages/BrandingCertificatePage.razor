@@ -54,38 +54,38 @@
             }
         </div>
     </div>
-    <div class="bench-qa-options">
-        <label class="bench-kind meta">
-            <input type="checkbox" data-testid="bench-qa-include-stress" @bind="_includeStress" disabled="@benchRunning" />
-            <span>Short thermal-guarded stress (CPU, RAM, Disk, GPU — offline bench safe)</span>
-        </label>
-        <label class="bench-kind meta">
-            <input type="checkbox" data-testid="bench-qa-include-audio" @bind="_includeAudioCamera" disabled="@benchRunning" />
-            <span>Dongle-free WASAPI speaker→mic loopback &amp; webcam check</span>
-        </label>
-        <label class="bench-kind meta">
-            <input type="checkbox" data-testid="bench-qa-include-security" @bind="_includeSecurityAudit" disabled="@benchRunning" />
-            <span>Windows security &amp; baseline audit (HardeningKitty)</span>
-        </label>
-        <label class="bench-kind meta">
-            <input type="checkbox" data-testid="bench-qa-include-keyboard" @bind="_includeKeyboard" disabled="@benchRunning" />
-            <span>Physical keyboard matrix &amp; rollover check</span>
-        </label>
-        <label class="bench-kind meta">
-            <input type="checkbox" data-testid="bench-qa-include-display" @bind="_includeDisplay" disabled="@benchRunning" />
-            <span>Physical display dead-pixel &amp; touch check</span>
-        </label>
-    </div>
     @if (benchRunning && ActiveBenchQa.TotalSteps > 0)
     {
-        <div class="progress wf-overall-progress" style="max-width:none;margin:10px 0 6px" data-testid="bench-qa-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@ActiveBenchQa.TotalSteps" aria-valuenow="@ActiveBenchQa.CompletedSteps">
+        <div class="progress wf-overall-progress" style="max-width:none;margin:8px 0 6px" data-testid="bench-qa-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@ActiveBenchQa.TotalSteps" aria-valuenow="@ActiveBenchQa.CompletedSteps">
             <div style="width:@($"{ActiveBenchQa.ProgressFraction * 100:0.#}%")"></div>
         </div>
     }
-    @if (!string.IsNullOrWhiteSpace(ActiveBenchQa.Status))
+    @if (benchRunning && !string.IsNullOrWhiteSpace(ActiveBenchQa.Status))
     {
-        <p class="meta" style="margin:6px 0 0" data-testid="bench-qa-status">@ActiveBenchQa.Status</p>
+        <p class="meta" style="margin:4px 0 10px;color:var(--text, #cbd5e1)" data-testid="bench-qa-status">@ActiveBenchQa.Status</p>
     }
+    <div class="bench-qa-options">
+        <label class="bench-kind meta">
+            <input type="checkbox" data-testid="bench-qa-include-stress" checked="@_includeStress" @onchange="e => _includeStress = e.Value is true" disabled="@benchRunning" />
+            <span>Short thermal-guarded stress (CPU, RAM, Disk, GPU — offline bench safe)</span>
+        </label>
+        <label class="bench-kind meta">
+            <input type="checkbox" data-testid="bench-qa-include-audio" checked="@_includeAudioCamera" @onchange="e => _includeAudioCamera = e.Value is true" disabled="@benchRunning" />
+            <span>Dongle-free WASAPI speaker→mic loopback &amp; webcam check</span>
+        </label>
+        <label class="bench-kind meta">
+            <input type="checkbox" data-testid="bench-qa-include-security" checked="@_includeSecurityAudit" @onchange="e => _includeSecurityAudit = e.Value is true" disabled="@benchRunning" />
+            <span>Windows security &amp; baseline audit (HardeningKitty)</span>
+        </label>
+        <label class="bench-kind meta">
+            <input type="checkbox" data-testid="bench-qa-include-keyboard" checked="@_includeKeyboard" @onchange="e => _includeKeyboard = e.Value is true" disabled="@benchRunning" />
+            <span>Physical keyboard matrix &amp; rollover check</span>
+        </label>
+        <label class="bench-kind meta">
+            <input type="checkbox" data-testid="bench-qa-include-display" checked="@_includeDisplay" @onchange="e => _includeDisplay = e.Value is true" disabled="@benchRunning" />
+            <span>Physical display dead-pixel &amp; touch check</span>
+        </label>
+    </div>
 </section>
 
 @if (benchRunning && _activeInteractiveSection is { Length: > 0 })
@@ -418,6 +418,7 @@ else
         _relayGroupSlug = Session.Group ?? prefs?.ShopGroupSlug ?? "";
         _relayApiKey = prefs?.ShopApiKey ?? "";
         _certGeneratedAt = DateTimeOffset.Now;
+        SyncActiveBenchOptions();
         ActivePhysicalQa.Changed += OnBenchStateChanged;
         ActiveBenchQa.Changed += OnBenchStateChanged;
         EnsureCertificateSnapshot(force: true);
@@ -455,8 +456,21 @@ else
         }
     }
 
+    private void SyncActiveBenchOptions()
+    {
+        if (ActiveBenchQa.IsRunning)
+        {
+            _includeStress = ActiveBenchQa.IncludeStress;
+            _includeAudioCamera = ActiveBenchQa.IncludeAudioCamera;
+            _includeSecurityAudit = ActiveBenchQa.IncludeSecurityAudit;
+            _includeKeyboard = ActiveBenchQa.IncludeKeyboard;
+            _includeDisplay = ActiveBenchQa.IncludeDisplay;
+        }
+    }
+
     private void OnBenchStateChanged()
     {
+        SyncActiveBenchOptions();
         var isRunning = ActiveBenchQa.IsRunning;
         if (_wasBenchRunning && !isRunning)
         {

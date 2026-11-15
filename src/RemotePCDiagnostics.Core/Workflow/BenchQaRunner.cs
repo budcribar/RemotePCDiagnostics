@@ -42,6 +42,12 @@ public sealed class BenchQaRunner(
     public int TotalSteps { get; private set; }
     public string? LastSavedCertificatePath { get; private set; }
 
+    public bool IncludeStress { get; private set; } = true;
+    public bool IncludeAudioCamera { get; private set; } = true;
+    public bool IncludeSecurityAudit { get; private set; }
+    public bool IncludeKeyboard { get; private set; }
+    public bool IncludeDisplay { get; private set; }
+
     public double ProgressFraction =>
         TotalSteps <= 0 ? 0.0 : Math.Clamp((double)CompletedSteps / TotalSteps, 0.0, 1.0);
 
@@ -71,6 +77,12 @@ public sealed class BenchQaRunner(
 
         if (Interlocked.CompareExchange(ref _running, 1, 0) != 0)
             return;
+
+        IncludeStress = includeStress;
+        IncludeAudioCamera = includeAudioCamera;
+        IncludeSecurityAudit = includeSecurityAudit;
+        IncludeKeyboard = includeKeyboard;
+        IncludeDisplay = includeDisplay;
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         lock (_gate) _cts = cts;
