@@ -154,8 +154,7 @@ try {
   await page.getByTestId('branding-title').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('bench-qa-start').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('physical-qa-card').waitFor({ state: 'visible', timeout: 15_000 });
-  await page.getByTestId('relay-server-url').waitFor({ state: 'visible', timeout: 15_000 });
-  await page.getByTestId('relay-api-key').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('relay-publish-card').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('publish-hosted-cert').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('qa-preview-frame').waitFor({ state: 'visible', timeout: 15_000 });
   console.log('QA Certificate ID:', await page.getByTestId('qa-live-id').innerText());

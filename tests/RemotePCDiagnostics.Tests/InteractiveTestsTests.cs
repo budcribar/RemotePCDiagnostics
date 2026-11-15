@@ -136,6 +136,26 @@ public class InteractiveTestsTests
         Assert.Contains("data-testid=\"branding-portal-btn\"", content);
         Assert.Contains("data-testid=\"branding-admin-link\"", content);
         Assert.Contains("data-testid=\"branding-card\"", content);
+
+        // Relay card should not contain manual inputs for server URL, group slug, or API key
+        Assert.DoesNotContain("data-testid=\"relay-server-url\"", content);
+        Assert.DoesNotContain("data-testid=\"relay-group-slug\"", content);
+        Assert.DoesNotContain("data-testid=\"relay-api-key\"", content);
+
+        // Certificate card should not contain redundant Checks or Stress tests nav buttons
+        Assert.DoesNotContain("href=\"checks\"", content);
+        Assert.DoesNotContain("href=\"stress\"", content);
+
+        // Save certificate initiates browser file download in remote display
+        Assert.Contains("rpdSession.saveAsFile", content);
+
+        // dialogs.js provides saveAsFile helper
+        var dialogsJsPath = Path.Combine(FindRepoRoot(), "src", "RemotePCDiagnostics.UI", "wwwroot", "dialogs.js");
+        Assert.True(File.Exists(dialogsJsPath));
+        var jsContent = File.ReadAllText(dialogsJsPath);
+        Assert.Contains("function saveAsFile(", jsContent);
+        Assert.Contains("window.saveAsFile = saveAsFile", jsContent);
+        Assert.Contains("saveAsFile,", jsContent);
     }
 
     private static string FindRepoRoot()

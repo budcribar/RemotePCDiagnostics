@@ -140,8 +140,34 @@
             const s = window.RemoteControl.getState();
             if (s && typeof s.isOwner === 'boolean') return !s.isOwner;
         }
+        if (!document.documentElement.classList.contains('rpd-desktop-host') && !(window.chrome && window.chrome.webview)) {
+            return true;
+        }
         return false;
     }
+
+    function saveAsFile(filename, content, mimeType) {
+        try {
+            const type = mimeType || 'text/html;charset=utf-8';
+            const blob = new Blob([content], { type: type });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename || 'qa-certificate.html';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }, 1000);
+            return true;
+        } catch (e) {
+            console.error('saveAsFile failed:', e);
+            return false;
+        }
+    }
+
+    window.saveAsFile = saveAsFile;
 
     function getControlInfo() {
         const isRemote = isRemoteDisplay();
@@ -215,6 +241,7 @@
 
     window.rpdSession = {
         isRemoteDisplay,
+        saveAsFile,
         getControlInfo,
         releaseControlToLocal,
         subscribeControl: (dotNetRef) => {
