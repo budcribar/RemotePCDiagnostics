@@ -339,12 +339,10 @@ else
         get
         {
             var uri = EffectiveRelayUri;
-            if (uri is not null)
-            {
-                var baseStr = uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
-                return $"{baseStr}/shop/branding";
-            }
-            return "https://admin.remoteblazorwebview.com/shop/branding";
+            var baseStr = uri is not null
+                ? ShopRelayClient.ShopApiBaseUrl(uri).TrimEnd('/')
+                : ShopRelayClient.DefaultShopPortalUrl;
+            return $"{baseStr}/shop#branding";
         }
     }
 

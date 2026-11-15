@@ -12,7 +12,7 @@
         Description="Remote PC Diagnostics Windows Service Agent"
         Manufacturer="Remote PC Diagnostics" />
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Icon Id="DiagnosticsIcon.ico" SourceFile="$(var.IconPath)" />
@@ -62,7 +62,7 @@
         DllEntry="WixQuietExec"
         Execute="deferred"
         Impersonate="no"
-        Return="check" />
+        Return="ignore" />
 
     <InstallExecuteSequence>
       <Custom Action="UninstallAgentService" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
