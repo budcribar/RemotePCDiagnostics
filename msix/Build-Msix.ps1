@@ -58,16 +58,16 @@ if ($FourPartVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') {
 }
 
 if ([string]::IsNullOrWhiteSpace($IdentityName)) {
-    $IdentityName = if ($env:MSIX_IDENTITY_NAME) { $env:MSIX_IDENTITY_NAME.Trim() } else { 'BudCribar.RemotePCDiagnostics' }
+    $IdentityName = if ($env:MSIX_IDENTITY_NAME) { $env:MSIX_IDENTITY_NAME.Trim() } else { 'PeakSoftwareConsultingLLC.RemotePCDiagnostics' }
 }
 if ([string]::IsNullOrWhiteSpace($Publisher)) {
-    $Publisher = if ($env:MSIX_PUBLISHER) { $env:MSIX_PUBLISHER.Trim() } else { 'CN=BudCribar' }
+    $Publisher = if ($env:MSIX_PUBLISHER) { $env:MSIX_PUBLISHER.Trim() } else { 'CN=0A440CA9-6893-4009-B5DC-4F514B6B2F19' }
 }
 if ([string]::IsNullOrWhiteSpace($DisplayName)) {
     $DisplayName = if ($env:MSIX_DISPLAY_NAME) { $env:MSIX_DISPLAY_NAME.Trim() } else { 'Remote PC Diagnostics' }
 }
 if ([string]::IsNullOrWhiteSpace($PublisherDisplayName)) {
-    $PublisherDisplayName = if ($env:MSIX_PUBLISHER_DISPLAY_NAME) { $env:MSIX_PUBLISHER_DISPLAY_NAME.Trim() } else { 'Bud Cribar' }
+    $PublisherDisplayName = if ($env:MSIX_PUBLISHER_DISPLAY_NAME) { $env:MSIX_PUBLISHER_DISPLAY_NAME.Trim() } else { 'Peak Software Consulting LLC' }
 }
 
 if ([string]::IsNullOrWhiteSpace($StageDir)) {
