@@ -96,10 +96,10 @@ try {
   await resetMainScroll();
   await capture1080p('01-dashboard-overview.png');
 
-  // 2) 02-bench-qa-and-qr-certificate.png — /certificates showing Shop Branding, Physical Keyboard/Display QA, and Live Buyer QR Certificate preview
+  // 2) 02-bench-qa-and-qr-certificate.png — /certificates showing 10-Minute Bench QA, Shop Branding, and Live Buyer QR Certificate preview
   await page.getByTestId('nav-certificates').click();
   await page.getByTestId('branding-title').waitFor({ state: 'visible', timeout: 15_000 });
-  await page.getByTestId('physical-qa-card').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('bench-qa-banner').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('branding-card').waitFor({ state: 'visible', timeout: 15_000 });
   await page.getByTestId('qa-preview-frame').waitFor({ state: 'visible', timeout: 15_000 });
 
@@ -108,26 +108,27 @@ try {
   await page.getByTestId('branding-phone').fill('(512) 555-0194');
   await page.getByTestId('branding-website').fill('https://apexrefurb.example');
   await page.getByTestId('branding-warranty').fill('Backed by our 90-Day Parts & Labor Hardware Warranty.');
-  await page.getByTestId('keyboard-pass').click();
-  await page.getByTestId('display-pass').click();
-  // Collapse the form inputs into the compact summary ("Shop branding & warranty settings — Apex Refurb & PC Repair")
-  // so Physical Keyboard/Display QA, Shop Branding, and the Live Buyer QR Certificate preview all fit in one 1080p frame.
-  await page.locator('[data-testid="branding-card"] > summary').click();
-  await sleep(350);
+  // Collapse the form inputs into the compact summary ("Offline / local bench configuration (optional) — Apex Refurb & PC Repair")
+  // so Bench QA banner, Shop Branding, and the Live Buyer QR Certificate preview all fit in one 1080p frame.
+  const isOpen = await page.locator('[data-testid="branding-card"]').evaluate(el => el.hasAttribute('open')).catch(() => false);
+  if (isOpen) {
+    await page.locator('[data-testid="branding-card"] > summary').click();
+    await sleep(350);
+  }
 
   const bounds = await page.evaluate(() => {
     const main = document.querySelector('main.content');
-    const phys = document.querySelector('[data-testid="physical-qa-card"]');
+    const banner = document.querySelector('[data-testid="bench-qa-banner"]');
     const brand = document.querySelector('[data-testid="branding-card"]');
     const cert = document.querySelector('[data-testid="qa-cert-card"]');
     const frame = document.querySelector('[data-testid="qa-preview-frame"]');
-    if (!main || !phys || !brand || !cert || !frame) return null;
+    if (!main || !banner || !brand || !cert || !frame) return null;
     window.scrollTo(0, 0);
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
     main.scrollTop = 0;
     // Closed-loop scroll adjustment so qa-preview-frame lands at y=720 (~360px of Live Buyer QR Certificate
-    // visible on the lower third while ~225px of Physical Keyboard/Display QA + Shop Branding sit above it).
+    // visible on the lower third while Bench QA banner + Shop Branding sit above it).
     for (let i = 0; i < 6; i++) {
       const delta = Math.round(frame.getBoundingClientRect().top - 720);
       if (Math.abs(delta) <= 2) break;
@@ -135,12 +136,12 @@ try {
       main.scrollTop = Math.max(0, prev + delta);
       if (main.scrollTop === prev) break;
     }
-    const pr = phys.getBoundingClientRect();
+    const bnr = banner.getBoundingClientRect();
     const br = brand.getBoundingClientRect();
     const fr = frame.getBoundingClientRect();
     return {
       scrollTop: Math.round(main.scrollTop),
-      physBottom: Math.round(pr.bottom),
+      bannerBottom: Math.round(bnr.bottom),
       brandTop: Math.round(br.top),
       brandBottom: Math.round(br.bottom),
       frameTop: Math.round(fr.top),
@@ -148,19 +149,17 @@ try {
     };
   });
   console.log('/certificates screenshot framing bounds:', JSON.stringify(bounds));
-  if (!bounds || bounds.physBottom < 180 || bounds.brandTop < 50 || bounds.frameTop > 850) {
+  if (!bounds || bounds.brandTop < 50 || bounds.frameTop > 850) {
     throw new Error(`Unexpected /certificates screenshot framing bounds: ${JSON.stringify(bounds)}`);
   }
   try {
     await capture1080p('02-bench-qa-and-qr-certificate.png');
   } finally {
-    const isOpen = await page.locator('[data-testid="branding-card"]').evaluate(el => el.hasAttribute('open')).catch(() => true);
-    if (!isOpen) {
+    const openAfter = await page.locator('[data-testid="branding-card"]').evaluate(el => el.hasAttribute('open')).catch(() => true);
+    if (!openAfter) {
       await page.locator('[data-testid="branding-card"] > summary').click().catch(() => {});
     }
     await page.getByTestId('branding-clear').click().catch(() => {});
-    await page.getByTestId('keyboard-reset').click().catch(() => {});
-    await page.getByTestId('display-reset').click().catch(() => {});
     await resetMainScroll();
   }
 

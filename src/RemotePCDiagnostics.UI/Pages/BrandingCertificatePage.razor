@@ -129,82 +129,82 @@ else
             </a>
         </div>
     </section>
-
-    <details class="card wf-section" open data-testid="branding-card" style="margin-bottom: 16px">
-        <summary style="cursor:pointer;font-weight:600;padding:4px 0" data-testid="branding-card-summary">
-            Offline / local bench configuration (optional)
-            @if (!string.IsNullOrWhiteSpace(_shopName)) { <span class="meta"> — @_shopName</span> }
-            else { <span class="meta"> — enter details manually if offline</span> }
-        </summary>
-        <div style="margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 16px;">
-            <label class="wf-field" style="flex-direction:column;align-items:stretch">
-                <span class="meta">Shop / business name</span>
-                <input data-testid="branding-shop-name" @bind="_shopName" @bind:event="oninput" maxlength="120" placeholder="e.g. Acme PC Repair &amp; Refurb" style="width:100%" />
-            </label>
-            <label class="wf-field" style="flex-direction:column;align-items:stretch">
-                <span class="meta">Technician name</span>
-                <input data-testid="branding-tech-name" @bind="_techName" @bind:event="oninput" maxlength="80" placeholder="e.g. Alex Rivera" style="width:100%" />
-            </label>
-            <label class="wf-field" style="flex-direction:column;align-items:stretch">
-                <span class="meta">Phone</span>
-                <input data-testid="branding-phone" @bind="_phone" @bind:event="oninput" maxlength="60" placeholder="(555) 019-2834" style="width:100%" />
-            </label>
-            <label class="wf-field" style="flex-direction:column;align-items:stretch">
-                <span class="meta">Email</span>
-                <input data-testid="branding-email" @bind="_email" @bind:event="oninput" maxlength="120" placeholder="service@acmepc.example" style="width:100%" />
-            </label>
-            <label class="wf-field" style="flex-direction:column;align-items:stretch">
-                <span class="meta">Website</span>
-                <input data-testid="branding-website" @bind="_website" @bind:event="oninput" maxlength="200" placeholder="https://acmepc.example" style="width:100%" />
-            </label>
-            <label class="wf-field" style="flex-direction:column;align-items:stretch">
-                <span class="meta">Location / address</span>
-                <input data-testid="branding-address" @bind="_address" @bind:event="oninput" maxlength="200" placeholder="120 Main St, Suite B" style="width:100%" />
-            </label>
-        </div>
-
-        <div style="margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px;">
-            <label class="meta">
-                Shop logo (PNG, JPEG, WebP, or GIF, up to 55 KB — embedded offline in HTML/PDF):
-                <InputFile OnChange="OnLogoSelected" accept="image/png,image/jpeg,image/webp,image/gif" data-testid="branding-logo-input" />
-            </label>
-            @if (ShopBranding.SanitizeLogoDataUri(_logoDataUri) is { } safeLogo)
-            {
-                <img src="@safeLogo" alt="Shop logo preview" data-testid="branding-logo-preview" style="max-height:42px;max-width:140px;object-fit:contain;border:1px solid var(--border);border-radius:6px;padding:2px;background:#fff" />
-                <button type="button" class="btn-small" data-testid="branding-logo-clear" @onclick="ClearLogo">Remove logo</button>
-            }
-        </div>
-        @if (_logoError is not null)
-        {
-            <p class="notice notice-error" role="alert" data-testid="branding-logo-error">@_logoError</p>
-        }
-
-        <div style="margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px 16px;">
-            <label style="display:flex;flex-direction:column;gap:4px">
-                <span class="meta">Warranty / return policy footer (shown on service reports &amp; QA certificates)</span>
-                <input data-testid="branding-warranty" @bind="_warrantyFooter" @bind:event="oninput" maxlength="500" placeholder="e.g. Backed by our 90-Day Parts &amp; Labor Warranty." style="width:100%" />
-            </label>
-            <label style="display:flex;flex-direction:column;gap:4px">
-                <span class="meta">Hosted QR verification base URL (optional)</span>
-                <input data-testid="branding-verify-url" @bind="_verificationBaseUrl" @bind:event="oninput" maxlength="200" placeholder="Leave blank for offline self-verifying QR payload" style="width:100%" />
-            </label>
-        </div>
-
-        <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px">
-            <span class="meta">Technician QA / service notes</span>
-            <textarea data-testid="branding-notes" @bind="_techNotes" @bind:event="oninput" rows="2" maxlength="2000" placeholder="Optional bench summary (e.g. thermal paste replaced, BIOS updated, passed 25-min extended burn-in)." style="width:100%;font-family:inherit;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit"></textarea>
-        </label>
-
-        <div class="toolbar" style="margin-top: 12px">
-            <button type="button" class="btn btn-primary" data-testid="branding-save" @onclick="SaveBranding">Save shop branding</button>
-            <button type="button" class="btn btn-outline" data-testid="branding-clear" @onclick="ResetBranding">Clear branding</button>
-            @if (_statusMessage is not null)
-            {
-                <span class="meta" data-testid="branding-status">@_statusMessage</span>
-            }
-        </div>
-    </details>
 }
+
+<details class="card wf-section" open="@(!HasConfiguredBranding)" data-testid="branding-card" style="margin-bottom: 16px">
+    <summary style="cursor:pointer;font-weight:600;padding:4px 0" data-testid="branding-card-summary">
+        Offline / local bench configuration (optional)
+        @if (!string.IsNullOrWhiteSpace(_shopName)) { <span class="meta"> — @_shopName</span> }
+        else { <span class="meta"> — enter details manually if offline</span> }
+    </summary>
+    <div style="margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 16px;">
+        <label class="wf-field" style="flex-direction:column;align-items:stretch">
+            <span class="meta">Shop / business name</span>
+            <input data-testid="branding-shop-name" @bind="_shopName" @bind:event="oninput" maxlength="120" placeholder="e.g. Acme PC Repair &amp; Refurb" style="width:100%" />
+        </label>
+        <label class="wf-field" style="flex-direction:column;align-items:stretch">
+            <span class="meta">Technician name</span>
+            <input data-testid="branding-tech-name" @bind="_techName" @bind:event="oninput" maxlength="80" placeholder="e.g. Alex Rivera" style="width:100%" />
+        </label>
+        <label class="wf-field" style="flex-direction:column;align-items:stretch">
+            <span class="meta">Phone</span>
+            <input data-testid="branding-phone" @bind="_phone" @bind:event="oninput" maxlength="60" placeholder="(555) 019-2834" style="width:100%" />
+        </label>
+        <label class="wf-field" style="flex-direction:column;align-items:stretch">
+            <span class="meta">Email</span>
+            <input data-testid="branding-email" @bind="_email" @bind:event="oninput" maxlength="120" placeholder="service@acmepc.example" style="width:100%" />
+        </label>
+        <label class="wf-field" style="flex-direction:column;align-items:stretch">
+            <span class="meta">Website</span>
+            <input data-testid="branding-website" @bind="_website" @bind:event="oninput" maxlength="200" placeholder="https://acmepc.example" style="width:100%" />
+        </label>
+        <label class="wf-field" style="flex-direction:column;align-items:stretch">
+            <span class="meta">Location / address</span>
+            <input data-testid="branding-address" @bind="_address" @bind:event="oninput" maxlength="200" placeholder="120 Main St, Suite B" style="width:100%" />
+        </label>
+    </div>
+
+    <div style="margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px;">
+        <label class="meta">
+            Shop logo (PNG, JPEG, WebP, or GIF, up to 55 KB — embedded offline in HTML/PDF):
+            <InputFile OnChange="OnLogoSelected" accept="image/png,image/jpeg,image/webp,image/gif" data-testid="branding-logo-input" />
+        </label>
+        @if (ShopBranding.SanitizeLogoDataUri(_logoDataUri) is { } offlineLogo)
+        {
+            <img src="@offlineLogo" alt="Shop logo preview" data-testid="branding-logo-preview" style="max-height:42px;max-width:140px;object-fit:contain;border:1px solid var(--border);border-radius:6px;padding:2px;background:#fff" />
+            <button type="button" class="btn-small" data-testid="branding-logo-clear" @onclick="ClearLogo">Remove logo</button>
+        }
+    </div>
+    @if (_logoError is not null)
+    {
+        <p class="notice notice-error" role="alert" data-testid="branding-logo-error">@_logoError</p>
+    }
+
+    <div style="margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px 16px;">
+        <label style="display:flex;flex-direction:column;gap:4px">
+            <span class="meta">Warranty / return policy footer (shown on service reports &amp; QA certificates)</span>
+            <input data-testid="branding-warranty" @bind="_warrantyFooter" @bind:event="oninput" maxlength="500" placeholder="e.g. Backed by our 90-Day Parts &amp; Labor Warranty." style="width:100%" />
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px">
+            <span class="meta">Hosted QR verification base URL (optional)</span>
+            <input data-testid="branding-verify-url" @bind="_verificationBaseUrl" @bind:event="oninput" maxlength="200" placeholder="Leave blank for offline self-verifying QR payload" style="width:100%" />
+        </label>
+    </div>
+
+    <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px">
+        <span class="meta">Technician QA / service notes</span>
+        <textarea data-testid="branding-notes" @bind="_techNotes" @bind:event="oninput" rows="2" maxlength="2000" placeholder="Optional bench summary (e.g. thermal paste replaced, BIOS updated, passed 25-min extended burn-in)." style="width:100%;font-family:inherit;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit"></textarea>
+    </label>
+
+    <div class="toolbar" style="margin-top: 12px">
+        <button type="button" class="btn btn-primary" data-testid="branding-save" @onclick="SaveBranding">Save shop branding</button>
+        <button type="button" class="btn btn-outline" data-testid="branding-clear" @onclick="ResetBranding">Clear branding</button>
+        @if (_statusMessage is not null)
+        {
+            <span class="meta" data-testid="branding-status">@_statusMessage</span>
+        }
+    </div>
+</details>
 
 <section class="card wf-section relay-publish-card" data-testid="relay-publish-card" style="margin-bottom: 16px">
     <div class="toolbar" style="margin-bottom: 6px">
