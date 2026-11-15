@@ -5,8 +5,8 @@ public static class AudioMath
 {
     /// <summary>Hard cap for any generated tone: about -12 dBFS.</summary>
     public const double MaxToneDbfs = -12;
-    /// <summary>Hard cap for the mic-to-speaker monitor gain (linear; 0.5 = -6 dB).</summary>
-    public const float MaxMonitorGain = 0.5f;
+    /// <summary>Hard cap for the mic-to-speaker monitor gain (linear; 1.0 = unity gain, 0.5 = -6 dB).</summary>
+    public const float MaxMonitorGain = 1.0f;
     public const double SilenceDbfs = -120;
 
     public static double MaxToneAmplitude => FromDbfs(MaxToneDbfs);
@@ -194,7 +194,7 @@ public sealed class HowlDetector
     public static readonly TimeSpan SustainedLoud = TimeSpan.FromMilliseconds(250);
     /// <summary>A pure sine has a crest factor of 3 dB; speech and noise are well above 8 dB.</summary>
     public const double TonalCrestDb = 4.0;
-    public const double TonalMinRmsDbfs = -30;
+    public const double TonalMinRmsDbfs = -25;
     public const double GrowthDb = 6;
     private const int GrowthBlocks = 5;
 
@@ -234,10 +234,16 @@ public sealed class HowlDetector
 public sealed class MonitorController
 {
     private readonly HowlDetector _howl;
+    private readonly float _targetGain;
     private float _gain;
     private double _peak, _sumSq;
     private long _count;
-    public MonitorController(int sampleRate, float gain) { _howl = new HowlDetector(sampleRate); _gain = AudioMath.ClampMonitorGain(gain); }
+    public MonitorController(int sampleRate, float gain)
+    {
+        _howl = new HowlDetector(sampleRate);
+        _targetGain = AudioMath.ClampMonitorGain(gain);
+        _gain = _targetGain;
+    }
 
     public float CurrentGain => _gain;
     public bool FeedbackDetected => _howl.FeedbackDetected;
@@ -253,7 +259,10 @@ public sealed class MonitorController
         switch (_howl.Feed(mic))
         {
             case HowlAction.Stop: _gain = 0; break;
-            case HowlAction.Duck: _gain = Math.Max(0.05f, _gain * 0.5f); Ducked = true; break;
+            case HowlAction.Duck: _gain = Math.Max(0.1f, _gain * 0.7f); Ducked = true; break;
+            case HowlAction.None:
+                if (_gain < _targetGain) _gain = Math.Min(_targetGain, _gain + 0.05f);
+                break;
         }
         return _gain;
     }

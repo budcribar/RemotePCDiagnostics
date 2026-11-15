@@ -83,6 +83,35 @@ public class InteractiveTestsTests
         Assert.Contains("href=\"interactive\"", content);
     }
 
+    [Fact]
+    public void InteractiveTestsPage_MarkupContainsDisabledStateAndTooltipForRemoteDisplay()
+    {
+        var pagePath = Path.Combine(FindRepoRoot(), "src", "RemotePCDiagnostics.UI", "Pages", "InteractiveTestsPage.razor");
+        Assert.True(File.Exists(pagePath));
+        var content = File.ReadAllText(pagePath);
+
+        const string expectedTooltip = "Interactive tests must run locally on the physical machine";
+        Assert.Contains(expectedTooltip, content);
+        Assert.Contains("disabled=\"@(_selected.Count == 0 || _isRemoteDisplay)\"", content);
+        Assert.Contains("disabled=\"@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)\"", content);
+        Assert.Contains("Remote technician has control. Release control to the local user", content);
+        Assert.Contains("Local user has control of the session", content);
+    }
+
+    [Fact]
+    public void PhysicalBenchQaCard_MarkupContainsDisabledStateAndTooltipForRemoteDisplay()
+    {
+        var cardPath = Path.Combine(FindRepoRoot(), "src", "RemotePCDiagnostics.UI", "Shared", "PhysicalBenchQaCard.razor");
+        Assert.True(File.Exists(cardPath));
+        var content = File.ReadAllText(cardPath);
+
+        const string expectedTooltip = "Interactive tests must run locally on the physical machine";
+        Assert.Contains(expectedTooltip, content);
+        Assert.Contains("data-testid=\"keyboard-capture-toggle\"", content);
+        Assert.Contains("data-testid=\"display-test-launch\"", content);
+        Assert.Contains("disabled=\"@IsRemoteDisplay\"", content);
+    }
+
     private static string FindRepoRoot()
     {
         for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)

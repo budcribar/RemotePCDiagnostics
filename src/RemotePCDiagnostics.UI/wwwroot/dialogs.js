@@ -132,6 +132,102 @@
         }
     }
 
+    function isRemoteDisplay() {
+        if (window.RemoteBlazor && typeof window.RemoteBlazor.isOwner === 'boolean') {
+            return !window.RemoteBlazor.isOwner;
+        }
+        if (window.RemoteControl && typeof window.RemoteControl.getState === 'function') {
+            const s = window.RemoteControl.getState();
+            if (s && typeof s.isOwner === 'boolean') return !s.isOwner;
+        }
+        return false;
+    }
+
+    function getControlInfo() {
+        const isRemote = isRemoteDisplay();
+        let hasRemoteSession = false;
+        let technicianHasControl = false;
+        let localHasControl = true;
+
+        if (window.RemoteControl && typeof window.RemoteControl.getState === 'function') {
+            const state = window.RemoteControl.getState();
+            if (state && Array.isArray(state.participants) && state.participants.length > 0) {
+                hasRemoteSession = state.participants.some(p => !p.owner);
+                const primary = state.participants.find(p => p.primary);
+                if (primary) {
+                    technicianHasControl = !primary.owner;
+                    localHasControl = primary.owner;
+                }
+            } else if (state && typeof state.iHaveControl === 'boolean') {
+                if (state.isOwner) {
+                    localHasControl = state.iHaveControl;
+                    technicianHasControl = !state.iHaveControl;
+                } else {
+                    technicianHasControl = state.iHaveControl;
+                    localHasControl = !state.iHaveControl;
+                }
+            }
+        }
+
+        if (!hasRemoteSession && document.querySelector('.rbwv-control-status')) {
+            hasRemoteSession = true;
+        }
+
+        return {
+            isRemoteDisplay: isRemote,
+            hasRemoteSession: hasRemoteSession,
+            technicianHasControl: technicianHasControl,
+            localHasControl: localHasControl
+        };
+    }
+
+    function releaseControlToLocal() {
+        if (window.RemoteControl && typeof window.RemoteControl.getState === 'function') {
+            const state = window.RemoteControl.getState();
+            if (state && Array.isArray(state.participants)) {
+                const owner = state.participants.find(p => p.owner);
+                if (owner && typeof window.RemoteControl.requestPrimary === 'function') {
+                    window.RemoteControl.requestPrimary(owner.id);
+                    return true;
+                }
+            }
+        }
+        const giveBtn = document.querySelector('.rbwv-control-give');
+        if (giveBtn) {
+            giveBtn.click();
+            return true;
+        }
+        return false;
+    }
+
+    const controlSubscribers = new Set();
+    function notifyControlSubscribers() {
+        if (controlSubscribers.size === 0) return;
+        const info = getControlInfo();
+        for (const sub of Array.from(controlSubscribers)) {
+            try {
+                sub.invokeMethodAsync('OnControlStateChanged', info);
+            } catch (e) {
+                controlSubscribers.delete(sub);
+            }
+        }
+    }
+
+    window.rpdSession = {
+        isRemoteDisplay,
+        getControlInfo,
+        releaseControlToLocal,
+        subscribeControl: (dotNetRef) => {
+            controlSubscribers.add(dotNetRef);
+            try {
+                dotNetRef.invokeMethodAsync('OnControlStateChanged', getControlInfo());
+            } catch (e) { }
+        },
+        unsubscribeControl: (dotNetRef) => {
+            controlSubscribers.delete(dotNetRef);
+        }
+    };
+
     let voiceHooked = false;
     function hookVoice() {
         if (voiceHooked) return;
@@ -153,6 +249,7 @@
             try {
                 window.RemoteControl.subscribe(() => {
                     updateControlStatus();
+                    notifyControlSubscribers();
                 });
             } catch (e) { }
         }
@@ -163,6 +260,7 @@
         markDesktopHost();
         updateVoiceStatus();
         updateControlStatus();
+        notifyControlSubscribers();
         hookVoice();
         hookControl();
     }).observe(document.body, { childList: true, subtree: true, characterData: true });

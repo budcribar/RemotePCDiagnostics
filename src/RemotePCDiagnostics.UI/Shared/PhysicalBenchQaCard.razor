@@ -20,6 +20,8 @@
                 <button type="button"
                         class="btn-small @(_capturingKeys ? "btn-primary" : "")"
                         data-testid="keyboard-capture-toggle"
+                        disabled="@IsRemoteDisplay"
+                        title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
                         @onclick="ToggleKeyCapture">
                     @(_capturingKeys ? "Capturing keys (click to release)" : "Capture keys")
                 </button>
@@ -137,7 +139,11 @@
             </div>
 
             <div style="margin-bottom: 8px">
-                <button type="button" class="btn btn-outline" style="width:auto" data-testid="display-test-launch" @onclick="LaunchDisplayOverlay">
+                <button type="button" class="btn btn-outline" style="width:auto"
+                        data-testid="display-test-launch"
+                        disabled="@IsRemoteDisplay"
+                        title="@(IsRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
+                        @onclick="LaunchDisplayOverlay">
                     <Icon Name="eye" Size="14" /> Launch full-screen color check
                 </button>
             </div>
@@ -223,6 +229,7 @@ else
     [Parameter] public PhysicalBenchQaService? Service { get; set; }
     [Parameter] public string? FilterSection { get; set; }
     [Parameter] public bool CardShell { get; set; } = true;
+    [Parameter] public bool IsRemoteDisplay { get; set; }
 
     private readonly PhysicalBenchQaService _fallbackService = new();
     private PhysicalBenchQaService? _subscribedService;

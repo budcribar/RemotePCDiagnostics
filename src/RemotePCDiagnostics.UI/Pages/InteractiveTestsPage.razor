@@ -22,7 +22,7 @@
     var m2sRunning = m2sResult.Status == DiagnosticStatus.Running;
 
     var kbSnap = ActivePhysicalQa.Current;
-    var anyRunning = camRunning || s2mRunning || m2sRunning;
+    var anyRunning = _isBatchRunning || camRunning || s2mRunning || m2sRunning;
 
     var allSelected = _selected.Count == AllTestIds.Length;
     var mixedSelected = _selected.Count > 0 && _selected.Count < AllTestIds.Length;
@@ -41,10 +41,23 @@
             <div class="banner-sub" data-testid="interactive-banner-desc">
                 Select and run interactive hardware tests (keyboard matrix, LCD uniformity &amp; touch digitizer, live webcam feed, and microphone/speaker loopback).
             </div>
-            @if (Session.Mode == SessionMode.Remote)
+            @if (Session.Mode == SessionMode.Remote || _hasRemoteSession)
             {
                 <div class="banner-note" data-testid="interactive-remote-note">
-                    Remote session active. If the technician has control, release control to the local user so they can interact with the physical hardware.
+                    @if (_technicianHasControl)
+                    {
+                        <span>Remote technician has control. Release control to the local user so they can interact with the physical hardware.</span>
+                        @if (_isRemoteDisplay)
+                        {
+                            <button type="button" class="btn btn-small btn-primary" style="margin-left: 8px" data-testid="interactive-release-control" @onclick="ReleaseControlAsync">
+                                Release control
+                            </button>
+                        }
+                    }
+                    else
+                    {
+                        <span>Local user has control of the session to interact with the physical hardware.</span>
+                    }
                 </div>
             }
         </div>
@@ -73,7 +86,9 @@
                         }
                         else
                         {
-                            <button class="btn btn-primary" data-testid="interactive-run-selected" disabled="@(_selected.Count == 0)"
+                            <button class="btn btn-primary" data-testid="interactive-run-selected"
+                                    disabled="@(_selected.Count == 0 || _isRemoteDisplay)"
+                                    title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
                                     @onclick="RunSelectedAsync">
                                 <Icon Name="play" Size="12" /> Run selected (@_selected.Count)
                             </button>
@@ -222,11 +237,11 @@
         <section class="ct-detail" aria-label="Interactive test details" data-testid="interactive-detail">
             @if (_selectedTestId == "keyboard")
             {
-                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="keyboard" CardShell="false" />
+                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="keyboard" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" />
             }
             else if (_selectedTestId == "display")
             {
-                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="display" CardShell="false" />
+                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="display" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" />
             }
             else if (_selectedTestId == "webcam")
             {
@@ -243,7 +258,8 @@
                             <button type="button"
                                     class="btn-small btn-primary"
                                     data-testid="webcam-start-btn"
-                                    disabled="@Diagnostics.IsStressSuiteRunning"
+                                    disabled="@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)"
+                                    title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
                                     @onclick="StartWebcamAsync">
                                 @(camResult.Status == DiagnosticStatus.NotRun ? "Start test" : "Run again")
                             </button>
@@ -343,7 +359,8 @@
                             <button type="button"
                                     class="btn-small btn-primary"
                                     data-testid="speakertomic-start-btn"
-                                    disabled="@Diagnostics.IsStressSuiteRunning"
+                                    disabled="@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)"
+                                    title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
                                     @onclick="StartSpeakerToMicAsync">
                                 @(s2mResult.Status == DiagnosticStatus.NotRun ? "Start test" : "Run again")
                             </button>
@@ -430,7 +447,8 @@
                             <button type="button"
                                     class="btn-small btn-primary"
                                     data-testid="mictospeaker-start-btn"
-                                    disabled="@Diagnostics.IsStressSuiteRunning"
+                                    disabled="@(Diagnostics.IsStressSuiteRunning || _isRemoteDisplay)"
+                                    title="@(_isRemoteDisplay ? "Interactive tests must run locally on the physical machine" : null)"
                                     @onclick="StartMicToSpeakerAsync">
                                 @(m2sResult.Status == DiagnosticStatus.NotRun ? "Start monitor" : "Run again")
                             </button>
@@ -548,6 +566,22 @@
     private bool _audioHalfDuplex;
     private string _audioNotes = "";
 
+    public sealed class RemoteControlInfo
+    {
+        public bool IsRemoteDisplay { get; set; }
+        public bool HasRemoteSession { get; set; }
+        public bool TechnicianHasControl { get; set; }
+        public bool LocalHasControl { get; set; }
+    }
+
+    private DotNetObjectReference<InteractiveTestsPage>? _dotNetRef;
+    private bool _isRemoteDisplay;
+    private bool _hasRemoteSession;
+    private bool _technicianHasControl;
+    private bool _localHasControl = true;
+    private bool _isBatchRunning;
+    private CancellationTokenSource? _batchCts;
+
     protected override void OnInitialized()
     {
         base.OnInitialized();
@@ -558,6 +592,42 @@
     {
         if (!firstRender) return;
         try { await JS.InvokeVoidAsync("rpdSplit.init"); } catch { }
+        try
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("rpdSession.subscribeControl", _dotNetRef);
+        }
+        catch { }
+    }
+
+    [JSInvokable]
+    public void OnControlStateChanged(RemoteControlInfo? info)
+    {
+        if (info is null) return;
+        _isRemoteDisplay = info.IsRemoteDisplay;
+        _hasRemoteSession = info.HasRemoteSession;
+        _technicianHasControl = info.TechnicianHasControl;
+        _localHasControl = info.LocalHasControl;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ReleaseControlAsync()
+    {
+        try { await JS.InvokeVoidAsync("rpdSession.releaseControlToLocal"); } catch { }
+    }
+
+    public override void Dispose()
+    {
+        base.Dispose();
+        _batchCts?.Cancel();
+        _batchCts?.Dispose();
+        _batchCts = null;
+        if (_dotNetRef is not null)
+        {
+            try { _ = JS.InvokeVoidAsync("rpdSession.unsubscribeControl", _dotNetRef); } catch { }
+            _dotNetRef.Dispose();
+            _dotNetRef = null;
+        }
     }
 
     private void SelectTest(string id)
@@ -584,35 +654,60 @@
 
     private async Task RunSelectedAsync()
     {
-        if (Diagnostics.IsStressSuiteRunning) return;
+        if (Diagnostics.IsStressSuiteRunning || _isBatchRunning || _isRemoteDisplay) return;
 
-        if (_selected.Contains("speakertomic"))
+        _isBatchRunning = true;
+        _batchCts = new CancellationTokenSource();
+        var ct = _batchCts.Token;
+
+        try
         {
-            _selectedTestId = "speakertomic";
-            await StartSpeakerToMicAsync();
+            if (_selected.Contains("webcam") && !ct.IsCancellationRequested)
+            {
+                _selectedTestId = "webcam";
+                StateHasChanged();
+                await StartWebcamAsync();
+            }
+
+            if (_selected.Contains("speakertomic") && !ct.IsCancellationRequested)
+            {
+                _selectedTestId = "speakertomic";
+                StateHasChanged();
+                await StartSpeakerToMicAsync();
+            }
+
+            if (_selected.Contains("mictospeaker") && !ct.IsCancellationRequested)
+            {
+                _selectedTestId = "mictospeaker";
+                StateHasChanged();
+                await StartMicToSpeakerAsync();
+            }
+
+            if (!ct.IsCancellationRequested)
+            {
+                if (_selected.Contains("keyboard"))
+                {
+                    _selectedTestId = "keyboard";
+                }
+                else if (_selected.Contains("display"))
+                {
+                    _selectedTestId = "display";
+                }
+            }
         }
-        else if (_selected.Contains("webcam"))
+        catch (OperationCanceledException) { }
+        finally
         {
-            _selectedTestId = "webcam";
-            await StartWebcamAsync();
-        }
-        else if (_selected.Contains("mictospeaker"))
-        {
-            _selectedTestId = "mictospeaker";
-            await StartMicToSpeakerAsync();
-        }
-        else if (_selected.Contains("keyboard"))
-        {
-            _selectedTestId = "keyboard";
-        }
-        else if (_selected.Contains("display"))
-        {
-            _selectedTestId = "display";
+            _isBatchRunning = false;
+            _batchCts?.Dispose();
+            _batchCts = null;
+            await InvokeAsync(StateHasChanged);
         }
     }
 
     private void StopRunning()
     {
+        _batchCts?.Cancel();
         CancelWebcam();
         CancelSpeakerToMic();
         CancelMicToSpeaker();
@@ -694,15 +789,15 @@
                     var key = InstanceKeys.From(dev.Id);
                     if (!Diagnostics.InstancesOf(cam).Any(i => i.Key == key))
                         await Diagnostics.RedetectAsync();
-                    _ = Diagnostics.RunInstanceAsync(cam.Name, key);
+                    await Diagnostics.RunInstanceAsync(cam.Name, key);
                     return;
                 }
             }
-            _ = Diagnostics.RunAsync(cam.Name);
+            await Diagnostics.RunAsync(cam.Name);
         }
         else
         {
-            _ = Diagnostics.RunAsync(ModuleSlugs.Webcam);
+            await Diagnostics.RunAsync(ModuleSlugs.Webcam);
         }
     }
 
@@ -748,42 +843,40 @@
         await Diagnostics.RedetectAsync();
     }
 
-    private Task StartSpeakerToMicAsync()
+    private async Task StartSpeakerToMicAsync()
     {
-        if (Diagnostics.IsStressSuiteRunning) return Task.CompletedTask;
+        if (Diagnostics.IsStressSuiteRunning) return;
         var m = GetSpeakerToMicModule();
         if (m is not null)
         {
             m.Settings.OutputId = _selectedOutputId;
             m.Settings.InputId = _selectedInputId;
             m.Settings.HalfDuplex = _audioHalfDuplex;
-            _ = Diagnostics.RunAsync(m.Name);
+            await Diagnostics.RunAsync(m.Name);
         }
         else
         {
-            _ = Diagnostics.RunAsync(ModuleSlugs.SpeakerToMic);
+            await Diagnostics.RunAsync(ModuleSlugs.SpeakerToMic);
         }
-        return Task.CompletedTask;
     }
 
     private void CancelSpeakerToMic() => GetSpeakerToMicModule()?.Cancel();
 
-    private Task StartMicToSpeakerAsync()
+    private async Task StartMicToSpeakerAsync()
     {
-        if (Diagnostics.IsStressSuiteRunning) return Task.CompletedTask;
+        if (Diagnostics.IsStressSuiteRunning) return;
         var m = GetMicToSpeakerModule();
         if (m is not null)
         {
             m.Settings.OutputId = _selectedOutputId;
             m.Settings.InputId = _selectedInputId;
             m.Settings.HalfDuplex = _audioHalfDuplex;
-            _ = Diagnostics.RunAsync(m.Name);
+            await Diagnostics.RunAsync(m.Name);
         }
         else
         {
-            _ = Diagnostics.RunAsync(ModuleSlugs.MicToSpeaker);
+            await Diagnostics.RunAsync(ModuleSlugs.MicToSpeaker);
         }
-        return Task.CompletedTask;
     }
 
     private void CancelMicToSpeaker() => GetMicToSpeakerModule()?.Cancel();

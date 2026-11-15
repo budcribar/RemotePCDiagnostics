@@ -162,8 +162,9 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
             var micRate = 0;
             using var mic = Capture.Open(inDev, loopback: false, raw: r.RequestRawMic, log, block =>
             {
-                var gain = AudioMath.ClampMonitorGain(r.ProcessBlock(block, micRate));
-                if (gain <= 0) { stoppedEarly = true; try { stop.Cancel(); } catch { } return; }
+                var blockGain = r.ProcessBlock(block, micRate);
+                var gain = r.HalfDuplex ? 1.0f : AudioMath.ClampMonitorGain(blockGain);
+                if (!r.HalfDuplex && gain <= 0) { stoppedEarly = true; try { stop.Cancel(); } catch { } return; }
                 var scaled = new float[block.Length];
                 for (var i = 0; i < block.Length; i++) scaled[i] = block[i] * gain;
                 if (keep is not null) keep.Add(scaled);
@@ -189,6 +190,13 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
             }
             else
             {
+                // Pre-buffer a few blocks (~30-60 ms) so playback has a stable cushion and doesn't underflow at start
+                var prebufferUntil = DateTime.UtcNow.AddMilliseconds(500);
+                while (queue.Count < 3 && !linked.IsCancellationRequested && DateTime.UtcNow < prebufferUntil)
+                {
+                    await Task.Delay(10, linked.Token).ConfigureAwait(false);
+                }
+
                 float[]? cur = null; var curPos = 0; var played = 0; var fade = mic.SampleRate / 5;
                 try
                 {
@@ -197,7 +205,24 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
                         if (linked.IsCancellationRequested) return 0;
                         for (var i = 0; i < span.Length; i++)
                         {
-                            if (cur is null || curPos >= cur.Length) { if (!queue.TryDequeue(out cur)) { cur = null; span[i] = 0; continue; } curPos = 0; }
+                            if (cur is null || curPos >= cur.Length)
+                            {
+                                if (!queue.TryDequeue(out cur))
+                                {
+                                    var spun = 0;
+                                    while (!queue.TryDequeue(out cur) && spun < 10)
+                                    {
+                                        Thread.SpinWait(50);
+                                        spun++;
+                                    }
+                                    if (cur is null)
+                                    {
+                                        span[i] = 0;
+                                        continue;
+                                    }
+                                }
+                                curPos = 0;
+                            }
                             var v = cur[curPos++];
                             if (played < fade) v *= (float)(0.5 - 0.5 * Math.Cos(Math.PI * played / fade));
                             played++;
