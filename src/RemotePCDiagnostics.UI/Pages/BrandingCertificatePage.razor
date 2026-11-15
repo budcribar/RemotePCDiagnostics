@@ -65,6 +65,14 @@
             <input type="checkbox" data-testid="bench-qa-include-security" @bind="_includeSecurityAudit" disabled="@benchRunning" />
             <span>Windows security &amp; baseline audit (HardeningKitty)</span>
         </label>
+        <label class="bench-kind meta">
+            <input type="checkbox" data-testid="bench-qa-include-keyboard" @bind="_includeKeyboard" disabled="@benchRunning" />
+            <span>Physical keyboard matrix &amp; rollover check</span>
+        </label>
+        <label class="bench-kind meta">
+            <input type="checkbox" data-testid="bench-qa-include-display" @bind="_includeDisplay" disabled="@benchRunning" />
+            <span>Physical display dead-pixel &amp; touch check</span>
+        </label>
     </div>
     @if (benchRunning && ActiveBenchQa.TotalSteps > 0)
     {
@@ -78,82 +86,123 @@
     }
 </section>
 
-<PhysicalBenchQaCard Service="ActivePhysicalQa" />
+@if (benchRunning && _activeInteractiveSection is { Length: > 0 })
+{
+    <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="@_activeInteractiveSection" OnOutcomeChanged="OnBenchInteractiveOutcomeChanged" />
+}
 
-<details class="card wf-section" open data-testid="branding-card" style="margin-bottom: 16px">
-    <summary style="cursor:pointer;font-weight:600;padding:4px 0">
-        Shop branding &amp; warranty settings
-        @if (!string.IsNullOrWhiteSpace(_shopName)) { <span class="meta"> — @_shopName</span> }
-        else { <span class="meta"> — unbranded (optional)</span> }
-    </summary>
-    <div style="margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 16px;">
-        <label class="wf-field" style="flex-direction:column;align-items:stretch">
-            <span class="meta">Shop / business name</span>
-            <input data-testid="branding-shop-name" @bind="_shopName" @bind:event="oninput" maxlength="120" placeholder="e.g. Acme PC Repair &amp; Refurb" style="width:100%" />
-        </label>
-        <label class="wf-field" style="flex-direction:column;align-items:stretch">
-            <span class="meta">Technician name</span>
-            <input data-testid="branding-tech-name" @bind="_techName" @bind:event="oninput" maxlength="80" placeholder="e.g. Alex Rivera" style="width:100%" />
-        </label>
-        <label class="wf-field" style="flex-direction:column;align-items:stretch">
-            <span class="meta">Phone</span>
-            <input data-testid="branding-phone" @bind="_phone" @bind:event="oninput" maxlength="60" placeholder="(555) 019-2834" style="width:100%" />
-        </label>
-        <label class="wf-field" style="flex-direction:column;align-items:stretch">
-            <span class="meta">Email</span>
-            <input data-testid="branding-email" @bind="_email" @bind:event="oninput" maxlength="120" placeholder="service@acmepc.example" style="width:100%" />
-        </label>
-        <label class="wf-field" style="flex-direction:column;align-items:stretch">
-            <span class="meta">Website</span>
-            <input data-testid="branding-website" @bind="_website" @bind:event="oninput" maxlength="200" placeholder="https://acmepc.example" style="width:100%" />
-        </label>
-        <label class="wf-field" style="flex-direction:column;align-items:stretch">
-            <span class="meta">Location / address</span>
-            <input data-testid="branding-address" @bind="_address" @bind:event="oninput" maxlength="200" placeholder="120 Main St, Suite B" style="width:100%" />
-        </label>
-    </div>
+@if (HasConfiguredBranding)
+{
+    <section class="card wf-section shop-branded-strip" data-testid="shop-branded-strip" style="margin-bottom: 16px">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                @if (ShopBranding.SanitizeLogoDataUri(_logoDataUri) is { } safeLogo)
+                {
+                    <img src="@safeLogo" alt="Shop logo" data-testid="branding-strip-logo" style="max-height:36px;max-width:120px;object-fit:contain;border:1px solid var(--border);border-radius:6px;padding:2px;background:#fff" />
+                }
+                <div>
+                    <strong style="color: var(--ok, #10b981);" data-testid="branding-strip-summary">✓ Branded as @_shopName</strong>
+                    <span class="meta" data-testid="branding-strip-warranty"> · @_warrantyFooter</span>
+                </div>
+            </div>
+            <div>
+                <a href="@AdminPortalBrandingUrl" target="_blank" rel="noopener noreferrer" class="btn btn-outline" data-testid="branding-admin-link">
+                    <Icon Name="external-link" Size="12" /> Edit on Admin Portal
+                </a>
+            </div>
+        </div>
+    </section>
+}
+else
+{
+    <section class="banner banner-warning" data-testid="branding-unconfigured-banner" style="margin-bottom: 16px">
+        <span class="banner-icon"><Icon Name="alert" Size="20" /></span>
+        <div class="banner-text" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; width: 100%;">
+            <div>
+                <div class="banner-title" data-testid="branding-unconfigured-title">Shop branding and warranty are not configured.</div>
+                <div class="banner-sub" data-testid="branding-unconfigured-desc">Buyer certificates and service reports will generate unbranded until configured on your admin portal.</div>
+            </div>
+            <a href="@AdminPortalBrandingUrl" target="_blank" rel="noopener noreferrer" class="btn btn-primary" data-testid="branding-portal-btn">
+                <Icon Name="external-link" Size="14" /> Configure on Admin Portal
+            </a>
+        </div>
+    </section>
 
-    <div style="margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px;">
-        <label class="meta">
-            Shop logo (PNG, JPEG, WebP, or GIF, up to 55 KB — embedded offline in HTML/PDF):
-            <InputFile OnChange="OnLogoSelected" accept="image/png,image/jpeg,image/webp,image/gif" data-testid="branding-logo-input" />
-        </label>
-        @if (ShopBranding.SanitizeLogoDataUri(_logoDataUri) is { } safeLogo)
+    <details class="card wf-section" open data-testid="branding-card" style="margin-bottom: 16px">
+        <summary style="cursor:pointer;font-weight:600;padding:4px 0" data-testid="branding-card-summary">
+            Offline / local bench configuration (optional)
+            @if (!string.IsNullOrWhiteSpace(_shopName)) { <span class="meta"> — @_shopName</span> }
+            else { <span class="meta"> — enter details manually if offline</span> }
+        </summary>
+        <div style="margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 16px;">
+            <label class="wf-field" style="flex-direction:column;align-items:stretch">
+                <span class="meta">Shop / business name</span>
+                <input data-testid="branding-shop-name" @bind="_shopName" @bind:event="oninput" maxlength="120" placeholder="e.g. Acme PC Repair &amp; Refurb" style="width:100%" />
+            </label>
+            <label class="wf-field" style="flex-direction:column;align-items:stretch">
+                <span class="meta">Technician name</span>
+                <input data-testid="branding-tech-name" @bind="_techName" @bind:event="oninput" maxlength="80" placeholder="e.g. Alex Rivera" style="width:100%" />
+            </label>
+            <label class="wf-field" style="flex-direction:column;align-items:stretch">
+                <span class="meta">Phone</span>
+                <input data-testid="branding-phone" @bind="_phone" @bind:event="oninput" maxlength="60" placeholder="(555) 019-2834" style="width:100%" />
+            </label>
+            <label class="wf-field" style="flex-direction:column;align-items:stretch">
+                <span class="meta">Email</span>
+                <input data-testid="branding-email" @bind="_email" @bind:event="oninput" maxlength="120" placeholder="service@acmepc.example" style="width:100%" />
+            </label>
+            <label class="wf-field" style="flex-direction:column;align-items:stretch">
+                <span class="meta">Website</span>
+                <input data-testid="branding-website" @bind="_website" @bind:event="oninput" maxlength="200" placeholder="https://acmepc.example" style="width:100%" />
+            </label>
+            <label class="wf-field" style="flex-direction:column;align-items:stretch">
+                <span class="meta">Location / address</span>
+                <input data-testid="branding-address" @bind="_address" @bind:event="oninput" maxlength="200" placeholder="120 Main St, Suite B" style="width:100%" />
+            </label>
+        </div>
+
+        <div style="margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px;">
+            <label class="meta">
+                Shop logo (PNG, JPEG, WebP, or GIF, up to 55 KB — embedded offline in HTML/PDF):
+                <InputFile OnChange="OnLogoSelected" accept="image/png,image/jpeg,image/webp,image/gif" data-testid="branding-logo-input" />
+            </label>
+            @if (ShopBranding.SanitizeLogoDataUri(_logoDataUri) is { } safeLogo)
+            {
+                <img src="@safeLogo" alt="Shop logo preview" data-testid="branding-logo-preview" style="max-height:42px;max-width:140px;object-fit:contain;border:1px solid var(--border);border-radius:6px;padding:2px;background:#fff" />
+                <button type="button" class="btn-small" data-testid="branding-logo-clear" @onclick="ClearLogo">Remove logo</button>
+            }
+        </div>
+        @if (_logoError is not null)
         {
-            <img src="@safeLogo" alt="Shop logo preview" data-testid="branding-logo-preview" style="max-height:42px;max-width:140px;object-fit:contain;border:1px solid var(--border);border-radius:6px;padding:2px;background:#fff" />
-            <button type="button" class="btn-small" data-testid="branding-logo-clear" @onclick="ClearLogo">Remove logo</button>
+            <p class="notice notice-error" role="alert" data-testid="branding-logo-error">@_logoError</p>
         }
-    </div>
-    @if (_logoError is not null)
-    {
-        <p class="notice notice-error" role="alert" data-testid="branding-logo-error">@_logoError</p>
-    }
 
-    <div style="margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px 16px;">
-        <label style="display:flex;flex-direction:column;gap:4px">
-            <span class="meta">Warranty / return policy footer (shown on service reports &amp; QA certificates)</span>
-            <input data-testid="branding-warranty" @bind="_warrantyFooter" @bind:event="oninput" maxlength="500" placeholder="e.g. Backed by our 90-Day Parts &amp; Labor Warranty." style="width:100%" />
+        <div style="margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px 16px;">
+            <label style="display:flex;flex-direction:column;gap:4px">
+                <span class="meta">Warranty / return policy footer (shown on service reports &amp; QA certificates)</span>
+                <input data-testid="branding-warranty" @bind="_warrantyFooter" @bind:event="oninput" maxlength="500" placeholder="e.g. Backed by our 90-Day Parts &amp; Labor Warranty." style="width:100%" />
+            </label>
+            <label style="display:flex;flex-direction:column;gap:4px">
+                <span class="meta">Hosted QR verification base URL (optional)</span>
+                <input data-testid="branding-verify-url" @bind="_verificationBaseUrl" @bind:event="oninput" maxlength="200" placeholder="Leave blank for offline self-verifying QR payload" style="width:100%" />
+            </label>
+        </div>
+
+        <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px">
+            <span class="meta">Technician QA / service notes</span>
+            <textarea data-testid="branding-notes" @bind="_techNotes" @bind:event="oninput" rows="2" maxlength="2000" placeholder="Optional bench summary (e.g. thermal paste replaced, BIOS updated, passed 25-min extended burn-in)." style="width:100%;font-family:inherit;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit"></textarea>
         </label>
-        <label style="display:flex;flex-direction:column;gap:4px">
-            <span class="meta">Hosted QR verification base URL (optional)</span>
-            <input data-testid="branding-verify-url" @bind="_verificationBaseUrl" @bind:event="oninput" maxlength="200" placeholder="Leave blank for offline self-verifying QR payload" style="width:100%" />
-        </label>
-    </div>
 
-    <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px">
-        <span class="meta">Technician QA / service notes</span>
-        <textarea data-testid="branding-notes" @bind="_techNotes" @bind:event="oninput" rows="2" maxlength="2000" placeholder="Optional bench summary (e.g. thermal paste replaced, BIOS updated, passed 25-min extended burn-in)." style="width:100%;font-family:inherit;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit"></textarea>
-    </label>
-
-    <div class="toolbar" style="margin-top: 12px">
-        <button type="button" class="btn btn-primary" data-testid="branding-save" @onclick="SaveBranding">Save shop branding</button>
-        <button type="button" class="btn btn-outline" data-testid="branding-clear" @onclick="ResetBranding">Clear branding</button>
-        @if (_statusMessage is not null)
-        {
-            <span class="meta" data-testid="branding-status">@_statusMessage</span>
-        }
-    </div>
-</details>
+        <div class="toolbar" style="margin-top: 12px">
+            <button type="button" class="btn btn-primary" data-testid="branding-save" @onclick="SaveBranding">Save shop branding</button>
+            <button type="button" class="btn btn-outline" data-testid="branding-clear" @onclick="ResetBranding">Clear branding</button>
+            @if (_statusMessage is not null)
+            {
+                <span class="meta" data-testid="branding-status">@_statusMessage</span>
+            }
+        </div>
+    </details>
+}
 
 <section class="card wf-section relay-publish-card" data-testid="relay-publish-card" style="margin-bottom: 16px">
     <div class="toolbar" style="margin-bottom: 6px">
@@ -289,6 +338,26 @@
     private bool _includeStress = true;
     private bool _includeAudioCamera = true;
     private bool _includeSecurityAudit;
+    private bool _includeKeyboard;
+    private bool _includeDisplay;
+    private string? _activeInteractiveSection;
+    private TaskCompletionSource<bool>? _benchInteractiveTcs;
+
+    private bool HasConfiguredBranding => !string.IsNullOrWhiteSpace(_shopName) && !string.IsNullOrWhiteSpace(_warrantyFooter);
+
+    private string AdminPortalBrandingUrl
+    {
+        get
+        {
+            var uri = Session.ServerUri ?? (ShopRelayClient.TryParseRelayUri(_relayServerUrl, out var parsed) ? parsed : null);
+            if (uri is not null)
+            {
+                var baseStr = uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+                return $"{baseStr}/shop/branding";
+            }
+            return "https://admin.remoteblazorwebview.com/shop/branding";
+        }
+    }
 
     private DateTimeOffset _certGeneratedAt = DateTimeOffset.Now;
     private HardwareQaSnapshot? _cachedSnap;
@@ -367,6 +436,38 @@
         EnsureCertificateSnapshot(force: true);
     }
 
+    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        if (!HasConfiguredBranding)
+        {
+            var server = Session.ServerUri ?? (ShopRelayClient.TryParseRelayUri(_relayServerUrl, out var parsed) ? parsed : null);
+            var group = SessionLaunchOptions.NormalizeGroup(Session.Group ?? _relayGroupSlug);
+            if (server is not null && !string.IsNullOrWhiteSpace(group))
+            {
+                try
+                {
+                    var result = await ActiveRelay.FetchBrandingAsync(server, group);
+                    if (result is ShopRelayBrandingResult.Found found)
+                    {
+                        var preservedNotes = _techNotes;
+                        LoadFromPreferences(found.Branding);
+                        if (!string.IsNullOrWhiteSpace(preservedNotes))
+                            _techNotes = preservedNotes;
+                        _relayGroupSlug = found.GroupSlug;
+                        var merged = BuildCurrentBranding();
+                        PersistRelayAndBranding(merged);
+                        if (App.Workflow is { State.Stage: WorkflowStage.Done } wf)
+                            wf.RefreshReportBranding(merged.HasAny ? merged : null);
+                        EnsureCertificateSnapshot(force: true);
+                        await InvokeAsync(StateHasChanged);
+                    }
+                }
+                catch { }
+            }
+        }
+    }
+
     private void OnBenchStateChanged()
     {
         var isRunning = ActiveBenchQa.IsRunning;
@@ -391,6 +492,8 @@
     {
         ActivePhysicalQa.Changed -= OnBenchStateChanged;
         ActiveBenchQa.Changed -= OnBenchStateChanged;
+        _benchInteractiveTcs?.TrySetCanceled();
+        _activeInteractiveSection = null;
         _showApiKey = false;
         base.Dispose();
     }
@@ -400,14 +503,74 @@
         _savedCertPath = null;
         _saveError = null;
         _certGeneratedAt = DateTimeOffset.Now;
+        _activeInteractiveSection = null;
         var current = BuildCurrentBranding();
         PersistRelayAndBranding(current);
         EnsureCertificateSnapshot(force: true);
-        _ = ActiveBenchQa.StartBenchQaAsync(_includeStress, _includeAudioCamera, _includeSecurityAudit);
+        _ = ActiveBenchQa.StartBenchQaAsync(
+            _includeStress,
+            _includeAudioCamera,
+            _includeSecurityAudit,
+            _includeKeyboard,
+            _includeDisplay,
+            WaitForInteractiveBenchQaAsync);
         return Task.CompletedTask;
     }
 
-    private void StopBenchQa() => ActiveBenchQa.Cancel();
+    private void StopBenchQa()
+    {
+        _benchInteractiveTcs?.TrySetCanceled();
+        _activeInteractiveSection = null;
+        ActiveBenchQa.Cancel();
+        StateHasChanged();
+    }
+
+    private async Task WaitForInteractiveBenchQaAsync(string section, CancellationToken ct)
+    {
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _benchInteractiveTcs = tcs;
+        _activeInteractiveSection = section;
+        await InvokeAsync(StateHasChanged);
+
+        var startUtc = DateTimeOffset.UtcNow;
+        var initialOutcome = section == "keyboard"
+            ? ActivePhysicalQa.Current.KeyboardOutcome
+            : ActivePhysicalQa.Current.DisplayOutcome;
+
+        void OnQaChanged()
+        {
+            var snap = ActivePhysicalQa.Current;
+            var currentOutcome = section == "keyboard" ? snap.KeyboardOutcome : snap.DisplayOutcome;
+            if (currentOutcome != PhysicalCheckOutcome.NotRun && (snap.UpdatedUtc >= startUtc || currentOutcome != initialOutcome))
+            {
+                tcs.TrySetResult(true);
+            }
+        }
+
+        using var reg = ct.Register(() => tcs.TrySetCanceled(ct));
+        ActivePhysicalQa.Changed += OnQaChanged;
+
+        try
+        {
+            await tcs.Task;
+        }
+        finally
+        {
+            ActivePhysicalQa.Changed -= OnQaChanged;
+            if (ReferenceEquals(_benchInteractiveTcs, tcs))
+                _benchInteractiveTcs = null;
+            _activeInteractiveSection = null;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OnBenchInteractiveOutcomeChanged(string section, PhysicalCheckOutcome outcome)
+    {
+        if (outcome != PhysicalCheckOutcome.NotRun)
+        {
+            _benchInteractiveTcs?.TrySetResult(true);
+        }
+    }
 
     private void LoadFromPreferences(ShopBranding? b)
     {

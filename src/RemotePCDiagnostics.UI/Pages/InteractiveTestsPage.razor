@@ -237,11 +237,11 @@
         <section class="ct-detail" aria-label="Interactive test details" data-testid="interactive-detail">
             @if (_selectedTestId == "keyboard")
             {
-                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="keyboard" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" />
+                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="keyboard" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" OnOutcomeChanged="OnPhysicalQaOutcomeCompleted" />
             }
             else if (_selectedTestId == "display")
             {
-                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="display" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" />
+                <PhysicalBenchQaCard Service="ActivePhysicalQa" FilterSection="display" CardShell="false" IsRemoteDisplay="_isRemoteDisplay" OnOutcomeChanged="OnPhysicalQaOutcomeCompleted" />
             }
             else if (_selectedTestId == "webcam")
             {
@@ -620,6 +620,7 @@
     {
         base.Dispose();
         _batchCts?.Cancel();
+        _interactiveWaitTcs?.TrySetCanceled();
         _batchCts?.Dispose();
         _batchCts = null;
         if (_dotNetRef is not null)
@@ -649,6 +650,48 @@
         {
             _selected.Clear();
             foreach (var id in AllTestIds) _selected.Add(id);
+        }
+    }
+
+    private TaskCompletionSource<bool>? _interactiveWaitTcs;
+
+    private void OnPhysicalQaOutcomeCompleted(string section, PhysicalCheckOutcome outcome)
+    {
+        if (outcome != PhysicalCheckOutcome.NotRun)
+            _interactiveWaitTcs?.TrySetResult(true);
+    }
+
+    private async Task WaitForPhysicalQaAsync(string testId, CancellationToken ct)
+    {
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _interactiveWaitTcs = tcs;
+
+        var startUtc = DateTimeOffset.UtcNow;
+        var initialOutcome = testId == "keyboard"
+            ? ActivePhysicalQa.Current.KeyboardOutcome
+            : ActivePhysicalQa.Current.DisplayOutcome;
+
+        void OnChanged()
+        {
+            var snap = ActivePhysicalQa.Current;
+            var currentOutcome = testId == "keyboard" ? snap.KeyboardOutcome : snap.DisplayOutcome;
+            if (currentOutcome != PhysicalCheckOutcome.NotRun && (snap.UpdatedUtc >= startUtc || currentOutcome != initialOutcome))
+            {
+                tcs.TrySetResult(true);
+            }
+        }
+
+        using var reg = ct.Register(() => tcs.TrySetCanceled(ct));
+        ActivePhysicalQa.Changed += OnChanged;
+        try
+        {
+            await tcs.Task;
+        }
+        finally
+        {
+            ActivePhysicalQa.Changed -= OnChanged;
+            if (ReferenceEquals(_interactiveWaitTcs, tcs))
+                _interactiveWaitTcs = null;
         }
     }
 
@@ -683,16 +726,18 @@
                 await StartMicToSpeakerAsync();
             }
 
-            if (!ct.IsCancellationRequested)
+            if (_selected.Contains("keyboard") && !ct.IsCancellationRequested)
             {
-                if (_selected.Contains("keyboard"))
-                {
-                    _selectedTestId = "keyboard";
-                }
-                else if (_selected.Contains("display"))
-                {
-                    _selectedTestId = "display";
-                }
+                _selectedTestId = "keyboard";
+                StateHasChanged();
+                await WaitForPhysicalQaAsync("keyboard", ct);
+            }
+
+            if (_selected.Contains("display") && !ct.IsCancellationRequested)
+            {
+                _selectedTestId = "display";
+                StateHasChanged();
+                await WaitForPhysicalQaAsync("display", ct);
             }
         }
         catch (OperationCanceledException) { }
@@ -708,6 +753,7 @@
     private void StopRunning()
     {
         _batchCts?.Cancel();
+        _interactiveWaitTcs?.TrySetCanceled();
         CancelWebcam();
         CancelSpeakerToMic();
         CancelMicToSpeaker();

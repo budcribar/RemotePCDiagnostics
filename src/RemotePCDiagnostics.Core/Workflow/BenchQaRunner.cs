@@ -47,10 +47,24 @@ public sealed class BenchQaRunner(
 
     public event Action? Changed;
 
-    public Task StartBenchQaAsync(bool includeStress = true, bool includeAudioCamera = true, bool includeSecurityAudit = false, CancellationToken ct = default) =>
-        Task.Run(() => RunIntakeAsync(includeStress, includeAudioCamera, includeSecurityAudit, ct), ct);
+    public Task StartBenchQaAsync(
+        bool includeStress = true,
+        bool includeAudioCamera = true,
+        bool includeSecurityAudit = false,
+        bool includeKeyboard = false,
+        bool includeDisplay = false,
+        Func<string, CancellationToken, Task>? waitInteractive = null,
+        CancellationToken ct = default) =>
+        Task.Run(() => RunIntakeAsync(includeStress, includeAudioCamera, includeSecurityAudit, includeKeyboard, includeDisplay, waitInteractive, ct), ct);
 
-    public async Task RunIntakeAsync(bool includeStress = true, bool includeAudioCamera = true, bool includeSecurityAudit = false, CancellationToken ct = default)
+    public async Task RunIntakeAsync(
+        bool includeStress = true,
+        bool includeAudioCamera = true,
+        bool includeSecurityAudit = false,
+        bool includeKeyboard = false,
+        bool includeDisplay = false,
+        Func<string, CancellationToken, Task>? waitInteractive = null,
+        CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(diag);
         ArgumentNullException.ThrowIfNull(store);
@@ -82,8 +96,10 @@ public sealed class BenchQaRunner(
         if (includeSecurityAudit && diag.CanRun(ModuleSlugs.SecurityAudit))
             securitySlugs.Add(ModuleSlugs.SecurityAudit);
 
+        var keyboardStep = includeKeyboard ? 1 : 0;
+        var displayStep = includeDisplay ? 1 : 0;
         var saveStep = workflow is not null ? 1 : 0;
-        TotalSteps = 1 + integrityToConsider.Count + suiteStressSlugs.Count + plainStressSlugs.Count + peripheralSlugs.Count + securitySlugs.Count + saveStep;
+        TotalSteps = 1 + integrityToConsider.Count + suiteStressSlugs.Count + plainStressSlugs.Count + peripheralSlugs.Count + securitySlugs.Count + keyboardStep + displayStep + saveStep;
         CompletedSteps = 0;
         LastSavedCertificatePath = null;
         Status = "Running hardware inventory, SMART, battery, driver & WHEA checks…";
@@ -91,7 +107,7 @@ public sealed class BenchQaRunner(
 
         try
         {
-            log.Info($"[bench-qa] Starting 10-minute hardware intake (stress={includeStress}, audioCamera={includeAudioCamera}, securityAudit={includeSecurityAudit})");
+            log.Info($"[bench-qa] Starting 10-minute hardware intake (stress={includeStress}, audioCamera={includeAudioCamera}, securityAudit={includeSecurityAudit}, keyboard={includeKeyboard}, display={includeDisplay})");
 
             // Step 1: Standard read-only checks (Osquery, Sensors, DriveHealth, BatteryPower, DeviceDrivers, Crashes/WHEA, etc.)
             await diag.RunAllAsync(token).ConfigureAwait(false);
@@ -182,7 +198,35 @@ public sealed class BenchQaRunner(
                 Raise();
             }
 
-            // Step 6: Automatically save the 1-page HTML QR Certificate
+            // Step 6: Physical keyboard matrix & rollover check
+            if (includeKeyboard)
+            {
+                token.ThrowIfCancellationRequested();
+                Status = "Physical keyboard check: verify key switches & simultaneous rollover…";
+                Raise();
+                if (waitInteractive is not null)
+                {
+                    await waitInteractive("keyboard", token).ConfigureAwait(false);
+                }
+                CompletedSteps++;
+                Raise();
+            }
+
+            // Step 7: Physical display dead-pixel & touch check
+            if (includeDisplay)
+            {
+                token.ThrowIfCancellationRequested();
+                Status = "Physical display check: inspect color uniformity, dead pixels & touch…";
+                Raise();
+                if (waitInteractive is not null)
+                {
+                    await waitInteractive("display", token).ConfigureAwait(false);
+                }
+                CompletedSteps++;
+                Raise();
+            }
+
+            // Step 8: Automatically save the 1-page HTML QR Certificate
             token.ThrowIfCancellationRequested();
             if (workflow is not null)
             {
@@ -220,10 +264,10 @@ public sealed class BenchQaRunner(
         CancellationTokenSource? cts;
         lock (_gate) cts = _cts;
         if (cts is null) return;
-        try { cts.Cancel(); } catch (ObjectDisposedException) { }
-        try { diag.CancelStressSuite(); } catch { }
         Status = "Stopping bench QA intake…";
         Raise();
+        try { cts.Cancel(); } catch (ObjectDisposedException) { }
+        try { diag.CancelStressSuite(); } catch { }
     }
 
     private async Task RunModuleSafeAsync(string slug, CancellationToken ct)

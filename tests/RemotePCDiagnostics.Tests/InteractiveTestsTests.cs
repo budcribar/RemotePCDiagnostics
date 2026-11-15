@@ -112,6 +112,32 @@ public class InteractiveTestsTests
         Assert.Contains("disabled=\"@IsRemoteDisplay\"", content);
     }
 
+    [Fact]
+    public void BrandingCertificatePage_Markup_ContainsKeyboardDisplayOptions_AndBrandingAdminElements()
+    {
+        var pagePath = Path.Combine(FindRepoRoot(), "src", "RemotePCDiagnostics.UI", "Pages", "BrandingCertificatePage.razor");
+        Assert.True(File.Exists(pagePath));
+        var content = File.ReadAllText(pagePath);
+
+        Assert.Contains("data-testid=\"bench-qa-include-keyboard\"", content);
+        Assert.Contains("data-testid=\"bench-qa-include-display\"", content);
+        Assert.Contains("Physical keyboard matrix &amp; rollover check", content);
+        Assert.Contains("Physical display dead-pixel &amp; touch check", content);
+
+        // PhysicalBenchQaCard should only render when benchRunning and activeInteractiveSection is present
+        Assert.Contains("@if (benchRunning && _activeInteractiveSection is { Length: > 0 })", content);
+        Assert.DoesNotContain("\n<PhysicalBenchQaCard Service=\"ActivePhysicalQa\" />", content);
+
+        // Branding strip and warning banner
+        Assert.Contains("data-testid=\"shop-branded-strip\"", content);
+        Assert.Contains("data-testid=\"branding-unconfigured-banner\"", content);
+        Assert.Contains("Shop branding and warranty are not configured.", content);
+        Assert.Contains("Buyer certificates and service reports will generate unbranded until configured on your admin portal.", content);
+        Assert.Contains("data-testid=\"branding-portal-btn\"", content);
+        Assert.Contains("data-testid=\"branding-admin-link\"", content);
+        Assert.Contains("data-testid=\"branding-card\"", content);
+    }
+
     private static string FindRepoRoot()
     {
         for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)

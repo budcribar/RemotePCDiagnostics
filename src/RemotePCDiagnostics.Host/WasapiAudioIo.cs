@@ -51,6 +51,32 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
         }
     }
 
+    private void EnsureMicrophoneUnmutedAndAudible(MMDevice dev)
+    {
+        try
+        {
+            var vol = dev.AudioEndpointVolume;
+            if (vol is not null)
+            {
+                if (vol.Mute)
+                {
+                    vol.Mute = false;
+                    Log($"Microphone on '{dev.FriendlyName}' was muted. Unmuted for audio test.");
+                }
+                if (vol.MasterVolumeLevelScalar < 0.6f)
+                {
+                    var prev = vol.MasterVolumeLevelScalar;
+                    vol.MasterVolumeLevelScalar = 0.8f;
+                    Log($"Microphone volume on '{dev.FriendlyName}' was {prev:P0}. Turned up to 80% for audio test.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LogWarn($"Could not inspect/adjust microphone volume: {ex.Message}");
+        }
+    }
+
     public IReadOnlyList<AudioDevice> ListDevices()
     {
         var list = new List<AudioDevice>();
@@ -95,6 +121,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
             using var outDev = Device(en, r.OutputId, DataFlow.Render);
             using var inDev = Device(en, r.InputId, DataFlow.Capture);
             EnsureSpeakerUnmutedAndAudible(outDev);
+            EnsureMicrophoneUnmutedAndAudible(inDev);
             string? note = null;
             var toneTime = TimeSpan.FromSeconds((double)r.Tone.Length / r.SampleRate);
 
@@ -154,6 +181,7 @@ public sealed class WasapiAudioIo(ILogger? log = null) : IAudioIo
             using var outDev = Device(en, r.OutputId, DataFlow.Render);
             using var inDev = Device(en, r.InputId, DataFlow.Capture);
             EnsureSpeakerUnmutedAndAudible(outDev);
+            EnsureMicrophoneUnmutedAndAudible(inDev);
             using var stop = new CancellationTokenSource();
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, stop.Token);
             var queue = new ConcurrentQueue<float[]>();

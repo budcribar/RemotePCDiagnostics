@@ -230,6 +230,7 @@ else
     [Parameter] public string? FilterSection { get; set; }
     [Parameter] public bool CardShell { get; set; } = true;
     [Parameter] public bool IsRemoteDisplay { get; set; }
+    [Parameter] public Action<string, PhysicalCheckOutcome>? OnOutcomeChanged { get; set; }
 
     private readonly PhysicalBenchQaService _fallbackService = new();
     private PhysicalBenchQaService? _subscribedService;
@@ -427,6 +428,7 @@ else
             UniqueKeysPressed = Math.Max(s.UniqueKeysPressed, _pressedKeys.Count),
             PeakKeyRollover = Math.Max(s.PeakKeyRollover, _peakRollover),
         });
+        OnOutcomeChanged?.Invoke("keyboard", outcome);
     }
 
     private void ResetKeyboard()
@@ -543,6 +545,7 @@ else
             DisplayNotes = trimmed,
             SolidColorsInspected = Math.Max(s.SolidColorsInspected, _inspectedPatterns.Count),
         });
+        OnOutcomeChanged?.Invoke("display", outcome);
     }
 
     private void ResetDisplay()

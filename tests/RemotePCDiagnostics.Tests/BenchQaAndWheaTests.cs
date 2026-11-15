@@ -421,4 +421,42 @@ public class BenchQaAndWheaTests
         Assert.Contains(ModuleSlugs.SecurityAudit, executed);
         Assert.Equal(DiagnosticStatus.Ok, store.Get(ModuleSlugs.SecurityAudit).Status);
     }
+
+    [Fact]
+    public async Task BenchQaRunner_ExecutesKeyboardAndDisplayInteractiveChecks_WhenRequested()
+    {
+        var store = new ResultStore();
+        var ran = new ConcurrentQueue<string>();
+        var interactiveCalls = new List<string>();
+
+        IDiagnosticModule Quick(string slug) => new FakeModule(slug, _ =>
+        {
+            ran.Enqueue(slug);
+            return Task.FromResult(FakeModule.Ok(slug));
+        });
+
+        var diag = new DiagnosticsService(store, [Quick(ModuleSlugs.Osquery)]);
+        var runner = new BenchQaRunner(diag, store);
+
+        Task WaitInteractive(string section, CancellationToken ct)
+        {
+            interactiveCalls.Add(section);
+            return Task.CompletedTask;
+        }
+
+        var task = runner.StartBenchQaAsync(
+            includeStress: false,
+            includeAudioCamera: false,
+            includeSecurityAudit: false,
+            includeKeyboard: true,
+            includeDisplay: true,
+            waitInteractive: WaitInteractive);
+
+        await task;
+
+        Assert.False(runner.IsRunning);
+        Assert.Equal(3, runner.TotalSteps); // 1 (osquery) + 1 (keyboard) + 1 (display)
+        Assert.Equal(3, runner.CompletedSteps);
+        Assert.Equal(["keyboard", "display"], interactiveCalls);
+    }
 }
