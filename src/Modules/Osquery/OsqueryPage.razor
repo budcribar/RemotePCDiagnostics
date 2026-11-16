@@ -13,6 +13,10 @@
     else { <span class="status-text"><CardList Text="@r.Message" Strong="true" /></span> }
     @if (!busy && r.Message != OsqueryModule.ToolMissingMessage && inv?.ToolMissing != true) { <button class="btn-small status-action" data-testid="osquery-requery" @onclick='() => Diagnostics.RunAsync(ModuleSlugs.Osquery)'>Check again</button> }
 </p>
+@if (!busy)
+{
+    <p class="meta">Completed <time datetime="@r.Timestamp.ToString("O")">@r.Timestamp.ToLocalTime().ToString("G")</time></p>
+}
 
 @if (r.Status == DiagnosticStatus.Running && Diagnostics.GetProgress(ModuleSlugs.Osquery) is { HasProgress: true } hwProg)
 {
