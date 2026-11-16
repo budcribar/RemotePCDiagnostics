@@ -1,0 +1,32 @@
+name: Promote Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: 'Source release tag (e.g. prerelease)'
+        default: 'prerelease'
+        required: true
+      target_tag:
+        description: 'Target release tag (e.g. v1.2.0)'
+        default: 'v1.2.0'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    name: Promote Release Assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Copy assets from source to target release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/assets
+          echo "Downloading assets from ${{ inputs.source_tag }}..."
+          gh release download "${{ inputs.source_tag }}" -D /tmp/assets --repo "$GITHUB_REPOSITORY"
+          echo "Uploading assets to ${{ inputs.target_tag }}..."
+          gh release upload "${{ inputs.target_tag }}" /tmp/assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          echo "Assets uploaded successfully."
