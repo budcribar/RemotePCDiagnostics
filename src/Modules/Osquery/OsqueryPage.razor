@@ -15,7 +15,7 @@
 </p>
 @if (!busy)
 {
-    <p class="meta">Completed <time datetime="@r.Timestamp.ToString("O")">@r.Timestamp.ToLocalTime().ToString("G")</time></p>
+    <time hidden data-testid="osquery-completed" datetime="@r.Timestamp.ToString("O")"></time>
 }
 
 @if (r.Status == DiagnosticStatus.Running && Diagnostics.GetProgress(ModuleSlugs.Osquery) is { HasProgress: true } hwProg)

@@ -6,6 +6,7 @@
     var m = Diagnostics.Modules.FirstOrDefault(x => string.Equals(x.Name, Slug, StringComparison.OrdinalIgnoreCase));
     var instances = m is IPerDeviceModule ? Store.InstancesOf(m.Name) : [];
 }
+<div hidden data-rpcd-page="module" data-check-id="@Slug"></div>
 <DependencyPrompt Module="m" />
 @if (instances.Count > 0)
 {

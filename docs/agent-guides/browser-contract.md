@@ -1,0 +1,35 @@
+# RPCD browser contract plan
+
+The first implementation renders `data-rpcd-page` on page headings or on a hidden marker for module and audit routes. Use a DOM query for those hidden markers. Checks and Stress have distinct values. Checks details expose the check ID, run state, result source, run and result IDs for DiagnosticsService runs, and an exact completion timestamp. History rows expose the module and exact timestamp. About exposes the build version. The workflow heading exposes its stage. The remote control indicator exposes `data-rpcd-control` when available. The table below includes further proposals.
+
+Give each rendered page one `data-rpcd-page` marker on its content root. Set it when the destination renders so a browser agent can wait through remote navigation. Keep the marker on loading, empty, and unavailable views for that destination. Use the heading or existing ID below as the fallback until the marker ships.
+
+Reuse existing `data-testid` selectors for buttons where they already identify the action. Scope repeated selectors to the containing panel, row, or dialog. The new attributes below are proposals.
+
+| Proposed page ID | Existing selectors to keep | Add or clarify |
+| --- | --- | --- |
+| `dashboard` | `dashboard-title`, `dashboard-runall`, `dashboard-checks-stop`, `dashboard-card-osquery` | Stable IDs for summary targets and exact freshness metadata on each result. Distinguish the check suite from the short and extended stress actions. |
+| `checks` | `checks-title`, `checks-row-{slug}`, `checks-select-{slug}`, `checks-detail`, `checks-run-one`, `checks-run-{group}` | Put the selected check ID on the detail panel and its run action. Publish selected check IDs for batch actions. Keep details selection distinct from the Include checkbox. |
+| `stress` | Shared Checks selectors plus `checks-mode-quick` and `checks-mode-extended` | Give this route its own marker despite the shared component. Expose the selected mode, test scope, phase, and terminal status per test. |
+| `interactive` | `interactive-run-selected`, `interactive-stop`, device-specific cancel and outcome IDs | Identify keyboard, display, webcam, and each audio direction by stable test ID. Expose waiting for a person, active device, layout selection, and whether an outcome was measured or entered by a person. |
+| `security-audit` | `audit-title`, `audit-start`, `audit-cancel`, `audit-status`, `audit-row-{id}`, `audit-drawer-close` | Identify baseline, active filters, result provenance, and current finding. Keep the page recognizable when the audit is unavailable. |
+| `benchmark` | `bench-title`, `bench-run-before`, `bench-run-after`, `bench-restart-before`, `bench-restart-after`, `bench-stop`, `bench-clear` | Expose phase, restart requirement, measurement settings, baseline identity, and units. A restart action must be separately identifiable from a no-restart run. |
+| `workflow` | `wf-title`, `wf-start-checks`, `wf-go`, `wf-restart-now`, `wf-cancel`, `wf-finished` | Mark diagnostic, review, repair, restart, and report phases. Give each selected fix a stable ID and expose its outcome. Give **Start over** its own selector. Keep sign-in inputs out of agent-readable workflow metadata. |
+| `certificates` | `branding-title`, `bench-qa-start`, `bench-qa-stop`, `branding-save`, `branding-clear`, `qa-save-html`, `publish-hosted-cert` | Mark the QA run scope, branding save outcome, certificate preview identity, and export or publication state. Scope preview headings separately from the page heading. |
+| `history` | `history-day`, `history-filter-range`, `history-filter-test`, `history-filter-outcome`, `history-details` | Add exact capture time and a stable record key to each row. Expose the selected record and active filters. Distinguish an earlier diagnostic from an applied fix. |
+| `about` | `about-title`, `about-version`, `about-builtin-modules`, `about-plugins` | Expose the full running build version for guide lookup and stable module IDs for availability. Keep plugin settings actions distinct from version lookup. |
+| `module` | `area-title`, `area-requery`, `area-status`, `area-missing`, module-specific selectors such as `osquery-requery` | Expose the module slug and share the same result identity as the Checks panel. Scope drawers and service or remediation actions to the affected item. |
+
+The application shell also needs a stable marker for connection and control state. Expose connected, reconnecting, disconnected, view-only, and in-control states separately from action availability. Never include credentials or ticket URLs.
+
+For run results, follow the [inventory metadata proposal](hardware-inventory.md#proposed-browser-metadata). Prioritize check ID, run ID, result run ID, exact completion time and result source. Add field IDs and units where guides need structured extraction. Display names can change without changing IDs.
+
+## Tests for UI releases
+
+1. Keep a versioned, machine-readable list of required page, action and result selectors alongside the guides. Record each selector's scope and the state that makes it required. Distinguish proposed IDs from shipped IDs until implementation.
+2. Render page components in tests with representative ready, busy, unavailable, and completed states. Assert required selectors resolve exactly once in their declared scope. Check disabled and waiting states too. A source-text check cannot establish that a control renders in the intended state.
+3. Exercise representative actions with the browser against a release candidate. Wait for the destination marker, click the documented control, and verify that the expected state changes and result IDs agree. Cover two runs in the same minute, history vs. current results, and reconnect after the click.
+4. Run a remote browser smoke test for every page route. Include Dashboard, which did not render after the prior live click. Verify Checks and Stress produce distinct markers. Keep interactive, repair, restart, and publication tests on a suitable test machine with the required user participation.
+5. Make required selector failures fail the release check. When changing a selector or its meaning, update the guide, its selector list, and the rendered tests in the same change.
+
+Implement page markers first, then wire Hardware Inventory to the selector list and tests. Expand the contract as each workflow is verified.

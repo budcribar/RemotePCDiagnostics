@@ -10,6 +10,8 @@ public record DiagnosticResult(
     DateTimeOffset Timestamp,
     object? Payload = null)
 {
+    public Guid? RunId { get; init; }
+
     /// <summary>
     /// The run was cancelled or stopped by the user: not a problem. Set where the cancel happens, so nothing has to recognise it from the
     /// (possibly translated) message.

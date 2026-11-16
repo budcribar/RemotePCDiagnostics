@@ -3,13 +3,13 @@
 @inject AppServices App
 @using RemotePCDiagnostics.Core.Plugins
 
-<div class="toolbar"><span class="icon-badge page-icon"><Icon Name="pc" Size="20" /></span><h1 data-testid="about-title">About Remote PC Diagnostics</h1></div>
+<div class="toolbar"><span class="icon-badge page-icon"><Icon Name="pc" Size="20" /></span><h1 data-rpcd-page="about" data-testid="about-title">About Remote PC Diagnostics</h1></div>
 <div class="about-accent-line" aria-hidden="true"></div>
 <section class="card about-card">
     <h2>Version @AppBuildInfo.Release</h2>
     <p>Use the full build version below when reporting a problem or comparing logs.</p>
     <dl>
-        <dt>Build version</dt><dd data-testid="about-version" style="overflow-wrap:anywhere">@AppBuildInfo.Version</dd>
+        <dt>Build version</dt><dd data-testid="about-version" data-rpcd-version="@AppBuildInfo.Version" style="overflow-wrap:anywhere">@AppBuildInfo.Version</dd>
         <dt>Git commit</dt><dd style="overflow-wrap:anywhere">@AppBuildInfo.Commit</dd>
         <dt>Session</dt><dd>@Session.Mode</dd>
         <dt>Computer</dt><dd>@Session.MachineName</dd>

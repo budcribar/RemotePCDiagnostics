@@ -18,7 +18,7 @@
     var selected = Screen.SelectedIn(_group);
 }
 <div class="ct-page">
-    <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="dash" Size="20" /></span><h1 data-testid="checks-title">@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")</h1>
+    <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="dash" Size="20" /></span><h1 data-rpcd-page="@(_group == CheckGroup.Stress ? "stress" : "checks")" data-testid="checks-title">@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")</h1>
         <span class="ct-expand-group">
             <button class="btn-small" data-testid="checks-expand-all" @onclick="() => Screen.SetAllCollapsed(false)">Expand all</button>
             <button class="btn-small" data-testid="checks-collapse-all" @onclick="() => Screen.SetAllCollapsed(true)">Collapse all</button>
@@ -178,7 +178,7 @@
                     @if (running) { <button class="btn btn-stop" data-testid="checks-run-@id" @onclick="Screen.Stop">Stop</button> }
                     else
                     {
-                        <button class="btn btn-primary" data-testid="checks-run-@id" disabled="@(count == 0 || otherBusy)"
+                        <button class="btn btn-primary" data-testid="checks-run-@id" data-action="run-selected" data-check-group="@id" disabled="@(count == 0 || otherBusy)"
                                 @onclick="() => { _ = Screen.RunGroupAsync(g); }"><Icon Name="play" Size="12" /> Run selected (@count)</button>
                     }
                 </div>
@@ -239,7 +239,10 @@
         var kind = CheckRows.KindOf(r);
         var last = kind == RowKind.Cancelled ? Screen.LastCompleted(m.Name) : null;
         var canRun = Screen.CanRunSingle(m);
-        <div class="ct-detail-head">
+        <div class="ct-detail-head" data-check-id="@m.Name" data-run-state="@kind.ToString().ToLowerInvariant()"
+             data-run-id="@r.RunId" data-result-run-id="@(kind is RowKind.NotRun or RowKind.Running ? null : r.RunId)"
+             data-result-source="@(kind == RowKind.NotRun ? (LastRun(m) is null ? "none" : "history") : kind == RowKind.Running ? "pending" : "current")"
+             data-completed-at="@(kind is RowKind.NotRun or RowKind.Running ? null : r.Timestamp.ToString("O"))">
             <span class="icon-badge"><Icon Name="@Icon.ForModule(m.Name)" /></span>
             <div class="ct-detail-title">
                 <div class="ct-group-line"><h2 data-testid="checks-detail-title">@m.DisplayName</h2>
@@ -263,7 +266,7 @@
             }
             else if (!HasOwnStart(m))
             {
-                <button class="btn btn-outline ct-run-one" data-testid="checks-run-one" disabled="@(!canRun)" @onclick="() => { _ = Screen.RunSingleAsync(m); }"><Icon Name="play" Size="12" /> Run just this</button>
+                <button class="btn btn-outline ct-run-one" data-testid="checks-run-one" data-check-id="@m.Name" data-action="run-check" disabled="@(!canRun)" @onclick="() => { _ = Screen.RunSingleAsync(m); }"><Icon Name="play" Size="12" /> Run just this</button>
             }
         </div>
         <div class="ct-detail-body" @key="m.Name">

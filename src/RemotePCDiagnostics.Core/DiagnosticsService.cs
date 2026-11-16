@@ -472,10 +472,10 @@ public sealed class DiagnosticsService
         return unmet;
     }
 
-    private void MarkRunning(IDiagnosticModule module)
+    private void MarkRunning(IDiagnosticModule module, Guid runId)
     {
         _progress.TryRemove(module.Name, out _);
-        _store.Set(new DiagnosticResult(module.Name, DiagnosticStatus.Running, "Running…", DateTimeOffset.Now));
+        _store.Set(new DiagnosticResult(module.Name, DiagnosticStatus.Running, "Running…", DateTimeOffset.Now) { RunId = runId });
     }
 
     /// <summary>True while a run of the module is in flight.</summary>
@@ -495,7 +495,8 @@ public sealed class DiagnosticsService
         {
             if (!_inFlight.TryGetValue(module.Name, out var existing))
             {
-                MarkRunning(module);
+                var runId = Guid.NewGuid();
+                MarkRunning(module, runId);
                 var tcs = new TaskCompletionSource<DiagnosticResult>(TaskCreationOptions.RunContinuationsAsynchronously);
                 _inFlight[module.Name] = existing = tcs.Task;
                 Func<Task>? cleanup = null;
@@ -514,7 +515,7 @@ public sealed class DiagnosticsService
                 {
                     DiagnosticResult? res = null;
                     Exception? err = null;
-                    try { res = await RunCoreAsync(module, progress, ct, onlyInstance, gateInstances).ConfigureAwait(false); }
+                    try { res = await RunCoreAsync(module, runId, progress, ct, onlyInstance, gateInstances).ConfigureAwait(false); }
                     catch (Exception ex) { err = ex; }
                     finally
                     {
@@ -548,14 +549,14 @@ public sealed class DiagnosticsService
         return ct.CanBeCanceled ? task.WaitAsync(ct) : task;
     }
 
-    private async Task<DiagnosticResult> RunCoreAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance, bool gateInstances)
+    private async Task<DiagnosticResult> RunCoreAsync(IDiagnosticModule module, Guid runId, IProgress<string>? progress, CancellationToken ct, string? onlyInstance, bool gateInstances)
     {
         var startedAt = _store.Get(module.Name) is { Status: DiagnosticStatus.Running } cur ? cur.Timestamp : DateTimeOffset.Now;
         var trackedProgress = CheckProgressExtensions.Create(cp =>
         {
             _progress[module.Name] = cp;
             if (!string.IsNullOrWhiteSpace(cp.Message))
-                _store.Set(new DiagnosticResult(module.Name, DiagnosticStatus.Running, cp.Message, startedAt));
+                _store.Set(new DiagnosticResult(module.Name, DiagnosticStatus.Running, cp.Message, startedAt) { RunId = runId });
             try { ProgressChanged?.Invoke(this, (module.Name, cp)); } catch { }
         }, progress);
         DiagnosticResult result;
@@ -588,7 +589,7 @@ public sealed class DiagnosticsService
         }
         _progress.TryRemove(module.Name, out _);
         try { ProgressChanged?.Invoke(this, (module.Name, null)); } catch { }
-        result = MarkStopped(module, result);
+        result = MarkStopped(module, result) with { RunId = runId };
         _store.Set(result);
         return result;
     }

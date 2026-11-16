@@ -92,6 +92,7 @@
             if (state) {
                 if (state.restarting) {
                     for (const el of statuses) {
+                        el.dataset.rpcdControl = 'restarting';
                         if (el.textContent !== 'Restarting…') {
                             el.textContent = 'Restarting…';
                             el.classList.remove('rbwv-in-control', 'rbwv-remote-control');
@@ -114,6 +115,7 @@
                 }
             }
 
+            el.dataset.rpcdControl = inControl === true ? 'in-control' : inControl === false ? 'view-only' : 'unknown';
             if (isLocal === true) {
                 if (el.textContent !== '🟢 In control') {
                     el.textContent = '🟢 In control';

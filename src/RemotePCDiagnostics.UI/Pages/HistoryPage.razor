@@ -28,7 +28,7 @@
         .Select(t => (t.Test, Key: HistoryQuery.TrendKey(t.Module)!.Value, Points: HistoryQuery.Trend(diagEntries, t.Module))).Where(t => t.Points.Count > 0).ToList();
 }
 <div class="toolbar toolbar-grouped">
-    <span class="icon-badge page-icon"><Icon Name="hist" Size="20" /></span><h1 data-testid="history-title">History</h1>
+    <span class="icon-badge page-icon"><Icon Name="hist" Size="20" /></span><h1 data-rpcd-page="history" data-testid="history-title">History</h1>
     <button data-testid="history-refresh" disabled="@_loading" @onclick="Load">@(_loading ? "Loading…" : "Refresh")</button>
 </div>
 <p class="meta" data-testid="history-source">Summary of automated fixes (disk space reclaimed, system memory saved, updates and settings applied) and past check/test results from the Windows Event Log.</p>
@@ -246,6 +246,7 @@ else
                     var entry = e;
                     var open = ReferenceEquals(_open, entry);
                     <tr class="clickable" role="button" tabindex="0" aria-expanded="@(open ? "true" : "false")" data-testid="history-row"
+                        data-check-id="@entry.Module" data-completed-at="@entry.TimeUtc.ToString("O")"
                         @onclick="() => _open = open ? null : entry" @onkeydown='k => { if (k.Key is "Enter" or " ") _open = open ? null : entry; }'>
                         <td title="@entry.LocalTime.ToString("g")">@entry.LocalTime.ToString("t")</td>
                         <td>@entry.Test@if (!string.IsNullOrEmpty(entry.Instance)) {<span class="meta" data-testid="history-instance"> · @entry.Instance</span>}</td>

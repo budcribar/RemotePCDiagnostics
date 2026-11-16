@@ -16,7 +16,7 @@
     var status = Flow.Status ?? (s.Stage == WorkflowStage.Checking ? "Running checks…" : null);
 }
 <div class="toolbar">
-    <span class="icon-badge page-icon"><Icon Name="play" Size="20" /></span><h1 data-testid="wf-title">Service workflow</h1>
+    <span class="icon-badge page-icon"><Icon Name="play" Size="20" /></span><h1 data-rpcd-page="workflow" data-workflow-stage="@s.Stage" data-testid="wf-title">Service workflow</h1>
 </div>
 <p class="meta">Runs every check, lets you choose the fixes once, then does the rest by itself: restart → before benchmark → apply the fixes →
     restart → after benchmark → client report. Plan on 20–40 minutes, mostly waiting for restarts and updates.</p>
