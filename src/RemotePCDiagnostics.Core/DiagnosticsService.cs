@@ -569,7 +569,11 @@ public sealed class DiagnosticsService
                 {
                     _progress.TryRemove(module.Name, out _);
                     try { ProgressChanged?.Invoke(this, (module.Name, null)); } catch { }
-                    var notRun = CouldNotRun.Result(module.Name, detection.NotApplicableReason ?? "Not applicable on this computer") with { RunId = runId };
+                    var notRun = DiagnosticResult.NotRun(module.Name) with
+                    {
+                        Message = detection.NotApplicableReason ?? "Not applicable on this computer",
+                        RunId = runId
+                    };
                     _store.Set(notRun);
                     return notRun;
                 }
