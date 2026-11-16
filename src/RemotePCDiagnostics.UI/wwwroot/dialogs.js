@@ -84,7 +84,7 @@
 
     function updateControlStatus() {
         const statuses = document.querySelectorAll('.rbwv-control-status');
-        if (statuses.length === 0) return;
+        const shell = document.querySelector('.app[data-rpcd-version]');
 
         let inControl = null;
         let connection = navigator.onLine ? 'unknown' : 'offline';
@@ -95,6 +95,10 @@
                     connection = state.connectionState;
                 }
                 if (state.restarting) {
+                    if (shell) {
+                        shell.dataset.rpcdConnection = connection;
+                        shell.dataset.rpcdControl = 'restarting';
+                    }
                     for (const el of statuses) {
                         el.dataset.rpcdConnection = connection;
                         el.dataset.rpcdControl = 'restarting';
@@ -105,10 +109,17 @@
                     }
                     return;
                 }
-                inControl = state.iHaveControl;
+                if (connection === 'connected' || connection === 'unknown') {
+                    inControl = state.iHaveControl;
+                }
             }
         }
 
+        const control = inControl === true ? 'in-control' : inControl === false ? 'view-only' : 'unknown';
+        if (shell) {
+            shell.dataset.rpcdConnection = connection;
+            shell.dataset.rpcdControl = control;
+        }
         for (const el of statuses) {
             el.dataset.rpcdConnection = connection;
             let isLocal = inControl;
@@ -121,7 +132,7 @@
                 }
             }
 
-            el.dataset.rpcdControl = inControl === true ? 'in-control' : inControl === false ? 'view-only' : 'unknown';
+            el.dataset.rpcdControl = control;
             if (isLocal === true) {
                 if (el.textContent !== '🟢 In control') {
                     el.textContent = '🟢 In control';
@@ -277,6 +288,8 @@
     }
 
     let controlHooked = false;
+    window.addEventListener('online', updateControlStatus);
+    window.addEventListener('offline', updateControlStatus);
     function hookControl() {
         if (controlHooked) return;
         if (window.RemoteControl && typeof window.RemoteControl.subscribe === 'function') {

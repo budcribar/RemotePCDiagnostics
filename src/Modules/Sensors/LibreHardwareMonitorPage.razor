@@ -25,22 +25,24 @@
 
 @if (report is not null)
 {
-    <div class="cards">
+    <div class="cards" data-testid="lhm-readings" data-result-run-id="@r.RunId" data-sampled-at="@r.Timestamp.ToString("O")">
         @foreach (var g in report.VisibleGroups)
         {
-            <div @key="g.Id" class="card card-click" data-testid="lhm-card-@g.Id" role="button" tabindex="0"
+            <div @key="g.Id" class="card card-click" data-testid="lhm-card-@g.Id" data-sensor-group="@g.Id" role="button" tabindex="0"
                  @onclick="() => _open = g.Id" @onkeydown='e => { if (e.Key is "Enter" or " ") _open = g.Id; }'>
                 <div class="card-head"><span class="@LevelClass(g.Level)"></span><strong>@g.Title</strong></div>
                 @if (g.Readings.Count == 0) { <div class="headline">No sensors</div> }
                 else if (g.Id == "fans")
                 {
                     var rpm = g.Readings.Where(x => x.Reading.Value is > 0).ToList();
-                    <div class="headline">@rpm.Count of @g.Readings.Count spinning</div>
+                    <div class="headline" data-field="spinning-fan-count" data-unit="count" data-value="@rpm.Count">@rpm.Count of @g.Readings.Count spinning</div>
+                    <span hidden data-field="reported-fan-count" data-unit="count" data-value="@g.Readings.Count"></span>
                     <CardList Items="@rpm.Take(3).Select(x => $"{x.Reading.Value:0} RPM")" />
                 }
                 else
                 {
-                    <div class="headline">Hottest @(g.Hottest is { } h ? $"{h:0}°C" : "—")</div>
+                    <div class="headline" data-field="hottest-temperature" data-unit="celsius"
+                         data-value="@g.Hottest?.ToString(System.Globalization.CultureInfo.InvariantCulture)">Hottest @(g.Hottest is { } h ? $"{h:0}°C" : "-")</div>
                     @if (g.Readings.Any(x => x.Reading.IsApproximate)) { <div class="meta" data-testid="lhm-approx">Estimate (from Windows)</div> }
                     @if (g.Readings.Any(x => x.Reading.IsFromWindows)) { <div class="meta" data-testid="lhm-from-windows">From Windows (GPU driver)</div> }
                     <CardList Items="@([ $"{g.Readings.Count} sensor(s)", .. g.Readings.Select(x => x.Reading.HardwareName).Distinct().Take(2) ])" />
@@ -96,7 +98,7 @@
     private string? _open { get => _openId; set { _openId = value; _uiDirty = true; } }
     private bool _busy;        // a read is in flight; no overlap
     private bool _uiDirty = true;
-    private string? _lastSig;
+    private (string Signature, Guid? RunId, DateTimeOffset Timestamp)? _lastRender;
     private DiagnosticResult? _lastDone;
 
     /// <summary>Latest finished result; while a read runs, keep showing the previous data (no flashing/loading state).</summary>
@@ -111,8 +113,10 @@
     {
         var shown = Shown();
         var sig = SensorReport.Signature(shown.Status.ToString(), shown.Message, shown.Payload as SensorReport);
-        if (!_uiDirty && sig == _lastSig) return false;
-        _uiDirty = false; _lastSig = sig;
+        var render = (sig, shown.RunId, shown.Timestamp);
+        if (!_uiDirty && _lastRender == render) return false;
+        _uiDirty = false;
+        _lastRender = render;
         return true;
     }
 

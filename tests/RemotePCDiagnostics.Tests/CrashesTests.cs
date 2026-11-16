@@ -58,6 +58,11 @@ public class CrashesTests
         var rep = B(Crash("a.exe", "2026-10-10T09:00:00Z"), Crash("b.exe", "2026-10-05T09:00:00Z"));
         Assert.Equal(DiagnosticStatus.Ok, rep.Status);
         Assert.Equal("No crashes in the last 7 days (2 older)", rep.Summary);
+        var counts = rep.Cards.Single(c => c.Id == "crashes");
+        Assert.Equal(2, counts.EventCount);
+        Assert.Equal(30, counts.WindowDays);
+        Assert.Equal(0, counts.RecentEventCount);
+        Assert.Equal(7, counts.RecentWindowDays);
         Assert.Equal(AreaLevel.Neutral, rep.Cards.Single(c => c.Id == "crashes").Level);
         Assert.All(rep.Cards.Single(c => c.Id == "crashes").Rows, r => Assert.Equal(AreaLevel.Neutral, r.Level));
     }

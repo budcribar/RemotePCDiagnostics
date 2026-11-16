@@ -39,13 +39,25 @@ else
 
     @if (rep is not null && rep.Cards.Count > 0)
     {
+        @if (!busy && m.Name == ModuleSlugs.DriveHealth)
+        {
+            <div hidden data-testid="drive-health-counts">
+                <span data-field="reported-drive-count" data-unit="count" data-value="@rep.Cards.Count"></span>
+                <span data-field="healthy-drive-count" data-unit="count" data-value="@rep.Cards.Count(c => c.Level == AreaLevel.Ok)"></span>
+                <span data-field="warning-drive-count" data-unit="count" data-value="@rep.Cards.Count(c => c.Level == AreaLevel.Warning)"></span>
+                <span data-field="critical-drive-count" data-unit="count" data-value="@rep.Cards.Count(c => c.Level == AreaLevel.Error)"></span>
+                <span data-field="unknown-drive-count" data-unit="count" data-value="@rep.Cards.Count(c => c.Level == AreaLevel.Neutral)"></span>
+            </div>
+        }
         <div class="cards">
             @foreach (var c in rep.ReviewedCards is null ? rep.Cards.AsEnumerable() : rep.Cards.OrderByDescending(c => c.Level))
             {
                 @* EmptyText describes an empty drawer; only show it on the card when there really is nothing in it. *@
                 <SummaryCard Id="@c.Id" Title="@c.Title" OnOpen="Open" ErrorText="@c.ErrorText" EmptyText="@(c.Rows.Count == 0 && string.IsNullOrEmpty(c.Headline) ? c.EmptyText : null)" Dot="@Dot(c.Level)">
                     <div class="headline" data-field="@c.Id" data-outcome="@c.Level.ToString().ToLowerInvariant()"
-                         data-event-count="@c.EventCount" data-window-days="@c.WindowDays">@c.Headline</div>
+                         data-event-count="@c.EventCount" data-window-days="@c.WindowDays"
+                         data-recent-event-count="@c.RecentEventCount" data-recent-window-days="@c.RecentWindowDays"
+                         data-unit="@(c.EventCount.HasValue ? "count" : null)" data-value="@c.EventCount">@c.Headline</div>
                     <CardList Text="@c.Meta" />
                     @if (remActions is not null && c.Actions is { Count: > 0 })
                     {

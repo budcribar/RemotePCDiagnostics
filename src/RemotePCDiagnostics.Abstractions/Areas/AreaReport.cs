@@ -61,6 +61,8 @@ public sealed record AreaCard(
 {
     public int? EventCount { get; init; }
     public int? WindowDays { get; init; }
+    public int? RecentEventCount { get; init; }
+    public int? RecentWindowDays { get; init; }
 
     public static AreaCard Failed(string id, string title, string errorText) =>
         new(id, title, AreaLevel.Error, "", "", [], [], ErrorText: errorText);

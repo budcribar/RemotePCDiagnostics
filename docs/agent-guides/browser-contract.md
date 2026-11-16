@@ -1,6 +1,6 @@
 # RPCD browser contract plan
 
-The first implementation renders `data-rpcd-page` on page headings or on a hidden marker for module and audit routes. Use a DOM query for those hidden markers. Checks and Stress have distinct values. Checks details expose the check ID, run state, result source, run and result IDs for DiagnosticsService runs, and an exact completion timestamp. History rows expose the module and exact timestamp. About exposes the build version. The workflow heading exposes its stage. The remote control indicator exposes `data-rpcd-control` when available. The table below includes further proposals.
+The first implementation renders `data-rpcd-page` on page headings or on a hidden marker for module and audit routes. Use a DOM query for those hidden markers. Checks and Stress have distinct values. Checks details expose the check ID, run state, result source, run and result IDs for DiagnosticsService runs, and an exact completion timestamp. History rows expose the module and exact timestamp. About exposes the build version. The workflow heading exposes its stage. The application shell exposes the full `data-rpcd-version` and initializes `data-rpcd-control` and `data-rpcd-connection` to `unknown`. Each mirror updates its own shell from the relay. The table below includes further proposals.
 
 Give each rendered page one `data-rpcd-page` marker on its content root. Set it when the destination renders so a browser agent can wait through remote navigation. Keep the marker on loading, empty, and unavailable views for that destination. Use the heading or existing ID below as the fallback until the marker ships.
 
@@ -20,9 +20,33 @@ Reuse existing `data-testid` selectors for buttons where they already identify t
 | `about` | `about-title`, `about-version`, `about-builtin-modules`, `about-plugins` | Expose the full running build version for guide lookup and stable module IDs for availability. Keep plugin settings actions distinct from version lookup. |
 | `module` | `area-title`, `area-requery`, `area-status`, `area-missing`, module-specific selectors such as `osquery-requery` | Expose the module slug and share the same result identity as the Checks panel. Scope drawers and service or remediation actions to the affected item. |
 
-The application shell also needs a stable marker for connection and control state. Expose connected, reconnecting, disconnected, view-only, and in-control states separately from action availability. Never include credentials or ticket URLs.
+Use `.app[data-rpcd-version]` as the canonical selector for control and connection metadata. Require `in-control` and an enabled action before clicking. Older relays can report control without a connection state. A known offline, connecting, reconnecting, or disconnected state clears confirmed control. Never include credentials or ticket URLs.
 
-For run results, follow the [inventory metadata proposal](hardware-inventory.md#proposed-browser-metadata). Prioritize check ID, run ID, result run ID, exact completion time and result source. Add field IDs and units where guides need structured extraction. Display names can change without changing IDs.
+For run results, follow the [inventory metadata proposal](hardware-inventory.md#browser-metadata). Prioritize check ID, run ID, result run ID, exact completion time and result source. Add field IDs and units where guides need structured extraction. Display names can change without changing IDs.
+
+## Structured diagnostic fields
+
+These selectors are implemented in source and are ready for verification on an installed build. In Checks, scope them to `checks-detail`. Verify the selected check, run state, and matching result ID before reading fields. A missing field or value means unavailable. A numeric zero represents a reported zero.
+
+| Check | Fields | Meaning |
+| --- | --- | --- |
+| `Osquery` | `logical-processor-count`, `installed-memory`, `physical-drive-count` | Read `data-value` and `data-unit`. Memory is in bytes. |
+| `DriveHealth` | Under `drive-health-counts`, read `reported-drive-count`, `healthy-drive-count`, `warning-drive-count`, `critical-drive-count`, `unknown-drive-count` | Counts describe the drives represented in the report. Unknown means a drive was shown without a health verdict. An absent block means no usable drive report. |
+| `Sensors` | Under `lhm-readings`, use `data-sensor-group` to scope `hottest-temperature` (Celsius) or `reported-fan-count` and `spinning-fan-count` (count). The drawer exposes `sensor-value` with its own unit. | The hottest value is the maximum current reading in the group, excluding threshold sensors. Fan counts refer to reported readings, and spinning means reported RPM greater than zero. The panel can retain its previous sample during refresh. Check `data-sampled-at` and its own `data-result-run-id` before attributing it to a new run. |
+| `Crashes` | On `data-field="crashes"` and `data-field="hangs"`, read `data-value` with `data-window-days` (30), or `data-recent-event-count` with `data-recent-window-days` (7). | These count application incidents in the events RPCD collected, subject to its query limit. Hang counts count occurrences across grouped rows. System resets and BSODs are separate. Failed event reads omit the counts. |
+
+## Remaining contracts across RPCD
+
+| Area | Contract still needed |
+| --- | --- |
+| Session and navigation | Verify control on a live relay after reload, recover the original run by ID, and confirm Dashboard navigation from nested routes. Distinguish initial load from a stale view and surface consent or unavailable reasons. |
+| Dashboard and Checks | Standardize freshness and result identity on summary cards. Verify selected batch membership against dispatched runs. Give pending, cancelled, unavailable, and partial results consistent outcome and reason metadata. |
+| Other read-only modules | Add field IDs and units for battery, resource usage, network, device drivers, programs, services, Windows errors, and security essentials as workflows need them. Include result scope, collection window, and truncation or partial-read status. |
+| Stress and interactive tests | Expose target and mode, run identity, progress, stop outcome, and any required local input. For keyboard and audio, distinguish detected or selected devices from user-confirmed outcomes. |
+| Audit and remediation | Add finding and action identifiers, result scope, confirmation state, permission requirements, and structured outcomes. Audit findings and repair results need distinct records. |
+| Benchmark and service workflow | Correlate before and after phases and measurements, label stopped or partial baselines, and preserve run identity across reboot. Expose selected fixes and their outcomes. |
+| QA, reports, and branding | Identify the active run and its selected checks, and distinguish preview, saved, exported, and published states. Correlate the certificate with the results used to generate it. |
+| History, About, and module pages | Verify stable history record identity, filters, and provenance. Expose module availability and reasons. Give standalone module results the same identity and freshness contract as Checks. |
 
 ## Tests for UI releases
 
@@ -44,9 +68,9 @@ In a separate reconnect test, Device Drivers reported a new running ID before th
 
 ### Before broad live testing
 
-- Verify Dashboard from nested routes and wait for the destination page marker. A marker alone does not prove that the mirror is connected or that the viewer can act. Add a separate connection state and bind the viewer's control state to the relay's authoritative state.
+- Verify Dashboard from nested routes and wait for the destination page marker. A marker alone does not prove that the mirror is connected or that the viewer can act. Verify the shell markers on the next installed build, including when the control indicator is absent.
 - Verify run identity through cancellation and unavailable results. The applicability early return preserves the accepted run ID and reports NotRun. Distinguish timestamps for attempts from timestamps for usable results. Attribution under concurrent operators still requires an initiation acknowledgment or exclusive control.
-- Add stable field IDs and unit metadata for inventory, drive health, temperatures and crash counts before automating their extraction. Document missing values, aggregation and time windows. Keep historical data distinguishable from current results.
+- Verify inventory, drive health, sensors, and crash fields on the installed build, including missing values, zero counts, and retained samples.
 - Expose selected check IDs for multi-check runs. The batch button currently identifies its group, but that alone does not describe its selected members. For interactive, benchmark and QA paths, verify workflow-specific states before making them required in the selector contract.
 - Test the rendered contract against the build installed on the pilot PC. Include unique selectors, navigation readiness, two rapid runs, reconnect and failure paths. Page markers and run metadata can be smoke-tested before all workflows have complete metadata.
 

@@ -16,18 +16,18 @@ Guide ID: `hardware-inventory`. Use the copy from the Git tag for the RPCD build
 - Read the processor thread count separately from physical cores. Preserve the memory and storage units shown, and distinguish missing values from zero. Record a failed, canceled, or partial run as such even if earlier cards remain visible.
 - If the connection drops after the click, return to the same computer and inspect the check before retrying. Use a bounded wait. If the outcome is still unclear, report it as unknown rather than claiming success.
 
-## Proposed browser metadata
+## Browser metadata
 
-Expose metadata on the existing authorized UI. Use the same result metadata in the Checks details panel and standalone inventory page.
+In Checks, scope the check result and inventory fields to `checks-detail`. The standalone page exposes the same inventory fields and its own `osquery-completed` time marker.
 
 | Attribute | Purpose |
 | --- | --- |
-| `data-rpcd-version`, `data-guide-id` | Select the guide for the running build and workflow. |
-| `data-check-id="osquery"`, `data-action="run-check"` | Scope the action and result to Hardware Inventory even if labels or layout change. |
+| `data-rpcd-version` | Read the full build from the app shell or About. The guide ID is `hardware-inventory`. |
+| `data-check-id="Osquery"`, `data-action="run-check"` | Scope the action and result to Hardware Inventory even if labels or layout change. |
 | `data-run-id`, `data-run-state` | Publish an opaque ID when the run is accepted. Keep it through completion. Use explicit states such as running, passed, failed, canceled, and unavailable. |
 | `data-result-run-id`, `data-result-source` | Tie the displayed cards to the run that produced them and distinguish live results from history. After a reconnect, verify the result belongs to the requested run before reporting it. |
-| `data-completed-at` | Use an ISO 8601 timestamp with an offset or UTC on terminal results. The standalone page already has a local change for a hidden time element. The Checks panel should expose equivalent precision. |
-| `data-field` | Identify existing displayed fields such as logical processor count, installed memory, and physical drive count. If exposing raw numeric values, define units and omit unavailable values explicitly. |
+| `data-completed-at` | Read the ISO 8601 completion timestamp in Checks or the `datetime` value of `osquery-completed` on the standalone page. |
+| `data-field` | Read `logical-processor-count` (count), `installed-memory` (bytes), and `physical-drive-count` (count). Read the number from `data-value`. If the marker or its value is absent, report the field as unavailable. |
 
 Metadata should describe only the authorized UI state. Keep credentials, session tickets, and extra inventory fields out of it. Use visibly labeled controls and accessible status text as the fallback for agents that cannot inspect the DOM. A run ID identifies a run, but the UI also needs exclusive control or an initiation acknowledgment to attribute it confidently when multiple operators can start checks.
 
