@@ -26,10 +26,18 @@ For run results, follow the [inventory metadata proposal](hardware-inventory.md#
 
 ## Tests for UI releases
 
+### Live verification on BUDSLAPTOP, TestShop
+
+Build `1.2.0-ci.659.1+23431f9` rendered the expected page marker for Workflow, Checks, Stress, Interactive, Security Audit, Benchmark, QA & Branding, History and About. History rendered its loading state and then its summary. Dashboard rendered on initial entry, but its navigation link left the browser on the previous page from Checks and About. The source now gives Dashboard a named route and `nav-dashboard`; verify both the root entry and the named link on the next installed build.
+
+All 14 check rows were present and their detail actions were observed. The mirror can briefly retain the previous detail panel after a row click. Wait for `checks-run-one` with the requested `data-check-id` before clicking. Inventory, drive health, and battery completed as `passed`; crashes and resource usage completed as `warning`. All returned `current` with matching run and result IDs and an exact completion time. Navigation coverage does not establish execution coverage for the other workflows.
+
+In a follow-up pass, Windows Error Log completed with a warning and Services passed. Device Drivers, Network, Programs, and Security Essentials showed pending results with new run IDs. Reloading the mirror produced browser connection timeouts, so run recovery and completion for those four checks remain unverified. After reloading, wait for the expected page and control state, then inspect the previous run before attempting another click.
+
 ### Before broad live testing
 
 - Verify Dashboard from nested routes and wait for the destination page marker. A marker alone does not prove that the mirror is connected or that the viewer can act. Add a separate connection state and bind the viewer's control state to the relay's authoritative state.
-- Verify run identity through running, completion, cancellation and unavailable results. The applicability early return currently replaces the accepted run with a NotRun result without its ID. Also distinguish timestamps for attempts from timestamps for usable results. A new run ID proves that a run happened. Attribution under concurrent operators still requires an initiation acknowledgment or exclusive control.
+- Verify run identity through cancellation and unavailable results. The applicability early return preserves the accepted run ID and reports NotRun. Distinguish timestamps for attempts from timestamps for usable results. Attribution under concurrent operators still requires an initiation acknowledgment or exclusive control.
 - Add stable field IDs and unit metadata for inventory, drive health, temperatures and crash counts before automating their extraction. Document missing values, aggregation and time windows. Keep historical data distinguishable from current results.
 - Expose selected check IDs for multi-check runs. The batch button currently identifies its group, but that alone does not describe its selected members. For interactive, benchmark and QA paths, verify workflow-specific states before making them required in the selector contract.
 - Test the rendered contract against the build installed on the pilot PC. Include unique selectors, navigation readiness, two rapid runs, reconnect and failure paths. Page markers and run metadata can be smoke-tested before all workflows have complete metadata.

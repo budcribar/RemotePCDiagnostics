@@ -6,6 +6,8 @@ Confirm the shop and computer in the header. A second browser can show results w
 
 ## Dashboard and Checks
 
+After navigating, wait for the expected `data-rpcd-page`. After choosing a Checks row, wait for the `checks-run-one` button whose `data-check-id` matches that check. The preceding check can remain visible while the mirror catches up. Record the old result ID before clicking. Accept a fresh result only after a new `data-run-id` appears, `data-result-run-id` matches it, and `data-result-source` is `current`. A warning is a completed diagnostic outcome.
+
 Use **Dashboard** for an overview and shortcuts. Dashboard cards can show startup or earlier results. For a fresh individual result, open **Checks**, expand the relevant group, select the named row, verify the details heading, and choose **Run just this**. The **Include** checkbox changes batch selection. Use **Run selected** only when the requested set matches the selected rows. Wait for a terminal status and verify a new completion time or run ID. Inspect details and report missing fields separately. See the [Hardware Inventory walkthrough](hardware-inventory.md) for freshness and recovery.
 
 | Check | What to read |
