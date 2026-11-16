@@ -34,6 +34,14 @@ All 14 check rows were present and their detail actions were observed. The mirro
 
 In a follow-up pass, Windows Error Log completed with a warning and Services passed. Device Drivers, Network, Programs, and Security Essentials showed pending results with new run IDs. Reloading the mirror produced browser connection timeouts, so run recovery and completion for those four checks remain unverified. After reloading, wait for the expected page and control state, then inspect the previous run before attempting another click.
 
+On the updated Dashboard build, two mirrors of the same TestShop session displayed the same fresh Hardware Inventory run ID after a single invocation. The Dashboard link still left the controlling mirror on Checks or About.
+
+To hand control to the other mirror when exactly two mirrors are connected, close the browser tab whose `data-rpcd-control` is `in-control`. Keep the RPCD app and the other mirror running. The remaining mirror can briefly show `view-only`. Wait for its marker to change to `in-control` before clicking an action. This worked on BUDSLAPTOP in TestShop, and the new controller completed Hardware Inventory with matching run and result IDs (`a98052bf-d1b8-43c7-a4b7-a6034f82f150`). The **Give control back** button returns control to the local host. In that test both mirrors became view-only.
+
+Device Drivers, Network, Programs, and Security Essentials subsequently passed with matching run and result IDs. A no-restart Before benchmark entered Running and accepted Stop during the idle sample. RPCD marked the baseline stopped early and retained measurements already completed. Treat such a baseline as partial.
+
+In a separate reconnect test, Device Drivers reported a new running ID before the controlling mirror was reloaded. The reload rendered Dashboard but did not restore the control marker within 15 seconds, and a Checks click did not change the page in the observed session. Treat a missing control marker as unconfirmed control, even when a page marker renders. Reopen the running session from Admin if necessary, and look for the original run ID before dispatching another check.
+
 ### Before broad live testing
 
 - Verify Dashboard from nested routes and wait for the destination page marker. A marker alone does not prove that the mirror is connected or that the viewer can act. Add a separate connection state and bind the viewer's control state to the relay's authoritative state.
