@@ -674,6 +674,7 @@ jobs:
           agent_msi_file=$(basename release-assets/RemotePCDiagnostics.Agent-*-win-x64.msi)
           ver="${setup_file#RemotePCDiagnostics-Setup-}"
           ver="${ver%-win-x64.exe}"
+          target_version="$ver"
 
           target_tag=""
           if [[ "$GIT_REF" == refs/tags/v* ]]; then
@@ -718,16 +719,20 @@ jobs:
               --notes-file release-notes.md \
               --repo "$GITHUB_REPOSITORY"
           else
-            # Delete all existing pre-releases (and their tags) so only one current pre-release is kept.
-            gh release list --repo "$GITHUB_REPOSITORY" --limit 50 --json tagName,isPrerelease --jq '.[] | select(.isPrerelease or .tagName == "prerelease") | .tagName' | while read -r old_tag; do
-              [ -z "$old_tag" ] && continue
-              gh release delete "$old_tag" --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
-            done
-
-            gh release create prerelease release-assets/* \
-              --prerelease \
-              --target "$GITHUB_SHA" \
-              --title "Remote PC Diagnostics ${ver} (${short_sha})" \
-              --notes-file release-notes.md \
-              --repo "$GITHUB_REPOSITORY"
+            # Update rolling pre-release in place without deleting to avoid 404 outages during builds.
+            if gh release view prerelease --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+              gh release edit prerelease \
+                --title "Remote PC Diagnostics ${target_version} (${GITHUB_SHA:0:7})" \
+                --notes-file release-notes.md \
+                --repo "$GITHUB_REPOSITORY"
+              gh release upload prerelease release-assets/* \
+                --clobber \
+                --repo "$GITHUB_REPOSITORY"
+            else
+              gh release create prerelease release-assets/* \
+                --title "Remote PC Diagnostics ${target_version} (${GITHUB_SHA:0:7})" \
+                --prerelease \
+                --notes-file release-notes.md \
+                --repo "$GITHUB_REPOSITORY"
+            fi
           fi
