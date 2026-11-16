@@ -26,6 +26,14 @@ For run results, follow the [inventory metadata proposal](hardware-inventory.md#
 
 ## Tests for UI releases
 
+### Before broad live testing
+
+- Verify Dashboard from nested routes and wait for the destination page marker. A marker alone does not prove that the mirror is connected or that the viewer can act. Add a separate connection state and bind the viewer's control state to the relay's authoritative state.
+- Verify run identity through running, completion, cancellation and unavailable results. The applicability early return currently replaces the accepted run with a NotRun result without its ID. Also distinguish timestamps for attempts from timestamps for usable results. A new run ID proves that a run happened. Attribution under concurrent operators still requires an initiation acknowledgment or exclusive control.
+- Add stable field IDs and unit metadata for inventory, drive health, temperatures and crash counts before automating their extraction. Document missing values, aggregation and time windows. Keep historical data distinguishable from current results.
+- Expose selected check IDs for multi-check runs. The batch button currently identifies its group, but that alone does not describe its selected members. For interactive, benchmark and QA paths, verify workflow-specific states before making them required in the selector contract.
+- Test the rendered contract against the build installed on the pilot PC. Include unique selectors, navigation readiness, two rapid runs, reconnect and failure paths. Page markers and run metadata can be smoke-tested before all workflows have complete metadata.
+
 1. Keep a versioned, machine-readable list of required page, action and result selectors alongside the guides. Record each selector's scope and the state that makes it required. Distinguish proposed IDs from shipped IDs until implementation.
 2. Render page components in tests with representative ready, busy, unavailable, and completed states. Assert required selectors resolve exactly once in their declared scope. Check disabled and waiting states too. A source-text check cannot establish that a control renders in the intended state.
 3. Exercise representative actions with the browser against a release candidate. Wait for the destination marker, click the documented control, and verify that the expected state changes and result IDs agree. Cover two runs in the same minute, history vs. current results, and reconnect after the click.
