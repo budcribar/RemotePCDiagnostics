@@ -87,11 +87,16 @@
         if (statuses.length === 0) return;
 
         let inControl = null;
+        let connection = navigator.onLine ? 'unknown' : 'offline';
         if (window.RemoteControl && typeof window.RemoteControl.getState === 'function') {
             const state = window.RemoteControl.getState();
             if (state) {
+                if (navigator.onLine && ['connected', 'connecting', 'reconnecting', 'disconnected'].includes(state.connectionState)) {
+                    connection = state.connectionState;
+                }
                 if (state.restarting) {
                     for (const el of statuses) {
+                        el.dataset.rpcdConnection = connection;
                         el.dataset.rpcdControl = 'restarting';
                         if (el.textContent !== 'Restarting…') {
                             el.textContent = 'Restarting…';
@@ -105,6 +110,7 @@
         }
 
         for (const el of statuses) {
+            el.dataset.rpcdConnection = connection;
             let isLocal = inControl;
             if (isLocal === null) {
                 const current = (el.textContent || '').trim();

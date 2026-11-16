@@ -44,7 +44,8 @@ else
             {
                 @* EmptyText describes an empty drawer; only show it on the card when there really is nothing in it. *@
                 <SummaryCard Id="@c.Id" Title="@c.Title" OnOpen="Open" ErrorText="@c.ErrorText" EmptyText="@(c.Rows.Count == 0 && string.IsNullOrEmpty(c.Headline) ? c.EmptyText : null)" Dot="@Dot(c.Level)">
-                    <div class="headline">@c.Headline</div>
+                    <div class="headline" data-field="@c.Id" data-outcome="@c.Level.ToString().ToLowerInvariant()"
+                         data-event-count="@c.EventCount" data-window-days="@c.WindowDays">@c.Headline</div>
                     <CardList Text="@c.Meta" />
                     @if (remActions is not null && c.Actions is { Count: > 0 })
                     {

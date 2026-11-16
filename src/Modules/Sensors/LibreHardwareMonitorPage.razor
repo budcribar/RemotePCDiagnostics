@@ -78,7 +78,8 @@
                             <td>@e.Reading.FriendlyDevice</td>
                             <td><span class="@LevelClass(e.Level)"></span>@e.Reading.FriendlyName
                                 @if (e.Reading.FriendlyName != e.Reading.SensorName) { <div class="meta">@e.Reading.SensorName</div> }</td>
-                            <td>@Fmt(e.Reading.Value, e.Reading.Unit)</td>
+                            <td data-field="sensor-value" data-unit="@e.Reading.Unit"
+                                data-value="@e.Reading.Value?.ToString(System.Globalization.CultureInfo.InvariantCulture)">@Fmt(e.Reading.Value, e.Reading.Unit)</td>
                             <td>@Fmt(e.Reading.Min, e.Reading.Unit)</td>
                             <td>@Fmt(e.Reading.Max, e.Reading.Unit)</td>
                             <td title="@e.Threshold?.Basis">@(e.Reading.IsLimit ? "Reported by the drive" : e.Threshold is { } t ? $"{t.Warning:0} / {t.Critical:0} °C" : "No limit set")</td>

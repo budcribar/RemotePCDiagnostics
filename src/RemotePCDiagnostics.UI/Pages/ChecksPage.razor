@@ -178,7 +178,8 @@
                     @if (running) { <button class="btn btn-stop" data-testid="checks-run-@id" @onclick="Screen.Stop">Stop</button> }
                     else
                     {
-                        <button class="btn btn-primary" data-testid="checks-run-@id" data-action="run-selected" data-check-group="@id" disabled="@(count == 0 || otherBusy)"
+                        <button class="btn btn-primary" data-testid="checks-run-@id" data-action="run-selected" data-check-group="@id"
+                                data-selected-check-ids="@string.Join(" ", mods.Where(m => Screen.IsSelected(m.Name)).Select(m => m.Name))" disabled="@(count == 0 || otherBusy)"
                                 @onclick="() => { _ = Screen.RunGroupAsync(g); }"><Icon Name="play" Size="12" /> Run selected (@count)</button>
                     }
                 </div>

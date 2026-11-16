@@ -37,18 +37,19 @@
                      EmptyText="@(inv.Cpus.Success && c is null ? "Processor details aren't available on this PC." : null)">
             <div class="headline">@(c?.Model is { Length: > 0 } m ? m : Dash(sys?.CpuBrand))</div>
             <CardList Text="@CpuMeta(c ?? (sys is null ? null : HardwareInventory.CpuFromSystemPublic(sys)))" />
+            <span hidden data-field="logical-processor-count" data-unit="count" data-value="@(c?.LogicalProcessors ?? sys?.CpuLogicalCores)"></span>
         </SummaryCard>
         @{ var pop = inv.Memory.Items.Where(d => d.IsPopulated).ToList(); }
         <SummaryCard Id="memory" Title="Memory" OnOpen="Open"
                      ErrorText="@(inv.Memory.Success || inv.TotalMemoryBytes is > 0 ? null : "Couldn't read memory details on this PC.")"
                      EmptyText="@(inv.TotalMemoryBytes is > 0 ? null : "Memory details aren't available on this PC.")">
-            <div class="headline">@HardwareInventory.FormatBytes(inv.TotalMemoryBytes)</div>
+            <div class="headline" data-field="installed-memory" data-unit="bytes" data-value="@inv.TotalMemoryBytes">@HardwareInventory.FormatBytes(inv.TotalMemoryBytes)</div>
             <CardList Text="@(pop.Count > 0 ? $"{pop.Count} of {inv.Memory.Items.Count} slots in use · {Dash(pop[0].MemoryType)}" : "Installed memory")" />
         </SummaryCard>
         <SummaryCard Id="disks" Title="Storage" OnOpen="Open"
                      ErrorText="@(inv.Disks.Success ? null : "Couldn't read storage details on this PC.")"
                      EmptyText="@(inv.Disks.Success && inv.Disks.Items.Count == 0 ? "Storage details aren't available on this PC." : null)">
-            <div class="headline">@(inv.Disks.Items.Count == 1 ? "1 drive" : $"{inv.Disks.Items.Count} drives")@(inv.TotalDiskBytes > 0 ? $" ({HardwareInventory.FormatBytes(inv.TotalDiskBytes)})" : "")</div>
+            <div class="headline" data-field="physical-drive-count" data-unit="count" data-value="@(inv.Disks.Success ? (int?)inv.Disks.Items.Count : null)">@(inv.Disks.Items.Count == 1 ? "1 drive" : $"{inv.Disks.Items.Count} drives")@(inv.TotalDiskBytes > 0 ? $" ({HardwareInventory.FormatBytes(inv.TotalDiskBytes)})" : "")</div>
             <CardList Items="@inv.Disks.Items.Select(d => Dash(d.HardwareModel)).Take(3)" />
         </SummaryCard>
     </div>

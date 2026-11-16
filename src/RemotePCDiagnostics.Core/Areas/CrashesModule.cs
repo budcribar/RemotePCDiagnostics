@@ -203,7 +203,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             new("crashes", "Apps that closed unexpectedly", repeatApp is not null ? AreaLevel.Error : crashes.Any(Recent) ? AreaLevel.Warning : crashes.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok,
                 crashes.Count == 0 ? "None" : AreaModuleBase.Plural(crashes.Count, "crash", "crashes"),
                 crashes.FirstOrDefault() is { } c ? $"Latest: {c.App}, {WindowsEventLog.FormatTime(c.Time)}" : $"In the last {Days} days",
-                cols, crashes.Select(Row).ToList()),
+                cols, crashes.Select(Row).ToList()) { EventCount = crashes.Count, WindowDays = Days },
             new(HangsCardId, "Apps that stopped responding", hangs.Any(Recent) ? AreaLevel.Warning : hangs.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok,
                 hangs.Count == 0 ? "None" : AreaModuleBase.Plural(hangs.Count, "time"),
                 hangs.FirstOrDefault() is { } h ? $"Latest: {h.App}, {WindowsEventLog.FormatTime(h.Time)}" : $"In the last {Days} days",
@@ -223,7 +223,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
                         ReviewKeys = g.Select(i => i.ReviewKey).OfType<string>().ToList(),
                         HangOccurrences = occurrences
                     };
-                }).OrderByDescending(row => row.HangOccurrences!.Count).ToList()),
+                }).OrderByDescending(row => row.HangOccurrences!.Count).ToList()) { EventCount = hangs.Count, WindowDays = Days },
             new("apps", "Most affected apps", top is null ? AreaLevel.Ok : AreaLevel.Neutral,
                 top is null ? "No problems recorded" : top.Key, top is null ? $"In the last {Days} days" : $"{AreaModuleBase.Plural(top.Count(), "problem")} in the last {Days} days",
                 ["App", "Crashes", "Freezes", "Last time"],

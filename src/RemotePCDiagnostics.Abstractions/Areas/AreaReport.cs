@@ -59,6 +59,9 @@ public sealed record AreaCard(
     string? ErrorText = null, string? EmptyText = null, string? Note = null,
     IReadOnlyList<AreaAction>? Actions = null, bool PreserveRowOrder = false)
 {
+    public int? EventCount { get; init; }
+    public int? WindowDays { get; init; }
+
     public static AreaCard Failed(string id, string title, string errorText) =>
         new(id, title, AreaLevel.Error, "", "", [], [], ErrorText: errorText);
 }
