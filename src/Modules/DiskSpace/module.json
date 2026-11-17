@@ -1,0 +1,9 @@
+{
+  "id": "9c7c4b12-5893-4e40-8ab7-7a2e379b3601",
+  "slug": "DiskSpace",
+  "displayName": "Large files & folders",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.DiskSpace.DiskSpacePlugin",
+  "needsAdmin": false,
+  "outOfProcess": false
+}
