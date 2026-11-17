@@ -1,4 +1,5 @@
 using System.Globalization;
+using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Storage;
 
 namespace RemotePCDiagnostics.Core.Areas;
@@ -240,6 +241,6 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
             ? $"Found {files.Count} large files on {root} totaling {HardwareInventory.FormatBytes(totalLargeFilesBytes)}"
             : $"Scan complete on {root} · No files >= {HardwareInventory.FormatBytes(minSizeBytes)}";
 
-        return new AreaReport(cards, summary, AreaLevel.Ok);
+        return new AreaReport(cards, summary, DiagnosticStatus.Ok);
     }
 }

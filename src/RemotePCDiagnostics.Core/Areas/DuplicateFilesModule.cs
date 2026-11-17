@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Storage;
 
 namespace RemotePCDiagnostics.Core.Areas;
@@ -316,7 +317,7 @@ public sealed class DuplicateFilesModule(
             ? $"Found {groups.Count} duplicate sets ({totalDuplicateFiles} extra copies, {HardwareInventory.FormatBytes(totalWastedBytes)} wasted space)"
             : "No duplicate files found";
 
-        return new AreaReport(cards, summary, AreaLevel.Ok);
+        return new AreaReport(cards, summary, DiagnosticStatus.Ok);
     }
 
     /// <summary>
