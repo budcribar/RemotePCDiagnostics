@@ -94,7 +94,9 @@ public sealed record PostRebootComparisonResult(
 /// Coordinates remote/local PC restarts:
 /// <list type="number">
 /// <item>Captures pre-reboot resource usage (memory, process count, uptime, top consumers) and saves <see cref="PendingRebootState"/>.</item>
-/// <item>Registers a Windows <c>HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce</c> entry so <c>RemotePCDiagnostics</c> automatically relaunches into the exact same remote session (<c>-u=&lt;server&gt; -i=&lt;sessionId&gt; --post-reboot</c>) after reboot.</item>
+/// <item>Registers a Task Scheduler task that runs at the user's next sign-in with highest privileges, so <c>RemotePCDiagnostics</c> relaunches elevated,
+/// without a UAC prompt, into the exact same remote session (<c>-u=&lt;server&gt; -i=&lt;sessionId&gt; --post-reboot</c>) after reboot. Only when the task
+/// can't be registered does it fall back to a <c>HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce</c> entry, which waits at the UAC prompt.</item>
 /// <item>On startup after the reboot, re-measures active resources, computes the memory and process reduction, and logs the result to History / Event Log (Event 1100).</item>
 /// </list>
 /// </summary>
@@ -107,6 +109,9 @@ public sealed class RebootResumeCoordinator(
 {
     public const string RunOnceRegistryKey = @"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce";
     public const string RunOnceValueName = "RemotePCDiagnosticsResume";
+
+    /// <summary>The sign-in task that relaunches the app elevated after a restart it scheduled. Removed once the app is back, or when the restart is called off.</summary>
+    public const string ResumeTaskName = "Remote PC Diagnostics - continue after restart";
 
     private readonly object _gate = new();
     private PendingRebootState? _memoryState;
@@ -179,8 +184,8 @@ public sealed class RebootResumeCoordinator(
     }
 
     /// <summary>
-    /// Captures pre-reboot resources, persists <see cref="PendingRebootState"/>, and writes the <c>RunOnce</c> registry entry
-    /// so <c>RemotePCDiagnostics</c> restarts with the same run stream after Windows reboots.
+    /// Captures pre-reboot resources, persists <see cref="PendingRebootState"/>, and registers the sign-in task (or, failing that,
+    /// the <c>RunOnce</c> registry entry) so <c>RemotePCDiagnostics</c> restarts with the same run stream after Windows reboots.
     /// </summary>
     public async Task<PendingRebootState> PrepareForRebootAsync(
         string actor,
@@ -220,16 +225,54 @@ public sealed class RebootResumeCoordinator(
         var resumeCmd = SessionLaunchOptions.BuildResumeCommandLine(ExecutablePath, mode, serverUri, sessionId, unattended, voice, group);
         LastRegisteredCommandLine = resumeCmd;
 
-        var reg = await commands.RunAsync(
-            SystemCommandRunner.SystemTool("reg.exe"),
-            ["add", RunOnceRegistryKey, "/v", RunOnceValueName, "/t", "REG_SZ", "/d", resumeCmd, "/f"],
-            ct).ConfigureAwait(false);
+        // A sign-in task with highest privileges starts the app elevated by itself. A RunOnce entry starts it unelevated, and the app
+        // then waits at the UAC prompt for someone at the PC, so that is only the fallback.
+        var task = await commands.RunPowerShellAsync(BuildRegisterResumeTaskScript(ExecutablePath, resumeCmd, CurrentUser(), DateTimeOffset.Now), ct).ConfigureAwait(false);
+        var how = "task";
+        int? regExit = null;
+        if (task is not { ExitCode: 0 })
+        {
+            LogWarn($"Couldn't register the resume task (exit={task?.ExitCode} err={task?.StdErr.Trim()}); using RunOnce, which waits at the UAC prompt.");
+            var reg = await commands.RunAsync(
+                SystemCommandRunner.SystemTool("reg.exe"),
+                ["add", RunOnceRegistryKey, "/v", RunOnceValueName, "/t", "REG_SZ", "/d", resumeCmd, "/f"],
+                ct).ConfigureAwait(false);
+            how = "runonce";
+            regExit = reg?.ExitCode;
+        }
 
-        Log($"Prepared reboot resume: mode={mode} sessionId={sessionId} group={group} preMem={baseline.UsedMemoryBytes} preProcs={baseline.ProcessCount} regExit={reg?.ExitCode} cmd='{resumeCmd}'");
+        Log($"Prepared reboot resume: mode={mode} sessionId={sessionId} group={group} preMem={baseline.UsedMemoryBytes} preProcs={baseline.ProcessCount} via={how} regExit={regExit} cmd='{resumeCmd}'");
         return state;
     }
 
-    /// <summary>Clears the <c>RunOnce</c> startup entry and deletes any saved pre-reboot snapshot when a restart is cancelled.</summary>
+    private static string CurrentUser() => $"{Environment.UserDomainName}\\{Environment.UserName}";
+
+    private static string Q(string s) => s.Replace("'", "''");
+
+    /// <summary>
+    /// PowerShell that registers <see cref="ResumeTaskName"/>: at <paramref name="user"/>'s sign-in, run the resume command line with highest
+    /// privileges. The trigger stops firing after <see cref="SessionLaunchOptions.PendingRebootMaxAge"/>, so a task that was never cleaned up
+    /// can't start the app at sign-ins long after the restart.
+    /// </summary>
+    public static string BuildRegisterResumeTaskScript(string executablePath, string resumeCommandLine, string user, DateTimeOffset now)
+    {
+        var exe = executablePath.Trim('"');
+        var quotedExe = $"\"{exe}\"";
+        var args = resumeCommandLine.StartsWith(quotedExe, StringComparison.OrdinalIgnoreCase) ? resumeCommandLine[quotedExe.Length..].Trim() : SessionLaunchOptions.PostRebootArg;
+        var slash = exe.LastIndexOfAny(['\\', '/']); // not Path.GetDirectoryName: a Windows path must split the same way wherever this runs
+        var workDir = slash > 0 ? exe[..slash] : null;
+        var end = now.Add(SessionLaunchOptions.PendingRebootMaxAge).LocalDateTime.ToString("s", System.Globalization.CultureInfo.InvariantCulture);
+        return
+            "$ErrorActionPreference='Stop';" +
+            $"$a=New-ScheduledTaskAction -Execute '{Q(exe)}' -Argument '{Q(args)}'" + (string.IsNullOrEmpty(workDir) ? "" : $" -WorkingDirectory '{Q(workDir)}'") + ";" +
+            $"$t=New-ScheduledTaskTrigger -AtLogOn -User '{Q(user)}';" +
+            $"$t.EndBoundary='{end}';" +
+            $"$p=New-ScheduledTaskPrincipal -UserId '{Q(user)}' -LogonType Interactive -RunLevel Highest;" +
+            "$s=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero);" +
+            $"Register-ScheduledTask -TaskName '{Q(ResumeTaskName)}' -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null";
+    }
+
+    /// <summary>Removes the sign-in task and the <c>RunOnce</c> startup entry, and deletes any saved pre-reboot snapshot, when a restart is cancelled or done.</summary>
     public async Task CancelPendingRebootAsync(CancellationToken ct = default)
     {
         ClearPendingState();
@@ -238,7 +281,8 @@ public sealed class RebootResumeCoordinator(
             SystemCommandRunner.SystemTool("reg.exe"),
             ["delete", RunOnceRegistryKey, "/v", RunOnceValueName, "/f"],
             ct).ConfigureAwait(false);
-        Log("Cleared pending reboot state and RunOnce entry.");
+        await commands.RunPowerShellAsync($"Unregister-ScheduledTask -TaskName '{Q(ResumeTaskName)}' -Confirm:$false -ErrorAction SilentlyContinue", ct).ConfigureAwait(false);
+        Log("Cleared pending reboot state, the resume task and the RunOnce entry.");
     }
 
     /// <summary>How long after a restart was scheduled (it runs 60 seconds later) a PC that has still not restarted counts as

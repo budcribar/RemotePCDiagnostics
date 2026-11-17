@@ -112,6 +112,7 @@ public sealed class InstallerConfigTests
         // Uninstall cleanup: workflow scheduled task, RunOnce resume value, and optional state/log removal.
         Assert.Contains(WorkflowService.ResumeTaskName, iss);
         Assert.Contains(RebootResumeCoordinator.RunOnceValueName, iss);
+        Assert.Contains(RebootResumeCoordinator.ResumeTaskName, iss);
         Assert.Contains(@"{commonappdata}\RemotePCDiagnostics", iss);
         Assert.Contains(@"{localappdata}\RemotePCDiagnostics", iss);
         Assert.Contains("/CLEANSTATE", iss);

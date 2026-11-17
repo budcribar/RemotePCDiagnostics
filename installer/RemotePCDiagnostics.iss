@@ -63,6 +63,7 @@
 #define WebView2BootstrapUrl "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
 #define WorkflowResumeTaskName "Remote PC Diagnostics - continue service workflow"
 #define RebootRunOnceValueName "RemotePCDiagnosticsResume"
+#define RebootResumeTaskName "Remote PC Diagnostics - continue after restart"
 
 [Setup]
 AppId={{8F6D4A2E-5C91-4B73-9E18-3A7C2D9F41B0}
@@ -146,6 +147,7 @@ Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; Description:
 [UninstallRun]
 ; Remove the post-reboot workflow continuation scheduled task if an interrupted workflow left one registered.
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""{#WorkflowResumeTaskName}"" /F"; Flags: runhidden; RunOnceId: "DeleteWorkflowResumeTask"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""{#RebootResumeTaskName}"" /F"; Flags: runhidden; RunOnceId: "DeleteRebootResumeTask"
 
 [Code]
 var

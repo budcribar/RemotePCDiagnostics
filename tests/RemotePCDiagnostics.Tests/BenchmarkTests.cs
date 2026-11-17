@@ -251,7 +251,7 @@ public class BenchmarkTests
             var r = await svc.RestartThenRunAfterAsync();
             Assert.True(r.Success);
             Assert.True(store.State.RunAfterOnStartup);
-            Assert.Contains(launcher.Calls, c => c.Args.Contains("/r"));
+            Assert.Contains(launcher.Calls, c => c.Args.Contains("/g"));
 
             // "App restarts": a new service instance loads the saved state.
             var delays = new List<TimeSpan>();
@@ -288,7 +288,7 @@ public class BenchmarkTests
             Assert.True(r.Success);
             Assert.True(store.State!.RunBeforeOnStartup);
             Assert.NotNull(store.State.RestartRequestedUtc);
-            Assert.Contains(launcher.Calls, c => c.Args.Contains("/r"));
+            Assert.Contains(launcher.Calls, c => c.Args.Contains("/g"));
 
             var delays = new List<TimeSpan>();
             var svc2 = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem, delay: (d, _) => { delays.Add(d); return Task.CompletedTask; });

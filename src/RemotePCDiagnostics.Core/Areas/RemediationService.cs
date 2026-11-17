@@ -168,7 +168,7 @@ public sealed class RemediationService(
                 session?.Mode == SessionMode.Remote
                     ? "Schedule a clean PC restart in 60 seconds (and auto-resume this remote session)?"
                     : "Schedule a clean PC restart in 60 seconds?",
-                "Records current memory and process usage, registers a Windows RunOnce entry to relaunch Remote PC Diagnostics into the same session after sign-in, and restarts the PC in 60 seconds.",
+                "Records current memory and process usage, registers a sign-in task to relaunch Remote PC Diagnostics into the same session, and restarts the PC in 60 seconds. Where Windows allows it, the same user is signed back in automatically with the screen locked.",
                 session?.Mode == SessionMode.Remote
                     ? "After the PC reboots and signs back in, Remote PC Diagnostics will automatically reconnect to this exact remote session link, re-measure running resources, and log the RAM/process reduction in History."
                     : "After the PC reboots and signs back in, Remote PC Diagnostics will automatically relaunch, re-measure running resources, and log the RAM/process reduction in History.",
@@ -181,7 +181,7 @@ public sealed class RemediationService(
                 action,
                 "Cancel scheduled restart?",
                 "Aborts a pending timed Windows shutdown or restart and clears the post-reboot auto-resume entry.",
-                "Runs 'shutdown /a' and removes the pending RunOnce startup entry so the PC stays on.",
+                "Runs 'shutdown /a' and removes the pending sign-in task so the PC stays on.",
                 null,
                 true),
 
@@ -446,7 +446,9 @@ public sealed class RemediationService(
         var state = await RebootResume.PrepareForRebootAsync(Actor, session, action.Target, ct).ConfigureAwait(false);
         var pr = await commands.RunAsync(
             SystemCommandRunner.SystemTool("shutdown.exe"),
-            ["/r", "/t", "60", "/c", "Remote PC Diagnostics: clean restart scheduled in 60 seconds. Session will automatically resume after sign-in."],
+            // /g = /r plus Automatic Restart Sign-On: where Windows allows it, the same user is signed back in and the screen locked,
+            // so the resume task runs without anyone at the PC. Where it is turned off, /g is a plain restart.
+            ["/g", "/t", "60", "/c", "Remote PC Diagnostics: clean restart scheduled in 60 seconds. Session will automatically resume after sign-in."],
             ct).ConfigureAwait(false);
 
         if (pr is not { ExitCode: 0 })

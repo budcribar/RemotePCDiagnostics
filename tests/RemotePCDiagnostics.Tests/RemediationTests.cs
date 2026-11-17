@@ -272,6 +272,38 @@ public class RemediationTests
         Assert.Equal(0, summary.CriticalRunsCount);
     }
 
+    [Fact]
+    public async Task Reboot_WhenTheResumeTaskCannotBeRegistered_FallsBackToRunOnce()
+    {
+        var launcher = new ScriptedLauncher((file, args) => file.Equals("powershell.exe", StringComparison.OrdinalIgnoreCase) && args[^1].Contains("Register-ScheduledTask")
+            ? ScriptedLauncher.Fail("Access is denied.") : ScriptedLauncher.Ok(""));
+        var statePath = Path.Combine(Path.GetTempPath(), $"rpcd-resume-{Guid.NewGuid():N}.json");
+        try
+        {
+            var coordinator = new RebootResumeCoordinator(new SystemCommandRunner(launcher), stateFilePath: statePath, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe");
+            await coordinator.PrepareForRebootAsync("Local user", new SessionContext(SessionMode.Local), new ResourceBaselineSnapshot(3600, 4L << 30, 110, "chrome.exe (2 GB)").Encode());
+
+            var add = Assert.Single(launcher.Calls, c => c.File.EndsWith("reg.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains("add"));
+            Assert.Contains(RebootResumeCoordinator.RunOnceValueName, add.Args);
+            Assert.Contains("\"C:\\App\\RemotePCDiagnostics.Host.exe\" --post-reboot", add.Args);
+        }
+        finally { try { File.Delete(statePath); } catch (IOException) { } }
+    }
+
+    [Fact]
+    public void ResumeTaskScript_ForALocalSession_PassesOnlyPostReboot_AndStopsFiringAfterThePendingStateExpires()
+    {
+        var now = new DateTimeOffset(2026, 11, 17, 15, 0, 0, TimeSpan.Zero);
+        var script = RebootResumeCoordinator.BuildRegisterResumeTaskScript(@"C:\Bud's Apps\RemotePCDiagnostics.Host.exe",
+            "\"C:\\Bud's Apps\\RemotePCDiagnostics.Host.exe\" --post-reboot", @"PC\o'neil", now);
+
+        Assert.Contains(@"-Execute 'C:\Bud''s Apps\RemotePCDiagnostics.Host.exe' -Argument '--post-reboot' -WorkingDirectory 'C:\Bud''s Apps'", script);
+        Assert.Contains(@"-AtLogOn -User 'PC\o''neil'", script);
+        Assert.Contains(@"-UserId 'PC\o''neil' -LogonType Interactive -RunLevel Highest", script);
+        var end = now.Add(SessionLaunchOptions.PendingRebootMaxAge).LocalDateTime.ToString("s", System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Contains($"$t.EndBoundary='{end}'", script);
+    }
+
     [Theory]
     [InlineData(1, false)]  // the app was restarted during the 60-second countdown: keep everything for the start after the reboot
     [InlineData(30, true)]  // half an hour on and still no restart: it was called off, so the resume entry goes
@@ -293,10 +325,11 @@ public class RemediationTests
         Assert.Empty(remSvc.Recent);
         Assert.Equal(cleared, coordinator.LoadPendingState() is null);
         Assert.Equal(cleared, launcher.Calls.Any(c => c.File.EndsWith("reg.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains("delete") && c.Args.Contains(RebootResumeCoordinator.RunOnceValueName)));
+        Assert.Equal(cleared, launcher.Calls.Any(c => c.File.EndsWith("powershell.exe", StringComparison.OrdinalIgnoreCase) && c.Args[^1].Contains("Unregister-ScheduledTask") && c.Args[^1].Contains(RebootResumeCoordinator.ResumeTaskName)));
     }
 
     [Fact]
-    public async Task RemoteReboot_RegistersRunOnceWithSameSessionStream_AndLogsPostRebootResourceReductionInHistory()
+    public async Task RemoteReboot_RegistersResumeTaskWithSameSessionStream_AndLogsPostRebootResourceReductionInHistory()
     {
         var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
         var runner = new SystemCommandRunner(launcher);
@@ -321,12 +354,22 @@ public class RemediationTests
         Assert.True(schedRes.Success);
         Assert.Contains("8 GB across 2 processes", schedRes.Message);
 
-        // Verify RunOnce command line keeps the exact same remote server and session GUID
+        // Verify the resume command line keeps the exact same remote server and session GUID
         Assert.NotNull(coordinator.LastRegisteredCommandLine);
         Assert.Equal(
             "\"C:\\App\\RemotePCDiagnostics.Host.exe\" -u=https://remoteblazorwebview.com:34544 -i=bfdffa8b-70ac-4740-bdb1-c7f62a0b598f --post-reboot",
             coordinator.LastRegisteredCommandLine);
-        Assert.Contains(launcher.Calls, c => c.File.EndsWith("reg.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains(RebootResumeCoordinator.RunOnceValueName));
+        // It is registered as a sign-in task with highest privileges (elevated, no UAC prompt), not as a RunOnce entry, and the restart asks
+        // Windows to sign the same user back in (shutdown /g).
+        var register = Assert.Single(launcher.Calls, c => c.File.EndsWith("powershell.exe", StringComparison.OrdinalIgnoreCase) && c.Args[^1].Contains("Register-ScheduledTask")).Args[^1];
+        Assert.Contains($"-TaskName '{RebootResumeCoordinator.ResumeTaskName}'", register);
+        Assert.Contains(@"-Execute 'C:\App\RemotePCDiagnostics.Host.exe'", register);
+        Assert.Contains("-Argument '-u=https://remoteblazorwebview.com:34544 -i=bfdffa8b-70ac-4740-bdb1-c7f62a0b598f --post-reboot'", register);
+        Assert.Contains("-AtLogOn", register);
+        Assert.Contains("-RunLevel Highest", register);
+        Assert.Contains("$t.EndBoundary='", register);
+        Assert.DoesNotContain(launcher.Calls, c => c.File.EndsWith("reg.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains("add"));
+        Assert.Contains(launcher.Calls, c => c.File.EndsWith("shutdown.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains("/g") && !c.Args.Contains("/r"));
 
         // Verify SessionLaunchOptions.Resolve parses the RunOnce arguments back into the identical Remote session stream
         var relaunchOpts = SessionLaunchOptions.Resolve(
