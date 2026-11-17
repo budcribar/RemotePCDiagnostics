@@ -3,6 +3,7 @@
 @using RemotePCDiagnostics.Core.Audio
 @using RemotePCDiagnostics.Core.Webcam
 @using RemotePCDiagnostics.Core.Workflow
+@using RemotePCDiagnostics.Core.Areas
 @inherits StoreAwareComponent
 @inject ISessionContext Session
 @inject IJSRuntime JS
@@ -29,6 +30,7 @@
 }
 
 <div class="ct-page">
+    <AgentData TestId="interactive-data" Json="@InteractiveJson(kbSnap, camResult, s2mResult, m2sResult)" />
     <div class="toolbar">
         <span class="icon-badge page-icon"><Icon Name="eye" Size="20" /></span>
         <h1 data-rpcd-page="interactive" data-testid="interactive-title">Interactive tests</h1>
@@ -559,6 +561,18 @@
     private TimeSpan _camDuration = TimeSpan.FromSeconds(5);
     private string _webcamNotes = "";
 
+    // Results whose verdict a person entered with the Pass/Fail buttons, so the agent copy can tell them from a measured result.
+    private readonly Dictionary<string, DiagnosticResult> _personResults = new(StringComparer.Ordinal);
+
+    private InteractiveExport.ModuleState PersonState(DiagnosticResult r) =>
+        new(r, _personResults.TryGetValue(r.ModuleName, out var entered) && ReferenceEquals(entered, r));
+
+    /// <summary>The page's state for browser agents (interactive-data): measured evidence and person-entered verdicts kept apart.</summary>
+    private string InteractiveJson(RemotePCDiagnostics.Core.Workflow.PhysicalBenchQaSnapshot kb, DiagnosticResult cam, DiagnosticResult s2m, DiagnosticResult m2s) =>
+        InteractiveExport.ToJson(
+            new InteractiveExport.PageState(_selectedTestId, _selected, _isBatchRunning, _isRemoteDisplay, Session.Mode == SessionMode.Remote || _hasRemoteSession, _technicianHasControl),
+            kb, PersonState(cam), PersonState(s2m), PersonState(m2s));
+
     private IReadOnlyList<AudioDevice> _outputs = [];
     private IReadOnlyList<AudioDevice> _inputs = [];
     private string? _selectedOutputId;
@@ -862,7 +876,9 @@
             DiagnosticStatus.Error => "Webcam failed inspection",
             _ => "Not run"
         });
-        Store.Set(new DiagnosticResult(ModuleSlugs.Webcam, status, msg, DateTimeOffset.Now, r.Payload));
+        var entered = new DiagnosticResult(ModuleSlugs.Webcam, status, msg, DateTimeOffset.Now, r.Payload);
+        Store.Set(entered);
+        _personResults[ModuleSlugs.Webcam] = entered;
     }
 
     private void ResetWebcam()
@@ -965,7 +981,9 @@
             DiagnosticStatus.Error => "Audio failed inspection",
             _ => "Not run"
         });
-        Store.Set(new DiagnosticResult(slug, status, msg, DateTimeOffset.Now, r.Payload));
+        var entered = new DiagnosticResult(slug, status, msg, DateTimeOffset.Now, r.Payload);
+        Store.Set(entered);
+        _personResults[slug] = entered;
     }
 
     private void ResetAudio()
