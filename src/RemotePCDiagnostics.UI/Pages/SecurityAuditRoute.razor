@@ -2,7 +2,7 @@
 @inherits StoreAwareComponent
 @* The security audit's top-level page (nav rail, Dashboard). The module ships as its own DLL, whose routes the app's router doesn't see, so
    this page shows the module's details here, laid out as on its module page, in or out of process. *@
-<div hidden data-rpcd-page="security-audit"></div>
+<div hidden data-rpcd-page="security-audit" data-rpcd-contract="@BrowserContract.SecurityAudit"></div>
 @if (Diagnostics.Catalog.ModuleFor(ModuleIds.SecurityAudit) is { } m)
 {
     <ModuleDetailsView DiagnosticModule="m" />

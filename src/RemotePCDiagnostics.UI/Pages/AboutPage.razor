@@ -3,7 +3,7 @@
 @inject AppServices App
 @using RemotePCDiagnostics.Core.Plugins
 
-<div class="toolbar"><span class="icon-badge page-icon"><Icon Name="pc" Size="20" /></span><h1 data-rpcd-page="about" data-testid="about-title">About Remote PC Diagnostics</h1></div>
+<div class="toolbar"><span class="icon-badge page-icon"><Icon Name="pc" Size="20" /></span><h1 data-rpcd-page="about" data-rpcd-contract="@BrowserContract.About" data-testid="about-title">About Remote PC Diagnostics</h1></div>
 <div class="about-accent-line" aria-hidden="true"></div>
 <section class="card about-card">
     <h2>Version @AppBuildInfo.Release</h2>

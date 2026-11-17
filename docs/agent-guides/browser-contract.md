@@ -24,6 +24,26 @@ Use `.app[data-rpcd-version]` as the canonical selector for control and connecti
 
 For run results, follow the [inventory metadata proposal](hardware-inventory.md#browser-metadata). Prioritize check ID, run ID, result run ID, exact completion time and result source. Add field IDs and units where guides need structured extraction. Display names can change without changing IDs.
 
+## Contract versions (`data-rpcd-contract`)
+
+Every page marker carries its page's contract version: `[data-rpcd-page="checks"][data-rpcd-contract="1"]`. The version says which agent metadata (data-testid and data-* attributes, and hidden data copies) the page provides, so an agent can tell a missing element apart from an older build that never had it. A marker without `data-rpcd-contract` is from a build before contract versions.
+
+**Rule:** any change to a page's agent metadata (an added, renamed or removed `data-testid`, `data-*` attribute or hidden data copy) bumps that page's version in `src/RemotePCDiagnostics.Core/BrowserContract.cs` and adds a row below. `BrowserContractTests` fails if a page marker has no version.
+
+| Page | Version | Agent metadata |
+| --- | --- | --- |
+| dashboard | 1 | Metadata on RPCD main when versions were introduced (November 2026) |
+| workflow | 1 | Same, including `workflow-data` |
+| checks | 1 | Same, including `checks-list-data`, `area-report-data`, generic `run-check`/`cancel-check` markers, fix and service action metadata |
+| stress | 1 | Same, including `stress-data` |
+| interactive | 1 | Same, including `interactive-data` with `reportIf` hints |
+| security-audit | 1 | Same, including `audit-report-data` |
+| benchmark | 1 | Same, including `bench-report-data` |
+| certificates | 1 | Same |
+| history | 1 | Same, including `history-data` |
+| about | 1 | Same |
+| module | 1 | Same (a module's own page outside Checks) |
+
 ## Checks list (`checks-list-data`)
 
 The Checks page renders one hidden `[data-testid="checks-list-data"]` element listing every check in the Checks group, collapsed or not: `id` (the check ID used everywhere else), `title`, `kind` (`check`, or `on-demand` for checks outside Run all), `scan` (true for long scans that keep running and can be cancelled), `start` (`run-one`: the detail panel's Run button; `own-page`: the check's own Start inside its detail page), `state`, and for finished runs `runId`, `completedAt` and `summary`.
