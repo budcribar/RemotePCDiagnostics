@@ -21,8 +21,8 @@ public sealed class BuiltInModulesPlugin : IModulePlugin
 {
     public const string Id = "builtin";
 
-    /// <summary>The modules compiled into the app: none. Every built-in module ships as its own DLL.</summary>
-    public static IReadOnlyList<Guid> CompiledIn { get; } = [];
+    /// <summary>The modules compiled into the app: DiskSpace and DuplicateFiles.</summary>
+    public static IReadOnlyList<Guid> CompiledIn { get; } = [ModuleIds.DiskSpace, ModuleIds.DuplicateFiles];
 
     /// <summary>The slugs of built-in modules that are neither compiled in nor found as a DLL in <paramref name="folder"/> (the package check).</summary>
     public static IReadOnlyList<string> MissingModuleDlls(string folder)
@@ -36,6 +36,8 @@ public sealed class BuiltInModulesPlugin : IModulePlugin
 
     public void Register(IServiceCollection services, IPluginContext context)
     {
+        services.AddModule(context, sp => new DiskSpaceModule(sp.GetService<ILogger>()));
+        services.AddModule(context, sp => new DuplicateFilesModule(sp.GetService<ILogger>()));
         foreach (var (id, type) in RemotePCDiagnostics.UI.BuiltInModuleUi.Components) context.SetDetailsComponent(id, type);
     }
 }

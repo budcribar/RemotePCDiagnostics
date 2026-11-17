@@ -167,4 +167,53 @@ public class DriveHealthTests
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
         Assert.Equal(1, reads);
     }
+
+    [Fact]
+    public void Trend_flags_drive_when_read_errors_increase()
+    {
+        var store = new DriveHealthHistoryStore();
+        var now1 = DateTimeOffset.UtcNow.AddDays(-7);
+        var now2 = DateTimeOffset.UtcNow;
+
+        var d1 = new DriveHealth("SSD", "SN123", "SSD", "NVMe", "Healthy", "OK", 500_000_000_000, 35, 10, ReadErrors: 0, WriteErrors: 0, PowerOnHours: 1000);
+        store.Record([d1], now1);
+
+        var d2 = new DriveHealth("SSD", "SN123", "SSD", "NVMe", "Healthy", "OK", 500_000_000_000, 36, 10, ReadErrors: 3, WriteErrors: 0, PowerOnHours: 1168);
+        var analysis = store.AnalyzeTrend(d2.RawId, d2, now2);
+
+        Assert.True(analysis.HasHistory);
+        Assert.True(analysis.IsDegrading);
+        Assert.Equal(3, analysis.ReadErrorDelta);
+        Assert.Contains("read errors increased by +3", analysis.SummaryText);
+
+        var rep = DriveHealthModule.Build([d2], null, now2, store);
+        var card = Assert.Single(rep.Cards);
+        Assert.Equal(AreaLevel.Warning, card.Level);
+        Assert.Contains("Degrading", card.Headline);
+        Assert.Contains("getting worse", rep.Summary);
+    }
+
+    [Fact]
+    public void Trend_shows_stable_when_errors_do_not_increase()
+    {
+        var store = new DriveHealthHistoryStore();
+        var now1 = DateTimeOffset.UtcNow.AddDays(-14);
+        var now2 = DateTimeOffset.UtcNow;
+
+        var d1 = new DriveHealth("SSD", "SN123", "SSD", "NVMe", "Healthy", "OK", 500_000_000_000, 35, 10, ReadErrors: 0, WriteErrors: 0, PowerOnHours: 1000);
+        store.Record([d1], now1);
+
+        var d2 = new DriveHealth("SSD", "SN123", "SSD", "NVMe", "Healthy", "OK", 500_000_000_000, 36, 10, ReadErrors: 0, WriteErrors: 0, PowerOnHours: 1336);
+        var analysis = store.AnalyzeTrend(d2.RawId, d2, now2);
+
+        Assert.True(analysis.HasHistory);
+        Assert.False(analysis.IsDegrading);
+        Assert.Contains("Stable", analysis.SummaryText);
+
+        var rep = DriveHealthModule.Build([d2], null, now2, store);
+        var card = Assert.Single(rep.Cards);
+        Assert.Equal(AreaLevel.Ok, card.Level);
+        Assert.Equal("Healthy", card.Headline);
+        Assert.DoesNotContain("getting worse", rep.Summary);
+    }
 }

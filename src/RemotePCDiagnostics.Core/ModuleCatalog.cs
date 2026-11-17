@@ -32,6 +32,8 @@ public static class BuiltInModules
         new(ModuleIds.NpuTest, ModuleSlugs.NpuTest, "NPU (AI accelerator) test", ModuleKind.OnDemand, ModuleGroups.Ai, 100),
         new(ModuleIds.SecurityEssentials, ModuleSlugs.SecurityEssentials, "Security essentials", ModuleKind.Check, ModuleGroups.Security, 50),
         new(ModuleIds.SecurityAudit, ModuleSlugs.SecurityAudit, "Security audit", ModuleKind.OnDemand, ModuleGroups.Security, 100) { Page = "security-audit" },
+        new(ModuleIds.DiskSpace, ModuleSlugs.DiskSpace, "Large files & folders", ModuleKind.OnDemand, ModuleGroups.Storage, 300),
+        new(ModuleIds.DuplicateFiles, ModuleSlugs.DuplicateFiles, "Duplicate files", ModuleKind.OnDemand, ModuleGroups.Storage, 400),
         // Merged into other modules; kept so History can still name their old results.
         new(ModuleIds.BsodHistory, ModuleSlugs.BsodHistory, "Blue screens & unexpected restarts", ModuleKind.Check, ModuleGroups.Windows, 310) { MergedInto = ModuleIds.Crashes },
         new(ModuleIds.WifiConfig, ModuleSlugs.WifiConfig, "Wi-Fi & network config", ModuleKind.Check, ModuleGroups.Network, 110) { MergedInto = ModuleIds.Network },

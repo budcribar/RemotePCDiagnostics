@@ -912,4 +912,66 @@ public sealed class StorageCleanupTests : IDisposable
         Assert.Empty(j.All);
         Assert.Single(sys.Cleaned); // undo never re-runs or reverses a cleanup
     }
+
+    [Fact]
+    public void WindowsOld_Category_Exists_And_Is_OptIn()
+    {
+        var cat = StorageCleanupCatalog.Find("storage-windows-old");
+        Assert.NotNull(cat);
+        Assert.False(cat.AutoChecked);
+        Assert.Equal("storage-windows-old", cat.Id);
+        Assert.Contains("Windows.old", cat.Title);
+    }
+
+    [Fact]
+    public void WindowsUpdate_Category_Exists_And_Is_AutoChecked()
+    {
+        var cat = StorageCleanupCatalog.Find("storage-windows-update");
+        Assert.NotNull(cat);
+        Assert.True(cat.AutoChecked);
+        Assert.Equal("storage-windows-update", cat.Id);
+        Assert.Contains("Windows Update", cat.Title);
+    }
+
+    [Fact]
+    public void WindowsOld_Cleans_Contents_When_Configured()
+    {
+        var sysDrive = Path.Combine(_tmp, "system");
+        var winOld = Path.Combine(sysDrive, "Windows.old");
+        Directory.CreateDirectory(winOld);
+        var f = Make(Path.Combine(winOld, "test.dll"), 5000);
+
+        var roots = new StorageRoots(_roots.UserProfile, _roots.LocalAppData, _roots.RoamingAppData, sysDrive, Path.Combine(sysDrive, "Windows"));
+        var ctx = new StorageScanContext(roots, [], Now);
+        var cat = StorageCleanupCatalog.Find("storage-windows-old")!;
+
+        var targets = cat.Targets(ctx, CancellationToken.None);
+        Assert.Single(targets);
+
+        var res = StorageCleanupEngine.Clean(cat, ctx, _ => false);
+        Assert.True(res.Ran);
+        Assert.False(File.Exists(f));
+        Assert.True(Directory.Exists(winOld));
+    }
+
+    [Fact]
+    public void WindowsUpdate_Cleans_Stale_Files_In_SoftwareDistribution()
+    {
+        var sysDrive = Path.Combine(_tmp, "system");
+        var winDir = Path.Combine(sysDrive, "Windows");
+        var dlDir = Path.Combine(winDir, "SoftwareDistribution", "Download");
+        Directory.CreateDirectory(dlDir);
+
+        var oldFile = Make(Path.Combine(dlDir, "update1.cab"), 8000, daysOld: 20);
+        var freshFile = Make(Path.Combine(dlDir, "update2.cab"), 4000, daysOld: 2);
+
+        var roots = new StorageRoots(_roots.UserProfile, _roots.LocalAppData, _roots.RoamingAppData, sysDrive, winDir);
+        var ctx = new StorageScanContext(roots, [], Now);
+        var cat = StorageCleanupCatalog.Find("storage-windows-update")!;
+
+        var res = StorageCleanupEngine.Clean(cat, ctx, _ => false);
+        Assert.True(res.Ran);
+        Assert.False(File.Exists(oldFile));
+        Assert.True(File.Exists(freshFile));
+    }
 }

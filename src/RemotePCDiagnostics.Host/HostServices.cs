@@ -71,6 +71,7 @@ public static class HostServices
         // Last retrim per SSD volume: Windows' Defrag event 258 plus this app's own record (retrim.json), so Drive health only offers it when needed.
         services.AddSingleton(_ => new RetrimLog(RetrimLog.DefaultPath(), L<RetrimLog>()));
         services.AddSingleton<IRetrimHistory>(sp => new RetrimHistory(sp.GetRequiredService<RetrimLog>(), new WindowsRetrimEvents(L<WindowsRetrimEvents>()), L<RetrimHistory>()));
+        services.AddSingleton<RemotePCDiagnostics.Core.Areas.IDriveHealthHistoryStore>(_ => new RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore(RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore.DefaultPath(), L<RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore>()));
         services.AddSingleton<ServicesModule>();
         // Reversible changes (with their "before" values) for "Undo all changes" / --undo-all; survives restarts.
         services.AddSingleton<RemotePCDiagnostics.Core.Changes.IChangeJournal>(_ => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(), L<RemotePCDiagnostics.Core.Changes.FileChangeJournal>()));

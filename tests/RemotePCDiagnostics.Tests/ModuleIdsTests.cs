@@ -38,6 +38,8 @@ public class ModuleIdsTests
         ["Webcam"] = "243be433-599b-42e4-ad92-04346a59a292",
         ["NpuTest"] = "85ffb9ea-fb21-4189-9714-5d58f7115237",
         ["SecurityEssentials"] = "61025d7b-f5ef-4286-82ff-df9a74834b39",
+        ["DiskSpace"] = "9c7c4b12-5893-4e40-8ab7-7a2e379b3601",
+        ["DuplicateFiles"] = "e22a8740-410a-4da5-a912-21ea7f7d195f",
     };
 
     [Fact]

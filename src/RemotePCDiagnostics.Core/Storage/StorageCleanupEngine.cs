@@ -4,13 +4,15 @@ using RemotePCDiagnostics.Core.Optimizations;
 
 namespace RemotePCDiagnostics.Core.Storage;
 
-/// <summary>The account folders every cleanup rule is built from (never from saved state or the journal).</summary>
-public sealed record StorageRoots(string UserProfile, string LocalAppData, string RoamingAppData)
+/// <summary>The folders every cleanup rule is built from (never from saved state or the journal).</summary>
+public sealed record StorageRoots(string UserProfile, string LocalAppData, string RoamingAppData, string? SystemDrive = null, string? WindowsFolder = null)
 {
     public static StorageRoots Current() => new(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\",
+        Environment.GetFolderPath(Environment.SpecialFolder.Windows));
 }
 
 /// <param name="ProjectRoots">Code folders found on this PC (only the NuGet rule uses them, to keep referenced package versions).</param>
@@ -119,7 +121,19 @@ public static class StorageCleanupEngine
             .Where(b => !string.IsNullOrWhiteSpace(b)).Select(Normalize)
             .Where(b => root.StartsWith(b + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(b => b.Length).ToList();
-        if (bases.Count == 0) { why = "root is outside the account folders"; return false; }
+        if (bases.Count == 0)
+        {
+            var systemBases = new List<string>();
+            if (!string.IsNullOrWhiteSpace(account.SystemDrive))
+                systemBases.Add(Normalize(System.IO.Path.Combine(account.SystemDrive, "Windows.old")));
+            if (!string.IsNullOrWhiteSpace(account.WindowsFolder))
+                systemBases.Add(Normalize(System.IO.Path.Combine(account.WindowsFolder, "SoftwareDistribution", "Download")));
+
+            bases = systemBases.Where(b => root.Equals(b, StringComparison.OrdinalIgnoreCase) ||
+                                           root.StartsWith(b + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            if (bases.Count == 0) { why = "root is outside the account and allowed system folders"; return false; }
+        }
         var current = bases[0];
         foreach (var part in System.IO.Path.GetRelativePath(current, path).Split(System.IO.Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
         {

@@ -65,9 +65,10 @@ public sealed record DriveHealth(
 /// <remarks>In user mode (the module host) <paramref name="host"/> is set: the health script and the drive list run in the app
 /// (<c>storage.drives</c>, <c>osquery.select</c>), since the reliability counters need administrator rights.</remarks>
 public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunner osquery, IRetrimHistory? retrims = null, Func<DateTimeOffset>? clock = null,
-    Plugins.IHostQueries? host = null)
+    Plugins.IHostQueries? host = null, IDriveHealthHistoryStore? historyStore = null)
     : AreaModuleBase(commands.Log ?? osquery.Options.Log), IPerDeviceModule, IInstanceSummary, IHasAreaPanels
 {
+    private readonly IDriveHealthHistoryStore _history = historyStore ?? new DriveHealthHistoryStore(DriveHealthHistoryStore.DefaultPath(), commands.Log ?? osquery.Options.Log);
     public AreaPanels Panels => AreaPanels.StorageCleanup;
     /// <summary>The instance used when the drive list itself can't be read, so the failure is still reported as a run.</summary>
     public const string AllDrivesKey = "all";
@@ -90,7 +91,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     {
         var read = await ReadDrivesAsync(progress, ct).ConfigureAwait(false);
         if (read.Drives is null) return AreaReport.Failed(FailedMessage);
-        return Build(read.Drives, read.Retrims, read.Now) with { Notice = read.Notice };
+        return Build(read.Drives, read.Retrims, read.Now, _history) with { Notice = read.Notice };
     }
 
     /// <summary>The drives as last read: health (or the osquery list with <see cref="Notice"/>), retrim dates, and when.</summary>
@@ -185,6 +186,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
         }
         if (drives is { Count: > 0 })
         {
+            _history.Record(drives, now);
             progress.ReportStep(2, 2, "Checking SSD optimization history…");
             return new(drives, await ReadRetrimsAsync(ct).ConfigureAwait(false), now, null, now);
         }
@@ -236,7 +238,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             var read = await ReadDrivesCachedAsync(progress, cancellationToken).ConfigureAwait(false);
             if (read.Drives is null) report = AreaReport.Failed(FailedMessage);
             else if (Instances(read.Drives).FirstOrDefault(x => x.Instance.Key == instance.Key) is { Drive: { } drive })
-                report = Build([drive], read.Retrims, read.Now) with { Notice = read.Notice };
+                report = Build([drive], read.Retrims, read.Now, _history) with { Notice = read.Notice };
             else return CouldNotRun.Result(Name, $"{instance.Label} is no longer connected.");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -257,7 +259,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
         if (_latest is not { Drives: { } drives } read) return null;
         var byKey = Instances(drives).ToDictionary(x => x.Instance.Key, x => x.Drive);
         var shown = instanceResults.Select(r => r.InstanceKey is { } k ? byKey.GetValueOrDefault(k) : null).OfType<DriveHealth>().ToList();
-        return shown.Count == 0 ? null : Build(shown, read.Retrims, read.Now) with { Notice = read.Notice };
+        return shown.Count == 0 ? null : Build(shown, read.Retrims, read.Now, _history) with { Notice = read.Notice };
     }
 
     private async Task<IReadOnlyDictionary<char, RetrimRecord>?> ReadRetrimsAsync(CancellationToken ct)
@@ -287,22 +289,36 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
 
     public static AreaReport Build(IReadOnlyList<DriveHealth> drives) => Build(drives, null, DateTimeOffset.Now);
 
-    public static AreaReport Build(IReadOnlyList<DriveHealth> drives, IReadOnlyDictionary<char, RetrimRecord>? retrims, DateTimeOffset now)
+    public static AreaReport Build(IReadOnlyList<DriveHealth> drives, IReadOnlyDictionary<char, RetrimRecord>? retrims, DateTimeOffset now, IDriveHealthHistoryStore? historyStore = null)
     {
         if (drives.Count == 0)
             return new([], "No drives were found to check.", DiagnosticStatus.Warning);
         string[] cols = ["Detail", "Value"];
         var cards = drives.Select((d, i) =>
         {
+            var trend = historyStore?.AnalyzeTrend(d.RawId, d, now);
+            var level = d.Level;
+            var verdict = d.Verdict;
+            var reasons = d.Reasons().ToList();
+            if (trend is { IsDegrading: true })
+            {
+                if (level < AreaLevel.Warning) level = AreaLevel.Warning;
+                verdict = "Degrading – check errors and back up files";
+                reasons.Insert(0, trend.SummaryText);
+            }
+
             var meta = string.Join(" · ", new[]
             {
                 d.Kind, d.SizeBytes is > 0 ? HardwareInventory.FormatBytes(d.SizeBytes) : null,
                 d.TemperatureC is > 0 ? $"{d.TemperatureC}°C" : null, d.Wear is not null ? $"{d.Wear}% worn" : null,
+                trend is { IsDegrading: true } ? "Degrading" : null,
             }.Where(x => x is not null));
             var rows = new List<AreaRow>();
-            void Add(string label, string? v, AreaLevel l = AreaLevel.Neutral) { if (!string.IsNullOrWhiteSpace(v)) rows.Add(new(l, [label, v])); }
-            Add("Overall", d.Verdict + (d.Reasons().Any() ? ": " + string.Join("; ", d.Reasons()) : ""), d.Level);
+            void Add(string label, string? v, AreaLevel l = AreaLevel.Neutral, string? detail = null) { if (!string.IsNullOrWhiteSpace(v)) rows.Add(new(l, [label, v], Detail: detail)); }
+            Add("Overall", verdict + (reasons.Count > 0 ? ": " + string.Join("; ", reasons) : ""), level);
             Add("Status reported by Windows", d.Health.Length > 0 ? $"{d.Health}{(d.Operational.Length > 0 && d.Operational != "OK" ? $" ({d.Operational})" : "")}" : "Not reported");
+            if (trend is not null)
+                Add("Health trend", trend.SummaryText, trend.IsDegrading ? AreaLevel.Warning : AreaLevel.Neutral, detail: trend.HistoryDetail);
             Add("Type", d.Kind);
             Add("Connection", d.BusType);
             Add("Size", d.SizeBytes is > 0 ? HardwareInventory.FormatBytes(d.SizeBytes) : null);
@@ -322,15 +338,18 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
                 !RecentlyRetrimmed(letter.ToString(), retrims, now)).ToArray());
             if (dueLetters.Length > 0)
                 actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", dueLetters, d.Name.Length > 0 ? d.Name : "SSD"));
-            return new AreaCard($"drive{i}", d.Name.Length > 0 ? d.Name : $"Drive {i + 1}", d.Level, d.Verdict, meta, cols, rows,
+            return new AreaCard($"drive{i}", d.Name.Length > 0 ? d.Name : $"Drive {i + 1}", level, verdict, meta, cols, rows,
                 Actions: actions.Count > 0 ? actions : null);
         }).ToList();
 
-        var bad = drives.Count(d => d.Level is AreaLevel.Warning or AreaLevel.Error);
+        var degrading = drives.Count(d => historyStore?.AnalyzeTrend(d.RawId, d, now).IsDegrading == true);
+        var bad = cards.Count(c => c.Level is AreaLevel.Warning or AreaLevel.Error);
         var unknown = drives.All(d => d.Level == AreaLevel.Neutral);
         var summary = bad > 0 ? $"{bad} of {Plural(drives.Count, "drive")} need{(bad == 1 ? "s" : "")} attention"
             : unknown ? $"{Plural(drives.Count, "drive")} found · health not reported"
             : drives.Count == 1 ? "1 drive · healthy" : $"{drives.Count} drives · all healthy";
-        return new(cards, summary, AreaReport.Worst(drives.Select(d => d.Level)));
+        if (degrading > 0)
+            summary = $"{summary} ({Plural(degrading, "drive")} getting worse)";
+        return new(cards, summary, AreaReport.Worst(cards.Select(c => c.Level)));
     }
 }
