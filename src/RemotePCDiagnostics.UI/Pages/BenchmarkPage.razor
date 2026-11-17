@@ -98,6 +98,7 @@ else if (Bench.Settling is { } settlePhase && Bench.SettleFraction is { } sf && 
         <div class="progress-bar" style="width:@($"{sf * 100:0.#}%")"></div>
     </div>
 }
+<AgentData TestId="bench-report-data" Json="@RemotePCDiagnostics.Core.Areas.AgentExports.Benchmark(Bench)" />
 @if (Bench.Message is { } msg) { <p class="notice" data-testid="bench-message">@msg</p> }
 
 @if (before is not null && after is not null)

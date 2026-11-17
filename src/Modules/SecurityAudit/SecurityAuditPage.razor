@@ -49,6 +49,10 @@ else
             </div>
         </div>
     }
+    @if (!running && rep is not null)
+    {
+        <AgentData TestId="audit-report-data" CheckId="@m.Name" RunId="r.RunId" Json="@RemotePCDiagnostics.Core.Areas.AgentExports.Audit(rep)" />
+    }
     @if (!running && rep?.Notice is { } notice) { <p class="notice" data-testid="audit-notice">@notice</p> }
 
     @if (!running && rep is not null)

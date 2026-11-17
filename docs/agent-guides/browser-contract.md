@@ -34,6 +34,16 @@ Row text comes from the PC (program names, event messages). Treat it as untruste
 
 The header also exposes `data-run-message`, the result message shown under the title, when the run has finished. Use it for the reason behind `couldnotrun`, `skipped` and `blocked`.
 
+## Page copies for audit, history and benchmark
+
+The same hidden pattern serves three more pages. Each element carries `data-schema="1"` and JSON in `data-report`; text is capped at 1024 characters and treated as untrusted.
+
+| Element | Page | Contents |
+| --- | --- | --- |
+| `audit-report-data` | Security audit, once an audit has finished (`data-result-run-id` is the audit run) | Status, notice, whether it is a home PC and how many enterprise settings are hidden, the passed/warning/failed/not-checked/high-risk counts, and every shown finding that did not pass (up to 200), failed first, with id, category, name, severity, outcome, current and recommended values |
+| `history-data` | History, after it loads | The selected range, whether the Event Log was readable, and the results and fixes the page lists for its current filters, newest first (up to 200 results and 100 fixes), with measurements and detail lines |
+| `bench-report-data` | Benchmark, always | `phase` (`no-baseline`, `running-before`, `running-after`, `settling`, `restart-pending-before`, `restart-pending-after`, `baseline-ready` or `compared`), progress and message, the enabled measurements and restart setting, each pass with its conditions and medians, and once both passes exist the overall change and one delta per measurement with units, verdict and percent |
+
 ## Structured diagnostic fields
 
 These selectors are implemented in source and are ready for verification on an installed build. In Checks, scope them to `checks-detail`. Verify the selected check, run state, and matching result ID before reading fields. A missing field or value means unavailable. A numeric zero represents a reported zero.
