@@ -60,6 +60,12 @@ The buttons carry the same identity: fix buttons have `data-action="remediate"`,
 
 A click opens RPCD's confirmation dialog: `remediation-confirm` (with `data-action-kind`, `data-action-target`, `data-allowed`, `data-state` confirm or working; confirm with `remediation-confirm-go`) or `svc-confirm` (with `data-service`, `data-service-action`, `data-allowed`, `data-state`; confirm with `svc-confirm-go`). Check the dialog names the intended fix before confirming. The result appears in `remediation-result` or `svc-result` with `data-outcome` (`succeeded` or `failed`), the fix or service identity, and `data-result-seq`, which increases with every result. After a successful fix the check runs again by itself.
 
+## Service workflow (`workflow-data`)
+
+The Service workflow page renders `[data-testid="workflow-data"]` with schema 1 JSON: `stage` (Idle, Checking, Review, RestartBefore, BeforeBenchmark, Applying, RestartAfter, AfterBenchmark, Reporting, Done, Cancelled or Failed), `running`, `busy`, `waitingForRestart`, `status`, `message`, `error`, timestamps and the restart count, `checks` while Checking, `findings`, `recommendations`, `notOffered`, `fixes` (stable `id`, title, why, area and `areaKey`, `areaOpen`, risk, slow, defaultOn, needsAdmin, undo and `approved`), `outcomes` (fixId, succeeded/failed/skipped, message), `repairs`, and on the Review stage `signIn` (`automatic`, `credentialsEntered`, `clientSignsIn`, `canStart`). It never holds the account name or password.
+
+Controls: `wf-start-checks` runs the checks. On Review, an area's fixes render only when its toggle (`data-action="wf-area"`, `data-area-key`) is open; each fix checkbox has `data-action="wf-fix"` and `data-fix-id`. `wf-select-recommended`, `wf-client-signs-in`, `wf-go` (starts restarts, benchmarks and fixes), `wf-start-over`, `wf-cancel`, `wf-restart-now` and `wf-new` act as on screen. Agents must never type into `wf-user` or `wf-password`: the person enters Windows credentials, or chooses to sign in themselves.
+
 ## Structured diagnostic fields
 
 These selectors are implemented in source and are ready for verification on an installed build. In Checks, scope them to `checks-detail`. Verify the selected check, run state, and matching result ID before reading fields. A missing field or value means unavailable. A numeric zero represents a reported zero.
