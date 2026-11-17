@@ -58,15 +58,26 @@ public sealed class DriveHealthHistoryStore(string? path = null, ILogger? log = 
 
             foreach (var d in drives)
             {
-                if (string.IsNullOrWhiteSpace(d.RawId)) continue;
-                if (!data.TryGetValue(d.RawId, out var list))
+                var key = StableIdentityKey(d);
+                if (string.IsNullOrWhiteSpace(key)) continue;
+
+                if (!data.TryGetValue(key, out var list))
                 {
-                    list = [];
-                    data[d.RawId] = list;
+                    // Check if existing records were saved under d.RawId
+                    if (!string.IsNullOrWhiteSpace(d.RawId) && data.Remove(d.RawId, out var legacyList))
+                    {
+                        list = legacyList;
+                        data[key] = list;
+                    }
+                    else
+                    {
+                        list = [];
+                        data[key] = list;
+                    }
                 }
 
-                // If recorded very recently (< 1 minute), update the latest instead of creating duplicate points
-                if (list.Count > 0 && Math.Abs((now - list[^1].When).TotalMinutes) < 1)
+                // If recorded very recently (< 1 minute), update the latest if it matches identity, instead of creating duplicate points
+                if (list.Count > 0 && MatchesIdentity(list[^1], d) && Math.Abs((now - list[^1].When).TotalMinutes) < 1)
                 {
                     list[^1] = ToRecord(d, now);
                 }
@@ -101,7 +112,14 @@ public sealed class DriveHealthHistoryStore(string? path = null, ILogger? log = 
         lock (_gate)
         {
             var data = LoadLocked();
-            return data.TryGetValue(rawId, out var list) ? list.ToList() : [];
+            if (data.TryGetValue(rawId, out var list))
+                return list.ToList();
+
+            var key = StableIdentityKey(rawId, null, null);
+            if (data.TryGetValue(key, out var keyList))
+                return keyList.ToList();
+
+            return [];
         }
     }
 
@@ -111,16 +129,26 @@ public sealed class DriveHealthHistoryStore(string? path = null, ILogger? log = 
         lock (_gate)
         {
             var data = LoadLocked();
-            history = data.TryGetValue(rawId, out var list) ? list.ToList() : [];
+            var key = StableIdentityKey(current);
+            if (data.TryGetValue(key, out var list))
+                history = list.ToList();
+            else if (data.TryGetValue(rawId, out var rawList))
+                history = rawList.ToList();
+            else
+                history = [];
         }
 
+        // Match a stable device identity before comparing readings:
+        // Exclude records from different physical drives (different serial, different identity, or reset power-on hours).
+        var matched = history.Where(h => MatchesIdentity(h, current)).ToList();
+
         // Compare against earlier visits (ignore readings taken in this current run/minute)
-        var prior = history.Where(h => (now - h.When).TotalMinutes >= 1).OrderByDescending(h => h.When).ToList();
+        var prior = matched.Where(h => (now - h.When).TotalMinutes >= 1).OrderByDescending(h => h.When).ToList();
         if (prior.Count == 0)
         {
             return new DriveTrendAnalysis(
                 HasHistory: false,
-                TotalVisits: history.Count > 0 ? history.Count : 1,
+                TotalVisits: matched.Count > 0 ? matched.Count : 1,
                 FirstSeen: now,
                 PreviousVisit: null,
                 ReadErrorDelta: 0,
@@ -191,6 +219,86 @@ public sealed class DriveHealthHistoryStore(string? path = null, ILogger? log = 
             IsDegrading: isDegrading,
             SummaryText: summary,
             HistoryDetail: detail);
+    }
+
+    public static string StableIdentityKey(DriveHealth d) =>
+        StableIdentityKey(d.RawId, d.Serial, d.Name, d.UniqueId);
+
+    public static string StableIdentityKey(string? rawId, string? serial, string? name, string? uniqueId = null)
+    {
+        var s = serial?.Trim();
+        if (!string.IsNullOrEmpty(s) && !IsGenericSerial(s))
+            return "serial:" + s.ToUpperInvariant();
+
+        var u = uniqueId?.Trim();
+        if (!string.IsNullOrEmpty(u))
+            return "id:" + u.ToUpperInvariant();
+
+        var r = rawId?.Trim();
+        if (!string.IsNullOrEmpty(r))
+        {
+            if (r.StartsWith("serial:", StringComparison.OrdinalIgnoreCase))
+            {
+                var ser = r["serial:".Length..].Trim();
+                if (!string.IsNullOrEmpty(ser) && !IsGenericSerial(ser))
+                    return "serial:" + ser.ToUpperInvariant();
+            }
+            if (r.StartsWith("id:", StringComparison.OrdinalIgnoreCase))
+                return r.ToUpperInvariant();
+        }
+
+        var n = (name ?? "").Trim();
+        if (!string.IsNullOrEmpty(n))
+            return "name:" + n.ToUpperInvariant();
+
+        return !string.IsNullOrEmpty(r) ? r.ToUpperInvariant() : "unknown";
+    }
+
+    public static bool IsGenericSerial(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return true;
+        var trimmed = s.Trim();
+        return trimmed.Length == 0 ||
+               trimmed.All(c => c is '0' or ' ' or '-' or '.' or '_') ||
+               trimmed.Equals("None", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.Equals("Unknown", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.Equals("To be filled by O.E.M.", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.Equals("Default string", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool MatchesIdentity(DriveHealthRecord h, DriveHealth current)
+    {
+        // 1. If both have serial numbers, they must match
+        bool hHasSerial = !string.IsNullOrWhiteSpace(h.Serial) && !IsGenericSerial(h.Serial);
+        bool cHasSerial = !string.IsNullOrWhiteSpace(current.Serial) && !IsGenericSerial(current.Serial);
+
+        if (hHasSerial && cHasSerial)
+        {
+            if (!string.Equals(h.Serial.Trim(), current.Serial.Trim(), StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        else if (hHasSerial != cHasSerial)
+        {
+            // One has a serial and the other does not; cannot safely assume they are the same physical drive
+            return false;
+        }
+
+        // 2. If name/model is available on both, verify it matches
+        if (!string.IsNullOrWhiteSpace(h.Name) && !string.IsNullOrWhiteSpace(current.Name))
+        {
+            if (!string.Equals(h.Name.Trim(), current.Name.Trim(), StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
+        // 3. Power-on-hours reset check:
+        // A single physical drive's power-on hours monotonically increases over time.
+        // If a past record had significant hours and current has substantially fewer, this indicates a replaced drive.
+        if (h.PowerOnHours is > 50 && current.PowerOnHours is not null && current.PowerOnHours.Value < h.PowerOnHours.Value - 24)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static DriveHealthRecord ToRecord(DriveHealth d, DateTimeOffset when) =>

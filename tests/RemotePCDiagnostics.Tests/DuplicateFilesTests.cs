@@ -75,10 +75,33 @@ public sealed class DuplicateFilesTests : IDisposable
 
         Assert.Contains("Found 1 duplicate set", report.Summary);
 
-        // Test deletion to recycle bin
-        bool ok = m.DeleteToRecycleBin(fileA2, out var err);
+        // Test deletion to recycle bin with safety revalidation against surviving duplicate
+        bool ok = m.DeleteToRecycleBin(fileA2, fileA1, out var err);
         Assert.True(ok);
         Assert.Null(err);
         Assert.Contains(fileA2, recycle.Deleted);
+
+        // Revalidation failure: target and surviving are identical path
+        bool failSame = m.DeleteToRecycleBin(fileA1, fileA1, out var errSame);
+        Assert.False(failSame);
+        Assert.Contains("cannot be the same file", errSame);
+
+        // Revalidation failure: target content changed after scan
+        var fileModified = Path.Combine(_tmp, "modified.dat");
+        var fileSurviving = Path.Combine(_tmp, "surviving.dat");
+        File.WriteAllBytes(fileSurviving, payloadA);
+        File.WriteAllBytes(fileModified, payloadB); // different content
+        bool failMismatch = m.DeleteToRecycleBin(fileModified, fileSurviving, out var errMismatch);
+        Assert.False(failMismatch);
+        Assert.Contains("File contents no longer match", errMismatch);
+    }
+
+    [Fact]
+    public void Scan_Can_Be_Cancelled()
+    {
+        var m = new DuplicateFilesModule();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => m.Scan([_tmp], 1024, null, cts.Token));
     }
 }

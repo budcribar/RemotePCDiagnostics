@@ -75,4 +75,20 @@ public sealed class DiskSpaceTests : IDisposable
         var foldersCard = Assert.Single(report.Cards.Where(c => c.Id == "folders"));
         Assert.True(foldersCard.Rows.Count > 0);
     }
+
+    [Fact]
+    public void Scan_Can_Be_Cancelled()
+    {
+        var m = new DiskSpaceModule(targetRoot: _tmp);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => m.Scan(_tmp, 1024, null, cts.Token));
+    }
+
+    [Fact]
+    public void Cancel_Method_Does_Not_Throw_When_Not_Scanning()
+    {
+        var m = new DiskSpaceModule(targetRoot: _tmp);
+        m.Cancel(); // Should be a safe no-op
+    }
 }

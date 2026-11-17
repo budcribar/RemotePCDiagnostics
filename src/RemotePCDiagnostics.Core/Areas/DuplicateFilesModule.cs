@@ -10,7 +10,11 @@ public interface IRecycleBinDeleter
     bool SendToRecycleBin(string path, out string? error);
 }
 
-/// <summary>Sends files to the Windows Recycle Bin using the Shell32 SHFileOperation API.</summary>
+/// <summary>
+/// Requests sending files to the Windows Recycle Bin using the Shell32 SHFileOperation API with FOF_ALLOWUNDO.
+/// Note that Recycle Bin storage is requested where supported by the volume; unbuffered drives, network shares,
+/// or volumes configured to bypass the Recycle Bin may delete files permanently.
+/// </summary>
 public sealed class WindowsRecycleBinDeleter : IRecycleBinDeleter
 {
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -88,7 +92,7 @@ public sealed record DuplicateGroup(string HashHex, long SizeBytes, IReadOnlyLis
 
 /// <summary>
 /// Scans folders for duplicate files by matching exact file size, confirming with a cryptographic hash,
-/// and allowing deletion to the Recycle Bin.
+/// and allowing deletions that request moving files to the Recycle Bin where supported.
 /// </summary>
 public sealed class DuplicateFilesModule(
     ILogger? log = null,
@@ -101,6 +105,8 @@ public sealed class DuplicateFilesModule(
     public const int PrefixBytesToRead = 4096;
 
     private readonly IRecycleBinDeleter _recycleBin = recycleBin ?? new WindowsRecycleBinDeleter();
+    private readonly object _scanGate = new();
+    private CancellationTokenSource? _scanCts;
 
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.DuplicateFiles;
@@ -110,6 +116,11 @@ public sealed class DuplicateFilesModule(
     public long MinFileSizeBytes => minFileSizeBytes;
 
     public IReadOnlyList<string> SearchRoots => searchRoots ?? DefaultRoots();
+
+    public void Cancel()
+    {
+        lock (_scanGate) _scanCts?.Cancel();
+    }
 
     public static IReadOnlyList<string> DefaultRoots()
     {
@@ -126,8 +137,19 @@ public sealed class DuplicateFilesModule(
         return list.Count > 0 ? list : [userProfile];
     }
 
-    protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct) =>
-        await Task.Run(() => Scan(SearchRoots, minFileSizeBytes, progress, ct), ct).ConfigureAwait(false);
+    protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        using var scan = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        lock (_scanGate) _scanCts = scan;
+        try
+        {
+            return await Task.Run(() => Scan(SearchRoots, minFileSizeBytes, progress, scan.Token), scan.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_scanGate) { if (ReferenceEquals(_scanCts, scan)) _scanCts = null; }
+        }
+    }
 
     public AreaReport Scan(IReadOnlyList<string> roots, long minSizeBytes, IProgress<string>? progress, CancellationToken ct)
     {
@@ -178,6 +200,7 @@ public sealed class DuplicateFilesModule(
                 {
                     foreach (var subDir in Directory.EnumerateDirectories(currentDir))
                     {
+                        ct.ThrowIfCancellationRequested();
                         if (StorageCleanupEngine.IsReparsePoint(subDir)) continue;
                         pendingDirs.Push(subDir);
                     }
@@ -199,7 +222,7 @@ public sealed class DuplicateFilesModule(
             foreach (var filePath in fileList)
             {
                 ct.ThrowIfCancellationRequested();
-                string? prefixHash = ComputePrefixHash(filePath);
+                string? prefixHash = ComputePrefixHash(filePath, ct);
                 if (prefixHash is null) continue;
 
                 string key = $"{size}:{prefixHash}";
@@ -230,7 +253,7 @@ public sealed class DuplicateFilesModule(
             foreach (var filePath in fileList)
             {
                 ct.ThrowIfCancellationRequested();
-                string? fullHash = ComputeFullHash(filePath);
+                string? fullHash = ComputeFullHash(filePath, ct);
                 if (fullHash is null) continue;
 
                 if (!byFullHash.TryGetValue(fullHash, out var list))
@@ -284,7 +307,7 @@ public sealed class DuplicateFilesModule(
             "Duplicate File Sets",
             groups.Count > 0 ? AreaLevel.Neutral : AreaLevel.Ok,
             headline,
-            groups.Count > 0 ? $"Deletions move files safely to the Recycle Bin." : $"Files >= {HardwareInventory.FormatBytes(minSizeBytes)} checked.",
+            groups.Count > 0 ? "Deletions request moving files to the Recycle Bin where supported." : $"Files >= {HardwareInventory.FormatBytes(minSizeBytes)} checked.",
             cols,
             rows,
             EmptyText: $"No duplicate files larger than {HardwareInventory.FormatBytes(minSizeBytes)} were found."));
@@ -296,13 +319,85 @@ public sealed class DuplicateFilesModule(
         return new AreaReport(cards, summary, AreaLevel.Ok);
     }
 
-    public bool DeleteToRecycleBin(string path, out string? error) =>
-        _recycleBin.SendToRecycleBin(path, out error);
+    /// <summary>
+    /// Revalidates that the target duplicate and a surviving duplicate still exist, are different files,
+    /// have matching sizes, and share identical cryptographic hashes before requesting deletion to the Recycle Bin.
+    /// </summary>
+    public bool DeleteToRecycleBin(string targetPath, string survivingPath, out string? error)
+    {
+        if (string.IsNullOrWhiteSpace(targetPath))
+        {
+            error = "Target file path is required.";
+            return false;
+        }
 
-    private static string? ComputePrefixHash(string filePath)
+        if (string.IsNullOrWhiteSpace(survivingPath))
+        {
+            error = "Surviving duplicate file path is required for safety validation.";
+            return false;
+        }
+
+        try
+        {
+            string fullTarget = Path.GetFullPath(targetPath);
+            string fullSurviving = Path.GetFullPath(survivingPath);
+
+            if (string.Equals(fullTarget, fullSurviving, StringComparison.OrdinalIgnoreCase))
+            {
+                error = "Target file and surviving duplicate cannot be the same file.";
+                return false;
+            }
+
+            if (!File.Exists(fullTarget))
+            {
+                error = "File to delete no longer exists.";
+                return false;
+            }
+
+            if (!File.Exists(fullSurviving))
+            {
+                error = "Surviving duplicate file no longer exists; aborting deletion to preserve the only remaining copy.";
+                return false;
+            }
+
+            var targetInfo = new FileInfo(fullTarget);
+            var survivingInfo = new FileInfo(fullSurviving);
+
+            if (targetInfo.Length != survivingInfo.Length)
+            {
+                error = "File sizes no longer match; the target file may have changed since the scan.";
+                return false;
+            }
+
+            string? targetHash = ComputeFullHash(fullTarget);
+            string? survivingHash = ComputeFullHash(fullSurviving);
+
+            if (targetHash is null || survivingHash is null)
+            {
+                error = "Could not compute cryptographic hashes to verify duplicate contents.";
+                return false;
+            }
+
+            if (!string.Equals(targetHash, survivingHash, StringComparison.OrdinalIgnoreCase))
+            {
+                error = "File contents no longer match the surviving copy; the target file may have been modified since the scan.";
+                return false;
+            }
+
+            return _recycleBin.SendToRecycleBin(fullTarget, out error);
+        }
+        catch (Exception ex)
+        {
+            error = $"Validation error before deletion: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static string? ComputePrefixHash(string filePath, CancellationToken ct = default)
     {
         try
         {
+            ct.ThrowIfCancellationRequested();
             using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             byte[] buffer = new byte[PrefixBytesToRead];
             int read = stream.Read(buffer, 0, buffer.Length);
@@ -310,17 +405,26 @@ public sealed class DuplicateFilesModule(
             byte[] hash = SHA256.HashData(buffer.AsSpan(0, read));
             return Convert.ToHexString(hash);
         }
+        catch (OperationCanceledException) { throw; }
         catch { return null; }
     }
 
-    private static string? ComputeFullHash(string filePath)
+    private static string? ComputeFullHash(string filePath, CancellationToken ct = default)
     {
         try
         {
             using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 64 * 1024);
-            byte[] hash = SHA256.HashData(stream);
-            return Convert.ToHexString(hash);
+            using var incremental = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                incremental.AppendData(buffer, 0, read);
+            }
+            return Convert.ToHexString(incremental.GetHashAndReset());
         }
+        catch (OperationCanceledException) { throw; }
         catch { return null; }
     }
 

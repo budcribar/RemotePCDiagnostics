@@ -216,4 +216,46 @@ public class DriveHealthTests
         Assert.Equal("Healthy", card.Headline);
         Assert.DoesNotContain("getting worse", rep.Summary);
     }
+
+    [Fact]
+    public void Replaced_drive_with_different_serial_does_not_inherit_baseline()
+    {
+        var store = new DriveHealthHistoryStore();
+        var now1 = DateTimeOffset.UtcNow.AddDays(-30);
+        var now2 = DateTimeOffset.UtcNow;
+
+        // Old drive recorded earlier with 0 read errors
+        var oldDrive = new DriveHealth("Samsung 980", "SN-OLD-111", "SSD", "NVMe", "Healthy", "OK", 500_000_000_000, 35, 10, ReadErrors: 0, WriteErrors: 0, PowerOnHours: 5000);
+        store.Record([oldDrive], now1);
+
+        // Replacement drive installed later; has different serial number and 2 uncorrected read errors
+        var newDrive = new DriveHealth("Samsung 980", "SN-NEW-999", "SSD", "NVMe", "Healthy", "OK", 500_000_000_000, 36, 1, ReadErrors: 2, WriteErrors: 0, PowerOnHours: 10);
+        var analysis = store.AnalyzeTrend(newDrive.RawId, newDrive, now2);
+
+        // Must not compare against SN-OLD-111 baseline:
+        Assert.False(analysis.HasHistory);
+        Assert.False(analysis.IsDegrading);
+        Assert.Contains("First recorded health check", analysis.SummaryText);
+    }
+
+    [Fact]
+    public void Replaced_drive_with_reset_power_on_hours_does_not_inherit_baseline()
+    {
+        var store = new DriveHealthHistoryStore();
+        var now1 = DateTimeOffset.UtcNow.AddDays(-30);
+        var now2 = DateTimeOffset.UtcNow;
+
+        // Old drive without serial reported, 10,000 hours, 0 errors
+        var oldDrive = new DriveHealth("Generic SSD", "", "SSD", "SATA", "Healthy", "OK", 500_000_000_000, 35, 10, ReadErrors: 0, WriteErrors: 0, PowerOnHours: 10_000);
+        store.Record([oldDrive], now1);
+
+        // Replacement drive with same name but reset power-on hours (10 hours) and 1 read error
+        var newDrive = new DriveHealth("Generic SSD", "", "SSD", "SATA", "Healthy", "OK", 500_000_000_000, 35, 1, ReadErrors: 1, WriteErrors: 0, PowerOnHours: 10);
+        var analysis = store.AnalyzeTrend(newDrive.RawId, newDrive, now2);
+
+        // Must detect reset power-on hours and not inherit old baseline
+        Assert.False(analysis.HasHistory);
+        Assert.False(analysis.IsDegrading);
+        Assert.Contains("First recorded health check", analysis.SummaryText);
+    }
 }

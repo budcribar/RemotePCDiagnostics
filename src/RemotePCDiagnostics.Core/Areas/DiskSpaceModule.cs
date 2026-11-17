@@ -32,6 +32,9 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
     public const int MaxLargeFiles = 50;
     public const int MaxFolders = 20;
 
+    private readonly object _scanGate = new();
+    private CancellationTokenSource? _scanCts;
+
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.DiskSpace;
     public override string DisplayName => "Large files & folders";
@@ -40,8 +43,24 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
     public long MinFileSizeBytes => minFileSizeBytes;
     public string RootPath => targetRoot ?? Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
 
-    protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct) =>
-        await Task.Run(() => Scan(RootPath, minFileSizeBytes, progress, ct), ct).ConfigureAwait(false);
+    public void Cancel()
+    {
+        lock (_scanGate) _scanCts?.Cancel();
+    }
+
+    protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        using var scan = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        lock (_scanGate) _scanCts = scan;
+        try
+        {
+            return await Task.Run(() => Scan(RootPath, minFileSizeBytes, progress, scan.Token), scan.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_scanGate) { if (ReferenceEquals(_scanCts, scan)) _scanCts = null; }
+        }
+    }
 
     public AreaReport Scan(string root, long minSizeBytes, IProgress<string>? progress, CancellationToken ct)
     {
@@ -59,6 +78,7 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
         {
             foreach (var dir in Directory.EnumerateDirectories(root))
             {
+                ct.ThrowIfCancellationRequested();
                 if (StorageCleanupEngine.IsReparsePoint(dir)) continue;
                 branchRoots.Add(dir);
 
@@ -69,6 +89,7 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
                     {
                         foreach (var userDir in Directory.EnumerateDirectories(dir))
                         {
+                            ct.ThrowIfCancellationRequested();
                             if (!StorageCleanupEngine.IsReparsePoint(userDir))
                             {
                                 branchRoots.Add(userDir);
@@ -151,6 +172,7 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
             {
                 foreach (var subDir in Directory.EnumerateDirectories(currentDir))
                 {
+                    ct.ThrowIfCancellationRequested();
                     if (StorageCleanupEngine.IsReparsePoint(subDir)) continue;
                     pendingDirs.Push(subDir);
                 }
