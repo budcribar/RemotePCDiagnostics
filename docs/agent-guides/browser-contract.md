@@ -48,6 +48,8 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 
 The Checks page renders one hidden `[data-testid="checks-list-data"]` element listing every check in the Checks group, collapsed or not: `id` (the check ID used everywhere else), `title`, `kind` (`check`, or `on-demand` for checks outside Run all), `scan` (true for long scans that keep running and can be cancelled), `start` (`run-one`: the detail panel's Run button; `own-page`: the check's own Start inside its detail page), `state`, and for finished runs `runId`, `completedAt` and `summary`.
 
+While a check runs, the detail header keeps `data-run-id` for the whole run, including while a scan reports its percent or a stress test its live readings. Builds up to 1.2.0-ci.701 dropped it after the first live update: there a header with `data-run-state="running"` and no `data-run-id` is still the run that was started.
+
 Run and cancel controls are marked generically: `[data-action="run-check"][data-check-id]` (the detail panel's `checks-run-one`, and a check's own Start such as the NPU test's) and `[data-action="cancel-check"][data-check-id]` (`checks-cancel-scan`, and the NPU test's Cancel).
 
 ## Full report copy (`area-report-data`)
