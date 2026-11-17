@@ -83,6 +83,7 @@ public static class InteractiveExport
         notes = T(b.KeyboardNotes),
         instructions = "Open the keyboard test, choose the matching layout, click Capture keys, then press every key once and a few keys "
             + "together to check rollover. Keys light up as they register. Then choose Pass keyboard, Pass with note or Fail keyboard.",
+        reportIf = ReportIf.Keyboard,
     };
 
     private static object Display(PageState page, PhysicalBenchQaSnapshot b) => new
@@ -97,6 +98,7 @@ public static class InteractiveExport
         notes = T(b.DisplayNotes),
         instructions = "Launch the full-screen test, step through each solid colour looking for dead or stuck pixels, bleed and blemishes, "
             + "and touch the screen with several fingers if it is a touch screen. Then Pass & exit, or choose Note blemish or Fail display.",
+        reportIf = ReportIf.Display,
     };
 
     private static object Webcam(PageState page, ModuleState m)
@@ -130,6 +132,7 @@ public static class InteractiveExport
             message = T(r.Message),
             instructions = "Choose the camera and length, then Start camera test. Look at the live preview on the PC: is the picture clear, "
                 + "correctly exposed and smooth? RPCD measures frames and brightness; the person decides. Then Pass camera, Pass with note or Fail camera.",
+            reportIf = ReportIf.Webcam,
         };
     }
 
@@ -163,6 +166,7 @@ public static class InteractiveExport
             message = T(r.Message),
             instructions = "Turn the volume up and keep the room quiet. Choose the speaker and microphone, then start the test: RPCD plays a "
                 + "tone and listens for it. The person confirms they heard the tone, then Pass audio, Pass with note or Fail audio.",
+            reportIf = ReportIf.SpeakerToMic,
         };
     }
 
@@ -196,6 +200,25 @@ public static class InteractiveExport
             message = T(r.Message),
             instructions = "Choose the microphone and speaker, then start the test and talk or tap near the microphone: the sound plays back "
                 + "through the speaker. RPCD measures the microphone level; the person says whether they heard it (Heard it / Didn't hear it).",
+            reportIf = ReportIf.MicToSpeaker,
         };
+    }
+
+    /// <summary>
+    /// When an agent coaching a test should report a learning (Admin's report_learning tool): the test's instructions or screen did not
+    /// match what the person has. One line each, written for the agent, not the person.
+    /// </summary>
+    public static class ReportIf
+    {
+        public const string Keyboard = "The person's keyboard does not match any layout offered (for example AZERTY, Japanese, a compact "
+            + "laptop or a keyboard with extra keys), keys they press do not light up, or they cannot find a key the test asks for.";
+        public const string Display = "The full-screen test does not open on the screen the person is using, does not cover it, cannot be "
+            + "exited, or touch does not register on a touch screen.";
+        public const string Webcam = "The camera the person uses is not listed, the preview never appears, or the measured result disagrees "
+            + "with what the person sees.";
+        public const string SpeakerToMic = "The person's speaker or microphone is not listed, they hear the tone but it is not detected, or "
+            + "the test cannot start.";
+        public const string MicToSpeaker = "The person's microphone or speaker is not listed, there is no playback, or feedback makes the test "
+            + "unusable.";
     }
 }

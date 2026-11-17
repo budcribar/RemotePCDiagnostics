@@ -66,4 +66,16 @@ public class InteractiveExportTests
         Assert.Equal("running", Test(doc.RootElement, "speakertomic").GetProperty("state").GetString());
         Assert.False(string.IsNullOrEmpty(Test(doc.RootElement, "speakertomic").GetProperty("instructions").GetString()));
     }
+
+    [Fact]
+    public void Every_test_says_when_to_report_a_learning()
+    {
+        var page = new InteractiveExport.PageState("keyboard", [], false, false, false, false);
+
+        using var doc = JsonDocument.Parse(InteractiveExport.ToJson(page, new PhysicalBenchQaSnapshot(), NotRun("Webcam"), NotRun("SpeakerToMic"), NotRun("MicToSpeaker")));
+
+        foreach (var id in new[] { "keyboard", "display", "webcam", "speakertomic", "mictospeaker" })
+            Assert.False(string.IsNullOrWhiteSpace(Test(doc.RootElement, id).GetProperty("reportIf").GetString()), id);
+        Assert.Contains("AZERTY", Test(doc.RootElement, "keyboard").GetProperty("reportIf").GetString());
+    }
 }
