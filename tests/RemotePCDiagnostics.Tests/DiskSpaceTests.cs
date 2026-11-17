@@ -1,5 +1,6 @@
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Tests;
 
@@ -63,13 +64,19 @@ public sealed class DiskSpaceTests : IDisposable
         var m = new DiskSpaceModule(targetRoot: _tmp, minFileSizeBytes: 10_000);
         var report = m.Scan(_tmp, minSizeBytes: 10_000, progress: null, CancellationToken.None);
 
-        Assert.Equal(2, report.Cards.Count);
+        Assert.Equal(3, report.Cards.Count);
         Assert.Contains("2 large files", report.Summary);
+
+        var drivesCard = Assert.Single(report.Cards, c => c.Id == "drives");
+        Assert.True(drivesCard.Rows.Count > 0);
+        Assert.Contains("Total", drivesCard.Columns);
+        Assert.Contains("Used", drivesCard.Columns);
+        Assert.Contains("Free", drivesCard.Columns);
 
         var filesCard = Assert.Single(report.Cards, c => c.Id == "files");
         Assert.Equal(2, filesCard.Rows.Count);
-        Assert.Contains(filesCard.Rows, r => r.Values[0] == "movie.mp4" && r.Values[2] == "Video");
-        Assert.Contains(filesCard.Rows, r => r.Values[0] == "backup.zip" && r.Values[2] == "Archive / Backup");
+        Assert.Contains(filesCard.Rows, r => r.Values[0] == "movie.mp4" && r.Values[2] == "Video" && r.Values[3] == "Local");
+        Assert.Contains(filesCard.Rows, r => r.Values[0] == "backup.zip" && r.Values[2] == "Archive / Backup" && r.Values[3] == "Local");
         Assert.DoesNotContain(filesCard.Rows, r => r.Values[0] == "readme.txt");
 
         var foldersCard = Assert.Single(report.Cards, c => c.Id == "folders");
@@ -90,5 +97,164 @@ public sealed class DiskSpaceTests : IDisposable
     {
         var m = new DiskSpaceModule(targetRoot: _tmp);
         m.Cancel(); // Should be a safe no-op
+    }
+
+    [Theory]
+    [InlineData("C:\\pagefile.sys", true)]
+    [InlineData("C:\\hiberfil.sys", true)]
+    [InlineData("C:\\swapfile.sys", true)]
+    [InlineData("C:\\dumpstack.log.tmp", true)]
+    [InlineData("C:\\bootmgr", true)]
+    [InlineData("C:\\Drivers\\display.sys", true)]
+    [InlineData("C:\\Windows\\System32\\largefile.bin", true)]
+    [InlineData("C:\\System Volume Information\\SPP\\test.dat", true)]
+    [InlineData("C:\\$Recycle.Bin\\S-1-5-21\\test.dat", true)]
+    [InlineData("C:\\Users\\User\\Videos\\movie.mp4", false)]
+    [InlineData("C:\\Projects\\repo.zip", false)]
+    public void IsSystemFilePath_Filters_Expected_Paths(string path, bool expectedSystem)
+    {
+        Assert.Equal(expectedSystem, DiskSpaceModule.IsSystemFilePath(path, windowsDir: "C:\\Windows"));
+    }
+
+    [Theory]
+    [InlineData(0x1000L, true)] // FILE_ATTRIBUTE_OFFLINE
+    [InlineData(0x00040000L, true)] // FILE_ATTRIBUTE_RECALL_ON_OPEN
+    [InlineData(0x00400000L, true)] // FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+    [InlineData(0x00441000L, true)] // Combination
+    [InlineData(0x20L, false)] // FILE_ATTRIBUTE_ARCHIVE
+    [InlineData(0x80L, false)] // FILE_ATTRIBUTE_NORMAL
+    public void IsCloudOnlyAttributes_Detects_Offline_And_Recall_Attributes(long attrs, bool expected)
+    {
+        Assert.Equal(expected, DiskSpaceModule.IsCloudOnlyAttributes(attrs));
+    }
+
+    [Theory]
+    [InlineData("C:\\Users\\User\\Phone Link\\Photos\\pic.jpg", true)]
+    [InlineData("C:\\Users\\User\\Your Phone\\Videos\\vid.mp4", true)]
+    [InlineData("C:\\Users\\User\\CrossDevice\\file.dat", true)]
+    [InlineData("C:\\Users\\User\\Documents\\local.pdf", false)]
+    public void IsCloudOnlyPath_Detects_PhoneLink_And_Virtual_Paths(string path, bool expected)
+    {
+        Assert.Equal(expected, DiskSpaceModule.IsCloudOnlyPath(path));
+    }
+
+    [Fact]
+    public void CloudOnly_Files_Have_Zero_Disk_Bytes_And_Are_Marked()
+    {
+        var localFile = new LargeFileInfo("local.mp4", "C:\\Videos\\local.mp4", 5_000_000_000, DateTime.UtcNow, "Video", IsCloudOnly: false, DiskSizeBytes: 5_000_000_000);
+        var cloudFile = new LargeFileInfo("cloud.mp4", "C:\\Users\\User\\Phone Link\\cloud.mp4", 10_000_000_000, DateTime.UtcNow, "Video", IsCloudOnly: true, DiskSizeBytes: 0);
+
+        Assert.Equal(5_000_000_000, localFile.ActualDiskBytes);
+        Assert.Equal("Local", localFile.StorageState);
+
+        Assert.Equal(0, cloudFile.ActualDiskBytes);
+        Assert.Equal("Cloud-only", cloudFile.StorageState);
+
+        var report = DiskSpaceModule.BuildReport("C:\\", 1_000_000, [localFile, cloudFile], []);
+        var filesCard = Assert.Single(report.Cards, c => c.Id == "files");
+        Assert.Equal(2, filesCard.Rows.Count);
+
+        var localRow = Assert.Single(filesCard.Rows, r => r.Values[0] == "local.mp4");
+        Assert.Equal("Local", localRow.Values[3]);
+
+        var cloudRow = Assert.Single(filesCard.Rows, r => r.Values[0] == "cloud.mp4");
+        Assert.Equal("Cloud-only", cloudRow.Values[3]);
+        Assert.Contains("0 B", cloudRow.Values[1]);
+        Assert.Contains("cloud", cloudRow.Values[1]);
+    }
+
+    [Fact]
+    public void FolderSpaceInfo_Tracks_Disk_And_Logical_Size()
+    {
+        var folder = new FolderSpaceInfo("OneDrive", "C:\\Users\\User\\OneDrive", TotalSizeBytes: 2_000_000_000, FileCount: 100, LogicalSizeBytes: 50_000_000_000);
+        Assert.Equal(2_000_000_000, folder.TotalSizeBytes);
+        Assert.Equal(50_000_000_000, folder.TotalLogicalBytes);
+
+        var report = DiskSpaceModule.BuildReport("C:\\", 1_000_000, [], [folder]);
+        var foldersCard = Assert.Single(report.Cards, c => c.Id == "folders");
+        Assert.Single(foldersCard.Rows);
+        Assert.Contains("on disk", foldersCard.Rows[0].Detail);
+        Assert.Contains("including cloud-only", foldersCard.Rows[0].Detail);
+    }
+
+    [Fact]
+    public void DriveCapacityInfo_Calculates_Used_Space_And_Percentage()
+    {
+        var drive = new DriveCapacityInfo("C:\\", "Windows", "NTFS", TotalBytes: 500_000_000_000, FreeBytes: 200_000_000_000);
+        Assert.Equal(300_000_000_000, drive.UsedBytes);
+        Assert.Equal(60.0, drive.UsedPercent, 1);
+
+        var report = DiskSpaceModule.BuildReport("C:\\", 1_000_000, [], [], [drive]);
+        var drivesCard = Assert.Single(report.Cards, c => c.Id == "drives");
+        Assert.Single(drivesCard.Rows);
+        Assert.Equal("C:\\", drivesCard.Rows[0].Values[0]);
+        Assert.Contains("60%", drivesCard.Rows[0].Values[4]);
+        Assert.Contains("NTFS", drivesCard.Rows[0].Values[5]);
+        Assert.Contains($"{HardwareInventory.FormatBytes(300_000_000_000)} used of {HardwareInventory.FormatBytes(500_000_000_000)}", report.Summary);
+        Assert.Contains($"{HardwareInventory.FormatBytes(200_000_000_000)} free", report.Summary);
+    }
+
+    [Fact]
+    public void Scan_Filters_Out_System_Files()
+    {
+        var folderA = Path.Combine(_tmp, "Media");
+        Directory.CreateDirectory(folderA);
+
+        var largeVideo = Path.Combine(folderA, "movie.mp4");
+        File.WriteAllBytes(largeVideo, new byte[20_000]);
+
+        var largeSysFile = Path.Combine(folderA, "driver.sys");
+        File.WriteAllBytes(largeSysFile, new byte[30_000]);
+
+        var m = new DiskSpaceModule(targetRoot: _tmp, minFileSizeBytes: 10_000);
+        var report = m.Scan(_tmp, minSizeBytes: 10_000, progress: null, CancellationToken.None);
+
+        var filesCard = Assert.Single(report.Cards, c => c.Id == "files");
+        // Should only contain movie.mp4, not driver.sys
+        Assert.Single(filesCard.Rows);
+        Assert.Equal("movie.mp4", filesCard.Rows[0].Values[0]);
+    }
+
+    [Fact]
+    public void BuildReport_Populates_FilePath_On_Rows()
+    {
+        var files = new List<LargeFileInfo>
+        {
+            new("movie.mp4", "/path/to/movie.mp4", 500_000_000, DateTime.UtcNow, "Video")
+        };
+        var folders = new List<FolderSpaceInfo>
+        {
+            new("Media", "/path/to/Media", 1_000_000_000, 5)
+        };
+
+        var report = DiskSpaceModule.BuildReport("/path/to", 100_000_000, files, folders);
+
+        var folderCard = Assert.Single(report.Cards, c => c.Id == "folders");
+        Assert.Equal("/path/to/Media", folderCard.Rows[0].FilePath);
+
+        var filesCard = Assert.Single(report.Cards, c => c.Id == "files");
+        Assert.Equal("/path/to/movie.mp4", filesCard.Rows[0].FilePath);
+    }
+
+    [Fact]
+    public void FileManagerLauncher_RevealFile_Uses_CustomOpener()
+    {
+        string? opened = null;
+        FileManagerLauncher.CustomOpener = path =>
+        {
+            opened = path;
+            return true;
+        };
+
+        try
+        {
+            var result = FileManagerLauncher.RevealFile("/test/path/file.mp4");
+            Assert.True(result);
+            Assert.Equal("/test/path/file.mp4", opened);
+        }
+        finally
+        {
+            FileManagerLauncher.CustomOpener = null;
+        }
     }
 }

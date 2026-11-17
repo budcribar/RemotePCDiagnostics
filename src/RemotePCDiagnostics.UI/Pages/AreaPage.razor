@@ -180,7 +180,13 @@ else
                                 {
                                     var col = open.Columns.Count > i ? open.Columns[i] : "";
                                     <td class="@ColumnClass(col)">@if (i == 0) { @if (expandable) { <span class="row-caret" aria-hidden="true">@(expanded ? "▾" : "▸")</span> } <span class="dot dot-@Dot(level)"></span> }
-                                        @if (col is "Type" or "Level") { <span class="badge badge-@row.Values[i].ToLowerInvariant()">@row.Values[i]</span> } else if (svc is not null && i == 1 && _svcStatus.ContainsKey(svc.Name)) { @svc.FriendlyStatus } else { @row.Values[i] }</td>
+                                        @if (col is "Type" or "Level" or "Storage") { <span class="badge badge-@row.Values[i].ToLowerInvariant().Replace(" ", "-")">@row.Values[i]</span> }
+                                        else if (svc is not null && i == 1 && _svcStatus.ContainsKey(svc.Name)) { @svc.FriendlyStatus }
+                                        else if (row.FilePath is { } fp && (col is "File" or "Folder" or "Drive" || (i == 0 && open.Id is "files" or "folders" or "drives")))
+                                        {
+                                            <button type="button" class="linklike" title="Open in file manager: @fp" @onclick="() => OpenFileManager(fp, row)" @onclick:stopPropagation="true">@row.Values[i]</button>
+                                        }
+                                        else { @row.Values[i] }</td>
                                 }
                                 @if (svcActions is not null)
                                 {
@@ -261,6 +267,16 @@ else
                                         @if (_analyzedDump == dumpPath)
                                         {
                                             <pre style="white-space:pre-wrap;overflow-wrap:anywhere" role="status">@(_analyzingDump ? "Analyzing dump…" : _dumpAnalysis)</pre>
+                                        }
+                                    }
+                                    @if (row.FilePath is { } filePath)
+                                    {
+                                        <div class="svc-actions" style="margin-top:0.5rem" @onclick:stopPropagation="true" @onkeydown="DrawerKey" @onkeydown:stopPropagation="true">
+                                            <button type="button" class="btn-small" data-testid="open-file-manager" @onclick="() => OpenFileManager(filePath, row)">Open in file manager</button>
+                                        </div>
+                                        @if (_fileManagerError is not null && ReferenceEquals(_fileManagerErrorRow, row))
+                                        {
+                                            <p role="status" class="error-text">@_fileManagerError</p>
                                         }
                                     }
                                 </td></tr>
@@ -473,7 +489,7 @@ else
         finally { _analyzingDump = false; }
     }
 
-    private void Open(string id) { _selectedHangGroups.Clear(); _showReviewed = false; _pendingCopilotPrompt = null; _copilotGroupStatus = null; _reviewError = null; _open = id; _expanded = null; _expandedKey = null; }
+    private void Open(string id) { _selectedHangGroups.Clear(); _showReviewed = false; _pendingCopilotPrompt = null; _copilotGroupStatus = null; _reviewError = null; _fileManagerError = null; _fileManagerErrorRow = null; _open = id; _expanded = null; _expandedKey = null; }
     private void Close() { _open = null; _expanded = null; _expandedKey = null; }
     // The row whose details are open; matched by content too, so an auto-refresh (new row objects) keeps it open.
     private AreaRow? _expanded;
@@ -481,13 +497,35 @@ else
     private static string RowId(AreaRow r) => r.Key ?? string.Join("\u001f", r.Values);
     private void ToggleRow(AreaRow r)
     {
-        if (r.Detail is null && r.GetHelpUri is null && r.EventCopyText is null && r.ReviewKeys is not { Count: > 0 }) return;
+        if (r.Detail is null && r.GetHelpUri is null && r.EventCopyText is null && r.ReviewKeys is not { Count: > 0 } && r.FilePath is null) return;
         _copyStatus = null;
         var open = ReferenceEquals(_expanded, r) || _expandedKey == RowId(r);
         _expanded = open ? null : r;
         _expandedKey = open ? null : RowId(r);
     }
     private void RowKey(KeyboardEventArgs e, AreaRow r) { if (e.Key is "Enter" or " ") ToggleRow(r); }
+
+    private AreaRow? _fileManagerErrorRow;
+    private string? _fileManagerError;
+
+    private void OpenFileManager(string path, AreaRow row)
+    {
+        _fileManagerError = null;
+        _fileManagerErrorRow = null;
+        try
+        {
+            if (!FileManagerLauncher.RevealFile(path))
+            {
+                _fileManagerError = $"Couldn't open '{path}' in file manager.";
+                _fileManagerErrorRow = row;
+            }
+        }
+        catch (Exception ex)
+        {
+            _fileManagerError = $"Couldn't open file manager: {ex.Message}";
+            _fileManagerErrorRow = row;
+        }
+    }
 
     private MemorySuggestionsPanel? _memPanel;
     private async Task ShowSuggestions()

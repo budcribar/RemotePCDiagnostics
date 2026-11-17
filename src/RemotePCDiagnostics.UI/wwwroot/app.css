@@ -93,6 +93,8 @@ code, pre, kbd, samp { font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono
 [data-theme="dark"] .badge-remote { border: 1px solid var(--badge-remote-fg); }
 .badge-crash, .badge-critical { background: var(--badge-crit-bg); color: var(--badge-crit-fg); }
 .badge-freeze, .badge-error { background: var(--badge-err-bg); color: var(--badge-err-fg); }
+.badge-cloud-only { background: var(--surface-2); color: var(--text-muted); border: 1px dashed var(--border); }
+[data-theme="dark"] .badge-cloud-only { background: rgba(255,255,255,0.06); color: var(--text-muted); border: 1px dashed var(--border); }
 
 /* Theme switcher (segmented control) */
 .theme-switch { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border); border-radius: 99px; background: var(--surface-2); }
