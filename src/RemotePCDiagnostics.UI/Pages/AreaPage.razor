@@ -37,6 +37,10 @@ else
     @* Always mounted (even while the check re-runs after a fix), so the fix's result message stays visible near the top. *@
     @if (remActions is not null) { <RemediationActions @ref="_remUi" Actions="remActions" ShowRecent="hasRemActions" OnCompleted="() => Diagnostics.RunAsync(m.Name)" /> }
 
+    @if (!busy && rep is not null)
+    {
+        <AreaReportData Report="rep" CheckId="@m.Name" RunId="r.RunId" />
+    }
     @if (rep is not null && rep.Cards.Count > 0)
     {
         @if (!busy && m.Name == ModuleSlugs.DriveHealth)

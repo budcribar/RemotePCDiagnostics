@@ -1,0 +1,14 @@
+@using RemotePCDiagnostics.Core.Areas
+@* Machine-readable copy of the report on screen, for browser agents (docs/agent-guides/browser-contract.md). Hidden; people read the cards.
+   data-result-run-id ties it to the run in the Checks header, so an agent can reject a copy left over from an earlier run. *@
+@if (Report is not null)
+{
+    <div hidden data-testid="area-report-data" data-check-id="@CheckId" data-result-run-id="@RunId"
+         data-schema="@AreaReportExport.SchemaVersion" data-report="@AreaReportExport.ToJson(Report)"></div>
+}
+
+@code {
+    [Parameter] public AreaReport? Report { get; set; }
+    [Parameter] public string? CheckId { get; set; }
+    [Parameter] public Guid? RunId { get; set; }
+}
