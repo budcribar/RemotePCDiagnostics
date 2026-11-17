@@ -66,6 +66,12 @@ The Service workflow page renders `[data-testid="workflow-data"]` with schema 1 
 
 Controls: `wf-start-checks` runs the checks. On Review, an area's fixes render only when its toggle (`data-action="wf-area"`, `data-area-key`) is open; each fix checkbox has `data-action="wf-fix"` and `data-fix-id`. `wf-select-recommended`, `wf-client-signs-in`, `wf-go` (starts restarts, benchmarks and fixes), `wf-start-over`, `wf-cancel`, `wf-restart-now` and `wf-new` act as on screen. Agents must never type into `wf-user` or `wf-password`: the person enters Windows credentials, or chooses to sign in themselves.
 
+## Interactive tests (`interactive-data`)
+
+The Interactive tests page renders `[data-testid="interactive-data"]` with schema 1 JSON for this viewer: `selectedTestId` (the open pane), `batchRunning`, `thisViewerIsRemote`, `remoteSessionActive`, `technicianHasControl` and `personCanRunTests`, and per test (`keyboard`, `display`, `webcam`, `speakertomic`, `mictospeaker`) whether it is `checked` and `open`, its `state` (`waiting-for-person`, `in-progress`, `running`, `waiting-for-person-verdict`, `done`), the run ID and devices, `measured` evidence (keys and rollover, patterns and touch points, frames and brightness, tone and microphone levels), `personOutcome` only when a person entered the verdict (or for microphone to speaker, `heardByListener`), notes, the result message and short `instructions` for coaching.
+
+Interactive tests start only on the PC itself: a remote viewer's start buttons are disabled. An agent opens the test (`interactive-row-{id}`), hands control to the person with `interactive-release-control`, then reads `interactive-data` while talking the person through the instructions. Measured evidence and the person's verdict are separate on purpose. Browser-generated key presses or clicks are not physical evidence: agents never send them.
+
 ## Structured diagnostic fields
 
 These selectors are implemented in source and are ready for verification on an installed build. In Checks, scope them to `checks-detail`. Verify the selected check, run state, and matching result ID before reading fields. A missing field or value means unavailable. A numeric zero represents a reported zero.
