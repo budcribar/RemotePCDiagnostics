@@ -1,0 +1,9 @@
+{
+  "id": "e22a8740-410a-4da5-a912-21ea7f7d195f",
+  "slug": "DuplicateFiles",
+  "displayName": "Duplicate files",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.DuplicateFiles.DuplicateFilesPlugin",
+  "needsAdmin": false,
+  "outOfProcess": false
+}

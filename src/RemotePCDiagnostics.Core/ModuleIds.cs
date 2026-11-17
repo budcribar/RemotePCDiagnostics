@@ -59,6 +59,10 @@ public static class ModuleIds
     public static readonly Guid NpuTest = new("85ffb9ea-fb21-4189-9714-5d58f7115237");
     /// <summary>Slug <c>SecurityEssentials</c>.</summary>
     public static readonly Guid SecurityEssentials = new("61025d7b-f5ef-4286-82ff-df9a74834b39");
+    /// <summary>Slug <c>DiskSpace</c>.</summary>
+    public static readonly Guid DiskSpace = new("9c7c4b12-5893-4e40-8ab7-7a2e379b3601");
+    /// <summary>Slug <c>DuplicateFiles</c>.</summary>
+    public static readonly Guid DuplicateFiles = new("e22a8740-410a-4da5-a912-21ea7f7d195f");
 
     /// <summary>Every built-in id with its slug (the module's Name). Includes modules that are not registered on every build.</summary>
     public static IReadOnlyDictionary<Guid, string> BuiltIn { get; } = new Dictionary<Guid, string>
@@ -89,6 +93,8 @@ public static class ModuleIds
         [Webcam] = ModuleSlugs.Webcam,
         [NpuTest] = ModuleSlugs.NpuTest,
         [SecurityEssentials] = ModuleSlugs.SecurityEssentials,
+        [DiskSpace] = ModuleSlugs.DiskSpace,
+        [DuplicateFiles] = ModuleSlugs.DuplicateFiles,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -130,4 +136,6 @@ public static class ModuleSlugs
     public const string Webcam = "Webcam";
     public const string NpuTest = "NpuTest";
     public const string SecurityEssentials = "SecurityEssentials";
+    public const string DiskSpace = "DiskSpace";
+    public const string DuplicateFiles = "DuplicateFiles";
 }

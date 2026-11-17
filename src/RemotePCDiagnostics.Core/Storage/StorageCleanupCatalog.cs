@@ -42,6 +42,8 @@ public static class StorageCleanupCatalog
     public static string ChromeUserData(StorageScanContext c) => L(c, "Google", "Chrome", "User Data");
     public static string EdgeUserData(StorageScanContext c) => L(c, "Microsoft", "Edge", "User Data");
     public static string NewOutlook(StorageScanContext c) => L(c, "Microsoft", "Olk");
+    public static string WindowsOld(StorageScanContext c) => Path.Combine(c.Roots.SystemDrive ?? "C:\\", "Windows.old");
+    public static string SoftwareDistributionDownload(StorageScanContext c) => Path.Combine(c.Roots.WindowsFolder ?? "C:\\Windows", "SoftwareDistribution", "Download");
 
     public static readonly IReadOnlyList<StorageCategory> All =
     [
@@ -158,6 +160,20 @@ public static class StorageCleanupCatalog
             c => [R(c, "Microsoft", "Templates")],
             (c, _) => [StorageTarget.Contents(R(c, "Microsoft", "Templates"), c.UtcNow - TimeSpan.FromDays(1), "~$*", topLevelOnly: true, maxFileBytes: LockFileMaxBytes)],
             MinBytes: 1),
+
+        new("storage-windows-old", "Previous Windows installation (Windows.old)",
+            "Removes leftover files kept from a previous Windows upgrade. Deleting Windows.old frees a large amount of disk space, but you will no longer be able to roll back to the prior Windows build. Opt-in.",
+            AutoChecked: false, [], "Windows",
+            c => [WindowsOld(c)],
+            (c, _) => Directory.Exists(WindowsOld(c)) ? [StorageTarget.Contents(WindowsOld(c))] : [],
+            MinBytes: 100L << 20),
+
+        new("storage-windows-update", "Old Windows Update download files (older than 14 days)",
+            "Removes downloaded installer packages in SoftwareDistribution\\Download that have already finished installing. Windows Update automatically downloads fresh packages when new updates arrive.",
+            AutoChecked: true, [], "Windows Update",
+            c => [SoftwareDistributionDownload(c)],
+            (c, ct) => [.. StaleEntries(SoftwareDistributionDownload(c), c.UtcNow - TimeSpan.FromDays(14), c.UtcNow, ct)],
+            MinBytes: 10L << 20),
     ];
 
     private static StorageCategory BrowserCategory(string id, string browser, string[] apps, Func<StorageScanContext, string> userData) => new(

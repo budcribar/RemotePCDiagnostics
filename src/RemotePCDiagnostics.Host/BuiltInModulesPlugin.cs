@@ -21,7 +21,7 @@ public sealed class BuiltInModulesPlugin : IModulePlugin
 {
     public const string Id = "builtin";
 
-    /// <summary>The modules compiled into the app: none. Every built-in module ships as its own DLL.</summary>
+    /// <summary>The modules compiled into the app, if any.</summary>
     public static IReadOnlyList<Guid> CompiledIn { get; } = [];
 
     /// <summary>The slugs of built-in modules that are neither compiled in nor found as a DLL in <paramref name="folder"/> (the package check).</summary>
