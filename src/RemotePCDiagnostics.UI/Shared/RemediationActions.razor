@@ -5,7 +5,9 @@
 {
     <div class="svc-modal-backdrop" @onclick="() => { if (!_busy) CloseDialog(); }"></div>
     <div class="svc-modal" role="dialog" aria-modal="true" aria-label="@_plan.Title" tabindex="-1"
-         @onkeydown='e => { if (e.Key == "Escape" && !_busy) CloseDialog(); }' data-testid="remediation-confirm">
+         @onkeydown='e => { if (e.Key == "Escape" && !_busy) CloseDialog(); }' data-testid="remediation-confirm"
+         data-action-kind="@_plan.Action.Kind" data-action-target="@_plan.Action.Target" data-allowed="@(_plan.Allowed ? "true" : "false")"
+         data-state="@(_busy ? "working" : "confirm")">
         <strong>@_plan.Title</strong>
         @if (_plan.WhatItIs.Length > 0) { <p>@_plan.WhatItIs</p> }
         @if (_plan.WhatWillHappen.Length > 0) { <p>@_plan.WhatWillHappen</p> }
@@ -26,7 +28,9 @@
 }
 @if (_lastMessage is { } msg)
 {
-    <div class="notice @(_lastOk ? "svc-result-ok" : "notice-error")" data-testid="remediation-result">@msg</div>
+    <div class="notice @(_lastOk ? "svc-result-ok" : "notice-error")" data-testid="remediation-result"
+         data-outcome="@(_lastOk ? "succeeded" : "failed")" data-action-kind="@_lastAction?.Kind" data-action-target="@_lastAction?.Target"
+         data-result-seq="@_resultSeq">@msg</div>
 }
 @if (ShowRecent && Actions is not null && Actions.Recent.Count > 0)
 {
@@ -51,6 +55,9 @@
     private CancellationTokenSource? _cts;
     private string? _lastMessage;
     private bool _lastOk;
+    // Which fix the result belongs to, and a counter that changes with every result, so an agent can tell a new result from an old one.
+    private AreaAction? _lastAction;
+    private int _resultSeq;
 
     public void Ask(AreaAction action)
     {
@@ -74,6 +81,8 @@
             if (_disposed) return;
             _lastOk = r.Success;
             _lastMessage = r.Message;
+            _lastAction = act;
+            _resultSeq++;
             if (r.Success && OnCompleted.HasDelegate)
                 await OnCompleted.InvokeAsync();
         }

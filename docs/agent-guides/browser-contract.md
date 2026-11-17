@@ -52,6 +52,14 @@ To run tests, use the existing controls: set the length with `checks-mode-quick`
 
 The Benchmark page needs no new markers: `bench-restart` (checkbox) chooses whether the restart buttons show; `bench-run-before`, `bench-restart-before`, `bench-run-after`, `bench-restart-after`, `bench-stop` and `bench-clear` act; `bench-report-data` reports the phase before and after a restart.
 
+## Fixes and service actions
+
+`area-report-data` lists the one-click fixes the page offers: `actions` on a card (buttons on the card and at the top of its drawer) and on a row (buttons in the drawer's row), each with `kind` (a RemediationKind name), `target`, `targetLabel`, `buttonText` and `currentSetting`. A row with a fix is listed even when its level is `ok`. On the Services check, `services` lists every service (up to 400) with `name`, `displayName`, `status`, `startType`, and `canStart`, `canStop`, `canRestart` and `protected`.
+
+The buttons carry the same identity: fix buttons have `data-action="remediate"`, `data-card-id`, `data-action-kind`, `data-action-target` and, for row buttons, `data-row-key`. Row buttons render only in the open drawer: open it with the card (`osquery-card-{cardId}`) first. Service buttons have `data-action="service"`, `data-service` and `data-service-action` (`start`, `stop` or `restart`) and render in the Services drawer.
+
+A click opens RPCD's confirmation dialog: `remediation-confirm` (with `data-action-kind`, `data-action-target`, `data-allowed`, `data-state` confirm or working; confirm with `remediation-confirm-go`) or `svc-confirm` (with `data-service`, `data-service-action`, `data-allowed`, `data-state`; confirm with `svc-confirm-go`). Check the dialog names the intended fix before confirming. The result appears in `remediation-result` or `svc-result` with `data-outcome` (`succeeded` or `failed`), the fix or service identity, and `data-result-seq`, which increases with every result. After a successful fix the check runs again by itself.
+
 ## Structured diagnostic fields
 
 These selectors are implemented in source and are ready for verification on an installed build. In Checks, scope them to `checks-detail`. Verify the selected check, run state, and matching result ID before reading fields. A missing field or value means unavailable. A numeric zero represents a reported zero.

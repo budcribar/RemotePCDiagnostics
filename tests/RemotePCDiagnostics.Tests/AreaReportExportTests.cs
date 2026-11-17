@@ -102,3 +102,47 @@ public class AreaReportExportTests
         Assert.Contains("EXCEL.EXE", json);
     }
 }
+
+public class AreaReportExportActionTests
+{
+    [Fact]
+    public void Exports_card_and_row_fixes_including_ok_rows_that_have_one()
+    {
+        var fix = new AreaAction(RemediationKind.FlushDnsAndRenewIp, "Flush DNS", "Ethernet", "Adapter Ethernet", "DHCP");
+        var rowFix = new AreaAction(RemediationKind.ApplySecuritySetting, "Turn on", "pua", "Block potentially unwanted apps", "Off");
+        var report = new AreaReport(
+        [
+            new AreaCard("dns", "DNS", AreaLevel.Warning, "Slow lookups", "", ["Setting", "Value"],
+                [new AreaRow(AreaLevel.Ok, ["PUA protection", "Off"], Key: "pua", Actions: [rowFix]), new AreaRow(AreaLevel.Ok, ["Other", "On"], Key: "other")],
+                Actions: [fix]),
+        ], "", DiagnosticStatus.Warning);
+
+        var card = Assert.Single(AreaReportExport.Build(report).Cards);
+
+        var cardAction = Assert.Single(card.Actions!);
+        Assert.Equal("FlushDnsAndRenewIp", cardAction.Kind);
+        Assert.Equal("Ethernet", cardAction.Target);
+        Assert.Equal("DHCP", cardAction.CurrentSetting);
+        var row = Assert.Single(card.Rows);
+        Assert.Equal("pua", row.Key);
+        Assert.Equal("ApplySecuritySetting", Assert.Single(row.Actions!).Kind);
+    }
+
+    [Fact]
+    public void Exports_services_with_their_buttons()
+    {
+        var service = new ServiceInfo("Spooler", "Print Spooler", "STOPPED", "AUTO_START", "LocalSystem", "");
+        var exported = AreaReportExport.Service(service, new ServiceControlOptions(true, false, false, false, null));
+        var report = new AreaReport([], "", DiagnosticStatus.Ok);
+
+        var json = AreaReportExport.ToJson(report, [exported]);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var svc = doc.RootElement.GetProperty("services")[0];
+
+        Assert.Equal("Spooler", svc.GetProperty("name").GetString());
+        Assert.Equal("Print Spooler", svc.GetProperty("displayName").GetString());
+        Assert.True(svc.GetProperty("canStart").GetBoolean());
+        Assert.False(svc.GetProperty("canStop").GetBoolean());
+        Assert.False(System.Text.Json.JsonDocument.Parse(AreaReportExport.ToJson(report)).RootElement.TryGetProperty("services", out _));
+    }
+}
