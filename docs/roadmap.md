@@ -1176,3 +1176,11 @@ restricted child is handed only its own pipe handles, and the plain launcher wai
 
 - PID polling in RemoteComponentHost.ExitWithParent: RemoteComponentHost.IsRunning(int pid) calls Process.GetProcesses() every 2 seconds and disposes every Process object on the system just to check if parentPid exists. Instead, since RemoteComponentHost already reads Console.In via connection.RunAsync, closing connection (connection.Closed) when the parent exits—or waiting on EOF of the anonymous stdin pipe—detects parent termination immediately (even if the parent crashes or is killed by Task Manager, Windows closes the write end of the anonymous pipe) with zero polling overhead and no Process.GetProcesses() allocations.
 - Documentation drift: docs/module-plugins.md (line 71 and lines 82–85) still states that admin modules are compiled into BuiltInModulesPlugin.CompiledIn, that ModuleUiHost doesn't have the app's CSS, and that remote sessions don't support module UI frames—all three of which were upgraded in PRs #32 and #33. Updating docs/module-plugins.md to match the new state will keep the docs aligned with the code.
+
+## 7. AI connector data leaving the PC (backlog)
+
+The browser contract's report copy (`area-report-data`, see docs/agent-guides/browser-contract.md) and the Admin diagnostic MCP send what the Checks pages show to whichever AI model the technician connects. That includes program and process names, service names, event messages, and file paths that can contain the Windows user name. This is acceptable for the TestShop pilot. Before customer PCs use the connector:
+
+- Replace the user profile path (`C:\Users\<name>`) with `%USERPROFILE%`, and the machine and user names with placeholders, in exported row values and detail text.
+- Decide whether AI access needs its own consent, alongside the unattended consent ceiling, and record it in the audit log with the session.
+- Show the person at the PC when an AI connector is reading the session.

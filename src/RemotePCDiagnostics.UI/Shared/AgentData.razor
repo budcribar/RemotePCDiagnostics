@@ -1,0 +1,13 @@
+@* Hidden machine-readable copy of a page's state for browser agents (docs/agent-guides/browser-contract.md). People read the page;
+   agents read data-report. data-result-run-id, when set, ties the copy to one run. *@
+@if (Json is not null)
+{
+    <div hidden data-testid="@TestId" data-check-id="@CheckId" data-result-run-id="@RunId" data-schema="1" data-report="@Json"></div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string TestId { get; set; } = "";
+    [Parameter] public string? Json { get; set; }
+    [Parameter] public string? CheckId { get; set; }
+    [Parameter] public Guid? RunId { get; set; }
+}

@@ -243,7 +243,8 @@
         <div class="ct-detail-head" data-check-id="@m.Name" data-run-state="@kind.ToString().ToLowerInvariant()"
              data-run-id="@r.RunId" data-result-run-id="@(kind is RowKind.NotRun or RowKind.Running ? null : r.RunId)"
              data-result-source="@(kind == RowKind.NotRun ? (LastRun(m) is null ? "none" : "history") : kind == RowKind.Running ? "pending" : "current")"
-             data-completed-at="@(kind is RowKind.NotRun or RowKind.Running ? null : r.Timestamp.ToString("O"))">
+             data-completed-at="@(kind is RowKind.NotRun or RowKind.Running ? null : r.Timestamp.ToString("O"))"
+             data-run-message="@(kind is RowKind.NotRun or RowKind.Running ? null : AreaReportExport.Text(r.Message, AreaReportExport.MaxTextLength))">
             <span class="icon-badge"><Icon Name="@Icon.ForModule(m.Name)" /></span>
             <div class="ct-detail-title">
                 <div class="ct-group-line"><h2 data-testid="checks-detail-title">@m.DisplayName</h2>
@@ -294,6 +295,7 @@
             }
             else if (m is ICancellableScan && r.Payload is AreaReport integrity && kind != RowKind.Cancelled)
             {
+                <AreaReportData Report="integrity" CheckId="@m.Name" RunId="r.RunId" />
                 @foreach (var card in integrity.Cards)
                 {
                     <p class="meta">@card.Meta</p>
