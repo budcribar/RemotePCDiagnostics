@@ -354,35 +354,36 @@ public static class AgentPaths
 
         var appRoot = AppCacheRootDir();
         var existingCachedVersion = GetCachedVersion(appRoot);
-        if (!string.IsNullOrEmpty(existingCachedVersion) && !ManifestSignature.IsKeyConfigured(ManifestKey.PublicKeyPem))
+        if (!string.IsNullOrEmpty(existingCachedVersion))
         {
             var cachedExe = Path.Combine(appRoot, existingCachedVersion, "RemotePCDiagnostics.Host.exe");
             if (VerifyEntryHash(cachedExe))
                 return (cachedExe, null);
         }
 
-        if (!ManifestSignature.IsKeyConfigured(ManifestKey.PublicKeyPem))
-        {
-            return (null, "Remote PC Diagnostics is not installed on this computer (install Remote PC Diagnostics first or configure the release signing key).");
-        }
-
         await reportStageAsync(PeakSWC.RemoteWebView.Agent.LaunchStage.StageVerifying, "Checking latest release manifest...", 0).ConfigureAwait(false);
 
         byte[] manifestBytes;
-        string signatureText;
+        string signatureText = "";
         try
         {
             manifestBytes = await FetchFollowingAllowedRedirectsAsync(http, new Uri(ReleaseUrls.ManifestUrl), ct).ConfigureAwait(false);
-            var sigBytes = await FetchFollowingAllowedRedirectsAsync(http, new Uri(ReleaseUrls.SignatureUrl), ct).ConfigureAwait(false);
-            signatureText = System.Text.Encoding.UTF8.GetString(sigBytes);
+            if (ManifestSignature.IsKeyConfigured(ManifestKey.PublicKeyPem))
+            {
+                var sigBytes = await FetchFollowingAllowedRedirectsAsync(http, new Uri(ReleaseUrls.SignatureUrl), ct).ConfigureAwait(false);
+                signatureText = System.Text.Encoding.UTF8.GetString(sigBytes);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return (null, $"Could not fetch release manifest: {ex.Message}");
         }
 
-        if (!ManifestSignature.Verify(manifestBytes, signatureText, ManifestKey.PublicKeyPem))
+        if (ManifestSignature.IsKeyConfigured(ManifestKey.PublicKeyPem)
+            && !ManifestSignature.Verify(manifestBytes, signatureText, ManifestKey.PublicKeyPem))
+        {
             return (null, "Release manifest signature verification failed.");
+        }
 
         var manifest = ReleaseManifest.Parse(manifestBytes, out var manifestError);
         if (manifest is null)
