@@ -135,11 +135,15 @@ public static class StorageCleanupEngine
             if (bases.Count == 0) { why = "root is outside the account and allowed system folders"; return false; }
         }
         var current = bases[0];
-        foreach (var part in System.IO.Path.GetRelativePath(current, path).Split(System.IO.Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        var rel = System.IO.Path.GetRelativePath(current, path);
+        if (rel != ".")
         {
-            if (part is "." or "..") { why = "relative segment"; return false; }
-            current = System.IO.Path.Combine(current, part);
-            if ((System.IO.Directory.Exists(current) || System.IO.File.Exists(current)) && IsReparsePoint(current)) { why = "goes through a link"; return false; }
+            foreach (var part in rel.Split(System.IO.Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (part is "." or "..") { why = "relative segment"; return false; }
+                current = System.IO.Path.Combine(current, part);
+                if ((System.IO.Directory.Exists(current) || System.IO.File.Exists(current)) && IsReparsePoint(current)) { why = "goes through a link"; return false; }
+            }
         }
         if (t.Mode == StorageTargetMode.File && IsProtectedFile(System.IO.Path.GetFileName(path))) { why = "protected file"; return false; }
         why = "";

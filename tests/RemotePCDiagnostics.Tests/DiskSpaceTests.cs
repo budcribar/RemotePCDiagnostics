@@ -66,13 +66,13 @@ public sealed class DiskSpaceTests : IDisposable
         Assert.Equal(2, report.Cards.Count);
         Assert.Contains("2 large files", report.Summary);
 
-        var filesCard = Assert.Single(report.Cards.Where(c => c.Id == "files"));
+        var filesCard = Assert.Single(report.Cards, c => c.Id == "files");
         Assert.Equal(2, filesCard.Rows.Count);
         Assert.Contains(filesCard.Rows, r => r.Values[0] == "movie.mp4" && r.Values[2] == "Video");
         Assert.Contains(filesCard.Rows, r => r.Values[0] == "backup.zip" && r.Values[2] == "Archive / Backup");
         Assert.DoesNotContain(filesCard.Rows, r => r.Values[0] == "readme.txt");
 
-        var foldersCard = Assert.Single(report.Cards.Where(c => c.Id == "folders"));
+        var foldersCard = Assert.Single(report.Cards, c => c.Id == "folders");
         Assert.True(foldersCard.Rows.Count > 0);
     }
 

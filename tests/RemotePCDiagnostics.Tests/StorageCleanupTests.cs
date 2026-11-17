@@ -100,7 +100,7 @@ public sealed class StorageCleanupTests : IDisposable
         Assert.Null(StorageCleanupCatalog.Find(@"C:\Windows"));
         Assert.Null(StorageCleanupCatalog.Find(null));
 
-        string[] optIn = ["storage-playwright", "storage-outlook-ost"];
+        string[] optIn = ["storage-playwright", "storage-outlook-ost", "storage-windows-old"];
         Assert.All(StorageCleanupCatalog.All, c => Assert.Equal(!optIn.Contains(c.Id), c.AutoChecked));
 
         Assert.Contains("Code", StorageCleanupCatalog.Find("storage-vscode")!.BlockingApps);
