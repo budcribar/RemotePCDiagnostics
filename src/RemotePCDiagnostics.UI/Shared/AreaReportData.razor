@@ -4,11 +4,12 @@
 @if (Report is not null)
 {
     <div hidden data-testid="area-report-data" data-check-id="@CheckId" data-result-run-id="@RunId"
-         data-schema="@AreaReportExport.SchemaVersion" data-report="@AreaReportExport.ToJson(Report)"></div>
+         data-schema="@AreaReportExport.SchemaVersion" data-report="@AreaReportExport.ToJson(Report, Services)"></div>
 }
 
 @code {
     [Parameter] public AreaReport? Report { get; set; }
     [Parameter] public string? CheckId { get; set; }
     [Parameter] public Guid? RunId { get; set; }
+    [Parameter] public IReadOnlyList<AreaReportExport.ExportedService>? Services { get; set; }
 }

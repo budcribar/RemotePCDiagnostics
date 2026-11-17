@@ -4,7 +4,9 @@
 @if (_plan is not null && _target is not null)
 {
     <div class="svc-modal-backdrop" @onclick="() => { if (!_busy) CloseDialog(); }"></div>
-    <div class="svc-modal" role="dialog" aria-modal="true" aria-label="@_plan.Title" tabindex="-1" @onkeydown='e => { if (e.Key == "Escape" && !_busy) CloseDialog(); }' data-testid="svc-confirm">
+    <div class="svc-modal" role="dialog" aria-modal="true" aria-label="@_plan.Title" tabindex="-1" @onkeydown='e => { if (e.Key == "Escape" && !_busy) CloseDialog(); }' data-testid="svc-confirm"
+         data-service="@_target.Name" data-service-action="@_plan.Action.ToString().ToLowerInvariant()" data-allowed="@(_plan.Allowed ? "true" : "false")"
+         data-state="@(_busy ? "working" : "confirm")">
         <strong>@_plan.Title</strong>
         <p>@_plan.WhatItIs</p>
         <p>@_plan.WhatWillHappen</p>
@@ -25,7 +27,9 @@
 }
 @if (_lastMessage is { } msg)
 {
-    <div class="notice @(_lastOk ? "svc-result-ok" : "notice-error")" data-testid="svc-result">@msg</div>
+    <div class="notice @(_lastOk ? "svc-result-ok" : "notice-error")" data-testid="svc-result"
+         data-outcome="@(_lastOk ? "succeeded" : "failed")" data-service="@_lastService" data-service-action="@_lastServiceAction"
+         data-result-seq="@_resultSeq">@msg</div>
 }
 @if (Actions is not null && Actions.Recent.Count > 0)
 {
@@ -51,6 +55,9 @@
     private CancellationTokenSource? _cts;
     private string? _lastMessage;
     private bool _lastOk;
+    // Which service and action the result belongs to, and a counter that changes with every result (for agents).
+    private string? _lastService, _lastServiceAction;
+    private int _resultSeq;
 
     public void Ask(ServiceInfo s, ServiceAction action)
     {
@@ -74,6 +81,7 @@
             var r = await Task.Run(() => Actions.ExecuteAsync(s, action, _cts.Token));
             if (_disposed) return;
             _lastOk = r.Success; _lastMessage = r.Message;
+            _lastService = s.Name; _lastServiceAction = action.ToString().ToLowerInvariant(); _resultSeq++;
             var status = ServiceActionService.StatusText(r.NewState);
             if (status.Length > 0) await OnRowChanged.InvokeAsync((s.Name, status));
         }
