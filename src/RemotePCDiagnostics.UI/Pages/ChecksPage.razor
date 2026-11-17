@@ -41,6 +41,10 @@
         <p class="meta" data-testid="checks-run-note">@lastRunNote</p>
     }
 
+    @if (_group == CheckGroup.Stress)
+    {
+        <AgentData TestId="stress-data" Json="@StressJson()" />
+    }
     <div class="ct-workspace" data-testid="checks-workspace">
         <section class="ct-list" aria-label="@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")">
             @if (_group == CheckGroup.Checks) { @Group(CheckGroup.Checks, "System checks", "Quick, read-only checks of Windows logs, drives, services, programs and hardware.") }
@@ -92,6 +96,16 @@
     }
 
     public override void Dispose() { Screen.Changed -= OnScreenChanged; Nav.LocationChanged -= OnLocationChanged; base.Dispose(); }
+
+    /// <summary>The Stress tests page's state for browser agents (stress-data).</summary>
+    private string StressJson()
+    {
+        var tests = Screen.Modules(CheckGroup.Stress)
+            .Select(m => new StressExport.Test(m.Name, m.DisplayName, Screen.IsSelected(m.Name), Store.Get(m.Name), Screen.RunLabel(m.Name)))
+            .ToList();
+        var running = Screen.RunningGroup == CheckGroup.Stress || Diagnostics.IsAnyStressRunning;
+        return StressExport.ToJson(Screen.Mode, running, Diagnostics.LastStressSuiteProgress, Screen.LastSuiteResult, Screen.LastRunNote, tests);
+    }
 
     private void Select(IDiagnosticModule m) { Screen.SelectedModule = m.Name; }
     /// <summary>Row click: select, and in the stacked (narrow) layout scroll the details panel into view.</summary>

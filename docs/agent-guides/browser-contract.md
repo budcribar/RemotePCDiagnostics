@@ -44,6 +44,14 @@ The same hidden pattern serves three more pages. Each element carries `data-sche
 | `history-data` | History, after it loads | The selected range, whether the Event Log was readable, and the results and fixes the page lists for its current filters, newest first (up to 200 results and 100 fixes), with measurements and detail lines |
 | `bench-report-data` | Benchmark, always | `phase` (`no-baseline`, `running-before`, `running-after`, `settling`, `restart-pending-before`, `restart-pending-after`, `baseline-ready` or `compared`), progress and message, the enabled measurements and restart setting, each pass with its conditions and medians, and once both passes exist the overall change and one delta per measurement with units, verdict and percent |
 
+## Stress tests (`stress-data`)
+
+The Stress tests page (`data-rpcd-page="stress"`) renders `[data-testid="stress-data"]` with schema 1 JSON: the selected length (`mode` short or extended, `minutesPerTest`), `running`, `progress` while a run is going (index, total, current test, headline, and each step's state), `lastSuite` (mode, outcome `completed`, `stopped-on-problem` or `cancelled`, message, steps), the run `note`, `selectedCheckIds`, and per stress test its `checkId`, `selected`, `state` (RowKind), `runId`, `completedAt`, `runLabel`, `message`, `headline` and the overheated, stoppedByUser, couldNotRun and unavailable flags.
+
+To run tests, use the existing controls: set the length with `checks-mode-quick` or `checks-mode-extended` (`aria-pressed`), make `checks-select-{slug}` (`aria-checked`) match the requested tests, verify `checks-run-stress` lists exactly those IDs in `data-selected-check-ids`, then click it. While running, the same button is Stop. One selected test runs as a one-test suite. Stress tests load the PC: only run them on request.
+
+The Benchmark page needs no new markers: `bench-restart` (checkbox) chooses whether the restart buttons show; `bench-run-before`, `bench-restart-before`, `bench-run-after`, `bench-restart-after`, `bench-stop` and `bench-clear` act; `bench-report-data` reports the phase before and after a restart.
+
 ## Structured diagnostic fields
 
 These selectors are implemented in source and are ready for verification on an installed build. In Checks, scope them to `checks-detail`. Verify the selected check, run state, and matching result ID before reading fields. A missing field or value means unavailable. A numeric zero represents a reported zero.
