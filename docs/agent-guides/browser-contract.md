@@ -24,6 +24,12 @@ Use `.app[data-rpcd-version]` as the canonical selector for control and connecti
 
 For run results, follow the [inventory metadata proposal](hardware-inventory.md#browser-metadata). Prioritize check ID, run ID, result run ID, exact completion time and result source. Add field IDs and units where guides need structured extraction. Display names can change without changing IDs.
 
+## Checks list (`checks-list-data`)
+
+The Checks page renders one hidden `[data-testid="checks-list-data"]` element listing every check in the Checks group, collapsed or not: `id` (the check ID used everywhere else), `title`, `kind` (`check`, or `on-demand` for checks outside Run all), `scan` (true for long scans that keep running and can be cancelled), `start` (`run-one`: the detail panel's Run button; `own-page`: the check's own Start inside its detail page), `state`, and for finished runs `runId`, `completedAt` and `summary`.
+
+Run and cancel controls are marked generically: `[data-action="run-check"][data-check-id]` (the detail panel's `checks-run-one`, and a check's own Start such as the NPU test's) and `[data-action="cancel-check"][data-check-id]` (`checks-cancel-scan`, and the NPU test's Cancel).
+
 ## Full report copy (`area-report-data`)
 
 Every check built on the generic report (Battery, Device drivers, Event log, Network, Programs, Resource hogs, Security essentials, Services, Crashes, Drive health, DISM and SFC) renders one hidden `[data-testid="area-report-data"]` element inside `checks-detail` once the run finishes. Read it only when its `data-result-run-id` equals the header's `data-run-id`. It is absent while the check runs and on builds before this change.

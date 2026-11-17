@@ -28,6 +28,38 @@ public static class AgentExports
     private static string? V(string? value) => AreaReportExport.Text(value, AreaReportExport.MaxValueLength);
     private static string? T(string? value) => AreaReportExport.Text(value, AreaReportExport.MaxTextLength);
 
+    // ---- Checks list ----------------------------------------------------------------------------------------------------
+
+    /// <summary>One row of the Checks list. <c>Start</c> is "run-one" (the detail panel's Run button), "own-page" (the check's own
+    /// Start in its detail page, marked data-action="run-check"). <c>Scan</c> is true for long scans that keep running after
+    /// the run starts and can be cancelled.</summary>
+    public sealed record CheckListItem(string Id, string Title, string Kind, bool Scan, string Start, string State,
+        Guid? RunId, DateTimeOffset? CompletedAt, string? Summary);
+
+    public static string Checks(IEnumerable<CheckListItem> checks) => JsonSerializer.Serialize(BuildChecks(checks), Json);
+
+    public static object BuildChecks(IEnumerable<CheckListItem> checks)
+    {
+        var list = checks.ToList();
+        return new
+        {
+            schema = SchemaVersion,
+            checkCount = list.Count,
+            checks = list.Select(c => new
+            {
+                id = V(c.Id),
+                title = V(c.Title),
+                kind = c.Kind,
+                scan = c.Scan,
+                start = c.Start,
+                state = c.State,
+                runId = c.RunId?.ToString(),
+                completedAt = c.CompletedAt?.ToString("O"),
+                summary = T(c.Summary),
+            }).ToList(),
+        };
+    }
+
     // ---- Security audit -------------------------------------------------------------------------------------------------
 
     public static string Audit(SecurityAuditReport report) => JsonSerializer.Serialize(BuildAudit(report), Json);

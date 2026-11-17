@@ -17,8 +17,8 @@ else
     var suiteBusy = Diagnostics.IsStressSuiteRunning;
     <div class="toolbar toolbar-grouped">
         <span class="icon-badge page-icon"><Icon Name="chip" Size="20" /></span><h1 data-testid="npu-title">@m.DisplayName</h1>
-        @if (running) { <button data-testid="npu-cancel" @onclick="m.Cancel">Cancel</button> }
-        else { <button data-testid="npu-start" disabled="@suiteBusy" @onclick="() => Start(m)">@(r.Status == DiagnosticStatus.NotRun ? "Start" : "Run again")</button> }
+        @if (running) { <button data-testid="npu-cancel" data-action="cancel-check" data-check-id="@m.Name" @onclick="m.Cancel">Cancel</button> }
+        else { <button data-testid="npu-start" data-action="run-check" data-check-id="@m.Name" disabled="@suiteBusy" @onclick="() => Start(m)">@(r.Status == DiagnosticStatus.NotRun ? "Start" : "Run again")</button> }
     </div>
     <p class="meta" data-testid="npu-intro">Looks for an NPU (neural processing unit / AI accelerator, such as Intel AI Boost, AMD Ryzen AI or Qualcomm Hexagon), checks its driver, and runs a short matrix-multiply workload on it, compared with the CPU. Nothing is downloaded, saved or sent. Most PCs older than 2024 have no NPU; that is reported as skipped, not as a fault.</p>
     <div class="toolbar">

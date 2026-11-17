@@ -82,4 +82,25 @@ public class AgentExportsTests
         Assert.Equal("better", delta.GetProperty("verdict").GetString());
         Assert.Equal("ms", delta.GetProperty("unit").GetString());
     }
+
+    [Fact]
+    public void Checks_list_carries_kind_start_scan_and_result()
+    {
+        var run = Guid.NewGuid();
+        var json = AgentExports.Checks(
+        [
+            new("DriveHealth", "Drive health", "check", false, "run-one", "passed", run, DateTimeOffset.Parse("2026-11-17T10:00:00Z"), "All drives healthy"),
+            new("DiskSpace", "Large files & folders", "on-demand", true, "run-one", "notrun", null, null, null),
+            new("NpuTest", "NPU (AI accelerator) test", "on-demand", false, "own-page", "running", Guid.NewGuid(), null, null),
+        ]);
+
+        using var doc = JsonDocument.Parse(json);
+        var checks = doc.RootElement.GetProperty("checks");
+        Assert.Equal(3, doc.RootElement.GetProperty("checkCount").GetInt32());
+        Assert.Equal(run.ToString(), checks[0].GetProperty("runId").GetString());
+        Assert.Equal("All drives healthy", checks[0].GetProperty("summary").GetString());
+        Assert.True(checks[1].GetProperty("scan").GetBoolean());
+        Assert.False(checks[1].TryGetProperty("runId", out _));
+        Assert.Equal("own-page", checks[2].GetProperty("start").GetString());
+    }
 }

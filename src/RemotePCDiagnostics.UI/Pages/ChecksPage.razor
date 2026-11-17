@@ -47,6 +47,10 @@
     }
     <div class="ct-workspace" data-testid="checks-workspace">
         <section class="ct-list" aria-label="@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")">
+            @if (_group == CheckGroup.Checks)
+            {
+                <AgentData TestId="checks-list-data" Json="@AgentExports.Checks(CheckList())" />
+            }
             @if (_group == CheckGroup.Checks) { @Group(CheckGroup.Checks, "System checks", "Quick, read-only checks of Windows logs, drives, services, programs and hardware.") }
             else { @Group(CheckGroup.Stress, "Hardware stress & deep scans", "Run one at a time · stop automatically if the PC gets too hot.") }
         </section>
@@ -117,6 +121,18 @@
         try { await JS.InvokeVoidAsync("rpdSplit.showDetail"); } catch { /* older host page without the helper */ }
     }
     private readonly Dictionary<string, ElementReference> _rowRefs = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Every check on the Checks list, for the agent copy (checks-list-data): including collapsed groups.</summary>
+    private IEnumerable<AgentExports.CheckListItem> CheckList() => Screen.Modules(CheckGroup.Checks).Select(m =>
+    {
+        var r = Store.Get(m.Name);
+        var kind = CheckRows.KindOf(r);
+        var onDemand = Diagnostics.Catalog.Get(m.Id)?.Kind == ModuleKind.OnDemand || !m.IncludeInRunAll;
+        var finished = kind is not (RowKind.NotRun or RowKind.Running);
+        return new AgentExports.CheckListItem(m.Name, m.DisplayName, onDemand ? "on-demand" : "check", m is ICancellableScan,
+            HasOwnStart(m) ? "own-page" : "run-one", kind.ToString().ToLowerInvariant(),
+            kind == RowKind.NotRun ? null : r.RunId, finished ? r.Timestamp : null, finished ? r.Message : null);
+    });
+
     private static bool HasOwnStart(IDiagnosticModule m) => m is IStressSuiteModule ||
         (m is not ICancellableScan && ChecksScreenState.IsSeparateStep(m));
 
@@ -278,7 +294,7 @@
             @* Stress tests, the security audit and the audio tests have their own Start/Stop (with length) below, so no second start button here. *@
             @if (m is ICancellableScan scan && kind == RowKind.Running)
             {
-                <button type="button" class="btn btn-stop ct-run-one" data-testid="checks-cancel-scan" @onclick="scan.Cancel">Cancel scan</button>
+                <button type="button" class="btn btn-stop ct-run-one" data-testid="checks-cancel-scan" data-action="cancel-check" data-check-id="@m.Name" @onclick="scan.Cancel">Cancel scan</button>
             }
             else if (!HasOwnStart(m))
             {
