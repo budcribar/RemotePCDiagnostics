@@ -1,5 +1,6 @@
 @page "/workflow"
 @using RemotePCDiagnostics.Core.Workflow
+@using RemotePCDiagnostics.Core.Areas
 @using RemotePCDiagnostics.Core.Benchmarks
 @using RemotePCDiagnostics.Core.Optimizations
 @implements IDisposable
@@ -21,6 +22,7 @@
 <p class="meta">Runs every check, lets you choose the fixes once, then does the rest by itself: restart → before benchmark → apply the fixes →
     restart → after benchmark → client report. Plan on 20–40 minutes, mostly waiting for restarts and updates.</p>
 
+<AgentData TestId="workflow-data" Json="@WorkflowJson(s)" />
 <ol class="wf-steps" data-testid="wf-steps">
     @foreach (var (label, stages) in Steps)
     {
@@ -155,14 +157,14 @@
                 var area = g.Key;                 // stable key (remembered open areas)
                 var areaName = g.First().Area;    // what's shown
                 var open = _openAreas.Contains(area);
-                <h3 class="wf-area"><button type="button" class="wf-area-toggle" data-testid="wf-area-toggle" aria-expanded="@(open ? "true" : "false")" @onclick="() => ToggleArea(area)">
+                <h3 class="wf-area"><button type="button" class="wf-area-toggle" data-testid="wf-area-toggle" data-action="wf-area" data-area-key="@area" aria-expanded="@(open ? "true" : "false")" @onclick="() => ToggleArea(area)">
                     <span class="wf-caret" aria-hidden="true">@(open ? "▾" : "▸")</span> @areaName <span class="meta">(@g.Count(f => s.IsApproved(f.Id)) of @g.Count() ticked)</span></button></h3>
                 @if (!open) { continue; }
                 @foreach (var f in g)
                 {
                     var id = f.Id;
                     <label class="wf-fix" data-testid="wf-fix">
-                        <input type="checkbox" checked="@s.IsApproved(id)" @onchange="e => Flow.SetApproved(id, e.Value is true)" />
+                        <input type="checkbox" data-action="wf-fix" data-fix-id="@id" checked="@s.IsApproved(id)" @onchange="e => Flow.SetApproved(id, e.Value is true)" />
                         <span><strong>@f.Title</strong>@if (f.Risk != SuggestionRisk.Low) { <span class="chip chip-warn">@f.Risk risk</span> }@if (f.Slow) { <span class="chip chip-na">can take a while</span> }@if (!f.DefaultOn) { <span class="chip chip-na" data-testid="wf-fix-optin" title="Not ticked by default: tick it only if it's worth it for this client.">opt-in</span> }@if ((f.UndoChip ?? RemotePCDiagnostics.Core.Changes.Undoability.Chip(f.Undo)) is { } undoChip) { <span class="chip @(f.Undo == RemotePCDiagnostics.Core.Changes.UndoSupport.None && f.UndoChip is null ? "chip-warn" : "chip-na")" data-testid="wf-fix-undo">@undoChip</span> }
                             <span class="meta wf-why">@f.Why</span></span>
                     </label>
@@ -187,13 +189,13 @@
                 <label class="wf-field">Password <input type="@(_showPassword ? "text" : "password")" data-testid="wf-password" @ref="_passwordBox" @bind="_password" autocomplete="off" />
                     <button type="button" class="btn-small" data-testid="wf-password-toggle" aria-label="@(_showPassword ? "Hide password" : "Show password")" title="@(_showPassword ? "Hide password" : "Show password")" aria-pressed="@(_showPassword ? "true" : "false")" @onclick="() => _showPassword = !_showPassword"><Icon Name="@(_showPassword ? "eye-off" : "eye")" Size="12" /></button></label>
                 <p class="meta">@(_logon?.MicrosoftAccountEmail is not null ? "This PC signs in with a Microsoft account, so the box shows its email address. " : "Microsoft account? Use the account's email address. ")The password must be the account's password, not the PIN.</p>
-                <label><input type="checkbox" @bind="_clientSignsIn" /> Skip: the client will sign in after each restart</label>
+                <label><input type="checkbox" data-testid="wf-client-signs-in" @bind="_clientSignsIn" /> Skip: the client will sign in after each restart</label>
             }
         </section>
         @if (_startError is { } se) { <p class="notice notice-error" role="alert" data-testid="wf-signin-error">@se</p> }
         <div class="toolbar">
             <button class="btn btn-primary" data-testid="wf-go" disabled="@(_starting || !CanStart)" @onclick="Start"><Icon Name="play" Size="12" /> @(_starting ? "Starting…" : $"Start: restart, benchmark, apply {approved} fix{(approved == 1 ? "" : "es")}, report")</button>
-            <button class="btn-small" @onclick="StartOver">Start over</button>
+            <button class="btn-small" data-testid="wf-start-over" @onclick="StartOver">Start over</button>
         </div>
         break;
 
@@ -372,6 +374,11 @@
     private bool _clientSignsIn, _starting, _showPassword, _adminActionBusy;
     private string? _message, _startError;
     private ElementReference _passwordBox;
+
+    /// <summary>The page's state for browser agents (workflow-data). Sign-in is reported as yes/no only.</summary>
+    private string WorkflowJson(WorkflowState s) => WorkflowExport.ToJson(s, Flow.Busy, Flow.WaitingForRestart, Flow.Status ?? (s.Stage == WorkflowStage.Checking ? "Running checks…" : null),
+        _message, Flow.CheckItems, _openAreas,
+        new WorkflowExport.SignIn(_logon is { AlreadyAutomatic: true }, _user.Length > 0 && _password.Length > 0, _clientSignsIn, CanStart && !_starting));
 
     private bool CanStart => _logon is { AlreadyAutomatic: true } || _clientSignsIn || (_user.Length > 0 && _password.Length > 0);
 
