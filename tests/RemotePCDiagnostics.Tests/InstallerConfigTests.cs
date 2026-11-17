@@ -160,6 +160,25 @@ public sealed class InstallerConfigTests
     }
 
     [Fact]
+    public void CiWorkflow_NeverInstallsAnAgentThatEnrolsWithThePublicRelay()
+    {
+        // The TestShop bundle is built for the public relay with unattended consent. Installed as built on a CI runner, its agent
+        // service registered the runner there as a persistent computer. The smoke install must send the agent to a loopback address.
+        var root = FindRepoRoot();
+        var iss = File.ReadAllText(Path.Combine(root, "installer", "RemotePCDiagnostics.iss"));
+        Assert.Contains("--server={param:AGENTSERVER|\" + AgentServerUrl + \"}", iss);
+
+        var ci = File.ReadAllText(Path.Combine(root, ".github", "workflows", "ci.yml"));
+        Assert.Contains("$smokeServer = 'http://127.0.0.1:9'", ci);
+        var silentInstalls = ci.Split('\n').Where(line => line.Contains("-FilePath $bundleExe", StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(silentInstalls);
+        Assert.All(silentInstalls, line => Assert.Contains("/AGENTSERVER=$smokeServer", line));
+        Assert.Contains("$cfgJson.server -ne $smokeServer", ci);
+        // No install or run step names the public relay as the agent's server; only the bundle build bakes it in as the default.
+        Assert.DoesNotContain("$cfgJson.server -ne 'https://server.remoteblazorwebview.com", ci);
+    }
+
+    [Fact]
     public void PublishScript_BuildsInstallerAndReplacesRollingPreRelease()
     {
         var root = FindRepoRoot();

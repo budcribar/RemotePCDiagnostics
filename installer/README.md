@@ -15,6 +15,10 @@ Builds a single-file Windows `x64` setup wizard (`RemotePCDiagnostics-Setup-<Ver
   - On interactive uninstall, asks whether to also delete saved diagnostic logs, benchmark history, preferences, and undo state under `%ProgramData%\RemotePCDiagnostics` and `%LOCALAPPDATA%\RemotePCDiagnostics` (defaults to **No** so history/undo records aren't accidentally wiped).
   - The Microsoft Store MSIX package cannot run a custom uninstall action. The agent removes itself after it has seen the Store package or this Setup install and later finds that install gone.
 
+## Bundled agent (TestShop demo bundle)
+
+When `Build-Installer.ps1` is given `-AgentExePath`, Setup also runs `RemotePCDiagnostics.Agent.exe install` with the relay, key and consent chosen at build time. `/AGENTSERVER=<url>` on the Setup command line replaces the relay for that install (an `https://` address, or `http://` on loopback). CI installs the bundle with `/AGENTSERVER=http://127.0.0.1:9` so the smoke test does not enrol the build runner with the public relay; do the same for any automated install on a machine that should not appear in a shop's computer list.
+
 ## Building Locally on Windows
 
 ### Prerequisites

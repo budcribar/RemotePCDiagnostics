@@ -448,7 +448,11 @@ jobs:
           $installDir = Join-Path $env:RUNNER_TEMP 'rpd-testshop-bundle'
           if (Test-Path -LiteralPath $installDir) { Remove-Item -LiteralPath $installDir -Recurse -Force }
           $installLog = Join-Path $env:GITHUB_WORKSPACE 'artifacts/testshop-bundle-install.log'
-          $installProc = Start-Process -FilePath $bundleExe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SKIPWEBVIEW2 /DIR=`"$installDir`" /LOG=`"$installLog`"" -Wait -PassThru
+          # The bundle is built for the public relay with unattended consent. Installing it as built would enrol this runner
+          # there as a persistent, unattended computer in the test shop, so the smoke install points the agent at a
+          # loopback address (nothing listens on port 9), like the MSI smoke test above.
+          $smokeServer = 'http://127.0.0.1:9'
+          $installProc = Start-Process -FilePath $bundleExe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SKIPWEBVIEW2 /AGENTSERVER=$smokeServer /DIR=`"$installDir`" /LOG=`"$installLog`"" -Wait -PassThru
           if ($installProc.ExitCode -ne 0) {
             if (Test-Path $installLog) { Get-Content $installLog -Tail 120 | Write-Host }
             throw "TestShop bundle silent install failed with exit code $($installProc.ExitCode)"
@@ -462,7 +466,7 @@ jobs:
             if (-not (Test-Path -LiteralPath $installedAgent)) { throw "TestShop bundle did not install $installedAgent" }
             if (-not (Test-Path -LiteralPath $installedCfg)) { throw "TestShop bundle did not write $installedCfg" }
             $cfgJson = Get-Content -LiteralPath $installedCfg -Raw | ConvertFrom-Json
-            if ($cfgJson.key -ne 'test-shop' -or $cfgJson.group -ne 'test-shop' -or $cfgJson.consent -ne 'unattended' -or $cfgJson.lifetime -ne 'persistent' -or $cfgJson.server -ne 'https://server.remoteblazorwebview.com:34544') {
+            if ($cfgJson.key -ne 'test-shop' -or $cfgJson.group -ne 'test-shop' -or $cfgJson.consent -ne 'unattended' -or $cfgJson.lifetime -ne 'persistent' -or $cfgJson.server -ne $smokeServer) {
               throw "Unexpected agent.json written by TestShop bundle: $(Get-Content -LiteralPath $installedCfg -Raw)"
             }
             $svc = Get-Service -Name 'RemotePCDiagnosticsAgent' -ErrorAction SilentlyContinue

@@ -49,8 +49,10 @@
 #else
   #define RemoteParameters "-u=" + RemoteServerUrl + " --voice"
 #endif
+; /AGENTSERVER=<url> on the Setup command line replaces the relay the bundled agent enrols with. CI installs the bundle with a
+; loopback address, so its smoke test never registers the build runner with the public relay.
 #if AgentExePath != ""
-  #define AgentInstallParams "install --server=" + AgentServerUrl + " --consent=" + AgentConsent + " --lifetime=persistent"
+  #define AgentInstallParams "install --server={param:AGENTSERVER|" + AgentServerUrl + "} --consent=" + AgentConsent + " --lifetime=persistent"
   #if AgentEnrollmentKey != ""
     #define AgentInstallParams AgentInstallParams + " --key=" + AgentEnrollmentKey
   #endif
