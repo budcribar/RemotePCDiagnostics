@@ -293,8 +293,9 @@ public static class HistorySummary
                 if (m.Success) memFixes++;
                 var freed = m.FreedMemoryBytes;
                 memBytes += freed;
+                diskBytes += m.FreedDiskBytes; // an app removal
 
-                var badge = freed > 0 ? $"+{HardwareInventory.FormatBytes(freed)} RAM" : null;
+                var badge = FormatImpactBadge(m.FreedDiskBytes, freed, 0, 0);
                 fixList.Add(new(tUtc, "Memory optimization", memory.Actor, m.Success, m.Message, badge));
             }
             // The session total also holds gains too small to be reported on a record. Every recent record is already counted
