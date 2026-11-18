@@ -503,3 +503,59 @@ public class PageErrorsTests
         Assert.True(RemotePCDiagnostics.Core.PageErrors.LogLine("checks", new Exception(new string('x', 9000))).Length <= RemotePCDiagnostics.Core.PageErrors.MaxLogLength + 40);
     }
 }
+
+/// <summary>The hardware inventory has a machine-readable report like every other check.</summary>
+public class HardwareInventoryReportTests
+{
+    private static RemotePCDiagnostics.Core.Osquery.InventorySection<T> Section<T>(params T[] items) => new("sql", items, null);
+
+    private static RemotePCDiagnostics.Core.Osquery.HardwareInventory Inventory() => new(
+        Section(new RemotePCDiagnostics.Core.Osquery.SystemInfo("host", "PC-NAME", "uuid", "LENOVO", "IdeaPad 1 15ALC7", "v1", "SERIAL-SYS",
+            "LENOVO", "LNVNB161216", "SDK0T76479", "SERIAL-BOARD", "AMD Ryzen 7 5700U", "x64", 8, 16, 1, 16L * 1024 * 1024 * 1024)),
+        Section(new RemotePCDiagnostics.Core.Osquery.CpuInfo("CPU0", "AMD Ryzen 7 5700U with Radeon Graphics", "AuthenticAMD", "3", "FP6", 8, 16, 1800, 4300, 12, "64")),
+        Section(new RemotePCDiagnostics.Core.Osquery.MemoryDevice("DIMM 0", "P0 CHANNEL A", "SODIMM", "DDR4", 8192, 3200, 3200, "Samsung", "M471A1G44AB0", "SERIAL-RAM"),
+            new RemotePCDiagnostics.Core.Osquery.MemoryDevice("DIMM 1", "P0 CHANNEL B", "SODIMM", "DDR4", 8192, 3200, 3200, "Samsung", "M471A1G44AB0", "SERIAL-RAM2")),
+        Section(new RemotePCDiagnostics.Core.Osquery.DiskInfo(0, "\\\\.\\PHYSICALDRIVE0", "disk0", "SCSI", "(Standard disk drives)", "SAMSUNG MZALQ512HBLU", "SERIAL-DISK", "Disk drive", 512110190592, 4)));
+
+    [Fact]
+    public void Report_has_a_card_per_part_with_the_details_the_page_shows()
+    {
+        var report = RemotePCDiagnostics.Core.Osquery.HardwareInventoryReport.Build(Inventory(), DiagnosticStatus.Ok, "LENOVO IdeaPad · 16 GB memory");
+        Assert.Equal(["system", "cpu", "memory", "disks"], report.Cards.Select(c => c.Id));
+        Assert.Equal(DiagnosticStatus.Ok, report.Status);
+        Assert.Equal("LENOVO IdeaPad 1 15ALC7", report.Cards[0].Headline);
+        Assert.Equal("AMD Ryzen 7 5700U with Radeon Graphics", report.Cards[1].Headline);
+        Assert.Contains("8 cores · 16 threads", report.Cards[1].Meta);
+        Assert.Equal(2, report.Cards[2].Rows.Count);
+        Assert.Contains("2 of 2 slots in use · DDR4", report.Cards[2].Meta);
+        Assert.Equal("1 drive", report.Cards[3].Headline);
+        Assert.Contains("SAMSUNG MZALQ512HBLU", report.Cards[3].Rows[0].Values);
+    }
+
+    [Fact]
+    public void The_agent_copy_carries_the_rows_and_no_serial_numbers()
+    {
+        var json = AreaReportExport.ToJson(RemotePCDiagnostics.Core.Osquery.HardwareInventoryReport.Build(Inventory(), DiagnosticStatus.Ok, "ok"));
+        Assert.Contains("M471A1G44AB0", json);   // part number: describes the hardware
+        Assert.Contains("DIMM 1", json);
+        Assert.Contains("SAMSUNG MZALQ512HBLU", json);
+        Assert.DoesNotContain("SERIAL-", json);  // serial numbers identify the customer's hardware
+        Assert.DoesNotContain("uuid", json);
+    }
+
+    [Fact]
+    public void A_section_that_could_not_be_read_is_a_failed_card_and_a_missing_one_says_so()
+    {
+        var inv = Inventory() with
+        {
+            Disks = new("sql", [], "osquery failed"),
+            Cpus = new("sql", [], null),
+            System = new("sql", [], null),
+        };
+        var report = RemotePCDiagnostics.Core.Osquery.HardwareInventoryReport.Build(inv, DiagnosticStatus.Warning, null);
+        Assert.NotNull(report.Cards.Single(c => c.Id == "disks").ErrorText);
+        Assert.NotNull(report.Cards.Single(c => c.Id == "cpu").EmptyText);
+        Assert.NotNull(report.Cards.Single(c => c.Id == "system").EmptyText);
+        Assert.Equal("Hardware inventory", report.Summary);
+    }
+}

@@ -24,6 +24,8 @@
 }
 @if (inv is not null)
 {
+    @* The same machine-readable copy every other check has, so an agent reads the inventory itself and not only three numbers. *@
+    @if (!busy) { <AreaReportData Report="@HardwareInventoryReport.Build(inv, r.Status, r.Message)" CheckId="@ModuleSlugs.Osquery" RunId="r.RunId" /> }
     <div class="cards">
         <SummaryCard Id="system" Title="Computer" OnOpen="Open"
                      ErrorText="@(inv.System.Success ? null : "Couldn't read computer details on this PC.")"

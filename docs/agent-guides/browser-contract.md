@@ -78,6 +78,10 @@ To run tests, use the existing controls: set the length with `checks-mode-quick`
 
 The Benchmark page needs no new markers: `bench-restart` (checkbox) chooses whether the restart buttons show; `bench-run-before`, `bench-restart-before`, `bench-run-after`, `bench-restart-after`, `bench-stop` and `bench-clear` act; `bench-report-data` reports the phase before and after a restart.
 
+## Hardware inventory report
+
+The Hardware inventory check (`Osquery`) renders `area-report-data` like the other checks, once a run has finished: cards `system`, `cpu`, `memory` and `disks`, with the rows the page's drawers show (one row per memory slot and per drive). Serial numbers and the hardware UUID are left out of this copy.
+
 ## Page errors (`page-error`)
 
 When a page throws while it draws or handles a click, the page's content is replaced by `[data-testid="page-error"]` with `data-error-seq` (increases with every error), `data-error-type` (the exception type) and `data-error-page` (the route, such as `checks`). `page-error-detail` holds a one-line description and `page-error-retry` shows the page again. The page marker (`data-rpcd-page`) is gone while the error shows; the navigation and the session bar keep working, and going to another page clears the error. The full error is in the app log as "Page error on '<page>': …". An agent that finds `page-error` should report the app fault, not a missing element.
