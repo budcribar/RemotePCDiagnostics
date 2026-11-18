@@ -40,7 +40,9 @@ public static class MemoryFeedback
 }
 
 /// <param name="Skipped">Nothing was attempted on purpose (e.g. the app whose cache it is was open); the workflow lists it as skipped.</param>
-public sealed record ActionOutcome(bool Success, string Message, bool Skipped = false);
+/// <param name="FreedDiskBytes">Disk cleanups only: the exact bytes freed, which History totals.</param>
+/// <param name="RemovedFiles">Disk cleanups only: the exact number of files deleted.</param>
+public sealed record ActionOutcome(bool Success, string Message, bool Skipped = false, long FreedDiskBytes = 0, long RemovedFiles = 0);
 
 /// <summary>
 /// Host-side probes and actions (Windows implementation in the Host; fakes in tests). Methods may throw. It is the sum of the role
@@ -201,7 +203,8 @@ public interface IAppManagementSystem
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null,
     string? CreatedKey = null, string? PreviousExtra = null);
 
-public sealed record SuggestionResult(string SuggestionId, bool Success, string Message, DateTime When, bool CanForceClose = false, bool Skipped = false);
+public sealed record SuggestionResult(string SuggestionId, bool Success, string Message, DateTime When, bool CanForceClose = false, bool Skipped = false,
+    long FreedDiskBytes = 0, long RemovedFiles = 0);
 
 /// <summary>
 /// Scans, shows and applies memory suggestions. Every change runs only from an explicit click; each is logged to the Event Log (1400)
@@ -360,7 +363,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             lock (_gate) StorageFreedBytes += r.BytesFreed;
         }
         SetStorage(StorageItems.Where(i => i.Id != c.Id).ToList()); // what's left is in use or newer than the rule allows
-        return new(r.FilesRemoved > 0 || r.FilesSkipped == 0, r.Message);
+        return new(r.FilesRemoved > 0 || r.FilesSkipped == 0, r.Message, FreedDiskBytes: Math.Max(0, r.BytesFreed), RemovedFiles: Math.Max(0, r.FilesRemoved));
     }
 
     private MemoryReading? SafeRead() { try { return sys.ReadMemory(); } catch (Exception ex) { LogWarn("ReadMemory failed: " + ex.Message); return null; } }
@@ -446,15 +449,18 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
 
     private SuggestionResult Record(string id, ActionOutcome o, MemoryAction a, UndoEntry? _, bool canForce = false)
     {
-        var r = new SuggestionResult(id, o.Success, (o.Success && !o.Skipped ? "Done: " : "") + o.Message, DateTime.Now, canForce, o.Skipped);
+        var r = new SuggestionResult(id, o.Success, (o.Success && !o.Skipped ? "Done: " : "") + o.Message, DateTime.Now, canForce, o.Skipped, o.FreedDiskBytes, o.RemovedFiles);
         lock (_gate)
         {
             _results[id] = r;
             _recent.Insert(0, r);
             if (_recent.Count > 20) _recent.RemoveAt(_recent.Count - 1);
         }
+        // History reads the exact disk amounts from these two lines, never from the message text.
+        var disk = a.Type == MemoryActionType.CleanStorage
+            ? $"Freed disk bytes: {o.FreedDiskBytes.ToString(System.Globalization.CultureInfo.InvariantCulture)}\r\nRemoved files: {o.RemovedFiles.ToString(System.Globalization.CultureInfo.InvariantCulture)}\r\n" : "";
         Event(o.Success ? LogLevel.Information : LogLevel.Warning,
-            $"Memory suggestion applied\r\nActor: {Actor}\r\nSuggestion: {id}\r\nAction: {a.Type}\r\nTarget: {a.Target}\r\nResult: {(o.Success ? "Success" : "Failed")}\r\nMessage: {r.Message}");
+            $"Memory suggestion applied\r\nActor: {Actor}\r\nSuggestion: {id}\r\nAction: {a.Type}\r\nTarget: {a.Target}\r\n{disk}Result: {(o.Success ? "Success" : "Failed")}\r\nMessage: {r.Message}");
         return r;
     }
 

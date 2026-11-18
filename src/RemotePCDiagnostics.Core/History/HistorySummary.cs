@@ -230,13 +230,7 @@ public static class HistorySummary
             var kind = e.Measurement("Kind") ?? e.Module;
             var isStorageCleanup = string.Equals(e.Module, MemoryFixModuleId, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(kind, nameof(MemoryActionType.CleanStorage), StringComparison.OrdinalIgnoreCase);
-            if (isStorageCleanup)
-            {
-                var (bytes, files) = ParseStorageCleanupImpact(e.Summary);
-                if (fb == 0) fb = bytes;
-                if (rf == 0) rf = files;
-                mb = 0;
-            }
+            if (isStorageCleanup) mb = 0; // disk, not memory
 
             diskBytes += fb;
             tempFiles += rf;
@@ -289,7 +283,8 @@ public static class HistorySummary
                 // The storage catalog uses its cleanup ID as the suggestion ID.
                 if (StorageCleanupCatalog.Find(m.SuggestionId) is not null)
                 {
-                    var (bytes, files) = ParseStorageCleanupImpact(m.Message);
+                    var bytes = m.FreedDiskBytes;
+                    var files = (int)Math.Min(m.RemovedFiles, int.MaxValue);
                     diskBytes += bytes;
                     tempFiles += files;
                     var diskBadge = FormatImpactBadge(bytes, 0, 0, files);
@@ -419,19 +414,6 @@ public static class HistorySummary
         if (updates > 0) return $"{AreaModuleBase.Plural(updates, "update")}";
         if (files > 0) return $"{AreaModuleBase.Plural(files, "file")} cleaned";
         return null;
-    }
-
-    private static (long Bytes, int Files) ParseStorageCleanupImpact(string summary)
-    {
-        // The cleanup log contains the displayed size, rounded by StorageCleanupEngine.SizeText.
-        var match = Regex.Match(summary, @"^(?:Done: )?Freed ([\d.]+) (GB|MB|KB) \(([\d,]+) files? deleted\)\.?", RegexOptions.CultureInvariant);
-        if (!match.Success ||
-            !decimal.TryParse(match.Groups[1].Value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var size) ||
-            !int.TryParse(match.Groups[3].Value, NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var files))
-            return default;
-
-        var unit = match.Groups[2].Value switch { "GB" => 1L << 30, "MB" => 1L << 20, _ => 1L << 10 };
-        return (size <= long.MaxValue / unit ? (long)(size * unit) : 0, files);
     }
 
     public static long ParseFreedBytesFromText(string? text)

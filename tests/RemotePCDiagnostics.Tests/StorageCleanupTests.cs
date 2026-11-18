@@ -827,15 +827,17 @@ public sealed class StorageCleanupTests : IDisposable
         Assert.Equal(2, j.All.Count);
     }
 
+    /// <summary>The amounts come from the event's own lines, never from the message text. Events logged before those lines existed
+    /// (the last row) still show as a disk cleanup, with nothing counted.</summary>
     [Theory]
-    [InlineData("Done: Freed 786 MB (1,508 files deleted).", 786L << 20, 1508)]
-    [InlineData("Done: Freed 786 MB (508 files deleted)", 786L << 20, 508)]
-    [InlineData("Done: Freed 2 KB (1 file deleted).", 2L << 10, 1)]
-    [InlineData("Nothing was deleted.", 0, 0)]
-    public void History_ClassifiesLegacyStorageEvents(string message, long bytes, int files)
+    [InlineData("Freed disk bytes: 824180736\nRemoved files: 1508\n", "Done: Freed 786 MB (1,508 files deleted).", 824_180_736L, 1508)]
+    [InlineData("Freed disk bytes: 1536\nRemoved files: 1\n", "Done: some other wording", 1536L, 1)]
+    [InlineData("Freed disk bytes: 0\nRemoved files: 0\n", "Nothing was deleted.", 0, 0)]
+    [InlineData("", "Done: Freed 786 MB (1,508 files deleted).", 0, 0)]
+    public void History_ClassifiesStorageEvents_AmountsFromEventFields(string amounts, string message, long bytes, int files)
     {
         var entry = HistoryEventParser.Parse(
-            $"Memory suggestion applied\nAction: CleanStorage\nResult: Success\nMessage: {message}", DateTimeOffset.UtcNow)!;
+            $"Memory suggestion applied\nAction: CleanStorage\n{amounts}Result: Success\nMessage: {message}", DateTimeOffset.UtcNow)!;
         var summary = HistorySummary.Build([entry]);
         Assert.Equal("Disk cleanup", Assert.Single(summary.Fixes).Category);
         Assert.Equal(bytes, summary.DiskReclaimedBytes);
@@ -860,12 +862,16 @@ public sealed class StorageCleanupTests : IDisposable
         Assert.Equal("Disk cleanup", fix.Category);
         Assert.EndsWith(" disk", fix.ImpactBadge);
         Assert.Equal(3L << 30, live.DiskReclaimedBytes);
+        Assert.Equal(3, live.TempFilesCleaned);
         Assert.Equal(0, live.MemoryFixesCount);
 
+        Assert.Contains("Freed disk bytes: 3221225472", eventText);
+        Assert.Contains("Removed files: 3", eventText);
         var entry = HistoryEventParser.Parse(eventText!, new DateTimeOffset(result.When))!;
         var combined = HistorySummary.Build([entry], memory: svc);
         Assert.Equal(fix, Assert.Single(combined.Fixes));
         Assert.Equal(live.DiskReclaimedBytes, combined.DiskReclaimedBytes);
+        Assert.Equal(live.TempFilesCleaned, combined.TempFilesCleaned);
     }
 
     [Fact]
