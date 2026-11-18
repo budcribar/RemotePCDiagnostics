@@ -75,6 +75,12 @@ public sealed record AreaCard(
     public int? RecentEventCount { get; init; }
     public int? RecentWindowDays { get; init; }
 
+    /// <summary>For a card about storage volumes: their capacity, free and used space in bytes, added up. The page publishes them
+    /// for browser agents as numbers, so nothing has to be read back out of the formatted text.</summary>
+    public long? TotalBytes { get; init; }
+    public long? FreeBytes { get; init; }
+    public long? UsedBytes { get; init; }
+
     public static AreaCard Failed(string id, string title, string errorText) =>
         new(id, title, AreaLevel.Error, "", "", [], [], ErrorText: errorText);
 }

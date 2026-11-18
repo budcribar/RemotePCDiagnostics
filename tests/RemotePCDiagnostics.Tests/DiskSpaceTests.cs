@@ -195,6 +195,28 @@ public sealed class DiskSpaceTests : IDisposable
     }
 
     [Fact]
+    public void Capacity_card_carries_byte_totals_and_warns_only_when_a_volume_is_nearly_full()
+    {
+        const long gb = 1024L * 1024 * 1024;
+        var roomy = new DriveCapacityInfo("C:\\", "Windows", "NTFS", 4000 * gb, 320 * gb); // 92% used, 320 GB free
+        var full = new DriveCapacityInfo("D:\\", "Data", "NTFS", 100 * gb, 5 * gb);
+
+        var one = DiskSpaceModule.BuildDriveCapacityCard([roomy]);
+        Assert.Equal(DiskSpaceModule.CapacityCardId, one.Id);
+        Assert.Equal(AreaLevel.Neutral, one.Level);
+        Assert.Equal($"C:\\ {HardwareInventory.FormatBytes(320 * gb)} free of {HardwareInventory.FormatBytes(4000 * gb)}", one.Headline);
+        Assert.Equal("92% used · NTFS file system", one.Meta);
+        Assert.Equal((4000 * gb, 320 * gb, 3680 * gb), (one.TotalBytes, one.FreeBytes, one.UsedBytes));
+
+        var two = DiskSpaceModule.BuildDriveCapacityCard([roomy, full]);
+        Assert.Equal(AreaLevel.Warning, two.Level);
+        Assert.Equal(new[] { AreaLevel.Neutral, AreaLevel.Warning }, two.Rows.Select(r => r.Level));
+        Assert.Equal($"{HardwareInventory.FormatBytes(325 * gb)} free across 2 drives", two.Headline);
+        Assert.Equal($"Nearly full: D: · {HardwareInventory.FormatBytes(4100 * gb)} total capacity", two.Meta);
+        Assert.Equal((4100 * gb, 325 * gb, 3775 * gb), (two.TotalBytes, two.FreeBytes, two.UsedBytes));
+    }
+
+    [Fact]
     public void Scan_Filters_Out_System_Files()
     {
         var folderA = Path.Combine(_tmp, "Media");

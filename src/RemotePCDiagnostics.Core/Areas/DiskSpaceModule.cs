@@ -5,16 +5,77 @@ using RemotePCDiagnostics.Core.Storage;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
-/// <summary>Drive capacity details (total, used, free) for a scanned storage volume.</summary>
+/// <summary>Capacity (total, used, free) of one storage volume. <see cref="Removable"/> is a USB stick or memory card.</summary>
 public sealed record DriveCapacityInfo(
     string DriveName,
     string VolumeLabel,
     string DriveFormat,
     long TotalBytes,
-    long FreeBytes)
+    long FreeBytes,
+    bool Removable = false)
 {
+    /// <summary>A volume is low on space when it has less than this share of its capacity free and less than <see cref="LowFreeBytes"/>.</summary>
+    public const double LowFreePercent = 10.0;
+    /// <summary>Both limits must be passed: 5% free of a 4 TB drive is still 200 GB, which is no problem.</summary>
+    public const long LowFreeBytes = 20L * 1024 * 1024 * 1024;
+
     public long UsedBytes => Math.Max(0, TotalBytes - FreeBytes);
     public double UsedPercent => TotalBytes > 0 ? (double)UsedBytes / TotalBytes * 100.0 : 0.0;
+    public double FreePercent => TotalBytes > 0 ? (double)FreeBytes / TotalBytes * 100.0 : 0.0;
+
+    /// <summary>The volume as people say it: "C:".</summary>
+    public string Letter => DriveName.TrimEnd('\\', '/');
+
+    /// <summary>Nearly full. Never a removable volume: a full USB stick or camera card is normal.</summary>
+    public bool IsLowOnSpace => !Removable && TotalBytes > 0 && FreePercent < LowFreePercent && FreeBytes < LowFreeBytes;
+
+    /// <summary>"C: is nearly full (12 GB free of 238 GB)".</summary>
+    public string NearlyFullText => $"{Letter} is nearly full ({HardwareInventory.FormatBytes(FreeBytes)} free of {HardwareInventory.FormatBytes(TotalBytes)})";
+}
+
+/// <summary>Reads volume capacity from Windows (<see cref="DriveInfo"/>): quick, no scan and no administrator rights.</summary>
+public static class DriveVolumes
+{
+    /// <summary>One volume's capacity, or null when it isn't ready or can't be read. Never throws.</summary>
+    public static DriveCapacityInfo? TryRead(DriveInfo drive, ILogger? log = null)
+    {
+        try
+        {
+            if (!drive.IsReady) return null;
+            return new DriveCapacityInfo(
+                drive.Name,
+                string.IsNullOrWhiteSpace(drive.VolumeLabel) ? drive.Name : drive.VolumeLabel,
+                drive.DriveFormat,
+                drive.TotalSize,
+                drive.TotalFreeSpace,
+                Removable: drive.DriveType == DriveType.Removable);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            log.Warn($"Volume {drive.Name}: capacity not read: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>Every fixed and removable volume that is ready. Network and optical drives are never touched: asking a
+    /// disconnected network drive whether it is ready can take many seconds. One unreadable volume doesn't hide the others.</summary>
+    public static IReadOnlyList<DriveCapacityInfo> ReadLocal(ILogger? log = null)
+    {
+        DriveInfo[] all;
+        try { all = DriveInfo.GetDrives(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            log.Warn($"Volume list not read: {ex.Message}");
+            return [];
+        }
+        var list = new List<DriveCapacityInfo>();
+        foreach (var d in all)
+        {
+            if (d.DriveType is not (DriveType.Fixed or DriveType.Removable)) continue;
+            if (TryRead(d, log) is { } volume) list.Add(volume);
+        }
+        return list;
+    }
 }
 
 /// <summary>One large file found during disk space analysis.</summary>
@@ -73,7 +134,7 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
     protected override string FailedMessage => "Couldn't scan disk space on this PC.";
 
     public long MinFileSizeBytes => minFileSizeBytes;
-    public string RootPath => targetRoot ?? Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
+    public string RootPath => targetRoot ?? SystemRoot;
 
     public void Cancel()
     {
@@ -104,7 +165,7 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
         var largeFiles = new List<LargeFileInfo>();
         var folderSizes = new Dictionary<string, (long DiskBytes, int Files, long LogicalBytes)>(StringComparer.OrdinalIgnoreCase);
         var windowsDir = GetWindowsDirectory();
-        var drives = GetDrivesForScan(root);
+        var drives = GetDrivesForScan(root, Logger);
 
         // Gather candidate top-level branches to measure (e.g. C:\Users, C:\Program Files, C:\Windows, C:\Users\<user>\*)
         var branchRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -394,72 +455,62 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
     [DllImport("kernel32.dll", EntryPoint = "GetCompressedFileSizeW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetCompressedFileSizeW(string lpFileName, out uint lpFileSizeHigh);
 
-    public static IReadOnlyList<DriveCapacityInfo> GetDrivesForScan(string root)
+    /// <summary>The system drive's root ("C:\\"): what a scan covers unless told otherwise.</summary>
+    public static string SystemRoot => Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
+
+    /// <summary>The volume <paramref name="root"/> is on; when that can't be read, every fixed volume.</summary>
+    public static IReadOnlyList<DriveCapacityInfo> GetDrivesForScan(string root, ILogger? log = null)
     {
-        var list = new List<DriveCapacityInfo>();
         try
         {
             var pathRoot = Path.GetPathRoot(root);
-            if (!string.IsNullOrEmpty(pathRoot))
-            {
-                var d = new DriveInfo(pathRoot);
-                if (d.IsReady)
-                {
-                    list.Add(new DriveCapacityInfo(
-                        d.Name,
-                        string.IsNullOrWhiteSpace(d.VolumeLabel) ? d.Name : d.VolumeLabel,
-                        d.DriveFormat,
-                        d.TotalSize,
-                        d.TotalFreeSpace));
-                }
-            }
+            if (!string.IsNullOrEmpty(pathRoot) && DriveVolumes.TryRead(new DriveInfo(pathRoot), log) is { } volume)
+                return [volume];
         }
-        catch { }
+        catch (ArgumentException ex) { log.Warn($"Volume of '{root}' not read: {ex.Message}"); }
 
-        if (list.Count == 0)
-        {
-            try
-            {
-                foreach (var d in DriveInfo.GetDrives())
-                {
-                    if (d.IsReady && (d.DriveType == DriveType.Fixed || string.Equals(d.Name, root, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        list.Add(new DriveCapacityInfo(
-                            d.Name,
-                            string.IsNullOrWhiteSpace(d.VolumeLabel) ? d.Name : d.VolumeLabel,
-                            d.DriveFormat,
-                            d.TotalSize,
-                            d.TotalFreeSpace));
-                    }
-                }
-            }
-            catch { }
-        }
-
-        return list;
+        return DriveVolumes.ReadLocal(log).Where(v => !v.Removable).ToList();
     }
 
-    public static AreaCard BuildDriveCapacityCard(IReadOnlyList<DriveCapacityInfo> drives, string cardId = "drives")
+    /// <summary>Id of the "Drive Capacity" card in this module's report.</summary>
+    public const string CapacityCardId = "drives";
+
+    /// <summary>The "Drive Capacity" card: one row per volume, a warning on each that is nearly full
+    /// (<see cref="DriveCapacityInfo.IsLowOnSpace"/>), and the byte totals as numbers on the card.</summary>
+    public static AreaCard BuildDriveCapacityCard(IReadOnlyList<DriveCapacityInfo> drives, string cardId = CapacityCardId)
     {
         string[] driveCols = ["Drive", "Total", "Used", "Free", "% Used", "Format"];
         var driveRows = drives.Select(d => new AreaRow(
-            d.UsedPercent >= 90.0 ? AreaLevel.Warning : AreaLevel.Neutral,
+            d.IsLowOnSpace ? AreaLevel.Warning : AreaLevel.Neutral,
             [d.DriveName, HardwareInventory.FormatBytes(d.TotalBytes), HardwareInventory.FormatBytes(d.UsedBytes), HardwareInventory.FormatBytes(d.FreeBytes), $"{d.UsedPercent:0.#}%", d.DriveFormat],
             SortKeys: [d.DriveName, d.TotalBytes.ToString("D19"), d.UsedBytes.ToString("D19"), d.FreeBytes.ToString("D19"), d.UsedPercent.ToString("F2"), d.DriveFormat],
             Detail: $"{d.DriveName} ({d.VolumeLabel})\nTotal capacity: {HardwareInventory.FormatBytes(d.TotalBytes)} ({d.TotalBytes:N0} bytes)\nUsed space: {HardwareInventory.FormatBytes(d.UsedBytes)} ({d.UsedBytes:N0} bytes, {d.UsedPercent:0.#}%)\nFree space: {HardwareInventory.FormatBytes(d.FreeBytes)} ({d.FreeBytes:N0} bytes)\nFile system: {d.DriveFormat}",
             FilePath: d.DriveName)).ToList();
 
+        var low = drives.Where(d => d.IsLowOnSpace).ToList();
+        long total = drives.Sum(d => d.TotalBytes), free = drives.Sum(d => d.FreeBytes), used = drives.Sum(d => d.UsedBytes);
+        var headline = drives.Count == 1
+            ? $"{drives[0].DriveName} {HardwareInventory.FormatBytes(free)} free of {HardwareInventory.FormatBytes(total)}"
+            : $"{HardwareInventory.FormatBytes(free)} free across {drives.Count} drives";
+        var meta = string.Join(" · ", new[]
+        {
+            low.Count > 0 ? "Nearly full: " + string.Join(", ", low.Select(d => d.Letter)) : null,
+            drives.Count == 1 ? $"{drives[0].UsedPercent:0.#}% used" : $"{HardwareInventory.FormatBytes(total)} total capacity",
+            drives.Count == 1 ? $"{drives[0].DriveFormat} file system" : null,
+        }.Where(x => x is not null));
+
         return new AreaCard(
             cardId,
             "Drive Capacity",
-            drives.Any(d => d.UsedPercent >= 90.0) ? AreaLevel.Warning : AreaLevel.Neutral,
-            drives.Count == 1
-                ? $"{drives[0].DriveName} {HardwareInventory.FormatBytes(drives[0].FreeBytes)} free of {HardwareInventory.FormatBytes(drives[0].TotalBytes)} ({drives[0].UsedPercent:0.#}% used)"
-                : $"{HardwareInventory.FormatBytes(drives.Sum(d => d.FreeBytes))} free across {drives.Count} drives",
-            drives.Count == 1 ? $"{drives[0].UsedPercent:0.#}% used · {drives[0].DriveFormat} file system" : $"{HardwareInventory.FormatBytes(drives.Sum(d => d.FreeBytes))} total free space",
+            low.Count > 0 ? AreaLevel.Warning : AreaLevel.Neutral,
+            headline,
+            meta,
             driveCols,
             driveRows,
-            EmptyText: "No drive capacity information available.");
+            EmptyText: "No drive capacity information available.")
+        {
+            TotalBytes = total, FreeBytes = free, UsedBytes = used,
+        };
     }
 
     public static AreaReport BuildReport(
@@ -476,7 +527,7 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
         // Card 1: Drive Capacity
         if (drives.Count > 0)
         {
-            cards.Add(BuildDriveCapacityCard(drives, "drives"));
+            cards.Add(BuildDriveCapacityCard(drives));
         }
 
         // Card 2: Largest Folders

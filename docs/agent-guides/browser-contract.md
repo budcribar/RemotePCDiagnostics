@@ -34,7 +34,7 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | --- | --- | --- |
 | dashboard | 1 | Metadata on RPCD main when versions were introduced (November 2026) |
 | workflow | 1 | Same, including `workflow-data` |
-| checks | 1 | Same, including `checks-list-data`, `area-report-data`, generic `run-check`/`cancel-check` markers, fix and service action metadata |
+| checks | 2 | Version 1: metadata on RPCD main when versions were introduced, including `checks-list-data`, `area-report-data`, generic `run-check`/`cancel-check` markers, fix and service action metadata. Version 2 adds storage bytes: `total-storage-bytes`, `free-storage-bytes` and `used-storage-bytes` under `drive-health-counts`, and the new `disk-space-counts` block. The Drive health report gains a `capacity` card that the drive counts leave out. |
 | stress | 1 | Same, including `stress-data` |
 | interactive | 1 | Same, including `interactive-data` with `reportIf` hints |
 | security-audit | 1 | Same, including `audit-report-data` |
@@ -42,7 +42,7 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | certificates | 1 | Same |
 | history | 1 | Same, including `history-data` |
 | about | 1 | Same |
-| module | 1 | Same (a module's own page outside Checks) |
+| module | 2 | Version 1: same (a module's own page outside Checks). Version 2: the storage bytes of checks version 2; `disk-space-counts` is also present before the first scan, then without `data-result-run-id`. |
 
 ## Checks list (`checks-list-data`)
 
@@ -52,7 +52,7 @@ Run and cancel controls are marked generically: `[data-action="run-check"][data-
 
 ## Full report copy (`area-report-data`)
 
-Every check built on the generic report (Battery, Device drivers, Event log, Network, Programs, Resource hogs, Security essentials, Services, Crashes, Drive health, DISM and SFC) renders one hidden `[data-testid="area-report-data"]` element inside `checks-detail` once the run finishes. Read it only when its `data-result-run-id` equals the header's `data-run-id`. It is absent while the check runs and on builds before this change.
+Every check built on the generic report (Battery, Device drivers, Event log, Network, Programs, Resource hogs, Security essentials, Services, Crashes, Drive health & free space, DISM and SFC) renders one hidden `[data-testid="area-report-data"]` element inside `checks-detail` once the run finishes. Read it only when its `data-result-run-id` equals the header's `data-run-id`. It is absent while the check runs and on builds before this change.
 
 `data-report` holds JSON (`data-schema="1"`): the report `status`, `summary` and `notice`, and for each card its `id`, `title`, `level`, `headline`, `meta`, `note`, `error`, event counts and windows, `columns`, `rowCount` and `attentionRowCount`. `rows` lists the card's rows that are not `ok`, worst first, up to 50, each with `level`, `key`, `values` (aligned with `columns`) and, for warning and error rows, `detail`. Values are capped at 200 characters and text at 1024. Crash dump paths and Copilot copy text are not included.
 
@@ -115,7 +115,8 @@ These selectors are implemented in source and are ready for verification on an i
 | Check | Fields | Meaning |
 | --- | --- | --- |
 | `Osquery` | `logical-processor-count`, `installed-memory`, `physical-drive-count` | Read `data-value` and `data-unit`. Memory is in bytes. |
-| `DriveHealth` | Under `drive-health-counts`, read `reported-drive-count`, `healthy-drive-count`, `warning-drive-count`, `critical-drive-count`, `unknown-drive-count` | Counts describe the drives represented in the report. Unknown means a drive was shown without a health verdict. An absent block means no usable drive report. |
+| `DriveHealth` | Under `drive-health-counts`, read `reported-drive-count`, `healthy-drive-count`, `warning-drive-count`, `critical-drive-count`, `unknown-drive-count`, and from contract version 2 `total-storage-bytes`, `free-storage-bytes`, `used-storage-bytes` | Counts describe the physical drives in the report; the `capacity` card (every volume) is not a drive and is not counted. Unknown means a drive was shown without a health verdict. A drive with a nearly full volume (under 10% and under 20 GB free) counts as warning. The byte fields add up every fixed and removable volume as read with the drives; they are absent when free space could not be read. An absent block means no usable drive report. |
+| `DiskSpace` | Under `disk-space-counts`, read `total-storage-bytes`, `free-storage-bytes`, `used-storage-bytes` (contract version 2) | Capacity of the drive the scan covers. With `data-result-run-id`, the values are from that finished scan. Without it (the check's own page before the first scan), they are the drive as it is now and no scan result exists: `area-report-data` is absent. |
 | `Sensors` | Under `lhm-readings`, use `data-sensor-group` to scope `hottest-temperature` (Celsius) or `reported-fan-count` and `spinning-fan-count` (count). The drawer exposes `sensor-value` with its own unit. | The hottest value is the maximum current reading in the group, excluding threshold sensors. Fan counts refer to reported readings, and spinning means reported RPM greater than zero. The panel can retain its previous sample during refresh. Check `data-sampled-at` and its own `data-result-run-id` before attributing it to a new run. |
 | `Crashes` | On `data-field="crashes"` and `data-field="hangs"`, read `data-value` with `data-window-days` (30), or `data-recent-event-count` with `data-recent-window-days` (7). | These count application incidents in the events RPCD collected, subject to its query limit. Hang counts count occurrences across grouped rows. System resets and BSODs are separate. Failed event reads omit the counts. |
 

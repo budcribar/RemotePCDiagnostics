@@ -11,12 +11,20 @@ public class DriveHealthTests
       "Temperature":"38","Wear":"3","ReadErrors":"0","WriteErrors":"0","PowerOnHours":"4120"}]
     """;
 
-    private static (DriveHealthModule M, ScriptedLauncher L, List<string> Log) Make(Func<string, IReadOnlyList<string>, ProcessResult> run)
+    /// <param name="volumes">The PC's volumes as the module reads them. None by default: a test never reads this machine's disks.</param>
+    private static (DriveHealthModule M, ScriptedLauncher L, List<string> Log) Make(Func<string, IReadOnlyList<string>, ProcessResult> run,
+        Func<IReadOnlyList<DriveCapacityInfo>>? volumes = null)
     {
         var log = new List<string>();
         var l = new ScriptedLauncher(run);
-        return (new DriveHealthModule(new SystemCommandRunner(l, new LineLogger(s => log.Add(s))), ScriptedLauncher.Osquery(l, log)), l, log);
+        return (new DriveHealthModule(new SystemCommandRunner(l, new LineLogger(s => log.Add(s))), ScriptedLauncher.Osquery(l, log),
+            volumes: volumes ?? (() => [])), l, log);
     }
+
+    private const long GB = 1024L * 1024 * 1024;
+    private static DriveCapacityInfo Volume(string letter, long totalGb, long freeGb, bool removable = false) =>
+        new(letter + ":\\", letter, "NTFS", totalGb * GB, freeGb * GB, removable);
+    private static string Size(long gb) => HardwareInventory.FormatBytes(gb * GB);
 
     [Fact]
     public async Task Healthy_Drive_IsOk_WithFriendlySummary()
@@ -24,9 +32,9 @@ public class DriveHealthTests
         var (m, l, log) = Make((f, a) => ScriptedLauncher.Ok(Healthy));
         var r = await m.RefreshAsync(null);
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
-        Assert.StartsWith("1 drive · healthy", r.Message);
+        Assert.Equal("1 drive · healthy", r.Message);
         var rep = Assert.IsType<AreaReport>(r.Payload);
-        var card = Assert.Single(rep.Cards, c => c.Title == "Samsung SSD 980 1TB");
+        var card = Assert.Single(rep.Cards);
         Assert.Equal("Samsung SSD 980 1TB", card.Title);
         Assert.Equal("Healthy", card.Headline);
         Assert.Contains("38°C", card.Meta);
@@ -64,8 +72,8 @@ public class DriveHealthTests
             : ScriptedLauncher.Fail("Get-PhysicalDisk : Access denied"));
         var r = await m.RefreshAsync(null);
         var rep = Assert.IsType<AreaReport>(r.Payload);
-        Assert.Equal("VirtualDisk", Assert.Single(rep.Cards, c => c.Title == "VirtualDisk").Title);
-        Assert.Equal("Health not reported", rep.Cards.First(c => c.Title == "VirtualDisk").Headline);
+        Assert.Equal("VirtualDisk", Assert.Single(rep.Cards).Title);
+        Assert.Equal("Health not reported", rep.Cards[0].Headline);
         Assert.NotNull(rep.Notice);
         Assert.DoesNotContain("Access denied", r.Message);
         Assert.Contains(log, s => s.Contains("Access denied"));
@@ -112,8 +120,7 @@ public class DriveHealthTests
         Assert.Equal(DiagnosticStatus.Warning, perDrive.Single(x => x.InstanceLabel!.StartsWith("WD")).Status);
         Assert.Equal(DiagnosticStatus.Warning, r.Status);
         var report = Assert.IsType<AreaReport>(r.Report());
-        Assert.Contains(report.Cards, c => c.Title.StartsWith("Samsung"));
-        Assert.Contains(report.Cards, c => c.Title.StartsWith("WD"));
+        Assert.Equal(2, report.Cards.Count);
         Assert.Single(report.Cards.SelectMany(c => c.Actions ?? []), a => a.Kind == RemediationKind.CleanTempFiles); // once, not per drive
         Assert.True(reads <= 2, $"read the drives {reads} times"); // detection, then one shared read for both drives
     }
@@ -152,7 +159,8 @@ public class DriveHealthTests
             started.TrySetResult();
             return release.Task.WaitAsync(ct);
         });
-        var m = new DriveHealthModule(new SystemCommandRunner(launcher), new OsqueryRunner(Path.GetTempPath(), launcher: launcher, fileExists: _ => true));
+        var m = new DriveHealthModule(new SystemCommandRunner(launcher), new OsqueryRunner(Path.GetTempPath(), launcher: launcher, fileExists: _ => true),
+            volumes: () => []);
         var instance = DriveHealthModule.Instances([DriveHealth.FromRow(new Dictionary<string, string> { ["Name"] = "Samsung SSD 980 1TB", ["Serial"] = "S1" })])[0].Instance;
 
         using var ctsA = new CancellationTokenSource();
@@ -260,48 +268,186 @@ public class DriveHealthTests
         Assert.Contains("First recorded health check", analysis.SummaryText);
     }
 
+    private static DriveHealth Drive(string name, string letters, string health = "Healthy") =>
+        new(name, "SN-" + name, "SSD", "NVMe", health, "OK", 500 * GB, 35, 10, ReadErrors: 0, WriteErrors: 0, PowerOnHours: 1000, Letters: letters);
+
+    [Theory]
+    [InlineData(4000, 200, false, false)] // 5% free, but 200 GB: plenty
+    [InlineData(100, 15, false, false)]   // under 20 GB, but 15% free
+    [InlineData(100, 5, false, true)]     // 5% and 5 GB
+    [InlineData(1000, 19, false, true)]   // 1.9% and 19 GB
+    [InlineData(1000, 20, false, false)]  // exactly 20 GB is not under it
+    [InlineData(100, 10, false, false)]   // exactly 10% is not under it
+    [InlineData(32, 1, true, false)]      // a full USB stick is normal
+    public void A_volume_is_low_on_space_under_10_percent_and_under_20_GB_free(long totalGb, long freeGb, bool removable, bool low) =>
+        Assert.Equal(low, Volume("C", totalGb, freeGb, removable).IsLowOnSpace);
+
     [Fact]
-    public void Build_with_capacities_inserts_capacity_card_and_includes_free_space_in_summary()
+    public void Volumes_are_listed_on_a_capacity_card_and_free_space_is_in_the_summary()
     {
-        var drive = new DriveHealth("Samsung 980", "SN1", "SSD", "NVMe", "Healthy", "OK", 500_000_000_000, 35, 10, ReadErrors: 0, WriteErrors: 0, PowerOnHours: 1000);
-        var capacities = new List<DriveCapacityInfo>
-        {
-            new("C:\\", "OS", "NTFS", 500_000_000_000, 200_000_000_000),
-            new("D:\\", "Data", "NTFS", 1_000_000_000_000, 600_000_000_000)
-        };
+        var rep = DriveHealthModule.Build([Drive("Samsung 980", "CD")], capacities: [Volume("D", 1000, 600), Volume("C", 500, 200)]);
 
-        var rep = DriveHealthModule.Build([drive], capacities: capacities);
-
+        Assert.Equal(DiagnosticStatus.Ok, rep.Status);
+        Assert.Equal($"1 drive · healthy · {Size(800)} free across 2 volumes", rep.Summary);
         Assert.Equal(2, rep.Cards.Count);
-        var capCard = rep.Cards[0];
-        Assert.Equal("capacity", capCard.Id);
-        Assert.Equal("Drive Capacity", capCard.Title);
-        Assert.Equal(AreaLevel.Neutral, capCard.Level);
-        Assert.Equal(2, capCard.Rows.Count);
-        Assert.Equal("C:\\", capCard.Rows[0].Values[0]);
-        Assert.Equal("D:\\", capCard.Rows[1].Values[0]);
+        var capacity = rep.Cards[0];
+        Assert.Equal(DriveHealthModule.CapacityCardId, capacity.Id);
+        Assert.Equal("Drive Capacity", capacity.Title);
+        Assert.Equal(AreaLevel.Neutral, capacity.Level);
+        Assert.Equal(new[] { "C:\\", "D:\\" }, capacity.Rows.Select(r => r.Values[0])); // drive letter order
+        // The totals as numbers, for the page's agent fields.
+        Assert.Equal(1500 * GB, capacity.TotalBytes);
+        Assert.Equal(800 * GB, capacity.FreeBytes);
+        Assert.Equal(700 * GB, capacity.UsedBytes);
 
-        // Summary includes total free space
-        Assert.Contains("free", rep.Summary);
+        var drive = rep.Cards[1];
+        Assert.Equal("drive0", drive.Id);
+        Assert.Equal("Healthy", drive.Headline);
+        Assert.Contains($"{Size(800)} free", drive.Meta);
+        Assert.Contains(drive.Rows, r => r.Values[0] == "Volume C:" && r.Values[1].StartsWith($"{Size(200)} free of {Size(500)}") && r.Level == AreaLevel.Neutral);
+        Assert.Contains(drive.Rows, r => r.Values[0] == "Volume D:");
     }
 
     [Fact]
-    public void Build_with_single_capacity_formats_single_drive_summary_and_warns_on_low_free_space()
+    public void A_nearly_full_volume_makes_its_own_drive_need_attention_and_is_counted_once()
     {
-        var drive = new DriveHealth("Samsung 980", "SN1", "SSD", "NVMe", "Healthy", "OK", 500_000_000_000, 35, 10, ReadErrors: 0, WriteErrors: 0, PowerOnHours: 1000);
-        var capacities = new List<DriveCapacityInfo>
-        {
-            new("C:\\", "OS", "NTFS", 100_000_000_000, 5_000_000_000) // 95% used
-        };
+        var rep = DriveHealthModule.Build([Drive("Samsung 980", "C"), Drive("WD Blue", "D")], capacities: [Volume("C", 500, 200), Volume("D", 100, 5)]);
 
-        var rep = DriveHealthModule.Build([drive], capacities: capacities);
+        Assert.Equal(DiagnosticStatus.Warning, rep.Status);
+        // One drive, not two: the capacity card is not a drive.
+        Assert.Equal($"1 of 2 drives needs attention · {Size(205)} free across 2 volumes", rep.Summary);
+        Assert.Equal(AreaLevel.Warning, rep.Cards[0].Level);
+        Assert.Contains("Nearly full: D:", rep.Cards[0].Meta);
+        Assert.Equal(AreaLevel.Warning, rep.Cards[0].Rows.Single(r => r.Values[0] == "D:\\").Level);
 
-        Assert.Equal(2, rep.Cards.Count);
-        var capCard = rep.Cards[0];
-        Assert.Equal("capacity", capCard.Id);
-        Assert.Equal(AreaLevel.Warning, capCard.Level);
-        Assert.Equal(AreaLevel.Warning, capCard.Rows[0].Level);
-        Assert.Contains("C", rep.Summary);
-        Assert.Contains("free on C", rep.Summary);
+        var samsung = rep.Cards.Single(c => c.Title == "Samsung 980");
+        Assert.Equal(AreaLevel.Ok, samsung.Level);
+        Assert.DoesNotContain(samsung.Rows, r => r.Values[0] == "Volume D:");
+
+        var wd = rep.Cards.Single(c => c.Title == "WD Blue");
+        Assert.Equal(AreaLevel.Warning, wd.Level);
+        Assert.Equal("Needs attention", wd.Headline);
+        Assert.Equal($"Needs attention: D: is nearly full ({Size(5)} free of {Size(100)})", wd.Rows.Single(r => r.Values[0] == "Overall").Values[1]);
+        Assert.Equal(AreaLevel.Warning, wd.Rows.Single(r => r.Values[0] == "Volume D:").Level);
+    }
+
+    [Fact]
+    public void A_failing_drive_stays_failing_when_it_is_also_nearly_full()
+    {
+        var rep = DriveHealthModule.Build([Drive("Old HDD", "C", health: "Unhealthy")], capacities: [Volume("C", 100, 5)]);
+
+        Assert.Equal(DiagnosticStatus.Error, rep.Status);
+        Assert.StartsWith("1 of 1 drive needs attention", rep.Summary);
+        var card = rep.Cards.Single(c => c.Id == "drive0");
+        Assert.Equal(AreaLevel.Error, card.Level);
+        Assert.Contains("back up", card.Headline);
+        var overall = card.Rows.Single(r => r.Values[0] == "Overall").Values[1];
+        Assert.Contains("Windows reports this drive as failing", overall);
+        Assert.Contains("C: is nearly full", overall);
+    }
+
+    [Fact]
+    public void A_large_drive_that_is_92_percent_used_is_not_a_warning()
+    {
+        var rep = DriveHealthModule.Build([Drive("Big", "C")], capacities: [Volume("C", 4000, 320)]);
+        Assert.Equal(DiagnosticStatus.Ok, rep.Status);
+        Assert.All(rep.Cards, c => Assert.NotEqual(AreaLevel.Warning, c.Level));
+        Assert.Equal($"1 drive · healthy · {Size(320)} free on C:", rep.Summary);
+    }
+
+    [Fact]
+    public void No_drives_is_still_a_warning_when_volumes_were_read()
+    {
+        var rep = DriveHealthModule.Build([], capacities: [Volume("C", 500, 200)]);
+        Assert.Equal(DiagnosticStatus.Warning, rep.Status);
+        Assert.Equal("No drives were found to check.", rep.Summary);
+        Assert.Empty(rep.Cards);
+    }
+
+    [Fact]
+    public void A_volume_with_no_drive_letter_reported_belongs_to_the_only_drive()
+    {
+        // The osquery fallback knows no letters.
+        var rep = DriveHealthModule.Build([Drive("Only", "")], capacities: [Volume("C", 100, 5), Volume("E", 32, 1, removable: true)]);
+        var card = rep.Cards.Single(c => c.Id == "drive0");
+        Assert.Equal(AreaLevel.Warning, card.Level);
+        Assert.Contains(card.Rows, r => r.Values[0] == "Volume C:");
+        Assert.DoesNotContain(card.Rows, r => r.Values[0] == "Volume E:"); // a removable volume is never guessed onto a drive
+        Assert.StartsWith("1 of 1 drive needs attention", rep.Summary);
+    }
+
+    [Fact]
+    public void With_several_drives_and_no_letters_the_capacity_card_alone_warns()
+    {
+        var rep = DriveHealthModule.Build([Drive("A", ""), Drive("B", "")], capacities: [Volume("C", 500, 200), Volume("D", 100, 5)]);
+        Assert.Equal(DiagnosticStatus.Warning, rep.Status);
+        Assert.Equal($"2 drives · all healthy · {Size(205)} free across 2 volumes · D: nearly full", rep.Summary);
+        Assert.Equal(AreaLevel.Warning, rep.Cards[0].Level);
+        Assert.All(rep.Cards.Skip(1), c => Assert.Equal(AreaLevel.Ok, c.Level));
+    }
+
+    private const string TwoHealthyDrives = """
+    [{"Name":"Samsung SSD 980 1TB","Serial":"S1","MediaType":"SSD","BusType":"NVMe","Health":"Healthy","Operational":"OK","Size":"1000204886016","Letters":"C"},
+     {"Name":"WD Blue","Serial":"W2","MediaType":"HDD","BusType":"SATA","Health":"Healthy","Operational":"OK","Size":"2000398934016","Letters":"D"}]
+    """;
+
+    [Fact]
+    public async Task A_nearly_full_volume_shows_in_its_drives_own_result_and_in_the_check_status()
+    {
+        var reads = 0;
+        var (m, _, _) = Make((f, a) => ScriptedLauncher.Ok(TwoHealthyDrives), () => { Interlocked.Increment(ref reads); return [Volume("C", 500, 200), Volume("D", 100, 5)]; });
+        var store = new ResultStore();
+        var r = await new DiagnosticsService(store, [m]).RunAsync(DriveHealthModule.ModuleName);
+
+        var perDrive = store.InstancesOf(DriveHealthModule.ModuleName);
+        var samsung = perDrive.Single(x => x.InstanceLabel!.StartsWith("Samsung"));
+        Assert.Equal(DiagnosticStatus.Ok, samsung.Status);
+        Assert.Equal($"Healthy · {Size(200)} free on C:", samsung.Message);
+        var wd = perDrive.Single(x => x.InstanceLabel!.StartsWith("WD"));
+        Assert.Equal(DiagnosticStatus.Warning, wd.Status);
+        Assert.Equal($"Needs attention · D: is nearly full ({Size(5)} free of {Size(100)})", wd.Message);
+        // A drive's own report is that drive alone: no table of every volume.
+        Assert.Equal("drive0", Assert.Single(Assert.IsType<AreaReport>(wd.Payload).Cards).Id);
+
+        // The check's status, its message and the report agree.
+        Assert.Equal(DiagnosticStatus.Warning, r.Status);
+        Assert.StartsWith("1 of 2 need attention: WD Blue", r.Message);
+        Assert.Contains("D: is nearly full", r.Message);
+        var report = Assert.IsType<AreaReport>(r.Report());
+        Assert.Equal(DiagnosticStatus.Warning, report.Status);
+        Assert.Equal($"1 of 2 drives needs attention · {Size(205)} free across 2 volumes", report.Summary);
+        Assert.Equal(new[] { DriveHealthModule.CapacityCardId, "drive0", "drive1" }, report.Cards.Select(c => c.Id));
+        Assert.True(reads <= 2, $"read the volumes {reads} times"); // with the drives: detection, then one shared read
+    }
+
+    [Fact]
+    public async Task When_every_drive_passes_the_check_message_carries_the_free_space()
+    {
+        var (m, _, _) = Make((f, a) => ScriptedLauncher.Ok(TwoHealthyDrives), () => [Volume("C", 500, 200), Volume("D", 1000, 600)]);
+        var r = await new DiagnosticsService(new ResultStore(), [m]).RunAsync(DriveHealthModule.ModuleName);
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+        Assert.Equal($"2 drives · all healthy · {Size(800)} free across 2 volumes", r.Message);
+    }
+
+    [Fact]
+    public async Task A_single_drives_message_carries_its_free_space()
+    {
+        var (m, _, _) = Make((f, a) => ScriptedLauncher.Ok(Healthy), () => [Volume("C", 500, 200)]);
+        var store = new ResultStore();
+        var r = await new DiagnosticsService(store, [m]).RunAsync(DriveHealthModule.ModuleName);
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+        Assert.Equal($"Healthy · {Size(200)} free on C:", r.Message);
+        Assert.Equal($"1 drive · healthy · {Size(200)} free on C:", Assert.IsType<AreaReport>(r.Report()).Summary);
+    }
+
+    [Fact]
+    public async Task Free_space_that_cannot_be_read_does_not_fail_the_drive_check()
+    {
+        var (m, _, log) = Make((f, a) => ScriptedLauncher.Ok(Healthy), () => throw new IOException("device not ready"));
+        var r = await m.RefreshAsync(null);
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+        Assert.Equal("1 drive · healthy", r.Message);
+        Assert.Single(Assert.IsType<AreaReport>(r.Payload).Cards);
+        Assert.Contains(log, s => s.Contains("free space not read") && s.Contains("device not ready"));
     }
 }

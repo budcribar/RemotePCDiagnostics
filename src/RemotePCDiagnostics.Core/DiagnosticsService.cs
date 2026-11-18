@@ -636,15 +636,17 @@ public sealed class DiagnosticsService
         // Every instance in detection order: this run's result, or the latest one from earlier.
         var results = all.Select(inst => ran.FirstOrDefault(r => r.InstanceKey == inst.Key) ?? Prior(inst.Key)).OfType<DiagnosticResult>().ToList();
         var worst = results.OrderByDescending(r => Severity(r.Status)).First();
-        var message = results.Count == 1 ? worst.Message
-            : results.All(r => r.Status == DiagnosticStatus.Ok) ? $"All {results.Count} passed"
-            : $"{results.Count(r => r.Status != DiagnosticStatus.Ok)} of {results.Count} need attention: {worst.InstanceLabel}: {worst.Message}";
         object? summary = null;
         if (module is IInstanceSummary combiner)
         {
             try { summary = combiner.Combine(results); }
             catch (Exception ex) { try { Log.Warn($"{module.Name}: combining device results failed: {ex.Message}"); } catch { } }
         }
+        // When every device passed, the module's own one-line summary says more than a count ("2 drives · all healthy · 300 GB free").
+        var message = results.Count == 1 ? worst.Message
+            : results.All(r => r.Status == DiagnosticStatus.Ok)
+                ? summary is Areas.AreaReport { Summary: { Length: > 0 } combined } ? combined : $"All {results.Count} passed"
+            : $"{results.Count(r => r.Status != DiagnosticStatus.Ok)} of {results.Count} need attention: {worst.InstanceLabel}: {worst.Message}";
         return new DiagnosticResult(module.Name, worst.Status, message, DateTimeOffset.Now, new InstanceResults(results) { Summary = summary })
             { Cancelled = ran.Any(r => r.Cancelled) };
 

@@ -128,7 +128,7 @@ After every action the app waits ~2.5 s and shows the measured change ("Freed ab
 
 ## Drive health: Optimize / Retrim SSD
 
-Each SSD card on **Drive health** has a **Last optimized** row, e.g. "6 days ago (by Windows)", "today (by this app)" or "Not reported"
+Each SSD card on **Drive health & free space** has a **Last optimized** row, e.g. "6 days ago (by Windows)", "today (by this app)" or "Not reported"
 (per drive letter when an SSD has several volumes that differ). **Optimize / Retrim SSD** is offered, on the page and in the service
 workflow's fix list, only when at least one of the SSD's volumes was not retrimmed in the last 30 days or the date is unknown.
 

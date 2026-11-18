@@ -149,7 +149,7 @@ the About page switches each one.
 | Module | `capabilities` in its module.json | What the app reads for it |
 |---|---|---|
 | Temperatures & fans (`Sensors`) | `sensors.read` | Every temperature and fan reading (LibreHardwareMonitor in the app) |
-| Drive health (`DriveHealth`) | `storage.drives`, `storage.retrims`, `osquery.select` | The drive health script's output, the last retrim per drive, `disk_info` |
+| Drive health & free space (`DriveHealth`) | `storage.drives`, `storage.retrims`, `osquery.select` | The drive health script's output, the last retrim per drive, `disk_info` |
 | Services (`Services`) | `osquery.select` | The `services` statement, with every service's details |
 | Crashes & unexpected restarts (`Crashes`) | `eventlog.query`, `crashes.minidumps`, `events.reviewed` | Application and System log events, the minidump list, the reviewed events |
 | Windows error log (`EventLog`) | `eventlog.query`, `events.reviewed` | Application and System log events, the reviewed events |
@@ -190,7 +190,7 @@ How it works:
   - both only for modules that ship with the app; an unsigned module's page data is ignored and its calls refused.
 - **Security audit** renders its page in the app from results (`"resultOnlyUi": true`; `SecurityAuditReport` is in
   `ModuleHostPayloads.Types`), and its Cancel button asks the module host to stop the run (`IUserModeModule.Stop`, the `stop` line).
-- **One run per device** (`"perDevice": true`, Drive health): the app's stand-in is a `PerDeviceModuleProxy` (`IPerDeviceModule`).
+- **One run per device** (`"perDevice": true`, Drive health & free space): the app's stand-in is a `PerDeviceModuleProxy` (`IPerDeviceModule`).
   It asks the host for the devices (`{"type":"detect"}` → `{"type":"detection","instances":[...]}`), runs each one
   (`{"type":"refresh","instance":{...}}`), and takes the one report of all drives from the host (`pageData.combined`, with the drive
   keys it covers). So the module keeps one result per drive in History and one card per drive on its page. Its storage clean-up panel

@@ -15,7 +15,7 @@ Use **Dashboard** for an overview and shortcuts. Dashboard cards can show startu
 | Hardware inventory | Computer model, CPU model, physical cores and logical threads, installed memory, and physical drives. |
 | Temperatures & fans | Sensor and component labels, units, observed temperatures and fan speeds. Missing fan readings mean unavailable. |
 | Device Manager & drivers | Device issues, affected devices, and driver details. |
-| Drive health | Per-drive status and warnings, with unknown or unsupported readings identified explicitly. This differs from Disk speed test. |
+| Drive health & free space | Per-drive status and warnings, with unknown or unsupported readings identified explicitly, plus each volume's free space; a nearly full volume is a warning on its drive. This differs from Disk speed test. For free space alone, use this check rather than the Large files & folders scan. |
 | Resource hogs & uptime | CPU and memory pressure, uptime, and the processes shown as top consumers. |
 | Battery & power plan | Health, charge, power source and plan where shown. A missing battery may be expected on a desktop. |
 | Network & Wi-Fi | Active adapters and connection details, signal when reported, and errors. This differs from Network stability test. |
