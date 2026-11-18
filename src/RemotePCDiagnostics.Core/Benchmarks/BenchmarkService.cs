@@ -138,7 +138,9 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     {
         if (remediation is null) return new(false, "Restarting isn't available from here.");
         if (Running is not null || Settling is not null) return new(false, "A benchmark is running.");
+        var previous = _state;
         Save(new BenchmarkState(Settings, RunBeforeOnStartup: true, RestartRequestedUtc: DateTimeOffset.UtcNow));
+        if (store.Load() is not { RunBeforeOnStartup: true }) return RestartNotSaved(previous);
         var r = await remediation.ExecuteAsync(new AreaAction(RemediationKind.ScheduleCleanRestart, "Restart, then benchmark"), ct).ConfigureAwait(false);
         if (!r.Success) Save(_state with { RunBeforeOnStartup = false, RestartRequestedUtc = null });
         Message = r.Success ? "Restarting in 60 seconds. The before benchmark runs by itself a few minutes after the PC is back." : r.Message;
@@ -151,7 +153,9 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     {
         if (remediation is null) return new(false, "Restarting isn't available from here.");
         if (Before is null) return new(false, "Run the before benchmark first.");
+        var previous = _state;
         Save(_state with { RunAfterOnStartup = true });
+        if (store.Load() is not { RunAfterOnStartup: true }) return RestartNotSaved(previous);
         var r = await remediation.ExecuteAsync(new AreaAction(RemediationKind.ScheduleCleanRestart, "Restart, then benchmark"), ct).ConfigureAwait(false);
         if (!r.Success) Save(_state with { RunAfterOnStartup = false });
         Message = r.Success ? "Restarting in 60 seconds. The after benchmark runs by itself a few minutes after the PC is back." : r.Message;
@@ -159,19 +163,38 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         return r;
     }
 
-    /// <summary>Called once at app start: if a "before" or "after" was requested before a restart, wait for start-up to settle and run it.</summary>
+    /// <summary>
+    /// The restart must not go ahead when the request to run afterwards didn't reach the disk (the state folder is for administrators
+    /// only, so an app that is not running as administrator can't write it): the PC would restart and nothing would follow.
+    /// </summary>
+    private RemediationResult RestartNotSaved(BenchmarkState previous)
+    {
+        lock (_gate) _state = previous;
+        Message = "The PC was not restarted: the benchmark could not be saved to run afterwards. Close Remote PC Diagnostics, start it as administrator and try again.";
+        LogWarn("restart refused: the pending benchmark could not be saved");
+        Raise();
+        return new(false, Message);
+    }
+
+    /// <summary>
+    /// Called once at app start: if a "before" or "after" was requested before a restart, wait for start-up to settle and run it.
+    /// The request stays saved through the settle wait and is dropped when the pass starts (or the wait is stopped by hand), so
+    /// an app that is itself restarted while waiting (a browser refresh starts a new copy) waits again and still runs the pass.
+    /// Once the pass has started it is not tried again, even if it fails.
+    /// </summary>
     public async Task ResumeAfterRestartAsync(CancellationToken ct = default)
     {
         if (!BeforePendingRestart && !AfterPendingRestart) return;
         var phase = BeforePendingRestart ? BenchmarkPhase.Before : BenchmarkPhase.After;
         var since = BeforePendingRestart ? _state.RestartRequestedUtc : null;
         var label = phase == BenchmarkPhase.Before ? "before" : "after";
-        Save(BeforePendingRestart ? _state with { RunBeforeOnStartup = false } : _state with { RunAfterOnStartup = false }); // once only, even if this run fails
+        void Forget() => Save(phase == BenchmarkPhase.Before ? _state with { RunBeforeOnStartup = false } : _state with { RunAfterOnStartup = false });
 
         var wait = Settings.SettleAfterRestart;
         CancellationTokenSource settleCts;
         lock (_gate)
         {
+            if (Running is not null || Settling is not null) return;
             Settling = phase;
             _cts = settleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         }
@@ -189,6 +212,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
+            Forget(); // stopped by hand: it must not start by itself at the next app start
             Message = $"Stopped waiting before the {label} benchmark started.";
             return;
         }
@@ -205,6 +229,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             settleCts.Dispose();
             Raise();
         }
+        Forget(); // once only from here on, even if this run fails
         await RunAsync(phase, ct, since).ConfigureAwait(false);
     }
 

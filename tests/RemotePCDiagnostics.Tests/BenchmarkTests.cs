@@ -350,6 +350,86 @@ public class BenchmarkTests
         }
     }
 
+    // A browser refresh (or anything else) can start a new copy of the app while it waits for start-up to settle. The pass must
+    // still run: the request stays saved until the pass starts.
+    [Fact]
+    public async Task Resume_WhenTheAppIsRestartedWhileSettling_TheNextCopyStillRunsThePass()
+    {
+        var store = new MemStore { State = new BenchmarkState(Fast, RunBeforeOnStartup: true, RestartRequestedUtc: DateTimeOffset.UtcNow) };
+        var never = new TaskCompletionSource();
+        var first = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => never.Task);
+        _ = first.ResumeAfterRestartAsync();
+        Assert.Equal(BenchmarkPhase.Before, first.Settling);
+        Assert.True(store.State!.RunBeforeOnStartup); // still saved while waiting
+        await first.ResumeAfterRestartAsync();        // a second call in the same copy does not start a second wait
+        Assert.Null(store.State.Before);
+
+        // The first copy is gone (never finishes); a new copy loads the saved state.
+        var second = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => Task.CompletedTask);
+        Assert.True(second.BeforePendingRestart);
+        await second.ResumeAfterRestartAsync();
+        Assert.NotNull(second.Before);
+        Assert.False(store.State.RunBeforeOnStartup);
+
+        var third = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, _) => throw new InvalidOperationException("must not wait again"));
+        await third.ResumeAfterRestartAsync(); // once the pass has started it is not tried again
+    }
+
+    [Fact]
+    public async Task Resume_StoppedByHandWhileSettling_DoesNotStartAgainAtTheNextAppStart()
+    {
+        var store = new MemStore { State = new BenchmarkState(Fast, Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 30)), null, RunAfterOnStartup: true) };
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, t) => Task.Delay(Timeout.Infinite, t));
+        var resume = svc.ResumeAfterRestartAsync();
+        Assert.Equal(BenchmarkPhase.After, svc.Settling);
+
+        svc.Stop();
+        await resume;
+
+        Assert.False(store.State!.RunAfterOnStartup);
+        Assert.Null(svc.After);
+        Assert.Contains("Stopped waiting", svc.Message);
+    }
+
+    /// <summary>The state folder refuses the write, as it does for an app that is not running as administrator.</summary>
+    private sealed class DeniedStore(BenchmarkState? onDisk = null) : IBenchmarkStore
+    {
+        public BenchmarkState? Load() => onDisk;
+        public void Save(BenchmarkState s) { }
+    }
+
+    [Fact]
+    public async Task RestartThenBenchmark_WhenTheRequestCannotBeSaved_DoesNotRestartThePc()
+    {
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var runner = new SystemCommandRunner(launcher);
+        var statePath = Path.Combine(Path.GetTempPath(), "rpd-bench-reboot-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var rem = new RemediationService(runner, new SessionContext(SessionMode.Remote), rebootResume: new RebootResumeCoordinator(runner, stateFilePath: statePath, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe"));
+            var before = Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 30));
+
+            var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), new DeniedStore(new BenchmarkState(Fast, before)), rem);
+            var r = await svc.RestartThenRunBeforeAsync();
+            Assert.False(r.Success);
+            Assert.Contains("was not restarted", r.Message);
+            Assert.Contains("administrator", r.Message);
+            Assert.False(svc.BeforePendingRestart);
+            Assert.NotNull(svc.Before); // the earlier results are still shown
+
+            var after = await svc.RestartThenRunAfterAsync();
+            Assert.False(after.Success);
+            Assert.False(svc.AfterPendingRestart);
+
+            Assert.DoesNotContain(launcher.Calls, c => c.File.EndsWith("shutdown.exe", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(launcher.Calls, c => c.Args.Any(a => a.Contains("Register-ScheduledTask")));
+        }
+        finally
+        {
+            if (File.Exists(statePath)) File.Delete(statePath);
+        }
+    }
+
     [Fact]
     public void FileStore_RoundTrips()
     {
