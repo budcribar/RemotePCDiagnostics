@@ -75,16 +75,8 @@ internal static class DesktopInstallProbe
     {
         try
         {
-            var procs = Process.GetProcessesByName("RemotePCDiagnostics.Host");
-            foreach (var proc in procs)
-            {
-                using (proc)
-                {
-                    if (!proc.HasExited && proc.MainWindowHandle != IntPtr.Zero)
-                        return true;
-                }
-            }
-            return false;
+            // Not by window: this runs in a service, which cannot see windows on the person's desktop.
+            return Process.GetProcessesByName("RemotePCDiagnostics.Host").Length > 0;
         }
         catch
         {
