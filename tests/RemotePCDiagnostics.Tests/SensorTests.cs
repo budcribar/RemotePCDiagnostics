@@ -1,5 +1,6 @@
 using System.Text.Json;
 using RemotePCDiagnostics.Core;
+using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Sensors;
 
 namespace RemotePCDiagnostics.Tests;
