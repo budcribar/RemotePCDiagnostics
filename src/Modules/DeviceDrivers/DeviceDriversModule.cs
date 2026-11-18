@@ -66,7 +66,9 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         progress.ReportStep(1, 2, "Checking Device Manager for problem devices…");
-        var problems = Platform.ProblemDevicesReader.Read();
+        var problems = Platform.ProblemDevicesReader.Read()
+            .Select(p => new ProblemDevice(p.Name, p.Class, p.DeviceId, p.ErrorCode, p.Status))
+            .ToList();
 
         progress.ReportStep(2, 2, "Reading hardware drivers…");
         var drvQ = await QueryAsync(DriversSql, ct).ConfigureAwait(false);

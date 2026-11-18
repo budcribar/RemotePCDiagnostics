@@ -8,11 +8,13 @@ namespace RemotePCDiagnostics.Core.Platform;
 /// Standard user processes can query Win32_PnPEntity via WMI without Administrator privileges.
 /// Replaces ProblemDevices.ps1 to eliminate ~400 ms of PowerShell overhead.
 /// </summary>
+public sealed record ProblemDeviceInfo(string Name, string Class, string DeviceId, int ErrorCode, string Status);
+
 public static class ProblemDevicesReader
 {
-    public static List<ProblemDevice> Read()
+    public static List<ProblemDeviceInfo> Read()
     {
-        var result = new List<ProblemDevice>();
+        var result = new List<ProblemDeviceInfo>();
         if (!OperatingSystem.IsWindows())
             return result;
 
@@ -37,7 +39,7 @@ public static class ProblemDevicesReader
                     else if (mo["ConfigManagerErrorCode"] is int iCode) errorCode = iCode;
                     var status = mo["Status"]?.ToString() ?? "";
 
-                    result.Add(new ProblemDevice(name, pnpClass, deviceId, errorCode, status));
+                    result.Add(new ProblemDeviceInfo(name, pnpClass, deviceId, errorCode, status));
                 }
             }
         }

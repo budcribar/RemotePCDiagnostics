@@ -48,7 +48,8 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
         if (!upQ.Success && !procQ.Success) return AreaReport.Failed(FailedMessage);
 
         progress.ReportStep(3, totalSteps, "Checking memory use and Fast Startup…");
-        var (fastStartup, memory) = Platform.FastStartupReader.Read();
+        var (fastStartup, totalBytes, freeBytes) = Platform.FastStartupReader.Read();
+        var memory = totalBytes is > 0 && freeBytes is >= 0 ? new MemoryUse(totalBytes.Value, freeBytes.Value) : null;
 
         var uptime = upQ.Success && upQ.Rows!.Count > 0 ? SystemUptimeInfo.FromRow(upQ.Rows[0], fastStartup) : null;
         var procs = procQ.Success ? procQ.Rows!.Select(ProcessResourceRow.FromRow).ToList() : null;

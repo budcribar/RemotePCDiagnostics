@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Principal;
+using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Sensors;
 

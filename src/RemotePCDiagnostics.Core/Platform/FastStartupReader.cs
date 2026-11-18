@@ -28,10 +28,11 @@ public static class FastStartupReader
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX m);
 
-    public static (bool? FastStartup, MemoryUse? Memory) Read()
+    public static (bool? FastStartup, long? TotalBytes, long? FreeBytes) Read()
     {
         bool? fastStartup = null;
-        MemoryUse? memory = null;
+        long? totalBytes = null;
+        long? freeBytes = null;
 
         if (OperatingSystem.IsWindows())
         {
@@ -61,7 +62,8 @@ public static class FastStartupReader
                     var free = (long)m.ullAvailPhys;
                     if (total > 0 && free >= 0)
                     {
-                        memory = new MemoryUse(total, free);
+                        totalBytes = total;
+                        freeBytes = free;
                     }
                 }
             }
@@ -71,17 +73,15 @@ public static class FastStartupReader
             }
         }
 
-        if (memory is null)
+        if (totalBytes is null || freeBytes is null)
         {
             try
             {
                 var gc = GC.GetGCMemoryInfo();
                 if (gc.TotalAvailableMemoryBytes > 0)
                 {
-                    // TotalAvailableMemoryBytes represents total physical memory usable by process/system
-                    var total = gc.TotalAvailableMemoryBytes;
-                    var free = Math.Max(0, total - gc.MemoryLoadBytes);
-                    memory = new MemoryUse(total, free);
+                    totalBytes = gc.TotalAvailableMemoryBytes;
+                    freeBytes = Math.Max(0, gc.TotalAvailableMemoryBytes - gc.MemoryLoadBytes);
                 }
             }
             catch
@@ -89,6 +89,6 @@ public static class FastStartupReader
             }
         }
 
-        return (fastStartup, memory);
+        return (fastStartup, totalBytes, freeBytes);
     }
 }
