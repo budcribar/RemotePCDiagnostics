@@ -31,6 +31,7 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
             return AreaReport.Failed(FailedMessage);
 
         return Build(wifi, wlanOk, ipSnap);
+    }
 
     public static AreaReport Build(WifiInterfaceInfo? wifi, bool wlanOk, IpConfigSnapshot? ipSnap, DnsComparison? dns = null)
     {
