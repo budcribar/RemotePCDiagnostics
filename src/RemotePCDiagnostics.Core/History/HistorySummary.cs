@@ -424,7 +424,7 @@ public static class HistorySummary
     private static (long Bytes, int Files) ParseStorageCleanupImpact(string summary)
     {
         // The cleanup log contains the displayed size, rounded by StorageCleanupEngine.SizeText.
-        var match = Regex.Match(summary, @"^(?:Done: )?Freed ([\d.]+) (GB|MB|KB) \(([\d,]+) files? deleted\)\.", RegexOptions.CultureInvariant);
+        var match = Regex.Match(summary, @"^(?:Done: )?Freed ([\d.]+) (GB|MB|KB) \(([\d,]+) files? deleted\)\.?", RegexOptions.CultureInvariant);
         if (!match.Success ||
             !decimal.TryParse(match.Groups[1].Value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var size) ||
             !int.TryParse(match.Groups[3].Value, NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var files))

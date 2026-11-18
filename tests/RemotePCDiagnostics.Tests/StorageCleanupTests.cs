@@ -829,6 +829,7 @@ public sealed class StorageCleanupTests : IDisposable
 
     [Theory]
     [InlineData("Done: Freed 786 MB (1,508 files deleted).", 786L << 20, 1508)]
+    [InlineData("Done: Freed 786 MB (508 files deleted)", 786L << 20, 508)]
     [InlineData("Done: Freed 2 KB (1 file deleted).", 2L << 10, 1)]
     [InlineData("Nothing was deleted.", 0, 0)]
     public void History_ClassifiesLegacyStorageEvents(string message, long bytes, int files)
