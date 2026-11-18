@@ -129,7 +129,12 @@
 
 @if (_result is not null)
 {
-    <AgentData TestId="history-data" Json="@AgentExports.History(rows, impact.Fixes, _range.ToString(), _result.Available)" />
+    <AgentData TestId="history-data" Json="@AgentExports.History(rows, impact.Fixes, _range.ToString(), _result.Available, _module, _outcome)" />
+}
+@if (Reloading)
+{
+    @* For browser agents: the list and its copy are the previous read until this is gone (a new range, or a result just in). *@
+    <span hidden data-testid="history-loading"></span>
 }
 @if (_result is { LegacyEntries: > 0 } pendingUpdate)
 {
@@ -302,6 +307,8 @@ else
     private HistoryReadResult? _result;
     private bool _loading, _disposed;
     private int _reloadPending;
+    /// <summary>A read is under way or due, with an earlier one still on show. The first read shows "Loading history…" instead.</summary>
+    private bool Reloading => _result is not null && (_loading || System.Threading.Volatile.Read(ref _reloadPending) != 0);
 
     protected override async Task OnInitializedAsync()
     {
@@ -390,10 +397,23 @@ else
         if (r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun || System.Threading.Interlocked.Exchange(ref _reloadPending, 1) == 1) return;
         _ = Task.Run(async () =>
         {
+            // Show the reload marker now: the list is already missing this result.
+            try { await InvokeAsync(StateHasChanged); } catch { }
             await Task.Delay(2000);
-            System.Threading.Interlocked.Exchange(ref _reloadPending, 0);
             if (_disposed) return;
-            try { await InvokeAsync(async () => { await Load(); StateHasChanged(); }); } catch { }
+            try
+            {
+                await InvokeAsync(async () =>
+                {
+                    // Load raises _loading before the pending flag drops, so the marker stays up from the result to the end of the read.
+                    var load = Load();
+                    System.Threading.Interlocked.Exchange(ref _reloadPending, 0);
+                    await load;
+                    StateHasChanged();
+                });
+            }
+            catch { }
+            finally { System.Threading.Interlocked.Exchange(ref _reloadPending, 0); }
         });
     }
 

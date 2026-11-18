@@ -127,14 +127,22 @@ public static class AgentExports
 
     // ---- History --------------------------------------------------------------------------------------------------------
 
-    public static string History(IReadOnlyList<HistoryEntry> entries, IReadOnlyList<FixHistoryItem> fixes, string range, bool available) =>
-        JsonSerializer.Serialize(BuildHistory(entries, fixes, range, available), Json);
+    public static string History(IReadOnlyList<HistoryEntry> entries, IReadOnlyList<FixHistoryItem> fixes, string range, bool available,
+        string testFilter = "", string outcomeFilter = "") =>
+        JsonSerializer.Serialize(BuildHistory(entries, fixes, range, available, testFilter, outcomeFilter), Json);
 
-    /// <summary>The results and fixes the page lists for its current filters, newest first.</summary>
-    public static object BuildHistory(IReadOnlyList<HistoryEntry> entries, IReadOnlyList<FixHistoryItem> fixes, string range, bool available) => new
+    /// <summary>
+    /// The results and fixes the page lists for its current filters, newest first, and the filters themselves: the range, the
+    /// test (a check ID) and the result, the last two empty when the page lists all of them. An agent that changes a filter
+    /// waits for the copy to name the new value.
+    /// </summary>
+    public static object BuildHistory(IReadOnlyList<HistoryEntry> entries, IReadOnlyList<FixHistoryItem> fixes, string range, bool available,
+        string testFilter = "", string outcomeFilter = "") => new
     {
         schema = SchemaVersion,
         range,
+        testFilter = V(testFilter) ?? "",
+        outcomeFilter = V(outcomeFilter) ?? "",
         available,
         entryCount = entries.Count,
         fixCount = fixes.Count,

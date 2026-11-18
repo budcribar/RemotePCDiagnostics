@@ -41,6 +41,7 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | benchmark | 1 | Same, including `bench-report-data` |
 | certificates | 1 | Same |
 | history | 1 | Same, including `history-data` |
+| history | 2 | `history-data` names the test and result filters (`testFilter`, `outcomeFilter`); `history-loading` is present through every reload, not only the first read |
 | about | 1 | Same |
 | module | 1 | Same (a module's own page outside Checks) |
 
@@ -69,8 +70,10 @@ The same hidden pattern serves three more pages. Each element carries `data-sche
 | Element | Page | Contents |
 | --- | --- | --- |
 | `audit-report-data` | Security audit, once an audit has finished (`data-result-run-id` is the audit run) | Status, notice, whether it is a home PC and how many enterprise settings are hidden, the passed/warning/failed/not-checked/high-risk counts, and every shown finding that did not pass (up to 200), failed first, with id, category, name, severity, outcome, current and recommended values |
-| `history-data` | History, after it loads | The selected range, whether the Event Log was readable, and the results and fixes the page lists for its current filters, newest first (up to 200 results and 100 fixes), with measurements and detail lines |
+| `history-data` | History, after it loads | The page's filters (`range`; from contract 2 `testFilter`, a check ID, and `outcomeFilter`, both empty when the page lists all), whether the Event Log was readable, `entryCount` and `fixCount` for those filters, and the results and fixes the page lists for them, newest first (up to 200 results and 100 fixes), with measurements and detail lines |
 | `bench-report-data` | Benchmark, always | `phase` (`no-baseline`, `running-before`, `running-after`, `settling`, `restart-pending-before`, `restart-pending-after`, `baseline-ready` or `compared`), progress and message, the enabled measurements and restart setting, each pass with its conditions and medians, and once both passes exist the overall change and one delta per measurement with units, verdict and percent |
+
+To change what History lists, choose in `history-filter-range`, `history-filter-test` (option values are check IDs) or `history-filter-outcome`, then wait until `history-loading` is gone and `history-data` names the chosen value. `history-loading` is present while the page reads the Event Log: on first load, after a range change, and from a result arriving until it is listed. The page draws no filters while it has no results at all.
 
 ## Stress tests (`stress-data`)
 
