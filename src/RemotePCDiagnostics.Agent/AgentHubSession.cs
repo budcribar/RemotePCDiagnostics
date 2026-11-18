@@ -435,7 +435,16 @@ public sealed class AgentHubWorker(
                         using var proc = Process.GetProcessById(info.ProcessId);
                         if (!proc.HasExited && proc.ProcessName.Contains("RemotePCDiagnostics.Host", StringComparison.OrdinalIgnoreCase))
                         {
-                            processAlive = true;
+                            if (proc.MainWindowHandle != IntPtr.Zero)
+                            {
+                                processAlive = true;
+                            }
+                            else
+                            {
+                                // A Host process running with no window is a headless zombie left after window close.
+                                try { proc.Kill(entireProcessTree: true); } catch { }
+                                processAlive = false;
+                            }
                         }
                     }
                     catch
@@ -637,6 +646,7 @@ public sealed class AgentHubWorker(
             var appCmdLine = LaunchRules.AppCommandLine(hostExePath, serverUrl, sessionGuid, launch.Group);
             await ReportProgressSafeAsync(writeAsync, launch.RequestId, sessionIdStr, LaunchStage.StageStarting, "Starting Remote PC Diagnostics...", 0, launchCt).ConfigureAwait(false);
 
+            ClearHeadlessZombieHostProcesses();
             var (proc, startError) = platform.StartHostProcess(hostExePath, appCmdLine);
             if (proc is null || startError is not null)
             {
@@ -827,4 +837,22 @@ public sealed class AgentHubWorker(
 
     private void Log(string message) =>
         _options.Log?.Invoke($"{DateTimeOffset.Now:O} [agent] {message}");
+
+    private static void ClearHeadlessZombieHostProcesses()
+    {
+        try
+        {
+            foreach (var proc in Process.GetProcessesByName("RemotePCDiagnostics.Host"))
+            {
+                using (proc)
+                {
+                    if (!proc.HasExited && proc.MainWindowHandle == IntPtr.Zero)
+                    {
+                        try { proc.Kill(entireProcessTree: true); } catch { }
+                    }
+                }
+            }
+        }
+        catch { }
+    }
 }

@@ -242,6 +242,7 @@ public partial class MainWindow : Window
         RemoteBlazorWebView.ReadyToConnect += (_, e) => Dispatcher.BeginInvoke(() =>
         {
             _readyTimer?.Stop();
+            StopReconnectTimer();
             HideNativeFallbackCard();
             if (_provider.GetService<ISessionContext>() is SessionContext sc && e.Id != Guid.Empty)
             {
@@ -283,6 +284,10 @@ public partial class MainWindow : Window
             var nextState = _remoteUserUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected;
             _provider.GetService<RemoteSessionHealth>()?.ReportFailure(nextState, e.Exception?.Message);
             SetRemoteState(nextState, e.Exception?.Message);
+            if (nextState == RemoteSessionState.Disconnected)
+            {
+                StartAutoReconnect();
+            }
         });
 
         _readyTimer = new DispatcherTimer { Interval = RemoteLinkInfo.ReadyTimeout };
@@ -305,6 +310,83 @@ public partial class MainWindow : Window
     }
 
     private UIElement? _fallbackCard;
+    private DispatcherTimer? _reconnectTimer;
+    private int _reconnectAttempt;
+    private const int MaxReconnectAttempts = 4;
+    private readonly Backoff _reconnectBackoff = new();
+    private int _reconnectCountdownSeconds;
+    private bool _isAutoReconnecting;
+    private System.Windows.Controls.TextBlock? _reconnectCountdownTextBlock;
+
+    private void StopReconnectTimer()
+    {
+        _reconnectTimer?.Stop();
+        _reconnectTimer = null;
+        _isAutoReconnecting = false;
+        if (_reconnectCountdownTextBlock is not null)
+            _reconnectCountdownTextBlock.Text = string.Empty;
+    }
+
+    private void StartAutoReconnect()
+    {
+        StopReconnectTimer();
+        _reconnectAttempt = 0;
+        _reconnectBackoff.Reset();
+        ScheduleNextReconnect();
+    }
+
+    private void ScheduleNextReconnect()
+    {
+        _reconnectAttempt++;
+        if (_reconnectAttempt > MaxReconnectAttempts)
+        {
+            Logger.Warn($"Auto-reconnect failed after {MaxReconnectAttempts} attempts. Releasing active session.");
+            _isAutoReconnecting = false;
+            ActiveSessionInfo.TryDelete(expectedProcessId: Environment.ProcessId);
+            if (_provider.GetService<ISessionContext>()?.Unattended == true)
+            {
+                Logger.Info("Unattended session could not reconnect to relay; closing window cleanly.");
+                Close();
+                return;
+            }
+            if (_reconnectCountdownTextBlock is not null)
+            {
+                _reconnectCountdownTextBlock.Text = "Could not reconnect automatically. Click Reconnect to retry, or switch to Local Mode.";
+            }
+            return;
+        }
+
+        _isAutoReconnecting = true;
+        var delay = _reconnectBackoff.Next();
+        _reconnectCountdownSeconds = (int)Math.Ceiling(delay.TotalSeconds);
+        Logger.Info($"Scheduling auto-reconnect attempt {_reconnectAttempt}/{MaxReconnectAttempts} in {_reconnectCountdownSeconds}s.");
+
+        UpdateReconnectCountdownText();
+
+        _reconnectTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _reconnectTimer.Tick += (_, _) =>
+        {
+            _reconnectCountdownSeconds--;
+            UpdateReconnectCountdownText();
+            if (_reconnectCountdownSeconds <= 0)
+            {
+                _reconnectTimer.Stop();
+                Logger.Info($"Executing auto-reconnect attempt {_reconnectAttempt}/{MaxReconnectAttempts} under current session id.");
+                RelaunchSelf(keepRemoteArgs: true);
+            }
+        };
+        _reconnectTimer.Start();
+    }
+
+    private void UpdateReconnectCountdownText()
+    {
+        if (_reconnectCountdownTextBlock is not null)
+        {
+            _reconnectCountdownTextBlock.Text = _isAutoReconnecting && _reconnectCountdownSeconds > 0
+                ? $"Attempting to reconnect in {_reconnectCountdownSeconds}s (attempt {_reconnectAttempt} of {MaxReconnectAttempts})..."
+                : string.Empty;
+        }
+    }
 
     /// <summary>
     /// Handles synchronous exceptions thrown by <c>RemoteWebView.Client()</c> on the WPF UI thread during <c>Loaded</c>
@@ -351,6 +433,11 @@ public partial class MainWindow : Window
         // relay can't be reached (a later ReadyToConnect replaces this page).
         if (!RemoteLinkInfo.IsWarning(state)) return;
         var issue = RemoteSessionHealth.ClassifyError(errorDetail, state);
+        if (state == RemoteSessionState.Disconnected)
+        {
+            ShowNativeFallbackCard(_serverUri, _group, issue);
+            return;
+        }
         if (!string.IsNullOrWhiteSpace(_group) && state == RemoteSessionState.Unreachable)
         {
             ShowRelayNotice(RemoteSessionHealth.BuildShopRelayDeniedHtml(_serverUri, _group, issue), _serverUri, _group, issue);
@@ -410,6 +497,7 @@ public partial class MainWindow : Window
         if (_fallbackCard is null) return;
         RootGrid.Children.Remove(_fallbackCard);
         _fallbackCard = null;
+        _reconnectCountdownTextBlock = null;
         RemoteBlazorWebView.Visibility = Visibility.Visible;
     }
 
@@ -429,6 +517,9 @@ public partial class MainWindow : Window
             RemoteRelayIssueKind.CreateFailedOrDenied => (
                 "Could not start remote session on the relay",
                 $"The relay ({server}) declined the session request for group \"{groupLabel}\". Verify the shop code or open in Local Mode."),
+            RemoteRelayIssueKind.Disconnected => (
+                "Disconnected from relay server",
+                $"The connection to relay {server} was lost. Reconnecting automatically with backoff, or click Reconnect to retry now."),
             _ => (
                 $"Can't reach relay {server}",
                 $"Remote PC Diagnostics could not connect to {server}. Check your internet connection, retry, or open in Local Mode."),
@@ -460,22 +551,50 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 0, 0, 18),
         });
 
+        if (issue == RemoteRelayIssueKind.Disconnected)
+        {
+            _reconnectCountdownTextBlock = new System.Windows.Controls.TextBlock
+            {
+                FontSize = 13,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x60, 0xA5, 0xFA)),
+                Margin = new Thickness(0, 0, 0, 14),
+                TextWrapping = TextWrapping.Wrap,
+            };
+            UpdateReconnectCountdownText();
+            stack.Children.Add(_reconnectCountdownTextBlock);
+        }
+
         var actions = new System.Windows.Controls.WrapPanel();
         var retryBtn = new System.Windows.Controls.Button
         {
-            Content = "Retry remote session",
+            Content = issue == RemoteRelayIssueKind.Disconnected ? "Reconnect" : "Retry remote session",
             Padding = new Thickness(14, 7, 14, 7),
             Margin = new Thickness(0, 0, 10, 0),
         };
-        retryBtn.Click += (_, _) => RelaunchSelf(keepRemoteArgs: true);
+        retryBtn.Click += (_, _) => { StopReconnectTimer(); RelaunchSelf(keepRemoteArgs: true); };
+
         var localBtn = new System.Windows.Controls.Button
         {
             Content = "Open in Local Mode",
             Padding = new Thickness(14, 7, 14, 7),
+            Margin = new Thickness(0, 0, 10, 0),
         };
-        localBtn.Click += (_, _) => RelaunchSelf(keepRemoteArgs: false);
+        localBtn.Click += (_, _) => { StopReconnectTimer(); RelaunchSelf(keepRemoteArgs: false); };
+
         actions.Children.Add(retryBtn);
         actions.Children.Add(localBtn);
+
+        if (issue == RemoteRelayIssueKind.Disconnected)
+        {
+            var exitBtn = new System.Windows.Controls.Button
+            {
+                Content = "Exit",
+                Padding = new Thickness(14, 7, 14, 7),
+            };
+            exitBtn.Click += (_, _) => { StopReconnectTimer(); Close(); };
+            actions.Children.Add(exitBtn);
+        }
+
         stack.Children.Add(actions);
 
         var card = new System.Windows.Controls.Border
@@ -508,8 +627,9 @@ public partial class MainWindow : Window
         try
         {
             var session = _provider.GetService<ISessionContext>();
+            var sessionId = session?.SessionId is { } sid && sid != Guid.Empty ? sid : Guid.NewGuid();
             IReadOnlyList<string> args = keepRemoteArgs && _serverUri is not null
-                ? SessionLaunchOptions.RestartArguments(_serverUri, Guid.NewGuid(), session?.Unattended ?? false, session?.Voice ?? false, _group, session?.Admin)
+                ? SessionLaunchOptions.RestartArguments(_serverUri, sessionId, session?.Unattended ?? false, session?.Voice ?? false, _group, session?.Admin)
                 : ["--restarted"];
             var psi = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
             foreach (var arg in args) psi.ArgumentList.Add(arg);
@@ -543,21 +663,35 @@ public partial class MainWindow : Window
         try { _awake.Dispose(); } catch { }
         ActiveSessionInfo.TryDelete(expectedProcessId: Environment.ProcessId);
         _readyTimer?.Stop();
+        StopReconnectTimer();
         _audit.Ended("The app was closed");
-        try
+
+        var cleanupTask = Task.Run(() =>
         {
-            _provider.GetService<DiagnosticsService>()?.CancelStressSuite();
-            foreach (var m in _provider.GetServices<IDiagnosticModule>())
+            try
             {
-                if (m is IStressSuiteModule sm) sm.Stop();
-                else if (m is SecurityAuditModule sa) sa.Cancel();
-                else if (m is RemotePCDiagnostics.Core.Audio.IAudioTestModule am) am.Cancel();
-                else if (m is RemotePCDiagnostics.Core.Webcam.IWebcamTestModule wm) wm.Cancel();
-                else if (m is RemotePCDiagnostics.Core.Npu.INpuTestModule nm) nm.Cancel();
+                _provider.GetService<DiagnosticsService>()?.CancelStressSuite();
+                foreach (var m in _provider.GetServices<IDiagnosticModule>())
+                {
+                    if (m is IStressSuiteModule sm) sm.Stop();
+                    else if (m is SecurityAuditModule sa) sa.Cancel();
+                    else if (m is RemotePCDiagnostics.Core.Audio.IAudioTestModule am) am.Cancel();
+                    else if (m is RemotePCDiagnostics.Core.Webcam.IWebcamTestModule wm) wm.Cancel();
+                    else if (m is RemotePCDiagnostics.Core.Npu.INpuTestModule nm) nm.Cancel();
+                }
+                _provider.Dispose();
             }
-            _provider.Dispose();
+            catch (Exception ex) { Logger.Warn($"Shutdown cleanup failed: {ex.Message}"); }
+        });
+
+        if (!cleanupTask.Wait(TimeSpan.FromSeconds(2.5)))
+        {
+            Logger.Warn("Shutdown cleanup timed out after 2.5s; forcing process termination");
         }
-        catch (Exception ex) { Logger.Warn($"Shutdown cleanup failed: {ex.Message}"); }
+
+        ActiveSessionInfo.TryDelete(expectedProcessId: Environment.ProcessId);
+        App.ReleaseInstance();
+        Environment.Exit(0);
     }
 
     private static readonly Lazy<string> _machine = new(() =>

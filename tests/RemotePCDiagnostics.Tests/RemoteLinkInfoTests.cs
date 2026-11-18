@@ -1,4 +1,4 @@
-﻿using RemotePCDiagnostics.Core.Session;
+using RemotePCDiagnostics.Core.Session;
 using Xunit;
 
 namespace RemotePCDiagnostics.Tests;
@@ -46,10 +46,11 @@ public class RemoteLinkInfoTests
         Assert.Equal("Connecting to server…", RemoteLinkInfo.StatusText(RemoteSessionState.Connecting, s));
         Assert.Equal("Ready. Share this link:", RemoteLinkInfo.StatusText(RemoteSessionState.Ready, s));
         Assert.Equal("Remote user connected", RemoteLinkInfo.StatusText(RemoteSessionState.RemoteUserConnected, s));
-        Assert.Equal("Remote user disconnected", RemoteLinkInfo.StatusText(RemoteSessionState.Disconnected, s));
+        Assert.Equal("Disconnected from relay server: remoteblazorwebview.com:34544", RemoteLinkInfo.StatusText(RemoteSessionState.Disconnected, s));
         var warn = RemoteLinkInfo.StatusText(RemoteSessionState.Unreachable, s);
         Assert.Equal("Couldn't reach the server yet: remoteblazorwebview.com:34544. Check your internet connection; still trying…", warn);
         Assert.True(RemoteLinkInfo.IsWarning(RemoteSessionState.Unreachable));
+        Assert.True(RemoteLinkInfo.IsWarning(RemoteSessionState.Disconnected));
         Assert.False(RemoteLinkInfo.IsWarning(RemoteSessionState.Ready));
         Assert.Equal(TimeSpan.FromSeconds(15), RemoteLinkInfo.ReadyTimeout);
     }
@@ -92,11 +93,22 @@ public class RemoteLinkInfoTests
     }
 
     [Fact]
+    public void DisconnectedHtml_NamesTheServer_AndEncodesIt()
+    {
+        var html = RemoteLinkInfo.DisconnectedHtml(new Uri("https://remoteblazorwebview.com:34544"));
+        Assert.Contains("Disconnected from relay server", html);
+        Assert.Contains("remoteblazorwebview.com:34544", html);
+        Assert.StartsWith("<!DOCTYPE html>", html);
+        Assert.DoesNotContain("<script", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void OnScreenText_DoesNotAssumeWhoTheRemoteUserIs()
     {
         var s = new Uri("https://remoteblazorwebview.com:34544");
         foreach (var state in Enum.GetValues<RemoteSessionState>())
             Assert.DoesNotContain("technician", RemoteLinkInfo.StatusText(state, s), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("technician", RemoteLinkInfo.UnreachableHtml(s), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("technician", RemoteLinkInfo.DisconnectedHtml(s), StringComparison.OrdinalIgnoreCase);
     }
 }

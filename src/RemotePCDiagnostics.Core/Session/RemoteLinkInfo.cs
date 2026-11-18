@@ -54,6 +54,14 @@ public static class RemoteLinkInfo
         "</style></head><body><main><h1>Remote session not connected</h1><p>" +
         System.Net.WebUtility.HtmlEncode(StatusText(RemoteSessionState.Unreachable, serverUri)) + "</p></main></body></html>";
 
+    /// <summary>What the local window shows while disconnected from the relay.</summary>
+    public static string DisconnectedHtml(Uri serverUri) =>
+        "<!DOCTYPE html><html><head><meta charset='utf-8'><style>" +
+        "html,body{margin:0;height:100%;background:#1f2329;color:#d0d5dd;font:15px 'Segoe UI',system-ui,sans-serif}" +
+        "main{max-width:560px;margin:72px auto;padding:0 24px;line-height:1.5}h1{font-size:18px;font-weight:600;color:#ffc857;margin:0 0 8px}" +
+        "</style></head><body><main><h1>Disconnected from relay server</h1><p>" +
+        System.Net.WebUtility.HtmlEncode(StatusText(RemoteSessionState.Disconnected, serverUri)) + "</p></main></body></html>";
+
     /// <summary>"host:port" for display (port always shown, e.g. remoteblazorwebview.com:34544 or example.com:443).</summary>
     public static string HostAndPort(Uri serverUri) => $"{serverUri.Host}:{serverUri.Port}";
 
@@ -63,10 +71,11 @@ public static class RemoteLinkInfo
         RemoteSessionState.Ready => "Ready. Share this link:",
         RemoteSessionState.Unreachable => $"Couldn't reach the server yet: {HostAndPort(serverUri)}. Check your internet connection; still trying…",
         RemoteSessionState.RemoteUserConnected => "Remote user connected",
-        RemoteSessionState.Disconnected => "Remote user disconnected",
+        RemoteSessionState.Disconnected => $"Disconnected from relay server: {HostAndPort(serverUri)}",
         _ => string.Empty,
     };
 
     /// <summary>True when the state is a warning (styled differently in the overlay).</summary>
-    public static bool IsWarning(RemoteSessionState state) => state == RemoteSessionState.Unreachable;
+    public static bool IsWarning(RemoteSessionState state) =>
+        state is RemoteSessionState.Unreachable or RemoteSessionState.Disconnected;
 }

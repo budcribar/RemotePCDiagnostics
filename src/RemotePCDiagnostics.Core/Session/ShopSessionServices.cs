@@ -10,6 +10,7 @@ public enum RemoteRelayIssueKind
     SessionLimitReached,
     CreateFailedOrDenied,
     RelayUnreachable,
+    Disconnected,
 }
 
 /// <summary>
@@ -75,6 +76,9 @@ public sealed class RemoteSessionHealth
                 || message.Contains("createFailed", StringComparison.OrdinalIgnoreCase))
                 return RemoteRelayIssueKind.CreateFailedOrDenied;
         }
+        if (state == RemoteSessionState.Disconnected)
+            return RemoteRelayIssueKind.Disconnected;
+
         return state == RemoteSessionState.Unreachable
             ? RemoteRelayIssueKind.RelayUnreachable
             : RemoteRelayIssueKind.None;
@@ -99,6 +103,9 @@ public sealed class RemoteSessionHealth
             RemoteRelayIssueKind.CreateFailedOrDenied => (
                 $"Could not start remote session for shop \"{group}\"",
                 "The relay declined the remote session request. Confirm that the shop code is active and has an open concurrent session slot, or restart in Local mode."),
+            RemoteRelayIssueKind.Disconnected => (
+                $"Disconnected from relay {server}",
+                "The connection to the relay server was lost. Reconnecting automatically with backoff, or click Reconnect now."),
             _ => (
                 $"Can't reach relay {server}",
                 $"Remote PC Diagnostics could not connect to {server} for shop \"{group}\". Check the internet connection and relay address, or run without -u= for Local mode."),

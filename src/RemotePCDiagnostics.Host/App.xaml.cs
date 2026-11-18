@@ -325,13 +325,18 @@ public partial class App : Application
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
 
+    public static void ReleaseInstance()
+    {
+        try { _instance?.ReleaseMutex(); _instance?.Dispose(); _instance = null; } catch { }
+    }
+
     protected override void OnExit(ExitEventArgs e)
     {
         ActiveSessionInfo.TryDelete(expectedProcessId: Environment.ProcessId);
         Log($"Exit code={e.ApplicationExitCode}");
         Event(LogEventIds.AppExit, LogLevel.Information, $"Remote PC Diagnostics exited (code {e.ApplicationExitCode}).");
         try { _events.Value.Flush(TimeSpan.FromSeconds(1)); _events.Value.Dispose(); } catch { }
-        try { _instance?.ReleaseMutex(); _instance?.Dispose(); } catch { }
+        ReleaseInstance();
         base.OnExit(e);
     }
 }
