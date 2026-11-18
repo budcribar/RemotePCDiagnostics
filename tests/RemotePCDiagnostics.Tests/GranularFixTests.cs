@@ -515,13 +515,20 @@ public class HardwareInventoryReportTests
         Section(new RemotePCDiagnostics.Core.Osquery.CpuInfo("CPU0", "AMD Ryzen 7 5700U with Radeon Graphics", "AuthenticAMD", "3", "FP6", 8, 16, 1800, 4300, 12, "64")),
         Section(new RemotePCDiagnostics.Core.Osquery.MemoryDevice("DIMM 0", "P0 CHANNEL A", "SODIMM", "DDR4", 8192, 3200, 3200, "Samsung", "M471A1G44AB0", "SERIAL-RAM"),
             new RemotePCDiagnostics.Core.Osquery.MemoryDevice("DIMM 1", "P0 CHANNEL B", "SODIMM", "DDR4", 8192, 3200, 3200, "Samsung", "M471A1G44AB0", "SERIAL-RAM2")),
-        Section(new RemotePCDiagnostics.Core.Osquery.DiskInfo(0, "\\\\.\\PHYSICALDRIVE0", "disk0", "SCSI", "(Standard disk drives)", "SAMSUNG MZALQ512HBLU", "SERIAL-DISK", "Disk drive", 512110190592, 4)));
+        Section(new RemotePCDiagnostics.Core.Osquery.DiskInfo(0, "\\\\.\\PHYSICALDRIVE0", "disk0", "SCSI", "(Standard disk drives)", "SAMSUNG MZALQ512HBLU", "SERIAL-DISK", "Disk drive", 512110190592, 4)))
+    {
+        Gpus = Section(new RemotePCDiagnostics.Core.Osquery.GpuInfo("AMD Radeon(TM) Graphics", "Advanced Micro Devices, Inc.", "AMD Radeon(TM) Graphics Family", "31.0.21912.14", "2024-03-01", "1920 x 1080 x 4294967296 colors")),
+        NetworkAdapters = Section(
+            new RemotePCDiagnostics.Core.Osquery.NetworkAdapterInfo("Wi-Fi", "Realtek RTL8852AE WiFi 6 802.11ax PCIe Adapter", "Realtek Semiconductor Corp.", "Wireless", true, true, "Connected", 866_700_000),
+            new RemotePCDiagnostics.Core.Osquery.NetworkAdapterInfo("Local Area Connection* 1", "Microsoft Wi-Fi Direct Virtual Adapter", "Microsoft", "Wireless", false, true, "Media disconnected", null)),
+        Bios = Section(new RemotePCDiagnostics.Core.Osquery.BiosInfo("LENOVO", "JTCN44WW", "05/26/2023", "1.44")),
+    };
 
     [Fact]
     public void Report_has_a_card_per_part_with_the_details_the_page_shows()
     {
         var report = RemotePCDiagnostics.Core.Osquery.HardwareInventoryReport.Build(Inventory(), DiagnosticStatus.Ok, "LENOVO IdeaPad · 16 GB memory");
-        Assert.Equal(["system", "cpu", "memory", "disks"], report.Cards.Select(c => c.Id));
+        Assert.Equal(["system", "cpu", "memory", "disks", "gpu", "network", "bios"], report.Cards.Select(c => c.Id));
         Assert.Equal(DiagnosticStatus.Ok, report.Status);
         Assert.Equal("LENOVO IdeaPad 1 15ALC7", report.Cards[0].Headline);
         Assert.Equal("AMD Ryzen 7 5700U with Radeon Graphics", report.Cards[1].Headline);
@@ -530,6 +537,52 @@ public class HardwareInventoryReportTests
         Assert.Contains("2 of 2 slots in use · DDR4", report.Cards[2].Meta);
         Assert.Equal("1 drive", report.Cards[3].Headline);
         Assert.Contains("SAMSUNG MZALQ512HBLU", report.Cards[3].Rows[0].Values);
+    }
+
+    [Fact]
+    public void Report_has_graphics_network_adapter_and_bios_cards()
+    {
+        var report = RemotePCDiagnostics.Core.Osquery.HardwareInventoryReport.Build(Inventory(), DiagnosticStatus.Ok, "ok");
+        var gpu = report.Cards.Single(c => c.Id == "gpu");
+        Assert.Equal("AMD Radeon(TM) Graphics", gpu.Headline);
+        Assert.Contains("31.0.21912.14", gpu.Rows[0].Values);
+
+        var net = report.Cards.Single(c => c.Id == "network");
+        Assert.Equal("1 adapter", net.Headline); // the virtual Wi-Fi Direct adapter is not hardware
+        Assert.Equal(["Wi-Fi", "Realtek RTL8852AE WiFi 6 802.11ax PCIe Adapter", "Realtek Semiconductor Corp.", "Connected", "866.7 Mbps"], net.Rows.Single().Values);
+
+        var bios = report.Cards.Single(c => c.Id == "bios");
+        Assert.Equal("LENOVO JTCN44WW", bios.Headline);
+        Assert.Contains(bios.Rows, r => r.Values.SequenceEqual(["Release date", "05/26/2023"]));
+    }
+
+    [Fact]
+    public async Task Network_adapter_addresses_and_device_ids_never_reach_the_inventory_or_export()
+    {
+        var launcher = new FakeLauncher(sql => Task.FromResult(new RemotePCDiagnostics.Core.Osquery.ProcessResult(0, sql switch
+        {
+            _ when sql.Contains("interface_details") => """[{"interface":"{4D36E972-E325-11CE-BFC1-08002BE10318}","mac":"a4:c3:f0:12:34:56","type":"71","description":"Intel(R) Wi-Fi 6 AX201 160MHz","manufacturer":"Intel Corporation","connection_id":"Wi-Fi","connection_status":"2","enabled":"1","physical_adapter":"1","speed":"1200000000","pnp_device_id":"PCI\\VEN_8086&DEV_A0F0\\3&11583659&0&A3","dhcp_server":"192.168.1.1","dns_server_search_order":"192.168.1.1"}]""",
+            _ when sql.Contains("video_info") => """[{"model":"Intel(R) Iris(R) Xe Graphics","manufacturer":"Intel Corporation","driver_version":"31.0.101.4502","driver_date":"1688169600","pnp_device_id":"PCI\\VEN_8086&DEV_9A49"}]""",
+            _ when sql.Contains("platform_info") => """[{"vendor":"Dell Inc.","version":"1.21.0","date":"06/12/2023","revision":"1.21","address":"0xf0000"}]""",
+            _ => "[]",
+        }, "")));
+        var runner = new RemotePCDiagnostics.Core.Osquery.OsqueryRunner(Path.Combine("C:", "app"), new RemotePCDiagnostics.Core.Osquery.OsqueryOptions(), launcher, _ => true);
+        var inv = await RemotePCDiagnostics.Core.Osquery.HardwareInventory.CollectAsync(runner);
+
+        Assert.Equal("1.2 Gbps", RemotePCDiagnostics.Core.Osquery.HardwareInventoryReport.FormatSpeed(inv.NetworkAdapters.Items.Single().SpeedBps));
+        Assert.Equal("Connected", inv.NetworkAdapters.Items.Single().Status);
+        Assert.Equal("2023-07-01", inv.Gpus.Items.Single().DriverDate);
+        Assert.Equal("Dell Inc.", inv.Bios.Items.Single().Vendor);
+
+        var json = AreaReportExport.ToJson(RemotePCDiagnostics.Core.Osquery.HardwareInventoryReport.Build(inv, DiagnosticStatus.Ok, "ok"));
+        Assert.Contains("Intel(R) Wi-Fi 6 AX201 160MHz", json);
+        Assert.Contains("Intel(R) Iris(R) Xe Graphics", json);
+        Assert.Contains("1.21.0", json);
+        Assert.DoesNotContain("a4:c3:f0", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("4D36E972", json);
+        Assert.DoesNotContain("VEN_8086", json);
+        Assert.DoesNotContain("192.168", json);
+        Assert.DoesNotContain("0xf0000", json);
     }
 
     [Fact]

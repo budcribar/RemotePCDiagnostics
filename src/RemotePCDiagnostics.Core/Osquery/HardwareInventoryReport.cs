@@ -4,15 +4,16 @@ namespace RemotePCDiagnostics.Core.Osquery;
 
 /// <summary>
 /// The hardware inventory as an <see cref="AreaReport"/>, so it has the same machine-readable copy as every other check
-/// (area-report-data): one card each for the computer, processor, memory and storage, with the rows the page's drawers show.
-/// Serial numbers are left out: an agent reading the inventory has no use for them, and they identify the customer's hardware.
+/// (area-report-data): one card each for the computer, processor, memory, storage, graphics, network adapters and BIOS,
+/// with the rows the page's drawers show. Serial numbers, device identifiers and network addresses are left out: an agent
+/// reading the inventory has no use for them, and they identify the customer's hardware.
 /// </summary>
 public static class HardwareInventoryReport
 {
     public static AreaReport Build(HardwareInventory inv, DiagnosticStatus status, string? message)
     {
         var sys = inv.System.Items.FirstOrDefault();
-        var cards = new List<AreaCard> { System(inv, sys), Cpu(inv, sys), Memory(inv), Disks(inv) };
+        var cards = new List<AreaCard> { System(inv, sys), Cpu(inv, sys), Memory(inv), Disks(inv), Gpus(inv), Network(inv), Bios(inv) };
         return new(cards, string.IsNullOrWhiteSpace(message) ? "Hardware inventory" : message, status);
     }
 
@@ -78,4 +79,44 @@ public static class HardwareInventoryReport
         return new("disks", "Storage", AreaLevel.Ok, disks.Count == 1 ? "1 drive" : $"{disks.Count} drives",
             string.Join(", ", disks.Select(d => d.HardwareModel).Where(m => m.Length > 0).Take(3)), columns, rows);
     }
+
+    private static AreaCard Gpus(HardwareInventory inv)
+    {
+        if (!inv.Gpus.Success) return AreaCard.Failed("gpu", "Graphics", "Couldn't read graphics details on this PC.");
+        var gpus = inv.Gpus.Items.Where(g => g.Model.Length > 0).ToList();
+        if (gpus.Count == 0) return new("gpu", "Graphics", AreaLevel.Neutral, "", "", [], [], EmptyText: "Graphics details aren't available on this PC.");
+        string[] columns = ["Model", "Manufacturer", "Driver version", "Driver date", "Display mode"];
+        var rows = gpus.Select(g => new AreaRow(AreaLevel.Neutral, [g.Model, g.Manufacturer, g.DriverVersion, g.DriverDate, g.VideoMode])).ToList();
+        return new("gpu", "Graphics", AreaLevel.Ok, gpus[0].Model,
+            gpus.Count == 1 ? Join(gpus[0].DriverVersion is { Length: > 0 } v ? $"Driver {v}" : null) : $"{gpus.Count} adapters", columns, rows);
+    }
+
+    private static AreaCard Network(HardwareInventory inv)
+    {
+        if (!inv.NetworkAdapters.Success) return AreaCard.Failed("network", "Network adapters", "Couldn't read network adapter details on this PC.");
+        var adapters = inv.PhysicalNetworkAdapters.Where(a => a.Description.Length > 0).ToList();
+        if (adapters.Count == 0)
+            return new("network", "Network adapters", AreaLevel.Neutral, "", "", [], [], EmptyText: "Network adapter details aren't available on this PC.");
+        string[] columns = ["Name", "Model", "Manufacturer", "Status", "Speed"];
+        var rows = adapters.Select(a => new AreaRow(AreaLevel.Neutral, [a.Name, a.Description, a.Manufacturer, a.Status, FormatSpeed(a.SpeedBps)])).ToList();
+        return new("network", "Network adapters", AreaLevel.Ok, adapters.Count == 1 ? "1 adapter" : $"{adapters.Count} adapters",
+            string.Join(", ", adapters.Select(a => a.Description).Take(3)), columns, rows);
+    }
+
+    private static AreaCard Bios(HardwareInventory inv)
+    {
+        if (!inv.Bios.Success) return AreaCard.Failed("bios", "BIOS", "Couldn't read BIOS details on this PC.");
+        var b = inv.Bios.Items.FirstOrDefault(x => x.Vendor.Length + x.Version.Length > 0);
+        if (b is null) return new("bios", "BIOS", AreaLevel.Neutral, "", "", [], [], EmptyText: "BIOS details aren't available on this PC.");
+        return new("bios", "BIOS", AreaLevel.Ok, Join(b.Vendor, b.Version), b.Date, ["Detail", "Value"],
+            Details(("Vendor", b.Vendor), ("Version", b.Version), ("Release date", b.Date), ("Revision", b.Revision)));
+    }
+
+    /// <summary>Link speed in bits per second, as Mbps or Gbps.</summary>
+    public static string FormatSpeed(long? bps) => bps switch
+    {
+        null or <= 0 => "",
+        >= 1_000_000_000 => $"{bps / 1_000_000_000.0:0.#} Gbps",
+        _ => $"{bps / 1_000_000.0:0.#} Mbps",
+    };
 }

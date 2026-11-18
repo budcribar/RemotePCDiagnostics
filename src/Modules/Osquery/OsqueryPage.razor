@@ -54,6 +54,27 @@
             <div class="headline" data-field="physical-drive-count" data-unit="count" data-value="@(inv.Disks.Success ? (int?)inv.Disks.Items.Count : null)">@(inv.Disks.Items.Count == 1 ? "1 drive" : $"{inv.Disks.Items.Count} drives")@(inv.TotalDiskBytes > 0 ? $" ({HardwareInventory.FormatBytes(inv.TotalDiskBytes)})" : "")</div>
             <CardList Items="@inv.Disks.Items.Select(d => Dash(d.HardwareModel)).Take(3)" />
         </SummaryCard>
+        @{ var gpus = inv.Gpus.Items.Where(g => g.Model.Length > 0).ToList(); }
+        <SummaryCard Id="gpu" Title="Graphics" OnOpen="Open"
+                     ErrorText="@(inv.Gpus.Success ? null : "Couldn't read graphics details on this PC.")"
+                     EmptyText="@(inv.Gpus.Success && gpus.Count == 0 ? "Graphics details aren't available on this PC." : null)">
+            <div class="headline">@(gpus.Count > 0 ? gpus[0].Model : "—")</div>
+            <CardList Items="@gpus.Skip(1).Select(g => g.Model).Take(2)" />
+        </SummaryCard>
+        @{ var nics = inv.PhysicalNetworkAdapters.Where(a => a.Description.Length > 0).ToList(); }
+        <SummaryCard Id="network" Title="Network adapters" OnOpen="Open"
+                     ErrorText="@(inv.NetworkAdapters.Success ? null : "Couldn't read network adapter details on this PC.")"
+                     EmptyText="@(inv.NetworkAdapters.Success && nics.Count == 0 ? "Network adapter details aren't available on this PC." : null)">
+            <div class="headline" data-field="network-adapter-count" data-unit="count" data-value="@(inv.NetworkAdapters.Success ? (int?)nics.Count : null)">@(nics.Count == 1 ? "1 adapter" : $"{nics.Count} adapters")</div>
+            <CardList Items="@nics.Select(a => a.Description).Take(3)" />
+        </SummaryCard>
+        @{ var bios = inv.Bios.Items.FirstOrDefault(b => b.Vendor.Length + b.Version.Length > 0); }
+        <SummaryCard Id="bios" Title="BIOS" OnOpen="Open"
+                     ErrorText="@(inv.Bios.Success ? null : "Couldn't read BIOS details on this PC.")"
+                     EmptyText="@(inv.Bios.Success && bios is null ? "BIOS details aren't available on this PC." : null)">
+            <div class="headline">@Join(bios?.Vendor, bios?.Version)</div>
+            <CardList Text="@(bios?.Date ?? "")" />
+        </SummaryCard>
     </div>
 
     @if (_open is not null)
@@ -73,6 +94,11 @@
                     else { <DetailTable Section="inv.Memory" Columns="MemCols" ErrorText="Couldn't read memory details on this PC." EmptyText="Memory details aren't available on this PC." /> }
                     break;
                 case "disks": <DetailTable Section="inv.Disks" Columns="DiskCols" ErrorText="Couldn't read storage details on this PC." EmptyText="Storage details aren't available on this PC." />; break;
+                case "gpu": <DetailTable Section="inv.Gpus" Columns="GpuCols" ErrorText="Couldn't read graphics details on this PC." EmptyText="Graphics details aren't available on this PC." />; break;
+                case "network":
+                    var nicSection = inv.NetworkAdapters with { Items = inv.PhysicalNetworkAdapters };
+                    <DetailTable Section="nicSection" Columns="NetCols" ErrorText="Couldn't read network adapter details on this PC." EmptyText="Network adapter details aren't available on this PC." />; break;
+                case "bios": <DetailTable Section="inv.Bios" Columns="BiosCols" ErrorText="Couldn't read BIOS details on this PC." EmptyText="BIOS details aren't available on this PC." />; break;
             }
         </aside>
     }
@@ -80,7 +106,7 @@
 
 @code {
     private string? _open;
-    private static readonly Dictionary<string, string> Titles = new() { ["system"] = "Computer", ["cpu"] = "Processor", ["memory"] = "Memory", ["disks"] = "Storage" };
+    private static readonly Dictionary<string, string> Titles = new() { ["system"] = "Computer", ["cpu"] = "Processor", ["memory"] = "Memory", ["disks"] = "Storage", ["gpu"] = "Graphics", ["network"] = "Network adapters", ["bios"] = "BIOS" };
     private void Open(string id) => _open = id;
     private void Close() => _open = null;
     private static string Dash(string? s) => string.IsNullOrWhiteSpace(s) ? "—" : s;
@@ -112,5 +138,19 @@
     [
         ("Model", x => x.HardwareModel), ("Manufacturer", x => x.Manufacturer), ("Size", x => x.SizeBytes is > 0 ? HardwareInventory.FormatBytes(x.SizeBytes) : ""),
         ("Connection", x => x.Type), ("Partitions", x => N(x.Partitions)), ("Serial number", x => x.Serial),
+    ];
+    private static readonly (string, Func<GpuInfo, string>)[] GpuCols =
+    [
+        ("Model", x => x.Model), ("Manufacturer", x => x.Manufacturer), ("Driver version", x => x.DriverVersion),
+        ("Driver date", x => x.DriverDate), ("Display mode", x => x.VideoMode),
+    ];
+    private static readonly (string, Func<NetworkAdapterInfo, string>)[] NetCols =
+    [
+        ("Name", x => x.Name), ("Model", x => x.Description), ("Manufacturer", x => x.Manufacturer),
+        ("Status", x => x.Status), ("Speed", x => HardwareInventoryReport.FormatSpeed(x.SpeedBps)),
+    ];
+    private static readonly (string, Func<BiosInfo, string>)[] BiosCols =
+    [
+        ("Vendor", x => x.Vendor), ("Version", x => x.Version), ("Release date", x => x.Date), ("Revision", x => x.Revision),
     ];
 }

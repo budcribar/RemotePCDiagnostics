@@ -52,6 +52,49 @@ public sealed record DiskInfo(
         r.Str("serial"), r.Str("description"), r.Long("disk_size"), r.Int("partitions"));
 }
 
+/// <summary>osquery <c>video_info</c> (Windows; one row per display adapter). <c>driver_date</c> is Unix seconds.</summary>
+/// <remarks>Only the model, vendor and driver: the PnP device ID is not kept.</remarks>
+public sealed record GpuInfo(string Model, string Manufacturer, string Series, string DriverVersion, string DriverDate, string VideoMode)
+{
+    public static GpuInfo FromRow(IReadOnlyDictionary<string, string> r) => new(
+        r.Str("model"), r.Str("manufacturer"), r.Str("series"), r.Str("driver_version"), FormatDriverDate(r.Str("driver_date")), r.Str("video_mode"));
+
+    /// <summary>Unix seconds to yyyy-MM-dd; any other text is kept as it came.</summary>
+    internal static string FormatDriverDate(string raw) =>
+        long.TryParse(raw, out var secs) && secs > 0
+            ? DateTimeOffset.FromUnixTimeSeconds(secs).UtcDateTime.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)
+            : raw;
+}
+
+/// <summary>osquery <c>interface_details</c>, reduced to what describes the adapter.</summary>
+/// <remarks>The MAC address, interface GUID, PnP device ID and IP/DNS/DHCP settings are never read into this record,
+/// so neither the page nor the automation export can show them.</remarks>
+public sealed record NetworkAdapterInfo(string Name, string Description, string Manufacturer, string Type, bool? Physical, bool? Enabled, string Status, long? SpeedBps)
+{
+    public static NetworkAdapterInfo FromRow(IReadOnlyDictionary<string, string> r) => new(
+        r.Str("connection_id").Length > 0 ? r.Str("connection_id") : r.Str("friendly_name"),
+        r.Str("description"), r.Str("manufacturer"), r.Str("type"),
+        Bool(r.Str("physical_adapter")), Bool(r.Str("enabled")), ConnectionStatus(r.Str("connection_status")), r.Long("speed"));
+
+    private static bool? Bool(string s) => s switch { "1" or "true" or "True" => true, "0" or "false" or "False" => false, _ => null };
+
+    /// <summary>Win32_NetworkAdapter.NetConnectionStatus code to words (osquery passes the number through).</summary>
+    internal static string ConnectionStatus(string code) => code switch
+    {
+        "0" => "Disconnected", "1" => "Connecting", "2" => "Connected", "3" => "Disconnecting", "4" => "Hardware not present",
+        "5" => "Hardware disabled", "6" => "Hardware malfunction", "7" => "Media disconnected", "8" => "Authenticating",
+        "9" => "Authentication succeeded", "10" => "Authentication failed", "11" => "Invalid address", "12" => "Credentials required",
+        _ => code,
+    };
+}
+
+/// <summary>osquery <c>platform_info</c>: the BIOS/UEFI firmware vendor, version and release date.</summary>
+public sealed record BiosInfo(string Vendor, string Version, string Date, string Revision)
+{
+    public static BiosInfo FromRow(IReadOnlyDictionary<string, string> r) =>
+        new(r.Str("vendor"), r.Str("version"), r.Str("date"), r.Str("revision"));
+}
+
 /// <summary>One inventory section: parsed items, or the error that prevented them.</summary>
 /// <remarks>Diagnostics (row count, exit code, stderr, elapsed, stdout head) live in <see cref="Query"/> and the log, never in the UI.
 /// <see cref="FromFallback"/> is true when <see cref="Items"/> were derived from another table because this one returned nothing usable.</remarks>
@@ -66,6 +109,17 @@ public sealed record InventorySection<T>(string Sql, IReadOnlyList<T> Items, str
 
     public static InventorySection<T> From(OsqueryQueryResult q, Func<IReadOnlyDictionary<string, string>, T> map) =>
         q.Success ? new(q.Sql, q.Rows!.Select(map).ToList(), null, q) : new(q.Sql, [], q.Error, q);
+
+    /// <summary>Like <see cref="From"/>, but a table this platform's osquery doesn't have is an empty section, not a failure:
+    /// the part is simply not reported on this PC.</summary>
+    public static InventorySection<T> FromOptional(OsqueryQueryResult q, Func<IReadOnlyDictionary<string, string>, T> map) =>
+        !q.Success && IsMissingTable(q) ? new(q.Sql, [], null, q) : From(q, map);
+
+    /// <summary>A section that was not collected (an inventory recorded before the section existed).</summary>
+    public static InventorySection<T> NotCollected(string sql) => new(sql, [], null);
+
+    private static bool IsMissingTable(OsqueryQueryResult q) =>
+        $"{q.Error} {q.RawStdErr}".Contains("no such table", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>Aggregate of the hardware inventory queries.</summary>
@@ -75,25 +129,46 @@ public sealed record HardwareInventory(
     InventorySection<MemoryDevice> Memory,
     InventorySection<DiskInfo> Disks)
 {
+    /// <summary>Display adapters (<c>video_info</c>). Empty when the platform doesn't report them.</summary>
+    public InventorySection<GpuInfo> Gpus { get; init; } = InventorySection<GpuInfo>.NotCollected(GpuSql);
+    /// <summary>Network adapters (<c>interface_details</c>), without addresses or device identifiers.</summary>
+    public InventorySection<NetworkAdapterInfo> NetworkAdapters { get; init; } = InventorySection<NetworkAdapterInfo>.NotCollected(NetworkSql);
+    /// <summary>BIOS/UEFI firmware (<c>platform_info</c>).</summary>
+    public InventorySection<BiosInfo> Bios { get; init; } = InventorySection<BiosInfo>.NotCollected(BiosSql);
+
     public const string SystemSql = "SELECT * FROM system_info;";
     public const string CpuSql = "SELECT * FROM cpu_info;";
     public const string MemorySql = "SELECT * FROM memory_devices;";
     public const string DiskSql = "SELECT * FROM disk_info;";
+    public const string GpuSql = "SELECT * FROM video_info;";
+    public const string NetworkSql = "SELECT * FROM interface_details;";
+    public const string BiosSql = "SELECT * FROM platform_info;";
+    public const int SectionCount = 7;
     /// <summary>Fallback for a blank disk_info.disk_size: total of fixed logical volumes (logical_drives.size, bytes).</summary>
     public const string LogicalDrivesSql = "SELECT device_id, type, size FROM logical_drives;";
 
     /// <summary>True when the machine was found to have no osqueryi (every section failed with not-found).</summary>
     public bool ToolMissing { get; init; }
 
-    public int FailedSections => new[] { System.Success, Cpus.Success, Memory.Success, Disks.Success }.Count(ok => !ok);
+    public int FailedSections => new[] { System.Success, Cpus.Success, Memory.Success, Disks.Success, Gpus.Success, NetworkAdapters.Success, Bios.Success }.Count(ok => !ok);
+
+    /// <summary>Failures among the original four sections (computer, processor, memory, storage).</summary>
+    public int CoreFailedSections => new[] { System.Success, Cpus.Success, Memory.Success, Disks.Success }.Count(ok => !ok);
+
+    /// <summary>True when no section could be read at all.</summary>
+    public bool AllSectionsFailed => FailedSections == SectionCount;
 
     public static async Task<HardwareInventory> CollectAsync(OsqueryRunner runner, IProgress<string>? progress = null, CancellationToken ct = default)
     {
-        async Task<OsqueryQueryResult> Q(int step, string msg, string sql) { progress.ReportStep(step, 4, msg); return await runner.RunQueryAsync(sql, ct).ConfigureAwait(false); }
+        async Task<OsqueryQueryResult> Q(int step, string msg, string sql) { progress.ReportStep(step, SectionCount, msg); return await runner.RunQueryAsync(sql, ct).ConfigureAwait(false); }
         var sys = InventorySection<SystemInfo>.From(await Q(1, "Reading computer details…", SystemSql).ConfigureAwait(false), SystemInfo.FromRow);
         var cpu = InventorySection<CpuInfo>.From(await Q(2, "Reading processor details…", CpuSql).ConfigureAwait(false), CpuInfo.FromRow);
         var mem = InventorySection<MemoryDevice>.From(await Q(3, "Reading memory modules…", MemorySql).ConfigureAwait(false), MemoryDevice.FromRow);
         var disk = InventorySection<DiskInfo>.From(await Q(4, "Reading storage drives…", DiskSql).ConfigureAwait(false), DiskInfo.FromRow);
+        // Each section is its own query, so one that fails (or a table this platform lacks) leaves the others intact.
+        var gpu = InventorySection<GpuInfo>.FromOptional(await Q(5, "Reading graphics adapters…", GpuSql).ConfigureAwait(false), GpuInfo.FromRow);
+        var net = InventorySection<NetworkAdapterInfo>.FromOptional(await Q(6, "Reading network adapters…", NetworkSql).ConfigureAwait(false), NetworkAdapterInfo.FromRow);
+        var bios = InventorySection<BiosInfo>.FromOptional(await Q(7, "Reading BIOS details…", BiosSql).ConfigureAwait(false), BiosInfo.FromRow);
 
         // Fallbacks (shown to the user as normal values).
         var s0 = sys.Items.FirstOrDefault();
@@ -107,7 +182,7 @@ public sealed record HardwareInventory(
             var total = ld.Success ? SumFixedDrives(ld.Rows!) : 0;
             if (total > 0) disk = disk with { Items = [disk.Items[0] with { SizeBytes = total }], FromFallback = true };
         }
-        return new(sys, cpu, mem, disk) { ToolMissing = !runner.Exists };
+        return new(sys, cpu, mem, disk) { Gpus = gpu, NetworkAdapters = net, Bios = bios, ToolMissing = !runner.Exists };
     }
 
     public static CpuInfo CpuFromSystemPublic(SystemInfo s) => CpuFromSystem(s);
@@ -133,6 +208,10 @@ public sealed record HardwareInventory(
     }
 
     public long TotalDiskBytes => Disks.Items.Sum(d => d.SizeBytes ?? 0);
+
+    /// <summary>The adapters that are real hardware: those osquery flags as physical, or every adapter when none carries the flag.</summary>
+    public IReadOnlyList<NetworkAdapterInfo> PhysicalNetworkAdapters =>
+        NetworkAdapters.Items.Any(a => a.Physical is not null) ? NetworkAdapters.Items.Where(a => a.Physical == true).ToList() : NetworkAdapters.Items;
 
     /// <summary>End-user one-liner for the Dashboard: computer, processor, memory, storage.</summary>
     public string FriendlySummary()

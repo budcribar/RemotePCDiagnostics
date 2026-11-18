@@ -204,6 +204,36 @@ public class OsqueryRunnerTests
     }
 
     [Fact]
+    public async Task Module_FailingGpuQuery_KeepsEverySectionElse()
+    {
+        var l = new FakeLauncher(sql => Task.FromResult(sql switch
+        {
+            _ when sql.Contains("video_info") => new ProcessResult(1, "", "Error: WMI query failed"),
+            _ when sql.Contains("platform_info") => new ProcessResult(1, "", "Error: no such table: platform_info"),
+            _ when sql.Contains("system_info") => new ProcessResult(0, """[{"hardware_vendor":"Dell","hardware_model":"X","physical_memory":"8589934592"}]""", ""),
+            _ when sql.Contains("interface_details") => new ProcessResult(0, """[{"description":"Intel(R) Ethernet I219-LM","physical_adapter":"1","connection_status":"2"}]""", ""),
+            _ => new ProcessResult(0, "[]", ""),
+        }));
+        var store = new ResultStore();
+        var r = await new DiagnosticsService(store, [new OsqueryModule(Runner(l))]).RunAsync("Osquery");
+        Assert.Equal(DiagnosticStatus.Warning, r.Status);
+        var inv = Assert.IsType<HardwareInventory>(store.Get("Osquery").Payload);
+        Assert.Equal(1, inv.FailedSections);
+        Assert.Equal(0, inv.CoreFailedSections);
+        Assert.False(inv.Gpus.Success);
+        Assert.True(inv.Bios.Success);                 // a table this platform lacks is "not available", not a failure
+        Assert.Empty(inv.Bios.Items);
+        Assert.Equal("Dell", inv.System.Items.Single().HardwareVendor);
+        Assert.Equal("Intel(R) Ethernet I219-LM", inv.NetworkAdapters.Items.Single().Description);
+
+        var report = HardwareInventoryReport.Build(inv, r.Status, r.Message);
+        Assert.NotNull(report.Cards.Single(c => c.Id == "gpu").ErrorText);
+        Assert.NotNull(report.Cards.Single(c => c.Id == "bios").EmptyText);
+        Assert.Equal("1 adapter", report.Cards.Single(c => c.Id == "network").Headline);
+        Assert.Equal("Dell X", report.Cards.Single(c => c.Id == "system").Headline);
+    }
+
+    [Fact]
     public async Task Module_AllFail_IsError()
     {
         var l = new FakeLauncher(_ => Task.FromResult(new ProcessResult(2, "", "bad")));
