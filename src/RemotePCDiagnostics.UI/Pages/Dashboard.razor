@@ -297,4 +297,13 @@
     };
 
     private static string Level(SensorGroup? g) => g is null || g.Readings.Count == 0 ? "na" : g.Level switch { SensorLevel.Critical => "err", SensorLevel.Warning => "warn", _ => "ok" };
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        base.OnAfterRender(firstRender);
+        if (firstRender)
+        {
+            RemotePCDiagnostics.Core.StartupProfiler.Mark("DashboardFirstRender");
+        }
+    }
 }

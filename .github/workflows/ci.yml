@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - '**'
+      - '!perf/**'
     tags-ignore:
       - prerelease
       - 'build-*'

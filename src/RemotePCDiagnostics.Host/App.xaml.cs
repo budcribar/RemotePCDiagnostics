@@ -91,6 +91,11 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        StartupProfiler.LogAction = LogFileOnly;
+        if (e.Args.Contains("--benchmark-startup")) StartupProfiler.IsEnabled = true;
+        if (e.Args.Contains("--benchmark-exit")) Environment.SetEnvironmentVariable("RPD_BENCHMARK_EXIT", "1");
+        StartupProfiler.Mark("App.OnStartup");
+
         // Packaging check: no window, machine scans, journal changes or instance mutex.
         if (e.Args.Contains("--verify-package"))
         {
@@ -168,8 +173,17 @@ public partial class App : Application
         if (isAdmin)
         {
             // Before anything reads the undo journal, workflow or resume state: secure their folder and move them out of %LOCALAPPDATA%.
-            SecureProtectedState();
+            if (StartupOptimizations.FastProtectedState && Directory.Exists(ProtectedState.Folder()) && File.Exists(Path.Combine(ProtectedState.Folder(), ".secured")))
+            {
+                // Fast-path: state folder already verified and secured
+            }
+            else
+            {
+                SecureProtectedState();
+                try { File.WriteAllText(Path.Combine(ProtectedState.Folder(), ".secured"), "1"); } catch { }
+            }
         }
+        StartupProfiler.Mark("SecureProtectedStateDone");
 
         if (e.Args.Any(a => a.Equals("--undo-all", StringComparison.OrdinalIgnoreCase)))
         {
@@ -180,11 +194,21 @@ public partial class App : Application
         if (isAdmin)
         {
             // One-time history update (event log format 3) before anything else writes events; the marker makes it a no-op afterwards.
-            RunStartupMigrations();
+            if (StartupOptimizations.DeferMigrations)
+            {
+                Task.Run(RunStartupMigrations);
+            }
+            else
+            {
+                RunStartupMigrations();
+            }
         }
+        StartupProfiler.Mark("RunStartupMigrationsDone");
 
         MainWindow = new RemotePCDiagnostics.Host.MainWindow();
+        StartupProfiler.Mark("MainWindowCreated");
         MainWindow.Show();
+        StartupProfiler.Mark("MainWindowShown");
     }
 
     private static void SecureProtectedState()

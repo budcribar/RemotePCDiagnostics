@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     private readonly SessionAudit _audit = new(App.Audit);
     public MainWindow()
     {
+        StartupProfiler.Mark("MainWindow.ctor:Start");
         // Keep the UI dispatcher above Normal and BelowNormal stressor threads so progress renders and Stop clicks stay responsive under full load.
         try { Thread.CurrentThread.Priority = ThreadPriority.AboveNormal; } catch { }
 
@@ -51,8 +52,11 @@ public partial class MainWindow : Window
             Group: launch.Group,
             Mode: launch.Mode.ToString(),
             StartedUtc: DateTimeOffset.UtcNow));
+        StartupProfiler.Mark("AddRemotePCDiagnosticsHost:Start");
         var services = new ServiceCollection().AddRemotePCDiagnosticsHost(sessionCtx, App.Log, App.Event, loggers: App.Loggers);
+        StartupProfiler.Mark("AddRemotePCDiagnosticsHost:Done");
         var provider = _provider = services.BuildServiceProvider();
+        StartupProfiler.Mark("BuildServiceProvider:Done");
         var diag = provider.GetRequiredService<DiagnosticsService>();
         provider.GetService<DesktopSessionRelauncher>()?.BindWindowClose(() => Dispatcher.BeginInvoke(Close));
         var elevation = provider.GetService<ElevationService>();
@@ -116,15 +120,36 @@ public partial class MainWindow : Window
 
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
         // Results flow through ResultStore to the Dashboard / Hardware inventory page. Disable with REMOTEPC_AUTORUN=0.
-        AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Loggers.CreateLogger(typeof(AutoRun).FullName!), ModuleSlugs.Osquery, LibreHardwareMonitorModule.ModuleName, ModuleSlugs.DriveHealth);
+        if (StartupOptimizations.DeferAutoRun)
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(2000).ConfigureAwait(false);
+                AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Loggers.CreateLogger(typeof(AutoRun).FullName!), ModuleSlugs.Osquery, LibreHardwareMonitorModule.ModuleName, ModuleSlugs.DriveHealth);
+            });
+        }
+        else
+        {
+            AutoRun.Start(provider.GetRequiredService<DiagnosticsService>(), Environment.GetEnvironmentVariable, App.Loggers.CreateLogger(typeof(AutoRun).FullName!), ModuleSlugs.Osquery, LibreHardwareMonitorModule.ModuleName, ModuleSlugs.DriveHealth);
+        }
+        StartupProfiler.Mark("AutoRunDispatched");
 
-
-        _ = Task.Run(async () => { try { await provider.GetRequiredService<RebootResumeCoordinator>().CompletePostRebootIfPendingAsync(provider.GetRequiredService<RemediationService>(), provider.GetRequiredService<DiagnosticsService>()); } catch (Exception ex) { Logger.Warn($"Post-reboot check failed: {ex.Message}"); } });
-
-        // A service workflow waiting for this restart carries on by itself.
-        _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Workflow.WorkflowService>().ResumeAsync(); } catch (Exception ex) { Logger.Warn($"Workflow resume failed: {ex.Message}"); } });
-        // An "after" benchmark requested before a restart runs by itself once start-up has settled.
-        _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>().ResumeAfterRestartAsync(); } catch (Exception ex) { Logger.Warn($"Benchmark resume failed: {ex.Message}"); } });
+        if (StartupOptimizations.DeferResumes)
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(2500).ConfigureAwait(false);
+                try { await provider.GetRequiredService<RebootResumeCoordinator>().CompletePostRebootIfPendingAsync(provider.GetRequiredService<RemediationService>(), provider.GetRequiredService<DiagnosticsService>()); } catch (Exception ex) { Logger.Warn($"Post-reboot check failed: {ex.Message}"); }
+                try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Workflow.WorkflowService>().ResumeAsync(); } catch (Exception ex) { Logger.Warn($"Workflow resume failed: {ex.Message}"); }
+                try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>().ResumeAfterRestartAsync(); } catch (Exception ex) { Logger.Warn($"Benchmark resume failed: {ex.Message}"); }
+            });
+        }
+        else
+        {
+            _ = Task.Run(async () => { try { await provider.GetRequiredService<RebootResumeCoordinator>().CompletePostRebootIfPendingAsync(provider.GetRequiredService<RemediationService>(), provider.GetRequiredService<DiagnosticsService>()); } catch (Exception ex) { Logger.Warn($"Post-reboot check failed: {ex.Message}"); } });
+            _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Workflow.WorkflowService>().ResumeAsync(); } catch (Exception ex) { Logger.Warn($"Workflow resume failed: {ex.Message}"); } });
+            _ = Task.Run(async () => { try { await provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>().ResumeAfterRestartAsync(); } catch (Exception ex) { Logger.Warn($"Benchmark resume failed: {ex.Message}"); } });
+        }
 
         InitializeComponent();
         Logger.Info($"MainWindow initialized, mode={mode} server={launch.ServerUri} group={launch.Group}");
@@ -134,15 +159,22 @@ public partial class MainWindow : Window
         RemoteBlazorWebView.BlazorWebViewInitializing += (_, e) =>
         {
             var extra = Environment.GetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+            if (StartupOptimizations.WebViewFlags)
+            {
+                var perfFlags = "--disable-features=Translate,OptimizationHints,MediaRouter,CalculateNativeWinOcclusion --disable-background-networking --disable-component-update";
+                extra = string.IsNullOrWhiteSpace(extra) ? perfFlags : $"{extra} {perfFlags}";
+            }
             if (!string.IsNullOrWhiteSpace(extra))
             {
                 e.EnvironmentOptions ??= new Microsoft.Web.WebView2.Core.CoreWebView2EnvironmentOptions();
                 e.EnvironmentOptions.AdditionalBrowserArguments = extra;
             }
             Logger.Info($"BlazorWebViewInitializing args='{extra}'");
+            StartupProfiler.Mark("BlazorWebViewInitializing");
         };
         RemoteBlazorWebView.BlazorWebViewInitialized += (_, e) =>
         {
+            StartupProfiler.Mark("BlazorWebViewInitialized");
             Logger.Info($"BlazorWebViewInitialized browserVersion={e.WebView.CoreWebView2?.Environment.BrowserVersionString}");
             // Remote: this window shows the relay's page for the session. Reloading it (F5, Ctrl+R) makes the relay treat the
             // session as refreshed, which restarts the app. Nothing here needs a reload, so ignore it; find, zoom and the
@@ -191,6 +223,7 @@ public partial class MainWindow : Window
         if (remote) WatchRemoteSession(launch.ServerUri!, sessionCtx.SessionId, launch.Unattended);
         // Last: setting HostPage starts the control, and the server, group and id must be set before it (which is why it is not in the XAML).
         RemoteBlazorWebView.HostPage = HostPage;
+        StartupProfiler.Mark("HostPageAssigned");
     }
 
     /// <summary>

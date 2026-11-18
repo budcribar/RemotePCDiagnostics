@@ -1,0 +1,109 @@
+name: Startup Performance Benchmark
+
+on:
+  push:
+    branches:
+      - 'perf/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark-startup:
+    name: Benchmark 10 Startup Optimizations
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Ensure RemoteBlazorWebView packages
+        shell: pwsh
+        run: |
+          $pkgDir = Join-Path $env:GITHUB_WORKSPACE 'third_party/RemoteBlazorWebView/packages'
+          New-Item -ItemType Directory -Force $pkgDir | Out-Null
+          if (@(Get-ChildItem $pkgDir -Filter 'PeakSWC.RemoteBlazorWebView.Wpf.*.nupkg' -ErrorAction SilentlyContinue).Count -eq 0) {
+            [xml]$props = Get-Content Directory.Build.props
+            $rbwvNode = $props.Project.PropertyGroup | ForEach-Object { $_['RbwvVersion'] } | Where-Object { $_ } | Select-Object -First 1
+            $rbwvVer = if ($rbwvNode -is [System.Xml.XmlElement]) { $rbwvNode.InnerText.Trim() } else { "$rbwvNode".Trim() }
+            $verLower = $rbwvVer.ToLowerInvariant()
+            $onNuGet = $true
+            foreach ($pkg in 'peakswc.remoteblazorwebview.remotecomponents', 'peakswc.remoteblazorwebview.wpf', 'peakswc.remotewebview', 'peakswc.remotewebviewservice.lib') {
+              try {
+                $resp = Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/$pkg/$verLower/$pkg.$verLower.nupkg" -Method Head -UseBasicParsing -TimeoutSec 10
+                if ($resp.StatusCode -ne 200) { $onNuGet = $false; break }
+              } catch { $onNuGet = $false; break }
+            }
+            if ($onNuGet) {
+              "Using PeakSWC.RemoteBlazorWebView packages ($rbwvVer) from nuget.org."
+            } else {
+              $suffix = if ($rbwvVer -match '-(.+)$') { $Matches[1] } else { '' }
+              $work = Join-Path $env:RUNNER_TEMP 'rbwv-build'
+              $srcRoot = Join-Path $work 'RemoteBlazorWebView'
+              $tutorialStub = Join-Path $work 'RemoteBlazorWebViewTutorial'
+              New-Item -ItemType Directory -Force $tutorialStub | Out-Null
+              Set-Content -Path (Join-Path $tutorialStub 'README.md') -Value '# RemoteBlazorWebView'
+              git clone --branch net10 --depth 1 https://github.com/budcribar/RemoteBlazorWebView.git $srcRoot
+              Push-Location (Join-Path $srcRoot 'src/RemoteWebView.Blazor.JS')
+              try {
+                corepack enable
+                yarn install
+                if ($LASTEXITCODE -ne 0) { throw "yarn install failed ($LASTEXITCODE)" }
+                yarn build:production
+                if ($LASTEXITCODE -ne 0) { throw "yarn build:production failed ($LASTEXITCODE)" }
+              } finally { Pop-Location }
+
+              $packArgs = @('pack', "$srcRoot/src/RemoteBlazorWebView.Wpf", '-c', 'Release', '-p:GeneratePackageOnBuild=false', '-o', $pkgDir)
+              if ($suffix) { $packArgs += "-p:VersionSuffix=$suffix" }
+              & dotnet @packArgs
+              if ($LASTEXITCODE -ne 0) { throw "Packing RemoteBlazorWebView.Wpf failed ($LASTEXITCODE)" }
+
+              $libPackArgs = @('pack', "$srcRoot/src/RemoteWebViewService.Lib", '-c', 'Release', '-p:GeneratePackageOnBuild=false', '-o', $pkgDir)
+              if ($suffix) { $libPackArgs += "-p:VersionSuffix=$suffix" }
+              & dotnet @libPackArgs
+              if ($LASTEXITCODE -ne 0) { throw "Packing RemoteWebViewService.Lib failed ($LASTEXITCODE)" }
+            }
+          }
+
+      - name: Publish Baseline (PublishReadyToRun=false)
+        shell: pwsh
+        run: |
+          $baselineDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts/baseline-stage'
+          New-Item -ItemType Directory -Force -Path $baselineDir | Out-Null
+          dotnet publish src/RemotePCDiagnostics.Host/RemotePCDiagnostics.Host.csproj -c Release -r win-x64 --self-contained true -p:PublishProfile=Installer -p:PublishReadyToRun=false -o $baselineDir
+          if ($LASTEXITCODE -ne 0) { throw "Baseline publish failed ($LASTEXITCODE)" }
+
+      - name: Publish Optimized (PublishReadyToRun=true)
+        shell: pwsh
+        run: |
+          $r2rDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts/r2r-stage'
+          New-Item -ItemType Directory -Force -Path $r2rDir | Out-Null
+          dotnet publish src/RemotePCDiagnostics.Host/RemotePCDiagnostics.Host.csproj -c Release -r win-x64 --self-contained true -p:PublishProfile=Installer -p:PublishReadyToRun=true -o $r2rDir
+          if ($LASTEXITCODE -ne 0) { throw "Optimized publish failed ($LASTEXITCODE)" }
+
+      - name: Run Startup Benchmarks
+        shell: pwsh
+        run: |
+          $baselineExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts/baseline-stage/RemotePCDiagnostics.Host.exe'
+          $optExe = Join-Path $env:GITHUB_WORKSPACE 'artifacts/r2r-stage/RemotePCDiagnostics.Host.exe'
+          pwsh -NoProfile -File scripts/benchmark-startup.ps1 -BaselineExePath $baselineExe -OptimizedExePath $optExe -RunsPerTest 3
+
+      - name: Upload Benchmark Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: startup-benchmark-results
+          path: artifacts/benchmark/
+          if-no-files-found: warn
+          retention-days: 7

@@ -135,19 +135,52 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
     /// </summary>
     public void LoadBundled(IServiceCollection services, IEnumerable<ModuleDescriptor>? known = null)
     {
+        StartupProfiler.Mark("LoadBundled:Start");
         var folder = options.BundledFolder;
         if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder)) return;
         if (SameFolder(folder, options.ModulesFolder)) { LogWarn($"{folder} is also the plugin folder; its modules load as plugins only"); return; }
         var byId = (known ?? BuiltInModules.Descriptors).ToDictionary(d => d.Id);
         var loaded = new HashSet<Guid>();
-        foreach (var path in Directory.EnumerateFiles(folder, "*.dll", SearchOption.TopDirectoryOnly).Order(StringComparer.OrdinalIgnoreCase).ToList())
+        var paths = Directory.EnumerateFiles(folder, "*.dll", SearchOption.TopDirectoryOnly).Order(StringComparer.OrdinalIgnoreCase).ToList();
+
+        (string Path, string PluginId, byte[] Dll, ModuleManifest Manifest)?[]? preloaded = null;
+        if (StartupOptimizations.ParallelPluginScan)
         {
+            preloaded = new (string, string, byte[], ModuleManifest)?[paths.Count];
+            Parallel.For(0, paths.Count, i =>
+            {
+                try
+                {
+                    var p = paths[i];
+                    var pid = Path.GetFileNameWithoutExtension(p);
+                    var bytes = File.ReadAllBytes(p);
+                    var (man, _) = ModuleManifest.ReadFromAssembly(bytes);
+                    preloaded[i] = (p, pid, bytes, man);
+                }
+                catch { }
+            });
+            StartupProfiler.Mark("LoadBundled:ParallelReadDone");
+        }
+
+        for (var i = 0; i < paths.Count; i++)
+        {
+            var path = paths[i];
             var pluginId = Path.GetFileNameWithoutExtension(path);
             var record = new PluginRecord(pluginId, ModuleSource.BuiltIn, PluginState.Loaded) { Path = path, Signature = BundledSignature, Version = AppBuildInfo.Release };
             try
             {
-                var dll = File.ReadAllBytes(path);
-                var (manifest, _) = ModuleManifest.ReadFromAssembly(dll);
+                byte[] dll;
+                ModuleManifest manifest;
+                if (preloaded?[i] is { } ready)
+                {
+                    dll = ready.Dll;
+                    manifest = ready.Manifest;
+                }
+                else
+                {
+                    dll = File.ReadAllBytes(path);
+                    (manifest, _) = ModuleManifest.ReadFromAssembly(dll);
+                }
                 record = record with { ModuleId = manifest.Id, DisplayName = manifest.DisplayName };
                 var why = !byId.TryGetValue(manifest.Id, out var d) ? $"id {manifest.Id} is not a module that ships with this app"
                     : !string.Equals(d.Slug, manifest.Slug, StringComparison.Ordinal) ? $"slug {manifest.Slug} should be {d.Slug} for id {manifest.Id}"
@@ -184,6 +217,7 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
                 registrar.RecordDisabled(record with { Reason = $"{ex.GetType().Name}: {ex.Message}" });
             }
         }
+        StartupProfiler.Mark("LoadBundled:Done");
     }
 
     /// <summary>Shown as the signature of a module that ships with the app (About page, Event Log).</summary>
