@@ -1,0 +1,13 @@
+@using RemotePCDiagnostics.Core.Areas
+@* A storage card's byte totals for browser agents (docs/agent-guides/browser-contract.md): the numbers the module put on the card,
+   never read back out of its text. Renders nothing for a card without them. Place inside a hidden block. *@
+@if (Card is { TotalBytes: { } total, FreeBytes: { } free, UsedBytes: { } used })
+{
+    <span data-field="total-storage-bytes" data-unit="bytes" data-value="@total"></span>
+    <span data-field="free-storage-bytes" data-unit="bytes" data-value="@free"></span>
+    <span data-field="used-storage-bytes" data-unit="bytes" data-value="@used"></span>
+}
+
+@code {
+    [Parameter] public AreaCard? Card { get; set; }
+}

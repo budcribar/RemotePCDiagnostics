@@ -35,7 +35,9 @@ public interface IHangEvidenceSource
     Task<string> FindHangEvidenceAsync(IReadOnlyList<HangOccurrence> occurrences, CancellationToken ct);
 }
 
-/// <summary>A long scan (DISM, SFC) the user can cancel from the Checks screen while it runs; progress comes as a <c>double</c> percent payload.</summary>
+/// <summary>A long scan (DISM, SFC, large files, duplicate files) the user can cancel from the Checks screen while it runs. DISM and SFC
+/// report progress as a <c>double</c> percent payload. How the result is shown is not decided here: the Windows integrity scans
+/// (<see cref="WindowsIntegrityModule"/>) have their own panel on Checks, the others show cards like any check.</summary>
 public interface ICancellableScan
 {
     void Cancel();

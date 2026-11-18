@@ -15,6 +15,9 @@ else
 {
     var r = Store.Get(m.Name);
     var rep = r.Report() as AreaReport; // a per-device module (drive health) combines its devices into one report
+    // Large files & folders before its first scan: how full the drive is, read live. It is not a result, so it stays out of
+    // area-report-data and everything else that describes a finished run.
+    var shown = rep ?? (m.Name == ModuleSlugs.DiskSpace ? CapacityPreview(m) : null);
     var busy = r.Status == DiagnosticStatus.Running;
     var svcModule = m.Feature<IServiceRows>(); // also from a stand-in for a module that runs out of process
     var svcActions = svcModule is null ? null : App.ServiceActions;
@@ -41,20 +44,29 @@ else
     {
         <AreaReportData Report="rep" CheckId="@m.Name" RunId="r.RunId" Services="@ExportServices(svcModule, svcActions)" />
     }
-    @if (rep is not null && rep.Cards.Count > 0)
+    @if (shown is not null && shown.Cards.Count > 0)
     {
         @if (!busy && m.Name == ModuleSlugs.DriveHealth)
         {
+            var driveCards = shown.Cards.Where(c => c.Id != DriveHealthModule.CapacityCardId).ToList();
             <div hidden data-testid="drive-health-counts">
-                <span data-field="reported-drive-count" data-unit="count" data-value="@rep.Cards.Count"></span>
-                <span data-field="healthy-drive-count" data-unit="count" data-value="@rep.Cards.Count(c => c.Level == AreaLevel.Ok)"></span>
-                <span data-field="warning-drive-count" data-unit="count" data-value="@rep.Cards.Count(c => c.Level == AreaLevel.Warning)"></span>
-                <span data-field="critical-drive-count" data-unit="count" data-value="@rep.Cards.Count(c => c.Level == AreaLevel.Error)"></span>
-                <span data-field="unknown-drive-count" data-unit="count" data-value="@rep.Cards.Count(c => c.Level == AreaLevel.Neutral)"></span>
+                <span data-field="reported-drive-count" data-unit="count" data-value="@driveCards.Count"></span>
+                <span data-field="healthy-drive-count" data-unit="count" data-value="@driveCards.Count(c => c.Level == AreaLevel.Ok)"></span>
+                <span data-field="warning-drive-count" data-unit="count" data-value="@driveCards.Count(c => c.Level == AreaLevel.Warning)"></span>
+                <span data-field="critical-drive-count" data-unit="count" data-value="@driveCards.Count(c => c.Level == AreaLevel.Error)"></span>
+                <span data-field="unknown-drive-count" data-unit="count" data-value="@driveCards.Count(c => c.Level == AreaLevel.Neutral)"></span>
+                <StorageByteFields Card="@shown.Cards.FirstOrDefault(c => c.Id == DriveHealthModule.CapacityCardId)" />
+            </div>
+        }
+        @* Without a run id (before the first scan) the numbers are the drive as it is now; with one, as that scan found it. *@
+        @if (m.Name == ModuleSlugs.DiskSpace && (!busy || rep is null) && shown.Cards.FirstOrDefault(c => c.Id == DiskSpaceModule.CapacityCardId) is { } capacity)
+        {
+            <div hidden data-testid="disk-space-counts" data-check-id="@m.Name" data-result-run-id="@(rep is null ? null : r.RunId)">
+                <StorageByteFields Card="capacity" />
             </div>
         }
         <div class="cards">
-            @foreach (var c in rep.ReviewedCards is null ? rep.Cards.AsEnumerable() : rep.Cards.OrderByDescending(c => c.Level))
+            @foreach (var c in shown.ReviewedCards is null ? shown.Cards.AsEnumerable() : shown.Cards.OrderByDescending(c => c.Level))
             {
                 @* EmptyText describes an empty drawer; only show it on the card when there really is nothing in it. *@
                 <SummaryCard Id="@c.Id" Title="@c.Title" OnOpen="Open" ErrorText="@c.ErrorText" EmptyText="@(c.Rows.Count == 0 && string.IsNullOrEmpty(c.Headline) ? c.EmptyText : null)" Dot="@Dot(c.Level)">
@@ -80,9 +92,9 @@ else
 
 
 
-        @if (_open is not null && rep.Cards.FirstOrDefault(c => c.Id == _open) is { } activeCard)
+        @if (_open is not null && shown.Cards.FirstOrDefault(c => c.Id == _open) is { } activeCard)
         {
-            var reviewedCard = rep.ReviewedCards?.FirstOrDefault(c => c.Id == activeCard.Id);
+            var reviewedCard = shown.ReviewedCards?.FirstOrDefault(c => c.Id == activeCard.Id);
             var hasReviewed = reviewedCard?.Rows.Any(row => row.ReviewKeys is { Count: > 0 }) == true;
             var open = _showReviewed && hasReviewed ? reviewedCard! : activeCard;
             var showingReviewed = _showReviewed && hasReviewed;
@@ -295,6 +307,23 @@ else
 @code {
     [Parameter] public string Slug { get; set; } = "";
     private string? _open;
+
+    private (string Root, DateTimeOffset ReadAt, AreaReport? Report) _capacityPreview;
+    private static readonly TimeSpan CapacityPreviewFor = TimeSpan.FromSeconds(30);
+
+    /// <summary>The drive capacity card on its own, for Large files &amp; folders before a scan. Read at most every 30 seconds: this
+    /// page renders on every store change, and a render must not go to the disk each time.</summary>
+    private AreaReport? CapacityPreview(IDiagnosticModule m)
+    {
+        var root = m is DiskSpaceModule scan ? scan.RootPath : DiskSpaceModule.SystemRoot;
+        var now = DateTimeOffset.UtcNow;
+        if (_capacityPreview.Root != root || now - _capacityPreview.ReadAt > CapacityPreviewFor)
+        {
+            var drives = DiskSpaceModule.GetDrivesForScan(root);
+            _capacityPreview = (root, now, drives.Count > 0 ? new AreaReport([DiskSpaceModule.BuildDriveCapacityCard(drives)], "", DiagnosticStatus.NotRun) : null);
+        }
+        return _capacityPreview.Report;
+    }
     private bool _showReviewed;
     private bool _savingReview;
     private string? _reviewError;

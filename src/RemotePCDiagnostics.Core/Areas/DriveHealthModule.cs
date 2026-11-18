@@ -61,11 +61,13 @@ public sealed record DriveHealth(
 /// If that fails, drives are listed from osquery disk_info with health marked as not reported.
 /// One instance per physical drive (keyed on <see cref="DriveHealth.RawId"/>); the page still shows one report with a card per drive
 /// (<see cref="Combine"/>). One drive read serves every drive of a run.
+/// Free space is read with the drives (<see cref="DriveVolumes"/>): each volume counts for the drive it is on, so a drive with a
+/// nearly full volume needs attention, in its own result as well as in the report.
 /// </summary>
 /// <remarks>In user mode (the module host) <paramref name="host"/> is set: the health script and the drive list run in the app
 /// (<c>storage.drives</c>, <c>osquery.select</c>), since the reliability counters need administrator rights.</remarks>
 public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunner osquery, IRetrimHistory? retrims = null, Func<DateTimeOffset>? clock = null,
-    Plugins.IHostQueries? host = null, IDriveHealthHistoryStore? historyStore = null)
+    Plugins.IHostQueries? host = null, IDriveHealthHistoryStore? historyStore = null, Func<IReadOnlyList<DriveCapacityInfo>>? volumes = null)
     : AreaModuleBase(commands.Log ?? osquery.Options.Log), IPerDeviceModule, IInstanceSummary, IHasAreaPanels
 {
     private readonly IDriveHealthHistoryStore _history = historyStore ?? new DriveHealthHistoryStore(DriveHealthHistoryStore.DefaultPath(), commands.Log ?? osquery.Options.Log);
@@ -80,7 +82,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     public const string ModuleName = ModuleSlugs.DriveHealth;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.DriveHealth;
-    public override string DisplayName => "Drive health";
+    public override string DisplayName => "Drive health & free space";
     protected override string FailedMessage => "Couldn't check drive health on this PC.";
 
     public static string Script => Scripts.PowerShellScripts.Get("DriveHealth");
@@ -91,11 +93,15 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     {
         var read = await ReadDrivesAsync(progress, ct).ConfigureAwait(false);
         if (read.Drives is null) return AreaReport.Failed(FailedMessage);
-        return Build(read.Drives, read.Retrims, read.Now, _history) with { Notice = read.Notice };
+        return BuildReport(read.Drives, read.Retrims, read.Now, _history, read.Volumes, capacityCard: true) with { Notice = read.Notice };
     }
 
     /// <summary>The drives as last read: health (or the osquery list with <see cref="Notice"/>), retrim dates, and when.</summary>
-    private sealed record DriveRead(List<DriveHealth>? Drives, IReadOnlyDictionary<char, RetrimRecord>? Retrims, DateTimeOffset Now, string? Notice, DateTimeOffset ReadAt);
+    private sealed record DriveRead(List<DriveHealth>? Drives, IReadOnlyDictionary<char, RetrimRecord>? Retrims, DateTimeOffset Now, string? Notice, DateTimeOffset ReadAt)
+    {
+        /// <summary>The volumes read with the drives, each with the drive it is on.</summary>
+        public DriveVolumeMap Volumes { get; init; } = DriveVolumeMap.None;
+    }
 
     private sealed class SharedRead
     {
@@ -168,8 +174,22 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     private async Task<DriveRead> ReadDrivesAsync(IProgress<string>? progress, CancellationToken ct)
     {
         var read = await ReadDrivesCoreAsync(progress, ct).ConfigureAwait(false);
+        if (read.Drives is { Count: > 0 } drives)
+            read = read with { Volumes = DriveVolumeMap.Assign(drives, await ReadVolumesAsync(ct).ConfigureAwait(false)) };
         _latest = read;
         return read;
+    }
+
+    /// <summary>Free space per volume. Never fails the drive read: without it the report just has no free space.</summary>
+    private async Task<IReadOnlyList<DriveCapacityInfo>> ReadVolumesAsync(CancellationToken ct)
+    {
+        var read = volumes ?? (() => DriveVolumes.ReadLocal(Logger));
+        try { return await Task.Run(read, ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogWarn($"{Name}: free space not read: {ex.Message}");
+            return [];
+        }
     }
 
     private async Task<DriveRead> ReadDrivesCoreAsync(IProgress<string>? progress, CancellationToken ct)
@@ -250,12 +270,17 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     {
         if (instance.Key == AllDrivesKey) return await RefreshAsync(progress, cancellationToken).ConfigureAwait(false);
         AreaReport report;
+        string? volumeText = null;
         try
         {
             var read = await ReadDrivesCachedAsync(progress, cancellationToken).ConfigureAwait(false);
             if (read.Drives is null) report = AreaReport.Failed(FailedMessage);
             else if (Instances(read.Drives).FirstOrDefault(x => x.Instance.Key == instance.Key) is { Drive: { } drive })
-                report = Build([drive], read.Retrims, read.Now, _history) with { Notice = read.Notice };
+            {
+                // This drive only: its own volumes count for it, and the capacity table of every volume belongs to the combined report.
+                report = BuildReport([drive], read.Retrims, read.Now, _history, read.Volumes, capacityCard: false) with { Notice = read.Notice };
+                volumeText = VolumeText(read.Volumes.Of(drive));
+            }
             else return CouldNotRun.Result(Name, $"{instance.Label} is no longer connected.");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -265,7 +290,9 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             report = AreaReport.Failed(FailedMessage);
         }
         var card = report.Cards.FirstOrDefault();
-        return new DiagnosticResult<AreaReport>(Name, report.Status, card is null ? report.Summary : card.Headline, DateTimeOffset.Now, report);
+        // The verdict and the drive's free space ("Healthy · 120 GB free on C:"): this line is what the Checks list and History show.
+        var message = card is null ? report.Summary : volumeText is null ? card.Headline : $"{card.Headline} · {volumeText}";
+        return new DiagnosticResult<AreaReport>(Name, report.Status, message, DateTimeOffset.Now, report);
     }
 
     /// <summary>One report with a card per drive (the page and the fix list read this), rebuilt from the latest drive read so the
@@ -276,7 +303,8 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
         if (_latest is not { Drives: { } drives } read) return null;
         var byKey = Instances(drives).ToDictionary(x => x.Instance.Key, x => x.Drive);
         var shown = instanceResults.Select(r => r.InstanceKey is { } k ? byKey.GetValueOrDefault(k) : null).OfType<DriveHealth>().ToList();
-        return shown.Count == 0 ? null : Build(shown, read.Retrims, read.Now, _history) with { Notice = read.Notice };
+        // Free space as read with the drives: the same numbers each drive's own result was judged on.
+        return shown.Count == 0 ? null : BuildReport(shown, read.Retrims, read.Now, _history, read.Volumes, capacityCard: true) with { Notice = read.Notice };
     }
 
     private async Task<IReadOnlyDictionary<char, RetrimRecord>?> ReadRetrimsAsync(CancellationToken ct)
@@ -304,16 +332,45 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
         return days <= 0 ? "today" : days == 1 ? "yesterday" : $"{days} days ago";
     }
 
-    public static AreaReport Build(IReadOnlyList<DriveHealth> drives) => Build(drives, null, DateTimeOffset.Now);
+    /// <summary>Id of the card listing every volume's capacity. The other cards are the drives ("drive0", "drive1", …).</summary>
+    public const string CapacityCardId = "capacity";
 
-    public static AreaReport Build(IReadOnlyList<DriveHealth> drives, IReadOnlyDictionary<char, RetrimRecord>? retrims, DateTimeOffset now, IDriveHealthHistoryStore? historyStore = null)
+    /// <summary>"120 GB free on C:", "300 GB free on C: and D:", or what is nearly full; null for a drive with no volume known.</summary>
+    public static string? VolumeText(IReadOnlyList<DriveCapacityInfo> volumes)
+    {
+        if (volumes.Count == 0) return null;
+        var low = volumes.Where(v => v.IsLowOnSpace).ToList();
+        if (low.Count > 0) return string.Join("; ", low.Select(v => v.NearlyFullText));
+        var free = HardwareInventory.FormatBytes(volumes.Sum(v => v.FreeBytes));
+        return volumes.Count == 1 ? $"{free} free on {volumes[0].Letter}" : $"{free} free on {string.Join(", ", volumes.Take(volumes.Count - 1).Select(v => v.Letter))} and {volumes[^1].Letter}";
+    }
+
+    /// <summary>One report of <paramref name="drives"/>. With <paramref name="capacities"/> (the PC's volumes) each volume counts for
+    /// the drive it is on, and a "Drive Capacity" card lists them all first.</summary>
+    public static AreaReport Build(
+        IReadOnlyList<DriveHealth> drives,
+        IReadOnlyDictionary<char, RetrimRecord>? retrims = null,
+        DateTimeOffset? now = null,
+        IDriveHealthHistoryStore? historyStore = null,
+        IReadOnlyList<DriveCapacityInfo>? capacities = null) =>
+        BuildReport(drives, retrims, now ?? DateTimeOffset.Now, historyStore, DriveVolumeMap.Assign(drives, capacities ?? []), capacityCard: true);
+
+    /// <param name="volumes">The PC's volumes by drive (of every drive read, also when <paramref name="drives"/> is only some of them).</param>
+    /// <param name="capacityCard">False for one drive's own result: no table of every volume, and no other drive's volume counts.</param>
+    private static AreaReport BuildReport(
+        IReadOnlyList<DriveHealth> drives,
+        IReadOnlyDictionary<char, RetrimRecord>? retrims,
+        DateTimeOffset timestamp,
+        IDriveHealthHistoryStore? historyStore,
+        DriveVolumeMap volumes,
+        bool capacityCard)
     {
         if (drives.Count == 0)
             return new([], "No drives were found to check.", DiagnosticStatus.Warning);
         string[] cols = ["Detail", "Value"];
         var cards = drives.Select((d, i) =>
         {
-            var trend = historyStore?.AnalyzeTrend(d.RawId, d, now);
+            var trend = historyStore?.AnalyzeTrend(d.RawId, d, timestamp);
             var level = d.Level;
             var verdict = d.Verdict;
             var reasons = d.Reasons().ToList();
@@ -324,9 +381,19 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
                 reasons.Insert(0, trend.SummaryText);
             }
 
+            // A nearly full volume makes its drive need attention; it never outranks a failing drive.
+            var own = volumes.Of(d);
+            var nearlyFull = own.Where(v => v.IsLowOnSpace).ToList();
+            if (nearlyFull.Count > 0)
+            {
+                if (level < AreaLevel.Warning) { level = AreaLevel.Warning; verdict = "Needs attention"; }
+                reasons.AddRange(nearlyFull.Select(v => v.NearlyFullText));
+            }
+
             var meta = string.Join(" · ", new[]
             {
                 d.Kind, d.SizeBytes is > 0 ? HardwareInventory.FormatBytes(d.SizeBytes) : null,
+                own.Count > 0 ? $"{HardwareInventory.FormatBytes(own.Sum(v => v.FreeBytes))} free" : null,
                 d.TemperatureC is > 0 ? $"{d.TemperatureC}°C" : null, d.Wear is not null ? $"{d.Wear}% worn" : null,
                 trend is { IsDegrading: true } ? "Degrading" : null,
             }.Where(x => x is not null));
@@ -339,34 +406,95 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             Add("Type", d.Kind);
             Add("Connection", d.BusType);
             Add("Size", d.SizeBytes is > 0 ? HardwareInventory.FormatBytes(d.SizeBytes) : null);
+            foreach (var vol in own)
+                Add($"Volume {vol.Letter}", $"{HardwareInventory.FormatBytes(vol.FreeBytes)} free of {HardwareInventory.FormatBytes(vol.TotalBytes)} ({vol.UsedPercent:0.#}% used · {vol.DriveFormat})",
+                    vol.IsLowOnSpace ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Temperature", d.TemperatureC is > 0 ? $"{d.TemperatureC}°C" : "Not reported", d.TemperatureC >= DriveHealth.HotC ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Life used", d.Wear is not null ? $"{d.Wear}%" : "Not reported", d.Wear >= DriveHealth.WornPercent ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Uncorrected read errors", d.ReadErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported", d.ReadErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Uncorrected write errors", d.WriteErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported", d.WriteErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Hours powered on", d.PowerOnHours is >= 0 ? d.PowerOnHours.Value.ToString("N0", CultureInfo.InvariantCulture) : "Not reported");
             var ssdLetters = d.Kind == "SSD" ? RemediationService.DriveLetters(d.Letters) : "";
-            if (ssdLetters.Length > 0) Add("Last optimized", LastOptimizedText(ssdLetters, retrims, now));
+            if (ssdLetters.Length > 0) Add("Last optimized", LastOptimizedText(ssdLetters, retrims, timestamp));
             Add("Serial number", d.Serial);
             var actions = new List<AreaAction>();
             if (i == 0)
                 actions.Add(new(RemediationKind.CleanTempFiles, "Clean up temporary files", "", "Temporary files & Recycle Bin"));
             // Not offered when Windows or this app retrimmed every volume of this SSD in the last 30 days.
             var dueLetters = new string(ssdLetters.Where(letter =>
-                !RecentlyRetrimmed(letter.ToString(), retrims, now)).ToArray());
+                !RecentlyRetrimmed(letter.ToString(), retrims, timestamp)).ToArray());
             if (dueLetters.Length > 0)
                 actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", dueLetters, d.Name.Length > 0 ? d.Name : "SSD"));
             return new AreaCard($"drive{i}", d.Name.Length > 0 ? d.Name : $"Drive {i + 1}", level, verdict, meta, cols, rows,
                 Actions: actions.Count > 0 ? actions : null);
         }).ToList();
 
-        var degrading = drives.Count(d => historyStore?.AnalyzeTrend(d.RawId, d, now).IsDegrading == true);
+        var degrading = drives.Count(d => historyStore?.AnalyzeTrend(d.RawId, d, timestamp).IsDegrading == true);
+        // Drives only: the capacity card repeats what its drives' cards already say, so it is never counted as a drive.
         var bad = cards.Count(c => c.Level is AreaLevel.Warning or AreaLevel.Error);
-        var unknown = drives.All(d => d.Level == AreaLevel.Neutral);
-        var summary = bad > 0 ? $"{bad} of {Plural(drives.Count, "drive")} need{(bad == 1 ? "s" : "")} attention"
-            : unknown ? $"{Plural(drives.Count, "drive")} found · health not reported"
-            : drives.Count == 1 ? "1 drive · healthy" : $"{drives.Count} drives · all healthy";
+        var unknown = cards.All(c => c.Level == AreaLevel.Neutral);
+        var freePart = "";
+        if (capacityCard && volumes.All.Count > 0)
+        {
+            cards.Insert(0, DiskSpaceModule.BuildDriveCapacityCard(volumes.All, CapacityCardId));
+            var free = HardwareInventory.FormatBytes(volumes.All.Sum(v => v.FreeBytes));
+            freePart = volumes.All.Count == 1 ? $" · {free} free on {volumes.All[0].Letter}" : $" · {free} free across {volumes.All.Count} volumes";
+            // A nearly full volume on no known drive (Windows gave no drive letters): the capacity card alone carries its warning.
+            if (volumes.Unassigned.Where(v => v.IsLowOnSpace).Select(v => v.Letter).ToList() is { Count: > 0 } adrift)
+                freePart += $" · {string.Join(", ", adrift)} nearly full";
+        }
+        var summary = bad > 0 ? $"{bad} of {Plural(drives.Count, "drive")} need{(bad == 1 ? "s" : "")} attention{freePart}"
+            : unknown ? $"{Plural(drives.Count, "drive")} found · health not reported{freePart}"
+            : drives.Count == 1 ? $"1 drive · healthy{freePart}" : $"{drives.Count} drives · all healthy{freePart}";
         if (degrading > 0)
             summary = $"{summary} ({Plural(degrading, "drive")} getting worse)";
         return new(cards, summary, AreaReport.Worst(cards.Select(c => c.Level)));
+    }
+}
+
+/// <summary>The PC's volumes and the physical drive each one is on.</summary>
+public sealed class DriveVolumeMap
+{
+    public static readonly DriveVolumeMap None = new([], new Dictionary<DriveHealth, IReadOnlyList<DriveCapacityInfo>>(ReferenceEqualityComparer.Instance), []);
+
+    private readonly IReadOnlyDictionary<DriveHealth, IReadOnlyList<DriveCapacityInfo>> _byDrive;
+
+    private DriveVolumeMap(IReadOnlyList<DriveCapacityInfo> all, IReadOnlyDictionary<DriveHealth, IReadOnlyList<DriveCapacityInfo>> byDrive, IReadOnlyList<DriveCapacityInfo> unassigned)
+    {
+        All = all;
+        _byDrive = byDrive;
+        Unassigned = unassigned;
+    }
+
+    /// <summary>Every volume read, in drive letter order.</summary>
+    public IReadOnlyList<DriveCapacityInfo> All { get; }
+
+    /// <summary>Volumes on no known drive.</summary>
+    public IReadOnlyList<DriveCapacityInfo> Unassigned { get; }
+
+    /// <summary>The volumes on <paramref name="drive"/> (one of the drives given to <see cref="Assign"/>).</summary>
+    public IReadOnlyList<DriveCapacityInfo> Of(DriveHealth drive) => _byDrive.GetValueOrDefault(drive) ?? [];
+
+    /// <summary>
+    /// A volume is on the drive whose letters (<see cref="DriveHealth.Letters"/>) include it. When Windows reported no letter for it
+    /// and the PC has a single drive, it is on that drive; a removable volume is never guessed this way.
+    /// </summary>
+    public static DriveVolumeMap Assign(IReadOnlyList<DriveHealth> drives, IReadOnlyList<DriveCapacityInfo> volumes)
+    {
+        if (volumes.Count == 0) return None;
+        var all = volumes.OrderBy(v => v.DriveName, StringComparer.OrdinalIgnoreCase).ToList();
+        var letters = drives.Select(d => RemediationService.DriveLetters(d.Letters)).ToList();
+        var byDrive = new Dictionary<DriveHealth, List<DriveCapacityInfo>>(ReferenceEqualityComparer.Instance);
+        var unassigned = new List<DriveCapacityInfo>();
+        foreach (var v in all)
+        {
+            var letter = v.DriveName.Length > 0 ? char.ToUpperInvariant(v.DriveName[0]) : '\0';
+            var owner = letters.FindIndex(l => l.Contains(letter));
+            if (owner < 0 && drives.Count == 1 && !v.Removable) owner = 0;
+            if (owner < 0) { unassigned.Add(v); continue; }
+            if (!byDrive.TryGetValue(drives[owner], out var list)) byDrive[drives[owner]] = list = [];
+            list.Add(v);
+        }
+        return new(all, byDrive.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<DriveCapacityInfo>)kv.Value, (IEqualityComparer<DriveHealth>)ReferenceEqualityComparer.Instance), unassigned);
     }
 }
