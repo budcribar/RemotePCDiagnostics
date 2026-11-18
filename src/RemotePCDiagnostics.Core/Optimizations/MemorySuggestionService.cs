@@ -43,7 +43,8 @@ public static class MemoryFeedback
 /// <param name="FreedDiskBytes">Disk cleanups, app removals and the hibernation file: the exact bytes freed, which History totals.</param>
 /// <param name="RemovedFiles">Disk cleanups only: the exact number of files deleted.</param>
 /// <param name="FreedMemoryBytes">The measured RAM freed, when the message reports one ("Freed about …"); History totals it.</param>
-public sealed record ActionOutcome(bool Success, string Message, bool Skipped = false, long FreedDiskBytes = 0, long RemovedFiles = 0, long FreedMemoryBytes = 0);
+/// <param name="DiskRestored">An undo only: what the fix removed is back on the disk (the app reinstalled, the hibernation file full size again), so History takes the fix's freed bytes back out.</param>
+public sealed record ActionOutcome(bool Success, string Message, bool Skipped = false, long FreedDiskBytes = 0, long RemovedFiles = 0, long FreedMemoryBytes = 0, bool DiskRestored = false);
 
 /// <summary>
 /// Host-side probes and actions (Windows implementation in the Host; fakes in tests). Methods may throw. It is the sum of the role
@@ -205,7 +206,7 @@ public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, s
     string? CreatedKey = null, string? PreviousExtra = null);
 
 public sealed record SuggestionResult(string SuggestionId, bool Success, string Message, DateTime When, bool CanForceClose = false, bool Skipped = false,
-    long FreedDiskBytes = 0, long RemovedFiles = 0, long FreedMemoryBytes = 0, MemoryActionType? Action = null);
+    long FreedDiskBytes = 0, long RemovedFiles = 0, long FreedMemoryBytes = 0, MemoryActionType? Action = null, bool Undone = false, bool DiskRestored = false);
 
 /// <summary>
 /// Scans, shows and applies memory suggestions. Every change runs only from an explicit click; each is logged to the Event Log (1400)
@@ -443,8 +444,9 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             lock (_gate) _undo.Remove(u);
             if (JournalKind(u.Type) is { } jk) try { journal?.RemoveLatest(jk, u.Target); } catch { }
         }
-        Event(outcome.Success ? LogLevel.Information : LogLevel.Warning, $"Memory suggestion undone\r\nActor: {Actor}\r\nAction: {u.Type}\r\nTarget: {u.Target}\r\nResult: {(outcome.Success ? "Success" : "Failed")}\r\nMessage: {outcome.Message}");
-        var r = new SuggestionResult(u.Id, outcome.Success, (outcome.Success ? "Undone: " : "") + outcome.Message, DateTime.Now);
+        var r = new SuggestionResult(u.Id, outcome.Success, (outcome.Success ? "Undone: " : "") + outcome.Message, DateTime.Now, Action: u.Type, Undone: true, DiskRestored: outcome.Success && outcome.DiskRestored);
+        // History pairs an undo with the fix it reverses by the suggestion ID, and matches this event to the live record by its message.
+        Event(outcome.Success ? LogLevel.Information : LogLevel.Warning, $"Memory suggestion undone\r\nActor: {Actor}\r\nSuggestion: {u.Id}\r\nAction: {u.Type}\r\nTarget: {u.Target}\r\n{(r.DiskRestored ? "Disk restored: Yes\r\n" : "")}Result: {(outcome.Success ? "Success" : "Failed")}\r\nMessage: {r.Message}");
         lock (_gate) { _results[u.Id] = r; _recent.Insert(0, r); }
         await ScanAsync(ct).ConfigureAwait(false);
         return r;

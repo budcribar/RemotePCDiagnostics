@@ -653,6 +653,36 @@ public class MemorySuggestionTests
         else { Assert.Equal((total, used), (slots!.Total, slots.Used)); Assert.Equal(32L * Gb, slots.MaxCapacityBytes); }
     }
 
+    /// <summary>The service keeps only its 20 latest records, while every fix stays in the Event Log. History counts each freed
+    /// amount once (from the record or its logged copy), and never adds gains under the measurable threshold.</summary>
+    [Fact]
+    public async Task History_CountsFreedMemoryOnce_BeyondTheRecentRecordLimit()
+    {
+        var (s, sys, events) = Make(Snap(new AppUsage("ChatGPT", 3, 1 * Gb, true)));
+        var entries = new List<HistoryEntry>();
+        const int fixes = 22;
+        for (var i = 0; i < fixes; i++)
+        {
+            await s.ScanAsync();
+            // The last one frees 10 MB: under the threshold, so the card says "No measurable change" and nothing is on its record.
+            var gain = i == fixes - 1 ? 10L << 20 : 100L << 20;
+            sys.Readings.Enqueue(new(16 * Gb, 5 * Gb)); sys.Readings.Enqueue(new(16 * Gb, 5 * Gb + gain));
+            var sug = s.Suggestions.Single(x => x.Id == "close-chatgpt");
+            var r = await s.ApplyAsync(sug, sug.Actions[0]);
+            Assert.True(r.Success, r.Message);
+            entries.Add(HistoryEventParser.Parse(events.Last(e => e.StartsWith("Memory suggestion applied")), new DateTimeOffset(r.When))!);
+        }
+        Assert.Equal(20, s.Recent.Count);
+        Assert.Equal((fixes - 1) * (100L << 20) + (10L << 20), s.TotalFreedBytes);
+
+        var summary = HistorySummary.Build(entries, memory: s);
+        Assert.Equal((fixes - 1) * (100L << 20), summary.MemorySavedBytes);
+        Assert.Equal(fixes, summary.Fixes.Count);
+        Assert.Equal(fixes, summary.MemoryFixesCount);
+        // With nothing logged, only what the kept records carry is counted.
+        Assert.Equal(19 * (100L << 20), HistorySummary.Build([], memory: s).MemorySavedBytes);
+    }
+
     [Fact]
     public async Task Close_MeasuresFeedback_TotalsFreed_LogsEvent()
     {

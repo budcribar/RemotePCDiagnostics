@@ -279,11 +279,14 @@ internal sealed class AppRemovalSuggestions(SuggestionContext c)
             MemoryActionType.RemoveNarratorAddons => $" The removed Narrator add-ons stay removed. {AppRemoval.StoreGetBackMany}",
             _ => " The uninstalled app stays uninstalled; reinstall it from its maker to get it back.",
         };
-        if (!settings) return new(failed == 0, apps.Trim());
+        // Every removed app is installed again: History takes the removal back out of its disk total. A program that stays
+        // uninstalled, or a reinstall that failed, leaves it counted.
+        var backOnDisk = undo.Reinstall is { Count: > 0 } && notReinstalled.Count == 0;
+        if (!settings) return new(failed == 0, apps.Trim(), DiskRestored: backOnDisk);
         var settingsFailed = failed - notReinstalled.Count;
         var turnedOn = undo.Reinstall is { Count: > 0 } ? "The settings were turned back on." : $"{u.Label} turned back on.";
         return failed == 0
-            ? new(true, turnedOn + apps)
+            ? new(true, turnedOn + apps, DiskRestored: backOnDisk)
             : new(false, (settingsFailed > 0 ? "Windows didn't allow turning everything back on (administrator rights needed)." : "The settings were turned back on.") + apps);
     }
 }

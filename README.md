@@ -484,7 +484,7 @@ overwrites them (Event Viewer shows them with a "description cannot be found" no
 | 1110 / 1111 | Stress suite started / finished (outcome and per-test states) |
 | 1200 | Fan diagnostic (EC fan, IdeaPad 82R4) lines |
 | 1300 | Sensor driver lines (PawnIO / LibreHardwareMonitor) |
-| 1400 | Memory suggestion applied / undone (actor, action, target, result, before/after memory) |
+| 1400 | Memory suggestion applied / undone (actor, suggestion, action, target, result, before/after memory). An applied event also carries its exact amounts on their own lines when it has them: `Freed disk bytes` (disk cleanups, app removals, the hibernation file), `Removed files` (disk cleanups) and `Freed memory bytes` (a measured RAM gain). The History page totals these lines and never reads an amount out of the message text; events logged before the lines existed count as 0. It reads the undone event too: an undo that put the files back (`Disk restored: Yes`: the app reinstalled, or the hibernation file full size again) takes that fix, matched by `Suggestion`, back out of the disk total and the counts. |
 | 1800 | Module plugin found at startup: loaded, or disabled with the reason (unsigned, signature does not match, contract version, duplicate id) |
 | 1900 | Unhandled errors |
 

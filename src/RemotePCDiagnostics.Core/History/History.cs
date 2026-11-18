@@ -147,7 +147,9 @@ public static class HistoryEventParser
                 section = null;
                 fields.TryAdd(key, value);
             }
-            if (lines[0].Trim().Equals("Memory suggestion applied", StringComparison.OrdinalIgnoreCase) && fields.TryGetValue("Result", out var memRes) && fields.TryGetValue("Message", out var memMsg))
+            // An undo is read too, so History can take back what the undone fix had counted (see HistorySummary).
+            var memUndone = lines[0].Trim().Equals("Memory suggestion undone", StringComparison.OrdinalIgnoreCase);
+            if ((memUndone || lines[0].Trim().Equals("Memory suggestion applied", StringComparison.OrdinalIgnoreCase)) && fields.TryGetValue("Result", out var memRes) && fields.TryGetValue("Message", out var memMsg))
             {
                 var memOk = string.Equals(memRes, "Success", StringComparison.OrdinalIgnoreCase) ? "OK" : "Warning";
                 var memMeas = new List<HistoryMeasurement>
@@ -155,6 +157,9 @@ public static class HistoryEventParser
                     new("Actor", fields.GetValueOrDefault("Actor") ?? "Local user"),
                     new("Kind", fields.GetValueOrDefault("Action") ?? HistorySummary.MemoryFixModuleId),
                 };
+                if (fields.GetValueOrDefault("Suggestion") is { Length: > 0 } sid) memMeas.Add(new("Suggestion", sid));
+                if (memUndone) memMeas.Add(new("Undone", "1"));
+                if (memUndone && string.Equals(fields.GetValueOrDefault("Disk restored"), "Yes", StringComparison.OrdinalIgnoreCase)) memMeas.Add(new("DiskRestored", "1"));
                 // The amounts are logged on their own lines (events written before that have none, and count as 0).
                 foreach (var (field, name) in new[] { ("Freed memory bytes", "FreedMemoryBytes"), ("Freed disk bytes", "FreedDiskBytes"), ("Removed files", "RemovedFiles") })
                     if (fields.TryGetValue(field, out var raw) && long.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var n) && n > 0)
