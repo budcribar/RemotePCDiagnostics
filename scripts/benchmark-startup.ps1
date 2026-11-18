@@ -99,7 +99,7 @@ function Measure-Config {
         try {
             $ms = Measure-SingleRun -ExePath $ExePath -EnvVars $EnvVars -LogFile $logPath
             $timings += $ms
-            Write-Host "    Run $r/$Runs: $([Math]::Round($ms, 1)) ms" -ForegroundColor Gray
+            Write-Host "    Run $r of $Runs - $([Math]::Round($ms, 1)) ms" -ForegroundColor Gray
         }
         finally {
             Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue
