@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
+using RemotePCDiagnostics.Core.History;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Storage;
 using RemotePCDiagnostics.Core.Workflow;
@@ -824,6 +825,46 @@ public sealed class StorageCleanupTests : IDisposable
         await svc.ScanStorageAsync(refresh: true);
         await svc.ApplyAsync(svc.StorageSuggestions[0], svc.StorageSuggestions[0].Actions[0]);
         Assert.Equal(2, j.All.Count);
+    }
+
+    [Theory]
+    [InlineData("Done: Freed 786 MB (1,508 files deleted).", 786L << 20, 1508)]
+    [InlineData("Done: Freed 2 KB (1 file deleted).", 2L << 10, 1)]
+    [InlineData("Nothing was deleted.", 0, 0)]
+    public void History_ClassifiesLegacyStorageEvents(string message, long bytes, int files)
+    {
+        var entry = HistoryEventParser.Parse(
+            $"Memory suggestion applied\nAction: CleanStorage\nResult: Success\nMessage: {message}", DateTimeOffset.UtcNow)!;
+        var summary = HistorySummary.Build([entry]);
+        Assert.Equal("Disk cleanup", Assert.Single(summary.Fixes).Category);
+        Assert.Equal(bytes, summary.DiskReclaimedBytes);
+        Assert.Equal(files, summary.TempFilesCleaned);
+        Assert.Equal(0, summary.MemorySavedBytes);
+        Assert.Equal(0, summary.MemoryFixesCount);
+        Assert.Equal(0, summary.TotalRunsCount);
+    }
+
+    [Fact]
+    public async Task History_ShowsLiveCleanupAndCountsPersistedCopyOnlyOnce()
+    {
+        string? eventText = null;
+        var svc = new MemorySuggestionService(new Sys { Items = [NuGetItem] },
+            events: (_, message) => eventText = message, settle: TimeSpan.Zero);
+        await svc.ScanStorageAsync();
+        var suggestion = Assert.Single(svc.StorageSuggestions);
+        var result = await svc.ApplyAsync(suggestion, Assert.Single(suggestion.Actions));
+
+        var live = HistorySummary.Build([], memory: svc);
+        var fix = Assert.Single(live.Fixes);
+        Assert.Equal("Disk cleanup", fix.Category);
+        Assert.EndsWith(" disk", fix.ImpactBadge);
+        Assert.Equal(3L << 30, live.DiskReclaimedBytes);
+        Assert.Equal(0, live.MemoryFixesCount);
+
+        var entry = HistoryEventParser.Parse(eventText!, new DateTimeOffset(result.When))!;
+        var combined = HistorySummary.Build([entry], memory: svc);
+        Assert.Equal(fix, Assert.Single(combined.Fixes));
+        Assert.Equal(live.DiskReclaimedBytes, combined.DiskReclaimedBytes);
     }
 
     [Fact]
