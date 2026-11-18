@@ -3,6 +3,19 @@ namespace RemotePCDiagnostics.Core.Session;
 /// <summary>States shown by the Host's native "Remote session" overlay.</summary>
 public enum RemoteSessionState { Connecting, Ready, Unreachable, RemoteUserConnected, Disconnected }
 
+/// <summary>When the app asks Windows not to sleep on its idle timer.</summary>
+public static class KeepAwakePolicy
+{
+    /// <summary>
+    /// An unattended session has nobody at the PC, so Windows counts it as idle and puts it to sleep behind the lock screen; the
+    /// relay connection, and whatever the remote user was running, goes with it. So the PC is kept awake while such a session is
+    /// starting or up. A supervised session has a person at the PC, and a session that has lost the relay has nothing to keep
+    /// awake for.
+    /// </summary>
+    public static bool ShouldHold(bool unattended, RemoteSessionState state) =>
+        unattended && state is RemoteSessionState.Connecting or RemoteSessionState.Ready or RemoteSessionState.RemoteUserConnected;
+}
+
 /// <summary>Link building and status text for the Remote-mode overlay (no WPF dependency, unit-tested).</summary>
 public static class RemoteLinkInfo
 {

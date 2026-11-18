@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private Uri? _remoteUserUrl;
     private DispatcherTimer? _readyTimer;
     private readonly SessionAudit _audit = new(App.Audit);
+    private readonly SystemAwake _awake = new();
     public MainWindow()
     {
         StartupProfiler.Mark("MainWindow.ctor:Start");
@@ -115,7 +116,8 @@ public partial class MainWindow : Window
         {
 
             _ = Task.Run(() => App.Event(RemotePCDiagnostics.Core.Logging.LogEventIds.TestResult, rec.Success ? RemotePCDiagnostics.Core.Logging.LogLevel.Information : RemotePCDiagnostics.Core.Logging.LogLevel.Warning, RemotePCDiagnostics.Core.History.HistorySummary.FormatRemediationEvent(rec, _machine.Value, eventContext.AppVersion)));
-            if (rec.Actor == ServiceActor.Remote) Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"A remote user ran an automated fix: {rec.Message.TrimEnd('.')}.", "Remote PC Diagnostics", MessageBoxButton.OK, MessageBoxImage.Information));
+            // Not for the record the app writes by itself after a restart: the remote user did nothing just then, and the box would sit on an unattended PC.
+            if (rec.Actor == ServiceActor.Remote && !RebootResumeCoordinator.IsPostRebootComparison(rec)) Dispatcher.BeginInvoke(() => MessageBox.Show(this, $"A remote user ran an automated fix: {rec.Message.TrimEnd('.')}.", "Remote PC Diagnostics", MessageBoxButton.OK, MessageBoxImage.Information));
         };
 
         // Auto-run the hardware inventory in the background on launch (host side, Local and Remote alike).
@@ -326,10 +328,25 @@ public partial class MainWindow : Window
         return true;
     }
 
+    /// <summary>Keeps the PC from sleeping on its idle timer while an unattended session is starting or up (see <see cref="KeepAwakePolicy"/>).</summary>
+    private void KeepAwakeFor(RemoteSessionState state)
+    {
+        try
+        {
+            var hold = KeepAwakePolicy.ShouldHold(_provider.GetService<ISessionContext>()?.Unattended ?? false, state);
+            if (_awake.Set(hold, "Remote PC Diagnostics: an unattended remote session is running"))
+                Logger.Info(hold ? "Keeping the PC awake while the unattended session is up" : "No longer keeping the PC awake");
+            else if (hold && !_awake.Held)
+                Logger.Warn("Couldn't ask Windows to keep the PC awake; it may go to sleep during the unattended session");
+        }
+        catch (Exception ex) { Logger.Warn($"Keep-awake request failed: {ex.Message}"); }
+    }
+
     private void SetRemoteState(RemoteSessionState state, string? errorDetail = null)
     {
         if (_serverUri is null) return;
         Logger.Info($"Remote session state: {state}");
+        KeepAwakeFor(state);
         // Once the app's page is up its header carries the status. Before that, the one thing to say here is that the
         // relay can't be reached (a later ReadyToConnect replaces this page).
         if (!RemoteLinkInfo.IsWarning(state)) return;
@@ -523,6 +540,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         base.OnClosed(e); // raise Closed first so handlers (EC fan release) run before the provider is disposed
+        try { _awake.Dispose(); } catch { }
         ActiveSessionInfo.TryDelete(expectedProcessId: Environment.ProcessId);
         _readyTimer?.Stop();
         _audit.Ended("The app was closed");

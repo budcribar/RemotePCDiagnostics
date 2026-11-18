@@ -398,6 +398,12 @@ public class RemediationTests
         Assert.Contains("1 fewer background processes", comparison.SummaryMessage);
         Assert.Null(coordinator.LoadPendingState()); // Pending state cleaned up after completion
 
+        // The record the app writes by itself after the restart is told apart from what the remote user did (no dialog at the PC for it),
+        // while the restart they asked for still counts as theirs.
+        Assert.True(RebootResumeCoordinator.IsPostRebootComparison(comparison.Record));
+        Assert.Equal(RebootResumeCoordinator.PostRebootTarget, comparison.Record.Target);
+        Assert.Contains(remSvc.Recent, r => r.Kind == RemediationKind.ScheduleCleanRestart && !RebootResumeCoordinator.IsPostRebootComparison(r));
+
         // 4. Verify HistorySummary logs the post-reboot memory reduction in System memory saved and Automated fixes
         var now = DateTimeOffset.UtcNow;
         var formattedRebootEvent = HistorySummary.FormatRemediationEvent(comparison.Record, "PC-1", "1.0.0");

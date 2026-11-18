@@ -7,6 +7,21 @@ public class RemoteLinkInfoTests
 {
     private static readonly Guid Id = Guid.Parse("11111111-2222-3333-4444-555555555555");
 
+    // An unattended PC counts as idle and goes to sleep behind the lock screen, dropping the relay connection: keep it awake
+    // while such a session is starting or up, and only then.
+    [Theory]
+    [InlineData(true, RemoteSessionState.Connecting, true)]
+    [InlineData(true, RemoteSessionState.Ready, true)]
+    [InlineData(true, RemoteSessionState.RemoteUserConnected, true)]
+    [InlineData(true, RemoteSessionState.Disconnected, false)]
+    [InlineData(true, RemoteSessionState.Unreachable, false)]
+    [InlineData(false, RemoteSessionState.Connecting, false)]
+    [InlineData(false, RemoteSessionState.Ready, false)]
+    [InlineData(false, RemoteSessionState.RemoteUserConnected, false)]
+    [InlineData(false, RemoteSessionState.Disconnected, false)]
+    public void KeepAwake_OnlyWhileAnUnattendedSessionIsStartingOrUp(bool unattended, RemoteSessionState state, bool expected) =>
+        Assert.Equal(expected, KeepAwakePolicy.ShouldHold(unattended, state));
+
     [Theory]
     [InlineData("https://remoteblazorwebview.com:34544", "https://remoteblazorwebview.com:34544/mirror/11111111-2222-3333-4444-555555555555")]
     [InlineData("https://remoteblazorwebview.com:34544/", "https://remoteblazorwebview.com:34544/mirror/11111111-2222-3333-4444-555555555555")]

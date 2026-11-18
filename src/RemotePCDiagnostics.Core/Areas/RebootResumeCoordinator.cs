@@ -110,6 +110,16 @@ public sealed class RebootResumeCoordinator(
     public const string RunOnceRegistryKey = @"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce";
     public const string RunOnceValueName = "RemotePCDiagnosticsResume";
 
+    /// <summary>The target of the record written after a restart: how much memory and how many processes the restart cleared.</summary>
+    public const string PostRebootTarget = "Post-reboot resource comparison";
+
+    /// <summary>
+    /// True for the record the app writes by itself once it is back from a restart. It carries the actor who asked for the restart
+    /// (so History shows who did it), but nobody did anything at that moment: it is not something to interrupt the person at the PC about.
+    /// </summary>
+    public static bool IsPostRebootComparison(RemediationRecord record) =>
+        record.Kind == RemediationKind.ScheduleCleanRestart && record.Target == PostRebootTarget;
+
     /// <summary>The sign-in task that relaunches the app elevated after a restart it scheduled. Removed once the app is back, or when the restart is called off.</summary>
     public const string ResumeTaskName = "Remote PC Diagnostics - continue after restart";
 
@@ -365,7 +375,7 @@ public sealed class RebootResumeCoordinator(
         var rec = remediation.RecordCompleted(
             pending.Actor,
             RemediationKind.ScheduleCleanRestart,
-            "Post-reboot resource comparison",
+            PostRebootTarget,
             success: true,
             summary,
             freedMemoryBytes: freedMem,
