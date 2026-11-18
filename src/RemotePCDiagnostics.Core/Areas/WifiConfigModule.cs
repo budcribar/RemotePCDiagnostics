@@ -26,7 +26,18 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         var wlanRes = await commands.RunAsync(Netsh, ["wlan", "show", "interfaces"], ct).ConfigureAwait(false);
         var wlanOk = wlanRes is { ExitCode: 0 };
         var wifi = wlanOk ? ParseNetshWlan(wlanRes!.StdOut) : null;
-        var ipSnap = Platform.NetworkInfoReader.ReadIpConfig();
+        IpConfigSnapshot? ipSnap = null;
+        if (commands.IsScripted)
+        {
+            var ipRes = await commands.RunPowerShellAsync(IpConfigScript, ct).ConfigureAwait(false);
+            if (ipRes is { ExitCode: 0 })
+                ipSnap = ParseIpSnapshot(ipRes.StdOut);
+        }
+        else
+        {
+            ipSnap = Platform.NetworkInfoReader.ReadIpConfig();
+        }
+
         if (!wlanOk && (ipSnap is null || ipSnap.Adapters.Count == 0))
             return AreaReport.Failed(FailedMessage);
 

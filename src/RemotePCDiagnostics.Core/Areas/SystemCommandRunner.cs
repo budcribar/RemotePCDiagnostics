@@ -12,6 +12,8 @@ public sealed class SystemCommandRunner(
     Func<bool>? isProcessElevated = null)
 {
     private readonly IProcessLauncher _launcher = launcher ?? new SystemProcessLauncher();
+    public IProcessLauncher Launcher => _launcher;
+    public bool IsScripted => _launcher is not SystemProcessLauncher;
     private readonly Func<bool> _isProcessElevated = isProcessElevated ?? ElevationService.DetectProcessElevated;
     public TimeSpan Timeout { get; } = timeout ?? TimeSpan.FromSeconds(60);
     public ILogger? Log { get; } = log;

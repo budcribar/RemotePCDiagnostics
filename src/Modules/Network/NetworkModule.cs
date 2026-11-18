@@ -80,22 +80,35 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
         var adapters = q.Rows!.Select(NetworkAdapter.FromRow).ToList();
         if (adapters.Count > 0 && !adapters.Any(a => a.HasCounters))
         {
-            var netStats = Platform.NetworkInfoReader.ReadAdapterStatistics();
-            if (netStats.Count > 0)
+            if (commands is { IsScripted: true })
             {
-                adapters = adapters.Select(a =>
+                Log($"{Name}: interface_details reported no traffic/error counters; using Get-NetAdapterStatistics");
+                var pr = await commands.RunPowerShellAsync(StatsScript, ct).ConfigureAwait(false);
+                if (pr is { ExitCode: 0 })
                 {
-                    if (a.HasCounters || !netStats.TryGetValue(a.Name, out var s)) return a;
-                    return a with
+                    try { adapters = MergeStatistics(adapters, OsqueryJson.ParseRows(pr.StdOut)); }
+                    catch (FormatException ex) { LogWarn($"{Name}: adapter statistics unreadable: {ex.Message}"); }
+                }
+            }
+            else
+            {
+                var netStats = Platform.NetworkInfoReader.ReadAdapterStatistics();
+                if (netStats.Count > 0)
+                {
+                    adapters = adapters.Select(a =>
                     {
-                        PacketsIn = s.PacketsIn,
-                        PacketsOut = s.PacketsOut,
-                        ErrorsIn = s.ErrorsIn,
-                        ErrorsOut = s.ErrorsOut,
-                        DropsIn = s.DropsIn,
-                        DropsOut = s.DropsOut,
-                    };
-                }).ToList();
+                        if (a.HasCounters || !netStats.TryGetValue(a.Name, out var s)) return a;
+                        return a with
+                        {
+                            PacketsIn = s.PacketsIn,
+                            PacketsOut = s.PacketsOut,
+                            ErrorsIn = s.ErrorsIn,
+                            ErrorsOut = s.ErrorsOut,
+                            DropsIn = s.DropsIn,
+                            DropsOut = s.DropsOut,
+                        };
+                    }).ToList();
+                }
             }
         }
         var baseReport = Build(adapters);
@@ -105,9 +118,19 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
         progress.ReportStep(2, total, "Checking Wi-Fi signal and IP configuration…");
         var wlanRes = await commands.RunAsync(WifiConfigModule.Netsh, ["wlan", "show", "interfaces"], ct).ConfigureAwait(false);
         var wlanOk = wlanRes is { ExitCode: 0 };
-        var ipSnap = Platform.NetworkInfoReader.ReadIpConfig();
-        var ipOk = ipSnap.Adapters.Count > 0;
-        var gateway = WifiConfigModule.PrimaryAdapter(ipSnap)?.Gateway;
+        IpConfigSnapshot? ipSnap = null;
+        if (commands.IsScripted)
+        {
+            var ipRes = await commands.RunPowerShellAsync(WifiConfigModule.IpConfigScript, ct).ConfigureAwait(false);
+            if (ipRes is { ExitCode: 0 })
+                ipSnap = WifiConfigModule.ParseIpSnapshot(ipRes.StdOut);
+        }
+        else
+        {
+            ipSnap = Platform.NetworkInfoReader.ReadIpConfig();
+        }
+        var ipOk = ipSnap is { Adapters.Count: > 0 };
+        var gateway = ipSnap is null ? null : WifiConfigModule.PrimaryAdapter(ipSnap)?.Gateway;
         // Measure the current DNS against Cloudflare/Google (a few seconds; nothing changed) so switching is only suggested when it's faster.
         DnsComparison? dns = null;
         if (ipSnap is not null && WifiConfigModule.PrimaryAdapter(ipSnap) is { } primary && !DnsSpeedTest.IsPublicAlready(primary.Dns))

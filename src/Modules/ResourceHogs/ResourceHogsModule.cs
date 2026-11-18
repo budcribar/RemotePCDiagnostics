@@ -48,8 +48,28 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
         if (!upQ.Success && !procQ.Success) return AreaReport.Failed(FailedMessage);
 
         progress.ReportStep(3, totalSteps, "Checking memory use and Fast Startup…");
-        var (fastStartup, totalBytes, freeBytes) = Platform.FastStartupReader.Read();
-        var memory = totalBytes is > 0 && freeBytes is >= 0 ? new MemoryUse(totalBytes.Value, freeBytes.Value) : null;
+        bool? fastStartup = null;
+        MemoryUse? memory = null;
+        if (commands is { IsScripted: true })
+        {
+            var pr = await commands.RunPowerShellAsync(FastStartupScript, ct).ConfigureAwait(false);
+            if (pr is { ExitCode: 0 } && !string.IsNullOrWhiteSpace(pr.StdOut))
+            {
+                try
+                {
+                    var row = OsqueryJson.ParseRows("[" + pr.StdOut.Trim().TrimStart('[').TrimEnd(']') + "]").FirstOrDefault();
+                    fastStartup = row?.Str("FastStartup") switch { "1" => true, "0" => false, _ => null };
+                    if (row?.Long("TotalBytes") is long total && total > 0 && row.Long("FreeBytes") is long free && free >= 0) memory = new MemoryUse(total, free);
+                }
+                catch (FormatException) { }
+            }
+        }
+        else
+        {
+            var (fs, totalBytes, freeBytes) = Platform.FastStartupReader.Read();
+            fastStartup = fs;
+            memory = totalBytes is > 0 && freeBytes is >= 0 ? new MemoryUse(totalBytes.Value, freeBytes.Value) : null;
+        }
 
         var uptime = upQ.Success && upQ.Rows!.Count > 0 ? SystemUptimeInfo.FromRow(upQ.Rows[0], fastStartup) : null;
         var procs = procQ.Success ? procQ.Rows!.Select(ProcessResourceRow.FromRow).ToList() : null;

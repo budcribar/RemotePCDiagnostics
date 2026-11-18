@@ -190,17 +190,6 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
                 LogWarn($"{Name}: elevated bridge ReadDrivesAsync failed: {ex.Message}");
             }
         }
-        else if (Environment.IsPrivilegedProcess)
-        {
-            try
-            {
-                drives = Platform.WindowsStorageDriveReader.ReadDrives();
-            }
-            catch (Exception ex)
-            {
-                LogWarn($"{Name}: in-process storage drive reader failed: {ex.Message}");
-            }
-        }
 
         if (drives is null || drives.Count == 0)
         {

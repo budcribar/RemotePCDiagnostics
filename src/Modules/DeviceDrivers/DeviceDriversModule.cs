@@ -67,18 +67,7 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
     {
         progress.ReportStep(1, 2, "Checking Device Manager for problem devices…");
         List<ProblemDevice>? problems = null;
-        try
-        {
-            problems = Platform.ProblemDevicesReader.Read()
-                .Select(p => new ProblemDevice(p.Name, p.Class, p.DeviceId, p.ErrorCode, p.Status))
-                .ToList();
-        }
-        catch (Exception ex)
-        {
-            LogWarn($"{Name}: in-process problem devices reader failed: {ex.Message}");
-        }
-
-        if (problems is null && commands is not null)
+        if (commands is { IsScripted: true })
         {
             var pr = await commands.RunPowerShellAsync(ProblemDevicesScript, ct).ConfigureAwait(false);
             if (pr is { ExitCode: 0 })
@@ -88,6 +77,33 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
                 {
                     try { problems = OsqueryJson.ParseRows(pr.StdOut).Select(ProblemDevice.FromRow).ToList(); }
                     catch (FormatException ex) { LogWarn($"{Name}: problem devices output unreadable: {ex.Message}"); }
+                }
+            }
+        }
+        else
+        {
+            try
+            {
+                problems = Platform.ProblemDevicesReader.Read()
+                    .Select(p => new ProblemDevice(p.Name, p.Class, p.DeviceId, p.ErrorCode, p.Status))
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                LogWarn($"{Name}: in-process problem devices reader failed: {ex.Message}");
+            }
+
+            if (problems is null && commands is not null)
+            {
+                var pr = await commands.RunPowerShellAsync(ProblemDevicesScript, ct).ConfigureAwait(false);
+                if (pr is { ExitCode: 0 })
+                {
+                    if (string.IsNullOrWhiteSpace(pr.StdOut) || pr.StdOut.Trim() == "[]") problems = [];
+                    else
+                    {
+                        try { problems = OsqueryJson.ParseRows(pr.StdOut).Select(ProblemDevice.FromRow).ToList(); }
+                        catch (FormatException ex) { LogWarn($"{Name}: problem devices output unreadable: {ex.Message}"); }
+                    }
                 }
             }
         }
