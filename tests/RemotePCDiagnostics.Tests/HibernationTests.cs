@@ -108,7 +108,18 @@ public class HibernationTests
         Assert.Contains("Freed 2.8 GB", r.Message);
         // History counts the shrunk file as reclaimed disk space.
         Assert.Equal(FullDesktop.FileBytes!.Value - (long)(2.84 * Gb), r.FreedDiskBytes);
-        Assert.Equal(r.FreedDiskBytes, HistorySummary.Build([], memory: svc).DiskReclaimedBytes);
+        // It is a storage fix (not a memory fix), the same for the live record and for its logged copy.
+        var logged = HistoryEventParser.Parse(
+            $"Memory suggestion applied\r\nAction: ReduceHibernateFile\r\nFreed disk bytes: {r.FreedDiskBytes}\r\nResult: Success\r\nMessage: {r.Message}", new DateTimeOffset(r.When))!;
+        foreach (var h in new[] { HistorySummary.Build([], memory: svc), HistorySummary.Build([logged], memory: svc) })
+        {
+            Assert.Equal(r.FreedDiskBytes, h.DiskReclaimedBytes);
+            Assert.Equal("Storage optimization", Assert.Single(h.Fixes).Category);
+            Assert.Equal((1, 0), (h.StorageFixesCount, h.MemoryFixesCount));
+            Assert.Equal("1 storage fix", h.FixesMeta);
+            Assert.Equal("Reclaimed from temp files, cache, etc.", h.DiskMeta);
+            Assert.Equal("No memory actions run in this range", h.MemoryMeta);
+        }
         Assert.Equal([true], sys.Calls);
         var rec = Assert.Single(j.All);
         Assert.Equal((ChangeKind.HiberFileType, "full"), (rec.Kind, rec.Previous));
@@ -116,6 +127,11 @@ public class HibernationTests
         Assert.True((await svc.UndoAsync(svc.UndoFor("hiberfile-reduced")!)).Success);
         Assert.Equal([true, false], sys.Calls);
         Assert.Empty(j.All);
+
+        // The undo is listed under storage too, and counts as neither a storage fix nor a memory fix.
+        var afterUndo = HistorySummary.Build([], memory: svc);
+        Assert.Equal(["Storage optimization", "Storage optimization"], afterUndo.Fixes.Select(f => f.Category));
+        Assert.Equal((1, 0), (afterUndo.StorageFixesCount, afterUndo.MemoryFixesCount));
     }
 
     [Fact]

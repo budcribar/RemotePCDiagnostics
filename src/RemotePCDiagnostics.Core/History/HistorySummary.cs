@@ -4,7 +4,6 @@ using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
-using RemotePCDiagnostics.Core.Storage;
 
 namespace RemotePCDiagnostics.Core.History;
 
@@ -37,6 +36,7 @@ public sealed record HistoryImpactSummary(
     int DevicesResetCount,
     int ServicesAdjustedCount,
     int AppsRemovedCount,
+    int StorageFixesCount,
     int TotalRunsCount,
     int PassedRunsCount,
     int WarningRunsCount,
@@ -46,7 +46,7 @@ public sealed record HistoryImpactSummary(
     public string DiskHeadline => DiskReclaimedBytes > 0 ? HardwareInventory.FormatBytes(DiskReclaimedBytes) : "0 B";
     public string DiskMeta => TempFilesCleaned > 0
         ? $"{TempFilesCleaned.ToString("N0", CultureInfo.InvariantCulture)} file(s) cleaned"
-        : DiskReclaimedBytes > 0 ? "Reclaimed from temporary files & cache" : "No disk cleanup run in this range";
+        : DiskReclaimedBytes > 0 ? "Reclaimed from temp files, cache, etc." : "No disk cleanup run in this range";
 
     public string MemoryHeadline => MemorySavedBytes > 0 ? HardwareInventory.FormatBytes(MemorySavedBytes) : "0 B";
     public string MemoryMeta => MemoryFixesCount > 0
@@ -65,6 +65,7 @@ public sealed record HistoryImpactSummary(
             if (ServicesAdjustedCount > 0) parts.Add(AreaModuleBase.Plural(ServicesAdjustedCount, "service action"));
             if (MemoryFixesCount > 0) parts.Add(AreaModuleBase.Plural(MemoryFixesCount, "memory fix", "memory fixes"));
             if (AppsRemovedCount > 0) parts.Add(AreaModuleBase.Plural(AppsRemovedCount, "app removal"));
+            if (StorageFixesCount > 0) parts.Add(AreaModuleBase.Plural(StorageFixesCount, "storage fix", "storage fixes"));
             return parts.Count > 0 ? string.Join(" · ", parts) : $"{SuccessfulFixesCount} of {TotalFixesCount} succeeded";
         }
     }
@@ -86,10 +87,22 @@ public static class HistorySummary
     public const string MemoryFixModuleId = "MemoryOptimization";
     private const string DiskCleanupCategory = "Disk cleanup";
     private const string AppRemovalCategory = "App removal";
+    private const string StorageCategory = "Storage optimization";
+    private const string MemoryCategory = "Memory optimization";
 
     /// <summary>Removing apps frees disk space, not memory: listed and counted on its own.</summary>
     private static bool IsAppRemoval(MemoryActionType? action) =>
         action is MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.RemoveNarratorAddons;
+
+    /// <summary>Shrinking the hibernation file frees disk space, not memory: a storage fix.</summary>
+    private static bool IsStorageFix(MemoryActionType? action) => action is MemoryActionType.ReduceHibernateFile;
+
+    /// <summary>The History category of a memory-suggestion action; the live record and its logged copy both go through here.</summary>
+    private static string MemoryActionCategory(MemoryActionType? action) =>
+        action is MemoryActionType.CleanStorage ? DiskCleanupCategory
+        : IsAppRemoval(action) ? AppRemovalCategory
+        : IsStorageFix(action) ? StorageCategory
+        : MemoryCategory;
 
     public static bool IsFixEntry(HistoryEntry e) =>
         string.Equals(e.Module, RemediationModuleId, StringComparison.OrdinalIgnoreCase)
@@ -137,6 +150,7 @@ public static class HistorySummary
         int devicesReset = 0;
         int servicesAdjusted = 0;
         int appsRemoved = 0;
+        int storageFixes = 0;
 
         var fixList = new List<FixHistoryItem>();
         var persistedUnmatched = new List<(DateTimeOffset TimeUtc, string Summary)>();
@@ -235,11 +249,12 @@ public static class HistorySummary
             var up = (int)LongMeas(e, "UpdatesInstalled");
             var actor = e.Measurement("Actor") ?? "Local user";
             var kind = e.Measurement("Kind") ?? e.Module;
-            var isStorageCleanup = string.Equals(e.Module, MemoryFixModuleId, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(kind, nameof(MemoryActionType.CleanStorage), StringComparison.OrdinalIgnoreCase);
+            var isMemoryModule = string.Equals(e.Module, MemoryFixModuleId, StringComparison.OrdinalIgnoreCase);
+            MemoryActionType? action = isMemoryModule && Enum.TryParse<MemoryActionType>(kind, ignoreCase: true, out var parsed) ? parsed : null;
+            var isStorageCleanup = action is MemoryActionType.CleanStorage;
             if (isStorageCleanup) mb = 0; // disk, not memory
-            var isAppRemoval = string.Equals(e.Module, MemoryFixModuleId, StringComparison.OrdinalIgnoreCase) &&
-                Enum.TryParse<MemoryActionType>(kind, ignoreCase: true, out var action) && IsAppRemoval(action);
+            var isAppRemoval = IsAppRemoval(action);
+            var isStorageFix = IsStorageFix(action);
 
             diskBytes += fb;
             tempFiles += rf;
@@ -247,7 +262,8 @@ public static class HistorySummary
             updatesInstalled += up;
 
             if (isAppRemoval && ok) appsRemoved++;
-            if (!isStorageCleanup && !isAppRemoval && (mb > 0 || string.Equals(e.Module, MemoryFixModuleId, StringComparison.OrdinalIgnoreCase) || kind.Equals(nameof(RemediationKind.EndProcessGroup), StringComparison.OrdinalIgnoreCase)))
+            if (isStorageFix && ok) storageFixes++;
+            if (!isStorageCleanup && !isAppRemoval && !isStorageFix && (mb > 0 || isMemoryModule || kind.Equals(nameof(RemediationKind.EndProcessGroup), StringComparison.OrdinalIgnoreCase)))
                 if (ok) memFixes++;
             if (kind is nameof(RemediationKind.RestartDevice) or nameof(RemediationKind.EnableDevice) && ok)
                 devicesReset++;
@@ -255,7 +271,7 @@ public static class HistorySummary
                 servicesAdjusted++;
 
             var badge = FormatImpactBadge(fb, mb, up, rf);
-            fixList.Add(new(e.TimeUtc, isStorageCleanup ? DiskCleanupCategory : isAppRemoval ? AppRemovalCategory : e.Test, actor, ok, e.Summary, badge));
+            fixList.Add(new(e.TimeUtc, action is null ? e.Test : MemoryActionCategory(action), actor, ok, e.Summary, badge));
             persistedUnmatched.Add((e.TimeUtc, NormalizeSummary(e.Summary)));
         }
 
@@ -289,8 +305,7 @@ public static class HistorySummary
                 totalFixes++;
                 if (m.Success) okFixes++;
 
-                // The storage catalog uses its cleanup ID as the suggestion ID.
-                if (StorageCleanupCatalog.Find(m.SuggestionId) is not null)
+                if (m.Action is MemoryActionType.CleanStorage)
                 {
                     var bytes = m.FreedDiskBytes;
                     var files = (int)Math.Min(m.RemovedFiles, int.MaxValue);
@@ -301,20 +316,22 @@ public static class HistorySummary
                     continue;
                 }
 
-                var appRemoval = IsAppRemoval(m.Action);
-                if (m.Success) { if (appRemoval) appsRemoved++; else memFixes++; }
+                // An undo is listed under its action's category, but it isn't a fix of that kind.
+                if (m.Success && !m.Undone)
+                {
+                    if (IsAppRemoval(m.Action)) appsRemoved++;
+                    else if (IsStorageFix(m.Action)) storageFixes++;
+                    else memFixes++;
+                }
                 var freed = m.FreedMemoryBytes;
                 memBytes += freed;
                 diskBytes += m.FreedDiskBytes; // an app removal, or the hibernation file shrunk
 
                 var badge = FormatImpactBadge(m.FreedDiskBytes, freed, 0, 0);
-                fixList.Add(new(tUtc, appRemoval ? AppRemovalCategory : "Memory optimization", memory.Actor, m.Success, m.Message, badge));
+                fixList.Add(new(tUtc, MemoryActionCategory(m.Action), memory.Actor, m.Success, m.Message, badge));
             }
-            // The session total also holds gains too small to be reported on a record. Every recent record is already counted
-            // above or through its logged copy, so only what's beyond them is added (never the same amount twice).
-            var onRecords = memory.Recent.Sum(x => x.FreedMemoryBytes);
-            if (memory.TotalFreedBytes > onRecords)
-                memBytes += memory.TotalFreedBytes - onRecords;
+            // Only amounts carried on a record are counted, the same as its logged copy: History never adds the session total,
+            // whose gains under the measurable threshold the card reports as "No measurable change".
         }
 
         // 4. Live in-session ServiceActionService records
@@ -348,6 +365,7 @@ public static class HistorySummary
             devicesReset,
             servicesAdjusted,
             appsRemoved,
+            storageFixes,
             diagnosticEntries.Count,
             passed,
             warn,

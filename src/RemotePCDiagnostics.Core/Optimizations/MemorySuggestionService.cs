@@ -205,7 +205,7 @@ public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, s
     string? CreatedKey = null, string? PreviousExtra = null);
 
 public sealed record SuggestionResult(string SuggestionId, bool Success, string Message, DateTime When, bool CanForceClose = false, bool Skipped = false,
-    long FreedDiskBytes = 0, long RemovedFiles = 0, long FreedMemoryBytes = 0, MemoryActionType? Action = null);
+    long FreedDiskBytes = 0, long RemovedFiles = 0, long FreedMemoryBytes = 0, MemoryActionType? Action = null, bool Undone = false);
 
 /// <summary>
 /// Scans, shows and applies memory suggestions. Every change runs only from an explicit click; each is logged to the Event Log (1400)
@@ -444,7 +444,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             if (JournalKind(u.Type) is { } jk) try { journal?.RemoveLatest(jk, u.Target); } catch { }
         }
         Event(outcome.Success ? LogLevel.Information : LogLevel.Warning, $"Memory suggestion undone\r\nActor: {Actor}\r\nAction: {u.Type}\r\nTarget: {u.Target}\r\nResult: {(outcome.Success ? "Success" : "Failed")}\r\nMessage: {outcome.Message}");
-        var r = new SuggestionResult(u.Id, outcome.Success, (outcome.Success ? "Undone: " : "") + outcome.Message, DateTime.Now);
+        var r = new SuggestionResult(u.Id, outcome.Success, (outcome.Success ? "Undone: " : "") + outcome.Message, DateTime.Now, Action: u.Type, Undone: true);
         lock (_gate) { _results[u.Id] = r; _recent.Insert(0, r); }
         await ScanAsync(ct).ConfigureAwait(false);
         return r;
