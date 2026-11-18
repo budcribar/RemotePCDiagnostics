@@ -63,6 +63,9 @@
 </div>
 
 @code {
+    /// <summary>The fix dialog and result for the integrity scan shown in the detail panel.</summary>
+    private RemediationActions? _scanFixUi;
+
     protected override void OnInitialized()
     {
         base.OnInitialized();
@@ -302,6 +305,12 @@
             }
         </div>
         <div class="ct-detail-body" @key="m.Name">
+            @* The integrity scans show their result here, not on an area page: their single repair steps and the fix dialog live here too.
+               Mounted while the scan re-runs after a fix, so the fix's result stays visible. *@
+            @if (m is ICancellableScan && App.Remediation is { } scanFixes && (kind == RowKind.Running || (r.Payload is AreaReport && kind != RowKind.Cancelled)))
+            {
+                <RemediationActions @ref="_scanFixUi" Actions="scanFixes" ShowRecent="false" Origin="@m.Name" OnCompleted="() => { _ = Screen.RunSingleAsync(m); }" />
+            }
             @if (m is ICancellableScan && kind == RowKind.Running)
             {
                 <div class="cards">
@@ -329,6 +338,16 @@
                 @foreach (var card in integrity.Cards)
                 {
                     <p class="meta">@card.Meta</p>
+                    @if (App.Remediation is not null && card.Actions is { Count: > 0 })
+                    {
+                        <div class="svc-actions" data-testid="checks-scan-fixes">
+                            @foreach (var act in card.Actions)
+                            {
+                                var a = act;
+                                <button class="btn-small" data-testid="remediation-card-@card.Id-@a.Kind" data-action="remediate" data-card-id="@card.Id" data-action-kind="@a.Kind" data-action-target="@a.Target" @onclick="() => _scanFixUi?.Ask(a)">@a.ButtonText</button>
+                            }
+                        </div>
+                    }
                     @foreach (var summary in card.Rows.Where(row => row.Values.Count > 0 && row.Values[0] == "CBS summary"))
                     {
                         <strong>CBS summary</strong>
