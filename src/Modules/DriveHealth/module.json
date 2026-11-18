@@ -1,7 +1,7 @@
 {
   "id": "6e35be79-5873-46de-b029-de1c69e05d58",
   "slug": "DriveHealth",
-  "displayName": "Drive health",
+  "displayName": "Drive health & free space",
   "contract": "2.0",
   "entryType": "RemotePCDiagnostics.Modules.DriveHealth.DriveHealthPlugin",
   "needsAdmin": false,

@@ -439,6 +439,29 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
         return list;
     }
 
+    public static AreaCard BuildDriveCapacityCard(IReadOnlyList<DriveCapacityInfo> drives, string cardId = "drives")
+    {
+        string[] driveCols = ["Drive", "Total", "Used", "Free", "% Used", "Format"];
+        var driveRows = drives.Select(d => new AreaRow(
+            d.UsedPercent >= 90.0 ? AreaLevel.Warning : AreaLevel.Neutral,
+            [d.DriveName, HardwareInventory.FormatBytes(d.TotalBytes), HardwareInventory.FormatBytes(d.UsedBytes), HardwareInventory.FormatBytes(d.FreeBytes), $"{d.UsedPercent:0.#}%", d.DriveFormat],
+            SortKeys: [d.DriveName, d.TotalBytes.ToString("D19"), d.UsedBytes.ToString("D19"), d.FreeBytes.ToString("D19"), d.UsedPercent.ToString("F2"), d.DriveFormat],
+            Detail: $"{d.DriveName} ({d.VolumeLabel})\nTotal capacity: {HardwareInventory.FormatBytes(d.TotalBytes)} ({d.TotalBytes:N0} bytes)\nUsed space: {HardwareInventory.FormatBytes(d.UsedBytes)} ({d.UsedBytes:N0} bytes, {d.UsedPercent:0.#}%)\nFree space: {HardwareInventory.FormatBytes(d.FreeBytes)} ({d.FreeBytes:N0} bytes)\nFile system: {d.DriveFormat}",
+            FilePath: d.DriveName)).ToList();
+
+        return new AreaCard(
+            cardId,
+            "Drive Capacity",
+            drives.Any(d => d.UsedPercent >= 90.0) ? AreaLevel.Warning : AreaLevel.Neutral,
+            drives.Count == 1
+                ? $"{drives[0].DriveName} {HardwareInventory.FormatBytes(drives[0].FreeBytes)} free of {HardwareInventory.FormatBytes(drives[0].TotalBytes)} ({drives[0].UsedPercent:0.#}% used)"
+                : $"{HardwareInventory.FormatBytes(drives.Sum(d => d.FreeBytes))} free across {drives.Count} drives",
+            drives.Count == 1 ? $"{drives[0].UsedPercent:0.#}% used · {drives[0].DriveFormat} file system" : $"{HardwareInventory.FormatBytes(drives.Sum(d => d.FreeBytes))} total free space",
+            driveCols,
+            driveRows,
+            EmptyText: "No drive capacity information available.");
+    }
+
     public static AreaReport BuildReport(
         string root,
         long minSizeBytes,
@@ -453,25 +476,7 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
         // Card 1: Drive Capacity
         if (drives.Count > 0)
         {
-            string[] driveCols = ["Drive", "Total", "Used", "Free", "% Used", "Format"];
-            var driveRows = drives.Select(d => new AreaRow(
-                d.UsedPercent >= 90.0 ? AreaLevel.Warning : AreaLevel.Neutral,
-                [d.DriveName, HardwareInventory.FormatBytes(d.TotalBytes), HardwareInventory.FormatBytes(d.UsedBytes), HardwareInventory.FormatBytes(d.FreeBytes), $"{d.UsedPercent:0.#}%", d.DriveFormat],
-                SortKeys: [d.DriveName, d.TotalBytes.ToString("D19"), d.UsedBytes.ToString("D19"), d.FreeBytes.ToString("D19"), d.UsedPercent.ToString("F2"), d.DriveFormat],
-                Detail: $"{d.DriveName} ({d.VolumeLabel})\nTotal capacity: {HardwareInventory.FormatBytes(d.TotalBytes)} ({d.TotalBytes:N0} bytes)\nUsed space: {HardwareInventory.FormatBytes(d.UsedBytes)} ({d.UsedBytes:N0} bytes, {d.UsedPercent:0.#}%)\nFree space: {HardwareInventory.FormatBytes(d.FreeBytes)} ({d.FreeBytes:N0} bytes)\nFile system: {d.DriveFormat}",
-                FilePath: d.DriveName)).ToList();
-
-            cards.Add(new AreaCard(
-                "drives",
-                "Drive Capacity",
-                drives.Any(d => d.UsedPercent >= 90.0) ? AreaLevel.Warning : AreaLevel.Neutral,
-                drives.Count == 1
-                    ? $"{drives[0].DriveName} {HardwareInventory.FormatBytes(drives[0].UsedBytes)} used of {HardwareInventory.FormatBytes(drives[0].TotalBytes)} ({HardwareInventory.FormatBytes(drives[0].FreeBytes)} free)"
-                    : $"{drives.Count} drives scanned",
-                drives.Count == 1 ? $"{drives[0].UsedPercent:0.#}% used · {drives[0].DriveFormat} file system" : $"{HardwareInventory.FormatBytes(drives.Sum(d => d.FreeBytes))} total free space",
-                driveCols,
-                driveRows,
-                EmptyText: "No drive capacity information available."));
+            cards.Add(BuildDriveCapacityCard(drives, "drives"));
         }
 
         // Card 2: Largest Folders

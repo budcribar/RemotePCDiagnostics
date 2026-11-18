@@ -80,18 +80,41 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     public const string ModuleName = ModuleSlugs.DriveHealth;
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.DriveHealth;
-    public override string DisplayName => "Drive health";
+    public override string DisplayName => "Drive health & free space";
     protected override string FailedMessage => "Couldn't check drive health on this PC.";
 
     public static string Script => Scripts.PowerShellScripts.Get("DriveHealth");
 
     public static IReadOnlyList<string> Arguments => SystemCommandRunner.PowerShellArgs(Script);
 
+    public static IReadOnlyList<DriveCapacityInfo> GetDrives()
+    {
+        var list = new List<DriveCapacityInfo>();
+        try
+        {
+            foreach (var d in DriveInfo.GetDrives())
+            {
+                if (d.IsReady && (d.DriveType == DriveType.Fixed || d.DriveType == DriveType.Removable))
+                {
+                    list.Add(new DriveCapacityInfo(
+                        d.Name,
+                        string.IsNullOrWhiteSpace(d.VolumeLabel) ? d.Name : d.VolumeLabel,
+                        d.DriveFormat,
+                        d.TotalSize,
+                        d.TotalFreeSpace));
+                }
+            }
+        }
+        catch { }
+        return list;
+    }
+
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         var read = await ReadDrivesAsync(progress, ct).ConfigureAwait(false);
         if (read.Drives is null) return AreaReport.Failed(FailedMessage);
-        return Build(read.Drives, read.Retrims, read.Now, _history) with { Notice = read.Notice };
+        var capacities = await Task.Run(GetDrives, ct).ConfigureAwait(false);
+        return Build(read.Drives, read.Retrims, read.Now, _history, capacities) with { Notice = read.Notice };
     }
 
     /// <summary>The drives as last read: health (or the osquery list with <see cref="Notice"/>), retrim dates, and when.</summary>
@@ -276,7 +299,7 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
         if (_latest is not { Drives: { } drives } read) return null;
         var byKey = Instances(drives).ToDictionary(x => x.Instance.Key, x => x.Drive);
         var shown = instanceResults.Select(r => r.InstanceKey is { } k ? byKey.GetValueOrDefault(k) : null).OfType<DriveHealth>().ToList();
-        return shown.Count == 0 ? null : Build(shown, read.Retrims, read.Now, _history) with { Notice = read.Notice };
+        return shown.Count == 0 ? null : Build(shown, read.Retrims, read.Now, _history, GetDrives()) with { Notice = read.Notice };
     }
 
     private async Task<IReadOnlyDictionary<char, RetrimRecord>?> ReadRetrimsAsync(CancellationToken ct)
@@ -304,16 +327,23 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
         return days <= 0 ? "today" : days == 1 ? "yesterday" : $"{days} days ago";
     }
 
-    public static AreaReport Build(IReadOnlyList<DriveHealth> drives) => Build(drives, null, DateTimeOffset.Now);
+    public static AreaReport Build(IReadOnlyList<DriveHealth> drives) =>
+        Build(drives, null, DateTimeOffset.Now, null, null);
 
-    public static AreaReport Build(IReadOnlyList<DriveHealth> drives, IReadOnlyDictionary<char, RetrimRecord>? retrims, DateTimeOffset now, IDriveHealthHistoryStore? historyStore = null)
+    public static AreaReport Build(
+        IReadOnlyList<DriveHealth> drives,
+        IReadOnlyDictionary<char, RetrimRecord>? retrims = null,
+        DateTimeOffset? now = null,
+        IDriveHealthHistoryStore? historyStore = null,
+        IReadOnlyList<DriveCapacityInfo>? capacities = null)
     {
-        if (drives.Count == 0)
+        var timestamp = now ?? DateTimeOffset.Now;
+        if (drives.Count == 0 && (capacities is null || capacities.Count == 0))
             return new([], "No drives were found to check.", DiagnosticStatus.Warning);
         string[] cols = ["Detail", "Value"];
         var cards = drives.Select((d, i) =>
         {
-            var trend = historyStore?.AnalyzeTrend(d.RawId, d, now);
+            var trend = historyStore?.AnalyzeTrend(d.RawId, d, timestamp);
             var level = d.Level;
             var verdict = d.Verdict;
             var reasons = d.Reasons().ToList();
@@ -324,9 +354,18 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
                 reasons.Insert(0, trend.SummaryText);
             }
 
+            var driveLetters = RemediationService.DriveLetters(d.Letters);
+            DriveCapacityInfo? primaryVol = null;
+            if (capacities is { Count: > 0 } && driveLetters.Length > 0)
+            {
+                primaryVol = capacities.FirstOrDefault(cap =>
+                    driveLetters.Any(letter => cap.DriveName.StartsWith(letter.ToString(), StringComparison.OrdinalIgnoreCase)));
+            }
+
             var meta = string.Join(" · ", new[]
             {
                 d.Kind, d.SizeBytes is > 0 ? HardwareInventory.FormatBytes(d.SizeBytes) : null,
+                primaryVol is not null ? $"{HardwareInventory.FormatBytes(primaryVol.FreeBytes)} free" : null,
                 d.TemperatureC is > 0 ? $"{d.TemperatureC}°C" : null, d.Wear is not null ? $"{d.Wear}% worn" : null,
                 trend is { IsDegrading: true } ? "Degrading" : null,
             }.Where(x => x is not null));
@@ -339,32 +378,51 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             Add("Type", d.Kind);
             Add("Connection", d.BusType);
             Add("Size", d.SizeBytes is > 0 ? HardwareInventory.FormatBytes(d.SizeBytes) : null);
+            if (capacities is { Count: > 0 } && driveLetters.Length > 0)
+            {
+                foreach (var letter in driveLetters)
+                {
+                    if (capacities.FirstOrDefault(cap => cap.DriveName.StartsWith(letter.ToString(), StringComparison.OrdinalIgnoreCase)) is { } vol)
+                    {
+                        Add($"Volume {vol.DriveName.TrimEnd('\\')}", $"{HardwareInventory.FormatBytes(vol.FreeBytes)} free of {HardwareInventory.FormatBytes(vol.TotalBytes)} ({vol.UsedPercent:0.#}% used · {vol.DriveFormat})",
+                            vol.UsedPercent >= 90.0 ? AreaLevel.Warning : AreaLevel.Neutral);
+                    }
+                }
+            }
             Add("Temperature", d.TemperatureC is > 0 ? $"{d.TemperatureC}°C" : "Not reported", d.TemperatureC >= DriveHealth.HotC ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Life used", d.Wear is not null ? $"{d.Wear}%" : "Not reported", d.Wear >= DriveHealth.WornPercent ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Uncorrected read errors", d.ReadErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported", d.ReadErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Uncorrected write errors", d.WriteErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported", d.WriteErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Hours powered on", d.PowerOnHours is >= 0 ? d.PowerOnHours.Value.ToString("N0", CultureInfo.InvariantCulture) : "Not reported");
             var ssdLetters = d.Kind == "SSD" ? RemediationService.DriveLetters(d.Letters) : "";
-            if (ssdLetters.Length > 0) Add("Last optimized", LastOptimizedText(ssdLetters, retrims, now));
+            if (ssdLetters.Length > 0) Add("Last optimized", LastOptimizedText(ssdLetters, retrims, timestamp));
             Add("Serial number", d.Serial);
             var actions = new List<AreaAction>();
             if (i == 0)
                 actions.Add(new(RemediationKind.CleanTempFiles, "Clean up temporary files", "", "Temporary files & Recycle Bin"));
             // Not offered when Windows or this app retrimmed every volume of this SSD in the last 30 days.
             var dueLetters = new string(ssdLetters.Where(letter =>
-                !RecentlyRetrimmed(letter.ToString(), retrims, now)).ToArray());
+                !RecentlyRetrimmed(letter.ToString(), retrims, timestamp)).ToArray());
             if (dueLetters.Length > 0)
                 actions.Add(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", dueLetters, d.Name.Length > 0 ? d.Name : "SSD"));
             return new AreaCard($"drive{i}", d.Name.Length > 0 ? d.Name : $"Drive {i + 1}", level, verdict, meta, cols, rows,
                 Actions: actions.Count > 0 ? actions : null);
         }).ToList();
 
-        var degrading = drives.Count(d => historyStore?.AnalyzeTrend(d.RawId, d, now).IsDegrading == true);
+        if (capacities is { Count: > 0 })
+        {
+            cards.Insert(0, DiskSpaceModule.BuildDriveCapacityCard(capacities, "capacity"));
+        }
+
+        var degrading = drives.Count(d => historyStore?.AnalyzeTrend(d.RawId, d, timestamp).IsDegrading == true);
         var bad = cards.Count(c => c.Level is AreaLevel.Warning or AreaLevel.Error);
         var unknown = drives.All(d => d.Level == AreaLevel.Neutral);
-        var summary = bad > 0 ? $"{bad} of {Plural(drives.Count, "drive")} need{(bad == 1 ? "s" : "")} attention"
-            : unknown ? $"{Plural(drives.Count, "drive")} found · health not reported"
-            : drives.Count == 1 ? "1 drive · healthy" : $"{drives.Count} drives · all healthy";
+        string freePart = capacities is { Count: > 0 }
+            ? $" · {(capacities.Count == 1 ? $"{HardwareInventory.FormatBytes(capacities[0].FreeBytes)} free on {capacities[0].DriveName.TrimEnd('\\')}" : $"{HardwareInventory.FormatBytes(capacities.Sum(c => c.FreeBytes))} free")}"
+            : "";
+        var summary = bad > 0 ? $"{bad} of {Plural(drives.Count, "drive")} need{(bad == 1 ? "s" : "")} attention{freePart}"
+            : unknown ? $"{Plural(drives.Count, "drive")} found · health not reported{freePart}"
+            : drives.Count == 1 ? $"1 drive · healthy{freePart}" : $"{drives.Count} drives · all healthy{freePart}";
         if (degrading > 0)
             summary = $"{summary} ({Plural(degrading, "drive")} getting worse)";
         return new(cards, summary, AreaReport.Worst(cards.Select(c => c.Level)));

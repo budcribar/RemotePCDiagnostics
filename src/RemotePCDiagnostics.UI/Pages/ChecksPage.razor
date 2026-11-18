@@ -335,6 +335,21 @@
             else if (m is ICancellableScan && r.Payload is AreaReport integrity && kind != RowKind.Cancelled)
             {
                 <AreaReportData Report="integrity" CheckId="@m.Name" RunId="r.RunId" />
+                @if (m.Name == ModuleSlugs.DiskSpace)
+                {
+                    var capCard = integrity.Cards.FirstOrDefault(c => c.Id is "drives" or "capacity");
+                    <div hidden data-testid="disk-space-counts">
+                        @if (capCard is not null)
+                        {
+                            var total = capCard.Rows.Sum(row => row.SortKeys.Count > 1 && long.TryParse(row.SortKeys[1], out var t) ? t : 0L);
+                            var used = capCard.Rows.Sum(row => row.SortKeys.Count > 2 && long.TryParse(row.SortKeys[2], out var u) ? u : 0L);
+                            var free = capCard.Rows.Sum(row => row.SortKeys.Count > 3 && long.TryParse(row.SortKeys[3], out var f) ? f : 0L);
+                            <span data-field="total-storage-bytes" data-unit="bytes" data-value="@total"></span>
+                            <span data-field="free-storage-bytes" data-unit="bytes" data-value="@free"></span>
+                            <span data-field="used-storage-bytes" data-unit="bytes" data-value="@used"></span>
+                        }
+                    </div>
+                }
                 @foreach (var card in integrity.Cards)
                 {
                     <p class="meta">@card.Meta</p>

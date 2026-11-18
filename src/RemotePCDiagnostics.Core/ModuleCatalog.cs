@@ -10,7 +10,7 @@ public static class BuiltInModules
         new(ModuleIds.Osquery, ModuleSlugs.Osquery, "Hardware inventory", ModuleKind.Check, ModuleGroups.Hardware, 100),
         new(ModuleIds.Sensors, ModuleSlugs.Sensors, "Temperatures & fans", ModuleKind.Check, ModuleGroups.Hardware, 200),
         new(ModuleIds.DeviceDrivers, ModuleSlugs.DeviceDrivers, "Device Manager & drivers", ModuleKind.Check, ModuleGroups.Hardware, 300),
-        new(ModuleIds.DriveHealth, ModuleSlugs.DriveHealth, "Drive health", ModuleKind.Check, ModuleGroups.Storage, 100),
+        new(ModuleIds.DriveHealth, ModuleSlugs.DriveHealth, "Drive health & free space", ModuleKind.Check, ModuleGroups.Storage, 100),
         new(ModuleIds.ResourceHogs, ModuleSlugs.ResourceHogs, "Resource hogs & uptime", ModuleKind.Check, ModuleGroups.Cpu, 100),
         new(ModuleIds.BatteryPower, ModuleSlugs.BatteryPower, "Battery & power plan", ModuleKind.Check, ModuleGroups.Power, 100),
         new(ModuleIds.Network, ModuleSlugs.Network, "Network & Wi-Fi", ModuleKind.Check, ModuleGroups.Network, 100),

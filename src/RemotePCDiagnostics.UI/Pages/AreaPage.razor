@@ -15,6 +15,14 @@ else
 {
     var r = Store.Get(m.Name);
     var rep = r.Report() as AreaReport; // a per-device module (drive health) combines its devices into one report
+    if (rep is null && string.Equals(m.Name, ModuleSlugs.DiskSpace, StringComparison.OrdinalIgnoreCase))
+    {
+        var quickDrives = DiskSpaceModule.GetDrivesForScan(m is DiskSpaceModule dsm ? dsm.RootPath : "C:\\");
+        if (quickDrives.Count > 0)
+        {
+            rep = new AreaReport([DiskSpaceModule.BuildDriveCapacityCard(quickDrives, "drives")], "Drive capacity available · Large files scan not run yet", DiagnosticStatus.Ok);
+        }
+    }
     var busy = r.Status == DiagnosticStatus.Running;
     var svcModule = m.Feature<IServiceRows>(); // also from a stand-in for a module that runs out of process
     var svcActions = svcModule is null ? null : App.ServiceActions;
@@ -45,12 +53,38 @@ else
     {
         @if (!busy && m.Name == ModuleSlugs.DriveHealth)
         {
+            var physCards = rep.Cards.Where(c => c.Id.StartsWith("drive")).ToList();
+            var capCard = rep.Cards.FirstOrDefault(c => c.Id == "capacity");
             <div hidden data-testid="drive-health-counts">
-                <span data-field="reported-drive-count" data-unit="count" data-value="@rep.Cards.Count"></span>
-                <span data-field="healthy-drive-count" data-unit="count" data-value="@rep.Cards.Count(c => c.Level == AreaLevel.Ok)"></span>
-                <span data-field="warning-drive-count" data-unit="count" data-value="@rep.Cards.Count(c => c.Level == AreaLevel.Warning)"></span>
-                <span data-field="critical-drive-count" data-unit="count" data-value="@rep.Cards.Count(c => c.Level == AreaLevel.Error)"></span>
-                <span data-field="unknown-drive-count" data-unit="count" data-value="@rep.Cards.Count(c => c.Level == AreaLevel.Neutral)"></span>
+                <span data-field="reported-drive-count" data-unit="count" data-value="@(physCards.Count > 0 ? physCards.Count : rep.Cards.Count)"></span>
+                <span data-field="healthy-drive-count" data-unit="count" data-value="@(physCards.Count > 0 ? physCards.Count(c => c.Level == AreaLevel.Ok) : rep.Cards.Count(c => c.Level == AreaLevel.Ok))"></span>
+                <span data-field="warning-drive-count" data-unit="count" data-value="@(physCards.Count > 0 ? physCards.Count(c => c.Level == AreaLevel.Warning) : rep.Cards.Count(c => c.Level == AreaLevel.Warning))"></span>
+                <span data-field="critical-drive-count" data-unit="count" data-value="@(physCards.Count > 0 ? physCards.Count(c => c.Level == AreaLevel.Error) : rep.Cards.Count(c => c.Level == AreaLevel.Error))"></span>
+                <span data-field="unknown-drive-count" data-unit="count" data-value="@(physCards.Count > 0 ? physCards.Count(c => c.Level == AreaLevel.Neutral) : rep.Cards.Count(c => c.Level == AreaLevel.Neutral))"></span>
+                @if (capCard is not null)
+                {
+                    var total = capCard.Rows.Sum(r => r.SortKeys.Count > 1 && long.TryParse(r.SortKeys[1], out var t) ? t : 0L);
+                    var used = capCard.Rows.Sum(r => r.SortKeys.Count > 2 && long.TryParse(r.SortKeys[2], out var u) ? u : 0L);
+                    var free = capCard.Rows.Sum(r => r.SortKeys.Count > 3 && long.TryParse(r.SortKeys[3], out var f) ? f : 0L);
+                    <span data-field="total-storage-bytes" data-unit="bytes" data-value="@total"></span>
+                    <span data-field="free-storage-bytes" data-unit="bytes" data-value="@free"></span>
+                    <span data-field="used-storage-bytes" data-unit="bytes" data-value="@used"></span>
+                }
+            </div>
+        }
+        @if (!busy && m.Name == ModuleSlugs.DiskSpace)
+        {
+            var capCard = rep.Cards.FirstOrDefault(c => c.Id is "drives" or "capacity");
+            <div hidden data-testid="disk-space-counts">
+                @if (capCard is not null)
+                {
+                    var total = capCard.Rows.Sum(r => r.SortKeys.Count > 1 && long.TryParse(r.SortKeys[1], out var t) ? t : 0L);
+                    var used = capCard.Rows.Sum(r => r.SortKeys.Count > 2 && long.TryParse(r.SortKeys[2], out var u) ? u : 0L);
+                    var free = capCard.Rows.Sum(r => r.SortKeys.Count > 3 && long.TryParse(r.SortKeys[3], out var f) ? f : 0L);
+                    <span data-field="total-storage-bytes" data-unit="bytes" data-value="@total"></span>
+                    <span data-field="free-storage-bytes" data-unit="bytes" data-value="@free"></span>
+                    <span data-field="used-storage-bytes" data-unit="bytes" data-value="@used"></span>
+                }
             </div>
         }
         <div class="cards">

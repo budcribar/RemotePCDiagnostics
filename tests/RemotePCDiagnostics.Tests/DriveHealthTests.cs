@@ -24,9 +24,9 @@ public class DriveHealthTests
         var (m, l, log) = Make((f, a) => ScriptedLauncher.Ok(Healthy));
         var r = await m.RefreshAsync(null);
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
-        Assert.Equal("1 drive · healthy", r.Message);
+        Assert.StartsWith("1 drive · healthy", r.Message);
         var rep = Assert.IsType<AreaReport>(r.Payload);
-        var card = Assert.Single(rep.Cards);
+        var card = Assert.Single(rep.Cards, c => c.Title == "Samsung SSD 980 1TB");
         Assert.Equal("Samsung SSD 980 1TB", card.Title);
         Assert.Equal("Healthy", card.Headline);
         Assert.Contains("38°C", card.Meta);
@@ -64,8 +64,8 @@ public class DriveHealthTests
             : ScriptedLauncher.Fail("Get-PhysicalDisk : Access denied"));
         var r = await m.RefreshAsync(null);
         var rep = Assert.IsType<AreaReport>(r.Payload);
-        Assert.Equal("VirtualDisk", Assert.Single(rep.Cards).Title);
-        Assert.Equal("Health not reported", rep.Cards[0].Headline);
+        Assert.Equal("VirtualDisk", Assert.Single(rep.Cards, c => c.Title == "VirtualDisk").Title);
+        Assert.Equal("Health not reported", rep.Cards.First(c => c.Title == "VirtualDisk").Headline);
         Assert.NotNull(rep.Notice);
         Assert.DoesNotContain("Access denied", r.Message);
         Assert.Contains(log, s => s.Contains("Access denied"));
@@ -89,7 +89,7 @@ public class DriveHealthTests
         await svc.RunAsync(DriveHealthModule.ModuleName);
         Assert.IsType<AreaReport>(store.Get("DriveHealth").Report());
         Assert.Equal("Samsung SSD 980 1TB, 931.5 GB", Assert.Single(store.InstancesOf("DriveHealth")).InstanceLabel);
-        Assert.Equal("Drive health", svc.Modules.Single().DisplayName);
+        Assert.Equal("Drive health & free space", svc.Modules.Single().DisplayName);
     }
 
     private const string TwoDrives = """
@@ -112,7 +112,8 @@ public class DriveHealthTests
         Assert.Equal(DiagnosticStatus.Warning, perDrive.Single(x => x.InstanceLabel!.StartsWith("WD")).Status);
         Assert.Equal(DiagnosticStatus.Warning, r.Status);
         var report = Assert.IsType<AreaReport>(r.Report());
-        Assert.Equal(2, report.Cards.Count);
+        Assert.Contains(report.Cards, c => c.Title.StartsWith("Samsung"));
+        Assert.Contains(report.Cards, c => c.Title.StartsWith("WD"));
         Assert.Single(report.Cards.SelectMany(c => c.Actions ?? []), a => a.Kind == RemediationKind.CleanTempFiles); // once, not per drive
         Assert.True(reads <= 2, $"read the drives {reads} times"); // detection, then one shared read for both drives
     }
@@ -257,5 +258,50 @@ public class DriveHealthTests
         Assert.False(analysis.HasHistory);
         Assert.False(analysis.IsDegrading);
         Assert.Contains("First recorded health check", analysis.SummaryText);
+    }
+
+    [Fact]
+    public void Build_with_capacities_inserts_capacity_card_and_includes_free_space_in_summary()
+    {
+        var drive = new DriveHealth("Samsung 980", "SN1", "SSD", "NVMe", "Healthy", "OK", 500_000_000_000, 35, 10, ReadErrors: 0, WriteErrors: 0, PowerOnHours: 1000);
+        var capacities = new List<DriveCapacityInfo>
+        {
+            new("C:\\", "OS", "NTFS", 500_000_000_000, 200_000_000_000),
+            new("D:\\", "Data", "NTFS", 1_000_000_000_000, 600_000_000_000)
+        };
+
+        var rep = DriveHealthModule.Build([drive], capacities: capacities);
+
+        Assert.Equal(2, rep.Cards.Count);
+        var capCard = rep.Cards[0];
+        Assert.Equal("capacity", capCard.Id);
+        Assert.Equal("Drive Capacity", capCard.Title);
+        Assert.Equal(AreaLevel.Neutral, capCard.Level);
+        Assert.Equal(2, capCard.Rows.Count);
+        Assert.Equal("C:\\", capCard.Rows[0].Values[0]);
+        Assert.Equal("D:\\", capCard.Rows[1].Values[0]);
+
+        // Summary includes total free space
+        Assert.Contains("free", rep.Summary);
+    }
+
+    [Fact]
+    public void Build_with_single_capacity_formats_single_drive_summary_and_warns_on_low_free_space()
+    {
+        var drive = new DriveHealth("Samsung 980", "SN1", "SSD", "NVMe", "Healthy", "OK", 500_000_000_000, 35, 10, ReadErrors: 0, WriteErrors: 0, PowerOnHours: 1000);
+        var capacities = new List<DriveCapacityInfo>
+        {
+            new("C:\\", "OS", "NTFS", 100_000_000_000, 5_000_000_000) // 95% used
+        };
+
+        var rep = DriveHealthModule.Build([drive], capacities: capacities);
+
+        Assert.Equal(2, rep.Cards.Count);
+        var capCard = rep.Cards[0];
+        Assert.Equal("capacity", capCard.Id);
+        Assert.Equal(AreaLevel.Warning, capCard.Level);
+        Assert.Equal(AreaLevel.Warning, capCard.Rows[0].Level);
+        Assert.Contains("C", rep.Summary);
+        Assert.Contains("free on C", rep.Summary);
     }
 }
