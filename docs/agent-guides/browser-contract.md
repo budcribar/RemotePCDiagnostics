@@ -82,11 +82,17 @@ The Benchmark page needs no new markers: `bench-restart` (checkbox) chooses whet
 
 The Hardware inventory check (`Osquery`) renders `area-report-data` like the other checks, once a run has finished: cards `system`, `cpu`, `memory` and `disks`, with the rows the page's drawers show (one row per memory slot and per drive). Serial numbers and the hardware UUID are left out of this copy.
 
-## Page errors (`page-error`)
+## App faults (`app-fault-data`)
 
-When a page throws while it draws or handles a click, the page's content is replaced by `[data-testid="page-error"]` with `data-error-seq` (increases with every error), `data-error-type` (the exception type) and `data-error-page` (the route, such as `checks`). `page-error-detail` holds a one-line description and `page-error-retry` shows the page again. The page marker (`data-rpcd-page`) is gone while the error shows; the navigation and the session bar keep working, and going to another page clears the error. The full error is in the app log as "Page error on '<page>': …". An agent that finds `page-error` should report the app fault, not a missing element.
+Every page renders `[data-testid="app-fault-data"]` (it sits in the layout, outside the page) with schema 1 JSON: `seq`, the number of faults the app has recorded so far, and `last` (`seq`, `page`, `type`, `message`, `at`) for the latest one, absent when there has been none. A fault is a page that threw while it drew or handled a click. `seq` only grows.
+
+An automation reads `seq` before a step and again after it. A higher number means the app faulted during the step: report an app fault, not a missing element. The app does not retry. An automation may repeat a step that only reads or navigates; before repeating a step that changes the PC it must first read the app's own state (for a fix, `fix-data`) to see whether the step took effect.
+
+After a fault the app goes to the start page and shows `page-fault-notice` (with `data-fault-seq` and `data-fault-page`), one line naming the page that couldn't be shown, with `page-fault-dismiss`; it goes away when the person moves to another page. The full error is in the app log as "Page error on '<page>': …". Only when the start page itself is the one that failed does the app stay put and show `[data-testid="page-error"]` in place of the page (`data-error-seq`, `data-error-type`, `data-error-page`, and `page-error-retry` to draw it again); the page marker (`data-rpcd-page`) is gone while it shows.
 
 A selected row on Checks has `aria-pressed="true"`. A row that is still not pressed after a click means the page did not act on the click.
+
+**Readiness, not retries.** A step that only works on a second attempt points at something the page had not finished when the step ran. The fix is a marker the automation can wait for (as `data-run-state`, `data-result-run-id` and the `seq` values here already are), not a retry rule.
 
 ## Fixes and service actions
 

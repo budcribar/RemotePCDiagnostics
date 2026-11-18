@@ -559,3 +559,55 @@ public class HardwareInventoryReportTests
         Assert.Equal("Hardware inventory", report.Summary);
     }
 }
+
+/// <summary>The app's own fault record, which automations read to tell an app fault from a missing element.</summary>
+public class AppFaultsTests
+{
+    [Fact]
+    public void Faults_are_numbered_and_the_latest_is_kept()
+    {
+        var at = new DateTimeOffset(2026, 11, 18, 13, 0, 0, TimeSpan.Zero);
+        var faults = new RemotePCDiagnostics.Core.AppFaults(() => at);
+        var changes = 0;
+        faults.Changed += () => changes++;
+        Assert.Equal(0, faults.Seq);
+        Assert.Null(faults.Last);
+
+        var first = faults.Record("checks", new InvalidOperationException("Collection was modified\nmore"));
+        var second = faults.Record("area/Network", new AggregateException(new NullReferenceException()));
+
+        Assert.Equal((1, "checks", "InvalidOperationException", "Collection was modified"), (first.Seq, first.Page, first.Type, first.Message));
+        Assert.Equal((2, "NullReferenceException"), (second.Seq, second.Type));
+        Assert.Equal(2, faults.Seq);
+        Assert.Equal(second, faults.Last);
+        Assert.Equal(2, changes);
+    }
+
+    [Fact]
+    public void A_listener_that_throws_does_not_lose_the_fault()
+    {
+        var faults = new RemotePCDiagnostics.Core.AppFaults();
+        faults.Changed += () => throw new InvalidOperationException("listener");
+        Assert.Equal(1, faults.Record("checks", new Exception("x")).Seq);
+        Assert.Equal(1, faults.Seq);
+    }
+
+    [Fact]
+    public void Export_carries_the_count_and_the_latest_fault()
+    {
+        var faults = new RemotePCDiagnostics.Core.AppFaults(() => DateTimeOffset.UnixEpoch);
+        Assert.Equal("{\"schema\":1,\"seq\":0}", AgentExports.FaultState(faults));
+        faults.Record("checks", new InvalidOperationException("Sequence contains no elements"));
+        var state = AgentExports.BuildFaultState(faults);
+        Assert.Equal((1, 1, "checks", "InvalidOperationException", "Sequence contains no elements"),
+            (state.Seq, state.Last!.Seq, state.Last.Page, state.Last.Type, state.Last.Message));
+    }
+
+    [Theory]
+    [InlineData("checks", "Checks")]
+    [InlineData("area/Network", "Network")]
+    [InlineData("security-audit", "Security audit")]
+    [InlineData("", "requested")]
+    public void A_page_is_named_the_way_a_person_would_say_it(string page, string title) =>
+        Assert.Equal(title, RemotePCDiagnostics.Core.PageErrors.Title(page));
+}

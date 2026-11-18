@@ -4,11 +4,19 @@
 @inject ILoggerFactory Loggers
 @inject NavigationManager Nav
 @* Catches an error thrown while a page draws or handles a click. Without it the error is lost: nothing is logged and the page
-   just stops answering, which from a remote session looks like an element that went missing. Here the error is written to the
-   app log, the person (and a browser agent, through page-error) is told, and the rest of the app (navigation, session bar)
-   keeps working. Going to another page clears it. *@
+   just stops answering. Here the error goes to the app log and to the app's fault record (app-fault-data, which an automation
+   reads), and the app goes to the start page with one plain line saying which page couldn't be shown, so the person and an
+   automation always land somewhere that works. The app does not retry: the person clicks again, an automation decides for itself.
+   Only when the start page is the one that failed is the notice shown in place, since there is nowhere else to go. *@
 @if (CurrentException is null)
 {
+    @if (_failedPage is not null)
+    {
+        <div class="notice" role="status" data-testid="page-fault-notice" data-fault-seq="@_seq" data-fault-page="@_failedPage">
+            The @PageErrors.Title(_failedPage) page couldn't be shown. You can try it again.
+            <button type="button" class="btn-small" data-testid="page-fault-dismiss" @onclick="() => _failedPage = null">Dismiss</button>
+        </div>
+    }
     @ChildContent
 }
 else
@@ -17,11 +25,11 @@ else
              data-error-type="@CurrentException.GetType().Name" data-error-page="@_page">
         <span class="banner-icon"><Icon Name="crash" Size="20" /></span>
         <div class="banner-text">
-            <div class="banner-title">This page ran into a problem and stopped</div>
-            <div class="banner-sub" data-testid="page-error-detail">@PageErrors.Describe(CurrentException) The details are in the app log. The other pages still work.</div>
+            <div class="banner-title">This page couldn't be shown</div>
+            <div class="banner-sub" data-testid="page-error-detail">Try again, or use another page. The other pages still work.</div>
         </div>
         <div class="banner-actions">
-            <button type="button" class="btn btn-outline" data-testid="page-error-retry" @onclick="Recover">Show the page again</button>
+            <button type="button" class="btn btn-outline" data-testid="page-error-retry" @onclick="Recover">Try again</button>
         </div>
     </section>
 }
@@ -29,23 +37,38 @@ else
 @code {
     private int _seq;
     private string _page = "";
+    // The page that failed and sent us to the start page; shown there as one line until dismissed or the person moves on.
+    private string? _failedPage;
+    // True from the redirect until the start page has arrived, so that arrival doesn't clear the line it is meant to show.
+    private bool _redirecting;
 
     protected override void OnInitialized() => Nav.LocationChanged += OnLocationChanged;
 
     protected override Task OnErrorAsync(Exception exception)
     {
-        _seq++;
         _page = PageErrors.PageOf(Nav.Uri, Nav.BaseUri);
+        _seq = AppFaults.Shared.Record(_page, exception).Seq;
         try { Loggers.CreateLogger("RemotePCDiagnostics.UI.Page").LogError("{Line}", PageErrors.LogLine(_page, exception)); }
         catch { /* logging must never break the page further */ }
+        if (_page != PageErrors.Home)
+        {
+            _failedPage = _page;
+            _redirecting = true;
+            Nav.NavigateTo(Nav.BaseUri);
+        }
         return Task.CompletedTask;
     }
 
-    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
-    {
-        if (CurrentException is null) return;
-        _ = InvokeAsync(() => { Recover(); StateHasChanged(); });
-    }
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e) =>
+        _ = InvokeAsync(async () =>
+        {
+            // Let the router put the new page in place first: recovering before that would draw the failed page once more.
+            await Task.Yield();
+            if (_redirecting) _redirecting = false;
+            else _failedPage = null;
+            if (CurrentException is not null) Recover();
+            StateHasChanged();
+        });
 
     public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
 }

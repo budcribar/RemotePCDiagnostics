@@ -4,6 +4,16 @@ namespace RemotePCDiagnostics.Core;
 public static class PageErrors
 {
     public const int MaxLogLength = 6000;
+    /// <summary>What <see cref="PageOf"/> calls the start page.</summary>
+    public const string Home = "home";
+
+    /// <summary>A page's route as a person would say it: "checks" → "Checks", "area/Network" → "Network", "security-audit" → "Security audit".</summary>
+    public static string Title(string page)
+    {
+        var last = page.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? "";
+        var words = last.Replace('-', ' ').Trim();
+        return words.Length == 0 ? "requested" : char.ToUpperInvariant(words[0]) + words[1..];
+    }
 
     /// <summary>The page's route without address, query or fragment ("checks", "area/Network"); "home" for the start page.</summary>
     public static string PageOf(string? uri, string? baseUri)
@@ -14,7 +24,7 @@ public static class PageErrors
         var cut = path.IndexOfAny(['?', '#']);
         if (cut >= 0) path = path[..cut];
         path = path.Trim('/');
-        return path.Length == 0 ? "home" : path;
+        return path.Length == 0 ? Home : path;
     }
 
     /// <summary>What the person is told: the kind of error and its first line, never a stack trace.</summary>
