@@ -1,6 +1,6 @@
 namespace RemotePCDiagnostics.Core.Osquery;
 
-/// <summary>Hardware inventory via osqueryi (system_info, cpu_info, memory_devices, disk_info).</summary>
+/// <summary>Hardware inventory via osqueryi (system_info, cpu_info, memory_devices, disk_info, video_info, interface_details, platform_info).</summary>
 public sealed class OsqueryModule(OsqueryRunner runner) : IDiagnosticModule
 {
     public const string ToolMissingMessage = "The hardware tool wasn't found. Please reinstall the app.";
@@ -23,14 +23,14 @@ public sealed class OsqueryModule(OsqueryRunner runner) : IDiagnosticModule
     public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
     {
         var inv = await HardwareInventory.CollectAsync(runner, progress, cancellationToken).ConfigureAwait(false);
-        var status = inv.FailedSections switch { 0 => DiagnosticStatus.Ok, 4 => DiagnosticStatus.Error, _ => DiagnosticStatus.Warning };
+        var status = inv.AllSectionsFailed ? DiagnosticStatus.Error : inv.FailedSections == 0 ? DiagnosticStatus.Ok : DiagnosticStatus.Warning;
         return new DiagnosticResult<HardwareInventory>(Name, status, Summarize(inv), DateTimeOffset.Now, inv);
     }
 
     /// <summary>End-user status text (no query names, exit codes or paths).</summary>
     internal static string Summarize(HardwareInventory inv)
     {
-        if (inv.FailedSections == 4) return inv.ToolMissing ? ToolMissingMessage : AllFailedMessage;
+        if (inv.AllSectionsFailed) return inv.ToolMissing ? ToolMissingMessage : AllFailedMessage;
         return inv.FriendlySummary();
     }
 

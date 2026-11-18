@@ -109,7 +109,7 @@ public static class HardwareQaCertificate
         var items = new List<HardwareQaItem>
         {
             BuildSimpleItem("hardware", "System & SMBIOS inventory", hwRes,
-                inv is { FailedSections: 0 } ? $"{vendorModel} · S/N {serial}" : null),
+                inv is { CoreFailedSections: 0 } ? $"{vendorModel} · S/N {serial}" : null),
             BuildAreaItem("battery", "Battery & power health", store.Get(ModuleSlugs.BatteryPower)),
             BuildAreaItem("smart", "Storage S.M.A.R.T. health", store.Get(ModuleSlugs.DriveHealth)),
             BuildSensorsItem(store.Get(ModuleSlugs.Sensors)),
