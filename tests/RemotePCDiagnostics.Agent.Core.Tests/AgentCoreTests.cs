@@ -546,6 +546,70 @@ public class AgentHubWorkerTests
     }
 
     [Fact]
+    public async Task Unanswered_consent_reports_StageConsentTimedOut_and_never_starts_host()
+    {
+        var machineGuid = Guid.Parse("7e57c0de-0000-4000-8000-000000000022");
+        var sessionGuid = Guid.Parse("7e57c0de-0000-4000-8000-000000000023");
+        var config = AgentConfig.ForInstall(
+            existing: null,
+            new AgentArgs(AgentCommand.Install, Server: "https://relay.example:34544", Consent: ConsentCeiling.Ask),
+            machineGuid);
+
+        var hostStarted = false;
+        var platform = new FakeAgentPlatform
+        {
+            ConsentResult = ConsentOutcome.TimedOut,
+            ProcessFactory = (_, _) =>
+            {
+                hostStarted = true;
+                return (new FakeLaunchedProcess(), null);
+            },
+        };
+
+        var hub = new FakeAgentHubClient();
+        var worker = new AgentHubWorker(config, platform, new AgentSessionOptions
+        {
+            HeartbeatInterval = TimeSpan.FromMinutes(5),
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var runTask = worker.RunSingleConnectionAsync(hub, cts.Token);
+
+        var hello = await hub.ReadAgentMessageAsync(cts.Token);
+        Assert.Equal(AgentMessage.BodyOneofCase.Hello, hello.BodyCase);
+
+        await hub.SendHubCommandAsync(new HubCommand
+        {
+            Launch = new LaunchCommand
+            {
+                RequestId = "req-no-answer",
+                SessionId = sessionGuid.ToString("D"),
+                ServerUrl = "https://relay.example:34544",
+                Requester = "Bob Tech",
+                RequireConsent = true,
+                Group = "shop-west",
+            },
+        }, cts.Token);
+
+        var stages = new List<LaunchStage>();
+        while (true)
+        {
+            var msg = await hub.ReadAgentMessageAsync(cts.Token);
+            if (msg.BodyCase != AgentMessage.BodyOneofCase.Progress)
+                continue;
+            stages.Add(msg.Progress.Stage);
+            if (msg.Progress.Stage == LaunchStage.StageConsentTimedOut)
+                break;
+        }
+
+        hub.CompleteServerStream();
+        await runTask;
+
+        Assert.Equal([LaunchStage.StageQueued, LaunchStage.StageWaitingForConsent, LaunchStage.StageConsentTimedOut], stages);
+        Assert.False(hostStarted);
+    }
+
+    [Fact]
     public async Task Cancel_command_aborts_pending_consent_and_reports_StageFailed()
     {
         var machineGuid = Guid.Parse("7e57c0de-0000-4000-8000-000000000030");

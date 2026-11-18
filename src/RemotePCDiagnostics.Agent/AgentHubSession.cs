@@ -612,7 +612,7 @@ public sealed class AgentHubWorker(
                         await ReportProgressSafeAsync(writeAsync, launch.RequestId, sessionIdStr, LaunchStage.StageDeclined, "The person at the computer declined the session", 0, streamCts.Token).ConfigureAwait(false);
                         return;
                     case ConsentOutcome.TimedOut:
-                        await ReportProgressSafeAsync(writeAsync, launch.RequestId, sessionIdStr, LaunchStage.StageDeclined, "No answer within the consent time limit", 0, streamCts.Token).ConfigureAwait(false);
+                        await ReportProgressSafeAsync(writeAsync, launch.RequestId, sessionIdStr, LaunchStage.StageConsentTimedOut, "No answer within the consent time limit", 0, streamCts.Token).ConfigureAwait(false);
                         return;
                     default:
                         await ReportProgressSafeAsync(writeAsync, launch.RequestId, sessionIdStr, LaunchStage.StageFailed, "Could not display the consent prompt on the user's desktop", 0, streamCts.Token).ConfigureAwait(false);
