@@ -11,6 +11,11 @@ public sealed class SfcVerifyOnlyModule(SystemCommandRunner commands) : WindowsI
     protected override string ToolExe => "sfc.exe";
     protected override string[] Arguments => ["/verifyonly"];
 
+    /// <summary>Violations found: offer the repair, and the restart that can be needed to finish it.</summary>
+    protected override IReadOnlyList<AreaAction>? CardActions(DiagnosticStatus status) => status == DiagnosticStatus.Warning
+        ? [new(RemediationKind.RepairSystemFiles, "Repair system files", "", "Protected system files"), PendingUpdates.RestartAction]
+        : null;
+
     protected override (DiagnosticStatus Status, string Summary) Interpret(string output, RemotePCDiagnostics.Core.Osquery.ProcessResult? result)
     {
         var status = Classify(Contains(output, "found integrity violations"), Contains(output, "did not find any integrity violations"), result);

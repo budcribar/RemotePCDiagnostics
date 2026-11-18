@@ -65,6 +65,8 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
+        // Asked alongside the other reads; scripted test runners aren't asked.
+        var pendingRead = commands is { IsScripted: false } ? PendingUpdates.ReadAsync(commands, ct) : null;
         progress.ReportStep(1, 2, "Checking Device Manager for problem devices…");
         List<ProblemDevice>? problems = null;
         if (commands is { IsScripted: true })
@@ -111,8 +113,18 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
         progress.ReportStep(2, 2, "Reading hardware drivers…");
         var drvQ = await QueryAsync(DriversSql, ct).ConfigureAwait(false);
         var drivers = drvQ.Success ? drvQ.Rows!.Select(DriverEntry.FromRow).ToList() : null;
-        return Build(problems, drivers);
+        var report = Build(problems, drivers);
+        if (pendingRead is null) return report;
+        PendingUpdateList? pending = null;
+        try { pending = await pendingRead.ConfigureAwait(false); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { LogWarn($"{Name}: pending driver updates unreadable: {ex.Message}"); }
+        return WithPendingUpdates(report, pending);
     }
+
+    /// <summary>Adds the pending-driver-updates card. It never changes the check's result.</summary>
+    public static AreaReport WithPendingUpdates(AreaReport report, PendingUpdateList? pending) =>
+        report.Cards.Count == 0 ? report : report with { Cards = [.. report.Cards, PendingUpdates.Card(pending, drivers: true)] };
 
     private static readonly HashSet<string> KeyClasses = new(StringComparer.OrdinalIgnoreCase)
     {

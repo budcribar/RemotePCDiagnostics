@@ -163,6 +163,31 @@ the cleaned output and, on failure, CBS/DISM log excerpts. Results:
 Localized SFC output is judged by the exit code plus CBS.log `[SR]` lines. **Not yet verified on real hardware:** the repairs have only
 been exercised with fakes.
 
+## Single repair steps and single updates
+
+A repair doesn't need the whole workflow. Each step is its own one-click fix on its check's card, run alone, with no restart and no
+benchmark unless that step asks for one:
+
+- **Windows component store (DISM)** check: **Analyze store** (`/AnalyzeComponentStore`, read-only) and **Clean up store**
+  (`/StartComponentCleanup`) after any finished scan; **Repair from Windows Update** (`/RestoreHealth`) when the scan found corruption;
+  and one **Repair from <image>** per `X:\sources\install.wim` / `install.esd` found on the PC's drives (a mounted Windows ISO or USB
+  install media). The image repair looks up the image of this PC's edition and runs `/RestoreHealth /Source:… /LimitAccess`; an image
+  without that edition is refused before anything runs. `/ResetBase` is never used.
+- **Protected system files (SFC)** check: **Repair system files** (`sfc /scannow`) when the scan found violations.
+- **Programs & updates** and **Device Manager & drivers**: a **Pending Windows updates** / **Pending driver updates** card lists what
+  Windows has waiting (from its last check with Windows Update, read without going online), with an **Install** button per update.
+  "Check & install" still checks online and installs everything.
+
+Every fix result says whether Windows asked for a restart. The restart is its own fix (**Restart Windows in 60s**) on the same card and
+brings the app back into the same session after sign-in. After a fix that changed something, only its own check runs again.
+
+Fixes run in the app, not in the page: one at a time, and a running fix keeps going when its page is left (a repair can take half an
+hour). The check's page shows it running, with Cancel, when you come back.
+
+In the service workflow, **Clean up store** and **Repair from <image>** are listed under Windows repair but not ticked; single updates
+are not listed (the workflow's "install all updates" fixes cover them). **Not yet verified on real hardware:** the image repair and
+single-update install have only been exercised with fakes.
+
 ## Status
 
 Active development — Windows x64 self-contained installer (`RemotePCDiagnostics-Setup-<Version>-win-x64.exe`) and portable builds are built and smoke-tested on GitHub Actions (see [Releases](https://github.com/budcribar/RemotePCDiagnostics/releases)).

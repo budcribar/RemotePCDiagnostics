@@ -32,10 +32,11 @@ public class WindowsReadOnlyTests
         { "DefenderExclusions", true },
         { "DockDevices", true },
         { "MemoryProbe", true },
+        { "PendingUpdates", true },       // prints its JSON even when Windows Update can't be asked
     };
 
     /// <summary>Scripts that change the PC: never run by a test.</summary>
-    private static readonly string[] Changing = ["CleanTempFiles", "WindowsUpdate"];
+    private static readonly string[] Changing = ["CleanTempFiles", "InstallUpdate", "WindowsUpdate"];
     /// <summary>Needs the Windows Search service, which a PC may have turned off: run, but its exit code isn't asserted.</summary>
     private const string SearchIndex = "SearchIndexProjects";
 

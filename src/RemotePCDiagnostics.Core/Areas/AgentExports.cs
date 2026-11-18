@@ -28,6 +28,21 @@ public static class AgentExports
     private static string? V(string? value) => AreaReportExport.Text(value, AreaReportExport.MaxValueLength);
     private static string? T(string? value) => AreaReportExport.Text(value, AreaReportExport.MaxTextLength);
 
+    // ---- Fix state ------------------------------------------------------------------------------------------------------
+
+    /// <summary>The fix running now and how the last one ended, for browser agents (fix-data). <c>Origin</c> is the check the fix belongs to.</summary>
+    public sealed record ExportedFixState(int Schema, ExportedFixRun? Running, ExportedFixResult? Last);
+    public sealed record ExportedFixRun(string Kind, string Target, string? Title, string Origin, DateTimeOffset StartedAt, string? Progress);
+    public sealed record ExportedFixResult(int Seq, string Kind, string Target, string Origin, string Outcome, string? Message, bool RestartNeeded,
+        bool ReadOnly, DateTimeOffset FinishedAt);
+
+    public static string FixState(FixRun? running, FixRunResult? last) => JsonSerializer.Serialize(BuildFixState(running, last), Json);
+
+    public static ExportedFixState BuildFixState(FixRun? running, FixRunResult? last) => new(SchemaVersion,
+        running is null ? null : new(running.Action.Kind.ToString(), V(running.Action.Target) ?? "", V(running.Title), running.Origin, running.StartedUtc, V(running.Progress)),
+        last is null ? null : new(last.Seq, last.Action.Kind.ToString(), V(last.Action.Target) ?? "", last.Origin, last.Success ? "succeeded" : "failed",
+            T(last.Message), last.RestartNeeded, RemediationService.IsReadOnly(last.Action.Kind), last.FinishedUtc));
+
     // ---- Checks list ----------------------------------------------------------------------------------------------------
 
     /// <summary>One row of the Checks list. <c>Start</c> is "run-one" (the detail panel's Run button), "own-page" (the check's own

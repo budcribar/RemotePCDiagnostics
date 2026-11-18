@@ -45,6 +45,31 @@ public sealed class DismScanHealthModule(SystemCommandRunner commands) : Windows
         });
     }
 
+    /// <summary>Finds Windows images to repair from (mounted ISOs, USB install media). Replaceable for tests.</summary>
+    public Func<IReadOnlyList<string>> FindImages { get; init; } = WindowsImages.FindOnDrives;
+
+    /// <summary>
+    /// The single steps for this result. Analyze and cleanup are offered for any finished scan; the repairs and the restart only when
+    /// the scan found corruption. One repair-from-image button per Windows image found on this PC's drives.
+    /// </summary>
+    protected override IReadOnlyList<AreaAction>? CardActions(DiagnosticStatus status) => Actions(status, status == DiagnosticStatus.Warning ? FindImages() : []);
+
+    public static IReadOnlyList<AreaAction>? Actions(DiagnosticStatus status, IReadOnlyList<string> images)
+    {
+        if (status is not (DiagnosticStatus.Ok or DiagnosticStatus.Warning)) return null;
+        var actions = new List<AreaAction>
+        {
+            new(RemediationKind.AnalyzeComponentStore, "Analyze store", "", "Windows component store"),
+            new(RemediationKind.CleanUpComponentStore, "Clean up store", "", "Windows component store"),
+        };
+        if (status != DiagnosticStatus.Warning) return actions;
+        actions.Add(new(RemediationKind.RepairComponentStore, "Repair from Windows Update", "", "Windows component store"));
+        actions.AddRange(images.Where(WindowsRepair.IsImagePath).Take(4)
+            .Select(path => new AreaAction(RemediationKind.RepairComponentStoreFromImage, $"Repair from {path}", path, path)));
+        actions.Add(PendingUpdates.RestartAction);
+        return actions;
+    }
+
     protected override void AddProblemEvidence(List<AreaRow> rows)
     {
         var cbs = ReadLogEvidence(_cbsPath, _cbsOffset);

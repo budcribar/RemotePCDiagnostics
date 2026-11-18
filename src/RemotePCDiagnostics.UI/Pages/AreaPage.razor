@@ -35,7 +35,7 @@ else
     }
     @if (!busy && rep?.Notice is { } notice) { <p class="meta" data-testid="area-notice">@notice</p> }
     @* Always mounted (even while the check re-runs after a fix), so the fix's result message stays visible near the top. *@
-    @if (remActions is not null) { <RemediationActions @ref="_remUi" Actions="remActions" ShowRecent="hasRemActions" OnCompleted="() => Diagnostics.RunAsync(m.Name)" /> }
+    @if (remActions is not null) { <RemediationActions @ref="_remUi" Actions="remActions" ShowRecent="hasRemActions" Origin="@m.Name" OnCompleted="() => Diagnostics.RunAsync(m.Name)" /> }
 
     @if (!busy && rep is not null)
     {

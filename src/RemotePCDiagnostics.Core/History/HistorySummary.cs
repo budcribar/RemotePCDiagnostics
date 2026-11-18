@@ -329,7 +329,9 @@ public static class HistorySummary
     public static string FriendlyKind(RemediationKind kind) => kind switch
     {
         RemediationKind.CheckAndInstallDriverUpdates => "Driver updates",
-        RemediationKind.CheckAndInstallWindowsUpdates => "Windows updates",
+        RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.InstallUpdate => "Windows updates",
+        RemediationKind.AnalyzeComponentStore or RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStore
+            or RemediationKind.RepairComponentStoreFromImage or RemediationKind.RepairSystemFiles => "Windows repair",
         RemediationKind.RestartDevice => "Device reset",
         RemediationKind.EnableDevice => "Device enabled",
         RemediationKind.ScanHardwareChanges => "Hardware scan",

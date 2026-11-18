@@ -7,7 +7,7 @@ namespace RemotePCDiagnostics.Modules.Programs;
 public sealed class ProgramsPlugin : IModulePlugin
 {
     public void Register(IServiceCollection services, IPluginContext context) =>
-        services.AddModule(context, sp => new ProgramsModule(sp.GetRequiredService<OsqueryRunner>()),
+        services.AddModule(context, sp => new ProgramsModule(sp.GetRequiredService<OsqueryRunner>(), commands: sp.GetService<SystemCommandRunner>()),
             ModuleIds.Programs, typeof(ProgramsDetails));
 }
 

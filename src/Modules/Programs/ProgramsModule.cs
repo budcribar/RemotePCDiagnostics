@@ -16,7 +16,8 @@ public sealed record InstalledUpdate(string Id, string Description, DateOnly? In
 }
 
 /// <summary>Windows version, installed updates (osquery <c>os_version</c>, <c>patches</c>) and installed programs (<c>programs</c>).</summary>
-public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today = null) : OsqueryAreaModuleBase(runner)
+/// <remarks>With a command runner it also lists the updates Windows has waiting, each with its own Install button.</remarks>
+public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today = null, SystemCommandRunner? commands = null) : OsqueryAreaModuleBase(runner)
 {
     public const string ModuleName = ModuleSlugs.Programs;
     public const string OsSql = "SELECT * FROM os_version;";
@@ -33,15 +34,35 @@ public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today =
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
+        // Asked alongside the osquery reads; scripted test runners aren't asked.
+        var pendingRead = commands is { IsScripted: false } ? PendingUpdates.ReadAsync(commands, ct) : null;
         progress.ReportStep(1, 3, "Checking Windows version…");
         var os = await QueryAsync(OsSql, ct).ConfigureAwait(false);
         progress.ReportStep(2, 3, "Checking installed Windows updates…");
         var patches = await QueryAsync(PatchesSql, ct).ConfigureAwait(false);
         progress.ReportStep(3, 3, "Reading installed programs…");
         var programs = await QueryAsync(ProgramsSql, ct).ConfigureAwait(false);
-        return Build(os.Success ? os.Rows!.FirstOrDefault() : null, os.Success,
+        var report = Build(os.Success ? os.Rows!.FirstOrDefault() : null, os.Success,
             patches.Success ? patches.Rows!.Select(InstalledUpdate.FromRow).ToList() : null,
             programs.Success ? programs.Rows!.Select(InstalledProgram.FromRow).ToList() : null, _today());
+        return pendingRead is null ? report : WithPendingUpdates(report, await PendingOrNullAsync(pendingRead, ct).ConfigureAwait(false));
+    }
+
+    private async Task<PendingUpdateList?> PendingOrNullAsync(Task<PendingUpdateList?> read, CancellationToken ct)
+    {
+        try { return await read.ConfigureAwait(false); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { LogWarn($"{Name}: pending updates unreadable: {ex.Message}"); return null; }
+    }
+
+    /// <summary>Adds the pending-updates card after the installed-updates card. It never changes the check's result.</summary>
+    public static AreaReport WithPendingUpdates(AreaReport report, PendingUpdateList? pending)
+    {
+        if (report.Cards.Count == 0) return report;
+        var cards = report.Cards.ToList();
+        var at = cards.FindIndex(c => c.Id == "updates");
+        cards.Insert(at < 0 ? cards.Count : at + 1, PendingUpdates.Card(pending, drivers: false));
+        return report with { Cards = cards };
     }
 
     public static DateOnly? ParseDate(string s) => OsqueryDates.Parse(s);

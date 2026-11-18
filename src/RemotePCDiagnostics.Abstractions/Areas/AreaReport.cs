@@ -30,12 +30,22 @@ public enum RemediationKind
     CleanTempFiles,
     OptimizeSsd,
 
-    // 5. Windows repair (service workflow only; offered when DISM ScanHealth / SFC verify-only found corruption)
+    // 5. Windows repair (offered when DISM ScanHealth / SFC verify-only found corruption)
     RepairComponentStore,
     RepairSystemFiles,
 
     // 6. Security settings (Security essentials): Target = a SecurityFixes key ("pua", "asr", "llmnr", ...)
     ApplySecuritySetting,
+
+    // 7. Single steps, each run alone. New members go at the end so numbers already written stay the same.
+    /// <summary>Read-only: reports the component store's size and whether a cleanup is recommended.</summary>
+    AnalyzeComponentStore,
+    /// <summary>Removes superseded component versions (DISM StartComponentCleanup).</summary>
+    CleanUpComponentStore,
+    /// <summary>DISM RestoreHealth from a Windows image instead of Windows Update. Target = the path of install.wim / install.esd.</summary>
+    RepairComponentStoreFromImage,
+    /// <summary>Installs one pending Windows or driver update. Target = the update's Windows Update ID.</summary>
+    InstallUpdate,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>

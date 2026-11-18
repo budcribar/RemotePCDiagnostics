@@ -1,36 +1,53 @@
 @using RemotePCDiagnostics.Core.Areas
 @implements IDisposable
-@* Confirmation modal, progress with Cancel, result banner, and recent audit list for one-click remediations. *@
-@if (_plan is not null)
+@* Confirmation modal, running notice with Cancel, result banner, and recent audit list for one-click remediations.
+   A fix runs in RemediationService, not in this component: leaving the page doesn't cut off a repair that takes half an hour,
+   and coming back shows it still running. Only one fix runs at a time. *@
+@{
+    var running = Actions?.Running;
+    var mine = running is not null && running.Origin == Origin;
+    var last = Actions?.LastRun is { } l && l.Origin == Origin ? l : null;
+}
+@if (Actions is not null)
 {
-    <div class="svc-modal-backdrop" @onclick="() => { if (!_busy) CloseDialog(); }"></div>
+    <AgentData TestId="fix-data" Json="@AgentExports.FixState(running, Actions.LastRun)" />
+}
+@if (_plan is not null && running is null)
+{
+    <div class="svc-modal-backdrop" @onclick="CloseDialog"></div>
     <div class="svc-modal" role="dialog" aria-modal="true" aria-label="@_plan.Title" tabindex="-1"
-         @onkeydown='e => { if (e.Key == "Escape" && !_busy) CloseDialog(); }' data-testid="remediation-confirm"
+         @onkeydown='e => { if (e.Key == "Escape") CloseDialog(); }' data-testid="remediation-confirm"
          data-action-kind="@_plan.Action.Kind" data-action-target="@_plan.Action.Target" data-allowed="@(_plan.Allowed ? "true" : "false")"
-         data-state="@(_busy ? "working" : "confirm")">
+         data-state="confirm">
         <strong>@_plan.Title</strong>
         @if (_plan.WhatItIs.Length > 0) { <p>@_plan.WhatItIs</p> }
         @if (_plan.WhatWillHappen.Length > 0) { <p>@_plan.WhatWillHappen</p> }
         @if (_plan.Warning is { } w) { <p class="svc-warn" data-testid="remediation-warning">@w</p> }
-        @if (_busy)
-        {
-            <p class="meta" data-testid="remediation-working">Working… please wait.</p>
-            <div class="buttons"><button data-testid="remediation-cancel" @onclick="CancelRun">Cancel</button></div>
-        }
-        else
-        {
-            <div class="buttons">
-                <button data-testid="remediation-cancel" @onclick="CloseDialog">Cancel</button>
-                @if (_plan.Allowed) { <button data-testid="remediation-confirm-go" @onclick="Run">@_plan.Action.ButtonText</button> }
-            </div>
-        }
+        <div class="buttons">
+            <button data-testid="remediation-cancel" @onclick="CloseDialog">Cancel</button>
+            @if (_plan.Allowed) { <button data-testid="remediation-confirm-go" @onclick="Run">@_plan.Action.ButtonText</button> }
+        </div>
     </div>
 }
-@if (_lastMessage is { } msg)
+@if (running is not null && mine)
 {
-    <div class="notice @(_lastOk ? "svc-result-ok" : "notice-error")" data-testid="remediation-result"
-         data-outcome="@(_lastOk ? "succeeded" : "failed")" data-action-kind="@_lastAction?.Kind" data-action-target="@_lastAction?.Target"
-         data-result-seq="@_resultSeq">@msg</div>
+    <div class="notice" data-testid="remediation-running" data-state="working"
+         data-action-kind="@running.Action.Kind" data-action-target="@running.Action.Target">
+        <strong>@running.Title</strong>
+        <span class="meta" data-testid="remediation-working">@(running.Progress ?? "Working… please wait.") You can leave this page; it keeps running.</span>
+        <button class="btn-small" data-testid="remediation-stop" @onclick="() => Actions?.CancelRunning()">Cancel</button>
+    </div>
+}
+else if (running is not null && _blocked)
+{
+    <div class="notice" data-testid="remediation-busy">@running.Title is still running. Wait for it to finish before starting another fix.</div>
+}
+@if (last is not null && !mine)
+{
+    <div class="notice @(last.Success ? "svc-result-ok" : "notice-error")" data-testid="remediation-result"
+         data-outcome="@(last.Success ? "succeeded" : "failed")" data-action-kind="@last.Action.Kind" data-action-target="@last.Action.Target"
+         data-restart-needed="@(last.RestartNeeded ? "true" : "false")"
+         data-result-seq="@last.Seq">@last.Message</div>
 }
 @if (ShowRecent && Actions is not null && Actions.Recent.Count > 0)
 {
@@ -47,58 +64,63 @@
 
 @code {
     [Parameter] public RemediationService? Actions { get; set; }
+    /// <summary>Runs after a fix from this page succeeded while the page is still open (the page runs its check again).</summary>
     [Parameter] public EventCallback OnCompleted { get; set; }
     [Parameter] public bool ShowRecent { get; set; } = true;
+    /// <summary>The check this page shows. The running notice and the result appear on the page of the check the fix belongs to.</summary>
+    [Parameter] public string Origin { get; set; } = "";
 
     private RemediationPlan? _plan;
-    private bool _busy;
-    private CancellationTokenSource? _cts;
-    private string? _lastMessage;
-    private bool _lastOk;
-    // Which fix the result belongs to, and a counter that changes with every result, so an agent can tell a new result from an old one.
-    private AreaAction? _lastAction;
-    private int _resultSeq;
+    private bool _blocked;
+    private RemediationService? _subscribed;
+    // The last result this component has already reacted to, so a result is followed by one re-run of the check.
+    private int _seenSeq;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_subscribed, Actions)) return;
+        if (_subscribed is not null) _subscribed.RunChanged -= OnRunChanged;
+        _subscribed = Actions;
+        _seenSeq = Actions?.LastRun?.Seq ?? 0;
+        if (Actions is not null) Actions.RunChanged += OnRunChanged;
+    }
 
     public void Ask(AreaAction action)
     {
-        if (Actions is null || _busy) return;
-        _plan = Actions.Plan(action);
+        if (Actions is null) return;
+        _blocked = Actions.Running is not null;
+        _plan = _blocked ? null : Actions.Plan(action);
         StateHasChanged();
     }
 
     private void CloseDialog() => _plan = null;
-    private void CancelRun() { try { _cts?.Cancel(); } catch (ObjectDisposedException) { } }
 
-    private async Task Run()
+    private void Run()
     {
         if (Actions is null || _plan is null) return;
-        _busy = true;
-        _cts = new CancellationTokenSource();
         var act = _plan.Action;
-        try
+        _plan = null;
+        // Not awaited: the fix belongs to the service and ends there; OnRunChanged shows its progress and result.
+        _ = Actions.RunTrackedAsync(act, Origin);
+    }
+
+    private void OnRunChanged() => _ = InvokeAsync(async () =>
+    {
+        if (_disposed) return;
+        if (Actions?.Running is null) _blocked = false;
+        StateHasChanged();
+        if (Actions?.LastRun is { } done && done.Seq != _seenSeq)
         {
-            var r = await Task.Run(() => Actions.ExecuteAsync(act, _cts.Token));
-            if (_disposed) return;
-            _lastOk = r.Success;
-            _lastMessage = r.Message;
-            _lastAction = act;
-            _resultSeq++;
-            if (r.Success && OnCompleted.HasDelegate)
+            _seenSeq = done.Seq;
+            if (done.Success && done.Origin == Origin && !RemediationService.IsReadOnly(done.Action.Kind) && OnCompleted.HasDelegate)
                 await OnCompleted.InvokeAsync();
         }
-        finally
-        {
-            _busy = false;
-            _cts?.Dispose();
-            _cts = null;
-            _plan = null;
-        }
-    }
+    });
 
     private bool _disposed;
     public void Dispose()
     {
         _disposed = true;
-        try { _cts?.Cancel(); } catch (ObjectDisposedException) { }
+        if (_subscribed is not null) _subscribed.RunChanged -= OnRunChanged;
     }
 }

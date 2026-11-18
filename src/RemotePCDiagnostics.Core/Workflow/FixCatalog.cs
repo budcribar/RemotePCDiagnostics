@@ -6,9 +6,23 @@ namespace RemotePCDiagnostics.Core.Workflow;
 /// <summary>Turns check results and memory suggestions into one de-duplicated, ordered list of fixes the workflow can apply unattended.</summary>
 public static class FixCatalog
 {
-    /// <summary>Not offered: the workflow restarts the PC anyway (which closes apps, ends processes, and forces a full clean kernel reboot regardless of Fast Startup).</summary>
+    /// <summary>
+    /// Not offered: the workflow restarts the PC anyway (which closes apps, ends processes, and forces a full clean kernel reboot
+    /// regardless of Fast Startup). Analyzing the component store only reads, so it isn't a fix to apply either.
+    /// </summary>
     public static readonly IReadOnlySet<RemediationKind> SkippedRemediation = new HashSet<RemediationKind>
-        { RemediationKind.ScheduleCleanRestart, RemediationKind.CancelScheduledRestart, RemediationKind.EndProcessGroup, RemediationKind.DisableFastStartup };
+        { RemediationKind.ScheduleCleanRestart, RemediationKind.CancelScheduledRestart, RemediationKind.EndProcessGroup, RemediationKind.DisableFastStartup,
+          RemediationKind.AnalyzeComponentStore };
+
+    /// <summary>
+    /// Offered on a check's own card but listed differently here: the repairs come from <see cref="RepairFixes"/> (with the scan's
+    /// reason and their order), and single updates are covered by the workflow's "install all updates" fixes.
+    /// </summary>
+    private static bool ListedElsewhere(RemediationKind k) =>
+        k is RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles or RemediationKind.InstallUpdate;
+
+    /// <summary>Single repair steps a technician picks on purpose: listed, but not ticked to start with.</summary>
+    private static bool OptIn(RemediationKind k) => k is RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStoreFromImage;
 
     /// <summary>Memory actions that persist across a restart and need nobody at the keyboard.</summary>
     public static readonly IReadOnlySet<MemoryActionType> UnattendedMemoryActions = new HashSet<MemoryActionType>
@@ -35,6 +49,7 @@ public static class FixCatalog
         [ModuleSlugs.DeviceDrivers] = "Drivers & devices", [ModuleSlugs.Programs] = "Windows updates", [ModuleSlugs.ResourceHogs] = "Performance & power",
         [ModuleSlugs.BatteryPower] = "Performance & power", [ModuleSlugs.Network] = "Network", [ModuleSlugs.DriveHealth] = "Storage", [ModuleSlugs.Services] = "Services",
         [ModuleSlugs.SecurityEssentials] = "Security",
+        [ModuleSlugs.DismScanHealth] = RepairArea, [ModuleSlugs.SfcVerifyOnly] = RepairArea,
     };
 
     /// <summary>Order groups: quick settings first, cleanup next, network renew near the end, long downloads last.</summary>
@@ -44,14 +59,18 @@ public static class FixCatalog
         RemediationKind.EnableDevice or RemediationKind.RestartDevice or RemediationKind.ScanHardwareChanges => 30,
         RemediationKind.CleanTempFiles or RemediationKind.OptimizeSsd => 40,
         RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns or RemediationKind.FlushDnsAndRenewIp => 60,
+        RemediationKind.CleanUpComponentStore => CleanupOrder,
+        RemediationKind.RepairComponentStoreFromImage => DismRepairOrder,
         RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates => 90,
         _ => 50,
     };
 
-    private static SuggestionRisk RiskOf(RemediationKind k) => k switch
+    public static SuggestionRisk RiskOf(RemediationKind k) => k switch
     {
-        RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.SetPublicDns
-            or RemediationKind.ResetDhcpDns or RemediationKind.DisableSystemProxy or RemediationKind.RestartDevice or RemediationKind.EnableDevice => SuggestionRisk.Medium,
+        RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.InstallUpdate
+            or RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles or RemediationKind.SetPublicDns
+            or RemediationKind.ResetDhcpDns or RemediationKind.DisableSystemProxy or RemediationKind.RestartDevice or RemediationKind.EnableDevice
+            or RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStoreFromImage => SuggestionRisk.Medium,
         _ => SuggestionRisk.Low,
     };
 
@@ -77,7 +96,7 @@ public static class FixCatalog
                 var actions = (card.Actions ?? []).Concat(card.Rows.SelectMany(row => row.Actions ?? []));
                 foreach (var a in actions)
                 {
-                    if (SkippedRemediation.Contains(a.Kind)) continue;
+                    if (SkippedRemediation.Contains(a.Kind) || ListedElsewhere(a.Kind)) continue;
                     var id = RemediationId(a);
                     if (!seen.Add(id)) continue;
                     var plan = plans?.Plan(a);
@@ -88,9 +107,9 @@ public static class FixCatalog
                         why += $" {a.ButtonText}. {card.Note} Measured during the network scan at {r.Timestamp:O}.";
                     list.Add(new(id, title, why, area, RiskOf(a.Kind), FixSource.Remediation, OrderOf(a.Kind), Remediation: a,
                         NeedsAdmin: a.Kind == RemediationKind.ApplySecuritySetting || plan?.Warning?.Contains("administrator", StringComparison.OrdinalIgnoreCase) == true,
-                        Slow: a.Kind is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates,
+                        Slow: a.Kind is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates || OptIn(a.Kind),
                         Undo: Changes.Undoability.Of(a.Kind), AreaKey: area,
-                        DefaultOn: a.Kind != RemediationKind.ApplySecuritySetting || Security.SecurityFixes.Find(a.Target)?.DefaultOn != false));
+                        DefaultOn: !OptIn(a.Kind) && (a.Kind != RemediationKind.ApplySecuritySetting || Security.SecurityFixes.Find(a.Target)?.DefaultOn != false)));
                 }
             }
         }
@@ -131,6 +150,8 @@ public static class FixCatalog
     public const string RepairArea = "Windows repair";
     /// <summary>Apply order: DISM RestoreHealth first, then SFC /scannow (SFC repairs from the store DISM just fixed). After settings, before long downloads.</summary>
     public const int DismRepairOrder = 85, SfcRepairOrder = 86;
+    /// <summary>Component cleanup, when ticked, runs before the repairs.</summary>
+    public const int CleanupOrder = 84;
 
     /// <summary>
     /// Windows repair fixes, only when the integrity scans found corruption: DISM RestoreHealth when ScanHealth reported a corrupt store

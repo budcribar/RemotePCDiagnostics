@@ -49,7 +49,14 @@ public sealed record RemediationResult(
     long FreedDiskBytes = 0,
     int RemovedFiles = 0,
     long FreedMemoryBytes = 0,
-    int UpdatesInstalled = 0);
+    int UpdatesInstalled = 0,
+    bool RestartNeeded = false);
+
+/// <summary>A fix that is running now (started from a page or by a remote agent). It keeps running when its page is left.</summary>
+public sealed record FixRun(AreaAction Action, string Title, string Origin, DateTimeOffset StartedUtc, string? Progress = null);
+
+/// <summary>How the last fix started with <see cref="RemediationService.RunTrackedAsync"/> ended. <see cref="Seq"/> grows with every result.</summary>
+public sealed record FixRunResult(int Seq, AreaAction Action, string Origin, bool Success, string Message, bool RestartNeeded, DateTimeOffset FinishedUtc);
 
 public sealed record RemediationRecord(
     DateTime When,
@@ -258,6 +265,41 @@ public sealed class RemediationService(
                 "Requires administrator privileges.",
                 true),
 
+            RemediationKind.AnalyzeComponentStore => new(
+                action,
+                "Analyze the Windows component store?",
+                "Measures the component store (WinSxS) and reports whether a cleanup is recommended.",
+                "Runs 'dism.exe /English /Online /Cleanup-Image /AnalyzeComponentStore' (a few minutes). Changes nothing on the PC.",
+                "Requires administrator privileges.",
+                true),
+
+            RemediationKind.CleanUpComponentStore => new(
+                action,
+                "Clean up the Windows component store?",
+                "Removes older versions of Windows components that newer updates have replaced.",
+                "Runs 'dism.exe /English /Online /Cleanup-Image /StartComponentCleanup' (10–30 minutes). Installed updates can still be uninstalled afterwards. Not undoable.",
+                "Requires administrator privileges. Restart the PC afterwards, before repairing the store again.",
+                true),
+
+            RemediationKind.RepairComponentStoreFromImage => new(
+                action,
+                "Repair the Windows component store from a Windows image?",
+                $"Repairs the component store from '{label}' instead of Windows Update, for when Windows Update doesn't have the files.",
+                "Finds the image of this PC's Windows edition, then runs 'dism.exe /English /Online /Cleanup-Image /RestoreHealth /Source:… /LimitAccess' (10–30 minutes). Not undoable.",
+                WindowsRepair.IsImagePath(action.Target)
+                    ? "Requires administrator privileges. The image must be the same Windows version and edition as this PC; another version usually fails."
+                    : "This isn't a Windows image file (.wim or .esd) this app can use.",
+                WindowsRepair.IsImagePath(action.Target)),
+
+            RemediationKind.InstallUpdate => new(
+                action,
+                $"Install {label}?",
+                "Installs this one update from Windows Update and leaves the other pending updates alone.",
+                "Windows downloads the update if needed and installs it. Not undoable from here.",
+                Guid.TryParse(action.Target, out _) ? "The update may need a restart to finish. A display or network driver may briefly flicker the screen or reconnect the network."
+                    : "This update has no Windows Update ID.",
+                Guid.TryParse(action.Target, out _)),
+
             RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf
                 ? new(action, $"{sf.ButtonText}?", sf.WhatItIs, sf.WhatHappens, sf.Caveat, true)
                 : new(action, action.ButtonText, "", "This setting isn't one this app changes.", "This setting isn't one this app changes.", Allowed: false),
@@ -309,7 +351,7 @@ public sealed class RemediationService(
                 // Permanent changes are journaled too, so "Undo all" can say what it left as is. Update checks that installed nothing changed nothing.
                 // Temp cleanup writes its own TempFiles record (with the amount freed), so it isn't recorded twice.
                 var permanent = Changes.Undoability.Of(action.Kind) == Changes.UndoSupport.None && action.Kind != RemediationKind.CleanTempFiles
-                    && (action.Kind is not (RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.CheckAndInstallDriverUpdates) || result.UpdatesInstalled > 0);
+                    && (action.Kind is not (RemediationKind.CheckAndInstallWindowsUpdates or RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.InstallUpdate) || result.UpdatesInstalled > 0);
                 if (result.Success && permanent)
                     try { journal?.Add(Changes.Undoability.Permanent($"{action.Kind}:{action.Target}:{Guid.NewGuid():N}", $"{plan.Title.TrimEnd('?')}: {result.Message}", actor)); }
                     catch (Exception ex) { Log($"journal: {ex.Message}"); }
@@ -419,7 +461,11 @@ public sealed class RemediationService(
                 $"Couldn't change {sf.Label.ToLowerInvariant()} (Windows refused the change; Tamper Protection or an organization policy may be blocking it).", ct).ConfigureAwait(false)
             : new(false, "This setting isn't one this app changes."),
 
-        RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles => ToResult(LastRepair = await RepairAsync(action, RepairProgress, ct).ConfigureAwait(false)),
+        RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles or RemediationKind.AnalyzeComponentStore
+            or RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStoreFromImage
+            => ToResult(LastRepair = await RepairAsync(action, RepairProgress, ct).ConfigureAwait(false)),
+
+        RemediationKind.InstallUpdate => await RunInstallUpdateAsync(action, ct).ConfigureAwait(false),
 
         RemediationKind.OptimizeSsd => await RunPowerShellAsync(
             $"$ErrorActionPreference='Stop'; Optimize-Volume -DriveLetter {string.Join(",", DriveLetters(action.Target).ToCharArray())} -ReTrim",
@@ -430,7 +476,100 @@ public sealed class RemediationService(
         _ => new(false, "Unsupported action."),
     };
 
-    private static RemediationResult ToResult(RepairResult r) => new(r.Success, r.Summary);
+    private static RemediationResult ToResult(RepairResult r) => new(r.Success, r.Summary, RestartNeeded: r.RebootRequired);
+
+    /// <summary>The repair step a fix kind runs; null for kinds that aren't Windows repair steps.</summary>
+    public static RepairStep? StepOf(RemediationKind kind) => kind switch
+    {
+        RemediationKind.AnalyzeComponentStore => RepairStep.AnalyzeStore,
+        RemediationKind.CleanUpComponentStore => RepairStep.CleanUpStore,
+        RemediationKind.RepairComponentStore => RepairStep.RestoreHealth,
+        RemediationKind.RepairComponentStoreFromImage => RepairStep.RestoreHealthFromImage,
+        RemediationKind.RepairSystemFiles => RepairStep.SfcScanNow,
+        _ => null,
+    };
+
+    /// <summary>True for a fix that only reads (it leaves nothing to verify, so its check isn't run again afterwards).</summary>
+    public static bool IsReadOnly(RemediationKind kind) => kind == RemediationKind.AnalyzeComponentStore;
+
+    // ---- One fix at a time, kept running when its page is left ------------------------------------------------------------
+
+    private FixRun? _running;
+    private FixRunResult? _lastRun;
+    private CancellationTokenSource? _runCts;
+    private int _runSeq;
+
+    /// <summary>The fix running now, if any.</summary>
+    public FixRun? Running { get { lock (_gate) return _running; } }
+    /// <summary>How the last tracked fix ended.</summary>
+    public FixRunResult? LastRun { get { lock (_gate) return _lastRun; } }
+    /// <summary>Raised when a tracked fix starts, reports progress or ends.</summary>
+    public event Action? RunChanged;
+
+    private void RaiseRunChanged()
+    {
+        try { RunChanged?.Invoke(); } catch (Exception ex) { LogError($"RunChanged handler failed: {ex}"); }
+    }
+
+    /// <summary>
+    /// Runs a fix to its end whatever happens to the page that started it (a repair takes up to half an hour; leaving the page must not
+    /// cut it off). One at a time: a second request while one runs is refused. <paramref name="origin"/> is the check the fix belongs to.
+    /// </summary>
+    public async Task<RemediationResult> RunTrackedAsync(AreaAction action, string origin)
+    {
+        CancellationTokenSource cts;
+        lock (_gate)
+        {
+            if (_running is not null) return new(false, $"{_running.Title} is still running. Wait for it to finish, or cancel it.");
+            cts = _runCts = new CancellationTokenSource();
+            _running = new(action, Plan(action).Title.TrimEnd('?'), origin, DateTimeOffset.UtcNow);
+        }
+        var ownsProgress = RepairProgress is null;
+        if (ownsProgress)
+            RepairProgress = new InlineRunProgress(p =>
+            {
+                lock (_gate) { if (_running is not null) _running = _running with { Progress = p }; }
+                RaiseRunChanged();
+            });
+        RaiseRunChanged();
+        RemediationResult result;
+        try
+        {
+            result = await Task.Run(() => ExecuteAsync(action, cts.Token)).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LogError($"{action.Kind} failed: {ex}");
+            result = new(false, $"Couldn't complete '{action.ButtonText}'.");
+        }
+        finally
+        {
+            if (ownsProgress) RepairProgress = null;
+        }
+        lock (_gate)
+        {
+            _lastRun = new(++_runSeq, action, origin, result.Success, result.Message, result.RestartNeeded, DateTimeOffset.UtcNow);
+            _running = null;
+            _runCts = null;
+        }
+        cts.Dispose();
+        RaiseRunChanged();
+        return result;
+    }
+
+    /// <summary>Asks the running fix to stop. Windows may still finish what it started.</summary>
+    public void CancelRunning()
+    {
+        lock (_gate)
+        {
+            try { _runCts?.Cancel(); } catch (ObjectDisposedException) { }
+        }
+    }
+
+    private sealed class InlineRunProgress(Action<string> report) : IProgress<string>
+    {
+        public void Report(string value) => report(value);
+    }
 
     /// <summary>Full result of the last DISM/SFC repair run through <see cref="ExecuteAsync"/> (for the workflow report).</summary>
     public RepairResult? LastRepair { get; private set; }
@@ -439,7 +578,8 @@ public sealed class RemediationService(
 
     /// <summary>DISM RestoreHealth or SFC /scannow with the full finding (output, exit code, log excerpts, restart needed).</summary>
     public Task<RepairResult> RepairAsync(AreaAction action, IProgress<string>? progress, CancellationToken ct) =>
-        WindowsRepair.RunAsync(commands, action.Kind == RemediationKind.RepairComponentStore, progress, ct);
+        WindowsRepair.RunStepAsync(commands, StepOf(action.Kind) ?? RepairStep.SfcScanNow,
+            action.Kind == RemediationKind.RepairComponentStoreFromImage ? action.Target : null, progress, ct);
 
     private async Task<RemediationResult> RunScheduleCleanRestartAsync(AreaAction action, CancellationToken ct)
     {
@@ -574,6 +714,7 @@ public sealed class RemediationService(
     {
         var kindWord = driversOnly ? "driver" : "Windows";
         var pr = await commands.RunPowerShellAsync(BuildWindowsUpdateScript(driversOnly), UpdateTimeout, ct).ConfigureAwait(false);
+        PendingUpdates.Invalidate();
         if (pr is not { ExitCode: 0 } || string.IsNullOrWhiteSpace(pr.StdOut))
             return new(false, $"Couldn't check Windows Update for {kindWord} updates.");
 
@@ -585,6 +726,7 @@ public sealed class RemediationService(
             var installed = root.TryGetProperty("Installed", out var ins) && ins.TryGetInt32(out var ii) ? ii : 0;
             // IUpdateInstaller ResultCode: 2 succeeded, 3 succeeded with errors, 4 failed, 5 aborted; -1/absent = no install attempted.
             var installResult = root.TryGetProperty("InstallResult", out var ir) && ir.TryGetInt32(out var iri) ? iri : -1;
+            var restart = root.TryGetProperty("RebootRequired", out var rb) && rb.ValueKind == JsonValueKind.True;
             var titles = new List<string>();
             if (root.TryGetProperty("Titles", out var tEl))
             {
@@ -607,7 +749,8 @@ public sealed class RemediationService(
             var sample = string.Join(", ", titles.Take(shown));
             if (titles.Count > shown) sample += $" (+{titles.Count - shown} more)";
             if (installed > 0)
-                return new(true, $"Installed {installed} of {count} {kindWord} update(s): {sample}.", UpdatesInstalled: installed);
+                return new(true, $"Installed {installed} of {count} {kindWord} update(s): {sample}." + (restart ? " Restart the PC to finish." : ""),
+                    UpdatesInstalled: installed, RestartNeeded: restart);
             if (installResult is 4 or 5)
                 return new(false, $"Found {count} {kindWord} update(s) ({sample}) but Windows couldn't install them. Try again from Settings > Windows Update.");
             return new(true, $"Found {count} available {kindWord} update(s) ({sample}) and triggered Windows Update scan/download.");
@@ -615,6 +758,50 @@ public sealed class RemediationService(
         catch
         {
             return new(false, $"Couldn't read Windows Update results for {kindWord} updates.");
+        }
+    }
+
+    /// <summary>The script that installs one update by its Windows Update ID; null when <paramref name="updateId"/> isn't one.</summary>
+    public static string? BuildInstallUpdateScript(string? updateId) =>
+        Guid.TryParse(updateId, out var id) ? Scripts.PowerShellScripts.Get("InstallUpdate").Replace("__UPDATE_ID__", id.ToString("D")) : null;
+
+    private async Task<RemediationResult> RunInstallUpdateAsync(AreaAction action, CancellationToken ct)
+    {
+        if (BuildInstallUpdateScript(action.Target) is not { } script) return new(false, "This update has no Windows Update ID.");
+        var pr = await commands.RunPowerShellAsync(script, UpdateTimeout, ct).ConfigureAwait(false);
+        PendingUpdates.Invalidate();
+        return ParseInstallUpdate(pr is { ExitCode: 0 } ? pr.StdOut : null, Display(action));
+    }
+
+    /// <summary>The install script's JSON → the fix result. <paramref name="label"/> names the update when the script couldn't.</summary>
+    public static RemediationResult ParseInstallUpdate(string? json, string label)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new(false, $"Couldn't ask Windows Update to install {label}.");
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            bool Flag(string n) => root.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.True;
+            int Number(string n) => root.TryGetProperty(n, out var v) && v.TryGetInt32(out var i) ? i : -1;
+            var title = root.TryGetProperty("Title", out var t) && t.GetString() is { Length: > 0 } s ? s : label;
+            var error = root.TryGetProperty("Error", out var e) ? e.GetString() ?? "" : "";
+            if (error.Length > 0) return new(false, $"Windows Update couldn't install {title}: {AreaReportExport.Text(error, 300)}");
+            if (!Flag("Found")) return new(false, $"Windows Update no longer offers {title}. It may be installed already, or replaced by a newer update. Run the check again.");
+            var restart = Flag("RebootRequired");
+            // IUpdateInstaller ResultCode: 2 succeeded, 3 succeeded with errors, 4 failed, 5 aborted; -1 = nothing was installed.
+            var code = Number("ResultCode");
+            if (Flag("Installed"))
+                return new(true, $"Installed {title}." + (restart ? " Restart the PC to finish." : ""), UpdatesInstalled: 1, RestartNeeded: restart);
+            if (code is 4 or 5)
+            {
+                var hr = Number("HResult");
+                return new(false, $"Windows couldn't install {title}" + (hr is not (0 or -1) ? $" (0x{unchecked((uint)hr):X8})." : ".") + " Try again from Settings > Windows Update.", RestartNeeded: restart);
+            }
+            return new(false, $"Windows couldn't download {title}. Check the internet connection and try again.");
+        }
+        catch (JsonException)
+        {
+            return new(false, $"Couldn't read Windows Update's answer for {label}.");
         }
     }
 

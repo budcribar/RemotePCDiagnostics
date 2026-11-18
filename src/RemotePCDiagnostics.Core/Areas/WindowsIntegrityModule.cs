@@ -24,6 +24,8 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
     protected virtual void OnScanStarting() { }
     /// <summary>Extra detail rows when the scan didn't come back clean.</summary>
     protected virtual void AddProblemEvidence(List<AreaRow> rows) { }
+    /// <summary>The single repair steps the card offers for this result, each run alone; null for none.</summary>
+    protected virtual IReadOnlyList<AreaAction>? CardActions(DiagnosticStatus status) => null;
 
     public void Cancel()
     {
@@ -82,7 +84,7 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
                 DiagnosticStatus.Warning => AreaLevel.Warning,
                 _ => AreaLevel.Error
             }, summary, result is null ? "Scan did not return an exit code" : $"Exit code {result.ExitCode}",
-            ["Detail", "Value"], rows)], summary, status);
+            ["Detail", "Value"], rows, Actions: CardActions(status) is { Count: > 0 } actions ? actions : null)], summary, status);
     }
 
     /// <summary>Warning when corruption was reported, Ok when the clean message came with exit code 0, otherwise Error.</summary>

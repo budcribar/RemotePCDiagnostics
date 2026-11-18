@@ -11,18 +11,120 @@ public sealed record RepairResult(
     public bool Success => Status == DiagnosticStatus.Ok;
 }
 
+/// <summary>One Windows repair step. Each runs alone, so a repair can be done step by step with a restart in between.</summary>
+public enum RepairStep
+{
+    /// <summary>Read-only: <c>DISM /AnalyzeComponentStore</c>.</summary>
+    AnalyzeStore,
+    /// <summary><c>DISM /StartComponentCleanup</c>: removes superseded component versions.</summary>
+    CleanUpStore,
+    /// <summary><c>DISM /RestoreHealth</c> from Windows Update.</summary>
+    RestoreHealth,
+    /// <summary><c>DISM /RestoreHealth /Source:… /LimitAccess</c> from a Windows image.</summary>
+    RestoreHealthFromImage,
+    /// <summary><c>SFC /scannow</c>.</summary>
+    SfcScanNow,
+}
+
+/// <summary>One image inside an install.wim / install.esd, as <c>DISM /Get-WimInfo /Index:n</c> reports it.</summary>
+public sealed record WimImageInfo(int Index, string Name, string Edition, string Version);
+
 /// <summary>
-/// Windows repair for the service workflow: <c>DISM /RestoreHealth</c> (component store) and <c>SFC /scannow</c> (protected files).
+/// Windows repair steps: <c>DISM /RestoreHealth</c> (component store) and <c>SFC /scannow</c> (protected files) for the service workflow,
+/// plus the single steps offered on the DISM and SFC checks (analyze, cleanup, repair from a Windows image).
 /// Parsing is pure (<see cref="ParseDism"/>, <see cref="ParseSfc"/>) so it can be tested with sample output. DISM is run with /English;
 /// SFC output is localized, so SFC also relies on its exit code and the CBS.log "[SR]" lines (English in every language).
 /// </summary>
 public static class WindowsRepair
 {
     public const string DismId = "dism-restorehealth", SfcId = "sfc-scannow";
+    public const string AnalyzeId = "dism-analyzecomponentstore", CleanupId = "dism-startcomponentcleanup", ImageId = "dism-restorehealth-image";
     public const string DismTitle = "Repair Windows component store (DISM RestoreHealth)", SfcTitle = "Repair protected system files (SFC /scannow)";
+    public const string AnalyzeTitle = "Analyze Windows component store", CleanupTitle = "Clean up Windows component store",
+        ImageTitle = "Repair Windows component store from a Windows image";
     public static readonly string[] DismArgs = ["/English", "/Online", "/Cleanup-Image", "/RestoreHealth"];
+    public static readonly string[] AnalyzeArgs = ["/English", "/Online", "/Cleanup-Image", "/AnalyzeComponentStore"];
+    public static readonly string[] CleanupArgs = ["/English", "/Online", "/Cleanup-Image", "/StartComponentCleanup"];
     public static readonly string[] SfcArgs = ["/scannow"];
     public static readonly TimeSpan DismTimeout = TimeSpan.FromMinutes(45), SfcTimeout = TimeSpan.FromMinutes(45);
+    public static readonly TimeSpan AnalyzeTimeout = TimeSpan.FromMinutes(15), ImageInfoTimeout = TimeSpan.FromMinutes(2);
+    /// <summary>DISM refuses a cleanup or repair while an earlier servicing operation waits for a restart.</summary>
+    public const string PendingOperationsCode = "0x800f0806";
+
+    public static string IdOf(RepairStep step) => step switch
+    {
+        RepairStep.AnalyzeStore => AnalyzeId, RepairStep.CleanUpStore => CleanupId, RepairStep.RestoreHealth => DismId,
+        RepairStep.RestoreHealthFromImage => ImageId, _ => SfcId,
+    };
+
+    public static string TitleOf(RepairStep step) => step switch
+    {
+        RepairStep.AnalyzeStore => AnalyzeTitle, RepairStep.CleanUpStore => CleanupTitle, RepairStep.RestoreHealth => DismTitle,
+        RepairStep.RestoreHealthFromImage => ImageTitle, _ => SfcTitle,
+    };
+
+    /// <summary>The <c>/Source</c> argument for one image in a .wim or .esd file.</summary>
+    public static string ImageSourceArg(string imagePath, int index) =>
+        $"/Source:{(imagePath.EndsWith(".esd", StringComparison.OrdinalIgnoreCase) ? "ESD" : "WIM")}:{imagePath}:{index}";
+
+    /// <summary>A path this app passes to DISM as a repair source: a rooted path to a .wim or .esd file, with nothing a command line could misread.</summary>
+    public static bool IsImagePath(string? path) =>
+        !string.IsNullOrWhiteSpace(path) && path.Length <= 260 && path.IndexOfAny(['"', '\r', '\n', '<', '>', '|', '*', '?']) < 0
+        && (path.EndsWith(".wim", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".esd", StringComparison.OrdinalIgnoreCase))
+        && (path.Length > 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] == '\\' || path.StartsWith(@"\\", StringComparison.Ordinal));
+
+    /// <summary>"Current Edition : Professional" from <c>DISM /Online /Get-CurrentEdition</c>; null when absent.</summary>
+    public static string? ParseCurrentEdition(string? output) =>
+        Regex.Match(output ?? "", @"(?im)^\s*Current Edition\s*:\s*(\S+)") is { Success: true } m ? m.Groups[1].Value : null;
+
+    /// <summary>The index numbers <c>DISM /Get-WimInfo /WimFile:…</c> lists.</summary>
+    public static IReadOnlyList<int> ParseWimIndexes(string? output) =>
+        Regex.Matches(output ?? "", @"(?im)^\s*Index\s*:\s*(\d+)").Select(m => int.Parse(m.Groups[1].Value)).Distinct().ToList();
+
+    /// <summary>One image's name, edition and version from <c>DISM /Get-WimInfo /WimFile:… /Index:n</c>; null when the edition is absent.</summary>
+    public static WimImageInfo? ParseWimImage(int index, string? output)
+    {
+        string Field(string name) => Regex.Match(output ?? "", $@"(?im)^\s*{name}\s*:\s*(.+?)\s*$") is { Success: true } m ? m.Groups[1].Value : "";
+        var edition = Field("Edition");
+        if (edition.Length == 0) return null;
+        var version = Field("Version");
+        var build = Field("ServicePack Build");
+        return new(index, Field("Name"), edition, build.Length > 0 && version.Length > 0 ? $"{version}.{build}" : version);
+    }
+
+    /// <summary>DISM /AnalyzeComponentStore output (English) + exit code → status and plain summary.</summary>
+    public static (DiagnosticStatus Status, string Summary, bool Reboot) ParseAnalyze(string output, int? exitCode)
+    {
+        var o = output ?? "";
+        string Field(string name) => Regex.Match(o, $@"(?im)^\s*{name}\s*:\s*(.+?)\s*$") is { Success: true } m ? m.Groups[1].Value : "";
+        var size = Field("Actual Size of Component Store");
+        if (exitCode != 0 || size.Length == 0)
+            return (DiagnosticStatus.Error, exitCode is null ? "DISM didn't finish (no exit code). Run the app as administrator and try again."
+                : $"DISM couldn't analyze the component store (exit code {ExitCodeText(exitCode.Value)}).", false);
+        var parts = new List<string> { $"Component store size: {size}" };
+        if (Field("Backups and Disabled Features") is { Length: > 0 } backups) parts.Add($"backups and disabled features: {backups}");
+        if (Field("Number of Reclaimable Packages") is { Length: > 0 } packages) parts.Add($"reclaimable packages: {packages}");
+        if (Field("Date of Last Cleanup") is { Length: > 0 } last) parts.Add($"last cleanup: {last}");
+        var recommended = Field("Component Store Cleanup Recommended");
+        parts.Add(recommended.StartsWith("Yes", StringComparison.OrdinalIgnoreCase) ? "cleanup recommended"
+            : recommended.Length > 0 ? "cleanup not needed" : "no cleanup recommendation reported");
+        return (DiagnosticStatus.Ok, string.Join("; ", parts) + ".", false);
+    }
+
+    /// <summary>DISM /StartComponentCleanup output (English) + exit code → status and plain summary.</summary>
+    public static (DiagnosticStatus Status, string Summary, bool Reboot) ParseCleanup(string output, int? exitCode)
+    {
+        var o = output ?? "";
+        var reboot = exitCode == RebootRequiredExitCode || RebootText(o);
+        if (Has(o, PendingOperationsCode) || exitCode == unchecked((int)0x800f0806))
+            return (DiagnosticStatus.Error, "Windows is waiting for a restart to finish an earlier update or repair (0x800F0806). Restart the PC, then clean up again.", true);
+        if (exitCode is 0 or RebootRequiredExitCode && (Has(o, "operation completed successfully") || o.Length == 0))
+            return (DiagnosticStatus.Ok, reboot ? "Component store cleaned up; a restart finishes it." : "Component store cleaned up. Restart the PC before repairing the store again.", reboot);
+        if (exitCode is null) return (DiagnosticStatus.Error, "DISM didn't finish (no exit code). Run the app as administrator and try again.", reboot);
+        return (DiagnosticStatus.Error, $"DISM couldn't clean up the component store (exit code {ExitCodeText(exitCode.Value)}). See the output.", reboot);
+    }
+
+    private static string ExitCodeText(int exitCode) => exitCode < 0 ? $"0x{unchecked((uint)exitCode):X8}" : exitCode.ToString();
     public const int RebootRequiredExitCode = 3010; // ERROR_SUCCESS_REBOOT_REQUIRED
 
     /// <summary>Removes progress bars and "NN% complete" lines (DISM's [====  50.0%  ] bars, SFC's "Verification 45% complete.").</summary>
@@ -173,54 +275,115 @@ public static class WindowsRepair
     }
 
     /// <summary>Runs the repair. <paramref name="progress"/> gets "Repair 45% complete" lines.</summary>
-    public static async Task<RepairResult> RunAsync(SystemCommandRunner commands, bool componentStore, IProgress<string>? progress, CancellationToken ct)
+    public static Task<RepairResult> RunAsync(SystemCommandRunner commands, bool componentStore, IProgress<string>? progress, CancellationToken ct) =>
+        RunStepAsync(commands, componentStore ? RepairStep.RestoreHealth : RepairStep.SfcScanNow, null, progress, ct);
+
+    /// <summary>Runs one repair step. <paramref name="imagePath"/> is the install.wim / install.esd for <see cref="RepairStep.RestoreHealthFromImage"/>.</summary>
+    public static async Task<RepairResult> RunStepAsync(SystemCommandRunner commands, RepairStep step, string? imagePath, IProgress<string>? progress, CancellationToken ct)
     {
-        var exe = SystemCommandRunner.SystemTool(componentStore ? "dism.exe" : "sfc.exe");
-        var args = componentStore ? DismArgs : SfcArgs;
+        var sfc = step == RepairStep.SfcScanNow;
+        var restore = step is RepairStep.RestoreHealth or RepairStep.RestoreHealthFromImage;
+        var exe = SystemCommandRunner.SystemTool(sfc ? "sfc.exe" : "dism.exe");
+        var id = IdOf(step);
+        var title = TitleOf(step);
+        var details = new List<(string, string)>();
+        string[] args;
+        switch (step)
+        {
+            case RepairStep.AnalyzeStore: args = AnalyzeArgs; break;
+            case RepairStep.CleanUpStore: args = CleanupArgs; break;
+            case RepairStep.RestoreHealth: args = DismArgs; break;
+            case RepairStep.SfcScanNow: args = SfcArgs; break;
+            default:
+                var (image, problem) = await FindImageAsync(commands, exe, imagePath, details, ct).ConfigureAwait(false);
+                if (image is null) return new(id, title, DiagnosticStatus.Error, problem!, "Not started", false, details);
+                args = [.. DismArgs, ImageSourceArg(imagePath!, image.Index), "/LimitAccess"];
+                break;
+        }
+
         var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         var cbsPath = Path.Combine(windows, "Logs", "CBS", "CBS.log");
         var dismPath = Path.Combine(windows, "Logs", "DISM", "dism.log");
         var cbsOffset = WindowsIntegrityModule.LogLength(cbsPath);
-        var dismOffset = componentStore ? WindowsIntegrityModule.LogLength(dismPath) : null;
+        var dismOffset = sfc ? null : WindowsIntegrityModule.LogLength(dismPath);
         double last = -1;
-        progress?.Report(componentStore ? "Repairing the Windows component store. This can take 10–30 minutes." : "Repairing protected system files. This can take 10–20 minutes.");
-        ProcessResult? pr = await commands.RunAsync(exe, args, componentStore ? DismTimeout : SfcTimeout, ct, line =>
+        var verb = step switch { RepairStep.AnalyzeStore => "Analysis", RepairStep.CleanUpStore => "Cleanup", _ => "Repair" };
+        progress?.Report(step switch
+        {
+            RepairStep.AnalyzeStore => "Analyzing the Windows component store. This can take a few minutes.",
+            RepairStep.CleanUpStore => "Cleaning up the Windows component store. This can take 10–30 minutes.",
+            RepairStep.SfcScanNow => "Repairing protected system files. This can take 10–20 minutes.",
+            _ => "Repairing the Windows component store. This can take 10–30 minutes.",
+        });
+        var timeout = step switch { RepairStep.AnalyzeStore => AnalyzeTimeout, RepairStep.SfcScanNow => SfcTimeout, _ => DismTimeout };
+        ProcessResult? pr = await commands.RunAsync(exe, args, timeout, ct, line =>
         {
             var m = Regex.Match(line.Replace("\0", ""), @"(?<![\d.])(\d{1,3}(?:[.,]\d+)?)\s*%");
             if (!m.Success || !double.TryParse(m.Groups[1].Value.Replace(',', '.'), System.Globalization.NumberStyles.AllowDecimalPoint,
                     System.Globalization.CultureInfo.InvariantCulture, out var p) || p > 100 || p <= last) return;
             last = p;
-            progress?.Report($"Repair {p:0.#}% complete");
+            progress?.Report($"{verb} {p:0.#}% complete");
         }).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         var output = CleanOutput(pr?.StdOut + "\n" + pr?.StdErr);
-        var srLines = componentStore ? [] : WindowsIntegrityModule.ReadNewLines(cbsPath, cbsOffset).Where(l => l.Contains("[SR]", StringComparison.Ordinal)).ToList();
-        var dismExcerpt = componentStore ? WindowsIntegrityModule.ReadLogEvidence(dismPath, dismOffset) : null;
-        var (status, summary, reboot) = componentStore ? ParseDism(output, pr?.ExitCode, dismExcerpt) : ParseSfc(output, pr?.ExitCode, srLines);
-        var details = new List<(string, string)>
+        var srLines = sfc ? WindowsIntegrityModule.ReadNewLines(cbsPath, cbsOffset).Where(l => l.Contains("[SR]", StringComparison.Ordinal)).ToList() : [];
+        var dismExcerpt = sfc ? null : WindowsIntegrityModule.ReadLogEvidence(dismPath, dismOffset);
+        var (status, summary, reboot) = step switch
         {
-            ("Command", $"{Path.GetFileName(exe)} {string.Join(' ', args)}"),
-            ("Output", output.Length > 12000 ? output[^12000..] : output),
+            RepairStep.AnalyzeStore => ParseAnalyze(output, pr?.ExitCode),
+            RepairStep.CleanUpStore => ParseCleanup(output, pr?.ExitCode),
+            RepairStep.SfcScanNow => ParseSfc(output, pr?.ExitCode, srLines),
+            _ => ParseDism(output, pr?.ExitCode, dismExcerpt),
         };
-        if (!componentStore && srLines.Count > 0) details.Add(("CBS [SR] lines", string.Join("\n", srLines.TakeLast(30))));
+        details.Insert(0, ("Command", $"{Path.GetFileName(exe)} {string.Join(' ', args)}"));
+        details.Insert(1, ("Output", output.Length > 12000 ? output[^12000..] : output));
+        if (sfc && srLines.Count > 0) details.Add(("CBS [SR] lines", string.Join("\n", srLines.TakeLast(30))));
         if (status != DiagnosticStatus.Ok)
         {
             var cbs = WindowsIntegrityModule.ReadLogEvidence(cbsPath, cbsOffset);
             details.Add(("CBS summary", WindowsIntegrityModule.SummarizeCbs(cbs)));
             details.Add(("CBS log excerpt", cbs));
-            if (componentStore && dismExcerpt is not null)
+            if (!sfc && dismExcerpt is not null)
             {
                 details.Add(("DISM summary", SummarizeDism(dismExcerpt)));
                 details.Add(("DISM log excerpt", dismExcerpt));
             }
         }
-        if (reboot) details.Add(("Restart", "Windows asked for a restart to finish; the workflow's restart after the fixes covers it."));
+        if (reboot) details.Add(("Restart", "Windows asked for a restart to finish."));
         var exitCodeDisplay = pr is null
             ? "No exit code (didn't finish)"
             : pr.ExitCode < 0
                 ? $"Exit code 0x{unchecked((uint)pr.ExitCode):X8}"
                 : $"Exit code {pr.ExitCode}";
-        return new(componentStore ? DismId : SfcId, componentStore ? DismTitle : SfcTitle, status, summary,
-            exitCodeDisplay, reboot, details);
+        return new(id, title, status, summary, exitCodeDisplay, reboot, details);
+    }
+
+    /// <summary>
+    /// Picks the image in <paramref name="imagePath"/> that matches the running Windows edition: DISM needs the index of the matching
+    /// edition as its repair source. Returns the image, or the reason none could be used.
+    /// </summary>
+    private static async Task<(WimImageInfo? Image, string? Problem)> FindImageAsync(SystemCommandRunner commands, string dism, string? imagePath,
+        List<(string, string)> details, CancellationToken ct)
+    {
+        if (!IsImagePath(imagePath)) return (null, "The Windows image path isn't a .wim or .esd file this app can use.");
+        if (!commands.IsScripted && !File.Exists(imagePath))
+            return (null, "The Windows image is no longer there. Mount the Windows ISO again, run the check again, then repair.");
+        var current = ParseCurrentEdition((await commands.RunAsync(dism, ["/English", "/Online", "/Get-CurrentEdition"], ImageInfoTimeout, ct).ConfigureAwait(false))?.StdOut);
+        if (current is null) return (null, "Couldn't read this PC's Windows edition. Run the app as administrator and try again.");
+        var list = await commands.RunAsync(dism, ["/English", "/Get-WimInfo", $"/WimFile:{imagePath}"], ImageInfoTimeout, ct).ConfigureAwait(false);
+        var indexes = ParseWimIndexes(list?.StdOut);
+        if (indexes.Count == 0) return (null, "Couldn't read the Windows image. It may be damaged or not a Windows installation image.");
+        var seen = new List<WimImageInfo>();
+        foreach (var index in indexes)
+        {
+            var one = await commands.RunAsync(dism, ["/English", "/Get-WimInfo", $"/WimFile:{imagePath}", $"/Index:{index}"], ImageInfoTimeout, ct).ConfigureAwait(false);
+            if (ParseWimImage(index, one?.StdOut) is not { } info) continue;
+            seen.Add(info);
+            if (!string.Equals(info.Edition, current, StringComparison.OrdinalIgnoreCase)) continue;
+            details.Add(("Repair source", $"{imagePath}, image {info.Index}: {info.Name} ({info.Edition}), version {info.Version}"));
+            return (info, null);
+        }
+        var editions = string.Join(", ", seen.Select(i => i.Edition).Distinct(StringComparer.OrdinalIgnoreCase));
+        return (null, $"The Windows image has no {current} edition (it has: {(editions.Length > 0 ? editions : "none readable")}). Use an image of the same edition and version as this PC.");
     }
 }

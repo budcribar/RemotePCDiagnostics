@@ -60,7 +60,15 @@ public static class AreaReportExport
     private static IReadOnlyList<ExportedAction>? Actions(IReadOnlyList<AreaAction>? actions) =>
         actions is { Count: > 0 }
             ? actions.Select(a => new ExportedAction(a.Kind.ToString(), Text(a.Target, MaxValueLength) ?? "",
-                Text(a.TargetLabel, MaxValueLength), Text(a.ButtonText, MaxValueLength) ?? "", Text(a.CurrentSetting, MaxValueLength))).ToList()
+                Text(a.TargetLabel, MaxValueLength), Text(a.ButtonText, MaxValueLength) ?? "", Text(a.CurrentSetting, MaxValueLength))
+            {
+                Risk = FixTraits.Risk(a.Kind),
+                Undo = FixTraits.Undo(a.Kind),
+                ReadOnly = RemediationService.IsReadOnly(a.Kind) ? true : null,
+                Slow = FixTraits.Slow(a.Kind) ? true : null,
+                MayNeedRestart = FixTraits.MayNeedRestart(a.Kind) ? true : null,
+                RestartsPc = a.Kind == RemediationKind.ScheduleCleanRestart ? true : null,
+            }).ToList()
             : null;
 
     private static ExportedCard Card(AreaCard card)
@@ -163,7 +171,21 @@ public static class AreaReportExport
     }
 
     /// <summary>A one-click fix as the page offers it. Kind is a <see cref="RemediationKind"/> name.</summary>
-    public sealed record ExportedAction(string Kind, string Target, string? TargetLabel, string ButtonText, string? CurrentSetting);
+    public sealed record ExportedAction(string Kind, string Target, string? TargetLabel, string ButtonText, string? CurrentSetting)
+    {
+        /// <summary>"low" or "medium": how much the fix can disturb the PC.</summary>
+        public string? Risk { get; init; }
+        /// <summary>"full" (undo puts it back), "none" (permanent) or "nothing" (leaves nothing lasting).</summary>
+        public string? Undo { get; init; }
+        /// <summary>True when the fix only reads.</summary>
+        public bool? ReadOnly { get; init; }
+        /// <summary>True when the fix can run for many minutes (a repair, a cleanup, an update).</summary>
+        public bool? Slow { get; init; }
+        /// <summary>True when Windows may ask for a restart to finish the fix; the fix's result says whether it did.</summary>
+        public bool? MayNeedRestart { get; init; }
+        /// <summary>True for the fix that restarts the PC itself.</summary>
+        public bool? RestartsPc { get; init; }
+    }
 
     public sealed record ExportedService(string Name, string? DisplayName, string? Status, string? StartType,
         bool CanStart, bool CanStop, bool CanRestart, bool Protected);
