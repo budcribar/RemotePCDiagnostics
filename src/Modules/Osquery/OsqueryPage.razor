@@ -1,3 +1,4 @@
+@using RemotePCDiagnostics.Core.Areas
 @using RemotePCDiagnostics.Core.Osquery
 @inherits ModuleDetailsBase
 @{
@@ -24,6 +25,10 @@
 }
 @if (inv is not null)
 {
+    @if (!busy)
+    {
+        <AreaReportData Report="@InventoryReport(inv, r.Status, r.Message)" CheckId="@ModuleSlugs.Osquery" RunId="r.RunId" />
+    }
     <div class="cards">
         <SummaryCard Id="system" Title="Computer" OnOpen="Open"
                      ErrorText="@(inv.System.Success ? null : "Couldn't read computer details on this PC.")"
@@ -86,6 +91,37 @@
     private static string N(long? v) => v?.ToString() ?? "";
     private static string CpuMeta(CpuInfo? c) => c is null ? "" :
         string.Join(" · ", new[] { c.NumberOfCores is > 0 ? $"{c.NumberOfCores} cores" : null, c.LogicalProcessors is > 0 ? $"{c.LogicalProcessors} threads" : null, c.MaxClockSpeedMhz is > 0 ? $"up to {c.MaxClockSpeedMhz / 1000.0:0.0#} GHz" : null }.Where(x => x is not null));
+
+    private static AreaReport InventoryReport(HardwareInventory inventory, DiagnosticStatus status, string summary)
+    {
+        var system = inventory.System.Items.FirstOrDefault();
+        var cpus = inventory.Cpus.Items.Count == 0 && system?.CpuBrand is { Length: > 0 }
+            ? inventory.Cpus with { Items = [HardwareInventory.CpuFromSystemPublic(system)], Error = null }
+            : inventory.Cpus;
+        return new AreaReport(
+        [
+            ExportSection("system", "Computer", inventory.System, SystemCols,
+                ["Manufacturer", "Model", "Version", "Motherboard", "Installed memory"]),
+            ExportSection("cpu", "Processor", cpus, CpuCols,
+                ["Processor", "Manufacturer", "Socket", "Cores", "Threads", "Current speed", "Maximum speed", "Current load"]),
+            ExportSection("memory", "Memory", inventory.Memory, MemCols,
+                ["Slot", "Bank", "Size", "Type", "Form factor", "Speed", "Manufacturer", "Part number"]),
+            ExportSection("disks", "Storage", inventory.Disks, DiskCols,
+                ["Model", "Manufacturer", "Size", "Connection", "Partitions"]),
+        ], summary, status);
+    }
+
+    private static AreaCard ExportSection<T>(string id, string title, InventorySection<T> section,
+        (string Name, Func<T, string> Read)[] columns, IReadOnlyList<string> allowed)
+    {
+        var exported = columns.Where(column => allowed.Contains(column.Name)).ToArray();
+        var rows = section.Items.Select(item => new AreaRow(AreaLevel.Neutral,
+            exported.Select(column => column.Read(item)).ToArray())).ToArray();
+        var level = section.Success ? AreaLevel.Neutral : AreaLevel.Warning;
+        return new AreaCard(id, title, level, "", "", exported.Select(column => column.Name).ToArray(), rows,
+            ErrorText: section.Success ? null : $"Couldn't read {title.ToLowerInvariant()} details on this PC.",
+            EmptyText: $"No {title.ToLowerInvariant()} details are available on this PC.");
+    }
 
     private static readonly (string, Func<SystemInfo, string>)[] SystemCols =
     [
