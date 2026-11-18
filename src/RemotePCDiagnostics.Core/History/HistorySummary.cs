@@ -153,6 +153,8 @@ public static class HistorySummary
         int storageFixes = 0;
 
         var fixList = new List<FixHistoryItem>();
+        // Fixes and undos of memory suggestions, logged or live, so an undo can take back what its fix had counted.
+        var memActs = new List<(DateTimeOffset TimeUtc, string Suggestion, MemoryActionType? Action, bool Undone, bool DiskRestored, bool Ok, long DiskBytes, int FixIdx)>();
         var persistedUnmatched = new List<(DateTimeOffset TimeUtc, string Summary)>();
 
         static string NormalizeSummary(string? s) => (s ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
@@ -255,22 +257,25 @@ public static class HistorySummary
             if (isStorageCleanup) mb = 0; // disk, not memory
             var isAppRemoval = IsAppRemoval(action);
             var isStorageFix = IsStorageFix(action);
+            var undone = isMemoryModule && e.Measurement("Undone") == "1";
+            var counts = ok && !undone; // an undo is listed, but it isn't a fix of its action's kind
 
             diskBytes += fb;
             tempFiles += rf;
             memBytes += mb;
             updatesInstalled += up;
 
-            if (isAppRemoval && ok) appsRemoved++;
-            if (isStorageFix && ok) storageFixes++;
+            if (isAppRemoval && counts) appsRemoved++;
+            if ((isStorageFix || isStorageCleanup || kind.Equals(nameof(RemediationKind.CleanTempFiles), StringComparison.OrdinalIgnoreCase)) && counts) storageFixes++;
             if (!isStorageCleanup && !isAppRemoval && !isStorageFix && (mb > 0 || isMemoryModule || kind.Equals(nameof(RemediationKind.EndProcessGroup), StringComparison.OrdinalIgnoreCase)))
-                if (ok) memFixes++;
+                if (counts) memFixes++;
             if (kind is nameof(RemediationKind.RestartDevice) or nameof(RemediationKind.EnableDevice) && ok)
                 devicesReset++;
             if (string.Equals(e.Module, ServiceFixModuleId, StringComparison.OrdinalIgnoreCase) && ok)
                 servicesAdjusted++;
 
             var badge = FormatImpactBadge(fb, mb, up, rf);
+            if (isMemoryModule) memActs.Add((e.TimeUtc, e.Measurement("Suggestion") ?? "", action, undone, e.Measurement("DiskRestored") == "1", ok, fb, fixList.Count));
             fixList.Add(new(e.TimeUtc, action is null ? e.Test : MemoryActionCategory(action), actor, ok, e.Summary, badge));
             persistedUnmatched.Add((e.TimeUtc, NormalizeSummary(e.Summary)));
         }
@@ -291,6 +296,8 @@ public static class HistorySummary
                     memFixes++;
                 if (r.Success && r.Kind is RemediationKind.RestartDevice or RemediationKind.EnableDevice)
                     devicesReset++;
+                if (r.Success && r.Kind == RemediationKind.CleanTempFiles)
+                    storageFixes++;
 
                 var badge = FormatImpactBadge(r.FreedDiskBytes, r.FreedMemoryBytes, r.UpdatesInstalled, r.RemovedFiles);
                 fixList.Add(new(tUtc, FriendlyKind(r.Kind), r.Actor, r.Success, r.Message, badge));
@@ -311,6 +318,7 @@ public static class HistorySummary
                     var files = (int)Math.Min(m.RemovedFiles, int.MaxValue);
                     diskBytes += bytes;
                     tempFiles += files;
+                    if (m.Success) storageFixes++;
                     var diskBadge = FormatImpactBadge(bytes, 0, 0, files);
                     fixList.Add(new(tUtc, DiskCleanupCategory, memory.Actor, m.Success, m.Message, diskBadge));
                     continue;
@@ -328,10 +336,26 @@ public static class HistorySummary
                 diskBytes += m.FreedDiskBytes; // an app removal, or the hibernation file shrunk
 
                 var badge = FormatImpactBadge(m.FreedDiskBytes, freed, 0, 0);
+                memActs.Add((tUtc, m.SuggestionId, m.Action, m.Undone, m.DiskRestored, m.Success, m.FreedDiskBytes, fixList.Count));
                 fixList.Add(new(tUtc, MemoryActionCategory(m.Action), memory.Actor, m.Success, m.Message, badge));
             }
             // Only amounts carried on a record are counted, the same as its logged copy: History never adds the session total,
             // whose gains under the measurable threshold the card reports as "No measurable change".
+        }
+
+        // An undo that put the files back (the app reinstalled, the hibernation file full size again) takes the fix's bytes and its
+        // count out of the totals. An undo that only turned settings back on (the program stays uninstalled) changes nothing.
+        // It pairs with the latest fix of the same suggestion before it; with none in range, nothing changes.
+        var reversed = new HashSet<int>();
+        foreach (var undo in memActs.Where(a => a.Undone && a.DiskRestored && a.Ok && a.Suggestion.Length > 0 && (IsAppRemoval(a.Action) || IsStorageFix(a.Action))).OrderBy(a => a.TimeUtc))
+        {
+            var fix = memActs.Where(a => !a.Undone && a.Ok && a.Action == undo.Action && a.TimeUtc <= undo.TimeUtc && !reversed.Contains(a.FixIdx) &&
+                string.Equals(a.Suggestion, undo.Suggestion, StringComparison.OrdinalIgnoreCase)).OrderByDescending(a => a.TimeUtc).Cast<(DateTimeOffset TimeUtc, string Suggestion, MemoryActionType? Action, bool Undone, bool DiskRestored, bool Ok, long DiskBytes, int FixIdx)?>().FirstOrDefault();
+            if (fix is not { } f) continue;
+            reversed.Add(f.FixIdx);
+            diskBytes -= f.DiskBytes;
+            if (IsAppRemoval(f.Action)) appsRemoved--; else storageFixes--;
+            if (f.DiskBytes > 0) fixList[undo.FixIdx] = fixList[undo.FixIdx] with { ImpactBadge = $"-{HardwareInventory.FormatBytes(f.DiskBytes)} disk" };
         }
 
         // 4. Live in-session ServiceActionService records

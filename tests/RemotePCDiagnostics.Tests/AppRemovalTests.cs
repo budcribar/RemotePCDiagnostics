@@ -456,6 +456,11 @@ public class AppRemovalTests
         Assert.True(undone.Success, undone.Message);
         Assert.Contains("stays uninstalled", undone.Message);
         Assert.Equal("Ready", sys.Tasks[@"\Lenovo\LenovoNowTask"]);
+        // The program stays uninstalled, so History keeps its removal and its freed space counted.
+        var history = HistorySummary.Build([], memory: svc);
+        Assert.Equal(1, history.AppsRemovedCount);
+        Assert.Equal(r.FreedDiskBytes, history.DiskReclaimedBytes);
+        Assert.True(r.FreedDiskBytes > 0);
         Assert.Equal(ChangeKind.NotUndoable, Assert.Single(j.All).Kind);
     }
 

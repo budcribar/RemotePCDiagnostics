@@ -844,6 +844,7 @@ public sealed class StorageCleanupTests : IDisposable
         Assert.Equal(files, summary.TempFilesCleaned);
         Assert.Equal(0, summary.MemorySavedBytes);
         Assert.Equal(0, summary.MemoryFixesCount);
+        Assert.Equal((1, "1 storage fix"), (summary.StorageFixesCount, summary.FixesMeta)); // a cleanup is a storage fix
         Assert.Equal(0, summary.TotalRunsCount);
     }
 
@@ -864,6 +865,7 @@ public sealed class StorageCleanupTests : IDisposable
         Assert.Equal(3L << 30, live.DiskReclaimedBytes);
         Assert.Equal(3, live.TempFilesCleaned);
         Assert.Equal(0, live.MemoryFixesCount);
+        Assert.Equal((1, "1 storage fix"), (live.StorageFixesCount, live.FixesMeta));
 
         Assert.Contains("Freed disk bytes: 3221225472", eventText);
         Assert.Contains("Removed files: 3", eventText);
@@ -872,6 +874,7 @@ public sealed class StorageCleanupTests : IDisposable
         Assert.Equal(fix, Assert.Single(combined.Fixes));
         Assert.Equal(live.DiskReclaimedBytes, combined.DiskReclaimedBytes);
         Assert.Equal(live.TempFilesCleaned, combined.TempFilesCleaned);
+        Assert.Equal(1, combined.StorageFixesCount);
     }
 
     [Fact]

@@ -3,6 +3,7 @@ using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Benchmarks;
 using RemotePCDiagnostics.Core.Changes;
+using History = RemotePCDiagnostics.Core.History;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Workflow;
@@ -413,6 +414,8 @@ public class StoreReinstallTests
         Assert.StartsWith("Couldn't reinstall Microsoft To Do automatically — reinstall it from the Microsoft Store.", failed.Message);
         Assert.Single(j.All);
         Assert.NotNull(svc.UndoFor(s.Id)); // can try again
+        // Not reinstalled: History still counts the removal.
+        Assert.Equal(1, History.HistorySummary.Build([], memory: svc).AppsRemovedCount);
 
         sys.WingetResult = WingetResult.Exited(0);
         var ok = await svc.UndoAsync(svc.UndoFor(s.Id)!);
@@ -420,6 +423,12 @@ public class StoreReinstallTests
         Assert.Contains("Microsoft To Do reinstalled", ok.Message);
         Assert.Empty(j.All);
         Assert.Equal(2, sys.Winget.Count);
+        // Reinstalled: the undo takes the removal, and whatever space it freed, back out of History.
+        Assert.True(ok.DiskRestored);
+        var history = History.HistorySummary.Build([], memory: svc);
+        Assert.Equal(0, history.AppsRemovedCount);
+        Assert.Equal(0, history.DiskReclaimedBytes);
+        Assert.All(history.Fixes, f => Assert.Equal("App removal", f.Category));
     }
 
     [Fact]

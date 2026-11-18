@@ -257,6 +257,7 @@ public class RemediationTests
         Assert.Equal(18, summary.TempFilesCleaned);
         Assert.Equal("1 GB", summary.DiskHeadline);
         Assert.Contains("18 file(s) cleaned", summary.DiskMeta);
+        Assert.Equal(1, summary.StorageFixesCount); // the temp-file cleanup
 
         Assert.Equal(750L * 1024 * 1024, summary.MemorySavedBytes);
         Assert.Equal(1, summary.MemoryFixesCount);

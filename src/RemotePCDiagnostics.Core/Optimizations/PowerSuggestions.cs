@@ -29,7 +29,7 @@ internal sealed class PowerSuggestions(SuggestionContext c)
     {
         var full = await c.Sys.SetHibernateTypeAsync(false, ct).ConfigureAwait(false);
         if (full.Success) Hibernation.RemoveAddedValues(c.Sys, u.PreviousExtra, c.Logger);
-        return full.Success ? new(true, "The hibernation file is full size again; Hibernate is back in the power menu.") : full;
+        return full.Success ? new(true, "The hibernation file is full size again; Hibernate is back in the power menu.", DiskRestored: true) : full;
     }
 
     /// <summary>Lets Windows manage the page file size; journals the custom sizes it had (undo puts them back).</summary>

@@ -100,7 +100,8 @@ public class HibernationTests
     {
         var sys = new Sys(FullDesktop) { After = FullDesktop with { Reduced = true, FileBytes = (long)(2.84 * Gb) } };
         var j = new MemoryChangeJournal();
-        var svc = new MemorySuggestionService(sys, session: new SessionContext(SessionMode.Remote), settle: TimeSpan.Zero, journal: j);
+        var events = new List<string>();
+        var svc = new MemorySuggestionService(sys, session: new SessionContext(SessionMode.Remote), settle: TimeSpan.Zero, journal: j, events: (_, m) => events.Add(m));
         await svc.ScanAsync();
         var s = svc.Suggestions.Single(x => x.Id == "hiberfile-reduced");
         var r = await svc.ApplyAsync(s, s.Actions[0]);
@@ -128,10 +129,19 @@ public class HibernationTests
         Assert.Equal([true, false], sys.Calls);
         Assert.Empty(j.All);
 
-        // The undo is listed under storage too, and counts as neither a storage fix nor a memory fix.
-        var afterUndo = HistorySummary.Build([], memory: svc);
-        Assert.Equal(["Storage optimization", "Storage optimization"], afterUndo.Fixes.Select(f => f.Category));
-        Assert.Equal((1, 0), (afterUndo.StorageFixesCount, afterUndo.MemoryFixesCount));
+        // The file is full size again, so the undo takes the fix back out of the disk total and the count. It is listed under
+        // storage too. The same from the live records, from the Event Log alone (after a restart), and from both.
+        var fromLog = events.Where(e => e.StartsWith("Memory suggestion")).Select(e => HistoryEventParser.Parse(e, DateTimeOffset.UtcNow)!).ToList();
+        Assert.Equal(2, fromLog.Count);
+        Assert.Contains("Disk restored: Yes\r\n", events[^1]);
+        foreach (var h in new[] { HistorySummary.Build([], memory: svc), HistorySummary.Build(fromLog), HistorySummary.Build(fromLog, memory: svc) })
+        {
+            Assert.Equal(["Storage optimization", "Storage optimization"], h.Fixes.Select(f => f.Category));
+            Assert.Equal(0, h.DiskReclaimedBytes);
+            Assert.Equal((0, 0), (h.StorageFixesCount, h.MemoryFixesCount));
+            var size = RemotePCDiagnostics.Core.Osquery.HardwareInventory.FormatBytes(r.FreedDiskBytes);
+            Assert.Equal([$"+{size} disk", $"-{size} disk"], h.Fixes.OrderBy(f => f.Summary.StartsWith("Undone") ? 1 : 0).Select(f => f.ImpactBadge));
+        }
     }
 
     [Fact]
