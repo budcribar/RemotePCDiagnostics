@@ -64,9 +64,127 @@
         })();
     </script>
     <link href="_content/RemotePCDiagnostics.UI/app.css" rel="stylesheet" />
+    <style>
+        .rpd-splash-wrap {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #07090c;
+            color: #d6e2ea;
+            font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+            user-select: none;
+            z-index: 99999;
+        }
+        [data-theme="light"] .rpd-splash-wrap {
+            background: #f4f6fa;
+            color: #1e2633;
+        }
+        .rpd-splash-card {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+            padding: 32px 36px;
+            border-radius: 20px;
+            background: #0d1218;
+            border: 1px solid #163a44;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+            max-width: 380px;
+            width: 90%;
+            text-align: center;
+        }
+        [data-theme="light"] .rpd-splash-card {
+            background: #ffffff;
+            border-color: #e2e8f0;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+        }
+        .rpd-splash-img {
+            width: 220px;
+            height: 180px;
+            border-radius: 12px;
+            object-fit: contain;
+            display: block;
+        }
+        .rpd-splash-title {
+            font-size: 17px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+        }
+        .rpd-splash-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #8fa3b3;
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+        [data-theme="light"] .rpd-splash-status {
+            color: #5b6676;
+        }
+        .rpd-splash-pulse {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00e5ff;
+            box-shadow: 0 0 8px #00e5ff;
+            animation: rpd-pulse-anim 1.8s infinite cubic-bezier(0.45, 0, 0.55, 1);
+        }
+        [data-theme="light"] .rpd-splash-pulse {
+            background: #2563eb;
+            box-shadow: 0 0 8px #2563eb;
+        }
+        @keyframes rpd-pulse-anim {
+            0% { transform: scale(0.9); opacity: 0.6; }
+            50% { transform: scale(1.3); opacity: 1; }
+            100% { transform: scale(0.9); opacity: 0.6; }
+        }
+        .rpd-splash-bar {
+            width: 160px;
+            height: 3px;
+            background: #163a44;
+            border-radius: 2px;
+            overflow: hidden;
+            position: relative;
+        }
+        [data-theme="light"] .rpd-splash-bar {
+            background: #e2e8f0;
+        }
+        .rpd-splash-bar-fill {
+            position: absolute;
+            top: 0; bottom: 0;
+            width: 45%;
+            background: #00e5ff;
+            border-radius: 2px;
+            animation: rpd-bar-anim 1.5s infinite ease-in-out;
+        }
+        [data-theme="light"] .rpd-splash-bar-fill {
+            background: #2563eb;
+        }
+        @keyframes rpd-bar-anim {
+            0% { left: -45%; width: 45%; }
+            50% { left: 30%; width: 55%; }
+            100% { left: 100%; width: 45%; }
+        }
+    </style>
 </head>
 <body>
-    <div id="app">Loading...</div>
+    <div id="app">
+        <div class="rpd-splash-wrap">
+            <div class="rpd-splash-card">
+                <img class="rpd-splash-img" src="img/diagnostic-pulse.gif" alt="Remote PC Diagnostics" width="220" height="180" />
+                <div class="rpd-splash-title">Remote PC Diagnostics</div>
+                <div class="rpd-splash-status">
+                    <span class="rpd-splash-pulse"></span>
+                    <span>Starting diagnostic engine…</span>
+                </div>
+                <div class="rpd-splash-bar">
+                    <div class="rpd-splash-bar-fill"></div>
+                </div>
+            </div>
+        </div>
+    </div>
     <!-- TODO: verify script name for PeakSWC.RemoteBlazorWebView v10 (Microsoft BlazorWebView uses _framework/blazor.webview.js). -->
     <script src="_content/RemotePCDiagnostics.UI/dialogs.js"></script>
     <script src="_framework/blazor.webview.js"></script>
