@@ -305,9 +305,11 @@
             }
         </div>
         <div class="ct-detail-body" @key="m.Name">
-            @* The integrity scans show their result here, not on an area page: their single repair steps and the fix dialog live here too.
-               Mounted while the scan re-runs after a fix, so the fix's result stays visible. *@
-            @if (m is ICancellableScan && App.Remediation is { } scanFixes && (kind == RowKind.Running || (r.Payload is AreaReport && kind != RowKind.Cancelled)))
+            @* The Windows integrity scans (DISM, SFC) show their result here, not on an area page: their single repair steps and the fix
+               dialog live here too. Mounted while the scan re-runs after a fix, so the fix's result stays visible.
+               The other long scans (large files, duplicate files) only share the live card and Cancel while they run: their result is
+               cards and drawers like any other check's (ModuleDetailsView), not a scan command and its output. *@
+            @if (m is WindowsIntegrityModule && App.Remediation is { } scanFixes && (kind == RowKind.Running || (r.Payload is AreaReport && kind != RowKind.Cancelled)))
             {
                 <RemediationActions @ref="_scanFixUi" Actions="scanFixes" ShowRecent="false" Origin="@m.Name" OnCompleted="() => { _ = Screen.RunSingleAsync(m); }" />
             }
@@ -332,15 +334,9 @@
                     </div>
                 </div>
             }
-            else if (m is ICancellableScan && r.Payload is AreaReport integrity && kind != RowKind.Cancelled)
+            else if (m is WindowsIntegrityModule && r.Payload is AreaReport integrity && kind != RowKind.Cancelled)
             {
                 <AreaReportData Report="integrity" CheckId="@m.Name" RunId="r.RunId" />
-                @if (m.Name == ModuleSlugs.DiskSpace && integrity.Cards.FirstOrDefault(c => c.Id == DiskSpaceModule.CapacityCardId) is { } capacity)
-                {
-                    <div hidden data-testid="disk-space-counts" data-check-id="@m.Name" data-result-run-id="@r.RunId">
-                        <StorageByteFields Card="capacity" />
-                    </div>
-                }
                 @foreach (var card in integrity.Cards)
                 {
                     <p class="meta">@card.Meta</p>
