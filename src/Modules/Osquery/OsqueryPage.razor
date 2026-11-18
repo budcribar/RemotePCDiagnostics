@@ -27,7 +27,7 @@
 {
     @if (!busy)
     {
-        <AreaReportData Report="@InventoryReport(inv, r.Status, r.Message)" CheckId="@ModuleSlugs.Osquery" RunId="r.RunId" />
+        <AreaReportData Report="@InventoryReport(inv, r.Status)" CheckId="@ModuleSlugs.Osquery" RunId="r.RunId" />
     }
     <div class="cards">
         <SummaryCard Id="system" Title="Computer" OnOpen="Open"
@@ -92,7 +92,7 @@
     private static string CpuMeta(CpuInfo? c) => c is null ? "" :
         string.Join(" · ", new[] { c.NumberOfCores is > 0 ? $"{c.NumberOfCores} cores" : null, c.LogicalProcessors is > 0 ? $"{c.LogicalProcessors} threads" : null, c.MaxClockSpeedMhz is > 0 ? $"up to {c.MaxClockSpeedMhz / 1000.0:0.0#} GHz" : null }.Where(x => x is not null));
 
-    private static AreaReport InventoryReport(HardwareInventory inventory, DiagnosticStatus status, string summary)
+    private static AreaReport InventoryReport(HardwareInventory inventory, DiagnosticStatus status)
     {
         var system = inventory.System.Items.FirstOrDefault();
         var cpus = inventory.Cpus.Items.Count == 0 && system?.CpuBrand is { Length: > 0 }
@@ -108,7 +108,7 @@
                 ["Slot", "Bank", "Size", "Type", "Form factor", "Speed", "Manufacturer", "Part number"]),
             ExportSection("disks", "Storage", inventory.Disks, DiskCols,
                 ["Model", "Manufacturer", "Size", "Connection", "Partitions"]),
-        ], summary, status);
+        ], "Hardware inventory", status);
     }
 
     private static AreaCard ExportSection<T>(string id, string title, InventorySection<T> section,
