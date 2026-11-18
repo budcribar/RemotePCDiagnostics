@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
+using RemotePCDiagnostics.Core.History;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Storage;
 using RemotePCDiagnostics.Core.Workflow;
@@ -824,6 +825,53 @@ public sealed class StorageCleanupTests : IDisposable
         await svc.ScanStorageAsync(refresh: true);
         await svc.ApplyAsync(svc.StorageSuggestions[0], svc.StorageSuggestions[0].Actions[0]);
         Assert.Equal(2, j.All.Count);
+    }
+
+    /// <summary>The amounts come from the event's own lines, never from the message text. Events logged before those lines existed
+    /// (the last row) still show as a disk cleanup, with nothing counted.</summary>
+    [Theory]
+    [InlineData("Freed disk bytes: 824180736\nRemoved files: 1508\n", "Done: Freed 786 MB (1,508 files deleted).", 824_180_736L, 1508)]
+    [InlineData("Freed disk bytes: 1536\nRemoved files: 1\n", "Done: some other wording", 1536L, 1)]
+    [InlineData("Freed disk bytes: 0\nRemoved files: 0\n", "Nothing was deleted.", 0, 0)]
+    [InlineData("", "Done: Freed 786 MB (1,508 files deleted).", 0, 0)]
+    public void History_ClassifiesStorageEvents_AmountsFromEventFields(string amounts, string message, long bytes, int files)
+    {
+        var entry = HistoryEventParser.Parse(
+            $"Memory suggestion applied\nAction: CleanStorage\n{amounts}Result: Success\nMessage: {message}", DateTimeOffset.UtcNow)!;
+        var summary = HistorySummary.Build([entry]);
+        Assert.Equal("Disk cleanup", Assert.Single(summary.Fixes).Category);
+        Assert.Equal(bytes, summary.DiskReclaimedBytes);
+        Assert.Equal(files, summary.TempFilesCleaned);
+        Assert.Equal(0, summary.MemorySavedBytes);
+        Assert.Equal(0, summary.MemoryFixesCount);
+        Assert.Equal(0, summary.TotalRunsCount);
+    }
+
+    [Fact]
+    public async Task History_ShowsLiveCleanupAndCountsPersistedCopyOnlyOnce()
+    {
+        string? eventText = null;
+        var svc = new MemorySuggestionService(new Sys { Items = [NuGetItem] },
+            events: (_, message) => eventText = message, settle: TimeSpan.Zero);
+        await svc.ScanStorageAsync();
+        var suggestion = Assert.Single(svc.StorageSuggestions);
+        var result = await svc.ApplyAsync(suggestion, Assert.Single(suggestion.Actions));
+
+        var live = HistorySummary.Build([], memory: svc);
+        var fix = Assert.Single(live.Fixes);
+        Assert.Equal("Disk cleanup", fix.Category);
+        Assert.EndsWith(" disk", fix.ImpactBadge);
+        Assert.Equal(3L << 30, live.DiskReclaimedBytes);
+        Assert.Equal(3, live.TempFilesCleaned);
+        Assert.Equal(0, live.MemoryFixesCount);
+
+        Assert.Contains("Freed disk bytes: 3221225472", eventText);
+        Assert.Contains("Removed files: 3", eventText);
+        var entry = HistoryEventParser.Parse(eventText!, new DateTimeOffset(result.When))!;
+        var combined = HistorySummary.Build([entry], memory: svc);
+        Assert.Equal(fix, Assert.Single(combined.Fixes));
+        Assert.Equal(live.DiskReclaimedBytes, combined.DiskReclaimedBytes);
+        Assert.Equal(live.TempFilesCleaned, combined.TempFilesCleaned);
     }
 
     [Fact]

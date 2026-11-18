@@ -40,7 +40,10 @@ public static class MemoryFeedback
 }
 
 /// <param name="Skipped">Nothing was attempted on purpose (e.g. the app whose cache it is was open); the workflow lists it as skipped.</param>
-public sealed record ActionOutcome(bool Success, string Message, bool Skipped = false);
+/// <param name="FreedDiskBytes">Disk cleanups, app removals and the hibernation file: the exact bytes freed, which History totals.</param>
+/// <param name="RemovedFiles">Disk cleanups only: the exact number of files deleted.</param>
+/// <param name="FreedMemoryBytes">The measured RAM freed, when the message reports one ("Freed about …"); History totals it.</param>
+public sealed record ActionOutcome(bool Success, string Message, bool Skipped = false, long FreedDiskBytes = 0, long RemovedFiles = 0, long FreedMemoryBytes = 0);
 
 /// <summary>
 /// Host-side probes and actions (Windows implementation in the Host; fakes in tests). Methods may throw. It is the sum of the role
@@ -201,7 +204,8 @@ public interface IAppManagementSystem
 public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, string Target, string? Previous, byte[]? PreviousBytes = null,
     string? CreatedKey = null, string? PreviousExtra = null);
 
-public sealed record SuggestionResult(string SuggestionId, bool Success, string Message, DateTime When, bool CanForceClose = false, bool Skipped = false);
+public sealed record SuggestionResult(string SuggestionId, bool Success, string Message, DateTime When, bool CanForceClose = false, bool Skipped = false,
+    long FreedDiskBytes = 0, long RemovedFiles = 0, long FreedMemoryBytes = 0, MemoryActionType? Action = null);
 
 /// <summary>
 /// Scans, shows and applies memory suggestions. Every change runs only from an explicit click; each is logged to the Event Log (1400)
@@ -360,7 +364,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             lock (_gate) StorageFreedBytes += r.BytesFreed;
         }
         SetStorage(StorageItems.Where(i => i.Id != c.Id).ToList()); // what's left is in use or newer than the rule allows
-        return new(r.FilesRemoved > 0 || r.FilesSkipped == 0, r.Message);
+        return new(r.FilesRemoved > 0 || r.FilesSkipped == 0, r.Message, FreedDiskBytes: Math.Max(0, r.BytesFreed), RemovedFiles: Math.Max(0, r.FilesRemoved));
     }
 
     private MemoryReading? SafeRead() { try { return sys.ReadMemory(); } catch (Exception ex) { LogWarn("ReadMemory failed: " + ex.Message); return null; } }
@@ -382,6 +386,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 outcome = new(false, "Windows didn't allow that change.");
             }
             string text = outcome.Message;
+            long freedMemory = 0;
             if (outcome.Success && a.Type is not (MemoryActionType.OpenSettings or MemoryActionType.CleanStorage)) // disk, not memory
             {
                 var deferred = MemoryFeedback.IsDeferred(a.Type);
@@ -389,10 +394,14 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 if (!deferred) { await Task.Delay(_settle, ct).ConfigureAwait(false); after = SafeRead(); }
                 if (!(deferred && MemoryFeedback.SaysWhen(text))) text += " " + MemoryFeedback.Describe(before, after, deferred);
                 if (!deferred && before is not null && after is not null)
-                    lock (_gate) TotalFreedBytes += Math.Max(0, MemoryFeedback.Freed(before, after));
+                {
+                    var delta = MemoryFeedback.Freed(before, after);
+                    lock (_gate) TotalFreedBytes += Math.Max(0, delta);
+                    if (delta >= MemoryFeedback.MeasurableBytes) freedMemory = delta; // the same threshold as the "Freed about" wording
+                }
             }
             var canForce = !outcome.Success && a.Type == MemoryActionType.CloseApp;
-            var r = Record(s.Id, outcome with { Message = text }, a, null, canForce);
+            var r = Record(s.Id, outcome with { Message = text, FreedMemoryBytes = freedMemory }, a, null, canForce);
             if (a.Type is not (MemoryActionType.OpenSettings or MemoryActionType.CleanStorage)) await ScanAsync(ct).ConfigureAwait(false);
             return r;
         }
@@ -446,15 +455,21 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
 
     private SuggestionResult Record(string id, ActionOutcome o, MemoryAction a, UndoEntry? _, bool canForce = false)
     {
-        var r = new SuggestionResult(id, o.Success, (o.Success && !o.Skipped ? "Done: " : "") + o.Message, DateTime.Now, canForce, o.Skipped);
+        var r = new SuggestionResult(id, o.Success, (o.Success && !o.Skipped ? "Done: " : "") + o.Message, DateTime.Now, canForce, o.Skipped, o.FreedDiskBytes, o.RemovedFiles, o.FreedMemoryBytes, a.Type);
         lock (_gate)
         {
             _results[id] = r;
             _recent.Insert(0, r);
             if (_recent.Count > 20) _recent.RemoveAt(_recent.Count - 1);
         }
+        // History reads the exact amounts from these lines, never from the message text.
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var storage = a.Type == MemoryActionType.CleanStorage;
+        var amounts = storage || o.FreedDiskBytes > 0 ? $"Freed disk bytes: {o.FreedDiskBytes.ToString(inv)}\r\n" : ""; // app removals and the hibernation file free disk space too
+        if (storage) amounts += $"Removed files: {o.RemovedFiles.ToString(inv)}\r\n";
+        if (o.FreedMemoryBytes > 0) amounts += $"Freed memory bytes: {o.FreedMemoryBytes.ToString(inv)}\r\n";
         Event(o.Success ? LogLevel.Information : LogLevel.Warning,
-            $"Memory suggestion applied\r\nActor: {Actor}\r\nSuggestion: {id}\r\nAction: {a.Type}\r\nTarget: {a.Target}\r\nResult: {(o.Success ? "Success" : "Failed")}\r\nMessage: {r.Message}");
+            $"Memory suggestion applied\r\nActor: {Actor}\r\nSuggestion: {id}\r\nAction: {a.Type}\r\nTarget: {a.Target}\r\n{amounts}Result: {(o.Success ? "Success" : "Failed")}\r\nMessage: {r.Message}");
         return r;
     }
 
