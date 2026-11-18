@@ -356,6 +356,18 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         return await client.ReadSensorsAsync(ct).ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<DriveHealth>?> ReadDrivesAsync(CancellationToken ct = default)
+    {
+        AdminPipeClient? client;
+        lock (_stateLock)
+            client = _client;
+
+        if (client is not { IsConnected: true })
+            return null;
+
+        return await client.ReadDrivesAsync(ct).ConfigureAwait(false);
+    }
+
     public static string? TryResolveInitialPipeName(IReadOnlyList<string>? args = null)
     {
         if (args is not null)

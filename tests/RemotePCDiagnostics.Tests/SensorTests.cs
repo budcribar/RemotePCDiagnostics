@@ -324,6 +324,9 @@ public class LhmSensorProviderElevationTests
             ReadCount++;
             return onRead != null ? onRead(ct) : Task.FromResult<SensorSnapshot?>(null);
         }
+
+        public Task<IReadOnlyList<DriveHealth>?> ReadDrivesAsync(CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<DriveHealth>?>(null);
     }
 
     [Fact]

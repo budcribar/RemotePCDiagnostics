@@ -15,6 +15,7 @@ public sealed class SystemCommandRunner(
     private readonly Func<bool> _isProcessElevated = isProcessElevated ?? ElevationService.DetectProcessElevated;
     public TimeSpan Timeout { get; } = timeout ?? TimeSpan.FromSeconds(60);
     public ILogger? Log { get; } = log;
+    public IElevatedCommandBridge? ElevatedBridge => elevatedBridge;
 
     /// <summary>Full path of a tool in the Windows system directory (falls back to the bare name, resolved via PATH).</summary>
     public static string SystemTool(string exe)

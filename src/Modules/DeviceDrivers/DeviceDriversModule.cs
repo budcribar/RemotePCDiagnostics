@@ -66,18 +66,7 @@ public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunne
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         progress.ReportStep(1, 2, "Checking Device Manager for problem devices…");
-        var pr = await commands.RunPowerShellAsync(ProblemDevicesScript, ct).ConfigureAwait(false);
-        List<ProblemDevice>? problems = null;
-
-        if (pr is { ExitCode: 0 })
-        {
-            if (string.IsNullOrWhiteSpace(pr.StdOut) || pr.StdOut.Trim() == "[]") problems = [];
-            else
-            {
-                try { problems = OsqueryJson.ParseRows(pr.StdOut).Select(ProblemDevice.FromRow).ToList(); }
-                catch (FormatException ex) { LogWarn($"{Name}: problem devices output unreadable: {ex.Message}"); }
-            }
-        }
+        var problems = Platform.ProblemDevicesReader.Read();
 
         progress.ReportStep(2, 2, "Reading hardware drivers…");
         var drvQ = await QueryAsync(DriversSql, ct).ConfigureAwait(false);

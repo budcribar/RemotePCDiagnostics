@@ -78,14 +78,24 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
         var q = await QueryAsync(Sql, ct).ConfigureAwait(false);
         if (!q.Success) return AreaReport.Failed(FailedMessage);
         var adapters = q.Rows!.Select(NetworkAdapter.FromRow).ToList();
-        if (adapters.Count > 0 && !adapters.Any(a => a.HasCounters) && commands is not null)
+        if (adapters.Count > 0 && !adapters.Any(a => a.HasCounters))
         {
-            Log($"{Name}: interface_details reported no traffic/error counters; using Get-NetAdapterStatistics");
-            var pr = await commands.RunPowerShellAsync(StatsScript, ct).ConfigureAwait(false);
-            if (pr is { ExitCode: 0 })
+            var netStats = Platform.NetworkInfoReader.ReadAdapterStatistics();
+            if (netStats.Count > 0)
             {
-                try { adapters = MergeStatistics(adapters, OsqueryJson.ParseRows(pr.StdOut)); }
-                catch (FormatException ex) { LogWarn($"{Name}: adapter statistics unreadable: {ex.Message}"); }
+                adapters = adapters.Select(a =>
+                {
+                    if (a.HasCounters || !netStats.TryGetValue(a.Name, out var s)) return a;
+                    return a with
+                    {
+                        PacketsIn = s.PacketsIn,
+                        PacketsOut = s.PacketsOut,
+                        ErrorsIn = s.ErrorsIn,
+                        ErrorsOut = s.ErrorsOut,
+                        DropsIn = s.DropsIn,
+                        DropsOut = s.DropsOut,
+                    };
+                }).ToList();
             }
         }
         var baseReport = Build(adapters);
@@ -93,16 +103,11 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
             return baseReport;
 
         progress.ReportStep(2, total, "Checking Wi-Fi signal and IP configuration…");
-        var wlanTask = commands.RunAsync(WifiConfigModule.Netsh, ["wlan", "show", "interfaces"], ct);
-        var ipTask = commands.RunPowerShellAsync(WifiConfigModule.IpConfigScript, ct);
-        await Task.WhenAll(wlanTask, ipTask).ConfigureAwait(false);
-
-        var wlanRes = await wlanTask.ConfigureAwait(false);
-        var ipRes = await ipTask.ConfigureAwait(false);
+        var wlanRes = await commands.RunAsync(WifiConfigModule.Netsh, ["wlan", "show", "interfaces"], ct).ConfigureAwait(false);
         var wlanOk = wlanRes is { ExitCode: 0 };
-        var ipOk = ipRes is { ExitCode: 0 };
-        var ipSnap = ipOk ? WifiConfigModule.ParseIpSnapshot(ipRes!.StdOut) : null;
-        var gateway = ipSnap is null ? null : WifiConfigModule.PrimaryAdapter(ipSnap)?.Gateway;
+        var ipSnap = Platform.NetworkInfoReader.ReadIpConfig();
+        var ipOk = ipSnap.Adapters.Count > 0;
+        var gateway = WifiConfigModule.PrimaryAdapter(ipSnap)?.Gateway;
         // Measure the current DNS against Cloudflare/Google (a few seconds; nothing changed) so switching is only suggested when it's faster.
         DnsComparison? dns = null;
         if (ipSnap is not null && WifiConfigModule.PrimaryAdapter(ipSnap) is { } primary && !DnsSpeedTest.IsPublicAlready(primary.Dns))

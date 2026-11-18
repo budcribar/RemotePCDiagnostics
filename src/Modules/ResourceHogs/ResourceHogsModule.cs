@@ -47,24 +47,8 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
         var procQ = await QueryAsync(ProcessesSql, ct).ConfigureAwait(false);
         if (!upQ.Success && !procQ.Success) return AreaReport.Failed(FailedMessage);
 
-        bool? fastStartup = null;
-        MemoryUse? memory = null;
-        if (commands is not null)
-        {
-            progress.ReportStep(3, totalSteps, "Checking memory use and Fast Startup…");
-            var pr = await commands.RunPowerShellAsync(FastStartupScript, ct).ConfigureAwait(false);
-            if (pr is { ExitCode: 0 } && !string.IsNullOrWhiteSpace(pr.StdOut))
-
-            {
-                try
-                {
-                    var row = OsqueryJson.ParseRows("[" + pr.StdOut.Trim().TrimStart('[').TrimEnd(']') + "]").FirstOrDefault();
-                    fastStartup = row?.Str("FastStartup") switch { "1" => true, "0" => false, _ => null };
-                    if (row?.Long("TotalBytes") is long total && total > 0 && row.Long("FreeBytes") is long free && free >= 0) memory = new MemoryUse(total, free);
-                }
-                catch (FormatException) { }
-            }
-        }
+        progress.ReportStep(3, totalSteps, "Checking memory use and Fast Startup…");
+        var (fastStartup, memory) = Platform.FastStartupReader.Read();
 
         var uptime = upQ.Success && upQ.Rows!.Count > 0 ? SystemUptimeInfo.FromRow(upQ.Rows[0], fastStartup) : null;
         var procs = procQ.Success ? procQ.Rows!.Select(ProcessResourceRow.FromRow).ToList() : null;

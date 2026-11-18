@@ -66,6 +66,11 @@ public sealed class AdminHelperAndElevationTests
         {
             return Task.FromResult<SensorSnapshot?>(null);
         }
+
+        public Task<IReadOnlyList<DriveHealth>?> ReadDrivesAsync(CancellationToken ct = default)
+        {
+            return Task.FromResult<IReadOnlyList<DriveHealth>?>(null);
+        }
     }
 
     [Fact]

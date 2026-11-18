@@ -31,6 +31,7 @@ public interface IElevatedCommandBridge
         Action<string>? outputLine = null);
 
     Task<SensorSnapshot?> ReadSensorsAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<DriveHealth>?> ReadDrivesAsync(CancellationToken ct = default);
 }
 
 public static class AdminCommandAllowlist
@@ -117,7 +118,8 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("stdErr")] string StdErr = "",
     [property: JsonPropertyName("timedOut")] bool TimedOut = false,
     [property: JsonPropertyName("error")] string? Error = null,
-    [property: JsonPropertyName("sensors")] SensorSnapshot? Sensors = null);
+    [property: JsonPropertyName("sensors")] SensorSnapshot? Sensors = null,
+    [property: JsonPropertyName("drives")] IReadOnlyList<DriveHealth>? Drives = null);
 
 /// <summary>
 /// Length-prefixed (4-byte little-endian int32 + UTF-8 JSON) framing over Named Pipes with zero third-party dependencies.
@@ -128,6 +130,7 @@ public static class AdminPipeFraming
     public const string OpPing = "ping";
     public const string OpRunCommand = "run_command";
     public const string OpReadSensors = "read_sensors";
+    public const string OpReadDrives = "read_drives";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -309,6 +312,17 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
             return null;
         }
         return response.Sensors;
+    }
+
+    public async Task<IReadOnlyList<DriveHealth>?> ReadDrivesAsync(CancellationToken ct = default)
+    {
+        var response = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpReadDrives), ct).ConfigureAwait(false);
+        if (!response.Ok || response.Drives is null)
+        {
+            _log?.Warn($"[admin-pipe] ReadDrives failed: {response.Error ?? "no data"}");
+            return null;
+        }
+        return response.Drives;
     }
 
     private async Task<AdminPipeResponse> SendAsync(AdminPipeRequest request, CancellationToken ct)
@@ -532,6 +546,31 @@ public sealed class AdminPipeServer(
                     HelperPid: Environment.ProcessId,
                     ExitCode: -1,
                     Error: $"Failed to read sensors: {ex.Message}");
+            }
+        }
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpReadDrives, StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var drives = Platform.WindowsStorageDriveReader.ReadDrives();
+                return new AdminPipeResponse(
+                    Ok: true,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: 0,
+                    Drives: drives);
+            }
+            catch (Exception ex)
+            {
+                return new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: -1,
+                    Error: $"Failed to read drives: {ex.Message}");
             }
         }
 

@@ -176,13 +176,41 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     {
         var now = Now();
         progress.ReportStep(1, 2, "Checking drive health and SMART status…");
-        var pr = host is null ? await commands.RunPowerShellAsync(Script, ct).ConfigureAwait(false)
-            : await Plugins.HostQueryExtensions.AskAsync(host, Name, Logger, h => h.ReadDrivesAsync(ct)).ConfigureAwait(false);
         List<DriveHealth>? drives = null;
-        if (pr is { ExitCode: 0 })
+        if (commands.ElevatedBridge is { IsConnected: true } bridge)
         {
-            try { drives = OsqueryJson.ParseRows(pr.StdOut).Select(DriveHealth.FromRow).ToList(); }
-            catch (FormatException ex) { LogWarn($"{Name}: storage health output unreadable: {ex.Message}"); }
+            try
+            {
+                var bridgedDrives = await bridge.ReadDrivesAsync(ct).ConfigureAwait(false);
+                if (bridgedDrives is { Count: > 0 })
+                    drives = bridgedDrives.ToList();
+            }
+            catch (Exception ex)
+            {
+                LogWarn($"{Name}: elevated bridge ReadDrivesAsync failed: {ex.Message}");
+            }
+        }
+        else if (Environment.IsPrivilegedProcess)
+        {
+            try
+            {
+                drives = Platform.WindowsStorageDriveReader.ReadDrives();
+            }
+            catch (Exception ex)
+            {
+                LogWarn($"{Name}: in-process storage drive reader failed: {ex.Message}");
+            }
+        }
+
+        if (drives is null || drives.Count == 0)
+        {
+            var pr = host is null ? await commands.RunPowerShellAsync(Script, ct).ConfigureAwait(false)
+                : await Plugins.HostQueryExtensions.AskAsync(host, Name, Logger, h => h.ReadDrivesAsync(ct)).ConfigureAwait(false);
+            if (pr is { ExitCode: 0 })
+            {
+                try { drives = OsqueryJson.ParseRows(pr.StdOut).Select(DriveHealth.FromRow).ToList(); }
+                catch (FormatException ex) { LogWarn($"{Name}: storage health output unreadable: {ex.Message}"); }
+            }
         }
         if (drives is { Count: > 0 })
         {

@@ -20,27 +20,17 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
     protected override string FailedMessage => "Couldn't read Wi-Fi and IP network configuration on this PC.";
 
     public static string Netsh => SystemCommandRunner.SystemTool("netsh.exe");
-
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         progress?.Report("Checking Wi-Fi signal and IP configuration…");
-        var wlanTask = commands.RunAsync(Netsh, ["wlan", "show", "interfaces"], ct);
-        var ipTask = commands.RunPowerShellAsync(IpConfigScript, ct);
-        await Task.WhenAll(wlanTask, ipTask).ConfigureAwait(false);
-
-
-        var wlanRes = await wlanTask.ConfigureAwait(false);
-        var ipRes = await ipTask.ConfigureAwait(false);
-
+        var wlanRes = await commands.RunAsync(Netsh, ["wlan", "show", "interfaces"], ct).ConfigureAwait(false);
         var wlanOk = wlanRes is { ExitCode: 0 };
-        var ipOk = ipRes is { ExitCode: 0 };
-        if (!wlanOk && !ipOk)
+        var wifi = wlanOk ? ParseNetshWlan(wlanRes!.StdOut) : null;
+        var ipSnap = Platform.NetworkInfoReader.ReadIpConfig();
+        if (!wlanOk && (ipSnap is null || ipSnap.Adapters.Count == 0))
             return AreaReport.Failed(FailedMessage);
 
-        var wifi = wlanOk ? ParseNetshWlan(wlanRes!.StdOut) : null;
-        var ipSnap = ipOk ? ParseIpSnapshot(ipRes!.StdOut) : null;
         return Build(wifi, wlanOk, ipSnap);
-    }
 
     public static AreaReport Build(WifiInterfaceInfo? wifi, bool wlanOk, IpConfigSnapshot? ipSnap, DnsComparison? dns = null)
     {
