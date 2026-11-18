@@ -7,7 +7,16 @@ public enum Readiness { Wait, Ready, ReadyUnconfirmed, Exited }
 /// <summary>Rules for starting the app from a LaunchCommand.</summary>
 public static class LaunchRules
 {
-    public static readonly TimeSpan StatusPollInterval = TimeSpan.FromSeconds(2);
+    /// <summary>
+    /// How long to wait before asking the relay again whether the app has registered. The app normally registers a second or two
+    /// after it starts, so the first few seconds are asked often: a fixed 2 seconds added, on average, a second to every launch.
+    /// A launch that is taking long is asked less often, so one that never registers costs about 70 requests in
+    /// <see cref="StatusPollLimit"/>, not hundreds.
+    /// </summary>
+    public static TimeSpan PollInterval(TimeSpan elapsed) =>
+        elapsed < TimeSpan.FromSeconds(5) ? TimeSpan.FromMilliseconds(250)
+        : elapsed < TimeSpan.FromSeconds(20) ? TimeSpan.FromSeconds(1)
+        : TimeSpan.FromSeconds(2);
     public static readonly TimeSpan StatusPollLimit = TimeSpan.FromSeconds(90);
     /// <summary>Running this long without exiting counts as started when the relay's /status can't confirm it.</summary>
     public static readonly TimeSpan AssumeReadyAfter = TimeSpan.FromSeconds(20);

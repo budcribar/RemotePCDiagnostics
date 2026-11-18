@@ -228,6 +228,28 @@ public class BackoffTests
 
 public class LaunchRulesTests
 {
+    // The app normally registers with the relay a second or two after it starts: ask often then, and less often for a launch
+    // that is taking long.
+    [Theory]
+    [InlineData(0, 250)]
+    [InlineData(1500, 250)]
+    [InlineData(4999, 250)]
+    [InlineData(5000, 1000)]
+    [InlineData(19999, 1000)]
+    [InlineData(20000, 2000)]
+    [InlineData(89000, 2000)]
+    public void Status_is_polled_often_at_first_and_then_less_so(int elapsedMs, int expectedMs) =>
+        Assert.Equal(TimeSpan.FromMilliseconds(expectedMs), LaunchRules.PollInterval(TimeSpan.FromMilliseconds(elapsedMs)));
+
+    [Fact]
+    public void A_launch_that_never_registers_is_not_polled_hundreds_of_times()
+    {
+        var polls = 0;
+        for (var elapsed = TimeSpan.Zero; elapsed < LaunchRules.StatusPollLimit; elapsed += LaunchRules.PollInterval(elapsed))
+            polls++;
+        Assert.InRange(polls, 60, 80);
+    }
+
     [Fact]
     public void The_app_is_started_on_the_requested_session_with_control_going_to_the_requester()
     {

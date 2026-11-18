@@ -33,7 +33,8 @@ public interface IAgentPlatform
 public sealed class AgentSessionOptions
 {
     public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.FromSeconds(30);
-    public TimeSpan StatusPollInterval { get; init; } = LaunchRules.StatusPollInterval;
+    /// <summary>A fixed time between status polls (tests). Unset: <see cref="LaunchRules.PollInterval"/>, often at first and then less so.</summary>
+    public TimeSpan? StatusPollInterval { get; init; }
     public int ConsentTimeoutSeconds { get; init; } = AgentCommandLine.DefaultConsentTimeoutSeconds;
     public Action<string>? Log { get; init; }
     /// <summary>
@@ -705,7 +706,7 @@ public sealed class AgentHubWorker(
                             break;
 
                         case Readiness.Wait:
-                            await Task.Delay(_options.StatusPollInterval, launchCt).ConfigureAwait(false);
+                            await Task.Delay(_options.StatusPollInterval ?? LaunchRules.PollInterval(sw.Elapsed), launchCt).ConfigureAwait(false);
                             break;
                     }
                 }
