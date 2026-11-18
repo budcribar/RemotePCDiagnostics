@@ -259,13 +259,61 @@ internal static class AgentAdminHost
         }
     }
 
+    private sealed class LazySensorProvider : IDisposable
+    {
+        private readonly ILogger _log;
+        private readonly Lazy<LhmSensorProvider> _lazy;
+
+        public LazySensorProvider(ILogger log)
+        {
+            _log = log;
+            _lazy = new Lazy<LhmSensorProvider>(() =>
+            {
+                var sw = Stopwatch.StartNew();
+                var ecFan = LenovoEcFanSource.Create(_log);
+                var provider = new LhmSensorProvider(ecFan, logger: _log);
+                _log.Info($"[lazy-sensors] Hardware sensor provider initialized in {sw.ElapsedMilliseconds} ms");
+                return provider;
+            }, LazyThreadSafetyMode.ExecutionAndPublication);
+        }
+
+        public void PrewarmInBackground()
+        {
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    _ = _lazy.Value;
+                }
+                catch (Exception ex)
+                {
+                    _log.Warn($"[lazy-sensors] Background sensor prewarm failed: {ex.Message}");
+                }
+            });
+        }
+
+        public async Task<SensorSnapshot?> ReadAsync(CancellationToken ct)
+        {
+            var provider = await Task.Run(() => _lazy.Value, ct).ConfigureAwait(false);
+            return provider.Read();
+        }
+
+        public void Dispose()
+        {
+            if (_lazy.IsValueCreated)
+            {
+                try { _lazy.Value.Dispose(); } catch { }
+            }
+        }
+    }
+
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static IDisposable? CreateWindowsSensorProvider(ILogger log, out Func<CancellationToken, Task<SensorSnapshot?>>? reader)
     {
-        var ecFan = LenovoEcFanSource.Create(log);
-        var provider = new LhmSensorProvider(ecFan, logger: log);
-        reader = ct => Task.FromResult<SensorSnapshot?>(provider.Read());
-        return provider;
+        var lazyProvider = new LazySensorProvider(log);
+        lazyProvider.PrewarmInBackground();
+        reader = ct => lazyProvider.ReadAsync(ct);
+        return lazyProvider;
     }
 
     private static ILogger CreateFileLogger(string fileName)

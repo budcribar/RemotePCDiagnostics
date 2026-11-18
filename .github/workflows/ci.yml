@@ -313,7 +313,7 @@ jobs:
           $ver = ($props.Project.PropertyGroup | ForEach-Object { $_['Version'] } | Where-Object { $_ } | Select-Object -First 1).InnerText.Trim()
           $pubDir = Join-Path $env:RUNNER_TEMP 'agent-publish'
           if (Test-Path $pubDir) { Remove-Item $pubDir -Recurse -Force }
-          dotnet publish src/RemotePCDiagnostics.Agent/RemotePCDiagnostics.Agent.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o $pubDir
+          dotnet publish src/RemotePCDiagnostics.Agent/RemotePCDiagnostics.Agent.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishReadyToRun=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o $pubDir
           if ($LASTEXITCODE -ne 0) { throw "Agent publish failed ($LASTEXITCODE)" }
 
           $publishedExe = Join-Path $pubDir 'RemotePCDiagnostics.Agent.exe'
@@ -337,6 +337,8 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or ($helpOut -join "`n") -notmatch 'RemotePCDiagnostics\.Agent\.exe install') {
             throw "Agent help output unexpected ($LASTEXITCODE)"
           }
+
+          & pwsh scripts/benchmark-agent-startup.ps1 -AgentExePath $agentDest -RunsPerTest 3
 
           $env:RPD_AGENT_CONFIG_PATH = Join-Path $env:RUNNER_TEMP 'rpd-agent-ci/agent.json'
           try {

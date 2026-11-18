@@ -8,6 +8,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ServerGarbageCollection>false</ServerGarbageCollection>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <TieredPGO>true</TieredPGO>
     <ApplicationIcon>..\RemotePCDiagnostics.Host\Assets\diagnostics.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyTitle>Remote PC Diagnostics Agent</AssemblyTitle>
