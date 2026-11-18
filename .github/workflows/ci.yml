@@ -687,6 +687,8 @@ jobs:
           fi
 
           {
+            echo "Build version: \`${ver}-ci.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}\`"
+            echo
             if [[ -n "$target_tag" ]]; then
               echo "Windows x64 self-contained installer (\`${setup_file}\`), Test-Shop demo bundle (\`${testshop_file}\`), Microsoft Store MSIX package (\`${msix_file}\`), and standalone MSP Fleet Agent (\`${agent_msi_file}\` / \`${agent_file}\`) built by GitHub Actions from commit \`${GITHUB_SHA}\`."
             else
