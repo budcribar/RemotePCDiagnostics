@@ -109,6 +109,8 @@ public sealed class DiagnosticsService
     private readonly ConcurrentDictionary<string, Task<DiagnosticResult>> _inFlight = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<Task>> _inFlightCleanups = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, CheckProgress> _progress = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>The run ID of each module run in flight.</summary>
+    private readonly ConcurrentDictionary<string, Guid> _runIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
 
     /// <summary>Current sub-step progress of a running module, or null when not running or no progress reported yet.</summary>
@@ -298,9 +300,14 @@ public sealed class DiagnosticsService
         Catalog.Add(module);
         _modules.Add(module);
         Volatile.Write(ref _visible, null);
-        module.Updated += (_, r) => _store.Set(MarkStopped(module, r));
+        module.Updated += (_, r) => _store.Set(MarkStopped(module, WithRunId(module, r)));
         _store.Set(DiagnosticResult.NotRun(module.Name));
     }
+
+    /// <summary>A module's own live updates during a run (a scan's percent, a stress test's readings) carry no run ID. Give them the
+    /// ID of the run in flight, so the stored result, and with it the page's data-run-id, names the run from start to finish.</summary>
+    private DiagnosticResult WithRunId(IDiagnosticModule module, DiagnosticResult r) =>
+        r.RunId is null && r.InstanceKey is null && _runIds.TryGetValue(module.Name, out var runId) ? r with { RunId = runId } : r;
 
     /// <summary>Stress tests know from their own report (not the message) when the user stopped them: flag it as cancelled.</summary>
     private static DiagnosticResult MarkStopped(IDiagnosticModule module, DiagnosticResult r) =>
@@ -496,6 +503,7 @@ public sealed class DiagnosticsService
             if (!_inFlight.TryGetValue(module.Name, out var existing))
             {
                 var runId = Guid.NewGuid();
+                _runIds[module.Name] = runId;
                 MarkRunning(module, runId);
                 var tcs = new TaskCompletionSource<DiagnosticResult>(TaskCreationOptions.RunContinuationsAsynchronously);
                 _inFlight[module.Name] = existing = tcs.Task;
@@ -523,6 +531,7 @@ public sealed class DiagnosticsService
                         lock (_gate)
                         {
                             _inFlight.TryRemove(module.Name, out _);
+                            _runIds.TryRemove(module.Name, out _);
                             _inFlightCleanups.Remove(module.Name);
                         }
                     }

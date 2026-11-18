@@ -20,15 +20,16 @@ internal sealed class PowerSuggestions(SuggestionContext c)
         if (after?.Reduced == false) return new(false, "Windows didn't shrink the hibernation file; nothing was changed.");
         c.AddUndo(new(s.Id, "Hibernation file", MemoryActionType.ReduceHibernateFile, "", "full", PreviousExtra: values));
         c.Journal(ChangeKind.HiberFileType, "", "full", "Hibernation file (hiberfil.sys) shrunk to the Fast Startup size (was full size)", extra: values);
-        var freed = before.FileBytes is { } b && after?.FileBytes is { } a && b > a ? $" Freed {MemoryText.Size(b - a)} on the system drive." : "";
-        return new(true, "hiberfil.sys now holds only what Fast Startup needs." + freed + " Fast Startup still works; Hibernate is no longer in the power menu.");
+        var freedBytes = before.FileBytes is { } b && after?.FileBytes is { } a && b > a ? b - a : 0;
+        var freed = freedBytes > 0 ? $" Freed {MemoryText.Size(freedBytes)} on the system drive." : "";
+        return new(true, "hiberfil.sys now holds only what Fast Startup needs." + freed + " Fast Startup still works; Hibernate is no longer in the power menu.", FreedDiskBytes: freedBytes);
     }
 
     internal async Task<ActionOutcome> UndoHibernateAsync(UndoEntry u, CancellationToken ct)
     {
         var full = await c.Sys.SetHibernateTypeAsync(false, ct).ConfigureAwait(false);
         if (full.Success) Hibernation.RemoveAddedValues(c.Sys, u.PreviousExtra, c.Logger);
-        return full.Success ? new(true, "The hibernation file is full size again; Hibernate is back in the power menu.") : full;
+        return full.Success ? new(true, "The hibernation file is full size again; Hibernate is back in the power menu.", DiskRestored: true) : full;
     }
 
     /// <summary>Lets Windows manage the page file size; journals the custom sizes it had (undo puts them back).</summary>

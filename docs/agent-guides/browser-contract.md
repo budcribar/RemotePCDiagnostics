@@ -41,12 +41,15 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | benchmark | 1 | Same, including `bench-report-data` |
 | certificates | 1 | Same |
 | history | 1 | Same, including `history-data` |
+| history | 2 | `history-data` names the test and result filters (`testFilter`, `outcomeFilter`); `history-loading` is present through every reload, not only the first read |
 | about | 1 | Same |
 | module | 2 | Version 1: same (a module's own page outside Checks). Version 2: the storage bytes of checks version 2; `disk-space-counts` is also present before the first scan, then without `data-result-run-id`. |
 
 ## Checks list (`checks-list-data`)
 
 The Checks page renders one hidden `[data-testid="checks-list-data"]` element listing every check in the Checks group, collapsed or not: `id` (the check ID used everywhere else), `title`, `kind` (`check`, or `on-demand` for checks outside Run all), `scan` (true for long scans that keep running and can be cancelled), `start` (`run-one`: the detail panel's Run button; `own-page`: the check's own Start inside its detail page), `state`, and for finished runs `runId`, `completedAt` and `summary`.
+
+While a check runs, the detail header keeps `data-run-id` for the whole run, including while a scan reports its percent or a stress test its live readings. Builds up to 1.2.0-ci.701 dropped it after the first live update: there a header with `data-run-state="running"` and no `data-run-id` is still the run that was started.
 
 Run and cancel controls are marked generically: `[data-action="run-check"][data-check-id]` (the detail panel's `checks-run-one`, and a check's own Start such as the NPU test's) and `[data-action="cancel-check"][data-check-id]` (`checks-cancel-scan`, and the NPU test's Cancel).
 
@@ -67,8 +70,10 @@ The same hidden pattern serves three more pages. Each element carries `data-sche
 | Element | Page | Contents |
 | --- | --- | --- |
 | `audit-report-data` | Security audit, once an audit has finished (`data-result-run-id` is the audit run) | Status, notice, whether it is a home PC and how many enterprise settings are hidden, the passed/warning/failed/not-checked/high-risk counts, and every shown finding that did not pass (up to 200), failed first, with id, category, name, severity, outcome, current and recommended values |
-| `history-data` | History, after it loads | The selected range, whether the Event Log was readable, and the results and fixes the page lists for its current filters, newest first (up to 200 results and 100 fixes), with measurements and detail lines |
+| `history-data` | History, after it loads | The page's filters (`range`; from contract 2 `testFilter`, a check ID, and `outcomeFilter`, both empty when the page lists all), whether the Event Log was readable, `entryCount` and `fixCount` for those filters, and the results and fixes the page lists for them, newest first (up to 200 results and 100 fixes), with measurements and detail lines |
 | `bench-report-data` | Benchmark, always | `phase` (`no-baseline`, `running-before`, `running-after`, `settling`, `restart-pending-before`, `restart-pending-after`, `baseline-ready` or `compared`), progress and message, the enabled measurements and restart setting, each pass with its conditions and medians, and once both passes exist the overall change and one delta per measurement with units, verdict and percent |
+
+To change what History lists, choose in `history-filter-range`, `history-filter-test` (option values are check IDs) or `history-filter-outcome`, then wait until `history-loading` is gone and `history-data` names the chosen value. `history-loading` is present while the page reads the Event Log: on first load, after a range change, and from a result arriving until it is listed. The page draws no filters while it has no results at all.
 
 ## Stress tests (`stress-data`)
 
@@ -78,11 +83,21 @@ To run tests, use the existing controls: set the length with `checks-mode-quick`
 
 The Benchmark page needs no new markers: `bench-restart` (checkbox) chooses whether the restart buttons show; `bench-run-before`, `bench-restart-before`, `bench-run-after`, `bench-restart-after`, `bench-stop` and `bench-clear` act; `bench-report-data` reports the phase before and after a restart.
 
-## Page errors (`page-error`)
+## Hardware inventory report
 
-When a page throws while it draws or handles a click, the page's content is replaced by `[data-testid="page-error"]` with `data-error-seq` (increases with every error), `data-error-type` (the exception type) and `data-error-page` (the route, such as `checks`). `page-error-detail` holds a one-line description and `page-error-retry` shows the page again. The page marker (`data-rpcd-page`) is gone while the error shows; the navigation and the session bar keep working, and going to another page clears the error. The full error is in the app log as "Page error on '<page>': …". An agent that finds `page-error` should report the app fault, not a missing element.
+The Hardware inventory check (`Osquery`) renders `area-report-data` like the other checks, once a run has finished: cards `system`, `cpu`, `memory` and `disks`, with the rows the page's drawers show (one row per memory slot and per drive). Serial numbers and the hardware UUID are left out of this copy.
+
+## App faults (`app-fault-data`)
+
+Every page renders `[data-testid="app-fault-data"]` (it sits in the layout, outside the page) with schema 1 JSON: `seq`, the number of faults the app has recorded so far, and `last` (`seq`, `page`, `type`, `message`, `at`) for the latest one, absent when there has been none. A fault is a page that threw while it drew or handled a click. `seq` only grows.
+
+An automation reads `seq` before a step and again after it. A higher number means the app faulted during the step: report an app fault, not a missing element. The app does not retry. An automation may repeat a step that only reads or navigates; before repeating a step that changes the PC it must first read the app's own state (for a fix, `fix-data`) to see whether the step took effect.
+
+After a fault the app goes to the start page and shows `page-fault-notice` (with `data-fault-seq` and `data-fault-page`), one line naming the page that couldn't be shown, with `page-fault-dismiss`; it goes away when the person moves to another page. The full error is in the app log as "Page error on '<page>': …". Only when the start page itself is the one that failed does the app stay put and show `[data-testid="page-error"]` in place of the page (`data-error-seq`, `data-error-type`, `data-error-page`, and `page-error-retry` to draw it again); the page marker (`data-rpcd-page`) is gone while it shows.
 
 A selected row on Checks has `aria-pressed="true"`. A row that is still not pressed after a click means the page did not act on the click.
+
+**Readiness, not retries.** A step that only works on a second attempt points at something the page had not finished when the step ran. The fix is a marker the automation can wait for (as `data-run-state`, `data-result-run-id` and the `seq` values here already are), not a retry rule.
 
 ## Fixes and service actions
 

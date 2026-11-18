@@ -1,6 +1,7 @@
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
+using RemotePCDiagnostics.Core.History;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Workflow;
@@ -379,6 +380,25 @@ public class AppRemovalTests
         Assert.True(r.Success, r.Message);
         Assert.Contains("Mail and Calendar removed for every account", r.Message);
         Assert.Contains("Freed about 206 MB", r.Message);
+        Assert.Equal(206L << 20, r.FreedDiskBytes);
+        Assert.Equal(0, r.FreedMemoryBytes);
+
+        // History counts it as disk space (not RAM), the same for the live record and for its logged copy.
+        var live = HistorySummary.Build([], memory: svc);
+        Assert.Equal(206L << 20, live.DiskReclaimedBytes);
+        Assert.Equal(0, live.MemorySavedBytes);
+        Assert.Equal("+206 MB disk", Assert.Single(live.Fixes).ImpactBadge);
+        Assert.Equal("App removal", live.Fixes[0].Category);
+        Assert.Equal((1, 0), (live.AppsRemovedCount, live.MemoryFixesCount)); // counted on its own, not as a memory fix
+        Assert.Equal("1 app removal", live.FixesMeta);
+        var logged = HistoryEventParser.Parse(
+            $"Memory suggestion applied\r\nAction: RemoveApp\r\nFreed disk bytes: {206L << 20}\r\nResult: Success\r\nMessage: {r.Message}", new DateTimeOffset(r.When))!;
+        var combined = HistorySummary.Build([logged], memory: svc);
+        Assert.Equal(206L << 20, combined.DiskReclaimedBytes);
+        Assert.Equal(0, combined.MemorySavedBytes);
+        Assert.Equal("+206 MB disk", Assert.Single(combined.Fixes).ImpactBadge);
+        Assert.Equal("App removal", combined.Fixes[0].Category);
+        Assert.Equal((1, 0), (combined.AppsRemovedCount, combined.MemoryFixesCount));
         Assert.Contains(AppRemoval.RetiredGetBack, r.Message);
         Assert.DoesNotContain("reinstall it from the Microsoft Store", r.Message);
         Assert.Equal(["appx:microsoft.windowscommunicationsapps_8wekyb3d8bbwe"], sys.Calls);
@@ -436,6 +456,11 @@ public class AppRemovalTests
         Assert.True(undone.Success, undone.Message);
         Assert.Contains("stays uninstalled", undone.Message);
         Assert.Equal("Ready", sys.Tasks[@"\Lenovo\LenovoNowTask"]);
+        // The program stays uninstalled, so History keeps its removal and its freed space counted.
+        var history = HistorySummary.Build([], memory: svc);
+        Assert.Equal(1, history.AppsRemovedCount);
+        Assert.Equal(r.FreedDiskBytes, history.DiskReclaimedBytes);
+        Assert.True(r.FreedDiskBytes > 0);
         Assert.Equal(ChangeKind.NotUndoable, Assert.Single(j.All).Kind);
     }
 

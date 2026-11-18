@@ -45,11 +45,25 @@ public class AgentExportsTests
         var root = doc.RootElement;
 
         Assert.Equal("Week", root.GetProperty("range").GetString());
+        // No filter given: the copy still names both, as "all".
+        Assert.Equal("", root.GetProperty("testFilter").GetString());
+        Assert.Equal("", root.GetProperty("outcomeFilter").GetString());
         var entries = root.GetProperty("entries");
         Assert.Equal("Crashes", entries[0].GetProperty("checkId").GetString());
         Assert.Equal("Most: EXCEL.EXE", entries[0].GetProperty("details")[0].GetString());
         Assert.Equal("Temperature", entries[1].GetProperty("measurements")[0].GetProperty("name").GetString());
         Assert.Equal("Cleaned temp files", root.GetProperty("fixes")[0].GetProperty("summary").GetString());
+    }
+
+    [Fact]
+    public void History_names_the_test_and_result_filters_the_page_has()
+    {
+        using var doc = JsonDocument.Parse(AgentExports.History([], [], "All", available: true, "DriveHealth", "Warning"));
+        var root = doc.RootElement;
+
+        Assert.Equal("DriveHealth", root.GetProperty("testFilter").GetString());
+        Assert.Equal("Warning", root.GetProperty("outcomeFilter").GetString());
+        Assert.Equal(0, root.GetProperty("entryCount").GetInt32());
     }
 
     [Fact]

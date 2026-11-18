@@ -26,6 +26,36 @@ public class DiagnosticsServiceTests
     }
 
     [Fact]
+    public async Task Run_LiveUpdatesFromTheModuleKeepTheRunId()
+    {
+        // A scan reports its percent through the module's own Updated event, which carries no run ID. The stored result must
+        // still name the run, or the Checks page drops data-run-id mid-scan and a browser agent cannot follow or cancel the run.
+        var store = new ResultStore();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var module = new FakeModule("Scan", async _ => { started.TrySetResult(); await gate.Task; return FakeModule.Ok("Scan"); });
+        var svc = new DiagnosticsService(store, [module]);
+
+        var run = svc.RunAsync("Scan");
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var runId = store.Get("Scan").RunId;
+        Assert.NotNull(runId);
+
+        module.Push(new DiagnosticResult<double>("Scan", DiagnosticStatus.Running, "Scan 40% complete", DateTimeOffset.Now, 40));
+        var live = store.Get("Scan");
+        Assert.Equal(DiagnosticStatus.Running, live.Status);
+        Assert.Equal(runId, live.RunId);
+        Assert.Equal(40d, live.Payload);
+
+        gate.SetResult();
+        Assert.Equal(runId, (await run).RunId);
+
+        // Outside a run there is no run to name.
+        module.Push(new DiagnosticResult("Scan", DiagnosticStatus.Ok, "Fresh sample", DateTimeOffset.Now));
+        Assert.Null(store.Get("Scan").RunId);
+    }
+
+    [Fact]
     public async Task Run_UnavailableModuleIsError()
     {
         var svc = new DiagnosticsService(new ResultStore(), [new FakeModule("X", _ => Task.FromResult(FakeModule.Ok("X")), available: false)]);

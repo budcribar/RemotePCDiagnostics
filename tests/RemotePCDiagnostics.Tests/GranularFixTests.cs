@@ -503,3 +503,111 @@ public class PageErrorsTests
         Assert.True(RemotePCDiagnostics.Core.PageErrors.LogLine("checks", new Exception(new string('x', 9000))).Length <= RemotePCDiagnostics.Core.PageErrors.MaxLogLength + 40);
     }
 }
+
+/// <summary>The hardware inventory has a machine-readable report like every other check.</summary>
+public class HardwareInventoryReportTests
+{
+    private static RemotePCDiagnostics.Core.Osquery.InventorySection<T> Section<T>(params T[] items) => new("sql", items, null);
+
+    private static RemotePCDiagnostics.Core.Osquery.HardwareInventory Inventory() => new(
+        Section(new RemotePCDiagnostics.Core.Osquery.SystemInfo("host", "PC-NAME", "uuid", "LENOVO", "IdeaPad 1 15ALC7", "v1", "SERIAL-SYS",
+            "LENOVO", "LNVNB161216", "SDK0T76479", "SERIAL-BOARD", "AMD Ryzen 7 5700U", "x64", 8, 16, 1, 16L * 1024 * 1024 * 1024)),
+        Section(new RemotePCDiagnostics.Core.Osquery.CpuInfo("CPU0", "AMD Ryzen 7 5700U with Radeon Graphics", "AuthenticAMD", "3", "FP6", 8, 16, 1800, 4300, 12, "64")),
+        Section(new RemotePCDiagnostics.Core.Osquery.MemoryDevice("DIMM 0", "P0 CHANNEL A", "SODIMM", "DDR4", 8192, 3200, 3200, "Samsung", "M471A1G44AB0", "SERIAL-RAM"),
+            new RemotePCDiagnostics.Core.Osquery.MemoryDevice("DIMM 1", "P0 CHANNEL B", "SODIMM", "DDR4", 8192, 3200, 3200, "Samsung", "M471A1G44AB0", "SERIAL-RAM2")),
+        Section(new RemotePCDiagnostics.Core.Osquery.DiskInfo(0, "\\\\.\\PHYSICALDRIVE0", "disk0", "SCSI", "(Standard disk drives)", "SAMSUNG MZALQ512HBLU", "SERIAL-DISK", "Disk drive", 512110190592, 4)));
+
+    [Fact]
+    public void Report_has_a_card_per_part_with_the_details_the_page_shows()
+    {
+        var report = RemotePCDiagnostics.Core.Osquery.HardwareInventoryReport.Build(Inventory(), DiagnosticStatus.Ok, "LENOVO IdeaPad · 16 GB memory");
+        Assert.Equal(["system", "cpu", "memory", "disks"], report.Cards.Select(c => c.Id));
+        Assert.Equal(DiagnosticStatus.Ok, report.Status);
+        Assert.Equal("LENOVO IdeaPad 1 15ALC7", report.Cards[0].Headline);
+        Assert.Equal("AMD Ryzen 7 5700U with Radeon Graphics", report.Cards[1].Headline);
+        Assert.Contains("8 cores · 16 threads", report.Cards[1].Meta);
+        Assert.Equal(2, report.Cards[2].Rows.Count);
+        Assert.Contains("2 of 2 slots in use · DDR4", report.Cards[2].Meta);
+        Assert.Equal("1 drive", report.Cards[3].Headline);
+        Assert.Contains("SAMSUNG MZALQ512HBLU", report.Cards[3].Rows[0].Values);
+    }
+
+    [Fact]
+    public void The_agent_copy_carries_the_rows_and_no_serial_numbers()
+    {
+        var json = AreaReportExport.ToJson(RemotePCDiagnostics.Core.Osquery.HardwareInventoryReport.Build(Inventory(), DiagnosticStatus.Ok, "ok"));
+        Assert.Contains("M471A1G44AB0", json);   // part number: describes the hardware
+        Assert.Contains("DIMM 1", json);
+        Assert.Contains("SAMSUNG MZALQ512HBLU", json);
+        Assert.DoesNotContain("SERIAL-", json);  // serial numbers identify the customer's hardware
+        Assert.DoesNotContain("uuid", json);
+    }
+
+    [Fact]
+    public void A_section_that_could_not_be_read_is_a_failed_card_and_a_missing_one_says_so()
+    {
+        var inv = Inventory() with
+        {
+            Disks = new("sql", [], "osquery failed"),
+            Cpus = new("sql", [], null),
+            System = new("sql", [], null),
+        };
+        var report = RemotePCDiagnostics.Core.Osquery.HardwareInventoryReport.Build(inv, DiagnosticStatus.Warning, null);
+        Assert.NotNull(report.Cards.Single(c => c.Id == "disks").ErrorText);
+        Assert.NotNull(report.Cards.Single(c => c.Id == "cpu").EmptyText);
+        Assert.NotNull(report.Cards.Single(c => c.Id == "system").EmptyText);
+        Assert.Equal("Hardware inventory", report.Summary);
+    }
+}
+
+/// <summary>The app's own fault record, which automations read to tell an app fault from a missing element.</summary>
+public class AppFaultsTests
+{
+    [Fact]
+    public void Faults_are_numbered_and_the_latest_is_kept()
+    {
+        var at = new DateTimeOffset(2026, 11, 18, 13, 0, 0, TimeSpan.Zero);
+        var faults = new RemotePCDiagnostics.Core.AppFaults(() => at);
+        var changes = 0;
+        faults.Changed += () => changes++;
+        Assert.Equal(0, faults.Seq);
+        Assert.Null(faults.Last);
+
+        var first = faults.Record("checks", new InvalidOperationException("Collection was modified\nmore"));
+        var second = faults.Record("area/Network", new AggregateException(new NullReferenceException()));
+
+        Assert.Equal((1, "checks", "InvalidOperationException", "Collection was modified"), (first.Seq, first.Page, first.Type, first.Message));
+        Assert.Equal((2, "NullReferenceException"), (second.Seq, second.Type));
+        Assert.Equal(2, faults.Seq);
+        Assert.Equal(second, faults.Last);
+        Assert.Equal(2, changes);
+    }
+
+    [Fact]
+    public void A_listener_that_throws_does_not_lose_the_fault()
+    {
+        var faults = new RemotePCDiagnostics.Core.AppFaults();
+        faults.Changed += () => throw new InvalidOperationException("listener");
+        Assert.Equal(1, faults.Record("checks", new Exception("x")).Seq);
+        Assert.Equal(1, faults.Seq);
+    }
+
+    [Fact]
+    public void Export_carries_the_count_and_the_latest_fault()
+    {
+        var faults = new RemotePCDiagnostics.Core.AppFaults(() => DateTimeOffset.UnixEpoch);
+        Assert.Equal("{\"schema\":1,\"seq\":0}", AgentExports.FaultState(faults));
+        faults.Record("checks", new InvalidOperationException("Sequence contains no elements"));
+        var state = AgentExports.BuildFaultState(faults);
+        Assert.Equal((1, 1, "checks", "InvalidOperationException", "Sequence contains no elements"),
+            (state.Seq, state.Last!.Seq, state.Last.Page, state.Last.Type, state.Last.Message));
+    }
+
+    [Theory]
+    [InlineData("checks", "Checks")]
+    [InlineData("area/Network", "Network")]
+    [InlineData("security-audit", "Security audit")]
+    [InlineData("", "requested")]
+    public void A_page_is_named_the_way_a_person_would_say_it(string page, string title) =>
+        Assert.Equal(title, RemotePCDiagnostics.Core.PageErrors.Title(page));
+}

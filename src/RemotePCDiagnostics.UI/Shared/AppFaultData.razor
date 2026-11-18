@@ -1,0 +1,11 @@
+@using RemotePCDiagnostics.Core.Areas
+@implements IDisposable
+@* The app's fault record, hidden, on every page (it sits in the layout, outside the page). Browser agents compare its seq before
+   and after a step to tell an app fault from a missing element. *@
+<AgentData TestId="app-fault-data" Json="@AgentExports.FaultState(AppFaults.Shared)" />
+
+@code {
+    protected override void OnInitialized() => AppFaults.Shared.Changed += OnChanged;
+    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+    public void Dispose() => AppFaults.Shared.Changed -= OnChanged;
+}
