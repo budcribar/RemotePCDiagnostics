@@ -25,6 +25,8 @@ public static class StartupProfiler
 
     public static void Mark(string milestone)
     {
+        if (!IsEnabled) return;
+
         var now = Stopwatch.GetTimestamp();
         lock (Lock)
         {
@@ -33,12 +35,9 @@ public static class StartupProfiler
             _lastTimestamp = now;
             Milestones.Add((milestone, elapsedMs, deltaMs));
 
-            if (IsEnabled)
-            {
-                var msg = $"[StartupProfile] +{elapsedMs:F1} ms (+{deltaMs:F1} ms) -> {milestone}";
-                Console.WriteLine(msg);
-                LogAction?.Invoke(msg);
-            }
+            var msg = $"[StartupProfile] +{elapsedMs:F1} ms (+{deltaMs:F1} ms) -> {milestone}";
+            Console.WriteLine(msg);
+            LogAction?.Invoke(msg);
 
             if (milestone is "DashboardFirstRender" or "DashboardReady")
             {

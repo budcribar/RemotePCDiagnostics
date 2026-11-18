@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
-using RemotePCDiagnostics.Core.Areas;
 
 namespace RemotePCDiagnostics.Core.Platform;
 

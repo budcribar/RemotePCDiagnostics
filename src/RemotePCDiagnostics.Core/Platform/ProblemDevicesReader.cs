@@ -1,5 +1,4 @@
 using System.Management;
-using RemotePCDiagnostics.Core.Areas;
 
 namespace RemotePCDiagnostics.Core.Platform;
 

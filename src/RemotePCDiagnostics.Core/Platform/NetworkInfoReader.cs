@@ -112,7 +112,7 @@ public static class NetworkInfoReader
                     ErrorsIn: stats.IncomingPacketsWithErrors,
                     ErrorsOut: stats.OutgoingPacketsWithErrors,
                     DropsIn: stats.IncomingPacketsDiscarded,
-                    DropsOut: stats.OutgoingPacketsDiscarded);
+                    DropsOut: OperatingSystem.IsWindows() ? stats.OutgoingPacketsDiscarded : 0);
             }
         }
         catch
