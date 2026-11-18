@@ -5,6 +5,7 @@ using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Storage;
 
 namespace RemotePCDiagnostics.Core.History;
 
@@ -44,7 +45,7 @@ public sealed record HistoryImpactSummary(
 {
     public string DiskHeadline => DiskReclaimedBytes > 0 ? HardwareInventory.FormatBytes(DiskReclaimedBytes) : "0 B";
     public string DiskMeta => TempFilesCleaned > 0
-        ? $"{TempFilesCleaned.ToString("N0", CultureInfo.InvariantCulture)} temp file(s) & Recycle Bin cleaned"
+        ? $"{TempFilesCleaned.ToString("N0", CultureInfo.InvariantCulture)} file(s) cleaned"
         : DiskReclaimedBytes > 0 ? "Reclaimed from temporary files & cache" : "No disk cleanup run in this range";
 
     public string MemoryHeadline => MemorySavedBytes > 0 ? HardwareInventory.FormatBytes(MemorySavedBytes) : "0 B";
@@ -82,6 +83,7 @@ public static class HistorySummary
     public const string RemediationModuleId = "Remediation";
     public const string ServiceFixModuleId = "ServiceAction";
     public const string MemoryFixModuleId = "MemoryOptimization";
+    private const string DiskCleanupCategory = "Disk cleanup";
 
     public static bool IsFixEntry(HistoryEntry e) =>
         string.Equals(e.Module, RemediationModuleId, StringComparison.OrdinalIgnoreCase)
@@ -226,13 +228,22 @@ public static class HistorySummary
             var up = (int)LongMeas(e, "UpdatesInstalled");
             var actor = e.Measurement("Actor") ?? "Local user";
             var kind = e.Measurement("Kind") ?? e.Module;
+            var isStorageCleanup = string.Equals(e.Module, MemoryFixModuleId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(kind, nameof(MemoryActionType.CleanStorage), StringComparison.OrdinalIgnoreCase);
+            if (isStorageCleanup)
+            {
+                var (bytes, files) = ParseStorageCleanupImpact(e.Summary);
+                if (fb == 0) fb = bytes;
+                if (rf == 0) rf = files;
+                mb = 0;
+            }
 
             diskBytes += fb;
             tempFiles += rf;
             memBytes += mb;
             updatesInstalled += up;
 
-            if (mb > 0 || string.Equals(e.Module, MemoryFixModuleId, StringComparison.OrdinalIgnoreCase) || kind.Equals(nameof(RemediationKind.EndProcessGroup), StringComparison.OrdinalIgnoreCase))
+            if (!isStorageCleanup && (mb > 0 || string.Equals(e.Module, MemoryFixModuleId, StringComparison.OrdinalIgnoreCase) || kind.Equals(nameof(RemediationKind.EndProcessGroup), StringComparison.OrdinalIgnoreCase)))
                 if (ok) memFixes++;
             if (kind is nameof(RemediationKind.RestartDevice) or nameof(RemediationKind.EnableDevice) && ok)
                 devicesReset++;
@@ -240,7 +251,7 @@ public static class HistorySummary
                 servicesAdjusted++;
 
             var badge = FormatImpactBadge(fb, mb, up, rf);
-            fixList.Add(new(e.TimeUtc, e.Test, actor, ok, e.Summary, badge));
+            fixList.Add(new(e.TimeUtc, isStorageCleanup ? DiskCleanupCategory : e.Test, actor, ok, e.Summary, badge));
             persistedUnmatched.Add((e.TimeUtc, NormalizeSummary(e.Summary)));
         }
 
@@ -273,11 +284,20 @@ public static class HistorySummary
             foreach (var (m, tUtc) in ExcludeAlreadyPersisted(memory.Recent, m => (new DateTimeOffset(m.When).ToUniversalTime(), m.Message)))
             {
                 totalFixes++;
-                if (m.Success)
+                if (m.Success) okFixes++;
+
+                // The storage catalog uses its cleanup ID as the suggestion ID.
+                if (StorageCleanupCatalog.Find(m.SuggestionId) is not null)
                 {
-                    okFixes++;
-                    memFixes++;
+                    var (bytes, files) = ParseStorageCleanupImpact(m.Message);
+                    diskBytes += bytes;
+                    tempFiles += files;
+                    var diskBadge = FormatImpactBadge(bytes, 0, 0, files);
+                    fixList.Add(new(tUtc, DiskCleanupCategory, memory.Actor, m.Success, m.Message, diskBadge));
+                    continue;
                 }
+
+                if (m.Success) memFixes++;
                 var freed = ParseFreedBytesFromText(m.Message);
                 parsedMemFromRecent += freed;
                 memBytes += freed;
@@ -341,7 +361,7 @@ public static class HistorySummary
         RemediationKind.EndProcessGroup => "Memory / process",
         RemediationKind.DisableSystemProxy => "System proxy",
         RemediationKind.FlushDnsAndRenewIp or RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns => "DNS & network",
-        RemediationKind.CleanTempFiles => "Disk cleanup",
+        RemediationKind.CleanTempFiles => DiskCleanupCategory,
         RemediationKind.OptimizeSsd => "SSD optimization",
         _ => "Automated fix",
     };
@@ -399,6 +419,19 @@ public static class HistorySummary
         if (updates > 0) return $"{AreaModuleBase.Plural(updates, "update")}";
         if (files > 0) return $"{AreaModuleBase.Plural(files, "file")} cleaned";
         return null;
+    }
+
+    private static (long Bytes, int Files) ParseStorageCleanupImpact(string summary)
+    {
+        // The cleanup log contains the displayed size, rounded by StorageCleanupEngine.SizeText.
+        var match = Regex.Match(summary, @"^(?:Done: )?Freed ([\d.]+) (GB|MB|KB) \(([\d,]+) files? deleted\)\.", RegexOptions.CultureInvariant);
+        if (!match.Success ||
+            !decimal.TryParse(match.Groups[1].Value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var size) ||
+            !int.TryParse(match.Groups[3].Value, NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var files))
+            return default;
+
+        var unit = match.Groups[2].Value switch { "GB" => 1L << 30, "MB" => 1L << 20, _ => 1L << 10 };
+        return (size <= long.MaxValue / unit ? (long)(size * unit) : 0, files);
     }
 
     public static long ParseFreedBytesFromText(string? text)
