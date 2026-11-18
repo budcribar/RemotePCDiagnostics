@@ -78,6 +78,12 @@ To run tests, use the existing controls: set the length with `checks-mode-quick`
 
 The Benchmark page needs no new markers: `bench-restart` (checkbox) chooses whether the restart buttons show; `bench-run-before`, `bench-restart-before`, `bench-run-after`, `bench-restart-after`, `bench-stop` and `bench-clear` act; `bench-report-data` reports the phase before and after a restart.
 
+## Page errors (`page-error`)
+
+When a page throws while it draws or handles a click, the page's content is replaced by `[data-testid="page-error"]` with `data-error-seq` (increases with every error), `data-error-type` (the exception type) and `data-error-page` (the route, such as `checks`). `page-error-detail` holds a one-line description and `page-error-retry` shows the page again. The page marker (`data-rpcd-page`) is gone while the error shows; the navigation and the session bar keep working, and going to another page clears the error. The full error is in the app log as "Page error on '<page>': …". An agent that finds `page-error` should report the app fault, not a missing element.
+
+A selected row on Checks has `aria-pressed="true"`. A row that is still not pressed after a click means the page did not act on the click.
+
 ## Fixes and service actions
 
 `area-report-data` lists the one-click fixes the page offers: `actions` on a card (buttons on the card and at the top of its drawer) and on a row (buttons in the drawer's row), each with `kind` (a RemediationKind name), `target`, `targetLabel`, `buttonText` and `currentSetting`. Each fix also says what to expect: `risk` (`low` or `medium`), `undo` (`full`, `none` or `nothing`), and, only when true, `readOnly`, `slow` (can run for many minutes), `mayNeedRestart` and `restartsPc`. A row with a fix is listed even when its level is `ok`. On the Services check, `services` lists every service (up to 400) with `name`, `displayName`, `status`, `startType`, and `canStart`, `canStop`, `canRestart` and `protected`.

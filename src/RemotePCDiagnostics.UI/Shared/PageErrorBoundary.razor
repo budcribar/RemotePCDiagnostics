@@ -1,0 +1,51 @@
+@inherits ErrorBoundary
+@implements IDisposable
+@using Microsoft.Extensions.Logging
+@inject ILoggerFactory Loggers
+@inject NavigationManager Nav
+@* Catches an error thrown while a page draws or handles a click. Without it the error is lost: nothing is logged and the page
+   just stops answering, which from a remote session looks like an element that went missing. Here the error is written to the
+   app log, the person (and a browser agent, through page-error) is told, and the rest of the app (navigation, session bar)
+   keeps working. Going to another page clears it. *@
+@if (CurrentException is null)
+{
+    @ChildContent
+}
+else
+{
+    <section class="banner banner-err" role="alert" data-testid="page-error" data-error-seq="@_seq"
+             data-error-type="@CurrentException.GetType().Name" data-error-page="@_page">
+        <span class="banner-icon"><Icon Name="crash" Size="20" /></span>
+        <div class="banner-text">
+            <div class="banner-title">This page ran into a problem and stopped</div>
+            <div class="banner-sub" data-testid="page-error-detail">@PageErrors.Describe(CurrentException) The details are in the app log. The other pages still work.</div>
+        </div>
+        <div class="banner-actions">
+            <button type="button" class="btn btn-outline" data-testid="page-error-retry" @onclick="Recover">Show the page again</button>
+        </div>
+    </section>
+}
+
+@code {
+    private int _seq;
+    private string _page = "";
+
+    protected override void OnInitialized() => Nav.LocationChanged += OnLocationChanged;
+
+    protected override Task OnErrorAsync(Exception exception)
+    {
+        _seq++;
+        _page = PageErrors.PageOf(Nav.Uri, Nav.BaseUri);
+        try { Loggers.CreateLogger("RemotePCDiagnostics.UI.Page").LogError("{Line}", PageErrors.LogLine(_page, exception)); }
+        catch { /* logging must never break the page further */ }
+        return Task.CompletedTask;
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        if (CurrentException is null) return;
+        _ = InvokeAsync(() => { Recover(); StateHasChanged(); });
+    }
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+}

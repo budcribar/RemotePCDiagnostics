@@ -472,3 +472,34 @@ public class GranularFixTests
         Assert.Single(fixes, f => f.Remediation?.Kind == RemediationKind.CheckAndInstallWindowsUpdates);
     }
 }
+
+/// <summary>An error a page throws is described for the person and logged whole.</summary>
+public class PageErrorsTests
+{
+    [Theory]
+    [InlineData("https://0.0.0.0/checks?module=DiskSpace#top", "https://0.0.0.0/", "checks")]
+    [InlineData("https://0.0.0.0/area/Network/", "https://0.0.0.0/", "area/Network")]
+    [InlineData("https://0.0.0.0/", "https://0.0.0.0/", "home")]
+    [InlineData("https://server.example:34544/abc/checks", null, "abc/checks")]
+    [InlineData(null, null, "home")]
+    public void Page_is_the_route_without_address_or_query(string? uri, string? baseUri, string expected) =>
+        Assert.Equal(expected, RemotePCDiagnostics.Core.PageErrors.PageOf(uri, baseUri));
+
+    [Fact]
+    public void The_person_sees_the_kind_and_first_line_and_the_log_gets_the_whole_error_on_one_line()
+    {
+        Exception thrown;
+        try { throw new InvalidOperationException("Sequence contains no elements\nsecond line"); }
+        catch (Exception e) { thrown = e; }
+
+        Assert.Equal("InvalidOperationException: Sequence contains no elements.", RemotePCDiagnostics.Core.PageErrors.Describe(thrown));
+        Assert.Equal("InvalidOperationException: Sequence contains no elements.", RemotePCDiagnostics.Core.PageErrors.Describe(new AggregateException(thrown)));
+        Assert.Equal("NullReferenceException: " + new NullReferenceException().Message.TrimEnd('.') + ".", RemotePCDiagnostics.Core.PageErrors.Describe(new NullReferenceException()));
+
+        var line = RemotePCDiagnostics.Core.PageErrors.LogLine("checks", thrown);
+        Assert.StartsWith("Page error on 'checks': System.InvalidOperationException: Sequence contains no elements", line);
+        Assert.Contains("PageErrorsTests", line); // the stack
+        Assert.DoesNotContain("\n", line);
+        Assert.True(RemotePCDiagnostics.Core.PageErrors.LogLine("checks", new Exception(new string('x', 9000))).Length <= RemotePCDiagnostics.Core.PageErrors.MaxLogLength + 40);
+    }
+}
