@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Optimizations;
@@ -274,7 +273,6 @@ public static class HistorySummary
         // 3. Live in-session MemorySuggestionService records
         if (memory is not null)
         {
-            long parsedMemFromRecent = 0;
             foreach (var (m, tUtc) in ExcludeAlreadyPersisted(memory.Recent, m => (new DateTimeOffset(m.When).ToUniversalTime(), m.Message)))
             {
                 totalFixes++;
@@ -293,15 +291,17 @@ public static class HistorySummary
                 }
 
                 if (m.Success) memFixes++;
-                var freed = ParseFreedBytesFromText(m.Message);
-                parsedMemFromRecent += freed;
+                var freed = m.FreedMemoryBytes;
                 memBytes += freed;
 
                 var badge = freed > 0 ? $"+{HardwareInventory.FormatBytes(freed)} RAM" : null;
                 fixList.Add(new(tUtc, "Memory optimization", memory.Actor, m.Success, m.Message, badge));
             }
-            if (memory.TotalFreedBytes > parsedMemFromRecent)
-                memBytes += memory.TotalFreedBytes - parsedMemFromRecent;
+            // The session total also holds gains too small to be reported on a record. Every recent record is already counted
+            // above or through its logged copy, so only what's beyond them is added (never the same amount twice).
+            var onRecords = memory.Recent.Sum(x => x.FreedMemoryBytes);
+            if (memory.TotalFreedBytes > onRecords)
+                memBytes += memory.TotalFreedBytes - onRecords;
         }
 
         // 4. Live in-session ServiceActionService records
@@ -416,18 +416,4 @@ public static class HistorySummary
         return null;
     }
 
-    public static long ParseFreedBytesFromText(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return 0;
-        var m = Regex.Match(text, @"Freed about\s+([\d.]+)\s*(GB|MB|KB)", RegexOptions.IgnoreCase);
-        if (!m.Success || !double.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var val))
-            return 0;
-        return m.Groups[2].Value.ToUpperInvariant() switch
-        {
-            "GB" => (long)(val * 1024 * 1024 * 1024),
-            "MB" => (long)(val * 1024 * 1024),
-            "KB" => (long)(val * 1024),
-            _ => 0,
-        };
-    }
 }

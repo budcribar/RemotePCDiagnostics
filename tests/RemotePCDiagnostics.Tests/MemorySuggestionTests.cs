@@ -1,4 +1,5 @@
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.History;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Session;
@@ -663,8 +664,16 @@ public class MemorySuggestionTests
         Assert.True(r.Success);
         Assert.Contains("Freed about 1.0 GB", r.Message);
         Assert.Equal(1 * Gb, s.TotalFreedBytes);
+        Assert.Equal(1 * Gb, r.FreedMemoryBytes);
         Assert.Contains("close:ChatGPT", sys.Calls);
-        Assert.Contains(events, e => e.StartsWith("Memory suggestion applied") && e.Contains("Actor: Remote user") && e.Contains("CloseApp"));
+        var logged = Assert.Single(events, e => e.StartsWith("Memory suggestion applied") && e.Contains("Actor: Remote user") && e.Contains("CloseApp"));
+        Assert.Contains("Freed memory bytes: 1073741824\r\n", logged);
+
+        // History shows the same amount for the live record and for its logged copy, counted once.
+        var entry = HistoryEventParser.Parse(logged, new DateTimeOffset(r.When))!;
+        var summary = HistorySummary.Build([entry], memory: s);
+        Assert.Equal(1 * Gb, summary.MemorySavedBytes);
+        Assert.Equal("+1 GB RAM", Assert.Single(summary.Fixes).ImpactBadge);
     }
 
     [Fact]

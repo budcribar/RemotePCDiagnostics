@@ -155,10 +155,8 @@ public static class HistoryEventParser
                     new("Actor", fields.GetValueOrDefault("Actor") ?? "Local user"),
                     new("Kind", fields.GetValueOrDefault("Action") ?? HistorySummary.MemoryFixModuleId),
                 };
-                var freed = HistorySummary.ParseFreedBytesFromText(memMsg);
-                if (freed > 0) memMeas.Add(new("FreedMemoryBytes", freed.ToString(CultureInfo.InvariantCulture)));
-                // Disk cleanups log their exact amounts on their own lines (events written before that have none, and count as 0).
-                foreach (var (field, name) in new[] { ("Freed disk bytes", "FreedDiskBytes"), ("Removed files", "RemovedFiles") })
+                // The amounts are logged on their own lines (events written before that have none, and count as 0).
+                foreach (var (field, name) in new[] { ("Freed memory bytes", "FreedMemoryBytes"), ("Freed disk bytes", "FreedDiskBytes"), ("Removed files", "RemovedFiles") })
                     if (fields.TryGetValue(field, out var raw) && long.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var n) && n > 0)
                         memMeas.Add(new(name, n.ToString(CultureInfo.InvariantCulture)));
                 var memTime = fields.TryGetValue("Logged", out var lg) && DateTimeOffset.TryParse(lg, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var lt) ? lt : timeCreated;
