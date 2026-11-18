@@ -1,6 +1,7 @@
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
+using RemotePCDiagnostics.Core.History;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Workflow;
@@ -105,6 +106,9 @@ public class HibernationTests
         var r = await svc.ApplyAsync(s, s.Actions[0]);
         Assert.True(r.Success, r.Message);
         Assert.Contains("Freed 2.8 GB", r.Message);
+        // History counts the shrunk file as reclaimed disk space.
+        Assert.Equal(FullDesktop.FileBytes!.Value - (long)(2.84 * Gb), r.FreedDiskBytes);
+        Assert.Equal(r.FreedDiskBytes, HistorySummary.Build([], memory: svc).DiskReclaimedBytes);
         Assert.Equal([true], sys.Calls);
         var rec = Assert.Single(j.All);
         Assert.Equal((ChangeKind.HiberFileType, "full"), (rec.Kind, rec.Previous));

@@ -40,7 +40,7 @@ public static class MemoryFeedback
 }
 
 /// <param name="Skipped">Nothing was attempted on purpose (e.g. the app whose cache it is was open); the workflow lists it as skipped.</param>
-/// <param name="FreedDiskBytes">Disk cleanups and app removals: the exact bytes freed, which History totals.</param>
+/// <param name="FreedDiskBytes">Disk cleanups, app removals and the hibernation file: the exact bytes freed, which History totals.</param>
 /// <param name="RemovedFiles">Disk cleanups only: the exact number of files deleted.</param>
 /// <param name="FreedMemoryBytes">The measured RAM freed, when the message reports one ("Freed about …"); History totals it.</param>
 public sealed record ActionOutcome(bool Success, string Message, bool Skipped = false, long FreedDiskBytes = 0, long RemovedFiles = 0, long FreedMemoryBytes = 0);
@@ -205,7 +205,7 @@ public sealed record UndoEntry(string Id, string Label, MemoryActionType Type, s
     string? CreatedKey = null, string? PreviousExtra = null);
 
 public sealed record SuggestionResult(string SuggestionId, bool Success, string Message, DateTime When, bool CanForceClose = false, bool Skipped = false,
-    long FreedDiskBytes = 0, long RemovedFiles = 0, long FreedMemoryBytes = 0);
+    long FreedDiskBytes = 0, long RemovedFiles = 0, long FreedMemoryBytes = 0, MemoryActionType? Action = null);
 
 /// <summary>
 /// Scans, shows and applies memory suggestions. Every change runs only from an explicit click; each is logged to the Event Log (1400)
@@ -455,7 +455,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
 
     private SuggestionResult Record(string id, ActionOutcome o, MemoryAction a, UndoEntry? _, bool canForce = false)
     {
-        var r = new SuggestionResult(id, o.Success, (o.Success && !o.Skipped ? "Done: " : "") + o.Message, DateTime.Now, canForce, o.Skipped, o.FreedDiskBytes, o.RemovedFiles, o.FreedMemoryBytes);
+        var r = new SuggestionResult(id, o.Success, (o.Success && !o.Skipped ? "Done: " : "") + o.Message, DateTime.Now, canForce, o.Skipped, o.FreedDiskBytes, o.RemovedFiles, o.FreedMemoryBytes, a.Type);
         lock (_gate)
         {
             _results[id] = r;
@@ -465,7 +465,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
         // History reads the exact amounts from these lines, never from the message text.
         var inv = System.Globalization.CultureInfo.InvariantCulture;
         var storage = a.Type == MemoryActionType.CleanStorage;
-        var amounts = storage || o.FreedDiskBytes > 0 ? $"Freed disk bytes: {o.FreedDiskBytes.ToString(inv)}\r\n" : ""; // app removals free disk space too
+        var amounts = storage || o.FreedDiskBytes > 0 ? $"Freed disk bytes: {o.FreedDiskBytes.ToString(inv)}\r\n" : ""; // app removals and the hibernation file free disk space too
         if (storage) amounts += $"Removed files: {o.RemovedFiles.ToString(inv)}\r\n";
         if (o.FreedMemoryBytes > 0) amounts += $"Freed memory bytes: {o.FreedMemoryBytes.ToString(inv)}\r\n";
         Event(o.Success ? LogLevel.Information : LogLevel.Warning,
