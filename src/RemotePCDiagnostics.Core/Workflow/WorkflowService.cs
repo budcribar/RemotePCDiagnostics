@@ -78,6 +78,9 @@ public sealed class WorkflowService(
     public string? Status { get; private set; }
     /// <summary>0..1 progress of the DISM/SFC repair running right now (null when none runs or it hasn't reported a percent yet).</summary>
     public double? RepairFraction { get; private set; }
+    /// <summary>The integrity scan running again after the restart to confirm a repair (null when none runs). It takes minutes and
+    /// reports no percent, so the page shows it as its own running step instead of looking stuck on the finished benchmark.</summary>
+    public WorkflowRescan? Rescan { get; private set; }
     public TimeSpan? SettleRemaining { get; private set; }
     public TimeSpan? SettleTotal { get; private set; }
     public double? SettleFraction { get; private set; }
@@ -514,21 +517,36 @@ public sealed class WorkflowService(
     {
         var ran = State.RepairFindings.Where(x => !x.AfterRestart).Select(x => x.Id).ToHashSet();
         if (ran.Count == 0 || State.RepairFindings.Any(x => x.AfterRestart)) return;
-        foreach (var m in diag.Modules.OfType<WindowsIntegrityModule>())
+        var scans = diag.Modules.OfType<WindowsIntegrityModule>()
+            .Select(m => (Module: m, Id: m is DismScanHealthModule ? WindowsRepair.DismId : WindowsRepair.SfcId))
+            .Where(x => ran.Contains(x.Id)).ToList();
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            var id = m is DismScanHealthModule ? WindowsRepair.DismId : WindowsRepair.SfcId;
-            if (!ran.Contains(id)) continue;
-            Note($"Checking again after the restart: {m.DisplayName}…");
-            DiagnosticResult r;
-            try { r = await diag.RunAsync(m.Name, null, ct).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn("re-scan failed: " + ex.Message); continue; }
-            var card = (r.Report() as AreaReport)?.Cards.FirstOrDefault();
-            var finding = new RepairFinding($"{id}-after", $"{m.DisplayName} after the restart",
-                r.Status, r.Message, card?.Meta ?? "", card?.Rows.Select(x => new RepairDetail(x.Values.Count > 0 ? x.Values[0] : "", x.Values.Count > 1 ? x.Values[1] : "")).ToList() ?? [],
-                AfterRestart: true);
-            Save(s => s with { RepairFindings = [.. s.RepairFindings, finding] });
+            for (var i = 0; i < scans.Count; i++)
+                await RescanOneAsync(scans[i].Module, scans[i].Id, i + 1, scans.Count, ct).ConfigureAwait(false);
         }
+        finally { Rescan = null; Raise(); }
+    }
+
+    private async Task RescanOneAsync(WindowsIntegrityModule m, string id, int number, int count, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        Rescan = new(m.DisplayName, number, count, DateTimeOffset.UtcNow, null);
+        Note($"Checking again after the restart ({number} of {count}): {m.DisplayName}. This can take several minutes…");
+        var progress = CheckProgressExtensions.Create(cp =>
+        {
+            if (Rescan is { } now) Rescan = now with { Message = cp.Message };
+            Status = $"Checking again after the restart ({number} of {count}): {m.DisplayName}: {cp.Message}";
+            Raise();
+        });
+        DiagnosticResult r;
+        try { r = await diag.RunAsync(m.Name, progress, ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn("re-scan failed: " + ex.Message); return; }
+        var card = (r.Report() as AreaReport)?.Cards.FirstOrDefault();
+        var finding = new RepairFinding($"{id}-after", $"{m.DisplayName} after the restart",
+            r.Status, r.Message, card?.Meta ?? "", card?.Rows.Select(x => new RepairDetail(x.Values.Count > 0 ? x.Values[0] : "", x.Values.Count > 1 ? x.Values[1] : "")).ToList() ?? [],
+            AfterRestart: true);
+        Save(s => s with { RepairFindings = [.. s.RepairFindings, finding] });
     }
 
     private sealed class InlineProgress(Action<string> a) : IProgress<string> { public void Report(string v) { try { a(v); } catch { } } }
