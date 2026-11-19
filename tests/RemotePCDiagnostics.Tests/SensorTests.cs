@@ -159,6 +159,40 @@ public class LibreHardwareMonitorModuleTests
         Assert.Equal(Sample.Readings, back.Readings);
         Assert.True(back.IsElevated);
     }
+
+    // Issue #48: one NVMe drive, Composite 42 °C (what Windows / Drive health reports) and an internal sensor at 64 °C.
+    [Fact]
+    public void Summarize_StorageUsesDriveOverall_AndNamesHotterSensor()
+    {
+        var snapshot = new SensorSnapshot([
+            new("SAMSUNG MZAL8512HDLU", HardwareKind.Storage, "Composite Temperature", SensorKind.Temperature, 42, 35, 45, "°C"),
+            new("SAMSUNG MZAL8512HDLU", HardwareKind.Storage, "Temperature #1", SensorKind.Temperature, 42, 35, 45, "°C"),
+            new("SAMSUNG MZAL8512HDLU", HardwareKind.Storage, "Temperature #2", SensorKind.Temperature, 64, 50, 66, "°C"),
+            new("SAMSUNG MZAL8512HDLU", HardwareKind.Storage, "Critical Temperature", SensorKind.Temperature, 85, null, null, "°C"),
+        ], IsElevated: true);
+        var report = LibreHardwareMonitorModule.BuildReport(snapshot);
+        Assert.Equal(42, LibreHardwareMonitorModule.DriveOverall(report.Groups.Single(g => g.Id == "storage").Readings.Select(r => r.Reading)));
+        Assert.Contains("Storage 42°C (hottest sensor 64°C)", LibreHardwareMonitorModule.Summarize(report));
+    }
+
+    [Fact]
+    public void Summarize_StorageWithoutComposite_UsesHottestAndNoSensorNote()
+    {
+        var snapshot = new SensorSnapshot([
+            new("Drive A", HardwareKind.Storage, "Temperature #1", SensorKind.Temperature, 40, null, null, "°C"),
+            new("Drive A", HardwareKind.Storage, "Temperature #2", SensorKind.Temperature, 43, null, null, "°C"),
+            new("Drive B", HardwareKind.Storage, "Composite Temperature", SensorKind.Temperature, 38, null, null, "°C"),
+        ], IsElevated: true);
+        var summary = LibreHardwareMonitorModule.Summarize(LibreHardwareMonitorModule.BuildReport(snapshot));
+        Assert.Contains("Storage 43°C ·", summary);
+        Assert.DoesNotContain("hottest sensor", summary);
+    }
+
+    [Theory]
+    [InlineData(1, 0, "1 fan")] [InlineData(1, 1, "1 fan, stopped")] [InlineData(3, 1, "3 fans, 1 stopped")]
+    [InlineData(2, 2, "2 fans, stopped")] [InlineData(0, 0, "fan speed not reported")]
+    public void FansText_KeepsCountAndNamesStopped(int fans, int stopped, string expected) =>
+        Assert.Equal(expected, LibreHardwareMonitorModule.FansText(fans, stopped));
 }
 
 public class SensorNoDataTests
@@ -375,4 +409,3 @@ public class LhmSensorProviderElevationTests
         Assert.Null(result.Note);
     }
 }
-

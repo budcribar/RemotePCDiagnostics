@@ -83,7 +83,8 @@ public sealed class AcpiEcReader(IEcPortIo io, TimeSpan? stepTimeout = null, int
     }
 }
 
-/// <summary>Per-fan plausibility: raw byte = RPM/100. 0xFF/out-of-range never shown; 0 is shown only after a non-zero reading this session.</summary>
+/// <summary>Per-fan plausibility: raw byte = RPM/100. 0xFF/out-of-range never shown; 0 (fan stopped) is shown once the fan is
+/// proven present: a non-zero reading this session, or the EC's own fan count says the fan exists.</summary>
 public sealed class EcFanPlausibility
 {
     /// <summary>Highest raw value treated as real (8000 RPM); laptop fans run well below this.</summary>
@@ -92,13 +93,14 @@ public sealed class EcFanPlausibility
     public bool SeenNonZero { get; private set; }
     public bool SeenChange { get; private set; }
 
-    /// <summary>Records a raw sample and returns the RPM to show, or null to keep the fan hidden.</summary>
-    public double? Accept(byte raw)
+    /// <summary>Records a raw sample and returns the RPM to show, or null to keep the fan hidden.
+    /// <paramref name="present"/>: the EC reports this fan exists (fan count), so 0 RPM means stopped, not missing.</summary>
+    public double? Accept(byte raw, bool present = false)
     {
         if (raw > MaxPlausibleRaw) return null;
         if (_first is null) _first = raw; else if (_first != raw) SeenChange = true;
         if (raw > 0) SeenNonZero = true;
-        return raw > 0 || SeenNonZero ? raw * 100.0 : null;
+        return raw > 0 || SeenNonZero || present ? raw * 100.0 : null;
     }
 }
 
@@ -256,8 +258,11 @@ public sealed class EcFanMonitor : IEcFanSource
         if (_lastSummary is null) _lastSummary = now;
         else if (now - _lastSummary >= SummaryInterval) { _lastSummary = now; Log($"Fan diagnostic summary: {Summary()} {FlagText(flags, nums)}"); }
 
+        // FNUM (0xAD high nibble) is the EC's fan count; 82R4 reports FNUM=1. A present fan at 0 RPM is stopped, not missing,
+        // so it stays listed (keeps the fan count stable between runs). Fan 2's address is unverified: it still needs a non-zero reading.
+        var fanCount = nums is { } fn ? fn >> 4 : 0;
         var list = new List<SensorReading>(2);
-        if (_fan1.Accept(b1) is { } rpm1) { _min1 = Math.Min(_min1 ?? rpm1, rpm1); _max1 = Math.Max(_max1 ?? rpm1, rpm1); list.Add(new(HardwareName, HardwareKind.Controller, CpuFanName, SensorKind.Fan, rpm1, _min1, _max1, "RPM")); }
+        if (_fan1.Accept(b1, present: fanCount >= 1) is { } rpm1) { _min1 = Math.Min(_min1 ?? rpm1, rpm1); _max1 = Math.Max(_max1 ?? rpm1, rpm1); list.Add(new(HardwareName, HardwareKind.Controller, CpuFanName, SensorKind.Fan, rpm1, _min1, _max1, "RPM")); }
         if (_fan2.Accept(b2) is { } rpm2) { _min2 = Math.Min(_min2 ?? rpm2, rpm2); _max2 = Math.Max(_max2 ?? rpm2, rpm2); list.Add(new(HardwareName, HardwareKind.Controller, Fan2Name, SensorKind.Fan, rpm2, _min2, _max2, "RPM")); }
         _cached = list;
     }

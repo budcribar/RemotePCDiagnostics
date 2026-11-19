@@ -74,6 +74,8 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     public AreaPanels Panels => AreaPanels.StorageCleanup;
     /// <summary>The instance used when the drive list itself can't be read, so the failure is still reported as a run.</summary>
     public const string AllDrivesKey = "all";
+    /// <summary>Explains which temperature Windows reports, so it can be matched with Temperatures &amp; fans.</summary>
+    public const string TemperatureDetail = "The drive's overall temperature as Windows reports it (NVMe composite). Temperatures & fans shows the same overall value and, when one runs hotter, the drive's hottest internal sensor (often the controller).";
     /// <summary>A drive read this recent is reused by the next drive of the same run.</summary>
     public static readonly TimeSpan ReuseReadFor = TimeSpan.FromSeconds(20);
     /// <summary>"Optimize / Retrim SSD" is offered only when a volume of the SSD wasn't retrimmed in this long (or the date is unknown).</summary>
@@ -409,7 +411,8 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             foreach (var vol in own)
                 Add($"Volume {vol.Letter}", $"{HardwareInventory.FormatBytes(vol.FreeBytes)} free of {HardwareInventory.FormatBytes(vol.TotalBytes)} ({vol.UsedPercent:0.#}% used · {vol.DriveFormat})",
                     vol.IsLowOnSpace ? AreaLevel.Warning : AreaLevel.Neutral);
-            Add("Temperature", d.TemperatureC is > 0 ? $"{d.TemperatureC}°C" : "Not reported", d.TemperatureC >= DriveHealth.HotC ? AreaLevel.Warning : AreaLevel.Neutral);
+            Add("Temperature", d.TemperatureC is > 0 ? $"{d.TemperatureC}°C" : "Not reported", d.TemperatureC >= DriveHealth.HotC ? AreaLevel.Warning : AreaLevel.Neutral,
+                detail: d.TemperatureC is > 0 ? TemperatureDetail : null);
             Add("Life used", d.Wear is not null ? $"{d.Wear}%" : "Not reported", d.Wear >= DriveHealth.WornPercent ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Uncorrected read errors", d.ReadErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported", d.ReadErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
             Add("Uncorrected write errors", d.WriteErrors?.ToString(CultureInfo.InvariantCulture) ?? "Not reported", d.WriteErrors is > 0 ? AreaLevel.Warning : AreaLevel.Neutral);
