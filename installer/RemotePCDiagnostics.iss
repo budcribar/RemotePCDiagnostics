@@ -143,6 +143,12 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "
 ; Stage Agent.exe in {tmp} and invoke 'install' so any running RemotePCDiagnosticsAgent service is stopped cleanly before updating Program Files.
 Filename: "{tmp}\RemotePCDiagnostics.Agent.exe"; Parameters: "{#AgentInstallParams}"; StatusMsg: "Installing and starting Remote PC Diagnostics Agent service..."; Flags: runhidden waituntilterminated
 #endif
+; In-app updates (AppUpdateService / the agent's AgentSelfUpdater) pass /AGENTMSI=<verified Agent MSI> when the persistent
+; agent service is installed: Setup upgrades it here, because the app and its elevated helper are closed by now and cannot.
+Filename: "{sys}\msiexec.exe"; Parameters: "/i ""{param:AGENTMSI}"" /qn /norestart"; StatusMsg: "Updating Remote PC Diagnostics Agent service..."; Check: HasSetupParam('AGENTMSI'); Flags: runhidden waituntilterminated
+; In-app updates also pass /RELAUNCHARGS=<the app's restart command line> (same relay, session id and group), so the app comes
+; back into the remote session it was in. The entry below it skips silent installs, so without this nothing restarts the app.
+Filename: "{app}\{#AppExeName}"; Parameters: "{param:RELAUNCHARGS}"; WorkingDir: "{app}"; Check: ShouldRelaunchAfterUpdate; Flags: nowait shellexec runasoriginaluser
 ; shellexec + runasoriginaluser launches RemotePCDiagnostics.Host.exe (asInvoker) as the interactive desktop user at the end of setup.
 Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; WorkingDir: "{app}"; Flags: nowait skipifsilent shellexec runasoriginaluser
 
@@ -175,6 +181,18 @@ begin
       Exit;
     end;
   end;
+end;
+
+{ True when Setup was started with /<Name>=<value> and a value. }
+function HasSetupParam(const Name: String): Boolean;
+begin
+  Result := ExpandConstant('{param:' + Name + '|}') <> '';
+end;
+
+{ Restart the app after a silent in-app update. An interactive install already starts it with the entry after this one. }
+function ShouldRelaunchAfterUpdate(): Boolean;
+begin
+  Result := WizardSilent() and HasSetupParam('RELAUNCHARGS');
 end;
 
 function HasValidWebView2Version(const RootKey: Integer): Boolean;

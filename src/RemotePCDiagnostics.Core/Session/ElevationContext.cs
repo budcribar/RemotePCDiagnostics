@@ -369,7 +369,7 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         return await client.ReadDrivesAsync(ct).ConfigureAwait(false);
     }
 
-    public async Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, CancellationToken ct = default)
+    public async Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, IReadOnlyList<string>? relaunchArguments = null, CancellationToken ct = default)
     {
         AdminPipeClient? client;
         lock (_stateLock)
@@ -378,7 +378,7 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         if (client is not { IsConnected: true })
             return null;
 
-        return await client.SelfUpdateAsync(channel, ct).ConfigureAwait(false);
+        return await client.SelfUpdateAsync(channel, relaunchArguments, ct).ConfigureAwait(false);
     }
 
     public static string? TryResolveInitialPipeName(IReadOnlyList<string>? args = null)

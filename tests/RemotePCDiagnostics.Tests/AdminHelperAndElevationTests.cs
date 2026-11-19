@@ -327,7 +327,7 @@ public sealed class AdminHelperAndElevationTests
     }
 
     [Fact]
-    public async Task RealAdminHelperProcess_ConnectsAnswersPingAndExitsCleanlyWhenPipeCloses()
+    public async Task RealAdminHelperProcess_AnswersOnlyItsHostAndExitsCleanlyWhenPipeCloses()
     {
         var adminExe = Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Agent.exe");
         var adminDll = Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Agent.dll");
@@ -368,6 +368,8 @@ public sealed class AdminHelperAndElevationTests
 
         try
         {
+#if DEBUG
+            // Debug builds honour RPD_ADMIN_ALLOW_TEST_PARENT, so the helper accepts this test process as its client.
             await using (var client = await AdminPipeClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(15), cts.Token))
             {
                 Assert.True(client.IsConnected);
@@ -377,6 +379,14 @@ public sealed class AdminHelperAndElevationTests
                 Assert.True(ping.Ok);
                 Assert.Equal(helper.Id, ping.HelperPid);
             }
+#else
+            // Release builds ignore RPD_ADMIN_ALLOW_TEST_PARENT: only RemotePCDiagnostics.Host.exe next to the helper may connect,
+            // so the helper must drop this test process before answering anything.
+            await Assert.ThrowsAnyAsync<IOException>(async () =>
+            {
+                await using var client = await AdminPipeClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(15), cts.Token);
+            });
+#endif
 
             // Disposing the client closes the named pipe; the helper must exit promptly without lingering.
             using var exitCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));

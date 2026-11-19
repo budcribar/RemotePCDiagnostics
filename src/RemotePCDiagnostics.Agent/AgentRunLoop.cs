@@ -7,8 +7,10 @@ internal static class AgentRunLoop
 {
     public static async Task RunAsync(AgentConfig config, Action<string>? log, CancellationToken ct)
     {
-        using var platform = new WindowsAgentPlatform();
+        using var platform = new WindowsAgentPlatform(config.Server, log);
         try { AgentPaths.EnsureSessionsDirectory(); } catch { }
+        // An in-app update may have replaced this service mid-way (Setup's Agent MSI step): bring the session's app back.
+        try { platform.ResumePendingRelaunch(); } catch { }
         var publisher = new AgentStatusPublisher();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var removing = 0;

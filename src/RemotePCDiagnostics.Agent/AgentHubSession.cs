@@ -51,8 +51,11 @@ public sealed class AgentSessionOptions
 /// <summary>
 /// Production Windows implementation of <see cref="IAgentPlatform"/> backed by <see cref="Win32Session"/> and <see cref="AgentPaths"/>.
 /// </summary>
-internal sealed class WindowsAgentPlatform : IAgentPlatform, IDisposable
+internal sealed class WindowsAgentPlatform(string? configuredServer = null, Action<string>? log = null) : IAgentPlatform, IDisposable
 {
+    /// <summary>The agent log line format (<c>RemotePCDiagnostics.Agent.log</c>), so the session pipe's lines land next to the agent's.</summary>
+    private void Log(string message) => log?.Invoke($"{DateTimeOffset.Now:O} [agent] {message}");
+
     private readonly HttpClient _http = new(new SocketsHttpHandler
     {
         AllowAutoRedirect = false,
@@ -140,7 +143,8 @@ internal sealed class WindowsAgentPlatform : IAgentPlatform, IDisposable
             return (null, err ?? "Failed to start Remote PC Diagnostics.");
 
         var pipeCts = new CancellationTokenSource();
-        var log = RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(_ => { }).CreateLogger("AgentSessionPipe");
+        // Elevated repairs and updates asked for by an unattended session's app go to the agent log, like the rest of the agent.
+        var pipeLog = RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(Log).CreateLogger("AgentSessionPipe");
         var serverOptions = new RemotePCDiagnostics.Core.Session.AdminPipeServerOptions
         {
             PipeName = pipeName,
@@ -152,8 +156,8 @@ internal sealed class WindowsAgentPlatform : IAgentPlatform, IDisposable
         var pipeServer = new RemotePCDiagnostics.Core.Session.AdminPipeServer(
             serverOptions,
             new RemotePCDiagnostics.Core.Osquery.SystemProcessLauncher(),
-            log: log,
-            selfUpdater: (channel, token) => AgentSelfUpdater.RunAsync(channel, log, token));
+            log: pipeLog,
+            selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, pipeLog, token, RelaunchAfterSetup));
 
         _ = Task.Run(async () =>
         {
@@ -165,6 +169,40 @@ internal sealed class WindowsAgentPlatform : IAgentPlatform, IDisposable
 
         return (new SystemLaunchedProcess(proc, pipeCts, pipeServer), null);
     }
+
+    /// <summary>
+    /// After an update this service ran for an unattended session: once Setup exits, start the app again in the user's session.
+    /// If Setup's Agent MSI step stops this service first, the new service does it when it starts (<see cref="ResumePendingRelaunch"/>).
+    /// </summary>
+    private void RelaunchAfterSetup(Process setup, string stagingDir)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using (setup)
+                    await setup.WaitForExitAsync().ConfigureAwait(false);
+                ResumePendingRelaunch(stagingDir);
+            }
+            catch (Exception ex)
+            {
+                Log($"[update-relaunch] Waiting for Setup failed: {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>Starts the app for a pending post-update relaunch request, if there is one (see <see cref="PendingAppRelaunch"/>).</summary>
+    public void ResumePendingRelaunch(string? stagingDir = null) =>
+        PendingAppRelaunch.TryResume(
+            stagingDir ?? AgentSelfUpdater.StagingDirectory(),
+            configuredServer,
+            (hostExe, cmdLine) =>
+            {
+                var (proc, error) = StartHostProcess(hostExe, cmdLine);
+                // The pipe server lives as long as the app; nothing else tracks this copy of the app.
+                return proc is null ? error ?? "Failed to start Remote PC Diagnostics." : null;
+            },
+            Log);
 
     public async Task<bool?> CheckRelaySessionConnectedAsync(string statusUrl, CancellationToken ct)
     {
