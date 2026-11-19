@@ -32,6 +32,8 @@ public interface IElevatedCommandBridge
 
     Task<SensorSnapshot?> ReadSensorsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<DriveHealth>?> ReadDrivesAsync(CancellationToken ct = default);
+    Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, CancellationToken ct = default) =>
+        Task.FromResult<AppUpdateResult?>(null);
 }
 
 public static class AdminCommandAllowlist
@@ -106,7 +108,8 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("op")] string Op,
     [property: JsonPropertyName("fileName")] string? FileName = null,
     [property: JsonPropertyName("arguments")] IReadOnlyList<string>? Arguments = null,
-    [property: JsonPropertyName("timeoutMs")] int TimeoutMs = 60_000);
+    [property: JsonPropertyName("timeoutMs")] int TimeoutMs = 60_000,
+    [property: JsonPropertyName("channel")] string? Channel = null);
 
 public sealed record AdminPipeResponse(
     [property: JsonPropertyName("ok")] bool Ok,
@@ -119,7 +122,8 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("timedOut")] bool TimedOut = false,
     [property: JsonPropertyName("error")] string? Error = null,
     [property: JsonPropertyName("sensors")] SensorSnapshot? Sensors = null,
-    [property: JsonPropertyName("drives")] IReadOnlyList<DriveHealth>? Drives = null);
+    [property: JsonPropertyName("drives")] IReadOnlyList<DriveHealth>? Drives = null,
+    [property: JsonPropertyName("updateResult")] AppUpdateResult? UpdateResult = null);
 
 /// <summary>
 /// Length-prefixed (4-byte little-endian int32 + UTF-8 JSON) framing over Named Pipes with zero third-party dependencies.
@@ -131,6 +135,7 @@ public static class AdminPipeFraming
     public const string OpRunCommand = "run_command";
     public const string OpReadSensors = "read_sensors";
     public const string OpReadDrives = "read_drives";
+    public const string OpSelfUpdate = "self_update";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -325,6 +330,17 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         return response.Drives;
     }
 
+    public async Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, CancellationToken ct = default)
+    {
+        var channelName = channel == AppUpdateChannel.Prerelease ? "prerelease" : "stable";
+        var response = await SendAsync(
+            new AdminPipeRequest(AdminPipeFraming.OpSelfUpdate, Channel: channelName, TimeoutMs: 300_000),
+            ct).ConfigureAwait(false);
+        if (response.UpdateResult is not null)
+            return response.UpdateResult;
+        return new AppUpdateResult(response.Ok, Error: response.Error);
+    }
+
     private async Task<AdminPipeResponse> SendAsync(AdminPipeRequest request, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -385,7 +401,8 @@ public sealed class AdminPipeServer(
     AdminPipeServerOptions options,
     IProcessLauncher? launcher = null,
     Func<CancellationToken, Task<SensorSnapshot?>>? sensorReader = null,
-    ILogger? log = null) : IAsyncDisposable, IDisposable
+    ILogger? log = null,
+    Func<AppUpdateChannel, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -571,6 +588,50 @@ public sealed class AdminPipeServer(
                     HelperPid: Environment.ProcessId,
                     ExitCode: -1,
                     Error: $"Failed to read drives: {ex.Message}");
+            }
+        }
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpSelfUpdate, StringComparison.OrdinalIgnoreCase))
+        {
+            if (selfUpdater is null)
+            {
+                return new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: false,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: -1,
+                    Error: "Self-update is not supported by this elevated helper.");
+            }
+
+            var channel = string.Equals(request.Channel, "prerelease", StringComparison.OrdinalIgnoreCase)
+                ? AppUpdateChannel.Prerelease
+                : AppUpdateChannel.Stable;
+            try
+            {
+                var result = await selfUpdater(channel, ct).ConfigureAwait(false);
+                return new AdminPipeResponse(
+                    Ok: result.Ok,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: result.Ok ? 0 : 1,
+                    Error: result.Error,
+                    UpdateResult: result);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                return new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: -1,
+                    Error: $"Self-update failed: {ex.Message}");
             }
         }
 

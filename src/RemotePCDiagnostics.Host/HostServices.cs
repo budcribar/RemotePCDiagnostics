@@ -167,6 +167,20 @@ public static class HostServices
         services.AddSingleton(sp => new DesktopSessionRelauncher(sp.GetRequiredService<ISessionContext>(), L<DesktopSessionRelauncher>()));
         services.AddSingleton<ISessionRelauncher>(sp => sp.GetRequiredService<DesktopSessionRelauncher>());
         services.AddSingleton<IFullscreenService, FullscreenService>();
+        services.AddSingleton<IStoreUpdateBackend>(_ => new StoreAppUpdateBackend(L<StoreAppUpdateBackend>()));
+        services.AddSingleton<IAppUpdateService>(sp => new AppUpdateService(
+            installedVersion: AppBuildInfo.Version,
+            storeBackend: sp.GetService<IStoreUpdateBackend>(),
+            getElevatedBridge: () => sp.GetService<IElevatedCommandBridge>(),
+            onExitForUpdate: () =>
+            {
+                try
+                {
+                    System.Windows.Application.Current?.Dispatcher.BeginInvoke(() => System.Windows.Application.Current.Shutdown());
+                }
+                catch { }
+            },
+            log: L<AppUpdateService>()));
         // The optional host services pages may use (instead of injecting IServiceProvider).
         services.AddSingleton(sp => new RemotePCDiagnostics.UI.AppServices(sp.GetService<RemediationService>(), sp.GetService<ServiceActionService>(),
             sp.GetService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(), sp.GetService<RemotePCDiagnostics.Core.Areas.ICopilotHandoff>(),
@@ -179,7 +193,8 @@ public static class HostServices
             sp.GetService<ISessionRelauncher>(),
             sp.GetService<RemoteSessionHealth>(),
             sp.GetService<IElevationContext>(),
-            sp.GetService<IFullscreenService>()));
+            sp.GetService<IFullscreenService>(),
+            sp.GetService<IAppUpdateService>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
         return services;

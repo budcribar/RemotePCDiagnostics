@@ -27,6 +27,16 @@
             }
         </button>
         <span class="topbar-spacer"></span>
+        @if (AvailableUpdate is { UpdateAvailable: true } update)
+        {
+            <button type="button"
+                    class="badge app-update-pill"
+                    data-testid="app-update-pill"
+                    title="@(update.InstallKind == AppInstallKind.MicrosoftStore ? "A Microsoft Store update is available" : $"Update to Remote PC Diagnostics {update.LatestVersion}")"
+                    @onclick="OpenUpdateDialog">
+                <span>@(update.InstallKind == AppInstallKind.MicrosoftStore ? "Update available" : $"Update {update.LatestVersion}")</span>
+            </button>
+        }
         @if (App.Elevation is { } elevation && elevation.HasAdminCapabilities)
         {
             <span class="admin-mode-slot" data-testid="admin-mode-badge">
@@ -175,6 +185,88 @@
             </div>
         </div>
     }
+
+    @if (_updateDialogOpen && AvailableUpdate is { UpdateAvailable: true } pendingUpdate)
+    {
+        <div class="svc-modal-backdrop" @onclick="CloseUpdateDialog"></div>
+        <div class="svc-modal app-update-modal"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="app-update-heading"
+             tabindex="-1"
+             data-testid="app-update-dialog"
+             @onkeydown="OnDialogKeyDown">
+            <div class="shop-info-head">
+                <h2 id="app-update-heading">Update Remote PC Diagnostics</h2>
+                @if (!_updateInstalling)
+                {
+                    <button type="button" class="btn btn-outline btn-sm" @onclick="CloseUpdateDialog">Close</button>
+                }
+            </div>
+            <div class="app-update-body">
+                <p>
+                    Installed: <strong>@pendingUpdate.InstalledVersion</strong>
+                    @if (!string.IsNullOrWhiteSpace(pendingUpdate.LatestVersion))
+                    {
+                        <span> &rarr; Available: <strong>@pendingUpdate.LatestVersion</strong></span>
+                    }
+                </p>
+                <p class="muted">
+                    @if (pendingUpdate.InstallKind == AppInstallKind.MicrosoftStore)
+                    {
+                        <span>This update will be downloaded and installed from the Microsoft Store. Remote PC Diagnostics will close when the update completes.</span>
+                    }
+                    else if (pendingUpdate.CanInstallSilently)
+                    {
+                        <span>The elevated agent will download, verify (SHA-256), and install this update silently without a UAC prompt, then restart the app.</span>
+                    }
+                    else
+                    {
+                        <span>The installer will be downloaded, verified (SHA-256), and launched. Windows may ask for permission (UAC) before restarting the app.</span>
+                    }
+                </p>
+                @if (!string.IsNullOrWhiteSpace(pendingUpdate.ReleaseUrl))
+                {
+                    <p><a href="@pendingUpdate.ReleaseUrl" target="_blank" rel="noopener noreferrer">View release notes on GitHub</a></p>
+                }
+                @if (_updateProgress is { } progress)
+                {
+                    <div class="app-update-progress" data-testid="app-update-progress">
+                        <span>@(progress.Message ?? progress.Stage)</span>
+                        @if (progress.Percent is int pct)
+                        {
+                            <progress value="@pct" max="100"></progress>
+                        }
+                    </div>
+                }
+                @if (!string.IsNullOrWhiteSpace(_updateMessage))
+                {
+                    <p class="app-update-status" data-testid="app-update-status">@_updateMessage</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(_updateError))
+                {
+                    <p class="app-update-error" role="alert" data-testid="app-update-error">@_updateError</p>
+                }
+            </div>
+            <div class="shop-info-actions">
+                <button type="button"
+                        class="btn btn-primary"
+                        data-testid="app-update-install"
+                        disabled="@_updateInstalling"
+                        @onclick="InstallAppUpdateAsync">
+                    @(_updateInstalling ? "Installing..." : "Install update")
+                </button>
+                @if (!_updateInstalling)
+                {
+                    <button type="button"
+                            class="btn btn-outline"
+                            @onclick="CloseUpdateDialog">
+                        Later
+                    </button>
+                }
+            </div>
+        </div>
+    }
 </div>
 
 @code {
@@ -183,6 +275,13 @@
 
     private bool _navigationOpen;
     private bool _shopInfoDialogOpen;
+    private bool _updateDialogOpen;
+    private bool _updateInstalling;
+    private AppUpdateProgress? _updateProgress;
+    private string? _updateMessage;
+    private string? _updateError;
+
+    private AppUpdateInfo? AvailableUpdate => App.AppUpdate?.Latest;
 
     private ShopBranding? _activeRemoteBranding;
     private bool _remoteGroupInactive;
@@ -246,6 +345,8 @@
             health.Changed += RemoteHealthChanged;
         if (App.Elevation is { } elevation)
             elevation.Changed += ElevationChanged;
+        if (App.AppUpdate is { } updater)
+            updater.Changed += AppUpdateChanged;
 
         try
         {
@@ -263,6 +364,16 @@
             && !string.IsNullOrWhiteSpace(Session.Group))
         {
             await RefreshActiveRemoteShopAsync(serverUri, Session.Group);
+        }
+
+        if (App.AppUpdate is { } updater
+            && (Session.Mode == SessionMode.Remote || IsAgentConnected))
+        {
+            _ = Task.Run(async () =>
+            {
+                try { await updater.CheckForUpdateAsync(); }
+                catch { }
+            });
         }
     }
 
@@ -363,10 +474,66 @@
         _shopInfoDialogOpen = false;
     }
 
+    private void OpenUpdateDialog()
+    {
+        _updateError = null;
+        _updateMessage = null;
+        _updateProgress = null;
+        _updateDialogOpen = true;
+    }
+
+    private void CloseUpdateDialog()
+    {
+        if (_updateInstalling)
+            return;
+        _updateDialogOpen = false;
+    }
+
+    private async Task InstallAppUpdateAsync()
+    {
+        if (App.AppUpdate is not { } updater || _updateInstalling)
+            return;
+
+        _updateInstalling = true;
+        _updateError = null;
+        _updateMessage = null;
+        _updateProgress = new AppUpdateProgress("starting", null, "Preparing update...");
+        StateHasChanged();
+
+        try
+        {
+            var result = await updater.InstallUpdateAsync(p =>
+            {
+                _updateProgress = p;
+                _ = InvokeAsync(StateHasChanged);
+            });
+            if (result.Ok)
+            {
+                _updateMessage = result.Message ?? "Update started.";
+            }
+            else
+            {
+                _updateError = result.Error ?? "Update failed.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _updateError = ex.Message;
+        }
+        finally
+        {
+            _updateInstalling = false;
+            StateHasChanged();
+        }
+    }
+
     private void OnDialogKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Escape")
+        {
             CloseShopInfoDialog();
+            CloseUpdateDialog();
+        }
     }
 
     // Phone layout: picking a page from the menu closes it, so the chosen page isn't pushed below the open menu.
@@ -381,6 +548,7 @@
     private void AgentLinkChanged() => _ = InvokeAsync(StateHasChanged);
     private void RemoteHealthChanged() => _ = InvokeAsync(StateHasChanged);
     private void ElevationChanged() => _ = InvokeAsync(StateHasChanged);
+    private void AppUpdateChanged() => _ = InvokeAsync(StateHasChanged);
 
     public void Dispose()
     {
@@ -391,5 +559,7 @@
             health.Changed -= RemoteHealthChanged;
         if (App.Elevation is { } elevation)
             elevation.Changed -= ElevationChanged;
+        if (App.AppUpdate is { } updater)
+            updater.Changed -= AppUpdateChanged;
     }
 }

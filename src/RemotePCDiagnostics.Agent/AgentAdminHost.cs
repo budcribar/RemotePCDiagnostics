@@ -92,7 +92,8 @@ internal static class AgentAdminHost
                 serverOptions,
                 new SystemProcessLauncher(),
                 sensorReader: sensorReader,
-                log: log);
+                log: log,
+                selfUpdater: (channel, token) => AgentSelfUpdater.RunAsync(channel, log, token));
 
         var serverTask = Task.Run(async () =>
         {
@@ -241,7 +242,8 @@ internal static class AgentAdminHost
                         },
                         new SystemProcessLauncher(),
                         sensorReader: sensorReader,
-                        log: log);
+                        log: log,
+                        selfUpdater: (channel, token) => AgentSelfUpdater.RunAsync(channel, log, token));
 
                     await server.RunSingleSessionAsync(cts.Token).ConfigureAwait(false);
                     return ExitOk;
