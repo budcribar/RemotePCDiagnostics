@@ -279,6 +279,34 @@ public sealed record SessionLaunchOptions(
     }
 
     /// <summary>
+    /// True when <paramref name="args"/> is a command line that <see cref="RestartArguments"/> (or a bare
+    /// <see cref="RestartedArg"/>) could have produced. The elevated helper checks this before it hands a relaunch command
+    /// line to Setup, which starts the app with it after an update, so a caller cannot slip other switches in.
+    /// Each value must also be free of spaces and quotes, because Setup gets them as one space-separated parameter.
+    /// </summary>
+    public static bool IsRestartCommandLine(IReadOnlyList<string>? args)
+    {
+        if (args is null || args.Count == 0) return false;
+        foreach (var arg in args)
+        {
+            if (string.IsNullOrEmpty(arg) || arg.Any(c => char.IsWhiteSpace(c) || c == '"' || char.IsControl(c)))
+                return false;
+
+            var ok = arg.ToLowerInvariant() switch
+            {
+                RestartedArg or UnattendedArg or VoiceArg or AdminArg or "--no-admin" => true,
+                var a when a.StartsWith("-u=", StringComparison.Ordinal) =>
+                    Uri.TryCreate(arg[3..], UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp),
+                var a when a.StartsWith("-i=", StringComparison.Ordinal) => Guid.TryParse(arg[3..], out var id) && id != Guid.Empty,
+                var a when a.StartsWith("-g=", StringComparison.Ordinal) => arg.Length > 3,
+                _ => false,
+            };
+            if (!ok) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Builds the Windows <c>RunOnce</c> command line so that after a reboot, <c>RemotePCDiagnostics.Host</c> restarts
     /// into the exact same session mode, relay server, remote session ID (<c>-i=&lt;guid&gt;</c>), shop group (<c>-g=&lt;group&gt;</c>), and unattended and voice settings.
     /// </summary>

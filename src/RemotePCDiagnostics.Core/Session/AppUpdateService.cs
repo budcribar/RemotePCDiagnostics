@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using RemotePCDiagnostics.Agent.Core;
 using RemotePCDiagnostics.Core.Logging;
 
 namespace RemotePCDiagnostics.Core.Session;
@@ -157,6 +158,35 @@ public static class AppUpdateInstaller
 
     public sealed record ReleaseFeed(ReleaseFeedChannel? Stable, ReleaseFeedChannel? Prerelease);
 
+    /// <summary>Setup switch (see installer/RemotePCDiagnostics.iss): the Agent MSI Setup runs after it installs the app.</summary>
+    public const string SetupAgentMsiParam = "AGENTMSI";
+
+    /// <summary>Setup switch (see installer/RemotePCDiagnostics.iss): the app's command line Setup starts it with when it is done.</summary>
+    public const string SetupRelaunchArgsParam = "RELAUNCHARGS";
+
+    /// <summary>
+    /// The Setup command line for an in-app update. Setup does the whole job, because it is the one process that outlives the
+    /// app: Inno Setup closes the app (and with it the elevated helper that started Setup), so a follow-up step left to the
+    /// helper never runs. With <paramref name="agentMsiPath"/>, Setup upgrades the persistent agent service after the app;
+    /// with <paramref name="relaunchArguments"/>, it starts the app again with them, so a remote session comes back.
+    /// Values with a double quote are left out, since Inno Setup cannot take them inside a quoted parameter.
+    /// </summary>
+    public static string BuildSetupArguments(bool verySilent, string? agentMsiPath, IReadOnlyList<string>? relaunchArguments)
+    {
+        var parts = new List<string>
+        {
+            verySilent ? "/VERYSILENT" : "/SILENT",
+            "/SUPPRESSMSGBOXES",
+            "/CLOSEAPPLICATIONS",
+            "/NORESTART",
+        };
+        if (!string.IsNullOrWhiteSpace(agentMsiPath) && !agentMsiPath.Contains('"'))
+            parts.Add($"\"/{SetupAgentMsiParam}={agentMsiPath}\"");
+        if (relaunchArguments is { Count: > 0 } && relaunchArguments.All(a => !a.Contains('"')))
+            parts.Add($"\"/{SetupRelaunchArgsParam}={string.Join(' ', relaunchArguments)}\"");
+        return string.Join(' ', parts);
+    }
+
     public static string ResolveFeedUrl(string? configuredUrl = null)
     {
         var env = Environment.GetEnvironmentVariable(FeedUrlEnvVar);
@@ -272,6 +302,8 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
     private readonly IStoreUpdateBackend? _storeBackend;
     private readonly Func<IElevatedCommandBridge?>? _getElevatedBridge;
     private readonly Action? _onExitForUpdate;
+    private readonly Func<IReadOnlyList<string>?>? _getRelaunchArguments;
+    private readonly Func<bool> _agentServiceInstalled;
     private readonly HttpClient _http;
     private readonly bool _ownsHttp;
     private readonly ILogger? _log;
@@ -291,7 +323,9 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
         Func<IElevatedCommandBridge?>? getElevatedBridge = null,
         Action? onExitForUpdate = null,
         HttpClient? httpClient = null,
-        ILogger? log = null)
+        ILogger? log = null,
+        Func<IReadOnlyList<string>?>? getRelaunchArguments = null,
+        Func<bool>? agentServiceInstalled = null)
     {
         _installedVersion = installedVersion;
         _channel = channel;
@@ -299,6 +333,8 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
         _storeBackend = storeBackend;
         _getElevatedBridge = getElevatedBridge;
         _onExitForUpdate = onExitForUpdate;
+        _getRelaunchArguments = getRelaunchArguments;
+        _agentServiceInstalled = agentServiceInstalled ?? (() => File.Exists(AgentLayout.DefaultAgentExe()));
         _ownsHttp = httpClient is null;
         _http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         _log = log;
@@ -382,12 +418,17 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
             return await _storeBackend.DownloadAndInstallAsync(progress, ct).ConfigureAwait(false);
         }
 
+        // Setup starts the app again with this command line once it is done, so a remote session comes back after the update.
+        IReadOnlyList<string>? relaunchArgs = null;
+        try { relaunchArgs = _getRelaunchArguments?.Invoke(); }
+        catch (Exception ex) { _log?.Warn($"[app-update] Could not build the relaunch command line: {ex.Message}"); }
+
         // Prefer the elevated Agent pipe when connected (remote technicians get a zero-UAC silent upgrade).
         var bridge = _getElevatedBridge?.Invoke();
         if (bridge is { IsConnected: true })
         {
             progress?.Invoke(new AppUpdateProgress("installing", null, "Downloading and installing update via elevated agent..."));
-            var agentResult = await bridge.SelfUpdateAsync(_channel, ct).ConfigureAwait(false);
+            var agentResult = await bridge.SelfUpdateAsync(_channel, relaunchArgs, ct).ConfigureAwait(false);
             if (agentResult is not null)
             {
                 if (agentResult.Ok && agentResult.Restarting)
@@ -408,11 +449,26 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
             var installerPath = await AppUpdateInstaller.DownloadAndVerifyAsync(
                 _http, info.InstallerUrl, info.InstallerSha256Url, stagingDir, progress, ct).ConfigureAwait(false);
 
+            // The persistent agent service is upgraded by Setup too (it runs elevated), so it does not stay on the old build.
+            string? agentMsiPath = null;
+            if (!string.IsNullOrWhiteSpace(info.AgentMsiUrl) && _agentServiceInstalled())
+            {
+                try
+                {
+                    agentMsiPath = await AppUpdateInstaller.DownloadAndVerifyAsync(
+                        _http, info.AgentMsiUrl, info.AgentMsiSha256Url, stagingDir, progress: null, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log?.Warn($"[app-update] Agent MSI download/verification skipped: {ex.Message}");
+                }
+            }
+
             progress?.Invoke(new AppUpdateProgress("installing", 100, "Launching installer..."));
             var psi = new ProcessStartInfo
             {
                 FileName = installerPath,
-                Arguments = "/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART",
+                Arguments = AppUpdateInstaller.BuildSetupArguments(verySilent: false, agentMsiPath, relaunchArgs),
                 UseShellExecute = true,
                 WorkingDirectory = stagingDir,
             };

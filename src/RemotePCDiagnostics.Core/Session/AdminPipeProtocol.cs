@@ -32,7 +32,11 @@ public interface IElevatedCommandBridge
 
     Task<SensorSnapshot?> ReadSensorsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<DriveHealth>?> ReadDrivesAsync(CancellationToken ct = default);
-    Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, CancellationToken ct = default) =>
+    /// <summary>
+    /// Has the elevated helper install the latest RPCD silently. <paramref name="relaunchArguments"/> is the app's command
+    /// line for Setup to start it with afterwards (<see cref="SessionLaunchOptions.RestartArguments"/>), or null for none.
+    /// </summary>
+    Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, IReadOnlyList<string>? relaunchArguments = null, CancellationToken ct = default) =>
         Task.FromResult<AppUpdateResult?>(null);
 }
 
@@ -330,11 +334,11 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         return response.Drives;
     }
 
-    public async Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, CancellationToken ct = default)
+    public async Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, IReadOnlyList<string>? relaunchArguments = null, CancellationToken ct = default)
     {
         var channelName = channel == AppUpdateChannel.Prerelease ? "prerelease" : "stable";
         var response = await SendAsync(
-            new AdminPipeRequest(AdminPipeFraming.OpSelfUpdate, Channel: channelName, TimeoutMs: 300_000),
+            new AdminPipeRequest(AdminPipeFraming.OpSelfUpdate, Arguments: relaunchArguments, Channel: channelName, TimeoutMs: 300_000),
             ct).ConfigureAwait(false);
         if (response.UpdateResult is not null)
             return response.UpdateResult;
@@ -402,7 +406,7 @@ public sealed class AdminPipeServer(
     IProcessLauncher? launcher = null,
     Func<CancellationToken, Task<SensorSnapshot?>>? sensorReader = null,
     ILogger? log = null,
-    Func<AppUpdateChannel, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null) : IAsyncDisposable, IDisposable
+    Func<AppUpdateChannel, IReadOnlyList<string>?, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -609,7 +613,7 @@ public sealed class AdminPipeServer(
                 : AppUpdateChannel.Stable;
             try
             {
-                var result = await selfUpdater(channel, ct).ConfigureAwait(false);
+                var result = await selfUpdater(channel, request.Arguments, ct).ConfigureAwait(false);
                 return new AdminPipeResponse(
                     Ok: result.Ok,
                     Allowed: true,

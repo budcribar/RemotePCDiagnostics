@@ -181,7 +181,12 @@ public static class HostServices
                 }
                 catch { }
             },
-            log: L<AppUpdateService>()));
+            log: L<AppUpdateService>(),
+            // Setup starts the app again with this once the update is installed: the same relay, session id and group, so the
+            // remote user's page reconnects instead of waiting for a session that never comes back.
+            getRelaunchArguments: () => session.Mode == SessionMode.Remote && session.ServerUri is not null && session.SessionId != Guid.Empty
+                ? SessionLaunchOptions.RestartArguments(session.ServerUri, session.SessionId, session.Unattended, session.Voice, session.Group, session.Admin)
+                : [SessionLaunchOptions.RestartedArg]));
         // The optional host services pages may use (instead of injecting IServiceProvider).
         services.AddSingleton(sp => new RemotePCDiagnostics.UI.AppServices(sp.GetService<RemediationService>(), sp.GetService<ServiceActionService>(),
             sp.GetService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(), sp.GetService<RemotePCDiagnostics.Core.Areas.ICopilotHandoff>(),

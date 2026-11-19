@@ -120,7 +120,8 @@ public class AppUpdateTests
             feedUrl: feedUrl,
             getElevatedBridge: () => bridge,
             onExitForUpdate: () => exitRequested = true,
-            httpClient: http);
+            httpClient: http,
+            getRelaunchArguments: () => ["-u=https://server.example.com:34544", "-i=748279c7-4309-452c-8b30-e02ec52e498f", "--restarted"]);
 
         var info = await service.CheckForUpdateAsync(force: true);
         Assert.True(info.UpdateAvailable);
@@ -133,7 +134,50 @@ public class AppUpdateTests
         Assert.True(result.Restarting);
         Assert.True(exitRequested);
         Assert.Equal(AppUpdateChannel.Stable, bridge.LastChannel);
+        // The helper gets the app's restart command line, so Setup can bring the remote session back after the update.
+        Assert.Equal(["-u=https://server.example.com:34544", "-i=748279c7-4309-452c-8b30-e02ec52e498f", "--restarted"], bridge.LastRelaunchArguments);
     }
+
+    [Fact]
+    public void Setup_arguments_carry_the_agent_msi_and_the_relaunch_command_line()
+    {
+        var args = AppUpdateInstaller.BuildSetupArguments(
+            verySilent: true,
+            @"C:\ProgramData\RemotePCDiagnostics\Updates\RemotePCDiagnostics.Agent-1.2.0-win-x64.msi",
+            ["-u=https://server.example.com:34544", "-i=748279c7-4309-452c-8b30-e02ec52e498f", "-g=test-shop", "--voice", "--restarted"]);
+
+        Assert.Equal(
+            "/VERYSILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /NORESTART "
+            + "\"/AGENTMSI=C:\\ProgramData\\RemotePCDiagnostics\\Updates\\RemotePCDiagnostics.Agent-1.2.0-win-x64.msi\" "
+            + "\"/RELAUNCHARGS=-u=https://server.example.com:34544 -i=748279c7-4309-452c-8b30-e02ec52e498f -g=test-shop --voice --restarted\"",
+            args);
+    }
+
+    [Fact]
+    public void Setup_arguments_leave_out_what_was_not_given()
+    {
+        Assert.Equal("/SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /NORESTART", AppUpdateInstaller.BuildSetupArguments(false, null, null));
+        Assert.Equal("/SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /NORESTART", AppUpdateInstaller.BuildSetupArguments(false, "C:\\a\"b.msi", ["-i=\"x\""]));
+    }
+
+    [Fact]
+    public void Restart_arguments_pass_the_relaunch_check()
+    {
+        var args = SessionLaunchOptions.RestartArguments(new Uri("https://server.example.com:34544/"), Guid.NewGuid(), unattended: true, voice: true, group: "test-shop", admin: false);
+        Assert.True(SessionLaunchOptions.IsRestartCommandLine(args));
+        Assert.True(SessionLaunchOptions.IsRestartCommandLine([SessionLaunchOptions.RestartedArg]));
+    }
+
+    [Theory]
+    [InlineData("--undo-all")]
+    [InlineData("-u=file:///C:/evil")]
+    [InlineData("-i=not-a-guid")]
+    [InlineData("-i=00000000-0000-0000-0000-000000000000")]
+    [InlineData("-g=two words")]
+    [InlineData("-g=")]
+    [InlineData("--restarted\" /evil")]
+    public void Relaunch_check_rejects_anything_else(string arg) =>
+        Assert.False(SessionLaunchOptions.IsRestartCommandLine(["-u=https://server.example.com:34544", arg]));
 
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {
@@ -171,9 +215,12 @@ public class AppUpdateTests
         public Task<IReadOnlyList<DriveHealth>?> ReadDrivesAsync(CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<DriveHealth>?>(null);
 
-        public Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, CancellationToken ct = default)
+        public IReadOnlyList<string>? LastRelaunchArguments { get; private set; }
+
+        public Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, IReadOnlyList<string>? relaunchArguments = null, CancellationToken ct = default)
         {
             LastChannel = channel;
+            LastRelaunchArguments = relaunchArguments;
             return Task.FromResult<AppUpdateResult?>(new AppUpdateResult(true, Restarting: true, Message: "Agent updating."));
         }
     }

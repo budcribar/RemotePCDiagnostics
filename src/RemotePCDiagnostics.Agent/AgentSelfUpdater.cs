@@ -15,6 +15,7 @@ internal static class AgentSelfUpdater
 {
     public static async Task<AppUpdateResult> RunAsync(
         AppUpdateChannel channel,
+        IReadOnlyList<string>? relaunchArguments,
         ILogger log,
         CancellationToken ct)
     {
@@ -74,13 +75,25 @@ internal static class AgentSelfUpdater
             }
         }
 
+        // Setup closes the app, and this helper (a child of the app) ends with it, so nothing may be left for this process
+        // to do after Setup starts. Setup itself runs the Agent MSI and starts the app again (installer/RemotePCDiagnostics.iss).
+        IReadOnlyList<string>? relaunch = null;
+        if (relaunchArguments is { Count: > 0 })
+        {
+            if (SessionLaunchOptions.IsRestartCommandLine(relaunchArguments))
+                relaunch = relaunchArguments;
+            else
+                log.Warn("[agent-update] Ignoring a relaunch command line that is not a session restart; the app will not be started again.");
+        }
+
         try
         {
-            log.Info($"[agent-update] Launching silent installer '{installerPath}'.");
+            var arguments = AppUpdateInstaller.BuildSetupArguments(verySilent: true, msiPath, relaunch);
+            log.Info($"[agent-update] Launching silent installer '{installerPath}' (agent MSI: {msiPath ?? "none"}; relaunch: {(relaunch is null ? "no" : "yes")}).");
             var psi = new ProcessStartInfo
             {
                 FileName = installerPath,
-                Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART",
+                Arguments = arguments,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 WorkingDirectory = stagingDir,
@@ -88,33 +101,6 @@ internal static class AgentSelfUpdater
             var proc = Process.Start(psi);
             if (proc is null)
                 return new AppUpdateResult(false, Error: "Failed to start the RPCD installer.");
-
-            if (!string.IsNullOrWhiteSpace(msiPath))
-            {
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await proc.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-                        if (proc.ExitCode == 0)
-                        {
-                            log.Info($"[agent-update] Launching silent Agent MSI upgrade '{msiPath}'.");
-                            Process.Start(new ProcessStartInfo
-                            {
-                                FileName = "msiexec.exe",
-                                Arguments = $"/i \"{msiPath}\" /qn /norestart",
-                                UseShellExecute = false,
-                                CreateNoWindow = true,
-                                WorkingDirectory = stagingDir,
-                            });
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        log.Warn($"[agent-update] Agent MSI follow-up failed: {ex.Message}");
-                    }
-                });
-            }
 
             return new AppUpdateResult(
                 Ok: true,
