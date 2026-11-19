@@ -149,6 +149,11 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
         {
             return await Task.Run(() => Scan(RootPath, minFileSizeBytes, progress, scan.Token), scan.Token).ConfigureAwait(false);
         }
+        // Cancel() stops only this scan's token, so the base class would log the exception as a failed collection (Critical).
+        catch (OperationCanceledException) when (scan.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            return AreaReport.ScanCancelled();
+        }
         finally
         {
             lock (_scanGate) { if (ReferenceEquals(_scanCts, scan)) _scanCts = null; }

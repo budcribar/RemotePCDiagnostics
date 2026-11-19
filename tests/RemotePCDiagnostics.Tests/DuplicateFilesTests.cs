@@ -1,3 +1,4 @@
+using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 
@@ -103,5 +104,24 @@ public sealed class DuplicateFilesTests : IDisposable
         using var cts = new CancellationTokenSource();
         cts.Cancel();
         Assert.ThrowsAny<OperationCanceledException>(() => m.Scan([_tmp], 1024, null, cts.Token));
+    }
+
+    [Fact]
+    public async Task Cancelled_Scan_Is_Reported_As_Cancelled_Not_Failed()
+    {
+        var m = new DuplicateFilesModule(recycleBin: new MockRecycleBin(), searchRoots: [_tmp], minFileSizeBytes: 1024);
+
+        var r = await m.RefreshAsync(new CancelOnFirstReport(m));
+
+        Assert.True(r.Cancelled);
+        Assert.NotEqual(DiagnosticStatus.Error, r.Status);
+        Assert.Equal("Cancelled", ResultEventLogger.Outcome(r));
+        Assert.DoesNotContain("Couldn't scan", r.Message);
+    }
+
+    /// <summary>Calls <c>Cancel()</c> on the module the first time the scan reports progress, as cancel_check does mid-scan.</summary>
+    private sealed class CancelOnFirstReport(ICancellableScan scan) : IProgress<string>
+    {
+        public void Report(string value) => scan.Cancel();
     }
 }
