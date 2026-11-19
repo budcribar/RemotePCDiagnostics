@@ -85,6 +85,41 @@ public class NetworkTests
     }
 
     [Fact]
+    public void EmptyIpSnapshot_WithConnectedAdapter_DoesNotClaimOffline()
+    {
+        // Issue #69: netsh saw no wireless interface and the IP read came back empty while osquery said Wi-Fi was connected.
+        var empty = new IpConfigSnapshot([], false, "");
+        var rep = WifiConfigModule.Build(null, wlanOk: true, empty, connectedAdapters: 1);
+        Assert.Equal("Connected, but IP details couldn't be read", rep.Summary);
+        var ip = rep.Cards.Single(c => c.Id == "ipdns");
+        Assert.Equal("IP details couldn't be read", ip.Headline);
+        Assert.Contains("1 adapter connected", ip.Meta);
+
+        Assert.Equal("No active network connection", WifiConfigModule.Build(null, wlanOk: true, empty).Summary);
+        Assert.Equal("No network adapters are currently up", WifiConfigModule.Build(null, wlanOk: true, empty).Cards.Single(c => c.Id == "ipdns").Meta);
+    }
+
+    [Fact]
+    public void ConnectedCount_MatchesSummaryCount()
+    {
+        var wifi = new NetworkAdapter("Wi-Fi", "", "", "m", "2", true, true, null, null, null, null, null, null, null);
+        var hyperV = new NetworkAdapter("vEthernet", "", "", "v", "2", true, false, null, null, null, null, null, null, null);
+        Assert.Equal(1, NetworkModule.ConnectedCount([wifi, hyperV]));
+        Assert.StartsWith("1 of 1 adapter connected", NetworkModule.Build([wifi, hyperV]).Summary);
+        Assert.Equal(0, NetworkModule.ConnectedCount([wifi with { ConnectionStatus = "7" }]));
+    }
+
+    [Theory]
+    [InlineData("69%", 69)]
+    [InlineData("69 %", 69)]
+    [InlineData("100%", 100)]
+    [InlineData("150%", 100)]
+    [InlineData("%", null)]
+    [InlineData("n/a", null)]
+    public void ParsePercent_ReadsNumberBeforePercentSign(string text, int? expected) =>
+        Assert.Equal(expected, WifiConfigModule.ParsePercent(text));
+
+    [Fact]
     public async Task QueryFails_Friendly()
     {
         var r = await new NetworkModule(ScriptedLauncher.Osquery(new ScriptedLauncher((f, a) => ScriptedLauncher.Fail()))).RefreshAsync(null);
