@@ -460,9 +460,19 @@ public sealed class ChecksScreenState
         foreach (var n in _diag.Modules.OfType<Npu.INpuTestModule>()) { try { n.Cancel(); } catch { } }
     }
 
-    /// <summary>"Run just this" is allowed when no group run is active and (for stress tests) no stress test runs.</summary>
+    /// <summary>"Run just this" is allowed when no group run is active, (for stress tests) no stress test runs, and (for the Windows
+    /// integrity scans) the other integrity scan isn't running.</summary>
     public bool CanRunSingle(IDiagnosticModule m) =>
-        RunningGroup is null && !_diag.IsStressSuiteRunning && !_diag.IsRunning(m.Name) && !(m is IStressSuiteModule && _diag.IsAnyStressRunning);
+        RunningGroup is null && !_diag.IsStressSuiteRunning && !_diag.IsRunning(m.Name) && !(m is IStressSuiteModule && _diag.IsAnyStressRunning)
+        && BlockingIntegrityScan(m) is null;
+
+    /// <summary>
+    /// For DISM or SFC: the other Windows integrity scan while it runs (from this page, the service workflow or an agent), else null.
+    /// Both use the Windows servicing stack, so run together one of them ends without a result.
+    /// </summary>
+    public IDiagnosticModule? BlockingIntegrityScan(IDiagnosticModule m) => m is Areas.WindowsIntegrityModule
+        ? _diag.Modules.FirstOrDefault(other => other is Areas.WindowsIntegrityModule && other.Name != m.Name && _diag.IsRunning(other.Name))
+        : null;
 
     public Task RunSingleAsync(IDiagnosticModule m) => CanRunSingle(m) ? _diag.RunAsync(m.Name) : Task.CompletedTask;
 

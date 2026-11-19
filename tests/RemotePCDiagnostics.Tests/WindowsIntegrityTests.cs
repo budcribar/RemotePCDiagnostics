@@ -152,6 +152,38 @@ public class WindowsIntegrityTests
         await dismRun.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
+    /// <summary>Checks page: while DISM runs (from the page, the service workflow or an agent), "Run just this" on SFC is disabled and says why.</summary>
+    [Fact]
+    public async Task ChecksPage_BlocksTheOtherIntegrityScanWhileOneRuns()
+    {
+        var launcher = new GatedLauncher();
+        var runner = new SystemCommandRunner(launcher, isProcessElevated: () => true);
+        var dism = new DismScanHealthModule(runner) { FindImages = () => [] };
+        var sfc = new SfcVerifyOnlyModule(runner);
+        var other = new FakeModule("A", _ => Task.FromResult(FakeModule.Ok("A")));
+        var store = new ResultStore();
+        var svc = new DiagnosticsService(store, [dism, sfc, other]);
+        var screen = new ChecksScreenState(svc, store);
+
+        Assert.True(screen.CanRunSingle(sfc));
+        Assert.Null(screen.BlockingIntegrityScan(sfc));
+
+        var run = svc.RunAsync(dism.Name);
+        await launcher.DismStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(screen.CanRunSingle(sfc));
+        Assert.Same(dism, screen.BlockingIntegrityScan(sfc));
+        Assert.Null(screen.BlockingIntegrityScan(dism));
+        Assert.Null(screen.BlockingIntegrityScan(other));
+        Assert.True(screen.CanRunSingle(other));
+        await screen.RunSingleAsync(sfc); // ignored while blocked
+        Assert.False(launcher.SfcStarted.Task.IsCompleted);
+
+        launcher.ReleaseDism.SetResult();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(screen.CanRunSingle(sfc));
+        Assert.Null(screen.BlockingIntegrityScan(sfc));
+    }
+
     private sealed class GatedLauncher : IProcessLauncher
     {
         public TaskCompletionSource DismStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
