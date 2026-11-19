@@ -53,7 +53,7 @@ The Checks page renders one hidden `[data-testid="checks-list-data"]` element li
 
 While a check runs, the detail header keeps `data-run-id` for the whole run, including while a scan reports its percent or a stress test its live readings. Builds up to 1.2.0-ci.701 dropped it after the first live update: there a header with `data-run-state="running"` and no `data-run-id` is still the run that was started.
 
-Run and cancel controls are marked generically: `[data-action="run-check"][data-check-id]` (the detail panel's `checks-run-one`, and a check's own Start such as the NPU test's) and `[data-action="cancel-check"][data-check-id]` (`checks-cancel-scan`, and the NPU test's Cancel). While DISM or SFC runs, `checks-run-one` on the other integrity scan is disabled and carries `data-blocked-by` with the running scan's check ID, and `checks-detail-blocked` says why.
+Run and cancel controls are marked generically: `[data-action="run-check"][data-check-id]` (the detail panel's `checks-run-one`, and a check's own Start such as the NPU test's) and `[data-action="cancel-check"][data-check-id]` (`checks-cancel-scan`, and the NPU test's Cancel). A disabled `checks-run-one` has the tooltip "Unavailable while other checks are running". While DISM or SFC runs, `checks-run-one` on the other integrity scan is disabled and carries `data-blocked-by` with the running scan's check ID.
 
 ## Full report copy (`area-report-data`)
 

@@ -474,6 +474,9 @@ public sealed class ChecksScreenState
         ? _diag.Modules.FirstOrDefault(other => other is Areas.WindowsIntegrityModule && other.Name != m.Name && _diag.IsRunning(other.Name))
         : null;
 
+    /// <summary>Tooltip on a disabled "Run just this", whatever the reason (a group run, a stress test, the other integrity scan).</summary>
+    public const string UnavailableTooltip = "Unavailable while other checks are running";
+
     public Task RunSingleAsync(IDiagnosticModule m) => CanRunSingle(m) ? _diag.RunAsync(m.Name) : Task.CompletedTask;
 
     private void SetProgress(CheckGroup g, int i, int n, IDiagnosticModule m)
