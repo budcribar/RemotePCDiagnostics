@@ -13,6 +13,15 @@ namespace RemotePCDiagnostics.Tests;
 public class AppUpdateTests
 {
     [Theory]
+    [InlineData("1.2.0-ci.786.1", AppUpdateChannel.Prerelease)]
+    [InlineData("1.2.0-ci.786.1+48ceabf", AppUpdateChannel.Prerelease)]
+    [InlineData("1.2.0", AppUpdateChannel.Stable)]
+    [InlineData("1.2.0-local", AppUpdateChannel.Stable)]
+    [InlineData(null, AppUpdateChannel.Stable)]
+    public void Ci_builds_default_to_prerelease_channel_and_releases_default_to_stable(string? installed, AppUpdateChannel expected) =>
+        Assert.Equal(expected, AppVersionComparer.DefaultChannelFor(installed));
+
+    [Theory]
     [InlineData("1.3.0", "1.2.0", true)]
     [InlineData("1.2.0-ci.800.1", "1.2.0-ci.724.1", true)]
     [InlineData("1.2.0-ci.724.1", "1.2.0-ci.724.1", false)]

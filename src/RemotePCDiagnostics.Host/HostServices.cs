@@ -170,6 +170,7 @@ public static class HostServices
         services.AddSingleton<IStoreUpdateBackend>(_ => new StoreAppUpdateBackend(L<StoreAppUpdateBackend>()));
         services.AddSingleton<IAppUpdateService>(sp => new AppUpdateService(
             installedVersion: AppBuildInfo.Version,
+            channel: AppVersionComparer.DefaultChannelFor(AppBuildInfo.Version),
             storeBackend: sp.GetService<IStoreUpdateBackend>(),
             getElevatedBridge: () => sp.GetService<IElevatedCommandBridge>(),
             onExitForUpdate: () =>

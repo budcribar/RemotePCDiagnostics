@@ -76,6 +76,12 @@ public static class AppVersionComparer
         "release-assets.githubusercontent.com",
     };
 
+    public static AppUpdateChannel DefaultChannelFor(string? installedVersion) =>
+        !string.IsNullOrWhiteSpace(installedVersion)
+        && installedVersion.Contains("-ci.", StringComparison.OrdinalIgnoreCase)
+            ? AppUpdateChannel.Prerelease
+            : AppUpdateChannel.Stable;
+
     public static bool? IsNewer(string? candidate, string? installed)
     {
         if (Parse(candidate) is not { } latest || Parse(installed) is not { } current)

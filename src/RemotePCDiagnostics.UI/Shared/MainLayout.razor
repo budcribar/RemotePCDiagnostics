@@ -366,15 +366,52 @@
             await RefreshActiveRemoteShopAsync(serverUri, Session.Group);
         }
 
-        if (App.AppUpdate is { } updater
-            && (Session.Mode == SessionMode.Remote || IsAgentConnected))
+        if (App.AppUpdate is not null)
         {
-            _ = Task.Run(async () =>
-            {
-                try { await updater.CheckForUpdateAsync(); }
-                catch { }
-            });
+            TriggerUpdateCheckIfEligible();
+            StartPeriodicUpdateCheck();
         }
+    }
+
+    private CancellationTokenSource? _updatePollCts;
+
+    private void TriggerUpdateCheckIfEligible()
+    {
+        if (App.AppUpdate is not { } updater)
+            return;
+        if (Session.Mode != SessionMode.Remote && !IsAgentConnected)
+            return;
+
+        _ = Task.Run(async () =>
+        {
+            try { await updater.CheckForUpdateAsync(); }
+            catch { }
+        });
+    }
+
+    private void StartPeriodicUpdateCheck()
+    {
+        if (_updatePollCts is not null || App.AppUpdate is null)
+            return;
+        var cts = new CancellationTokenSource();
+        _updatePollCts = cts;
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(15));
+            try
+            {
+                while (await timer.WaitForNextTickAsync(cts.Token).ConfigureAwait(false))
+                {
+                    if (App.AppUpdate is { } updater && (Session.Mode == SessionMode.Remote || IsAgentConnected))
+                    {
+                        try { await updater.CheckForUpdateAsync(force: true, cts.Token).ConfigureAwait(false); }
+                        catch (OperationCanceledException) when (cts.IsCancellationRequested) { break; }
+                        catch { }
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
     }
 
     private async Task RefreshActiveRemoteShopAsync(Uri serverUri, string groupSlug)
@@ -545,13 +582,19 @@
     }
 
     private void RemoteUsersChanged() => _ = InvokeAsync(StateHasChanged);
-    private void AgentLinkChanged() => _ = InvokeAsync(StateHasChanged);
+    private void AgentLinkChanged()
+    {
+        TriggerUpdateCheckIfEligible();
+        _ = InvokeAsync(StateHasChanged);
+    }
     private void RemoteHealthChanged() => _ = InvokeAsync(StateHasChanged);
     private void ElevationChanged() => _ = InvokeAsync(StateHasChanged);
     private void AppUpdateChanged() => _ = InvokeAsync(StateHasChanged);
 
     public void Dispose()
     {
+        try { _updatePollCts?.Cancel(); } catch { }
+        _updatePollCts?.Dispose();
         Nav.LocationChanged -= CloseNavigation;
         Remote.Changed -= RemoteUsersChanged;
         AgentLink.Changed -= AgentLinkChanged;
