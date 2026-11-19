@@ -1,5 +1,6 @@
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Webcam;
+using RemotePCDiagnostics.Core.Logging;
 
 namespace RemotePCDiagnostics.Tests;
 
@@ -152,6 +153,8 @@ public class WebcamTests
         Assert.Equal(WebcamVerdicts.PrivacyMessage, denied.Message);
         var busy = await new WebcamTestModule(new FakeIo((_, _) => throw new WebcamBusyException("in use"))).RefreshAsync(null);
         Assert.Equal(WebcamVerdicts.BusyMessage, busy.Message);
+        // A busy camera never ran: History shows "Couldn't run", not "Critical".
+        Assert.Equal(CouldNotRun.OutcomeText, ResultEventLogger.Outcome(busy));
         // Privacy Deny + black frames (some drivers) => privacy message, not "covered lens".
         var black = await new WebcamTestModule(new FakeIo((r, _) => Feed(r, i => Scene(i, 0, 0, 0)), privacy: true)).RefreshAsync(null);
         Assert.Equal(WebcamVerdicts.PrivacyMessage, black.Message);
