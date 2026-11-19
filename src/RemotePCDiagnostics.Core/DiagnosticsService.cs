@@ -491,6 +491,10 @@ public sealed class DiagnosticsService
     /// <summary>True while any module or the stress suite is running.</summary>
     public bool IsAnyRunning => !_inFlight.IsEmpty || IsStressSuiteRunning;
 
+    /// <summary>Every module run in flight now, with its run ID (null for a run that has none, such as a per-instance run).</summary>
+    public IReadOnlyList<(string ModuleName, Guid? RunId)> RunningModules =>
+        _inFlight.Keys.Select(name => (name, _runIds.TryGetValue(name, out var id) ? id : (Guid?)null)).ToList();
+
     /// <summary>Starts a run unless one is already in progress, in which case the in-flight task is returned (no double-runs).</summary>
     private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance = null, bool gateInstances = false) =>
         StartRun(module, progress, ct, out _, onlyInstance, gateInstances);

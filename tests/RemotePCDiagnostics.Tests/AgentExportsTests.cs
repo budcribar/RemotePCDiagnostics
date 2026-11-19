@@ -1,4 +1,5 @@
 using System.Text.Json;
+using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Benchmarks;
 using RemotePCDiagnostics.Core.History;
@@ -116,5 +117,68 @@ public class AgentExportsTests
         Assert.True(checks[1].GetProperty("scan").GetBoolean());
         Assert.False(checks[1].TryGetProperty("runId", out _));
         Assert.Equal("own-page", checks[2].GetProperty("start").GetString());
+    }
+
+    [Fact]
+    public void Activity_is_idle_when_nothing_runs()
+    {
+        using var doc = JsonDocument.Parse(AgentExports.Activity(new AgentExports.ActivitySnapshot([],
+            Workflow: new AgentExports.WorkflowActivity(Core.Workflow.WorkflowStage.Done, false, null))));
+        var root = doc.RootElement;
+
+        Assert.False(root.GetProperty("busy").GetBoolean());
+        Assert.Empty(root.GetProperty("checks").EnumerateArray());
+        Assert.False(root.TryGetProperty("sequence", out _));
+        Assert.False(root.TryGetProperty("workflow", out _));
+    }
+
+    [Fact]
+    public void Activity_lists_the_running_scan_and_the_steps_left_of_run_all()
+    {
+        var runId = Guid.NewGuid();
+        var snapshot = new AgentExports.ActivitySnapshot(
+            [new AgentExports.RunningCheck("DismScanHealth", "Windows image health", runId, new CheckProgress(2, 5, "Scanning 40%"))],
+            new AgentExports.SequenceRun(CheckGroup.Checks, RunAll: true, new GroupRunProgress(CheckGroup.Checks, 3, 9, "Windows image health"),
+                ["SfcVerifyOnly", "MemoryScan", "StorageScan"]),
+            Fix: new FixRun(new AreaAction(RemediationKind.InstallUpdate, "Install", "upd-1", "Driver"), "Install driver", "DeviceDrivers",
+                DateTimeOffset.Parse("2026-11-18T10:00:00Z")),
+            BenchmarkRunning: BenchmarkPhase.Before);
+
+        using var doc = JsonDocument.Parse(AgentExports.Activity(snapshot));
+        var root = doc.RootElement;
+
+        Assert.True(root.GetProperty("busy").GetBoolean());
+        var check = root.GetProperty("checks")[0];
+        Assert.Equal("DismScanHealth", check.GetProperty("id").GetString());
+        Assert.Equal(runId.ToString(), check.GetProperty("runId").GetString());
+        Assert.Equal(2, check.GetProperty("progress").GetProperty("step").GetInt32());
+        var sequence = root.GetProperty("sequence");
+        Assert.Equal("run-all", sequence.GetProperty("kind").GetString());
+        Assert.Equal(3, sequence.GetProperty("index").GetInt32());
+        Assert.Equal(["SfcVerifyOnly", "MemoryScan", "StorageScan"],
+            sequence.GetProperty("remaining").EnumerateArray().Select(e => e.GetString()).ToList());
+        Assert.Equal("DeviceDrivers", root.GetProperty("fix").GetProperty("origin").GetString());
+        Assert.Equal("running-before", root.GetProperty("benchmark").GetProperty("phase").GetString());
+    }
+
+    [Fact]
+    public void Activity_lists_the_stress_tests_still_to_run()
+    {
+        var progress = new StressSuiteProgress(StressSuiteMode.Short, 2, 3, "Memory",
+        [
+            new StressSuiteStep("CpuStress", "CPU", StressSuiteStepState.Passed),
+            new StressSuiteStep("MemoryStress", "Memory", StressSuiteStepState.Running),
+            new StressSuiteStep("DiskStress", "Disk", StressSuiteStepState.Pending),
+        ], Finished: false, Message: null);
+
+        using var doc = JsonDocument.Parse(AgentExports.Activity(new AgentExports.ActivitySnapshot([], StressSuite: progress,
+            Workflow: new AgentExports.WorkflowActivity(Core.Workflow.WorkflowStage.Review, false, null))));
+        var root = doc.RootElement;
+
+        Assert.True(root.GetProperty("busy").GetBoolean());
+        var stress = root.GetProperty("stressSuite");
+        Assert.Equal("Memory", stress.GetProperty("current").GetString());
+        Assert.Equal(["DiskStress"], stress.GetProperty("remaining").EnumerateArray().Select(e => e.GetString()).ToList());
+        Assert.Equal("Review", root.GetProperty("workflow").GetProperty("stage").GetString());
     }
 }

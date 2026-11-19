@@ -89,6 +89,20 @@ The Benchmark page needs no new markers: `bench-restart` (checkbox) chooses whet
 
 The Hardware inventory check (`Osquery`) renders `area-report-data` like the other checks, once a run has finished: cards `system`, `cpu`, `memory` and `disks`, with the rows the page's drawers show (one row per memory slot and per drive). Serial numbers and the hardware UUID are left out of this copy.
 
+## What is running (`activity-data`)
+
+Every page renders `[data-testid="activity-data"]` (it sits in the layout, outside the page) with schema 1 JSON describing everything running in the app, wherever it was started (the person at the PC, an agent, an earlier session). Because it is on every page, an agent can read it while view-only, without navigating.
+
+- `busy`: true when anything below is running.
+- `checks`: each check or scan running now: `id`, `title`, `runId`, and `progress` (`step`, `total`, `message`) when it reports one.
+- `sequence`: a group run on Checks & Tests, absent when none: `kind` (`run-all`, `checks` for the ticked checks, `stress-tests` for the ticked stress and separate tests), `index` and `total` (1-based, absent until the first step starts), `current` (display name), and `remaining`, the check IDs not started yet in run order. On Run all, `MemoryScan` and `StorageScan` follow the checks.
+- `stressSuite`: the stress suite while it runs, however it was started: `mode`, `index`, `total`, `current`, and `remaining` (pending test IDs).
+- `fix`: the fix running now (`kind`, `target`, `title`, `origin`, `startedAt`, `progress`).
+- `workflow`: the service workflow while it is between Idle and Done/Cancelled/Failed: `stage`, `busy` (working now, as opposed to waiting at Review or for a restart) and `status`.
+- `benchmark`: a benchmark pass running or settling: `phase` (`running-before`, `running-after`, `settling`) and `progress`.
+
+An agent that is handed control reads this first. When `busy` is true it asks the person whether to stop what is running before it starts anything; it never cancels on its own.
+
 ## App faults (`app-fault-data`)
 
 Every page renders `[data-testid="app-fault-data"]` (it sits in the layout, outside the page) with schema 1 JSON: `seq`, the number of faults the app has recorded so far, and `last` (`seq`, `page`, `type`, `message`, `at`) for the latest one, absent when there has been none. A fault is a page that threw while it drew or handled a click. `seq` only grows.

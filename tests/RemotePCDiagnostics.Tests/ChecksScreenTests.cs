@@ -264,6 +264,8 @@ public class ChecksScreenTests
         Assert.False(s.CanRunSingle(stress[1]));
         await s.RunGroupAsync(CheckGroup.Checks); // ignored while busy (returns at once)
         Assert.Equal(CheckGroup.Stress, s.RunningGroup);
+        Assert.False(s.IsRunAll);
+        Assert.Equal(["MemoryTest"], s.RemainingSteps());
         release.SetResult();
         await run;
         Assert.False(s.IsBusy);
@@ -326,6 +328,9 @@ public class ChecksScreenTests
         Assert.Equal(2, live[0].Total);
         Assert.Equal(DiagnosticStatus.NotRun, live[1].Status);
         Assert.True(s.CheckProgressFraction > 0 && s.CheckProgressFraction < 0.5);
+        Assert.True(s.IsRunAll);
+        Assert.Equal(["B"], s.RemainingSteps());
+        Assert.Contains(svc.RunningModules, run => run.ModuleName == "A" && run.RunId is not null);
 
         release.SetResult();
         await run;
@@ -334,6 +339,9 @@ public class ChecksScreenTests
         Assert.Equal(DiagnosticStatus.Warning, store.Get("B").Status);
         Assert.Null(s.RunningGroup);
         Assert.Empty(s.CheckItems);
+        Assert.False(s.IsRunAll);
+        Assert.Empty(s.RemainingSteps());
+        Assert.Empty(svc.RunningModules);
 
     }
 }

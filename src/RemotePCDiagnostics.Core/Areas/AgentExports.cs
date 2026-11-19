@@ -57,6 +57,90 @@ public static class AgentExports
         last is null ? null : new(last.Seq, last.Action.Kind.ToString(), V(last.Action.Target) ?? "", last.Origin, last.Success ? "succeeded" : "failed",
             T(last.Message), last.RestartNeeded, RemediationService.IsReadOnly(last.Action.Kind), last.FinishedUtc));
 
+    // ---- Activity ---------------------------------------------------------------------------------------------------------
+
+    /// <summary>A check or scan running now. <c>Progress</c> is its latest sub-step, when it reports one.</summary>
+    public sealed record RunningCheck(string Id, string Title, Guid? RunId, CheckProgress? Progress);
+
+    /// <summary>A group run on the Checks &amp; Tests screen: Run all, the ticked checks, or the ticked stress and separate tests.</summary>
+    public sealed record SequenceRun(CheckGroup Group, bool RunAll, GroupRunProgress? Progress, IReadOnlyList<string> Remaining);
+
+    /// <summary>The service workflow's stage, whether it is working now, and its status line.</summary>
+    public sealed record WorkflowActivity(Workflow.WorkflowStage Stage, bool Busy, string? Status);
+
+    /// <summary>Everything running in the app at one moment, wherever it was started, for <see cref="Activity"/>.</summary>
+    public sealed record ActivitySnapshot(
+        IReadOnlyList<RunningCheck> Checks,
+        SequenceRun? Sequence = null,
+        StressSuiteProgress? StressSuite = null,
+        FixRun? Fix = null,
+        WorkflowActivity? Workflow = null,
+        BenchmarkPhase? BenchmarkRunning = null,
+        bool BenchmarkSettling = false,
+        string? BenchmarkProgress = null);
+
+    /// <summary>
+    /// What is running now (activity-data, on every page): checks and scans, a group run with the steps still to come, the stress
+    /// suite, a fix, the service workflow and a benchmark pass. <c>busy</c> is true when any of them is. An agent that takes over a
+    /// session reads this first, so it can ask the person before stopping anything.
+    /// </summary>
+    public static string Activity(ActivitySnapshot snapshot) => JsonSerializer.Serialize(BuildActivity(snapshot), Json);
+
+    private static readonly HashSet<Workflow.WorkflowStage> IdleStages =
+        [Workflow.WorkflowStage.Idle, Workflow.WorkflowStage.Done, Workflow.WorkflowStage.Cancelled, Workflow.WorkflowStage.Failed];
+
+    public static object BuildActivity(ActivitySnapshot s)
+    {
+        var workflow = s.Workflow is { } w && !IdleStages.Contains(w.Stage) ? w : null;
+        var stress = s.StressSuite is { Finished: false } p ? p : null;
+        var benchmark = s.BenchmarkRunning is not null || s.BenchmarkSettling;
+        var busy = s.Checks.Count > 0 || s.Sequence is not null || stress is not null || s.Fix is not null || benchmark
+            || workflow is { Busy: true };
+        return new
+        {
+            schema = SchemaVersion,
+            busy,
+            checks = s.Checks.Select(c => new
+            {
+                id = V(c.Id),
+                title = V(c.Title),
+                runId = c.RunId?.ToString(),
+                progress = c.Progress is { } cp ? new { step = cp.Step, total = cp.Total, message = T(cp.Message) } : null,
+            }).ToList(),
+            sequence = s.Sequence is { } q ? new
+            {
+                kind = q.Group == CheckGroup.Stress ? "stress-tests" : q.RunAll ? "run-all" : "checks",
+                index = q.Progress?.Index,
+                total = q.Progress?.Total,
+                current = V(q.Progress?.Current),
+                remaining = q.Remaining.Select(V).OfType<string>().ToList(),
+            } : null,
+            stressSuite = stress is null ? null : new
+            {
+                mode = stress.Mode.ToString().ToLowerInvariant(),
+                index = stress.Index,
+                total = stress.Total,
+                current = V(stress.CurrentDisplayName),
+                remaining = stress.Steps.Where(step => step.State == StressSuiteStepState.Pending).Select(step => V(step.ModuleName)).OfType<string>().ToList(),
+            },
+            fix = s.Fix is { } f ? new
+            {
+                kind = f.Action.Kind.ToString(),
+                target = V(f.Action.Target),
+                title = V(f.Title),
+                origin = f.Origin,
+                startedAt = f.StartedUtc,
+                progress = V(f.Progress),
+            } : null,
+            workflow = workflow is null ? null : new { stage = workflow.Stage.ToString(), busy = workflow.Busy, status = T(workflow.Status) },
+            benchmark = benchmark ? new
+            {
+                phase = s.BenchmarkRunning is { } b ? (b == BenchmarkPhase.Before ? "running-before" : "running-after") : "settling",
+                progress = T(s.BenchmarkProgress),
+            } : null,
+        };
+    }
+
     // ---- Checks list ----------------------------------------------------------------------------------------------------
 
     /// <summary>One row of the Checks list. <c>Start</c> is "run-one" (the detail panel's Run button), "own-page" (the check's own
