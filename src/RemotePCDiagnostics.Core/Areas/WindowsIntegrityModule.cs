@@ -10,6 +10,12 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
     public bool IncludeInRunAll => false;
     private readonly object _scanGate = new();
     private CancellationTokenSource? _scan;
+    /// <summary>
+    /// One integrity scan at a time across DISM and SFC: both use the Windows servicing stack (TrustedInstaller), and run together one of
+    /// them stops without a result. A second scan waits for the first to finish.
+    /// </summary>
+    private static readonly SemaphoreSlim ServicingGate = new(1, 1);
+    private static string? _runningScan;
 
     /// <summary>Executable in the Windows system directory ("dism.exe", "sfc.exe").</summary>
     protected abstract string ToolExe { get; }
@@ -26,6 +32,12 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
     protected virtual void AddProblemEvidence(List<AreaRow> rows) { }
     /// <summary>The single repair steps the card offers for this result, each run alone; null for none.</summary>
     protected virtual IReadOnlyList<AreaAction>? CardActions(DiagnosticStatus status) => null;
+    /// <summary>
+    /// Called when <see cref="Interpret"/> found neither corruption nor a clean result (or the tool didn't return): why the scan gave no
+    /// verdict. A reason records the run as "Couldn't run" with that reason instead of Critical, since nothing showed corruption.
+    /// Null keeps the Critical result.
+    /// </summary>
+    protected virtual string? CouldNotRunReason(string output, RemotePCDiagnostics.Core.Osquery.ProcessResult? result) => null;
 
     public void Cancel()
     {
@@ -41,12 +53,22 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
         var args = Arguments;
         using var scan = CancellationTokenSource.CreateLinkedTokenSource(ct);
         lock (_scanGate) _scan = scan;
-        var started = DateTimeOffset.Now;
-        OnScanStarting();
+        var gateTaken = false;
         double lastPercent = -1;
         RemotePCDiagnostics.Core.Osquery.ProcessResult? result;
         try
         {
+            if (!ServicingGate.Wait(0))
+            {
+                var other = Volatile.Read(ref _runningScan) ?? "another Windows integrity scan";
+                progress?.Report($"Waiting for {other} to finish before starting.");
+                RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, $"Waiting for {other} to finish", DateTimeOffset.Now, 0));
+                await ServicingGate.WaitAsync(scan.Token).ConfigureAwait(false);
+            }
+            gateTaken = true;
+            Volatile.Write(ref _runningScan, DisplayName);
+            OnScanStarting();
+            var started = DateTimeOffset.Now;
             result = await commands.RunAsync(exe, args, TimeSpan.FromMinutes(30), scan.Token, line =>
             {
                 if (scan.IsCancellationRequested) return;
@@ -65,12 +87,20 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
         }
         finally
         {
+            if (gateTaken)
+            {
+                Volatile.Write(ref _runningScan, null);
+                ServicingGate.Release();
+            }
             lock (_scanGate) _scan = null;
         }
-        if (result is null && !InterpretWithoutResult) return AreaReport.Failed(FailedMessage);
+        if (result is null && !InterpretWithoutResult)
+            return CouldNotRunReason("", null) is { } why ? new([], why, DiagnosticStatus.Error) { CouldNotRunReason = why } : AreaReport.Failed(FailedMessage);
 
         var output = CleanOutput((result?.StdOut + "\n" + result?.StdErr).Replace("\0", "").Trim());
         var (status, summary) = Interpret(output, result);
+        var couldNotRun = status == DiagnosticStatus.Error ? CouldNotRunReason(output, result) : null;
+        if (couldNotRun is not null) summary = couldNotRun;
         var rows = new List<AreaRow>
         {
             new(AreaLevel.Neutral, ["Command", $"{Path.GetFileName(exe)} {string.Join(' ', args)}"]),
@@ -82,9 +112,11 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
             {
                 DiagnosticStatus.Ok => AreaLevel.Ok,
                 DiagnosticStatus.Warning => AreaLevel.Warning,
+                _ when couldNotRun is not null => AreaLevel.Warning,
                 _ => AreaLevel.Error
             }, summary, result is null ? "Scan did not return an exit code" : $"Exit code {result.ExitCode}",
-            ["Detail", "Value"], rows, Actions: CardActions(status) is { Count: > 0 } actions ? actions : null)], summary, status);
+            ["Detail", "Value"], rows, Actions: CardActions(status) is { Count: > 0 } actions ? actions : null)], summary, status)
+        { CouldNotRunReason = couldNotRun };
     }
 
     /// <summary>Warning when corruption was reported, Ok when the clean message came with exit code 0, otherwise Error.</summary>
@@ -92,6 +124,14 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
         corrupt ? DiagnosticStatus.Warning : clean && result?.ExitCode == 0 ? DiagnosticStatus.Ok : DiagnosticStatus.Error;
 
     protected static bool Contains(string output, string text) => output.Contains(text, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The tool's last line that isn't a progress line ("Verification 42% complete."), capped at 200 characters; null for none.</summary>
+    public static string? LastMessageLine(string output)
+    {
+        var line = output.Split(['\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .LastOrDefault(l => !l.Contains('%'));
+        return line is null ? null : line.Length > 200 ? line[..200] + "…" : line;
+    }
 
     /// <summary>%windir%\Logs\<paramref name="folder"/>\<paramref name="file"/>.</summary>
     internal static string WindowsLog(string folder, string file) =>
