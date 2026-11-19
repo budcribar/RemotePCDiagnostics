@@ -36,6 +36,7 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | workflow | 1 | Same, including `workflow-data` |
 | checks | 1 | Same, including `checks-list-data`, `area-report-data`, generic `run-check`/`cancel-check` markers, fix and service action metadata |
 | checks | 2 | Storage bytes: `total-storage-bytes`, `free-storage-bytes` and `used-storage-bytes` under `drive-health-counts`, and the new `disk-space-counts` block. The Drive health report gains a `capacity` card that the drive counts leave out. A finished Large files & folders or Duplicate files scan shows the generic report (`area-status`, cards, drawers and their fix buttons) like any other check; only DISM and SFC keep the scan output panel with `checks-scan-fixes` |
+| checks | 3 | Fixes: `fix-data` (the running fix and the last result) on every check page, `remediation-running` with `remediation-working` and `remediation-stop` while a fix runs, `remediation-busy` on a second fix, and the `pending-updates` and `pending-driver-updates` cards with an `InstallUpdate` fix per update |
 | stress | 1 | Same, including `stress-data` |
 | interactive | 1 | Same, including `interactive-data` with `reportIf` hints |
 | security-audit | 1 | Same, including `audit-report-data` |
@@ -46,6 +47,7 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | about | 1 | Same |
 | module | 1 | Same (a module's own page outside Checks) |
 | module | 2 | The storage bytes of checks version 2. `disk-space-counts` is also present before the first scan, then without `data-result-run-id` |
+| module | 3 | The fix metadata of checks version 3 |
 
 ## Checks list (`checks-list-data`)
 
