@@ -250,6 +250,38 @@ public class EcFanTests
     }
 
     [Fact]
+    public void Plausibility_ZeroShown_WhenFanKnownPresent()
+    {
+        var p = new EcFanPlausibility();
+        Assert.Equal(0, p.Accept(0, present: true));
+        Assert.Null(p.Accept(0xFF, present: true)); // out of range is never shown
+    }
+
+    // Issue #44: BUDSLAPTOP (82R4) logs FNUM=1 FAN1=0. A fresh session with the fan stopped hid it ("fan speed not reported"),
+    // while a session where it had spun showed "1 fan". The EC's fan count keeps the stopped fan listed at 0 RPM.
+    [Fact]
+    public void StoppedCpuFan_IsListedAtZero_WhenEcCountsIt()
+    {
+        var rig = new Rig();
+        rig.Ports.Ram[0x06] = 0x00; rig.Ports.Ram[0xAB] = 0x40; rig.Ports.Ram[0xAD] = 0x10; // FNUM=1, FAN1=0
+        using var m = rig.Build();
+        var fan = Assert.Single(m.Read());
+        Assert.Equal(EcFanMonitor.CpuFanName, fan.SensorName);
+        Assert.Equal(0, fan.Value);
+        var summary = LibreHardwareMonitorModule.Summarize(LibreHardwareMonitorModule.BuildReport(new SensorSnapshot(m.Read(), true)));
+        Assert.EndsWith("1 fan, stopped", summary);
+    }
+
+    [Fact]
+    public void StoppedCpuFan_StaysHidden_WhenEcFanCountIsZero()
+    {
+        var rig = new Rig();
+        rig.Ports.Ram[0x06] = 0x00; rig.Ports.Ram[0xAD] = 0x00;
+        using var m = rig.Build();
+        Assert.Empty(m.Read());
+    }
+
+    [Fact]
     public void Fan2_AppearsWhenItSpinsUp_ThenZeroIsShown()
     {
         var rig = new Rig();
