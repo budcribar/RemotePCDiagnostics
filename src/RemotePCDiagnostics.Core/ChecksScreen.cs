@@ -269,6 +269,25 @@ public sealed class ChecksScreenState
     public CheckGroup? RunningGroup { get; private set; }
     public GroupRunProgress? Progress { get; private set; }
     public bool IsBusy => RunningGroup is not null;
+    /// <summary>True while the running group run is Run all (every check), false for a run of the ticked checks or tests.</summary>
+    public bool IsRunAll { get; private set; }
+    private List<string> _runSteps = [];
+
+    /// <summary>
+    /// The steps of the running group run that have not started yet, by module name, in run order. Empty when nothing is running.
+    /// On Checks the memory and storage scans that follow the checks are steps too (MemoryScan, StorageScan).
+    /// </summary>
+    public IReadOnlyList<string> RemainingSteps()
+    {
+        lock (_gate)
+        {
+            if (RunningGroup is null)
+                return [];
+            if (RunningGroup == CheckGroup.Checks)
+                return _checkItems.Where(item => item.Status == DiagnosticStatus.NotRun).Select(item => item.Id).ToList();
+            return _runSteps.Skip(Progress?.Index ?? 0).ToList();
+        }
+    }
     /// <summary>Outcome line of the last group run (stress suite summary with skipped/stopping tests, or an error that kept a
     /// test from running), shown on the page instead of being swallowed. Null until a run reports something.</summary>
     public string? LastRunNote { get; private set; }
@@ -322,6 +341,10 @@ public sealed class ChecksScreenState
             }
             if (selected.Count == 0) return;
             RunningGroup = g;
+            IsRunAll = allModules;
+            // Stress runs the suite's tests first and then the separate steps (audio, webcam, NPU), so the steps follow that order.
+            _runSteps = g == CheckGroup.Checks ? selected.Select(m => m.Name).ToList()
+                : selected.Where(m => !IsSeparateStep(m)).Concat(selected.Where(IsSeparateStep)).Select(m => m.Name).ToList();
             if (g == CheckGroup.Checks) CollapsedChecks = false; else CollapsedStress = false;
             _cts = cts = new CancellationTokenSource();
             LastRunNote = null;
@@ -399,7 +422,7 @@ public sealed class ChecksScreenState
         }
         finally
         {
-            lock (_gate) { RunningGroup = null; Progress = null; _cts = null; if (g == CheckGroup.Checks) _checkItems.Clear(); LastRunNote = errors.Count == 0 ? null : string.Join(" ", errors); }
+            lock (_gate) { RunningGroup = null; Progress = null; IsRunAll = false; _runSteps = []; _cts = null; if (g == CheckGroup.Checks) _checkItems.Clear(); LastRunNote = errors.Count == 0 ? null : string.Join(" ", errors); }
             cts.Dispose();
             Raise();
         }

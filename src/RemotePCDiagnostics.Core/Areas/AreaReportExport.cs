@@ -97,10 +97,13 @@ public static class AreaReportExport
             card.RecentWindowDays,
             card.Columns.Select(c => Text(c, MaxValueLength) ?? "").ToList(),
             card.Rows.Count,
-            attention.Count,
+            // Only warning and error rows need attention. Neutral rows and rows with a fix are listed for their facts, so the
+            // listed count says how many rows the list holds before the cap, and rowCount minus it is the ok rows left out.
+            card.Rows.Count(row => row.Level is AreaLevel.Warning or AreaLevel.Error),
             rows)
         {
             Actions = Actions(card.Actions),
+            ListedRowCount = attention.Count,
         };
     }
 
@@ -162,6 +165,9 @@ public static class AreaReportExport
     {
         /// <summary>One-click fixes on the card itself (buttons on the card and in its drawer).</summary>
         public IReadOnlyList<ExportedAction>? Actions { get; init; }
+
+        /// <summary>How many rows qualify for <c>Rows</c> (every row that is not ok, and any row with a fix) before the cap.</summary>
+        public int ListedRowCount { get; init; }
     }
 
     public sealed record ExportedRow(string Level, string? Key, IReadOnlyList<string> Values, string? Detail, int? Occurrences)

@@ -34,7 +34,8 @@ public class AreaReportExportTests
         Assert.Equal(7, card.RecentWindowDays);
         Assert.Equal(["App", "Count"], card.Columns);
         Assert.Equal(5, card.RowCount);
-        Assert.Equal(4, card.AttentionRowCount);
+        Assert.Equal(3, card.AttentionRowCount); // the neutral row is listed but does not need attention
+        Assert.Equal(4, card.ListedRowCount); // the ok row is left out
         Assert.Equal(["bad.exe", "warn-1.exe", "warn-2.exe", "info.exe"], card.Rows.Select(r => r.Key));
         Assert.Equal("Access violation", card.Rows[0].Detail);
         Assert.Equal("Faulting module ntdll.dll", card.Rows[1].Detail);
@@ -64,6 +65,7 @@ public class AreaReportExportTests
 
         Assert.Equal(AreaReportExport.MaxRowsPerCard, card.Rows.Count);
         Assert.Equal(AreaReportExport.MaxRowsPerCard + 10, card.AttentionRowCount);
+        Assert.Equal(AreaReportExport.MaxRowsPerCard + 10, card.ListedRowCount);
         Assert.All(card.Rows, r =>
         {
             Assert.True(r.Values[0].Length <= AreaReportExport.MaxValueLength);
