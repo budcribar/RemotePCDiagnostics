@@ -20,7 +20,7 @@ Reuse existing `data-testid` selectors for buttons where they already identify t
 | `about` | `about-title`, `about-version`, `about-builtin-modules`, `about-plugins` | Expose the full running build version for guide lookup and stable module IDs for availability. Keep plugin settings actions distinct from version lookup. |
 | `module` | `area-title`, `area-requery`, `area-status`, `area-missing`, module-specific selectors such as `osquery-requery` | Expose the module slug and share the same result identity as the Checks panel. Scope drawers and service or remediation actions to the affected item. |
 
-Use `.app[data-rpcd-version]` as the canonical selector for control and connection metadata. Require `in-control` and an enabled action before clicking. Older relays can report control without a connection state. A known offline, connecting, reconnecting, or disconnected state clears confirmed control. Never include credentials or ticket URLs.
+Use `.app[data-rpcd-version]` as the canonical selector for control and connection metadata. Require `in-control` and an enabled action before clicking. Older relays can report control without a connection state. A known offline, connecting, reconnecting, or disconnected state clears confirmed control. On relays without a connection state, RemoteBlazorWebView's connection-lost notice (`#rbwv-connection-lost`) reads as disconnected. Never include credentials or ticket URLs.
 
 For run results, follow the [inventory metadata proposal](hardware-inventory.md#browser-metadata). Prioritize check ID, run ID, result run ID, exact completion time and result source. Add field IDs and units where guides need structured extraction. Display names can change without changing IDs.
 

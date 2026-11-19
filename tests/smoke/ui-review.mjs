@@ -73,5 +73,37 @@ try {
   await page.locator('.app').evaluate(el => el.classList.add('nav-open'));
   assert.equal(await page.locator('.rail').isVisible(), true);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-  console.log('PASS: overlay hit-testing, focus containment/restoration, nested dialogs, inert cleanup, 390/768px layout and mobile navigation');
+  // Control and connection markers: a page whose stream to the session closed keeps its last copy, so it must not read in-control.
+  for (const withState of [false, true]) {
+    const mirror = await browser.newPage();
+    await mirror.setContent('<div class="app" data-rpcd-version="0.0.0-test" data-rpcd-control="unknown" data-rpcd-connection="unknown"><span class="rbwv-control-status"></span></div>');
+    await mirror.evaluate(withState => {
+      // RemoteBlazorWebView's window.RemoteControl. Builds before connectionState leave it out.
+      let state = { iHaveControl: true, restarting: false, participants: [] };
+      if (withState) state.connectionState = 'connected';
+      const subscribers = [];
+      window.RemoteControl = { getState: () => state, subscribe: cb => { subscribers.push(cb); cb(state); } };
+      window.setControlState = next => { state = { ...state, ...next }; subscribers.forEach(cb => cb(state)); };
+    }, withState);
+    await mirror.addScriptTag({ content: dialogs });
+    const markers = () => mirror.locator('.app').evaluate(el => [el.dataset.rpcdControl, el.dataset.rpcdConnection].join('/'));
+    assert.equal(await markers(), withState ? 'in-control/connected' : 'in-control/unknown');
+    if (withState) {
+      await mirror.evaluate(() => window.setControlState({ connectionState: 'reconnecting' }));
+      assert.equal(await markers(), 'unknown/reconnecting', 'a reconnecting page is not in control');
+      await mirror.evaluate(() => window.setControlState({ connectionState: 'disconnected' }));
+      assert.equal(await markers(), 'unknown/disconnected', 'a disconnected page is not in control');
+    } else {
+      await mirror.evaluate(() => {
+        const notice = document.createElement('div');
+        notice.id = 'rbwv-connection-lost';
+        notice.textContent = 'Connection lost. Waiting for the session to come back…';
+        document.body.appendChild(notice);
+      });
+      await mirror.waitForFunction(() => document.querySelector('.app').dataset.rpcdConnection === 'disconnected');
+      assert.equal(await markers(), 'unknown/disconnected', 'the connection-lost notice clears control on builds without connectionState');
+    }
+    await mirror.close();
+  }
+  console.log('PASS: overlay hit-testing, focus containment/restoration, nested dialogs, inert cleanup, 390/768px layout, mobile navigation and control/connection markers');
 } finally { await browser.close(); }
