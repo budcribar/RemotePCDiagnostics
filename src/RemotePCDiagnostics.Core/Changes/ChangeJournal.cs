@@ -27,6 +27,7 @@ public enum ChangeKind
     ScheduledTask,       // Target = task path on ScheduledTaskAllowlist ("\Microsoft\XblGameSave\XblGameSaveTask"); Previous = "Enabled"; undo enables it again
     StoreReinstall,      // A removed Store app undo can reinstall. Target = package family name on AppRemoval.Packages ("Microsoft.BingWeather_8wekyb3d8bbwe"); Previous = its Store id ("9WZDNCRFJ3Q2"); undo runs winget for the allowlist's id, never the journal's alone
     SecuritySetting,     // Target = a SecurityFixes key ("pua", "network-protection", "asr", "llmnr", "autorun"); Previous = its value before (SecurityFixes.ParsePrevious validates it); undo runs SecurityFixes.RestoreScript
+    DeviceWake,          // Target = device name as powercfg /devicequery wake_armed listed it (DeviceWake.IsSafeName); Previous = "armed"; undo runs powercfg /deviceenablewake
 }
 
 /// <param name="Label">Friendly, e.g. "Spotify won't start with Windows".</param>

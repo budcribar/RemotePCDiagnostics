@@ -46,6 +46,9 @@ public enum RemediationKind
     RepairComponentStoreFromImage,
     /// <summary>Installs one pending Windows or driver update. Target = the update's Windows Update ID.</summary>
     InstallUpdate,
+    /// <summary>Stops one device from waking the PC (<c>powercfg /devicedisablewake</c>). Target = the device's name exactly as
+    /// <c>powercfg /devicequery wake_armed</c> lists it; it must still be on that list when the fix runs. Undo arms it again.</summary>
+    DisableDeviceWake,
 }
 
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>

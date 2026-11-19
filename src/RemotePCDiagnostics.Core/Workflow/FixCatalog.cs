@@ -21,8 +21,10 @@ public static class FixCatalog
     private static bool ListedElsewhere(RemediationKind k) =>
         k is RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles or RemediationKind.InstallUpdate;
 
-    /// <summary>Single repair steps a technician picks on purpose: listed, but not ticked to start with.</summary>
-    private static bool OptIn(RemediationKind k) => k is RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStoreFromImage;
+    /// <summary>Single repair steps a technician picks on purpose: listed, but not ticked to start with.
+    /// Stopping a device from waking the PC changes how the customer wakes it, so it is listed but left for the technician to tick.</summary>
+    private static bool OptIn(RemediationKind k) => k is RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStoreFromImage
+        or RemediationKind.DisableDeviceWake;
 
     /// <summary>Memory actions that persist across a restart and need nobody at the keyboard.</summary>
     public static readonly IReadOnlySet<MemoryActionType> UnattendedMemoryActions = new HashSet<MemoryActionType>
@@ -47,7 +49,7 @@ public static class FixCatalog
     private static readonly Dictionary<string, string> AreaNames = new(StringComparer.OrdinalIgnoreCase)
     {
         [ModuleSlugs.DeviceDrivers] = "Drivers & devices", [ModuleSlugs.Programs] = "Windows updates", [ModuleSlugs.ResourceHogs] = "Performance & power",
-        [ModuleSlugs.BatteryPower] = "Performance & power", [ModuleSlugs.Network] = "Network", [ModuleSlugs.DriveHealth] = "Storage", [ModuleSlugs.Services] = "Services",
+        [ModuleSlugs.BatteryPower] = "Performance & power", [ModuleSlugs.SleepWake] = "Performance & power", [ModuleSlugs.Network] = "Network", [ModuleSlugs.DriveHealth] = "Storage", [ModuleSlugs.Services] = "Services",
         [ModuleSlugs.SecurityEssentials] = "Security",
         [ModuleSlugs.DismScanHealth] = RepairArea, [ModuleSlugs.SfcVerifyOnly] = RepairArea,
     };
@@ -55,7 +57,8 @@ public static class FixCatalog
     /// <summary>Order groups: quick settings first, cleanup next, network renew near the end, long downloads last.</summary>
     private static int OrderOf(RemediationKind k) => k switch
     {
-        RemediationKind.SetBalancedPowerPlan or RemediationKind.DisableFastStartup or RemediationKind.DisableSystemProxy => 10,
+        RemediationKind.SetBalancedPowerPlan or RemediationKind.DisableFastStartup or RemediationKind.DisableSystemProxy
+            or RemediationKind.DisableDeviceWake => 10,
         RemediationKind.EnableDevice or RemediationKind.RestartDevice or RemediationKind.ScanHardwareChanges => 30,
         RemediationKind.CleanTempFiles or RemediationKind.OptimizeSsd => 40,
         RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns or RemediationKind.FlushDnsAndRenewIp => 60,
@@ -107,7 +110,7 @@ public static class FixCatalog
                         why += $" {a.ButtonText}. {card.Note} Measured during the network scan at {r.Timestamp:O}.";
                     list.Add(new(id, title, why, area, RiskOf(a.Kind), FixSource.Remediation, OrderOf(a.Kind), Remediation: a,
                         NeedsAdmin: a.Kind == RemediationKind.ApplySecuritySetting || plan?.Warning?.Contains("administrator", StringComparison.OrdinalIgnoreCase) == true,
-                        Slow: a.Kind is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates || OptIn(a.Kind),
+                        Slow: a.Kind is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates || (OptIn(a.Kind) && a.Kind != RemediationKind.DisableDeviceWake),
                         Undo: Changes.Undoability.Of(a.Kind), AreaKey: area,
                         DefaultOn: !OptIn(a.Kind) && (a.Kind != RemediationKind.ApplySecuritySetting || Security.SecurityFixes.Find(a.Target)?.DefaultOn != false)));
                 }

@@ -63,6 +63,8 @@ public static class ModuleIds
     public static readonly Guid DiskSpace = new("9c7c4b12-5893-4e40-8ab7-7a2e379b3601");
     /// <summary>Slug <c>DuplicateFiles</c>.</summary>
     public static readonly Guid DuplicateFiles = new("e22a8740-410a-4da5-a912-21ea7f7d195f");
+    /// <summary>Slug <c>SleepWake</c>.</summary>
+    public static readonly Guid SleepWake = new("d8665737-c11d-44ad-b1d3-72b14dcdaedd");
 
     /// <summary>Every built-in id with its slug (the module's Name). Includes modules that are not registered on every build.</summary>
     public static IReadOnlyDictionary<Guid, string> BuiltIn { get; } = new Dictionary<Guid, string>
@@ -95,6 +97,7 @@ public static class ModuleIds
         [SecurityEssentials] = ModuleSlugs.SecurityEssentials,
         [DiskSpace] = ModuleSlugs.DiskSpace,
         [DuplicateFiles] = ModuleSlugs.DuplicateFiles,
+        [SleepWake] = ModuleSlugs.SleepWake,
     };
 
     /// <summary>The built-in id for a slug (case-insensitive), or null for an unknown name.</summary>
@@ -138,4 +141,5 @@ public static class ModuleSlugs
     public const string SecurityEssentials = "SecurityEssentials";
     public const string DiskSpace = "DiskSpace";
     public const string DuplicateFiles = "DuplicateFiles";
+    public const string SleepWake = "SleepWake";
 }

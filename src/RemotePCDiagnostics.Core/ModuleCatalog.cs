@@ -13,6 +13,7 @@ public static class BuiltInModules
         new(ModuleIds.DriveHealth, ModuleSlugs.DriveHealth, "Drive health & free space", ModuleKind.Check, ModuleGroups.Storage, 100),
         new(ModuleIds.ResourceHogs, ModuleSlugs.ResourceHogs, "Resource hogs & uptime", ModuleKind.Check, ModuleGroups.Cpu, 100),
         new(ModuleIds.BatteryPower, ModuleSlugs.BatteryPower, "Battery & power plan", ModuleKind.Check, ModuleGroups.Power, 100),
+        new(ModuleIds.SleepWake, ModuleSlugs.SleepWake, "Sleep, wake & standby drain", ModuleKind.Check, ModuleGroups.Power, 200),
         new(ModuleIds.Network, ModuleSlugs.Network, "Network & Wi-Fi", ModuleKind.Check, ModuleGroups.Network, 100),
         new(ModuleIds.Services, ModuleSlugs.Services, "Services", ModuleKind.Check, ModuleGroups.Windows, 100),
         new(ModuleIds.EventLog, ModuleSlugs.EventLog, "Windows error log", ModuleKind.Check, ModuleGroups.Windows, 200),

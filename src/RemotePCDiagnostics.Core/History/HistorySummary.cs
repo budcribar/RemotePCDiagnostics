@@ -414,6 +414,7 @@ public static class HistorySummary
         RemediationKind.FlushDnsAndRenewIp or RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns => "DNS & network",
         RemediationKind.CleanTempFiles => DiskCleanupCategory,
         RemediationKind.OptimizeSsd => "SSD optimization",
+        RemediationKind.DisableDeviceWake => "Device wake",
         _ => "Automated fix",
     };
 

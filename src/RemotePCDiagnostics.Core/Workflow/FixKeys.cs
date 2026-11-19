@@ -35,6 +35,7 @@ public static class FixKeys
         [RemediationKind.CleanUpComponentStore] = "cleanupcomponentstore",
         [RemediationKind.RepairComponentStoreFromImage] = "repaircomponentstorefromimage",
         [RemediationKind.InstallUpdate] = "installupdate",
+        [RemediationKind.DisableDeviceWake] = "disabledevicewake",
     };
 
     public static readonly IReadOnlyDictionary<MemoryActionType, string> Memory = new Dictionary<MemoryActionType, string>

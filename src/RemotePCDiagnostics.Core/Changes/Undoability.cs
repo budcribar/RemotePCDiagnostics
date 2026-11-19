@@ -26,7 +26,8 @@ public static class Undoability
     public static UndoSupport Of(RemediationKind k) => k switch
     {
         RemediationKind.SetBalancedPowerPlan or RemediationKind.DisableFastStartup or RemediationKind.DisableSystemProxy
-            or RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns or RemediationKind.ApplySecuritySetting => UndoSupport.Full,
+            or RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns or RemediationKind.ApplySecuritySetting
+            or RemediationKind.DisableDeviceWake => UndoSupport.Full,
         RemediationKind.CleanTempFiles => UndoSupport.None,
         RemediationKind.RepairComponentStore or RemediationKind.RepairSystemFiles or RemediationKind.RepairComponentStoreFromImage
             or RemediationKind.CleanUpComponentStore => UndoSupport.None, // repaired or removed Windows files aren't put back
