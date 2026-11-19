@@ -62,6 +62,22 @@ public class SecurityFixesTests
     }
 
     [Fact]
+    public void Why_it_matters_never_says_off_when_the_setting_is_on()
+    {
+        // #71: the explanation row said "It's off" under an "on" headline.
+        var asr = string.Join(",", SecurityFixes.SafeAsrRules.Select(r => r.Id + ":1"));
+        var f = SecurityEssentialsModule.ParseProbe($"DefenderMode=Normal\nPua=1\nNetworkProtection=1\nAsr={asr}", Tpm2);
+        var rep = SecurityEssentialsModule.Build(f);
+        foreach (var id in new[] { "pua", "networkprotection", "asr" })
+        {
+            var card = Card(rep, id);
+            Assert.Equal(AreaLevel.Ok, card.Level);
+            var why = card.Rows.Single(r => r.Values[0] == "Why it matters").Values[1];
+            Assert.DoesNotContain(" off", why, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void Another_antivirus_means_no_defender_fixes()
     {
         var f = SecurityEssentialsModule.ParseProbe("DefenderMode=Passive mode\nPua=0\nNetworkProtection=0\nAsr=\nAntivirus=Windows Defender;Norton 360", Tpm2);
