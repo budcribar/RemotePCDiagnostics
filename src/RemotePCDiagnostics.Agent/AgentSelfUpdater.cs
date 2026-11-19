@@ -15,11 +15,18 @@ namespace RemotePCDiagnostics.Agent;
 /// </summary>
 internal static class AgentSelfUpdater
 {
+    /// <summary>Admin-only folder for downloaded installers (and <see cref="PendingAppRelaunch"/>'s request).</summary>
+    public static string StagingDirectory() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "RemotePCDiagnostics",
+        "Updates");
+
     public static async Task<AppUpdateResult> RunAsync(
         AppUpdateChannel channel,
         IReadOnlyList<string>? relaunchArguments,
         ILogger log,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<Process, string>? relaunchFromService = null)
     {
         var installed = AgentPaths.GetInstalledOrCachedAppVersion();
 #if DEBUG
@@ -41,10 +48,7 @@ internal static class AgentSelfUpdater
         if (!string.IsNullOrWhiteSpace(installed) && AppVersionComparer.IsNewer(selected.Version, installed) == false)
             return new AppUpdateResult(false, Error: $"RPCD {installed} is already up to date.");
 
-        var stagingDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "RemotePCDiagnostics",
-            "Updates");
+        var stagingDir = StagingDirectory();
 
         try
         {
@@ -97,22 +101,38 @@ internal static class AgentSelfUpdater
         // Setup closes the app, and this helper (a child of the app) ends with it, so nothing may be left for this process
         // to do after Setup starts. Setup itself runs the Agent MSI and starts the app again (installer/RemotePCDiagnostics.iss).
         IReadOnlyList<string>? relaunch = null;
+        IReadOnlyList<string>? serviceRelaunch = null;
         if (relaunchArguments is { Count: > 0 })
         {
-            // From the agent service (Session 0, the un-elevated remote host's pipe) Setup would start the app as SYSTEM on
-            // Session 0's desktop, where nobody can see it. Only an updater running in the user's session asks for a relaunch.
-            if (OperatingSystem.IsWindows() && Process.GetCurrentProcess().SessionId == 0)
-                log.Info("[agent-update] Running in the service session: Setup will not start the app again.");
-            else if (SessionLaunchOptions.IsRestartCommandLine(relaunchArguments))
-                relaunch = relaunchArguments;
-            else
+            if (!SessionLaunchOptions.IsRestartCommandLine(relaunchArguments))
                 log.Warn("[agent-update] Ignoring a relaunch command line that is not a session restart; the app will not be started again.");
+            else if (OperatingSystem.IsWindows() && Process.GetCurrentProcess().SessionId == 0)
+            {
+                // The agent service (SYSTEM, Session 0) ran this update for an unattended session. Setup would start the app on
+                // Session 0's desktop, where nobody sees it, so the service starts it in the user's session instead (PendingAppRelaunch).
+                if (relaunchFromService is not null)
+                    serviceRelaunch = relaunchArguments;
+                else
+                    log.Info("[agent-update] Running in the service session: the app will not be started again.");
+            }
+            else
+                relaunch = relaunchArguments;
+        }
+
+        if (serviceRelaunch is not null)
+        {
+            try { PendingAppRelaunch.Save(stagingDir, serviceRelaunch); }
+            catch (Exception ex)
+            {
+                log.Warn($"[agent-update] Could not save the relaunch request: {ex.Message}");
+                serviceRelaunch = null;
+            }
         }
 
         try
         {
             var arguments = AppUpdateInstaller.BuildSetupArguments(verySilent: true, msiPath, relaunch);
-            log.Info($"[agent-update] Launching silent installer '{installerPath}' (agent MSI: {msiPath ?? "none"}; relaunch: {(relaunch is null ? "no" : "yes")}).");
+            log.Info($"[agent-update] Launching silent installer '{installerPath}' (agent MSI: {msiPath ?? "none"}; relaunch: {(relaunch is not null ? "by Setup" : serviceRelaunch is not null ? "by the agent service" : "no")}).");
             var psi = new ProcessStartInfo
             {
                 FileName = installerPath,
@@ -124,6 +144,9 @@ internal static class AgentSelfUpdater
             var proc = Process.Start(psi);
             if (proc is null)
                 return new AppUpdateResult(false, Error: "Failed to start the RPCD installer.");
+
+            if (serviceRelaunch is not null)
+                relaunchFromService!(proc, stagingDir);
 
             return new AppUpdateResult(
                 Ok: true,

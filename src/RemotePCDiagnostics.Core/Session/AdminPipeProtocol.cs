@@ -61,22 +61,83 @@ public static class AdminCommandAllowlist
             ["powershell.exe"] = Path.Combine("WindowsPowerShell", "v1.0", "powershell.exe"),
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly string[] BlockedPowerShellPrimitives =
+    // What an elevated script from the app never needs: downloading, decoding or compiling code, running a string as code,
+    // starting another shell, and adding accounts. Matched after PowerShellScreen.Normalize, so splitting a name with
+    // quotes, '+' or backticks ('Inv'+'oke-Expression', I`EX) does not get it past this list.
+    private static readonly string[] BlockedPowerShellNames =
     [
-        "Invoke-WebRequest",
-        "Invoke-RestMethod",
-        "Net.WebClient",
-        "DownloadString",
-        "DownloadFile",
-        "Start-BitsTransfer",
-        "New-LocalUser",
-        "Add-LocalGroupMember",
-        "net user",
-        "net localgroup",
-        "certutil",
-        "mshta",
-        "rundll32",
+        // Downloads
+        "invoke-webrequest", "invoke-restmethod", "net.webclient", "webclient", "downloadstring", "downloadfile", "downloaddata",
+        "openread", "start-bitstransfer", "system.net.http", "net.sockets", "net.webrequest",
+        // Code from strings, encodings and the runtime
+        "invoke-expression", "frombase64string", "-encodedcommand", "add-type", "reflection.assembly", "[char]", "[scriptblock]",
+        "scriptblock]::create", "executioncontext", "invokecommand", "invokescript", "invoke-command", "start-job", "&(", "&$",
+        // Tools that download or run code for you (WindowsUpdate.ps1 needs Start-Process for UsoClient.exe, and PowerShell runs
+        // any program by its path anyway, so starting programs as such is not screened)
+        "new-service", "certutil", "mshta", "rundll32", "regsvr32", "bitsadmin",
+        // Accounts
+        "new-localuser", "add-localgroupmember",
     ];
+
+    /// <summary>Aliases and program names that are blocked as whole words only, because they are short.</summary>
+    private static readonly HashSet<string> BlockedPowerShellWords = new(StringComparer.Ordinal)
+    {
+        "iex", "iwr", "irm", "icm", "sajb", "curl", "wget", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "cmd", "cmd.exe",
+        "wscript", "cscript", "-enc", "-ec",
+    };
+
+    /// <summary>Phrases with a space in them, matched with runs of whitespace collapsed to one space.</summary>
+    private static readonly string[] BlockedPowerShellPhrases = ["net user", "net localgroup", "net1 user", "net1 localgroup"];
+
+    /// <summary>
+    /// The first blocked thing in <paramref name="script"/>, or null when there is none. This screens the scripts the elevated
+    /// helper runs for the app; it is defence in depth on top of the helper checking that its caller is the app itself.
+    /// </summary>
+    public static string? FindBlockedPowerShell(string? script)
+    {
+        var (spaced, compact) = NormalizePowerShell(script ?? "");
+        foreach (var name in BlockedPowerShellNames)
+            if (compact.Contains(name, StringComparison.Ordinal)) return name;
+        foreach (var phrase in BlockedPowerShellPhrases)
+            if (spaced.Contains(phrase, StringComparison.Ordinal)) return phrase;
+        foreach (var word in spaced.Split(PowerShellWordBreaks, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (BlockedPowerShellWords.Contains(word)) return word;
+            // "C:\Windows\System32\cmd.exe" or "...\certutil.exe": the program name is the last path segment.
+            var slash = word.LastIndexOfAny(['\\', '/']);
+            if (slash >= 0 && BlockedPowerShellWords.Contains(word[(slash + 1)..])) return word[(slash + 1)..];
+        }
+        return null;
+    }
+
+    private static readonly char[] PowerShellWordBreaks = [' ', ';', '|', '(', ')', '{', '}', '[', ']', ',', '=', '&', '@', '$', '<', '>', '!'];
+
+    /// <summary>
+    /// Lowercase, without backticks, quotes or '+', so names split up as strings come back together. <c>spaced</c> keeps one
+    /// space between words; <c>compact</c> has no whitespace at all.
+    /// </summary>
+    private static (string Spaced, string Compact) NormalizePowerShell(string script)
+    {
+        var spaced = new System.Text.StringBuilder(script.Length);
+        var compact = new System.Text.StringBuilder(script.Length);
+        var lastWasSpace = true;
+        foreach (var raw in script)
+        {
+            if (raw is '`' or '\'' or '"' or '+' or '\u2018' or '\u2019' or '\u201C' or '\u201D')
+                continue;
+            if (char.IsWhiteSpace(raw))
+            {
+                if (!lastWasSpace) spaced.Append(' ');
+                lastWasSpace = true;
+                continue;
+            }
+            var c = char.ToLowerInvariant(raw);
+            spaced.Append(c);
+            compact.Append(c);
+            lastWasSpace = false;
+        }
+        return (spaced.ToString(), compact.ToString());
+    }
 
     public static IReadOnlyCollection<string> AllowedExecutableNames => CanonicalRelativePaths.Keys;
 
@@ -175,14 +236,10 @@ public static class AdminCommandAllowlist
                 return false;
             }
 
-            var script = args[5] ?? "";
-            foreach (var blocked in BlockedPowerShellPrimitives)
+            if (FindBlockedPowerShell(args[5]) is { } blocked)
             {
-                if (script.Contains(blocked, StringComparison.OrdinalIgnoreCase))
-                {
-                    error = $"PowerShell script contains blocked primitive '{blocked}'.";
-                    return false;
-                }
+                error = $"PowerShell script contains blocked primitive '{blocked}'.";
+                return false;
             }
             return true;
         }
