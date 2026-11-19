@@ -82,7 +82,28 @@ public sealed class DismScanHealthModule(SystemCommandRunner commands) : Windows
     /// The single steps for this result. Analyze and cleanup are offered for any finished scan; the repairs and the restart only when
     /// the scan found corruption. One repair-from-image button per Windows image found on this PC's drives.
     /// </summary>
-    protected override IReadOnlyList<AreaAction>? CardActions(DiagnosticStatus status) => Actions(status, status == DiagnosticStatus.Warning ? FindImages() : []);
+    protected override IReadOnlyList<AreaAction>? CardActions(DiagnosticStatus status) =>
+        Actions(status, status == DiagnosticStatus.Warning ? _images ??= FindImages() : []);
+
+    private IReadOnlyList<string>? _images;
+
+    /// <summary>Title of the row that says what to do when no Windows image is available to repair from.</summary>
+    public const string NoImageRowTitle = "Repair from a Windows image";
+    /// <summary>
+    /// Shown on a corrupt store when no Windows image is on this PC's drives: Repair from Windows Update fails with 0x800F0915 when Windows
+    /// Update lacks the files, and the only other source is an image, so say how to get the repair-from-image button.
+    /// </summary>
+    public const string NoImageRowText = "No Windows image (install.wim or install.esd) was found on this PC's drives. If Repair from Windows Update fails "
+        + "because the repair files are missing (0x800F0915), mount a Windows ISO of the same version and edition as this PC, "
+        + "then run this check again to get a Repair from image button.";
+
+    protected override void AddStatusRows(List<AreaRow> rows, DiagnosticStatus status)
+    {
+        _images = null;
+        if (status != DiagnosticStatus.Warning) return;
+        _images = FindImages();
+        if (!_images.Any(WindowsRepair.IsImagePath)) rows.Add(new(AreaLevel.Neutral, [NoImageRowTitle, NoImageRowText]));
+    }
 
     public static IReadOnlyList<AreaAction>? Actions(DiagnosticStatus status, IReadOnlyList<string> images)
     {

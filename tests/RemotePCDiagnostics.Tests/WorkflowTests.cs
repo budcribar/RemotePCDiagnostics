@@ -1190,9 +1190,10 @@ public class WorkflowTests
         await RunWorkflow(flow, sys);
         var dism = flow.State.RepairFindings.Single(x => x.Id == WindowsRepair.DismId);
         Assert.Equal(DiagnosticStatus.Error, dism.Level);
-        Assert.Contains("0x800f081f", dism.Summary);
+        Assert.Contains("0x800F081F", dism.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Next step", dism.Summary);
         Assert.Contains(dism.Details, d => d.Label == "DISM log excerpt");
         Assert.Equal(DiagnosticStatus.Error, flow.State.RepairFindings.Single(x => x.Id == WindowsRepair.SfcId).Level);
-        Assert.Contains("0x800f081f", sys.Report);
+        Assert.Contains("0x800F081F", sys.Report, StringComparison.OrdinalIgnoreCase);
     }
 }
