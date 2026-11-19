@@ -86,11 +86,14 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
         _ => ""
     });
 
-    private static string? BugCheckCode(WinEvent e)
+    private static string? BugCheckCode(WinEvent e) => BugCheckValue(e) is { } code ? StopCode(code) : null;
+
+    /// <summary>The stop code a blue screen event records, or null.</summary>
+    public static uint? BugCheckValue(WinEvent e)
     {
         var match = Regex.Match(e.DataAt(0, "param1") + " " + e.Message, @"\b0x([0-9a-fA-F]{1,8})\b");
         return match.Success && uint.TryParse(match.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var code)
-            ? StopCode(code) : null;
+            ? code : null;
     }
 
     private static bool SameDump(MinidumpFile dump, string path) =>

@@ -151,7 +151,7 @@ the About page switches each one.
 | Temperatures & fans (`Sensors`) | `sensors.read` | Every temperature and fan reading (LibreHardwareMonitor in the app) |
 | Drive health & free space (`DriveHealth`) | `storage.drives`, `storage.retrims`, `osquery.select` | The drive health script's output, the last retrim per drive, `disk_info` |
 | Services (`Services`) | `osquery.select` | The `services` statement, with every service's details |
-| Crashes & unexpected restarts (`Crashes`) | `eventlog.query`, `crashes.minidumps`, `events.reviewed` | Application and System log events, the minidump list, the reviewed events |
+| Crashes & unexpected restarts (`Crashes`) | `eventlog.query`, `crashes.minidumps`, `crashes.livekernelreports`, `osquery.select`, `events.reviewed` | Application and System log events, the minidump list, the graphics live kernel dumps, the Display class `drivers` statement, the reviewed events |
 | Windows error log (`EventLog`) | `eventlog.query`, `events.reviewed` | Application and System log events, the reviewed events |
 
 How it works:
