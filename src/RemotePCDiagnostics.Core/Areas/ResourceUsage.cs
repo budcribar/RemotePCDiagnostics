@@ -2,8 +2,11 @@ using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
-/// <summary>One process row from osquery <c>processes</c>.</summary>
-public sealed record ProcessResourceRow(string Name, int Pid, long ResidentBytes, long CpuTimeMs, long DiskBytes)
+/// <summary>
+/// One process row from osquery <c>processes</c>. <see cref="ResidentBytes"/> is the working set, <see cref="PrivateBytes"/> the
+/// private (committed) memory, and <see cref="StartTime"/> the start time in Unix seconds (0 when not reported).
+/// </summary>
+public sealed record ProcessResourceRow(string Name, int Pid, long ResidentBytes, long CpuTimeMs, long DiskBytes, int ParentPid = 0, long StartTime = 0, long PrivateBytes = 0)
 {
     public static ProcessResourceRow FromRow(IReadOnlyDictionary<string, string> r)
     {
@@ -11,7 +14,8 @@ public sealed record ProcessResourceRow(string Name, int Pid, long ResidentBytes
         var sys = Math.Max(0, r.Long("system_time") ?? 0);
         var read = Math.Max(0, r.Long("disk_bytes_read") ?? 0);
         var write = Math.Max(0, r.Long("disk_bytes_written") ?? 0);
-        return new(r.Str("name"), r.Int("pid") ?? 0, Math.Max(0, r.Long("resident_size") ?? 0), user + sys, read + write);
+        return new(r.Str("name"), r.Int("pid") ?? 0, Math.Max(0, r.Long("resident_size") ?? 0), user + sys, read + write,
+            ParentPid: r.Int("parent") ?? 0, StartTime: Math.Max(0, r.Long("start_time") ?? 0), PrivateBytes: Math.Max(0, r.Long("total_size") ?? 0));
     }
 }
 
@@ -34,7 +38,7 @@ public sealed record SystemUptimeInfo(long TotalSeconds, int Days, int Hours, in
 public static class ResourceUsage
 {
     public const string UptimeSql = "SELECT days, hours, minutes, total_seconds FROM uptime;";
-    public const string ProcessesSql = "SELECT pid, name, resident_size, user_time, system_time, disk_bytes_read, disk_bytes_written FROM processes WHERE pid > 4;";
+    public const string ProcessesSql = "SELECT pid, parent, name, start_time, resident_size, total_size, user_time, system_time, disk_bytes_read, disk_bytes_written FROM processes WHERE pid > 4;";
 
     public static List<ProcessGroupUsage> GroupProcesses(IEnumerable<ProcessResourceRow> rows) =>
         rows.Where(p => p.Name.Length > 0 && !p.Name.Equals("[System Process]", StringComparison.OrdinalIgnoreCase) && !p.Name.Equals("System", StringComparison.OrdinalIgnoreCase) && !p.Name.Equals("svchost", StringComparison.OrdinalIgnoreCase) && !p.Name.Equals("svchost.exe", StringComparison.OrdinalIgnoreCase))
