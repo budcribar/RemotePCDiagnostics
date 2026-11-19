@@ -1,5 +1,5 @@
-// Remote PC Diagnostics agent <-> relay (RemoteWebViewService) <-> admin site.
-// Owned by budcribar/RemoteBlazorWebView (src/Protos/agent.proto); copied verbatim into RemotePCDiagnostics (agent) and RemoteWebViewAdmin.
+// Agent <-> relay (RemoteWebViewService) <-> admin site.
+// Owned by budcribar/RemoteBlazorWebView (src/Protos/agent.proto); agent and admin-site projects copy it verbatim.
 syntax = "proto3";
 
 option csharp_namespace = "PeakSWC.RemoteWebView.Agent";
@@ -81,6 +81,7 @@ message HubCommand {
   oneof body {
     LaunchCommand launch = 1;
     CancelCommand cancel = 2;
+    ReleaseAvailableCommand release_available = 3;
   }
 }
 
@@ -90,11 +91,18 @@ message LaunchCommand {
   string server_url = 3;     // relay base address the app connects to (-u=)
   string requester = 4;     // shown in the consent prompt
   bool require_consent = 5;  // the agent asks anyway when its own ceiling is CONSENT_ALWAYS_ASK
-  string group = 6;          // shop group slug (-g=) when the agent is enrolled under a multi-tenant shop
+  string group = 6;          // group slug (-g=) from the account host, else empty
 }
 
 message CancelCommand {
   string request_id = 1;
+}
+
+// Version-only hint pushed to connected agents when a newer app release is published.
+// Agents still download exclusively from their own trusted release feed and verified repository URLs.
+message ReleaseAvailableCommand {
+  string stable_version = 1;
+  string prerelease_version = 2;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -107,6 +115,7 @@ service AgentAdmin {
   rpc WatchLaunch(WatchLaunchRequest) returns (stream LaunchProgress); // replays the latest stage first
   rpc CancelLaunch(CancelCommand) returns (google.protobuf.Empty);
   rpc EndSession(EndSessionRequest) returns (EndSessionResponse);      // stops the app the agent started on that computer
+  rpc PublishRelease(ReleaseAvailableCommand) returns (google.protobuf.Empty); // notifies connected agents of new release versions
 }
 
 message AgentInfo {
@@ -123,7 +132,7 @@ message AgentInfo {
   bool session_running = 11;
   string session_id = 12;
   string ip_address = 13;
-  string group = 14;         // shop group slug this agent belongs to, if enrolled under a tenant
+  string group = 14;         // group slug owning this agent, empty for unscoped agents
 }
 
 message AgentList {

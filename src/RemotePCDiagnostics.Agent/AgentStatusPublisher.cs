@@ -9,12 +9,16 @@ namespace RemotePCDiagnostics.Agent;
 internal sealed class AgentStatusPublisher
 {
     private readonly object _gate = new();
+    private bool _connected;
     private string? _group;
+    private string? _latestStable;
+    private string? _latestPrerelease;
 
     public void Publish(bool connected, string? group)
     {
         lock (_gate)
         {
+            _connected = connected;
             var normalized = AgentLayout.NormalizeShopGroup(group);
             if (normalized is not null)
                 _group = normalized;
@@ -24,15 +28,34 @@ internal sealed class AgentStatusPublisher
                 _group = AgentLayout.NormalizeShopGroup(existing?.Group);
             }
 
-            var status = new AgentLinkStatus
-            {
-                Connected = connected,
-                UpdatedUtc = DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
-                Group = _group ?? "",
-            };
-            try { AgentPaths.WriteReadableStatus(status); }
-            catch { /* A badge that stays stale is safer than crashing the service. */ }
+            WriteLocked();
         }
+    }
+
+    public void PublishRelease(string? stableVersion, string? prereleaseVersion)
+    {
+        lock (_gate)
+        {
+            if (!string.IsNullOrWhiteSpace(stableVersion))
+                _latestStable = stableVersion.Trim();
+            if (!string.IsNullOrWhiteSpace(prereleaseVersion))
+                _latestPrerelease = prereleaseVersion.Trim();
+            WriteLocked();
+        }
+    }
+
+    private void WriteLocked()
+    {
+        var status = new AgentLinkStatus
+        {
+            Connected = _connected,
+            UpdatedUtc = DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+            Group = _group ?? "",
+            LatestStableVersion = _latestStable ?? "",
+            LatestPrereleaseVersion = _latestPrerelease ?? "",
+        };
+        try { AgentPaths.WriteReadableStatus(status); }
+        catch { /* A badge that stays stale is safer than crashing the service. */ }
     }
 
     private static string? ReadQuiet(string path)

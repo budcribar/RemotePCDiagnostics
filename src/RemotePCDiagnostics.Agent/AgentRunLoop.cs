@@ -16,6 +16,7 @@ internal static class AgentRunLoop
         {
             Log = log,
             LinkChanged = (connected, group) => publisher.Publish(connected, group),
+            ReleaseAnnounced = (stable, prerelease) => publisher.PublishRelease(stable, prerelease),
         });
         var watch = DesktopInstallWatch.RunAsync(linked.Token, log, () =>
         {

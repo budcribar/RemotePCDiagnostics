@@ -42,6 +42,10 @@ public sealed class AgentSessionOptions
     /// Called from the connection tasks; must not throw (exceptions are ignored).
     /// </summary>
     public Action<bool, string?>? LinkChanged { get; init; }
+    /// <summary>
+    /// Relay pushed a new RPCD release version hint (stable, prerelease). Must not throw.
+    /// </summary>
+    public Action<string?, string?>? ReleaseAnnounced { get; init; }
 }
 
 /// <summary>
@@ -329,6 +333,16 @@ public sealed class AgentHubWorker(
 
                     case HubCommand.BodyOneofCase.Cancel:
                         HandleCancelCommand(command.Cancel);
+                        break;
+
+                    case HubCommand.BodyOneofCase.ReleaseAvailable:
+                        try
+                        {
+                            _options.ReleaseAnnounced?.Invoke(
+                                command.ReleaseAvailable.StableVersion,
+                                command.ReleaseAvailable.PrereleaseVersion);
+                        }
+                        catch { }
                         break;
                 }
             }

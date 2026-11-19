@@ -19,10 +19,16 @@ public sealed record AgentModeSignals(
     bool AgentInstalled,
     bool LinkUp,
     DateTimeOffset? LinkUpdatedUtc,
-    string? ShopGroup);
+    string? ShopGroup,
+    string? LatestStableVersion = null,
+    string? LatestPrereleaseVersion = null);
 
 /// <summary>What the top-bar badge shows. Session Local / N Remote Users is a separate badge.</summary>
-public sealed record AgentModeSnapshot(AgentModeKind Kind, string? ShopGroup)
+public sealed record AgentModeSnapshot(
+    AgentModeKind Kind,
+    string? ShopGroup,
+    string? LatestStableVersion = null,
+    string? LatestPrereleaseVersion = null)
 {
     public static AgentModeSnapshot LocalOnly { get; } = new(AgentModeKind.LocalOnly, null);
 
@@ -67,11 +73,13 @@ public static class AgentMode
     public static AgentModeSnapshot From(AgentModeSignals signals, DateTimeOffset utcNow)
     {
         var group = AgentLayout.NormalizeShopGroup(signals.ShopGroup);
+        var stable = string.IsNullOrWhiteSpace(signals.LatestStableVersion) ? null : signals.LatestStableVersion.Trim();
+        var prerelease = string.IsNullOrWhiteSpace(signals.LatestPrereleaseVersion) ? null : signals.LatestPrereleaseVersion.Trim();
         var fresh = signals.LinkUp && signals.LinkUpdatedUtc is { } at && IsFresh(at, utcNow);
         if (fresh)
-            return new AgentModeSnapshot(AgentModeKind.Connected, group);
+            return new AgentModeSnapshot(AgentModeKind.Connected, group, stable, prerelease);
         if (signals.AgentInstalled)
-            return new AgentModeSnapshot(AgentModeKind.InstalledNotConnected, null);
+            return new AgentModeSnapshot(AgentModeKind.InstalledNotConnected, null, stable, prerelease);
         return AgentModeSnapshot.LocalOnly;
     }
 }
@@ -85,6 +93,8 @@ public sealed class AgentLinkStatus
     [JsonPropertyName("connected")] public bool Connected { get; set; }
     [JsonPropertyName("updatedUtc")] public string UpdatedUtc { get; set; } = "";
     [JsonPropertyName("group")] public string Group { get; set; } = "";
+    [JsonPropertyName("latestStableVersion")] public string LatestStableVersion { get; set; } = "";
+    [JsonPropertyName("latestPrereleaseVersion")] public string LatestPrereleaseVersion { get; set; } = "";
 
     [JsonIgnore]
     public DateTimeOffset? Updated =>
@@ -166,7 +176,15 @@ public sealed class AgentModeReader
         }
 
         var status = ReadStatus();
-        return AgentMode.From(new AgentModeSignals(_installed, status?.Connected == true, status?.Updated, status?.Group), utcNow);
+        return AgentMode.From(
+            new AgentModeSignals(
+                _installed,
+                status?.Connected == true,
+                status?.Updated,
+                status?.Group,
+                status?.LatestStableVersion,
+                status?.LatestPrereleaseVersion),
+            utcNow);
     }
 
     private bool SafeService()

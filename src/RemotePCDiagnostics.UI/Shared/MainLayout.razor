@@ -374,6 +374,7 @@
     }
 
     private CancellationTokenSource? _updatePollCts;
+    private string? _lastAnnouncedUpdateVersion;
 
     private void TriggerUpdateCheckIfEligible()
     {
@@ -382,9 +383,19 @@
         if (Session.Mode != SessionMode.Remote && !IsAgentConnected)
             return;
 
+        var channel = AppVersionComparer.DefaultChannelFor(AppBuildInfo.Version);
+        var announced = channel == AppUpdateChannel.Prerelease
+            ? AgentLink.Current.LatestPrereleaseVersion
+            : AgentLink.Current.LatestStableVersion;
+        var force = !string.IsNullOrWhiteSpace(announced)
+            && !string.Equals(announced, _lastAnnouncedUpdateVersion, StringComparison.OrdinalIgnoreCase)
+            && AppVersionComparer.IsNewer(announced, AppBuildInfo.Version) == true;
+        if (force)
+            _lastAnnouncedUpdateVersion = announced;
+
         _ = Task.Run(async () =>
         {
-            try { await updater.CheckForUpdateAsync(); }
+            try { await updater.CheckForUpdateAsync(force: force); }
             catch { }
         });
     }
