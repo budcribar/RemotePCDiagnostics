@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
@@ -44,12 +43,16 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         return Build(wifi, wlanOk, ipSnap);
     }
 
-    public static AreaReport Build(WifiInterfaceInfo? wifi, bool wlanOk, IpConfigSnapshot? ipSnap, DnsComparison? dns = null)
+    /// <param name="connectedAdapters">
+    /// How many adapters Windows' adapter list (osquery) reports as connected, when known. An empty IP snapshot alongside a
+    /// connected adapter means the IP read failed or caught the stack mid-change, not that the PC is offline.
+    /// </param>
+    public static AreaReport Build(WifiInterfaceInfo? wifi, bool wlanOk, IpConfigSnapshot? ipSnap, DnsComparison? dns = null, int connectedAdapters = 0)
     {
         if (!wlanOk && ipSnap is null)
             return AreaReport.Failed("Couldn't read Wi-Fi and IP network configuration on this PC.");
 
-        var cards = new List<AreaCard> { BuildWifiCard(wifi, wlanOk), BuildIpDnsCard(ipSnap, dns) };
+        var cards = new List<AreaCard> { BuildWifiCard(wifi, wlanOk), BuildIpDnsCard(ipSnap, dns, connectedAdapters) };
         string summary;
         if (wifi is { Connected: true })
         {
@@ -61,6 +64,10 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         {
             var primary = ipSnap.Adapters.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.Gateway)) ?? ipSnap.Adapters[0];
             summary = $"Active: {primary.Alias} ({(string.IsNullOrWhiteSpace(primary.IPv4) ? "no IPv4" : primary.IPv4)})";
+        }
+        else if (connectedAdapters > 0)
+        {
+            summary = "Connected, but IP details couldn't be read";
         }
         else
         {
@@ -128,7 +135,7 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
     public static ActiveAdapterIp? PrimaryAdapter(IpConfigSnapshot snap) =>
         snap.Adapters.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.Gateway)) ?? snap.Adapters.FirstOrDefault();
 
-    private static AreaCard BuildIpDnsCard(IpConfigSnapshot? snap, DnsComparison? dns)
+    private static AreaCard BuildIpDnsCard(IpConfigSnapshot? snap, DnsComparison? dns, int connectedAdapters)
     {
         if (snap is null)
             return AreaCard.Failed("ipdns", "IP, gateway, DNS & proxy", "Couldn't read IP and DNS configuration.");
@@ -143,7 +150,13 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         var level = AreaLevel.Ok;
         string headline;
         string meta;
-        if (snap.Adapters.Count == 0)
+        if (snap.Adapters.Count == 0 && connectedAdapters > 0)
+        {
+            level = AreaLevel.Warning;
+            headline = "IP details couldn't be read";
+            meta = $"Windows reports {Plural(connectedAdapters, "adapter")} connected but returned no IP configuration. Run the check again.";
+        }
+        else if (snap.Adapters.Count == 0)
         {
             level = AreaLevel.Warning;
             headline = "No active IP configuration";
@@ -202,7 +215,7 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
 
         return new("ipdns", "IP, gateway, DNS & proxy", level, headline, meta,
             ["Interface", "IPv4 address", "Gateway", "DNS servers", "Adapter"], rows,
-            EmptyText: snap.Adapters.Count == 0 ? "No active IP configurations." : null,
+            EmptyText: snap.Adapters.Count == 0 ? (connectedAdapters > 0 ? "Windows returned no IP configuration for the connected adapter." : "No active IP configurations.") : null,
             Note: noteParts.Count > 0 ? string.Join(" ", noteParts) : null,
             Actions: cardActions);
     }
@@ -289,9 +302,7 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
         int? sigPct = null;
         if (fields.TryGetValue("Signal", out var sigRaw))
         {
-            var m = Regex.Match(sigRaw, @"(\d+)\s*%");
-            if (m.Success && int.TryParse(m.Groups[1].Value, out var parsed))
-                sigPct = Math.Clamp(parsed, 0, 100);
+            sigPct = ParsePercent(sigRaw);
         }
 
         var connected = string.Equals(state, "connected", StringComparison.OrdinalIgnoreCase);
@@ -307,6 +318,17 @@ public sealed class WifiConfigModule(SystemCommandRunner commands) : AreaModuleB
             rx ?? "",
             tx ?? "",
             sigPct);
+    }
+
+    /// <summary>Reads the number in front of '%' ("69%", "69 %"); null when there is none.</summary>
+    public static int? ParsePercent(string text)
+    {
+        var pct = text.IndexOf('%');
+        if (pct < 0) return null;
+        var digits = text[..pct].TrimEnd();
+        var start = digits.Length;
+        while (start > 0 && char.IsAsciiDigit(digits[start - 1])) start--;
+        return start < digits.Length && int.TryParse(digits[start..], out var parsed) ? Math.Clamp(parsed, 0, 100) : null;
     }
 
     public static IpConfigSnapshot ParseIpSnapshot(string json)

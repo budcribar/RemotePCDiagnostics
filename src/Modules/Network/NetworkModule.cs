@@ -116,19 +116,17 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
             return baseReport;
 
         progress.ReportStep(2, total, "Checking Wi-Fi signal and IP configuration…");
-        var wlanRes = await commands.RunAsync(WifiConfigModule.Netsh, ["wlan", "show", "interfaces"], ct).ConfigureAwait(false);
+        var connectedAdapters = ConnectedCount(adapters);
+        var (wlanRes, ipSnap) = await ReadWifiAndIpAsync(commands, ct).ConfigureAwait(false);
+        if (connectedAdapters > 0 && ipSnap is not { Adapters.Count: > 0 })
+        {
+            // The adapter list says we're connected but the IP read came back empty: usually the network stack was mid-change
+            // (resume, roaming, adapter reset). Read once more before reporting it, so the check doesn't claim the PC is offline.
+            Log($"{Name}: {connectedAdapters} adapter(s) connected but no IP configuration was read; retrying in {IpConfigRetryDelay.TotalSeconds:0.#} s");
+            await Task.Delay(IpConfigRetryDelay, ct).ConfigureAwait(false);
+            (wlanRes, ipSnap) = await ReadWifiAndIpAsync(commands, ct).ConfigureAwait(false);
+        }
         var wlanOk = wlanRes is { ExitCode: 0 };
-        IpConfigSnapshot? ipSnap = null;
-        if (commands.IsScripted)
-        {
-            var ipRes = await commands.RunPowerShellAsync(WifiConfigModule.IpConfigScript, ct).ConfigureAwait(false);
-            if (ipRes is { ExitCode: 0 })
-                ipSnap = WifiConfigModule.ParseIpSnapshot(ipRes.StdOut);
-        }
-        else
-        {
-            ipSnap = Platform.NetworkInfoReader.ReadIpConfig();
-        }
         var ipOk = ipSnap is { Adapters.Count: > 0 };
         var gateway = ipSnap is null ? null : WifiConfigModule.PrimaryAdapter(ipSnap)?.Gateway;
         // Measure the current DNS against Cloudflare/Google (a few seconds; nothing changed) so switching is only suggested when it's faster.
@@ -144,13 +142,40 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
         var probes = NetworkDiagnostics.ProbeAsync(gateway, ct);
         await Task.WhenAll(history, probes).ConfigureAwait(false);
         var wifiRep = wlanOk || ipOk ? WifiConfigModule.Build(
-            wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null, wlanOk, ipSnap, dns) : null;
+            wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null, wlanOk, ipSnap, dns, connectedAdapters) : null;
         var combinedCards = (wifiRep?.Cards ?? []).Concat(baseReport.Cards)
             .Append(await history.ConfigureAwait(false)).Append(await probes.ConfigureAwait(false)).ToList();
         var combinedStatus = AreaReport.Worst(combinedCards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));
         var combinedSummary = wifiRep is null ? baseReport.Summary : $"{wifiRep.Summary} · {baseReport.Summary}";
         return new(combinedCards, combinedSummary, combinedStatus);
     }
+
+    /// <summary>Wait before re-reading IP configuration when it came back empty while an adapter is connected.</summary>
+    public static TimeSpan IpConfigRetryDelay { get; set; } = TimeSpan.FromSeconds(2);
+
+    private static async Task<(ProcessResult? Wlan, IpConfigSnapshot? Ip)> ReadWifiAndIpAsync(SystemCommandRunner commands, CancellationToken ct)
+    {
+        var wlanRes = await commands.RunAsync(WifiConfigModule.Netsh, ["wlan", "show", "interfaces"], ct).ConfigureAwait(false);
+        IpConfigSnapshot? ipSnap = null;
+        if (commands.IsScripted)
+        {
+            var ipRes = await commands.RunPowerShellAsync(WifiConfigModule.IpConfigScript, ct).ConfigureAwait(false);
+            if (ipRes is { ExitCode: 0 })
+                ipSnap = WifiConfigModule.ParseIpSnapshot(ipRes.StdOut);
+        }
+        else
+        {
+            ipSnap = Platform.NetworkInfoReader.ReadIpConfig();
+        }
+        return (wlanRes, ipSnap);
+    }
+
+    /// <summary>The adapters the report shows: real network cards when Windows says which are physical, else any with a MAC or link.</summary>
+    private static List<NetworkAdapter> Shown(IReadOnlyList<NetworkAdapter> all) =>
+        all.Any(a => a.Physical == true) ? all.Where(a => a.Physical == true).ToList() : all.Where(a => a.Mac.Length > 0 || a.IsConnected).ToList();
+
+    /// <summary>How many of the shown adapters are connected (the "N of M adapters connected" count).</summary>
+    public static int ConnectedCount(IReadOnlyList<NetworkAdapter> all) => Shown(all).Count(a => a.IsConnected);
 
     /// <summary>Fills blank counters from Get-NetAdapterStatistics rows (matched on adapter name = connection name).</summary>
     public static List<NetworkAdapter> MergeStatistics(IReadOnlyList<NetworkAdapter> adapters, IReadOnlyList<IReadOnlyDictionary<string, string>> stats)
@@ -168,7 +193,7 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
     public static AreaReport Build(IReadOnlyList<NetworkAdapter> all)
     {
         // Prefer real network cards; hide virtual/loopback adapters when Windows tells us which are physical.
-        var list = all.Any(a => a.Physical == true) ? all.Where(a => a.Physical == true).ToList() : all.Where(a => a.Mac.Length > 0 || a.IsConnected).ToList();
+        var list = Shown(all);
         if (list.Count == 0) return new([], "No network adapters were found.", DiagnosticStatus.Warning);
         list = list.OrderByDescending(a => a.IsConnected).ThenBy(a => a.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
 

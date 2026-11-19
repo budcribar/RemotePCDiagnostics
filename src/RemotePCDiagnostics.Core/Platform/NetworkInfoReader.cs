@@ -15,10 +15,14 @@ public static class NetworkInfoReader
     {
         var adapters = new List<ActiveAdapterIp>();
 
-        try
+        NetworkInterface[] ifaces;
+        try { ifaces = NetworkInterface.GetAllNetworkInterfaces(); }
+        catch { ifaces = []; }
+
+        foreach (var iface in ifaces)
         {
-            var ifaces = NetworkInterface.GetAllNetworkInterfaces();
-            foreach (var iface in ifaces)
+            // One interface that can't be read (a virtual adapter going away, say) must not drop the others.
+            try
             {
                 if (iface.OperationalStatus != OperationalStatus.Up)
                     continue;
@@ -63,9 +67,9 @@ public static class NetworkInfoReader
                     Dns: dnsStr,
                     DnsManual: dnsManual));
             }
-        }
-        catch
-        {
+            catch
+            {
+            }
         }
 
         var (proxyEnabled, proxyServer) = ReadProxySettings();
