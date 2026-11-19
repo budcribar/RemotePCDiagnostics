@@ -141,6 +141,20 @@ public class GraphicsDriverCrashesTests
     }
 
     [Fact]
+    public void The_card_offers_the_GPU_stress_test_unless_a_driver_update_started_the_resets()
+    {
+        Assert.Null(GraphicsDriverCrashes.Build([], [], [], [Nvidia], Now).RunCheck);
+
+        var bsod = GraphicsDriverCrashes.Build(Events(BugCheck(Now.AddDays(-10), "0x00000116")), [], [], [Nvidia], Now);
+        Assert.Equal(new AreaCheckLink(ModuleSlugs.GpuStress, "Run GPU stress test"), bsod.RunCheck);
+        var exported = AreaReportExport.ToJson(new AreaReport([bsod], "x", DiagnosticStatus.Error));
+        Assert.Contains("\"runCheck\":{\"checkId\":\"GpuStress\",\"buttonText\":\"Run GPU stress test\"}", exported);
+
+        var afterUpdate = GraphicsDriverCrashes.Build(Events(Tdr(Now.AddDays(-5))), [], Installs(Install(Now.AddDays(-6), "32.0.15.6094")), [Nvidia], Now);
+        Assert.Null(afterUpdate.RunCheck);
+    }
+
+    [Fact]
     public void The_queries_fit_the_host_query_limits() =>
         Assert.All([GraphicsDriverCrashes.SystemQuery, GraphicsDriverCrashes.InstallQuery, GraphicsDriverCrashes.ReportQuery],
             q => Assert.InRange(q.Length, 1, HostCapabilities.MaxXPathLength));

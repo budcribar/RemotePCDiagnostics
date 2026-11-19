@@ -51,6 +51,10 @@ public enum RemediationKind
 /// <summary>A one-click remediation button attached to an <see cref="AreaCard"/> or <see cref="AreaRow"/>.</summary>
 public sealed record AreaAction(RemediationKind Kind, string ButtonText, string Target = "", string TargetLabel = "", string? CurrentSetting = null);
 
+/// <summary>A button on an <see cref="AreaCard"/> that runs another check (a stress test, say) as the suggested next step. Unlike an
+/// <see cref="AreaAction"/> it changes nothing on the PC; it is run like Run just this.</summary>
+public sealed record AreaCheckLink(string CheckId, string ButtonText);
+
 /// <summary>One drawer table row; <see cref="Values"/> line up with <see cref="AreaCard.Columns"/>. All text is end-user friendly.</summary>
 public sealed record AreaRow(
     AreaLevel Level,
@@ -74,6 +78,9 @@ public sealed record AreaCard(
     public int? WindowDays { get; init; }
     public int? RecentEventCount { get; init; }
     public int? RecentWindowDays { get; init; }
+
+    /// <summary>The check the card suggests running next, shown as a button on the card.</summary>
+    public AreaCheckLink? RunCheck { get; init; }
 
     /// <summary>For a card about storage volumes: their capacity, free and used space in bytes, added up. The page publishes them
     /// for browser agents as numbers, so nothing has to be read back out of the formatted text.</summary>

@@ -2,6 +2,7 @@
 @inherits StoreAwareComponent
 @inject AppServices App
 @inject Microsoft.JSInterop.IJSRuntime ClipboardJs
+@inject NavigationManager Nav
 @using Microsoft.JSInterop
 @* Generic card + drill-down page for area modules (drive health, services, programs, network, events, crashes, and new checks). *@
 @{
@@ -75,6 +76,14 @@ else
                          data-recent-event-count="@c.RecentEventCount" data-recent-window-days="@c.RecentWindowDays"
                          data-unit="@(c.EventCount.HasValue ? "count" : null)" data-value="@c.EventCount">@c.Headline</div>
                     <CardList Text="@c.Meta" />
+                    @if (c.RunCheck is { } link && Diagnostics.Modules.FirstOrDefault(x => x.Name == link.CheckId) is { } next)
+                    {
+                        var nextBusy = Store.Get(next.Name).Status == DiagnosticStatus.Running;
+                        <div class="svc-actions" style="margin-top:0.5rem" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">
+                            <button class="btn-small" data-testid="card-run-check-@c.Id" data-action="run-check" data-card-id="@c.Id" data-check-id="@next.Name"
+                                    disabled="@nextBusy" @onclick="() => RunNext(next)">@(nextBusy ? "Running…" : link.ButtonText)</button>
+                        </div>
+                    }
                     @if (remActions is not null && c.Actions is { Count: > 0 })
                     {
                         <div class="svc-actions" style="margin-top:0.5rem" @onclick:stopPropagation="true" @onkeydown="DrawerKey" @onkeydown:stopPropagation="true">
@@ -336,6 +345,13 @@ else
         _copilotGroupStatus = null;
         _expanded = null;
         _expandedKey = null;
+    }
+
+    /// <summary>A card's suggested next check: start it and go where its progress shows (stress tests on the Stress tests page).</summary>
+    private void RunNext(IDiagnosticModule next)
+    {
+        _ = Diagnostics.RunAsync(next.Name);
+        if (Diagnostics.Catalog.Get(next.Id)?.Kind == ModuleKind.StressTest) Nav.NavigateTo("stress");
     }
 
     private async Task SetReview(string module, IReadOnlyList<string> keys, bool reviewed)

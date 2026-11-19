@@ -248,9 +248,14 @@ public static class GraphicsDriverCrashes
 
         var currentText = current.Count == 0 ? null : $"Current graphics driver: {string.Join("; ", current.Select(g => g.Label))}.";
         var note = string.Join(" ", new[] { NextStep(incidents, installs, level), currentText }.OfType<string>());
+        // The GPU stress test is the next step unless a driver update started the resets (then roll it back first).
+        var stress = incidents.Count > 0 && StartedAfter(incidents, installs) is null;
         return new AreaCard(CardId, Title, level, headline, meta, ["When", "What happened", "Driver at the time"], rows,
             EmptyText: $"No graphics driver resets or graphics blue screens in the last {Days} days.", Note: note)
-            { EventCount = incidents.Count, WindowDays = Days, RecentEventCount = recent, RecentWindowDays = RecentDays };
+        {
+            EventCount = incidents.Count, WindowDays = Days, RecentEventCount = recent, RecentWindowDays = RecentDays,
+            RunCheck = stress ? new AreaCheckLink(ModuleSlugs.GpuStress, "Run GPU stress test") : null
+        };
     }
 
     /// <summary>The install the resets started after: the latest one before the first reset, at most <see cref="UpdateLeadDays"/> days before it.</summary>
