@@ -10,9 +10,12 @@ namespace RemotePCDiagnostics.Agent;
 /// </summary>
 internal static class DesktopInstallProbe
 {
+    /// <summary>HKLM key with one subkey per installed package full name; each has a <c>PackageRootFolder</c> value.</summary>
+    internal const string RepositoryPackagesKey = @"SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
+
     private static readonly string[] PackageKeys =
     [
-        @"SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages",
+        RepositoryPackagesKey,
         @"SOFTWARE\Microsoft\Windows\CurrentVersion\Appx\AppxAllUserStore\Applications",
     ];
 

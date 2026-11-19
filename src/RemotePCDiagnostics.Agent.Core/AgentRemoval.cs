@@ -181,6 +181,26 @@ public static class AgentRemoval
         return name.EndsWith(".RemotePCDiagnostics", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// The newest desktop-app Store package among package full names (<c>Name_1.2.0.0_x64__publisherId</c>), ordered by the
+    /// package version. An updated package can leave the old version listed for a while. Null when none is the desktop app.
+    /// </summary>
+    public static string? NewestDesktopMsixPackage(IEnumerable<string> packageFullNames)
+    {
+        string? newest = null;
+        Version? newestVersion = null;
+        foreach (var name in packageFullNames)
+        {
+            if (!IsDesktopMsixPackage(name)) continue;
+            var parts = name.Trim().Split('_');
+            if (parts.Length < 2 || !Version.TryParse(parts[1], out var version)) continue;
+            if (newestVersion is not null && version <= newestVersion) continue;
+            newest = name.Trim();
+            newestVersion = version;
+        }
+        return newest;
+    }
+
     public static bool IsDesktopUninstallRegistryKey(string? keyName)
     {
         if (string.IsNullOrWhiteSpace(keyName)) return false;

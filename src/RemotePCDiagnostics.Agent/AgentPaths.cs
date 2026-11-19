@@ -247,7 +247,9 @@ public static class AgentPaths
         if (!string.IsNullOrEmpty(cached))
             return cached;
 
-        var installed = TryFindLocalInstalledHostExe();
+        // The Store package is checked last: the agent does not launch it, but its Host is the same CI build as the Setup exe's,
+        // so its ProductVersion (1.2.0-ci.<run>.<attempt>+<commit>) lets Admin tell a Store PC about a newer build.
+        var installed = TryFindLocalInstalledHostExe() ?? TryFindStoreHostExe();
         if (installed is not null)
         {
             try
@@ -337,6 +339,32 @@ public static class AgentPaths
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// <c>RemotePCDiagnostics.Host.exe</c> in the newest installed Store package (under <c>Program Files\WindowsApps</c>), found
+    /// through the package repository in HKLM. Null when the Store app is not installed or anything fails.
+    /// </summary>
+    public static string? TryFindStoreHostExe()
+    {
+        if (!OperatingSystem.IsWindows())
+            return null;
+        try
+        {
+            using var baseKey = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64);
+            using var packages = baseKey.OpenSubKey(DesktopInstallProbe.RepositoryPackagesKey);
+            if (packages is null || AgentRemoval.NewestDesktopMsixPackage(packages.GetSubKeyNames()) is not { } package)
+                return null;
+            using var key = packages.OpenSubKey(package);
+            if (key?.GetValue("PackageRootFolder") is not string root || string.IsNullOrWhiteSpace(root))
+                return null;
+            var exe = Path.Combine(root.Trim(), "RemotePCDiagnostics.Host.exe");
+            return File.Exists(exe) ? exe : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>

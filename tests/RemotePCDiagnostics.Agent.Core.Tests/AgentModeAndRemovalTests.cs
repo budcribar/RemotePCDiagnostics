@@ -327,6 +327,22 @@ public class AgentRemovalTests
         Assert.Equal(match, AgentRemoval.IsDesktopMsixPackage(package));
 
     [Fact]
+    public void The_newest_desktop_store_package_is_picked_by_package_version()
+    {
+        var packages = new[]
+        {
+            "PeakSoftwareConsultingLLC.RemotePCDiagnostics_1.2.0.0_x64__abc",
+            "PeakSoftwareConsultingLLC.RemotePCDiagnostics_1.10.0.0_x64__abc", // numeric order, not text order
+            "PeakSoftwareConsultingLLC.RemotePCDiagnostics.Agent_9.0.0.0_x64__abc",
+            "Contoso.OtherApp_20.0.0.0_x64__abc",
+            "PeakSoftwareConsultingLLC.RemotePCDiagnostics_notaversion_x64__abc",
+        };
+        Assert.Equal("PeakSoftwareConsultingLLC.RemotePCDiagnostics_1.10.0.0_x64__abc", AgentRemoval.NewestDesktopMsixPackage(packages));
+        Assert.Null(AgentRemoval.NewestDesktopMsixPackage(["Contoso.OtherApp_1.0.0.0_x64__abc"]));
+        Assert.Null(AgentRemoval.NewestDesktopMsixPackage([]));
+    }
+
+    [Fact]
     public void Inno_uninstall_key_is_not_the_agent_msi()
     {
         Assert.True(AgentRemoval.IsDesktopUninstallRegistryKey("{8F6D4A2E-5C91-4B73-9E18-3A7C2D9F41B0}_is1"));
