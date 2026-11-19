@@ -143,6 +143,52 @@ public class SecurityEssentialsTests
     }
 
     [Fact]
+    public void ParseProbe_reads_autorun_policies_and_drives()
+    {
+        var f = SecurityEssentialsModule.ParseProbe("AutoRun=\nAutoRunUser=149\nAutoRunLetters=8\nDrives=C:3,d:5,E:2,bad,F:x\n", null);
+        Assert.Null(f.AutoRunPolicy);
+        Assert.Equal(149, f.AutoRunUserPolicy);
+        Assert.Equal(8, f.AutoRunLetterPolicy);
+        Assert.Equal("C:3,D:5,E:2", string.Join(",", f.Drives.OrderBy(d => d.Key).Select(d => $"{d.Key}:{d.Value}")));
+    }
+
+    [Fact]
+    public void AutoRun_default_names_the_drive_types_and_letters()
+    {
+        var f = Hardened with { AutoRunPolicy = null, Drives = new Dictionary<char, int> { ['C'] = 3, ['D'] = 5, ['E'] = 2, ['Z'] = 4 } };
+        var card = Card(SecurityEssentialsModule.Build(f), "autorun");
+        Assert.Equal(AreaLevel.Warning, card.Level);
+        Assert.Equal("AutoRun is on for removable, CD/DVD, fixed and RAM drives", card.Headline);
+        Assert.Contains(card.Rows, r => r.Values[0] == "Removable drives (USB sticks, memory cards)" && r.Values[1] == "On (Windows default) · E:");
+        Assert.Contains(card.Rows, r => r.Values[0] == "CD/DVD drives" && r.Values[1] == "On (Windows default) · D:");
+        Assert.Contains(card.Rows, r => r.Values[0] == "RAM disks" && r.Values[1] == "On (Windows default)");
+        Assert.Contains(card.Rows, r => r.Values[0] == "Off for" && r.Values[1] == "network and unknown drives");
+        Assert.DoesNotContain(card.Rows, r => r.Values[0] == "Network drives");
+        Assert.Contains("AutoRun is on for removable, CD/DVD, fixed and RAM drives", SecurityEssentialsModule.Build(f).Summary);
+    }
+
+    [Fact]
+    public void AutoRun_policies_narrow_the_list()
+    {
+        // 0xDD: off for everything but CD/DVD (0x20 clear); NoDriveAutoRun 0x08 turns D: off by letter.
+        var drives = new Dictionary<char, int> { ['C'] = 3, ['D'] = 5, ['G'] = 5 };
+        var card = Card(SecurityEssentialsModule.Build(Hardened with { AutoRunPolicy = 0xDD, AutoRunLetterPolicy = 8, Drives = drives }), "autorun");
+        Assert.Equal("AutoRun is on for CD/DVD drives", card.Headline);
+        Assert.Contains(card.Rows, r => r.Values[0] == "CD/DVD drives" && r.Values[1] == "On · G:");
+        Assert.Contains(card.Rows, r => r.Values[0] == "Off by drive letter" && r.Values[1] == "D:");
+
+        // The user policy applies only when the machine policy isn't set.
+        var user = Card(SecurityEssentialsModule.Build(Hardened with { AutoRunPolicy = null, AutoRunUserPolicy = 0xFB }), "autorun");
+        Assert.Equal("AutoRun is on for removable drives", user.Headline);
+        Assert.Contains(user.Rows, r => r.Values[1] == "On (your user policy)");
+        Assert.Equal(AreaLevel.Ok, Card(SecurityEssentialsModule.Build(Hardened with { AutoRunUserPolicy = 0 }), "autorun").Level);
+
+        // Every letter turned off, or every type: AutoRun is off.
+        Assert.Equal("AutoRun is off", Card(SecurityEssentialsModule.Build(Hardened with { AutoRunPolicy = null, AutoRunLetterPolicy = (1L << 26) - 1 }), "autorun").Headline);
+        Assert.Equal("AutoRun is off", Card(SecurityEssentialsModule.Build(Hardened with { AutoRunPolicy = 0xFD }), "autorun").Headline);
+    }
+
+    [Fact]
     public void Is_a_security_check_in_run_all()
     {
         var d = new ModuleCatalog().Get(ModuleIds.SecurityEssentials)!;
