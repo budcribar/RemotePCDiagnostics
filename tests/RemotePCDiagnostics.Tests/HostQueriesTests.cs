@@ -209,7 +209,7 @@ public sealed class HostQueriesTests : IDisposable
     [InlineData("RemotePCDiagnostics.Modules.Sensors.dll", new[] { HostCapabilities.SensorsRead })]
     [InlineData("RemotePCDiagnostics.Modules.DriveHealth.dll", new[] { HostCapabilities.StorageDrives, HostCapabilities.StorageRetrims, HostCapabilities.OsquerySelect })]
     [InlineData("RemotePCDiagnostics.Modules.Services.dll", new[] { HostCapabilities.OsquerySelect })]
-    [InlineData("RemotePCDiagnostics.Modules.Crashes.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.Minidumps, HostCapabilities.EventReviews })]
+    [InlineData("RemotePCDiagnostics.Modules.Crashes.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.Minidumps, HostCapabilities.LiveKernelReports, HostCapabilities.OsquerySelect, HostCapabilities.EventReviews })]
     [InlineData("RemotePCDiagnostics.Modules.EventLog.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.EventReviews })]
     public void The_four_modules_run_in_user_mode_and_list_what_they_ask_for(string file, string[] capabilities)
     {

@@ -91,6 +91,13 @@ public sealed class WindowsEventLog(SystemCommandRunner commands, Plugins.IHostQ
                 data.Add(d.Value.Trim());
                 if (d.Attribute("Name")?.Value is { Length: > 0 } n) named[n] = d.Value.Trim();
             }
+            // Some providers (UserPnp driver installs, for one) write UserData instead: one element whose children are the fields.
+            if (data.Count == 0)
+                foreach (var d in El(e, "UserData")?.Elements().FirstOrDefault()?.Elements() ?? [])
+                {
+                    data.Add(d.Value.Trim());
+                    named[d.Name.LocalName] = d.Value.Trim();
+                }
             var ch = El(sys, "Channel")?.Value;
             list.Add(new WinEvent(time, !string.IsNullOrEmpty(ch) ? ch : channel, provider, id, level, CleanMessage(El(render, "Message")?.Value), data, named));
         }
