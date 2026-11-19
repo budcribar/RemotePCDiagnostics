@@ -90,6 +90,10 @@ public sealed record AreaReport(IReadOnlyList<AreaCard> Cards, string Summary, D
 {
     public static AreaReport Failed(string message) => new([], message, DiagnosticStatus.Error);
 
+    /// <summary>A scan stopped with <c>ICancellableScan.Cancel</c> before it finished: Cancelled, so History and the Checks screen don't
+    /// count it as a failure.</summary>
+    public static AreaReport ScanCancelled() => new([], "Scan cancelled before it finished", DiagnosticStatus.Warning, Cancelled: true);
+
     public static DiagnosticStatus Worst(IEnumerable<AreaLevel> levels) =>
         levels.DefaultIfEmpty(AreaLevel.Ok).Max() switch
         {
