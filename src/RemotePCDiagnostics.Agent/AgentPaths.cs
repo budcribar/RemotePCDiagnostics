@@ -147,13 +147,13 @@ public static class AgentPaths
         }
 
         var tempPath = path + ".tmp";
-        File.WriteAllText(tempPath, config.ToJson());
-
+        using (File.Create(tempPath)) { }
         if (OperatingSystem.IsWindows())
         {
             TryApplyAdminSystemOnlyFileAcl(tempPath);
         }
 
+        File.WriteAllText(tempPath, config.ToJson());
         File.Move(tempPath, path, overwrite: true);
 
         if (OperatingSystem.IsWindows())
@@ -309,9 +309,11 @@ public static class AgentPaths
 
     public static string? TryFindLocalInstalledHostExe()
     {
+#if DEBUG
         var overrideExe = Environment.GetEnvironmentVariable(HostExeEnvVar)?.Trim();
         if (!string.IsNullOrEmpty(overrideExe) && File.Exists(overrideExe))
             return Path.GetFullPath(overrideExe);
+#endif
 
         var candidates = new List<string>
         {
@@ -389,26 +391,25 @@ public static class AgentPaths
                 return (cachedExe, null);
         }
 
+        if (!ManifestSignature.IsKeyConfigured(ManifestKey.PublicKeyPem))
+            return (null, "Release manifest signing key is not configured; refusing unverified network download.");
+
         await reportStageAsync(PeakSWC.RemoteWebView.Agent.LaunchStage.StageVerifying, "Checking latest release manifest...", 0).ConfigureAwait(false);
 
         byte[] manifestBytes;
-        string signatureText = "";
+        string signatureText;
         try
         {
             manifestBytes = await FetchFollowingAllowedRedirectsAsync(http, new Uri(ReleaseUrls.ManifestUrl), ct).ConfigureAwait(false);
-            if (ManifestSignature.IsKeyConfigured(ManifestKey.PublicKeyPem))
-            {
-                var sigBytes = await FetchFollowingAllowedRedirectsAsync(http, new Uri(ReleaseUrls.SignatureUrl), ct).ConfigureAwait(false);
-                signatureText = System.Text.Encoding.UTF8.GetString(sigBytes);
-            }
+            var sigBytes = await FetchFollowingAllowedRedirectsAsync(http, new Uri(ReleaseUrls.SignatureUrl), ct).ConfigureAwait(false);
+            signatureText = System.Text.Encoding.UTF8.GetString(sigBytes);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return (null, $"Could not fetch release manifest: {ex.Message}");
         }
 
-        if (ManifestSignature.IsKeyConfigured(ManifestKey.PublicKeyPem)
-            && !ManifestSignature.Verify(manifestBytes, signatureText, ManifestKey.PublicKeyPem))
+        if (!ManifestSignature.Verify(manifestBytes, signatureText, ManifestKey.PublicKeyPem))
         {
             return (null, "Release manifest signature verification failed.");
         }

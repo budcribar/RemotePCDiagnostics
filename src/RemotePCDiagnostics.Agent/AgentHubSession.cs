@@ -62,7 +62,11 @@ internal sealed class WindowsAgentPlatform : IAgentPlatform, IDisposable
         Timeout = TimeSpan.FromMinutes(10),
     };
 
-    private readonly HttpClient _statusHttp = new()
+    private readonly HttpClient _statusHttp = new(new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+    })
     {
         Timeout = TimeSpan.FromSeconds(5),
     };
@@ -121,14 +125,45 @@ internal sealed class WindowsAgentPlatform : IAgentPlatform, IDisposable
     public (IAgentLaunchedProcess? Process, string? Error) StartHostProcess(string hostExePath, string fullCommandLine)
     {
         var workDir = Path.GetDirectoryName(hostExePath) ?? AppContext.BaseDirectory;
+        var pipeName = $"rpd-admin-{Guid.NewGuid():N}";
+        var cmdWithPipe = $"{fullCommandLine} {RemotePCDiagnostics.Core.Session.ElevationService.AdminPipeArgPrefix}{pipeName}";
+
+        // F7: Launch WPF + WebView2 Host un-elevated (asInvoker) and bridge allowlisted elevated repairs/updates over AdminPipeServer.
         var (proc, err) = Win32Session.StartInActiveUserSession(
             hostExePath,
-            fullCommandLine,
+            cmdWithPipe,
             workDir,
-            preferElevatedToken: true,
+            preferElevatedToken: false,
             createNoWindow: false);
 
-        return proc is null ? (null, err ?? "Failed to start Remote PC Diagnostics.") : (new SystemLaunchedProcess(proc), null);
+        if (proc is null)
+            return (null, err ?? "Failed to start Remote PC Diagnostics.");
+
+        var pipeCts = new CancellationTokenSource();
+        var log = RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(_ => { }).CreateLogger("AgentSessionPipe");
+        var serverOptions = new RemotePCDiagnostics.Core.Session.AdminPipeServerOptions
+        {
+            PipeName = pipeName,
+            ExpectedClientPid = proc.Id,
+            ExpectedClientExePath = hostExePath,
+            AllowedClientSid = Win32Session.GetActiveUserSid(),
+            ConnectTimeout = TimeSpan.FromSeconds(60),
+        };
+        var pipeServer = new RemotePCDiagnostics.Core.Session.AdminPipeServer(
+            serverOptions,
+            new RemotePCDiagnostics.Core.Osquery.SystemProcessLauncher(),
+            log: log,
+            selfUpdater: (channel, token) => AgentSelfUpdater.RunAsync(channel, log, token));
+
+        _ = Task.Run(async () =>
+        {
+            try { await pipeServer.RunSingleSessionAsync(pipeCts.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            catch { }
+            finally { pipeServer.Dispose(); }
+        });
+
+        return (new SystemLaunchedProcess(proc, pipeCts, pipeServer), null);
     }
 
     public async Task<bool?> CheckRelaySessionConnectedAsync(string statusUrl, CancellationToken ct)
@@ -163,7 +198,10 @@ internal sealed class WindowsAgentPlatform : IAgentPlatform, IDisposable
         _statusHttp.Dispose();
     }
 
-    private sealed class SystemLaunchedProcess(Process process) : IAgentLaunchedProcess
+    private sealed class SystemLaunchedProcess(
+        Process process,
+        CancellationTokenSource? pipeCts = null,
+        RemotePCDiagnostics.Core.Session.AdminPipeServer? pipeServer = null) : IAgentLaunchedProcess
     {
         public bool HasExited
         {
@@ -190,7 +228,13 @@ internal sealed class WindowsAgentPlatform : IAgentPlatform, IDisposable
             try { process.Kill(entireProcessTree: true); } catch { }
         }
 
-        public void Dispose() => process.Dispose();
+        public void Dispose()
+        {
+            try { pipeCts?.Cancel(); } catch { }
+            pipeCts?.Dispose();
+            try { pipeServer?.Dispose(); } catch { }
+            process.Dispose();
+        }
     }
 }
 
@@ -588,7 +632,7 @@ public sealed class AgentHubWorker(
             0,
             streamCts.Token).ConfigureAwait(false);
 
-        var validationError = LaunchRules.Validate(launch.SessionId, launch.ServerUrl, out var sessionGuid, out var serverUrl);
+        var validationError = LaunchRules.Validate(launch.SessionId, launch.ServerUrl, out var sessionGuid, out var serverUrl, config.Server);
         if (validationError is not null)
         {
             await ReportProgressSafeAsync(writeAsync, launch.RequestId, launch.SessionId, LaunchStage.StageFailed, validationError, 0, streamCts.Token).ConfigureAwait(false);

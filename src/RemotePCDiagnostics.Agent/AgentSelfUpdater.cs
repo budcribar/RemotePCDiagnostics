@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using Microsoft.Extensions.Logging;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Session;
@@ -9,7 +11,7 @@ namespace RemotePCDiagnostics.Agent;
 /// <summary>
 /// Performs zero-UAC elevated RPCD (and optional persistent Agent service) self-updates on behalf of
 /// <c>RemotePCDiagnostics.Host</c>. Only downloads from the trusted release feed and verifies SHA-256 checksums
-/// in an admin-writable <c>%ProgramData%</c> staging folder before launching Inno Setup silently.
+/// in an admin-only <c>%ProgramData%</c> staging folder before launching Inno Setup silently.
 /// </summary>
 internal static class AgentSelfUpdater
 {
@@ -19,10 +21,17 @@ internal static class AgentSelfUpdater
         CancellationToken ct)
     {
         var installed = AgentPaths.GetInstalledOrCachedAppVersion();
-        var feedUrl = AppUpdateInstaller.ResolveFeedUrl();
+#if DEBUG
+        var feedUrl = AppUpdateInstaller.ResolveFeedUrl(allowEnvOverride: true);
+#else
+        var feedUrl = AppUpdateInstaller.DefaultFeedUrl;
+#endif
         log.Info($"[agent-update] Checking {feedUrl} for channel={channel} (installed={installed}).");
 
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
+        using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
+        {
+            Timeout = TimeSpan.FromMinutes(3),
+        };
         var feed = await AppUpdateInstaller.FetchFeedAsync(http, feedUrl, ct).ConfigureAwait(false);
         var selected = channel == AppUpdateChannel.Prerelease ? feed?.Prerelease : feed?.Stable;
         if (selected is null || string.IsNullOrWhiteSpace(selected.InstallerUrl))
@@ -35,6 +44,16 @@ internal static class AgentSelfUpdater
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "RemotePCDiagnostics",
             "Updates");
+
+        try
+        {
+            PrepareSecuredStagingDirectory(stagingDir);
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"[agent-update] Could not secure staging directory: {ex.Message}");
+            return new AppUpdateResult(false, Error: "Could not prepare a secure update staging directory.");
+        }
 
         string installerPath;
         try
@@ -91,6 +110,9 @@ internal static class AgentSelfUpdater
 
             if (!string.IsNullOrWhiteSpace(msiPath))
             {
+                var msiexecPath = Path.Combine(Environment.SystemDirectory, "msiexec.exe");
+                if (!File.Exists(msiexecPath))
+                    msiexecPath = "msiexec.exe";
                 _ = Task.Run(async () =>
                 {
                     try
@@ -101,7 +123,7 @@ internal static class AgentSelfUpdater
                             log.Info($"[agent-update] Launching silent Agent MSI upgrade '{msiPath}'.");
                             Process.Start(new ProcessStartInfo
                             {
-                                FileName = "msiexec.exe",
+                                FileName = msiexecPath,
                                 Arguments = $"/i \"{msiPath}\" /qn /norestart",
                                 UseShellExecute = false,
                                 CreateNoWindow = true,
@@ -126,5 +148,26 @@ internal static class AgentSelfUpdater
             log.Warn($"[agent-update] Failed to launch installer: {ex.Message}");
             return new AppUpdateResult(false, Error: ex.Message);
         }
+    }
+
+    private static void PrepareSecuredStagingDirectory(string stagingDir)
+    {
+        var dirInfo = Directory.CreateDirectory(stagingDir);
+        if ((dirInfo.Attributes & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException("Staging directory must not be a symlink or junction.");
+
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        const InheritanceFlags all = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+
+        var security = new DirectorySecurity();
+        security.SetOwner(admins);
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
+        dirInfo.SetAccessControl(security);
     }
 }

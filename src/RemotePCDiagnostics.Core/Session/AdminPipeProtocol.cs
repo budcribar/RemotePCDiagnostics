@@ -47,17 +47,32 @@ public static class AdminCommandAllowlist
             ["netsh.exe"] = "netsh.exe",
             ["defrag.exe"] = "defrag.exe",
             ["powercfg.exe"] = "powercfg.exe",
-            ["sc.exe"] = "sc.exe",
             ["wevtutil.exe"] = "wevtutil.exe",
             ["pnputil.exe"] = "pnputil.exe",
             ["reg.exe"] = "reg.exe",
-            ["schtasks.exe"] = "schtasks.exe",
             ["shutdown.exe"] = "shutdown.exe",
             ["tpmtool.exe"] = "tpmtool.exe",
             ["dsregcmd.exe"] = "dsregcmd.exe",
             ["w32tm.exe"] = "w32tm.exe",
             ["powershell.exe"] = Path.Combine("WindowsPowerShell", "v1.0", "powershell.exe"),
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly string[] BlockedPowerShellPrimitives =
+    [
+        "Invoke-WebRequest",
+        "Invoke-RestMethod",
+        "Net.WebClient",
+        "DownloadString",
+        "DownloadFile",
+        "Start-BitsTransfer",
+        "New-LocalUser",
+        "Add-LocalGroupMember",
+        "net user",
+        "net localgroup",
+        "certutil",
+        "mshta",
+        "rundll32",
+    ];
 
     public static IReadOnlyCollection<string> AllowedExecutableNames => CanonicalRelativePaths.Keys;
 
@@ -100,6 +115,74 @@ public static class AdminCommandAllowlist
         }
 
         resolvedPath = canonicalFull;
+        return true;
+    }
+
+    /// <summary>
+    /// Enforces argument constraints on high-risk allowlisted tools (<c>reg.exe</c>, <c>powershell.exe</c>, <c>shutdown.exe</c>)
+    /// so an un-elevated caller cannot abuse them for arbitrary persistence, registry hijacking, or payload staging.
+    /// </summary>
+    public static bool TryValidateArguments(string? requestedFileName, IReadOnlyList<string>? arguments, out string? error)
+    {
+        error = null;
+        var leaf = Path.GetFileName(requestedFileName?.Trim() ?? "");
+        var args = arguments ?? [];
+
+        if (string.Equals(leaf, "reg.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Count < 2)
+            {
+                error = "reg.exe requires a subcommand and key path.";
+                return false;
+            }
+            var sub = args[0].Trim();
+            if (string.Equals(sub, "query", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if ((string.Equals(sub, "add", StringComparison.OrdinalIgnoreCase) || string.Equals(sub, "delete", StringComparison.OrdinalIgnoreCase))
+                && string.Equals(args[1].Trim(), @"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            error = $"reg.exe '{sub}' on '{args[1]}' is not permitted by the elevated repair policy.";
+            return false;
+        }
+
+        if (string.Equals(leaf, "shutdown.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            if (args.Count == 0 || args[0].Trim() is not ("/r" or "/g" or "/a" or "-r" or "-g" or "-a"))
+            {
+                error = "shutdown.exe is restricted to /r, /g, and /a.";
+                return false;
+            }
+            return true;
+        }
+
+        if (string.Equals(leaf, "powershell.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            // Require the exact SystemCommandRunner.PowerShellArgs shape:
+            // -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <script>
+            if (args.Count != 6
+                || !string.Equals(args[0], "-NoProfile", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(args[1], "-NonInteractive", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(args[2], "-ExecutionPolicy", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(args[3], "Bypass", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(args[4], "-Command", StringComparison.OrdinalIgnoreCase))
+            {
+                error = "powershell.exe must use the canonical -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <script> form.";
+                return false;
+            }
+
+            var script = args[5] ?? "";
+            foreach (var blocked in BlockedPowerShellPrimitives)
+            {
+                if (script.Contains(blocked, StringComparison.OrdinalIgnoreCase))
+                {
+                    error = $"PowerShell script contains blocked primitive '{blocked}'.";
+                    return false;
+                }
+            }
+            return true;
+        }
+
         return true;
     }
 }
@@ -500,6 +583,16 @@ public sealed class AdminPipeServer(
             }
 
             var args = request.Arguments ?? [];
+            if (!AdminCommandAllowlist.TryValidateArguments(request.FileName, args, out var argError))
+            {
+                return new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: false,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: -1,
+                    Error: argError ?? "Command arguments are not permitted by the elevated repair allowlist.");
+            }
             var timeout = TimeSpan.FromMilliseconds(Math.Clamp(request.TimeoutMs, 1_000, 3_600_000));
             try
             {

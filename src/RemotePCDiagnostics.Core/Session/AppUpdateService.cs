@@ -69,7 +69,11 @@ public static class AppVersionComparer
         @"\b(?<hash>[0-9a-fA-F]{64})\b",
         RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
 
-    private static readonly HashSet<string> TrustedDownloadHosts = new(StringComparer.OrdinalIgnoreCase)
+    public const string ReleaseDownloadPrefix = "https://github.com/budcribar/RemotePCDiagnostics/releases/download/";
+    private const string ReleasePathPrefix = "/budcribar/RemotePCDiagnostics/releases/";
+    private const int MaxRedirects = 5;
+
+    private static readonly HashSet<string> AllowedRedirectHosts = new(StringComparer.OrdinalIgnoreCase)
     {
         "github.com",
         "objects.githubusercontent.com",
@@ -99,11 +103,80 @@ public static class AppVersionComparer
 
     public static bool IsTrustedDownloadUrl(string? url)
     {
-        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri))
+        if (!TryStrictHttpsUri(url, out var uri)
+            || !string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase)
+            || uri.Query.Length > 0)
             return false;
-        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        var trimmed = url!.Trim();
+        if (!trimmed.StartsWith(ReleaseDownloadPrefix, StringComparison.Ordinal))
             return false;
-        return TrustedDownloadHosts.Contains(uri.Host);
+        var rest = trimmed[ReleaseDownloadPrefix.Length..];
+        var parts = rest.Split('/');
+        return parts.Length == 2 && parts.All(p => p.Length > 0 && p != "." && p != "..");
+    }
+
+    public static bool IsAllowedRedirectUrl(Uri? target)
+    {
+        if (target is null || !target.IsAbsoluteUri)
+            return false;
+        if (!TryStrictHttpsUri(target.OriginalString, out var uri))
+            return false;
+        if (!AllowedRedirectHosts.Contains(uri.Host))
+            return false;
+        return !string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.StartsWith(ReleasePathPrefix, StringComparison.Ordinal);
+    }
+
+    public static Uri? ResolveAllowedRedirect(Uri requestUri, Uri? location)
+    {
+        if (requestUri is null || !requestUri.IsAbsoluteUri || location is null)
+            return null;
+        var raw = location.OriginalString;
+        if (string.IsNullOrEmpty(raw) || raw.Length > 4096 || raw.Any(char.IsWhiteSpace) || raw.Contains('\\') || raw.Contains('#'))
+            return null;
+        Uri? target;
+        if (location.IsAbsoluteUri)
+        {
+            target = location;
+        }
+        else
+        {
+            if (raw.StartsWith("//", StringComparison.Ordinal))
+                return null;
+            if (!Uri.TryCreate(requestUri, location, out target))
+                return null;
+        }
+        return IsAllowedRedirectUrl(target) ? target : null;
+    }
+
+    private static bool TryStrictHttpsUri(string? url, out Uri uri)
+    {
+        uri = null!;
+        if (string.IsNullOrWhiteSpace(url))
+            return false;
+        var trimmed = url.Trim();
+        if (trimmed.Length > 4096 || trimmed.Any(char.IsWhiteSpace) || trimmed.Contains('\\'))
+            return false;
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var u))
+            return false;
+        if (!string.Equals(u.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || !u.IsDefaultPort
+            || u.UserInfo.Length > 0
+            || u.Fragment.Length > 0)
+            return false;
+        var pathStart = trimmed.IndexOf('/', "https://".Length);
+        var path = pathStart < 0 ? "/" : trimmed[pathStart..];
+        var q = path.IndexOf('?');
+        if (q >= 0) path = path[..q];
+        if (path.Split('/').Any(s => s is "." or "..")
+            || path.Contains("%2e", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("%2f", StringComparison.OrdinalIgnoreCase)
+            || path.Contains("%5c", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.Equals(u.Host, "github.com", StringComparison.OrdinalIgnoreCase) && path.Contains('%'))
+            return false;
+        uri = u;
+        return true;
     }
 
     public static string? ParseSha256Text(string? text)
@@ -144,6 +217,7 @@ public static class AppUpdateInstaller
     public const string DefaultFeedUrl = "https://admin.remoteblazorwebview.com/api/rpcd/latest";
     public const string FeedUrlEnvVar = "RPD_UPDATE_FEED_URL";
     public const long MaxInstallerBytes = 512L * 1024 * 1024;
+    private const int MaxRedirects = 5;
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -157,11 +231,14 @@ public static class AppUpdateInstaller
 
     public sealed record ReleaseFeed(ReleaseFeedChannel? Stable, ReleaseFeedChannel? Prerelease);
 
-    public static string ResolveFeedUrl(string? configuredUrl = null)
+    public static string ResolveFeedUrl(string? configuredUrl = null, bool allowEnvOverride = true)
     {
-        var env = Environment.GetEnvironmentVariable(FeedUrlEnvVar);
-        if (!string.IsNullOrWhiteSpace(env))
-            return env.Trim();
+        if (allowEnvOverride)
+        {
+            var env = Environment.GetEnvironmentVariable(FeedUrlEnvVar);
+            if (!string.IsNullOrWhiteSpace(env))
+                return env.Trim();
+        }
         return string.IsNullOrWhiteSpace(configuredUrl) ? DefaultFeedUrl : configuredUrl.Trim();
     }
 
@@ -172,6 +249,30 @@ public static class AppUpdateInstaller
             return null;
         await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         return await JsonSerializer.DeserializeAsync<ReleaseFeed>(stream, Json, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<HttpResponseMessage> GetFollowingAllowedRedirectsAsync(
+        HttpClient http,
+        string initialUrl,
+        HttpCompletionOption completionOption,
+        CancellationToken ct)
+    {
+        var current = new Uri(initialUrl, UriKind.Absolute);
+        for (var hop = 0; hop <= MaxRedirects; hop++)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, current);
+            var response = await http.SendAsync(req, completionOption, ct).ConfigureAwait(false);
+            if ((int)response.StatusCode is >= 300 and < 400)
+            {
+                var location = response.Headers.Location;
+                response.Dispose();
+                current = AppVersionComparer.ResolveAllowedRedirect(current, location)
+                    ?? throw new InvalidOperationException("Update download redirect pointed to an untrusted host.");
+                continue;
+            }
+            return response;
+        }
+        throw new InvalidOperationException("Too many redirects while downloading update.");
     }
 
     public static async Task<string> DownloadAndVerifyAsync(
@@ -197,7 +298,7 @@ public static class AppUpdateInstaller
         try
         {
             progress?.Invoke(new AppUpdateProgress("downloading", 0, $"Downloading {fileName}..."));
-            using (var response = await http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
+            using (var response = await GetFollowingAllowedRedirectsAsync(http, downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
             {
                 response.EnsureSuccessStatusCode();
                 var totalBytes = response.Content.Headers.ContentLength;
@@ -231,7 +332,9 @@ public static class AppUpdateInstaller
             if (!string.IsNullOrWhiteSpace(sha256Url))
             {
                 progress?.Invoke(new AppUpdateProgress("verifying", null, "Verifying SHA-256 checksum..."));
-                var shaText = await http.GetStringAsync(sha256Url, ct).ConfigureAwait(false);
+                using var shaResp = await GetFollowingAllowedRedirectsAsync(http, sha256Url, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false);
+                shaResp.EnsureSuccessStatusCode();
+                var shaText = await shaResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 var expected = AppVersionComparer.ParseSha256Text(shaText)
                     ?? throw new InvalidOperationException("Could not parse SHA-256 checksum for update installer.");
 
@@ -300,7 +403,7 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
         _getElevatedBridge = getElevatedBridge;
         _onExitForUpdate = onExitForUpdate;
         _ownsHttp = httpClient is null;
-        _http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        _http = httpClient ?? new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(15) };
         _log = log;
     }
 
