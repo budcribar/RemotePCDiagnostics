@@ -15,7 +15,7 @@ on:
         type: string
         default: 'Beta'
       run_id:
-        description: 'Optional CI workflow run ID to fetch existing MSIX artifact from (leave empty to build from current commit)'
+        description: 'Optional ci.yml run ID to take the MSIX artifact from (leave empty to use the latest successful ci.yml run for this commit)'
         type: string
         default: ''
   release:
@@ -75,7 +75,7 @@ jobs:
           Write-Host "Publishing Event: $event"
           Write-Host "Target:           $target"
           Write-Host "Flight Name:      $flightName"
-          Write-Host "Artifact Run ID:  $(if ($runId) { $runId } else { '<None - build from commit or release>' })"
+          Write-Host "Artifact Run ID:  $(if ($runId) { $runId } else { '<None - release asset or ci.yml run for this commit>' })"
 
           "target=$target" >> $env:GITHUB_OUTPUT
           "flight_name=$flightName" >> $env:GITHUB_OUTPUT
@@ -106,43 +106,60 @@ jobs:
               Write-Host "Downloaded MSIX from release: $($found[0].FullName)"
             }
           } catch {
-            Write-Host "No MSIX package found on GitHub release assets; will build from commit."
+            Write-Host "No MSIX package found on GitHub release assets; will use the ci.yml run for this commit."
           }
 
-      - name: Build MSIX package from commit if not already present
+      # The Store package must be the one ci.yml built: its Host carries ci.yml's 1.2.0-ci.<run>.<attempt> build version, which
+      # Admin orders against the GitHub releases. A package built inside this workflow would get this workflow's run number,
+      # a different counter, so it is never built here.
+      - name: Download MSIX from the ci.yml run for this commit if not already present
         shell: pwsh
         env:
-          INPUT_MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
-          INPUT_MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $existing = Get-ChildItem -Path artifacts/msix -Filter 'RemotePCDiagnostics-*-win-x64.msix' -ErrorAction SilentlyContinue |
             Where-Object { -not $_.Name.EndsWith('.sha256') } | Select-Object -First 1
-
           if ($existing) {
             Write-Host "Found existing MSIX package: $($existing.FullName) ($([Math]::Round($existing.Length / 1MB, 2)) MB)"
             return
           }
 
-          Write-Host "No MSIX package present; building package via msix/Build-Msix.ps1..."
-          $msixArgs = @('-NoProfile', '-File', 'msix/Build-Msix.ps1')
-          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_MSIX_IDENTITY_NAME)) {
-            $msixArgs += @('-IdentityName', $env:INPUT_MSIX_IDENTITY_NAME.Trim())
-          }
-          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_MSIX_PUBLISHER)) {
-            $msixArgs += @('-Publisher', $env:INPUT_MSIX_PUBLISHER.Trim())
+          $sha = '${{ github.sha }}'
+          $runId = gh run list --repo '${{ github.repository }}' --workflow ci.yml --commit $sha --status success --limit 1 --json databaseId --jq '.[0].databaseId'
+          if ([string]::IsNullOrWhiteSpace($runId)) {
+            throw "No successful ci.yml run found for commit $sha. Run ci.yml on it first, or pass that run's ID as run_id. The MSIX is not built here, so its build version always comes from ci.yml."
           }
 
-          pwsh @msixArgs
+          Write-Host "Downloading MSIX artifact from ci.yml run $runId (commit $sha)..."
+          New-Item -ItemType Directory -Force -Path artifacts/msix | Out-Null
+          gh run download $runId --repo '${{ github.repository }}' --name RemotePCDiagnostics-Msix-win-x64 --dir artifacts/msix
           if ($LASTEXITCODE -ne 0) {
-            throw "Build-Msix.ps1 failed with exit code $LASTEXITCODE"
+            throw "Could not download the MSIX artifact from ci.yml run $runId (artifacts are kept for 5 days). Re-run ci.yml on commit $sha."
           }
 
-          $built = Get-ChildItem artifacts/msix -Filter 'RemotePCDiagnostics-*-win-x64.msix' |
+      - name: Check the package carries a CI build version
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $msix = Get-ChildItem -Path artifacts/msix -Filter 'RemotePCDiagnostics-*-win-x64.msix' |
             Where-Object { -not $_.Name.EndsWith('.sha256') } | Select-Object -First 1
-          if (-not $built) {
-            throw 'Build-Msix.ps1 completed but no MSIX package was found in artifacts/msix'
+          if (-not $msix) { throw 'No MSIX package found in artifacts/msix.' }
+
+          $hostExe = Join-Path $env:RUNNER_TEMP 'msix-check-RemotePCDiagnostics.Host.exe'
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($msix.FullName)
+          try {
+            $entry = $zip.GetEntry('RemotePCDiagnostics.Host.exe')
+            if (-not $entry) { throw "$($msix.Name) has no RemotePCDiagnostics.Host.exe." }
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $hostExe, $true)
+          } finally {
+            $zip.Dispose()
           }
-          Write-Host "Successfully built MSIX: $($built.FullName) ($([Math]::Round($built.Length / 1MB, 2)) MB)"
+
+          $productVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($hostExe).ProductVersion
+          Write-Host "Host ProductVersion: $productVersion"
+          if (-not $productVersion -or -not $productVersion.Contains('-ci.')) {
+            throw "Host ProductVersion '$productVersion' is not a ci.yml build version (<version>-ci.<run>.<attempt>). Publish an MSIX built by ci.yml."
+          }
 
       - name: Validate package and prepare publishing metadata
         id: pkg_info

@@ -147,13 +147,13 @@ public static class AgentPaths
         }
 
         var tempPath = path + ".tmp";
-        File.WriteAllText(tempPath, config.ToJson());
-
+        using (File.Create(tempPath)) { }
         if (OperatingSystem.IsWindows())
         {
             TryApplyAdminSystemOnlyFileAcl(tempPath);
         }
 
+        File.WriteAllText(tempPath, config.ToJson());
         File.Move(tempPath, path, overwrite: true);
 
         if (OperatingSystem.IsWindows())
@@ -247,7 +247,9 @@ public static class AgentPaths
         if (!string.IsNullOrEmpty(cached))
             return cached;
 
-        var installed = TryFindLocalInstalledHostExe();
+        // The Store package is checked last: the agent does not launch it, but its Host is the same CI build as the Setup exe's,
+        // so its ProductVersion (1.2.0-ci.<run>.<attempt>+<commit>) lets Admin tell a Store PC about a newer build.
+        var installed = TryFindLocalInstalledHostExe() ?? TryFindStoreHostExe();
         if (installed is not null)
         {
             try
@@ -307,9 +309,11 @@ public static class AgentPaths
 
     public static string? TryFindLocalInstalledHostExe()
     {
+#if DEBUG
         var overrideExe = Environment.GetEnvironmentVariable(HostExeEnvVar)?.Trim();
         if (!string.IsNullOrEmpty(overrideExe) && File.Exists(overrideExe))
             return Path.GetFullPath(overrideExe);
+#endif
 
         var candidates = new List<string>
         {
@@ -340,6 +344,32 @@ public static class AgentPaths
     }
 
     /// <summary>
+    /// <c>RemotePCDiagnostics.Host.exe</c> in the newest installed Store package (under <c>Program Files\WindowsApps</c>), found
+    /// through the package repository in HKLM. Null when the Store app is not installed or anything fails.
+    /// </summary>
+    public static string? TryFindStoreHostExe()
+    {
+        if (!OperatingSystem.IsWindows())
+            return null;
+        try
+        {
+            using var baseKey = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64);
+            using var packages = baseKey.OpenSubKey(DesktopInstallProbe.RepositoryPackagesKey);
+            if (packages is null || AgentRemoval.NewestDesktopMsixPackage(packages.GetSubKeyNames()) is not { } package)
+                return null;
+            using var key = packages.OpenSubKey(package);
+            if (key?.GetValue("PackageRootFolder") is not string root || string.IsNullOrWhiteSpace(root))
+                return null;
+            var exe = Path.Combine(root.Trim(), "RemotePCDiagnostics.Host.exe");
+            return File.Exists(exe) ? exe : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Locates an already-installed <c>RemotePCDiagnostics.Host.exe</c>, a verified cached copy under
     /// <c>%ProgramData%\RemotePCDiagnostics\app\</c>, or downloads and verifies the latest signed GitHub release.
     /// </summary>
@@ -361,26 +391,25 @@ public static class AgentPaths
                 return (cachedExe, null);
         }
 
+        if (!ManifestSignature.IsKeyConfigured(ManifestKey.PublicKeyPem))
+            return (null, "Release manifest signing key is not configured; refusing unverified network download.");
+
         await reportStageAsync(PeakSWC.RemoteWebView.Agent.LaunchStage.StageVerifying, "Checking latest release manifest...", 0).ConfigureAwait(false);
 
         byte[] manifestBytes;
-        string signatureText = "";
+        string signatureText;
         try
         {
             manifestBytes = await FetchFollowingAllowedRedirectsAsync(http, new Uri(ReleaseUrls.ManifestUrl), ct).ConfigureAwait(false);
-            if (ManifestSignature.IsKeyConfigured(ManifestKey.PublicKeyPem))
-            {
-                var sigBytes = await FetchFollowingAllowedRedirectsAsync(http, new Uri(ReleaseUrls.SignatureUrl), ct).ConfigureAwait(false);
-                signatureText = System.Text.Encoding.UTF8.GetString(sigBytes);
-            }
+            var sigBytes = await FetchFollowingAllowedRedirectsAsync(http, new Uri(ReleaseUrls.SignatureUrl), ct).ConfigureAwait(false);
+            signatureText = System.Text.Encoding.UTF8.GetString(sigBytes);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return (null, $"Could not fetch release manifest: {ex.Message}");
         }
 
-        if (ManifestSignature.IsKeyConfigured(ManifestKey.PublicKeyPem)
-            && !ManifestSignature.Verify(manifestBytes, signatureText, ManifestKey.PublicKeyPem))
+        if (!ManifestSignature.Verify(manifestBytes, signatureText, ManifestKey.PublicKeyPem))
         {
             return (null, "Release manifest signature verification failed.");
         }

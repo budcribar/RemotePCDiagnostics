@@ -81,105 +81,105 @@ internal static class AgentAdminHost
 
         using (sensorProvider)
         {
-            var serverOptions = new AdminPipeServerOptions
+            // 4. Launch RemotePCDiagnostics.Host first so ExpectedClientPid is bound before the pipe begins listening (F5).
+            var hostArgs = new List<string>();
+            if (args.ForwardedArgs is not null)
             {
-                PipeName = pipeName,
-                ExpectedClientExePath = useDotnet ? null : hostExe,
-                ConnectTimeout = TimeSpan.FromSeconds(60),
-            };
+                foreach (var a in args.ForwardedArgs)
+                {
+                    if (!string.Equals(a, "--launch", StringComparison.OrdinalIgnoreCase))
+                        hostArgs.Add(a);
+                }
+            }
+            hostArgs.Add($"{ElevationService.AdminPipeArgPrefix}{pipeName}");
 
-            var server = new AdminPipeServer(
-                serverOptions,
-                new SystemProcessLauncher(),
-                sensorReader: sensorReader,
-                log: log,
-                selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token));
+            ProcessStartInfo startInfo;
+            if (useDotnet)
+            {
+                startInfo = new ProcessStartInfo("dotnet")
+                {
+                    WorkingDirectory = AppContext.BaseDirectory,
+                    UseShellExecute = false,
+                };
+                startInfo.ArgumentList.Add(hostDll);
+                foreach (var a in hostArgs) startInfo.ArgumentList.Add(a);
+            }
+            else
+            {
+                startInfo = new ProcessStartInfo(hostExe)
+                {
+                    WorkingDirectory = AppContext.BaseDirectory,
+                    UseShellExecute = false,
+                };
+                foreach (var a in hostArgs) startInfo.ArgumentList.Add(a);
+            }
+            startInfo.EnvironmentVariables[ElevationService.AdminPipeEnvVar] = pipeName;
 
-        var serverTask = Task.Run(async () =>
-        {
+            Process? hostProcess;
             try
             {
-                await server.RunSingleSessionAsync(workerCts.Token).ConfigureAwait(false);
+                hostProcess = Process.Start(startInfo);
             }
-            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                log.Warn($"[agent-launcher] Admin pipe server ended: {ex.Message}");
+                log.Error($"[agent-launcher] Failed to start Host process: {ex.Message}");
+                workerCts.Cancel();
+                return ExitError;
             }
-            finally
+
+            if (hostProcess is null)
             {
-                server.Dispose();
+                workerCts.Cancel();
+                return ExitError;
             }
-        });
 
-        // 5. Launch RemotePCDiagnostics.Host
-        var hostArgs = new List<string>();
-        if (args.ForwardedArgs is not null)
-        {
-            foreach (var a in args.ForwardedArgs)
+            using (hostProcess)
             {
-                if (!string.Equals(a, "--launch", StringComparison.OrdinalIgnoreCase))
-                    hostArgs.Add(a);
+                var serverOptions = new AdminPipeServerOptions
+                {
+                    PipeName = pipeName,
+                    ExpectedClientPid = hostProcess.Id,
+                    ExpectedClientExePath = useDotnet ? null : hostExe,
+                    ConnectTimeout = TimeSpan.FromSeconds(60),
+                };
+
+                var server = new AdminPipeServer(
+                    serverOptions,
+                    new SystemProcessLauncher(),
+                    sensorReader: sensorReader,
+                    log: log,
+                    selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token));
+
+                var serverTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await server.RunSingleSessionAsync(workerCts.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) { }
+                    catch (Exception ex)
+                    {
+                        log.Warn($"[agent-launcher] Admin pipe server ended: {ex.Message}");
+                    }
+                    finally
+                    {
+                        server.Dispose();
+                    }
+                });
+
+                log.Info($"[agent-launcher] Host started (pid={hostProcess.Id}); monitoring lifetime...");
+
+                // 5. Monitor PID and exit when Host exits
+                await hostProcess.WaitForExitAsync().ConfigureAwait(false);
+                var exitCode = hostProcess.ExitCode;
+                log.Info($"[agent-launcher] Host exited with code {exitCode}. Stopping background worker...");
+
+                workerCts.Cancel();
+                try { await serverTask.ConfigureAwait(false); } catch { }
+
+                return exitCode;
             }
         }
-        hostArgs.Add($"{ElevationService.AdminPipeArgPrefix}{pipeName}");
-
-        ProcessStartInfo startInfo;
-        if (useDotnet)
-        {
-            startInfo = new ProcessStartInfo("dotnet")
-            {
-                WorkingDirectory = AppContext.BaseDirectory,
-                UseShellExecute = false,
-            };
-            startInfo.ArgumentList.Add(hostDll);
-            foreach (var a in hostArgs) startInfo.ArgumentList.Add(a);
-        }
-        else
-        {
-            startInfo = new ProcessStartInfo(hostExe)
-            {
-                WorkingDirectory = AppContext.BaseDirectory,
-                UseShellExecute = false,
-            };
-            foreach (var a in hostArgs) startInfo.ArgumentList.Add(a);
-        }
-        startInfo.EnvironmentVariables[ElevationService.AdminPipeEnvVar] = pipeName;
-
-        Process? hostProcess;
-        try
-        {
-            hostProcess = Process.Start(startInfo);
-        }
-        catch (Exception ex)
-        {
-            log.Error($"[agent-launcher] Failed to start Host process: {ex.Message}");
-            workerCts.Cancel();
-            return ExitError;
-        }
-
-        if (hostProcess is null)
-        {
-            workerCts.Cancel();
-            return ExitError;
-        }
-
-        using (hostProcess)
-        {
-            serverOptions.ExpectedClientPid = hostProcess.Id;
-            log.Info($"[agent-launcher] Host started (pid={hostProcess.Id}); monitoring lifetime...");
-
-            // 6. Monitor PID and exit when Host exits
-            await hostProcess.WaitForExitAsync().ConfigureAwait(false);
-            var exitCode = hostProcess.ExitCode;
-            log.Info($"[agent-launcher] Host exited with code {exitCode}. Stopping background worker...");
-
-            workerCts.Cancel();
-            try { await serverTask.ConfigureAwait(false); } catch { }
-
-            return exitCode;
-        }
-    }
     }
 
     public static async Task<int> RunHelperModeAsync(AgentArgs args)
@@ -210,10 +210,14 @@ internal static class AgentAdminHost
             using var cts = new CancellationTokenSource();
             _ = WatchParentExitAsync(parent, cts);
 
+#if DEBUG
             var allowTestParent = string.Equals(
                 Environment.GetEnvironmentVariable(AllowTestParentEnvVar)?.Trim(),
                 "1",
                 StringComparison.OrdinalIgnoreCase);
+#else
+            const bool allowTestParent = false;
+#endif
 
             var expectedClientExe = allowTestParent
                 ? AdminPipeServer.TryQueryProcessImagePath((uint)parentPid)

@@ -114,6 +114,37 @@ internal static class Win32Session
     }
 
     /// <summary>
+    /// Returns the SID string (<c>S-1-5-21-...</c>) of the active interactive user session so an elevated Session 0
+    /// <see cref="RemotePCDiagnostics.Core.Session.AdminPipeServer"/> can grant that user ReadWrite pipe access.
+    /// </summary>
+    public static string? GetActiveUserSid()
+    {
+        if (!OperatingSystem.IsWindows())
+            return null;
+
+        var sessionId = FindActiveUserSessionId();
+        if (sessionId == NoSessionId)
+            return null;
+
+        if (!WTSQueryUserToken(sessionId, out var userToken) || userToken == IntPtr.Zero)
+            return null;
+
+        try
+        {
+            using var identity = new System.Security.Principal.WindowsIdentity(userToken);
+            return identity.User?.Value;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            CloseHandle(userToken);
+        }
+    }
+
+    /// <summary>
     /// Runs the interactive desktop consent prompt inside the active user's session and returns a <see cref="ConsentPolicy"/> exit code.
     /// </summary>
     public static int ShowConsentMessageBox(string requester, int timeoutSeconds)

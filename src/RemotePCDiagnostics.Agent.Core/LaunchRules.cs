@@ -22,11 +22,23 @@ public static class LaunchRules
     public static readonly TimeSpan AssumeReadyAfter = TimeSpan.FromSeconds(20);
 
     /// <summary>Checks the relay-supplied fields that end up on the app's command line. Returns null when they're fine.</summary>
-    public static string? Validate(string? sessionId, string? serverUrl, out Guid session, out string server)
+    public static string? Validate(string? sessionId, string? serverUrl, out Guid session, out string server, string? configuredServer = null)
     {
         server = "";
         if (!Guid.TryParse(sessionId, out session) || session == Guid.Empty) return "The relay sent an invalid session id.";
         if (!AgentCommandLine.TryNormalizeServer(serverUrl, out server)) return "The relay sent an invalid server address.";
+        if (!string.IsNullOrWhiteSpace(configuredServer)
+            && AgentCommandLine.TryNormalizeServer(configuredServer, out var expectedServer))
+        {
+            var actualUri = new Uri(server, UriKind.Absolute);
+            var expectedUri = new Uri(expectedServer, UriKind.Absolute);
+            if (!string.Equals(actualUri.Scheme, expectedUri.Scheme, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(actualUri.Host, expectedUri.Host, StringComparison.OrdinalIgnoreCase)
+                || actualUri.Port != expectedUri.Port)
+            {
+                return "The relay sent a server address that does not match this agent's configured server.";
+            }
+        }
         return null;
     }
 
