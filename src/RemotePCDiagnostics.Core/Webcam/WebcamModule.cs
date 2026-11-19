@@ -12,5 +12,12 @@ public interface IWebcamTestModule : IPerDeviceModule
     void Cancel();
 }
 
+/// <summary>
+/// A camera held by another app means the test never captured a frame: recorded as "Couldn't run", not as a failed camera.
+/// </summary>
 public sealed record WebcamReport(WebcamVerdict Verdict, string Device, WebcamBus Bus, int Width, int Height, double RequestedFps, string? Format,
-    TimeSpan Duration, WebcamStats Stats, string? Notice);
+    TimeSpan Duration, WebcamStats Stats, string? Notice) : IRunEnd
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public RunEnd RunEnd => Verdict == WebcamVerdict.Busy ? RunEnd.CouldNotRun : RunEnd.Finished;
+}
