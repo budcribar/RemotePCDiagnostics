@@ -32,7 +32,7 @@
             "No installed program matched. Try the app's name as shown in Windows.")
         @Evidence(ModuleSlugs.Crashes, "Crashes and freezes", ["crashes", "hangs"], 1, ProcessQuery,
             "No matching incidents in the latest 30-day report. Try the executable name if it differs from the installed name.")
-        @Evidence(ModuleSlugs.ResourceHogs, "Resource snapshot", ["memory", "cpu"], 0, ProcessQuery,
+        @Evidence(ModuleSlugs.ResourceHogs, "Resource snapshot", ["apps", "memory", "cpu"], 0, ProcessQuery,
             "No match among the top resource consumers in the latest snapshot. The app may still be running.")
         @Evidence(ModuleSlugs.Programs, "Recent Windows updates", ["updates"], 0, null,
             "No Windows updates were recorded in the latest inventory.", limit: 5)
