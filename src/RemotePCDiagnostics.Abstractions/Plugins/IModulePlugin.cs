@@ -35,9 +35,10 @@ public static class ContractVersion
 {
     /// <summary>1.1: hardware instances (IPerDeviceModule, IDetectableModule, DiagnosticResult.InstanceKey) and CouldNotRun.
     /// 1.2: IRunEnd, so a module's payload can say it was cancelled or couldn't run.
-    /// 2.0: logging through ILogger (AreaModuleBase, StressModuleBase, StressCleanup, IPluginContext.Log).</summary>
+    /// 2.0: logging through ILogger (AreaModuleBase, StressModuleBase, StressCleanup, IPluginContext.Log).
+    /// 2.1: AreaReport.CouldNotRunReason (an area check that reached no verdict is recorded as "Couldn't run").</summary>
     /// <remarks>Major changes break plugins (removed type, changed signature); minor ones add optional members.</remarks>
-    public static Version Current { get; } = new(2, 0, 0);
+    public static Version Current { get; } = new(2, 1, 0);
 
     /// <summary>A plugin built for <paramref name="builtFor"/> loads when the majors match and its minor is at or below the host's.</summary>
     public static bool IsCompatible(Version builtFor, Version? host = null)

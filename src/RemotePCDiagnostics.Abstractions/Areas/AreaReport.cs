@@ -87,7 +87,18 @@ public sealed record AreaCard(
 
 /// <summary>Payload of an area module: the cards, a one-line summary for the Dashboard, and the overall status.</summary>
 public sealed record AreaReport(IReadOnlyList<AreaCard> Cards, string Summary, DiagnosticStatus Status, string? Notice = null, IReadOnlyList<AreaCard>? ReviewedCards = null, bool Cancelled = false)
+    : IRunEnd
 {
+    /// <summary>
+    /// Set when the check never reached a verdict (the tool was blocked, didn't start, or ended without a recognizable result): History
+    /// and the Checks screen show "Couldn't run" with this reason instead of Critical. <see cref="Status"/> stays Error so nothing treats
+    /// the run as passed.
+    /// </summary>
+    public string? CouldNotRunReason { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public RunEnd RunEnd => Cancelled ? RunEnd.Cancelled : CouldNotRunReason is not null ? RunEnd.CouldNotRun : RunEnd.Finished;
+
     public static AreaReport Failed(string message) => new([], message, DiagnosticStatus.Error);
 
     /// <summary>A scan stopped with <c>ICancellableScan.Cancel</c> before it finished: Cancelled, so History and the Checks screen don't

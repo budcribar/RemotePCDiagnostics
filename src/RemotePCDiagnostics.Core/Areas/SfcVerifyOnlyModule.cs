@@ -26,4 +26,33 @@ public sealed class SfcVerifyOnlyModule(SystemCommandRunner commands) : WindowsI
             _ => "Integrity scan could not confirm a result"
         });
     }
+
+    /// <summary>
+    /// SFC reports corruption only with "found integrity violations". Any other ending (another repair or DISM scan running, a restart
+    /// pending, no administrator rights, no output at all) means no scan took place, so it is recorded as "Couldn't run" with the reason,
+    /// never as Critical.
+    /// </summary>
+    protected override string? CouldNotRunReason(string output, RemotePCDiagnostics.Core.Osquery.ProcessResult? result) =>
+        NoResultReason(output, result?.ExitCode, result is not null);
+
+    /// <summary>Why <c>sfc /verifyonly</c> gave no verdict. <paramref name="returned"/> false: the tool didn't start or timed out.</summary>
+    public static string NoResultReason(string output, int? exitCode, bool returned = true)
+    {
+        if (!returned)
+            return "SFC did not start or did not finish within 30 minutes, so no scan result is available. Run RemotePCDiagnostics as administrator and try again.";
+        if (Contains(output, "servicing or repair operation"))
+            return "SFC did not run because another servicing or repair operation is running (for example a DISM scan or Windows Update). Run SFC again when it has finished.";
+        if (Contains(output, "system repair pending") || exitCode == WindowsRepair.RebootRequiredExitCode)
+            return "SFC did not run because a system repair is waiting for a restart. Restart the PC, then run SFC again.";
+        if (Contains(output, "must be an administrator"))
+            return "SFC did not run because it needs administrator rights. Run RemotePCDiagnostics as administrator and try again.";
+        if (Contains(output, "could not start the repair service"))
+            return "SFC did not run because Windows Resource Protection could not start its repair service (Windows Modules Installer). Restart the PC and try again.";
+        if (Contains(output, "could not perform the requested operation"))
+            return "SFC could not perform the scan, so no result is available. Run the DISM check, restart, then run SFC again.";
+        var lastLine = LastMessageLine(output);
+        if (lastLine is null)
+            return $"SFC ended without any output (exit code {exitCode}), so no scan took place. Run it again; if this repeats, check whether a DISM scan or Windows Update is running.";
+        return $"SFC ended without a scan result (exit code {exitCode}). Its last message was: \"{lastLine}\"";
+    }
 }
