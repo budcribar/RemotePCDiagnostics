@@ -209,8 +209,42 @@ public static class WindowsRepair
             : dismExcerpt;
     }
 
+    /// <summary>DISM couldn't find the repair payload (DISM_E_SOURCE_NOT_FOUND / CBS_E_SOURCE_MISSING).</summary>
+    public const string PayloadNotFoundCode = "0x800F0915", SourceFilesNotFoundCode = "0x800F081F";
+
+    /// <summary>
+    /// The error code when DISM RestoreHealth stopped because the files to repair from were missing, read from its output, exit code or
+    /// the dism.log lines written during the run (dism.log names the missing payload even when the console shows a generic failure).
+    /// Null for any other ending.
+    /// </summary>
+    public static string? MissingPayloadCode(string? output, int? exitCode, string? dismExcerpt = null)
+    {
+        var o = output ?? "";
+        var log = dismExcerpt ?? "";
+        if (exitCode == unchecked((int)0x800f0915) || Has(o, PayloadNotFoundCode)) return PayloadNotFoundCode;
+        if (exitCode == unchecked((int)0x800f081f) || Has(o, SourceFilesNotFoundCode) || Has(o, "source files could not be found")) return SourceFilesNotFoundCode;
+        if (Has(o, "repair content could not be found") || Has(log, "repair content could not be found") || Has(log, "Failed to download payload")
+            || Has(log, PayloadNotFoundCode))
+            return PayloadNotFoundCode;
+        return Has(log, SourceFilesNotFoundCode) ? SourceFilesNotFoundCode : null;
+    }
+
+    /// <summary>The reason and the next step when the repair payload is missing (see <see cref="MissingPayloadCode"/>).</summary>
+    public static string MissingPayloadSummary(string code, bool fromImage)
+    {
+        var what = code == PayloadNotFoundCode ? "repair payload not found" : "repair source not found";
+        return fromImage
+            ? $"The Windows image doesn't have the files needed to repair the component store ({code}, {what}), so the store wasn't repaired. "
+                + "Next step: use an ISO of exactly this PC's Windows version and edition (an older or newer build doesn't match), "
+                + "or install the latest Windows cumulative update and repair from Windows Update again."
+            : $"Windows Update doesn't have the files needed to repair the component store ({code}, {what}), so the store wasn't repaired. "
+                + "Next step: mount a Windows ISO of the same version and edition as this PC, run the component store check again, "
+                + "then choose Repair from that image. Installing the latest Windows cumulative update, then repairing again, can also work.";
+    }
+
     /// <summary>DISM /RestoreHealth output (English) + exit code → status and plain summary.</summary>
-    public static (DiagnosticStatus Status, string Summary, bool Reboot) ParseDism(string output, int? exitCode, string? dismExcerpt = null)
+    /// <param name="fromImage">True for a repair from a Windows image (<c>/Source … /LimitAccess</c>), which changes the advice when files are missing.</param>
+    public static (DiagnosticStatus Status, string Summary, bool Reboot) ParseDism(string output, int? exitCode, string? dismExcerpt = null, bool fromImage = false)
     {
         var o = output ?? "";
         var reboot = exitCode == RebootRequiredExitCode || RebootText(o);
@@ -219,10 +253,9 @@ public static class WindowsRepair
 
         string? Hint()
         {
-            if (Has(o, "0x800f0915") || exitCode == unchecked((int)0x800f0915))
-                return "Windows could not find the repair content/payload (0x800F0915). The required package files are missing from Windows Update and WinSxS. Repair needs a matching Windows ISO / installation source specified (/Source) or a Servicing Stack update.";
-            if (Has(o, "0x800f081f") || exitCode == unchecked((int)0x800f081f))
-                return "Windows couldn't find the files it needs to repair itself (0x800f081f). Repair needs a matching Windows installation source (ISO / /Source) or Windows Update.";
+            // dism.log can mention a payload that failed from one source and then came from another, so it only counts when DISM failed.
+            var failed = exitCode is not (0 or RebootRequiredExitCode);
+            if (MissingPayloadCode(o, exitCode, failed ? dismExcerpt : null) is { } code) return MissingPayloadSummary(code, fromImage);
             if (Has(o, "0x800f0906") || exitCode == unchecked((int)0x800f0906))
                 return "Windows couldn't download the repair files (0x800f0906). Check the internet connection and that Windows Update is reachable, then try again.";
             if (Has(o, "0x800f0907") || exitCode == unchecked((int)0x800f0907))
@@ -238,7 +271,7 @@ public static class WindowsRepair
 
         if (Hint() is { } h) return (DiagnosticStatus.Error, h + pkgSuffix, reboot);
         if ((exitCode is 0 or RebootRequiredExitCode) && Has(o, "restore operation completed successfully"))
-            return (DiagnosticStatus.Ok, reboot ? "Windows component store repaired; a restart finishes the repair." : "Windows component store repaired.", reboot);
+            return (DiagnosticStatus.Ok, reboot ? "Windows component store repaired; a restart finishes the repair." : "Windows component store repaired. No restart needed.", reboot);
         if ((exitCode is 0 or RebootRequiredExitCode) && o.Length == 0)
             return (DiagnosticStatus.Ok, "DISM reported success.", reboot);
         if (exitCode is null) return (DiagnosticStatus.Error, "DISM didn't finish (no exit code). Run the app as administrator and try again.", reboot);
@@ -333,7 +366,7 @@ public static class WindowsRepair
             RepairStep.AnalyzeStore => ParseAnalyze(output, pr?.ExitCode),
             RepairStep.CleanUpStore => ParseCleanup(output, pr?.ExitCode),
             RepairStep.SfcScanNow => ParseSfc(output, pr?.ExitCode, srLines),
-            _ => ParseDism(output, pr?.ExitCode, dismExcerpt),
+            _ => ParseDism(output, pr?.ExitCode, dismExcerpt, step == RepairStep.RestoreHealthFromImage),
         };
         details.Insert(0, ("Command", $"{Path.GetFileName(exe)} {string.Join(' ', args)}"));
         details.Insert(1, ("Output", output.Length > 12000 ? output[^12000..] : output));

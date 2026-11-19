@@ -66,6 +66,70 @@ public class WindowsRepairTests
         Assert.Contains("0x800F0915", sum);
     }
 
+    // Bud's service workflow on 2026-11-18: RestoreHealth failed with 0x800F0915. The summary must say why and what to do next.
+    private const string PayloadLog = "2026-11-18 18:55:02, Error DISM DISM Package Manager: PID=4321 TID=8765 Failed to download payload for package: "
+        + "Package_for_RollupFix~31bf3856ad364e35~amd64~~26100.2314.1.10 - CPackageManagerRestoreHealthHandler::DownloadPackagePayload(hr:0x800f0915)";
+
+    [Fact]
+    public void Dism_MissingPayload_GivesReasonAndNextStep()
+    {
+        var (st, sum, _) = WindowsRepair.ParseDism("Error: 0x800f0915\n\nThe repair content could not be found anywhere.", unchecked((int)0x800f0915));
+        Assert.Equal(DiagnosticStatus.Error, st);
+        Assert.Contains("0x800F0915", sum);
+        Assert.Contains("repair payload not found", sum);
+        Assert.Contains("wasn't repaired", sum);
+        Assert.Contains("Next step: mount a Windows ISO", sum);
+        Assert.Contains("Repair from that image", sum);
+    }
+
+    [Fact]
+    public void Dism_MissingPayload_OnlyInDismLog_IsStillRecognized()
+    {
+        // The console showed a generic failure; dism.log names the missing payload.
+        var (st, sum, _) = WindowsRepair.ParseDism("The operation failed.", unchecked((int)0x80004005), PayloadLog);
+        Assert.Equal(DiagnosticStatus.Error, st);
+        Assert.Contains("0x800F0915", sum);
+        Assert.Contains("Next step", sum);
+        Assert.Contains("Package_for_RollupFix~31bf3856ad364e35~amd64~~26100.2314.1.10", sum);
+    }
+
+    [Fact]
+    public void Dism_Success_IgnoresPayloadFailureThatDismRecoveredFrom()
+    {
+        var (st, _, _) = WindowsRepair.ParseDism(DismOk, 0, PayloadLog);
+        Assert.Equal(DiagnosticStatus.Ok, st);
+    }
+
+    [Fact]
+    public void Dism_MissingPayload_FromImage_AdvisesMatchingBuild()
+    {
+        var (st, sum, _) = WindowsRepair.ParseDism("Error: 0x800f081f\nThe source files could not be found.", unchecked((int)0x800f081f), fromImage: true);
+        Assert.Equal(DiagnosticStatus.Error, st);
+        Assert.Contains("0x800F081F", sum);
+        Assert.Contains("The Windows image doesn't have the files", sum);
+        Assert.Contains("exactly this PC's Windows version and edition", sum);
+        Assert.DoesNotContain("mount a Windows ISO", sum);
+    }
+
+    [Theory]
+    [InlineData("Error: 0x800f0915", null, null, "0x800F0915")]
+    [InlineData("", -2146498283, null, "0x800F0915")]
+    [InlineData("The source files could not be found.", 1, null, "0x800F081F")]
+    [InlineData("The operation failed.", 1, "hr:0x800f081f", "0x800F081F")]
+    [InlineData("The operation failed.", 1, "Failed to get provider", null)]
+    [InlineData("Error: 0x800f0906", 1, null, null)]
+    public void MissingPayloadCode_ReadsOutputExitCodeAndLog(string output, int? exitCode, string? log, string? expected) =>
+        Assert.Equal(expected, WindowsRepair.MissingPayloadCode(output, exitCode, log));
+
+    [Fact]
+    public void Dism_Success_SaysWhetherARestartIsNeeded()
+    {
+        Assert.Contains("No restart needed", WindowsRepair.ParseDism(DismOk, 0).Summary);
+        Assert.Contains("restart finishes", WindowsRepair.ParseDism(DismOk, 3010).Summary);
+        Assert.True(WindowsRepair.ParseCleanup("The operation completed successfully.", 3010).Reboot);
+        Assert.False(WindowsRepair.ParseCleanup("The operation completed successfully.", 0).Reboot);
+    }
+
     [Fact]
     public void Dism_GenericNegativeExitCode_FormatsHex()
     {

@@ -202,4 +202,37 @@ public class WindowsIntegrityTests
             return new(0, "Windows Resource Protection did not find any integrity violations.", "");
         }
     }
+
+    private static DismScanHealthModule Dism(ProcessResult result, IReadOnlyList<string> images) =>
+        new(new SystemCommandRunner(new ScriptedLauncher((_, _) => result), isProcessElevated: () => true)) { FindImages = () => images };
+
+    [Fact]
+    public async Task Dism_Corrupt_NoImage_SaysHowToGetRepairFromImage()
+    {
+        var r = await Run(Dism(new(0, "The component store is repairable.\nThe operation completed successfully.", ""), []));
+        var card = Assert.Single(Assert.IsType<AreaReport>(r.Payload).Cards);
+        var row = Assert.Single(card.Rows, x => x.Values[0] == DismScanHealthModule.NoImageRowTitle);
+        Assert.Contains("0x800F0915", row.Values[1]);
+        var kinds = card.Actions!.Select(a => a.Kind).ToList();
+        Assert.Contains(RemediationKind.CleanUpComponentStore, kinds);
+        Assert.Contains(RemediationKind.RepairComponentStore, kinds);
+        Assert.DoesNotContain(RemediationKind.RepairComponentStoreFromImage, kinds);
+    }
+
+    [Fact]
+    public async Task Dism_Corrupt_WithImage_OffersRepairFromImageWithoutTheNote()
+    {
+        var r = await Run(Dism(new(0, "The component store is repairable.\nThe operation completed successfully.", ""), [@"D:\sources\install.wim"]));
+        var card = Assert.Single(Assert.IsType<AreaReport>(r.Payload).Cards);
+        Assert.DoesNotContain(card.Rows, x => x.Values[0] == DismScanHealthModule.NoImageRowTitle);
+        Assert.Contains(card.Actions!, a => a.Kind == RemediationKind.RepairComponentStoreFromImage && a.Target == @"D:\sources\install.wim");
+    }
+
+    [Fact]
+    public async Task Dism_Clean_HasNoImageNote()
+    {
+        var r = await Run(Dism(new(0, "No component store corruption detected.\nThe operation completed successfully.", ""), []));
+        var card = Assert.Single(Assert.IsType<AreaReport>(r.Payload).Cards);
+        Assert.DoesNotContain(card.Rows, x => x.Values[0] == DismScanHealthModule.NoImageRowTitle);
+    }
 }

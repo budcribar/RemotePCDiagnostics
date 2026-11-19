@@ -30,6 +30,8 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
     protected virtual void OnScanStarting() { }
     /// <summary>Extra detail rows when the scan didn't come back clean.</summary>
     protected virtual void AddProblemEvidence(List<AreaRow> rows) { }
+    /// <summary>Rows that depend on the result's status (e.g. what to do next), added after the problem evidence.</summary>
+    protected virtual void AddStatusRows(List<AreaRow> rows, DiagnosticStatus status) { }
     /// <summary>The single repair steps the card offers for this result, each run alone; null for none.</summary>
     protected virtual IReadOnlyList<AreaAction>? CardActions(DiagnosticStatus status) => null;
     /// <summary>
@@ -107,6 +109,7 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
             new(AreaLevel.Neutral, ["Output", output.Length > 12000 ? output[^12000..] : output])
         };
         if (status != DiagnosticStatus.Ok) AddProblemEvidence(rows);
+        AddStatusRows(rows, status);
 
         return new([new("integrity", DisplayName, status switch
             {
