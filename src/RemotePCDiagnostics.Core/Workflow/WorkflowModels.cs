@@ -23,6 +23,10 @@ public sealed record WorkflowCheckItem(
         : Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error ? 1.0 : 0.0;
 }
 
+/// <summary>An integrity scan (DISM ScanHealth or SFC verify-only) running again after the restart to confirm a repair:
+/// <paramref name="Number"/> of <paramref name="Count"/>, started at <paramref name="StartedUtc"/>; <paramref name="Message"/> is the scan's latest progress line.</summary>
+public sealed record WorkflowRescan(string Title, int Number, int Count, DateTimeOffset StartedUtc, string? Message);
+
 /// <summary>A fix the tech can approve. Remediation fixes replay their <see cref="AreaAction"/>; memory fixes are matched again after the restart.</summary>
 /// <param name="DefaultOn">Ticked when the review opens. False = opt-in (e.g. Windows Search): listed unticked; the tech ticks it by hand.</param>
 public sealed record WorkflowFix(

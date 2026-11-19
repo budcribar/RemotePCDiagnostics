@@ -1146,6 +1146,22 @@ public class WorkflowTests
     }
 
     [Fact]
+    public async Task Repair_RescanAfterRestart_IsShownAsRunningStep_AndClearedAfter()
+    {
+        var script = new RepairScript();
+        var (flow, sys, _) = MakeRepair(script);
+        await flow.RunChecksAsync();
+        var seen = new List<WorkflowRescan>();
+        flow.Changed += () => { if (flow.Rescan is { } r && (seen.Count == 0 || seen[^1].Title != r.Title)) seen.Add(r); };
+        await RunWorkflow(flow, sys);
+        Assert.Equal(2, seen.Count);
+        Assert.All(seen, r => Assert.Equal(2, r.Count));
+        Assert.Equal(new[] { 1, 2 }, seen.Select(r => r.Number));
+        Assert.Null(flow.Rescan);
+        Assert.Contains(flow.State.Log, l => l.Contains("Checking again after the restart (1 of 2)"));
+    }
+
+    [Fact]
     public async Task Repair_CleanScans_OfferNothing()
     {
         var script = new RepairScript { DismCorrupt = false, SfcCorrupt = false };
