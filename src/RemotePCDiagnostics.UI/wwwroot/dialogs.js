@@ -94,6 +94,11 @@
                 if (navigator.onLine && ['connected', 'connecting', 'reconnecting', 'disconnected'].includes(state.connectionState)) {
                     connection = state.connectionState;
                 }
+                // RemoteBlazorWebView builds before connectionState still show this notice once the page's stream to the
+                // session has closed. The page then keeps its last copy, so the control it had is no longer true.
+                if (connection === 'unknown' && !state.restarting && document.getElementById('rbwv-connection-lost')) {
+                    connection = 'disconnected';
+                }
                 if (state.restarting) {
                     if (shell) {
                         shell.dataset.rpcdConnection = connection;
