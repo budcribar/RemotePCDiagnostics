@@ -30,6 +30,10 @@ public static class SecurityFixes
     public const string LlmnrValue = "EnableMulticast";
     public const string AutoRunKey = @"HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer";
     public const string AutoRunValue = "NoDriveTypeAutoRun";
+    /// <summary>The same policy for the signed-in user; the machine value (<see cref="AutoRunKey"/>) wins when both are set.</summary>
+    public const string AutoRunUserKey = @"HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+    /// <summary>Policy NoDriveAutoRun: bit 0 = A: … bit 25 = Z:, a set bit turns AutoRun off for that drive letter.</summary>
+    public const string AutoRunLettersValue = "NoDriveAutoRun";
     /// <summary>0xFF: AutoRun off on every kind of drive.</summary>
     public const int AutoRunAllDrives = 255;
     /// <summary>Policy "Enable insecure guest logons" (Lanman Workstation): 0 = off.</summary>

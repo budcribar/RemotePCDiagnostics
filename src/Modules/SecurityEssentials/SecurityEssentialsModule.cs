@@ -27,8 +27,14 @@ public sealed record SecurityFacts(bool? SecureBoot, string? Firmware, string? E
     public IReadOnlyDictionary<string, bool> Firewall { get; init; } = new Dictionary<string, bool>();
     /// <summary>Policy EnableMulticast (0 = LLMNR off), null when not set (Windows default: on).</summary>
     public long? LlmnrPolicy { get; init; }
-    /// <summary>Policy NoDriveTypeAutoRun, null when not set (Windows default: AutoRun on for some drives).</summary>
+    /// <summary>Policy NoDriveTypeAutoRun (HKLM), null when not set (Windows default: AutoRun on for some drives).</summary>
     public long? AutoRunPolicy { get; init; }
+    /// <summary>Policy NoDriveTypeAutoRun for the signed-in user (HKCU), null when not set. Used only when the HKLM value isn't set.</summary>
+    public long? AutoRunUserPolicy { get; init; }
+    /// <summary>Policy NoDriveAutoRun (drive letter bits, A: = bit 0), HKLM then HKCU, null when neither is set.</summary>
+    public long? AutoRunLetterPolicy { get; init; }
+    /// <summary>This PC's drives: letter → Windows drive type (2 removable, 3 fixed, 4 network, 5 CD/DVD, 6 RAM disk). Empty = couldn't read.</summary>
+    public IReadOnlyDictionary<char, int> Drives { get; init; } = new Dictionary<char, int>();
     /// <summary>AllowInsecureGuestAuth (policy first, then the LanmanWorkstation parameter), null when neither is set.</summary>
     public long? InsecureGuest { get; init; }
 
@@ -80,6 +86,10 @@ public sealed class SecurityEssentialsModule(SystemCommandRunner commands) : Are
         "'Firewall='+((Get-NetFirewallProfile|ForEach-Object{$_.Name+':'+$_.Enabled}) -join ',');" +
         "'Llmnr='+(D '" + SecurityFixes.LlmnrKey + "' '" + SecurityFixes.LlmnrValue + "');" +
         "'AutoRun='+(D '" + SecurityFixes.AutoRunKey + "' '" + SecurityFixes.AutoRunValue + "');" +
+        "'AutoRunUser='+(D '" + SecurityFixes.AutoRunUserKey + "' '" + SecurityFixes.AutoRunValue + "');" +
+        "$l=D '" + SecurityFixes.AutoRunKey + "' '" + SecurityFixes.AutoRunLettersValue + "';" +
+        "if([string]$l -eq ''){$l=D '" + SecurityFixes.AutoRunUserKey + "' '" + SecurityFixes.AutoRunLettersValue + "'};'AutoRunLetters='+$l;" +
+        "'Drives='+((Get-CimInstance Win32_LogicalDisk|ForEach-Object{$_.DeviceID+[int]$_.DriveType}) -join ',');" +
         "$g=D 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\LanmanWorkstation' 'AllowInsecureGuestAuth';" +
         "if([string]$g -eq ''){$g=D 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\LanmanWorkstation\\Parameters' 'AllowInsecureGuestAuth'};'InsecureGuest='+$g";
 
@@ -95,7 +105,7 @@ public sealed class SecurityEssentialsModule(SystemCommandRunner commands) : Are
         Log($"{Name}: secureBoot={facts.SecureBoot?.ToString() ?? "?"} firmware={facts.Firmware ?? "?"} edition={facts.Edition ?? "?"} encryption={facts.Encryption?.ToString() ?? "?"} " +
             $"tpm={(facts.Tpm is { } t ? $"present={t.Present} v={t.Version} ready={t.ReadyForStorage} pcr7={t.Pcr7Binding}" : "?")} defender={facts.DefenderMode ?? "?"} pua={facts.Pua} np={facts.NetworkProtection} " +
             $"asr={facts.AsrRules?.Count.ToString(CultureInfo.InvariantCulture) ?? "?"} av='{string.Join(";", facts.Antivirus)}' fw={string.Join(",", facts.Firewall.Select(kv => $"{kv.Key}:{kv.Value}"))} " +
-            $"llmnr={facts.LlmnrPolicy} autorun={facts.AutoRunPolicy} guest={facts.InsecureGuest}");
+            $"llmnr={facts.LlmnrPolicy} autorun={facts.AutoRunPolicy}/{facts.AutoRunUserPolicy}/{facts.AutoRunLetterPolicy} drives={string.Join(",", facts.Drives.Select(kv => $"{kv.Key}:{kv.Value}"))} guest={facts.InsecureGuest}");
         return Build(facts);
     }
 
@@ -138,12 +148,22 @@ public sealed class SecurityEssentialsModule(SystemCommandRunner commands) : Are
             if (c > 0) fw[part[..c]] = part[(c + 1)..].Equals("True", StringComparison.OrdinalIgnoreCase);
         }
 
+        // "C:3,D:5": drive letter, colon, Win32_LogicalDisk.DriveType.
+        var drives = new Dictionary<char, int>();
+        foreach (var part in (Str("Drives") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var c = part.IndexOf(':');
+            if (c == 1 && char.IsAsciiLetter(part[0]) && int.TryParse(part[2..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var type))
+                drives[char.ToUpperInvariant(part[0])] = type;
+        }
+
         return new(Int("SecureBoot") is { } sb ? sb != 0 : null, Str("Firmware"), Str("Edition"), Int("Encryption"), tpm, Str("SystemDrive") ?? "C:")
         {
             DefenderMode = Str("DefenderMode"), RealTimeProtection = Bool("RealTime"), TamperProtection = Bool("Tamper"),
             Pua = Int("Pua"), NetworkProtection = Int("NetworkProtection"), AsrRules = asr,
             Antivirus = (Str("Antivirus") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            Firewall = fw, LlmnrPolicy = Long("Llmnr"), AutoRunPolicy = Long("AutoRun"), InsecureGuest = Long("InsecureGuest"),
+            Firewall = fw, LlmnrPolicy = Long("Llmnr"), AutoRunPolicy = Long("AutoRun"), AutoRunUserPolicy = Long("AutoRunUser"),
+            AutoRunLetterPolicy = Long("AutoRunLetters"), Drives = drives, InsecureGuest = Long("InsecureGuest"),
         };
     }
 
@@ -364,14 +384,63 @@ public sealed class SecurityEssentialsModule(SystemCommandRunner commands) : Are
             Note: off ? null : fix.WhatHappens, Actions: off ? null : [Fix(SecurityFixes.Llmnr)]);
     }
 
+    /// <summary>Windows' NoDriveTypeAutoRun when no policy is set (0x91: off for unknown, network and other drive types).</summary>
+    public const long AutoRunWindowsDefault = 0x91;
+    private const long AllLetters = (1L << 26) - 1;
+
+    /// <summary>The drive types NoDriveTypeAutoRun covers, in the order they're listed (bit 0x02, "no root folder", can't AutoRun).</summary>
+    private static readonly (long Bit, int DriveType, string Name, string Row)[] AutoRunTypes =
+    [
+        (0x04, 2, "removable", "Removable drives (USB sticks, memory cards)"),
+        (0x20, 5, "CD/DVD", "CD/DVD drives"),
+        (0x08, 3, "fixed", "Fixed drives (internal and external disks)"),
+        (0x10, 4, "network", "Network drives"),
+        (0x40, 6, "RAM", "RAM disks"),
+        (0x81, 0, "unknown", "Other drive types"),
+    ];
+
+    /// <summary>The NoDriveTypeAutoRun value in effect: the machine policy, else the user policy, else Windows' default.</summary>
+    public static long EffectiveAutoRunTypes(SecurityFacts f) => f.AutoRunPolicy ?? f.AutoRunUserPolicy ?? AutoRunWindowsDefault;
+
+    /// <summary>The drive types AutoRun is still on for, e.g. ["removable", "CD/DVD"]; empty when it's off everywhere.</summary>
+    public static IReadOnlyList<string> AutoRunOnFor(SecurityFacts f)
+    {
+        if (((f.AutoRunLetterPolicy ?? 0) & AllLetters) == AllLetters) return [];
+        var mask = EffectiveAutoRunTypes(f);
+        return AutoRunTypes.Where(t => (mask & t.Bit) != t.Bit).Select(t => t.Name).ToList();
+    }
+
+    private static string JoinAnd(IReadOnlyList<string> items) =>
+        items.Count <= 1 ? string.Concat(items) : string.Join(", ", items.Take(items.Count - 1)) + " and " + items[^1];
+
     private static AreaCard AutoRunCard(SecurityFacts f)
     {
         var fix = SecurityFixes.Find(SecurityFixes.AutoRun)!;
-        var off = f.AutoRunPolicy is { } v && (v & SecurityFixes.AutoRunAllDrives) == SecurityFixes.AutoRunAllDrives;
+        var onFor = AutoRunOnFor(f);
+        var off = onFor.Count == 0;
         var level = off ? AreaLevel.Ok : AreaLevel.Warning;
-        return new("autorun", fix.Label, level, off ? "AutoRun is off" : "AutoRun is on for some drives", "", Cols,
-            [Row(level, "AutoRun", off ? "Off for all drives" : f.AutoRunPolicy is null ? "On for some drives (Windows default)" : "On for some drives"), Means(fix.WhatItIs)],
-            Note: off ? null : fix.WhatHappens, Actions: off ? null : [Fix(SecurityFixes.AutoRun)]);
+        var mask = EffectiveAutoRunTypes(f);
+        var letterMask = f.AutoRunLetterPolicy ?? 0;
+        bool LetterOff(char letter) => (letterMask & (1L << (letter - 'A'))) != 0;
+
+        var rows = new List<AreaRow>();
+        if (off) rows.Add(Row(level, "AutoRun", "Off for all drives"));
+        else
+        {
+            var source = f.AutoRunPolicy is not null ? "" : f.AutoRunUserPolicy is not null ? " (your user policy)" : " (Windows default)";
+            foreach (var t in AutoRunTypes.Where(t => (mask & t.Bit) != t.Bit))
+            {
+                var letters = f.Drives.Where(d => d.Value == t.DriveType && !LetterOff(d.Key)).Select(d => d.Key + ":").Order(StringComparer.Ordinal).ToList();
+                rows.Add(Row(AreaLevel.Warning, t.Row, "On" + source + (letters.Count > 0 ? " · " + string.Join(", ", letters) : "")));
+            }
+            var offTypes = AutoRunTypes.Where(t => (mask & t.Bit) == t.Bit).Select(t => t.Name).ToList();
+            if (offTypes.Count > 0) rows.Add(Row(AreaLevel.Ok, "Off for", JoinAnd(offTypes) + " drives"));
+            var offLetters = Enumerable.Range(0, 26).Where(i => (letterMask & (1L << i)) != 0).Select(i => (char)('A' + i) + ":").ToList();
+            if (offLetters.Count > 0) rows.Add(Row(AreaLevel.Ok, "Off by drive letter", string.Join(", ", offLetters)));
+        }
+        rows.Add(Means(fix.WhatItIs));
+        return new("autorun", fix.Label, level, off ? "AutoRun is off" : $"AutoRun is on for {JoinAnd(onFor)} drives", "", Cols, rows,
+            Note: off ? null : fix.WhatHappens, Actions: off ? null : [Fix(SecurityFixes.AutoRun)], PreserveRowOrder: true);
     }
 
     /// <summary>Fixable, but the fix isn't ticked by default in the fix list: turning guest logons off can cut off old network drives (NAS).
