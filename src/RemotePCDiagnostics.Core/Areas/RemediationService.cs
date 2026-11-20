@@ -464,8 +464,8 @@ public sealed class RemediationService(
 
         RemediationKind.CleanTempFiles => await RunCleanTempFilesAsync(ct).ConfigureAwait(false),
 
-        RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf && Security.SecurityFixes.ApplyScript(sf.Key) is { } script
-            ? await RunPowerShellAsync(script, sf.Done,
+        RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf && Security.SecurityFixes.ApplyScript(sf.Key) is not null
+            ? await RunAgentScriptAsync(AgentScripts.Of(AgentScripts.SecurityApply, sf.Key), sf.Done,
                 $"Couldn't change {sf.Label.ToLowerInvariant()} (Windows refused the change; Tamper Protection or an organization policy may be blocking it).", ct).ConfigureAwait(false)
             : new(false, "This setting isn't one this app changes."),
 
@@ -477,8 +477,8 @@ public sealed class RemediationService(
 
         RemediationKind.DisableDeviceWake => await RunDisableDeviceWakeAsync(action, ct).ConfigureAwait(false),
 
-        RemediationKind.OptimizeSsd => await RunPowerShellAsync(
-            $"$ErrorActionPreference='Stop'; Optimize-Volume -DriveLetter {string.Join(",", DriveLetters(action.Target).ToCharArray())} -ReTrim",
+        RemediationKind.OptimizeSsd => await RunAgentScriptAsync(
+            AgentScripts.Of(AgentScripts.OptimizeVolume, DriveLetters(action.Target)),
             $"Optimized / Retrimmed {Display(action)}.",
             $"Couldn't optimize {Display(action)} (administrator rights required).",
             ct, OptimizeTimeout).ConfigureAwait(false),
@@ -667,8 +667,16 @@ public sealed class RemediationService(
     private async Task<RemediationResult> RunSimpleAsync(string exe, IReadOnlyList<string> args, string okMsg, string failMsg, CancellationToken ct)
     {
         var pr = await commands.RunAsync(exe, args, ct).ConfigureAwait(false);
-        return pr is { ExitCode: 0 } ? new(true, okMsg) : new(false, failMsg);
+        return pr is { ExitCode: 0 } ? new(true, okMsg) : new(false, Failure(pr, failMsg));
     }
+
+    /// <summary>
+    /// The failure text: what the Agent said when it couldn't run the command (<see cref="SystemCommandRunner.AgentFailure"/>), else
+    /// <paramref name="failMsg"/>, plus <see cref="ElevationService.AdminRepairHint"/> when the Agent wasn't there to run it.
+    /// </summary>
+    private string Failure(ProcessResult? pr, string failMsg) =>
+        SystemCommandRunner.AgentFailure(pr)
+        ?? (commands.ElevatedBridge is { IsConnected: true } || commands.IsScripted ? failMsg : failMsg + " " + ElevationService.AdminRepairHint);
 
     private async Task<RemediationResult> RunPnpUtilAsync(IReadOnlyList<string> args, string okMsg, string failMsg, CancellationToken ct)
     {
@@ -679,10 +687,11 @@ public sealed class RemediationService(
     /// <summary>Time limits for fixes that legitimately take minutes (the default limit is 60 s).</summary>
     public static readonly TimeSpan CleanupTimeout = TimeSpan.FromMinutes(10), UpdateTimeout = TimeSpan.FromMinutes(45), OptimizeTimeout = TimeSpan.FromMinutes(15);
 
-    private async Task<RemediationResult> RunPowerShellAsync(string script, string okMsg, string failMsg, CancellationToken ct, TimeSpan? timeout = null)
+    /// <summary>A named script the Agent builds and runs with administrator rights (<see cref="AgentScripts"/>).</summary>
+    private async Task<RemediationResult> RunAgentScriptAsync(AdminPipeScript script, string okMsg, string failMsg, CancellationToken ct, TimeSpan? timeout = null)
     {
-        var pr = await commands.RunPowerShellAsync(script, timeout, ct).ConfigureAwait(false);
-        return pr is { ExitCode: 0 } ? new(true, okMsg) : new(false, failMsg);
+        var pr = await commands.RunAgentScriptAsync(script, timeout, ct).ConfigureAwait(false);
+        return pr is { ExitCode: 0 } ? new(true, okMsg) : new(false, Failure(pr, failMsg));
     }
 
     private async Task<RemediationResult> RunEndProcessAsync(AreaAction action, CancellationToken ct)
@@ -691,14 +700,10 @@ public sealed class RemediationService(
             return new(false, $"{Display(action)} is protected by Windows and cannot be stopped.");
 
         var procName = Path.GetFileNameWithoutExtension(action.Target.Trim());
-        var escaped = EscapeSingleQuotes(procName);
-        var script = $"$ErrorActionPreference='Stop'; " +
-                     $"$mem = [int64]((Get-Process -Name '{escaped}' -ErrorAction SilentlyContinue | Measure-Object WorkingSet64 -Sum).Sum); " +
-                     $"Stop-Process -Name '{escaped}' -Force; " +
-                     $"[pscustomobject]@{{ FreedMemoryBytes = $mem }} | ConvertTo-Json -Compress";
-        var pr = await commands.RunPowerShellAsync(script, ct).ConfigureAwait(false);
+        // Through the Agent (an elevated process can only be ended with administrator rights); it checks the name again.
+        var pr = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.StopProcess, procName), null, ct).ConfigureAwait(false);
         if (pr is not { ExitCode: 0 })
-            return new(false, $"Couldn't close {Display(action)} (it may have already exited or requires administrator rights).");
+            return new(false, SystemCommandRunner.AgentFailure(pr) ?? $"Couldn't close {Display(action)} (it may have already exited, or it runs as administrator and the Agent isn't connected).");
 
         long freedMem = 0;
         if (!string.IsNullOrWhiteSpace(pr.StdOut))
@@ -729,13 +734,23 @@ public sealed class RemediationService(
         return new(false, "Couldn't flush DNS cache or renew IP configuration.");
     }
 
+    /// <summary>Ends every process named <paramref name="processName"/> and prints the memory they used.</summary>
+    public static string BuildStopProcessScript(string processName)
+    {
+        var escaped = EscapeSingleQuotes(processName);
+        return $"$ErrorActionPreference='Stop'; " +
+               $"$mem = [int64]((Get-Process -Name '{escaped}' -ErrorAction SilentlyContinue | Measure-Object WorkingSet64 -Sum).Sum); " +
+               $"Stop-Process -Name '{escaped}' -Force; " +
+               $"[pscustomobject]@{{ FreedMemoryBytes = $mem }} | ConvertTo-Json -Compress";
+    }
+
     public static string BuildWindowsUpdateScript(bool driversOnly) =>
         Scripts.PowerShellScripts.Get("WindowsUpdate").Replace("__CRITERIA__", driversOnly ? "IsInstalled=0 and Type='Driver'" : "IsInstalled=0 and Type='Software'");
 
     private async Task<RemediationResult> RunWindowsUpdateAsync(bool driversOnly, CancellationToken ct)
     {
         var kindWord = driversOnly ? "driver" : "Windows";
-        var pr = await commands.RunPowerShellAsync(BuildWindowsUpdateScript(driversOnly), UpdateTimeout, ct).ConfigureAwait(false);
+        var pr = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.WindowsUpdate, driversOnly ? "drivers" : "software"), UpdateTimeout, ct).ConfigureAwait(false);
         PendingUpdates.Invalidate();
         if (pr is not { ExitCode: 0 } || string.IsNullOrWhiteSpace(pr.StdOut))
             return new(false, $"Couldn't check Windows Update for {kindWord} updates.");
@@ -789,8 +804,8 @@ public sealed class RemediationService(
 
     private async Task<RemediationResult> RunInstallUpdateAsync(AreaAction action, CancellationToken ct)
     {
-        if (BuildInstallUpdateScript(action.Target) is not { } script) return new(false, "This update has no Windows Update ID.");
-        var pr = await commands.RunPowerShellAsync(script, UpdateTimeout, ct).ConfigureAwait(false);
+        if (BuildInstallUpdateScript(action.Target) is null || !Guid.TryParse(action.Target, out var updateId)) return new(false, "This update has no Windows Update ID.");
+        var pr = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.InstallUpdate, updateId.ToString("D")), UpdateTimeout, ct).ConfigureAwait(false);
         PendingUpdates.Invalidate();
         return ParseInstallUpdate(pr is { ExitCode: 0 } ? pr.StdOut : null, Display(action));
     }
@@ -831,7 +846,7 @@ public sealed class RemediationService(
 
     private async Task<RemediationResult> RunCleanTempFilesAsync(CancellationToken ct)
     {
-        var pr = await commands.RunPowerShellAsync(CleanTempScript, CleanupTimeout, ct).ConfigureAwait(false);
+        var pr = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.CleanTemp), CleanupTimeout, ct).ConfigureAwait(false);
         if (pr is not { ExitCode: 0 } || string.IsNullOrWhiteSpace(pr.StdOut))
             return new(false, "Couldn't clean temporary files.");
 
@@ -875,8 +890,8 @@ public sealed class RemediationService(
                 case RemediationKind.DisableSystemProxy:
                     return settings?.GetUserProxyEnable() == 1
                         ? Rec(Changes.ChangeKind.SystemProxy, "", "1", "System proxy turned off") : null;
-                case RemediationKind.ApplySecuritySetting when Security.SecurityFixes.Find(action.Target) is { } sf && Security.SecurityFixes.ReadScript(sf.Key) is { } read:
-                    var cur = await commands.RunPowerShellAsync(read, ct).ConfigureAwait(false);
+                case RemediationKind.ApplySecuritySetting when Security.SecurityFixes.Find(action.Target) is { } sf && Security.SecurityFixes.ReadScript(sf.Key) is not null:
+                    var cur = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.SecurityRead, sf.Key), null, ct).ConfigureAwait(false);
 
                     var prev = cur is { ExitCode: 0 } ? cur.StdOut.Trim() : null;
                     return prev is not null && Security.SecurityFixes.ParsePrevious(sf.Key, prev) is not null

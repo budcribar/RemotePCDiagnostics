@@ -141,9 +141,15 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
     }
 
     // ---- boot ----
-    public async Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct) =>
-        await new WindowsEventLog(commands).QueryAsync(BootRecord.Channel, BootRecord.Query, 20, ct).ConfigureAwait(false)
-        ?? throw new InvalidOperationException("Diagnostics-Performance log unavailable (administrator rights needed)");
+    // Only an administrator can read the Diagnostics-Performance log, so the Agent reads it (wevtutil qe, the one wevtutil use it allows).
+    // Without the Agent nothing is run here: the app never has administrator rights, and the result says to turn on Admin Repair Mode.
+    public async Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct)
+    {
+        if (!commands.HasAdminRights)
+            throw new RemotePCDiagnostics.Core.Session.AdminRequiredException(BenchmarkRunner.BootLogUnreadable);
+        return await new WindowsEventLog(commands).QueryAsync(BootRecord.Channel, BootRecord.Query, 20, ct).ConfigureAwait(false)
+            ?? throw new RemotePCDiagnostics.Core.Session.AdminRequiredException(BenchmarkRunner.BootLogUnreadable);
+    }
 
     // ---- idle resources: memory in use + background processes (sampled several times) ----
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
