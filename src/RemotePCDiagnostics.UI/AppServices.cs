@@ -29,4 +29,5 @@ public sealed record AppServices(
     RemoteSessionHealth? RemoteHealth = null,
     IElevationContext? Elevation = null,
     IFullscreenService? Fullscreen = null,
-    IAppUpdateService? AppUpdate = null);
+    IAppUpdateService? AppUpdate = null,
+    SystemCommandRunner? Commands = null);

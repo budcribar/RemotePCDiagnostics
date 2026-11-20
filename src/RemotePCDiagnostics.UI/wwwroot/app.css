@@ -481,6 +481,7 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 .bench-restart-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-muted); }
 .bench-hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .bench-customize { margin-bottom: 12px; padding: 0; overflow: hidden; }
+.bench-upload { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 .bench-customize-summary { list-style: none; cursor: pointer; padding: 12px 16px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; color: var(--text-strong); user-select: none; }
 .bench-customize-summary::-webkit-details-marker { display: none; }
 .bench-customize-summary:hover { background: var(--surface-hover); }
