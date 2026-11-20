@@ -26,6 +26,7 @@ param(
     [string] $RbwvSourceRoot = '',
     [switch] $UseRbwvSource,
     [switch] $SkipPublish,
+    [switch] $NoReadyToRun,
     [switch] $SkipVerify,
     [switch] $StageOnly,
     [switch] $PublishPreRelease
@@ -92,6 +93,10 @@ if (-not $SkipPublish) {
         '-p:GeneratePackageOnBuild=false'
         "-p:Version=$Version"
     )
+    # Faster publish for development builds (CI TestShop-only runs); the app starts a little slower without ReadyToRun.
+    if ($NoReadyToRun) {
+        $PublishArgs += '-p:PublishReadyToRun=false'
+    }
 
     $RunningOnWindows = ($env:OS -eq 'Windows_NT') -or ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows))
     if (-not $RunningOnWindows) {

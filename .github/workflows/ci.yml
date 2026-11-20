@@ -337,12 +337,16 @@ jobs:
 
           $pubDir = Join-Path $env:RUNNER_TEMP 'agent-publish'
           $log = Join-Path $env:RUNNER_TEMP 'agent-publish.log'
+          # TestShop-only runs skip ReadyToRun (about a minute less CPU on the 4-core runner); release builds keep it.
+          $r2r = if ($env:TESTSHOP_ONLY -eq 'true') { 'false' } else { 'true' }
           $publishArgs = @('publish', (Join-Path $src 'src/RemotePCDiagnostics.Agent/RemotePCDiagnostics.Agent.csproj'), '-c', 'Release', '-r', 'win-x64', '--self-contained',
-            '-p:PublishSingleFile=true', '-p:PublishReadyToRun=true', '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:DebugType=None', '-nodeReuse:false', '-o', $pubDir)
+            '-p:PublishSingleFile=true', "-p:PublishReadyToRun=$r2r", '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:DebugType=None', '-nodeReuse:false', '-o', $pubDir)
           $agent = Start-Process -FilePath 'dotnet' -ArgumentList $publishArgs -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError "$log.err"
           $null = $agent.Handle  # keeps ExitCode readable after the process ends
 
-          pwsh -NoProfile -File installer/Build-Installer.ps1 -StageOnly
+          $stageArgs = @('-NoProfile', '-File', 'installer/Build-Installer.ps1', '-StageOnly')
+          if ($env:TESTSHOP_ONLY -eq 'true') { $stageArgs += '-NoReadyToRun' }
+          pwsh @stageArgs
           $appCode = $LASTEXITCODE
 
           $agent.WaitForExit()
