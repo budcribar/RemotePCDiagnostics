@@ -237,11 +237,19 @@ public sealed class RebootResumeCoordinator(
 
         // The sign-in task runs the Agent's launcher (RemotePCDiagnostics.Agent.exe --launch …) with highest privileges, so there's no UAC
         // prompt after the restart; the launcher starts the app un-elevated, as the signed-in user, with the Agent connected. The app itself
-        // never runs as administrator. Registering it needs administrator rights, so it goes through the Agent; without it, a RunOnce entry
-        // starts the app (un-elevated, without the Agent) instead.
-        var agent = AgentLauncherPath(ExecutablePath);
-        var task = await commands.RunPowerShellAsync(BuildRegisterResumeTaskScript(ExecutablePath, resumeCmd, CurrentUser(), DateTimeOffset.Now, agent), ct).ConfigureAwait(false);
+        // never runs as administrator. Registering it needs administrator rights, so the Agent does it from a script it builds itself
+        // (the app sends only the user and the launch arguments). Without the Agent the app registers its own task with limited rights,
+        // and if that fails too, a RunOnce entry starts the app (un-elevated, without the Agent) instead.
+        var launch = ResumeTaskScript.LaunchArguments(ExecutablePath, resumeCmd);
+        var task = await commands.RunAgentScriptAsync(
+            AgentScripts.Of(AgentScripts.ResumeTaskRegister, [AgentScripts.RebootTask, CurrentUser(), .. launch]), null, ct).ConfigureAwait(false);
         var how = "task";
+        if (SystemCommandRunner.AgentFailure(task) is { } noAgent)
+        {
+            Log($"The Agent didn't register the resume task ({noAgent}); registering the app's own task with limited rights.");
+            task = await commands.RunPowerShellAsync(BuildRegisterResumeTaskScript(ExecutablePath, resumeCmd, CurrentUser(), DateTimeOffset.Now), ct).ConfigureAwait(false);
+            how = "task-limited";
+        }
         int? regExit = null;
         if (task is not { ExitCode: 0 })
         {
@@ -260,44 +268,19 @@ public sealed class RebootResumeCoordinator(
 
     private static string CurrentUser() => $"{Environment.UserDomainName}\\{Environment.UserName}";
 
-    private static string Q(string s) => s.Replace("'", "''");
-
-    /// <summary>The Agent next to the app (<see cref="ElevationService.AdminHelperExeName"/>), or null when it isn't installed there.</summary>
-    public static string? AgentLauncherPath(string executablePath)
-    {
-        var exe = executablePath.Trim('"');
-        var slash = exe.LastIndexOfAny(['\\', '/']);
-        if (slash <= 0) return null;
-        var agent = exe[..(slash + 1)] + ElevationService.AdminHelperExeName;
-        return File.Exists(agent) ? agent : null;
-    }
-
     /// <summary>
-    /// PowerShell that registers <see cref="ResumeTaskName"/>: at <paramref name="user"/>'s sign-in, run the Agent's launcher
-    /// (<paramref name="agentPath"/> <c>--launch</c> plus the resume arguments) with highest privileges; the launcher starts the app un-elevated.
-    /// Without the Agent the task starts the app itself with limited (normal) rights, never highest. The trigger stops firing after
+    /// PowerShell that registers the app's own <see cref="ResumeTaskName"/>, for when the Agent isn't there to register its launcher's:
+    /// at <paramref name="user"/>'s sign-in, start the app with limited (normal) rights, never highest. The trigger stops firing after
     /// <see cref="SessionLaunchOptions.PendingRebootMaxAge"/>, so a task that was never cleaned up can't start the app at sign-ins long after the restart.
+    /// (The Agent's task: <see cref="AgentScripts.ResumeTaskRegister"/>.)
     /// </summary>
-    public static string BuildRegisterResumeTaskScript(string executablePath, string resumeCommandLine, string user, DateTimeOffset now, string? agentPath = null)
+    public static string BuildRegisterResumeTaskScript(string executablePath, string resumeCommandLine, string user, DateTimeOffset now)
     {
         var exe = executablePath.Trim('"');
-        var quotedExe = $"\"{exe}\"";
-        var args = resumeCommandLine.StartsWith(quotedExe, StringComparison.OrdinalIgnoreCase) ? resumeCommandLine[quotedExe.Length..].Trim() : SessionLaunchOptions.PostRebootArg;
+        var args = string.Join(' ', ResumeTaskScript.LaunchArguments(exe, resumeCommandLine));
         var slash = exe.LastIndexOfAny(['\\', '/']); // not Path.GetDirectoryName: a Windows path must split the same way wherever this runs
         var workDir = slash > 0 ? exe[..slash] : null;
-        var agent = agentPath?.Trim('"');
-        var run = string.IsNullOrEmpty(agent) ? exe : agent;
-        if (!string.IsNullOrEmpty(agent)) args = "--launch " + args;
-        var level = string.IsNullOrEmpty(agent) ? "Limited" : "Highest";
-        var end = now.Add(SessionLaunchOptions.PendingRebootMaxAge).LocalDateTime.ToString("s", System.Globalization.CultureInfo.InvariantCulture);
-        return
-            "$ErrorActionPreference='Stop';" +
-            $"$a=New-ScheduledTaskAction -Execute '{Q(run)}' -Argument '{Q(args)}'" + (string.IsNullOrEmpty(workDir) ? "" : $" -WorkingDirectory '{Q(workDir)}'") + ";" +
-            $"$t=New-ScheduledTaskTrigger -AtLogOn -User '{Q(user)}';" +
-            $"$t.EndBoundary='{end}';" +
-            $"$p=New-ScheduledTaskPrincipal -UserId '{Q(user)}' -LogonType Interactive -RunLevel {level};" +
-            "$s=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero);" +
-            $"Register-ScheduledTask -TaskName '{Q(ResumeTaskName)}' -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null";
+        return ResumeTaskScript.Register(ResumeTaskName, exe, args, workDir, user, now.Add(SessionLaunchOptions.PendingRebootMaxAge), highest: false);
     }
 
     /// <summary>Removes the sign-in task and the <c>RunOnce</c> startup entry, and deletes any saved pre-reboot snapshot, when a restart is cancelled or done.</summary>
@@ -309,7 +292,10 @@ public sealed class RebootResumeCoordinator(
             SystemCommandRunner.SystemTool("reg.exe"),
             ["delete", RunOnceRegistryKey, "/v", RunOnceValueName, "/f"],
             ct).ConfigureAwait(false);
-        await commands.RunPowerShellAsync($"Unregister-ScheduledTask -TaskName '{Q(ResumeTaskName)}' -Confirm:$false -ErrorAction SilentlyContinue", ct).ConfigureAwait(false);
+        // The Agent removes the task it registered; without it, the app removes its own (limited) one.
+        var removed = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.ResumeTaskRemove, AgentScripts.RebootTask), null, ct).ConfigureAwait(false);
+        if (SystemCommandRunner.AgentFailure(removed) is not null)
+            await commands.RunPowerShellAsync(ResumeTaskScript.Remove(ResumeTaskName), ct).ConfigureAwait(false);
         Log("Cleared pending reboot state, the resume task and the RunOnce entry.");
     }
 

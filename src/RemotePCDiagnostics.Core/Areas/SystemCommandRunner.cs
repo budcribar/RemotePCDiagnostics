@@ -18,6 +18,8 @@ public sealed class SystemCommandRunner(
     public TimeSpan Timeout { get; } = timeout ?? TimeSpan.FromSeconds(60);
     public ILogger? Log { get; } = log;
     public IElevatedCommandBridge? ElevatedBridge => elevatedBridge;
+    /// <summary>Whether an admin tool run through this runner gets administrator rights: the Agent is connected, or this process has them.</summary>
+    public bool HasAdminRights => elevatedBridge is { IsConnected: true } || _isProcessElevated();
 
     /// <summary>Full path of a tool in the Windows system directory (falls back to the bare name, resolved via PATH).</summary>
     public static string SystemTool(string exe)
@@ -54,20 +56,26 @@ public sealed class SystemCommandRunner(
             && elevatedBridge is { IsConnected: true }
             && AdminCommandAllowlist.TryResolveSystemTool(fileName, out _))
         {
+            // An admin tool goes to the Agent, and only to the Agent: when the call fails, the app doesn't run it itself (it would only
+            // fail later without administrator rights, or half-work). The caller gets a failed result that says why.
+            ProcessResult? bridged;
             try
             {
-                var bridged = await elevatedBridge.RunElevatedAsync(fileName, arguments, effectiveTimeout, ct, outputLine).ConfigureAwait(false);
-                if (bridged is not null)
-                {
-                    LogResult("[admin-helper] ", fileName, arguments, bridged, sw.ElapsedMilliseconds);
-                    return bridged.TimedOut ? null : bridged;
-                }
+                bridged = await elevatedBridge.RunElevatedAsync(fileName, arguments, effectiveTimeout, ct, outputLine).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
-                Write($"[admin-helper] command {Path.GetFileName(fileName)} bridge call failed, falling back to direct execution: {ex.Message}");
+                Write($"[admin-helper] command {Path.GetFileName(fileName)} bridge call failed: {ex.Message}");
+                return AgentFailed($"The Agent couldn't run {Path.GetFileNameWithoutExtension(fileName)}. " + ElevationService.AdminRepairHint);
             }
+            if (bridged is null)
+            {
+                Write($"[admin-helper] command {Path.GetFileName(fileName)} was refused or failed in the Agent.");
+                return AgentFailed($"The Agent didn't run {Path.GetFileNameWithoutExtension(fileName)}. Update Remote PC Diagnostics, then try again.");
+            }
+            LogResult("[admin-helper] ", fileName, arguments, bridged, sw.ElapsedMilliseconds);
+            return bridged.TimedOut ? null : bridged;
         }
 
         ProcessResult pr;
@@ -85,6 +93,59 @@ public sealed class SystemCommandRunner(
         }
         LogResult("", fileName, arguments, pr, sw.ElapsedMilliseconds);
         return pr.TimedOut ? null : pr;
+    }
+
+    /// <summary>The exit code of a result the Agent never ran (refused, unreachable, or not connected): its StdErr says why.</summary>
+    public const int AgentFailedExitCode = -0x41474E54;
+
+    private static ProcessResult AgentFailed(string why) => new(AgentFailedExitCode, "", why);
+
+    /// <summary>Why the Agent didn't run <paramref name="pr"/>'s command, or null when it ran (or the result isn't the Agent's).</summary>
+    public static string? AgentFailure(ProcessResult? pr) => pr is { ExitCode: AgentFailedExitCode } ? pr.StdErr : null;
+
+    /// <summary>
+    /// Runs one of the Agent's own scripts (<see cref="AgentScripts"/>) with administrator rights. The app sends only the script's name and
+    /// arguments; the Agent checks them and builds the PowerShell. Runs it in this process when it already has administrator rights (the
+    /// Agent's own sessions, tests). Otherwise, without the Agent, the result is a failure that says to turn on Admin Repair Mode
+    /// (<see cref="AgentFailure"/>). Null when it timed out.
+    /// </summary>
+    public async Task<ProcessResult?> RunAgentScriptAsync(AdminPipeScript script, TimeSpan? timeout, CancellationToken ct, Action<string>? outputLine = null)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var effectiveTimeout = timeout ?? Timeout;
+        var label = $"agent script {script.Name} {string.Join(' ', script.Args ?? [])}";
+        var elevated = _isProcessElevated();
+
+        if (!elevated && elevatedBridge is { IsConnected: true } bridge)
+        {
+            ProcessResult pr;
+            try
+            {
+                pr = await bridge.RunAgentScriptAsync(script, effectiveTimeout, ct, outputLine).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (AdminRequiredException ex) { Write($"[admin-helper] {label}: {ex.Message}"); return AgentFailed(ex.Message); }
+            catch (Exception ex)
+            {
+                Write($"[admin-helper] {label} failed: {ex.Message}");
+                return AgentFailed("The Agent couldn't make this change. " + ElevationService.AdminRepairHint);
+            }
+            Write($"[admin-helper] {label} exit={pr.ExitCode} timedOut={pr.TimedOut} ms={sw.ElapsedMilliseconds} stderr=\"{pr.StdErr.Trim()}\"");
+            return pr.TimedOut ? null : pr;
+        }
+
+        if (!elevated && !IsScripted)
+        {
+            Write($"{label}: not run, the Agent isn't connected.");
+            return AgentFailed("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+        }
+
+        if (AgentScripts.Build(script, AppContext.BaseDirectory, out var refusal) is not { } ps)
+        {
+            Write($"{label} refused: {refusal}");
+            return AgentFailed(refusal ?? "That change isn't allowed.");
+        }
+        return await RunAsync(PowerShell, PowerShellArgs(ps), timeout, ct, outputLine).ConfigureAwait(false);
     }
 
     private void LogResult(string prefix, string fileName, IReadOnlyList<string> arguments, ProcessResult pr, long elapsedMs)
