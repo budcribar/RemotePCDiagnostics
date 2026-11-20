@@ -11,6 +11,7 @@ using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Projects;
+using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Storage;
 
 namespace RemotePCDiagnostics.Host;
@@ -19,7 +20,7 @@ namespace RemotePCDiagnostics.Host;
 /// Windows probes and actions for memory suggestions. Per-user changes only (HKCU startup, the user's browser profile),
 /// except service start-up type, which the user explicitly clicks and can undo. Nothing here runs without a UI click.
 /// </summary>
-public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger? log = null) : IMemorySystem
+public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger? log = null, IElevatedCommandBridge? agent = null) : IMemorySystem
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string Run32Key = @"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run";

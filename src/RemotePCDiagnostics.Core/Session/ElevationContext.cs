@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Principal;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Workflow;
@@ -322,6 +323,15 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
 
     public Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) =>
         ConnectedClient().DisableAutoLogonAsync(backup, ct);
+
+    public Task<AppRemovalAgent.Result> RemoveAppxPackagesAsync(IReadOnlyList<RemovableAppx> apps, CancellationToken ct = default) =>
+        ConnectedClient().RemoveAppxPackagesAsync(apps, ct);
+
+    public Task<AppRemovalAgent.Result> RunUninstallerAsync(UninstallCommand command, CancellationToken ct = default) =>
+        ConnectedClient().RunUninstallerAsync(command, ct);
+
+    public Task<AppRemovalAgent.Result> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct = default) =>
+        ConnectedClient().SetScheduledTaskEnabledAsync(path, enabled, ct);
 
     /// <summary>The connected Agent, or <see cref="InvalidOperationException"/> with what to do.</summary>
     private AdminPipeClient ConnectedClient()
