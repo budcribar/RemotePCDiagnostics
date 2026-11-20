@@ -170,40 +170,11 @@ public partial class App : Application
             return;
         }
 
-        if (isAdmin)
-        {
-            // Before anything reads the undo journal, workflow or resume state: secure their folder and move them out of %LOCALAPPDATA%.
-            if (StartupOptimizations.FastProtectedState && Directory.Exists(ProtectedState.Folder()) && File.Exists(Path.Combine(ProtectedState.Folder(), ".secured")))
-            {
-                // Fast-path: state folder already verified and secured
-            }
-            else
-            {
-                SecureProtectedState();
-                try { File.WriteAllText(Path.Combine(ProtectedState.Folder(), ".secured"), "1"); } catch { }
-            }
-        }
-        StartupProfiler.Mark("SecureProtectedStateDone");
-
         if (e.Args.Any(a => a.Equals("--undo-all", StringComparison.OrdinalIgnoreCase)))
         {
             Shutdown(RunUndoAll(restart: e.Args.Any(a => a.Equals("--restart", StringComparison.OrdinalIgnoreCase))));
             return;
         }
-
-        if (isAdmin)
-        {
-            // One-time history update (event log format 3) before anything else writes events; the marker makes it a no-op afterwards.
-            if (StartupOptimizations.DeferMigrations)
-            {
-                Task.Run(RunStartupMigrations);
-            }
-            else
-            {
-                RunStartupMigrations();
-            }
-        }
-        StartupProfiler.Mark("RunStartupMigrationsDone");
 
         MainWindow = new RemotePCDiagnostics.Host.MainWindow();
         StartupProfiler.Mark("MainWindowCreated");
@@ -211,42 +182,27 @@ public partial class App : Application
         StartupProfiler.Mark("MainWindowShown");
     }
 
-    private static void SecureProtectedState()
+    private static int _machineSetupDone;
+
+    /// <summary>
+    /// The administrator-only setup the app used to do itself when started as administrator, done by the Agent once it is connected:
+    /// securing the state folder, registering the Event Log source and the one-time history updates. Asked again on the next connection
+    /// until it is all done.
+    /// </summary>
+    public static async Task PrepareMachineThroughAgentAsync(RemotePCDiagnostics.Core.Session.IElevatedCommandBridge agent)
     {
-        if (!ProtectedStateFolder.Ensure(Loggers.CreateLogger(typeof(ProtectedStateFolder).FullName!)))
-        {
+        if (Volatile.Read(ref _machineSetupDone) != 0) return;
+        RemotePCDiagnostics.Core.Session.MachineSetupResult? setup;
+        try { setup = await agent.PrepareMachineAsync().ConfigureAwait(false); }
+        catch (Exception ex) { Log($"Machine setup through the Agent failed: {ex.Message}"); return; }
+        if (setup is null) return;
+        Log($"Machine setup (Agent): state folder secured={setup.StateFolderSecured}, event source={setup.EventSourceReady}, " +
+            $"history update={setup.HistoryUpdate}, event log move={setup.LogMove}");
+        if (setup.EventSourceReady && _events.IsValueCreated) _events.Value.SourceRegistered();
+        if (!setup.StateFolderSecured)
             Event(LogEventIds.Error, LogLevel.Error, $"Remote PC Diagnostics couldn't make {ProtectedState.Folder()} administrator-only. " +
                 "Undo, the service workflow and restart resume keep working, but a program without administrator rights may be able to change what they do.");
-            return;
-        }
-        try
-        {
-            var outcome = new RemotePCDiagnostics.Core.Migrations.ProtectedStateMigration(ProtectedState.LegacyFolder(), ProtectedState.Folder(),
-                new RemotePCDiagnostics.Core.Migrations.MigrationMarkers(RemotePCDiagnostics.Core.Migrations.MigrationMarkers.DefaultPath()), HostServices.For<RemotePCDiagnostics.Core.Migrations.ProtectedStateMigration>(Loggers)).Run();
-            if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"State move to {ProtectedState.Folder()}: {outcome}");
-        }
-        catch (Exception ex) { Log($"State move to {ProtectedState.Folder()} failed: {ex.Message}"); }
-        try { RemotePCDiagnostics.Agent.AgentPaths.EnsureSessionsDirectory(); } catch { }
-    }
-
-    private static void RunStartupMigrations()
-    {
-        try
-        {
-            var outcome = new RemotePCDiagnostics.Core.Migrations.EventLogV3Migration(new WindowsEventLogMigrationIo(HostServices.For<WindowsEventLogMigrationIo>(Loggers)),
-                new RemotePCDiagnostics.Core.Migrations.MigrationMarkers(RemotePCDiagnostics.Core.Migrations.MigrationMarkers.DefaultPath()),
-                RemotePCDiagnostics.Core.Migrations.EventLogV3Migration.DefaultWorkDir(), HostServices.For<RemotePCDiagnostics.Core.Migrations.EventLogV3Migration>(Loggers)).Run();
-            if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"History update (event log format 3): {outcome}");
-        }
-        catch (Exception ex) { Log($"History update (event log format 3) failed: {ex.Message}"); }
-        try
-        {
-            var outcome = new RemotePCDiagnostics.Core.Migrations.EventLogMoveMigration(new WindowsEventLogMoveIo(),
-                new RemotePCDiagnostics.Core.Migrations.MigrationMarkers(RemotePCDiagnostics.Core.Migrations.MigrationMarkers.DefaultPath()),
-                RemotePCDiagnostics.Core.Migrations.EventLogV3Migration.DefaultWorkDir(), HostServices.For<RemotePCDiagnostics.Core.Migrations.EventLogMoveMigration>(Loggers)).Run();
-            if (outcome != RemotePCDiagnostics.Core.Migrations.MigrationOutcome.AlreadyDone) Log($"Event log move to the {EventLogSink.OwnLogName} log: {outcome}");
-        }
-        catch (Exception ex) { Log($"Event log move failed: {ex.Message}"); }
+        if (setup.Done) Volatile.Write(ref _machineSetupDone, 1);
     }
 
     /// <summary>

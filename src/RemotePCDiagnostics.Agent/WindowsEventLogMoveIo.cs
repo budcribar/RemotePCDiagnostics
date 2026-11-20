@@ -2,17 +2,17 @@ using System.Diagnostics;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Migrations;
 
-namespace RemotePCDiagnostics.Host;
+namespace RemotePCDiagnostics.Agent;
 
 /// <summary>Event Log access for <see cref="EventLogMoveMigration"/>.</summary>
 public sealed class WindowsEventLogMoveIo : IEventLogMoveIo
 {
-    public bool IsElevated => App.IsAdministrator();
+    public bool IsElevated => Environment.IsPrivilegedProcess;
 
     public string? SourceLog()
     {
-        if (!OperatingSystem.IsWindows() || !EventLog.SourceExists(EventLogSink.SourceName)) return null;
-        var name = EventLog.LogNameFromSourceName(EventLogSink.SourceName, ".");
+        if (!OperatingSystem.IsWindows() || !EventLog.SourceExists(AppEventLog.SourceName)) return null;
+        var name = EventLog.LogNameFromSourceName(AppEventLog.SourceName, ".");
         return string.IsNullOrEmpty(name) ? null : name;
     }
 
@@ -22,15 +22,15 @@ public sealed class WindowsEventLogMoveIo : IEventLogMoveIo
     {
         if (!OperatingSystem.IsWindows()) return;
         var current = SourceLog();
-        if (current is not null && !string.Equals(current, EventLogSink.OwnLogName, StringComparison.OrdinalIgnoreCase))
-            EventLog.DeleteEventSource(EventLogSink.SourceName); // a log cannot be named like a source of another log
-        EventLogSink.CreateOwnLog();
+        if (current is not null && !string.Equals(current, AppEventLog.OwnLogName, StringComparison.OrdinalIgnoreCase))
+            EventLog.DeleteEventSource(AppEventLog.SourceName); // a log cannot be named like a source of another log
+        AppEventLog.CreateOwnLog();
     }
 
     public void Write(RawLogEvent e)
     {
         if (!OperatingSystem.IsWindows()) return;
-        using var el = new EventLog { Source = EventLogSink.SourceName };
+        using var el = new EventLog { Source = AppEventLog.SourceName };
         var type = e.Level switch { LogLevel.Error => EventLogEntryType.Error, LogLevel.Warning => EventLogEntryType.Warning, _ => EventLogEntryType.Information };
         el.WriteEntry(LogText.Truncate(e.Message) + Environment.NewLine + "Build: " + RemotePCDiagnostics.Core.AppBuildInfo.Version, type, e.EventId);
     }
@@ -44,7 +44,7 @@ public sealed class WindowsEventLogMoveIo : IEventLogMoveIo
         {
             try
             {
-                if (WindowsEventLogMigrationIo.ReadOurEvents(EventLogSink.OwnLogName, recent).Any(e => e.Message.Contains(token, StringComparison.Ordinal))) return true;
+                if (WindowsEventLogMigrationIo.ReadOurEvents(AppEventLog.OwnLogName, recent).Any(e => e.Message.Contains(token, StringComparison.Ordinal))) return true;
             }
             catch (System.Diagnostics.Eventing.Reader.EventLogException) { /* the new log is not readable yet */ }
             Thread.Sleep(200);

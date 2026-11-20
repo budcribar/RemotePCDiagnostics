@@ -5,7 +5,10 @@ using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
 using RemotePCDiagnostics.Core;
 
-namespace RemotePCDiagnostics.Host;
+using ILogger = Microsoft.Extensions.Logging.ILogger;
+using RemotePCDiagnostics.Logging;
+
+namespace RemotePCDiagnostics.Agent;
 
 /// <summary>
 /// Secures %ProgramData%\RemotePCDiagnostics (everyone may read, only Administrators and SYSTEM may change) and its state folder

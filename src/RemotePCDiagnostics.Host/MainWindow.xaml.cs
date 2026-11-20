@@ -63,10 +63,21 @@ public partial class MainWindow : Window
         var elevation = provider.GetService<ElevationService>();
         if (elevation is not null)
         {
-            elevation.Changed += () =>
+            void OnElevationChanged()
             {
                 if (elevation.IsAdminHelperConnected)
                 {
+                    // Admin-only setup (state folder, Event Log source, history updates) and the benchmark state, both through the Agent.
+                    _ = Task.Run(async () =>
+                    {
+                        await App.PrepareMachineThroughAgentAsync(elevation).ConfigureAwait(false);
+                        try
+                        {
+                            var benchmarks = provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>();
+                            if (benchmarks.Reload()) await benchmarks.ResumeAfterRestartAsync().ConfigureAwait(false);
+                        }
+                        catch (Exception ex) { Logger.Warn($"Benchmark state reload through the Agent failed: {ex.Message}"); }
+                    });
                     if (provider.GetService<ISensorProvider>() is LhmSensorProvider lhm)
                     {
                         lhm.Reset();
@@ -87,7 +98,9 @@ public partial class MainWindow : Window
                         }
                     });
                 }
-            };
+            }
+            elevation.Changed += OnElevationChanged;
+            if (elevation.IsAdminHelperConnected) OnElevationChanged(); // connected before this subscribed
         }
         Resources.Add("services", provider);
         var fullscreenService = provider.GetService<IFullscreenService>();

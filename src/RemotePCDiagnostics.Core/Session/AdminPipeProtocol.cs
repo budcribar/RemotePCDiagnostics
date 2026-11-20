@@ -59,6 +59,12 @@ public interface IElevatedCommandBridge
         throw new NotSupportedException("The Agent can't turn on automatic sign-in.");
     Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) =>
         throw new NotSupportedException("The Agent can't turn off automatic sign-in.");
+
+    /// <summary>
+    /// Has the Agent secure the admin-only state folder, register the app's Windows Event Log source and run the history updates.
+    /// Null when the Agent isn't connected or is from before this existed.
+    /// </summary>
+    Task<MachineSetupResult?> PrepareMachineAsync(CancellationToken ct = default) => Task.FromResult<MachineSetupResult?>(null);
 }
 
 public static class AdminCommandAllowlist
@@ -300,7 +306,8 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("updateResult")] AppUpdateResult? UpdateResult = null,
     [property: JsonPropertyName("report")] string? Report = null,
     [property: JsonPropertyName("cancelled")] bool Cancelled = false,
-    [property: JsonPropertyName("autoLogonBackup")] AutoLogonBackup? AutoLogonBackup = null);
+    [property: JsonPropertyName("autoLogonBackup")] AutoLogonBackup? AutoLogonBackup = null,
+    [property: JsonPropertyName("setup")] MachineSetupResult? Setup = null);
 
 /// <summary>
 /// Length-prefixed (4-byte little-endian int32 + UTF-8 JSON) framing over Named Pipes with zero third-party dependencies.
@@ -320,6 +327,8 @@ public static class AdminPipeFraming
     public const string OpValidateCredentials = "validate_credentials";
     public const string OpEnableAutoLogon = "enable_autologon";
     public const string OpDisableAutoLogon = "disable_autologon";
+    /// <summary>Secures the state folder, registers the Event Log source and runs the history updates; the response carries what was done.</summary>
+    public const string OpPrepareMachine = "prepare_machine";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -547,6 +556,17 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         if (!r.Ok) throw new InvalidOperationException(r.Error ?? "The Agent didn't turn off automatic sign-in.");
     }
 
+    public async Task<MachineSetupResult?> PrepareMachineAsync(CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpPrepareMachine), ct).ConfigureAwait(false);
+        if (!r.Allowed || r.Setup is null)
+        {
+            _log?.Warn($"[admin-pipe] Machine setup not run by the Agent: {r.Error ?? "no result"}");
+            return null;
+        }
+        return r.Setup;
+    }
+
     /// <summary>An Agent from before a request existed answers "Unknown operation" (not allowed).</summary>
     private static void ThrowIfRefused(AdminPipeResponse r)
     {
@@ -687,7 +707,8 @@ public sealed class AdminPipeServer(
     ILogger? log = null,
     Func<AppUpdateChannel, IReadOnlyList<string>?, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null,
     Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>>? securityAuditor = null,
-    IAutoLogonBackend? autoLogon = null) : IAsyncDisposable, IDisposable
+    IAutoLogonBackend? autoLogon = null,
+    IMachineSetup? machineSetup = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -980,6 +1001,9 @@ public sealed class AdminPipeServer(
         if (request.Op is AdminPipeFraming.OpValidateCredentials or AdminPipeFraming.OpEnableAutoLogon or AdminPipeFraming.OpDisableAutoLogon)
             return await Task.Run(() => HandleAutoLogon(request), ct).ConfigureAwait(false);
 
+        if (string.Equals(request.Op, AdminPipeFraming.OpPrepareMachine, StringComparison.OrdinalIgnoreCase))
+            return await Task.Run(PrepareMachine, ct).ConfigureAwait(false);
+
         return new AdminPipeResponse(
             Ok: false,
             Allowed: false,
@@ -987,6 +1011,17 @@ public sealed class AdminPipeServer(
             HelperPid: Environment.ProcessId,
             ExitCode: -1,
             Error: $"Unknown operation '{request.Op}'.");
+    }
+
+    private AdminPipeResponse PrepareMachine()
+    {
+        if (machineSetup is null)
+            return new(Ok: false, Allowed: false, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId,
+                Error: "Machine setup is not supported by this elevated helper.");
+        var setup = machineSetup.Prepare();
+        log.Info($"[admin-pipe-server] Machine setup: state folder secured={setup.StateFolderSecured}, event source={setup.EventSourceReady}, " +
+            $"history update={setup.HistoryUpdate}, log move={setup.LogMove}.");
+        return new(Ok: setup.Done, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: setup.Done ? 0 : -1, Setup: setup);
     }
 
     /// <summary>The maximum sign-ins automatic sign-in may be turned on for (the workflow needs two).</summary>

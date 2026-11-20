@@ -323,6 +323,14 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     public Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) =>
         ConnectedClient().DisableAutoLogonAsync(backup, ct);
 
+    public async Task<MachineSetupResult?> PrepareMachineAsync(CancellationToken ct = default)
+    {
+        AdminPipeClient? client;
+        lock (_stateLock)
+            client = _client;
+        return client is { IsConnected: true } ? await client.PrepareMachineAsync(ct).ConfigureAwait(false) : null;
+    }
+
     /// <summary>The connected Agent, or <see cref="InvalidOperationException"/> with what to do.</summary>
     private AdminPipeClient ConnectedClient()
     {

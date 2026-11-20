@@ -7,7 +7,7 @@ namespace RemotePCDiagnostics.Core.Migrations;
 /// <summary>The Windows Event Log operations <see cref="EventLogMoveMigration"/> needs.</summary>
 public interface IEventLogMoveIo
 {
-    /// <summary>Registering an event source needs administrator.</summary>
+    /// <summary>Registering an event source needs administrator (the migration runs in the Agent).</summary>
     bool IsElevated { get; }
     /// <summary>The log the app's source is registered to, or null when it is not registered.</summary>
     string? SourceLog();
@@ -63,13 +63,13 @@ public sealed class EventLogMoveMigration(IEventLogMoveIo io, MigrationMarkers m
                     markers.MarkDone(MarkerKey, Now); // a PC without earlier events: the source is created in the new log
                     return MigrationOutcome.NothingToMigrate;
                 }
-                if (!io.IsElevated) { Log("waits for an elevated start"); return MigrationOutcome.NeedsElevation; }
+                if (!io.IsElevated) { Log("waits for the Agent (administrator)"); return MigrationOutcome.NeedsElevation; }
                 var events = io.ReadOurEvents(OldLogName).Where(e => e.EventId != LogEventIds.LogMoveProbe).Select(ToPending).ToList();
                 state = new State(false, null, false, events);
                 Save(state);
                 Log($"{events.Count} events saved from {OldLogName}");
             }
-            if (!io.IsElevated) { Log("waits for an elevated start"); return MigrationOutcome.NeedsElevation; }
+            if (!io.IsElevated) { Log("waits for the Agent (administrator)"); return MigrationOutcome.NeedsElevation; }
 
             if (!state.Moved)
             {
