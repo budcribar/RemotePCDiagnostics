@@ -22,7 +22,11 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         if (state is null) return null;
         if (state.Settings.SchemaVersion < BenchmarkSettings.CurrentSchemaVersion)
         {
-            var added = Benchmarks.IdleResourceKinds.Concat(Benchmarks.ResourceSnapshotKinds);
+            var added = new List<BenchmarkKind>();
+            if (state.Settings.SchemaVersion < 2)
+                added.AddRange(Benchmarks.IdleResourceKinds.Concat(Benchmarks.ResourceSnapshotKinds));
+            if (state.Settings.SchemaVersion < 3)
+                added.Add(BenchmarkKind.Speedometer);
             var enabled = Enum.GetValues<BenchmarkKind>().Where(state.Settings.Enabled.Union(added).Contains).ToList();
             state = state with { Settings = state.Settings with { SchemaVersion = BenchmarkSettings.CurrentSchemaVersion, Enabled = enabled } };
             store.Save(state);
