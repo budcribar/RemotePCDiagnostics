@@ -13,7 +13,7 @@ internal sealed class WindowsShellSuggestions(SuggestionContext c)
         if (c.Snapshot?.Feeds is { WidgetsPolicyBlocked: true })
             return new(false, "This version of Windows blocks the Widgets policy (User Choice Protection), so nothing was changed. Hide Widgets from Settings > Personalization > Taskbar instead.");
         var w = c.SetDword(RegistryAllowlist.WidgetsPolicy, 0, was => $"Widgets turned off for everyone on this PC (policy was {was})");
-        if (!w.Ok) return new(false, "Windows didn't keep the Widgets policy " + SuggestionContext.PolicyRefused);
+        if (!w.Ok) return new(false, w.Refused("Windows didn't keep the Widgets policy "));
         if (w.Changed) c.AddUndo(new(s.Id, "Widgets", MemoryActionType.DisableWidgets, "", RegistryUndo.Encode([w.Item])));
         var ended = 0;
         foreach (var name in WindowsFeeds.WidgetProcesses)
@@ -29,7 +29,7 @@ internal sealed class WindowsShellSuggestions(SuggestionContext c)
     internal ActionOutcome DisableSearchHighlights(MemorySuggestion s)
     {
         var policy = c.SetDword(RegistryAllowlist.SearchHighlightsPolicy, 0, was => $"Search highlights turned off for everyone on this PC (policy was {was})");
-        if (!policy.Ok) return new(false, "Windows didn't keep the Search highlights policy " + SuggestionContext.PolicyRefused);
+        if (!policy.Ok) return new(false, policy.Refused("Windows didn't keep the Search highlights policy "));
         var toggle = c.SetDword(RegistryAllowlist.SearchHighlightsToggle, 0, was => $"Search highlights setting turned off for this account (was {was})");
         var changed = new[] { policy, toggle }.Where(x => x.Changed).Select(x => x.Item).ToList();
         if (changed.Count > 0) c.AddUndo(new(s.Id, "Search highlights", MemoryActionType.DisableSearchHighlights, "", RegistryUndo.Encode(changed)));

@@ -22,9 +22,11 @@ namespace RemotePCDiagnostics.Host;
 /// </summary>
 /// <param name="admin">Makes the changes that need administrator rights (machine-wide startup apps, service start types, hibernation):
 /// the Agent, over the admin pipe. Without it those changes fail with what to do (the app never runs as administrator).</param>
-public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger? log = null, IAdminSettingsBackend? admin = null) : IMemorySystem
+/// <param name="machine">Makes the machine-wide changes (HKLM policy values, extension blocklists, the page file, Defender exclusions): the Agent too.</param>
+public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger? log = null, IAdminSettingsBackend? admin = null, IMachineTweaks? machine = null) : IMemorySystem
 {
     private readonly IAdminSettingsBackend _admin = admin ?? new AgentAdminSettings(null);
+    private readonly IMachineTweaks _machine = machine ?? new AgentMachineTweaks(null, log);
 
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string Run32Key = @"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run";
@@ -460,37 +462,19 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
     /// <summary>Only allowlisted IDs, only as a new numbered value; never overwrites an existing value.</summary>
     public void AddExtensionBlock(BrowserKind browser, string valueName, string extensionId)
     {
-        if (BrowserExtensions.Known(browser, extensionId) is not { } known) throw new InvalidOperationException($"{extensionId} isn't an extension this app may block.");
+        if (BrowserExtensions.Known(browser, extensionId) is null) throw new InvalidOperationException($"{extensionId} isn't an extension this app may block.");
         if (!BrowserExtensions.IsEntryName(valueName)) throw new InvalidOperationException($"'{valueName}' isn't a blocklist entry name.");
-        var keyPath = BrowserExtensions.BlocklistKey(browser);
-        using var hklm = Hklm64();
-        var created = RegistryKeyCleanup.TopmostMissing(keyPath, path => KeyExists(hklm, path));
-        var key = hklm.CreateSubKey(keyPath, writable: true) ?? throw new UnauthorizedAccessException("Can't open the blocklist key.");
-        try
-        {
-            if (key.GetValue(valueName) is not null) throw new InvalidOperationException($"Blocklist entry {valueName} already exists.");
-            key.SetValue(valueName, known.Id, RegistryValueKind.String);
-        }
-        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
-        {
-            key.Dispose();
-            RemoveCreatedKeys(hklm, RegistryRoot.LocalMachine, keyPath, created);
-            throw;
-        }
-        finally { key.Dispose(); }
-        Log($"HKLM\\{keyPath}\\{valueName} = {known.Id} ({known.Name})" + (created is null ? "" : $" (created {created})"));
+        _machine.AddExtensionBlock(browser, valueName, extensionId);
+        Log($"{browser} blocklist {valueName} = {extensionId} added by the Agent");
     }
 
     /// <summary>Deletes the value only while it still holds this allowlisted ID; other entries are never touched or renumbered.</summary>
     public void RemoveExtensionBlock(BrowserKind browser, string valueName, string extensionId)
     {
-        if (BrowserExtensions.Known(browser, extensionId) is not { } known) throw new InvalidOperationException($"{extensionId} isn't an extension this app may block.");
+        if (BrowserExtensions.Known(browser, extensionId) is null) throw new InvalidOperationException($"{extensionId} isn't an extension this app may block.");
         if (!BrowserExtensions.IsEntryName(valueName)) throw new InvalidOperationException($"'{valueName}' isn't a blocklist entry name.");
-        using var hklm = Hklm64();
-        using var key = hklm.OpenSubKey(BrowserExtensions.BlocklistKey(browser), writable: true);
-        if (key?.GetValue(valueName) is not string data || !data.Trim().Equals(known.Id, StringComparison.OrdinalIgnoreCase)) return;
-        key.DeleteValue(valueName, throwOnMissingValue: false);
-        Log($"HKLM\\{BrowserExtensions.BlocklistKey(browser)}\\{valueName} ({known.Name}) deleted");
+        _machine.RemoveExtensionBlock(browser, valueName, extensionId);
+        Log($"{browser} blocklist {valueName} ({extensionId}) removed by the Agent");
     }
 
     /// <summary>Only values on <see cref="RegistryAllowlist"/>; the allowlisted entry's own key and name are used, never the caller's.</summary>
@@ -517,6 +501,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
     public void WriteDword(RegistrySetting setting, int value)
     {
         var s = Allowed(setting);
+        if (s.Root == RegistryRoot.LocalMachine) { _machine.WriteDword(s, value); Log($"{s.Target} set to {value} by the Agent"); return; }
         using var root = OpenBase(s);
         var created = RegistryKeyCleanup.TopmostMissing(s.Key, path => KeyExists(root, path));
         var k = root.CreateSubKey(s.Key, writable: true) ?? throw new UnauthorizedAccessException($"Can't open {s.Key}.");
@@ -560,6 +545,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
 
     public bool DeleteRegistryKeyIfEmpty(RegistryRoot root, string key)
     {
+        if (root == RegistryRoot.LocalMachine) return _machine.DeleteKeyIfEmpty(key);
         using var b = OpenBase(root);
         return DeleteKeyIfEmpty(b, root, key);
     }
@@ -588,6 +574,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
     public void DeleteDword(RegistrySetting setting)
     {
         var s = Allowed(setting);
+        if (s.Root == RegistryRoot.LocalMachine) { _machine.DeleteDword(s); Log($"{s.Target} deleted by the Agent"); return; }
         using var root = OpenBase(s);
         using var k = root.OpenSubKey(s.Key, writable: true);
         k?.DeleteValue(s.Name, throwOnMissingValue: false);
@@ -599,8 +586,15 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
     {
         try
         {
-            var r = await RunPowerShellAsync(DefenderProbe.Script, ct).ConfigureAwait(false);
-            if (DefenderProbe.Parse(r.ExitCode == 0 ? r.Output : null) is not { } status) return null;
+            // Only an administrator can read the exclusion lists, so the Agent reads them. Without it the app reads Defender's state itself,
+            // the lists come back unreadable, and nothing is suggested.
+            var json = await _machine.ReadDefenderAsync(ct).ConfigureAwait(false);
+            if (json is null)
+            {
+                var r = await RunPowerShellAsync(DefenderProbe.Script, ct).ConfigureAwait(false);
+                json = r.ExitCode == 0 ? r.Output : null;
+            }
+            if (DefenderProbe.Parse(json) is not { } status) return null;
             if (!status.Active) return new(false, [], [], []);
             var p = ProjectLocatorPaths.Current();
             var roots = await DevProjects.FindAsync(log, ct).ConfigureAwait(false);
@@ -611,12 +605,12 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
         catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn("Defender read failed: " + ex.Message); return null; }
     }
 
-    public async Task<(bool Ok, string? Output)> RunDefenderScriptAsync(string script, CancellationToken ct)
-    {
-        var r = await RunPowerShellAsync(script, ct).ConfigureAwait(false);
-        if (r.ExitCode != 0) LogWarn("Defender script failed: " + r.Error);
-        return (r.ExitCode == 0, r.Output);
-    }
+    /// <summary>The Agent adds them (it checks each is a code folder or a Visual Studio build tool) and reads them back.</summary>
+    public Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) =>
+        _machine.AddDefenderExclusionsAsync(folders, processes, ct);
+
+    public Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) =>
+        _machine.RemoveDefenderExclusionsAsync(folders, processes, ct);
 
     // One cache for the whole app: several WindowsMemorySystem instances exist (memory page, benchmarks, --undo-all).
     private static StorageCleanupCache? s_cleanupCache;
@@ -655,33 +649,26 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
     /// <summary>Same value the Settings toggle writes (current user only); Explorer picks it up within a few seconds.</summary>
     public void SetTransparency(bool on) => Registry.SetValue(PersonalizeKey, "EnableTransparency", on ? 1 : 0, RegistryValueKind.DWord);
 
-    public Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct) => Task.Run(() =>
+    /// <summary>The Agent switches the page file to "managed by Windows" (it needs administrator rights).</summary>
+    public async Task<ActionOutcome> EnableAutoPageFileAsync(CancellationToken ct)
     {
-        try
-        {
-            SetAutomaticPageFile(true);
-            Log("Enable automatic page file: done");
-            return new ActionOutcome(true, "Windows will manage the page file size from the next restart.");
-        }
-        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or COMException)
-        {
-            LogWarn($"Enable automatic page file: {ex.Message}");
-            return new ActionOutcome(false, "Couldn't change the page file setting (administrator rights required).");
-        }
-    }, ct);
+        var o = await _machine.EnableAutoPageFileAsync(ct).ConfigureAwait(false);
+        Log("Enable automatic page file (Agent): " + o.Message);
+        return o;
+    }
 
-    /// <summary>The custom page file sizes (Win32_PageFileSetting) as base64 of a JSON array of {Name, InitialSize, MaximumSize}, the format the
-    /// change journal keeps; null when Windows manages the size (no settings).</summary>
+    /// <summary>The custom page file sizes (Win32_PageFileSetting, readable without administrator rights) in <see cref="PageFileSettings"/>'
+    /// format, the one the change journal keeps; null when Windows manages the size (no settings).</summary>
     public Task<string?> ReadPageFileSettingsAsync(CancellationToken ct) => Task.Run(() =>
     {
         try
         {
-            var rows = new List<PageFileSize>();
+            var rows = new List<PageFileSettings.Size>();
             using var searcher = new ManagementObjectSearcher("SELECT Name, InitialSize, MaximumSize FROM Win32_PageFileSetting");
             using var results = searcher.Get();
             foreach (ManagementObject o in results)
                 using (o) rows.Add(new((string)o["Name"], Convert.ToUInt32(o["InitialSize"] ?? 0u), Convert.ToUInt32(o["MaximumSize"] ?? 0u)));
-            return rows.Count == 0 ? null : Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(rows)));
+            return rows.Count == 0 ? null : PageFileSettings.Encode(rows);
         }
         catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or COMException)
         {
@@ -690,70 +677,13 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
         }
     }, ct);
 
-    public Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct) => Task.Run(() =>
+    /// <summary>The Agent puts the saved sizes back (it checks they are page files in the journal's format first).</summary>
+    public async Task<ActionOutcome> RestorePageFileAsync(string settings, CancellationToken ct)
     {
-        if (settings.Length == 0 || settings.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '+' or '/' or '='))) return new ActionOutcome(false, "The saved page file settings are unreadable.");
-        List<PageFileSize> rows;
-        try
-        {
-            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(settings)).Trim();
-            if (!json.StartsWith('[')) json = "[" + json + "]"; // one setting was saved as a single object
-            rows = System.Text.Json.JsonSerializer.Deserialize<List<PageFileSize>>(json) ?? [];
-        }
-        catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException) { return new ActionOutcome(false, "The saved page file settings are unreadable."); }
-        if (rows.Count == 0 || rows.Any(r => !PageFileSize.IsValidName(r.Name))) return new ActionOutcome(false, "The saved page file settings are unreadable.");
-        try
-        {
-            SetAutomaticPageFile(false);
-            foreach (var row in rows)
-            {
-                ManagementObject? existing = null;
-                try
-                {
-                    using (var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_PageFileSetting"))
-                    using (var results = searcher.Get())
-                    {
-                        foreach (ManagementObject o in results)
-                        {
-                            if (existing is null && string.Equals(o["Name"] as string, row.Name, StringComparison.OrdinalIgnoreCase)) existing = o;
-                            else o.Dispose();
-                        }
-                    }
-                    if (existing is null)
-                    {
-                        using var cls = new ManagementClass("Win32_PageFileSetting");
-                        existing = cls.CreateInstance();
-                        existing["Name"] = row.Name;
-                    }
-                    existing["InitialSize"] = row.InitialSize;
-                    existing["MaximumSize"] = row.MaximumSize;
-                    existing.Put();
-                }
-                finally { existing?.Dispose(); }
-            }
-            Log($"Restore page file: {rows.Count} setting(s)");
-            return new ActionOutcome(true, "Custom page file size restored (takes effect after a restart).");
-        }
-        catch (Exception ex) when (ex is ManagementException or UnauthorizedAccessException or COMException)
-        {
-            LogWarn($"Restore page file: {ex.Message}");
-            return new ActionOutcome(false, "Couldn't restore the page file setting (administrator rights required).");
-        }
-    }, ct);
-
-    private static void SetAutomaticPageFile(bool automatic)
-    {
-        using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_ComputerSystem");
-        using var results = searcher.Get();
-        foreach (ManagementObject cs in results)
-            using (cs) { cs["AutomaticManagedPagefile"] = automatic; cs.Put(); }
-    }
-
-    /// <summary>One Win32_PageFileSetting as the journal stores it (the names match what the earlier PowerShell version wrote).</summary>
-    private sealed record PageFileSize(string Name, uint InitialSize, uint MaximumSize)
-    {
-        public static bool IsValidName(string? name) => name is { Length: > 3 and < 260 } && name[1] == ':' && char.IsAsciiLetter(name[0])
-            && name.EndsWith(".sys", StringComparison.OrdinalIgnoreCase) && name.IndexOfAny(Path.GetInvalidPathChars()) < 0;
+        if (PageFileSettings.TryDecode(settings) is null) return new ActionOutcome(false, "The saved page file settings are unreadable.");
+        var o = await _machine.RestorePageFileAsync(settings, ct).ConfigureAwait(false);
+        Log("Restore page file (Agent): " + o.Message);
+        return o;
     }
 
     /// <summary>Runs one of this class's fixed PowerShell scripts (never user input) and returns its output.</summary>

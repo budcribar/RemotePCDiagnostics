@@ -194,11 +194,14 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
         return r;
     }
 
+    /// <summary>The boot-time result when the Agent didn't read the start-up log (only an administrator can).</summary>
+    public const string BootLogUnreadable = "Windows' start-up log couldn't be read. " + Session.ElevationService.AdminRepairHint;
+
     private async Task<BenchmarkMeasurement> BootAsync(BenchmarkPhase phase, DateTimeOffset? beforeTime, DateTimeOffset? bootsSince, CancellationToken ct)
     {
         IReadOnlyList<WinEvent> events;
         try { events = await probes.ReadBootEventsAsync(ct).ConfigureAwait(false); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Log("boot: " + ex.Message); return new(BenchmarkKind.BootTime, [], "Windows' start-up log couldn't be read (run as administrator)"); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { Log("boot: " + ex.Message); return new(BenchmarkKind.BootTime, [], Session.AdminRequiredException.MessageOr(ex, BootLogUnreadable)); }
         var boots = events.Select(BootRecord.From).OfType<BootRecord>().OrderByDescending(b => b.Time).ToList();
         return SelectBoots(phase, boots, beforeTime, bootsSince);
     }

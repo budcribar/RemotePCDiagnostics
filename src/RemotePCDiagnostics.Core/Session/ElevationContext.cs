@@ -342,6 +342,12 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         return client is { IsConnected: true } ? client.RemoveJournalChangeAsync(id, ct) : Task.FromResult(false);
     }
 
+    public Task<AdminPipeResponse> MachineTweakAsync(AdminPipeTweak tweak, CancellationToken ct = default) =>
+        ConnectedClient().MachineTweakAsync(tweak, ct);
+
+    public Task<ProcessResult> RunAgentScriptAsync(AdminPipeScript script, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine = null) =>
+        ConnectedClient().RunAgentScriptAsync(script, timeout, ct, outputLine);
+
     public Task<bool> AddJournalChangeAsync(RemotePCDiagnostics.Core.Changes.ChangeRecord change, CancellationToken ct = default) =>
         ConnectedOrNull() is { } client ? client.AddJournalChangeAsync(change, ct) : Task.FromResult(false);
 
