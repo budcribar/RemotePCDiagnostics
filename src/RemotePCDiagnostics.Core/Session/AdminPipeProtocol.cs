@@ -11,6 +11,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Win32.SafeHandles;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Sensors;
@@ -68,6 +69,18 @@ public interface IElevatedCommandBridge
     /// </summary>
     Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default) =>
         throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+
+    /// <summary>
+    /// App removal, done by the Agent (<see cref="AppRemovalAgent"/>): Store packages for every account, an allowlisted program's
+    /// uninstaller, and allowlisted scheduled tasks. Each throws <see cref="NotSupportedException"/> when the Agent is from before this
+    /// existed, and otherwise returns the Agent's answer (<see cref="AppRemovalAgent.Result.Ok"/> false with its reason when it refused or failed).
+    /// </summary>
+    Task<AppRemovalAgent.Result> RemoveAppxPackagesAsync(IReadOnlyList<RemovableAppx> apps, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't remove apps.");
+    Task<AppRemovalAgent.Result> RunUninstallerAsync(UninstallCommand command, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't run uninstallers.");
+    Task<AppRemovalAgent.Result> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't change scheduled tasks.");
 
     /// <summary>
     /// A machine-wide change (<see cref="IMachineTweaks"/>: HKLM policy values, extension blocklists, the page file, Defender exclusions),
@@ -302,12 +315,29 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("channel")] string? Channel = null,
     [property: JsonPropertyName("autoLogon")] AdminPipeAutoLogon? AutoLogon = null,
     [property: JsonPropertyName("setting")] AdminPipeSetting? Setting = null,
+    [property: JsonPropertyName("appRemoval")] AdminPipeAppRemoval? AppRemoval = null,
     [property: JsonPropertyName("tweak")] AdminPipeTweak? Tweak = null,
     [property: JsonPropertyName("script")] AdminPipeScript? Script = null,
     [property: JsonPropertyName("changeId")] Guid? ChangeId = null,
     [property: JsonPropertyName("change")] ChangeRecord? Change = null,
     [property: JsonPropertyName("stateName")] string? StateName = null,
     [property: JsonPropertyName("stateJson")] string? StateJson = null);
+
+/// <summary>
+/// The app removal requests' arguments: packages by name and publisher id, one uninstall command, or one task path. The Agent checks
+/// each against its own allowlists before doing anything.
+/// </summary>
+public sealed record AdminPipeAppRemoval(
+    [property: JsonPropertyName("packages")] IReadOnlyList<AdminPipePackage>? Packages = null,
+    [property: JsonPropertyName("msi")] bool Msi = false,
+    [property: JsonPropertyName("path")] string? Path = null,
+    [property: JsonPropertyName("arguments")] IReadOnlyList<string>? Arguments = null,
+    [property: JsonPropertyName("taskPath")] string? TaskPath = null,
+    [property: JsonPropertyName("enabled")] bool Enabled = false);
+
+public sealed record AdminPipePackage(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("publisherId")] string PublisherId);
 
 /// <summary>The automatic sign-in requests' arguments. The password is sent only to check it and to turn sign-in on.</summary>
 public sealed record AdminPipeAutoLogon(
@@ -333,6 +363,8 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("report")] string? Report = null,
     [property: JsonPropertyName("cancelled")] bool Cancelled = false,
     [property: JsonPropertyName("autoLogonBackup")] AutoLogonBackup? AutoLogonBackup = null,
+    [property: JsonPropertyName("left")] IReadOnlyList<string>? Left = null,
+    [property: JsonPropertyName("taskState")] string? TaskState = null,
     [property: JsonPropertyName("changes")] IReadOnlyList<ChangeRecord>? Changes = null,
     [property: JsonPropertyName("stateJson")] string? StateJson = null);
 
@@ -356,6 +388,12 @@ public static class AdminPipeFraming
     public const string OpDisableAutoLogon = "disable_autologon";
     /// <summary>One <see cref="AdminPipeSetting"/> change (startup apps, services, hibernation, Fast Startup, DNS).</summary>
     public const string OpSystemSetting = "system_setting";
+    /// <summary>Removes allowlisted Store packages for every account; the response lists the family names still installed.</summary>
+    public const string OpRemoveAppx = "remove_appx";
+    /// <summary>Runs an allowlisted program's own uninstaller (or msiexec /x for its product code).</summary>
+    public const string OpRunUninstaller = "run_uninstaller";
+    /// <summary>Turns an allowlisted scheduled task off or on; the response carries its state afterwards.</summary>
+    public const string OpSetScheduledTask = "set_scheduled_task";
     /// <summary>The undo journal, which only administrators can open: read it, and take an undone change off it.</summary>
     public const string OpJournalList = "journal_list";
     public const string OpJournalRemove = "journal_remove";
@@ -640,6 +678,24 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         if (!r.Ok) throw new InvalidOperationException(r.Error ?? "The Agent didn't make the change.");
     }
 
+    public async Task<AppRemovalAgent.Result> RemoveAppxPackagesAsync(IReadOnlyList<RemovableAppx> apps, CancellationToken ct = default) =>
+        AppRemovalResult(await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpRemoveAppx,
+            AppRemoval: new(Packages: apps.Select(a => new AdminPipePackage(a.Name, a.PublisherId)).ToList())), ct).ConfigureAwait(false));
+
+    public async Task<AppRemovalAgent.Result> RunUninstallerAsync(UninstallCommand command, CancellationToken ct = default) =>
+        AppRemovalResult(await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpRunUninstaller,
+            AppRemoval: new(Msi: command.Msi, Path: command.Path, Arguments: command.Arguments)), ct).ConfigureAwait(false));
+
+    public async Task<AppRemovalAgent.Result> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct = default) =>
+        AppRemovalResult(await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpSetScheduledTask,
+            AppRemoval: new(TaskPath: path, Enabled: enabled)), ct).ConfigureAwait(false));
+
+    private static AppRemovalAgent.Result AppRemovalResult(AdminPipeResponse r)
+    {
+        ThrowIfRefused(r);
+        return new(r.Ok, r.Error, r.Left, r.ExitCode, r.TaskState);
+    }
+
     public async Task<AdminPipeResponse> MachineTweakAsync(AdminPipeTweak tweak, CancellationToken ct = default)
     {
         var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpMachineTweak, Tweak: tweak, TimeoutMs: 180_000), ct).ConfigureAwait(false);
@@ -793,6 +849,8 @@ public sealed record AdminPipeServerOptions
     public string? AllowedClientSid { get; set; }
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(30);
     public Func<NamedPipeServerStream, (bool Allowed, string? Reason)>? CustomClientVerifier { get; set; }
+    /// <summary>Folders vendor uninstallers may be run from (null = Program Files, see <see cref="AppRemoval.IsVendorUninstaller"/>). Tests only.</summary>
+    public IReadOnlyList<string>? UninstallerRoots { get; set; }
 }
 
 /// <summary>
@@ -1108,6 +1166,8 @@ public sealed class AdminPipeServer(
 
         if (string.Equals(request.Op, AdminPipeFraming.OpSystemSetting, StringComparison.OrdinalIgnoreCase))
             return await Task.Run(() => HandleSystemSetting(request), ct).ConfigureAwait(false);
+        if (request.Op is AdminPipeFraming.OpRemoveAppx or AdminPipeFraming.OpRunUninstaller or AdminPipeFraming.OpSetScheduledTask)
+            return await HandleAppRemovalAsync(request, ct).ConfigureAwait(false);
 
         if (request.Op is AdminPipeFraming.OpJournalList or AdminPipeFraming.OpJournalRemove or AdminPipeFraming.OpJournalAdd)
             return await Task.Run(() => HandleJournal(request), ct).ConfigureAwait(false);
@@ -1332,6 +1392,35 @@ public sealed class AdminPipeServer(
             log.Warn($"[admin-pipe-server] {s.Action} '{s.Target ?? s.Name}' failed: {ex.Message}");
             return Answer(false, ex.Message);
         }
+    }
+
+    private async Task<AdminPipeResponse> HandleAppRemovalAsync(AdminPipeRequest request, CancellationToken ct)
+    {
+        var a = request.AppRemoval ?? new AdminPipeAppRemoval();
+        AppRemovalAgent.Result r;
+        try
+        {
+            r = request.Op switch
+            {
+                AdminPipeFraming.OpRemoveAppx => await AppRemovalAgent.RemoveAppxAsync(_launcher,
+                    (a.Packages ?? []).Select(p => (p.Name, p.PublisherId)).ToList(), ct).ConfigureAwait(false),
+                AdminPipeFraming.OpRunUninstaller => await AppRemovalAgent.RunUninstallerAsync(_launcher,
+                    new UninstallCommand(a.Msi, a.Path ?? "", a.Arguments ?? []), ct, options.UninstallerRoots).ConfigureAwait(false),
+                _ => await AppRemovalAgent.SetScheduledTaskAsync(_launcher, a.TaskPath, a.Enabled, ct).ConfigureAwait(false),
+            };
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            r = new AppRemovalAgent.Result(false, ex.Message, ExitCode: -1);
+        }
+        log.Info($"[admin-pipe-server] {request.Op}: ok={r.Ok} exit={r.ExitCode}{(r.Left is null ? "" : $" left=[{string.Join(", ", r.Left)}]")}{(r.TaskState is null ? "" : " state=" + r.TaskState)}{(r.Error is null ? "" : " " + r.Error)}");
+        return new AdminPipeResponse(
+            Ok: r.Ok, Allowed: true, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: r.ExitCode,
+            Error: r.Error, Left: r.Left, TaskState: r.TaskState);
     }
 
     private async Task<AdminPipeResponse> RunSecurityAuditAsync(AdminPipeRequest request, CancellationToken ct)
