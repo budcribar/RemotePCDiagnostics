@@ -11,6 +11,7 @@ using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Projects;
+using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Storage;
 
 namespace RemotePCDiagnostics.Host;
@@ -19,8 +20,12 @@ namespace RemotePCDiagnostics.Host;
 /// Windows probes and actions for memory suggestions. Per-user changes only (HKCU startup, the user's browser profile),
 /// except service start-up type, which the user explicitly clicks and can undo. Nothing here runs without a UI click.
 /// </summary>
-public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger? log = null) : IMemorySystem
+/// <param name="admin">Makes the changes that need administrator rights (machine-wide startup apps, service start types, hibernation):
+/// the Agent, over the admin pipe. Without it those changes fail with what to do (the app never runs as administrator).</param>
+public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger? log = null, IAdminSettingsBackend? admin = null) : IMemorySystem
 {
+    private readonly IAdminSettingsBackend _admin = admin ?? new AgentAdminSettings(null);
+
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string Run32Key = @"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run";
     private const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
@@ -159,41 +164,22 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
     public void DeleteHibernateValue(string name)
     {
         if (!Hibernation.IsTracked(name)) throw new InvalidOperationException($"{name} isn't a hibernation value this app removes.");
-        using var k = Registry.LocalMachine.OpenSubKey(Hibernation.PowerKey, writable: true) ?? throw new InvalidOperationException("Power key missing");
-        k.DeleteValue(name, throwOnMissingValue: false);
-        Log($@"HKLM\{Hibernation.PowerKey}\{name} removed (it wasn't there before)");
+        _admin.DeleteHibernateValue(name);
+        Log($@"HKLM\{Hibernation.PowerKey}\{name} removed by the Agent (it wasn't there before)");
     }
 
-    /// <summary>Only ever runs System32\powercfg.exe /h /type reduced|full.</summary>
+    /// <summary>The Agent runs System32\powercfg.exe /h /type reduced|full (it needs administrator rights).</summary>
     public async Task<ActionOutcome> SetHibernateTypeAsync(bool reduced, CancellationToken ct)
     {
-        var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "powercfg.exe"))
-        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var a in new[] { "/h", "/type", reduced ? "reduced" : "full" }) psi.ArgumentList.Add(a);
         try
         {
-            using var p = Process.Start(psi)!;
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromSeconds(60));
-            try
-            {
-                var err = p.StandardError.ReadToEndAsync(timeout.Token);
-                var output = p.StandardOutput.ReadToEndAsync(timeout.Token);
-                await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-                if (p.ExitCode == 0) return new(true, reduced ? "Hibernation file reduced." : "Hibernation file full size.");
-                LogWarn($"powercfg /h /type failed ({p.ExitCode}): {(await err.ConfigureAwait(false)).Trim()} {(await output.ConfigureAwait(false)).Trim()}");
-                return new(false, "Windows didn't allow changing the hibernation file (a custom size may be set, or administrator rights are missing).");
-            }
-            catch (OperationCanceledException)
-            {
-                try { p.Kill(entireProcessTree: true); } catch { }
-                throw;
-            }
+            await Task.Run(() => _admin.SetHibernateType(reduced), ct).ConfigureAwait(false);
+            return new(true, reduced ? "Hibernation file reduced." : "Hibernation file full size.");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            LogWarn("powercfg failed: " + ex.Message);
-            return new(false, "Couldn't run powercfg.");
+            LogWarn("powercfg /h /type: " + ex.Message);
+            return new(false, ex is InvalidOperationException ? ex.Message : "Couldn't change the hibernation file.");
         }
     }
 
@@ -1148,24 +1134,10 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
             uwp.SetValue("State", state, RegistryValueKind.DWord);
             return;
         }
-        if (name.StartsWith("hklm32:", StringComparison.OrdinalIgnoreCase))
+        // Machine-wide entries are in HKLM, which needs administrator rights: the Agent changes those.
+        if (AdminSettingsRules.MachineStartupName(name) is not null)
         {
-            var raw = name[7..];
-            using var run32 = Registry.LocalMachine.OpenSubKey(Run32Key);
-            if (run32?.GetValue(raw) is null) throw new InvalidOperationException("Not a 32-bit machine startup entry");
-            using var k32 = Registry.LocalMachine.CreateSubKey(Approved32Key);
-            if (value is null) k32.DeleteValue(raw, throwOnMissingValue: false);
-            else k32.SetValue(raw, value, RegistryValueKind.Binary);
-            return;
-        }
-        if (name.StartsWith("hklm:", StringComparison.OrdinalIgnoreCase))
-        {
-            var raw = name[5..];
-            using var runLm = Registry.LocalMachine.OpenSubKey(RunKey);
-            if (runLm?.GetValue(raw) is null) throw new InvalidOperationException("Not a machine startup entry");
-            using var klm = Registry.LocalMachine.CreateSubKey(ApprovedKey);
-            if (value is null) klm.DeleteValue(raw, throwOnMissingValue: false);
-            else klm.SetValue(raw, value, RegistryValueKind.Binary);
+            _admin.SetStartupApproved(name, value);
             return;
         }
         using var run = Registry.CurrentUser.OpenSubKey(RunKey);
@@ -1241,12 +1213,8 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
     {
         if (!MemorySuggestionService.StartTypes.Contains(startType)) throw new ArgumentException("Bad start type");
         if (ServiceProtection.IsProtected(name) || ServiceProtection.IsSelfComponent(name)) throw new InvalidOperationException("Protected");
-        using var k = Registry.LocalMachine.OpenSubKey(ServiceKey(name), writable: true) ?? throw new InvalidOperationException("Service not found");
-        k.SetValue("Start", startType switch { "Automatic" or "AutomaticDelayed" => 2, "Disabled" => 4, _ => 3 }, RegistryValueKind.DWord);
-        if (startType == "AutomaticDelayed") k.SetValue(ServiceDelayedStart.ValueName, 1, RegistryValueKind.DWord);
-        // Only clear a delayed start that's there: many services have no DelayedAutostart at all, and undo must not leave a 0 behind.
-        else if (startType == "Automatic" && k.GetValue(ServiceDelayedStart.ValueName) is int d && d != 0) k.SetValue(ServiceDelayedStart.ValueName, 0, RegistryValueKind.DWord);
-        Log($"Service '{name}' start type set to {startType}");
+        _admin.SetServiceStartType(name, startType);
+        Log($"Service '{name}' start type set to {startType} by the Agent");
     }
 
     public (bool Known, int? Value) ReadServiceValue(string service, string name)
@@ -1265,9 +1233,7 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
     {
         if (!name.Equals(ServiceDelayedStart.ValueName, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException($"{name} isn't a service value this app restores.");
         if (ServiceProtection.IsProtected(service) || ServiceProtection.IsSelfComponent(service)) throw new InvalidOperationException("Protected");
-        using var k = Registry.LocalMachine.OpenSubKey(ServiceKey(service), writable: true) ?? throw new InvalidOperationException("Service not found");
-        if (value is { } v) k.SetValue(ServiceDelayedStart.ValueName, v, RegistryValueKind.DWord);
-        else k.DeleteValue(ServiceDelayedStart.ValueName, throwOnMissingValue: false);
+        _admin.RestoreServiceValue(service, name, value);
         var what = value.HasValue ? "set back to " + value.Value : "removed (it wasn't there before)";
         Log($"Service '{service}' {ServiceDelayedStart.ValueName} {what}");
     }

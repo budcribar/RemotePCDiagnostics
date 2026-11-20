@@ -63,7 +63,6 @@ public partial class MainWindow : Window
         var elevation = provider.GetService<ElevationService>();
         if (elevation is not null)
         {
-            elevation.BindWindowClose(() => Dispatcher.BeginInvoke(Close));
             elevation.Changed += () =>
             {
                 if (elevation.IsAdminHelperConnected)

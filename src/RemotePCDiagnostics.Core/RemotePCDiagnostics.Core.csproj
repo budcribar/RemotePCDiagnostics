@@ -12,6 +12,8 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
     <PackageReference Include="System.Management" Version="10.0.2" />
+    <!-- WindowsAdminSettings: the Agent starts and stops services for the app. -->
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.15" />
   </ItemGroup>
   <ItemGroup>
     <!-- Fixed PowerShell scripts, loaded by name (PowerShellScripts.Get). -->

@@ -169,7 +169,8 @@ public sealed class FileWorkflowStore(string path, ILogger? log = null) : IWorkf
 /// <summary>Windows pieces the workflow needs (Host implementation; fakes in tests).</summary>
 public interface IWorkflowSystem
 {
-    /// <summary>Start this app elevated at the next sign-in (Task Scheduler, highest privileges), reconnecting to the same session.</summary>
+    /// <summary>Start this app again at the next sign-in, reconnecting to the same session: Task Scheduler starts the Agent with highest
+    /// privileges (no UAC prompt), and the Agent starts the app un-elevated with its admin pipe. Registering it needs the Agent.</summary>
     Task<bool> RegisterResumeAsync(CancellationToken ct);
     /// <summary>Removes the task again; false when it's still there afterwards.</summary>
     Task<bool> RemoveResumeAsync(CancellationToken ct);
@@ -178,11 +179,12 @@ public interface IWorkflowSystem
     /// <summary>Time since Windows started.</summary>
     TimeSpan Uptime { get; }
     AutoLogonStatus GetAutoLogonStatus();
-    bool ValidateCredentials(string user, string domain, string password);
-    /// <summary>Turns on automatic sign-in for <paramref name="logons"/> sign-ins (password kept as an LSA secret). Returns the previous settings.</summary>
-    AutoLogonBackup EnableAutoLogon(string user, string domain, string password, int logons);
-    /// <summary>Turns automatic sign-in off again, removes the stored password and restores the previous settings.</summary>
-    void DisableAutoLogon(AutoLogonBackup? backup);
+    /// <summary>Checks the password (in the Agent: Windows Hello-only sign-in is paused for the check, which needs administrator).</summary>
+    Task<bool> ValidateCredentialsAsync(string user, string domain, string password, CancellationToken ct = default);
+    /// <summary>Turns on automatic sign-in for <paramref name="logons"/> sign-ins (in the Agent; password kept as an LSA secret). Returns the previous settings.</summary>
+    Task<AutoLogonBackup> EnableAutoLogonAsync(string user, string domain, string password, int logons, CancellationToken ct = default);
+    /// <summary>Turns automatic sign-in off again (in the Agent), removes the stored password and restores the previous settings.</summary>
+    Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default);
     /// <summary>Where the client report for <paramref name="when"/> is saved (full path).</summary>
     string ReportFile(DateTimeOffset when);
     /// <summary>Where a 1-page buyer Hardware QA certificate is saved (full path).</summary>

@@ -35,9 +35,10 @@ public class BenchQaAndWheaTests
         public Task<bool> RestartAsync(TimeSpan delay, string message, CancellationToken ct) => Task.FromResult(true);
         public Task AbortRestartAsync(CancellationToken ct) => Task.CompletedTask;
         public AutoLogonStatus GetAutoLogonStatus() => new("tech", "BENCH-01", false, false, null, null);
-        public bool ValidateCredentials(string user, string domain, string password) => true;
-        public AutoLogonBackup EnableAutoLogon(string user, string domain, string password, int logons) => new("0", "tech", "BENCH-01", null, null);
-        public void DisableAutoLogon(AutoLogonBackup? backup) { }
+        public Task<bool> ValidateCredentialsAsync(string user, string domain, string password, CancellationToken ct = default) => Task.FromResult(true);
+        public Task<AutoLogonBackup> EnableAutoLogonAsync(string user, string domain, string password, int logons, CancellationToken ct = default) =>
+            Task.FromResult(new AutoLogonBackup("0", "tech", "BENCH-01", null, null));
+        public Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) => Task.CompletedTask;
         public string ReportFile(DateTimeOffset when) => @"C:\Users\Public\Documents\Remote PC Diagnostics\Service report.html";
         public void SaveReport(string path, string html)
         {

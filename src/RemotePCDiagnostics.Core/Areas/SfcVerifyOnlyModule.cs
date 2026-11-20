@@ -1,3 +1,5 @@
+using RemotePCDiagnostics.Core.Session;
+
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>Protected system files check: <c>sfc /verifyonly</c> (read-only).</summary>
@@ -39,13 +41,13 @@ public sealed class SfcVerifyOnlyModule(SystemCommandRunner commands) : WindowsI
     public static string NoResultReason(string output, int? exitCode, bool returned = true)
     {
         if (!returned)
-            return "SFC did not start or did not finish within 30 minutes, so no scan result is available. Run RemotePCDiagnostics as administrator and try again.";
+            return "SFC did not start or did not finish within 30 minutes, so no scan result is available. " + ElevationService.AdminRepairHint;
         if (Contains(output, "servicing or repair operation"))
             return "SFC did not run because another servicing or repair operation is running (for example a DISM scan or Windows Update). Run SFC again when it has finished.";
         if (Contains(output, "system repair pending") || exitCode == WindowsRepair.RebootRequiredExitCode)
             return "SFC did not run because a system repair is waiting for a restart. Restart the PC, then run SFC again.";
         if (Contains(output, "must be an administrator"))
-            return "SFC did not run because it needs administrator rights. Run RemotePCDiagnostics as administrator and try again.";
+            return "SFC did not run because it needs administrator rights. " + ElevationService.AdminRepairHint;
         if (Contains(output, "could not start the repair service"))
             return "SFC did not run because Windows Resource Protection could not start its repair service (Windows Modules Installer). Restart the PC and try again.";
         if (Contains(output, "could not perform the requested operation"))

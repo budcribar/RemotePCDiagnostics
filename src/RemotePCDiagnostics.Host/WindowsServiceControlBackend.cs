@@ -1,10 +1,14 @@
 using System.ServiceProcess;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Host;
 
-/// <summary><see cref="IServiceControlBackend"/> over System.ServiceProcess.ServiceController (the app runs elevated via app.manifest).</summary>
-public sealed class WindowsServiceControlBackend : IServiceControlBackend
+/// <summary>
+/// <see cref="IServiceControlBackend"/>: states and dependents are read here with ServiceController; starting and stopping need
+/// administrator rights, so the Agent does them (<paramref name="admin"/>, over the admin pipe). The app never runs as administrator.
+/// </summary>
+public sealed class WindowsServiceControlBackend(IAdminSettingsBackend admin) : IServiceControlBackend
 {
     public ServiceState GetState(string name)
     {
@@ -54,14 +58,14 @@ public sealed class WindowsServiceControlBackend : IServiceControlBackend
 
     public void Start(string name)
     {
-        using var sc = new ServiceController(name);
-        if (sc.Status != ServiceControllerStatus.Running && sc.Status != ServiceControllerStatus.StartPending) sc.Start();
+        if (GetState(name) is ServiceState.Running or ServiceState.StartPending) return;
+        admin.StartService(name);
     }
 
     public void Stop(string name)
     {
-        using var sc = new ServiceController(name);
-        if (sc.Status != ServiceControllerStatus.Stopped && sc.Status != ServiceControllerStatus.StopPending) sc.Stop(stopDependentServices: true);
+        if (GetState(name) is ServiceState.Stopped or ServiceState.StopPending) return;
+        admin.StopService(name);
     }
 
     public async Task<bool> WaitForStateAsync(string name, ServiceState target, TimeSpan timeout, CancellationToken ct)

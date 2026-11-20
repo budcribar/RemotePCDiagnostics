@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Optimizations;
+using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Changes;
 
@@ -72,7 +73,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 LogError($"{c.Kind} '{c.Target}' failed: {ex}");
-                r = new(c, false, "Windows didn't allow undoing it.");
+                r = new(c, false, AdminRequiredException.MessageOr(ex, "Windows didn't allow undoing it."));
             }
             // Permanent changes are reported once, then forgotten (there's nothing to retry).
             if (r.Success || r.Skipped) journal.Remove(c.Id);
@@ -231,7 +232,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             LogError($"{c.Kind} {c.Target}: {ex.GetType().Name}: {ex.Message}");
-            return new(c, false, "Couldn't put it back (administrator rights required).");
+            return new(c, false, AdminRequiredException.MessageOr(ex, "Couldn't put it back (administrator rights required)."));
         }
     }
 

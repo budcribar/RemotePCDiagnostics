@@ -21,12 +21,12 @@ public sealed class SecurityAuditTests : IDisposable
         "\"1300\",\"Misc\",\"Multi\nline\",\"Medium\",\"2\",\"1\",\"Failed\",\"Medium\",\"\",\"\"\r\n" +
         "\"1400\",\"Misc\",\"Unknown\",\"\",\"\",\"\",\"\",\"\",\"\",\"\"\r\n";
 
-    private SecurityAuditModule Module(IProcessLauncher l, bool admin = true, bool toolPresent = true, bool psPresent = true, TimeSpan? timeout = null) =>
+    private SecurityAuditModule Module(IProcessLauncher l, bool toolPresent = true, bool psPresent = true, TimeSpan? timeout = null) =>
         new(new SecurityAuditOptions
         {
             ModuleFolder = Path.Combine(_dir, "hk"), PowerShellPath = Path.Combine(_dir, "powershell.exe"),
             FileExists = p => p.EndsWith(".psd1") ? toolPresent : p.EndsWith("powershell.exe") ? psPresent : File.Exists(p),
-            ReportPathFactory = () => ReportPath, IsAdministrator = () => admin,
+            ReportPathFactory = () => ReportPath,
             Timeout = timeout ?? TimeSpan.FromMinutes(5), Log = new LineLogger(s => { lock (_log) _log.Add(s); }),
         }, l);
 
@@ -112,12 +112,17 @@ public sealed class SecurityAuditTests : IDisposable
     }
 
     [Fact]
-    public async Task Non_admin_still_runs_with_friendly_notice()
+    public async Task Skipped_checks_notice_is_friendly()
     {
-        var r = await Module(WritesReport(SampleCsv), admin: false).RefreshAsync(null);
-        var rep = Assert.IsType<SecurityAuditReport>(r.Payload);
-        Assert.Equal(SecurityAuditModule.NotAdminNotice, rep.Notice);
+        var l = new ScriptedLauncher((_, _) =>
+        {
+            File.WriteAllText(ReportPath, SampleCsv);
+            return ScriptedLauncher.Ok("[!] 11/20/2026 5:51:59 AM - ID 1708, BitLocker Drive Encryption: Volume status, Method BitLockerVolume requires admin privileges. Test skipped.");
+        });
+        var rep = Assert.IsType<SecurityAuditReport>((await Module(l).RefreshAsync(null)).Payload);
+        Assert.StartsWith("1 check needs administrator rights and wasn't run: BitLocker drive encryption.", rep.Notice);
         AssertFriendly(rep.Notice!);
+        Assert.DoesNotContain("as an administrator", rep.Notice);
     }
 
     [Fact]
