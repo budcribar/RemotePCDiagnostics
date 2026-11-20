@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Win32.SafeHandles;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Sensors;
@@ -59,6 +60,15 @@ public interface IElevatedCommandBridge
         throw new NotSupportedException("The Agent can't turn on automatic sign-in.");
     Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) =>
         throw new NotSupportedException("The Agent can't turn off automatic sign-in.");
+
+    /// <summary>
+    /// The undo journal (%ProgramData%\RemotePCDiagnostics\state\changes.json, which only administrators can open), read by the
+    /// Agent. Null when it can't (not connected, or an Agent from before this existed).
+    /// </summary>
+    Task<IReadOnlyList<ChangeRecord>?> ReadChangeJournalAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ChangeRecord>?>(null);
+    /// <summary>Has the Agent take one undone change off the journal. False when it couldn't.</summary>
+    Task<bool> RemoveJournalChangeAsync(Guid id, CancellationToken ct = default) => Task.FromResult(false);
 }
 
 public static class AdminCommandAllowlist
@@ -275,7 +285,8 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("arguments")] IReadOnlyList<string>? Arguments = null,
     [property: JsonPropertyName("timeoutMs")] int TimeoutMs = 60_000,
     [property: JsonPropertyName("channel")] string? Channel = null,
-    [property: JsonPropertyName("autoLogon")] AdminPipeAutoLogon? AutoLogon = null);
+    [property: JsonPropertyName("autoLogon")] AdminPipeAutoLogon? AutoLogon = null,
+    [property: JsonPropertyName("changeId")] Guid? ChangeId = null);
 
 /// <summary>The automatic sign-in requests' arguments. The password is sent only to check it and to turn sign-in on.</summary>
 public sealed record AdminPipeAutoLogon(
@@ -300,7 +311,8 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("updateResult")] AppUpdateResult? UpdateResult = null,
     [property: JsonPropertyName("report")] string? Report = null,
     [property: JsonPropertyName("cancelled")] bool Cancelled = false,
-    [property: JsonPropertyName("autoLogonBackup")] AutoLogonBackup? AutoLogonBackup = null);
+    [property: JsonPropertyName("autoLogonBackup")] AutoLogonBackup? AutoLogonBackup = null,
+    [property: JsonPropertyName("changes")] IReadOnlyList<ChangeRecord>? Changes = null);
 
 /// <summary>
 /// Length-prefixed (4-byte little-endian int32 + UTF-8 JSON) framing over Named Pipes with zero third-party dependencies.
@@ -320,6 +332,9 @@ public static class AdminPipeFraming
     public const string OpValidateCredentials = "validate_credentials";
     public const string OpEnableAutoLogon = "enable_autologon";
     public const string OpDisableAutoLogon = "disable_autologon";
+    /// <summary>The undo journal, which only administrators can open: read it, and take an undone change off it.</summary>
+    public const string OpJournalList = "journal_list";
+    public const string OpJournalRemove = "journal_remove";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -547,6 +562,20 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         if (!r.Ok) throw new InvalidOperationException(r.Error ?? "The Agent didn't turn off automatic sign-in.");
     }
 
+    public async Task<IReadOnlyList<ChangeRecord>?> ReadChangeJournalAsync(CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpJournalList), ct).ConfigureAwait(false);
+        if (!r.Ok) _log.Warn($"[admin-pipe] Reading the undo journal failed: {r.Error}");
+        return r.Ok ? r.Changes ?? [] : null;
+    }
+
+    public async Task<bool> RemoveJournalChangeAsync(Guid id, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpJournalRemove, ChangeId: id), ct).ConfigureAwait(false);
+        if (!r.Ok) _log.Warn($"[admin-pipe] Removing {id} from the undo journal failed: {r.Error}");
+        return r.Ok;
+    }
+
     /// <summary>An Agent from before a request existed answers "Unknown operation" (not allowed).</summary>
     private static void ThrowIfRefused(AdminPipeResponse r)
     {
@@ -687,7 +716,8 @@ public sealed class AdminPipeServer(
     ILogger? log = null,
     Func<AppUpdateChannel, IReadOnlyList<string>?, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null,
     Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>>? securityAuditor = null,
-    IAutoLogonBackend? autoLogon = null) : IAsyncDisposable, IDisposable
+    IAutoLogonBackend? autoLogon = null,
+    Func<IChangeJournal>? changeJournal = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -980,6 +1010,9 @@ public sealed class AdminPipeServer(
         if (request.Op is AdminPipeFraming.OpValidateCredentials or AdminPipeFraming.OpEnableAutoLogon or AdminPipeFraming.OpDisableAutoLogon)
             return await Task.Run(() => HandleAutoLogon(request), ct).ConfigureAwait(false);
 
+        if (request.Op is AdminPipeFraming.OpJournalList or AdminPipeFraming.OpJournalRemove)
+            return await Task.Run(() => HandleJournal(request), ct).ConfigureAwait(false);
+
         return new AdminPipeResponse(
             Ok: false,
             Allowed: false,
@@ -1021,6 +1054,35 @@ public sealed class AdminPipeServer(
                     log.Info("[admin-pipe-server] Automatic sign-in turned off and the previous settings restored.");
                     return Answer(true);
             }
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] {request.Op} failed: {ex.Message}");
+            return Answer(false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// The undo journal for an app that isn't elevated: it reads the records and takes off the ones it undid. It can't add any, so
+    /// nothing the app sends can make a later undo put back something this app didn't change.
+    /// </summary>
+    private AdminPipeResponse HandleJournal(AdminPipeRequest request)
+    {
+        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true, IReadOnlyList<ChangeRecord>? changes = null) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            Error: error, Changes: changes);
+
+        if (changeJournal is null) return Answer(false, "The undo journal is not supported by this elevated helper.", allowed: false);
+        try
+        {
+            // Opened for each request: the app or another Agent may have changed the file since the last one.
+            var journal = changeJournal();
+            if (request.Op == AdminPipeFraming.OpJournalList) return Answer(true, changes: journal.All);
+            if (request.ChangeId is not { } id || id == Guid.Empty) return Answer(false, "Which change to remove wasn't given.");
+            if (journal.All.All(c => c.Id != id)) return Answer(true); // already gone
+            journal.Remove(id);
+            log.Info($"[admin-pipe-server] Undone change {id} taken off the undo journal.");
+            return Answer(true);
         }
         catch (Exception ex)
         {

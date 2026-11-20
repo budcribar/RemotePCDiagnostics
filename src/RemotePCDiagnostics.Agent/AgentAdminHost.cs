@@ -7,6 +7,7 @@ using RemotePCDiagnostics.Logging;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Workflow;
+using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Session;
 
@@ -156,7 +157,8 @@ internal static class AgentAdminHost
                     log: log,
                     selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token),
                     securityAuditor: SecurityAuditModule.ElevatedRunner(AppContext.BaseDirectory, log),
-                    autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null);
+                    autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null,
+                    changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log));
 
                 var serverTask = Task.Run(async () =>
                 {
@@ -258,7 +260,8 @@ internal static class AgentAdminHost
                         selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token),
                         // The helper sits in the app's folder, next to the HardeningKitty the app ships.
                         securityAuditor: SecurityAuditModule.ElevatedRunner(AppContext.BaseDirectory, log),
-                        autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null);
+                        autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null,
+                        changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log));
 
                     await server.RunSingleSessionAsync(cts.Token).ConfigureAwait(false);
                     return ExitOk;
