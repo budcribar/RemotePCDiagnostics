@@ -86,8 +86,9 @@ public partial class App : Application
     public static bool IsAdministrator() =>
         RemotePCDiagnostics.Core.Session.ElevationService.DetectProcessElevated();
 
-    public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, RemotePCDiagnostics.Core.Optimizations.IMemorySystem memory) =>
-        HostServices.CreateUndoService(journal, commands, memory, HostServices.For<UndoService>(Loggers), Event);
+    public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, RemotePCDiagnostics.Core.Optimizations.IMemorySystem memory,
+        RemotePCDiagnostics.Core.Session.IAdminSettingsBackend admin) =>
+        HostServices.CreateUndoService(journal, commands, memory, admin, HostServices.For<UndoService>(Loggers), Event);
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -261,7 +262,8 @@ public partial class App : Application
                 return ExitNotAdmin;
             }
             var commands = new SystemCommandRunner(log: HostServices.For<SystemCommandRunner>(Loggers), elevatedBridge: agent, isProcessElevated: () => false);
-            var undo = CreateUndoService(journal, commands, new WindowsMemorySystem(null, HostServices.For<WindowsMemorySystem>(Loggers)));
+            var admin = new AgentAdminSettings(agent);
+            var undo = CreateUndoService(journal, commands, new WindowsMemorySystem(null, HostServices.For<WindowsMemorySystem>(Loggers), admin), admin);
             var result = Task.Run(() => undo.UndoAllAsync("Command line (--undo-all)")).GetAwaiter().GetResult();
             Log("--undo-all: " + result.Summary);
             foreach (var i in result.Items) Log($"--undo-all: {(i.Success ? "OK" : i.Skipped ? "LEFT AS IS (permanent)" : "FAILED")} {i.Change.Kind} '{i.Change.Target}': {i.Message}");
