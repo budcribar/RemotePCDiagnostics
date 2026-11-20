@@ -86,6 +86,16 @@ public partial class MainWindow : Window
                             Logger.Warn($"Sensors refresh on elevation failed: {ex.Message}");
                         }
                     });
+                    // The Agent keeps the workflow's state: an app started before it connected read nothing, so read it now and carry on.
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            var workflow = provider.GetRequiredService<RemotePCDiagnostics.Core.Workflow.WorkflowService>();
+                            if (workflow.Reload()) await workflow.ResumeAsync().ConfigureAwait(false);
+                        }
+                        catch (Exception ex) { Logger.Warn($"Workflow resume after the Agent connected failed: {ex.Message}"); }
+                    });
                 }
             };
         }

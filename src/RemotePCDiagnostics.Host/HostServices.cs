@@ -74,7 +74,10 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Areas.IDriveHealthHistoryStore>(_ => new RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore(RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore.DefaultPath(), L<RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore>()));
         services.AddSingleton<ServicesModule>();
         // Reversible changes (with their "before" values) for "Undo all changes" / --undo-all; survives restarts.
-        services.AddSingleton<RemotePCDiagnostics.Core.Changes.IChangeJournal>(_ => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(), L<RemotePCDiagnostics.Core.Changes.FileChangeJournal>()));
+        // The app isn't elevated, so the Agent reads and saves it (the state folder is for administrators only).
+        services.AddSingleton<RemotePCDiagnostics.Core.Changes.IChangeJournal>(sp => new RemotePCDiagnostics.Core.Changes.AgentChangeJournal(
+            sp.GetRequiredService<IElevatedCommandBridge>(), sp.GetService<IElevationContext>(), RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(),
+            L<RemotePCDiagnostics.Core.Changes.AgentChangeJournal>()));
         services.AddSingleton(sp => new ServiceActionService(new WindowsServiceControlBackend(), sp.GetRequiredService<ISessionContext>(), L<ServiceActionService>(),
             journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
         services.AddSingleton(sp => new RebootResumeCoordinator(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<OsqueryRunner>(), RebootResumeCoordinator.DefaultStateFilePath(), log: L<RebootResumeCoordinator>()));
@@ -141,7 +144,7 @@ public static class HostServices
         // Before/after performance benchmarks (state saved so the "before" survives a restart; event 1500).
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Benchmarks.BenchmarkService(
             new RemotePCDiagnostics.Core.Benchmarks.BenchmarkRunner(new WindowsBenchmarkProbes(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISensorProvider>(), L<WindowsBenchmarkProbes>()), L<RemotePCDiagnostics.Core.Benchmarks.BenchmarkRunner>()),
-            new RemotePCDiagnostics.Core.Benchmarks.FileBenchmarkStore(RemotePCDiagnostics.Core.Benchmarks.FileBenchmarkStore.DefaultPath(), L<RemotePCDiagnostics.Core.Benchmarks.FileBenchmarkStore>()),
+            new AgentBenchmarkStore(sp.GetRequiredService<IElevatedCommandBridge>(), L<AgentBenchmarkStore>()),
             sp.GetRequiredService<RemediationService>(), sp.GetRequiredService<ISessionContext>(),
             (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Benchmark, level, text), L<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>()));
         // Service workflow: checks → tech review → restart → before benchmark → fixes → restart → after benchmark → report.
@@ -149,7 +152,7 @@ public static class HostServices
             sp.GetRequiredService<DiagnosticsService>(), sp.GetRequiredService<ResultStore>(), sp.GetRequiredService<RemediationService>(),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>(),
             new WindowsWorkflowSystem(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), L<WindowsWorkflowSystem>(), sp.GetRequiredService<IElevatedCommandBridge>()),
-            new RemotePCDiagnostics.Core.Workflow.FileWorkflowStore(RemotePCDiagnostics.Core.Workflow.FileWorkflowStore.DefaultPath(), L<RemotePCDiagnostics.Core.Workflow.FileWorkflowStore>()),
+            new AgentWorkflowStore(sp.GetRequiredService<IElevatedCommandBridge>(), L<AgentWorkflowStore>()),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(), sp.GetRequiredService<ISessionContext>(),
             (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Workflow, level, text), L<RemotePCDiagnostics.Core.Workflow.WorkflowService>(),
             journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(),

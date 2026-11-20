@@ -339,6 +339,21 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         return client is { IsConnected: true } ? client.RemoveJournalChangeAsync(id, ct) : Task.FromResult(false);
     }
 
+    public Task<bool> AddJournalChangeAsync(RemotePCDiagnostics.Core.Changes.ChangeRecord change, CancellationToken ct = default) =>
+        ConnectedOrNull() is { } client ? client.AddJournalChangeAsync(change, ct) : Task.FromResult(false);
+
+    public Task<AgentStateRead> ReadStateFileAsync(string name, CancellationToken ct = default) =>
+        ConnectedOrNull() is { } client ? client.ReadStateFileAsync(name, ct) : Task.FromResult(AgentStateRead.Failed);
+
+    public Task<bool> WriteStateFileAsync(string name, string? json, CancellationToken ct = default) =>
+        ConnectedOrNull() is { } client ? client.WriteStateFileAsync(name, json, ct) : Task.FromResult(false);
+
+    private AdminPipeClient? ConnectedOrNull()
+    {
+        lock (_stateLock)
+            return _client is { IsConnected: true } ? _client : null;
+    }
+
     /// <summary>The connected Agent, or <see cref="InvalidOperationException"/> with what to do.</summary>
     private AdminPipeClient ConnectedClient()
     {
