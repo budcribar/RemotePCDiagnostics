@@ -30,6 +30,8 @@ public interface IHostQueries
     Task<IReadOnlyList<WinEvent>?> QueryEventsAsync(string log, string xpath, int max, CancellationToken ct = default);
     /// <summary><c>crashes.minidumps</c>: the blue screen dump files in the Windows folder.</summary>
     Task<IReadOnlyList<MinidumpFile>> ReadMinidumpsAsync(CancellationToken ct = default);
+    /// <summary><c>crashes.livekernelreports</c>: the graphics hang dumps in the admin-only <c>LiveKernelReports</c> folder.</summary>
+    Task<IReadOnlyList<MinidumpFile>> ReadLiveKernelReportsAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<MinidumpFile>>([]);
     /// <summary><c>events.reviewed</c>: the events the person marked as reviewed.</summary>
     Task<IReadOnlyCollection<string>> ReadEventReviewsAsync(CancellationToken ct = default);
 }
@@ -43,13 +45,14 @@ public static class HostCapabilities
     public const string StorageRetrims = "storage.retrims";
     public const string EventLogQuery = "eventlog.query";
     public const string Minidumps = "crashes.minidumps";
+    public const string LiveKernelReports = "crashes.livekernelreports";
     public const string EventReviews = "events.reviewed";
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
-        { SensorsRead, OsquerySelect, StorageDrives, StorageRetrims, EventLogQuery, Minidumps, EventReviews };
+        { SensorsRead, OsquerySelect, StorageDrives, StorageRetrims, EventLogQuery, Minidumps, LiveKernelReports, EventReviews };
 
     /// <summary>The only statements <c>osquery.select</c> runs: the app's own, verbatim. Anything else is refused.</summary>
-    public static readonly IReadOnlySet<string> AllowedSql = new HashSet<string>(StringComparer.Ordinal) { ServicesModule.Sql, HardwareInventory.DiskSql };
+    public static readonly IReadOnlySet<string> AllowedSql = new HashSet<string>(StringComparer.Ordinal) { ServicesModule.Sql, HardwareInventory.DiskSql, GraphicsDriverCrashes.DriversSql };
 
     /// <summary>The logs <c>eventlog.query</c> reads (never Security).</summary>
     public static readonly IReadOnlySet<string> AllowedLogs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "System", "Application" };
@@ -78,6 +81,7 @@ public sealed record HostQueryBackend
     public SystemCommandRunner? Commands { get; init; }
     public IRetrimHistory? Retrims { get; init; }
     public Func<IReadOnlyList<MinidumpFile>> Minidumps { get; init; } = BsodHistoryModule.ReadSystemMinidumps;
+    public Func<IReadOnlyList<MinidumpFile>> LiveKernelReports { get; init; } = GraphicsDriverCrashes.ReadLiveKernelReports;
     public Func<IReadOnlyCollection<string>> EventReviews { get; init; } = Areas.EventReviews.Read;
 }
 
@@ -165,6 +169,9 @@ public sealed class HostQueryServer(Func<HostQueryBackend?> backend, ILogger? lo
             case HostCapabilities.Minidumps:
                 value = await Task.Run(backend.Minidumps, ct).ConfigureAwait(false);
                 break;
+            case HostCapabilities.LiveKernelReports:
+                value = await Task.Run(backend.LiveKernelReports, ct).ConfigureAwait(false);
+                break;
             case HostCapabilities.EventReviews:
                 value = backend.EventReviews().ToList();
                 break;
@@ -251,6 +258,9 @@ public sealed class HostQueriesClient(Action<ModuleHostMessage> send) : IHostQue
 
     public async Task<IReadOnlyList<MinidumpFile>> ReadMinidumpsAsync(CancellationToken ct = default) =>
         await QueryAsync<List<MinidumpFile>?>(HostCapabilities.Minidumps, null, ct).ConfigureAwait(false) ?? [];
+
+    public async Task<IReadOnlyList<MinidumpFile>> ReadLiveKernelReportsAsync(CancellationToken ct = default) =>
+        await QueryAsync<List<MinidumpFile>?>(HostCapabilities.LiveKernelReports, null, ct).ConfigureAwait(false) ?? [];
 
     public async Task<IReadOnlyCollection<string>> ReadEventReviewsAsync(CancellationToken ct = default) =>
         await QueryAsync<List<string>?>(HostCapabilities.EventReviews, null, ct).ConfigureAwait(false) ?? [];

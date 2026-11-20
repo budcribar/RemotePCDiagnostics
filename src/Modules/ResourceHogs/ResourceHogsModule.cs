@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using RemotePCDiagnostics.Core.Osquery;
 
@@ -12,10 +13,27 @@ public sealed record MemoryUse(long TotalBytes, long AvailableBytes)
 {
     public long UsedBytes => Math.Max(0, TotalBytes - AvailableBytes);
     public int UsedPercent => TotalBytes > 0 ? (int)Math.Round(100.0 * UsedBytes / TotalBytes) : 0;
+
+    /// <summary>Commit charge: memory apps and Windows have reserved, backed by RAM or the page file.</summary>
+    public long? CommitUsedBytes { get; init; }
+    /// <summary>Commit limit: RAM plus the current page file size.</summary>
+    public long? CommitLimitBytes { get; init; }
+    /// <summary>RAM installed in the PC (can be more than <see cref="TotalBytes"/>).</summary>
+    public long? InstalledBytes { get; init; }
+    public long? PagefileUsedBytes { get; init; }
+    public long? PagefileSizeBytes { get; init; }
+
+    public bool HasCommit => CommitUsedBytes is >= 0 && CommitLimitBytes is > 0;
+    public int CommitPercent => HasCommit ? (int)Math.Round(100.0 * CommitUsedBytes!.Value / CommitLimitBytes!.Value) : 0;
 }
 
-public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner? commands = null) : OsqueryAreaModuleBase(runner), IHasAreaPanels
+/// <param name="sampleWindow">How long to wait between the two process snapshots used for CPU % and disk rate. Zero takes one snapshot and
+/// reports cumulative CPU time and disk I/O only.</param>
+public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner? commands = null, TimeSpan? sampleWindow = null) : OsqueryAreaModuleBase(runner), IHasAreaPanels
 {
+    public static readonly TimeSpan DefaultSampleWindow = TimeSpan.FromSeconds(2);
+    private readonly TimeSpan _sampleWindow = sampleWindow ?? DefaultSampleWindow;
+
     public AreaPanels Panels => AreaPanels.MemorySuggestions;
     public const string ModuleName = ModuleSlugs.ResourceHogs;
     public const string UptimeSql = ResourceUsage.UptimeSql;
@@ -32,6 +50,10 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
     public const long HighTotalProcessMemoryBytes = 6L * 1024 * 1024 * 1024;
     public const int HighProcessCount = 150;
     public const int TopCount = 15;
+    /// <summary>An app using at least this share of the whole PC's CPU during the sample makes the apps card a warning.</summary>
+    public const double HighAppCpuPercent = 50;
+    /// <summary>Commit charge at or above this share of the commit limit makes the commit card a warning (Windows is close to "out of memory").</summary>
+    public const int HighCommitPercent = 90;
 
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.ResourceHogs;
@@ -46,6 +68,24 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
         progress.ReportStep(2, totalSteps, "Checking running processes…");
         var procQ = await QueryAsync(ProcessesSql, ct).ConfigureAwait(false);
         if (!upQ.Success && !procQ.Success) return AreaReport.Failed(FailedMessage);
+        var procs = procQ.Success ? procQ.Rows!.Select(ProcessResourceRow.FromRow).ToList() : null;
+
+        // Second snapshot after a short wait: the difference gives CPU % and disk rate right now, not totals since each app started.
+        Dictionary<int, ProcessRate>? rates = null;
+        if (procs is not null && _sampleWindow > TimeSpan.Zero)
+        {
+            progress.ReportStep(2, totalSteps, "Measuring CPU and disk activity…");
+            var sw = Stopwatch.StartNew();
+            await Task.Delay(_sampleWindow, ct).ConfigureAwait(false);
+            var againQ = await QueryAsync(ProcessesSql, ct).ConfigureAwait(false);
+            sw.Stop();
+            if (againQ.Success)
+            {
+                var again = againQ.Rows!.Select(ProcessResourceRow.FromRow).ToList();
+                rates = ProcessTree.Rates(procs, again, sw.Elapsed, Environment.ProcessorCount);
+                procs = again;
+            }
+        }
 
         progress.ReportStep(3, totalSteps, "Checking memory use and Fast Startup…");
         bool? fastStartup = null;
@@ -59,7 +99,19 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
                 {
                     var row = OsqueryJson.ParseRows("[" + pr.StdOut.Trim().TrimStart('[').TrimEnd(']') + "]").FirstOrDefault();
                     fastStartup = row?.Str("FastStartup") switch { "1" => true, "0" => false, _ => null };
-                    if (row?.Long("TotalBytes") is long total && total > 0 && row.Long("FreeBytes") is long free && free >= 0) memory = new MemoryUse(total, free);
+                    if (row?.Long("TotalBytes") is long total && total > 0 && row.Long("FreeBytes") is long free && free >= 0)
+                    {
+                        var limit = row.Long("CommitLimitBytes");
+                        var commitFree = row.Long("CommitFreeBytes");
+                        memory = new MemoryUse(total, free)
+                        {
+                            CommitLimitBytes = limit is > 0 ? limit : null,
+                            CommitUsedBytes = limit is > 0 && commitFree is >= 0 ? Math.Max(0, limit.Value - commitFree.Value) : null,
+                            InstalledBytes = row.Long("InstalledBytes") is > 0 and var inst ? inst : null,
+                            PagefileUsedBytes = row.Long("PagefileUsedBytes") is >= 0 and var pu ? pu : null,
+                            PagefileSizeBytes = row.Long("PagefileSizeBytes") is >= 0 and var ps ? ps : null,
+                        };
+                    }
                 }
                 catch (FormatException) { }
             }
@@ -68,13 +120,19 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
         {
             var (fs, totalBytes, freeBytes) = Platform.FastStartupReader.Read();
             fastStartup = fs;
-            memory = totalBytes is > 0 && freeBytes is >= 0 ? new MemoryUse(totalBytes.Value, freeBytes.Value) : null;
+            var (commitUsed, commitLimit, installed, pfUsed, pfSize) = Platform.FastStartupReader.ReadCommit();
+            memory = totalBytes is > 0 && freeBytes is >= 0
+                ? new MemoryUse(totalBytes.Value, freeBytes.Value)
+                {
+                    CommitUsedBytes = commitUsed, CommitLimitBytes = commitLimit, InstalledBytes = installed,
+                    PagefileUsedBytes = pfUsed, PagefileSizeBytes = pfSize,
+                }
+                : null;
         }
 
         var uptime = upQ.Success && upQ.Rows!.Count > 0 ? SystemUptimeInfo.FromRow(upQ.Rows[0], fastStartup) : null;
-        var procs = procQ.Success ? procQ.Rows!.Select(ProcessResourceRow.FromRow).ToList() : null;
         var restartPending = RebootResumeCoordinator.TryReadPendingStateFile() is not null;
-        return Build(uptime, procs, memory, restartPending);
+        return Build(uptime, procs, memory, restartPending, rates);
     }
 
     public static List<ProcessGroupUsage> GroupProcesses(IEnumerable<ProcessResourceRow> rows) => ResourceUsage.GroupProcesses(rows);
@@ -104,7 +162,87 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
 
     private static string NumKey(long v) => v.ToString(CultureInfo.InvariantCulture);
 
-    public static AreaReport Build(SystemUptimeInfo? uptime, IReadOnlyList<ProcessResourceRow>? processes, MemoryUse? memory = null, bool restartPending = false)
+    public static string FormatPercent(double pct) => pct >= 10 ? $"{pct:0}%" : pct >= 0.05 ? $"{pct:0.0}%" : "0%";
+
+    /// <summary>Card with commit charge vs installed RAM and page file use, or null when Windows didn't report the commit charge.</summary>
+    public static AreaCard? CommitCard(MemoryUse mu)
+    {
+        if (!mu.HasCommit) return null;
+        var used = mu.CommitUsedBytes!.Value;
+        var limit = mu.CommitLimitBytes!.Value;
+        var ram = mu.InstalledBytes ?? mu.TotalBytes;
+        var high = mu.CommitPercent >= HighCommitPercent;
+        var overRam = used > ram;
+        var rows = new List<AreaRow>
+        {
+            new(high ? AreaLevel.Warning : AreaLevel.Neutral, ["Committed", $"{HardwareInventory.FormatBytes(used)} ({mu.CommitPercent}% of the limit)"]),
+            new(AreaLevel.Neutral, ["Commit limit (RAM + page file)", HardwareInventory.FormatBytes(limit)]),
+            new(AreaLevel.Neutral, [mu.InstalledBytes is null ? "Usable RAM" : "Installed RAM", HardwareInventory.FormatBytes(ram)]),
+        };
+        if (mu.PagefileSizeBytes is > 0 && mu.PagefileUsedBytes is { } pfUsed)
+            rows.Add(new(AreaLevel.Neutral, ["Page file in use", $"{HardwareInventory.FormatBytes(pfUsed)} of {HardwareInventory.FormatBytes(mu.PagefileSizeBytes.Value)}"]));
+        else if (mu.PagefileSizeBytes == 0)
+            rows.Add(new(AreaLevel.Neutral, ["Page file", "None"]));
+        rows.Add(new(high ? AreaLevel.Warning : AreaLevel.Neutral, ["What this means", high
+            ? "Windows is close to its memory limit. Apps may fail to open or crash with \"out of memory\". Close apps you don't need, or restart."
+            : overRam
+                ? "Apps have reserved more memory than the PC has RAM, so Windows keeps some of it in the page file on disk. That's slower; more RAM or fewer open apps helps."
+                : "Apps' reserved memory fits in RAM."]));
+        return new("commit", "Memory commitments", high ? AreaLevel.Warning : AreaLevel.Ok,
+            $"{HardwareInventory.FormatBytes(used)} committed",
+            $"{mu.CommitPercent}% of the {HardwareInventory.FormatBytes(limit)} limit · {HardwareInventory.FormatBytes(ram)} RAM",
+            ["Detail", "Value"], rows,
+            Note: "Committed memory is what apps and Windows have reserved. It's backed by RAM and, when RAM runs short, by the page file.");
+    }
+
+    /// <summary>Card listing top-level apps with their helper processes rolled in (process-tree rollup).</summary>
+    public static AreaCard AppsCard(IReadOnlyList<ProcessResourceRow> processes, IReadOnlyDictionary<int, ProcessRate>? rates)
+    {
+        var apps = ProcessTree.RollUp(processes, rates);
+        var sampled = rates is not null;
+        var top = apps.OrderByDescending(a => a.WorkingSetBytes).Take(TopCount).ToList();
+        if (sampled)
+        {
+            // Make sure the busiest apps right now are listed even if they use little memory.
+            foreach (var busy in apps.Where(a => a.CpuPercent >= 1).OrderByDescending(a => a.CpuPercent).Take(5))
+                if (!top.Contains(busy)) top.Add(busy);
+        }
+        var topMem = top.FirstOrDefault();
+        var topCpu = sampled ? apps.OrderByDescending(a => a.CpuPercent).FirstOrDefault(a => a.CpuPercent > 0) : null;
+        var warn = topMem is not null && topMem.WorkingSetBytes >= HighSingleAppMemoryBytes || topCpu?.CpuPercent >= HighAppCpuPercent;
+
+        string[] cols = sampled
+            ? ["App", "Processes", "CPU now", "Memory", "Private memory", "Disk now"]
+            : ["App", "Processes", "Memory", "Private memory", "CPU time", "Disk I/O"];
+        var rows = top.Select(a =>
+        {
+            var level = a.WorkingSetBytes >= HighSingleAppMemoryBytes || a.CpuPercent >= HighAppCpuPercent ? AreaLevel.Warning : AreaLevel.Neutral;
+            var count = a.ProcessCount.ToString(CultureInfo.InvariantCulture);
+            var mem = HardwareInventory.FormatBytes(a.WorkingSetBytes);
+            var priv = HardwareInventory.FormatBytes(a.PrivateBytes);
+            IReadOnlyList<string> values = sampled
+                ? [a.Name, count, FormatPercent(a.CpuPercent ?? 0), mem, priv, (a.DiskBytesPerSecond is > 0 and var rate ? HardwareInventory.FormatBytes(rate) + "/s" : "0 B/s")]
+                : [a.Name, count, mem, priv, FormatCpuTime(a.CpuTimeMs), HardwareInventory.FormatBytes(a.DiskBytes)];
+            IReadOnlyList<string?> keys = sampled
+                ? [null, NumKey(a.ProcessCount), ((long)Math.Round((a.CpuPercent ?? 0) * 100)).ToString(CultureInfo.InvariantCulture), NumKey(a.WorkingSetBytes), NumKey(a.PrivateBytes), NumKey(a.DiskBytesPerSecond ?? 0)]
+                : [null, NumKey(a.ProcessCount), NumKey(a.WorkingSetBytes), NumKey(a.PrivateBytes), NumKey(a.CpuTimeMs), NumKey(a.DiskBytes)];
+            return new AreaRow(level, values, keys, Key: "app:" + a.Name, Detail: a.HelpersText,
+                Actions: ProcessProtection.IsProtected(a.Name) ? null : [new(RemediationKind.EndProcessGroup, "End task", a.Name, a.DisplayName)]);
+        }).ToList();
+
+        var headline = topMem is null ? "No apps" : $"{topMem.Name} ({HardwareInventory.FormatBytes(topMem.WorkingSetBytes)})";
+        var meta = topMem is null ? "" : topCpu is not null
+            ? $"Busiest now: {topCpu.Name} ({FormatPercent(topCpu.CpuPercent ?? 0)} CPU) · {Plural(apps.Count, "app")}"
+            : $"{Plural(apps.Count, "app")} · {Plural(processes.Count, "process", "processes")} total";
+        return new("apps", "Top apps (with their helper processes)", warn ? AreaLevel.Warning : AreaLevel.Ok, headline, meta, cols, rows,
+            EmptyText: "No apps running.",
+            Note: (sampled ? $"CPU and disk are measured over {DefaultSampleWindow.TotalSeconds:0} seconds; CPU % is of the whole PC. " : "")
+                + "Each app includes the helper processes it started (for example browser tabs, or the web views inside an app). "
+                + "Memory is the working set; private memory is what the app has reserved for itself.");
+    }
+
+    public static AreaReport Build(SystemUptimeInfo? uptime, IReadOnlyList<ProcessResourceRow>? processes, MemoryUse? memory = null, bool restartPending = false,
+        IReadOnlyDictionary<int, ProcessRate>? rates = null)
     {
         if (uptime is null && processes is null) return AreaReport.Failed("Couldn't read running processes and uptime on this PC.");
         var cards = new List<AreaCard>();
@@ -127,6 +265,7 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
                 ],
                 Note: "\"Usable\" can be less than the installed memory: Windows sets some aside, for example for built-in graphics."));
             parts.Add($"RAM {mu.UsedPercent}% in use");
+            if (CommitCard(mu) is { } commit) cards.Add(commit);
         }
 
         if (uptime is null)
@@ -173,6 +312,7 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
         }
         else
         {
+            cards.Add(AppsCard(processes, rates));
             var groups = GroupProcesses(processes);
             var byMem = groups.OrderByDescending(g => g.MemoryBytes).Take(TopCount).ToList();
             var byCpu = groups.OrderByDescending(g => g.CpuTimeMs).Take(TopCount).ToList();

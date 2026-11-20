@@ -103,6 +103,7 @@ public static class AreaReportExport
             rows)
         {
             Actions = Actions(card.Actions),
+            RunCheck = card.RunCheck is { } link ? new ExportedCheckLink(link.CheckId, link.ButtonText) : null,
             ListedRowCount = attention.Count,
         };
     }
@@ -166,6 +167,9 @@ public static class AreaReportExport
         /// <summary>One-click fixes on the card itself (buttons on the card and in its drawer).</summary>
         public IReadOnlyList<ExportedAction>? Actions { get; init; }
 
+        /// <summary>The check the card suggests running next (its button is <c>[data-action="run-check"][data-check-id]</c>).</summary>
+        public ExportedCheckLink? RunCheck { get; init; }
+
         /// <summary>How many rows qualify for <c>Rows</c> (every row that is not ok, and any row with a fix) before the cap.</summary>
         public int ListedRowCount { get; init; }
     }
@@ -177,6 +181,8 @@ public static class AreaReportExport
     }
 
     /// <summary>A one-click fix as the page offers it. Kind is a <see cref="RemediationKind"/> name.</summary>
+    public sealed record ExportedCheckLink(string CheckId, string ButtonText);
+
     public sealed record ExportedAction(string Kind, string Target, string? TargetLabel, string ButtonText, string? CurrentSetting)
     {
         /// <summary>"low" or "medium": how much the fix can disturb the PC.</summary>

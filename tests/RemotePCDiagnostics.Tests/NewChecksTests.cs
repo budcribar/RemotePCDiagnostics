@@ -30,11 +30,11 @@ public class NewChecksTests
             return ScriptedLauncher.Ok(psJson);
         });
 
-        var module = new ResourceHogsModule(ScriptedLauncher.Osquery(launcher), new SystemCommandRunner(launcher));
+        var module = new ResourceHogsModule(ScriptedLauncher.Osquery(launcher), new SystemCommandRunner(launcher), sampleWindow: TimeSpan.Zero);
         var res = await module.RefreshAsync(null);
         Assert.Equal(DiagnosticStatus.Warning, res.Status);
         var rep = Assert.IsType<AreaReport>(res.Payload);
-        Assert.Equal(3, rep.Cards.Count);
+        Assert.Equal(["uptime", "apps", "memory", "cpu"], rep.Cards.Select(c => c.Id));
 
         var upCard = rep.Cards.Single(c => c.Id == "uptime");
         Assert.Equal(AreaLevel.Warning, upCard.Level);
