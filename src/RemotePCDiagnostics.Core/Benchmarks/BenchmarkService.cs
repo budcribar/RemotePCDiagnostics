@@ -4,6 +4,42 @@ using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Benchmarks;
 
+/// <summary>Why a pass cannot start. <see cref="Setting"/> is the control that blocks it (<c>restartBeforeAfter</c>, <c>enabled</c>, <c>baseline</c> or <c>benchmark</c>).</summary>
+public sealed record BenchmarkBlock(string Setting, string Reason);
+
+/// <summary>One pass an agent can start, and why it cannot when <see cref="Available"/> is false.</summary>
+public sealed record BenchmarkStartChoice(string Pass, bool Restart, string Control, bool Available, string? Setting = null, string? Reason = null);
+
+/// <summary>Result of asking for a pass. <see cref="Started"/> is false when nothing ran and the restart choice was left as it was.</summary>
+public sealed record BenchmarkPassStart(bool Started, BenchmarkBlock? Blocked, RemediationResult? Restart);
+
+/// <summary>Rules for starting a benchmark pass. A refusal names the blocking setting and does not change the restart choice.</summary>
+public static class BenchmarkStartRules
+{
+    public const string RestartSetting = "restartBeforeAfter";
+    public const string EnabledSetting = "enabled";
+    public const string BaselineSetting = "baseline";
+    public const string RunningSetting = "benchmark";
+
+    public static string Control(BenchmarkPhase phase, bool restart) =>
+        (restart ? "bench-restart-" : "bench-run-") + (phase == BenchmarkPhase.Before ? "before" : "after");
+
+    public static BenchmarkBlock? Block(BenchmarkPhase phase, bool restart, bool busy, bool hasBaseline, bool hasMeasurements, bool restartPending, bool canRestart)
+    {
+        if (busy)
+            return new(RunningSetting, "A benchmark is already running.");
+        if (!hasMeasurements)
+            return new(EnabledSetting, "No measurements are selected.");
+        if (phase == BenchmarkPhase.After && !hasBaseline)
+            return new(BaselineSetting, "Run the before benchmark first.");
+        if (restartPending)
+            return new(RestartSetting, "A restart is already waiting to run a benchmark.");
+        if (restart && !canRestart)
+            return new(RestartSetting, "Restarting isn't available from here.");
+        return null;
+    }
+}
+
 /// <summary>
 /// Before/after benchmarks for one service call. State (settings, the "before" run, a pending "after") is saved, so the
 /// "before" survives the restart and the "after" can run by itself once the PC is back.
@@ -49,6 +85,8 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public double? SettleFraction { get; private set; }
     public string? Progress { get; private set; }
     public string? Message { get; private set; }
+    /// <summary>The last start that was refused. Cleared when a pass actually starts. A refusal does not change <see cref="BenchmarkSettings.RestartBeforeAfter"/>.</summary>
+    public BenchmarkBlock? Blocked { get; private set; }
     public BenchmarkComparison Comparison => BenchmarkComparison.Build(Before, After);
 
     // ---- Developer benchmarks (Phase 1 & 2) ----
@@ -127,6 +165,69 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         Save(_state with { Settings = s with { Runs = Math.Clamp(s.Runs, 1, 5), Enabled = s.Enabled.Distinct().ToList() } });
     }
 
+    public BenchmarkBlock? BlockFor(BenchmarkPhase phase, bool restart) => BenchmarkStartRules.Block(
+        phase, restart, Running is not null || Settling is not null || RunningDeveloperAction, Before is not null,
+        Settings.Enabled.Count > 0, BeforePendingRestart || AfterPendingRestart, remediation is not null);
+
+    public IReadOnlyList<BenchmarkStartChoice> StartChoices() =>
+        new[] { BenchmarkPhase.Before, BenchmarkPhase.After }
+            .SelectMany(phase => new[] { false, true }.Select(restart =>
+            {
+                var block = BlockFor(phase, restart);
+                return new BenchmarkStartChoice(
+                    phase == BenchmarkPhase.Before ? "before" : "after", restart, BenchmarkStartRules.Control(phase, restart),
+                    block is null, block?.Setting, block?.Reason);
+            }))
+            .ToList();
+
+    /// <summary>
+    /// Starts <paramref name="phase"/> with the requested restart choice. The choice is saved only once the pass has started
+    /// (the run is underway, or Windows has been asked to restart). A refusal leaves <see cref="BenchmarkSettings.RestartBeforeAfter"/> as it was.
+    /// </summary>
+    public async Task<BenchmarkPassStart> BeginPassAsync(BenchmarkPhase phase, bool restart, CancellationToken ct = default)
+    {
+        var block = BlockFor(phase, restart);
+        if (block is not null)
+        {
+            Blocked = block;
+            Raise();
+            return new(false, block, null);
+        }
+
+        Blocked = null;
+        if (restart)
+        {
+            var result = phase == BenchmarkPhase.Before
+                ? await RestartThenRunBeforeAsync(ct).ConfigureAwait(false)
+                : await RestartThenRunAfterAsync(ct).ConfigureAwait(false);
+            if (!result.Success)
+            {
+                Blocked = new BenchmarkBlock(BenchmarkStartRules.RestartSetting, result.Message);
+                Raise();
+                return new(false, Blocked, result);
+            }
+            CommitRestartChoice(true);
+            Raise();
+            return new(true, null, result);
+        }
+
+        var run = await RunAsync(phase, ct, restartChoice: false).ConfigureAwait(false);
+        if (run is null)
+        {
+            Blocked = new BenchmarkBlock(BenchmarkStartRules.RunningSetting, "A benchmark is already running.");
+            Raise();
+            return new(false, Blocked, null);
+        }
+        return new(true, null, null);
+    }
+
+    /// <summary>Records the restart choice used by a pass that has already started. Does nothing when it already matches.</summary>
+    private void CommitRestartChoice(bool restart)
+    {
+        if (_state.Settings.RestartBeforeAfter == restart) return;
+        Save(_state with { Settings = _state.Settings with { RestartBeforeAfter = restart } });
+    }
+
     /// <summary>Starts a new service call: forgets earlier results (settings are kept).</summary>
     public void Clear()
     {
@@ -138,19 +239,27 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public void Stop() { try { _cts?.Cancel(); } catch (ObjectDisposedException) { } }
 
     /// <param name="bootsSince">Before only: count just the start-ups after this time (the service workflow's restart before the baseline).</param>
-    public async Task<BenchmarkRun?> RunAsync(BenchmarkPhase phase, CancellationToken ct = default, DateTimeOffset? bootsSince = null)
+    /// <param name="restartChoice">When set, saved as soon as this run starts and not before. Null leaves the saved choice alone (resume after a restart already recorded it).</param>
+    public async Task<BenchmarkRun?> RunAsync(BenchmarkPhase phase, CancellationToken ct = default, DateTimeOffset? bootsSince = null, bool? restartChoice = null)
     {
+        BenchmarkState? commit = null;
         lock (_gate)
         {
             if (Running is not null || Settling is not null) return null;
+            if (restartChoice is { } choice && _state.Settings.RestartBeforeAfter != choice)
+            {
+                _state = _state with { Settings = _state.Settings with { RestartBeforeAfter = choice } };
+                commit = _state;
+            }
             Running = phase;
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         }
-        Message = null;
-        Raise();
         var cts = _cts;
         try
         {
+            if (commit is not null) store.Save(commit);
+            Message = null;
+            Raise();
             var settings = Settings;
             var prog = new SyncProgress(p => { Progress = p; Raise(); });
             var preferredSpeedometerEngine = phase == BenchmarkPhase.After

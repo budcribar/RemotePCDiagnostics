@@ -30,8 +30,8 @@
                     : "Comparison ready")
         </div>
         <label class="bench-restart-toggle">
-            <input type="checkbox" data-testid="bench-restart" checked="@s.RestartBeforeAfter" disabled="@running"
-                   @onchange="e => Bench.UpdateSettings(s with { RestartBeforeAfter = e.Value is true })" />
+            <input @key="_restartEcho" type="checkbox" data-testid="bench-restart" checked="@s.RestartBeforeAfter" disabled="@running"
+                   @onchange="EchoCommittedRestart" />
             <span>Restart the PC first (needed for a fair start-up time)</span>
         </label>
     </div>
@@ -44,30 +44,31 @@
         {
             @if (s.RestartBeforeAfter)
             {
-                <button class="btn btn-primary" data-testid="bench-restart-before" disabled="@(s.Enabled.Count == 0 || Bench.BeforePendingRestart || Bench.AfterPendingRestart)" @onclick="RestartThenBefore">
-                    <Icon Name="refresh" Size="12" /> Restart &amp; Run Snapshot</button>
+                @StartButton(BenchmarkPhase.Before, true, true, "Restart & Run Snapshot")
             }
             else
             {
-                <button class="btn btn-primary" data-testid="bench-run-before" disabled="@(s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)">
-                    <Icon Name="play" Size="12" /> Run Benchmark Snapshot</button>
+                @StartButton(BenchmarkPhase.Before, false, true, "Run Benchmark Snapshot")
             }
+            @StartButton(BenchmarkPhase.Before, !s.RestartBeforeAfter, false, s.RestartBeforeAfter ? "Run Benchmark Snapshot" : "Restart & Run Snapshot")
         }
         else
         {
             @if (s.RestartBeforeAfter)
             {
-                <button class="btn btn-primary" data-testid="bench-restart-after" disabled="@(s.Enabled.Count == 0 || Bench.AfterPendingRestart)" @onclick="RestartThenAfter">
-                    <Icon Name="refresh" Size="12" /> @(after is null ? "Restart & Run Next Snapshot" : "Restart & Re-run After")</button>
-                <button class="btn-small" data-testid="bench-restart-before" disabled="@(s.Enabled.Count == 0 || Bench.BeforePendingRestart || Bench.AfterPendingRestart)" @onclick="RestartThenBefore">Re-run baseline</button>
+                @StartButton(BenchmarkPhase.After, true, true, after is null ? "Restart & Run Next Snapshot" : "Restart & Re-run After")
+                @StartButton(BenchmarkPhase.Before, true, false, "Re-run baseline")
             }
             else
             {
-                <button class="btn btn-primary" data-testid="bench-run-after" disabled="@(s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.After)">
-                    <Icon Name="play" Size="12" /> @(after is null ? "Run Next Snapshot" : "Re-run After")</button>
-                <button class="btn-small" data-testid="bench-run-before" disabled="@(s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)">Re-run baseline</button>
+                @StartButton(BenchmarkPhase.After, false, true, after is null ? "Run Next Snapshot" : "Re-run After")
+                @StartButton(BenchmarkPhase.Before, false, false, "Re-run baseline")
             }
             <button class="btn-small" data-testid="bench-clear" @onclick="Bench.Clear">Start over</button>
+            @StartButton(BenchmarkPhase.After, !s.RestartBeforeAfter, false, s.RestartBeforeAfter
+                ? (after is null ? "Run Next Snapshot" : "Re-run After")
+                : (after is null ? "Restart & Run Next Snapshot" : "Restart & Re-run After"))
+            @StartButton(BenchmarkPhase.Before, !s.RestartBeforeAfter, false, s.RestartBeforeAfter ? "Re-run baseline without restart" : "Restart and re-run baseline")
         }
     </div>
 </section>
@@ -370,9 +371,32 @@ else if (!running)
         if (int.TryParse(e.Value?.ToString(), out var n)) Bench.UpdateSettings(Bench.Settings with { Runs = n });
     }
 
-    private void Run(BenchmarkPhase phase) => _ = Bench.RunAsync(phase);
-    private async Task RestartThenAfter() => await Bench.RestartThenRunAfterAsync();
-    private async Task RestartThenBefore() => await Bench.RestartThenRunBeforeAsync();
+    /// <summary>
+    /// The checkbox shows the restart choice the last started pass used. Clicking it does not write that choice:
+    /// a rejected start must leave it unchanged. The pass buttons save it once the pass has actually started.
+    /// </summary>
+    private int _restartEcho;
+    private void EchoCommittedRestart(ChangeEventArgs _) => _restartEcho++;
+
+    private Task Start(BenchmarkPhase phase, bool restart) => Bench.BeginPassAsync(phase, restart);
+
+    private RenderFragment StartButton(BenchmarkPhase phase, bool restart, bool primary, string label) => __builder =>
+    {
+        var block = Bench.BlockFor(phase, restart);
+        var pass = phase == BenchmarkPhase.Before ? "before" : "after";
+        <button class="@(primary ? "btn btn-primary" : "btn-small")"
+                data-testid="@BenchmarkStartRules.Control(phase, restart)"
+                data-action="start-benchmark" data-pass="@pass" data-restart="@(restart ? "true" : "false")"
+                data-blocked-setting="@block?.Setting" data-blocked-reason="@block?.Reason"
+                disabled="@(block is not null)" title="@block?.Reason"
+                @onclick="async () => await Start(phase, restart)">
+            @if (primary)
+            {
+                <Icon Name="@(restart ? "refresh" : "play")" Size="12" />
+            }
+            @label
+        </button>
+    };
 
     private static string Minutes(int seconds) => seconds < 90 ? $"{seconds} s" : $"{Math.Round(seconds / 60.0, 1):0.#} min";
 
