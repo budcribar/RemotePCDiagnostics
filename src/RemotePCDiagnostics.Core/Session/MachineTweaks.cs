@@ -139,7 +139,11 @@ public static class MachineTweakRules
             case AdminPipeTweak.DefenderTempAdd or AdminPipeTweak.DefenderTempRemove:
                 var addingTemp = t.Action == AdminPipeTweak.DefenderTempAdd;
                 var tp = paths ?? DefenderPaths.Current();
-                return DevDriveRules.TempBuildFolderRefusal(t.Target, mustExist: addingTemp, tp.DirectoryExists);
+                // Removing is always safe (and the startup sweep removes leftovers anywhere); adding is only allowed directly
+                // inside the signed-in user's own Temp folder, never a Windows, program or shared folder, and never a link.
+                return addingTemp
+                    ? DevDriveRules.TempBuildFolderRefusal(t.Target, tp.UserTempFolders, tp.DirectoryExists, tp.IsReparsePoint)
+                    : DevDriveRules.IsRpcdTempBuildFolder(t.Target) ? null : "Temporary build exclusions are only removed for RPCD build temp folders (Temp\\rpcd-devbench-*).";
 
             case AdminPipeTweak.DevDriveCreate:
                 if (t.Number is { } gb && (gb < DevDriveRules.MinSizeGb || gb > DevDriveRules.MaxSizeGb))
@@ -211,6 +215,18 @@ public static class MachineTweakRules
 /// </summary>
 public sealed record DefenderPaths(IReadOnlyList<string> SystemFolders, IReadOnlyList<string> ProgramFiles, Func<string, bool> DirectoryExists, Func<string, bool> FileExists)
 {
+    /// <summary>The signed-in user's own Temp folders: the only places a temporary build exclusion may be added.</summary>
+    public IReadOnlyList<string> UserTempFolders { get; init; } = [];
+
+    /// <summary>True when a folder is a junction or symbolic link (never excluded, since it can point anywhere).</summary>
+    public Func<string, bool> IsReparsePoint { get; init; } = DefaultIsReparsePoint;
+
+    private static bool DefaultIsReparsePoint(string path)
+    {
+        try { return new DirectoryInfo(path).Attributes.HasFlag(FileAttributes.ReparsePoint); }
+        catch { return true; }
+    }
+
     /// <summary>The build tools the fix excludes, relative to a Visual Studio edition folder (the same list the app looks for).</summary>
     public static readonly IReadOnlyList<string> BuildToolPaths =
         [@"Common7\IDE\devenv.exe", @"MSBuild\Current\Bin\MSBuild.exe", @"MSBuild\Current\Bin\amd64\MSBuild.exe", @"MSBuild\Current\Bin\Roslyn\VBCSCompiler.exe"];
@@ -219,14 +235,62 @@ public sealed record DefenderPaths(IReadOnlyList<string> SystemFolders, IReadOnl
     private static readonly string[] ProfileFolders = ["Desktop", "Documents", "Downloads", "OneDrive", "source", "AppData", "Pictures", "Music", "Videos"];
     private static readonly string[] ProfileTrees = ["Downloads", "AppData"];
 
-    public static DefenderPaths Current()
+    /// <param name="userSid">The app's user (the pipe's allowed client). Its Temp folders are the only ones a temporary build exclusion may go in.</param>
+    public static DefenderPaths Current(string? userSid = null)
     {
         static string F(Environment.SpecialFolder f) => Environment.GetFolderPath(f);
+        var system = new[] { F(Environment.SpecialFolder.Windows), F(Environment.SpecialFolder.ProgramFiles), F(Environment.SpecialFolder.ProgramFilesX86), F(Environment.SpecialFolder.CommonApplicationData) }
+            .Where(x => x.Length > 0).ToList();
         return new(
-            new[] { F(Environment.SpecialFolder.Windows), F(Environment.SpecialFolder.ProgramFiles), F(Environment.SpecialFolder.ProgramFilesX86), F(Environment.SpecialFolder.CommonApplicationData) }
-                .Where(x => x.Length > 0).ToList(),
+            system,
             new[] { F(Environment.SpecialFolder.ProgramFiles), F(Environment.SpecialFolder.ProgramFilesX86) }.Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            Directory.Exists, File.Exists);
+            Directory.Exists, File.Exists)
+        {
+            UserTempFolders = OperatingSystem.IsWindows() ? UserTemps(userSid, system) : [],
+        };
+    }
+
+    /// <summary>
+    /// The user's Temp folders: <c>&lt;profile&gt;\AppData\Local\Temp</c> and the user's own TEMP/TMP setting (from the user's
+    /// registry hive, so it is right when the Agent runs as SYSTEM), plus this process's Temp when the Agent runs as that user.
+    /// Anything inside a Windows or program folder (for example C:\Windows\SystemTemp) is left out.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static IReadOnlyList<string> UserTemps(string? userSid, IReadOnlyList<string> systemFolders)
+    {
+        var found = new List<string>();
+        string? profile = null;
+        if (DevDriveRules.IsValidUserSid(userSid))
+        {
+            try
+            {
+                using var key = Registry.LocalMachine.OpenSubKey($@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{userSid}");
+                profile = (key?.GetValue("ProfileImagePath") as string) is { Length: > 0 } pi ? Environment.ExpandEnvironmentVariables(pi) : null;
+            }
+            catch { }
+            if (profile is not null) found.Add(Path.Combine(profile, "AppData", "Local", "Temp"));
+            try
+            {
+                using var env = Registry.Users.OpenSubKey($@"{userSid}\Environment");
+                foreach (var name in new[] { "TEMP", "TMP" })
+                {
+                    if (env?.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string raw || raw.Length == 0) continue;
+                    if (profile is not null) raw = raw.Replace("%USERPROFILE%", profile, StringComparison.OrdinalIgnoreCase);
+                    if (!raw.Contains('%')) found.Add(raw);
+                }
+            }
+            catch { }
+        }
+        else
+        {
+            // No client SID known: only the elevated helper's own Temp (it runs as the signed-in user).
+            try { found.Add(Path.GetTempPath()); } catch { }
+        }
+        return found
+            .Select(x => x.TrimEnd('\\'))
+            .Where(x => IsLocalPath(x) && Parts(x).Length >= 2 && !systemFolders.Any(s => IsUnder(x, s)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     /// <summary>A full local path like <c>D:\work\app</c>: drive letter, no wildcards, no <c>.</c> or <c>..</c> parts, no doubled separators.</summary>
@@ -609,8 +673,40 @@ public sealed class WindowsMachineTweaks(ILogger? log = null, IProcessLauncher? 
         return r.ExitCode == 0;
     }
 
-    public Task<(bool Ok, string? Output)> AddTempBuildDefenderExclusionAsync(string folder, CancellationToken ct) =>
-        AddDefenderExclusionsAsync([folder], [], ct);
+    /// <summary>
+    /// How long a temporary build exclusion may live. The Agent removes it by itself after this, so a crashed or closed app
+    /// never leaves a Temp folder excluded (the Agent's startup sweep covers an Agent restart).
+    /// </summary>
+    public static readonly TimeSpan TempExclusionLifetime = TimeSpan.FromHours(2);
+
+    public async Task<(bool Ok, string? Output)> AddTempBuildDefenderExclusionAsync(string folder, CancellationToken ct)
+    {
+        var added = await AddDefenderExclusionsAsync([folder], [], ct).ConfigureAwait(false);
+        if (added.Ok)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(TempExclusionLifetime).ConfigureAwait(false);
+                    if (await StillExcludedAsync(folder).ConfigureAwait(false))
+                    {
+                        var removed = await RemoveDefenderExclusionsAsync([folder], [], CancellationToken.None).ConfigureAwait(false);
+                        Log($"Temporary build exclusion expired after {TempExclusionLifetime.TotalHours:0} h: {folder} (removed={removed})");
+                    }
+                }
+                catch (Exception ex) { Log("Expiring temporary build exclusion failed: " + ex.Message); }
+            });
+        }
+        return added;
+    }
+
+    private async Task<bool> StillExcludedAsync(string folder)
+    {
+        var status = DefenderProbe.Parse(await ReadDefenderAsync(CancellationToken.None).ConfigureAwait(false));
+        // When the list can't be read, try the removal anyway: removing an exclusion that isn't there does nothing.
+        return status is not { ExclusionsReadable: true } || status.Paths.Any(p => p.TrimEnd('\\').Equals(folder.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
+    }
 
     public Task<bool> RemoveTempBuildDefenderExclusionAsync(string folder, CancellationToken ct) =>
         RemoveDefenderExclusionsAsync([folder], [], ct);

@@ -138,9 +138,22 @@ public sealed class DeveloperBenchmarkTests : IDisposable
         var paths = new DefenderPaths(
             [@"C:\Windows", @"C:\Program Files", @"C:\Program Files (x86)", @"C:\ProgramData"],
             [@"C:\Program Files"],
-            _ => true, _ => true);
+            _ => true, _ => true)
+        {
+            UserTempFolders = [@"C:\Users\alice\AppData\Local\Temp"],
+            IsReparsePoint = p => p.EndsWith("-link0000", StringComparison.OrdinalIgnoreCase),
+        };
 
         Assert.Null(MachineTweakRules.Refusal(new AdminPipeTweak(AdminPipeTweak.DefenderTempAdd, Target: @"C:\Users\alice\AppData\Local\Temp\rpcd-devbench-0123456789abcdef"), paths));
+        // Only the signed-in user's own Temp: never Windows\Temp, another user's Temp, or any other folder named Temp.
+        Assert.NotNull(MachineTweakRules.Refusal(new AdminPipeTweak(AdminPipeTweak.DefenderTempAdd, Target: @"C:\Windows\Temp\rpcd-devbench-0123456789abcdef"), paths));
+        Assert.NotNull(MachineTweakRules.Refusal(new AdminPipeTweak(AdminPipeTweak.DefenderTempAdd, Target: @"C:\Temp\rpcd-devbench-0123456789abcdef"), paths));
+        Assert.NotNull(MachineTweakRules.Refusal(new AdminPipeTweak(AdminPipeTweak.DefenderTempAdd, Target: @"C:\Users\bob\AppData\Local\Temp\rpcd-devbench-0123456789abcdef"), paths));
+        Assert.NotNull(MachineTweakRules.Refusal(new AdminPipeTweak(AdminPipeTweak.DefenderTempAdd, Target: @"C:\Users\alice\AppData\Local\Temp\sub\rpcd-devbench-0123456789abcdef"), paths));
+        Assert.NotNull(MachineTweakRules.Refusal(new AdminPipeTweak(AdminPipeTweak.DefenderTempAdd, Target: @"C:\Users\alice\AppData\Local\Temp\rpcd-devbench-link0000"), paths));
+        Assert.NotNull(MachineTweakRules.Refusal(new AdminPipeTweak(AdminPipeTweak.DefenderTempAdd, Target: @"C:\Users\alice\AppData\Local\Temp\rpcd-devbench-0123456789abcdef"), paths with { UserTempFolders = [] }));
+        // Removing a leftover is allowed wherever it is (the Agent's startup sweep does the same).
+        Assert.Null(MachineTweakRules.Refusal(new AdminPipeTweak(AdminPipeTweak.DefenderTempRemove, Target: @"C:\Users\bob\AppData\Local\Temp\rpcd-devbench-0123456789abcdef"), paths));
         Assert.Null(MachineTweakRules.Refusal(new AdminPipeTweak(AdminPipeTweak.DefenderTempRemove, Target: @"C:\Users\alice\AppData\Local\Temp\rpcd-devbench-0123456789abcdef"), paths));
         Assert.NotNull(MachineTweakRules.Refusal(new AdminPipeTweak(AdminPipeTweak.DefenderTempAdd, Target: @"C:\Users\alice\AppData\Local\Temp"), paths));
         Assert.NotNull(MachineTweakRules.Refusal(new AdminPipeTweak(AdminPipeTweak.DefenderTempAdd, Target: @"C:\Users\alice\AppData\Local\Temp\other-folder"), paths));

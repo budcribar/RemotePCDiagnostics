@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -60,13 +59,22 @@ public static class DevDriveRules
         return suffix.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
     }
 
-    /// <summary>Why <paramref name="folder"/> is refused as a temporary build exclusion, or null when allowed.</summary>
-    public static string? TempBuildFolderRefusal(string? folder, bool mustExist, Func<string, bool>? dirExists = null)
+    /// <summary>
+    /// Why <paramref name="folder"/> is refused as a new temporary build exclusion, or null when allowed: it must be an RPCD build
+    /// folder directly inside one of <paramref name="userTempFolders"/> (the signed-in user's own Temp), exist, and not be a link.
+    /// </summary>
+    public static string? TempBuildFolderRefusal(string? folder, IReadOnlyList<string> userTempFolders, Func<string, bool>? dirExists = null, Func<string, bool>? isReparsePoint = null)
     {
         if (!IsRpcdTempBuildFolder(folder))
             return "Temporary build exclusions are only allowed for RPCD build temp folders (Temp\\rpcd-devbench-*).";
-        if (mustExist && !(dirExists ?? Directory.Exists)(folder!))
+        var parent = folder!.TrimEnd('\\');
+        parent = parent[..parent.LastIndexOf('\\')];
+        if (!userTempFolders.Any(t => t.TrimEnd('\\').Equals(parent, StringComparison.OrdinalIgnoreCase)))
+            return "Temporary build exclusions are only allowed directly inside the signed-in user's own Temp folder.";
+        if (!(dirExists ?? Directory.Exists)(folder))
             return $"{folder} doesn't exist.";
+        if (isReparsePoint is not null && isReparsePoint(folder))
+            return $"{folder} is a link; it's never excluded.";
         return null;
     }
 
@@ -102,14 +110,14 @@ public static class DevDriveRules
         return parts.Length >= 4 && parts.Skip(1).All(p => p.Length > 0 && p.All(char.IsAsciiDigit));
     }
 
-    /// <summary>Builds the fixed diskpart fallback script for creating and attaching the VHDX.</summary>
+    /// <summary>Builds the fixed diskpart script for creating and attaching the VHDX.</summary>
     public static string BuildDiskpartCreateScript(string vhdxPath, int sizeGb)
     {
         var maxMb = Math.Clamp(sizeGb, MinSizeGb, MaxSizeGb) * 1024;
         return $"create vdisk file=\"{vhdxPath}\" maximum={maxMb} type=expandable\r\nselect vdisk file=\"{vhdxPath}\"\r\nattach vdisk\r\n";
     }
 
-    /// <summary>Builds the fixed diskpart fallback script for detaching the VHDX.</summary>
+    /// <summary>Builds the fixed diskpart script for detaching the VHDX.</summary>
     public static string BuildDiskpartDetachScript(string vhdxPath) =>
         $"select vdisk file=\"{vhdxPath}\"\r\ndetach vdisk\r\n";
 
@@ -130,7 +138,8 @@ public static class DevDriveRules
 
 /// <summary>
 /// Creates, mounts, formats, and cleans up temporary RPCD Dev Drive VHDX images in the elevated Agent.
-/// Uses the Virtual Disk API (<c>virtdisk.dll</c>, present on every Windows edition) with a fixed <c>diskpart</c> fallback.
+/// Uses a fixed, Agent-built <c>diskpart</c> script (present on every Windows edition; no Hyper-V needed). Only one temporary
+/// Dev Drive exists at a time.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class WindowsDevDriveManager(ILogger? log = null, IProcessLauncher? launcher = null, string? vhdxFolder = null)
@@ -147,20 +156,17 @@ public sealed class WindowsDevDriveManager(ILogger? log = null, IProcessLauncher
             return new(false, Error: "Invalid user SID.");
 
         Directory.CreateDirectory(_folder);
+        if (Directory.EnumerateFiles(_folder, $"{DevDriveRules.VhdxPrefix}*.vhdx").Any())
+            return new(false, Error: "A temporary Dev Drive is already in use. Wait for that comparison to finish, then try again.");
         var vhdxPath = Path.Combine(_folder, $"{DevDriveRules.VhdxPrefix}{Guid.NewGuid():N}.vhdx");
 
         try
         {
-            var created = TryCreateAndAttachViaVirtDisk(vhdxPath, clampedGb, out var virtErr);
-            if (!created)
+            if (!await RunDiskpartAsync(DevDriveRules.BuildDiskpartCreateScript(vhdxPath, clampedGb), ct).ConfigureAwait(false))
             {
-                Log($"virtdisk.dll failed ({virtErr}); falling back to fixed diskpart script.");
-                var dpOk = await RunDiskpartAsync(DevDriveRules.BuildDiskpartCreateScript(vhdxPath, clampedGb), ct).ConfigureAwait(false);
-                if (!dpOk)
-                {
-                    TryDeleteFile(vhdxPath);
-                    return new(false, Error: $"Could not create temporary Dev Drive VHDX ({virtErr}).");
-                }
+                // diskpart may have attached the disk before failing; detach and delete whatever it left.
+                await RemoveAsync(vhdxPath, CancellationToken.None).ConfigureAwait(false);
+                return new(false, Error: "diskpart could not create the temporary Dev Drive VHDX.");
             }
 
             var fmt = await _launcher.RunAsync(
@@ -206,8 +212,7 @@ public sealed class WindowsDevDriveManager(ILogger? log = null, IProcessLauncher
         if (!DevDriveRules.IsRpcdDevDriveVhdx(vhdxPath, _folder))
             return false;
 
-        var detached = TryDetachViaVirtDisk(vhdxPath);
-        if (!detached && File.Exists(vhdxPath))
+        if (File.Exists(vhdxPath))
             await RunDiskpartAsync(DevDriveRules.BuildDiskpartDetachScript(vhdxPath), ct).ConfigureAwait(false);
 
         var deleted = TryDeleteFile(vhdxPath);
@@ -287,138 +292,5 @@ public sealed class WindowsDevDriveManager(ILogger? log = null, IProcessLauncher
             return !File.Exists(path);
         }
         catch { return false; }
-    }
-
-    // ---- virtdisk.dll P/Invoke (available on all Windows editions, no Hyper-V required) ----
-
-    private static readonly Guid VirtualStorageTypeVendorMicrosoft = new("EC984AEC-A0F9-47E9-901F-71415A66345B");
-    private const uint VirtualStorageTypeDeviceVhdx = 3;
-    private const uint VirtualDiskAccessAll = 0x003f0000;
-    private const uint VirtualDiskAccessDetach = 0x00040000;
-    private const uint OpenVirtualDiskFlagNone = 0;
-    private const uint CreateVirtualDiskFlagNone = 0;
-    private const uint AttachVirtualDiskFlagPermanentLifetime = 0x00000004;
-    private const uint DetachVirtualDiskFlagNone = 0;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct VIRTUAL_STORAGE_TYPE
-    {
-        public uint DeviceId;
-        public Guid VendorId;
-    }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct CREATE_VIRTUAL_DISK_PARAMETERS_V2
-    {
-        public uint Version;
-        public Guid UniqueId;
-        public ulong MaximumSize;
-        public uint BlockSizeInBytes;
-        public uint SectorSizeInBytes;
-        public uint PhysicalSectorSizeInBytes;
-        public IntPtr ParentPath;
-        public IntPtr SourcePath;
-        public uint OpenFlags;
-        public VIRTUAL_STORAGE_TYPE ParentVirtualStorageType;
-        public VIRTUAL_STORAGE_TYPE SourceVirtualStorageType;
-        public Guid ResiliencyGuid;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct OPEN_VIRTUAL_DISK_PARAMETERS
-    {
-        public uint Version;
-        public uint RWDepth;
-    }
-
-    [DllImport("virtdisk.dll", CharSet = CharSet.Unicode)]
-    private static extern uint CreateVirtualDisk(
-        ref VIRTUAL_STORAGE_TYPE virtualStorageType,
-        string path,
-        uint virtualDiskAccessMask,
-        IntPtr securityDescriptor,
-        uint flags,
-        uint providerSpecificFlags,
-        ref CREATE_VIRTUAL_DISK_PARAMETERS_V2 parameters,
-        IntPtr overlapped,
-        out IntPtr handle);
-
-    [DllImport("virtdisk.dll", CharSet = CharSet.Unicode)]
-    private static extern uint OpenVirtualDisk(
-        ref VIRTUAL_STORAGE_TYPE virtualStorageType,
-        string path,
-        uint virtualDiskAccessMask,
-        uint flags,
-        ref OPEN_VIRTUAL_DISK_PARAMETERS parameters,
-        out IntPtr handle);
-
-    [DllImport("virtdisk.dll")]
-    private static extern uint AttachVirtualDisk(
-        IntPtr virtualDiskHandle,
-        IntPtr securityDescriptor,
-        uint flags,
-        uint providerSpecificFlags,
-        IntPtr parameters,
-        IntPtr overlapped);
-
-    [DllImport("virtdisk.dll")]
-    private static extern uint DetachVirtualDisk(
-        IntPtr virtualDiskHandle,
-        uint flags,
-        uint providerSpecificFlags);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool CloseHandle(IntPtr handle);
-
-    private static bool TryCreateAndAttachViaVirtDisk(string vhdxPath, int sizeGb, out string error)
-    {
-        error = "";
-        var storageType = new VIRTUAL_STORAGE_TYPE { DeviceId = VirtualStorageTypeDeviceVhdx, VendorId = VirtualStorageTypeVendorMicrosoft };
-        var createParams = new CREATE_VIRTUAL_DISK_PARAMETERS_V2
-        {
-            Version = 2,
-            MaximumSize = (ulong)sizeGb * 1024UL * 1024UL * 1024UL,
-            BlockSizeInBytes = 0,
-            SectorSizeInBytes = 512,
-            PhysicalSectorSizeInBytes = 4096,
-        };
-
-        var rc = CreateVirtualDisk(ref storageType, vhdxPath, VirtualDiskAccessAll, IntPtr.Zero, CreateVirtualDiskFlagNone, 0, ref createParams, IntPtr.Zero, out var handle);
-        if (rc != 0)
-        {
-            error = $"CreateVirtualDisk returned {rc}";
-            return false;
-        }
-        try
-        {
-            rc = AttachVirtualDisk(handle, IntPtr.Zero, AttachVirtualDiskFlagPermanentLifetime, 0, IntPtr.Zero, IntPtr.Zero);
-            if (rc != 0)
-            {
-                error = $"AttachVirtualDisk returned {rc}";
-                return false;
-            }
-            return true;
-        }
-        finally
-        {
-            CloseHandle(handle);
-        }
-    }
-
-    private static bool TryDetachViaVirtDisk(string vhdxPath)
-    {
-        if (!File.Exists(vhdxPath)) return true;
-        var storageType = new VIRTUAL_STORAGE_TYPE { DeviceId = VirtualStorageTypeDeviceVhdx, VendorId = VirtualStorageTypeVendorMicrosoft };
-        var openParams = new OPEN_VIRTUAL_DISK_PARAMETERS { Version = 2, RWDepth = 0 };
-        var rc = OpenVirtualDisk(ref storageType, vhdxPath, VirtualDiskAccessDetach, OpenVirtualDiskFlagNone, ref openParams, out var handle);
-        if (rc != 0) return false;
-        try
-        {
-            return DetachVirtualDisk(handle, DetachVirtualDiskFlagNone, 0) == 0;
-        }
-        finally
-        {
-            CloseHandle(handle);
-        }
     }
 }
