@@ -69,6 +69,12 @@ public static class AgentExports
     public sealed record WorkflowActivity(Workflow.WorkflowStage Stage, bool Busy, string? Status);
 
     /// <summary>Everything running in the app at one moment, wherever it was started, for <see cref="Activity"/>.</summary>
+    /// <summary>Who has control, who should keep it, and why that last changed. Readable on every page, including while view-only.</summary>
+    public sealed record ControlMark(string Actual, string KeptWith, string Reason, DateTimeOffset? MovedAt);
+
+    /// <summary>A check that already finished. Not a running check: view-only mirrors can read it without opening the check.</summary>
+    public sealed record FinishedCheck(string Id, string Status, string? Summary, Guid? RunId, DateTimeOffset At);
+
     public sealed record ActivitySnapshot(
         IReadOnlyList<RunningCheck> Checks,
         SequenceRun? Sequence = null,
@@ -77,12 +83,30 @@ public static class AgentExports
         WorkflowActivity? Workflow = null,
         BenchmarkPhase? BenchmarkRunning = null,
         bool BenchmarkSettling = false,
-        string? BenchmarkProgress = null);
+        string? BenchmarkProgress = null,
+        ControlMark? Control = null,
+        IReadOnlyList<FinishedCheck>? Finished = null);
+
+    /// <summary>Finished checks only, newest first, capped. A running or not-yet-run check is left out.</summary>
+    public static IReadOnlyList<FinishedCheck> FinishedFrom(IEnumerable<DiagnosticResult> results) =>
+        results
+            .Where(r => r.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error)
+            .OrderByDescending(r => r.Timestamp)
+            .Take(40)
+            .Select(r => new FinishedCheck(
+                r.ModuleName,
+                r.Cancelled ? "cancelled" : r.Status.ToString().ToLowerInvariant(),
+                T(r.Message),
+                r.RunId,
+                r.Timestamp))
+            .ToList();
 
     /// <summary>
     /// What is running now (activity-data, on every page): checks and scans, a group run with the steps still to come, the stress
     /// suite, a fix, the service workflow and a benchmark pass. <c>busy</c> is true when any of them is. An agent that takes over a
-    /// session reads this first, so it can ask the person before stopping anything.
+    /// session reads this first, so it can ask the person before stopping anything. <c>control</c> says who holds the session and
+    /// why it last moved. <c>finished</c> is checks that already produced a result, so a view-only mirror can read them without
+    /// clicking.
     /// </summary>
     public static string Activity(ActivitySnapshot snapshot) => JsonSerializer.Serialize(BuildActivity(snapshot), Json);
 
@@ -138,6 +162,23 @@ public static class AgentExports
                 phase = s.BenchmarkRunning is { } b ? (b == BenchmarkPhase.Before ? "running-before" : "running-after") : "settling",
                 progress = T(s.BenchmarkProgress),
             } : null,
+            control = s.Control is { } control ? new
+            {
+                actual = control.Actual,
+                keptWith = control.KeptWith,
+                reason = control.Reason,
+                movedAt = control.MovedAt?.ToString("O"),
+            } : null,
+            finished = s.Finished is { Count: > 0 } finished
+                ? finished.Select(f => new
+                {
+                    id = V(f.Id),
+                    status = f.Status,
+                    summary = f.Summary,
+                    runId = f.RunId?.ToString(),
+                    at = f.At.ToString("O"),
+                }).ToList()
+                : null,
         };
     }
 

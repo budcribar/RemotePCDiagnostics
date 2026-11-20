@@ -130,6 +130,43 @@ public class AgentExportsTests
         Assert.Empty(root.GetProperty("checks").EnumerateArray());
         Assert.False(root.TryGetProperty("sequence", out _));
         Assert.False(root.TryGetProperty("workflow", out _));
+        Assert.False(root.TryGetProperty("control", out _));
+        Assert.False(root.TryGetProperty("finished", out _));
+    }
+
+    [Fact]
+    public void Activity_keeps_who_holds_control_and_finished_results_while_another_check_runs()
+    {
+        var finishedAt = DateTimeOffset.Parse("2026-11-20T21:00:00Z");
+        var moved = DateTimeOffset.Parse("2026-11-20T21:04:00Z");
+        var runningId = Guid.NewGuid();
+        var finishedId = Guid.NewGuid();
+        var snapshot = new AgentExports.ActivitySnapshot(
+            [new AgentExports.RunningCheck("Osquery", "Hardware inventory", runningId, new CheckProgress(2, 7, "Reading processor details…"))],
+            Control: new AgentExports.ControlMark("owner", "remote", "restored", moved),
+            Finished:
+            [
+                new AgentExports.FinishedCheck("DriveHealth", "ok", "All drives healthy", finishedId, finishedAt),
+                new AgentExports.FinishedCheck("Sensors", "cancelled", "Cancelled", null, finishedAt),
+            ]);
+
+        using var doc = JsonDocument.Parse(AgentExports.Activity(snapshot));
+        var root = doc.RootElement;
+        var control = root.GetProperty("control");
+        Assert.Equal("owner", control.GetProperty("actual").GetString());
+        Assert.Equal("remote", control.GetProperty("keptWith").GetString());
+        Assert.Equal("restored", control.GetProperty("reason").GetString());
+        Assert.Equal(moved.ToString("O"), control.GetProperty("movedAt").GetString());
+
+        var finished = root.GetProperty("finished");
+        Assert.Equal(2, finished.GetArrayLength());
+        Assert.Equal("DriveHealth", finished[0].GetProperty("id").GetString());
+        Assert.Equal("ok", finished[0].GetProperty("status").GetString());
+        Assert.Equal(finishedId.ToString(), finished[0].GetProperty("runId").GetString());
+        Assert.Equal("cancelled", finished[1].GetProperty("status").GetString());
+        Assert.False(finished[1].TryGetProperty("runId", out _));
+
+        Assert.Equal("Reading processor details…", root.GetProperty("checks")[0].GetProperty("progress").GetProperty("message").GetString());
     }
 
     [Fact]

@@ -103,6 +103,42 @@ public class DiagnosticsServiceTests
     }
 
     [Fact]
+    public async Task Run_WhileOneIsInFlight_DoesNotStartAnother_AndACancelledWaitDoesNotStopIt()
+    {
+        var store = new ResultStore();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var svc = new DiagnosticsService(store, [new FakeModule("Osquery", async ct =>
+        {
+            Interlocked.Increment(ref calls);
+            started.TrySetResult();
+            await Task.Delay(Timeout.Infinite, ct);
+            return FakeModule.Ok("Osquery");
+        })]);
+
+        using var first = new CancellationTokenSource();
+        var run = svc.RunAsync("Osquery", ct: first.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var runId = store.Get("Osquery").RunId;
+        Assert.NotNull(runId);
+        Assert.Equal(DiagnosticStatus.Running, store.Get("Osquery").Status);
+
+        using var abandoned = new CancellationTokenSource();
+        abandoned.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => svc.RunAsync("Osquery", ct: abandoned.Token));
+
+        Assert.Equal(1, calls);
+        Assert.Equal(runId, store.Get("Osquery").RunId);
+        Assert.Equal(DiagnosticStatus.Running, store.Get("Osquery").Status);
+
+        first.Cancel();
+        var done = await run;
+        Assert.True(done.Cancelled);
+        Assert.Equal(1, calls);
+        Assert.Equal(runId, done.RunId);
+    }
+
+    [Fact]
     public async Task OsqueryModule_MissingExe_ReportsNotFound()
     {
         var runner = new OsqueryRunner(Path.GetTempPath());

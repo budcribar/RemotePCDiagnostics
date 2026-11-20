@@ -1,10 +1,13 @@
 @using RemotePCDiagnostics.Core.Areas
 @using RemotePCDiagnostics.Core.Benchmarks
+@using RemotePCDiagnostics.Core.Session
 @implements IDisposable
 @inject DiagnosticsService Diagnostics
 @inject ChecksScreenState Screen
 @inject BenchmarkService Bench
 @inject AppServices App
+@inject ResultStore Results
+@inject SessionControlTracker Control
 @* What is running now, hidden, on every page (it sits in the layout, outside the page). An agent that takes over the session reads
    it first, so it can ask the person before stopping anything, and on any page, also while it is view-only. *@
 <AgentData TestId="activity-data" Json="@AgentExports.Activity(Snapshot())" />
@@ -21,8 +24,9 @@
         var flow = App.Workflow is { } workflow
             ? new AgentExports.WorkflowActivity(workflow.State.Stage, workflow.Busy, workflow.Status)
             : null;
+        var control = new AgentExports.ControlMark(Control.ActualHolder, Control.KeptWith, Control.Reason, Control.MovedAt);
         return new(checks, sequence, Diagnostics.IsStressSuiteRunning ? Diagnostics.LastStressSuiteProgress : null, App.Remediation?.Running, flow,
-            Bench.Running, Bench.Settling is not null, Bench.Progress);
+            Bench.Running, Bench.Settling is not null, Bench.Progress, control, AgentExports.FinishedFrom(Results.Snapshot.Values));
     }
 
     protected override void OnInitialized()
@@ -33,6 +37,8 @@
         Bench.Changed += OnChanged;
         if (App.Remediation is { } fixes) fixes.RunChanged += OnChanged;
         if (App.Workflow is { } workflow) workflow.Changed += OnChanged;
+        Results.Changed += OnResult;
+        Control.Changed += OnChanged;
     }
 
     private void OnChanged() => _ = InvokeAsync(StateHasChanged);
@@ -47,5 +53,9 @@
         Bench.Changed -= OnChanged;
         if (App.Remediation is { } fixes) fixes.RunChanged -= OnChanged;
         if (App.Workflow is { } workflow) workflow.Changed -= OnChanged;
+        Results.Changed -= OnResult;
+        Control.Changed -= OnChanged;
     }
+
+    private void OnResult(object? sender, DiagnosticResult result) => OnChanged();
 }

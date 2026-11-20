@@ -223,12 +223,50 @@
             hasRemoteSession = true;
         }
 
+        // A mirror is in the roster. The session bar existing is not enough: it is drawn for the owner before anyone joins.
+        let remoteJoined = false;
+        if (window.RemoteControl && typeof window.RemoteControl.getState === 'function') {
+            const roster = window.RemoteControl.getState();
+            if (roster && Array.isArray(roster.participants)) {
+                remoteJoined = roster.participants.some(p => !p.owner);
+            }
+        }
+        const gesture = controlGesture && (Date.now() - controlGesture.at) < 60000 ? controlGesture : null;
+
         return {
             isRemoteDisplay: isRemote,
             hasRemoteSession: hasRemoteSession,
+            remoteJoined: remoteJoined,
             technicianHasControl: technicianHasControl,
-            localHasControl: localHasControl
+            localHasControl: localHasControl,
+            gesture: gesture ? gesture.action : null,
+            gestureAgeMs: gesture ? Date.now() - gesture.at : -1
         };
+    }
+
+    // Take and Give are the only clicks that may move control. Reconnects, focus and timers are not.
+    let controlGesture = null;
+    document.addEventListener('click', (event) => {
+        const el = event.target && event.target.closest ? event.target.closest('.rbwv-control-take, .rbwv-control-give') : null;
+        if (!el) return;
+        controlGesture = {
+            action: el.classList.contains('rbwv-control-take') ? 'take' : 'give',
+            at: Date.now()
+        };
+    }, true);
+
+    function giveControlToRemote() {
+        // Only the PC's own window can hand control back. A mirror asking would be refused, and must not try.
+        if (isRemoteDisplay()) return false;
+        if (!window.RemoteControl || typeof window.RemoteControl.getState !== 'function' || typeof window.RemoteControl.requestPrimary !== 'function') {
+            return false;
+        }
+        const state = window.RemoteControl.getState();
+        if (!state || !Array.isArray(state.participants)) return false;
+        const remote = state.participants.find(p => !p.owner && p.id !== state.myClientId);
+        if (!remote) return false;
+        window.RemoteControl.requestPrimary(remote.id);
+        return true;
     }
 
     function releaseControlToLocal() {
@@ -268,6 +306,7 @@
         saveAsFile,
         getControlInfo,
         releaseControlToLocal,
+        giveControlToRemote,
         subscribeControl: (dotNetRef) => {
             controlSubscribers.add(dotNetRef);
             try {

@@ -46,6 +46,7 @@ public static class HostServices
         // HKLM policy values, extension blocklists, the page file and Defender exclusions: made by the Agent too.
         services.AddSingleton<IMachineTweaks>(sp => new AgentMachineTweaks(sp.GetRequiredService<IElevatedCommandBridge>(), L<AgentMachineTweaks>()));
         services.AddSingleton<RemoteUsers>(); // the top bar's "N Remote Users" badge
+        services.AddSingleton<SessionControlTracker>(); // who last took control, and why it moved
         services.AddSingleton(_ => AgentModeHost.CreateMonitor()); // Local only / agent link, separate from the session badge
         if (session.Mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
         services.AddSingleton<ResultStore>();

@@ -1,5 +1,6 @@
 @inherits LayoutComponentBase
 @implements IDisposable
+@using Microsoft.JSInterop
 @using RemotePCDiagnostics.Agent.Core
 @using RemotePCDiagnostics.Core.Session
 @using RemotePCDiagnostics.Core.Workflow
@@ -8,8 +9,15 @@
 @inject AppServices App
 @inject RemoteUsers Remote
 @inject AgentModeMonitor AgentLink
+@inject IJSRuntime JS
+@inject SessionControlTracker Control
 <div class="app @(_navigationOpen ? "nav-open" : "")" data-rpcd-version="@AppBuildInfo.Version"
-     data-rpcd-control="unknown" data-rpcd-connection="unknown">
+     data-rpcd-control="unknown" data-rpcd-connection="unknown"
+     data-rpcd-control-holder="@Control.ActualHolder"
+     data-rpcd-control-kept-with="@Control.KeptWith"
+     data-rpcd-control-reason="@Control.Reason"
+     data-rpcd-control-since="@ControlSince"
+     data-rpcd-heartbeat="@_heartbeat">
     <header class="topbar">
         <button class="nav-toggle" aria-label="Toggle navigation" aria-controls="main-navigation" aria-expanded="@(_navigationOpen ? "true" : "false")" @onclick="() => _navigationOpen = !_navigationOpen">Menu</button>
         <span class="title"><Icon Name="health" Size="22" Class="logo" />RemotePCDiagnostics</span>
@@ -351,6 +359,7 @@
             elevation.Changed += ElevationChanged;
         if (App.AppUpdate is { } updater)
             updater.Changed += AppUpdateChanged;
+        Control.Changed += OnControlRecordChanged;
 
         try
         {
@@ -375,9 +384,70 @@
             TriggerUpdateCheckIfEligible();
             StartPeriodicUpdateCheck();
         }
+
+        if (Session.Mode == SessionMode.Remote)
+            StartStreamKeepalive();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || Session.Mode != SessionMode.Remote || _controlRef is not null)
+            return;
+        try
+        {
+            _controlRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("rpdSession.subscribeControl", _controlRef);
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// A quiet mirror stream is cut off about once a minute, and the relay then gives control back to this window.
+    /// Redrawing this mark keeps a write on that stream. It is not shown.
+    /// </summary>
+    private void StartStreamKeepalive()
+    {
+        if (_keepaliveCts is not null)
+            return;
+        var cts = new CancellationTokenSource();
+        _keepaliveCts = cts;
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(SessionControlTracker.StreamKeepalive);
+            try
+            {
+                while (await timer.WaitForNextTickAsync(cts.Token).ConfigureAwait(false))
+                {
+                    _heartbeat = DateTimeOffset.UtcNow.ToString("O");
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+    }
+
+    private string? ControlSince => Control.MovedAt?.ToString("O");
+
+    private void OnControlRecordChanged() => _ = InvokeAsync(StateHasChanged);
+
+    [JSInvokable]
+    public async Task OnControlStateChanged(SessionControlTracker.Notice? info)
+    {
+        if (info is null || Session.Mode != SessionMode.Remote)
+            return;
+        var now = DateTimeOffset.UtcNow;
+        var handBack = Control.Observe(info.ToObservation(), now);
+        await InvokeAsync(StateHasChanged);
+        if (!handBack || !Control.TryMarkHandback(now))
+            return;
+        try { await JS.InvokeVoidAsync("rpdSession.giveControlToRemote"); }
+        catch { }
     }
 
     private CancellationTokenSource? _updatePollCts;
+    private CancellationTokenSource? _keepaliveCts;
+    private DotNetObjectReference<MainLayout>? _controlRef;
+    private string? _heartbeat;
     private string? _lastAnnouncedUpdateVersion;
 
     private void TriggerUpdateCheckIfEligible()
@@ -610,6 +680,15 @@
     {
         try { _updatePollCts?.Cancel(); } catch { }
         _updatePollCts?.Dispose();
+        try { _keepaliveCts?.Cancel(); } catch { }
+        _keepaliveCts?.Dispose();
+        Control.Changed -= OnControlRecordChanged;
+        if (_controlRef is not null)
+        {
+            try { _ = JS.InvokeVoidAsync("rpdSession.unsubscribeControl", _controlRef); } catch { }
+            _controlRef.Dispose();
+            _controlRef = null;
+        }
         Nav.LocationChanged -= CloseNavigation;
         Remote.Changed -= RemoteUsersChanged;
         AgentLink.Changed -= AgentLinkChanged;
