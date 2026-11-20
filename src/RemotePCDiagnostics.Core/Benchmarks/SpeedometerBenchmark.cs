@@ -614,7 +614,6 @@ public static class SpeedometerProcessRunner
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public static int CloseOrphanedBrowsers(string tempRoot)
     {
-        var marker = "--user-data-dir=" + Path.Combine(tempRoot, TempProfilePrefix);
         var closed = 0;
         try
         {
@@ -625,7 +624,7 @@ public static class SpeedometerProcessRunner
             {
                 using (mo)
                 {
-                    if (mo["CommandLine"] is not string cmd || !cmd.Contains(marker, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (mo["CommandLine"] is not string cmd || !UsesRunProfile(cmd, tempRoot)) continue;
                     if (mo["ProcessId"] is not uint pid) continue;
                     try
                     {
@@ -639,6 +638,36 @@ public static class SpeedometerProcessRunner
         }
         catch { /* WMI unavailable: leave them */ }
         return closed;
+    }
+
+    /// <summary>
+    /// True when <paramref name="commandLine"/> has a <c>--user-data-dir</c> (quoted or not) that is an
+    /// <c>rpcd-speedometer-*</c> folder directly inside <paramref name="tempRoot"/>.
+    /// </summary>
+    public static bool UsesRunProfile(string commandLine, string tempRoot)
+    {
+        const string Switch = "--user-data-dir=";
+        var at = commandLine.IndexOf(Switch, StringComparison.OrdinalIgnoreCase);
+        if (at < 0) return false;
+        var rest = commandLine[(at + Switch.Length)..];
+        string value;
+        if (rest.StartsWith('"'))
+        {
+            var end = rest.IndexOf('"', 1);
+            if (end < 0) return false;
+            value = rest[1..end];
+        }
+        else
+        {
+            var end = rest.IndexOf(' ');
+            value = end < 0 ? rest : rest[..end];
+        }
+        value = value.TrimEnd('\\', '/');
+        var leaf = Path.GetFileName(value);
+        var parent = Path.GetDirectoryName(value);
+        return leaf.StartsWith(TempProfilePrefix, StringComparison.OrdinalIgnoreCase)
+            && parent is not null
+            && parent.TrimEnd('\\', '/').Equals(tempRoot.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
     }
 
     public static async Task<SpeedometerResult> RunAsync(

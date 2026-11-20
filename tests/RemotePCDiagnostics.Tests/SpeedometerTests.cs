@@ -10,6 +10,19 @@ namespace RemotePCDiagnostics.Tests;
 public sealed class SpeedometerTests
 {
     [Fact]
+    public void UsesRunProfile_MatchesQuotedAndBareRunProfilesInTempOnly()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "rpd-t");
+        var run = Path.Combine(temp, "rpcd-speedometer-0123abcd");
+        Assert.True(SpeedometerProcessRunner.UsesRunProfile($"chrome.exe --headless=new \"--user-data-dir={run}\" --no-first-run", temp));
+        Assert.True(SpeedometerProcessRunner.UsesRunProfile($"chrome.exe --headless=new --user-data-dir=\"{run}\" --no-first-run", temp));
+        Assert.True(SpeedometerProcessRunner.UsesRunProfile($"chrome.exe --type=renderer --user-data-dir={run} --foo", temp));
+        Assert.False(SpeedometerProcessRunner.UsesRunProfile("chrome.exe --no-first-run", temp));
+        Assert.False(SpeedometerProcessRunner.UsesRunProfile($"chrome.exe --user-data-dir={Path.Combine(temp, "Default")}", temp));
+        Assert.False(SpeedometerProcessRunner.UsesRunProfile($"chrome.exe --user-data-dir={Path.Combine(temp, "x", "rpcd-speedometer-1")}", temp));
+    }
+
+    [Fact]
     public async Task LocalServer_FolderUrlServesItsIndex_AndRedirectsWithoutSlash()
     {
         // Speedometer's Perf-Dashboard suite loads resources/perf.webkit.org/public/v3/; a 404 there stalled every run.
