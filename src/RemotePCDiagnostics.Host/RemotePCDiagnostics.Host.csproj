@@ -67,6 +67,9 @@
     <None Include="..\..\third_party\osquery\LICENSE*" Link="tools\osquery\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- Bundled HardeningKitty (third_party/HardeningKitty, v0.9.4, MIT). Lands at <output>\tools\HardeningKitty\ = HardeningKittyRunner.RelativeFolder. -->
     <None Include="..\..\third_party\HardeningKitty\module\**" Link="tools\HardeningKitty\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Bundled Speedometer 3.1 (third_party/speedometer, 2-clause BSD). Lands at <output>\benchmarks\speedometer-3.1.zip = SpeedometerPackage.DefaultBundledZipPath(). -->
+    <None Include="..\..\third_party\speedometer\speedometer-3.1.zip" Link="benchmarks\speedometer-3.1.zip" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\third_party\speedometer\LICENSE" Link="benchmarks\SPEEDOMETER-LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <!-- Logging: ILogger plus the plain-line helpers (LoggerLines), without importing Microsoft.Extensions.Logging, whose LogLevel

@@ -151,6 +151,38 @@ public sealed class SpeedometerTests
         }
     }
 
+    [Fact]
+    public async Task VendoredZip_MatchesExpectedSha256_AndExtractsCleanly()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        string? zipPath = null;
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName, "third_party", "speedometer", SpeedometerPackage.BundleFileName);
+            if (File.Exists(candidate)) { zipPath = candidate; break; }
+            dir = dir.Parent;
+        }
+        Assert.NotNull(zipPath);
+
+        var extractDir = Path.Combine(Path.GetTempPath(), "rpd-sm-vendored-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var (root, error) = await SpeedometerPackage.EnsureAssetsAsync(
+                cacheDir: extractDir,
+                bundledZipPath: zipPath,
+                expectedSha256: SpeedometerPackage.ExpectedSha256);
+            Assert.Null(error);
+            Assert.NotNull(root);
+            Assert.True(File.Exists(Path.Combine(root!, "index.html")));
+            Assert.True(File.Exists(Path.Combine(root!, "LICENSE")));
+            Assert.True(File.Exists(Path.Combine(root!, "resources", "main.mjs")));
+        }
+        finally
+        {
+            try { Directory.Delete(extractDir, recursive: true); } catch { }
+        }
+    }
+
     private static MemoryStream BuildZip(params (string Name, string Content)[] entries)
     {
         var ms = new MemoryStream();

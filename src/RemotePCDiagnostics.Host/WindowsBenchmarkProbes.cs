@@ -238,7 +238,6 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
             return new(null, Note: "No supported Chromium browser (Edge, Chrome, Brave, or Opera) was found.");
 
         var (rootDir, error) = await SpeedometerPackage.EnsureAssetsAsync(
-            downloadUrl: SpeedometerPackage.DefaultReleaseUrl,
             expectedSha256: SpeedometerPackage.ExpectedSha256,
             ct: ct).ConfigureAwait(false);
         if (rootDir is null)
