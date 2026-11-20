@@ -331,17 +331,23 @@ public sealed class ProcessModuleHostLauncher : IModuleHostLauncher
         _shared = new SharedBundledHost(StartRaw);
     }
 
-    public static (string File, string Args) Command(string directory, UserModeModule module)
+    public static (string File, string Args) Command(string directory, UserModeModule module) => Command(directory, module.Path);
+
+    /// <summary>The command line for "--shared" or one module DLL.</summary>
+    public static (string File, string Args) Command(string directory, string module)
     {
         var exe = Path.Combine(directory, HostName + (OperatingSystem.IsWindows() ? ".exe" : ""));
         var dll = Path.Combine(directory, HostName + ".dll");
-        var args = module.Path == "--shared" ? "--shared" : $"\"{module.Path}\"";
+        var args = module == "--shared" ? "--shared" : $"\"{module}\"";
         return File.Exists(exe) ? (exe, args) : File.Exists(dll) ? ("dotnet", $"\"{dll}\" {args}") : throw new FileNotFoundException("Module host not found", exe);
     }
 
     public IModuleHostConnection Start(UserModeModule module) => _shared.Start(module);
 
-    public IModuleHostConnection StartRaw(UserModeModule module)
+    public IModuleHostConnection StartRaw(UserModeModule module) => Start(module.Path, module.Manifest.Slug);
+
+    /// <summary>Starts the module host for "--shared" or one module DLL; <paramref name="label"/> names it in the log.</summary>
+    public IModuleHostConnection Start(string module, string label)
     {
         var (file, args) = Command(_directory ?? AppContext.BaseDirectory, module);
         var psi = new ProcessStartInfo(file, args)
@@ -349,7 +355,7 @@ public sealed class ProcessModuleHostLauncher : IModuleHostLauncher
             UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
         };
         var p = Process.Start(psi) ?? throw new InvalidOperationException("Module host did not start");
-        p.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) _log.Info($"Module host [{module.Manifest.Slug}]: {e.Data}"); };
+        p.ErrorDataReceived += (_, e) => { if (e.Data is { Length: > 0 }) _log.Info($"Module host [{label}]: {e.Data}"); };
         p.BeginErrorReadLine();
         return new Connection(p);
     }

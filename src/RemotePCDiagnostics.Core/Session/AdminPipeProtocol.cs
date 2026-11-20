@@ -11,6 +11,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Win32.SafeHandles;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Plugins;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Workflow;
@@ -59,6 +60,15 @@ public interface IElevatedCommandBridge
         throw new NotSupportedException("The Agent can't turn on automatic sign-in.");
     Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) =>
         throw new NotSupportedException("The Agent can't turn off automatic sign-in.");
+
+    /// <summary>
+    /// Has the Agent run RemotePCDiagnostics.ModuleHost with administrator rights for a module that ships with the app and needs them
+    /// (<paramref name="module"/> is its DLL path, or "--shared"), and returns the app's end of it (<see cref="AgentModuleHost"/>). Throws
+    /// <see cref="InvalidOperationException"/> with the Agent's reason when it can't, and <see cref="NotSupportedException"/> when the
+    /// Agent is from before this existed.
+    /// </summary>
+    Task<IModuleHostConnection> StartModuleHostAsync(string module, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't run modules.");
 }
 
 public static class AdminCommandAllowlist
@@ -275,7 +285,8 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("arguments")] IReadOnlyList<string>? Arguments = null,
     [property: JsonPropertyName("timeoutMs")] int TimeoutMs = 60_000,
     [property: JsonPropertyName("channel")] string? Channel = null,
-    [property: JsonPropertyName("autoLogon")] AdminPipeAutoLogon? AutoLogon = null);
+    [property: JsonPropertyName("autoLogon")] AdminPipeAutoLogon? AutoLogon = null,
+    [property: JsonPropertyName("module")] string? Module = null);
 
 /// <summary>The automatic sign-in requests' arguments. The password is sent only to check it and to turn sign-in on.</summary>
 public sealed record AdminPipeAutoLogon(
@@ -300,7 +311,8 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("updateResult")] AppUpdateResult? UpdateResult = null,
     [property: JsonPropertyName("report")] string? Report = null,
     [property: JsonPropertyName("cancelled")] bool Cancelled = false,
-    [property: JsonPropertyName("autoLogonBackup")] AutoLogonBackup? AutoLogonBackup = null);
+    [property: JsonPropertyName("autoLogonBackup")] AutoLogonBackup? AutoLogonBackup = null,
+    [property: JsonPropertyName("modulePipe")] string? ModulePipe = null);
 
 /// <summary>
 /// Length-prefixed (4-byte little-endian int32 + UTF-8 JSON) framing over Named Pipes with zero third-party dependencies.
@@ -320,6 +332,8 @@ public static class AdminPipeFraming
     public const string OpValidateCredentials = "validate_credentials";
     public const string OpEnableAutoLogon = "enable_autologon";
     public const string OpDisableAutoLogon = "disable_autologon";
+    /// <summary>Starts a module host in the Agent for a module that needs administrator; the response names the pipe that carries its lines.</summary>
+    public const string OpModuleHost = "module_host";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -547,6 +561,29 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         if (!r.Ok) throw new InvalidOperationException(r.Error ?? "The Agent didn't turn off automatic sign-in.");
     }
 
+    /// <summary>How long the app waits to open the pipe of a module host the Agent started.</summary>
+    public static TimeSpan ModulePipeConnectTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    public async Task<IModuleHostConnection> StartModuleHostAsync(string module, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpModuleHost, Module: module), ct).ConfigureAwait(false);
+        ThrowIfRefused(r);
+        if (!r.Ok || string.IsNullOrEmpty(r.ModulePipe)) throw new InvalidOperationException(r.Error ?? "The Agent didn't start the module host.");
+        var pipe = new NamedPipeClientStream(".", r.ModulePipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+        try
+        {
+            using var connect = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connect.CancelAfter(ModulePipeConnectTimeout);
+            await pipe.ConnectAsync(connect.Token).ConfigureAwait(false);
+            return new PipeModuleHostConnection(pipe);
+        }
+        catch
+        {
+            pipe.Dispose();
+            throw;
+        }
+    }
+
     /// <summary>An Agent from before a request existed answers "Unknown operation" (not allowed).</summary>
     private static void ThrowIfRefused(AdminPipeResponse r)
     {
@@ -687,7 +724,8 @@ public sealed class AdminPipeServer(
     ILogger? log = null,
     Func<AppUpdateChannel, IReadOnlyList<string>?, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null,
     Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>>? securityAuditor = null,
-    IAutoLogonBackend? autoLogon = null) : IAsyncDisposable, IDisposable
+    IAutoLogonBackend? autoLogon = null,
+    AgentModuleHost? moduleHost = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -703,6 +741,8 @@ public sealed class AdminPipeServer(
     private readonly IProcessLauncher _launcher = launcher ?? new SystemProcessLauncher();
     private NamedPipeServerStream? _server;
     private int _disposed;
+    /// <summary>Ends the module hosts this session started when the app's session ends.</summary>
+    private readonly CancellationTokenSource _moduleHosts = new();
 
     public async Task RunSingleSessionAsync(CancellationToken ct)
     {
@@ -726,6 +766,19 @@ public sealed class AdminPipeServer(
 
         log.Info($"[admin-pipe-server] Verified client connected on '{options.PipeName}'.");
 
+        try
+        {
+            await ServeAsync(server, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            // The app's session is over: so are the module hosts it asked for.
+            try { _moduleHosts.Cancel(); } catch (ObjectDisposedException) { }
+        }
+    }
+
+    private async Task ServeAsync(NamedPipeServerStream server, CancellationToken ct)
+    {
         // A request read while a cancellable one ran (the client sends only a cancel then, so this is rare).
         Task<AdminPipeRequest?>? pendingRead = null;
         while (server.IsConnected && !ct.IsCancellationRequested)
@@ -980,6 +1033,9 @@ public sealed class AdminPipeServer(
         if (request.Op is AdminPipeFraming.OpValidateCredentials or AdminPipeFraming.OpEnableAutoLogon or AdminPipeFraming.OpDisableAutoLogon)
             return await Task.Run(() => HandleAutoLogon(request), ct).ConfigureAwait(false);
 
+        if (string.Equals(request.Op, AdminPipeFraming.OpModuleHost, StringComparison.OrdinalIgnoreCase))
+            return await Task.Run(() => StartModuleHost(request), ct).ConfigureAwait(false);
+
         return new AdminPipeResponse(
             Ok: false,
             Allowed: false,
@@ -1027,6 +1083,77 @@ public sealed class AdminPipeServer(
             log.Warn($"[admin-pipe-server] {request.Op} failed: {ex.Message}");
             return Answer(false, ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Starts a module host for a module that ships with the app and needs administrator (<see cref="AgentModuleHost"/>), on a pipe of
+    /// its own with the same protection as this one: only the verified app may open it, once. The response names the pipe; the relay runs
+    /// until the app or the host ends it, or this session ends.
+    /// </summary>
+    private AdminPipeResponse StartModuleHost(AdminPipeRequest request)
+    {
+        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true, string? pipe = null) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            Error: error, ModulePipe: pipe);
+
+        if (moduleHost is null) return Answer(false, "Running modules is not supported by this elevated helper.", allowed: false);
+        var module = request.Module ?? "";
+        var shared = module == AgentModuleHost.Shared;
+        if (!shared && !moduleHost.IsAllowed(module)) return Answer(false, AgentModuleHost.NotAllowed);
+
+        var pipeName = $"{options.PipeName}-module-{Guid.NewGuid():N}";
+        NamedPipeServerStream stream;
+        IModuleHostConnection host;
+        try
+        {
+            stream = CreateSecuredServerStream(options with { PipeName = pipeName });
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] Module pipe not created: {ex.Message}");
+            return Answer(false, $"The Agent couldn't open a pipe for the module host: {ex.Message}");
+        }
+        try
+        {
+            host = moduleHost.Start(module);
+        }
+        catch (Exception ex)
+        {
+            stream.Dispose();
+            log.Warn($"[admin-pipe-server] Module host not started for '{module}': {ex.Message}");
+            return Answer(false, $"The Agent couldn't start the module host: {ex.Message}");
+        }
+
+        var lifetime = _moduleHosts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using (var connect = CancellationTokenSource.CreateLinkedTokenSource(lifetime))
+                {
+                    connect.CancelAfter(options.ConnectTimeout);
+                    await stream.WaitForConnectionAsync(connect.Token).ConfigureAwait(false);
+                }
+                var (verified, reason) = VerifyConnectedClient(stream, options);
+                if (!verified)
+                {
+                    log.Warn($"[admin-pipe-server] Rejected module pipe client: {reason}");
+                    return;
+                }
+                log.Info($"[admin-pipe-server] Module host started for '{(shared ? "shared" : Path.GetFileName(module))}'.");
+                await moduleHost.RelayAsync(stream, host, shared, lifetime).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
+            {
+                log.Info($"[admin-pipe-server] Module host ended: {ex.Message}");
+            }
+            finally
+            {
+                try { host.Dispose(); } catch { }
+                try { stream.Dispose(); } catch { }
+            }
+        });
+        return Answer(true, pipe: pipeName);
     }
 
     private async Task<AdminPipeResponse> RunSecurityAuditAsync(AdminPipeRequest request, CancellationToken ct)
@@ -1220,6 +1347,7 @@ public sealed class AdminPipeServer(
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
         try { _server?.Dispose(); } catch { }
+        try { _moduleHosts.Cancel(); } catch { }
     }
 
     public ValueTask DisposeAsync()

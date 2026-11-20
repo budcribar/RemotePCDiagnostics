@@ -212,10 +212,11 @@ public static class HostServices
         ModuleLoaderOptions? options = null)
     {
         var log = For<ModuleLoader>(loggers);
-        var launcher = new RestrictedModuleHostLauncher(For<RestrictedModuleHostLauncher>(loggers));
         // Host queries: what a module in user mode asks the app for. The answers come from the app's own services, so they bind when the
-        // container builds the diagnostics service (HostQueryBackendSlot.Bind).
+        // container builds the diagnostics service (HostQueryBackendSlot.Bind). The Agent's connection binds then too: it runs the modules
+        // that need administrator.
         var backend = new HostQueryBackendSlot();
+        var launcher = new RestrictedModuleHostLauncher(For<RestrictedModuleHostLauncher>(loggers), agent: () => backend.Agent);
         services.AddSingleton(backend);
         var hostQueries = new HostQueryServer(() => backend.Value, For<HostQueryServer>(loggers));
         var loader = new ModuleLoader(options ?? new ModuleLoaderOptions { HostVersion = HostVersion() }, plugins, log,
@@ -277,9 +278,16 @@ public sealed class HostQueryBackendSlot
 {
     public HostQueryBackend? Value { get; private set; }
 
-    public void Bind(IServiceProvider sp) => Value ??= new HostQueryBackend
+    /// <summary>The Agent's connection (Admin Repair Mode or the agent service), for the module host it runs.</summary>
+    public RemotePCDiagnostics.Core.Session.IElevatedCommandBridge? Agent { get; private set; }
+
+    public void Bind(IServiceProvider sp)
     {
-        Sensors = sp.GetService<ISensorProvider>(), Osquery = sp.GetService<OsqueryRunner>(), Commands = sp.GetService<SystemCommandRunner>(),
-        Retrims = sp.GetService<IRetrimHistory>(),
-    };
+        Agent ??= sp.GetService<RemotePCDiagnostics.Core.Session.IElevatedCommandBridge>();
+        Value ??= new HostQueryBackend
+        {
+            Sensors = sp.GetService<ISensorProvider>(), Osquery = sp.GetService<OsqueryRunner>(), Commands = sp.GetService<SystemCommandRunner>(),
+            Retrims = sp.GetService<IRetrimHistory>(),
+        };
+    }
 }

@@ -106,7 +106,7 @@ queries ([Host queries](#host-queries) below).
 A module that ships with the app can set `"outOfProcess": true` in its `module.json`. Programs & updates, Battery & power plan and
 Device Manager & drivers do. The About page overrides that for all modules or one module at a time (`process-mode.json` in the
 admin-only modules folder, read at the next start); the module page lays itself out from the result (`ModuleHosting`), so a switch
-needs no code or page changes. A module that needs administrator runs out of process with the app's own token (isolation only). Then:
+needs no code or page changes. A module that needs administrator runs out of process in a module host the Agent starts (Admin Repair Mode or the agent service), since the app never runs as administrator; without the Agent it shows as unavailable with what to do. Then:
 
 - `LoadBundled` doesn't load its code into the app. It registers a `UserModeModuleProxy` (`UserModeModule.Bundled = true`) and the check
   runs in `RemotePCDiagnostics.ModuleHost.exe` with the restricted, Medium-integrity token, in Local and Remote sessions. It doesn't need
