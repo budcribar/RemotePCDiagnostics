@@ -378,7 +378,10 @@ internal static class AgentAdminHost
                 {
                     BasicLimitInformation = new JOBOBJECT_BASIC_LIMIT_INFORMATION
                     {
-                        LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+                        // BREAKAWAY_OK lets AgentSelfUpdater start Setup outside this job (JobBreakawayProcess). Setup closes
+                        // the Host, which closes this job, and a Setup still in it would be ended before it installs anything.
+                        // Other children (repair tools) are started normally, so they stay in the job and end with the Host.
+                        LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK,
                     },
                 };
 
@@ -423,6 +426,7 @@ internal static class AgentAdminHost
     private const uint PROCESS_DUP_HANDLE = 0x0040;
     private const uint DUPLICATE_SAME_ACCESS = 0x00000002;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const uint JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800;
     private const int JobObjectExtendedLimitInformation = 9;
 
     [StructLayout(LayoutKind.Sequential)]

@@ -133,19 +133,11 @@ internal static class AgentSelfUpdater
         {
             var arguments = AppUpdateInstaller.BuildSetupArguments(verySilent: true, msiPath, relaunch);
             log.Info($"[agent-update] Launching silent installer '{installerPath}' (agent MSI: {msiPath ?? "none"}; relaunch: {(relaunch is not null ? "by Setup" : serviceRelaunch is not null ? "by the agent service" : "no")}).");
-            var psi = new ProcessStartInfo
-            {
-                FileName = installerPath,
-                Arguments = arguments,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = stagingDir,
-            };
-            var proc = Process.Start(psi);
-            if (proc is null)
+            var proc = StartInstaller(installerPath, arguments, stagingDir, log, out var started);
+            if (!started)
                 return new AppUpdateResult(false, Error: "Failed to start the RPCD installer.");
 
-            if (serviceRelaunch is not null)
+            if (serviceRelaunch is not null && proc is not null)
                 relaunchFromService!(proc, stagingDir);
 
             return new AppUpdateResult(
@@ -158,6 +150,35 @@ internal static class AgentSelfUpdater
             log.Warn($"[agent-update] Failed to launch installer: {ex.Message}");
             return new AppUpdateResult(false, Error: ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Starts Setup so that it outlives this process. In the elevated helper, this process is in a kill-on-close job that the
+    /// Host holds, and Setup closes the Host: a Setup started inside that job is ended with it, before it installs anything,
+    /// and the PC stays on the old build (see <see cref="JobBreakawayProcess"/>).
+    /// </summary>
+    private static Process? StartInstaller(string installerPath, string arguments, string stagingDir, ILogger log, out bool started)
+    {
+        if (JobBreakawayProcess.IsInJob())
+        {
+            if (JobBreakawayProcess.TryStart(installerPath, arguments, stagingDir, out var detached))
+            {
+                started = true;
+                return detached;
+            }
+            log.Warn("[agent-update] Windows did not let Setup leave this process's job; Setup may be stopped when the app closes.");
+        }
+
+        var proc = Process.Start(new ProcessStartInfo
+        {
+            FileName = installerPath,
+            Arguments = arguments,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = stagingDir,
+        });
+        started = proc is not null;
+        return proc;
     }
 
     private static void PrepareSecuredStagingDirectory(string stagingDir)
