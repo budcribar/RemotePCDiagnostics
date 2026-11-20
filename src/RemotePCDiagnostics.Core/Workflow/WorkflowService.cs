@@ -590,6 +590,25 @@ public sealed class WorkflowService(
         Event(LogLevel.Warning, $"Service workflow cancelled\r\nActor: {Actor}\r\nApplied before cancelling: {State.Outcomes.Count(o => o.Success && !o.Skipped)}\r\n{CleanupText()}\r\nReport: {path ?? "(not saved)"}");
     }
 
+    /// <summary>
+    /// Reads the saved workflow again: the Agent keeps it, and it may connect after the app started (nothing could be read then).
+    /// Only while nothing has happened in this run, so it never replaces a workflow in progress. True when it got a saved workflow.
+    /// </summary>
+    public bool Reload()
+    {
+        if (Busy) return false;
+        var saved = LoadState(store);
+        lock (_gate)
+        {
+            var untouched = _state is { Stage: WorkflowStage.Idle, StartedUtc: null, ReviewedUtc: null, Fixes.Count: 0, Log.Count: 0 };
+            if (!untouched || saved.Stage == WorkflowStage.Idle) return false;
+            _state = saved;
+        }
+        Log($"Saved workflow read after the Agent connected (stage {saved.Stage}).");
+        Raise();
+        return true;
+    }
+
     /// <summary>Back to the start (keeps nothing of the old run except saved benchmark results).</summary>
     public void Reset()
     {
