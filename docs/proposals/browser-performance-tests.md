@@ -35,11 +35,11 @@ Time a fixed set of pages in the same minimized browser (WebView2 only as the fa
 
 ## Browser health check
 
-A normal check: `ModuleKind.Check`, slug `BrowserHealth`, Programs group, included in Run All. It finishes in seconds.
+A normal check: `ModuleKind.Check`, slug `BrowserHealth`, listed in the Programs group on Checks (group key `apps`), included in Run All. It finishes in seconds. That group is only where the row sits. The Chrome and Edge profile reader is shared Core code and today feeds the memory suggestions, not the Programs module (`Programs`, "Programs & updates"). See [Consolidating browser code](#consolidating-browser-code).
 
 For each installed browser, record:
 
-1. Installed extensions. Flag a large extension folder, a high count, and known adware. Chrome and Edge already have a profile reader and an allowlist (Honey, MSN New Tab, Amazon Assistant). Reuse that list. Firefox has no reader yet.
+1. Installed extensions. Flag a large extension folder, a high count, and known adware. The allowlist (Honey, MSN New Tab, Amazon Assistant) and the profile read live in Core. Firefox has no reader yet.
 2. Hardware acceleration on or off, per profile. When a policy forces it, say forced.
 3. Cache size and profile size.
 4. Open tab count, process count, and memory per browser process. Counts and bytes only. Leave tab titles and URLs out.
@@ -88,9 +88,30 @@ Each row names the check or fix that produced it. One-click rows are actions on 
 3. Hide a browser that is not installed, rather than showing it disabled. No Chrome installed means no Chrome block and no Chrome benchmark choice. When no browser is installed, omit the health check from the list, the same way a missing webcam is omitted, and do not call that a failure.
 4. Fixes stay off the read-only run. Clear cache, enable hardware acceleration, and disable an extension go through the existing remediation path, one at a time, after explicit approval. A remote user who already has control can apply them, because remote control matches the person at the PC.
 
+## Consolidating browser code
+
+The Chrome and Edge profile reader lives in shared Core, under `src/RemotePCDiagnostics.Core/Optimizations/`:
+
+- `BrowserExtensions.cs` reads installed extensions and the allowlist block.
+- `BrowserPrefs.cs` reads and writes Memory Saver, sleeping tabs, and Efficiency mode.
+- `BrowserBackground.cs` reads background mode and Startup Boost.
+- `BrowserSuggestions.cs` applies those fixes (block an extension, stop background running, turn a pref on) with the journal and undo.
+
+`WindowsMemorySystem` fills a `MemorySnapshot` from that reader. `MemorySuggestionEngine` builds the cards, and `MemorySuggestionService` runs them. Those cards are the memory suggestions. The Resource hogs check hosts that panel. The Programs module does not call this reader.
+
+Phase 1 keeps the reader in Core so `BrowserHealth` and the memory suggestions can both use it. The new check calls it directly. The browser-specific suggestions move out of the memory suggestions and onto `BrowserHealth`, so they appear in one place:
+
+1. Extension blocklist cards.
+2. Background-app and Startup Boost cards.
+3. Browser pref cards (Chrome Memory Saver, Edge sleeping tabs and Efficiency mode).
+
+The memory suggestions then point at `BrowserHealth` for those items. They do not build the same cards again. Other memory suggestions (startup apps that are not a browser, Office, services, close-app) stay where they are.
+
+`BrowserExtensionsTests` and `BrowserBackgroundTests` cover this reader and its fixes, and `BrowserContractTests` covers page markers. All three must keep passing. No code moves until implementation of this proposal is approved.
+
 ## Phased plan
 
-1. **Phase 1.** Browser health and Speedometer, for Chrome and Edge, reusing the profile readers already in the app. Record the score and conditions and start saving samples. No pass/fail band until a class has enough runs. WebView2 is the labeled fallback.
+1. **Phase 1.** Browser health and Speedometer, for Chrome and Edge. `BrowserHealth` calls the Core profile reader directly. Record the score and conditions and start saving samples. No pass/fail band until a class has enough runs. WebView2 is the labeled fallback. In the same phase, move the browser-specific memory suggestions onto `BrowserHealth` and leave a pointer in the memory suggestions. See [Consolidating browser code](#consolidating-browser-code). No code moves until implementation is approved, and `BrowserExtensionsTests`, `BrowserBackgroundTests`, and `BrowserContractTests` must keep passing.
 2. **Phase 2.** Page-load timing, read next to the network and DNS results.
 3. **Phase 3.** MotionMark and JetStream as further optional benchmark kinds, still off by default. Turn the percentile bands on only after the stored samples support them.
 
