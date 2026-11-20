@@ -269,8 +269,9 @@ public sealed class ServiceActionService(IServiceControlBackend backend, ISessio
         catch (Exception ex)
         {
             LogError($"{action} of '{s.Name}' failed during {step}: {ex}");
-            var why = s.IsDisabled && step == "start" ? "it's turned off (disabled)" : "Windows didn't allow it";
-            return (new(false, $"Couldn't {verb} {s.Label}: {why}.", SafeState(s.Name)),
+            var why = s.IsDisabled && step == "start" ? "it's turned off (disabled)." : "Windows didn't allow it.";
+            if (ex is AdminRequiredException) why = ex.Message;
+            return (new(false, $"Couldn't {verb} {s.Label}: {why}", SafeState(s.Name)),
                 stopped && step == "start" ? deps : [], stopped && step == "start");
         }
     }

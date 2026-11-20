@@ -384,7 +384,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 LogError($"{a.Type} '{a.Target}' failed: {ex}");
-                outcome = new(false, "Windows didn't allow that change.");
+                outcome = new(false, AdminRequiredException.MessageOr(ex, "Windows didn't allow that change."));
             }
             string text = outcome.Message;
             long freedMemory = 0;
@@ -437,7 +437,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             LogError($"Undo {u.Type} '{u.Target}' failed: {ex}");
-            outcome = new(false, "Windows didn't allow undoing that change.");
+            outcome = new(false, AdminRequiredException.MessageOr(ex, "Windows didn't allow undoing that change."));
         }
         if (outcome.Success)
         {

@@ -324,6 +324,9 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     public Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) =>
         ConnectedClient().DisableAutoLogonAsync(backup, ct);
 
+    public Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default) =>
+        ConnectedClient().ChangeSystemSettingAsync(setting, ct);
+
     public Task<AppRemovalAgent.Result> RemoveAppxPackagesAsync(IReadOnlyList<RemovableAppx> apps, CancellationToken ct = default) =>
         ConnectedClient().RemoveAppxPackagesAsync(apps, ct);
 
@@ -333,11 +336,11 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     public Task<AppRemovalAgent.Result> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct = default) =>
         ConnectedClient().SetScheduledTaskEnabledAsync(path, enabled, ct);
 
-    /// <summary>The connected Agent, or <see cref="InvalidOperationException"/> with what to do.</summary>
+    /// <summary>The connected Agent, or <see cref="AdminRequiredException"/> with what to do.</summary>
     private AdminPipeClient ConnectedClient()
     {
         lock (_stateLock)
-            return _client is { IsConnected: true } c ? c : throw new InvalidOperationException("The Agent isn't connected. " + AdminRepairHint);
+            return _client is { IsConnected: true } c ? c : throw new AdminRequiredException("The Agent isn't connected. " + AdminRepairHint);
     }
 
     public static string? TryResolveInitialPipeName(IReadOnlyList<string>? args = null)
