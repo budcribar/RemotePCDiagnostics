@@ -230,10 +230,10 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
     }
 
     // ---- Speedometer 3 (headless Chromium over local loopback CDP) ----
-    public async Task<SpeedometerResult?> RunSpeedometerAsync(TimeSpan timeout, CancellationToken ct)
+    public async Task<SpeedometerResult?> RunSpeedometerAsync(TimeSpan timeout, string? preferredEngine, CancellationToken ct)
     {
         SpeedometerProcessRunner.CleanupOrphanedProfiles();
-        var browser = SelectDefaultChromiumBrowser();
+        var browser = SelectChromiumBrowser(preferredEngine);
         if (browser is null)
             return new(null, Note: "No supported Chromium browser (Edge, Chrome, Brave, or Opera) was found.");
 
@@ -247,18 +247,19 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
     }
 
     /// <summary>
-    /// Detects installed Chromium-family browsers RPCD can drive via CDP and prefers the user's
-    /// Windows default HTTPS browser when it is one of them (falling back to Edge → Chrome → Brave → Opera).
+    /// Detects installed Chromium-family browsers RPCD can drive via CDP. When <paramref name="preferredEngine"/> is set
+    /// (e.g. matching the Before pass), reuses that exact engine if installed; otherwise prefers the user's Windows default
+    /// HTTPS browser when it is Chromium (falling back to Edge → Chrome → Brave → Opera).
     /// </summary>
-    private static SpeedometerBrowser? SelectDefaultChromiumBrowser()
+    private static SpeedometerBrowser? SelectChromiumBrowser(string? preferredEngine)
     {
         var installed = DetectInstalledChromiumBrowsers();
         if (installed.Count == 0) return null;
 
-        var preferredEngine = ReadDefaultHttpsEngine();
-        if (preferredEngine is not null)
+        var targetEngine = !string.IsNullOrWhiteSpace(preferredEngine) ? preferredEngine : ReadDefaultHttpsEngine();
+        if (targetEngine is not null)
         {
-            var match = installed.FirstOrDefault(b => b.Engine.Equals(preferredEngine, StringComparison.OrdinalIgnoreCase));
+            var match = installed.FirstOrDefault(b => b.Engine.Equals(targetEngine, StringComparison.OrdinalIgnoreCase));
             if (match is not null) return match;
         }
         return installed[0];

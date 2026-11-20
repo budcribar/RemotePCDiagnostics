@@ -134,8 +134,11 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         {
             var settings = Settings;
             var prog = new SyncProgress(p => { Progress = p; Raise(); });
+            var preferredSpeedometerEngine = phase == BenchmarkPhase.After
+                ? Before?.Get(BenchmarkKind.Speedometer)?.RunIdentity?.Engine
+                : null;
             var run = await runner.RunAsync(phase, settings, phase == BenchmarkPhase.After ? Before?.TimeUtc : null, prog, cts.Token,
-                phase == BenchmarkPhase.Before ? bootsSince : null).ConfigureAwait(false);
+                phase == BenchmarkPhase.Before ? bootsSince : null, preferredSpeedometerEngine).ConfigureAwait(false);
             Save(phase == BenchmarkPhase.Before ? _state with { Before = run, After = null, RunBeforeOnStartup = false } : _state with { After = run });
             Message = run.Completed ? null : "Stopped before every benchmark finished; the finished ones are kept.";
             WriteEvent(run);

@@ -13,6 +13,32 @@ namespace RemotePCDiagnostics.Core.Benchmarks;
 /// <summary>An installed Chromium-family browser that RPCD can drive via CDP for Speedometer 3.</summary>
 public sealed record SpeedometerBrowser(string Engine, string DisplayName, string ExecutablePath, string? Version = null);
 
+/// <summary>Structured identity of a Speedometer 3 run, persisted so Before/After comparisons only pair matching runs.</summary>
+public sealed record SpeedometerRunIdentity(
+    string Engine,
+    string BrowserName,
+    string? BrowserVersion,
+    string SpeedometerVersion,
+    string LaunchMode)
+{
+    public const string HeadlessNewMode = "headless-new";
+
+    public bool IsComparableTo(SpeedometerRunIdentity? other) =>
+        other is not null
+        && string.Equals(Engine, other.Engine, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(SpeedometerVersion, other.SpeedometerVersion, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(LaunchMode, other.LaunchMode, StringComparison.OrdinalIgnoreCase);
+
+    public static string MismatchReason(SpeedometerRunIdentity before, SpeedometerRunIdentity after)
+    {
+        if (!string.Equals(before.Engine, after.Engine, StringComparison.OrdinalIgnoreCase))
+            return $"Different browser ({before.BrowserName} before vs {after.BrowserName} after) — excluded from overall score.";
+        if (!string.Equals(before.SpeedometerVersion, after.SpeedometerVersion, StringComparison.OrdinalIgnoreCase))
+            return $"Different Speedometer version ({before.SpeedometerVersion} before vs {after.SpeedometerVersion} after) — excluded from overall score.";
+        return $"Different launch mode ({before.LaunchMode} before vs {after.LaunchMode} after) — excluded from overall score.";
+    }
+}
+
 /// <summary>Outcome of one Speedometer 3 pass (which runs 10 internal iterations).</summary>
 public sealed record SpeedometerResult(
     double? Score,
@@ -20,9 +46,16 @@ public sealed record SpeedometerResult(
     string? BrowserName = null,
     string? BrowserVersion = null,
     double? ConfidenceInterval = null,
-    string? Note = null)
+    string? Note = null,
+    string SpeedometerVersion = SpeedometerPackage.Version,
+    string LaunchMode = SpeedometerRunIdentity.HeadlessNewMode)
 {
     public bool Succeeded => Score is > 0;
+
+    public SpeedometerRunIdentity? ToIdentity() =>
+        !string.IsNullOrWhiteSpace(Engine) && !string.IsNullOrWhiteSpace(BrowserName)
+            ? new(Engine, BrowserName, BrowserVersion, SpeedometerVersion, LaunchMode)
+            : null;
 
     public string? FormatDetail()
     {
@@ -34,49 +67,6 @@ public sealed record SpeedometerResult(
         if (ConfidenceInterval is > 0 and var ci)
             parts.Add(string.Create(CultureInfo.InvariantCulture, $"±{ci:0.00}"));
         return string.Join(" · ", parts);
-    }
-}
-
-public enum SpeedometerCpuClass { MobileLowPower, MobileMainstream, Desktop }
-public enum SpeedometerBand { Pass, Warning, Critical }
-
-/// <summary>
-/// Checked-in seed baseline bands for Speedometer 3 by coarse CPU class so freshly diagnosed PCs
-/// have immediate context on Day 1 (10th / 25th / 50th percentile reference points).
-/// </summary>
-public static class SpeedometerBaselines
-{
-    public sealed record SeedBand(double P10, double P25, double P50);
-
-    private static readonly Dictionary<SpeedometerCpuClass, SeedBand> Seeds = new()
-    {
-        [SpeedometerCpuClass.MobileLowPower] = new(P10: 4.5, P25: 6.5, P50: 9.5),
-        [SpeedometerCpuClass.MobileMainstream] = new(P10: 9.0, P25: 12.5, P50: 17.0),
-        [SpeedometerCpuClass.Desktop] = new(P10: 11.0, P25: 15.0, P50: 21.0),
-    };
-
-    public static SeedBand For(SpeedometerCpuClass cpuClass) => Seeds[cpuClass];
-
-    public static SpeedometerCpuClass ClassifyCpu(string? cpuName, int logicalCores)
-    {
-        var n = (cpuName ?? "").ToUpperInvariant();
-        if (n.Contains("CELERON") || n.Contains("PENTIUM") || n.Contains("ATHLON") || n.Contains("ATOM")
-            || n.Contains("N100") || n.Contains("N200") || n.Contains("N95") || logicalCores <= 4)
-            return SpeedometerCpuClass.MobileLowPower;
-
-        if (n.Contains("-U") || n.Contains(" U ") || n.EndsWith("U") || n.Contains("-P") || n.Contains("G7") || n.Contains("G4")
-            || n.Contains("-H") || n.Contains("-HS") || n.Contains("MOBILE"))
-            return SpeedometerCpuClass.MobileMainstream;
-
-        return logicalCores >= 12 ? SpeedometerCpuClass.Desktop : SpeedometerCpuClass.MobileMainstream;
-    }
-
-    public static SpeedometerBand Judge(double score, SpeedometerCpuClass cpuClass)
-    {
-        var b = Seeds[cpuClass];
-        if (score >= b.P25) return SpeedometerBand.Pass;
-        if (score >= b.P10) return SpeedometerBand.Warning;
-        return SpeedometerBand.Critical;
     }
 }
 

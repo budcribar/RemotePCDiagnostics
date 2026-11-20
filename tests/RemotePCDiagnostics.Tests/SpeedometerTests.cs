@@ -93,19 +93,7 @@ public sealed class SpeedometerTests
     }
 
     [Fact]
-    public void Baselines_ClassifyCpuAndJudgeBands()
-    {
-        Assert.Equal(SpeedometerCpuClass.MobileLowPower, SpeedometerBaselines.ClassifyCpu("Intel N100", 4));
-        Assert.Equal(SpeedometerCpuClass.MobileMainstream, SpeedometerBaselines.ClassifyCpu("13th Gen Intel Core i7-1365U", 12));
-        Assert.Equal(SpeedometerCpuClass.Desktop, SpeedometerBaselines.ClassifyCpu("AMD Ryzen 9 7950X", 32));
-
-        Assert.Equal(SpeedometerBand.Pass, SpeedometerBaselines.Judge(16.0, SpeedometerCpuClass.MobileMainstream));
-        Assert.Equal(SpeedometerBand.Warning, SpeedometerBaselines.Judge(10.0, SpeedometerCpuClass.MobileMainstream));
-        Assert.Equal(SpeedometerBand.Critical, SpeedometerBaselines.Judge(7.0, SpeedometerCpuClass.MobileMainstream));
-    }
-
-    [Fact]
-    public async Task Runner_RunsSpeedometerOnce_RecordsBrowserDetail_AndComparesHigherIsBetter()
+    public async Task Runner_RunsSpeedometerOnce_RecordsIdentity_AndComparesMatchingBrowsers()
     {
         var probe = new FakeSpeedometerProbes(new SpeedometerResult(10.0, "edge", "Microsoft Edge", "131.0", 0.15));
         var runner = new BenchmarkRunner(probe);
@@ -117,13 +105,53 @@ public sealed class SpeedometerTests
         Assert.Equal(10.0, bm.Median);
         Assert.Contains("Microsoft Edge 131.0", bm.Detail);
         Assert.Contains("clean profile", bm.Detail);
+        Assert.Equal("edge", bm.RunIdentity?.Engine);
+        Assert.Equal(SpeedometerPackage.Version, bm.RunIdentity?.SpeedometerVersion);
+        Assert.Equal(SpeedometerRunIdentity.HeadlessNewMode, bm.RunIdentity?.LaunchMode);
 
         probe.NextResult = new SpeedometerResult(13.5, "edge", "Microsoft Edge", "131.0", 0.12);
-        var after = await runner.RunAsync(BenchmarkPhase.After, settings, before.TimeUtc, null, default);
+        var after = await runner.RunAsync(BenchmarkPhase.After, settings, before.TimeUtc, null, default, preferredSpeedometerEngine: "edge");
+        Assert.Equal("edge", probe.LastPreferredEngine);
         var cmp = BenchmarkComparison.Build(before, after);
         var delta = cmp.Deltas.Single(d => d.Info.Kind == BenchmarkKind.Speedometer);
         Assert.Equal(BenchmarkVerdict.Better, delta.Verdict);
         Assert.Contains("faster", delta.ChangeSummary);
+        Assert.NotNull(cmp.OverallPercent);
+    }
+
+    [Fact]
+    public async Task Service_ReusesBeforeEngineForAfter_AndComparisonExcludesMismatchedBrowsers()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "rpd-bench-id-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var probe = new FakeSpeedometerProbes(new SpeedometerResult(10.0, "chrome", "Google Chrome", "131.0", 0.10));
+            var store = new FileBenchmarkStore(path);
+            var svc = new BenchmarkService(new BenchmarkRunner(probe), store);
+            svc.UpdateSettings(svc.Settings with { Enabled = [BenchmarkKind.Speedometer] });
+
+            await svc.RunAsync(BenchmarkPhase.Before);
+            // Reload from disk to verify structured RunIdentity survives restart
+            var reloaded = new BenchmarkService(new BenchmarkRunner(probe), store);
+            Assert.Equal("chrome", reloaded.Before?.Get(BenchmarkKind.Speedometer)?.RunIdentity?.Engine);
+
+            // Simulate browser changed to Edge on After despite preferredEngine = "chrome"
+            probe.NextResult = new SpeedometerResult(15.0, "edge", "Microsoft Edge", "131.0", 0.10);
+            await reloaded.RunAsync(BenchmarkPhase.After);
+            Assert.Equal("chrome", probe.LastPreferredEngine);
+
+            var cmp = reloaded.Comparison;
+            var delta = cmp.Deltas.Single(d => d.Info.Kind == BenchmarkKind.Speedometer);
+            Assert.Equal(10.0, delta.Before);
+            Assert.Equal(15.0, delta.After);
+            Assert.Equal(BenchmarkVerdict.NotMeasured, delta.Verdict);
+            Assert.Contains("Different browser", delta.Note);
+            Assert.Null(cmp.OverallPercent); // excluded from overall score
+        }
+        finally
+        {
+            try { File.Delete(path); } catch { }
+        }
     }
 
     [Fact]
@@ -203,14 +231,16 @@ public sealed class SpeedometerTests
     {
         public SpeedometerResult? NextResult { get; set; } = next;
         public int Calls { get; private set; }
+        public string? LastPreferredEngine { get; private set; }
         public BenchmarkConditions ReadConditions() => new(false, 52, "Balanced");
         public Task<IdleSample?> SampleIdleAsync(TimeSpan duration, CancellationToken ct) => Task.FromResult<IdleSample?>(null);
         public Task<double?> StartProgramAsync(BuiltInProgram program, CancellationToken ct) => Task.FromResult<double?>(null);
         public Task<double?> DiskRandomReadIopsAsync(TimeSpan duration, CancellationToken ct) => Task.FromResult<double?>(null);
         public Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<WinEvent>>([]);
-        public Task<SpeedometerResult?> RunSpeedometerAsync(TimeSpan timeout, CancellationToken ct)
+        public Task<SpeedometerResult?> RunSpeedometerAsync(TimeSpan timeout, string? preferredEngine, CancellationToken ct)
         {
             Calls++;
+            LastPreferredEngine = preferredEngine;
             return Task.FromResult(NextResult);
         }
     }

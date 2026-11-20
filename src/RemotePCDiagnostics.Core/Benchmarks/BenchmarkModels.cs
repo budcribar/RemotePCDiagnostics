@@ -122,7 +122,8 @@ public static class BuiltInPrograms
 
 /// <summary>One benchmark's runs. The median is the result; the spread tells how noisy it was.</summary>
 /// <param name="Detail">Extra breakdown shown with the comparison (start-up: time until the desktop + settling after sign-in).</param>
-public sealed record BenchmarkMeasurement(BenchmarkKind Kind, IReadOnlyList<double> Samples, string? Note = null, string? Detail = null)
+/// <param name="RunIdentity">Structured browser/version/launch-mode identity for Speedometer 3 comparisons.</param>
+public sealed record BenchmarkMeasurement(BenchmarkKind Kind, IReadOnlyList<double> Samples, string? Note = null, string? Detail = null, SpeedometerRunIdentity? RunIdentity = null)
 {
     public double? Median
     {
@@ -263,6 +264,11 @@ public sealed record BenchmarkComparison(IReadOnlyList<BenchmarkDelta> Deltas, d
             {
                 if (b is not null || a is not null)
                     deltas.Add(new(info, b?.Median, a?.Median, BenchmarkVerdict.NotMeasured, null, a?.Note ?? b?.Note ?? (b is null ? "no before result" : "no after result")));
+                continue;
+            }
+            if (b.RunIdentity is { } bi && a.RunIdentity is { } ai && !bi.IsComparableTo(ai))
+            {
+                deltas.Add(new(info, bv, av, BenchmarkVerdict.NotMeasured, null, SpeedometerRunIdentity.MismatchReason(bi, ai)));
                 continue;
             }
             var diff = info.LowerIsBetter ? bv - av : av - bv;           // > 0 means better
