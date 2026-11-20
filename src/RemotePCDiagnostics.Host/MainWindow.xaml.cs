@@ -52,7 +52,9 @@ public partial class MainWindow : Window
             SessionId: sessionCtx.Mode == SessionMode.Remote ? sessionCtx.SessionId.ToString() : null,
             Group: launch.Group,
             Mode: launch.Mode.ToString(),
-            StartedUtc: DateTimeOffset.UtcNow));
+            StartedUtc: DateTimeOffset.UtcNow,
+            Unattended: launch.Unattended,
+            Voice: launch.Voice));
         StartupProfiler.Mark("AddRemotePCDiagnosticsHost:Start");
         var services = new ServiceCollection().AddRemotePCDiagnosticsHost(sessionCtx, App.Log, App.Event, loggers: App.Loggers);
         StartupProfiler.Mark("AddRemotePCDiagnosticsHost:Done");
@@ -278,7 +280,9 @@ public partial class MainWindow : Window
                     SessionId: e.Id.ToString(),
                     Group: _group,
                     Mode: SessionMode.Remote.ToString(),
-                    StartedUtc: DateTimeOffset.UtcNow));
+                    StartedUtc: DateTimeOffset.UtcNow,
+                    Unattended: sc.Unattended,
+                    Voice: sc.Voice));
             }
             // The link to share is the read-only /mirror page: this window holds the app's own page, and the remote user is
             // handed control from the session bar.

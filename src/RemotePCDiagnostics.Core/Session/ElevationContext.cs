@@ -304,6 +304,36 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         return await client.SelfUpdateAsync(channel, relaunchArguments, ct).ConfigureAwait(false);
     }
 
+    public async Task ReportDiagnosticsActivityAsync(string? busyReason, CancellationToken ct = default)
+    {
+        AdminPipeClient? client;
+        lock (_stateLock)
+            client = _client;
+        if (client is not { IsConnected: true })
+            return;
+        await client.ReportDiagnosticsActivityAsync(busyReason, ct).ConfigureAwait(false);
+    }
+
+    public async Task<RpcdUpdateStatus?> StartRpcdUpdateAsync(RpcdUpdateRequest request, IReadOnlyList<string>? relaunchArguments = null, CancellationToken ct = default)
+    {
+        AdminPipeClient? client;
+        lock (_stateLock)
+            client = _client;
+        if (client is not { IsConnected: true })
+            return null;
+        return await client.StartRpcdUpdateAsync(request, relaunchArguments, ct).ConfigureAwait(false);
+    }
+
+    public async Task<RpcdUpdateStatus?> GetRpcdUpdateStatusAsync(string? requestId = null, CancellationToken ct = default)
+    {
+        AdminPipeClient? client;
+        lock (_stateLock)
+            client = _client;
+        if (client is not { IsConnected: true })
+            return null;
+        return await client.GetRpcdUpdateStatusAsync(requestId, ct).ConfigureAwait(false);
+    }
+
     public async Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, CancellationToken ct = default)
     {
         AdminPipeClient? client;

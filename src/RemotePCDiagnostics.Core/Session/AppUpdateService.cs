@@ -102,6 +102,21 @@ public static class AppVersionComparer
         return (latestRun, latest.Attempt).CompareTo((currentRun, current.Attempt)) > 0;
     }
 
+    /// <summary>
+    /// The comparable build identity: no leading <c>v</c>, no <c>+commit</c> metadata.
+    /// Null when <paramref name="value"/> is not an RPCD version.
+    /// </summary>
+    public static string? Normalize(string? value)
+    {
+        if (Parse(value) is null || string.IsNullOrWhiteSpace(value))
+            return null;
+        var trimmed = value.Trim().TrimStart('v', 'V');
+        var plus = trimmed.IndexOf('+');
+        if (plus > 0)
+            trimmed = trimmed[..plus];
+        return trimmed;
+    }
+
     public static bool IsTrustedDownloadUrl(string? url)
     {
         if (!TryStrictHttpsUri(url, out var uri)
@@ -245,7 +260,14 @@ public static class AppUpdateInstaller
     /// with <paramref name="relaunchArguments"/>, it starts the app again with them, so a remote session comes back.
     /// Values with a double quote are left out, since Inno Setup cannot take them inside a quoted parameter.
     /// </summary>
-    public static string BuildSetupArguments(bool verySilent, string? agentMsiPath, IReadOnlyList<string>? relaunchArguments)
+    /// <summary>Setup switch: <c>install</c> the agent service again without replacing enrollment, consent, or lifetime.</summary>
+    public const string SetupPreserveAgentParam = "PRESERVEAGENT";
+
+    public static string BuildSetupArguments(
+        bool verySilent,
+        string? agentMsiPath,
+        IReadOnlyList<string>? relaunchArguments,
+        bool preserveAgentSettings = false)
     {
         var parts = new List<string>
         {
@@ -254,6 +276,8 @@ public static class AppUpdateInstaller
             "/CLOSEAPPLICATIONS",
             "/NORESTART",
         };
+        if (preserveAgentSettings)
+            parts.Add($"/{SetupPreserveAgentParam}");
         if (!string.IsNullOrWhiteSpace(agentMsiPath) && !agentMsiPath.Contains('"'))
             parts.Add($"\"/{SetupAgentMsiParam}={agentMsiPath}\"");
         if (relaunchArguments is { Count: > 0 } && relaunchArguments.All(a => !a.Contains('"')))
@@ -311,10 +335,13 @@ public static class AppUpdateInstaller
         string? sha256Url,
         string stagingDirectory,
         Action<AppUpdateProgress>? progress,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool requireChecksum = false)
     {
         if (!AppVersionComparer.IsTrustedDownloadUrl(downloadUrl))
             throw new InvalidOperationException("Refusing to download update from an untrusted URL.");
+        if (requireChecksum && string.IsNullOrWhiteSpace(sha256Url))
+            throw new InvalidOperationException("The GitHub release has no SHA-256 checksum for the installer. The update was not installed.");
         if (!string.IsNullOrWhiteSpace(sha256Url) && !AppVersionComparer.IsTrustedDownloadUrl(sha256Url))
             throw new InvalidOperationException("Refusing to download checksum from an untrusted URL.");
 

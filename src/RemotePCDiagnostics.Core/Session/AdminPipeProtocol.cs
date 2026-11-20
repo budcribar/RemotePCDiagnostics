@@ -44,6 +44,20 @@ public interface IElevatedCommandBridge
     Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, IReadOnlyList<string>? relaunchArguments = null, CancellationToken ct = default) =>
         Task.FromResult<AppUpdateResult?>(null);
 
+    /// <summary>Tells the agent what diagnostics work is running so a later <c>update_rpcd</c> can refuse. Empty means idle.</summary>
+    Task ReportDiagnosticsActivityAsync(string? busyReason, CancellationToken ct = default) => Task.CompletedTask;
+
+    /// <summary>
+    /// Asks the agent to install an official RPCD release. Null when the agent is not connected.
+    /// The status is the first snapshot; poll <see cref="GetRpcdUpdateStatusAsync"/>.
+    /// </summary>
+    Task<RpcdUpdateStatus?> StartRpcdUpdateAsync(RpcdUpdateRequest request, IReadOnlyList<string>? relaunchArguments = null, CancellationToken ct = default) =>
+        Task.FromResult<RpcdUpdateStatus?>(null);
+
+    /// <summary>The latest update snapshot, or the one named by <paramref name="requestId"/>. Null when the agent is not connected.</summary>
+    Task<RpcdUpdateStatus?> GetRpcdUpdateStatusAsync(string? requestId = null, CancellationToken ct = default) =>
+        Task.FromResult<RpcdUpdateStatus?>(null);
+
     /// <summary>
     /// Has the elevated helper run the security audit with administrator rights, with the HardeningKitty installed next to it. Null when
     /// it can't (not connected, or a helper from before this existed); throws <see cref="OperationCanceledException"/> when cancelled.
@@ -338,7 +352,12 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("changeId")] Guid? ChangeId = null,
     [property: JsonPropertyName("change")] ChangeRecord? Change = null,
     [property: JsonPropertyName("stateName")] string? StateName = null,
-    [property: JsonPropertyName("stateJson")] string? StateJson = null);
+    [property: JsonPropertyName("stateJson")] string? StateJson = null,
+    [property: JsonPropertyName("version")] string? Version = null,
+    [property: JsonPropertyName("approved")] bool? Approved = null,
+    [property: JsonPropertyName("approvedBy")] string? ApprovedBy = null,
+    [property: JsonPropertyName("busyReason")] string? BusyReason = null,
+    [property: JsonPropertyName("requestId")] string? RequestId = null);
 
 /// <summary>
 /// The app removal requests' arguments: packages by name and publisher id, one uninstall command, or one task path. The Agent checks
@@ -385,7 +404,8 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("taskState")] string? TaskState = null,
     [property: JsonPropertyName("changes")] IReadOnlyList<ChangeRecord>? Changes = null,
     [property: JsonPropertyName("stateJson")] string? StateJson = null,
-    [property: JsonPropertyName("setup")] MachineSetupResult? Setup = null);
+    [property: JsonPropertyName("setup")] MachineSetupResult? Setup = null,
+    [property: JsonPropertyName("updateStatus")] RpcdUpdateStatus? UpdateStatus = null);
 
 /// <summary>
 /// Length-prefixed (4-byte little-endian int32 + UTF-8 JSON) framing over Named Pipes with zero third-party dependencies.
@@ -398,6 +418,12 @@ public static class AdminPipeFraming
     public const string OpReadSensors = "read_sensors";
     public const string OpReadDrives = "read_drives";
     public const string OpSelfUpdate = "self_update";
+    /// <summary>Install an official GitHub release. <c>approved</c> must be true. The first snapshot comes back at once; poll <see cref="OpUpdateRpcdStatus"/>.</summary>
+    public const string OpUpdateRpcd = "update_rpcd";
+    /// <summary>The latest <c>update_rpcd</c> snapshot, or the one named by <c>requestId</c>.</summary>
+    public const string OpUpdateRpcdStatus = "update_rpcd_status";
+    /// <summary>The app telling the agent what diagnostics work is running. An empty <c>busyReason</c> means idle.</summary>
+    public const string OpReportActivity = "report_activity";
     /// <summary>Runs the security audit elevated; the response carries the report CSV. The only request the client can cancel.</summary>
     public const string OpSecurityAudit = "security_audit";
     /// <summary>Sent while a <see cref="OpSecurityAudit"/> request runs: stops it. It gets no response of its own.</summary>
@@ -632,6 +658,43 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         if (response.UpdateResult is not null)
             return response.UpdateResult;
         return new AppUpdateResult(response.Ok, Error: response.Error);
+    }
+
+    public async Task ReportDiagnosticsActivityAsync(string? busyReason, CancellationToken ct = default)
+    {
+        await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpReportActivity, BusyReason: busyReason), ct).ConfigureAwait(false);
+    }
+
+    public async Task<RpcdUpdateStatus?> StartRpcdUpdateAsync(RpcdUpdateRequest request, IReadOnlyList<string>? relaunchArguments = null, CancellationToken ct = default)
+    {
+        var response = await SendAsync(
+            new AdminPipeRequest(
+                AdminPipeFraming.OpUpdateRpcd,
+                Arguments: relaunchArguments,
+                Channel: request.Channel,
+                Version: request.Version,
+                Approved: request.Approved,
+                ApprovedBy: request.ApprovedBy,
+                BusyReason: request.BusyReason,
+                TimeoutMs: 60_000),
+            ct).ConfigureAwait(false);
+        if (response.UpdateStatus is not null)
+            return response.UpdateStatus;
+        return new RpcdUpdateStatus
+        {
+            Stage = RpcdUpdateStages.Failed,
+            Terminal = true,
+            Channel = request.Channel,
+            Error = response.Error ?? "The agent did not start an update.",
+            Detail = response.Error ?? "The agent did not start an update.",
+            UpdatedUtc = DateTimeOffset.UtcNow,
+        };
+    }
+
+    public async Task<RpcdUpdateStatus?> GetRpcdUpdateStatusAsync(string? requestId = null, CancellationToken ct = default)
+    {
+        var response = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpUpdateRpcdStatus, RequestId: requestId), ct).ConfigureAwait(false);
+        return response.UpdateStatus;
     }
 
     public async Task<bool> ValidateCredentialsAsync(string user, string domain, string password, CancellationToken ct = default)
@@ -908,6 +971,15 @@ public sealed record AdminPipeServerOptions
     public Func<NamedPipeServerStream, (bool Allowed, string? Reason)>? CustomClientVerifier { get; set; }
     /// <summary>Folders vendor uninstallers may be run from (null = Program Files, see <see cref="AppRemoval.IsVendorUninstaller"/>). Tests only.</summary>
     public IReadOnlyList<string>? UninstallerRoots { get; set; }
+
+    /// <summary>Starts <c>update_rpcd</c>. The app's request carries the live busy reason; the returned status is the first snapshot.</summary>
+    public Func<RpcdUpdateRequest, IReadOnlyList<string>?, CancellationToken, Task<RpcdUpdateStatus>>? StartUpdate { get; set; }
+
+    /// <summary>The latest update, or the one named by request id. Null when this agent has never run one.</summary>
+    public Func<string?, RpcdUpdateStatus?>? ReadUpdate { get; set; }
+
+    /// <summary>The app's latest "what is running" line. Empty or null means idle.</summary>
+    public Action<string?>? ReportActivity { get; set; }
 }
 
 /// <summary>
@@ -1185,6 +1257,74 @@ public sealed class AdminPipeServer(
                     HelperPid: Environment.ProcessId,
                     ExitCode: -1,
                     Error: $"Failed to read drives: {ex.Message}");
+            }
+        }
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpReportActivity, StringComparison.OrdinalIgnoreCase))
+        {
+            options.ReportActivity?.Invoke(request.BusyReason);
+            return new AdminPipeResponse(Ok: true, Allowed: true, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: 0);
+        }
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpUpdateRpcdStatus, StringComparison.OrdinalIgnoreCase))
+        {
+            var snapshot = options.ReadUpdate?.Invoke(request.RequestId);
+            return new AdminPipeResponse(
+                Ok: true,
+                Allowed: true,
+                Elevated: Environment.IsPrivilegedProcess,
+                HelperPid: Environment.ProcessId,
+                ExitCode: 0,
+                UpdateStatus: snapshot);
+        }
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpUpdateRpcd, StringComparison.OrdinalIgnoreCase))
+        {
+            if (options.StartUpdate is null)
+            {
+                return new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: false,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: -1,
+                    Error: "This agent cannot install RPCD updates.");
+            }
+
+            var updateRequest = new RpcdUpdateRequest(
+                request.Channel,
+                request.Version,
+                request.Approved == true,
+                request.ApprovedBy,
+                request.BusyReason);
+            try
+            {
+                var snapshot = await options.StartUpdate(updateRequest, request.Arguments, ct).ConfigureAwait(false);
+                var accepted = snapshot.Stage is RpcdUpdateStages.Checking or RpcdUpdateStages.Downloading
+                    or RpcdUpdateStages.Verifying or RpcdUpdateStages.Installing or RpcdUpdateStages.Relaunching
+                    or RpcdUpdateStages.Succeeded or RpcdUpdateStages.AlreadyUpToDate;
+                return new AdminPipeResponse(
+                    Ok: accepted,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: accepted ? 0 : 1,
+                    Error: snapshot.Error,
+                    UpdateStatus: snapshot);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                return new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: -1,
+                    Error: ex.Message);
             }
         }
 

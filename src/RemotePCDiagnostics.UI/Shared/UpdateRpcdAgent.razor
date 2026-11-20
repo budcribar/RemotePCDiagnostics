@@ -1,0 +1,167 @@
+@using RemotePCDiagnostics.Core.Areas
+@using RemotePCDiagnostics.Core.Benchmarks
+@implements IDisposable
+@inject DiagnosticsService Diagnostics
+@inject ChecksScreenState Screen
+@inject BenchmarkService Bench
+@inject AppServices App
+@inject ISessionContext Session
+@* Hidden controls for update_rpcd. Nothing here is drawn. A browser agent sets the fields and clicks start, then reads update-rpcd-data. *@
+<div hidden data-testid="update-rpcd-panel">
+    <input data-testid="update-rpcd-channel" @bind="_channel" @bind:event="oninput" />
+    <input data-testid="update-rpcd-version" @bind="_version" @bind:event="oninput" />
+    <input data-testid="update-rpcd-approved-by" @bind="_approvedBy" @bind:event="oninput" />
+    <input type="checkbox" data-testid="update-rpcd-approved" @bind="_approved" />
+    <button type="button" data-testid="update-rpcd-start" @onclick="StartAsync">Start update</button>
+    <AgentData TestId="update-rpcd-data" Json="@_json" />
+</div>
+
+@code {
+    private string _channel = "prerelease";
+    private string _version = "";
+    private string _approvedBy = "";
+    private bool _approved;
+    private string? _json;
+    private CancellationTokenSource? _poll;
+    private string? _lastReported;
+
+    protected override void OnInitialized()
+    {
+        Diagnostics.ProgressChanged += OnProgress;
+        Diagnostics.StressSuiteProgressChanged += OnStress;
+        Screen.Changed += OnChanged;
+        Bench.Changed += OnChanged;
+        if (App.Remediation is { } fixes) fixes.RunChanged += OnChanged;
+        if (App.Workflow is { } workflow) workflow.Changed += OnChanged;
+        _ = ReportAsync();
+        _ = RefreshAsync();
+    }
+
+    private AgentExports.ActivitySnapshot Snapshot()
+    {
+        var checks = Diagnostics.RunningModules.Select(run => new AgentExports.RunningCheck(run.ModuleName,
+            Diagnostics.Modules.FirstOrDefault(m => string.Equals(m.Name, run.ModuleName, StringComparison.OrdinalIgnoreCase))?.DisplayName ?? run.ModuleName,
+            run.RunId, Diagnostics.GetProgress(run.ModuleName))).ToList();
+        var sequence = Screen.RunningGroup is { } group
+            ? new AgentExports.SequenceRun(group, Screen.IsRunAll, Screen.Progress, Screen.RemainingSteps())
+            : null;
+        var flow = App.Workflow is { } workflow
+            ? new AgentExports.WorkflowActivity(workflow.State.Stage, workflow.Busy, workflow.Status)
+            : null;
+        return new(checks, sequence, Diagnostics.IsStressSuiteRunning ? Diagnostics.LastStressSuiteProgress : null, App.Remediation?.Running, flow,
+            Bench.Running, Bench.Settling is not null, Bench.Progress);
+    }
+
+    private async Task StartAsync()
+    {
+        if (App.Elevation is not IElevatedCommandBridge bridge)
+        {
+            Show(new RpcdUpdateStatus
+            {
+                Stage = RpcdUpdateStages.Failed,
+                Terminal = true,
+                Error = "The agent is not connected, so Remote PC Diagnostics was not changed.",
+                Detail = "The agent is not connected, so Remote PC Diagnostics was not changed.",
+                UpdatedUtc = DateTimeOffset.UtcNow,
+            });
+            return;
+        }
+
+        var busy = AgentExports.UpdateBlockReason(Snapshot());
+        IReadOnlyList<string>? relaunch = null;
+        if (Session.Mode == SessionMode.Remote && Session.ServerUri is { } server && Session.SessionId != Guid.Empty)
+            relaunch = SessionLaunchOptions.RestartArguments(server, Session.SessionId, Session.Unattended, Session.Voice, Session.Group, Session.Admin);
+
+        var status = await bridge.StartRpcdUpdateAsync(new RpcdUpdateRequest(
+            string.IsNullOrWhiteSpace(_channel) ? "prerelease" : _channel.Trim(),
+            string.IsNullOrWhiteSpace(_version) ? null : _version.Trim(),
+            _approved,
+            string.IsNullOrWhiteSpace(_approvedBy) ? null : _approvedBy.Trim(),
+            busy ?? ""));
+        status ??= new RpcdUpdateStatus
+        {
+            Stage = RpcdUpdateStages.Failed,
+            Terminal = true,
+            Error = "The agent is not connected, so Remote PC Diagnostics was not changed.",
+            Detail = "The agent is not connected, so Remote PC Diagnostics was not changed.",
+            UpdatedUtc = DateTimeOffset.UtcNow,
+        };
+        Show(status);
+        if (status is { Terminal: false })
+            _ = PollAsync(bridge, status.RequestId);
+    }
+
+    private async Task PollAsync(IElevatedCommandBridge bridge, string requestId)
+    {
+        _poll?.Cancel();
+        var cts = new CancellationTokenSource();
+        _poll = cts;
+        try
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+                var status = await bridge.GetRpcdUpdateStatusAsync(requestId, cts.Token);
+                if (status is null)
+                    continue;
+                Show(status);
+                if (status.Terminal)
+                    return;
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (App.Elevation is not IElevatedCommandBridge bridge)
+            return;
+        try
+        {
+            var status = await bridge.GetRpcdUpdateStatusAsync();
+            if (status is not null)
+                Show(status);
+        }
+        catch { }
+    }
+
+    private async Task ReportAsync()
+    {
+        if (App.Elevation is not IElevatedCommandBridge bridge)
+            return;
+        var reason = AgentExports.UpdateBlockReason(Snapshot());
+        if (string.Equals(reason, _lastReported, StringComparison.Ordinal))
+            return;
+        _lastReported = reason;
+        try { await bridge.ReportDiagnosticsActivityAsync(reason); }
+        catch { }
+    }
+
+    private void Show(RpcdUpdateStatus? status)
+    {
+        _json = status?.ToJson();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnChanged()
+    {
+        _ = ReportAsync();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnProgress(object? sender, (string ModuleName, CheckProgress? Progress) e) => OnChanged();
+
+    private void OnStress(object? sender, StressSuiteProgress e) => OnChanged();
+
+    public void Dispose()
+    {
+        try { _poll?.Cancel(); } catch { }
+        _poll?.Dispose();
+        Diagnostics.ProgressChanged -= OnProgress;
+        Diagnostics.StressSuiteProgressChanged -= OnStress;
+        Screen.Changed -= OnChanged;
+        Bench.Changed -= OnChanged;
+        if (App.Remediation is { } fixes) fixes.RunChanged -= OnChanged;
+        if (App.Workflow is { } workflow) workflow.Changed -= OnChanged;
+    }
+}

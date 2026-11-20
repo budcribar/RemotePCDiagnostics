@@ -154,6 +154,7 @@ internal static class AgentAdminHost
 
                 var machineTweaks = OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null;
                 StartDevBenchmarkSweep(machineTweaks, log);
+                using var updater = NewUpdater(log);
 
                 var server = new AdminPipeServer(
                     serverOptions,
@@ -169,6 +170,7 @@ internal static class AgentAdminHost
                     changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
                     stateFolder: ProtectedState.Folder(),
                     machineSetup: AgentMachineSetup.ForSignedInUser(log));
+                updater.Bind(serverOptions);
 
                 var serverTask = Task.Run(async () =>
                 {
@@ -257,16 +259,19 @@ internal static class AgentAdminHost
                 {
                     var machineTweaks = OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null;
                     StartDevBenchmarkSweep(machineTweaks, log);
+                    using var updater = NewUpdater(log);
+                    var serverOptions = new AdminPipeServerOptions
+                    {
+                        PipeName = pipeName,
+                        ExpectedClientPid = parentPid,
+                        ExpectedClientExePath = expectedClientExe,
+                        AllowedClientSid = clientSid,
+                        ConnectTimeout = TimeSpan.FromSeconds(30),
+                    };
+                    updater.Bind(serverOptions);
 
                     using var server = new AdminPipeServer(
-                        new AdminPipeServerOptions
-                        {
-                            PipeName = pipeName,
-                            ExpectedClientPid = parentPid,
-                            ExpectedClientExePath = expectedClientExe,
-                            AllowedClientSid = clientSid,
-                            ConnectTimeout = TimeSpan.FromSeconds(30),
-                        },
+                        serverOptions,
                         new SystemProcessLauncher(),
                         sensorReader: sensorReader,
                         log: log,
@@ -297,6 +302,12 @@ internal static class AgentAdminHost
             }
         }
     }
+
+    private static RpcdRemoteUpdater NewUpdater(ILogger log) => new(
+        AgentPaths.GetInstalledOrCachedAppVersion,
+        RpcdRemoteUpdater.IsTrackedHostRunning,
+        () => RpcdRemoteUpdater.RelaunchForActiveSession(AgentPaths.TryLoadConfig(out _)?.Server),
+        message => log.Info(message));
 
     private static void StartDevBenchmarkSweep(IMachineTweaks? tweaks, ILogger log)
     {
