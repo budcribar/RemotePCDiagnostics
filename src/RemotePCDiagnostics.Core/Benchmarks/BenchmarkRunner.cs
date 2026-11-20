@@ -180,7 +180,7 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
                 {
                     DeveloperBuildResult? res = null; string? note = null;
                     try { res = await probes.RunDeveloperCSharpAsync(includeAntivirusComparison: false, progress, ct).ConfigureAwait(false); }
-                    catch (Exception ex) when (ex is not OperationCanceledException) { Log("dev-csharp: " + ex.Message); note = "C# clean build couldn't run"; }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { Log("dev-csharp: " + ex.Message); note = "C# clean build couldn't run. " + ex.Message; }
                     if (res is { Succeeded: true })
                         list.Add(new(BenchmarkKind.DeveloperCSharp, res.WarmSamples, null, res.FormatDetail(), DeveloperBuild: res));
                     else

@@ -99,6 +99,40 @@ public class AgentExportsTests
     }
 
     [Fact]
+    public void Benchmark_developer_build_failure_includes_exit_code_and_error_text()
+    {
+        const string note = "Could not run: cold dotnet build failed (exit 1). error NETSDK1004: Assets file 'project.assets.json' not found.";
+        var dev = new DeveloperBuildResult(
+            DeveloperLanguage.CSharp, DeveloperCSharpPin.PinId, "ABC", "9.0.200", 9,
+            1.2, null, [], null, [], Note: note, ToolExitCode: 1);
+        var run = new BenchmarkRun(BenchmarkPhase.Before, DateTimeOffset.Parse("2026-11-20T10:00:00Z"),
+            new BenchmarkConditions(false, 40, "Balanced"),
+            [new BenchmarkMeasurement(BenchmarkKind.DeveloperCSharp, [], note, DeveloperBuild: dev)]);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(AgentExports.BuildBenchmark(
+            new BenchmarkSettings(), run, null, BenchmarkComparison.Build(run, null), null, false, null, false, false, null,
+            detectedToolchains: [new DetectedToolchain(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "9.0.200", 9)])));
+        var measurement = doc.RootElement.GetProperty("before").GetProperty("measurements")[0];
+        Assert.Equal(note, measurement.GetProperty("note").GetString());
+        var built = measurement.GetProperty("developerBuild");
+        Assert.Equal(note, built.GetProperty("note").GetString());
+        Assert.Equal(1, built.GetProperty("toolExitCode").GetInt32());
+        var unavailable = doc.RootElement.GetProperty("developer").GetProperty("csharpUnavailableReason");
+        Assert.Equal(JsonValueKind.Null, unavailable.ValueKind);
+    }
+
+    [Fact]
+    public void Benchmark_hides_csharp_reason_when_the_sdk_is_too_old_to_build()
+    {
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(AgentExports.BuildBenchmark(
+            new BenchmarkSettings(), null, null, BenchmarkComparison.Build(null, null), null, false, null, false, false, null,
+            detectedToolchains: [new DetectedToolchain(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "6.0.428", 6)])));
+        var reason = doc.RootElement.GetProperty("developer").GetProperty("csharpUnavailableReason").GetString();
+        Assert.Contains(".NET SDK 8 or newer", reason);
+        Assert.Contains("6.0.428", reason);
+    }
+
+    [Fact]
     public void Checks_list_carries_kind_start_scan_and_result()
     {
         var run = Guid.NewGuid();

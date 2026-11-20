@@ -308,6 +308,7 @@ public static class AgentExports
             {
                 busyWarning = DeveloperScoring.BusyPcWarning,
                 toolchains = (detectedToolchains ?? []).Select(t => new { language = t.Language.ToString(), name = V(t.DisplayName), version = V(t.Version) }).ToList(),
+                csharpUnavailableReason = T(CSharpUnavailableReason(detectedToolchains)),
                 antivirusComparison = lastAvComparison is null ? null : new
                 {
                     language = lastAvComparison.Language.ToString(),
@@ -320,6 +321,7 @@ public static class AgentExports
                     antivirusCostPercent = lastAvComparison.AntivirusCostPercent,
                     band = lastAvComparison.Band.ToString(),
                     note = T(lastAvComparison.Note),
+                    toolExitCode = lastAvComparison.ToolExitCode,
                 },
                 devDrivePrecheck = devDrivePrecheck is null ? null : new
                 {
@@ -343,6 +345,12 @@ public static class AgentExports
             }
             : null,
     };
+
+    private static string? CSharpUnavailableReason(IReadOnlyList<DetectedToolchain>? toolchains)
+    {
+        var csharp = toolchains?.FirstOrDefault(t => t.Language == DeveloperLanguage.CSharp);
+        return csharp is null ? null : DeveloperCSharpPin.UnsupportedSdkReason(csharp.Version, csharp.MajorVersion);
+    }
 
     private static object? Pass(BenchmarkRun? run) => run is null ? null : new
     {
@@ -372,6 +380,8 @@ public static class AgentExports
                     restoreSeconds = m.DeveloperBuild.RestoreSeconds,
                     score = m.DeveloperBuild.Score,
                     band = m.DeveloperBuild.Band.ToString(),
+                    note = T(m.DeveloperBuild.Note),
+                    toolExitCode = m.DeveloperBuild.ToolExitCode,
                 },
             };
         }).ToList(),

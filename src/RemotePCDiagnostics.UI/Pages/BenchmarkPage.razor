@@ -111,7 +111,7 @@
     </div>
 </details>
 
-@if (Bench.DetectedToolchains.Any(t => t.Language == DeveloperLanguage.CSharp))
+@if (Bench.IsKindAvailable(BenchmarkKind.DeveloperCSharp))
 {
     <section class="card" data-testid="bench-dev-comparisons">
         <div class="card-head"><strong>Developer comparisons (opt-in, one approval per run)</strong></div>
