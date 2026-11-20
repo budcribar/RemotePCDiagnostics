@@ -22,6 +22,7 @@ param(
     [string] $AgentEnrollmentKey = '',
     [string] $AgentConsent = '',
     [string] $IsccPath = '',
+    [string] $Compression = '',
     [string] $RbwvSourceRoot = '',
     [switch] $UseRbwvSource,
     [switch] $SkipPublish,
@@ -262,6 +263,9 @@ if (-not [string]::IsNullOrWhiteSpace($AgentEnrollmentKey)) {
 }
 if (-not [string]::IsNullOrWhiteSpace($AgentConsent)) {
     $IsccArgs += "/DAgentConsent=$AgentConsent"
+}
+if (-not [string]::IsNullOrWhiteSpace($Compression)) {
+    $IsccArgs += "/DCompression=$Compression"
 }
 
 $IsccArgs += $IssFile

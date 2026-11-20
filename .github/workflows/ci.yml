@@ -11,6 +11,11 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      testshop_only:
+        description: 'Development build: only build and smoke-test the TestShop installer (skips tests, the other packages and the release). A push to a branch other than main does the same when its commit message contains [testshop-only].'
+        required: false
+        type: boolean
+        default: false
       release_tag:
         description: 'Optional version tag to publish as a full GitHub Release (e.g. v1.2.0). Leave empty for rolling pre-release.'
         required: false
@@ -30,46 +35,32 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch or pull request cancels the older run there. Runs on main and on tags always finish.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+# The packages are built by separate jobs that run at the same time: build-test (build, verify, unit tests, prototypes),
+# installer (Setup.exe), testshop (TestShop bundle), agent (Agent EXE + MSI) and smoke (MSIX + Playwright). Each
+# publishes what it needs itself, which is faster than publishing once and handing the files around as artifacts.
+# TestShop-only runs (see the testshop_only input) skip every job but testshop.
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  PUBLISH_ARTIFACTS: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch') && 'true' || 'false' }}
+  TESTSHOP_ONLY: ${{ (inputs.testshop_only || (github.event_name == 'push' && github.ref != 'refs/heads/main' && contains(github.event.head_commit.message, '[testshop-only]'))) && 'true' || 'false' }}
+  # Full compression only for installers that get uploaded for a release; pull requests and TestShop-only runs use fast.
+  INSTALLER_COMPRESSION: ${{ (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch') && !(inputs.testshop_only || (github.event_name == 'push' && github.ref != 'refs/heads/main' && contains(github.event.head_commit.message, '[testshop-only]')))) && 'lzma2/ultra64' || 'lzma2/fast' }}
+
 jobs:
   service-workflow:
     name: Service workflow (simulated restarts)
+    if: ${{ !(inputs.testshop_only || (github.event_name == 'push' && github.ref != 'refs/heads/main' && contains(github.event.head_commit.message, '[testshop-only]'))) }}
     runs-on: windows-latest
     timeout-minutes: 10
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-      DOTNET_NOLOGO: "1"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-      - name: Ensure RemoteBlazorWebView packages
-        shell: pwsh
-        run: |
-          $pkgDir = Join-Path $env:GITHUB_WORKSPACE 'third_party/RemoteBlazorWebView/packages'
-          New-Item -ItemType Directory -Force $pkgDir | Out-Null
-          if (@(Get-ChildItem $pkgDir -Filter 'PeakSWC.RemoteBlazorWebView.RemoteComponents.*.nupkg' -ErrorAction SilentlyContinue).Count -eq 0) {
-            [xml]$props = Get-Content Directory.Build.props
-            $rbwvNode = $props.Project.PropertyGroup | ForEach-Object { $_['RbwvVersion'] } | Where-Object { $_ } | Select-Object -First 1
-            $rbwvVer = if ($rbwvNode -is [System.Xml.XmlElement]) { $rbwvNode.InnerText.Trim() } else { "$rbwvNode".Trim() }
-            $verLower = $rbwvVer.ToLowerInvariant()
-            $onNuGet = $false
-            try {
-              $resp = Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/peakswc.remoteblazorwebview.remotecomponents/$verLower/peakswc.remoteblazorwebview.remotecomponents.$verLower.nupkg" -Method Head -UseBasicParsing -TimeoutSec 10
-              $onNuGet = ($resp.StatusCode -eq 200)
-            } catch { $onNuGet = $false }
-            if ($onNuGet) {
-              "Using PeakSWC.RemoteBlazorWebView.RemoteComponents $rbwvVer from nuget.org."
-            } else {
-              $suffix = if ($rbwvVer -match '-(.+)$') { $Matches[1] } else { '' }
-              $srcRoot = Join-Path $env:RUNNER_TEMP 'rbwv-src/RemoteBlazorWebView'
-              git clone --branch net10 --depth 1 https://github.com/budcribar/RemoteBlazorWebView.git $srcRoot
-              $packArgs = @('pack', "$srcRoot/src/RemoteBlazorWebView.RemoteComponents", '-c', 'Release', '-p:GeneratePackageOnBuild=false', '-o', $pkgDir)
-              if ($suffix) { $packArgs += "-p:VersionSuffix=$suffix" }
-              & dotnet @packArgs
-              if ($LASTEXITCODE -ne 0) { throw "Packing RemoteComponents failed ($LASTEXITCODE)" }
-            }
-          }
+      - uses: ./.github/actions/setup-rpcd
       - name: Test workflow, saved-state resume, and client reports
         run: dotnet test --project tests/RemotePCDiagnostics.Tests/RemotePCDiagnostics.Tests.csproj -c Release --filter-class "RemotePCDiagnostics.Tests.WorkflowTests" --report-xunit-trx --report-xunit-trx-filename workflow.trx --results-directory artifacts/workflow-tests
       - name: Verify workflow tests ran
@@ -89,67 +80,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
-  build-test-smoke:
+  build-test:
+    name: Build, verify and unit tests
+    if: ${{ !(inputs.testshop_only || (github.event_name == 'push' && github.ref != 'refs/heads/main' && contains(github.event.head_commit.message, '[testshop-only]'))) }}
     runs-on: windows-latest
-    timeout-minutes: 35
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-      DOTNET_NOLOGO: "1"
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Ensure RemoteBlazorWebView packages
-        shell: pwsh
-        run: |
-          $pkgDir = Join-Path $env:GITHUB_WORKSPACE 'third_party/RemoteBlazorWebView/packages'
-          New-Item -ItemType Directory -Force $pkgDir | Out-Null
-          if (@(Get-ChildItem $pkgDir -Filter 'PeakSWC.RemoteBlazorWebView.Wpf.*.nupkg' -ErrorAction SilentlyContinue).Count -eq 0) {
-            [xml]$props = Get-Content Directory.Build.props
-            $rbwvNode = $props.Project.PropertyGroup | ForEach-Object { $_['RbwvVersion'] } | Where-Object { $_ } | Select-Object -First 1
-            $rbwvVer = if ($rbwvNode -is [System.Xml.XmlElement]) { $rbwvNode.InnerText.Trim() } else { "$rbwvNode".Trim() }
-            $verLower = $rbwvVer.ToLowerInvariant()
-            $onNuGet = $true
-            foreach ($pkg in 'peakswc.remoteblazorwebview.remotecomponents', 'peakswc.remoteblazorwebview.wpf', 'peakswc.remotewebview', 'peakswc.remotewebviewservice.lib') {
-              try {
-                $resp = Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/$pkg/$verLower/$pkg.$verLower.nupkg" -Method Head -UseBasicParsing -TimeoutSec 10
-                if ($resp.StatusCode -ne 200) { $onNuGet = $false; break }
-              } catch { $onNuGet = $false; break }
-            }
-            if ($onNuGet) {
-              "Using PeakSWC.RemoteBlazorWebView packages ($rbwvVer) from nuget.org."
-            } else {
-              $suffix = if ($rbwvVer -match '-(.+)$') { $Matches[1] } else { '' }
-              $work = Join-Path $env:RUNNER_TEMP 'rbwv-build'
-              $srcRoot = Join-Path $work 'RemoteBlazorWebView'
-              $tutorialStub = Join-Path $work 'RemoteBlazorWebViewTutorial'
-              New-Item -ItemType Directory -Force $tutorialStub | Out-Null
-              Set-Content -Path (Join-Path $tutorialStub 'README.md') -Value '# RemoteBlazorWebView'
-              git clone --branch net10 --depth 1 https://github.com/budcribar/RemoteBlazorWebView.git $srcRoot
-              Push-Location (Join-Path $srcRoot 'src/RemoteWebView.Blazor.JS')
-              try {
-                # Enable corepack yarn for Web.JS submodule build invoked by build:production, or use npm + webpack.
-                corepack enable
-                yarn install
-                if ($LASTEXITCODE -ne 0) { throw "yarn install failed ($LASTEXITCODE)" }
-                npm run build:production
-                if ($LASTEXITCODE -ne 0) { throw "JS bundle build failed ($LASTEXITCODE)" }
-              } finally { Pop-Location }
-              foreach ($p in 'RemoteWebViewService.Lib', 'RemoteWebView', 'RemoteBlazorWebView.RemoteComponents', 'RemoteBlazorWebView.Wpf') {
-                $packArgs = @('pack', "$srcRoot/src/$p", '-c', 'Release', '-p:GeneratePackageOnBuild=false', '-o', $pkgDir)
-                if ($suffix) { $packArgs += "-p:VersionSuffix=$suffix" }
-                & dotnet @packArgs
-                if ($LASTEXITCODE -ne 0) { throw "dotnet pack $p failed ($LASTEXITCODE)" }
-              }
-            }
-          }
+      - uses: ./.github/actions/setup-rpcd
 
       - name: Restore
         run: dotnet restore RemotePCDiagnostics.sln
@@ -220,6 +158,74 @@ jobs:
       - name: Unit tests
         run: dotnet test --solution RemotePCDiagnostics.sln -c Release --no-build --report-xunit-trx --results-directory artifacts/test-results
 
+      - name: Report failed tests as annotations
+        if: failure()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path artifacts/test-results)) { return }
+          Get-ChildItem artifacts/test-results -Recurse -Filter *.trx | ForEach-Object {
+            [xml]$x = Get-Content $_.FullName
+            $c = $x.TestRun.ResultSummary.Counters
+            Write-Output "::notice title=Unit tests::total=$($c.total) passed=$($c.passed) failed=$($c.failed)"
+            $x.TestRun.Results.UnitTestResult | Where-Object { $_.outcome -ne 'Passed' } | Select-Object -First 40 | ForEach-Object {
+              $m = ([string]$_.Output.ErrorInfo.Message) -replace '\r?\n', ' '
+              if ($m.Length -gt 300) { $m = $m.Substring(0, 300) }
+              $t = ([string]$_.testName).Replace('%', '%25').Replace(':', '%3A').Replace(',', '%2C')
+              Write-Output "::error title=$t::$($m.Replace('%', '%25'))"
+            }
+          }
+
+      # The standalone prototypes live outside RemotePCDiagnostics.sln (tools/prototypes/Prototypes.slnx); build them so they keep compiling.
+      - name: Build prototypes
+        run: dotnet build tools/prototypes/Prototypes.slnx -c Release
+
+      - name: Publish OutlookBenchmark (single exe)
+        shell: pwsh
+        run: |
+          dotnet publish tools/prototypes/OutlookBenchmark/OutlookBenchmark.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts/OutlookBenchmark
+          $exe = 'artifacts/OutlookBenchmark/OutlookBenchmark.exe'
+          if (-not (Test-Path $exe)) { throw 'OutlookBenchmark.exe was not published' }
+          # Smoke run on the runner (no Outlook there): inventory only, must exit 0 and write results.
+          & $exe --skip-start-test --no-reference --yes --out artifacts/OutlookBenchmark/smoke-results
+          if ($LASTEXITCODE -ne 0) { throw "OutlookBenchmark exited $LASTEXITCODE" }
+          if (-not (Test-Path artifacts/OutlookBenchmark/smoke-results/results.csv)) { throw 'results.csv missing' }
+          Get-Content artifacts/OutlookBenchmark/smoke-results/results.csv
+
+      - name: Publish network history prototype and test demo export
+        shell: pwsh
+        run: |
+          dotnet publish tools/prototypes/NetworkUsagePrototype/NetworkUsagePrototype.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts/NetworkUsagePrototype
+          if ($LASTEXITCODE -ne 0) { throw 'Network usage prototype publish failed' }
+          Copy-Item tools/prototypes/NetworkUsagePrototype/README.md artifacts/NetworkUsagePrototype/README.md
+          & artifacts/NetworkUsagePrototype/NetworkUsagePrototype.exe --demo --out artifacts/network-demo
+          if ($LASTEXITCODE -ne 0) { throw 'Network usage demo export failed' }
+          $report = Get-Content artifacts/network-demo/network-usage.json -Raw | ConvertFrom-Json
+          if ($report.Entries.Count -ne 1 -or $report.Source -notlike 'DEMO*') { throw 'Unexpected demo report' }
+          if (-not (Test-Path artifacts/network-demo/network-usage.html)) { throw 'HTML report missing' }
+
+      # Logs and test results only (no binaries), and only when the job failed.
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-build-test
+          path: |
+            artifacts/*.csv
+            artifacts/test-results/**/*.trx
+            artifacts/OutlookBenchmark/smoke-results/
+            artifacts/network-demo/
+          if-no-files-found: warn
+          retention-days: 1
+
+  installer:
+    name: Windows installer (Setup.exe)
+    if: ${{ !(inputs.testshop_only || (github.event_name == 'push' && github.ref != 'refs/heads/main' && contains(github.event.head_commit.message, '[testshop-only]'))) }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rpcd
+
       - name: Ensure Inno Setup 6
         shell: pwsh
         run: |
@@ -231,7 +237,7 @@ jobs:
       - name: Build and smoke-test Windows installer (Inno Setup)
         shell: pwsh
         run: |
-          pwsh -NoProfile -File installer/Build-Installer.ps1
+          pwsh -NoProfile -File installer/Build-Installer.ps1 -Compression $env:INSTALLER_COMPRESSION
           if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 failed ($LASTEXITCODE)" }
 
           $setup = Get-ChildItem artifacts/installer -Filter 'RemotePCDiagnostics-Setup-*-win-x64.exe' | Select-Object -First 1
@@ -266,7 +272,7 @@ jobs:
           "Installer silent install, package check, and silent uninstall verified."
 
       - name: Upload Windows installer
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch'
+        if: env.PUBLISH_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: RemotePCDiagnostics-Setup-win-x64
@@ -276,35 +282,161 @@ jobs:
           if-no-files-found: error
           retention-days: 5
 
-      - name: Build Microsoft Store MSIX package
-        shell: pwsh
-        env:
-          INPUT_MSIX_IDENTITY_NAME: ${{ inputs.msix_identity_name || vars.MSIX_IDENTITY_NAME }}
-          INPUT_MSIX_PUBLISHER: ${{ inputs.msix_publisher || vars.MSIX_PUBLISHER }}
-        run: |
-          $msixArgs = @('-NoProfile', '-File', 'msix/Build-Msix.ps1', '-SkipPublish')
-          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_MSIX_IDENTITY_NAME)) {
-            $msixArgs += @('-IdentityName', $env:INPUT_MSIX_IDENTITY_NAME.Trim())
-          }
-          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_MSIX_PUBLISHER)) {
-            $msixArgs += @('-Publisher', $env:INPUT_MSIX_PUBLISHER.Trim())
-          }
-          pwsh @msixArgs
-          if ($LASTEXITCODE -ne 0) { throw "Build-Msix.ps1 failed ($LASTEXITCODE)" }
-          $msix = Get-ChildItem artifacts/msix -Filter 'RemotePCDiagnostics-*-win-x64.msix' | Select-Object -First 1
-          if (-not $msix) { throw 'MSIX package was not produced' }
-          "Built MSIX: $($msix.FullName) ($([Math]::Round($msix.Length / 1MB, 2)) MB)"
-
-      - name: Upload Microsoft Store MSIX package
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch'
+      # Logs and test results only (no binaries), and only when the job failed.
+      - name: Upload logs
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: RemotePCDiagnostics-Msix-win-x64
+          name: ci-logs-installer
           path: |
-            artifacts/msix/RemotePCDiagnostics-*-win-x64.msix
-            artifacts/msix/RemotePCDiagnostics-*-win-x64.msix.sha256
+            artifacts/*.log
+            artifacts/installer/*.log
+          if-no-files-found: warn
+          retention-days: 1
+
+  testshop:
+    name: TestShop demo bundle (RPCD + RPCDA)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rpcd
+
+      - name: Ensure Inno Setup 6
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+
+      # Same publish command as the agent job. The agent job tests that EXE on its own; this one only bundles it,
+      # so the two jobs can run at the same time.
+      - name: Publish Agent EXE for the bundle
+        shell: pwsh
+        run: |
+          [xml]$props = Get-Content Directory.Build.props
+          $ver = ($props.Project.PropertyGroup | ForEach-Object { $_['Version'] } | Where-Object { $_ } | Select-Object -First 1).InnerText.Trim()
+          $pubDir = Join-Path $env:RUNNER_TEMP 'agent-publish'
+          dotnet publish src/RemotePCDiagnostics.Agent/RemotePCDiagnostics.Agent.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishReadyToRun=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o $pubDir
+          if ($LASTEXITCODE -ne 0) { throw "Agent publish failed ($LASTEXITCODE)" }
+          $agentOutDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts/agent'
+          New-Item -ItemType Directory -Force $agentOutDir | Out-Null
+          Copy-Item -LiteralPath (Join-Path $pubDir 'RemotePCDiagnostics.Agent.exe') -Destination (Join-Path $agentOutDir "RemotePCDiagnostics.Agent-$ver-win-x64.exe") -Force
+
+      - name: Publish and verify the app
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File installer/Build-Installer.ps1 -StageOnly
+          if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 -StageOnly failed ($LASTEXITCODE)" }
+
+      - name: Build and smoke-test TestShop demo bundle installer (RPCD + RPCDA)
+        shell: pwsh
+        run: |
+          [xml]$props = Get-Content Directory.Build.props
+          $ver = ($props.Project.PropertyGroup | ForEach-Object { $_['Version'] } | Where-Object { $_ } | Select-Object -First 1).InnerText.Trim()
+          $agentExe = Join-Path $env:GITHUB_WORKSPACE "artifacts/agent/RemotePCDiagnostics.Agent-$ver-win-x64.exe"
+          if (-not (Test-Path -LiteralPath $agentExe)) { throw "Agent EXE missing for bundle: $agentExe" }
+
+          $bundleBaseName = "RemotePCDiagnostics-TestShop-Setup-$ver-win-x64"
+          pwsh -NoProfile -File installer/Build-Installer.ps1 `
+            -Version $ver `
+            -SkipPublish `
+            -SkipVerify `
+            -Compression $env:INSTALLER_COMPRESSION `
+            -OutputBaseName $bundleBaseName `
+            -RemoteServerUrl 'https://server.remoteblazorwebview.com:34544' `
+            -ShopGroup 'test-shop' `
+            -AgentExePath $agentExe `
+            -AgentServerUrl 'https://server.remoteblazorwebview.com:34544' `
+            -AgentEnrollmentKey 'test-shop' `
+            -AgentConsent 'unattended'
+          if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 for TestShop bundle failed ($LASTEXITCODE)" }
+
+          $bundleExe = Join-Path $env:GITHUB_WORKSPACE "artifacts/installer/$bundleBaseName.exe"
+          if (-not (Test-Path -LiteralPath $bundleExe)) { throw "TestShop bundle missing: $bundleExe" }
+          if (-not (Test-Path -LiteralPath "$bundleExe.sha256")) { throw "TestShop bundle sha256 missing: $bundleExe.sha256" }
+
+          $installDir = Join-Path $env:RUNNER_TEMP 'rpd-testshop-bundle'
+          if (Test-Path -LiteralPath $installDir) { Remove-Item -LiteralPath $installDir -Recurse -Force }
+          $installLog = Join-Path $env:GITHUB_WORKSPACE 'artifacts/testshop-bundle-install.log'
+          # The bundle is built for the public relay with unattended consent. Installing it as built would enrol this runner
+          # there as a persistent, unattended computer in the test shop, so the smoke install points the agent at a
+          # loopback address (nothing listens on port 9), like the MSI smoke test above.
+          $smokeServer = 'http://127.0.0.1:9'
+          $installProc = Start-Process -FilePath $bundleExe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SKIPWEBVIEW2 /AGENTSERVER=$smokeServer /DIR=`"$installDir`" /LOG=`"$installLog`"" -Wait -PassThru
+          if ($installProc.ExitCode -ne 0) {
+            if (Test-Path $installLog) { Get-Content $installLog -Tail 120 | Write-Host }
+            throw "TestShop bundle silent install failed with exit code $($installProc.ExitCode)"
+          }
+
+          $installedHost = Join-Path $installDir 'RemotePCDiagnostics.Host.exe'
+          try {
+            if (-not (Test-Path -LiteralPath $installedHost)) { throw "TestShop bundle did not install $installedHost" }
+            $installedAgent = 'C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe'
+            $installedCfg = 'C:\ProgramData\RemotePCDiagnostics\agent.json'
+            if (-not (Test-Path -LiteralPath $installedAgent)) { throw "TestShop bundle did not install $installedAgent" }
+            if (-not (Test-Path -LiteralPath $installedCfg)) { throw "TestShop bundle did not write $installedCfg" }
+            $cfgJson = Get-Content -LiteralPath $installedCfg -Raw | ConvertFrom-Json
+            if ($cfgJson.key -ne 'test-shop' -or $cfgJson.group -ne 'test-shop' -or $cfgJson.consent -ne 'unattended' -or $cfgJson.lifetime -ne 'persistent' -or $cfgJson.server -ne $smokeServer) {
+              throw "Unexpected agent.json written by TestShop bundle: $(Get-Content -LiteralPath $installedCfg -Raw)"
+            }
+            $svc = Get-Service -Name 'RemotePCDiagnosticsAgent' -ErrorAction SilentlyContinue
+            if ($null -eq $svc -or $svc.Status -ne 'Running') {
+              throw "Expected RemotePCDiagnosticsAgent service Running after TestShop bundle install, got: $($svc.Status)"
+            }
+          } finally {
+            $uninstaller = Join-Path $installDir 'unins000.exe'
+            if (Test-Path -LiteralPath $uninstaller) {
+              $uninstallProc = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru
+              if ($uninstallProc.ExitCode -ne 0) { throw "TestShop bundle silent uninstall failed with exit code $($uninstallProc.ExitCode)" }
+            }
+          }
+
+          for ($i = 0; $i -lt 20 -and (Test-Path -LiteralPath $installedHost); $i++) { Start-Sleep -Milliseconds 500 }
+          if (Test-Path -LiteralPath $installedHost) { throw 'TestShop bundle uninstall left RemotePCDiagnostics.Host.exe behind' }
+          if (Test-Path -LiteralPath 'C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe') {
+            throw 'TestShop bundle uninstall left C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe behind'
+          }
+          if (Test-Path -LiteralPath 'C:\ProgramData\RemotePCDiagnostics\agent.json') {
+            throw 'TestShop bundle uninstall left C:\ProgramData\RemotePCDiagnostics\agent.json behind'
+          }
+          if ($null -ne (Get-Service -Name 'RemotePCDiagnosticsAgent' -ErrorAction SilentlyContinue)) {
+            throw 'TestShop bundle uninstall left RemotePCDiagnosticsAgent service behind'
+          }
+          "TestShop demo bundle install (RPCD + RPCDA) + service verification + clean uninstall passed."
+
+      - name: Upload TestShop demo bundle installer
+        if: env.PUBLISH_ARTIFACTS == 'true' || env.TESTSHOP_ONLY == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemotePCDiagnostics-TestShop-Setup-win-x64
+          path: |
+            artifacts/installer/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe
+            artifacts/installer/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe.sha256
           if-no-files-found: error
           retention-days: 5
+
+      # Logs and test results only (no binaries), and only when the job failed.
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-testshop
+          path: |
+            artifacts/*.log
+            artifacts/installer/*.log
+          if-no-files-found: warn
+          retention-days: 1
+
+  agent:
+    name: MSP Fleet Agent (EXE + MSI)
+    if: ${{ !(inputs.testshop_only || (github.event_name == 'push' && github.ref != 'refs/heads/main' && contains(github.event.head_commit.message, '[testshop-only]'))) }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rpcd
 
       - name: Publish and smoke-test standalone MSP Fleet Agent (RemotePCDiagnostics.Agent)
         shell: pwsh
@@ -407,7 +539,7 @@ jobs:
           "MSI install + tokenized filename enrollment + clean uninstall smoke-test passed."
 
       - name: Upload standalone MSP Fleet Agent
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch'
+        if: env.PUBLISH_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: RemotePCDiagnostics-Agent-win-x64
@@ -419,136 +551,55 @@ jobs:
           if-no-files-found: error
           retention-days: 5
 
-      - name: Build and smoke-test TestShop demo bundle installer (RPCD + RPCDA)
+  smoke:
+    name: MSIX and Playwright smoke test
+    if: ${{ !(inputs.testshop_only || (github.event_name == 'push' && github.ref != 'refs/heads/main' && contains(github.event.head_commit.message, '[testshop-only]'))) }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: ./.github/actions/setup-rpcd
+
+      - name: Publish and verify the app
         shell: pwsh
         run: |
-          [xml]$props = Get-Content Directory.Build.props
-          $ver = ($props.Project.PropertyGroup | ForEach-Object { $_['Version'] } | Where-Object { $_ } | Select-Object -First 1).InnerText.Trim()
-          $agentExe = Join-Path $env:GITHUB_WORKSPACE "artifacts/agent/RemotePCDiagnostics.Agent-$ver-win-x64.exe"
-          if (-not (Test-Path -LiteralPath $agentExe)) { throw "Agent EXE missing for bundle: $agentExe" }
+          pwsh -NoProfile -File installer/Build-Installer.ps1 -StageOnly
+          if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 -StageOnly failed ($LASTEXITCODE)" }
 
-          $bundleBaseName = "RemotePCDiagnostics-TestShop-Setup-$ver-win-x64"
-          pwsh -NoProfile -File installer/Build-Installer.ps1 `
-            -Version $ver `
-            -SkipPublish `
-            -SkipVerify `
-            -OutputBaseName $bundleBaseName `
-            -RemoteServerUrl 'https://server.remoteblazorwebview.com:34544' `
-            -ShopGroup 'test-shop' `
-            -AgentExePath $agentExe `
-            -AgentServerUrl 'https://server.remoteblazorwebview.com:34544' `
-            -AgentEnrollmentKey 'test-shop' `
-            -AgentConsent 'unattended'
-          if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 for TestShop bundle failed ($LASTEXITCODE)" }
-
-          $bundleExe = Join-Path $env:GITHUB_WORKSPACE "artifacts/installer/$bundleBaseName.exe"
-          if (-not (Test-Path -LiteralPath $bundleExe)) { throw "TestShop bundle missing: $bundleExe" }
-          if (-not (Test-Path -LiteralPath "$bundleExe.sha256")) { throw "TestShop bundle sha256 missing: $bundleExe.sha256" }
-
-          $installDir = Join-Path $env:RUNNER_TEMP 'rpd-testshop-bundle'
-          if (Test-Path -LiteralPath $installDir) { Remove-Item -LiteralPath $installDir -Recurse -Force }
-          $installLog = Join-Path $env:GITHUB_WORKSPACE 'artifacts/testshop-bundle-install.log'
-          # The bundle is built for the public relay with unattended consent. Installing it as built would enrol this runner
-          # there as a persistent, unattended computer in the test shop, so the smoke install points the agent at a
-          # loopback address (nothing listens on port 9), like the MSI smoke test above.
-          $smokeServer = 'http://127.0.0.1:9'
-          $installProc = Start-Process -FilePath $bundleExe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SKIPWEBVIEW2 /AGENTSERVER=$smokeServer /DIR=`"$installDir`" /LOG=`"$installLog`"" -Wait -PassThru
-          if ($installProc.ExitCode -ne 0) {
-            if (Test-Path $installLog) { Get-Content $installLog -Tail 120 | Write-Host }
-            throw "TestShop bundle silent install failed with exit code $($installProc.ExitCode)"
+      - name: Build Microsoft Store MSIX package
+        shell: pwsh
+        env:
+          INPUT_MSIX_IDENTITY_NAME: ${{ inputs.msix_identity_name || vars.MSIX_IDENTITY_NAME }}
+          INPUT_MSIX_PUBLISHER: ${{ inputs.msix_publisher || vars.MSIX_PUBLISHER }}
+        run: |
+          $msixArgs = @('-NoProfile', '-File', 'msix/Build-Msix.ps1', '-SkipPublish')
+          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_MSIX_IDENTITY_NAME)) {
+            $msixArgs += @('-IdentityName', $env:INPUT_MSIX_IDENTITY_NAME.Trim())
           }
+          if (-not [string]::IsNullOrWhiteSpace($env:INPUT_MSIX_PUBLISHER)) {
+            $msixArgs += @('-Publisher', $env:INPUT_MSIX_PUBLISHER.Trim())
+          }
+          pwsh @msixArgs
+          if ($LASTEXITCODE -ne 0) { throw "Build-Msix.ps1 failed ($LASTEXITCODE)" }
+          $msix = Get-ChildItem artifacts/msix -Filter 'RemotePCDiagnostics-*-win-x64.msix' | Select-Object -First 1
+          if (-not $msix) { throw 'MSIX package was not produced' }
+          "Built MSIX: $($msix.FullName) ($([Math]::Round($msix.Length / 1MB, 2)) MB)"
 
-          $installedHost = Join-Path $installDir 'RemotePCDiagnostics.Host.exe'
-          try {
-            if (-not (Test-Path -LiteralPath $installedHost)) { throw "TestShop bundle did not install $installedHost" }
-            $installedAgent = 'C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe'
-            $installedCfg = 'C:\ProgramData\RemotePCDiagnostics\agent.json'
-            if (-not (Test-Path -LiteralPath $installedAgent)) { throw "TestShop bundle did not install $installedAgent" }
-            if (-not (Test-Path -LiteralPath $installedCfg)) { throw "TestShop bundle did not write $installedCfg" }
-            $cfgJson = Get-Content -LiteralPath $installedCfg -Raw | ConvertFrom-Json
-            if ($cfgJson.key -ne 'test-shop' -or $cfgJson.group -ne 'test-shop' -or $cfgJson.consent -ne 'unattended' -or $cfgJson.lifetime -ne 'persistent' -or $cfgJson.server -ne $smokeServer) {
-              throw "Unexpected agent.json written by TestShop bundle: $(Get-Content -LiteralPath $installedCfg -Raw)"
-            }
-            $svc = Get-Service -Name 'RemotePCDiagnosticsAgent' -ErrorAction SilentlyContinue
-            if ($null -eq $svc -or $svc.Status -ne 'Running') {
-              throw "Expected RemotePCDiagnosticsAgent service Running after TestShop bundle install, got: $($svc.Status)"
-            }
-          } finally {
-            $uninstaller = Join-Path $installDir 'unins000.exe'
-            if (Test-Path -LiteralPath $uninstaller) {
-              $uninstallProc = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru
-              if ($uninstallProc.ExitCode -ne 0) { throw "TestShop bundle silent uninstall failed with exit code $($uninstallProc.ExitCode)" }
-            }
-          }
-
-          for ($i = 0; $i -lt 20 -and (Test-Path -LiteralPath $installedHost); $i++) { Start-Sleep -Milliseconds 500 }
-          if (Test-Path -LiteralPath $installedHost) { throw 'TestShop bundle uninstall left RemotePCDiagnostics.Host.exe behind' }
-          if (Test-Path -LiteralPath 'C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe') {
-            throw 'TestShop bundle uninstall left C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe behind'
-          }
-          if (Test-Path -LiteralPath 'C:\ProgramData\RemotePCDiagnostics\agent.json') {
-            throw 'TestShop bundle uninstall left C:\ProgramData\RemotePCDiagnostics\agent.json behind'
-          }
-          if ($null -ne (Get-Service -Name 'RemotePCDiagnosticsAgent' -ErrorAction SilentlyContinue)) {
-            throw 'TestShop bundle uninstall left RemotePCDiagnosticsAgent service behind'
-          }
-          "TestShop demo bundle install (RPCD + RPCDA) + service verification + clean uninstall passed."
-
-      - name: Upload TestShop demo bundle installer
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch'
+      - name: Upload Microsoft Store MSIX package
+        if: env.PUBLISH_ARTIFACTS == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: RemotePCDiagnostics-TestShop-Setup-win-x64
+          name: RemotePCDiagnostics-Msix-win-x64
           path: |
-            artifacts/installer/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe
-            artifacts/installer/RemotePCDiagnostics-TestShop-Setup-*-win-x64.exe.sha256
+            artifacts/msix/RemotePCDiagnostics-*-win-x64.msix
+            artifacts/msix/RemotePCDiagnostics-*-win-x64.msix.sha256
           if-no-files-found: error
           retention-days: 5
-
-      # The standalone prototypes live outside RemotePCDiagnostics.sln (tools/prototypes/Prototypes.slnx); build them so they keep compiling.
-      - name: Build prototypes
-        run: dotnet build tools/prototypes/Prototypes.slnx -c Release
-
-      - name: Publish OutlookBenchmark (single exe)
-        shell: pwsh
-        run: |
-          dotnet publish tools/prototypes/OutlookBenchmark/OutlookBenchmark.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts/OutlookBenchmark
-          $exe = 'artifacts/OutlookBenchmark/OutlookBenchmark.exe'
-          if (-not (Test-Path $exe)) { throw 'OutlookBenchmark.exe was not published' }
-          # Smoke run on the runner (no Outlook there): inventory only, must exit 0 and write results.
-          & $exe --skip-start-test --no-reference --yes --out artifacts/OutlookBenchmark/smoke-results
-          if ($LASTEXITCODE -ne 0) { throw "OutlookBenchmark exited $LASTEXITCODE" }
-          if (-not (Test-Path artifacts/OutlookBenchmark/smoke-results/results.csv)) { throw 'results.csv missing' }
-          Get-Content artifacts/OutlookBenchmark/smoke-results/results.csv
-
-      - name: Publish network history prototype and test demo export
-        shell: pwsh
-        run: |
-          dotnet publish tools/prototypes/NetworkUsagePrototype/NetworkUsagePrototype.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o artifacts/NetworkUsagePrototype
-          if ($LASTEXITCODE -ne 0) { throw 'Network usage prototype publish failed' }
-          Copy-Item tools/prototypes/NetworkUsagePrototype/README.md artifacts/NetworkUsagePrototype/README.md
-          & artifacts/NetworkUsagePrototype/NetworkUsagePrototype.exe --demo --out artifacts/network-demo
-          if ($LASTEXITCODE -ne 0) { throw 'Network usage demo export failed' }
-          $report = Get-Content artifacts/network-demo/network-usage.json -Raw | ConvertFrom-Json
-          if ($report.Entries.Count -ne 1 -or $report.Source -notlike 'DEMO*') { throw 'Unexpected demo report' }
-          if (-not (Test-Path artifacts/network-demo/network-usage.html)) { throw 'HTML report missing' }
-
-      - name: Report failed tests as annotations
-        if: failure()
-        shell: pwsh
-        run: |
-          if (-not (Test-Path artifacts/test-results)) { return }
-          Get-ChildItem artifacts/test-results -Recurse -Filter *.trx | ForEach-Object {
-            [xml]$x = Get-Content $_.FullName
-            $c = $x.TestRun.ResultSummary.Counters
-            Write-Output "::notice title=Unit tests::total=$($c.total) passed=$($c.passed) failed=$($c.failed)"
-            $x.TestRun.Results.UnitTestResult | Where-Object { $_.outcome -ne 'Passed' } | Select-Object -First 40 | ForEach-Object {
-              $m = ([string]$_.Output.ErrorInfo.Message) -replace '\r?\n', ' '
-              if ($m.Length -gt 300) { $m = $m.Substring(0, 300) }
-              $t = ([string]$_.testName).Replace('%', '%25').Replace(':', '%3A').Replace(',', '%2C')
-              Write-Output "::error title=$t::$($m.Replace('%', '%25'))"
-            }
-          }
 
       - name: Install Playwright
         working-directory: tests/smoke
@@ -615,27 +666,24 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # Logs, test results and smoke screenshots only (no binaries or publish output), and only when the job failed.
-      - name: Upload artifacts
+      # Logs and test results only (no binaries), and only when the job failed.
+      - name: Upload logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-artifacts
+          name: ci-logs-smoke
           path: |
             artifacts/*.log
             artifacts/*.txt
             artifacts/*.png
-            artifacts/*.csv
-            artifacts/test-results/**/*.trx
-            artifacts/OutlookBenchmark/smoke-results/
-            artifacts/network-demo/
+            artifacts/installer/*.log
           if-no-files-found: warn
           retention-days: 1
 
   release:
     name: Publish GitHub release
-    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || inputs.release_tag != ''))
-    needs: [service-workflow, build-test-smoke]
+    if: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || inputs.release_tag != ''))) && !inputs.testshop_only }}
+    needs: [service-workflow, build-test, installer, testshop, agent, smoke]
     runs-on: ubuntu-latest
     concurrency:
       group: github-release
