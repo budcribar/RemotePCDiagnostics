@@ -128,6 +128,32 @@ if (-not $SkipPublish) {
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed with exit code $LASTEXITCODE"
     }
+
+    # Bundle pinned Speedometer 3.1 archive into benchmarks/speedometer-3.1.zip (included in both Inno Setup and MSIX).
+    $SpeedometerUrl = 'https://github.com/WebKit/Speedometer/archive/1386415be8fef2f6b6bbdbe1828872471c5d802a.zip'
+    $SpeedometerSha256 = 'E66DF431922FD35D027D4EFFF047843EB4FE0BFA05D37FE4487B483F7149F076'
+    $SpeedometerCacheDir = Join-Path $RepoRoot 'artifacts/cache'
+    $SpeedometerCacheZip = Join-Path $SpeedometerCacheDir 'speedometer-3.1.zip'
+    New-Item -ItemType Directory -Force -Path $SpeedometerCacheDir | Out-Null
+    $NeedDownload = $true
+    if (Test-Path -LiteralPath $SpeedometerCacheZip) {
+        $CachedHash = (Get-FileHash -LiteralPath $SpeedometerCacheZip -Algorithm SHA256).Hash
+        if ($CachedHash -eq $SpeedometerSha256) {
+            $NeedDownload = $false
+        }
+    }
+    if ($NeedDownload) {
+        Write-Host "Downloading pinned Speedometer 3.1 bundle ..." -ForegroundColor Cyan
+        Invoke-WebRequest -Uri $SpeedometerUrl -OutFile $SpeedometerCacheZip -UseBasicParsing
+        $DownloadedHash = (Get-FileHash -LiteralPath $SpeedometerCacheZip -Algorithm SHA256).Hash
+        if ($DownloadedHash -ne $SpeedometerSha256) {
+            Remove-Item -LiteralPath $SpeedometerCacheZip -Force -ErrorAction SilentlyContinue
+            throw "Speedometer 3.1 SHA-256 mismatch: expected $SpeedometerSha256, got $DownloadedHash"
+        }
+    }
+    $StageBenchDir = Join-Path $StageDir 'benchmarks'
+    New-Item -ItemType Directory -Force -Path $StageBenchDir | Out-Null
+    Copy-Item -LiteralPath $SpeedometerCacheZip -Destination (Join-Path $StageBenchDir 'speedometer-3.1.zip') -Force
 }
 
 $StageDir = (Resolve-Path -LiteralPath $StageDir).Path
@@ -153,6 +179,7 @@ $RequiredFiles = @(
     'tools/osquery/osqueryi.exe'
     'tools/HardeningKitty/HardeningKitty.psd1'
     'tools/HardeningKitty/HardeningKitty.psm1'
+    'benchmarks/speedometer-3.1.zip'
     'wwwroot/index.html'
 )
 

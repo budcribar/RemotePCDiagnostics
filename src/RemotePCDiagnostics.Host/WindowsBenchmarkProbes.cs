@@ -239,6 +239,7 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
 
         var (rootDir, error) = await SpeedometerPackage.EnsureAssetsAsync(
             downloadUrl: SpeedometerPackage.DefaultReleaseUrl,
+            expectedSha256: SpeedometerPackage.ExpectedSha256,
             ct: ct).ConfigureAwait(false);
         if (rootDir is null)
             return new(null, browser.Engine, browser.DisplayName, browser.Version, Note: error ?? "Speedometer 3 assets are not available.");

@@ -88,7 +88,9 @@ public static class SpeedometerPackage
 {
     public const string Version = "3.1";
     public const string BundleFileName = "speedometer-3.1.zip";
-    public const string DefaultReleaseUrl = "https://github.com/WebKit/Speedometer/archive/refs/tags/v3.1.zip";
+    /// <summary>Pinned commit on WebKit/Speedometer <c>release/3.1</c> (includes pre-built dist assets and BSD LICENSE).</summary>
+    public const string DefaultReleaseUrl = "https://github.com/WebKit/Speedometer/archive/1386415be8fef2f6b6bbdbe1828872471c5d802a.zip";
+    public const string ExpectedSha256 = "E66DF431922FD35D027D4EFFF047843EB4FE0BFA05D37FE4487B483F7149F076";
 
     public static string DefaultCacheDir() =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

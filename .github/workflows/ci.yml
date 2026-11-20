@@ -249,6 +249,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $installedUiHost)) { throw "Installed ModuleUiHost missing: $installedUiHost" }
           if (-not (Test-Path -LiteralPath (Join-Path $installDir 'modules'))) { throw 'modules folder was not created by installer' }
           if (-not (Test-Path -LiteralPath (Join-Path $installDir 'checks'))) { throw 'checks folder was not created by installer' }
+          if (-not (Test-Path -LiteralPath (Join-Path $installDir 'benchmarks/speedometer-3.1.zip'))) { throw 'benchmarks/speedometer-3.1.zip was not bundled by installer' }
 
           $env:RPD_LOG_FILE = Join-Path $env:GITHUB_WORKSPACE 'artifacts/installed-package-check.log'
           $verify = Start-Process -FilePath $installedHost -ArgumentList '--verify-package' -WorkingDirectory $installDir -WindowStyle Hidden -PassThru
