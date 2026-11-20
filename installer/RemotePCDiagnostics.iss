@@ -103,9 +103,11 @@ OutputBaseFilename={#OutputBaseName}
 Compression={#Compression}
 SolidCompression=yes
 ; Compress in 64 MB blocks on 4 threads (the GitHub runners have 4 cores). Single-threaded ultra64 took about 2.5 minutes
-; per installer; the blocks cost a little compression ratio.
+; per installer; the blocks cost a little compression ratio. ISCC is a 32-bit process and 4 ultra64 threads need more
+; memory than it can address ("Out of memory"), so compression runs in the separate 64-bit ISLZMA process.
 LZMANumBlockThreads=4
 LZMABlockSize=65536
+LZMAUseSeparateProcess=yes
 WizardStyle=modern
 WizardResizable=no
 WizardSizePercent=100,100
