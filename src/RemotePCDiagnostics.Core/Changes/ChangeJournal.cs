@@ -4,6 +4,8 @@ using System.Text.Json.Serialization;
 namespace RemotePCDiagnostics.Core.Changes;
 
 /// <summary>Kinds of reversible changes. Each record keeps what was there before, so "Undo all" can put it back.</summary>
+/// <remarks>Written by name everywhere (the journal file and the admin pipe), so adding a kind never shifts the others.</remarks>
+[JsonConverter(typeof(JsonStringEnumConverter<ChangeKind>))]
 public enum ChangeKind
 {
     StartupApp,          // Target = Run-key name; Previous = StartupApproved bytes (base64) or null (value absent)

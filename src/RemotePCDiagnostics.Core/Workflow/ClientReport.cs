@@ -261,7 +261,7 @@ public static class ClientReport
                 sb.Append("</ul>");
             }
             if (permanent.Count > 0) { sb.Append("<p>Permanent (can't be undone; for example, installed updates stay installed and deleted files can't be recovered):</p><ul>"); foreach (var x in permanent) sb.Append("<li>").Append(E(x)).Append("</li>"); sb.Append("</ul>"); }
-            sb.Append("<p>To put changes back, open Remote PC Diagnostics and click \"Undo all changes\" (History page), or run <code>RemotePCDiagnostics.Host.exe --undo-all</code> as administrator (add <code>--restart</code> to restart afterwards). Permanent changes are left as they are.")
+            sb.Append("<p>To put changes back, open Remote PC Diagnostics and click \"Undo all changes\" (History page), or run <code>RemotePCDiagnostics.Host.exe --undo-all</code> and approve the Agent's administrator prompt (add <code>--restart</code> to restart afterwards). Permanent changes are left as they are.")
               .Append(reinstall.Count > 0 ? " If an app can't be reinstalled automatically, undo says so and it can be reinstalled from the Microsoft Store by hand." : "").Append("</p>");
         }
         if (s.EarlierChanges > 0)

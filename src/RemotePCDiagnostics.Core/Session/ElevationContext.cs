@@ -330,6 +330,22 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     public Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default) =>
         ConnectedClient().ChangeSystemSettingAsync(setting, ct);
 
+    public Task<IReadOnlyList<RemotePCDiagnostics.Core.Changes.ChangeRecord>?> ReadChangeJournalAsync(CancellationToken ct = default)
+    {
+        AdminPipeClient? client;
+        lock (_stateLock)
+            client = _client;
+        return client is { IsConnected: true } ? client.ReadChangeJournalAsync(ct) : Task.FromResult<IReadOnlyList<RemotePCDiagnostics.Core.Changes.ChangeRecord>?>(null);
+    }
+
+    public Task<bool> RemoveJournalChangeAsync(Guid id, CancellationToken ct = default)
+    {
+        AdminPipeClient? client;
+        lock (_stateLock)
+            client = _client;
+        return client is { IsConnected: true } ? client.RemoveJournalChangeAsync(id, ct) : Task.FromResult(false);
+    }
+
     public Task<AdminPipeResponse> MachineTweakAsync(AdminPipeTweak tweak, CancellationToken ct = default) =>
         ConnectedClient().MachineTweakAsync(tweak, ct);
 

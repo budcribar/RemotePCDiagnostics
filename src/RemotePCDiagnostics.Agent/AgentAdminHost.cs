@@ -8,6 +8,7 @@ using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Plugins;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Workflow;
+using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Session;
 
@@ -160,7 +161,8 @@ internal static class AgentAdminHost
                     autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null,
                     moduleHost: new AgentModuleHost(AppContext.BaseDirectory, log),
                     adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null,
-                    machineTweaks: OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null);
+                    machineTweaks: OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null,
+                    changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log));
 
                 var serverTask = Task.Run(async () =>
                 {
@@ -266,7 +268,8 @@ internal static class AgentAdminHost
                         // The modules that ship with the app and need administrator run in a module host from the app's folder.
                         moduleHost: new AgentModuleHost(AppContext.BaseDirectory, log),
                         adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null,
-                        machineTweaks: OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null);
+                        machineTweaks: OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null,
+                        changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log));
 
                     await server.RunSingleSessionAsync(cts.Token).ConfigureAwait(false);
                     return ExitOk;

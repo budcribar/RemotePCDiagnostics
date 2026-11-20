@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Win32.SafeHandles;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Plugins;
 using RemotePCDiagnostics.Core.Security;
@@ -93,6 +94,15 @@ public interface IElevatedCommandBridge
     /// </summary>
     Task<ProcessResult> RunAgentScriptAsync(AdminPipeScript script, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine = null) =>
         throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+
+    /// <summary>
+    /// The undo journal (%ProgramData%\RemotePCDiagnostics\state\changes.json, which only administrators can open), read by the
+    /// Agent. Null when it can't (not connected, or an Agent from before this existed).
+    /// </summary>
+    Task<IReadOnlyList<ChangeRecord>?> ReadChangeJournalAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ChangeRecord>?>(null);
+    /// <summary>Has the Agent take one undone change off the journal. False when it couldn't.</summary>
+    Task<bool> RemoveJournalChangeAsync(Guid id, CancellationToken ct = default) => Task.FromResult(false);
 }
 
 public static class AdminCommandAllowlist
@@ -284,7 +294,8 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("module")] string? Module = null,
     [property: JsonPropertyName("setting")] AdminPipeSetting? Setting = null,
     [property: JsonPropertyName("tweak")] AdminPipeTweak? Tweak = null,
-    [property: JsonPropertyName("script")] AdminPipeScript? Script = null);
+    [property: JsonPropertyName("script")] AdminPipeScript? Script = null,
+    [property: JsonPropertyName("changeId")] Guid? ChangeId = null);
 
 /// <summary>The automatic sign-in requests' arguments. The password is sent only to check it and to turn sign-in on.</summary>
 public sealed record AdminPipeAutoLogon(
@@ -310,7 +321,8 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("report")] string? Report = null,
     [property: JsonPropertyName("cancelled")] bool Cancelled = false,
     [property: JsonPropertyName("autoLogonBackup")] AutoLogonBackup? AutoLogonBackup = null,
-    [property: JsonPropertyName("modulePipe")] string? ModulePipe = null);
+    [property: JsonPropertyName("modulePipe")] string? ModulePipe = null,
+    [property: JsonPropertyName("changes")] IReadOnlyList<ChangeRecord>? Changes = null);
 
 /// <summary>
 /// Length-prefixed (4-byte little-endian int32 + UTF-8 JSON) framing over Named Pipes with zero third-party dependencies.
@@ -334,6 +346,9 @@ public static class AdminPipeFraming
     public const string OpModuleHost = "module_host";
     /// <summary>One <see cref="AdminPipeSetting"/> change (startup apps, services, hibernation, Fast Startup, DNS).</summary>
     public const string OpSystemSetting = "system_setting";
+    /// <summary>The undo journal, which only administrators can open: read it, and take an undone change off it.</summary>
+    public const string OpJournalList = "journal_list";
+    public const string OpJournalRemove = "journal_remove";
     /// <summary>One <see cref="AdminPipeTweak"/> change (HKLM policy values, extension blocklists, page file, Defender exclusions).</summary>
     public const string OpMachineTweak = "machine_tweak";
     /// <summary>One <see cref="AdminPipeScript"/>: the Agent builds and runs that script (Security fixes, updates, clean-up, sign-in tasks).</summary>
@@ -588,6 +603,20 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         }
     }
 
+    public async Task<IReadOnlyList<ChangeRecord>?> ReadChangeJournalAsync(CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpJournalList), ct).ConfigureAwait(false);
+        if (!r.Ok) _log.Warn($"[admin-pipe] Reading the undo journal failed: {r.Error}");
+        return r.Ok ? r.Changes ?? [] : null;
+    }
+
+    public async Task<bool> RemoveJournalChangeAsync(Guid id, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpJournalRemove, ChangeId: id), ct).ConfigureAwait(false);
+        if (!r.Ok) _log.Warn($"[admin-pipe] Removing {id} from the undo journal failed: {r.Error}");
+        return r.Ok;
+    }
+
     public async Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default)
     {
         var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpSystemSetting, Setting: setting), ct).ConfigureAwait(false);
@@ -770,7 +799,8 @@ public sealed class AdminPipeServer(
     IAdminSettingsBackend? adminSettings = null,
     IMachineTweaks? machineTweaks = null,
     DefenderPaths? defenderPaths = null,
-    string? appFolder = null) : IAsyncDisposable, IDisposable
+    string? appFolder = null,
+    Func<IChangeJournal>? changeJournal = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -1083,6 +1113,9 @@ public sealed class AdminPipeServer(
         if (string.Equals(request.Op, AdminPipeFraming.OpSystemSetting, StringComparison.OrdinalIgnoreCase))
             return await Task.Run(() => HandleSystemSetting(request), ct).ConfigureAwait(false);
 
+        if (request.Op is AdminPipeFraming.OpJournalList or AdminPipeFraming.OpJournalRemove)
+            return await Task.Run(() => HandleJournal(request), ct).ConfigureAwait(false);
+
         if (string.Equals(request.Op, AdminPipeFraming.OpMachineTweak, StringComparison.OrdinalIgnoreCase))
             return await Task.Run(() => HandleMachineTweakAsync(request, ct), ct).ConfigureAwait(false);
 
@@ -1207,6 +1240,35 @@ public sealed class AdminPipeServer(
             }
         });
         return Answer(true, pipe: pipeName);
+    }
+
+    /// <summary>
+    /// The undo journal for an app that isn't elevated: it reads the records and takes off the ones it undid. It can't add any, so
+    /// nothing the app sends can make a later undo put back something this app didn't change.
+    /// </summary>
+    private AdminPipeResponse HandleJournal(AdminPipeRequest request)
+    {
+        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true, IReadOnlyList<ChangeRecord>? changes = null) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            Error: error, Changes: changes);
+
+        if (changeJournal is null) return Answer(false, "The undo journal is not supported by this elevated helper.", allowed: false);
+        try
+        {
+            // Opened for each request: the app or another Agent may have changed the file since the last one.
+            var journal = changeJournal();
+            if (request.Op == AdminPipeFraming.OpJournalList) return Answer(true, changes: journal.All);
+            if (request.ChangeId is not { } id || id == Guid.Empty) return Answer(false, "Which change to remove wasn't given.");
+            if (journal.All.All(c => c.Id != id)) return Answer(true); // already gone
+            journal.Remove(id);
+            log.Info($"[admin-pipe-server] Undone change {id} taken off the undo journal.");
+            return Answer(true);
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] {request.Op} failed: {ex.Message}");
+            return Answer(false, ex.Message);
+        }
     }
 
     /// <summary>The installed app's folder (the Agent's own): where the sign-in tasks run the Agent launcher from.</summary>
