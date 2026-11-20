@@ -391,7 +391,35 @@ public class BenchmarkTests
         Assert.Contains("Stopped waiting", svc.Message);
     }
 
-    /// <summary>The state folder refuses the write, as it does for an app that is not running as administrator.</summary>
+    [Fact]
+    public void Reload_PicksUpTheSavedStateOnceTheAgentConnects()
+    {
+        var store = new MemStore();
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store);
+        Assert.False(svc.Reload()); // nothing to read yet (the Agent isn't connected)
+
+        store.State = new BenchmarkState(Fast, Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 30)), null, RunAfterOnStartup: true);
+        var changed = 0;
+        svc.Changed += () => changed++;
+        Assert.True(svc.Reload());
+        Assert.True(svc.AfterPendingRestart);
+        Assert.NotNull(svc.Before);
+        Assert.Equal(1, changed);
+    }
+
+    [Fact]
+    public async Task Reload_LeavesAWaitingBenchmarkAlone()
+    {
+        var store = new MemStore { State = new BenchmarkState(Fast, Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 30)), null, RunAfterOnStartup: true) };
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, t) => Task.Delay(Timeout.Infinite, t));
+        var resume = svc.ResumeAfterRestartAsync();
+        Assert.Equal(BenchmarkPhase.After, svc.Settling);
+        Assert.False(svc.Reload());
+        svc.Stop();
+        await resume;
+    }
+
+    /// <summary>The state folder refuses the write, as it does when the Agent isn't connected (the app never runs as administrator).</summary>
     private sealed class DeniedStore(BenchmarkState? onDisk = null) : IBenchmarkStore
     {
         public BenchmarkState? Load() => onDisk;

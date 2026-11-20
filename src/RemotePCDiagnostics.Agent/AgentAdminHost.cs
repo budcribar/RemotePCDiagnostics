@@ -164,7 +164,8 @@ internal static class AgentAdminHost
                     adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null,
                     machineTweaks: OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null,
                     changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
-                    stateFolder: ProtectedState.Folder());
+                    stateFolder: ProtectedState.Folder(),
+                    machineSetup: AgentMachineSetup.ForSignedInUser(log));
 
                 var serverTask = Task.Run(async () =>
                 {
@@ -272,7 +273,8 @@ internal static class AgentAdminHost
                         adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null,
                         machineTweaks: OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null,
                         changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
-                        stateFolder: ProtectedState.Folder());
+                        stateFolder: ProtectedState.Folder(),
+                        machineSetup: AgentMachineSetup.ForSignedInUser(log));
 
                     await server.RunSingleSessionAsync(cts.Token).ConfigureAwait(false);
                     return ExitOk;

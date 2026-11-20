@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Principal;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Workflow;
@@ -327,8 +328,25 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     public Task<IModuleHostConnection> StartModuleHostAsync(string module, CancellationToken ct = default) =>
         ConnectedClient().StartModuleHostAsync(module, ct);
 
+    public async Task<MachineSetupResult?> PrepareMachineAsync(CancellationToken ct = default)
+    {
+        AdminPipeClient? client;
+        lock (_stateLock)
+            client = _client;
+        return client is { IsConnected: true } ? await client.PrepareMachineAsync(ct).ConfigureAwait(false) : null;
+    }
+
     public Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default) =>
         ConnectedClient().ChangeSystemSettingAsync(setting, ct);
+
+    public Task<AppRemovalAgent.Result> RemoveAppxPackagesAsync(IReadOnlyList<RemovableAppx> apps, CancellationToken ct = default) =>
+        ConnectedClient().RemoveAppxPackagesAsync(apps, ct);
+
+    public Task<AppRemovalAgent.Result> RunUninstallerAsync(UninstallCommand command, CancellationToken ct = default) =>
+        ConnectedClient().RunUninstallerAsync(command, ct);
+
+    public Task<AppRemovalAgent.Result> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct = default) =>
+        ConnectedClient().SetScheduledTaskEnabledAsync(path, enabled, ct);
 
     public Task<IReadOnlyList<RemotePCDiagnostics.Core.Changes.ChangeRecord>?> ReadChangeJournalAsync(CancellationToken ct = default)
     {

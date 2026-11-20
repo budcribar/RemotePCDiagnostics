@@ -14,10 +14,12 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     private readonly object _gate = new();
     private BenchmarkState _state = LoadState(store);
 
-    private static BenchmarkState LoadState(IBenchmarkStore store)
+    private static BenchmarkState LoadState(IBenchmarkStore store) => LoadSaved(store) ?? new BenchmarkState(new BenchmarkSettings());
+
+    private static BenchmarkState? LoadSaved(IBenchmarkStore store)
     {
         var state = store.Load();
-        if (state is null) return new BenchmarkState(new BenchmarkSettings());
+        if (state is null) return null;
         if (state.Settings.SchemaVersion < BenchmarkSettings.CurrentSchemaVersion)
         {
             var added = Benchmarks.IdleResourceKinds.Concat(Benchmarks.ResourceSnapshotKinds);
@@ -77,6 +79,24 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     private void LogWarn(string m) => log.Warn("[benchmark] " + m);
     private void Raise() { try { Changed?.Invoke(); } catch (Exception ex) { LogWarn("Changed handler failed: " + ex.Message); } }
     private void Save(BenchmarkState s) { lock (_gate) _state = s; store.Save(s); Raise(); }
+
+    /// <summary>
+    /// Reads the saved state again: the app reads it through the Agent, which may connect after the service was made. Does nothing while a
+    /// benchmark runs or waits, or when nothing could be read. True when it read the state.
+    /// </summary>
+    public bool Reload()
+    {
+        if (Running is not null || Settling is not null) return false;
+        var saved = LoadSaved(store);
+        if (saved is null) return false;
+        lock (_gate)
+        {
+            if (Running is not null || Settling is not null) return false;
+            _state = saved;
+        }
+        Raise();
+        return true;
+    }
 
     public void UpdateSettings(BenchmarkSettings s)
     {
@@ -165,12 +185,12 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
 
     /// <summary>
     /// The restart must not go ahead when the request to run afterwards didn't reach the disk (the state folder is for administrators
-    /// only, so an app that is not running as administrator can't write it): the PC would restart and nothing would follow.
+    /// only, so the app saves it through the Agent, which may not be connected): the PC would restart and nothing would follow.
     /// </summary>
     private RemediationResult RestartNotSaved(BenchmarkState previous)
     {
         lock (_gate) _state = previous;
-        Message = "The PC was not restarted: the benchmark could not be saved to run afterwards. Close Remote PC Diagnostics, start it as administrator and try again.";
+        Message = "The PC was not restarted: the benchmark could not be saved to run afterwards. " + ElevationService.AdminRepairHint;
         LogWarn("restart refused: the pending benchmark could not be saved");
         Raise();
         return new(false, Message);

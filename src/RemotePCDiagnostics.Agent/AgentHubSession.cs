@@ -187,7 +187,8 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             machineTweaks: OperatingSystem.IsWindows() ? new RemotePCDiagnostics.Core.Session.WindowsMachineTweaks(pipeLog) : null,
             // The app isn't elevated: this service keeps its undo journal and its workflow and benchmark state.
             changeJournal: () => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(), pipeLog),
-            stateFolder: RemotePCDiagnostics.Core.ProtectedState.Folder());
+            stateFolder: RemotePCDiagnostics.Core.ProtectedState.Folder(),
+            machineSetup: AgentMachineSetup.ForService(pipeLog));
 
         _ = Task.Run(async () =>
         {

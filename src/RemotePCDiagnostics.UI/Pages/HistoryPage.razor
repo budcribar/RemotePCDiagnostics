@@ -138,7 +138,7 @@
 }
 @if (_result is { LegacyEntries: > 0 } pendingUpdate)
 {
-    <p class="notice" data-testid="history-update-pending">History update pending: @pendingUpdate.LegacyEntries older @(pendingUpdate.LegacyEntries == 1 ? "result is" : "results are") converted the next time the app starts as administrator.</p>
+    <p class="notice" data-testid="history-update-pending">History update pending: @pendingUpdate.LegacyEntries older @(pendingUpdate.LegacyEntries == 1 ? "result is" : "results are") converted once the Agent connects. Turn on Admin Repair Mode to update them now.</p>
 }
 @if (_result is null)
 {
@@ -148,7 +148,7 @@ else if (diagEntries.Count == 0 && _range == HistoryRange.All)
 {
     <p class="status-line" data-testid="history-empty">@(_result.Available
         ? "No results yet. Results appear here after a check or test finishes."
-        : "Windows Event Log isn't available or has no results yet; run the app once as administrator so it can register the event source.")</p>
+        : "Windows Event Log isn't available or has no results yet. Turn on Admin Repair Mode once so the Agent can register the app's event source.")</p>
 }
 else
 {

@@ -63,10 +63,34 @@ public partial class MainWindow : Window
         var elevation = provider.GetService<ElevationService>();
         if (elevation is not null)
         {
-            elevation.Changed += () =>
+            void OnElevationChanged()
             {
                 if (elevation.IsAdminHelperConnected)
                 {
+                    // Admin-only setup (state folder, Event Log source, history updates) first, then the workflow and benchmark state the
+                    // Agent keeps in that folder: an app started before the Agent connected read nothing, so read it now and carry on.
+                    _ = Task.Run(async () =>
+                    {
+                        await App.PrepareMachineThroughAgentAsync(elevation).ConfigureAwait(false);
+                        // Side by side: either can run for a while once it resumes.
+                        await Task.WhenAll(Task.Run(async () =>
+                        {
+                            try
+                            {
+                                var workflow = provider.GetRequiredService<RemotePCDiagnostics.Core.Workflow.WorkflowService>();
+                                if (workflow.Reload()) await workflow.ResumeAsync().ConfigureAwait(false);
+                            }
+                            catch (Exception ex) { Logger.Warn($"Workflow resume after the Agent connected failed: {ex.Message}"); }
+                        }), Task.Run(async () =>
+                        {
+                            try
+                            {
+                                var benchmarks = provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>();
+                                if (benchmarks.Reload()) await benchmarks.ResumeAfterRestartAsync().ConfigureAwait(false);
+                            }
+                            catch (Exception ex) { Logger.Warn($"Benchmark state reload through the Agent failed: {ex.Message}"); }
+                        })).ConfigureAwait(false);
+                    });
                     if (provider.GetService<ISensorProvider>() is LhmSensorProvider lhm)
                     {
                         lhm.Reset();
@@ -86,18 +110,10 @@ public partial class MainWindow : Window
                             Logger.Warn($"Sensors refresh on elevation failed: {ex.Message}");
                         }
                     });
-                    // The Agent keeps the workflow's state: an app started before it connected read nothing, so read it now and carry on.
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            var workflow = provider.GetRequiredService<RemotePCDiagnostics.Core.Workflow.WorkflowService>();
-                            if (workflow.Reload()) await workflow.ResumeAsync().ConfigureAwait(false);
-                        }
-                        catch (Exception ex) { Logger.Warn($"Workflow resume after the Agent connected failed: {ex.Message}"); }
-                    });
                 }
-            };
+            }
+            elevation.Changed += OnElevationChanged;
+            if (elevation.IsAdminHelperConnected) OnElevationChanged(); // connected before this subscribed
         }
         Resources.Add("services", provider);
         var fullscreenService = provider.GetService<IFullscreenService>();

@@ -219,7 +219,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 if (taskState == ScheduledTaskAllowlist.Missing) return Ok("The task no longer exists (it was removed with its app); nothing to turn back on.");
                 if (ScheduledTaskAllowlist.IsEnabledState(taskState)) return Ok("The task is already on.");
                 return ScheduledTaskAllowlist.IsEnabledState(await memory.SetScheduledTaskEnabledAsync(c.Target, true, ct).ConfigureAwait(false))
-                    ? Ok("Scheduled task turned back on.") : Fail("Windows didn't allow turning the task back on (administrator rights needed).");
+                    ? Ok("Scheduled task turned back on.") : Fail("The task wasn't turned back on. " + ElevationService.AdminRepairHint);
 
             case ChangeKind.PageFile:
                 if (memory is null || c.Previous is null) return Fail("The original page file size wasn't recorded.");

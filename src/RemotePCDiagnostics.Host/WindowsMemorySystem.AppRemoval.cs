@@ -4,13 +4,15 @@ using System.IO;
 using Microsoft.Win32;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Optimizations;
+using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Host;
 
 /// <summary>
 /// #3 / #8 / #10 app removal: detection with registry reads only (installed and provisioned Store packages, Uninstall entries, scheduled
 /// task tree, ContentDeliveryManager / GameDVR values). Package sizes are measured once per package version and cached for the app's lifetime.
-/// Removal runs only allowlisted packages, programs and tasks (<see cref="AppRemoval"/>, <see cref="ScheduledTaskAllowlist"/>).
+/// Removal runs only allowlisted packages, programs and tasks (<see cref="AppRemoval"/>, <see cref="ScheduledTaskAllowlist"/>), and it's done
+/// by the Agent (<see cref="AppRemovalAgent"/>), since it needs administrator rights.
 /// </summary>
 public sealed partial class WindowsMemorySystem
 {
@@ -152,52 +154,37 @@ public sealed partial class WindowsMemorySystem
         return list;
     }
 
+    // Removing packages for every account, running uninstallers and changing system tasks need administrator rights: the Agent does them
+    // (AppRemovalAgent, over the admin pipe), and checks each request against the same allowlists. The app never runs as administrator.
+    // The call itself isn't cancelled (a half-read answer would break the pipe); a cancel stops waiting and leaves the Agent to finish.
+
     public async Task<IReadOnlyList<string>?> RemoveAppxPackagesAsync(IReadOnlyList<RemovableAppx> apps, CancellationToken ct)
     {
         if (apps.Count == 0 || apps.Any(a => AppRemoval.FindPackage(a.Name, a.PublisherId) != a)) { Log("Refused: package not on the allowlist"); return null; }
-        var r = await RunPowerShellAsync(AppRemoval.RemoveScript(apps), ct, TimeSpan.FromMinutes(10)).ConfigureAwait(false);
-        var left = AppRemoval.ParseLeft(r.Output);
-        Log($"Remove {string.Join(", ", apps.Select(a => a.FamilyName))}: exit={r.ExitCode} left=[{(left is null ? "?" : string.Join(", ", left))}] err={r.Error.Trim()}");
-        return left;
+        var r = await AskAgentAsync("remove " + string.Join(", ", apps.Select(a => a.FamilyName)), b => b.RemoveAppxPackagesAsync(apps, CancellationToken.None), ct).ConfigureAwait(false);
+        if (r is null) return null;
+        Log($"Remove {string.Join(", ", apps.Select(a => a.FamilyName))} (Agent): ok={r.Ok} exit={r.ExitCode} left=[{(r.Left is null ? "?" : string.Join(", ", r.Left))}] {r.Error}");
+        return r.Left;
     }
 
     public async Task<ActionOutcome> RunUninstallerAsync(UninstallCommand command, CancellationToken ct)
     {
         if (!AppRemoval.IsAllowedCommand(command)) { Log("Refused uninstall: " + command.Display); return new(false, "That uninstaller isn't one this app may run."); }
-        var file = command.Msi ? Path.Combine(Environment.SystemDirectory, "msiexec.exe") : command.Path;
-        if (!File.Exists(file)) return new(false, "The uninstaller wasn't found.");
-        var psi = new ProcessStartInfo(file) { UseShellExecute = false, CreateNoWindow = true };
-        foreach (var a in command.Arguments) psi.ArgumentList.Add(a);
-        try
+        var r = await AskAgentAsync("uninstall " + command.Display, b => b.RunUninstallerAsync(command, CancellationToken.None), ct).ConfigureAwait(false);
+        if (r is null) return new(false, "Couldn't run the uninstaller. " + ElevationService.AdminRepairHint);
+        Log($"Uninstall {command.Display} (Agent): ok={r.Ok} exit={r.ExitCode} {r.Error}");
+        return r.Ok ? new(true, "Uninstalled.") : new(false, r.Error ?? "Couldn't run the uninstaller.");
+    }
+
+    /// <summary>The Agent's answer, or null (logged) when it isn't connected, is too old to do it, or the pipe broke.</summary>
+    private async Task<AppRemovalAgent.Result?> AskAgentAsync(string what, Func<IElevatedCommandBridge, Task<AppRemovalAgent.Result>> call, CancellationToken ct)
+    {
+        if (agent is not { IsConnected: true }) { LogWarn($"Can't {what}: the Agent isn't connected (Admin Repair Mode is off)"); return null; }
+        try { return await call(agent).WaitAsync(ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException or IOException or ObjectDisposedException)
         {
-            using var p = Process.Start(psi)!;
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromMinutes(15));
-            try
-            {
-                await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                // Stuck past the time limit: end it. A cancel by the user leaves the uninstaller running, since killing it mid-way can leave the app half removed.
-                try { p.Kill(entireProcessTree: true); } catch { }
-                throw;
-            }
-            Log($"Uninstall {command.Display}: exit={p.ExitCode}");
-            // msiexec: 0 = done, 3010 = done, restart needed, 1605 = not installed any more.
-            var ok = p.ExitCode is 0 or 3010 or 1605;
-            // Inno Setup uninstallers (unins000.exe) hand over to a temporary copy and exit at once: wait for the uninstaller file to go.
-            if (!command.Msi && ok)
-            {
-                var until = DateTime.UtcNow.AddMinutes(3);
-                while (File.Exists(file) && DateTime.UtcNow < until) await Task.Delay(1000, ct).ConfigureAwait(false);
-            }
-            return ok ? new(true, "Uninstalled.") : new(false, $"The uninstaller ended with code {p.ExitCode}.");
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
-        {
-            LogWarn($"Uninstall {command.Display} failed: {ex.Message}");
-            return new(false, "Couldn't run the uninstaller.");
+            LogWarn($"Can't {what}: {ex.Message}");
+            return null;
         }
     }
 
@@ -211,9 +198,10 @@ public sealed partial class WindowsMemorySystem
     public async Task<string?> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct)
     {
         if (!ScheduledTaskAllowlist.IsAllowed(path)) { Log("Refused task: " + path); return null; }
-        var r = await RunPowerShellAsync(ScheduledTaskAllowlist.SetScript(path, enabled), ct).ConfigureAwait(false);
-        Log($"Task {path} {(enabled ? "enable" : "disable")}: exit={r.ExitCode} out={r.Output.Trim()} err={r.Error.Trim()}");
-        return TaskState(r.ExitCode, r.Output);
+        var r = await AskAgentAsync($"{(enabled ? "enable" : "disable")} task {path}", b => b.SetScheduledTaskEnabledAsync(path, enabled, CancellationToken.None), ct).ConfigureAwait(false);
+        if (r is null) return null;
+        Log($"Task {path} {(enabled ? "enable" : "disable")} (Agent): ok={r.Ok} state={r.TaskState ?? "?"} {r.Error}");
+        return r.Ok ? r.TaskState : null;
     }
 
     private static string? TaskState(int exitCode, string output)

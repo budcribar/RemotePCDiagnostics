@@ -62,7 +62,7 @@ public static class HostServices
             isProcessElevated: () => sp.GetRequiredService<IElevationContext>().IsProcessElevated));
         // One Windows memory/startup adapter for the whole app (undo and memory suggestions share it).
         services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), L<WindowsMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(),
-            sp.GetRequiredService<IMachineTweaks>()));
+            sp.GetRequiredService<IMachineTweaks>(), sp.GetRequiredService<IElevatedCommandBridge>()));
         // Its role interfaces resolve to the same instance, so a consumer can take only the part it uses.
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IMemoryProbe>(sp => sp.GetRequiredService<IMemorySystem>());
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IAppControl>(sp => sp.GetRequiredService<IMemorySystem>());
