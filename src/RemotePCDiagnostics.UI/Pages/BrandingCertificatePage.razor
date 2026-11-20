@@ -193,7 +193,7 @@ else
 
     <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px">
         <span class="meta">Technician QA / service notes</span>
-        <textarea data-testid="branding-notes" @bind="_techNotes" @bind:event="oninput" rows="2" maxlength="2000" placeholder="Optional bench summary (e.g. thermal paste replaced, BIOS updated, passed 25-min extended burn-in)." style="width:100%;font-family:inherit;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit"></textarea>
+        <textarea data-testid="branding-notes" @bind="_techNotes" @bind:event="oninput" rows="2" maxlength="2000" placeholder="Optional bench summary (e.g. thermal paste replaced, BIOS updated, passed 25-min extended burn-in)." style="width:100%;box-sizing:border-box;font-family:inherit;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit"></textarea>
     </label>
 
     <div class="toolbar" style="margin-top: 12px">

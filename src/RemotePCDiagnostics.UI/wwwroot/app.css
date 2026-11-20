@@ -1015,19 +1015,16 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
     white-space: nowrap;
   }
   .topbar-spacer { display: none; }
-  .topbar .pc {
-    font-size: 11.5px;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
+  .topbar .pc { display: none; }
   .admin-mode-pill, .agent-shop-pill, .app-update-pill, .connect-tech-btn {
     white-space: normal;
     text-align: left;
-    min-height: 32px;
+    min-height: 30px;
+    padding: 3px 10px;
+    font-size: 11.5px;
   }
-  .theme-switch button { min-height: 30px; padding: 4px 8px; font-size: 11.5px; }
+  .theme-switch { margin-left: auto; }
+  .theme-switch button { min-height: 28px; padding: 3px 7px; font-size: 11px; }
 
   /* Remote session control bar: wrap cleanly instead of overflowing horizontally */
   .topbar-control { flex: 1 1 100%; min-width: 0; }
@@ -1070,6 +1067,7 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
   /* Touch-friendly controls & 16px inputs (prevents Android/iOS zoom on focus) */
   .btn { min-height: 42px; height: auto; padding: 8px 14px; }
   .btn-small { min-height: 36px; padding: 5px 10px; }
+  .ct-check { width: 24px; height: 24px; min-width: 24px; min-height: 24px; padding: 0; }
   input[type="text"], input[type="search"], input[type="password"], input[type="url"], input[type="email"], select, textarea {
     font-size: 16px;
     min-height: 40px;
@@ -1133,6 +1131,7 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
   .bench-kinds { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .bench-kind, .bench-restart-toggle { min-height: 36px; }
   .bench-customize-summary { padding: 12px; }
+  .bench-customize-title { flex-wrap: wrap; gap: 4px 8px; }
 
   /* Service workflow */
   .wf-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
