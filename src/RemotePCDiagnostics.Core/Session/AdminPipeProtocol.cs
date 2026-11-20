@@ -67,6 +67,14 @@ public interface IElevatedCommandBridge
     /// </summary>
     Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default) =>
         throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+
+    /// <summary>
+    /// A machine-wide change (<see cref="IMachineTweaks"/>: HKLM policy values, extension blocklists, the page file, Defender exclusions),
+    /// made by the Agent. The response's <see cref="AdminPipeResponse.StdOut"/> carries what the change reads back. Throws
+    /// <see cref="AdminRequiredException"/> when the Agent isn't connected or is from before this existed.
+    /// </summary>
+    Task<AdminPipeResponse> MachineTweakAsync(AdminPipeTweak tweak, CancellationToken ct = default) =>
+        throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
 }
 
 public static class AdminCommandAllowlist
@@ -284,7 +292,8 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("timeoutMs")] int TimeoutMs = 60_000,
     [property: JsonPropertyName("channel")] string? Channel = null,
     [property: JsonPropertyName("autoLogon")] AdminPipeAutoLogon? AutoLogon = null,
-    [property: JsonPropertyName("setting")] AdminPipeSetting? Setting = null);
+    [property: JsonPropertyName("setting")] AdminPipeSetting? Setting = null,
+    [property: JsonPropertyName("tweak")] AdminPipeTweak? Tweak = null);
 
 /// <summary>The automatic sign-in requests' arguments. The password is sent only to check it and to turn sign-in on.</summary>
 public sealed record AdminPipeAutoLogon(
@@ -331,6 +340,8 @@ public static class AdminPipeFraming
     public const string OpDisableAutoLogon = "disable_autologon";
     /// <summary>One <see cref="AdminPipeSetting"/> change (startup apps, services, hibernation, Fast Startup, DNS).</summary>
     public const string OpSystemSetting = "system_setting";
+    /// <summary>One <see cref="AdminPipeTweak"/> change (HKLM policy values, extension blocklists, page file, Defender exclusions).</summary>
+    public const string OpMachineTweak = "machine_tweak";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -568,6 +579,15 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         if (!r.Ok) throw new InvalidOperationException(r.Error ?? "The Agent didn't make the change.");
     }
 
+    public async Task<AdminPipeResponse> MachineTweakAsync(AdminPipeTweak tweak, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpMachineTweak, Tweak: tweak, TimeoutMs: 180_000), ct).ConfigureAwait(false);
+        // Not allowed = an Agent from before this existed ("Unknown operation"). A refused or failed change comes back allowed, with the reason.
+        if (!r.Allowed)
+            throw new AdminRequiredException("The Agent on this PC can't make this change yet. Update Remote PC Diagnostics, then try again.");
+        return r;
+    }
+
     /// <summary>An Agent from before a request existed answers "Unknown operation" (not allowed).</summary>
     private static void ThrowIfRefused(AdminPipeResponse r)
     {
@@ -709,7 +729,9 @@ public sealed class AdminPipeServer(
     Func<AppUpdateChannel, IReadOnlyList<string>?, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null,
     Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>>? securityAuditor = null,
     IAutoLogonBackend? autoLogon = null,
-    IAdminSettingsBackend? adminSettings = null) : IAsyncDisposable, IDisposable
+    IAdminSettingsBackend? adminSettings = null,
+    IMachineTweaks? machineTweaks = null,
+    DefenderPaths? defenderPaths = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -1005,6 +1027,9 @@ public sealed class AdminPipeServer(
         if (string.Equals(request.Op, AdminPipeFraming.OpSystemSetting, StringComparison.OrdinalIgnoreCase))
             return await Task.Run(() => HandleSystemSetting(request), ct).ConfigureAwait(false);
 
+        if (string.Equals(request.Op, AdminPipeFraming.OpMachineTweak, StringComparison.OrdinalIgnoreCase))
+            return await Task.Run(() => HandleMachineTweakAsync(request, ct), ct).ConfigureAwait(false);
+
         return new AdminPipeResponse(
             Ok: false,
             Allowed: false,
@@ -1051,6 +1076,34 @@ public sealed class AdminPipeServer(
         {
             log.Warn($"[admin-pipe-server] {request.Op} failed: {ex.Message}");
             return Answer(false, ex.Message);
+        }
+    }
+
+    private async Task<AdminPipeResponse> HandleMachineTweakAsync(AdminPipeRequest request, CancellationToken ct)
+    {
+        AdminPipeResponse Answer(bool ok, string? text = null, string? error = null, bool allowed = true) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            StdOut: text ?? "", Error: error);
+
+        if (machineTweaks is null) return Answer(false, error: "Machine-wide changes are not supported by this elevated helper.", allowed: false);
+        if (request.Tweak is not { } t) return Answer(false, error: "No change was sent.");
+        var what = t.Target ?? t.Name ?? $"{t.Folders?.Count ?? 0} folder(s), {t.Processes?.Count ?? 0} program(s)";
+        try
+        {
+            if (MachineTweakRules.Refusal(t, defenderPaths) is { } refusal)
+            {
+                log.Warn($"[admin-pipe-server] {t.Action} '{what}' refused: {refusal}");
+                return Answer(false, error: refusal);
+            }
+            var (ok, text) = await MachineTweakRules.ApplyAsync(machineTweaks, t, ct).ConfigureAwait(false);
+            log.Info($"[admin-pipe-server] {t.Action} '{what}' {(ok ? "done" : "not done")}.");
+            return ok ? Answer(true, text) : Answer(false, error: text ?? "Windows didn't allow the change.");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] {t.Action} '{what}' failed: {ex.Message}");
+            return Answer(false, error: ex.Message);
         }
     }
 

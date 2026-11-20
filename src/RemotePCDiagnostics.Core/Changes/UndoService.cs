@@ -109,8 +109,14 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 var sep = c.Target.IndexOf('|');
                 if (sep <= 0) return Fail("The exclusion wasn't recorded.");
                 var (kindD, value) = (c.Target[..sep], c.Target[(sep + 1)..]);
-                var removeScript = kindD == "process" ? DefenderProbe.RemoveScript([], [value]) : DefenderProbe.RemoveScript([value], []);
-                return await Ps(removeScript, c, $"Defender scans {(kindD == "process" ? "files opened by " + Path.GetFileName(value) : value)} again.", ct).ConfigureAwait(false);
+                if (memory is null) return Fail("Not available.");
+                // The Agent removes it (it needs administrator rights) and checks it's a folder or build tool this app excludes.
+                var removed = kindD == "process"
+                    ? await memory.RemoveDefenderExclusionsAsync([], [value], ct).ConfigureAwait(false)
+                    : await memory.RemoveDefenderExclusionsAsync([value], [], ct).ConfigureAwait(false);
+                return removed
+                    ? Ok($"Defender scans {(kindD == "process" ? "files opened by " + Path.GetFileName(value) : value)} again.")
+                    : Fail("Windows didn't allow removing the exclusion.");
 
             case ChangeKind.SecuritySetting:
                 if (Security.SecurityFixes.Find(c.Target) is not { } sf || Security.SecurityFixes.RestoreScript(sf.Key, c.Previous) is not { } restore)

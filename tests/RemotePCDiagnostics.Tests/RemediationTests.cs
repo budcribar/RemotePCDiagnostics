@@ -300,9 +300,24 @@ public class RemediationTests
 
         Assert.Contains(@"-Execute 'C:\Bud''s Apps\RemotePCDiagnostics.Host.exe' -Argument '--post-reboot' -WorkingDirectory 'C:\Bud''s Apps'", script);
         Assert.Contains(@"-AtLogOn -User 'PC\o''neil'", script);
-        Assert.Contains(@"-UserId 'PC\o''neil' -LogonType Interactive -RunLevel Highest", script);
+        // No Agent next to the app: the task starts the app itself with normal rights, never highest (the app never runs as administrator).
+        Assert.Contains(@"-UserId 'PC\o''neil' -LogonType Interactive -RunLevel Limited", script);
+        Assert.DoesNotContain("Highest", script);
         var end = now.Add(SessionLaunchOptions.PendingRebootMaxAge).LocalDateTime.ToString("s", System.Globalization.CultureInfo.InvariantCulture);
         Assert.Contains($"$t.EndBoundary='{end}'", script);
+    }
+
+    [Fact]
+    public void ResumeTaskScript_WithTheAgent_RunsItsLauncher_WhichStartsTheAppUnelevated()
+    {
+        var now = new DateTimeOffset(2026, 11, 20, 15, 0, 0, TimeSpan.Zero);
+        var script = RebootResumeCoordinator.BuildRegisterResumeTaskScript(@"C:\Bud's Apps\RemotePCDiagnostics.Host.exe",
+            "\"C:\\Bud's Apps\\RemotePCDiagnostics.Host.exe\" --post-reboot", @"PC\ann", now, @"C:\Bud's Apps\RemotePCDiagnostics.Agent.exe");
+
+        Assert.Contains(@"-Execute 'C:\Bud''s Apps\RemotePCDiagnostics.Agent.exe' -Argument '--launch --post-reboot' -WorkingDirectory 'C:\Bud''s Apps'", script);
+        Assert.DoesNotContain(@"-Execute 'C:\Bud''s Apps\RemotePCDiagnostics.Host.exe'", script);
+        // Highest only for the Agent's launcher, so there is no UAC prompt after the restart; it starts the app as the signed-in user.
+        Assert.Contains("-RunLevel Highest", script);
     }
 
     [Theory]
@@ -360,14 +375,14 @@ public class RemediationTests
         Assert.Equal(
             "\"C:\\App\\RemotePCDiagnostics.Host.exe\" -u=https://remoteblazorwebview.com:34544 -i=bfdffa8b-70ac-4740-bdb1-c7f62a0b598f --post-reboot",
             coordinator.LastRegisteredCommandLine);
-        // It is registered as a sign-in task with highest privileges (elevated, no UAC prompt), not as a RunOnce entry, and the restart asks
+        // It is registered as a sign-in task (no Agent next to the app here, so with normal rights), not as a RunOnce entry, and the restart asks
         // Windows to sign the same user back in (shutdown /g).
         var register = Assert.Single(launcher.Calls, c => c.File.EndsWith("powershell.exe", StringComparison.OrdinalIgnoreCase) && c.Args[^1].Contains("Register-ScheduledTask")).Args[^1];
         Assert.Contains($"-TaskName '{RebootResumeCoordinator.ResumeTaskName}'", register);
         Assert.Contains(@"-Execute 'C:\App\RemotePCDiagnostics.Host.exe'", register);
         Assert.Contains("-Argument '-u=https://remoteblazorwebview.com:34544 -i=bfdffa8b-70ac-4740-bdb1-c7f62a0b598f --post-reboot'", register);
         Assert.Contains("-AtLogOn", register);
-        Assert.Contains("-RunLevel Highest", register);
+        Assert.Contains("-RunLevel Limited", register);
         Assert.Contains("$t.EndBoundary='", register);
         Assert.DoesNotContain(launcher.Calls, c => c.File.EndsWith("reg.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains("add"));
         Assert.Contains(launcher.Calls, c => c.File.EndsWith("shutdown.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains("/g") && !c.Args.Contains("/r"));

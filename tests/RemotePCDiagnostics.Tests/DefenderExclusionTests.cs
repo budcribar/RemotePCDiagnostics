@@ -29,10 +29,18 @@ public class DefenderExclusionTests
         public void OpenUri(string uri) { }
         public string GetServiceStartType(string n) => "Automatic";
         public void SetServiceStartType(string n, string t) { }
-        public Task<(bool Ok, string? Output)> RunDefenderScriptAsync(string script, CancellationToken ct)
+        public Exception? Throw;
+        // Recorded as the script the Agent builds from the lists.
+        public Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct)
         {
-            Scripts.Add(script);
-            return Task.FromResult<(bool, string?)>(Fail ? (false, null) : (true, script.Contains("Add-MpPreference") ? ReadBack : ""));
+            if (Throw is not null) throw Throw;
+            Scripts.Add(DefenderProbe.AddScript(folders, processes));
+            return Task.FromResult<(bool, string?)>(Fail ? (false, null) : (true, ReadBack));
+        }
+        public Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct)
+        {
+            Scripts.Add(DefenderProbe.RemoveScript(folders, processes));
+            return Task.FromResult(!Fail);
         }
     }
 
@@ -134,11 +142,27 @@ public class DefenderExclusionTests
         j.Add(ChangeRecord.New(ChangeKind.DefenderExclusion, @"path|D:\work", null, "Defender no longer scans D:\\work", "x"));
         j.Add(ChangeRecord.New(ChangeKind.DefenderExclusion, @"process|C:\VS\MSBuild.exe", null, "MSBuild", "x"));
         var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
-        var r = await new UndoService(j, new SystemCommandRunner(launcher)).UndoAllAsync("x");
+        var sys = new Sys(Work);
+        var r = await new UndoService(j, new SystemCommandRunner(launcher), sys).UndoAllAsync("x");
         Assert.Equal(2, r.Succeeded);
-        var scripts = launcher.Calls.Select(c => c.Args[^1]).ToList();
+        Assert.Empty(launcher.Calls); // the Agent removes them, never a script from the app
+        var scripts = sys.Scripts;
         Assert.Contains(scripts, x => x.Contains(@"Remove-MpPreference -ExclusionPath @('D:\work')"));
         Assert.Contains(scripts, x => x.Contains(@"Remove-MpPreference -ExclusionProcess @('C:\VS\MSBuild.exe')"));
+    }
+
+    [Fact]
+    public async Task Apply_WithoutTheAgent_SaysWhatToDo_NothingJournaled()
+    {
+        var sys = new Sys(Work) { Throw = new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint) };
+        var j = new MemoryChangeJournal();
+        var svc = new MemorySuggestionService(sys, settle: TimeSpan.Zero, journal: j);
+        await svc.ScanAsync();
+        var s = svc.Suggestions.Single(x => x.Id == "defender-exclusions");
+        var r = await svc.ApplyAsync(s, s.Actions[0]);
+        Assert.False(r.Success);
+        Assert.Contains("Admin Repair Mode", r.Message);
+        Assert.Empty(j.All);
     }
 
     [Fact]
