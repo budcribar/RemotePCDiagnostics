@@ -1,16 +1,18 @@
-using System.Management;
 using Microsoft.Win32;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Host;
 
 /// <summary>
-/// <see cref="ISystemSettings"/> in process: the registry for Fast Startup and the proxy, WMI (Win32_NetworkAdapterConfiguration) for
-/// adapter DNS. The proxy is the signed-in user's setting, so it is read and written in their hive (HKEY_USERS\&lt;SID&gt; of the shell's
-/// account), not in the elevated administrator's HKCU, which differs when someone else typed the administrator password at the UAC prompt.
+/// <see cref="ISystemSettings"/>: Fast Startup and adapter DNS are read here (registry, WMI) and changed by the Agent (<paramref name="admin"/>,
+/// over the admin pipe), because they need administrator rights and the app never runs as administrator. The proxy is the signed-in user's
+/// setting, so it is read and written here, in their hive (HKEY_USERS\&lt;SID&gt; of the shell's account when that isn't this process's).
 /// </summary>
-public sealed class WindowsSystemSettings(ILogger? log = null) : ISystemSettings
+public sealed class WindowsSystemSettings(ILogger? log = null, IAdminSettingsBackend? admin = null) : ISystemSettings
 {
+    private readonly IAdminSettingsBackend _admin = admin ?? new AgentAdminSettings(null);
+
     private const string PowerKey = @"SYSTEM\CurrentControlSet\Control\Session Manager\Power";
     private const string InternetSettingsKey = @"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
     private const string TcpipInterfacesKey = @"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\";
@@ -22,12 +24,7 @@ public sealed class WindowsSystemSettings(ILogger? log = null) : ISystemSettings
         return k?.GetValue("HiberbootEnabled") is int v ? v : null;
     }
 
-    public void SetFastStartup(int value)
-    {
-        using var lm = OpenLocalMachine();
-        using var k = lm.OpenSubKey(PowerKey, writable: true) ?? throw new InvalidOperationException("The power settings key is missing.");
-        k.SetValue("HiberbootEnabled", value, RegistryValueKind.DWord);
-    }
+    public void SetFastStartup(int value) => _admin.SetFastStartup(value);
 
     public int? GetUserProxyEnable()
     {
@@ -46,7 +43,7 @@ public sealed class WindowsSystemSettings(ILogger? log = null) : ISystemSettings
     public string? GetAdapterDns(string alias)
     {
         if (!SystemSettingsRules.IsAdapterName(alias)) return null;
-        using var config = FindAdapterConfiguration(alias);
+        using var config = WindowsAdminSettings.FindAdapterConfiguration(alias);
         if (config?["SettingID"] is not string guid) return null;
         using var lm = OpenLocalMachine();
         using var k = lm.OpenSubKey(TcpipInterfacesKey + guid);
@@ -57,37 +54,8 @@ public sealed class WindowsSystemSettings(ILogger? log = null) : ISystemSettings
     public void SetAdapterDns(string alias, IReadOnlyList<string> servers)
     {
         if (!SystemSettingsRules.IsAdapterName(alias)) throw new ArgumentException("Invalid network adapter name.", nameof(alias));
-        using var config = FindAdapterConfiguration(alias) ?? throw new InvalidOperationException($"No network adapter named '{alias}'.");
-        // An empty or null list makes the adapter take its DNS servers from DHCP again.
-        var result = config.InvokeMethod("SetDNSServerSearchOrder", [servers.Count == 0 ? null : servers.ToArray()]);
-        var code = Convert.ToUInt32(result ?? 0u);
-        log.Info($"SetDNSServerSearchOrder '{alias}' [{string.Join(",", servers)}]: {code}");
-        if (code is not (0 or 1)) throw new InvalidOperationException($"Windows refused the DNS change (WMI error {code}).");
-    }
-
-    /// <summary>The Win32_NetworkAdapterConfiguration of the adapter whose connection name (as in Settings) is <paramref name="alias"/>.</summary>
-    private static ManagementObject? FindAdapterConfiguration(string alias)
-    {
-        var escaped = alias.Replace("\\", "\\\\").Replace("'", "\\'");
-        using var adapters = new ManagementObjectSearcher($"SELECT Index FROM Win32_NetworkAdapter WHERE NetConnectionID = '{escaped}'");
-        using var adapterResults = adapters.Get();
-        foreach (ManagementObject adapter in adapterResults)
-        {
-            using (adapter)
-            {
-                if (adapter["Index"] is not uint index) continue;
-                using var configs = new ManagementObjectSearcher($"SELECT * FROM Win32_NetworkAdapterConfiguration WHERE Index = {index}");
-                using var configResults = configs.Get();
-                ManagementObject? found = null;
-                foreach (ManagementObject config in configResults)
-                {
-                    if (found is null) found = config;
-                    else config.Dispose();
-                }
-                if (found is not null) return found;
-            }
-        }
-        return null;
+        _admin.SetAdapterDns(alias, servers);
+        log.Info($"DNS on '{alias}' set to [{string.Join(",", servers)}] by the Agent");
     }
 
     private static RegistryKey OpenLocalMachine() => RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);

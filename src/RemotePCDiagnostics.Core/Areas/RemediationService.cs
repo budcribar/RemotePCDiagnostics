@@ -653,7 +653,7 @@ public sealed class RemediationService(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             LogWarn($"{failMsg} {ex.GetType().Name}: {ex.Message}");
-            return new(false, failMsg);
+            return new(false, AdminRequiredException.MessageOr(ex, failMsg));
         }
     }
 
