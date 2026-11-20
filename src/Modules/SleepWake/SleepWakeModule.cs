@@ -18,7 +18,12 @@ public sealed record WakeEvent(DateTimeOffset SleepTime, DateTimeOffset WakeTime
         return new(sleep, wake, e.NamedData.GetValueOrDefault("WakeSourceText", "").Trim(), e.NamedData.GetValueOrDefault("WakeTimerOwner", "").Trim());
     }
 
-    public string Because => ByTimer ? $"Wake timer: {TimerOwner}" : Source.Length > 0 ? Source : "Unknown (Windows didn't record the source)";
+    /// <summary>Woken through a USB controller: Windows names the controller, not the keyboard, mouse or other USB device behind it.</summary>
+    public bool ByUsb => SleepWakeModule.IsUsbController(Source);
+
+    public string Because => ByTimer ? $"Wake timer: {TimerOwner}"
+        : ByUsb ? $"A USB device such as the keyboard or mouse (through the {Source})"
+        : Source.Length > 0 ? Source : "Unknown (Windows didn't record the source)";
 }
 
 /// <summary>What the sleep check read. Null fields couldn't be read (a tool failed or needs administrator rights).</summary>
@@ -109,8 +114,31 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
     public static bool IsNetworkDevice(string? name) =>
         !string.IsNullOrWhiteSpace(name) && NetworkWords.Any(w => (name + " ").Contains(w, StringComparison.OrdinalIgnoreCase));
 
+    private static readonly string[] UsbControllerWords = ["host controller", "xhci", "root hub"];
+
+    /// <summary>A USB controller or hub ("AMD USB 3.10 eXtensible Host Controller - 1.10 (Microsoft)", "USB Root Hub (USB 3.0)").</summary>
+    public static bool IsUsbController(string? name) =>
+        !string.IsNullOrWhiteSpace(name) && name.Contains("USB", StringComparison.OrdinalIgnoreCase)
+        && UsbControllerWords.Any(w => name.Contains(w, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>How far a battery-report sleep's start may be from the Kernel-Power 42 ("entering sleep") event that matches it.</summary>
+    public static readonly TimeSpan SleepEventTolerance = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// The battery report also lists restarts and shutdowns as "Suspend". When the System log was read, a Suspend counts as sleep only
+    /// if Windows logged entering sleep (Kernel-Power 42) at about the same time; Modern Standby entries are kept as they are.
+    /// </summary>
+    public static IReadOnlyList<StandbySession>? RealSleeps(IReadOnlyList<StandbySession>? standby, IReadOnlyList<WinEvent>? events)
+    {
+        if (standby is null || events is null) return standby;
+        var entering = events.Where(e => e.EventId == 42 && e.Provider.EndsWith("Kernel-Power", StringComparison.OrdinalIgnoreCase)).Select(e => e.Time).ToList();
+        return standby.Where(s => !s.EntryType.Equals("Suspend", StringComparison.OrdinalIgnoreCase)
+            || entering.Any(t => (t - s.Start).Duration() <= SleepEventTolerance)).ToList();
+    }
+
     public static AreaReport Build(SleepWakeFacts f, DateTimeOffset now)
     {
+        f = f with { Standby = RealSleeps(f.Standby, f.Events) };
         var cards = new List<AreaCard>();
         var parts = new List<string>();
         var wakes = (f.Events ?? []).Where(e => e.EventId == 1 && e.Provider.EndsWith("Power-Troubleshooter", StringComparison.OrdinalIgnoreCase))
@@ -221,6 +249,8 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
         const string Title = "Devices that can wake the PC";
         if (f.WakeArmed is null) return AreaCard.Failed("devices", Title, "Couldn't read which devices can wake the PC.");
         var recent = wakes.Select(w => w.Source).Concat((f.LastWake ?? []).Select(s => s.Name)).Where(s => s.Length > 0).ToList();
+        // Wakes through a USB controller can't be pinned on one device: Windows names only the controller.
+        var viaUsb = wakes.Count(w => w.ByUsb);
         var rows = f.WakeArmed.Select(d =>
         {
             var woke = recent.Count(r => string.Equals(r, d, StringComparison.OrdinalIgnoreCase));
@@ -228,7 +258,10 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
             var lv = woke > 0 && network ? AreaLevel.Warning : AreaLevel.Neutral;
             var role = network ? "Network adapter" : d.Contains("keyboard", StringComparison.OrdinalIgnoreCase) ? "Keyboard"
                 : d.Contains("mouse", StringComparison.OrdinalIgnoreCase) ? "Mouse" : "Device";
-            return new AreaRow(lv, [d, role, woke > 0 ? $"Woke the PC {AreaModuleBase.Plural(woke, "time")}" : "No recent wakes"], Key: d,
+            var wokeText = woke > 0 ? $"Woke the PC {AreaModuleBase.Plural(woke, "time")}"
+                : viaUsb > 0 && !network ? $"Maybe: {AreaModuleBase.Plural(viaUsb, "wake")} came through USB"
+                : "No recent wakes";
+            return new AreaRow(lv, [d, role, wokeText], Key: d,
                 Actions: DeviceWake.IsSafeName(d) ? [new AreaAction(RemediationKind.DisableDeviceWake, "Stop it waking the PC", d, d)] : null);
         }).ToList();
         var networkArmed = f.WakeArmed.Count(IsNetworkDevice);
@@ -264,7 +297,7 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
         if (requests is null) return AreaCard.Failed("blockers", Title, "Couldn't read what keeps the PC awake (this needs administrator rights).");
         var blocking = requests.Count(r => r.BlocksSleep);
         var rows = requests.Select(r => new AreaRow(r.BlocksSleep ? AreaLevel.Warning : AreaLevel.Neutral,
-            [What(r.Category), $"{SleepWakeParsers.ShortRequester(r.Requester)} ({r.RequesterType.ToLowerInvariant()})", r.Detail])).ToList();
+            [What(r.Category), $"{SleepWakeParsers.ShortRequester(r.Requester)} ({r.RequesterType.ToLowerInvariant()})", Why(r)])).ToList();
         if (blocking > 0) parts.Add(AreaModuleBase.Plural(blocking, "sleep blocker"));
         return new("blockers", Title, blocking > 0 ? AreaLevel.Warning : AreaLevel.Ok,
             blocking > 0 ? $"{AreaModuleBase.Plural(blocking, "app or driver", "apps or drivers")} keeping the PC or screen awake" : "Nothing is stopping the PC from sleeping",
@@ -283,6 +316,27 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
         "ACTIVELOCKSCREEN" => "Lock screen",
         _ => category,
     };
+
+    /// <summary>
+    /// The request's own reason when it is a sentence ("An audio stream is currently in use."). Apps often give only a word, such as
+    /// "Electron" (the framework the app is built on), so then the row says what the request does and keeps the word in brackets.
+    /// </summary>
+    public static string Why(PowerRequest r)
+    {
+        var detail = r.Detail.Trim();
+        if (detail.Contains(' ')) return detail;
+        var what = r.Category switch
+        {
+            "DISPLAY" => "Asked Windows to keep the screen on",
+            "SYSTEM" => "Asked Windows not to sleep",
+            "AWAYMODE" => "Asked Windows to keep running with the screen off instead of sleeping",
+            "EXECUTION" => "Asked to keep running in the background",
+            "PERFBOOST" => "Asked for a performance boost",
+            "ACTIVELOCKSCREEN" => "Asked Windows to keep the lock screen showing",
+            _ => "Asked Windows to stay awake",
+        };
+        return detail.Length > 0 ? $"{what} (reason given: {detail})" : what;
+    }
 
     private static string Pct(double v) => v.ToString(v < 10 ? "0.0" : "0", CultureInfo.InvariantCulture) + "%";
 }
