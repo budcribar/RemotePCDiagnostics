@@ -334,6 +334,12 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     public Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default) =>
         ConnectedClient().ChangeSystemSettingAsync(setting, ct);
 
+    public Task<AdminPipeResponse> MachineTweakAsync(AdminPipeTweak tweak, CancellationToken ct = default) =>
+        ConnectedClient().MachineTweakAsync(tweak, ct);
+
+    public Task<ProcessResult> RunAgentScriptAsync(AdminPipeScript script, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine = null) =>
+        ConnectedClient().RunAgentScriptAsync(script, timeout, ct, outputLine);
+
     /// <summary>The connected Agent, or <see cref="AdminRequiredException"/> with what to do.</summary>
     private AdminPipeClient ConnectedClient()
     {

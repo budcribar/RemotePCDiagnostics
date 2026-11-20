@@ -183,6 +183,7 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             securityAuditor: RemotePCDiagnostics.Core.Security.SecurityAuditModule.ElevatedRunner(workDir, pipeLog),
             autoLogon: OperatingSystem.IsWindows() ? new RemotePCDiagnostics.Core.Workflow.WindowsAutoLogon(pipeLog) : null,
             adminSettings: OperatingSystem.IsWindows() ? new RemotePCDiagnostics.Core.Session.WindowsAdminSettings(pipeLog) : null,
+            machineTweaks: OperatingSystem.IsWindows() ? new RemotePCDiagnostics.Core.Session.WindowsMachineTweaks(pipeLog) : null,
             machineSetup: AgentMachineSetup.ForService(pipeLog));
 
         _ = Task.Run(async () =>

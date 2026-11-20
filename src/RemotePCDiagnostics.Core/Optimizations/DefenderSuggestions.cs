@@ -12,8 +12,10 @@ internal sealed class DefenderSuggestions(SuggestionContext c)
     internal async Task<ActionOutcome> AddDefenderExclusionsAsync(MemorySuggestion s, CancellationToken ct)
     {
         if (c.Snapshot?.Defender is not { HasWork: true } d) return new(false, "Nothing left to exclude.");
-        var (ok, output) = await c.Sys.RunDefenderScriptAsync(DefenderProbe.AddScript(d.MissingFolders, d.MissingProcesses), ct).ConfigureAwait(false);
-        if (!ok) return new(false, "Windows didn't allow adding Defender exclusions (administrator rights needed, or your organization manages Defender).");
+        bool ok; string? output;
+        try { (ok, output) = await c.Sys.AddDefenderExclusionsAsync(d.MissingFolders, d.MissingProcesses, ct).ConfigureAwait(false); }
+        catch (AdminRequiredException ex) { return new(false, ex.Message); }
+        if (!ok) return new(false, "Windows didn't allow adding Defender exclusions (your organization may manage Defender). Nothing was changed.");
         var (folders, procs) = DefenderProbe.Confirmed(output, d.MissingFolders, d.MissingProcesses);
         foreach (var f in folders) c.Journal(ChangeKind.DefenderExclusion, "path|" + f, null, $"Defender no longer scans {f}");
         foreach (var p in procs) c.Journal(ChangeKind.DefenderExclusion, "process|" + p, null, $"Defender no longer scans files opened by {Path.GetFileName(p)} ({p})");
@@ -27,7 +29,9 @@ internal sealed class DefenderSuggestions(SuggestionContext c)
     internal async Task<ActionOutcome> UndoExclusionsAsync(UndoEntry u, CancellationToken ct)
     {
         var (df, dp) = DefenderProbe.Decode(u.Previous);
-        var (ok, _) = await c.Sys.RunDefenderScriptAsync(DefenderProbe.RemoveScript(df, dp), ct).ConfigureAwait(false);
+        bool ok;
+        try { ok = await c.Sys.RemoveDefenderExclusionsAsync(df, dp, ct).ConfigureAwait(false); }
+        catch (AdminRequiredException ex) { return new(false, ex.Message); }
         if (ok)
             foreach (var t in df.Select(f => "path|" + f).Concat(dp.Select(x => "process|" + x)))
                 try { c.JournalStore?.RemoveLatest(ChangeKind.DefenderExclusion, t); } catch { }
