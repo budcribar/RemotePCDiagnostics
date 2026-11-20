@@ -1478,7 +1478,7 @@ public sealed class AdminPipeServer(
         var what = t.Target ?? t.Name ?? $"{t.Folders?.Count ?? 0} folder(s), {t.Processes?.Count ?? 0} program(s)";
         try
         {
-            if (MachineTweakRules.Refusal(t, defenderPaths) is { } refusal)
+            if (MachineTweakRules.Refusal(t, defenderPaths ?? DefenderPaths.Current(options.AllowedClientSid)) is { } refusal)
             {
                 log.Warn($"[admin-pipe-server] {t.Action} '{what}' refused: {refusal}");
                 return Answer(false, error: refusal);

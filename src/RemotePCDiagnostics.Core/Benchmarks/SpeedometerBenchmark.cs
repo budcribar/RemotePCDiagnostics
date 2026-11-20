@@ -301,6 +301,18 @@ public sealed class SpeedometerLocalServer : IAsyncDisposable
                 if (string.IsNullOrEmpty(decoded)) decoded = "index.html";
 
                 var candidate = Path.GetFullPath(Path.Combine(_rootDir, decoded.Replace('/', Path.DirectorySeparatorChar)));
+                if (candidate.StartsWith(_rootDir, StringComparison.OrdinalIgnoreCase) && Directory.Exists(candidate))
+                {
+                    // A folder URL serves its index.html, as a normal web server does. Speedometer's Perf-Dashboard suite loads
+                    // resources/perf.webkit.org/public/v3/; a 404 there left the run stuck on its last suite until it timed out.
+                    if (!pathOnly.EndsWith('/'))
+                    {
+                        // Without the slash the page's relative links would resolve one folder up.
+                        await WriteRedirectAsync(stream, pathOnly + "/" + (qIdx >= 0 ? rawTarget[qIdx..] : ""), ct).ConfigureAwait(false);
+                        return;
+                    }
+                    candidate = Path.Combine(candidate, "index.html");
+                }
                 if (!candidate.StartsWith(_rootDir, StringComparison.OrdinalIgnoreCase) || !File.Exists(candidate))
                 {
                     await WriteStatusAsync(stream, "404 Not Found", ct).ConfigureAwait(false);
@@ -318,6 +330,13 @@ public sealed class SpeedometerLocalServer : IAsyncDisposable
             }
             catch (Exception) { /* client disconnected or server stopping */ }
         }
+    }
+
+    private static async Task WriteRedirectAsync(NetworkStream stream, string location, CancellationToken ct)
+    {
+        var resp = Encoding.ASCII.GetBytes($"HTTP/1.1 301 Moved Permanently\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        await stream.WriteAsync(resp, ct).ConfigureAwait(false);
+        await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
     private static async Task WriteStatusAsync(NetworkStream stream, string status, CancellationToken ct)
@@ -338,6 +357,10 @@ public sealed class SpeedometerLocalServer : IAsyncDisposable
         ".jpg" or ".jpeg" => "image/jpeg",
         ".woff2" => "font/woff2",
         ".wasm" => "application/wasm",
+        ".csv" => "text/csv; charset=utf-8",
+        ".tsv" => "text/tab-separated-values; charset=utf-8",
+        ".txt" or ".md" => "text/plain; charset=utf-8",
+        ".ico" => "image/x-icon",
         _ => "application/octet-stream",
     };
 
@@ -358,6 +381,37 @@ public sealed class CdpClient : IAsyncDisposable
 {
     private readonly ClientWebSocket _ws = new();
     private int _nextId;
+
+    /// <summary>False once the browser closed the DevTools connection (the browser, or the benchmark tab, is gone).</summary>
+    public bool IsOpen => _ws.State == WebSocketState.Open;
+
+    /// <summary>
+    /// Asks the browser on <paramref name="cdpPort"/> to close itself (<c>Browser.close</c> on the browser target). Needed because
+    /// on Windows the chrome.exe RPCD started can hand the browser to another process and exit, so killing the started process's
+    /// tree doesn't reach it. Best effort; returns false when the browser couldn't be reached.
+    /// </summary>
+    public static async Task<bool> CloseBrowserAsync(int cdpPort, TimeSpan timeout)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(timeout);
+            using var http = new HttpClient { Timeout = timeout };
+            var json = await http.GetStringAsync($"http://127.0.0.1:{cdpPort}/json/version", cts.Token).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("webSocketDebuggerUrl", out var wsProp)
+                || !Uri.TryCreate(wsProp.GetString(), UriKind.Absolute, out var wsUri))
+                return false;
+            await using var browser = new CdpClient();
+            await browser.ConnectAsync(wsUri, cts.Token).ConfigureAwait(false);
+            var payload = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { id = 1, method = "Browser.close" }));
+            await browser._ws.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, cts.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or WebSocketException or OperationCanceledException or JsonException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
 
     /// <summary>JavaScript probe evaluated over CDP to check Speedometer 3 completion and extract the score.</summary>
     public const string SpeedometerPollExpression = """
@@ -543,11 +597,77 @@ public static class SpeedometerProcessRunner
     public static void CleanupOrphanedProfiles(string? tempRoot = null)
     {
         var root = tempRoot ?? Path.GetTempPath();
+        if (OperatingSystem.IsWindows()) CloseOrphanedBrowsers(root);
         if (!Directory.Exists(root)) return;
         foreach (var dir in Directory.EnumerateDirectories(root, TempProfilePrefix + "*"))
         {
             try { Directory.Delete(dir, recursive: true); } catch { }
         }
+    }
+
+    /// <summary>
+    /// Ends headless browsers left running by earlier runs: any process started with a <c>--user-data-dir</c> inside
+    /// <paramref name="tempRoot"/>\rpcd-speedometer-*. Older builds left one behind each time Chrome handed itself to a second
+    /// process (they only killed the process they started), and each kept a full Chrome running in the background. Only
+    /// the user's own processes are visible to the un-elevated app, so this never touches anyone else's browser.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public static int CloseOrphanedBrowsers(string tempRoot)
+    {
+        var closed = 0;
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                $"SELECT ProcessId, CommandLine FROM Win32_Process WHERE CommandLine LIKE '%{TempProfilePrefix}%'");
+            using var results = searcher.Get();
+            foreach (var mo in results)
+            {
+                using (mo)
+                {
+                    if (mo["CommandLine"] is not string cmd || !UsesRunProfile(cmd, tempRoot)) continue;
+                    if (mo["ProcessId"] is not uint pid) continue;
+                    try
+                    {
+                        using var p = Process.GetProcessById((int)pid);
+                        p.Kill(entireProcessTree: true);
+                        closed++;
+                    }
+                    catch { /* already gone, or not ours */ }
+                }
+            }
+        }
+        catch { /* WMI unavailable: leave them */ }
+        return closed;
+    }
+
+    /// <summary>
+    /// True when <paramref name="commandLine"/> has a <c>--user-data-dir</c> (quoted or not) that is an
+    /// <c>rpcd-speedometer-*</c> folder directly inside <paramref name="tempRoot"/>.
+    /// </summary>
+    public static bool UsesRunProfile(string commandLine, string tempRoot)
+    {
+        const string Switch = "--user-data-dir=";
+        var at = commandLine.IndexOf(Switch, StringComparison.OrdinalIgnoreCase);
+        if (at < 0) return false;
+        var rest = commandLine[(at + Switch.Length)..];
+        string value;
+        if (rest.StartsWith('"'))
+        {
+            var end = rest.IndexOf('"', 1);
+            if (end < 0) return false;
+            value = rest[1..end];
+        }
+        else
+        {
+            var end = rest.IndexOf(' ');
+            value = end < 0 ? rest : rest[..end];
+        }
+        value = value.TrimEnd('\\', '/');
+        var leaf = Path.GetFileName(value);
+        var parent = Path.GetDirectoryName(value);
+        return leaf.StartsWith(TempProfilePrefix, StringComparison.OrdinalIgnoreCase)
+            && parent is not null
+            && parent.TrimEnd('\\', '/').Equals(tempRoot.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
     }
 
     public static async Task<SpeedometerResult> RunAsync(
@@ -581,6 +701,7 @@ public static class SpeedometerProcessRunner
         linked.CancelAfter(timeout);
 
         Process? proc = null;
+        int? port = null;
         try
         {
             log.Info($"[benchmark] speedometer start: browser={browser.DisplayName} url={runUrl}");
@@ -596,15 +717,29 @@ public static class SpeedometerProcessRunner
             if (wsUri is null)
                 return new(null, browser.Engine, browser.DisplayName, browser.Version, Note: $"Could not attach to {browser.DisplayName} benchmark tab.");
 
+            port = cdpPort;
             await using var cdp = new CdpClient();
             await cdp.ConnectAsync(wsUri, linked.Token).ConfigureAwait(false);
 
+            var launcherExitLogged = false;
             while (!linked.Token.IsCancellationRequested)
             {
-                if (proc.HasExited)
+                // The DevTools connection is what tells us the browser is still running. On Windows the chrome.exe we started
+                // often hands the browser to another chrome.exe and exits within a second, so its exit alone means nothing.
+                if (!cdp.IsOpen)
                     return new(null, browser.Engine, browser.DisplayName, browser.Version, Note: $"{browser.DisplayName} closed before Speedometer finished.");
+                if (proc.HasExited && !launcherExitLogged)
+                {
+                    launcherExitLogged = true;
+                    log.Info($"[benchmark] speedometer: started {browser.DisplayName} process exited (code {SafeExitCode(proc)}); the browser is still answering, so the run continues.");
+                }
 
-                var raw = await cdp.EvaluateStringAsync(CdpClient.SpeedometerPollExpression, linked.Token).ConfigureAwait(false);
+                string? raw;
+                try { raw = await cdp.EvaluateStringAsync(CdpClient.SpeedometerPollExpression, linked.Token).ConfigureAwait(false); }
+                catch (WebSocketException)
+                {
+                    return new(null, browser.Engine, browser.DisplayName, browser.Version, Note: $"{browser.DisplayName} closed before Speedometer finished.");
+                }
                 if (CdpClient.IsErrorJson(raw))
                     return new(null, browser.Engine, browser.DisplayName, browser.Version, Note: "Speedometer 3 stopped with an error in the browser.");
                 if (CdpClient.TryParseScoreJson(raw, out var score, out var ci))
@@ -624,6 +759,9 @@ public static class SpeedometerProcessRunner
         }
         finally
         {
+            // Close the browser through DevTools first: it reaches the browser even when the process we started already exited.
+            if (port is { } p && await CdpClient.CloseBrowserAsync(p, TimeSpan.FromSeconds(3)).ConfigureAwait(false))
+                await WaitForProfileReleaseAsync(profileDir, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             try
             {
                 if (proc is not null && !proc.HasExited)
@@ -633,5 +771,20 @@ public static class SpeedometerProcessRunner
             proc?.Dispose();
             try { Directory.Delete(profileDir, recursive: true); } catch { }
         }
+    }
+
+    private static string SafeExitCode(Process proc)
+    {
+        try { return proc.ExitCode.ToString(CultureInfo.InvariantCulture); }
+        catch { return "unknown"; }
+    }
+
+    /// <summary>Waits until the browser lets go of its profile (Chrome deletes DevToolsActivePort as it shuts down).</summary>
+    private static async Task WaitForProfileReleaseAsync(string profileDir, TimeSpan timeout)
+    {
+        var portFile = Path.Combine(profileDir, "DevToolsActivePort");
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline && File.Exists(portFile))
+            await Task.Delay(200).ConfigureAwait(false);
     }
 }

@@ -10,6 +10,48 @@ namespace RemotePCDiagnostics.Tests;
 public sealed class SpeedometerTests
 {
     [Fact]
+    public void UsesRunProfile_MatchesQuotedAndBareRunProfilesInTempOnly()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "rpd-t");
+        var run = Path.Combine(temp, "rpcd-speedometer-0123abcd");
+        Assert.True(SpeedometerProcessRunner.UsesRunProfile($"chrome.exe --headless=new \"--user-data-dir={run}\" --no-first-run", temp));
+        Assert.True(SpeedometerProcessRunner.UsesRunProfile($"chrome.exe --headless=new --user-data-dir=\"{run}\" --no-first-run", temp));
+        Assert.True(SpeedometerProcessRunner.UsesRunProfile($"chrome.exe --type=renderer --user-data-dir={run} --foo", temp));
+        Assert.False(SpeedometerProcessRunner.UsesRunProfile("chrome.exe --no-first-run", temp));
+        Assert.False(SpeedometerProcessRunner.UsesRunProfile($"chrome.exe --user-data-dir={Path.Combine(temp, "Default")}", temp));
+        Assert.False(SpeedometerProcessRunner.UsesRunProfile($"chrome.exe --user-data-dir={Path.Combine(temp, "x", "rpcd-speedometer-1")}", temp));
+    }
+
+    [Fact]
+    public async Task LocalServer_FolderUrlServesItsIndex_AndRedirectsWithoutSlash()
+    {
+        // Speedometer's Perf-Dashboard suite loads resources/perf.webkit.org/public/v3/; a 404 there stalled every run.
+        var dir = Path.Combine(Path.GetTempPath(), "rpd-sm-srv-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(dir, "sub", "v3"));
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "index.html"), "<html>root</html>");
+            File.WriteAllText(Path.Combine(dir, "sub", "v3", "index.html"), "<html>v3</html>");
+            await using var server = new SpeedometerLocalServer(dir);
+
+            using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+            var folder = await http.GetAsync($"{server.BaseUri}sub/v3/");
+            Assert.Equal(HttpStatusCode.OK, folder.StatusCode);
+            Assert.Equal("<html>v3</html>", await folder.Content.ReadAsStringAsync());
+
+            var noSlash = await http.GetAsync($"{server.BaseUri}sub/v3?x=1");
+            Assert.Equal(HttpStatusCode.MovedPermanently, noSlash.StatusCode);
+            Assert.Equal("/sub/v3/?x=1", noSlash.Headers.Location?.OriginalString);
+
+            Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"{server.BaseUri}sub/")).StatusCode);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
     public async Task LocalServer_ServesIndexAndAssets_StripsQuery_AndBlocksTraversal()
     {
         var dir = Path.Combine(Path.GetTempPath(), "rpd-sm-srv-" + Guid.NewGuid().ToString("N"));
