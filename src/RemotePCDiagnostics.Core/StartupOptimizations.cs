@@ -25,12 +25,6 @@ public static class StartupOptimizations
     /// <summary>Opt 3: Use pre-known descriptors for built-in modules to avoid reading PE assembly manifests at startup.</summary>
     public static bool StaticDescriptors => IsEnabled("RPD_OPT_STATIC_DESCRIPTORS", false);
 
-    /// <summary>Opt 4: Run event log startup migrations in the background or fast-check marker file without synchronous event queries.</summary>
-    public static bool DeferMigrations => IsEnabled("RPD_OPT_DEFER_MIGRATIONS", true);
-
-    /// <summary>Opt 5: Fast-path SecureProtectedState if ACLs were already verified for this installation.</summary>
-    public static bool FastProtectedState => IsEnabled("RPD_OPT_FAST_STATE_CHECK", true);
-
     /// <summary>Opt 6: Defer post-reboot, workflow, and benchmark resume file queries until after UI settles.</summary>
     public static bool DeferResumes => IsEnabled("RPD_OPT_DEFER_RESUMES", true);
 

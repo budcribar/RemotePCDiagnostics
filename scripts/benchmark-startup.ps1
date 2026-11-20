@@ -153,18 +153,6 @@ $configs = @(
         Env = @{ "RPD_OPT_PARALLEL_PLUGINS" = "1" }
     },
     @{
-        Name = "Opt 4: Fast Protected State"
-        Description = "Skip redundant ACL/security descriptor re-verification when .secured marker exists"
-        Exe = $BaselineExePath
-        Env = @{ "RPD_OPT_FAST_STATE_CHECK" = "1" }
-    },
-    @{
-        Name = "Opt 5: Defer Startup Migrations"
-        Description = "Run EventLog migrations in background task instead of blocking UI thread"
-        Exe = $BaselineExePath
-        Env = @{ "RPD_OPT_DEFER_MIGRATIONS" = "1" }
-    },
-    @{
         Name = "Opt 6: Defer State Resumes"
         Description = "Delay reboot/workflow/benchmark resume queries until post-startup idle"
         Exe = $BaselineExePath
