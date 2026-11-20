@@ -58,12 +58,10 @@ public class PowerShellScreenTests
     }
 
     [Fact]
-    public void Validation_uses_the_screen_for_powershell()
+    public void The_Agent_runs_no_powershell_the_app_sends()
     {
-        var ok = AdminCommandAllowlist.TryValidateArguments("powershell.exe", SystemCommandRunner.PowerShellArgs("Get-Service wuauserv"), out var error);
-        Assert.True(ok, error);
-
-        Assert.False(AdminCommandAllowlist.TryValidateArguments("powershell.exe", SystemCommandRunner.PowerShellArgs("'i'+'ex' | Out-Null; IE`X $x"), out error));
-        Assert.Contains("iex", error);
+        // run_command no longer takes powershell.exe at all: the Agent's own scripts (agent_script) are screened too, before they run.
+        Assert.False(AdminCommandAllowlist.TryResolveSystemTool(SystemCommandRunner.PowerShell, out _));
+        Assert.False(AdminCommandAllowlist.TryResolveSystemTool("powershell.exe", out _));
     }
 }

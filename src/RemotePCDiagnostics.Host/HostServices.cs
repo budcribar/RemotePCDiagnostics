@@ -43,6 +43,8 @@ public static class HostServices
         services.AddSingleton<IElevatedCommandBridge>(sp => sp.GetRequiredService<ElevationService>());
         // Startup apps, services, hibernation, Fast Startup and DNS changes that need administrator rights: made by the Agent.
         services.AddSingleton<IAdminSettingsBackend>(sp => new AgentAdminSettings(sp.GetRequiredService<IElevatedCommandBridge>()));
+        // HKLM policy values, extension blocklists, the page file and Defender exclusions: made by the Agent too.
+        services.AddSingleton<IMachineTweaks>(sp => new AgentMachineTweaks(sp.GetRequiredService<IElevatedCommandBridge>(), L<AgentMachineTweaks>()));
         services.AddSingleton<RemoteUsers>(); // the top bar's "N Remote Users" badge
         services.AddSingleton(_ => AgentModeHost.CreateMonitor()); // Local only / agent link, separate from the session badge
         if (session.Mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
@@ -59,7 +61,8 @@ public static class HostServices
             elevatedBridge: sp.GetRequiredService<IElevatedCommandBridge>(),
             isProcessElevated: () => sp.GetRequiredService<IElevationContext>().IsProcessElevated));
         // One Windows memory/startup adapter for the whole app (undo and memory suggestions share it).
-        services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), L<WindowsMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>()));
+        services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), L<WindowsMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(),
+            sp.GetRequiredService<IMachineTweaks>()));
         // Its role interfaces resolve to the same instance, so a consumer can take only the part it uses.
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IMemoryProbe>(sp => sp.GetRequiredService<IMemorySystem>());
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IAppControl>(sp => sp.GetRequiredService<IMemorySystem>());
