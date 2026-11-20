@@ -1,0 +1,183 @@
+using System.Globalization;
+using System.Text.Json.Serialization;
+using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Security;
+using RemotePCDiagnostics.Core.Workflow;
+
+namespace RemotePCDiagnostics.Core.Session;
+
+/// <summary>
+/// One <see cref="AdminPipeFraming.OpAgentScript"/> request: which change (<see cref="Name"/>) and its arguments. The app never sends
+/// PowerShell to the Agent: the Agent builds the script itself from <see cref="AgentScripts"/>, after checking the arguments.
+/// </summary>
+public sealed record AdminPipeScript(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("args")] IReadOnlyList<string>? Args = null);
+
+/// <summary>
+/// The PowerShell the Agent runs with administrator rights for the app, by name. Each entry checks its arguments and builds the script
+/// from this app's own code; anything else is refused. Replaces sending scripts through <c>run_command</c>.
+/// </summary>
+public static class AgentScripts
+{
+    /// <summary>Args: the <see cref="SecurityFixes"/> key. Prints the current value (journaled before the change).</summary>
+    public const string SecurityRead = "security_read";
+    /// <summary>Args: the key. Makes the change and reads it back (exit 3 when Windows didn't keep it).</summary>
+    public const string SecurityApply = "security_apply";
+    /// <summary>Args: the key and the journaled previous value (<see cref="SecurityFixes.ParsePrevious"/>).</summary>
+    public const string SecurityRestore = "security_restore";
+    /// <summary>Args: drive letters ("C", "DE").</summary>
+    public const string OptimizeVolume = "optimize_volume";
+    /// <summary>Args: the Windows Update ID (a GUID).</summary>
+    public const string InstallUpdate = "install_update";
+    /// <summary>Args: "drivers" or "software".</summary>
+    public const string WindowsUpdate = "windows_update";
+    public const string CleanTemp = "clean_temp";
+    /// <summary>Args: a process name (not protected, no wildcards). Prints the memory it freed.</summary>
+    public const string StopProcess = "stop_process";
+    /// <summary>Args: <see cref="RebootTask"/> or <see cref="WorkflowTask"/>, the user (DOMAIN\name), then the app's launch arguments.</summary>
+    public const string ResumeTaskRegister = "resume_task_register";
+    /// <summary>Args: <see cref="RebootTask"/> or <see cref="WorkflowTask"/>. Fails only when the task is still there afterwards.</summary>
+    public const string ResumeTaskRemove = "resume_task_remove";
+
+    public const string RebootTask = "reboot";
+    public const string WorkflowTask = "workflow";
+
+    public static AdminPipeScript Of(string name, params string[] args) => new(name, args);
+
+    /// <summary>The script for <paramref name="request"/>, or null with <paramref name="refusal"/> saying why it isn't run.</summary>
+    /// <param name="appFolder">The installed app's folder: the resume task runs the Agent launcher from there (never a path the app sent).</param>
+    public static string? Build(AdminPipeScript request, string? appFolder, out string? refusal, DateTimeOffset? now = null)
+    {
+        string? why = null;
+        var script = Build(request, appFolder, now, r => why = r);
+        refusal = script is null ? why ?? "That change isn't allowed." : null;
+        return script;
+    }
+
+    private static string? Build(AdminPipeScript request, string? appFolder, DateTimeOffset? now, Action<string> refused)
+    {
+        var a = request.Args ?? [];
+        string? Arg(int i) => i < a.Count ? a[i] : null;
+        string? Refuse(string why) { refused(why); return null; }
+
+        switch (request.Name)
+        {
+            case SecurityRead or SecurityApply:
+                if (a.Count != 1 || SecurityFixes.Find(Arg(0)) is not { } fix) return Refuse("That isn't a security setting this app changes.");
+                return (request.Name == SecurityRead ? SecurityFixes.ReadScript(fix.Key) : SecurityFixes.ApplyScript(fix.Key)) ?? Refuse("That setting can't be changed here.");
+
+            case SecurityRestore:
+                if (a.Count != 2 || SecurityFixes.Find(Arg(0)) is not { } restore) return Refuse("That isn't a security setting this app changes.");
+                return SecurityFixes.RestoreScript(restore.Key, Arg(1)) ?? Refuse("The original setting wasn't recorded in a form this app wrote.");
+
+            case OptimizeVolume:
+                var letters = a.Count == 1 ? RemediationService.DriveLetters(Arg(0)) : "";
+                if (letters.Length == 0) return Refuse("That isn't a drive letter.");
+                return $"$ErrorActionPreference='Stop'; Optimize-Volume -DriveLetter {string.Join(",", letters.ToCharArray())} -ReTrim";
+
+            case InstallUpdate:
+                return (a.Count == 1 ? RemediationService.BuildInstallUpdateScript(Arg(0)) : null) ?? Refuse("That isn't a Windows Update ID.");
+
+            case WindowsUpdate:
+                return a.Count == 1 && Arg(0) is "drivers" or "software"
+                    ? RemediationService.BuildWindowsUpdateScript(Arg(0) == "drivers") : Refuse("Only driver or software updates.");
+
+            case CleanTemp:
+                return a.Count == 0 ? RemediationService.CleanTempScript : Refuse("Cleaning temporary files takes no arguments.");
+
+            case StopProcess:
+                var name = a.Count == 1 ? Arg(0)?.Trim() : null;
+                if (!IsProcessName(name) || ProcessProtection.IsProtected(name!)) return Refuse("That process is protected or isn't a process name.");
+                return RemediationService.BuildStopProcessScript(name!);
+
+            case ResumeTaskRegister:
+                if (a.Count < 3 || TaskName(Arg(0)) is not { } task) return Refuse("That isn't a sign-in task this app creates.");
+                if (!IsAccountName(Arg(1))) return Refuse("That isn't a Windows account name.");
+                var launch = a.Skip(2).ToList();
+                if (!launch.All(IsLaunchArgument)) return Refuse("Those aren't arguments the app starts with.");
+                if (string.IsNullOrEmpty(appFolder)) return Refuse("The app's folder isn't known.");
+                // A Windows path, joined the same way wherever this runs (the task is for Task Scheduler).
+                appFolder = appFolder.TrimEnd('\\', '/');
+                var agent = appFolder + "\\" + ElevationService.AdminHelperExeName;
+                // The reboot task stops firing once the saved restart state would have expired; the workflow's runs until the workflow removes it.
+                DateTimeOffset? end = Arg(0) == RebootTask ? (now ?? DateTimeOffset.Now).Add(SessionLaunchOptions.PendingRebootMaxAge) : null;
+                return ResumeTaskScript.Register(task, agent, "--launch " + string.Join(' ', launch), appFolder, Arg(1)!, end, highest: true);
+
+            case ResumeTaskRemove:
+                return a.Count == 1 && TaskName(Arg(0)) is { } remove ? ResumeTaskScript.Remove(remove) : Refuse("That isn't a sign-in task this app creates.");
+
+            default:
+                return Refuse($"Unknown script '{request.Name}'.");
+        }
+    }
+
+    public static string? TaskName(string? kind) => kind switch
+    {
+        RebootTask => RebootResumeCoordinator.ResumeTaskName,
+        WorkflowTask => WorkflowService.ResumeTaskName,
+        _ => null,
+    };
+
+    /// <summary>A process name as Task Manager shows it: no path, no wildcards, no quotes.</summary>
+    public static bool IsProcessName(string? name) =>
+        name is { Length: > 0 and <= 128 } && name.All(c => char.IsLetterOrDigit(c) || c is ' ' or '.' or '-' or '_' or '(' or ')' or '+');
+
+    /// <summary>DOMAIN\name (or a local name), as Windows writes a sign-in task's user.</summary>
+    public static bool IsAccountName(string? user)
+    {
+        if (user is not { Length: > 0 and <= 256 } || user.Any(c => char.IsControl(c) || c is '"' or '/' or '[' or ']' or ':' or ';' or '|' or '=' or ',' or '+' or '*' or '?' or '<' or '>' or '@'))
+            return false;
+        var parts = user.Split('\\');
+        return parts.Length is 1 or 2 && parts.All(p => p.Trim().Length > 0);
+    }
+
+    /// <summary>One argument <see cref="SessionLaunchOptions.BuildResumeCommandLine"/> writes (plus the workflow's), and nothing else.</summary>
+    public static bool IsLaunchArgument(string? arg)
+    {
+        if (string.IsNullOrEmpty(arg)) return false;
+        if (arg is SessionLaunchOptions.PostRebootArg or SessionLaunchOptions.WorkflowArg or SessionLaunchOptions.UnattendedArg
+            or SessionLaunchOptions.VoiceArg or SessionLaunchOptions.AdminArg or "--no-admin")
+            return true;
+        if (arg.StartsWith("-u=", StringComparison.Ordinal))
+            return Uri.TryCreate(arg[3..], UriKind.Absolute, out var u) && u.Scheme is "https" or "http" && arg.All(c => c > ' ' && c is not ('"' or '\'' or '`'));
+        if (arg.StartsWith("-i=", StringComparison.Ordinal)) return Guid.TryParseExact(arg[3..], "D", out _);
+        if (arg.StartsWith("-g=", StringComparison.Ordinal))
+            return arg.Length is > 3 and <= 67 && arg[3..].All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
+        return false;
+    }
+}
+
+/// <summary>The "continue after the restart" sign-in tasks (the restart fix and benchmark, and the service workflow).</summary>
+public static class ResumeTaskScript
+{
+    private static string Q(string s) => s.Replace("'", "''");
+
+    /// <summary>
+    /// The arguments of <paramref name="commandLine"/> (<see cref="SessionLaunchOptions.BuildResumeCommandLine"/>: the quoted
+    /// <paramref name="executablePath"/>, then arguments without spaces), one by one, as the Agent checks them.
+    /// </summary>
+    public static IReadOnlyList<string> LaunchArguments(string executablePath, string commandLine)
+    {
+        var quotedExe = $"\"{executablePath.Trim('"')}\"";
+        var rest = commandLine.StartsWith(quotedExe, StringComparison.OrdinalIgnoreCase) ? commandLine[quotedExe.Length..] : SessionLaunchOptions.PostRebootArg;
+        return rest.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    /// <summary>
+    /// At <paramref name="user"/>'s sign-in, runs <paramref name="execute"/> <paramref name="arguments"/>. <paramref name="highest"/> only for the
+    /// Agent's launcher (it starts the app un-elevated); the app itself only ever gets limited rights.
+    /// </summary>
+    public static string Register(string taskName, string execute, string arguments, string? workDir, string user, DateTimeOffset? endBoundary, bool highest) =>
+        "$ErrorActionPreference='Stop';" +
+        $"$a=New-ScheduledTaskAction -Execute '{Q(execute)}' -Argument '{Q(arguments)}'" + (string.IsNullOrEmpty(workDir) ? "" : $" -WorkingDirectory '{Q(workDir)}'") + ";" +
+        $"$t=New-ScheduledTaskTrigger -AtLogOn -User '{Q(user)}';" +
+        (endBoundary is { } end ? $"$t.EndBoundary='{end.LocalDateTime.ToString("s", CultureInfo.InvariantCulture)}';" : "") +
+        $"$p=New-ScheduledTaskPrincipal -UserId '{Q(user)}' -LogonType Interactive -RunLevel {(highest ? "Highest" : "Limited")};" +
+        "$s=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero);" +
+        $"Register-ScheduledTask -TaskName '{Q(taskName)}' -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null";
+
+    public static string Remove(string taskName) =>
+        $"Unregister-ScheduledTask -TaskName '{Q(taskName)}' -Confirm:$false -ErrorAction SilentlyContinue; " +
+        $"if (Get-ScheduledTask -TaskName '{Q(taskName)}' -ErrorAction SilentlyContinue) {{ exit 1 }}";
+}

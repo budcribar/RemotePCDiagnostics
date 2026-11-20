@@ -19,12 +19,10 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
     private void Log(string m) => log.Info("[workflow] " + m);
     private void LogWarn(string m) => log.Warn("[workflow] " + m);
 
-    private static string Q(string s) => s.Replace("'", "''");
-
-    private async Task<bool> PsAsync(string script, CancellationToken ct)
+    private async Task<bool> AgentScriptAsync(AdminPipeScript script, CancellationToken ct)
     {
-        var r = await commands.RunPowerShellAsync(script, ct).ConfigureAwait(false);
-        Log($"powershell exit={r?.ExitCode} err={r?.StdErr.Trim()}");
+        var r = await commands.RunAgentScriptAsync(script, null, ct).ConfigureAwait(false);
+        Log($"{script.Name} exit={r?.ExitCode} err={r?.StdErr.Trim()}");
         return r is { ExitCode: 0 };
     }
 
@@ -32,32 +30,23 @@ public sealed class WindowsWorkflowSystem(SystemCommandRunner commands, ISession
     // ---- continue after sign-in ----
     // Task Scheduler starts the Agent's launcher with highest privileges (no UAC prompt, unlike RunOnce); the launcher starts the app
     // un-elevated in the user's session with its admin pipe, so the rest of the workflow has the Agent from the start.
+    // A task with highest privileges can only be registered with administrator rights: the Agent registers it, from its own folder and
+    // a script it builds itself (AgentScripts.ResumeTaskRegister); the app sends only the user and its launch arguments.
     public Task<bool> RegisterResumeAsync(CancellationToken ct)
     {
         var exe = Environment.ProcessPath ?? throw new InvalidOperationException("No process path");
-        var dir = Path.GetDirectoryName(exe)!;
-        var agent = Path.Combine(dir, ElevationService.AdminHelperExeName);
-        if (!File.Exists(agent)) { LogWarn($"register resume task: the Agent isn't at {agent}"); return Task.FromResult(false); }
-        // A task with highest privileges can only be registered with administrator rights: the Agent registers it.
         if (bridge is not { IsConnected: true }) { LogWarn("register resume task: the Agent isn't connected"); return Task.FromResult(false); }
         var full = SessionLaunchOptions.BuildResumeCommandLine(exe, session.Mode, session.ServerUri, session.SessionId, session.Unattended, session.Voice, session.Group);
-        var args = "--launch " + full[$"\"{exe.Trim('"')}\"".Length..].Trim() + " " + SessionLaunchOptions.WorkflowArg;
+        var launch = ResumeTaskScript.LaunchArguments(exe, full).Append(SessionLaunchOptions.WorkflowArg);
         var user = $"{Environment.UserDomainName}\\{Environment.UserName}";
-        var script =
-            "$ErrorActionPreference='Stop';" +
-            $"$a=New-ScheduledTaskAction -Execute '{Q(agent)}' -Argument '{Q(args)}' -WorkingDirectory '{Q(dir)}';" +
-            $"$t=New-ScheduledTaskTrigger -AtLogOn -User '{Q(user)}';" +
-            $"$p=New-ScheduledTaskPrincipal -UserId '{Q(user)}' -LogonType Interactive -RunLevel Highest;" +
-            "$s=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero);" +
-            $"Register-ScheduledTask -TaskName '{Q(TaskName)}' -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null";
-        Log($"register resume task: {agent} {args}");
-        return PsAsync(script, ct);
+        var script = AgentScripts.Of(AgentScripts.ResumeTaskRegister, [AgentScripts.WorkflowTask, user, .. launch]);
+        Log($"register resume task (Agent): {string.Join(' ', script.Args ?? [])}");
+        return AgentScriptAsync(script, ct);
     }
 
     /// <summary>Removes the task (a missing task is fine) and fails only when it's still registered afterwards.</summary>
     public Task<bool> RemoveResumeAsync(CancellationToken ct) =>
-        PsAsync($"Unregister-ScheduledTask -TaskName '{Q(TaskName)}' -Confirm:$false -ErrorAction SilentlyContinue; " +
-                $"if (Get-ScheduledTask -TaskName '{Q(TaskName)}' -ErrorAction SilentlyContinue) {{ exit 1 }}", ct);
+        AgentScriptAsync(AgentScripts.Of(AgentScripts.ResumeTaskRemove, AgentScripts.WorkflowTask), ct);
 
     // ---- restart ----
     public async Task<bool> RestartAsync(TimeSpan delay, string message, CancellationToken ct)

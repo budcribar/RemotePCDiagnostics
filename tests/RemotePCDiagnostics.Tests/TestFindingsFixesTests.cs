@@ -111,8 +111,9 @@ public class TestFindingsFixesTests
         public IReadOnlyDictionary<string, int?>? ReadHibernateValues() => Hibernation.TrackedValues.ToDictionary(n => n, n => Power.TryGetValue(n, out var v) ? v : (int?)null);
         public void DeleteHibernateValue(string name) { Calls.Add("hib-delete:" + name); Power.Remove(name); }
 
-        public Task<(bool Ok, string? Output)> RunDefenderScriptAsync(string script, CancellationToken ct) =>
-            Task.FromResult<(bool, string?)>((true, script.Contains("Add-MpPreference") ? DefenderReadBack : ""));
+        public Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) =>
+            Task.FromResult<(bool, string?)>((true, DefenderReadBack));
+        public Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) => Task.FromResult(true);
     }
 
     private static (Sys, MemoryChangeJournal, MemorySuggestionService) Make(Sys sys)
