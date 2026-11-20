@@ -188,7 +188,7 @@ public class BenchmarkTests
         var run = await new BenchmarkRunner(probes, resolve: Resolve).RunAsync(BenchmarkPhase.Before, Fast, null, new SyncProgress(progress.Add), default);
         Assert.True(run.Completed, "run stopped early");
         Assert.Contains(progress, p => p.StartsWith("Measuring disk"));
-        Assert.Equal(Enum.GetValues<BenchmarkKind>().Length, run.Measurements.Count);
+        Assert.Equal(Fast.Enabled.Count, run.Measurements.Count);
         Assert.Equal(3.5, run.Get(BenchmarkKind.IdleCpu)!.Median);
         Assert.Equal(42, run.Get(BenchmarkKind.Paging)!.Median);
         Assert.Equal(35, run.Get(BenchmarkKind.BootTime)!.Median);

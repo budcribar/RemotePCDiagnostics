@@ -259,11 +259,14 @@ public static class AgentExports
 
     public static string Benchmark(BenchmarkService bench) => JsonSerializer.Serialize(BuildBenchmark(
         bench.Settings, bench.Before, bench.After, bench.Comparison, bench.Running, bench.Settling is not null,
-        bench.Progress, bench.BeforePendingRestart, bench.AfterPendingRestart, bench.Message), Json);
+        bench.Progress, bench.BeforePendingRestart, bench.AfterPendingRestart, bench.Message,
+        bench.DetectedToolchains, bench.DevDrivePrecheck, bench.LastAntivirusComparison, bench.LastDevDriveComparison), Json);
 
     /// <summary>The page's state: settings, what is running or waiting for a restart, each pass, and the comparison.</summary>
     public static object BuildBenchmark(BenchmarkSettings settings, BenchmarkRun? before, BenchmarkRun? after, BenchmarkComparison comparison,
-        BenchmarkPhase? running, bool settling, string? progress, bool beforePendingRestart, bool afterPendingRestart, string? message) => new
+        BenchmarkPhase? running, bool settling, string? progress, bool beforePendingRestart, bool afterPendingRestart, string? message,
+        IReadOnlyList<DetectedToolchain>? detectedToolchains = null, DevDrivePrecheckResult? devDrivePrecheck = null,
+        DeveloperBuildResult? lastAvComparison = null, DevDriveComparisonResult? lastDevDriveComparison = null) => new
     {
         schema = SchemaVersion,
         phase = running is { } p ? (p == BenchmarkPhase.Before ? "running-before" : "running-after")
@@ -300,6 +303,45 @@ public static class AgentExports
                 note = T(d.Note),
             }).ToList()
             : null,
+        developer = detectedToolchains is { Count: > 0 } || lastAvComparison is not null || lastDevDriveComparison is not null
+            ? new
+            {
+                busyWarning = DeveloperScoring.BusyPcWarning,
+                toolchains = (detectedToolchains ?? []).Select(t => new { language = t.Language.ToString(), name = V(t.DisplayName), version = V(t.Version) }).ToList(),
+                antivirusComparison = lastAvComparison is null ? null : new
+                {
+                    language = lastAvComparison.Language.ToString(),
+                    pinId = V(lastAvComparison.PinId),
+                    coldMedianSeconds = lastAvComparison.ColdMedianSeconds,
+                    warmMedianSeconds = lastAvComparison.WarmMedianSeconds,
+                    warmExcludedMedianSeconds = lastAvComparison.WarmExcludedMedianSeconds,
+                    restoreSeconds = lastAvComparison.RestoreSeconds,
+                    antivirusCostSeconds = lastAvComparison.AntivirusCostSeconds,
+                    antivirusCostPercent = lastAvComparison.AntivirusCostPercent,
+                    band = lastAvComparison.Band.ToString(),
+                    note = T(lastAvComparison.Note),
+                },
+                devDrivePrecheck = devDrivePrecheck is null ? null : new
+                {
+                    eligible = devDrivePrecheck.Eligible,
+                    reason = T(devDrivePrecheck.Reason),
+                    requiresExplicitApproval = true,
+                },
+                devDriveComparison = lastDevDriveComparison is null ? null : new
+                {
+                    succeeded = lastDevDriveComparison.Succeeded,
+                    order = V(lastDevDriveComparison.Order),
+                    ntfsColdMedianSeconds = lastDevDriveComparison.NtfsColdMedianSeconds,
+                    ntfsWarmMedianSeconds = lastDevDriveComparison.NtfsWarmMedianSeconds,
+                    devDriveColdMedianSeconds = lastDevDriveComparison.DevDriveColdMedianSeconds,
+                    devDriveWarmMedianSeconds = lastDevDriveComparison.DevDriveWarmMedianSeconds,
+                    coldPercentFaster = lastDevDriveComparison.ColdPercentFaster,
+                    warmPercentFaster = lastDevDriveComparison.WarmPercentFaster,
+                    defenderPerformanceModeActive = lastDevDriveComparison.DefenderPerformanceModeActive,
+                    note = T(lastDevDriveComparison.Note),
+                },
+            }
+            : null,
     };
 
     private static object? Pass(BenchmarkRun? run) => run is null ? null : new
@@ -321,6 +363,16 @@ public static class AgentExports
                 spread = m.Spread,
                 note = T(m.Note),
                 detail = T(m.Detail),
+                developerBuild = m.DeveloperBuild is null ? null : new
+                {
+                    language = m.DeveloperBuild.Language.ToString(),
+                    pinId = V(m.DeveloperBuild.PinId),
+                    coldMedianSeconds = m.DeveloperBuild.ColdMedianSeconds,
+                    warmMedianSeconds = m.DeveloperBuild.WarmMedianSeconds,
+                    restoreSeconds = m.DeveloperBuild.RestoreSeconds,
+                    score = m.DeveloperBuild.Score,
+                    band = m.DeveloperBuild.Band.ToString(),
+                },
             };
         }).ToList(),
     };

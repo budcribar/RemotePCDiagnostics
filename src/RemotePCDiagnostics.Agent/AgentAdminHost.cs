@@ -152,6 +152,9 @@ internal static class AgentAdminHost
                     ConnectTimeout = TimeSpan.FromSeconds(60),
                 };
 
+                var machineTweaks = OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null;
+                StartDevBenchmarkSweep(machineTweaks, log);
+
                 var server = new AdminPipeServer(
                     serverOptions,
                     new SystemProcessLauncher(),
@@ -162,7 +165,7 @@ internal static class AgentAdminHost
                     autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null,
                     moduleHost: new AgentModuleHost(AppContext.BaseDirectory, log),
                     adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null,
-                    machineTweaks: OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null,
+                    machineTweaks: machineTweaks,
                     changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
                     stateFolder: ProtectedState.Folder(),
                     machineSetup: AgentMachineSetup.ForSignedInUser(log));
@@ -252,6 +255,9 @@ internal static class AgentAdminHost
             {
                 try
                 {
+                    var machineTweaks = OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null;
+                    StartDevBenchmarkSweep(machineTweaks, log);
+
                     using var server = new AdminPipeServer(
                         new AdminPipeServerOptions
                         {
@@ -271,7 +277,7 @@ internal static class AgentAdminHost
                         // The modules that ship with the app and need administrator run in a module host from the app's folder.
                         moduleHost: new AgentModuleHost(AppContext.BaseDirectory, log),
                         adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null,
-                        machineTweaks: OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null,
+                        machineTweaks: machineTweaks,
                         changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
                         stateFolder: ProtectedState.Folder(),
                         machineSetup: AgentMachineSetup.ForSignedInUser(log));
@@ -290,6 +296,24 @@ internal static class AgentAdminHost
                 }
             }
         }
+    }
+
+    private static void StartDevBenchmarkSweep(IMachineTweaks? tweaks, ILogger log)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var cleaned = await new WindowsDevDriveManager(log).SweepLeftoversAsync(tweaks, CancellationToken.None).ConfigureAwait(false);
+                if (cleaned > 0)
+                    log.Info($"[devdrive] Startup sweep cleaned {cleaned} leftover developer benchmark artifact(s).");
+            }
+            catch (Exception ex)
+            {
+                log.Warn($"[devdrive] Startup sweep failed: {ex.Message}");
+            }
+        });
     }
 
     private sealed class LazySensorProvider : IDisposable
