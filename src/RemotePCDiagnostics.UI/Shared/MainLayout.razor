@@ -319,10 +319,10 @@
         AgentShopPillState.IsInstalledNotConnected(Session.Mode, AgentLink.Current.Kind);
 
     private string AgentPillLabel =>
-        AgentShopPillState.FormatLabel(Session.Mode, AgentLink.Current.Kind);
+        AgentShopPillState.FormatLabel(Session.Mode, AgentLink.Current.Kind, Remote.Count);
 
     private string AgentPillCssClass =>
-        AgentShopPillState.FormatCssClass(Session.Mode, AgentLink.Current.Kind);
+        AgentShopPillState.FormatCssClass(Session.Mode, AgentLink.Current.Kind, Remote.Count);
 
     private string AgentPillTooltip =>
         AgentShopPillState.FormatTooltip(

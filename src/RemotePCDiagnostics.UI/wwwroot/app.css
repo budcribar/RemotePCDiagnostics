@@ -816,6 +816,11 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
   box-shadow: 0 0 10px rgba(251, 191, 36, 0.35);
 }
 
+.agent-shop-pill.agent-connected.agent-waiting {
+  /* Linked to a shop, nobody has joined yet: same colour, dashed edge so it reads as pending. */
+  border: 1px dashed var(--badge-remote-fg);
+}
+
 .agent-shop-pill.agent-installed {
   background: var(--surface-2);
   color: var(--text-muted);

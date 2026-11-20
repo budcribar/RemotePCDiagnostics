@@ -7,47 +7,59 @@ namespace RemotePCDiagnostics.Tests;
 public class AgentShopPillStateTests
 {
     [Fact]
-    public void Connected_WithBrandingAndActiveUsers_FormatsCorrectly()
+    public void AgentJoined_WithBrandingAndActiveUsers_ReadsAgentConnected()
     {
-        var label = AgentShopPillState.FormatLabel(SessionMode.Remote, AgentModeKind.Connected);
+        var label = AgentShopPillState.FormatLabel(SessionMode.Remote, AgentModeKind.Connected, 2);
         Assert.Equal("Agent connected", label);
 
-        var css = AgentShopPillState.FormatCssClass(SessionMode.Remote, AgentModeKind.Connected);
+        var css = AgentShopPillState.FormatCssClass(SessionMode.Remote, AgentModeKind.Connected, 2);
         Assert.Contains("agent-connected", css);
         Assert.Contains("badge-remote", css);
+        Assert.DoesNotContain("agent-waiting", css);
 
         var tooltip = AgentShopPillState.FormatTooltip(SessionMode.Remote, AgentModeKind.Connected, "Apex PC Repair", 2);
         Assert.Equal("Agent connected · Apex PC Repair · 2 Remote Users active. Click for shop details & contact info.", tooltip);
     }
 
     [Fact]
-    public void Connected_WithBrandingAndZeroUsers_FormatsWaitingForTechnician()
+    public void ShopLinked_NobodyJoined_ReadsWaitingForAgent()
     {
+        Assert.True(AgentShopPillState.IsConnected(SessionMode.Remote, AgentModeKind.Connected));
+        Assert.False(AgentShopPillState.IsAgentJoined(SessionMode.Remote, AgentModeKind.Connected, 0));
+
+        var label = AgentShopPillState.FormatLabel(SessionMode.Remote, AgentModeKind.Connected, 0);
+        Assert.Equal("Waiting for agent", label);
+
+        var css = AgentShopPillState.FormatCssClass(SessionMode.Remote, AgentModeKind.Connected, 0);
+        Assert.Contains("agent-waiting", css);
+
         var tooltip = AgentShopPillState.FormatTooltip(SessionMode.Remote, AgentModeKind.Connected, "Apex PC Repair", 0);
-        Assert.Equal("Agent connected · Apex PC Repair (Waiting for technician to join). Click for shop details & contact info.", tooltip);
+        Assert.Equal("Waiting for agent · Apex PC Repair. Click for shop details & contact info.", tooltip);
     }
 
     [Fact]
-    public void Connected_WithoutBranding_FormatsCleanlyWithoutRawGroupTags()
+    public void WithoutBranding_FormatsCleanlyWithoutRawGroupTags()
     {
-        var label = AgentShopPillState.FormatLabel(SessionMode.Remote, AgentModeKind.Connected);
-        Assert.Equal("Agent connected", label);
-
         var tooltipWaiting = AgentShopPillState.FormatTooltip(SessionMode.Remote, AgentModeKind.Connected, null, 0);
-        Assert.Equal("Agent connected (Waiting for technician to join). Click for shop details.", tooltipWaiting);
+        Assert.Equal("Waiting for agent. Click for shop details.", tooltipWaiting);
 
         var tooltipActive = AgentShopPillState.FormatTooltip(SessionMode.Remote, AgentModeKind.Connected, "", 1);
         Assert.Equal("Agent connected · 1 Remote User active. Click for shop details.", tooltipActive);
     }
 
     [Fact]
-    public void Connected_ViaAgentService_WhenSessionModeIsLocal_StillReportsConnected()
+    public void ConnectedViaAgentService_WhenSessionModeIsLocal_WaitsUntilSomeoneJoins()
     {
-        var isConn = AgentShopPillState.IsConnected(SessionMode.Local, AgentModeKind.Connected);
-        Assert.True(isConn);
+        Assert.True(AgentShopPillState.IsConnected(SessionMode.Local, AgentModeKind.Connected));
+        Assert.Equal("Waiting for agent", AgentShopPillState.FormatLabel(SessionMode.Local, AgentModeKind.Connected, 0));
+        Assert.Equal("Agent connected", AgentShopPillState.FormatLabel(SessionMode.Local, AgentModeKind.Connected, 1));
+    }
 
-        var label = AgentShopPillState.FormatLabel(SessionMode.Local, AgentModeKind.Connected);
-        Assert.Equal("Agent connected", label);
+    [Fact]
+    public void RemoteUsersWithoutShopLink_DoNotReadAgentConnected()
+    {
+        Assert.False(AgentShopPillState.IsAgentJoined(SessionMode.Local, AgentModeKind.LocalOnly, 3));
+        Assert.Equal("Local only", AgentShopPillState.FormatLabel(SessionMode.Local, AgentModeKind.LocalOnly, 3));
     }
 
     [Fact]
@@ -59,10 +71,10 @@ public class AgentShopPillStateTests
         var isInstalled = AgentShopPillState.IsInstalledNotConnected(SessionMode.Local, AgentModeKind.InstalledNotConnected);
         Assert.True(isInstalled);
 
-        var label = AgentShopPillState.FormatLabel(SessionMode.Local, AgentModeKind.InstalledNotConnected);
+        var label = AgentShopPillState.FormatLabel(SessionMode.Local, AgentModeKind.InstalledNotConnected, 0);
         Assert.Equal("Agent installed, not connected", label);
 
-        var css = AgentShopPillState.FormatCssClass(SessionMode.Local, AgentModeKind.InstalledNotConnected);
+        var css = AgentShopPillState.FormatCssClass(SessionMode.Local, AgentModeKind.InstalledNotConnected, 0);
         Assert.Contains("agent-installed", css);
 
         var tooltip = AgentShopPillState.FormatTooltip(SessionMode.Local, AgentModeKind.InstalledNotConnected, null, 0);
@@ -75,10 +87,10 @@ public class AgentShopPillStateTests
         var isConn = AgentShopPillState.IsConnected(SessionMode.Local, AgentModeKind.LocalOnly);
         Assert.False(isConn);
 
-        var label = AgentShopPillState.FormatLabel(SessionMode.Local, AgentModeKind.LocalOnly);
+        var label = AgentShopPillState.FormatLabel(SessionMode.Local, AgentModeKind.LocalOnly, 0);
         Assert.Equal("Local only", label);
 
-        var css = AgentShopPillState.FormatCssClass(SessionMode.Local, AgentModeKind.LocalOnly);
+        var css = AgentShopPillState.FormatCssClass(SessionMode.Local, AgentModeKind.LocalOnly, 0);
         Assert.Contains("agent-local", css);
         Assert.Contains("badge-local", css);
 
