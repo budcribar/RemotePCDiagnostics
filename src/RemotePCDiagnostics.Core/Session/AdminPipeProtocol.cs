@@ -62,6 +62,14 @@ public interface IElevatedCommandBridge
         throw new NotSupportedException("The Agent can't turn off automatic sign-in.");
 
     /// <summary>
+    /// A system setting the fixes and undo change with administrator rights (<see cref="IAdminSettingsBackend"/>), made by the Agent.
+    /// Throws <see cref="InvalidOperationException"/> with the Agent's reason when it can't, and <see cref="AdminRequiredException"/> when the
+    /// Agent isn't connected or is from before this existed.
+    /// </summary>
+    Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default) =>
+        throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+
+    /// <summary>
     /// The undo journal (%ProgramData%\RemotePCDiagnostics\state\changes.json, which only administrators can open), read by the
     /// Agent. Null when it can't (not connected, or an Agent from before this existed).
     /// </summary>
@@ -306,6 +314,7 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("timeoutMs")] int TimeoutMs = 60_000,
     [property: JsonPropertyName("channel")] string? Channel = null,
     [property: JsonPropertyName("autoLogon")] AdminPipeAutoLogon? AutoLogon = null,
+    [property: JsonPropertyName("setting")] AdminPipeSetting? Setting = null,
     [property: JsonPropertyName("changeId")] Guid? ChangeId = null,
     [property: JsonPropertyName("change")] ChangeRecord? Change = null,
     [property: JsonPropertyName("stateName")] string? StateName = null,
@@ -356,6 +365,8 @@ public static class AdminPipeFraming
     public const string OpValidateCredentials = "validate_credentials";
     public const string OpEnableAutoLogon = "enable_autologon";
     public const string OpDisableAutoLogon = "disable_autologon";
+    /// <summary>One <see cref="AdminPipeSetting"/> change (startup apps, services, hibernation, Fast Startup, DNS).</summary>
+    public const string OpSystemSetting = "system_setting";
     /// <summary>The undo journal, which only administrators can open: read it, and take an undone change off it.</summary>
     public const string OpJournalList = "journal_list";
     public const string OpJournalRemove = "journal_remove";
@@ -626,6 +637,16 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         return r.Ok;
     }
 
+    public async Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpSystemSetting, Setting: setting), ct).ConfigureAwait(false);
+        // Not allowed = an Agent from before this existed ("Unknown operation"): it has to be updated before it can make these changes.
+        // (A change the Agent refuses or that fails comes back allowed, with the reason.)
+        if (!r.Allowed)
+            throw new AdminRequiredException("The Agent on this PC can't change this setting yet. Update Remote PC Diagnostics, then try again.");
+        if (!r.Ok) throw new InvalidOperationException(r.Error ?? "The Agent didn't make the change.");
+    }
+
     /// <summary>An Agent from before a request existed answers "Unknown operation" (not allowed).</summary>
     private static void ThrowIfRefused(AdminPipeResponse r)
     {
@@ -767,6 +788,7 @@ public sealed class AdminPipeServer(
     Func<AppUpdateChannel, IReadOnlyList<string>?, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null,
     Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>>? securityAuditor = null,
     IAutoLogonBackend? autoLogon = null,
+    IAdminSettingsBackend? adminSettings = null,
     Func<IChangeJournal>? changeJournal = null,
     string? stateFolder = null) : IAsyncDisposable, IDisposable
 {
@@ -1061,6 +1083,9 @@ public sealed class AdminPipeServer(
         if (request.Op is AdminPipeFraming.OpValidateCredentials or AdminPipeFraming.OpEnableAutoLogon or AdminPipeFraming.OpDisableAutoLogon)
             return await Task.Run(() => HandleAutoLogon(request), ct).ConfigureAwait(false);
 
+        if (string.Equals(request.Op, AdminPipeFraming.OpSystemSetting, StringComparison.OrdinalIgnoreCase))
+            return await Task.Run(() => HandleSystemSetting(request), ct).ConfigureAwait(false);
+
         if (request.Op is AdminPipeFraming.OpJournalList or AdminPipeFraming.OpJournalRemove or AdminPipeFraming.OpJournalAdd)
             return await Task.Run(() => HandleJournal(request), ct).ConfigureAwait(false);
 
@@ -1184,6 +1209,31 @@ public sealed class AdminPipeServer(
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             log.Warn($"[admin-pipe-server] {request.Op} {request.StateName} failed: {ex.Message}");
+            return Answer(false, ex.Message);
+        }
+    }
+
+    private AdminPipeResponse HandleSystemSetting(AdminPipeRequest request)
+    {
+        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1, Error: error);
+
+        if (adminSettings is null) return Answer(false, "System settings are not supported by this elevated helper.", allowed: false);
+        if (request.Setting is not { } s) return Answer(false, "No setting was sent.");
+        try
+        {
+            if (AdminSettingsRules.Refusal(s, adminSettings.IsDriver) is { } refusal)
+            {
+                log.Warn($"[admin-pipe-server] {s.Action} '{s.Target ?? s.Name}' refused: {refusal}");
+                return Answer(false, refusal);
+            }
+            AdminSettingsRules.Apply(adminSettings, s);
+            log.Info($"[admin-pipe-server] {s.Action} '{s.Target ?? s.Name}' done.");
+            return Answer(true);
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] {s.Action} '{s.Target ?? s.Name}' failed: {ex.Message}");
             return Answer(false, ex.Message);
         }
     }
