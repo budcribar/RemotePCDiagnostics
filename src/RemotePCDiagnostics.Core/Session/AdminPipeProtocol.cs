@@ -106,6 +106,26 @@ public interface IElevatedCommandBridge
         Task.FromResult<IReadOnlyList<ChangeRecord>?>(null);
     /// <summary>Has the Agent take one undone change off the journal. False when it couldn't.</summary>
     Task<bool> RemoveJournalChangeAsync(Guid id, CancellationToken ct = default) => Task.FromResult(false);
+    /// <summary>
+    /// Has the Agent record a change the app just made in the undo journal. False when it couldn't (not connected, or an Agent from
+    /// before this existed); the app keeps the record and tries again when the Agent connects.
+    /// </summary>
+    Task<bool> AddJournalChangeAsync(ChangeRecord change, CancellationToken ct = default) => Task.FromResult(false);
+
+    /// <summary>
+    /// One of the state files the Agent keeps for the app (<see cref="ProtectedStateFiles.AgentManaged"/>) in the state folder only
+    /// administrators can open. <see cref="AgentStateRead.Ok"/> is false when the Agent couldn't read it (not connected, or too old);
+    /// a file that isn't there is Ok with no JSON.
+    /// </summary>
+    Task<AgentStateRead> ReadStateFileAsync(string name, CancellationToken ct = default) => Task.FromResult(AgentStateRead.Failed);
+    /// <summary>Has the Agent save one of those files (null JSON deletes it). False when it couldn't.</summary>
+    Task<bool> WriteStateFileAsync(string name, string? json, CancellationToken ct = default) => Task.FromResult(false);
+}
+
+/// <summary>A state file as the Agent read it: <paramref name="Ok"/> false when it couldn't; <paramref name="Json"/> null when there's no file.</summary>
+public sealed record AgentStateRead(bool Ok, string? Json)
+{
+    public static readonly AgentStateRead Failed = new(false, null);
 }
 
 public static class AdminCommandAllowlist
@@ -298,7 +318,10 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("appRemoval")] AdminPipeAppRemoval? AppRemoval = null,
     [property: JsonPropertyName("tweak")] AdminPipeTweak? Tweak = null,
     [property: JsonPropertyName("script")] AdminPipeScript? Script = null,
-    [property: JsonPropertyName("changeId")] Guid? ChangeId = null);
+    [property: JsonPropertyName("changeId")] Guid? ChangeId = null,
+    [property: JsonPropertyName("change")] ChangeRecord? Change = null,
+    [property: JsonPropertyName("stateName")] string? StateName = null,
+    [property: JsonPropertyName("stateJson")] string? StateJson = null);
 
 /// <summary>
 /// The app removal requests' arguments: packages by name and publisher id, one uninstall command, or one task path. The Agent checks
@@ -342,7 +365,8 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("autoLogonBackup")] AutoLogonBackup? AutoLogonBackup = null,
     [property: JsonPropertyName("left")] IReadOnlyList<string>? Left = null,
     [property: JsonPropertyName("taskState")] string? TaskState = null,
-    [property: JsonPropertyName("changes")] IReadOnlyList<ChangeRecord>? Changes = null);
+    [property: JsonPropertyName("changes")] IReadOnlyList<ChangeRecord>? Changes = null,
+    [property: JsonPropertyName("stateJson")] string? StateJson = null);
 
 /// <summary>
 /// Length-prefixed (4-byte little-endian int32 + UTF-8 JSON) framing over Named Pipes with zero third-party dependencies.
@@ -377,6 +401,11 @@ public static class AdminPipeFraming
     public const string OpMachineTweak = "machine_tweak";
     /// <summary>One <see cref="AdminPipeScript"/>: the Agent builds and runs that script (Security fixes, updates, clean-up, sign-in tasks).</summary>
     public const string OpAgentScript = "agent_script";
+    /// <summary>Records a change the app just made in the undo journal.</summary>
+    public const string OpJournalAdd = "journal_add";
+    /// <summary>The workflow and benchmark state files in the state folder: read one, or save it (no JSON deletes it).</summary>
+    public const string OpStateRead = "state_read";
+    public const string OpStateWrite = "state_write";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -618,6 +647,27 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         return r.Ok;
     }
 
+    public async Task<bool> AddJournalChangeAsync(ChangeRecord change, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpJournalAdd, Change: change), ct).ConfigureAwait(false);
+        if (!r.Ok) _log.Warn($"[admin-pipe] Recording {change.Kind} '{change.Target}' in the undo journal failed: {r.Error}");
+        return r.Ok;
+    }
+
+    public async Task<AgentStateRead> ReadStateFileAsync(string name, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpStateRead, StateName: name), ct).ConfigureAwait(false);
+        if (!r.Ok) _log.Warn($"[admin-pipe] Reading {name} failed: {r.Error}");
+        return r.Ok ? new AgentStateRead(true, r.StateJson) : AgentStateRead.Failed;
+    }
+
+    public async Task<bool> WriteStateFileAsync(string name, string? json, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpStateWrite, StateName: name, StateJson: json), ct).ConfigureAwait(false);
+        if (!r.Ok) _log.Warn($"[admin-pipe] Saving {name} failed: {r.Error}");
+        return r.Ok;
+    }
+
     public async Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default)
     {
         var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpSystemSetting, Setting: setting), ct).ConfigureAwait(false);
@@ -820,7 +870,8 @@ public sealed class AdminPipeServer(
     IMachineTweaks? machineTweaks = null,
     DefenderPaths? defenderPaths = null,
     string? appFolder = null,
-    Func<IChangeJournal>? changeJournal = null) : IAsyncDisposable, IDisposable
+    Func<IChangeJournal>? changeJournal = null,
+    string? stateFolder = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -1118,7 +1169,7 @@ public sealed class AdminPipeServer(
         if (request.Op is AdminPipeFraming.OpRemoveAppx or AdminPipeFraming.OpRunUninstaller or AdminPipeFraming.OpSetScheduledTask)
             return await HandleAppRemovalAsync(request, ct).ConfigureAwait(false);
 
-        if (request.Op is AdminPipeFraming.OpJournalList or AdminPipeFraming.OpJournalRemove)
+        if (request.Op is AdminPipeFraming.OpJournalList or AdminPipeFraming.OpJournalRemove or AdminPipeFraming.OpJournalAdd)
             return await Task.Run(() => HandleJournal(request), ct).ConfigureAwait(false);
 
         if (string.Equals(request.Op, AdminPipeFraming.OpMachineTweak, StringComparison.OrdinalIgnoreCase))
@@ -1126,6 +1177,9 @@ public sealed class AdminPipeServer(
 
         if (string.Equals(request.Op, AdminPipeFraming.OpAgentScript, StringComparison.OrdinalIgnoreCase))
             return await HandleAgentScriptAsync(request, ct).ConfigureAwait(false);
+
+        if (request.Op is AdminPipeFraming.OpStateRead or AdminPipeFraming.OpStateWrite)
+            return await Task.Run(() => HandleStateFile(request), ct).ConfigureAwait(false);
 
         return new AdminPipeResponse(
             Ok: false,
@@ -1177,8 +1231,9 @@ public sealed class AdminPipeServer(
     }
 
     /// <summary>
-    /// The undo journal for an app that isn't elevated: it reads the records and takes off the ones it undid. It can't add any, so
-    /// nothing the app sends can make a later undo put back something this app didn't change.
+    /// The undo journal for an app that isn't elevated: it reads the records, adds the changes it makes and takes off the ones it
+    /// undid. Only the verified app can connect, and an undo runs in the app, which reaches administrator rights only through this
+    /// pipe's own checked requests (allowlisted commands and values), so a record adds nothing the app couldn't already ask for.
     /// </summary>
     private AdminPipeResponse HandleJournal(AdminPipeRequest request)
     {
@@ -1192,6 +1247,13 @@ public sealed class AdminPipeServer(
             // Opened for each request: the app or another Agent may have changed the file since the last one.
             var journal = changeJournal();
             if (request.Op == AdminPipeFraming.OpJournalList) return Answer(true, changes: journal.All);
+            if (request.Op == AdminPipeFraming.OpJournalAdd)
+            {
+                if (ProtectedStateFiles.InvalidChange(request.Change) is { } bad) return Answer(false, bad);
+                journal.Add(request.Change!);
+                log.Info($"[admin-pipe-server] Recorded {request.Change!.Kind} '{request.Change.Target}' in the undo journal.");
+                return Answer(true);
+            }
             if (request.ChangeId is not { } id || id == Guid.Empty) return Answer(false, "Which change to remove wasn't given.");
             if (journal.All.All(c => c.Id != id)) return Answer(true); // already gone
             journal.Remove(id);
@@ -1269,6 +1331,41 @@ public sealed class AdminPipeServer(
         {
             log.Warn($"[admin-pipe-server] {t.Action} '{what}' failed: {ex.Message}");
             return Answer(false, error: ex.Message);
+        }
+    }
+
+    /// <summary>The workflow and benchmark state for an app that isn't elevated, by fixed file name only, checked before it's saved.</summary>
+    private AdminPipeResponse HandleStateFile(AdminPipeRequest request)
+    {
+        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true, string? json = null) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            Error: error, StateJson: json);
+
+        if (string.IsNullOrEmpty(stateFolder)) return Answer(false, "State files are not supported by this elevated helper.", allowed: false);
+        if (!ProtectedStateFiles.IsAgentManaged(request.StateName)) return Answer(false, $"'{request.StateName}' isn't a state file the Agent keeps.", allowed: false);
+        var path = Path.Combine(stateFolder, request.StateName!);
+        try
+        {
+            if (request.Op == AdminPipeFraming.OpStateRead)
+                return Answer(true, json: File.Exists(path) ? File.ReadAllText(path) : null);
+
+            if (request.StateJson is null)
+            {
+                if (File.Exists(path)) File.Delete(path);
+                return Answer(true);
+            }
+            if (ProtectedStateFiles.InvalidState(request.StateName!, request.StateJson) is { } bad) return Answer(false, bad);
+            // Never creates the folder: it must already be the secured one (only administrators can open it).
+            if (!Directory.Exists(stateFolder)) return Answer(false, "The state folder isn't set up yet.");
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, request.StateJson);
+            File.Move(tmp, path, overwrite: true);
+            return Answer(true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            log.Warn($"[admin-pipe-server] {request.Op} {request.StateName} failed: {ex.Message}");
+            return Answer(false, ex.Message);
         }
     }
 

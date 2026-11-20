@@ -358,6 +358,21 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     public Task<ProcessResult> RunAgentScriptAsync(AdminPipeScript script, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine = null) =>
         ConnectedClient().RunAgentScriptAsync(script, timeout, ct, outputLine);
 
+    public Task<bool> AddJournalChangeAsync(RemotePCDiagnostics.Core.Changes.ChangeRecord change, CancellationToken ct = default) =>
+        ConnectedOrNull() is { } client ? client.AddJournalChangeAsync(change, ct) : Task.FromResult(false);
+
+    public Task<AgentStateRead> ReadStateFileAsync(string name, CancellationToken ct = default) =>
+        ConnectedOrNull() is { } client ? client.ReadStateFileAsync(name, ct) : Task.FromResult(AgentStateRead.Failed);
+
+    public Task<bool> WriteStateFileAsync(string name, string? json, CancellationToken ct = default) =>
+        ConnectedOrNull() is { } client ? client.WriteStateFileAsync(name, json, ct) : Task.FromResult(false);
+
+    private AdminPipeClient? ConnectedOrNull()
+    {
+        lock (_stateLock)
+            return _client is { IsConnected: true } ? _client : null;
+    }
+
     /// <summary>The connected Agent, or <see cref="AdminRequiredException"/> with what to do.</summary>
     private AdminPipeClient ConnectedClient()
     {

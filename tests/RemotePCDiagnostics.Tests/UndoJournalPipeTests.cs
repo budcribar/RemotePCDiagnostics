@@ -37,7 +37,17 @@ public sealed class UndoJournalPipeTests
                     Assert.Equal([b], new FileChangeJournal(path).All); // the Agent wrote the file
 
                     Assert.True(await client.RemoveJournalChangeAsync(a.Id, cts.Token)); // already gone is fine
-                    Assert.Throws<NotSupportedException>(() => journal.Add(a));
+
+                    var c = ChangeRecord.New(ChangeKind.Transparency, "transparency", "1", "Transparency", "test");
+                    journal.Add(c);
+                    journal.Add(c with { Id = Guid.NewGuid(), Previous = "0" }); // only the first "before" counts
+                    Assert.Equal([b, c], journal.All);
+                    Assert.Equal([b, c], new FileChangeJournal(path).All); // the Agent recorded it
+                    Assert.Equal(0, journal.UnsentCount);
+
+                    Assert.False(await client.AddJournalChangeAsync(c with { Id = Guid.Empty }, cts.Token));
+                    Assert.False(await client.AddJournalChangeAsync(c with { Id = Guid.NewGuid(), Kind = (ChangeKind)999, Target = "other" }, cts.Token));
+                    Assert.Equal([b, c], new FileChangeJournal(path).All);
                 }
                 await task;
             }
@@ -88,6 +98,7 @@ public sealed class UndoJournalPipeTests
             {
                 Assert.Null(await AgentChangeJournal.LoadAsync(client, ct: cts.Token));
                 Assert.False(await client.RemoveJournalChangeAsync(Guid.NewGuid(), cts.Token));
+                Assert.False(await client.AddJournalChangeAsync(ChangeRecord.New(ChangeKind.PowerPlan, "plan", "x", "Power plan", "test"), cts.Token));
             }
             await task;
         }
