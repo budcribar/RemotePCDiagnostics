@@ -32,6 +32,8 @@ public interface IBenchmarkProbes
     /// <summary>Cheap; called <see cref="BenchmarkSettings.ResourceSamples"/> times per run.</summary>
     Task<IdleResourceSample?> ReadIdleResourcesAsync(CancellationToken ct) => Task.FromResult<IdleResourceSample?>(null);
     Task<SystemResourceSnapshot?> ReadResourceSnapshotAsync(CancellationToken ct) => Task.FromResult<SystemResourceSnapshot?>(null);
+    /// <summary>Runs one full Speedometer 3 pass (10 internal iterations) in a clean Chromium profile.</summary>
+    Task<SpeedometerResult?> RunSpeedometerAsync(TimeSpan timeout, string? preferredEngine, CancellationToken ct) => Task.FromResult<SpeedometerResult?>(null);
 }
 
 /// <summary>
@@ -76,7 +78,7 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
     private void Log(string m) => log.Info("[benchmark] " + m);
 
     public async Task<BenchmarkRun> RunAsync(BenchmarkPhase phase, BenchmarkSettings settings, DateTimeOffset? beforeTime, IProgress<string>? progress, CancellationToken ct,
-        DateTimeOffset? bootsSince = null)
+        DateTimeOffset? bootsSince = null, string? preferredSpeedometerEngine = null)
     {
         var started = DateTimeOffset.UtcNow;
         var list = new List<BenchmarkMeasurement>();
@@ -157,6 +159,18 @@ public sealed class BenchmarkRunner(IBenchmarkProbes probes, ILogger? log = null
                         catch (Exception ex) when (ex is not OperationCanceledException) { Log("disk: " + ex.Message); note = "the disk test couldn't run"; return null; }
                     }).ConfigureAwait(false);
                     list.Add(new(BenchmarkKind.DiskLatency, samples, samples.Count == 0 ? note ?? "not available" : null));
+                });
+
+            if (settings.IsEnabled(BenchmarkKind.Speedometer))
+                await Step("Measuring web browsing speed (Speedometer 3)…", async () =>
+                {
+                    SpeedometerResult? res = null; string? note = null;
+                    try { res = await probes.RunSpeedometerAsync(settings.SpeedometerTimeout, preferredSpeedometerEngine, ct).ConfigureAwait(false); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { Log("speedometer: " + ex.Message); note = "Speedometer 3 couldn't run"; }
+                    if (res is { Succeeded: true, Score: { } score })
+                        list.Add(new(BenchmarkKind.Speedometer, [score], null, res.FormatDetail(), res.ToIdentity()));
+                    else
+                        list.Add(new(BenchmarkKind.Speedometer, [], res?.Note ?? note ?? "not available", RunIdentity: res?.ToIdentity()));
                 });
         }
         catch (OperationCanceledException) { completed = false; Log($"{phase} stopped by user"); }

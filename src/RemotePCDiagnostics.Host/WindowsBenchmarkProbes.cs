@@ -228,4 +228,97 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
 
         return new(diskFreeGb, startupCount, autoSvcCount, taskCount, bloatCount);
     }
+
+    // ---- Speedometer 3 (headless Chromium over local loopback CDP) ----
+    public async Task<SpeedometerResult?> RunSpeedometerAsync(TimeSpan timeout, string? preferredEngine, CancellationToken ct)
+    {
+        SpeedometerProcessRunner.CleanupOrphanedProfiles();
+        var browser = SelectChromiumBrowser(preferredEngine);
+        if (browser is null)
+            return new(null, Note: "No supported Chromium browser (Edge, Chrome, Brave, or Opera) was found.");
+
+        var (rootDir, error) = await SpeedometerPackage.EnsureAssetsAsync(
+            expectedSha256: SpeedometerPackage.ExpectedSha256,
+            ct: ct).ConfigureAwait(false);
+        if (rootDir is null)
+            return new(null, browser.Engine, browser.DisplayName, browser.Version, Note: error ?? "Speedometer 3 assets are not available.");
+
+        return await SpeedometerProcessRunner.RunAsync(browser, rootDir, timeout, log, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Detects installed Chromium-family browsers RPCD can drive via CDP. When <paramref name="preferredEngine"/> is set
+    /// (e.g. matching the Before pass), reuses that exact engine if installed; otherwise prefers the user's Windows default
+    /// HTTPS browser when it is Chromium (falling back to Edge → Chrome → Brave → Opera).
+    /// </summary>
+    private static SpeedometerBrowser? SelectChromiumBrowser(string? preferredEngine)
+    {
+        var installed = DetectInstalledChromiumBrowsers();
+        if (installed.Count == 0) return null;
+
+        var targetEngine = !string.IsNullOrWhiteSpace(preferredEngine) ? preferredEngine : ReadDefaultHttpsEngine();
+        if (targetEngine is not null)
+        {
+            var match = installed.FirstOrDefault(b => b.Engine.Equals(targetEngine, StringComparison.OrdinalIgnoreCase));
+            if (match is not null) return match;
+        }
+        return installed[0];
+    }
+
+    private static string? ReadDefaultHttpsEngine()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice");
+            var progId = key?.GetValue("ProgId") as string;
+            if (string.IsNullOrWhiteSpace(progId)) return null;
+            if (progId.Contains("MSEdge", StringComparison.OrdinalIgnoreCase)) return "edge";
+            if (progId.Contains("Chrome", StringComparison.OrdinalIgnoreCase)) return "chrome";
+            if (progId.Contains("Brave", StringComparison.OrdinalIgnoreCase)) return "brave";
+            if (progId.Contains("Opera", StringComparison.OrdinalIgnoreCase)) return "opera";
+        }
+        catch { }
+        return null;
+    }
+
+    private static List<SpeedometerBrowser> DetectInstalledChromiumBrowsers()
+    {
+        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+        var candidates = new (string Engine, string Name, string[] Paths)[]
+        {
+            ("edge", "Microsoft Edge", [
+                Path.Combine(pf86, @"Microsoft\Edge\Application\msedge.exe"),
+                Path.Combine(pf, @"Microsoft\Edge\Application\msedge.exe"),
+            ]),
+            ("chrome", "Google Chrome", [
+                Path.Combine(pf, @"Google\Chrome\Application\chrome.exe"),
+                Path.Combine(pf86, @"Google\Chrome\Application\chrome.exe"),
+                Path.Combine(local, @"Google\Chrome\Application\chrome.exe"),
+            ]),
+            ("brave", "Brave", [
+                Path.Combine(pf, @"BraveSoftware\Brave-Browser\Application\brave.exe"),
+                Path.Combine(pf86, @"BraveSoftware\Brave-Browser\Application\brave.exe"),
+                Path.Combine(local, @"BraveSoftware\Brave-Browser\Application\brave.exe"),
+            ]),
+            ("opera", "Opera", [
+                Path.Combine(local, @"Programs\Opera\opera.exe"),
+                Path.Combine(pf, @"Opera\opera.exe"),
+            ]),
+        };
+
+        var result = new List<SpeedometerBrowser>();
+        foreach (var (engine, name, paths) in candidates)
+        {
+            var exe = paths.FirstOrDefault(p => !string.IsNullOrEmpty(p) && File.Exists(p));
+            if (exe is null) continue;
+            string? ver = null;
+            try { ver = FileVersionInfo.GetVersionInfo(exe).ProductVersion?.Split(' ')[0]; } catch { }
+            result.Add(new(engine, name, exe, ver));
+        }
+        return result;
+    }
 }

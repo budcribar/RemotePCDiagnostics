@@ -9,6 +9,7 @@ public enum BenchmarkKind
 {
     BootTime, ProgramStart, IdleCpu, Paging, CpuSingle, CpuMulti, DiskLatency, DnsLookup,
     MemoryUsedMb, BackgroundProcesses, DiskFreeGb, EnabledStartupApps, AutoVendorServices, ActiveScheduledTasks, InstalledBloatwareApps,
+    Speedometer,
 }
 
 public enum BenchmarkPhase { Before, After }
@@ -42,6 +43,7 @@ public static class Benchmarks
         new(BenchmarkKind.CpuMulti, "Processor speed (all cores)", "Speed of heavy work that uses every core", "points", false, 0.05, 0, 1.5, "0"),
         new(BenchmarkKind.DiskLatency, "Disk response time", "How fast the drive answers small reads (opening files, searching)", "ms", true, 0.10, 0.02, 1.5, "0.00"),
         new(BenchmarkKind.DnsLookup, "Website lookup time", "How long it takes to find a website before it starts loading", "ms", true, 0.15, 5, 0.5, "0"),
+        new(BenchmarkKind.Speedometer, "Web browsing speed (Speedometer 3)", "How responsive real web apps feel in a clean browser profile (higher is better)", "score", false, 0.05, 0.3, 1.5, "0.0"),
         new(BenchmarkKind.EnabledStartupApps, "Enabled start-up apps", "Apps and tasks set to launch automatically when you sign in", "apps", true, 0.01, 1, 0.0, "0", "fewer", "more"),
         new(BenchmarkKind.AutoVendorServices, "Automatic background services", "Non-Windows background services set to start automatically", "services", true, 0.01, 1, 0.0, "0", "fewer", "more"),
         new(BenchmarkKind.ActiveScheduledTasks, "Active background tasks", "Non-Windows scheduled tasks enabled to run in the background", "tasks", true, 0.01, 1, 0.0, "0", "fewer", "more"),
@@ -63,7 +65,7 @@ public static class Benchmarks
 /// <summary>Which benchmarks run and how. Saved with the results so before/after use the same settings.</summary>
 public sealed record BenchmarkSettings
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public IReadOnlyList<BenchmarkKind> Enabled { get; init; } = [.. Enum.GetValues<BenchmarkKind>()];
     /// <summary>Runs per benchmark; the middle value is used.</summary>
@@ -74,6 +76,8 @@ public sealed record BenchmarkSettings
     public TimeSpan CpuSingleRun { get; init; } = TimeSpan.FromSeconds(4);
     public TimeSpan CpuMultiRun { get; init; } = TimeSpan.FromSeconds(8);
     public TimeSpan DiskRun { get; init; } = TimeSpan.FromSeconds(12);
+    /// <summary>Per-pass timeout for Speedometer 3 (which runs 10 internal iterations in ~60–90 s).</summary>
+    public TimeSpan SpeedometerTimeout { get; init; } = TimeSpan.FromMinutes(3);
     /// <summary>Memory in use and the background-process count are read this many times, <see cref="ResourceSampleInterval"/> apart (median used).</summary>
     public int ResourceSamples { get; init; } = 5;
     public TimeSpan ResourceSampleInterval { get; init; } = TimeSpan.FromSeconds(5);
@@ -97,6 +101,7 @@ public sealed record BenchmarkSettings
         if (IsEnabled(BenchmarkKind.CpuMulti)) s += Runs * CpuMultiRun.TotalSeconds;
         if (IsEnabled(BenchmarkKind.DiskLatency)) s += Runs * DiskRun.TotalSeconds;
         if (IsEnabled(BenchmarkKind.DnsLookup)) s += Runs * 3;
+        if (IsEnabled(BenchmarkKind.Speedometer)) s += 65;
         return (int)Math.Ceiling(s);
     }
 }
@@ -117,7 +122,8 @@ public static class BuiltInPrograms
 
 /// <summary>One benchmark's runs. The median is the result; the spread tells how noisy it was.</summary>
 /// <param name="Detail">Extra breakdown shown with the comparison (start-up: time until the desktop + settling after sign-in).</param>
-public sealed record BenchmarkMeasurement(BenchmarkKind Kind, IReadOnlyList<double> Samples, string? Note = null, string? Detail = null)
+/// <param name="RunIdentity">Structured browser/version/launch-mode identity for Speedometer 3 comparisons.</param>
+public sealed record BenchmarkMeasurement(BenchmarkKind Kind, IReadOnlyList<double> Samples, string? Note = null, string? Detail = null, SpeedometerRunIdentity? RunIdentity = null)
 {
     public double? Median
     {
@@ -258,6 +264,11 @@ public sealed record BenchmarkComparison(IReadOnlyList<BenchmarkDelta> Deltas, d
             {
                 if (b is not null || a is not null)
                     deltas.Add(new(info, b?.Median, a?.Median, BenchmarkVerdict.NotMeasured, null, a?.Note ?? b?.Note ?? (b is null ? "no before result" : "no after result")));
+                continue;
+            }
+            if (b.RunIdentity is { } bi && a.RunIdentity is { } ai && !bi.IsComparableTo(ai))
+            {
+                deltas.Add(new(info, bv, av, BenchmarkVerdict.NotMeasured, null, SpeedometerRunIdentity.MismatchReason(bi, ai)));
                 continue;
             }
             var diff = info.LowerIsBetter ? bv - av : av - bv;           // > 0 means better

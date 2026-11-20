@@ -225,6 +225,7 @@ else if (!running)
         {
             <span>@info.Show(v)</span>
             @if (m.Samples.Count > 1) { <div class="meta" title="@string.Join(", ", m.Samples.Select(x => info.Show(x)))">@m.Samples.Count runs · @((m.Spread * 100).ToString("0"))% full range</div> }
+            @if (m.Detail is { } detail) { <div class="meta">@detail</div> }
         }
         else { <span class="meta">@(m?.Note ?? "—")</span> }
     };

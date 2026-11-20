@@ -159,6 +159,7 @@ $RequiredFiles = @(
     'tools/osquery/osqueryi.exe'
     'tools/HardeningKitty/HardeningKitty.psd1'
     'tools/HardeningKitty/HardeningKitty.psm1'
+    'benchmarks/speedometer-3.1.zip'
     'wwwroot/index.html'
 )
 

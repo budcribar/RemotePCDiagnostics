@@ -582,8 +582,8 @@ public class BenchmarkTests
     }
 
     [Fact]
-    public void Settings_Default_PassStaysWithinThreeMinutes() =>
-        Assert.InRange(new BenchmarkSettings().EstimatedSeconds(), 140, 180);
+    public void Settings_Default_PassStaysWithinFourMinutes() =>
+        Assert.InRange(new BenchmarkSettings().EstimatedSeconds(), 200, 240);
 
     [Fact]
     public void Comparison_MemoryAndProcessNoise_DontSwingOverall()
