@@ -102,7 +102,7 @@ public static class SpeedometerPackage
         CancellationToken ct = default)
     {
         var target = cacheDir ?? DefaultCacheDir();
-        var existingRoot = FindIndexRoot(target);
+        var existingRoot = FindReadyRoot(target);
         if (existingRoot is not null)
             return (existingRoot, null);
 
@@ -112,8 +112,7 @@ public static class SpeedometerPackage
             try
             {
                 using var fs = File.OpenRead(zipPath);
-                ExtractZipSafely(fs, target, expectedSha256);
-                var root = FindIndexRoot(target);
+                var root = ExtractToCache(fs, target, expectedSha256);
                 return root is not null ? (root, null) : (null, "Bundled Speedometer archive does not contain index.html.");
             }
             catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or CryptographicException)
@@ -135,8 +134,7 @@ public static class SpeedometerPackage
             await using var ms = new MemoryStream();
             await resp.Content.CopyToAsync(ms, ct).ConfigureAwait(false);
             ms.Position = 0;
-            ExtractZipSafely(ms, target, expectedSha256);
-            var root = FindIndexRoot(target);
+            var root = ExtractToCache(ms, target, expectedSha256);
             return root is not null ? (root, null) : (null, "Downloaded Speedometer archive does not contain index.html.");
         }
         catch (OperationCanceledException) { throw; }
@@ -144,6 +142,29 @@ public static class SpeedometerPackage
         {
             return (null, $"Could not download Speedometer 3: {ex.Message}");
         }
+    }
+
+    /// <summary>Written into the cache folder only after every entry is extracted.</summary>
+    public const string CompleteMarkerFileName = ".rpcd-extracted";
+
+    /// <summary>The cache's <c>index.html</c> root, only when a previous extraction finished (an interrupted one leaves no marker).</summary>
+    public static string? FindReadyRoot(string dir) =>
+        File.Exists(Path.Combine(dir, CompleteMarkerFileName)) ? FindIndexRoot(dir) : null;
+
+    /// <summary>
+    /// Extracts into a clean <paramref name="target"/> and marks it complete. <c>index.html</c> is one of the first
+    /// entries in the archive, so without the marker an extraction cut short (app closed, disk full) would look ready
+    /// and every later run would serve a bundle with files missing.
+    /// </summary>
+    private static string? ExtractToCache(Stream zipStream, string target, string? expectedSha256)
+    {
+        if (Directory.Exists(target))
+            Directory.Delete(target, recursive: true);
+        ExtractZipSafely(zipStream, target, expectedSha256);
+        var root = FindIndexRoot(target);
+        if (root is not null)
+            File.WriteAllText(Path.Combine(target, CompleteMarkerFileName), Version);
+        return root;
     }
 
     /// <summary>
@@ -358,6 +379,9 @@ public sealed class CdpClient : IAsyncDisposable
                     return JSON.stringify({ done: true, score: raw, ci: null });
                 }
             }
+            if (client && client._hasResults && !client._isRunning) {
+                return JSON.stringify({ done: true, error: true });
+            }
             return JSON.stringify({ done: false });
         })()
         """;
@@ -459,6 +483,18 @@ public sealed class CdpClient : IAsyncDisposable
             }
             return null;
         }
+    }
+
+    /// <summary>True when <see cref="SpeedometerPollExpression"/> reports that the run finished without a score.</summary>
+    public static bool IsErrorJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.True;
+        }
+        catch (JsonException) { return false; }
     }
 
     /// <summary>Parses the JSON payload returned by <see cref="SpeedometerPollExpression"/>.</summary>
@@ -569,6 +605,8 @@ public static class SpeedometerProcessRunner
                     return new(null, browser.Engine, browser.DisplayName, browser.Version, Note: $"{browser.DisplayName} closed before Speedometer finished.");
 
                 var raw = await cdp.EvaluateStringAsync(CdpClient.SpeedometerPollExpression, linked.Token).ConfigureAwait(false);
+                if (CdpClient.IsErrorJson(raw))
+                    return new(null, browser.Engine, browser.DisplayName, browser.Version, Note: "Speedometer 3 stopped with an error in the browser.");
                 if (CdpClient.TryParseScoreJson(raw, out var score, out var ci))
                 {
                     log.Info($"[benchmark] speedometer done: browser={browser.DisplayName} score={score:0.00}");

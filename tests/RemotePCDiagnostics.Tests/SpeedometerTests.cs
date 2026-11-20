@@ -211,6 +211,49 @@ public sealed class SpeedometerTests
         }
     }
 
+    [Fact]
+    public async Task EnsureAssets_ReExtracts_WhenAnEarlierExtractionWasCutShort()
+    {
+        var cache = Path.Combine(Path.GetTempPath(), "rpd-sm-partial-" + Guid.NewGuid().ToString("N"));
+        var zipPath = cache + ".zip";
+        try
+        {
+            // What an interrupted extraction leaves: index.html (an early entry) but not the rest, and no marker.
+            Directory.CreateDirectory(Path.Combine(cache, "Speedometer-3.1"));
+            File.WriteAllText(Path.Combine(cache, "Speedometer-3.1", "index.html"), "<html>partial</html>");
+
+            using (var zip = BuildZip(("Speedometer-3.1/index.html", "<html>ok</html>"), ("Speedometer-3.1/resources/main.mjs", "export {}")))
+                File.WriteAllBytes(zipPath, zip.ToArray());
+
+            var (root, error) = await SpeedometerPackage.EnsureAssetsAsync(cacheDir: cache, bundledZipPath: zipPath);
+            Assert.Null(error);
+            Assert.NotNull(root);
+            Assert.Equal("<html>ok</html>", File.ReadAllText(Path.Combine(root!, "index.html")));
+            Assert.True(File.Exists(Path.Combine(root!, "resources", "main.mjs")));
+            Assert.True(File.Exists(Path.Combine(cache, SpeedometerPackage.CompleteMarkerFileName)));
+
+            // A finished cache is reused without the zip.
+            File.Delete(zipPath);
+            var (again, againError) = await SpeedometerPackage.EnsureAssetsAsync(cacheDir: cache, bundledZipPath: zipPath);
+            Assert.Null(againError);
+            Assert.Equal(root, again);
+        }
+        finally
+        {
+            try { Directory.Delete(cache, recursive: true); } catch { }
+            try { File.Delete(zipPath); } catch { }
+        }
+    }
+
+    [Theory]
+    [InlineData("{\"done\":true,\"error\":true}", true)]
+    [InlineData("{\"done\":true,\"score\":12.5,\"ci\":null}", false)]
+    [InlineData("{\"done\":false}", false)]
+    [InlineData("not json", false)]
+    [InlineData(null, false)]
+    public void IsErrorJson_DetectsARunThatFinishedWithoutAScore(string? json, bool expected) =>
+        Assert.Equal(expected, CdpClient.IsErrorJson(json));
+
     private static MemoryStream BuildZip(params (string Name, string Content)[] entries)
     {
         var ms = new MemoryStream();
