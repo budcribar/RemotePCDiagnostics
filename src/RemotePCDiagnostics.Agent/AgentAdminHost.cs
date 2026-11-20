@@ -159,6 +159,7 @@ internal static class AgentAdminHost
                     securityAuditor: SecurityAuditModule.ElevatedRunner(AppContext.BaseDirectory, log),
                     autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null,
                     adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null,
+                    machineTweaks: OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null,
                     changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log));
 
                 var serverTask = Task.Run(async () =>
@@ -263,6 +264,7 @@ internal static class AgentAdminHost
                         securityAuditor: SecurityAuditModule.ElevatedRunner(AppContext.BaseDirectory, log),
                         autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null,
                         adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null,
+                        machineTweaks: OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null,
                         changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log));
 
                     await server.RunSingleSessionAsync(cts.Token).ConfigureAwait(false);

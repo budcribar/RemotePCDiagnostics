@@ -263,7 +263,8 @@ public partial class App : Application
             }
             var commands = new SystemCommandRunner(log: HostServices.For<SystemCommandRunner>(Loggers), elevatedBridge: agent, isProcessElevated: () => false);
             var admin = new AgentAdminSettings(agent);
-            var undo = CreateUndoService(journal, commands, new WindowsMemorySystem(null, HostServices.For<WindowsMemorySystem>(Loggers), admin), admin);
+            var machine = new AgentMachineTweaks(agent, HostServices.For<AgentMachineTweaks>(Loggers));
+            var undo = CreateUndoService(journal, commands, new WindowsMemorySystem(null, HostServices.For<WindowsMemorySystem>(Loggers), admin, machine), admin);
             var result = Task.Run(() => undo.UndoAllAsync("Command line (--undo-all)")).GetAwaiter().GetResult();
             Log("--undo-all: " + result.Summary);
             foreach (var i in result.Items) Log($"--undo-all: {(i.Success ? "OK" : i.Skipped ? "LEFT AS IS (permanent)" : "FAILED")} {i.Change.Kind} '{i.Change.Target}': {i.Message}");

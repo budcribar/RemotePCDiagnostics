@@ -33,10 +33,14 @@ internal sealed class SuggestionContext(IMemorySystem sys, IChangeJournal? journ
     }
 
     /// <summary>Result of one allowlisted DWORD write. <see cref="Changed"/> = written (and journaled); false when it was already that value.
-    /// <see cref="CreatedKey"/> = the topmost key the write created (journaled, so undo deletes it again while empty).</summary>
-    public sealed record DwordWrite(bool Ok, bool Changed, string Target, string? Previous, string? CreatedKey = null)
+    /// <see cref="CreatedKey"/> = the topmost key the write created (journaled, so undo deletes it again while empty).
+    /// <see cref="AgentMessage"/> = what to do when the Agent wasn't there to make an HKLM change (<see cref="Session.AdminRequiredException"/>).</summary>
+    public sealed record DwordWrite(bool Ok, bool Changed, string Target, string? Previous, string? CreatedKey = null, string? AgentMessage = null)
     {
         public RegistryUndo.Item Item => new(Target, Previous, CreatedKey);
+
+        /// <summary>The failure text: what to do about the Agent, else <paramref name="prefix"/> + <see cref="PolicyRefused"/>.</summary>
+        public string Refused(string prefix) => AgentMessage ?? prefix + PolicyRefused;
     }
 
     /// <summary>
@@ -68,7 +72,7 @@ internal sealed class SuggestionContext(IMemorySystem sys, IChangeJournal? journ
             LogWarn($"{r.Target} = {value} failed: {ex.Message}");
             // The Host already tries this when SetValue fails; again here for keys created before a later failure. Never throws.
             RegistryKeyCleanup.Remove(sys, r.Root, r.Key, created, Logger);
-            return new(false, false, r.Target, null);
+            return new(false, false, r.Target, null, AgentMessage: ex is Session.AdminRequiredException ? ex.Message : null);
         }
     }
 
@@ -80,12 +84,18 @@ internal sealed class SuggestionContext(IMemorySystem sys, IChangeJournal? journ
         var items = RegistryUndo.Decode(u.Previous);
         if (items.Count == 0) return new(false, "The original setting wasn't recorded.");
         var remaining = new List<RegistryUndo.Item>();
+        string? agent = null;
         for (var i = items.Count - 1; i >= 0; i--) // last written first: the first write is the one that created any keys
         {
             var item = items[i];
             bool ok;
             try { ok = RegistryAllowlist.Restore(sys, item.Target, item.Previous, item.CreatedKey, Logger).Ok; }
-            catch (Exception ex) when (ex is not OperationCanceledException) { Log($"Undo {item.Target}: {ex.Message}"); ok = false; }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log($"Undo {item.Target}: {ex.Message}");
+                if (ex is Session.AdminRequiredException) agent = ex.Message;
+                ok = false;
+            }
             if (ok) { try { journal?.RemoveLatest(ChangeKind.RegistryValue, item.Target); } catch { } }
             else remaining.Insert(0, item);
         }
@@ -93,6 +103,6 @@ internal sealed class SuggestionContext(IMemorySystem sys, IChangeJournal? journ
             AddUndo(u with { Previous = RegistryUndo.Encode(remaining) });
         return remaining.Count == 0
             ? new(true, done ?? $"{u.Label} turned back on. Takes full effect after a restart.")
-            : new(false, $"Windows didn't allow turning {u.Label} back on (administrator rights needed).");
+            : new(false, agent ?? $"Windows didn't allow turning {u.Label} back on (your organization may manage it).");
     }
 }
