@@ -46,6 +46,10 @@ public class SleepWakeTests
         + "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Kernel-Power' Guid='{331c3b3a-2005-44c2-ac5e-77220c37d6b4}'/><EventID>107</EventID><Version>1</Version><Level>4</Level><TimeCreated SystemTime='2026-11-19T02:16:19.9924362Z'/><Channel>System</Channel></System><EventData><Data Name='TargetState'>4</Data><Data Name='EffectiveState'>4</Data><Data Name='WakeFromState'>4</Data></EventData><RenderingInfo Culture='en-US'><Message>The system has resumed from sleep.</Message></RenderingInfo></Event>"
         + "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Kernel-Power' Guid='{331c3b3a-2005-44c2-ac5e-77220c37d6b4}'/><EventID>42</EventID><Version>3</Version><Level>4</Level><TimeCreated SystemTime='2026-11-19T02:16:18.7057866Z'/><Channel>System</Channel></System><EventData><Data Name='TargetState'>4</Data><Data Name='EffectiveState'>4</Data><Data Name='Reason'>7</Data><Data Name='Flags'>0</Data><Data Name='TransitionsToOn'>1</Data></EventData><RenderingInfo Culture='en-US'><Message>The system is entering sleep.</Message></RenderingInfo></Event>";
 
+    /// <summary>A Kernel-Power 42 ("The system is entering sleep") at <paramref name="time"/>.</summary>
+    private static string EnteringSleep(string time) =>
+        $"<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Kernel-Power'/><EventID>42</EventID><Level>4</Level><TimeCreated SystemTime='{time}'/><Channel>System</Channel></System><EventData><Data Name='TargetState'>4</Data><Data Name='Reason'>7</Data></EventData></Event>";
+
     /// <summary>The captured report's RecentUsage (all on wall power), trimmed, plus <paramref name="extra"/> entries.</summary>
     private static string BatteryReport(string extra = "") =>
         "<?xml version=\"1.0\" encoding=\"utf-8\"?><BatteryReport xmlns=\"http://schemas.microsoft.com/battery/2012\">"
@@ -199,8 +203,12 @@ public class SleepWakeTests
         Assert.Single(wakes.Rows);
         Assert.Contains("AMD USB 3.10", wakes.Meta);
 
+        // Windows names the USB controller, not the keyboard or mouse behind it.
+        Assert.Equal("A USB device such as the keyboard or mouse (through the AMD USB 3.10 eXtensible Host Controller - 1.10 (Microsoft))", wakes.Rows[0].Values[2]);
+
         var devices = r.Cards.Single(c => c.Id == "devices");
         Assert.Equal(2, devices.Rows.Count);
+        Assert.All(devices.Rows, x => Assert.Equal("Maybe: 1 wake came through USB", x.Values[2]));
         var action = Assert.Single(devices.Rows[0].Actions!);
         Assert.Equal((RemediationKind.DisableDeviceWake, "HID Keyboard Device"), (action.Kind, action.Target));
 
@@ -215,7 +223,7 @@ public class SleepWakeTests
         var networkWake = WakeEventXml.Replace("AMD USB 3.10 eXtensible Host Controller - 1.10 (Microsoft)", "Intel(R) Wi-Fi 6 AX201 160MHz");
         var failedResume = "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Kernel-Power'/><EventID>41</EventID><Level>1</Level><TimeCreated SystemTime='2026-11-18T09:00:00Z'/><Channel>System</Channel></System><EventData><Data Name='BugcheckCode'>0</Data><Data Name='SleepInProgress'>4</Data></EventData></Event>";
         var battery = BatteryReport(Usage("2026-11-18T06:00:00Z", TimeSpan.FromHours(8), "Suspend", 16000)); // 40% in 8 h
-        var r = SleepWakeModule.Build(Facts(networkWake + failedResume, battery, NoRequests, armed: "Intel(R) Wi-Fi 6 AX201 160MHz\r\nHID Keyboard Device\r\n"), DateTimeOffset.Now);
+        var r = SleepWakeModule.Build(Facts(networkWake + failedResume + EnteringSleep("2026-11-18T06:00:00.5Z"), battery, NoRequests, armed: "Intel(R) Wi-Fi 6 AX201 160MHz\r\nHID Keyboard Device\r\n"), DateTimeOffset.Now);
 
         var wakes = r.Cards.Single(c => c.Id == "wakes");
         Assert.Equal(AreaLevel.Error, wakes.Level);
@@ -228,6 +236,35 @@ public class SleepWakeTests
         Assert.StartsWith("5.0% of the battery per hour asleep", drain.Headline);
         Assert.Equal(AreaLevel.Ok, r.Cards.Single(c => c.Id == "blockers").Level);
         Assert.Equal(DiagnosticStatus.Error, r.Status);
+    }
+
+    [Fact]
+    public void A_restart_the_battery_report_calls_Suspend_is_not_rated_as_sleep()
+    {
+        // Captured on the laptop: a 5-minute "Suspend" at 22:12 UTC was a restart (no Kernel-Power 42, the OS shut down and started).
+        var battery = BatteryReport(Usage("2026-11-17T22:12:00Z", TimeSpan.FromMinutes(45), "Suspend", 8000));
+        var drain = SleepWakeModule.Build(Facts(battery: battery), DateTimeOffset.Now).Cards.Single(c => c.Id == "drain");
+        Assert.Equal("No sleep on battery this week", drain.Headline);
+        Assert.Empty(drain.Rows);
+
+        // A Modern Standby entry needs no Kernel-Power 42, and without the System log nothing is dropped.
+        var standby = StandbyDrain.Parse(battery.Replace("\"Suspend\"", "\"ConnectedStandby\""));
+        Assert.Single(SleepWakeModule.RealSleeps(standby, WindowsEventLog.Parse(WakeEventXml, "System"))!);
+        Assert.Single(SleepWakeModule.RealSleeps(StandbyDrain.Parse(battery), null)!);
+    }
+
+    [Fact]
+    public void A_one_word_power_request_reason_is_explained()
+    {
+        const string display = "DISPLAY:\r\n[PROCESS] \\Device\\HarddiskVolume3\\Users\\me\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe\r\nElectron\r\n\r\nSYSTEM:\r\nNone.\r\n";
+        var r = Assert.Single(SleepWakeParsers.ParseRequests(display)!);
+        Assert.Equal("Asked Windows to keep the screen on (reason given: Electron)", SleepWakeModule.Why(r));
+        var blockers = SleepWakeModule.Build(Facts(requests: display), DateTimeOffset.Now).Cards.Single(c => c.Id == "blockers");
+        Assert.Equal(["Screen on", "Antigravity.exe (process)", "Asked Windows to keep the screen on (reason given: Electron)"], blockers.Rows[0].Values);
+        // A reason that is already a sentence is kept as Windows gives it.
+        Assert.Equal("An audio stream is currently in use.", SleepWakeModule.Why(SleepWakeParsers.ParseRequests(Requests)![0]));
+        Assert.True(SleepWakeModule.IsUsbController("USB Root Hub (USB 3.0)"));
+        Assert.False(SleepWakeModule.IsUsbController("HID Keyboard Device"));
     }
 
     [Fact]
@@ -248,7 +285,7 @@ public class SleepWakeTests
         string? reportPath = null;
         var launcher = new ScriptedLauncher((file, args) =>
         {
-            if (file.Equals("wevtutil.exe", StringComparison.OrdinalIgnoreCase)) return ScriptedLauncher.Ok(WakeEventXml);
+            if (file.Equals("wevtutil.exe", StringComparison.OrdinalIgnoreCase)) return ScriptedLauncher.Ok(WakeEventXml + EnteringSleep("2026-11-18T06:00:01Z"));
             Assert.Equal("powercfg.exe", file, ignoreCase: true);
             switch (args[0])
             {
