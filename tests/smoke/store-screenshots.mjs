@@ -110,8 +110,10 @@ try {
   await page.getByTestId('branding-warranty').fill('Backed by our 90-Day Parts & Labor Hardware Warranty.');
   // Collapse the form inputs into the compact summary ("Offline / local bench configuration (optional) — Apex Refurb & PC Repair")
   // so Bench QA banner, Shop Branding, and the Live Buyer QR Certificate preview all fit in one 1080p frame.
-  const isOpen = await page.locator('[data-testid="branding-card"]').evaluate(el => el.hasAttribute('open')).catch(() => false);
-  if (isOpen) {
+  // Re-check after each click: one CI run (PR 94) measured the card still open after a single click, so the frame check failed.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const isOpen = await page.locator('[data-testid="branding-card"]').evaluate(el => el.hasAttribute('open')).catch(() => false);
+    if (!isOpen) break;
     await page.locator('[data-testid="branding-card"] > summary').click();
     await sleep(350);
   }
