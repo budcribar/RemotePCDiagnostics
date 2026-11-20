@@ -59,11 +59,27 @@ public abstract record ShopReportPublishResult
     public sealed record NetworkError(string Message) : ShopReportPublishResult;
 }
 
+public sealed record ShopBenchmarkUploadedDto(string? MachineId = null, string? CompareUrl = null, int? Computers = null);
+
+public abstract record ShopBenchmarkUploadResult
+{
+    private ShopBenchmarkUploadResult() { }
+
+    /// <param name="CompareUrl">The Admin page that ranks the shop's computers.</param>
+    /// <param name="Computers">How many of the shop's computers have uploaded results, this one included.</param>
+    public sealed record Uploaded(string CompareUrl, int? Computers) : ShopBenchmarkUploadResult;
+    public sealed record Unauthorized : ShopBenchmarkUploadResult;
+    public sealed record PaymentRequired : ShopBenchmarkUploadResult;
+    public sealed record InvalidRequest(string Error) : ShopBenchmarkUploadResult;
+    public sealed record NetworkError(string Message) : ShopBenchmarkUploadResult;
+}
+
 /// <summary>
 /// HTTP client for talking to a <c>RemoteWebViewService</c> shop relay:
 /// <list type="bullet">
 /// <item><c>GET {relayBase}/api/shops/{group}/branding</c> — anonymous shop identity lookup &amp; active-subscription check.</item>
 /// <item><c>POST {relayBase}/api/reports</c> — authenticated (<c>Bearer rpd_live_...</c>) hosted QR certificate &amp; client service report publishing.</item>
+/// <item><c>POST {relayBase}/api/benchmarks</c> — authenticated the same way: this PC's latest benchmark results, for the shop's computer comparison.</item>
 /// </list>
 /// </summary>
 public sealed partial class ShopRelayClient(HttpClient? httpClient = null, ILogger? log = null)
@@ -290,6 +306,66 @@ public sealed partial class ShopRelayClient(HttpClient? httpClient = null, ILogg
                 : ex.Message;
             LogWarn($"PublishReportAsync error for '{request.Id}' on {relayBase}: {msg}");
             return new ShopReportPublishResult.NetworkError(msg);
+        }
+    }
+
+    /// <summary>
+    /// Uploads this PC's benchmark results and hardware to <c>POST {shopApiBase}/api/benchmarks</c> with the shop's <c>Bearer rpd_live_...</c>
+    /// key, the same authenticated Admin API hosted reports use. Admin keeps the latest upload per computer and ranks the shop's computers.
+    /// </summary>
+    public async Task<ShopBenchmarkUploadResult> UploadBenchmarkAsync(Uri relayServerUri, string apiKey, Benchmarks.BenchmarkUploadRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(relayServerUri);
+        ArgumentNullException.ThrowIfNull(request);
+        var trimmedKey = apiKey?.Trim() ?? "";
+        if (!trimmedKey.StartsWith(ApiKeyPrefix, StringComparison.Ordinal) || trimmedKey.Length <= ApiKeyPrefix.Length)
+            return new ShopBenchmarkUploadResult.InvalidRequest("Shop API key must start with 'rpd_live_'.");
+        if (request.Results.Count == 0)
+            return new ShopBenchmarkUploadResult.InvalidRequest("no_results");
+
+        var shopBase = ShopApiBaseUrl(relayServerUri);
+        var endpoint = new Uri($"{shopBase}/api/benchmarks", UriKind.Absolute);
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(request, WriteJsonOptions), Encoding.UTF8, "application/json"),
+            };
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", trimmedKey);
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+            using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            if (resp.StatusCode is HttpStatusCode.Created or HttpStatusCode.OK)
+            {
+                var dto = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<ShopBenchmarkUploadedDto>(body, ReadJsonOptions);
+                var url = dto?.CompareUrl is { Length: > 0 } u && (u.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || u.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+                    ? u
+                    : $"{shopBase}/benchmarks";
+                LogInfo($"Uploaded benchmark results ({request.Results.Count} tests) to {shopBase}");
+                return new ShopBenchmarkUploadResult.Uploaded(url, dto?.Computers);
+            }
+            var serverError = TryReadErrorCode(body);
+            if (resp.StatusCode == HttpStatusCode.Unauthorized)
+                return new ShopBenchmarkUploadResult.Unauthorized();
+            if (resp.StatusCode == HttpStatusCode.PaymentRequired)
+                return new ShopBenchmarkUploadResult.PaymentRequired();
+            if ((int)resp.StatusCode is >= 400 and < 500)
+                return new ShopBenchmarkUploadResult.InvalidRequest(serverError ?? $"HTTP {(int)resp.StatusCode}");
+            var msg = $"Admin returned HTTP {(int)resp.StatusCode} ({resp.ReasonPhrase}).";
+            LogWarn("UploadBenchmarkAsync failed: " + msg);
+            return new ShopBenchmarkUploadResult.NetworkError(msg);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or InvalidOperationException)
+        {
+            var msg = ex is TaskCanceledException ? $"Timed out uploading benchmark results to {shopBase}." : ex.Message;
+            LogWarn($"UploadBenchmarkAsync error on {shopBase}: {msg}");
+            return new ShopBenchmarkUploadResult.NetworkError(msg);
         }
     }
 
