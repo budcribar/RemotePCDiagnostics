@@ -39,16 +39,20 @@ A normal check: `ModuleKind.Check`, slug `BrowserHealth`, listed in the Programs
 
 For each installed browser, record:
 
-1. Installed extensions. Flag a large extension folder, a high count, and known adware. The allowlist (Honey, MSN New Tab, Amazon Assistant) and the profile read live in Core. Firefox has no reader yet.
-2. Hardware acceleration on or off, per profile. When a policy forces it, say forced.
-3. Cache size and profile size.
-4. Open tab count, process count, and memory per browser process. Counts and bytes only. Leave tab titles and URLs out.
+1. **Extensions.** Installed extensions. Flag a large extension folder, a high count, and known adware. The allowlist (Honey, MSN New Tab, Amazon Assistant) and the profile read live in Core. Firefox has no reader yet.
+2. **Background running.** Whether the browser keeps running after it is closed, from `BrowserBackground` in Core. That is `background_mode.enabled` in Local State ("Continue running background apps when the browser is closed") and, for Edge, Startup Boost. A `BackgroundModeEnabled` policy, or an Edge Startup Boost policy under HKLM or HKCU, is reported as forced.
+3. **Preferences.** Hardware acceleration on or off, per profile. When a policy forces it, say forced. Also whether Edge sleeping tabs and Efficiency mode, or Chrome Memory Saver, are on, from `BrowserPrefs`.
+4. **Storage.** Cache size and profile size.
+5. **Live load.** Open tab count, process count, and memory per browser process. Counts and bytes only. Leave tab titles and URLs out.
 
 The check may offer these fixes. It lists them and applies none:
 
 1. Clear cache. The browser has to be closed first, the same rule as the other browser-file writes. Confirm, journal, and keep undo.
 2. Turn hardware acceleration on, where that preference exists and a policy does not force it. Browser closed, then confirm, journal, and undo.
 3. Disable one extension. Known adware goes through the existing blocklist fix. Any other extension is one the person picks. A "heavy" flag alone never disables it.
+4. Stop the browser running in the background. Reuse `StopBrowserBackground` (`BrowserSuggestions.StopBrowserBackgroundAsync`). It turns off "Continue running background apps" (`background_mode.enabled`) and, for Edge, Startup Boost when no policy is already set. Windows of that browser must be closed first. An open window is never closed. Windowless background processes may be ended so the Local State write can stick. Approval, journal (`ChangeKind.BrowserLocalStateValue`), and undo through `BrowserBackground.RestoreAsync` in `UndoService`. A policy that forces background mode or Startup Boost is reported as forced and left unchanged. Today's memory-suggestion card offers this only for the browser that is not the default (`BrowserBackground.Secondary`), and the action refuses the default browser. `BrowserHealth` uses the same writes for each installed browser whose preference is on and whose policy does not force it. That is the same fix, not a second one.
+
+Edge sleeping tabs, Edge Efficiency mode, and Chrome Memory Saver stay advice on this check: turn the preference on. A one-click preference fix could come later. Core already has that write (`EnableBrowserMemorySaver` in `BrowserSuggestions`, journal `ChangeKind.BrowserSettings`, undo in `UndoService`, and only while the browser is closed). This proposal does not offer it.
 
 Each fix needs the same explicit approval as every other repair, remote or local.
 
@@ -68,10 +72,11 @@ A low score or a health flag names the next step on the same result. A one-click
 
 1. **Low Speedometer 3.** One-click when the plan is a power saver, or the run was on one: the Battery & power plan check (`BatteryPower`) and its Balanced power-plan fix (`SetBalancedPowerPlan`, "Switch to Balanced power plan"). Review startup apps. There is no startup-apps check on the Checks page. The benchmark already counts enabled start-up apps, and the startup-app suggestions disable one app at a time (`DisableStartup`, approval, journal, undo). For throttling, run Temperatures & fans (`Sensors`). That check reads CPU temperature and fan speed through LibreHardwareMonitor. A hot or throttling CPU is the finding. It offers no cooling fix.
 2. **Low MotionMark.** One-click: the hardware-acceleration fix on `BrowserHealth`, when that preference exists and a policy does not force it (browser closed, approval, journal, undo). A policy that forces it off leaves advice only. Also point at Device Manager & drivers (`DeviceDrivers`), which shows the GPU driver's version and date. Its "Check & install driver updates" fix (`CheckAndInstallDriverUpdates`) is offered from this result when that check shows a pending driver update or an old GPU driver. The technician still approves it.
-3. **Too many tabs, or high memory per process.** Advice: close tabs. The result keeps the count and closes nothing. Turning on the browser's own saver can be one-click. Chrome Memory Saver, and Edge sleeping tabs and Efficiency mode, already have that write (`EnableBrowserMemorySaver`) when the key is in Local State and the browser is closed: approval, journal, undo. Point the result at that fix. When the key is missing, or the browser is open, the same line stays advice and names the browser's performance settings. Add no second switch.
-4. **Large cache or profile.** One-click for a large cache: the clear-cache fix on `BrowserHealth` (browser closed, approval, journal, undo). It clears cache files and leaves the profile, including bookmarks, history, and sign-in. Storage cleanup already removes Chrome and Edge Service Worker and Code Cache entries unused for 60 days. The health-check clear-cache is the action on this result, and running it does not also run that storage cleanup. A large profile whose cache is small is advice: say what is using the space, and offer no profile delete.
-5. **Heavy or adware extensions.** One-click for known adware: the existing blocklist fix (Chrome and Edge `ExtensionInstallBlocklist`, limited to the allowlist: Honey, MSN New Tab, Amazon Assistant), one extension, approval, journal, undo. Any other extension is a person-picked disable. The result names it, and the fix appears only after that person chooses it. A heavy flag by itself adds no fix.
-6. **Slow page loads with normal Speedometer and MotionMark scores.** Advice that points at the existing checks: Network & Wi-Fi (`Network`), the DNS comparison (current DNS against Cloudflare and Google), and the benchmark's website-lookup time (`DnsLookup`). This result changes neither DNS nor the adapter. When the DNS comparison already offers its own switch, that fix stays on the network check, and this row links to it.
+3. **Too many tabs, or high memory per process.** Advice: close tabs. The result keeps the count and closes nothing. Also advice, from the preferences line: turn on Edge sleeping tabs and Efficiency mode, or Chrome Memory Saver. A one-click preference fix could come later, reusing `EnableBrowserMemorySaver`. This proposal does not offer that fix.
+4. **Browser still running after it is closed.** One-click: the existing `StopBrowserBackground` fix on `BrowserHealth` (browser windows closed first, approval, journal, undo). A policy-forced setting is reported as forced and left unchanged. See the health check for the action and the undo path.
+5. **Large cache or profile.** One-click for a large cache: the clear-cache fix on `BrowserHealth` (browser closed, approval, journal, undo). It clears cache files and leaves the profile, including bookmarks, history, and sign-in. Storage cleanup already removes Chrome and Edge Service Worker and Code Cache entries unused for 60 days. The health-check clear-cache is the action on this result, and running it does not also run that storage cleanup. A large profile whose cache is small is advice: say what is using the space, and offer no profile delete.
+6. **Heavy or adware extensions.** One-click for known adware: the existing blocklist fix (Chrome and Edge `ExtensionInstallBlocklist`, limited to the allowlist: Honey, MSN New Tab, Amazon Assistant), one extension, approval, journal, undo. Any other extension is a person-picked disable. The result names it, and the fix appears only after that person chooses it. A heavy flag by itself adds no fix.
+7. **Slow page loads with normal Speedometer and MotionMark scores.** Advice that points at the existing checks: Network & Wi-Fi (`Network`), the DNS comparison (current DNS against Cloudflare and Google), and the benchmark's website-lookup time (`DnsLookup`). This result changes neither DNS nor the adapter. When the DNS comparison already offers its own switch, that fix stays on the network check, and this row links to it.
 
 Each row names the check or fix that produced it. One-click rows are actions on the result, so `list_fixes` returns them and `apply_fix` runs one after approval. Advice rows are text on the result.
 
@@ -86,7 +91,7 @@ Each row names the check or fix that produced it. One-click rows are actions on 
 1. All of these tests are software-only, so they are safe to run in a remote session the same way other read-only checks are.
 2. The benchmarks still load the CPU, and MotionMark loads the GPU. A minimized window can spin the fans. Run them when the person is not working, and say so before starting. Leave them out of an unattended idle pass.
 3. Hide a browser that is not installed, rather than showing it disabled. No Chrome installed means no Chrome block and no Chrome benchmark choice. When no browser is installed, omit the health check from the list, the same way a missing webcam is omitted, and do not call that a failure.
-4. Fixes stay off the read-only run. Clear cache, enable hardware acceleration, and disable an extension go through the existing remediation path, one at a time, after explicit approval. A remote user who already has control can apply them, because remote control matches the person at the PC.
+4. Fixes stay off the read-only run. Clear cache, turn on hardware acceleration, disable an extension, and stop background running go through the existing remediation path, one at a time, after explicit approval. A remote user who already has control can apply them, because remote control matches the person at the PC.
 
 ## Consolidating browser code
 
@@ -99,11 +104,11 @@ The Chrome and Edge profile reader lives in shared Core, under `src/RemotePCDiag
 
 `WindowsMemorySystem` fills a `MemorySnapshot` from that reader. `MemorySuggestionEngine` builds the cards, and `MemorySuggestionService` runs them. Those cards are the memory suggestions. The Resource hogs check hosts that panel. The Programs module does not call this reader.
 
-Phase 1 keeps the reader in Core so `BrowserHealth` and the memory suggestions can both use it. The new check calls it directly. The browser-specific suggestions move out of the memory suggestions and onto `BrowserHealth`, so they appear in one place:
+Phase 1 keeps the reader in Core so `BrowserHealth` and the memory suggestions can both use it. The new check calls it directly. These items move out of the memory suggestions and onto `BrowserHealth`, so they appear in one place:
 
 1. Extension blocklist cards.
-2. Background-app and Startup Boost cards.
-3. Browser pref cards (Chrome Memory Saver, Edge sleeping tabs and Efficiency mode).
+2. Background-running cards. The fix is the existing `StopBrowserBackground` action (`BrowserSuggestions`, undo in `UndoService` through `BrowserBackground.RestoreAsync`), not a new one.
+3. The efficiency / sleeping-tabs readout (Edge sleeping tabs and Efficiency mode, Chrome Memory Saver). It stays advice. A one-click preference fix could come later, reusing `EnableBrowserMemorySaver`. This proposal does not offer that fix.
 
 The memory suggestions then point at `BrowserHealth` for those items. They do not build the same cards again. Other memory suggestions (startup apps that are not a browser, Office, services, close-app) stay where they are.
 
@@ -111,7 +116,7 @@ The memory suggestions then point at `BrowserHealth` for those items. They do no
 
 ## Phased plan
 
-1. **Phase 1.** Browser health and Speedometer, for Chrome and Edge. `BrowserHealth` calls the Core profile reader directly. Record the score and conditions and start saving samples. No pass/fail band until a class has enough runs. WebView2 is the labeled fallback. In the same phase, move the browser-specific memory suggestions onto `BrowserHealth` and leave a pointer in the memory suggestions. See [Consolidating browser code](#consolidating-browser-code). No code moves until implementation is approved, and `BrowserExtensionsTests`, `BrowserBackgroundTests`, and `BrowserContractTests` must keep passing.
+1. **Phase 1.** Browser health and Speedometer, for Chrome and Edge. `BrowserHealth` calls the Core profile reader directly, including `BrowserBackground` (still running after close) and `BrowserPrefs` (hardware acceleration, Edge sleeping tabs and Efficiency mode, Chrome Memory Saver). Record the score and conditions and start saving samples. No pass/fail band until a class has enough runs. WebView2 is the labeled fallback. In the same phase, move the extension blocklist and the background-running suggestion onto `BrowserHealth`, reusing `StopBrowserBackground`, and leave a pointer in the memory suggestions. Efficiency and sleeping tabs stay advice. A one-click for that preference could come later. See [Consolidating browser code](#consolidating-browser-code). No code moves until implementation is approved, and `BrowserExtensionsTests`, `BrowserBackgroundTests`, and `BrowserContractTests` must keep passing.
 2. **Phase 2.** Page-load timing, read next to the network and DNS results.
 3. **Phase 3.** MotionMark and JetStream as further optional benchmark kinds, still off by default. Turn the percentile bands on only after the stored samples support them.
 
