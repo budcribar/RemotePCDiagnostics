@@ -148,7 +148,7 @@ public static class HostServices
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Workflow.WorkflowService(
             sp.GetRequiredService<DiagnosticsService>(), sp.GetRequiredService<ResultStore>(), sp.GetRequiredService<RemediationService>(),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>(),
-            new WindowsWorkflowSystem(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), L<WindowsWorkflowSystem>()),
+            new WindowsWorkflowSystem(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), L<WindowsWorkflowSystem>(), sp.GetRequiredService<IElevatedCommandBridge>()),
             new RemotePCDiagnostics.Core.Workflow.FileWorkflowStore(RemotePCDiagnostics.Core.Workflow.FileWorkflowStore.DefaultPath(), L<RemotePCDiagnostics.Core.Workflow.FileWorkflowStore>()),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(), sp.GetRequiredService<ISessionContext>(),
             (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Workflow, level, text), L<RemotePCDiagnostics.Core.Workflow.WorkflowService>(),

@@ -6,6 +6,7 @@ using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Logging;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Security;
+using RemotePCDiagnostics.Core.Workflow;
 using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Session;
 
@@ -119,7 +120,11 @@ internal static class AgentAdminHost
             Process? hostProcess;
             try
             {
-                hostProcess = Process.Start(startInfo);
+                // The launcher runs elevated (a UAC prompt, or the resume task's highest privileges), but the app never does: on Windows
+                // it's started with the signed-in user's own un-elevated token, and admin work goes through this launcher's pipe.
+                hostProcess = !OperatingSystem.IsWindows() || !Environment.IsPrivilegedProcess ? Process.Start(startInfo)
+                    : useDotnet ? await UnelevatedProcess.StartAsync("dotnet", [hostDll, .. hostArgs], AppContext.BaseDirectory, log).ConfigureAwait(false)
+                    : await UnelevatedProcess.StartAsync(hostExe, hostArgs, AppContext.BaseDirectory, log).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -150,7 +155,8 @@ internal static class AgentAdminHost
                     sensorReader: sensorReader,
                     log: log,
                     selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token),
-                    securityAuditor: SecurityAuditModule.ElevatedRunner(AppContext.BaseDirectory, log));
+                    securityAuditor: SecurityAuditModule.ElevatedRunner(AppContext.BaseDirectory, log),
+                    autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null);
 
                 var serverTask = Task.Run(async () =>
                 {
@@ -251,7 +257,8 @@ internal static class AgentAdminHost
                         log: log,
                         selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token),
                         // The helper sits in the app's folder, next to the HardeningKitty the app ships.
-                        securityAuditor: SecurityAuditModule.ElevatedRunner(AppContext.BaseDirectory, log));
+                        securityAuditor: SecurityAuditModule.ElevatedRunner(AppContext.BaseDirectory, log),
+                        autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null);
 
                     await server.RunSingleSessionAsync(cts.Token).ConfigureAwait(false);
                     return ExitOk;

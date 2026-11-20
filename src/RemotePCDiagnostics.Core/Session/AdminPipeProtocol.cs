@@ -13,6 +13,7 @@ using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Sensors;
+using RemotePCDiagnostics.Core.Workflow;
 
 namespace RemotePCDiagnostics.Core.Session;
 
@@ -46,6 +47,18 @@ public interface IElevatedCommandBridge
     /// </summary>
     Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, CancellationToken ct = default) =>
         Task.FromResult<SecurityAuditRun?>(null);
+
+    /// <summary>
+    /// The workflow's automatic sign-in, done by the Agent (it writes HKLM and an LSA secret). Each throws
+    /// <see cref="InvalidOperationException"/> with the Agent's reason when it can't, and <see cref="NotSupportedException"/> when the
+    /// Agent is from before this existed.
+    /// </summary>
+    Task<bool> ValidateCredentialsAsync(string user, string domain, string password, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't check sign-in passwords.");
+    Task<AutoLogonBackup> EnableAutoLogonAsync(string user, string domain, string password, int logons, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't turn on automatic sign-in.");
+    Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't turn off automatic sign-in.");
 }
 
 public static class AdminCommandAllowlist
@@ -261,7 +274,16 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("fileName")] string? FileName = null,
     [property: JsonPropertyName("arguments")] IReadOnlyList<string>? Arguments = null,
     [property: JsonPropertyName("timeoutMs")] int TimeoutMs = 60_000,
-    [property: JsonPropertyName("channel")] string? Channel = null);
+    [property: JsonPropertyName("channel")] string? Channel = null,
+    [property: JsonPropertyName("autoLogon")] AdminPipeAutoLogon? AutoLogon = null);
+
+/// <summary>The automatic sign-in requests' arguments. The password is sent only to check it and to turn sign-in on.</summary>
+public sealed record AdminPipeAutoLogon(
+    [property: JsonPropertyName("user")] string? User = null,
+    [property: JsonPropertyName("domain")] string? Domain = null,
+    [property: JsonPropertyName("password")] string? Password = null,
+    [property: JsonPropertyName("logons")] int Logons = 0,
+    [property: JsonPropertyName("backup")] AutoLogonBackup? Backup = null);
 
 public sealed record AdminPipeResponse(
     [property: JsonPropertyName("ok")] bool Ok,
@@ -277,7 +299,8 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("drives")] IReadOnlyList<DriveHealth>? Drives = null,
     [property: JsonPropertyName("updateResult")] AppUpdateResult? UpdateResult = null,
     [property: JsonPropertyName("report")] string? Report = null,
-    [property: JsonPropertyName("cancelled")] bool Cancelled = false);
+    [property: JsonPropertyName("cancelled")] bool Cancelled = false,
+    [property: JsonPropertyName("autoLogonBackup")] AutoLogonBackup? AutoLogonBackup = null);
 
 /// <summary>
 /// Length-prefixed (4-byte little-endian int32 + UTF-8 JSON) framing over Named Pipes with zero third-party dependencies.
@@ -294,6 +317,9 @@ public static class AdminPipeFraming
     public const string OpSecurityAudit = "security_audit";
     /// <summary>Sent while a <see cref="OpSecurityAudit"/> request runs: stops it. It gets no response of its own.</summary>
     public const string OpCancel = "cancel";
+    public const string OpValidateCredentials = "validate_credentials";
+    public const string OpEnableAutoLogon = "enable_autologon";
+    public const string OpDisableAutoLogon = "disable_autologon";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -499,6 +525,34 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         return new AppUpdateResult(response.Ok, Error: response.Error);
     }
 
+    public async Task<bool> ValidateCredentialsAsync(string user, string domain, string password, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpValidateCredentials, AutoLogon: new(user, domain, password)), ct).ConfigureAwait(false);
+        ThrowIfRefused(r);
+        return r.Ok;
+    }
+
+    public async Task<AutoLogonBackup> EnableAutoLogonAsync(string user, string domain, string password, int logons, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpEnableAutoLogon, AutoLogon: new(user, domain, password, logons)), ct).ConfigureAwait(false);
+        ThrowIfRefused(r);
+        if (!r.Ok || r.AutoLogonBackup is null) throw new InvalidOperationException(r.Error ?? "The Agent didn't turn on automatic sign-in.");
+        return r.AutoLogonBackup;
+    }
+
+    public async Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpDisableAutoLogon, AutoLogon: new(Backup: backup)), ct).ConfigureAwait(false);
+        ThrowIfRefused(r);
+        if (!r.Ok) throw new InvalidOperationException(r.Error ?? "The Agent didn't turn off automatic sign-in.");
+    }
+
+    /// <summary>An Agent from before a request existed answers "Unknown operation" (not allowed).</summary>
+    private static void ThrowIfRefused(AdminPipeResponse r)
+    {
+        if (!r.Allowed) throw new NotSupportedException(r.Error ?? "The Agent doesn't support this request.");
+    }
+
     /// <summary>How long after cancelling the client waits for the helper to answer the cancelled request before dropping the pipe.</summary>
     public static TimeSpan CancelGrace { get; set; } = TimeSpan.FromSeconds(20);
 
@@ -632,7 +686,8 @@ public sealed class AdminPipeServer(
     Func<CancellationToken, Task<SensorSnapshot?>>? sensorReader = null,
     ILogger? log = null,
     Func<AppUpdateChannel, IReadOnlyList<string>?, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null,
-    Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>>? securityAuditor = null) : IAsyncDisposable, IDisposable
+    Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>>? securityAuditor = null,
+    IAutoLogonBackend? autoLogon = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -922,6 +977,9 @@ public sealed class AdminPipeServer(
         if (string.Equals(request.Op, AdminPipeFraming.OpSecurityAudit, StringComparison.OrdinalIgnoreCase))
             return await RunSecurityAuditAsync(request, ct).ConfigureAwait(false);
 
+        if (request.Op is AdminPipeFraming.OpValidateCredentials or AdminPipeFraming.OpEnableAutoLogon or AdminPipeFraming.OpDisableAutoLogon)
+            return await Task.Run(() => HandleAutoLogon(request), ct).ConfigureAwait(false);
+
         return new AdminPipeResponse(
             Ok: false,
             Allowed: false,
@@ -929,6 +987,46 @@ public sealed class AdminPipeServer(
             HelperPid: Environment.ProcessId,
             ExitCode: -1,
             Error: $"Unknown operation '{request.Op}'.");
+    }
+
+    /// <summary>The maximum sign-ins automatic sign-in may be turned on for (the workflow needs two).</summary>
+    public const int MaxAutoLogons = 5;
+
+    private AdminPipeResponse HandleAutoLogon(AdminPipeRequest request)
+    {
+        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true, AutoLogonBackup? backup = null) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            Error: error, AutoLogonBackup: backup);
+
+        if (autoLogon is null) return Answer(false, "Automatic sign-in is not supported by this elevated helper.", allowed: false);
+        var a = request.AutoLogon ?? new AdminPipeAutoLogon();
+        try
+        {
+            switch (request.Op)
+            {
+                case AdminPipeFraming.OpValidateCredentials:
+                    if (string.IsNullOrWhiteSpace(a.User) || a.Password is null) return Answer(false, "A user name and password are required.");
+                    return Answer(autoLogon.Validate(a.User, a.Domain ?? "", a.Password));
+                case AdminPipeFraming.OpEnableAutoLogon:
+                    if (string.IsNullOrWhiteSpace(a.User) || a.Password is null) return Answer(false, "A user name and password are required.");
+                    if (a.Logons is < 1 or > MaxAutoLogons) return Answer(false, $"Automatic sign-in is limited to 1 to {MaxAutoLogons} sign-ins.");
+                    var backup = autoLogon.Enable(a.User, a.Domain ?? "", a.Password, a.Logons);
+                    log.Info($"[admin-pipe-server] Automatic sign-in turned on for {a.Domain}\\{a.User} ({a.Logons} sign-ins).");
+                    return Answer(true, backup: backup);
+                default:
+                    // Only Winlogon's own values come back: AutoAdminLogon is "0" or "1", nothing else is written.
+                    if (a.Backup is { AutoAdminLogon: not (null or "0" or "1") })
+                        return Answer(false, "The saved sign-in settings aren't valid.");
+                    autoLogon.Disable(a.Backup);
+                    log.Info("[admin-pipe-server] Automatic sign-in turned off and the previous settings restored.");
+                    return Answer(true);
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] {request.Op} failed: {ex.Message}");
+            return Answer(false, ex.Message);
+        }
     }
 
     private async Task<AdminPipeResponse> RunSecurityAuditAsync(AdminPipeRequest request, CancellationToken ct)

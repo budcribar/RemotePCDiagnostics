@@ -4,6 +4,7 @@ using System.Security.Principal;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Security;
+using RemotePCDiagnostics.Core.Workflow;
 using RemotePCDiagnostics.Core.Sensors;
 
 namespace RemotePCDiagnostics.Core.Session;
@@ -311,6 +312,22 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
             return null;
 
         return await client.RunSecurityAuditAsync(timeout, ct).ConfigureAwait(false);
+    }
+
+    public Task<bool> ValidateCredentialsAsync(string user, string domain, string password, CancellationToken ct = default) =>
+        ConnectedClient().ValidateCredentialsAsync(user, domain, password, ct);
+
+    public Task<AutoLogonBackup> EnableAutoLogonAsync(string user, string domain, string password, int logons, CancellationToken ct = default) =>
+        ConnectedClient().EnableAutoLogonAsync(user, domain, password, logons, ct);
+
+    public Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) =>
+        ConnectedClient().DisableAutoLogonAsync(backup, ct);
+
+    /// <summary>The connected Agent, or <see cref="InvalidOperationException"/> with what to do.</summary>
+    private AdminPipeClient ConnectedClient()
+    {
+        lock (_stateLock)
+            return _client is { IsConnected: true } c ? c : throw new InvalidOperationException("The Agent isn't connected. " + AdminRepairHint);
     }
 
     public static string? TryResolveInitialPipeName(IReadOnlyList<string>? args = null)
