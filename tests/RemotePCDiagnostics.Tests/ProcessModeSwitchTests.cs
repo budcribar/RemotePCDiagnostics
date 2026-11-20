@@ -123,7 +123,7 @@ public sealed class ProcessModeSwitchTests : IDisposable
         }
         var um = Assert.Single(made);
         Assert.True(um.Bundled);
-        Assert.Equal(manifest.NeedsAdmin, um.Elevated); // an admin module gets the app's own token, the others a restricted one
+        Assert.Equal(manifest.NeedsAdmin, um.Elevated); // an admin module runs in the Agent's module host, the others with a restricted token
         var proxy = Assert.IsAssignableFrom<IUserModeModule>(modules[manifest.Id]);
         if (manifest.PerDevice) Assert.IsType<PerDeviceModuleProxy>(proxy);
         else Assert.IsType<UserModeModuleProxy>(proxy);

@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 using RemotePCDiagnostics.Core.Plugins;
+using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Host;
 
@@ -13,18 +14,22 @@ namespace RemotePCDiagnostics.Host;
 /// deny-only, every privilege but SeChangeNotify removed, Medium integrity. Windows lets a process start a child with a restricted version
 /// of its own token, so no extra rights are needed. An unsigned module's host also has INTERACTIVE and Event Log Readers deny-only
 /// (<see cref="UnsignedDenyOnly"/>), so it can't read the Application or System log itself. The host talks to the app over anonymous pipes for its stdin and stdout, which only
-/// the app holds, and exits when the app closes them.
+/// the app holds, and exits when the app closes them. A module that ships with the app and needs administrator never gets a host from the
+/// app: the Agent runs it (<see cref="AgentModuleHost"/>), because the app never runs as administrator.
 /// </summary>
 public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
 {
     private readonly Microsoft.Extensions.Logging.ILogger? _log;
     private readonly string? _directory;
     private readonly SharedBundledHost _shared;
+    private readonly Func<IElevatedCommandBridge?>? _agent;
 
-    public RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.ILogger? log = null, string? directory = null)
+    /// <param name="agent">The Agent's connection, once the app has one (it runs the modules that need administrator).</param>
+    public RestrictedModuleHostLauncher(Microsoft.Extensions.Logging.ILogger? log = null, string? directory = null, Func<IElevatedCommandBridge?>? agent = null)
     {
         _log = log;
         _directory = directory;
+        _agent = agent;
         _shared = new SharedBundledHost(StartRaw);
     }
 
@@ -34,12 +39,9 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
     {
         var log = _log;
         var directory = _directory;
-        // A module that ships with the app and needs administrator runs out of process for isolation only: the app's own (elevated) token.
+        // A module that ships with the app and needs administrator: the Agent runs its module host with administrator rights.
         if (module is { Bundled: true, Elevated: true })
-        {
-            if (log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(log, "Module host [{Slug}]: starting with the app's own token (needs administrator)", module.Manifest.Slug);
-            return new ProcessModuleHostLauncher(directory, log).StartRaw(module);
-        }
+            return StartInAgent(module);
         var dir = directory ?? AppContext.BaseDirectory;
         var exe = Path.Combine(dir, ProcessModuleHostLauncher.HostName + ".exe");
         if (!File.Exists(exe)) throw new FileNotFoundException("Module host not found", exe);
@@ -120,6 +122,18 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
         return new Connection(process,
             new StreamWriter(new FileStream(inWrite, FileAccess.Write), new UTF8Encoding(false)) { AutoFlush = true },
             new StreamReader(new FileStream(outRead, FileAccess.Read), Encoding.UTF8), stderr);
+    }
+
+    /// <summary>
+    /// Asks the Agent to start the module host (<see cref="IElevatedCommandBridge.StartModuleHostAsync"/>). Throws, with what to do, when
+    /// the Agent isn't connected or can't: the module then shows as unavailable with that reason.
+    /// </summary>
+    private IModuleHostConnection StartInAgent(UserModeModule module)
+    {
+        var bridge = _agent?.Invoke() ?? throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+        if (_log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(_log, "Module host [{Slug}]: asking the Agent to run it (needs administrator)", module.Manifest.Slug);
+        // Called from the module's stand-in, which waits for the host anyway; the client awaits without a captured context.
+        return bridge.StartModuleHostAsync(module.Path, CancellationToken.None).GetAwaiter().GetResult();
     }
 
     /// <summary>

@@ -7,6 +7,7 @@ using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Workflow;
 using RemotePCDiagnostics.Core.Sensors;
+using RemotePCDiagnostics.Core.Plugins;
 
 namespace RemotePCDiagnostics.Core.Session;
 
@@ -323,6 +324,9 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
 
     public Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) =>
         ConnectedClient().DisableAutoLogonAsync(backup, ct);
+
+    public Task<IModuleHostConnection> StartModuleHostAsync(string module, CancellationToken ct = default) =>
+        ConnectedClient().StartModuleHostAsync(module, ct);
 
     public async Task<MachineSetupResult?> PrepareMachineAsync(CancellationToken ct = default)
     {
