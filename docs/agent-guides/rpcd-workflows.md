@@ -18,6 +18,7 @@ Use **Dashboard** for an overview and shortcuts. Dashboard cards can show startu
 | Drive health & free space | Per-drive status and warnings, with unknown or unsupported readings identified explicitly, plus each volume's free space; a nearly full volume is a warning on its drive. This differs from Disk speed test. For free space alone, use this check rather than the Large files & folders scan. |
 | Resource hogs & uptime | CPU and memory pressure, uptime, and the processes shown as top consumers. |
 | Battery & power plan | Health, charge, power source and plan where shown. A missing battery may be expected on a desktop. |
+| Sleep, wake & standby drain | Sleep states (Modern Standby or S3), battery used per hour asleep over the last 7 days, recent wakes with their cause, failed resumes, wake-armed devices, wake timers and current sleep blockers. Wake timers and sleep blockers need administrator rights; report them as unread, not as problems. Stopping a device from waking the PC is an undoable fix that needs the technician's choice. |
 | Network & Wi-Fi | Active adapters and connection details, signal when reported, and errors. This differs from Network stability test. |
 | Services | Running services and automatic services that are stopped. Inspect before considering service actions. |
 | Windows error log | Counts, time window, event source and affected application where shown. |

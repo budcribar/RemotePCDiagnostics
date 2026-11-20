@@ -187,6 +187,12 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 var pr = await commands.RunAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/setactive", g.ToString()], ct).ConfigureAwait(false);
                 return pr is { ExitCode: 0 } ? Ok("Previous power plan active again.") : Fail("Couldn't switch the power plan back.");
 
+            case ChangeKind.DeviceWake:
+                if (!DeviceWake.IsSafeName(c.Target)) return Fail("The device wasn't recorded, so it was left as is.");
+                var wr = await commands.RunAsync(DeviceWake.PowerCfg, ["/deviceenablewake", c.Target], ct).ConfigureAwait(false);
+                return wr is { ExitCode: 0 } ? Ok($"{c.Target} can wake the PC again.")
+                    : Fail("Windows didn't allow it (administrator rights needed, or the device is no longer connected).");
+
             case ChangeKind.SystemProxy:
                 return Set(c, s => s.SetUserProxyEnable(Dword(c.Previous)), "System proxy setting restored.");
 

@@ -1,0 +1,12 @@
+{
+  "id": "d8665737-c11d-44ad-b1d3-72b14dcdaedd",
+  "slug": "SleepWake",
+  "displayName": "Sleep, wake & standby drain",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.SleepWake.SleepWakePlugin",
+  "needsAdmin": false,
+  "hasUi": false,
+  // In user mode (the module host) the System log comes from the app.
+  "capabilities": [ "eventlog.query" ],
+  "outOfProcess": false
+}

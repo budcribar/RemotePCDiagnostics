@@ -194,6 +194,14 @@ public sealed class RemediationService(
 
             RemediationKind.EndProcessGroup => PlanEndProcess(action, label),
 
+            RemediationKind.DisableDeviceWake => new(
+                action,
+                $"Stop {label} from waking the PC?",
+                $"'{label}' is allowed to wake this PC from sleep. A mouse nudged in a bag, a network adapter or a USB controller often wakes a PC by itself and drains the battery.",
+                $"Runs 'powercfg /devicedisablewake' for this one device. The PC then stays asleep when the device is used; the power button (and the lid, on a laptop) still wake it. Undo lets the device wake the PC again.",
+                DeviceWake.IsSafeName(action.Target) ? "Requires administrator privileges." : "This isn't a device name this app can change.",
+                DeviceWake.IsSafeName(action.Target)),
+
             // 3. Network & Connectivity Fixes
             RemediationKind.DisableSystemProxy => new(
                 action,
@@ -467,6 +475,8 @@ public sealed class RemediationService(
 
         RemediationKind.InstallUpdate => await RunInstallUpdateAsync(action, ct).ConfigureAwait(false),
 
+        RemediationKind.DisableDeviceWake => await RunDisableDeviceWakeAsync(action, ct).ConfigureAwait(false),
+
         RemediationKind.OptimizeSsd => await RunPowerShellAsync(
             $"$ErrorActionPreference='Stop'; Optimize-Volume -DriveLetter {string.Join(",", DriveLetters(action.Target).ToCharArray())} -ReTrim",
             $"Optimized / Retrimmed {Display(action)}.",
@@ -475,6 +485,18 @@ public sealed class RemediationService(
 
         _ => new(false, "Unsupported action."),
     };
+
+    /// <summary>Only a device Windows lists as wake-armed right now, by the name Windows gives it.</summary>
+    private async Task<RemediationResult> RunDisableDeviceWakeAsync(AreaAction action, CancellationToken ct)
+    {
+        var armed = await DeviceWake.QueryArmedAsync(commands, ct).ConfigureAwait(false);
+        if (armed is null) return new(false, "Couldn't read which devices can wake this PC.");
+        if (DeviceWake.FindArmed(armed, action.Target) is not { } device)
+            return new(true, $"{Display(action)} already can't wake the PC.");
+        return await RunSimpleAsync(DeviceWake.PowerCfg, ["/devicedisablewake", device],
+            $"{Display(action)} no longer wakes the PC from sleep.",
+            $"Couldn't stop {Display(action)} from waking the PC (administrator rights required).", ct).ConfigureAwait(false);
+    }
 
     private static RemediationResult ToResult(RepairResult r) => new(r.Success, r.Summary, RestartNeeded: r.RebootRequired);
 
@@ -859,6 +881,11 @@ public sealed class RemediationService(
                     var prev = cur is { ExitCode: 0 } ? cur.StdOut.Trim() : null;
                     return prev is not null && Security.SecurityFixes.ParsePrevious(sf.Key, prev) is not null
                         ? Rec(Changes.ChangeKind.SecuritySetting, sf.Key, prev, sf.Done.TrimEnd('.')) : null;
+                case RemediationKind.DisableDeviceWake:
+                    // Journaled only when the device is armed now, under Windows' own spelling of its name.
+                    var armed = await DeviceWake.QueryArmedAsync(commands, ct).ConfigureAwait(false);
+                    return armed is not null && DeviceWake.FindArmed(armed, action.Target) is { } device
+                        ? Rec(Changes.ChangeKind.DeviceWake, device, "armed", $"{device} can't wake the PC") : null;
                 case RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns when SystemSettingsRules.IsAdapterName(action.Target):
                     var dns = settings?.GetAdapterDns(action.Target);
                     return dns is null ? null : Rec(Changes.ChangeKind.AdapterDns, action.Target, dns,
