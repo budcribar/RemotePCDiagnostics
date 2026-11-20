@@ -162,6 +162,8 @@ public partial class App : Application
             return;
         }
 
+        // A later launch (desktop icon, Start menu) exits at once; it signals this copy to come to the front instead.
+        InstanceActivation.Listen(() => Dispatcher.BeginInvoke(() => (MainWindow as RemotePCDiagnostics.Host.MainWindow)?.BringToFront()));
         MainWindow = new RemotePCDiagnostics.Host.MainWindow();
         StartupProfiler.Mark("MainWindowCreated");
         MainWindow.Show();
@@ -234,8 +236,15 @@ public partial class App : Application
         catch (Exception ex) { Log("--undo-all failed: " + ex); return ExitUndoPartial; }
     }
 
+    /// <summary>Asks the running copy to restore, maximize and come to the front. Falls back to doing it from here for a running copy too old to listen,
+    /// which Windows' foreground lock often turns into a flashing taskbar button.</summary>
     private static void TryActivateExistingWindow()
     {
+        if (InstanceActivation.SignalRunningCopy())
+        {
+            Log("Asked the running copy to come to the front");
+            return;
+        }
         try
         {
             using var current = System.Diagnostics.Process.GetCurrentProcess();
@@ -244,7 +253,7 @@ public partial class App : Application
                 using (proc)
                 {
                     if (proc.Id == current.Id || proc.MainWindowHandle == IntPtr.Zero) continue;
-                    ShowWindowAsync(proc.MainWindowHandle, SwRestore);
+                    ShowWindowAsync(proc.MainWindowHandle, SwMaximize);
                     SetForegroundWindow(proc.MainWindowHandle);
                     return;
                 }
@@ -253,7 +262,7 @@ public partial class App : Application
         catch { }
     }
 
-    private const int SwRestore = 9;
+    private const int SwMaximize = 3;
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -263,6 +272,7 @@ public partial class App : Application
 
     public static void ReleaseInstance()
     {
+        InstanceActivation.Stop();
         try { _instance?.ReleaseMutex(); _instance?.Dispose(); _instance = null; } catch { }
     }
 

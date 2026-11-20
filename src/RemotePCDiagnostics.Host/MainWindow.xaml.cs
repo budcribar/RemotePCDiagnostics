@@ -731,6 +731,30 @@ public partial class MainWindow : Window
         return model.Length > 0 ? $"{Environment.MachineName} ({model})" : Environment.MachineName;
     });
 
+    /// <summary>
+    /// Another launch of the app (desktop icon, Start menu) asked this copy to show itself: shows the window if it was hidden, restores it
+    /// maximized if it was minimized or in a normal size, and brings it in front of other windows. The launching copy has already allowed
+    /// this process to take the foreground; if Windows still refuses focus, a Topmost toggle at least raises the window above the others.
+    /// A full-screen window keeps its full-screen layout.
+    /// </summary>
+    public void BringToFront()
+    {
+        App.Log($"Second launch: bringing the window to the front (state={WindowState}, visible={IsVisible})");
+        if (!IsVisible) Show();
+        if (!_isFullscreen) WindowState = WindowState.Maximized;
+        Activate();
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (hwnd != IntPtr.Zero && !SetForegroundWindow(hwnd))
+        {
+            Topmost = true;
+            Topmost = false;
+        }
+        Focus();
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
     private WindowStyle _savedStyle = WindowStyle.SingleBorderWindow;
     private WindowState _savedState = WindowState.Normal;
     private ResizeMode _savedResize = ResizeMode.CanResize;
