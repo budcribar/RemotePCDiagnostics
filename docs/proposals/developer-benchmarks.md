@@ -1,6 +1,6 @@
 # RemotePCDiagnostics developer benchmarks
 
-**Status:** Proposed. Not implemented.
+**Status:** Phases 1–2 implemented (Developer setup check, C# clean build + AV comparison, opt-in Dev Drive comparison, Agent rules & startup sweep). Phases 3–4 (Rust, Go, TypeScript, Python, C/C++, calibrated baselines) planned.
 
 Publishing this document grants no implementation approval. It is planning only: a timed clean build of pinned open-source projects, a fast read-only setup check, scores against CPU-class baselines, and an opt-in Dev Drive comparison.
 

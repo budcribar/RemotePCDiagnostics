@@ -9,7 +9,8 @@ namespace RemotePCDiagnostics.Core.Benchmarks;
 /// "before" survives the restart and the "after" can run by itself once the PC is back.
 /// </summary>
 public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore store, RemediationService? remediation = null,
-    ISessionContext? session = null, Action<LogLevel, string>? events = null, ILogger? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null)
+    ISessionContext? session = null, Action<LogLevel, string>? events = null, ILogger? log = null, Func<TimeSpan, CancellationToken, Task>? delay = null,
+    DeveloperBuildRunner? devRunner = null, IDeveloperEnvironmentProbe? devEnv = null)
 {
     private readonly object _gate = new();
     private BenchmarkState _state = LoadState(store);
@@ -49,6 +50,24 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public string? Progress { get; private set; }
     public string? Message { get; private set; }
     public BenchmarkComparison Comparison => BenchmarkComparison.Build(Before, After);
+
+    // ---- Developer benchmarks (Phase 1 & 2) ----
+    public IReadOnlyList<DetectedToolchain> DetectedToolchains { get; private set; } = [];
+    public DevDrivePrecheckResult? DevDrivePrecheck { get; private set; }
+    public DeveloperBuildResult? LastAntivirusComparison { get; private set; }
+    public DevDriveComparisonResult? LastDevDriveComparison { get; private set; }
+    public bool RunningDeveloperAction { get; private set; }
+
+    /// <summary>True when a benchmark kind should be shown on this PC. Developer kinds are hidden when their toolchain is absent (NPU rule).</summary>
+    public bool IsKindAvailable(BenchmarkKind kind)
+    {
+        if (!Benchmarks.IsDeveloperKind(kind)) return true;
+        var lang = Benchmarks.LanguageFor(kind);
+        return lang is not null && DetectedToolchains.Any(t => t.Language == lang.Value);
+    }
+
+    public IReadOnlyList<BenchmarkInfo> AvailableBenchmarks =>
+        Benchmarks.All.Where(i => IsKindAvailable(i.Kind)).ToList();
 
     public static string FormatCountdown(TimeSpan remaining)
     {
@@ -258,6 +277,119 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         }
         Forget(); // once only from here on, even if this run fails
         await RunAsync(phase, ct, since).ConfigureAwait(false);
+    }
+
+    /// <summary>Read-only probe of installed toolchains and Dev Drive comparison eligibility. Never builds anything.</summary>
+    public async Task RefreshDeveloperEnvironmentAsync(CancellationToken ct = default)
+    {
+        if (devEnv is null) return;
+        try
+        {
+            DetectedToolchains = await devEnv.DetectToolchainsAsync(ct).ConfigureAwait(false);
+            if (devRunner is not null)
+                DevDrivePrecheck = await devRunner.EvaluateDevDrivePrecheckAsync(ct).ConfigureAwait(false);
+            Raise();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogWarn("developer environment refresh failed: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Approval-gated antivirus comparison: runs the C# clean build under current policy, then with a temporary Agent Defender
+    /// exclusion on the RPCD temp folder, then removes the exclusion. Requires explicit <paramref name="userConfirmed"/> for this run.
+    /// </summary>
+    public async Task<DeveloperBuildResult?> RunAntivirusComparisonAsync(bool userConfirmed, CancellationToken ct = default)
+    {
+        if (!userConfirmed)
+        {
+            Message = "Antivirus comparison requires explicit approval for this run.";
+            Raise();
+            return null;
+        }
+        if (devRunner is null)
+        {
+            Message = "Developer benchmark runner is not available.";
+            Raise();
+            return null;
+        }
+        CancellationTokenSource cts;
+        lock (_gate)
+        {
+            if (Running is not null || Settling is not null || RunningDeveloperAction) return null;
+            RunningDeveloperAction = true;
+            _cts = cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        }
+        Message = DeveloperScoring.BusyPcWarning;
+        Raise();
+        try
+        {
+            var prog = new SyncProgress(p => { Progress = p; Raise(); });
+            var res = await devRunner.RunCSharpCleanBuildAsync(new DeveloperBuildOptions(IncludeAntivirusComparison: true), prog, cts.Token).ConfigureAwait(false);
+            LastAntivirusComparison = res;
+            Message = res.Succeeded ? res.FormatDetail() : res.Note ?? "Antivirus comparison did not complete.";
+            return res;
+        }
+        catch (OperationCanceledException)
+        {
+            Message = "Antivirus comparison cancelled; temporary exclusion and build folder were cleaned up.";
+            return null;
+        }
+        finally
+        {
+            lock (_gate) { RunningDeveloperAction = false; Progress = null; if (ReferenceEquals(_cts, cts)) _cts = null; }
+            cts.Dispose();
+            Raise();
+        }
+    }
+
+    /// <summary>
+    /// Phase 2 opt-in Dev Drive comparison: builds the cached C# pin on NTFS, then on a temporary ~50 GB Dev Drive VHDX created
+    /// and cleaned up by the elevated Agent. Requires explicit <paramref name="userConfirmed"/> for this run; never started by <see cref="RunAsync"/>.
+    /// </summary>
+    public async Task<DevDriveComparisonResult?> RunDevDriveComparisonAsync(bool userConfirmed, CancellationToken ct = default)
+    {
+        if (!userConfirmed)
+        {
+            Message = "Dev Drive comparison requires explicit approval for this run.";
+            Raise();
+            return null;
+        }
+        if (devRunner is null)
+        {
+            Message = "Developer benchmark runner is not available.";
+            Raise();
+            return null;
+        }
+        CancellationTokenSource cts;
+        lock (_gate)
+        {
+            if (Running is not null || Settling is not null || RunningDeveloperAction) return null;
+            RunningDeveloperAction = true;
+            _cts = cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        }
+        Message = DeveloperScoring.BusyPcWarning;
+        Raise();
+        try
+        {
+            var prog = new SyncProgress(p => { Progress = p; Raise(); });
+            var res = await devRunner.RunDevDriveComparisonAsync(progress: prog, ct: cts.Token).ConfigureAwait(false);
+            LastDevDriveComparison = res;
+            Message = res.FormatSummary();
+            return res;
+        }
+        catch (OperationCanceledException)
+        {
+            Message = "Dev Drive comparison cancelled; temporary VHDX and build folders were cleaned up.";
+            return null;
+        }
+        finally
+        {
+            lock (_gate) { RunningDeveloperAction = false; Progress = null; if (ReferenceEquals(_cts, cts)) _cts = null; }
+            cts.Dispose();
+            Raise();
+        }
     }
 
     private void WriteEvent(BenchmarkRun run)

@@ -37,6 +37,18 @@ public interface IMachineTweaks
     /// <summary>Adds the exclusions and returns them read back (<see cref="DefenderProbe.Confirmed"/>); Ok = false when Windows refused.</summary>
     Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct);
     Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct);
+    /// <summary>Adds a temporary Defender exclusion for one RPCD build temp folder (<see cref="DevDriveRules.IsRpcdTempBuildFolder"/>).</summary>
+    Task<(bool Ok, string? Output)> AddTempBuildDefenderExclusionAsync(string folder, CancellationToken ct) =>
+        AddDefenderExclusionsAsync([folder], [], ct);
+    /// <summary>Removes a temporary Defender exclusion for one RPCD build temp folder.</summary>
+    Task<bool> RemoveTempBuildDefenderExclusionAsync(string folder, CancellationToken ct) =>
+        RemoveDefenderExclusionsAsync([folder], [], ct);
+    /// <summary>Creates, attaches, and formats a temporary dynamically expanding RPCD Dev Drive VHDX (~50 GB).</summary>
+    Task<DevDriveMountResult> CreateTempDevDriveAsync(int sizeGb, string? grantUserSid, CancellationToken ct) =>
+        Task.FromResult(new DevDriveMountResult(false, Error: "Dev Drive actions are not supported by this Agent."));
+    /// <summary>Detaches and deletes a temporary RPCD Dev Drive VHDX inside the Agent's temp folder.</summary>
+    Task<bool> RemoveTempDevDriveAsync(string vhdxPath, CancellationToken ct) =>
+        Task.FromResult(false);
 }
 
 /// <summary>One <see cref="AdminPipeFraming.OpMachineTweak"/> request: which change (<see cref="Action"/>) and its arguments.</summary>
@@ -63,6 +75,13 @@ public sealed record AdminPipeTweak(
     public const string DefenderRead = "defender_read";
     public const string DefenderAdd = "defender_add";
     public const string DefenderRemove = "defender_remove";
+    /// <summary>Target = RPCD build temp folder under Temp\rpcd-devbench-*.</summary>
+    public const string DefenderTempAdd = "defender_temp_add";
+    public const string DefenderTempRemove = "defender_temp_remove";
+    /// <summary>Number = size in GB (50..64), Text = optional signed-in user SID to grant modify access on the build folder.</summary>
+    public const string DevDriveCreate = "devdrive_create";
+    /// <summary>Target = VHDX path inside the Agent's devdrive-temp folder.</summary>
+    public const string DevDriveRemove = "devdrive_remove";
 }
 
 /// <summary>
@@ -117,6 +136,23 @@ public static class MachineTweakRules
                     if (!p.IsBuildTool(x, mustExist: adding)) return $"{x} isn't a Visual Studio build tool.";
                 return null;
 
+            case AdminPipeTweak.DefenderTempAdd or AdminPipeTweak.DefenderTempRemove:
+                var addingTemp = t.Action == AdminPipeTweak.DefenderTempAdd;
+                var tp = paths ?? DefenderPaths.Current();
+                return DevDriveRules.TempBuildFolderRefusal(t.Target, mustExist: addingTemp, tp.DirectoryExists);
+
+            case AdminPipeTweak.DevDriveCreate:
+                if (t.Number is { } gb && (gb < DevDriveRules.MinSizeGb || gb > DevDriveRules.MaxSizeGb))
+                    return $"Temporary Dev Drive size must be between {DevDriveRules.MinSizeGb} and {DevDriveRules.MaxSizeGb} GB.";
+                if (!string.IsNullOrEmpty(t.Text) && !DevDriveRules.IsValidUserSid(t.Text))
+                    return "Invalid user SID for temporary Dev Drive.";
+                return null;
+
+            case AdminPipeTweak.DevDriveRemove:
+                return DevDriveRules.IsRpcdDevDriveVhdx(t.Target)
+                    ? null
+                    : "Dev Drive removal is only allowed for RPCD VHDX files inside the Agent's devdrive-temp folder.";
+
             default:
                 return $"Unknown change '{t.Action}'.";
         }
@@ -154,6 +190,15 @@ public static class MachineTweakRules
                 return await backend.AddDefenderExclusionsAsync(t.Folders ?? [], t.Processes ?? [], ct).ConfigureAwait(false);
             case AdminPipeTweak.DefenderRemove:
                 return (await backend.RemoveDefenderExclusionsAsync(t.Folders ?? [], t.Processes ?? [], ct).ConfigureAwait(false), null);
+            case AdminPipeTweak.DefenderTempAdd:
+                return await backend.AddTempBuildDefenderExclusionAsync(t.Target!, ct).ConfigureAwait(false);
+            case AdminPipeTweak.DefenderTempRemove:
+                return (await backend.RemoveTempBuildDefenderExclusionAsync(t.Target!, ct).ConfigureAwait(false), null);
+            case AdminPipeTweak.DevDriveCreate:
+                var mounted = await backend.CreateTempDevDriveAsync(t.Number ?? DevDriveRules.DefaultSizeGb, t.Text, ct).ConfigureAwait(false);
+                return (mounted.Ok, mounted.ToJson());
+            case AdminPipeTweak.DevDriveRemove:
+                return (await backend.RemoveTempDevDriveAsync(t.Target!, ct).ConfigureAwait(false), null);
             default:
                 throw new InvalidOperationException($"Unknown change '{t.Action}'.");
         }
@@ -303,6 +348,38 @@ public sealed class AgentMachineTweaks(IElevatedCommandBridge? bridge, ILogger? 
     {
         var r = await bridge.RequireAgent().MachineTweakAsync(new(AdminPipeTweak.DefenderRemove, Folders: folders, Processes: processes), ct).ConfigureAwait(false);
         if (!r.Ok) log.Warn("[machine-tweaks] Defender exclusions not removed: " + r.Error);
+        return r.Ok;
+    }
+
+    public async Task<(bool Ok, string? Output)> AddTempBuildDefenderExclusionAsync(string folder, CancellationToken ct)
+    {
+        var r = await bridge.RequireAgent().MachineTweakAsync(new(AdminPipeTweak.DefenderTempAdd, Target: folder), ct).ConfigureAwait(false);
+        if (!r.Ok) log.Warn("[machine-tweaks] Temporary Defender build exclusion not added: " + r.Error);
+        return (r.Ok, r.Ok ? r.StdOut : null);
+    }
+
+    public async Task<bool> RemoveTempBuildDefenderExclusionAsync(string folder, CancellationToken ct)
+    {
+        var r = await bridge.RequireAgent().MachineTweakAsync(new(AdminPipeTweak.DefenderTempRemove, Target: folder), ct).ConfigureAwait(false);
+        if (!r.Ok) log.Warn("[machine-tweaks] Temporary Defender build exclusion not removed: " + r.Error);
+        return r.Ok;
+    }
+
+    public async Task<DevDriveMountResult> CreateTempDevDriveAsync(int sizeGb, string? grantUserSid, CancellationToken ct)
+    {
+        var r = await bridge.RequireAgent().MachineTweakAsync(new(AdminPipeTweak.DevDriveCreate, Number: sizeGb, Text: grantUserSid), ct).ConfigureAwait(false);
+        if (!r.Ok)
+        {
+            log.Warn("[machine-tweaks] Temporary Dev Drive not created: " + r.Error);
+            return new(false, Error: r.Error ?? "The Agent could not create a temporary Dev Drive.");
+        }
+        return DevDriveMountResult.FromJson(r.StdOut) ?? new(false, Error: "The Agent returned an unreadable Dev Drive response.");
+    }
+
+    public async Task<bool> RemoveTempDevDriveAsync(string vhdxPath, CancellationToken ct)
+    {
+        var r = await bridge.RequireAgent().MachineTweakAsync(new(AdminPipeTweak.DevDriveRemove, Target: vhdxPath), ct).ConfigureAwait(false);
+        if (!r.Ok) log.Warn("[machine-tweaks] Temporary Dev Drive not removed: " + r.Error);
         return r.Ok;
     }
 
@@ -531,6 +608,18 @@ public sealed class WindowsMachineTweaks(ILogger? log = null, IProcessLauncher? 
         Log($"Defender exclusions remove ({folders.Count} folder(s), {processes.Count} program(s)): exit {r.ExitCode}");
         return r.ExitCode == 0;
     }
+
+    public Task<(bool Ok, string? Output)> AddTempBuildDefenderExclusionAsync(string folder, CancellationToken ct) =>
+        AddDefenderExclusionsAsync([folder], [], ct);
+
+    public Task<bool> RemoveTempBuildDefenderExclusionAsync(string folder, CancellationToken ct) =>
+        RemoveDefenderExclusionsAsync([folder], [], ct);
+
+    public Task<DevDriveMountResult> CreateTempDevDriveAsync(int sizeGb, string? grantUserSid, CancellationToken ct) =>
+        new WindowsDevDriveManager(log, _launcher).CreateAndMountAsync(sizeGb, grantUserSid, ct);
+
+    public Task<bool> RemoveTempDevDriveAsync(string vhdxPath, CancellationToken ct) =>
+        new WindowsDevDriveManager(log, _launcher).RemoveAsync(vhdxPath, ct);
 
     private async Task<ProcessResult> PowerShellAsync(string script, CancellationToken ct)
     {

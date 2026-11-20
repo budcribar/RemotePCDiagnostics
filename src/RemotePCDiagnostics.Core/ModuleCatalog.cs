@@ -19,6 +19,7 @@ public static class BuiltInModules
         new(ModuleIds.EventLog, ModuleSlugs.EventLog, "Windows error log", ModuleKind.Check, ModuleGroups.Windows, 200),
         new(ModuleIds.Crashes, ModuleSlugs.Crashes, "Crashes & unexpected restarts", ModuleKind.Check, ModuleGroups.Windows, 300),
         new(ModuleIds.Programs, ModuleSlugs.Programs, "Programs & updates", ModuleKind.Check, ModuleGroups.Apps, 100),
+        new(ModuleIds.DeveloperSetup, ModuleSlugs.DeveloperSetup, "Developer setup", ModuleKind.Check, ModuleGroups.Apps, 200),
         new(ModuleIds.DismScanHealth, ModuleSlugs.DismScanHealth, "Windows component store (DISM)", ModuleKind.OnDemand, ModuleGroups.Windows, 400),
         new(ModuleIds.SfcVerifyOnly, ModuleSlugs.SfcVerifyOnly, "Protected system files (SFC)", ModuleKind.OnDemand, ModuleGroups.Windows, 500),
         new(ModuleIds.CpuStress, ModuleSlugs.CpuStress, "CPU stress test", ModuleKind.StressTest, ModuleGroups.Cpu, 200),

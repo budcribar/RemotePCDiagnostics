@@ -146,12 +146,34 @@ public static class HostServices
             sp.GetRequiredService<IMemorySystem>(), sp.GetRequiredService<ServicesModule>(), sp.GetRequiredService<ServiceActionService>(),
             sp.GetRequiredService<ISessionContext>(), (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.MemorySuggestion, level, text), L<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(),
             remediation: sp.GetRequiredService<RemediationService>(), journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
+        // Developer setup check & developer clean-build benchmarks (Phase 1 & 2).
+        services.AddSingleton<RemotePCDiagnostics.Core.Benchmarks.IDeveloperSampleStore>(sp => new AgentDeveloperSampleStore(
+            sp.GetRequiredService<IElevatedCommandBridge>(), L<AgentDeveloperSampleStore>()));
+        services.AddSingleton<RemotePCDiagnostics.Core.Benchmarks.IDeveloperEnvironmentProbe>(sp =>
+        {
+            var probesForCond = new WindowsBenchmarkProbes(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISensorProvider>(), L<WindowsBenchmarkProbes>());
+            return new WindowsDeveloperEnvironmentProbe(
+                sp.GetRequiredService<SystemCommandRunner>(),
+                sp.GetRequiredService<IMachineTweaks>(),
+                sp.GetRequiredService<IElevatedCommandBridge>(),
+                probesForCond.ReadConditions,
+                L<WindowsDeveloperEnvironmentProbe>());
+        });
+        services.AddSingleton(sp => new RemotePCDiagnostics.Core.Benchmarks.DeveloperBuildRunner(
+            sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.IDeveloperEnvironmentProbe>(),
+            machineTweaks: sp.GetRequiredService<IMachineTweaks>(),
+            sampleStore: sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.IDeveloperSampleStore>(),
+            log: L<RemotePCDiagnostics.Core.Benchmarks.DeveloperBuildRunner>()));
         // Before/after performance benchmarks (state saved so the "before" survives a restart; event 1500).
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Benchmarks.BenchmarkService(
-            new RemotePCDiagnostics.Core.Benchmarks.BenchmarkRunner(new WindowsBenchmarkProbes(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISensorProvider>(), L<WindowsBenchmarkProbes>()), L<RemotePCDiagnostics.Core.Benchmarks.BenchmarkRunner>()),
+            new RemotePCDiagnostics.Core.Benchmarks.BenchmarkRunner(
+                new WindowsBenchmarkProbes(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISensorProvider>(), L<WindowsBenchmarkProbes>(), sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.DeveloperBuildRunner>()),
+                L<RemotePCDiagnostics.Core.Benchmarks.BenchmarkRunner>()),
             new AgentBenchmarkStore(sp.GetRequiredService<IElevatedCommandBridge>(), L<AgentBenchmarkStore>()),
             sp.GetRequiredService<RemediationService>(), sp.GetRequiredService<ISessionContext>(),
-            (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Benchmark, level, text), L<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>()));
+            (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Benchmark, level, text), L<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>(),
+            devRunner: sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.DeveloperBuildRunner>(),
+            devEnv: sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.IDeveloperEnvironmentProbe>()));
         // Service workflow: checks → tech review → restart → before benchmark → fixes → restart → after benchmark → report.
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Workflow.WorkflowService(
             sp.GetRequiredService<DiagnosticsService>(), sp.GetRequiredService<ResultStore>(), sp.GetRequiredService<RemediationService>(),

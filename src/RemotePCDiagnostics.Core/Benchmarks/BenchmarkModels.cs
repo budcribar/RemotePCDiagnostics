@@ -10,6 +10,7 @@ public enum BenchmarkKind
     BootTime, ProgramStart, IdleCpu, Paging, CpuSingle, CpuMulti, DiskLatency, DnsLookup,
     MemoryUsedMb, BackgroundProcesses, DiskFreeGb, EnabledStartupApps, AutoVendorServices, ActiveScheduledTasks, InstalledBloatwareApps,
     Speedometer,
+    DeveloperCSharp,
 }
 
 public enum BenchmarkPhase { Before, After }
@@ -48,6 +49,8 @@ public static class Benchmarks
         new(BenchmarkKind.AutoVendorServices, "Automatic background services", "Non-Windows background services set to start automatically", "services", true, 0.01, 1, 0.0, "0", "fewer", "more"),
         new(BenchmarkKind.ActiveScheduledTasks, "Active background tasks", "Non-Windows scheduled tasks enabled to run in the background", "tasks", true, 0.01, 1, 0.0, "0", "fewer", "more"),
         new(BenchmarkKind.InstalledBloatwareApps, "Pre-installed bloatware apps", "Unsupported or unneeded pre-installed apps on the PC", "apps", true, 0.01, 1, 0.0, "0", "fewer", "more"),
+        // Developer clean-build benchmarks: off by default, zero weight in the overall before/after score, hidden when the toolchain is absent.
+        new(BenchmarkKind.DeveloperCSharp, "Developer clean build (C#)", "Timed clean Release build of a pinned C# solution (warm median; lower is better)", "s", true, 0.08, 0.5, 0.0, "0.0"),
     ];
 
     /// <summary>Read several times over the idle sampling window (they wander from second to second).</summary>
@@ -59,6 +62,21 @@ public static class Benchmarks
         BenchmarkKind.DiskFreeGb, BenchmarkKind.EnabledStartupApps, BenchmarkKind.AutoVendorServices, BenchmarkKind.ActiveScheduledTasks, BenchmarkKind.InstalledBloatwareApps,
     ];
 
+    /// <summary>Optional developer clean-build benchmarks (off by default, zero weight in overall before/after score).</summary>
+    public static readonly IReadOnlyList<BenchmarkKind> DeveloperKinds = [BenchmarkKind.DeveloperCSharp];
+
+    public static bool IsDeveloperKind(BenchmarkKind k) => DeveloperKinds.Contains(k);
+
+    /// <summary>Kinds enabled by default on a fresh Benchmark screen (excludes optional developer builds).</summary>
+    public static readonly IReadOnlyList<BenchmarkKind> DefaultEnabled =
+        Enum.GetValues<BenchmarkKind>().Where(k => !IsDeveloperKind(k)).ToList();
+
+    public static DeveloperLanguage? LanguageFor(BenchmarkKind k) => k switch
+    {
+        BenchmarkKind.DeveloperCSharp => DeveloperLanguage.CSharp,
+        _ => null,
+    };
+
     public static BenchmarkInfo Info(BenchmarkKind k) => All.First(i => i.Kind == k);
 }
 
@@ -67,7 +85,7 @@ public sealed record BenchmarkSettings
 {
     public const int CurrentSchemaVersion = 3;
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
-    public IReadOnlyList<BenchmarkKind> Enabled { get; init; } = [.. Enum.GetValues<BenchmarkKind>()];
+    public IReadOnlyList<BenchmarkKind> Enabled { get; init; } = [.. Benchmarks.DefaultEnabled];
     /// <summary>Runs per benchmark; the middle value is used.</summary>
     public int Runs { get; init; } = 3;
     /// <summary>Restart the PC before the "after" benchmark (needed to measure start-up time).</summary>
@@ -89,6 +107,7 @@ public sealed record BenchmarkSettings
 
     public static readonly int[] RunChoices = [1, 3, 5];
     public bool IsEnabled(BenchmarkKind k) => Enabled.Contains(k);
+    public bool HasDeveloperKindEnabled => Enabled.Any(Benchmarks.IsDeveloperKind);
 
     /// <summary>Rough length of one pass (seconds), shown before starting.</summary>
     public int EstimatedSeconds()
@@ -102,6 +121,7 @@ public sealed record BenchmarkSettings
         if (IsEnabled(BenchmarkKind.DiskLatency)) s += Runs * DiskRun.TotalSeconds;
         if (IsEnabled(BenchmarkKind.DnsLookup)) s += Runs * 3;
         if (IsEnabled(BenchmarkKind.Speedometer)) s += 65;
+        if (IsEnabled(BenchmarkKind.DeveloperCSharp)) s += 120;
         return (int)Math.Ceiling(s);
     }
 }
@@ -123,7 +143,9 @@ public static class BuiltInPrograms
 /// <summary>One benchmark's runs. The median is the result; the spread tells how noisy it was.</summary>
 /// <param name="Detail">Extra breakdown shown with the comparison (start-up: time until the desktop + settling after sign-in).</param>
 /// <param name="RunIdentity">Structured browser/version/launch-mode identity for Speedometer 3 comparisons.</param>
-public sealed record BenchmarkMeasurement(BenchmarkKind Kind, IReadOnlyList<double> Samples, string? Note = null, string? Detail = null, SpeedometerRunIdentity? RunIdentity = null)
+/// <param name="DeveloperBuild">Structured developer clean-build telemetry (cold/warm medians, restore, AV cost, band).</param>
+public sealed record BenchmarkMeasurement(BenchmarkKind Kind, IReadOnlyList<double> Samples, string? Note = null, string? Detail = null,
+    SpeedometerRunIdentity? RunIdentity = null, DeveloperBuildResult? DeveloperBuild = null)
 {
     public double? Median
     {
