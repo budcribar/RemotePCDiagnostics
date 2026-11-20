@@ -200,6 +200,12 @@ if ($IsWindowsHost -and -not $SkipVerify) {
     Write-Host "Package self-verification passed." -ForegroundColor Green
 }
 
+# Sign our own binaries before Inno Setup or MSIX packaging. No-op when the test
+# signing secrets are unset. This never installs a certificate. See docs/code-signing.md.
+$SignScript = Join-Path $RepoRoot 'scripts/signing/Invoke-RpcdCodeSign.ps1'
+& $SignScript -AppDirectory $StageDir
+if (-not $?) { throw 'Code signing the staged app binaries failed.' }
+
 if ($StageOnly) {
     Write-Host "StageOnly requested; skipping Inno Setup compilation. Staged files are at: $StageDir" -ForegroundColor Green
     return
@@ -276,6 +282,12 @@ if (-not [string]::IsNullOrWhiteSpace($Compression)) {
 
 $IsccArgs += $IssFile
 
+# The TestShop bundle copies a separately published Agent EXE. Sign it before Inno packs it.
+if (-not [string]::IsNullOrWhiteSpace($AgentExePath)) {
+    & $SignScript -File $AgentExePath
+    if (-not $?) { throw 'Code signing the bundled Agent executable failed.' }
+}
+
 Write-Host "Compiling installer '$OutputBaseName.exe' with Inno Setup ($Iscc) ..." -ForegroundColor Cyan
 & $Iscc @IsccArgs
 
@@ -288,6 +300,9 @@ $SetupExePath = Join-Path $OutputDir $SetupFileName
 if (-not (Test-Path -LiteralPath $SetupExePath)) {
     throw "Expected installer output was not created: $SetupExePath"
 }
+
+& $SignScript -File $SetupExePath
+if (-not $?) { throw 'Code signing the setup executable failed.' }
 
 $Hash = (Get-FileHash -LiteralPath $SetupExePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $ShaFile = "$SetupExePath.sha256"

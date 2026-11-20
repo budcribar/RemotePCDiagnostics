@@ -45,7 +45,7 @@ Planned components are used under their own licenses and need to be confirmed be
 
 ## Privacy & security policy
 
-- **Build provenance & signing status:** Standalone GitHub Release installers (`RemotePCDiagnostics-Setup-*-win-x64.exe`) are built automatically from public `main` commits on GitHub Actions alongside a `.sha256` checksum and are currently unsigned while Microsoft Store MSIX packaging is finalized.
+- **Build provenance & signing status:** Standalone GitHub Release installers (`RemotePCDiagnostics-Setup-*-win-x64.exe`) are built from public `main` commits on GitHub Actions with a `.sha256` checksum. They are Authenticode-signed only when the test signing secrets in [docs/code-signing.md](docs/code-signing.md) are set. That certificate is trusted only on PCs where its public half was installed. The installer does not install a certificate.
 - **Maintainer:** [@budcribar](https://github.com/budcribar)
 - **Bundled tools & read-only security baseline scope:** Built-in binaries (`RemotePCDiagnostics.*.exe`, `RemotePCDiagnostics.*.dll`) are compiled from this repository's MIT-licensed source code alongside bundled open-source dependencies (`osqueryi.exe`, `HardeningKitty`, and NuGet packages). The optional **Security audit** module evaluates local Windows configuration settings against published CIS and Microsoft hardening baselines strictly in read-only mode (`HardeningKitty`) and does not perform network port scanning, active vulnerability scanning, or exploitation.
 - **Privacy policy:** This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.

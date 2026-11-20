@@ -86,6 +86,11 @@ if ([string]::IsNullOrWhiteSpace($AgentExePath) -or -not (Test-Path -LiteralPath
 }
 $AgentExePath = (Resolve-Path -LiteralPath $AgentExePath).Path
 
+# Sign the EXE before WiX embeds it. No-op when the test signing secrets are unset.
+$SignScript = Join-Path $RepoRoot 'scripts/signing/Invoke-RpcdCodeSign.ps1'
+& $SignScript -File $AgentExePath
+if (-not $?) { throw 'Code signing the Agent executable failed.' }
+
 $WixStageOut = Join-Path $RepoRoot 'artifacts/agent-msi-stage'
 if (Test-Path -LiteralPath $WixStageOut) {
     Remove-Item -LiteralPath $WixStageOut -Recurse -Force
@@ -121,6 +126,9 @@ $MsiSizeBytes = (Get-Item -LiteralPath $DestMsi).Length
 if ($MsiSizeBytes -lt 5MB) {
     throw "MSI package '$DestMsi' is unexpectedly small ($MsiSizeBytes bytes); expected embedded self-contained win-x64 agent."
 }
+
+& $SignScript -File $DestMsi
+if (-not $?) { throw 'Code signing the Agent MSI failed.' }
 
 $Hash = (Get-FileHash -LiteralPath $DestMsi -Algorithm SHA256).Hash.ToLowerInvariant()
 $ShaFile = "$DestMsi.sha256"

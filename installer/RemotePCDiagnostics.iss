@@ -1,5 +1,8 @@
 ; Inno Setup 6 installer script for Remote PC Diagnostics (win-x64).
 ; Build via: pwsh -NoProfile -File installer/Build-Installer.ps1
+; This installer does not install a code-signing certificate or a trusted root.
+; Test laptops trust the test certificate only through scripts/signing/Install-RpcdTestCert.ps1.
+; See docs/code-signing.md.
 
 #ifndef AppVersion
   #define AppVersion "1.2.0"

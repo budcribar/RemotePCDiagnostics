@@ -51,6 +51,10 @@ env:
   TESTSHOP_ONLY: ${{ (inputs.testshop_only || (github.event_name == 'push' && github.ref != 'refs/heads/main' && contains(github.event.head_commit.message, '[testshop-only]'))) && 'true' || 'false' }}
   # Full compression only for installers that get uploaded for a release; pull requests and TestShop-only runs use fast.
   INSTALLER_COMPRESSION: ${{ (((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch') && !(inputs.testshop_only || (github.event_name == 'push' && github.ref != 'refs/heads/main' && contains(github.event.head_commit.message, '[testshop-only]')))) && 'lzma2/ultra64' || 'lzma2/fast' }}
+  # Test code signing. Both empty when the secrets are not configured; signing then logs a notice and the packages stay unsigned.
+  # See docs/code-signing.md. Do not put a certificate file in the repository.
+  WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+  WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
 
 jobs:
   service-workflow:
@@ -294,6 +298,29 @@ jobs:
           if-no-files-found: error
           retention-days: 5
 
+      # Always upload something from this directory so the release job can download it.
+      # The .cer is present only when the signing secrets were set; otherwise a one-line note is.
+      - name: Collect test signing public certificate
+        if: env.PUBLISH_ARTIFACTS == 'true'
+        shell: pwsh
+        run: |
+          $dir = 'artifacts/signing'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $cer = Join-Path $dir 'rpcd-test-codesign.cer'
+          if (-not (Test-Path -LiteralPath $cer)) {
+            $note = "Code signing secrets WINDOWS_CODESIGN_PFX_BASE64 and WINDOWS_CODESIGN_PFX_PASSWORD were not set. No public certificate was produced."
+            [System.IO.File]::WriteAllText((Join-Path $dir 'signing-skipped.txt'), $note)
+          }
+
+      - name: Upload test signing public certificate
+        if: env.PUBLISH_ARTIFACTS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpcd-test-codesign-cer
+          path: artifacts/signing/*
+          if-no-files-found: error
+          retention-days: 5
+
       # Logs and test results only (no binaries), and only when the job failed.
       - name: Upload logs
         if: failure()
@@ -486,6 +513,9 @@ jobs:
           $agentFileName = "RemotePCDiagnostics.Agent-$ver-win-x64.exe"
           $agentDest = Join-Path $agentOutDir $agentFileName
           Copy-Item -LiteralPath $publishedExe -Destination $agentDest -Force
+
+          & (Join-Path $env:GITHUB_WORKSPACE 'scripts/signing/Invoke-RpcdCodeSign.ps1') -File $agentDest
+          if (-not $?) { throw 'Code signing the Agent executable failed.' }
 
           $hash = (Get-FileHash -LiteralPath $agentDest -Algorithm SHA256).Hash.ToLowerInvariant()
           $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -741,6 +771,21 @@ jobs:
           name: RemotePCDiagnostics-Agent-win-x64
           path: release-assets
 
+      - name: Download test signing public certificate
+        uses: actions/download-artifact@v4
+        with:
+          name: rpcd-test-codesign-cer
+          path: test-signing
+
+      - name: Attach public certificate when signing ran
+        run: |
+          if compgen -G "test-signing/*.cer" > /dev/null; then
+            cp -f test-signing/*.cer release-assets/
+            echo "Attaching rpcd-test-codesign.cer to the release."
+          else
+            echo "No public test certificate in this build (signing secrets are not set)."
+          fi
+
       - name: Publish release or rolling pre-release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -787,7 +832,7 @@ jobs:
           - **Uninstall:** Uninstall **Remote PC Diagnostics** or **Remote PC Diagnostics Agent** from **Windows Settings > Apps > Installed apps**.
 
           ### Privacy & security policy
-          Standalone GitHub Release installers, MSIX packages, and Fleet Agent binaries are built automatically by GitHub Actions (`.sha256` checksums attached); Partner Center signs the MSIX package with Microsoft's Store certificate on Store submission.
+          Standalone GitHub Release installers, MSIX packages, and Fleet Agent binaries are built by GitHub Actions (`.sha256` checksums attached). When `WINDOWS_CODESIGN_PFX_BASE64` and `WINDOWS_CODESIGN_PFX_PASSWORD` are set, those packages are signed with the test certificate and `rpcd-test-codesign.cer` is attached. Trust that public certificate only on the test laptops (`docs/code-signing.md`). The installer does not install it. Without those secrets the packages stay unsigned. A test-signed MSIX uses the test certificate subject as Publisher and is for sideload, not for Partner Center. Partner Center signs an unsigned Store MSIX on submission.
 
           This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. See the full [Privacy & security policy](https://github.com/budcribar/RemotePCDiagnostics#privacy--security-policy) for details.
           EOF

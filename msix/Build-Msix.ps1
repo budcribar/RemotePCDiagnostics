@@ -8,6 +8,10 @@
 
 .EXAMPLE
   pwsh -NoProfile -File msix/Build-Msix.ps1 -SkipPublish -IdentityName "12345BudCribar.RemotePCDiagnostics" -Publisher "CN=00000000-0000-0000-0000-000000000000"
+
+  When WINDOWS_CODESIGN_PFX_BASE64 and WINDOWS_CODESIGN_PFX_PASSWORD are set, Publisher becomes the
+  certificate subject unless -Publisher or MSIX_PUBLISHER is already that exact subject.
+  See docs/code-signing.md.
 #>
 [CmdletBinding()]
 param(
@@ -60,6 +64,8 @@ if ($FourPartVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') {
 if ([string]::IsNullOrWhiteSpace($IdentityName)) {
     $IdentityName = if ($env:MSIX_IDENTITY_NAME) { $env:MSIX_IDENTITY_NAME.Trim() } else { 'PeakSoftwareConsultingLLC.RemotePCDiagnostics' }
 }
+# An explicit publisher (parameter or MSIX_PUBLISHER) must match the test certificate when signing.
+$PublisherExplicit = $PSBoundParameters.ContainsKey('Publisher') -or -not [string]::IsNullOrWhiteSpace($env:MSIX_PUBLISHER)
 if ([string]::IsNullOrWhiteSpace($Publisher)) {
     $Publisher = if ($env:MSIX_PUBLISHER) { $env:MSIX_PUBLISHER.Trim() } else { 'CN=0A440CA9-6893-4009-B5DC-4F514B6B2F19' }
 }
@@ -192,6 +198,27 @@ function Escape-XmlAttribute {
     return [System.Security.SecurityElement]::Escape($Value)
 }
 
+$signingSubject = $null
+$SignScript = Join-Path $RepoRoot 'scripts/signing/Invoke-RpcdCodeSign.ps1'
+$subjectLines = @(& $SignScript -SubjectOnly)
+if (-not $?) { throw 'Reading the test signing certificate failed.' }
+foreach ($line in @($subjectLines)) {
+    if ($line -is [string] -and -not [string]::IsNullOrWhiteSpace($line)) { $signingSubject = $line.Trim() }
+}
+if ($signingSubject) {
+    if ($PublisherExplicit -and $Publisher -ne $signingSubject) {
+        throw @"
+MSIX Publisher '$Publisher' does not match the test signing certificate subject '$signingSubject'.
+Package/Identity/Publisher must be that exact subject or Windows will not install the signed package.
+Unset the msix_publisher input and the MSIX_PUBLISHER variable, or set them to that subject.
+"@
+    }
+    if (-not $PublisherExplicit) {
+        Write-Host "MSIX Publisher set to the test signing certificate subject: $signingSubject" -ForegroundColor Cyan
+        $Publisher = $signingSubject
+    }
+}
+
 $TemplatePath = Join-Path $PSScriptRoot 'AppxManifest.template.xml'
 $ManifestContent = Get-Content -LiteralPath $TemplatePath -Raw
 $ManifestContent = $ManifestContent.Replace('{{IDENTITY_NAME}}', (Escape-XmlAttribute $IdentityName))
@@ -207,6 +234,9 @@ $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($AppxManifestOut, $ManifestContent, $Utf8NoBom)
 
 Write-Host "Prepared MSIX stage at '$MsixStageDir' (Identity='$IdentityName', Version='$FourPartVersion', zero .sys files)." -ForegroundColor Green
+
+& $SignScript -AppDirectory $MsixStageDir
+if (-not $?) { throw 'Code signing the MSIX stage binaries failed.' }
 
 if ($StageOnly) {
     Write-Host "StageOnly requested; skipping MakeAppx.exe packaging." -ForegroundColor Green
@@ -263,6 +293,9 @@ if (-not (Test-Path -LiteralPath $MsixPath)) {
     throw "Expected MSIX package was not created: $MsixPath"
 }
 
+& $SignScript -File $MsixPath
+if (-not $?) { throw 'Code signing the MSIX package failed.' }
+
 $MsixSizeBytes = (Get-Item -LiteralPath $MsixPath).Length
 if ($MsixSizeBytes -lt 20MB) {
     throw "MSIX package is unexpectedly small ($MsixSizeBytes bytes); expected self-contained win-x64 bundle."
@@ -279,4 +312,9 @@ Write-Host "  File:     $MsixPath ($SizeMb MB)"
 Write-Host "  Identity: $IdentityName ($Publisher) v$FourPartVersion"
 Write-Host "  SHA256:   $Hash"
 Write-Host "  Hash:     $ShaFile"
-Write-Host '  Note:     Upload directly to Microsoft Partner Center for $0 Store signing (no local EV cert required).'
+if ($signingSubject) {
+    Write-Host '  Note:     Test-signed for sideload. Publisher is the test certificate subject. Do not submit this package to Partner Center.'
+}
+else {
+    Write-Host '  Note:     Unsigned. Partner Center can sign this package on Store submission. See docs/code-signing.md.'
+}

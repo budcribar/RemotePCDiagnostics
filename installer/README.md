@@ -19,6 +19,10 @@ Builds a single-file Windows `x64` setup wizard (`RemotePCDiagnostics-Setup-<Ver
 
 When `Build-Installer.ps1` is given `-AgentExePath`, Setup also runs `RemotePCDiagnostics.Agent.exe install` with the relay, key and consent chosen at build time. `/AGENTSERVER=<url>` on the Setup command line replaces the relay for that install (an `https://` address, or `http://` on loopback). CI installs the bundle with `/AGENTSERVER=http://127.0.0.1:9` so the smoke test does not enrol the build runner with the public relay; do the same for any automated install on a machine that should not appear in a shop's computer list.
 
+## Code signing
+
+The installer does not install a certificate or a trusted root. Release builds are Authenticode-signed when the secrets in [docs/code-signing.md](../docs/code-signing.md) are set. Trust that public certificate on a test laptop by running `scripts/signing/Install-RpcdTestCert.ps1` from an elevated PowerShell. Do not add that step to this installer.
+
 ## Building Locally on Windows
 
 ### Prerequisites
