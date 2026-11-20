@@ -338,6 +338,37 @@ public sealed class CdpClient : IAsyncDisposable
     private readonly ClientWebSocket _ws = new();
     private int _nextId;
 
+    /// <summary>False once the browser closed the DevTools connection (the browser, or the benchmark tab, is gone).</summary>
+    public bool IsOpen => _ws.State == WebSocketState.Open;
+
+    /// <summary>
+    /// Asks the browser on <paramref name="cdpPort"/> to close itself (<c>Browser.close</c> on the browser target). Needed because
+    /// on Windows the chrome.exe RPCD started can hand the browser to another process and exit, so killing the started process's
+    /// tree doesn't reach it. Best effort; returns false when the browser couldn't be reached.
+    /// </summary>
+    public static async Task<bool> CloseBrowserAsync(int cdpPort, TimeSpan timeout)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(timeout);
+            using var http = new HttpClient { Timeout = timeout };
+            var json = await http.GetStringAsync($"http://127.0.0.1:{cdpPort}/json/version", cts.Token).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("webSocketDebuggerUrl", out var wsProp)
+                || !Uri.TryCreate(wsProp.GetString(), UriKind.Absolute, out var wsUri))
+                return false;
+            await using var browser = new CdpClient();
+            await browser.ConnectAsync(wsUri, cts.Token).ConfigureAwait(false);
+            var payload = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { id = 1, method = "Browser.close" }));
+            await browser._ws.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, cts.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or WebSocketException or OperationCanceledException or JsonException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>JavaScript probe evaluated over CDP to check Speedometer 3 completion and extract the score.</summary>
     public const string SpeedometerPollExpression = """
         (() => {
@@ -545,6 +576,7 @@ public static class SpeedometerProcessRunner
         linked.CancelAfter(timeout);
 
         Process? proc = null;
+        int? port = null;
         try
         {
             log.Info($"[benchmark] speedometer start: browser={browser.DisplayName} url={runUrl}");
@@ -560,15 +592,29 @@ public static class SpeedometerProcessRunner
             if (wsUri is null)
                 return new(null, browser.Engine, browser.DisplayName, browser.Version, Note: $"Could not attach to {browser.DisplayName} benchmark tab.");
 
+            port = cdpPort;
             await using var cdp = new CdpClient();
             await cdp.ConnectAsync(wsUri, linked.Token).ConfigureAwait(false);
 
+            var launcherExitLogged = false;
             while (!linked.Token.IsCancellationRequested)
             {
-                if (proc.HasExited)
+                // The DevTools connection is what tells us the browser is still running. On Windows the chrome.exe we started
+                // often hands the browser to another chrome.exe and exits within a second, so its exit alone means nothing.
+                if (!cdp.IsOpen)
                     return new(null, browser.Engine, browser.DisplayName, browser.Version, Note: $"{browser.DisplayName} closed before Speedometer finished.");
+                if (proc.HasExited && !launcherExitLogged)
+                {
+                    launcherExitLogged = true;
+                    log.Info($"[benchmark] speedometer: started {browser.DisplayName} process exited (code {SafeExitCode(proc)}); the browser is still answering, so the run continues.");
+                }
 
-                var raw = await cdp.EvaluateStringAsync(CdpClient.SpeedometerPollExpression, linked.Token).ConfigureAwait(false);
+                string? raw;
+                try { raw = await cdp.EvaluateStringAsync(CdpClient.SpeedometerPollExpression, linked.Token).ConfigureAwait(false); }
+                catch (WebSocketException)
+                {
+                    return new(null, browser.Engine, browser.DisplayName, browser.Version, Note: $"{browser.DisplayName} closed before Speedometer finished.");
+                }
                 if (CdpClient.TryParseScoreJson(raw, out var score, out var ci))
                 {
                     log.Info($"[benchmark] speedometer done: browser={browser.DisplayName} score={score:0.00}");
@@ -586,6 +632,9 @@ public static class SpeedometerProcessRunner
         }
         finally
         {
+            // Close the browser through DevTools first: it reaches the browser even when the process we started already exited.
+            if (port is { } p && await CdpClient.CloseBrowserAsync(p, TimeSpan.FromSeconds(3)).ConfigureAwait(false))
+                await WaitForProfileReleaseAsync(profileDir, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             try
             {
                 if (proc is not null && !proc.HasExited)
@@ -595,5 +644,20 @@ public static class SpeedometerProcessRunner
             proc?.Dispose();
             try { Directory.Delete(profileDir, recursive: true); } catch { }
         }
+    }
+
+    private static string SafeExitCode(Process proc)
+    {
+        try { return proc.ExitCode.ToString(CultureInfo.InvariantCulture); }
+        catch { return "unknown"; }
+    }
+
+    /// <summary>Waits until the browser lets go of its profile (Chrome deletes DevToolsActivePort as it shuts down).</summary>
+    private static async Task WaitForProfileReleaseAsync(string profileDir, TimeSpan timeout)
+    {
+        var portFile = Path.Combine(profileDir, "DevToolsActivePort");
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline && File.Exists(portFile))
+            await Task.Delay(200).ConfigureAwait(false);
     }
 }
