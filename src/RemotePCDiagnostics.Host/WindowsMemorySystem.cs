@@ -23,7 +23,9 @@ namespace RemotePCDiagnostics.Host;
 /// <param name="admin">Makes the changes that need administrator rights (machine-wide startup apps, service start types, hibernation):
 /// the Agent, over the admin pipe. Without it those changes fail with what to do (the app never runs as administrator).</param>
 /// <param name="machine">Makes the machine-wide changes (HKLM policy values, extension blocklists, the page file, Defender exclusions): the Agent too.</param>
-public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger? log = null, IAdminSettingsBackend? admin = null, IMachineTweaks? machine = null) : IMemorySystem
+/// <param name="agent">Removes apps for every account, runs uninstallers and changes system tasks (<see cref="AppRemovalAgent"/>): the Agent too.</param>
+public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger? log = null, IAdminSettingsBackend? admin = null, IMachineTweaks? machine = null,
+    IElevatedCommandBridge? agent = null) : IMemorySystem
 {
     private readonly IAdminSettingsBackend _admin = admin ?? new AgentAdminSettings(null);
     private readonly IMachineTweaks _machine = machine ?? new AgentMachineTweaks(null, log);

@@ -29,7 +29,7 @@ internal sealed class AppRemovalSuggestions(SuggestionContext c)
         {
             if (AppRemoval.FoundPackages(snap).FirstOrDefault(f => f.App == pkg) is not { } found) return new(false, $"{pkg.Label} is no longer installed.");
             var left = await c.Sys.RemoveAppxPackagesAsync([pkg], ct).ConfigureAwait(false);
-            if (left is null) return new(false, $"Windows didn't allow removing {pkg.Label} (administrator rights needed). Nothing was changed.");
+            if (left is null) return new(false, $"{pkg.Label} wasn't removed, and nothing was changed. {ElevationService.AdminRepairHint}");
             if (left.Contains(pkg.FamilyName, StringComparer.OrdinalIgnoreCase))
                 return new(false, $"{pkg.Label} is still installed after trying to remove it (Windows or your organization may protect it). Nothing was recorded as removed.");
             var reinstall = StoreReinstall.CanReinstall(pkg);
@@ -76,7 +76,7 @@ internal sealed class AppRemovalSuggestions(SuggestionContext c)
         var freed = removed.Sum(e => e.SizeBytes ?? 0);
         var taskText = tasks.Count > 0 ? $" Turned off {MemoryText.Plural(tasks.Count, "scheduled task")} ({string.Join(", ", tasks)}); undo turns them back on." : "";
         if (removed.Count == 0)
-            return new(false, $"{prog.Label} is still installed: its uninstaller didn't finish (administrator rights needed, or it needs someone at the PC).{taskText}");
+            return new(false, $"{prog.Label} is still installed: its uninstaller didn't finish (it may need someone at the PC). If Admin Repair Mode is off, turn it on so the Agent can run the uninstaller, then try again.{taskText}");
         return new(true, $"{string.Join(" and ", removed.Select(e => e.DisplayName).Distinct(StringComparer.OrdinalIgnoreCase))} uninstalled."
             + (freed > 0 ? $" Freed about {MemoryText.Size(freed)}." : "")
             + (failed.Count > 0 ? $" {string.Join(", ", failed)} couldn't be uninstalled." : "")
@@ -153,7 +153,7 @@ internal sealed class AppRemovalSuggestions(SuggestionContext c)
         if (tasks.Count > 0) parts.Add("Xbox cloud-save task turned off.");
         if (registry.Count + services.Count + tasks.Count > 0) parts.Add("Undo turns those settings back on.");
         if (removed.Count == 0 && undo.IsEmpty)
-            return new(false, "Windows didn't allow removing the Xbox apps (administrator rights needed, or your organization protects them). Nothing was changed.");
+            return new(false, "The Xbox apps weren't removed (your organization may protect them), and nothing was changed. " + ElevationService.AdminRepairHint);
         return new(removed.Count > 0, string.Join(" ", parts));
     }
 
@@ -176,7 +176,7 @@ internal sealed class AppRemovalSuggestions(SuggestionContext c)
             MemoryActionType.RemoveNarratorAddons, "", undo.Encode()));
 
         if (removed.Count == 0 && undo.IsEmpty)
-            return new(false, "Windows didn't allow removing Narrator's add-ons (administrator rights needed, or Windows protects them). Nothing was changed.");
+            return new(false, "Narrator's add-ons weren't removed (Windows may protect them), and nothing was changed. " + ElevationService.AdminRepairHint);
         var freed = removed.Sum(f => f.Installed.SizeBytes ?? 0);
         var parts = new List<string>();
         if (removed.Count > 0) parts.Add($"Removed {string.Join(", ", removed.Select(f => f.App.Label))}" + (freed > 0 ? $" (about {MemoryText.Size(freed)} freed)" : "") + $"; {(reinstall ? AppRemoval.StoreUndoMany : AppRemoval.StoreGetBackMany)}");
