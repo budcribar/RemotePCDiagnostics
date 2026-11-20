@@ -21,6 +21,8 @@ public interface IAgentPlatform
     string GetActiveSignedInUser();
     string GetAgentVersion();
     string GetCachedOrInstalledAppVersion();
+    /// <summary>When Windows last started, so Admin can drop the hardware inventory it kept from before. Null when unknown.</summary>
+    DateTimeOffset? GetBootTime() => null;
     Task<ConsentOutcome> RequestConsentAsync(string requester, int timeoutSeconds, CancellationToken ct);
     Task<(string? ExePath, string? Error)> ResolveHostExecutableAsync(
         Func<LaunchStage, string, int, Task> reportStageAsync,
@@ -28,6 +30,19 @@ public interface IAgentPlatform
     (IAgentLaunchedProcess? Process, string? Error) StartHostProcess(string hostExePath, string fullCommandLine);
     Task<bool?> CheckRelaySessionConnectedAsync(string statusUrl, CancellationToken ct);
     Task RemoveSelfAfterSessionAsync();
+}
+
+/// <summary>Works out when Windows started from the current time and the milliseconds since boot.</summary>
+public static class BootTime
+{
+    /// <summary>Rounded to the second, so the value is the same on every reconnect within one boot. Null for a nonsensical tick count.</summary>
+    public static DateTimeOffset? From(DateTimeOffset utcNow, long millisecondsSinceBoot)
+    {
+        if (millisecondsSinceBoot < 0)
+            return null;
+        var booted = utcNow.ToUniversalTime() - TimeSpan.FromMilliseconds(millisecondsSinceBoot);
+        return new DateTimeOffset(booted.UtcTicks - booted.UtcTicks % TimeSpan.TicksPerSecond, TimeSpan.Zero);
+    }
 }
 
 public sealed class AgentSessionOptions
@@ -79,6 +94,12 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
     public string GetActiveSignedInUser() => Win32Session.GetActiveSignedInUser();
     public string GetAgentVersion() => AgentPaths.GetAgentVersion();
     public string GetCachedOrInstalledAppVersion() => AgentPaths.GetInstalledOrCachedAppVersion();
+
+    /// <summary>
+    /// Now minus the tick count (GetTickCount64, which counts sleep and hibernation too). A Restart resets it; a shutdown with
+    /// Fast Startup on resumes the same kernel session and keeps it.
+    /// </summary>
+    public DateTimeOffset? GetBootTime() => BootTime.From(DateTimeOffset.UtcNow, Environment.TickCount64);
 
     public async Task<ConsentOutcome> RequestConsentAsync(string requester, int timeoutSeconds, CancellationToken ct)
     {
@@ -394,6 +415,8 @@ public sealed class AgentHubWorker(
                 ? Lifetime.RemoveAfterSession
                 : Lifetime.Persistent,
         };
+        if (platform.GetBootTime() is { } booted)
+            hello.BootTime = Google.Protobuf.WellKnownTypes.Timestamp.FromDateTimeOffset(booted);
 
         await WriteMessageAsync(new AgentMessage { Hello = hello }, token).ConfigureAwait(false);
         Log($"Sent AgentHello (machine={hello.MachineName}, user='{hello.SignedInUser}', version={hello.AgentVersion}).");
