@@ -301,6 +301,18 @@ public sealed class SpeedometerLocalServer : IAsyncDisposable
                 if (string.IsNullOrEmpty(decoded)) decoded = "index.html";
 
                 var candidate = Path.GetFullPath(Path.Combine(_rootDir, decoded.Replace('/', Path.DirectorySeparatorChar)));
+                if (candidate.StartsWith(_rootDir, StringComparison.OrdinalIgnoreCase) && Directory.Exists(candidate))
+                {
+                    // A folder URL serves its index.html, as a normal web server does. Speedometer's Perf-Dashboard suite loads
+                    // resources/perf.webkit.org/public/v3/; a 404 there left the run stuck on its last suite until it timed out.
+                    if (!pathOnly.EndsWith('/'))
+                    {
+                        // Without the slash the page's relative links would resolve one folder up.
+                        await WriteRedirectAsync(stream, pathOnly + "/" + (qIdx >= 0 ? rawTarget[qIdx..] : ""), ct).ConfigureAwait(false);
+                        return;
+                    }
+                    candidate = Path.Combine(candidate, "index.html");
+                }
                 if (!candidate.StartsWith(_rootDir, StringComparison.OrdinalIgnoreCase) || !File.Exists(candidate))
                 {
                     await WriteStatusAsync(stream, "404 Not Found", ct).ConfigureAwait(false);
@@ -318,6 +330,13 @@ public sealed class SpeedometerLocalServer : IAsyncDisposable
             }
             catch (Exception) { /* client disconnected or server stopping */ }
         }
+    }
+
+    private static async Task WriteRedirectAsync(NetworkStream stream, string location, CancellationToken ct)
+    {
+        var resp = Encoding.ASCII.GetBytes($"HTTP/1.1 301 Moved Permanently\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        await stream.WriteAsync(resp, ct).ConfigureAwait(false);
+        await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
     private static async Task WriteStatusAsync(NetworkStream stream, string status, CancellationToken ct)
@@ -338,6 +357,10 @@ public sealed class SpeedometerLocalServer : IAsyncDisposable
         ".jpg" or ".jpeg" => "image/jpeg",
         ".woff2" => "font/woff2",
         ".wasm" => "application/wasm",
+        ".csv" => "text/csv; charset=utf-8",
+        ".tsv" => "text/tab-separated-values; charset=utf-8",
+        ".txt" or ".md" => "text/plain; charset=utf-8",
+        ".ico" => "image/x-icon",
         _ => "application/octet-stream",
     };
 
@@ -574,11 +597,48 @@ public static class SpeedometerProcessRunner
     public static void CleanupOrphanedProfiles(string? tempRoot = null)
     {
         var root = tempRoot ?? Path.GetTempPath();
+        if (OperatingSystem.IsWindows()) CloseOrphanedBrowsers(root);
         if (!Directory.Exists(root)) return;
         foreach (var dir in Directory.EnumerateDirectories(root, TempProfilePrefix + "*"))
         {
             try { Directory.Delete(dir, recursive: true); } catch { }
         }
+    }
+
+    /// <summary>
+    /// Ends headless browsers left running by earlier runs: any process started with a <c>--user-data-dir</c> inside
+    /// <paramref name="tempRoot"/>\rpcd-speedometer-*. Older builds left one behind each time Chrome handed itself to a second
+    /// process (they only killed the process they started), and each kept a full Chrome running in the background. Only
+    /// the user's own processes are visible to the un-elevated app, so this never touches anyone else's browser.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public static int CloseOrphanedBrowsers(string tempRoot)
+    {
+        var marker = "--user-data-dir=" + Path.Combine(tempRoot, TempProfilePrefix);
+        var closed = 0;
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                $"SELECT ProcessId, CommandLine FROM Win32_Process WHERE CommandLine LIKE '%{TempProfilePrefix}%'");
+            using var results = searcher.Get();
+            foreach (var mo in results)
+            {
+                using (mo)
+                {
+                    if (mo["CommandLine"] is not string cmd || !cmd.Contains(marker, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (mo["ProcessId"] is not uint pid) continue;
+                    try
+                    {
+                        using var p = Process.GetProcessById((int)pid);
+                        p.Kill(entireProcessTree: true);
+                        closed++;
+                    }
+                    catch { /* already gone, or not ours */ }
+                }
+            }
+        }
+        catch { /* WMI unavailable: leave them */ }
+        return closed;
     }
 
     public static async Task<SpeedometerResult> RunAsync(
