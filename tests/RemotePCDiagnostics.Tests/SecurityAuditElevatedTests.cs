@@ -8,7 +8,7 @@ using Xunit;
 
 namespace RemotePCDiagnostics.Tests;
 
-/// <summary>The audit without administrator rights: run in the elevated helper, or locally with the skipped checks named.</summary>
+/// <summary>The audit runs in the Agent (the app never runs as administrator), or in the app with the skipped checks named.</summary>
 public sealed class SecurityAuditElevatedTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "rpd-sae-test-" + Guid.NewGuid().ToString("N"));
@@ -44,7 +44,7 @@ public sealed class SecurityAuditElevatedTests : IDisposable
         "1103,Account Policies,Store passwords using reversible encryption,secedit,High\n" +
         "1708,\"Administrative Templates: Windows Components\",BitLocker Drive Encryption: Volume status,BitLockerVolume,High\n";
 
-    private SecurityAuditModule Module(IProcessLauncher l, IElevatedCommandBridge? bridge = null, Func<CancellationToken, Task<bool>>? elevate = null, bool admin = false)
+    private SecurityAuditModule Module(IProcessLauncher l, IElevatedCommandBridge? bridge = null, Func<CancellationToken, Task<bool>>? elevate = null)
     {
         var hk = Path.Combine(_dir, "hk");
         Directory.CreateDirectory(Path.Combine(hk, "lists"));
@@ -53,7 +53,7 @@ public sealed class SecurityAuditElevatedTests : IDisposable
         {
             ModuleFolder = hk, PowerShellPath = Path.Combine(_dir, "powershell.exe"),
             FileExists = p => p.EndsWith(".psd1") || p.EndsWith("powershell.exe") || File.Exists(p),
-            ReportPathFactory = () => ReportPath, IsAdministrator = () => admin,
+            ReportPathFactory = () => ReportPath,
             Log = new LineLogger(s => { lock (_log) _log.Add(s); }),
             ElevatedBridge = bridge, RequestElevation = elevate,
         }, l);
@@ -122,10 +122,10 @@ public sealed class SecurityAuditElevatedTests : IDisposable
     }
 
     [Fact]
-    public async Task Without_skip_lines_the_general_notice_is_shown()
+    public async Task Without_skip_lines_there_is_no_notice()
     {
         var r = await Module(LocalRun(PartialCsv, "")).RefreshAsync(null);
-        Assert.Equal(SecurityAuditModule.NotAdminNotice, Assert.IsType<SecurityAuditReport>(r.Payload).Notice);
+        Assert.Null(Assert.IsType<SecurityAuditReport>(r.Payload).Notice);
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public sealed class SecurityAuditElevatedTests : IDisposable
         Assert.Equal(0, rep.NotChecked);
         Assert.Equal(1, bridge.Calls);
         Assert.Equal(TimeSpan.FromMinutes(5), bridge.Timeout);
-        Assert.Contains(_log, l => l.Contains("elevated=True"));
+        Assert.Contains(_log, l => l.Contains("inAgent=True"));
     }
 
     [Fact]
@@ -171,15 +171,6 @@ public sealed class SecurityAuditElevatedTests : IDisposable
         var r = await Module(LocalRun(PartialCsv, SkippedOutput), bridge).RefreshAsync(null);
         Assert.Equal(1, bridge.Calls);
         Assert.Contains("weren't run", Assert.IsType<SecurityAuditReport>(r.Payload).Notice);
-    }
-
-    [Fact]
-    public async Task An_elevated_app_never_uses_the_helper()
-    {
-        var bridge = new FakeBridge();
-        var r = await Module(LocalRun(FullCsv, ""), bridge, admin: true).RefreshAsync(null);
-        Assert.Equal(0, bridge.Calls);
-        Assert.Null(Assert.IsType<SecurityAuditReport>(r.Payload).Notice);
     }
 
     [Fact]

@@ -4,8 +4,9 @@ using RemotePCDiagnostics.Core.Session;
 namespace RemotePCDiagnostics.Modules.SecurityAudit;
 
 /// <summary>
-/// Security audit (bundled HardeningKitty, read-only), with its own page. Needs administrator: when the app isn't elevated, the audit
-/// runs in the elevated helper or the agent service. At the PC, with neither running, Start asks Windows to start the helper first.
+/// Security audit (bundled HardeningKitty, read-only), with its own page. Needs administrator, so it runs in the Agent (the elevated
+/// helper, or the agent service); the app never runs as administrator. At the PC, with neither running, Start asks Windows to start the
+/// helper first.
 /// </summary>
 public sealed class SecurityAuditPlugin : IModulePlugin
 {
@@ -18,7 +19,6 @@ public sealed class SecurityAuditPlugin : IModulePlugin
             {
                 Log = context.Log,
                 ElevatedBridge = sp.GetService<IElevatedCommandBridge>(),
-                IsAdministrator = elevation is null ? null : () => elevation.IsProcessElevated,
                 // Windows' permission prompt shows only at the PC, so a remote session never raises it.
                 RequestElevation = elevation is null || context.Session.Mode != SessionMode.Local ? null
                     : async ct => (await elevation.EnableAdminModeAsync(ct).ConfigureAwait(false)).Success && elevation.IsAdminHelperConnected,

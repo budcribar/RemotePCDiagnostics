@@ -14,10 +14,10 @@ public sealed class SecurityAuditOptions
     public TimeSpan Timeout { get; set; } = TimeSpan.FromMinutes(5);
     /// <summary>Creates the per-run CSV report path (folder is created by the module). Default: %TEMP%\RemotePCDiagnostics\hk-&lt;guid&gt;\report.csv.</summary>
     public Func<string>? ReportPathFactory { get; set; }
-    public Func<bool>? IsAdministrator { get; set; }
     public Func<string, bool>? FileExists { get; set; }
     public ILogger? Log { get; set; }
-    /// <summary>The elevated helper or agent service: when the app isn't elevated, the audit runs there, with administrator rights.</summary>
+    /// <summary>The Agent (its elevated helper, or the agent service): the audit runs there, with administrator rights. The app itself
+    /// never runs as administrator.</summary>
     public IElevatedCommandBridge? ElevatedBridge { get; set; }
     /// <summary>
     /// Starts the elevated helper when none is connected (Windows asks the person at the PC for permission); true when it connected.
@@ -30,7 +30,8 @@ public sealed class SecurityAuditOptions
 public sealed record SecurityAuditRun(ProcessResult Process, string? ReportCsv);
 
 /// <summary>
-/// On-demand Windows security baseline audit using the bundled HardeningKitty module (Audit mode: read-only).
+/// On-demand Windows security baseline audit using the bundled HardeningKitty module (Audit mode: read-only). It runs in the Agent, which
+/// has administrator rights; only when the Agent can't run it does it run in the app, without them, and the page names the checks skipped.
 /// Not auto-run and excluded from Run All. Technical detail goes to the log only; results/messages are end-user text.
 /// </summary>
 public sealed class SecurityAuditModule : OnDemandModuleBase
@@ -44,8 +45,6 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
     public const string PowerShellMissingMessage = "Windows PowerShell isn't available on this PC, so the security audit can't run.";
     public new const string CancelledMessage = "The security audit was cancelled.";
     public const string FailedMessage = "The security audit couldn't finish on this PC. Please try again.";
-    /// <summary>Without administrator rights, when the skipped checks can't be named (<see cref="SkippedForAdmin.Notice"/> names them).</summary>
-    public const string NotAdminNotice = "Some checks need administrator rights and weren't run. To include them, start the audit again and choose Yes when Windows asks for permission.";
     /// <summary>The finding list HardeningKitty audits against by default (its lists folder), read for the skipped checks' categories.</summary>
     public const string DefaultFindingList = "finding_list_0x6d69636b_machine.csv";
 
@@ -140,18 +139,17 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
         string? reportPath = null;
         try
         {
-            var admin = IsAdmin();
             var sw = Stopwatch.StartNew();
             SecurityAuditRun? run;
-            var elevated = admin;
+            var inAgent = false;
             try
             {
-                run = admin ? null : await RunElevatedAsync(progress, ct).ConfigureAwait(false);
-                if (run is not null) elevated = true;
+                run = await RunInAgentAsync(progress, ct).ConfigureAwait(false);
+                if (run is not null) inAgent = true;
                 else
                 {
                     reportPath = (_o.ReportPathFactory ?? DefaultReportPath)();
-                    Log($"SecurityAudit: start admin={admin} timeout={Timeout} cmd={PowerShellPath} {string.Join(' ', BuildArguments(ManifestPath, reportPath))}");
+                    Log($"SecurityAudit: start in the app timeout={Timeout} cmd={PowerShellPath} {string.Join(' ', BuildArguments(ManifestPath, reportPath))}");
                     progress?.Report("Auditing security settings…");
                     run = await RunProcessAsync(_launcher, PowerShellPath, ManifestPath, reportPath, Timeout, ct).ConfigureAwait(false);
                 }
@@ -168,13 +166,13 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
             }
             var pr = run.Process;
             var head = pr.StdOut.Length > 2048 ? pr.StdOut[..2048] : pr.StdOut;
-            Log($"SecurityAudit: exit={pr.ExitCode} timedOut={pr.TimedOut} elevated={elevated} ms={sw.ElapsedMilliseconds} stdout_len={pr.StdOut.Length} stderr=\"{pr.StdErr.Trim()}\" stdout_head=\"{head.Replace("\r", "").Replace("\n", " ")}\"");
+            Log($"SecurityAudit: exit={pr.ExitCode} timedOut={pr.TimedOut} inAgent={inAgent} ms={sw.ElapsedMilliseconds} stdout_len={pr.StdOut.Length} stderr=\"{pr.StdErr.Trim()}\" stdout_head=\"{head.Replace("\r", "").Replace("\n", " ")}\"");
             if (pr.TimedOut)
                 return Result(DiagnosticStatus.Error, $"The security audit took longer than {FormatDuration(Timeout)} and was stopped. Please try again later.", null);
 
             if (run.ReportCsv is not { } csv)
             {
-                LogWarn($"SecurityAudit: no report produced (elevated={elevated})");
+                LogWarn($"SecurityAudit: no report produced (inAgent={inAgent})");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             IReadOnlyList<AuditFinding> findings;
@@ -190,15 +188,16 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             var profile = PcProfile.Parse(pr.StdOut);
-            var skipped = SkippedForAdmin.Parse(pr.StdOut, elevated ? null : ReadCatalog());
+            // The Agent has administrator rights, so nothing is skipped there; the app's own run skips the checks that need them.
+            var skipped = inAgent ? [] : SkippedForAdmin.Parse(pr.StdOut, ReadCatalog());
             if (skipped.Count > 0)
             {
                 var reported = findings.Select(f => f.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 findings = [.. findings, .. skipped.Where(f => !reported.Contains(f.Id))];
             }
             var report = new SecurityAuditReport(findings, null, profile);
-            if (!elevated)
-                report = report with { Notice = skipped.Count > 0 ? SkippedForAdmin.Notice(report, _o.RequestElevation is not null) : NotAdminNotice };
+            if (skipped.Count > 0)
+                report = report with { Notice = SkippedForAdmin.Notice(report, _o.RequestElevation is not null) };
             LogWarn($"SecurityAudit: profile={(profile is null ? "unknown" : $"managed={profile.Managed} domain={profile.Domain} entra={profile.EntraJoined} mdm={profile.Mdm} edition={profile.Edition}")} hidden={report.Hidden} parsed {findings.Count} findings passed={report.Passed} warn={report.Warnings} failed={report.Failed} notChecked={report.NotChecked} skippedForAdmin={skipped.Count} ({string.Join(",", skipped.Select(f => f.Id))})");
             return Result(report.Status, report.Summary, report);
         }
@@ -209,11 +208,11 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
     }
 
     /// <summary>
-    /// Without administrator rights: runs the audit in the elevated helper (or the agent service), first asking Windows to start the
-    /// helper when none is connected and asking is allowed. Null when there's none, or it can't run the audit (an older helper), so the
-    /// audit runs here instead. Throws only on cancellation.
+    /// Runs the audit in the Agent (the elevated helper, or the agent service), first asking Windows to start the helper when none is
+    /// connected and asking is allowed. Null when there's no Agent, or it can't run the audit (an older one), so the audit runs in the
+    /// app instead. Throws only on cancellation.
     /// </summary>
-    private async Task<SecurityAuditRun?> RunElevatedAsync(IProgress<string>? progress, CancellationToken ct)
+    private async Task<SecurityAuditRun?> RunInAgentAsync(IProgress<string>? progress, CancellationToken ct)
     {
         var bridge = _o.ElevatedBridge;
         if (bridge is null) return null;
@@ -228,17 +227,17 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
         }
         if (!bridge.IsConnected) return null;
         progress?.Report("Auditing security settings with administrator rights…");
-        Log($"SecurityAudit: running in the elevated helper, timeout={Timeout}");
+        Log($"SecurityAudit: running in the Agent, timeout={Timeout}");
         try
         {
             var run = await bridge.RunSecurityAuditAsync(Timeout, ct).ConfigureAwait(false);
-            if (run is null) LogWarn("SecurityAudit: the elevated helper can't run the audit; running it without administrator rights");
+            if (run is null) LogWarn("SecurityAudit: the Agent can't run the audit; running it in the app, without administrator rights");
             return run;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            LogWarn($"SecurityAudit: elevated run failed, running it without administrator rights: {ex.Message}");
+            LogWarn($"SecurityAudit: the Agent's run failed, running it in the app, without administrator rights: {ex.Message}");
             return null;
         }
     }
@@ -262,18 +261,6 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
 
     public static string FormatDuration(TimeSpan t) =>
         t.TotalMinutes >= 1 ? AreaModuleBase.Plural((int)Math.Round(t.TotalMinutes), "minute") : AreaModuleBase.Plural((int)Math.Max(1, Math.Round(t.TotalSeconds)), "second");
-
-    private bool IsAdmin()
-    {
-        if (_o.IsAdministrator is { } f) return f();
-        if (!OperatingSystem.IsWindows()) return false;
-        try
-        {
-            using var id = System.Security.Principal.WindowsIdentity.GetCurrent();
-            return new System.Security.Principal.WindowsPrincipal(id).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
-        }
-        catch { return false; }
-    }
 
     private static string DefaultReportPath() =>
         Path.Combine(Path.GetTempPath(), "RemotePCDiagnostics", "hk-" + Guid.NewGuid().ToString("N"), "report.csv");
