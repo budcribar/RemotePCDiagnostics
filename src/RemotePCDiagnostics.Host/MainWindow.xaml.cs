@@ -67,16 +67,29 @@ public partial class MainWindow : Window
             {
                 if (elevation.IsAdminHelperConnected)
                 {
-                    // Admin-only setup (state folder, Event Log source, history updates) and the benchmark state, both through the Agent.
+                    // Admin-only setup (state folder, Event Log source, history updates) first, then the workflow and benchmark state the
+                    // Agent keeps in that folder: an app started before the Agent connected read nothing, so read it now and carry on.
                     _ = Task.Run(async () =>
                     {
                         await App.PrepareMachineThroughAgentAsync(elevation).ConfigureAwait(false);
-                        try
+                        // Side by side: either can run for a while once it resumes.
+                        await Task.WhenAll(Task.Run(async () =>
                         {
-                            var benchmarks = provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>();
-                            if (benchmarks.Reload()) await benchmarks.ResumeAfterRestartAsync().ConfigureAwait(false);
-                        }
-                        catch (Exception ex) { Logger.Warn($"Benchmark state reload through the Agent failed: {ex.Message}"); }
+                            try
+                            {
+                                var workflow = provider.GetRequiredService<RemotePCDiagnostics.Core.Workflow.WorkflowService>();
+                                if (workflow.Reload()) await workflow.ResumeAsync().ConfigureAwait(false);
+                            }
+                            catch (Exception ex) { Logger.Warn($"Workflow resume after the Agent connected failed: {ex.Message}"); }
+                        }), Task.Run(async () =>
+                        {
+                            try
+                            {
+                                var benchmarks = provider.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>();
+                                if (benchmarks.Reload()) await benchmarks.ResumeAfterRestartAsync().ConfigureAwait(false);
+                            }
+                            catch (Exception ex) { Logger.Warn($"Benchmark state reload through the Agent failed: {ex.Message}"); }
+                        })).ConfigureAwait(false);
                     });
                     if (provider.GetService<ISensorProvider>() is LhmSensorProvider lhm)
                     {

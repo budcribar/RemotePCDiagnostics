@@ -13,7 +13,12 @@
 }
 <section class="card undo-panel" data-testid="undo-panel">
     <div class="card-head"><strong>Undo changes</strong>
-        <span class="meta" data-testid="undo-count">@(pending.Count == 0 ? "Nothing to undo" : $"{pending.Count} change{(pending.Count == 1 ? "" : "s")} can be undone")</span></div>
+        <span class="meta" data-testid="undo-count">@(pending.Count == 0 ? (Journal.IsLoaded ? "Nothing to undo" : "Saved changes not read yet") : $"{pending.Count} change{(pending.Count == 1 ? "" : "s")} can be undone")</span></div>
+    @if (!Journal.IsLoaded)
+    {
+        @* The Agent keeps the undo list (only administrators can open it); without it only this run's changes show, and they're saved once it connects. *@
+        <p class="notice" data-testid="undo-needs-agent">The list of earlier changes is kept by the Agent. Turn on Admin Repair Mode to see and undo every change; changes made now are saved to it then.</p>
+    }
     @if (permanent.Count > 0)
     {
         <details data-testid="undo-permanent">

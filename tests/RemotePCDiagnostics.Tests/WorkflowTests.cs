@@ -122,6 +122,24 @@ public class WorkflowTests
         return (flow, sys, store, delays, launcher, probes);
     }
 
+    // ---- the Agent keeps the state: it can connect after the app started ----
+    [Fact]
+    public void Reload_picks_up_the_saved_workflow_only_while_nothing_happened_in_this_run()
+    {
+        var store = new MemFlowStore();
+        var (flow, _, _, _, _, _) = Make(store);
+        Assert.Equal(WorkflowStage.Idle, flow.State.Stage);
+        Assert.False(flow.Reload()); // still nothing saved
+
+        store.State = new WorkflowState { ReviewRulesVersion = WorkflowService.CurrentReviewRulesVersion, Stage = WorkflowStage.RestartAfter, StartedUtc = DateTimeOffset.UtcNow };
+        Assert.True(flow.Reload());
+        Assert.Equal(WorkflowStage.RestartAfter, flow.State.Stage);
+
+        store.State = store.State with { Stage = WorkflowStage.Done };
+        Assert.False(flow.Reload()); // never replaces a workflow this run already has
+        Assert.Equal(WorkflowStage.RestartAfter, flow.State.Stage);
+    }
+
     // ---- catalog ----
     [Fact]
     public async Task LegacyReviewRequiresFreshChecksInsteadOfRestoringStaleDnsApprovals()
