@@ -705,7 +705,7 @@ public sealed class AdminPipeServer(
             {
                 await AdminPipeFraming.WriteFrameAsync(server, response, ct).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is IOException)
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException)
             {
                 log.Warn($"[admin-pipe-server] Pipe write ended: {ex.Message}");
                 break;

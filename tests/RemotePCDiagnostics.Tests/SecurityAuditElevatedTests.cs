@@ -197,23 +197,28 @@ public sealed class SecurityAuditElevatedTests : IDisposable
             seen = t;
             return Task.FromResult(new SecurityAuditRun(new ProcessResult(0, SkippedOutput, ""), FullCsv));
         }, cts.Token);
+        // The server ends once the client closes; it's disposed only after that, so its last write isn't cut off.
         using (server)
-        await using (client)
         {
-            var run = await client.RunSecurityAuditAsync(TimeSpan.FromMinutes(5), cts.Token);
-            Assert.NotNull(run);
-            Assert.Equal(FullCsv, run!.ReportCsv);
-            Assert.Equal(SkippedOutput, run.Process.StdOut);
-            Assert.Equal(TimeSpan.FromMinutes(5), seen);
-            Assert.True((await client.PingAsync(cts.Token)).Ok);
+            await using (client)
+            {
+                var run = await client.RunSecurityAuditAsync(TimeSpan.FromMinutes(5), cts.Token);
+                Assert.NotNull(run);
+                Assert.Equal(FullCsv, run!.ReportCsv);
+                Assert.Equal(SkippedOutput, run.Process.StdOut);
+                Assert.Equal(TimeSpan.FromMinutes(5), seen);
+                Assert.True((await client.PingAsync(cts.Token)).Ok);
+            }
+            await serverTask;
         }
-        await serverTask;
 
         var (old, oldTask, oldClient) = await StartAsync(null, cts.Token);
         using (old)
-        await using (oldClient)
-            Assert.Null(await oldClient.RunSecurityAuditAsync(TimeSpan.FromMinutes(5), cts.Token));
-        await oldTask;
+        {
+            await using (oldClient)
+                Assert.Null(await oldClient.RunSecurityAuditAsync(TimeSpan.FromMinutes(5), cts.Token));
+            await oldTask;
+        }
     }
 
     [Fact]
@@ -230,20 +235,22 @@ public sealed class SecurityAuditElevatedTests : IDisposable
             throw new InvalidOperationException("unreachable");
         }, cts.Token);
         using (server)
-        await using (client)
         {
-            using var runCts = new CancellationTokenSource();
-            var run = client.RunSecurityAuditAsync(TimeSpan.FromMinutes(5), runCts.Token);
-            await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            runCts.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
-            await stopped.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.True(client.IsConnected);
-            var ping = await client.PingAsync(cts.Token); // reads its own answer, not the cancelled audit's
-            Assert.True(ping.Ok);
-            Assert.Equal(Environment.ProcessId, ping.HelperPid);
+            await using (client)
+            {
+                using var runCts = new CancellationTokenSource();
+                var run = client.RunSecurityAuditAsync(TimeSpan.FromMinutes(5), runCts.Token);
+                await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                runCts.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+                await stopped.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.True(client.IsConnected);
+                var ping = await client.PingAsync(cts.Token); // reads its own answer, not the cancelled audit's
+                Assert.True(ping.Ok);
+                Assert.Equal(Environment.ProcessId, ping.HelperPid);
+            }
+            await serverTask;
         }
-        await serverTask;
     }
 
     [Fact]
