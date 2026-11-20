@@ -12,6 +12,12 @@ public sealed record StandbySession(DateTimeOffset Start, TimeSpan Duration, str
     public double PercentPerHour => Duration.TotalHours > 0 ? DrainPercent / Duration.TotalHours : 0;
 }
 
+/// <summary>One sleep period from the battery report, on battery or on wall power.</summary>
+public sealed record SleepPeriod(DateTimeOffset Start, TimeSpan Duration, bool OnBattery)
+{
+    public DateTimeOffset End => Start + Duration;
+}
+
 /// <summary>
 /// Standby battery drain from <c>powercfg /batteryreport /xml</c> (no administrator rights needed; works on classic S3 sleep and on
 /// Modern Standby). RecentUsage lists each period with its type (Active, Suspend, ConnectedStandby, ReportGenerated), whether it was on
@@ -55,6 +61,24 @@ public static class StandbyDrain
                 discharge = c0 - c1;
             if (discharge is null || full <= 0) continue;
             list.Add(new(start, TimeSpan.FromTicks(ticks.Value), type, Math.Max(0, discharge.Value), full));
+        }
+        return list.OrderBy(s => s.Start).ToList();
+    }
+
+    /// <summary>
+    /// Every sleep period in the report, oldest first, on battery or not. The event log can miss sleeps the battery report
+    /// has (it rolls over, or Windows didn't log the wake), so Recent wakes fills its gaps from these. Null when the XML isn't a battery report.
+    /// </summary>
+    public static IReadOnlyList<SleepPeriod>? ParseSleeps(string? xml)
+    {
+        if (Load(xml) is not { Root: { } root }) return null;
+        var list = new List<SleepPeriod>();
+        foreach (var e in root.Elements().FirstOrDefault(x => x.Name.LocalName == "RecentUsage")?.Elements().Where(x => x.Name.LocalName == "UsageEntry") ?? [])
+        {
+            if (!IsSleep((string?)e.Attribute("EntryType") ?? "")) continue;
+            if (SleepWakeParsers.Time((string?)e.Attribute("Timestamp")) is not { } start) continue;
+            if (Long(e, "Duration") is not { } ticks || ticks <= 0) continue;
+            list.Add(new(start, TimeSpan.FromTicks(ticks), (string?)e.Attribute("Ac") == "0"));
         }
         return list.OrderBy(s => s.Start).ToList();
     }

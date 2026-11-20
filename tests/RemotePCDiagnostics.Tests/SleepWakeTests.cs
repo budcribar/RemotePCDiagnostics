@@ -239,6 +239,45 @@ public class SleepWakeTests
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
     }
 
+    [Fact]
+    public void Wakes_named_after_the_usb_controller_are_offered_to_the_keyboard_and_mouse()
+    {
+        var r = SleepWakeModule.Build(Facts(), DateTimeOffset.Now);
+        var devices = r.Cards.Single(c => c.Id == "devices");
+        Assert.All(devices.Rows, row => Assert.Equal("Maybe: the USB controller it's on woke the PC 1 time", row.Values[2]));
+        Assert.Contains("Windows names the USB controller", devices.Note);
+        Assert.True(SleepWakeModule.IsUsbController("AMD USB 3.10 eXtensible Host Controller - 1.10 (Microsoft)"));
+        Assert.True(SleepWakeModule.IsUsbController("USB Root Hub (USB 3.0)"));
+        Assert.False(SleepWakeModule.IsUsbController("HID Keyboard Device"));
+        // A network adapter isn't a USB input device, even when a USB controller woke the PC.
+        var withNic = SleepWakeModule.Build(Facts(armed: "Intel(R) Ethernet Controller I225-V\r\n"), DateTimeOffset.Now);
+        Assert.Equal("No recent wakes", withNic.Cards.Single(c => c.Id == "devices").Rows[0].Values[2]);
+    }
+
+    [Fact]
+    public void Sleeps_the_event_log_missed_come_from_the_battery_report()
+    {
+        // The captured report's 02:16Z suspend ends 34 s after the logged 03:36:07Z wake: the same sleep, listed once.
+        var battery = BatteryReport(Usage("2026-11-17T22:12:00Z", TimeSpan.FromSeconds(322), "Suspend", 0, ac: "1"));
+        var f = Facts() with { Sleeps = StandbyDrain.ParseSleeps(battery) };
+        Assert.Equal(2, f.Sleeps!.Count);
+        var wakes = SleepWakeModule.Build(f, new DateTimeOffset(2026, 11, 19, 12, 0, 0, TimeSpan.Zero)).Cards.Single(c => c.Id == "wakes");
+        Assert.Equal(2, wakes.Rows.Count);
+        Assert.Contains("AMD USB", wakes.Rows[0].Values[2]);
+        Assert.Equal(("5 min", "Not recorded in the event log (from the battery report)"), (wakes.Rows[1].Values[1], wakes.Rows[1].Values[2]));
+        Assert.Equal("2 wakes, none by a timer or the network", wakes.Headline);
+        Assert.Equal(AreaLevel.Ok, wakes.Level);
+    }
+
+    [Fact]
+    public void Bare_app_reasons_are_explained()
+    {
+        Assert.Equal("Asked Windows to keep the screen on (the app says \"Electron\")",
+            SleepWakeModule.Why(new PowerRequest("DISPLAY", "PROCESS", "\\Device\\HarddiskVolume3\\Antigravity.exe", "Electron")));
+        Assert.Equal("Asked Windows not to sleep", SleepWakeModule.Why(new PowerRequest("SYSTEM", "DRIVER", "x", "")));
+        Assert.Equal("An audio stream is currently in use.", SleepWakeModule.Why(new PowerRequest("SYSTEM", "DRIVER", "x", "An audio stream is currently in use.")));
+    }
+
     // ---- end to end with a scripted powercfg ----
 
     [Fact]

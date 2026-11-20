@@ -29,7 +29,8 @@ public sealed record SleepWakeFacts(
     IReadOnlyList<string>? WakeArmed,
     IReadOnlyList<LastWakeSource>? LastWake,
     IReadOnlyList<WinEvent>? Events,
-    IReadOnlyList<StandbySession>? Standby);
+    IReadOnlyList<StandbySession>? Standby,
+    IReadOnlyList<SleepPeriod>? Sleeps = null);
 
 /// <summary>
 /// Sleep, wake and standby battery drain: the sleep states the PC has (Modern Standby or S3), what keeps it awake now, wake timers,
@@ -77,27 +78,28 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
         var events = await new WindowsEventLog(commands, host, ModuleName).QueryAsync("System", EventQuery(EventDays), 500, ct).ConfigureAwait(false);
 
         progress.ReportStep(7, total, "Measuring battery drain while asleep…");
-        var standby = await ReadStandbyAsync(ct).ConfigureAwait(false);
+        var report = await ReadBatteryReportAsync(ct).ConfigureAwait(false);
+        var standby = StandbyDrain.Parse(report);
 
         var facts = new SleepWakeFacts(states,
             SleepWakeParsers.ParseRequests(requestsOut),
             timersOut is null ? null : SleepWakeParsers.ParseWakeTimers(timersOut),
             armedOut is null ? null : DeviceWake.ParseArmed(armedOut),
             lastOut is null ? null : SleepWakeParsers.ParseLastWake(lastOut),
-            events, standby);
+            events, standby, StandbyDrain.ParseSleeps(report));
         if (states is null && facts.WakeArmed is null && events is null && standby is null) return AreaReport.Failed(FailedMessage);
         return Build(facts, DateTimeOffset.Now);
     }
 
-    /// <summary>The battery report's sleep periods on battery; null when the report couldn't be made (a PC without a battery has none).</summary>
-    private async Task<IReadOnlyList<StandbySession>?> ReadStandbyAsync(CancellationToken ct)
+    /// <summary>The battery report XML; null when it couldn't be made (a PC without a battery has none).</summary>
+    private async Task<string?> ReadBatteryReportAsync(CancellationToken ct)
     {
         var path = Path.Combine(Path.GetTempPath(), $"rpcd-battery-{Guid.NewGuid():N}.xml");
         try
         {
             var pr = await commands.RunAsync(PowerCfg, StandbyDrain.Args(path), ct).ConfigureAwait(false);
             if (pr is not { ExitCode: 0 } || !File.Exists(path)) return null;
-            return StandbyDrain.Parse(await File.ReadAllTextAsync(path, ct).ConfigureAwait(false));
+            return await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { LogWarn($"{Name}: battery report unreadable: {ex.Message}"); return null; }
         finally { try { File.Delete(path); } catch { } }
@@ -108,6 +110,23 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
     /// <summary>A network adapter by its usual names ("Intel(R) Ethernet Controller I225-V", "Realtek PCIe GbE Family Controller", "Intel(R) Wi-Fi 6 AX201").</summary>
     public static bool IsNetworkDevice(string? name) =>
         !string.IsNullOrWhiteSpace(name) && NetworkWords.Any(w => (name + " ").Contains(w, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// A USB host controller or hub ("AMD USB 3.10 eXtensible Host Controller - 1.10 (Microsoft)", "USB Root Hub (USB 3.0)"). When a USB
+    /// keyboard or mouse wakes the PC, Windows often names the controller it hangs off instead of the device.
+    /// </summary>
+    public static bool IsUsbController(string? name) =>
+        !string.IsNullOrWhiteSpace(name) && name.Contains("USB", StringComparison.OrdinalIgnoreCase)
+        && (name.Contains("Host Controller", StringComparison.OrdinalIgnoreCase) || name.Contains("xHCI", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Hub", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>A keyboard, mouse or other input device that usually sits behind a USB controller (HID devices).</summary>
+    public static bool IsUsbInput(string? name) =>
+        !string.IsNullOrWhiteSpace(name) && (name.Contains("HID", StringComparison.OrdinalIgnoreCase) || name.Contains("USB", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("keyboard", StringComparison.OrdinalIgnoreCase) || name.Contains("mouse", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>How close a battery-report sleep's end must be to a logged wake to count as the same sleep.</summary>
+    public static readonly TimeSpan SameWake = TimeSpan.FromMinutes(3);
 
     public static AreaReport Build(SleepWakeFacts f, DateTimeOffset now)
     {
@@ -191,18 +210,27 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
         var rows = new List<AreaRow>();
         foreach (var e in failedResumes)
             rows.Add(new(AreaLevel.Error, [WindowsEventLog.FormatTime(e.Time, now), "", "Didn't resume: the PC restarted while sleeping or waking up"],
-                SortKeys: [e.Time.ToString("O", CultureInfo.InvariantCulture), null, null]));
+                SortKeys: [e.Time.UtcDateTime.ToString("O", CultureInfo.InvariantCulture), null, null]));
         foreach (var w in wakes)
             rows.Add(new(w.Unexpected ? AreaLevel.Warning : AreaLevel.Neutral, [WindowsEventLog.FormatTime(w.WakeTime, now), SleepWakeParsers.Duration(w.Slept), w.Because],
-                SortKeys: [w.WakeTime.ToString("O", CultureInfo.InvariantCulture), w.Slept.Ticks.ToString("D20", CultureInfo.InvariantCulture), null]));
+                SortKeys: [w.WakeTime.UtcDateTime.ToString("O", CultureInfo.InvariantCulture), w.Slept.Ticks.ToString("D20", CultureInfo.InvariantCulture), null]));
+        // Sleeps the battery report has but the System log doesn't (no Power-Troubleshooter event for that wake).
+        var unlogged = (f.Sleeps ?? []).Where(p => p.End <= now && !wakes.Any(w => (w.WakeTime - p.End).Duration() <= SameWake)).ToList();
+        foreach (var p in unlogged)
+            rows.Add(new(AreaLevel.Neutral, [WindowsEventLog.FormatTime(p.End, now), SleepWakeParsers.Duration(p.Duration),
+                    "Not recorded in the event log (from the battery report)" + (p.OnBattery ? ", on battery" : "")],
+                SortKeys: [p.End.UtcDateTime.ToString("O", CultureInfo.InvariantCulture), p.Duration.Ticks.ToString("D20", CultureInfo.InvariantCulture), null]));
         rows = rows.OrderByDescending(r => r.SortKeys![0], StringComparer.Ordinal).ToList();
 
         var unexpected = wakes.Count(w => w.Unexpected);
+        var total = wakes.Count + unlogged.Count;
         var level = failedResumes.Count > 0 ? AreaLevel.Error : unexpected >= UnexpectedWakesWarn ? AreaLevel.Warning : AreaLevel.Ok;
         var headline = failedResumes.Count > 0 ? $"{AreaModuleBase.Plural(failedResumes.Count, "failed resume")} from sleep"
-            : wakes.Count == 0 ? "No wakes from sleep recorded"
+            : total == 0 ? "No wakes from sleep recorded"
             : unexpected > 0 ? $"{AreaModuleBase.Plural(unexpected, "wake")} by a timer or the network"
-            : $"{AreaModuleBase.Plural(wakes.Count, "wake")}, all by a person or device";
+            : wakes.Count == 0 ? $"{AreaModuleBase.Plural(total, "wake")}, cause not recorded"
+            : unlogged.Count == 0 ? $"{AreaModuleBase.Plural(total, "wake")}, all by a person or device"
+            : $"{AreaModuleBase.Plural(total, "wake")}, none by a timer or the network";
         var last = f.LastWake is { Count: > 0 } lw ? $"Last wake: {string.Join(", ", lw.Select(s => s.Text))}" : $"Last {EventDays} days";
         if (failedResumes.Count > 0) parts.Add(AreaModuleBase.Plural(failedResumes.Count, "failed resume"));
         else if (unexpected > 0) parts.Add(AreaModuleBase.Plural(unexpected, "unexpected wake"));
@@ -212,7 +240,7 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
                 ? "The PC lost power or was forced off while sleeping or waking. Update the BIOS, chipset and graphics drivers; check Crashes & unexpected restarts for a blue screen at the same time."
                 : unexpected > 0 ? "A wake timer (often Windows Update or a scheduled task) or a network adapter woke the PC with nobody using it. That is the usual cause of a laptop that is hot or flat after a night in a bag." : null)
         {
-            EventCount = wakes.Count + failedResumes.Count, WindowDays = EventDays,
+            EventCount = total + failedResumes.Count, WindowDays = EventDays,
         };
     }
 
@@ -220,15 +248,22 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
     {
         const string Title = "Devices that can wake the PC";
         if (f.WakeArmed is null) return AreaCard.Failed("devices", Title, "Couldn't read which devices can wake the PC.");
-        var recent = wakes.Select(w => w.Source).Concat((f.LastWake ?? []).Select(s => s.Name)).Where(s => s.Length > 0).ToList();
+        // The event log has one entry per wake; /lastwake repeats the newest, so it only counts when the log has none.
+        var recent = wakes.Count > 0 ? wakes.Select(w => w.Source).Where(s => s.Length > 0).ToList()
+            : (f.LastWake ?? []).Select(s => s.Name).Where(s => s.Length > 0).ToList();
+        var viaUsb = recent.Count(IsUsbController);
         var rows = f.WakeArmed.Select(d =>
         {
             var woke = recent.Count(r => string.Equals(r, d, StringComparison.OrdinalIgnoreCase));
+            var usb = woke == 0 && viaUsb > 0 && IsUsbInput(d) && !IsNetworkDevice(d);
             var network = IsNetworkDevice(d);
             var lv = woke > 0 && network ? AreaLevel.Warning : AreaLevel.Neutral;
             var role = network ? "Network adapter" : d.Contains("keyboard", StringComparison.OrdinalIgnoreCase) ? "Keyboard"
                 : d.Contains("mouse", StringComparison.OrdinalIgnoreCase) ? "Mouse" : "Device";
-            return new AreaRow(lv, [d, role, woke > 0 ? $"Woke the PC {AreaModuleBase.Plural(woke, "time")}" : "No recent wakes"], Key: d,
+            var wokeText = woke > 0 ? $"Woke the PC {AreaModuleBase.Plural(woke, "time")}"
+                : usb ? $"Maybe: the USB controller it's on woke the PC {AreaModuleBase.Plural(viaUsb, "time")}"
+                : "No recent wakes";
+            return new AreaRow(lv, [d, role, wokeText], Key: d,
                 Actions: DeviceWake.IsSafeName(d) ? [new AreaAction(RemediationKind.DisableDeviceWake, "Stop it waking the PC", d, d)] : null);
         }).ToList();
         var networkArmed = f.WakeArmed.Count(IsNetworkDevice);
@@ -239,7 +274,9 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
             networkArmed > 0 ? $"{AreaModuleBase.Plural(networkArmed, "network adapter")} among them" : "Keyboard, mouse and other devices",
             ["Device", "Kind", "Recent wakes"], rows,
             EmptyText: "No device is allowed to wake this PC.",
-            Note: f.WakeArmed.Count > 0 ? "A mouse moved in a bag or a network adapter can wake a sleeping PC. Stopping a device from waking it is undoable; the power button still wakes the PC." : null);
+            Note: f.WakeArmed.Count == 0 ? null
+                : "A mouse moved in a bag or a network adapter can wake a sleeping PC. Stopping a device from waking it is undoable; the power button still wakes the PC."
+                  + (viaUsb > 0 ? " Windows names the USB controller, not the keyboard or mouse on it, so \"Maybe\" means one of the USB devices here woke the PC." : ""));
     }
 
     private static AreaCard TimersCard(IReadOnlyList<WakeTimer>? timers, IReadOnlyList<WakeEvent> wakes)
@@ -264,13 +301,34 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
         if (requests is null) return AreaCard.Failed("blockers", Title, "Couldn't read what keeps the PC awake (this needs administrator rights).");
         var blocking = requests.Count(r => r.BlocksSleep);
         var rows = requests.Select(r => new AreaRow(r.BlocksSleep ? AreaLevel.Warning : AreaLevel.Neutral,
-            [What(r.Category), $"{SleepWakeParsers.ShortRequester(r.Requester)} ({r.RequesterType.ToLowerInvariant()})", r.Detail])).ToList();
+            [What(r.Category), $"{SleepWakeParsers.ShortRequester(r.Requester)} ({r.RequesterType.ToLowerInvariant()})", Why(r)])).ToList();
         if (blocking > 0) parts.Add(AreaModuleBase.Plural(blocking, "sleep blocker"));
         return new("blockers", Title, blocking > 0 ? AreaLevel.Warning : AreaLevel.Ok,
             blocking > 0 ? $"{AreaModuleBase.Plural(blocking, "app or driver", "apps or drivers")} keeping the PC or screen awake" : "Nothing is stopping the PC from sleeping",
             "Right now", cols, rows,
             EmptyText: "No app, driver or service is asking Windows to stay awake.",
             Note: blocking > 0 ? "Media playing, a download, a remote session or a driver holding an audio stream open stops the PC from sleeping on its timer. Close the app or end its task, then check again." : null);
+    }
+
+    /// <summary>
+    /// The request's reason in plain words. Apps write their own reason text; many give only a framework or app name ("Electron",
+    /// "Chromium"), which says nothing to a customer, so a reason without a space is shown after what the request does.
+    /// </summary>
+    public static string Why(PowerRequest r)
+    {
+        var detail = r.Detail.Trim();
+        if (detail.Contains(' ')) return detail;
+        var plain = r.Category switch
+        {
+            "DISPLAY" => "Asked Windows to keep the screen on",
+            "SYSTEM" => "Asked Windows not to sleep",
+            "AWAYMODE" => "Asked Windows for away mode (sleep with the screen off but keep running)",
+            "EXECUTION" => "Asked Windows to keep it running in the background",
+            "PERFBOOST" => "Asked Windows for full processor speed",
+            "ACTIVELOCKSCREEN" => "Asked Windows to keep the lock screen active",
+            _ => "Asked Windows to stay awake",
+        };
+        return detail.Length > 0 ? $"{plain} (the app says \"{detail}\")" : plain;
     }
 
     private static string What(string category) => category switch
