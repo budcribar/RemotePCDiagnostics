@@ -263,8 +263,9 @@ public partial class App : Application
             // --undo-all still relaunches itself elevated and has no Agent, so it makes these changes in its own process for now.
             // TODO(admin-to-agent A): run --undo-all through the Agent like the window does, then drop this.
             var admin = new RemotePCDiagnostics.Core.Session.WindowsAdminSettings(HostServices.For<RemotePCDiagnostics.Core.Session.WindowsAdminSettings>(Loggers));
+            var machine = new RemotePCDiagnostics.Core.Session.WindowsMachineTweaks(HostServices.For<RemotePCDiagnostics.Core.Session.WindowsMachineTweaks>(Loggers));
             var undo = CreateUndoService(new FileChangeJournal(FileChangeJournal.DefaultPath(), HostServices.For<FileChangeJournal>(Loggers)), commands,
-                new WindowsMemorySystem(null, HostServices.For<WindowsMemorySystem>(Loggers), admin), admin);
+                new WindowsMemorySystem(null, HostServices.For<WindowsMemorySystem>(Loggers), admin, machine), admin);
             var result = Task.Run(() => undo.UndoAllAsync("Command line (--undo-all)")).GetAwaiter().GetResult();
             Log("--undo-all: " + result.Summary);
             foreach (var i in result.Items) Log($"--undo-all: {(i.Success ? "OK" : i.Skipped ? "LEFT AS IS (permanent)" : "FAILED")} {i.Change.Kind} '{i.Change.Target}': {i.Message}");

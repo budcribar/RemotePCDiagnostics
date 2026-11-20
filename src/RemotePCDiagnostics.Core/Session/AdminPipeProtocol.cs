@@ -77,6 +77,22 @@ public interface IElevatedCommandBridge
     /// </summary>
     Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default) =>
         throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+
+    /// <summary>
+    /// A machine-wide change (<see cref="IMachineTweaks"/>: HKLM policy values, extension blocklists, the page file, Defender exclusions),
+    /// made by the Agent. The response's <see cref="AdminPipeResponse.StdOut"/> carries what the change reads back. Throws
+    /// <see cref="AdminRequiredException"/> when the Agent isn't connected or is from before this existed.
+    /// </summary>
+    Task<AdminPipeResponse> MachineTweakAsync(AdminPipeTweak tweak, CancellationToken ct = default) =>
+        throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+
+    /// <summary>
+    /// Runs one of the Agent's own scripts (<see cref="AgentScripts"/>): the app sends the name and arguments, never PowerShell. A script
+    /// the Agent refuses comes back with <see cref="SystemCommandRunner.AgentFailedExitCode"/> and the reason in StdErr. Throws
+    /// <see cref="AdminRequiredException"/> when the Agent isn't connected or is from before this existed.
+    /// </summary>
+    Task<ProcessResult> RunAgentScriptAsync(AdminPipeScript script, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine = null) =>
+        throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
 }
 
 public static class AdminCommandAllowlist
@@ -92,12 +108,12 @@ public static class AdminCommandAllowlist
             ["powercfg.exe"] = "powercfg.exe",
             ["wevtutil.exe"] = "wevtutil.exe",
             ["pnputil.exe"] = "pnputil.exe",
-            ["reg.exe"] = "reg.exe",
             ["shutdown.exe"] = "shutdown.exe",
             ["tpmtool.exe"] = "tpmtool.exe",
             ["dsregcmd.exe"] = "dsregcmd.exe",
             ["w32tm.exe"] = "w32tm.exe",
-            ["powershell.exe"] = Path.Combine("WindowsPowerShell", "v1.0", "powershell.exe"),
+            // Never powershell.exe or reg.exe: the Agent doesn't run scripts or registry edits the app wrote. Admin PowerShell is one of
+            // the Agent's own scripts (AgentScripts, op agent_script); registry changes are typed ops (system_setting, machine_tweak).
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     // What an elevated script from the app never needs: downloading, decoding or compiling code, running a string as code,
@@ -223,7 +239,7 @@ public static class AdminCommandAllowlist
     }
 
     /// <summary>
-    /// Enforces argument constraints on high-risk allowlisted tools (<c>reg.exe</c>, <c>powershell.exe</c>, <c>shutdown.exe</c>)
+    /// Enforces argument constraints on high-risk allowlisted tools (<c>shutdown.exe</c>, <c>wevtutil.exe</c>)
     /// so an un-elevated caller cannot abuse them for arbitrary persistence, registry hijacking, or payload staging.
     /// </summary>
     public static bool TryValidateArguments(string? requestedFileName, IReadOnlyList<string>? arguments, out string? error)
@@ -232,22 +248,16 @@ public static class AdminCommandAllowlist
         var leaf = Path.GetFileName(requestedFileName?.Trim() ?? "");
         var args = arguments ?? [];
 
-        if (string.Equals(leaf, "reg.exe", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(leaf, "wevtutil.exe", StringComparison.OrdinalIgnoreCase))
         {
-            if (args.Count < 2)
+            // Only reading events (qe): clearing, exporting or changing a log isn't something the app asks the Agent to do.
+            if (args.Count < 2 || !string.Equals(args[0].Trim(), "qe", StringComparison.OrdinalIgnoreCase)
+                || args.Skip(1).Any(x => x.StartsWith("/sq", StringComparison.OrdinalIgnoreCase) || x.StartsWith("/lf:true", StringComparison.OrdinalIgnoreCase)))
             {
-                error = "reg.exe requires a subcommand and key path.";
+                error = "wevtutil.exe is restricted to reading events (qe).";
                 return false;
             }
-            var sub = args[0].Trim();
-            if (string.Equals(sub, "query", StringComparison.OrdinalIgnoreCase))
-                return true;
-            if ((string.Equals(sub, "add", StringComparison.OrdinalIgnoreCase) || string.Equals(sub, "delete", StringComparison.OrdinalIgnoreCase))
-                && string.Equals(args[1].Trim(), @"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce", StringComparison.OrdinalIgnoreCase))
-                return true;
-
-            error = $"reg.exe '{sub}' on '{args[1]}' is not permitted by the elevated repair policy.";
-            return false;
+            return true;
         }
 
         if (string.Equals(leaf, "shutdown.exe", StringComparison.OrdinalIgnoreCase))
@@ -255,29 +265,6 @@ public static class AdminCommandAllowlist
             if (args.Count == 0 || args[0].Trim() is not ("/r" or "/g" or "/a" or "-r" or "-g" or "-a"))
             {
                 error = "shutdown.exe is restricted to /r, /g, and /a.";
-                return false;
-            }
-            return true;
-        }
-
-        if (string.Equals(leaf, "powershell.exe", StringComparison.OrdinalIgnoreCase))
-        {
-            // Require the exact SystemCommandRunner.PowerShellArgs shape:
-            // -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <script>
-            if (args.Count != 6
-                || !string.Equals(args[0], "-NoProfile", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(args[1], "-NonInteractive", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(args[2], "-ExecutionPolicy", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(args[3], "Bypass", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(args[4], "-Command", StringComparison.OrdinalIgnoreCase))
-            {
-                error = "powershell.exe must use the canonical -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <script> form.";
-                return false;
-            }
-
-            if (FindBlockedPowerShell(args[5]) is { } blocked)
-            {
-                error = $"PowerShell script contains blocked primitive '{blocked}'.";
                 return false;
             }
             return true;
@@ -295,7 +282,9 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("channel")] string? Channel = null,
     [property: JsonPropertyName("autoLogon")] AdminPipeAutoLogon? AutoLogon = null,
     [property: JsonPropertyName("module")] string? Module = null,
-    [property: JsonPropertyName("setting")] AdminPipeSetting? Setting = null);
+    [property: JsonPropertyName("setting")] AdminPipeSetting? Setting = null,
+    [property: JsonPropertyName("tweak")] AdminPipeTweak? Tweak = null,
+    [property: JsonPropertyName("script")] AdminPipeScript? Script = null);
 
 /// <summary>The automatic sign-in requests' arguments. The password is sent only to check it and to turn sign-in on.</summary>
 public sealed record AdminPipeAutoLogon(
@@ -345,6 +334,10 @@ public static class AdminPipeFraming
     public const string OpModuleHost = "module_host";
     /// <summary>One <see cref="AdminPipeSetting"/> change (startup apps, services, hibernation, Fast Startup, DNS).</summary>
     public const string OpSystemSetting = "system_setting";
+    /// <summary>One <see cref="AdminPipeTweak"/> change (HKLM policy values, extension blocklists, page file, Defender exclusions).</summary>
+    public const string OpMachineTweak = "machine_tweak";
+    /// <summary>One <see cref="AdminPipeScript"/>: the Agent builds and runs that script (Security fixes, updates, clean-up, sign-in tasks).</summary>
+    public const string OpAgentScript = "agent_script";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -605,6 +598,33 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         if (!r.Ok) throw new InvalidOperationException(r.Error ?? "The Agent didn't make the change.");
     }
 
+    public async Task<AdminPipeResponse> MachineTweakAsync(AdminPipeTweak tweak, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpMachineTweak, Tweak: tweak, TimeoutMs: 180_000), ct).ConfigureAwait(false);
+        // Not allowed = an Agent from before this existed ("Unknown operation"). A refused or failed change comes back allowed, with the reason.
+        if (!r.Allowed)
+            throw new AdminRequiredException("The Agent on this PC can't make this change yet. Update Remote PC Diagnostics, then try again.");
+        return r;
+    }
+
+    public async Task<ProcessResult> RunAgentScriptAsync(AdminPipeScript script, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine = null)
+    {
+        var timeoutMs = (int)Math.Clamp(timeout.TotalMilliseconds, 1_000, 3_600_000);
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpAgentScript, TimeoutMs: timeoutMs, Script: script), ct).ConfigureAwait(false);
+        // Not allowed = an Agent from before this existed ("Unknown operation"). A script it refuses comes back allowed, with the reason.
+        if (!r.Allowed)
+            throw new AdminRequiredException("The Agent on this PC can't make this change yet. Update Remote PC Diagnostics, then try again.");
+        if (r.ExitCode < 0 && !r.TimedOut && r.Error is not null)
+        {
+            _log.Warn($"[admin-pipe] Agent script '{script.Name}' not run: {r.Error}");
+            return new ProcessResult(SystemCommandRunner.AgentFailedExitCode, "", r.Error);
+        }
+        if (outputLine is not null && !string.IsNullOrEmpty(r.StdOut))
+            foreach (var line in r.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+                try { outputLine(line); } catch { }
+        return new ProcessResult(r.ExitCode, r.StdOut, r.StdErr, r.TimedOut);
+    }
+
     /// <summary>An Agent from before a request existed answers "Unknown operation" (not allowed).</summary>
     private static void ThrowIfRefused(AdminPipeResponse r)
     {
@@ -747,7 +767,10 @@ public sealed class AdminPipeServer(
     Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>>? securityAuditor = null,
     IAutoLogonBackend? autoLogon = null,
     AgentModuleHost? moduleHost = null,
-    IAdminSettingsBackend? adminSettings = null) : IAsyncDisposable, IDisposable
+    IAdminSettingsBackend? adminSettings = null,
+    IMachineTweaks? machineTweaks = null,
+    DefenderPaths? defenderPaths = null,
+    string? appFolder = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -1060,6 +1083,12 @@ public sealed class AdminPipeServer(
         if (string.Equals(request.Op, AdminPipeFraming.OpSystemSetting, StringComparison.OrdinalIgnoreCase))
             return await Task.Run(() => HandleSystemSetting(request), ct).ConfigureAwait(false);
 
+        if (string.Equals(request.Op, AdminPipeFraming.OpMachineTweak, StringComparison.OrdinalIgnoreCase))
+            return await Task.Run(() => HandleMachineTweakAsync(request, ct), ct).ConfigureAwait(false);
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpAgentScript, StringComparison.OrdinalIgnoreCase))
+            return await HandleAgentScriptAsync(request, ct).ConfigureAwait(false);
+
         return new AdminPipeResponse(
             Ok: false,
             Allowed: false,
@@ -1178,6 +1207,73 @@ public sealed class AdminPipeServer(
             }
         });
         return Answer(true, pipe: pipeName);
+    }
+
+    /// <summary>The installed app's folder (the Agent's own): where the sign-in tasks run the Agent launcher from.</summary>
+    private string AppFolder => appFolder ?? AppContext.BaseDirectory;
+
+    private async Task<AdminPipeResponse> HandleAgentScriptAsync(AdminPipeRequest request, CancellationToken ct)
+    {
+        AdminPipeResponse Refused(string error) => new(
+            Ok: false, Allowed: true, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: -1, Error: error);
+
+        if (request.Script is not { Name.Length: > 0 } script) return Refused("No script was named.");
+        var what = $"{script.Name} {string.Join(' ', script.Args ?? [])}";
+        if (AgentScripts.Build(script, AppFolder, out var refusal) is not { } ps)
+        {
+            log.Warn($"[admin-pipe-server] Agent script '{what}' refused: {refusal}");
+            return Refused(refusal ?? "That change isn't allowed.");
+        }
+        // The script is this app's own code; the screen is a second check that nothing in it downloads or runs other code.
+        if (AdminCommandAllowlist.FindBlockedPowerShell(ps) is { } blocked)
+        {
+            log.Warn($"[admin-pipe-server] Agent script '{what}' blocked: contains '{blocked}'.");
+            return Refused($"The script contains '{blocked}', which the Agent doesn't run.");
+        }
+        var timeout = TimeSpan.FromMilliseconds(Math.Clamp(request.TimeoutMs, 1_000, 3_600_000));
+        try
+        {
+            var pr = await _launcher.RunAsync(SystemCommandRunner.PowerShell, SystemCommandRunner.PowerShellArgs(ps), timeout, ct).ConfigureAwait(false);
+            log.Info($"[admin-pipe-server] Agent script '{what}' exit={pr.ExitCode} timedOut={pr.TimedOut}.");
+            return new AdminPipeResponse(
+                Ok: !pr.TimedOut, Allowed: true, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId,
+                ExitCode: pr.ExitCode, StdOut: pr.StdOut, StdErr: pr.StdErr, TimedOut: pr.TimedOut,
+                Error: pr.TimedOut ? "The change timed out." : null);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] Agent script '{what}' failed to start: {ex.Message}");
+            return Refused("PowerShell didn't start: " + ex.Message);
+        }
+    }
+
+    private async Task<AdminPipeResponse> HandleMachineTweakAsync(AdminPipeRequest request, CancellationToken ct)
+    {
+        AdminPipeResponse Answer(bool ok, string? text = null, string? error = null, bool allowed = true) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            StdOut: text ?? "", Error: error);
+
+        if (machineTweaks is null) return Answer(false, error: "Machine-wide changes are not supported by this elevated helper.", allowed: false);
+        if (request.Tweak is not { } t) return Answer(false, error: "No change was sent.");
+        var what = t.Target ?? t.Name ?? $"{t.Folders?.Count ?? 0} folder(s), {t.Processes?.Count ?? 0} program(s)";
+        try
+        {
+            if (MachineTweakRules.Refusal(t, defenderPaths) is { } refusal)
+            {
+                log.Warn($"[admin-pipe-server] {t.Action} '{what}' refused: {refusal}");
+                return Answer(false, error: refusal);
+            }
+            var (ok, text) = await MachineTweakRules.ApplyAsync(machineTweaks, t, ct).ConfigureAwait(false);
+            log.Info($"[admin-pipe-server] {t.Action} '{what}' {(ok ? "done" : "not done")}.");
+            return ok ? Answer(true, text) : Answer(false, error: text ?? "Windows didn't allow the change.");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] {t.Action} '{what}' failed: {ex.Message}");
+            return Answer(false, error: ex.Message);
+        }
     }
 
     private AdminPipeResponse HandleSystemSetting(AdminPipeRequest request)
