@@ -1,3 +1,5 @@
+using RemotePCDiagnostics.Core.Session;
+
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>Windows component store check: <c>dism /Online /Cleanup-Image /ScanHealth</c> (read-only).</summary>
@@ -55,13 +57,13 @@ public sealed class DismScanHealthModule(SystemCommandRunner commands) : Windows
     public static string NoResultReason(string output, int? exitCode, bool returned = true)
     {
         if (!returned)
-            return "DISM did not start or did not finish within 30 minutes, so no scan result is available. Run RemotePCDiagnostics as administrator and try again.";
+            return "DISM did not start or did not finish within 30 minutes, so no scan result is available. " + ElevationService.AdminRepairHint;
         if (Contains(output, "another servicing") || Contains(output, "0x800700b7") || Contains(output, "0x80070020"))
             return "DISM did not run because another servicing or repair operation is running (for example SFC or Windows Update). Run the scan again when it has finished.";
         if (Contains(output, WindowsRepair.PendingOperationsCode) || Contains(output, "0x800f082f") || exitCode == WindowsRepair.RebootRequiredExitCode)
             return "DISM did not run because a servicing operation is waiting for a restart. Restart the PC, then run the scan again.";
         if (Contains(output, "Elevated permissions") || exitCode == 740)
-            return "DISM did not run because it needs administrator rights. Run RemotePCDiagnostics as administrator and try again.";
+            return "DISM did not run because it needs administrator rights. " + ElevationService.AdminRepairHint;
         var lines = output.Split(['\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         var errorAt = Array.FindLastIndex(lines, l => l.StartsWith("Error:", StringComparison.OrdinalIgnoreCase));
         if (errorAt >= 0)

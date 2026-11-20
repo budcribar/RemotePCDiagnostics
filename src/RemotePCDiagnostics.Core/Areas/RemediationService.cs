@@ -371,7 +371,7 @@ public sealed class RemediationService(
             catch (Exception ex)
             {
                 LogError($"{action.Kind} failed: {ex}");
-                result = new(false, $"Couldn't complete '{action.ButtonText}'. Make sure the app is running as administrator.");
+                result = new(false, $"Couldn't complete '{action.ButtonText}'. " + ElevationService.AdminRepairHint);
             }
         }
 

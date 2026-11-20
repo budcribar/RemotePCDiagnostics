@@ -38,17 +38,10 @@
         <div class="banner-text">
             <div class="banner-title">Standard User Mode</div>
             <div class="banner-sub">
-                Diagnostic checks run without UAC. Enable <strong>Admin Repair Mode</strong> to apply system repairs (DISM, SFC, network resets), or <strong>Relaunch as Administrator</strong> for unattended multi-reboot sign-in and scheduled tasks.
+                Diagnostic checks run without UAC. Enable <strong>Admin Repair Mode</strong> to apply system repairs (DISM, SFC, network resets): they run in the Agent, so the app never needs to run as administrator.
             </div>
         </div>
         <div class="banner-actions">
-            <button type="button"
-                    class="btn btn-outline"
-                    data-testid="wf-relaunch-admin-btn"
-                    disabled="@_adminActionBusy"
-                    @onclick="RelaunchWorkflowAsAdminAsync">
-                Relaunch as Administrator
-            </button>
             <button type="button"
                     class="btn btn-primary"
                     data-testid="wf-enable-admin-btn"
@@ -439,27 +432,6 @@
         catch (Exception ex)
         {
             _message = $"Could not enable Admin Repair Mode: {ex.Message}";
-        }
-        finally
-        {
-            _adminActionBusy = false;
-        }
-    }
-
-    private async Task RelaunchWorkflowAsAdminAsync()
-    {
-        if (App.Elevation is not { } elev || _adminActionBusy)
-            return;
-
-        _adminActionBusy = true;
-        try
-        {
-            var res = await elev.RelaunchElevatedAsync();
-            _message = res.Message;
-        }
-        catch (Exception ex)
-        {
-            _message = $"Could not relaunch as Administrator: {ex.Message}";
         }
         finally
         {

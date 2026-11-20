@@ -227,7 +227,7 @@ public sealed class AdminHelperAndElevationTests
     }
 
     [Fact]
-    public async Task ElevationService_ManagesHelperConnectionStateAndPreservesRemoteRelaunchFlags()
+    public async Task ElevationService_ManagesHelperConnectionState()
     {
         var sessionId = Guid.Parse("a8f5e2c1-4b3d-4e9f-8a1c-2d3e4f5a6b7c");
         var session = new SessionContext(
@@ -238,22 +238,9 @@ public sealed class AdminHelperAndElevationTests
             voice: true,
             group: "Acme-PC");
 
-        var relaunchArgs = ElevationService.BuildRelaunchArguments(session);
-        Assert.Equal(
-            [
-                "-u=https://remoteblazorwebview.com:34544",
-                $"-i={sessionId:D}",
-                "-g=acme-pc",
-                "--unattended",
-                "--voice",
-                "--restarted",
-            ],
-            relaunchArgs);
-
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         AdminPipeServer? activeServer = null;
         Task? serverTask = null;
-        IReadOnlyList<string>? capturedRelaunch = null;
 
         using var elevation = new ElevationService(
             session,
@@ -269,11 +256,6 @@ public sealed class AdminHelperAndElevationTests
                     new RecordingLauncher());
                 serverTask = activeServer.RunSingleSessionAsync(token);
                 return await AdminPipeClient.ConnectAsync(req.PipeName, TimeSpan.FromSeconds(10), token);
-            },
-            customRelauncher: (args, _) =>
-            {
-                capturedRelaunch = args;
-                return Task.FromResult(new ElevationResult(true, false, "Relaunched"));
             });
 
         var changedCount = 0;
@@ -289,10 +271,6 @@ public sealed class AdminHelperAndElevationTests
         Assert.True(elevation.IsAdminHelperConnected);
         Assert.True(elevation.HasAdminCapabilities);
         Assert.True(changedCount >= 1);
-
-        var relaunchRes = await elevation.RelaunchElevatedAsync(cts.Token);
-        Assert.True(relaunchRes.Success);
-        Assert.Equal(relaunchArgs, capturedRelaunch);
 
         elevation.Dispose();
         if (serverTask is not null)

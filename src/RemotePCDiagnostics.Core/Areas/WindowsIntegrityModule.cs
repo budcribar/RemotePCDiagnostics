@@ -1,3 +1,5 @@
+using RemotePCDiagnostics.Core.Session;
+
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>
@@ -46,7 +48,7 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
         lock (_scanGate) _scan?.Cancel();
     }
 
-    protected override string FailedMessage => "The integrity scan could not complete. Run RemotePCDiagnostics as administrator and try again.";
+    protected override string FailedMessage => "The integrity scan could not complete. " + ElevationService.AdminRepairHint;
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {

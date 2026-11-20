@@ -21,7 +21,8 @@ public sealed record AdminHelperStartRequest(
 
 /// <summary>
 /// Tracks whether <c>RemotePCDiagnostics.Host</c> launched elevated or in Microsoft Store <c>asInvoker</c> standard-user mode,
-/// and manages the on-demand <c>RemotePCDiagnostics.Agent</c> Named-Pipe elevated repair helper or full elevated Host relaunch.
+/// and manages the on-demand <c>RemotePCDiagnostics.Agent</c> Named-Pipe elevated repair helper. The app itself never relaunches as
+/// administrator: admin work goes to the Agent.
 /// </summary>
 public interface IElevationContext
 {
@@ -32,12 +33,13 @@ public interface IElevationContext
     event Action? Changed;
 
     Task<ElevationResult> EnableAdminModeAsync(CancellationToken ct = default);
-    Task<ElevationResult> RelaunchElevatedAsync(CancellationToken ct = default);
 }
 
 public sealed class ElevationService : IElevationContext, IElevatedCommandBridge, IDisposable
 {
     public const string SimulateStandardUserEnvVar = "RPD_SIMULATE_STANDARD_USER";
+    /// <summary>What to do when something needed administrator rights and the Agent wasn't connected (the app never runs as administrator).</summary>
+    public const string AdminRepairHint = "Turn on Admin Repair Mode so the Agent can run it with administrator rights, then try again.";
     public const string AdminHelperExeName = "RemotePCDiagnostics.Agent.exe";
     public const string AdminPipeEnvVar = "RPD_ADMIN_PIPE";
     public const string AdminPipeArgPrefix = "--admin-pipe=";
@@ -48,13 +50,11 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     private readonly string _baseDirectory;
     private readonly Func<bool> _isProcessElevated;
     private readonly Func<AdminHelperStartRequest, CancellationToken, Task<AdminPipeClient>>? _customConnector;
-    private readonly Func<IReadOnlyList<string>, CancellationToken, Task<ElevationResult>>? _customRelauncher;
     private readonly SemaphoreSlim _enableGate = new(1, 1);
     private readonly object _stateLock = new();
 
     private AdminPipeClient? _client;
     private Process? _helperProcess;
-    private Action? _closeCurrentWindow;
     private int _disposed;
 
     public event Action? Changed;
@@ -65,7 +65,6 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         string? baseDirectory = null,
         Func<bool>? isProcessElevated = null,
         Func<AdminHelperStartRequest, CancellationToken, Task<AdminPipeClient>>? customConnector = null,
-        Func<IReadOnlyList<string>, CancellationToken, Task<ElevationResult>>? customRelauncher = null,
         string? initialPipeName = null)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
@@ -73,7 +72,6 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         _baseDirectory = !string.IsNullOrWhiteSpace(baseDirectory) ? baseDirectory : AppContext.BaseDirectory;
         _isProcessElevated = isProcessElevated ?? DetectProcessElevated;
         _customConnector = customConnector;
-        _customRelauncher = customRelauncher;
 
         var initialPipe = !string.IsNullOrWhiteSpace(initialPipeName)
             ? initialPipeName
@@ -122,8 +120,6 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
 
     bool IElevatedCommandBridge.IsConnected => IsAdminHelperConnected;
 
-    public void BindWindowClose(Action closeWindow) => _closeCurrentWindow = closeWindow;
-
     public static bool IsSimulateStandardUser()
     {
         var raw = Environment.GetEnvironmentVariable(SimulateStandardUserEnvVar)?.Trim();
@@ -150,28 +146,6 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         }
 
         return Environment.IsPrivilegedProcess;
-    }
-
-    /// <summary>
-    /// Builds the command-line arguments used to relaunch <c>RemotePCDiagnostics.Host.exe</c> elevated while preserving
-    /// any active remote relay URL, session ID, shop group, unattended, and voice flags.
-    /// </summary>
-    public static IReadOnlyList<string> BuildRelaunchArguments(ISessionContext session)
-    {
-        ArgumentNullException.ThrowIfNull(session);
-        var args = new List<string>();
-        if (session.Mode == SessionMode.Remote && session.ServerUri is not null)
-            args.Add($"-u={session.ServerUri.AbsoluteUri.TrimEnd('/')}");
-        if (session.SessionId != Guid.Empty)
-            args.Add($"-i={session.SessionId:D}");
-        if (SessionLaunchOptions.NormalizeGroup(session.Group) is { } group)
-            args.Add($"-g={group}");
-        if (session.Unattended)
-            args.Add(SessionLaunchOptions.UnattendedArg);
-        if (session.Voice)
-            args.Add(SessionLaunchOptions.VoiceArg);
-        args.Add(SessionLaunchOptions.RestartedArg);
-        return args;
     }
 
     public async Task<ElevationResult> EnableAdminModeAsync(CancellationToken ct = default)
@@ -271,61 +245,6 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         finally
         {
             _enableGate.Release();
-        }
-    }
-
-    public async Task<ElevationResult> RelaunchElevatedAsync(CancellationToken ct = default)
-    {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (IsProcessElevated)
-            return new ElevationResult(true, false, "Already running as Administrator.");
-
-        var args = BuildRelaunchArguments(_session);
-        if (_customRelauncher is not null)
-            return await _customRelauncher(args, ct).ConfigureAwait(false);
-
-        var preview = $"RemotePCDiagnostics.Host.exe {string.Join(' ', args)}";
-        if (_closeCurrentWindow is not { } closeWindow
-            || Environment.ProcessPath is not { Length: > 0 } exePath
-            || !File.Exists(exePath))
-        {
-            _log.Info($"[elevation] Preview/headless relaunch requested: {preview}");
-            return new ElevationResult(
-                Success: true,
-                Cancelled: false,
-                Message: $"Configured elevated relaunch ({preview}).");
-        }
-
-        try
-        {
-            var argLine = string.Join(' ', args.Select(QuoteIfNeeded));
-            var psi = IsSimulateStandardUser()
-                ? new ProcessStartInfo(exePath, argLine)
-                {
-                    UseShellExecute = false,
-                    WorkingDirectory = Path.GetDirectoryName(exePath) ?? _baseDirectory,
-                }
-                : new ProcessStartInfo(exePath, argLine)
-                {
-                    UseShellExecute = true,
-                    Verb = "runas",
-                    WorkingDirectory = Path.GetDirectoryName(exePath) ?? _baseDirectory,
-                };
-
-            Process.Start(psi);
-            _log.Info($"[elevation] Started elevated Host copy: {exePath} {argLine}");
-            closeWindow();
-            return new ElevationResult(true, false, "Relaunching Remote PC Diagnostics as Administrator…");
-        }
-        catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
-        {
-            _log.Info("[elevation] User cancelled UAC prompt for full Host relaunch.");
-            return new ElevationResult(false, Cancelled: true, "Administrator relaunch was cancelled.");
-        }
-        catch (Exception ex)
-        {
-            _log.Warn($"[elevation] Failed to relaunch Host elevated: {ex.Message}");
-            return new ElevationResult(false, false, $"Could not relaunch as Administrator: {ex.Message}");
         }
     }
 

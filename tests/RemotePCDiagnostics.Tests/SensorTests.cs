@@ -235,7 +235,7 @@ public class SensorNoDataTests
         var rep = LibreHardwareMonitorModule.BuildReport(raw);
         Assert.Empty(rep.VisibleGroups);
         Assert.Null(rep.MissingText);
-        Assert.Equal("No sensors found. Try running the app as administrator.", LibreHardwareMonitorModule.Summarize(rep));
+        Assert.Equal("No sensors found. " + RemotePCDiagnostics.Core.Session.ElevationService.AdminRepairHint, LibreHardwareMonitorModule.Summarize(rep));
         Assert.Equal(DiagnosticStatus.Warning, LibreHardwareMonitorModule.ToStatus(rep, raw));
 
         var refresh = await new LibreHardwareMonitorModule(new FakeSensorProvider(raw)).RefreshAsync(null);

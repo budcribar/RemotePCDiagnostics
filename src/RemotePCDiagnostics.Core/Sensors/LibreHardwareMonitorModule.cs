@@ -1,3 +1,5 @@
+using RemotePCDiagnostics.Core.Session;
+
 namespace RemotePCDiagnostics.Core.Sensors;
 
 /// <summary>Live temperatures and fan speeds (LibreHardwareMonitorLib via <see cref="ISensorProvider"/>).</summary>
@@ -51,7 +53,7 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
     {
         var s = report.Snapshot; // already filtered to readings with data by BuildReport
         if (s.Readings.Count == 0)
-            return s.IsElevated ? "No temperature or fan sensors found" : "No sensors found. Try running the app as administrator.";
+            return s.IsElevated ? "No temperature or fan sensors found" : "No sensors found. " + ElevationService.AdminRepairHint;
         string T(string id) => report.Groups.First(g => g.Id == id).Hottest is { } v ? $"{v:0}°C" : "—";
         var fans = s.Readings.Where(r => r.SensorType == SensorKind.Fan).ToList();
         var text = $"CPU {T("cpu")} · GPU {T("gpu")} · Storage {StorageText(report.Groups.First(g => g.Id == "storage"))} · {FansText(fans.Count, fans.Count(r => r.Value == 0))}";
