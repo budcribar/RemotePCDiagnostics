@@ -20,16 +20,57 @@
     <span class="icon-badge page-icon"><Icon Name="play" Size="20" /></span><h1 data-rpcd-page="workflow" data-rpcd-contract="@BrowserContract.Workflow" data-workflow-stage="@s.Stage" data-testid="wf-title">Service workflow</h1>
 </div>
 <p class="meta">Runs every check, lets you choose the fixes once, then does the rest by itself: restart → before benchmark → apply the fixes →
-    restart → after benchmark → client report. Plan on 20–40 minutes, mostly waiting for restarts and updates.</p>
+    restart → after benchmark → client report. Plan on 20–40 minutes, mostly waiting for restarts and updates.
+    Need a quick standalone measurement? <a href="/benchmark">Open Benchmark →</a></p>
 
 <AgentData TestId="workflow-data" Json="@WorkflowJson(s)" />
-<ol class="wf-steps" data-testid="wf-steps">
-    @foreach (var (label, stages) in Steps)
-    {
-        var state = StepState(s.Stage, stages);
-        <li class="wf-step wf-@state">@label</li>
-    }
-</ol>
+<section class="card wf-pipeline-card" aria-label="Service workflow progress">
+    <ol class="wf-steps" data-testid="wf-steps">
+        @for (var i = 0; i < Steps.Length; i++)
+        {
+            var (label, stages) = Steps[i];
+            var state = StepState(s.Stage, stages);
+            var isRebootStep = stages[0] is WorkflowStage.RestartBefore or WorkflowStage.RestartAfter;
+            var cssClass = state == "now" && isRebootStep
+                ? "wf-rebooting"
+                : state == "now" && s.IsRunning
+                    ? "wf-now wf-running"
+                    : $"wf-{state}";
+            var caption = StepCaption(s, stages, state, approved, checkCount);
+            var pct = StepProgressPercent(s, stages, state, approved);
+            <li class="wf-step @cssClass" data-wf-step-state="@state">
+                <span class="wf-step-head">
+                    <span class="wf-step-badge" aria-hidden="true">@(state == "done" ? "✓" : state == "now" && isRebootStep ? "↻" : state == "now" ? "•" : "")</span>
+                    <span>@label</span>
+                </span>
+                <span class="wf-step-caption">@caption</span>
+                @if (pct is { } p)
+                {
+                    <div class="wf-step-bar" aria-hidden="true"><div style="width:@($"{p:0.#}%")"></div></div>
+                }
+            </li>
+            @if (i < Steps.Length - 1)
+            {
+                var nextState = StepState(s.Stage, Steps[i + 1].Stages);
+                var nextIsReboot = Steps[i + 1].Stages[0] is WorkflowStage.RestartBefore or WorkflowStage.RestartAfter;
+                var connClass = nextState == "now" && nextIsReboot
+                    ? "wf-conn-rebooting"
+                    : nextState == "now"
+                        ? "wf-conn-active"
+                        : state == "done" && nextState == "done"
+                            ? "wf-conn-done"
+                            : "wf-conn-todo";
+                <li class="wf-connector @connClass" aria-hidden="true"></li>
+            }
+        }
+    </ol>
+    <div class="wf-legend" aria-hidden="true">
+        <span class="wf-legend-item"><span class="wf-swatch wf-swatch-done"></span>Completed</span>
+        <span class="wf-legend-item"><span class="wf-swatch wf-swatch-now"></span>Current / Running</span>
+        <span class="wf-legend-item"><span class="wf-swatch wf-swatch-rebooting"></span>Rebooting</span>
+        <span class="wf-legend-item"><span class="wf-swatch wf-swatch-todo"></span>Not run</span>
+    </div>
+</section>
 
 @if (App.Elevation is { HasAdminCapabilities: false })
 {
@@ -361,6 +402,35 @@
         var mine = Index(stages[0]); var cur = Index(current);
         return current == WorkflowStage.Done || mine < cur ? "done" : mine == cur ? "now" : "todo";
     }
+
+    private string StepCaption(WorkflowState s, WorkflowStage[] stages, string state, int approved, int checkCount) => (stages[0], state) switch
+    {
+        (WorkflowStage.Checking, "now") when Flow.TotalChecksCount > 0 => $"{Flow.CompletedChecksCount}/{Flow.TotalChecksCount}",
+        (WorkflowStage.Checking, "done") => $"{checkCount} checks",
+        (WorkflowStage.Review, "now") => $"{approved} selected",
+        (WorkflowStage.Review, "done") => $"{approved} approved",
+        (WorkflowStage.RestartBefore or WorkflowStage.RestartAfter, "now") => "Restarting…",
+        (WorkflowStage.RestartBefore or WorkflowStage.RestartAfter, "done") => "Rebooted",
+        (WorkflowStage.BeforeBenchmark, "now") => Bench.Settling is not null ? "Settling…" : "Measuring…",
+        (WorkflowStage.BeforeBenchmark, "done") => "Captured",
+        (WorkflowStage.Applying, "now") when approved > 0 => $"{s.Outcomes.Count}/{approved}",
+        (WorkflowStage.Applying, "done") => $"{s.Outcomes.Count} applied",
+        (WorkflowStage.AfterBenchmark, "now") => Bench.Settling is not null ? "Settling…" : "Measuring…",
+        (WorkflowStage.AfterBenchmark, "done") => "Captured",
+        (WorkflowStage.Reporting, "now") => "Building…",
+        (WorkflowStage.Reporting, "done") => "Ready",
+        (_, "done") => "Done",
+        (_, "now") => "In progress",
+        _ => "Not run",
+    };
+
+    private double? StepProgressPercent(WorkflowState s, WorkflowStage[] stages, string state, int approved) => (stages[0], state) switch
+    {
+        (WorkflowStage.Checking, "now") when Flow.TotalChecksCount > 0 => Math.Clamp(Flow.CheckProgressFraction * 100.0, 0, 100),
+        (WorkflowStage.Applying, "now") when approved > 0 => Math.Clamp((double)s.Outcomes.Count / approved * 100.0, 0, 100),
+        (WorkflowStage.BeforeBenchmark or WorkflowStage.AfterBenchmark, "now") when Bench.SettleFraction is { } sf => Math.Clamp(sf * 100.0, 0, 100),
+        _ => null,
+    };
 
     /// <summary>The report exactly as it was saved (so page and file agree); rebuilt only for runs saved by an older version.</summary>
     private string ReportHtml(WorkflowState s) =>
