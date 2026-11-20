@@ -327,11 +327,14 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     public Task<IModuleHostConnection> StartModuleHostAsync(string module, CancellationToken ct = default) =>
         ConnectedClient().StartModuleHostAsync(module, ct);
 
-    /// <summary>The connected Agent, or <see cref="InvalidOperationException"/> with what to do.</summary>
+    public Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default) =>
+        ConnectedClient().ChangeSystemSettingAsync(setting, ct);
+
+    /// <summary>The connected Agent, or <see cref="AdminRequiredException"/> with what to do.</summary>
     private AdminPipeClient ConnectedClient()
     {
         lock (_stateLock)
-            return _client is { IsConnected: true } c ? c : throw new InvalidOperationException("The Agent isn't connected. " + AdminRepairHint);
+            return _client is { IsConnected: true } c ? c : throw new AdminRequiredException("The Agent isn't connected. " + AdminRepairHint);
     }
 
     public static string? TryResolveInitialPipeName(IReadOnlyList<string>? args = null)

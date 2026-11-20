@@ -129,7 +129,7 @@ public sealed class AgentModuleHostTests : IDisposable
     public async Task Without_the_agent_the_app_says_to_turn_on_admin_repair_mode()
     {
         using var elevation = new ElevationService(new SessionContext(SessionMode.Local), isProcessElevated: () => false);
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => elevation.StartModuleHostAsync(AgentModuleHost.Shared));
+        var ex = await Assert.ThrowsAsync<AdminRequiredException>(() => elevation.StartModuleHostAsync(AgentModuleHost.Shared));
         Assert.Contains(ElevationService.AdminRepairHint, ex.Message);
     }
 

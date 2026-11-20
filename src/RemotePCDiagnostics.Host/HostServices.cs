@@ -41,6 +41,8 @@ public static class HostServices
         services.AddSingleton<ElevationService>(sp => new ElevationService(sp.GetRequiredService<ISessionContext>(), L<ElevationService>()));
         services.AddSingleton<IElevationContext>(sp => sp.GetRequiredService<ElevationService>());
         services.AddSingleton<IElevatedCommandBridge>(sp => sp.GetRequiredService<ElevationService>());
+        // Startup apps, services, hibernation, Fast Startup and DNS changes that need administrator rights: made by the Agent.
+        services.AddSingleton<IAdminSettingsBackend>(sp => new AgentAdminSettings(sp.GetRequiredService<IElevatedCommandBridge>()));
         services.AddSingleton<RemoteUsers>(); // the top bar's "N Remote Users" badge
         services.AddSingleton(_ => AgentModeHost.CreateMonitor()); // Local only / agent link, separate from the session badge
         if (session.Mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
@@ -57,7 +59,7 @@ public static class HostServices
             elevatedBridge: sp.GetRequiredService<IElevatedCommandBridge>(),
             isProcessElevated: () => sp.GetRequiredService<IElevationContext>().IsProcessElevated));
         // One Windows memory/startup adapter for the whole app (undo and memory suggestions share it).
-        services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), L<WindowsMemorySystem>()));
+        services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), L<WindowsMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>()));
         // Its role interfaces resolve to the same instance, so a consumer can take only the part it uses.
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IMemoryProbe>(sp => sp.GetRequiredService<IMemorySystem>());
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IAppControl>(sp => sp.GetRequiredService<IMemorySystem>());
@@ -75,15 +77,15 @@ public static class HostServices
         services.AddSingleton<ServicesModule>();
         // Reversible changes (with their "before" values) for "Undo all changes" / --undo-all; survives restarts.
         services.AddSingleton<RemotePCDiagnostics.Core.Changes.IChangeJournal>(_ => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(), L<RemotePCDiagnostics.Core.Changes.FileChangeJournal>()));
-        services.AddSingleton(sp => new ServiceActionService(new WindowsServiceControlBackend(), sp.GetRequiredService<ISessionContext>(), L<ServiceActionService>(),
+        services.AddSingleton(sp => new ServiceActionService(new WindowsServiceControlBackend(sp.GetRequiredService<IAdminSettingsBackend>()), sp.GetRequiredService<ISessionContext>(), L<ServiceActionService>(),
             journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
         services.AddSingleton(sp => new RebootResumeCoordinator(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<OsqueryRunner>(), RebootResumeCoordinator.DefaultStateFilePath(), log: L<RebootResumeCoordinator>()));
-        // Registry and WMI settings the fixes and undo change in process (Fast Startup, the signed-in user's proxy, adapter DNS).
-        services.AddSingleton<ISystemSettings>(_ => new WindowsSystemSettings(L<WindowsSystemSettings>()));
+        // Registry and WMI settings the fixes and undo change (Fast Startup and adapter DNS through the Agent, the signed-in user's proxy here).
+        services.AddSingleton<ISystemSettings>(sp => new WindowsSystemSettings(L<WindowsSystemSettings>(), sp.GetRequiredService<IAdminSettingsBackend>()));
         services.AddSingleton(sp => new RemediationService(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), L<RemediationService>(), sp.GetRequiredService<RebootResumeCoordinator>(),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(), sp.GetRequiredService<RetrimLog>(), sp.GetRequiredService<ISystemSettings>()));
         services.AddSingleton(sp => CreateUndoService(sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(), sp.GetRequiredService<SystemCommandRunner>(),
-            sp.GetRequiredService<IMemorySystem>(), L<UndoService>(), logEvent));
+            sp.GetRequiredService<IMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(), L<UndoService>(), logEvent));
         // Audio tests (speaker→mic, mic→speaker): on-demand only, own pages, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
@@ -267,10 +269,10 @@ public static class HostServices
     public static Version HostVersion() => Version.TryParse(AppBuildInfo.Release, out var v) ? v : new Version(0, 0);
 
     /// <summary>The undo service, shared by the window (via the container) and the headless --undo-all run.</summary>
-    public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem memory,
+    public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem memory, IAdminSettingsBackend admin,
         ILogger? log, Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent) =>
-        new(journal, commands, memory, new WindowsServiceControlBackend(), (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Undo, level, text), log,
-            new WindowsSystemSettings(log));
+        new(journal, commands, memory, new WindowsServiceControlBackend(admin), (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Undo, level, text), log,
+            new WindowsSystemSettings(log, admin));
 }
 
 /// <summary>The app's services that answer host queries (<see cref="HostQueryServer"/>), bound once the container exists.</summary>

@@ -130,7 +130,7 @@ public sealed class RestrictedModuleHostLauncher : IModuleHostLauncher
     /// </summary>
     private IModuleHostConnection StartInAgent(UserModeModule module)
     {
-        var bridge = _agent?.Invoke() ?? throw new InvalidOperationException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+        var bridge = _agent?.Invoke() ?? throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
         if (_log is not null) Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(_log, "Module host [{Slug}]: asking the Agent to run it (needs administrator)", module.Manifest.Slug);
         // Called from the module's stand-in, which waits for the host anyway; the client awaits without a captured context.
         return bridge.StartModuleHostAsync(module.Path, CancellationToken.None).GetAwaiter().GetResult();

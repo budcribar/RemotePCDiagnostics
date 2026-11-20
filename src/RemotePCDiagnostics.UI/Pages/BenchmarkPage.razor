@@ -13,66 +13,95 @@
 <div class="toolbar">
     <span class="icon-badge page-icon"><Icon Name="health" Size="20" /></span><h1 data-rpcd-page="benchmark" data-rpcd-contract="@BrowserContract.Benchmark" data-testid="bench-title">Performance benchmark</h1>
 </div>
-<p class="meta">Measures what the client feels (start-up, how fast programs open, background load, processor and disk speed, website lookups)
-    before and after the fixes, so the difference can be shown with numbers. Only Windows' own programs are opened, and closed again.
-    Run both passes under the same conditions (plugged in, nothing else running).</p>
+<p class="meta">Quick standalone performance snapshots to verify manual changes. Running a full automated tune-up?
+    <a href="/workflow">Use Service workflow →</a></p>
 
-<section class="card bench-settings" data-testid="bench-settings">
-    <div class="card-head"><strong>What to measure</strong><span class="meta">about @Minutes(s.EstimatedSeconds()) per pass</span><span class="svc-actions"><button class="btn-small" data-testid="bench-select-all" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Enabled = [.. Enum.GetValues<BenchmarkKind>()] })">Select all</button><button class="btn-small" data-testid="bench-select-none" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Enabled = [] })">Select none</button></span></div>
-    <div class="bench-kinds">
-        @foreach (var info in Benchmarks.All)
-        {
-            var k = info.Kind;
-            <label class="bench-kind" title="@info.ClientMeaning">
-                <input type="checkbox" data-testid="bench-kind-@k.ToString().ToLowerInvariant()" checked="@s.IsEnabled(k)" disabled="@running"
-                       @onchange="e => Toggle(k, e.Value is true)" /> @info.Title
-            </label>
-        }
-    </div>
-    <div class="bench-options">
-        <label class="meta">Runs per test
-            <select data-testid="bench-runs" disabled="@running" @onchange="SetRuns">
-                @foreach (var n in BenchmarkSettings.RunChoices) { <option value="@n" selected="@(n == s.Runs)">@n</option> }
-            </select>
+<section class="card bench-hero" data-testid="bench-hero">
+    <div class="bench-hero-main">
+        <div class="bench-hero-title">
+            @(before is null
+                ? "Take a performance snapshot"
+                : after is null
+                    ? "Baseline captured — take next snapshot to compare"
+                    : "Comparison ready")
+        </div>
+        <label class="bench-restart-toggle">
+            <input type="checkbox" data-testid="bench-restart" checked="@s.RestartBeforeAfter" disabled="@running"
+                   @onchange="e => Bench.UpdateSettings(s with { RestartBeforeAfter = e.Value is true })" />
+            <span>Restart the PC first (needed for a fair start-up time)</span>
         </label>
-        <label class="meta"><input type="checkbox" data-testid="bench-restart" checked="@s.RestartBeforeAfter" disabled="@running"
-                                   @onchange="e => Bench.UpdateSettings(s with { RestartBeforeAfter = e.Value is true })" />
-            Restart the PC before each benchmark (needed for a fair start-up time)</label>
+    </div>
+    <div class="bench-hero-actions">
+        @if (running)
+        {
+            <button class="btn btn-stop" data-testid="bench-stop" @onclick="Bench.Stop">Stop</button>
+        }
+        else if (before is null)
+        {
+            @if (s.RestartBeforeAfter)
+            {
+                <button class="btn btn-primary" data-testid="bench-restart-before" disabled="@(s.Enabled.Count == 0 || Bench.BeforePendingRestart || Bench.AfterPendingRestart)" @onclick="RestartThenBefore">
+                    <Icon Name="refresh" Size="12" /> Restart &amp; Run Snapshot</button>
+            }
+            else
+            {
+                <button class="btn btn-primary" data-testid="bench-run-before" disabled="@(s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)">
+                    <Icon Name="play" Size="12" /> Run Benchmark Snapshot</button>
+            }
+        }
+        else
+        {
+            @if (s.RestartBeforeAfter)
+            {
+                <button class="btn btn-primary" data-testid="bench-restart-after" disabled="@(s.Enabled.Count == 0 || Bench.AfterPendingRestart)" @onclick="RestartThenAfter">
+                    <Icon Name="refresh" Size="12" /> @(after is null ? "Restart & Run Next Snapshot" : "Restart & Re-run After")</button>
+                <button class="btn-small" data-testid="bench-restart-before" disabled="@(s.Enabled.Count == 0 || Bench.BeforePendingRestart || Bench.AfterPendingRestart)" @onclick="RestartThenBefore">Re-run baseline</button>
+            }
+            else
+            {
+                <button class="btn btn-primary" data-testid="bench-run-after" disabled="@(s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.After)">
+                    <Icon Name="play" Size="12" /> @(after is null ? "Run Next Snapshot" : "Re-run After")</button>
+                <button class="btn-small" data-testid="bench-run-before" disabled="@(s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)">Re-run baseline</button>
+            }
+            <button class="btn-small" data-testid="bench-clear" @onclick="Bench.Clear">Start over</button>
+        }
     </div>
 </section>
 
-<div class="toolbar bench-actions">
-    @if (running)
-    {
-        <button class="btn btn-stop" data-testid="bench-stop" @onclick="Bench.Stop">Stop</button>
-    }
-    else
-    {
-        @if (s.RestartBeforeAfter)
-        {
-            <button class="btn btn-primary" data-testid="bench-restart-before" disabled="@(running || s.Enabled.Count == 0 || Bench.BeforePendingRestart || Bench.AfterPendingRestart)" @onclick="RestartThenBefore">
-                <Icon Name="refresh" Size="12" /> @(before is null ? "Restart, then run before benchmark" : "Restart, then run before benchmark again")</button>
-            <button class="btn-small" data-testid="bench-run-before" disabled="@(running || s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)"
-                    title="Without restarting: start-up time uses the last few start-ups in Windows' log, which may not be comparable">Run before now (no restart)</button>
-        }
-        else
-        {
-            <button class="btn btn-primary" data-testid="bench-run-before" disabled="@(running || s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)">
-                <Icon Name="play" Size="12" /> @(before is null ? "Run before benchmark" : "Run before benchmark again")</button>
-        }
-        @if (s.RestartBeforeAfter)
-        {
-            <button class="btn btn-outline" data-testid="bench-restart-after" disabled="@(running || before is null || Bench.AfterPendingRestart)" @onclick="RestartThenAfter">
-                <Icon Name="refresh" Size="12" /> Restart, then run after benchmark</button>
-            <button class="btn-small" data-testid="bench-run-after" disabled="@(running || before is null)" @onclick="() => Run(BenchmarkPhase.After)" title="Without restarting: start-up time won't be compared">Run after now (no restart)</button>
-        }
-        else
-        {
-            <button class="btn btn-outline" data-testid="bench-run-after" disabled="@(running || before is null)" @onclick="() => Run(BenchmarkPhase.After)"><Icon Name="play" Size="12" /> Run after benchmark</button>
-        }
-        @if (before is not null) { <button class="btn-small" data-testid="bench-clear" @onclick="Bench.Clear">Start over</button> }
-    }
-</div>
+<details class="card bench-customize" data-testid="bench-settings">
+    <summary class="bench-customize-summary">
+        <span class="bench-customize-title">
+            <span class="bench-customize-caret" aria-hidden="true">▸</span>
+            <span>Customize tests</span>
+            <span class="meta">(@s.Enabled.Count of @Benchmarks.All.Count selected · @s.Runs @(s.Runs == 1 ? "run" : "runs") each · about @Minutes(s.EstimatedSeconds()))</span>
+        </span>
+    </summary>
+    <div class="bench-customize-body">
+        <div class="bench-presets">
+            <div class="bench-preset-group">
+                <button type="button" class="btn-small" data-testid="bench-preset-standard" disabled="@running" @onclick="ApplyStandardPreset">Standard (All · 3 runs)</button>
+                <button type="button" class="btn-small" data-testid="bench-preset-quick" disabled="@running" @onclick="ApplyQuickPreset">Quick (Core · 1 run)</button>
+                <button type="button" class="btn-small" data-testid="bench-select-all" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Enabled = [.. Enum.GetValues<BenchmarkKind>()] })">Select all</button>
+                <button type="button" class="btn-small" data-testid="bench-select-none" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Enabled = [] })">Select none</button>
+            </div>
+            <label class="meta">Runs per test
+                <select data-testid="bench-runs" disabled="@running" @onchange="SetRuns">
+                    @foreach (var n in BenchmarkSettings.RunChoices) { <option value="@n" selected="@(n == s.Runs)">@n</option> }
+                </select>
+            </label>
+        </div>
+        <div class="bench-kinds">
+            @foreach (var info in Benchmarks.All)
+            {
+                var k = info.Kind;
+                <label class="bench-kind" title="@info.ClientMeaning">
+                    <input type="checkbox" data-testid="bench-kind-@k.ToString().ToLowerInvariant()" checked="@s.IsEnabled(k)" disabled="@running"
+                           @onchange="e => Toggle(k, e.Value is true)" /> @info.Title
+                </label>
+            }
+        </div>
+    </div>
+</details>
 
 @if (before is not null && !running) { <UndoAllPanel /> }
 
@@ -148,13 +177,28 @@ else if (Bench.Settling is { } settlePhase && Bench.SettleFraction is { } sf && 
 }
 else if (!running)
 {
-    <p class="status-line" data-testid="bench-empty">No benchmark yet. Run the before benchmark first, then make the fixes, then run the after benchmark.</p>
+    <p class="status-line" data-testid="bench-empty">No snapshot yet. Click the button above to capture a baseline, then run another snapshot after changes to compare.</p>
 }
 
 @code {
+    private static readonly BenchmarkKind[] QuickCoreKinds =
+    [
+        BenchmarkKind.MemoryUsedMb,
+        BenchmarkKind.IdleCpu,
+        BenchmarkKind.CpuMulti,
+        BenchmarkKind.DiskLatency,
+        BenchmarkKind.EnabledStartupApps,
+    ];
+
     protected override void OnInitialized() => Bench.Changed += OnChanged;
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
     public void Dispose() => Bench.Changed -= OnChanged;
+
+    private void ApplyStandardPreset() =>
+        Bench.UpdateSettings(Bench.Settings with { Enabled = [.. Enum.GetValues<BenchmarkKind>()], Runs = 3 });
+
+    private void ApplyQuickPreset() =>
+        Bench.UpdateSettings(Bench.Settings with { Enabled = [.. QuickCoreKinds], Runs = 1 });
 
     private void Toggle(BenchmarkKind k, bool on)
     {

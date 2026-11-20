@@ -158,7 +158,8 @@ internal static class AgentAdminHost
                     selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token),
                     securityAuditor: SecurityAuditModule.ElevatedRunner(AppContext.BaseDirectory, log),
                     autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null,
-                    moduleHost: new AgentModuleHost(AppContext.BaseDirectory, log));
+                    moduleHost: new AgentModuleHost(AppContext.BaseDirectory, log),
+                    adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null);
 
                 var serverTask = Task.Run(async () =>
                 {
@@ -262,7 +263,8 @@ internal static class AgentAdminHost
                         securityAuditor: SecurityAuditModule.ElevatedRunner(AppContext.BaseDirectory, log),
                         autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null,
                         // The modules that ship with the app and need administrator run in a module host from the app's folder.
-                        moduleHost: new AgentModuleHost(AppContext.BaseDirectory, log));
+                        moduleHost: new AgentModuleHost(AppContext.BaseDirectory, log),
+                        adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null);
 
                     await server.RunSingleSessionAsync(cts.Token).ConfigureAwait(false);
                     return ExitOk;
