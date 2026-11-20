@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Security;
 
@@ -16,7 +17,17 @@ public sealed class SecurityAuditOptions
     public Func<bool>? IsAdministrator { get; set; }
     public Func<string, bool>? FileExists { get; set; }
     public ILogger? Log { get; set; }
+    /// <summary>The elevated helper or agent service: when the app isn't elevated, the audit runs there, with administrator rights.</summary>
+    public IElevatedCommandBridge? ElevatedBridge { get; set; }
+    /// <summary>
+    /// Starts the elevated helper when none is connected (Windows asks the person at the PC for permission); true when it connected.
+    /// Null = never ask (a remote session, where nobody may be there to answer).
+    /// </summary>
+    public Func<CancellationToken, Task<bool>>? RequestElevation { get; set; }
 }
+
+/// <summary>One HardeningKitty run: what PowerShell returned and the report CSV it wrote (null when it wrote none).</summary>
+public sealed record SecurityAuditRun(ProcessResult Process, string? ReportCsv);
 
 /// <summary>
 /// On-demand Windows security baseline audit using the bundled HardeningKitty module (Audit mode: read-only).
@@ -33,7 +44,10 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
     public const string PowerShellMissingMessage = "Windows PowerShell isn't available on this PC, so the security audit can't run.";
     public new const string CancelledMessage = "The security audit was cancelled.";
     public const string FailedMessage = "The security audit couldn't finish on this PC. Please try again.";
-    public const string NotAdminNotice = "Some checks need administrator rights and couldn't be completed. For a full audit, close the app and start it again as an administrator.";
+    /// <summary>Without administrator rights, when the skipped checks can't be named (<see cref="SkippedForAdmin.Notice"/> names them).</summary>
+    public const string NotAdminNotice = "Some checks need administrator rights and weren't run. To include them, start the audit again and choose Yes when Windows asks for permission.";
+    /// <summary>The finding list HardeningKitty audits against by default (its lists folder), read for the skipped checks' categories.</summary>
+    public const string DefaultFindingList = "finding_list_0x6d69636b_machine.csv";
 
     private readonly IProcessLauncher _launcher;
     private readonly SecurityAuditOptions _o;
@@ -85,20 +99,63 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
     public static IReadOnlyList<string> BuildArguments(string manifestPath, string reportPath) =>
         SystemCommandRunner.PowerShellArgs(BuildScript(manifestPath, reportPath));
 
+    /// <summary>
+    /// Runs HardeningKitty once and reads its report: the one run both the app and the elevated helper make. Creates the report's folder;
+    /// the caller deletes it. Throws when PowerShell can't start, and on cancellation (the process tree is killed).
+    /// </summary>
+    public static async Task<SecurityAuditRun> RunProcessAsync(IProcessLauncher launcher, string powerShellPath, string manifestPath, string reportPath,
+        TimeSpan timeout, CancellationToken ct)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
+        var pr = await launcher.RunAsync(powerShellPath, BuildArguments(manifestPath, reportPath), timeout, ct).ConfigureAwait(false);
+        var csv = File.Exists(reportPath) ? await File.ReadAllTextAsync(reportPath, CancellationToken.None).ConfigureAwait(false) : null;
+        return new SecurityAuditRun(pr, csv);
+    }
+
+    /// <summary>
+    /// What the elevated helper and the agent service run for the app's audit: HardeningKitty from <paramref name="appFolder"/> (the
+    /// installed app's own folder, never a path the app passes), the report in a temp folder of the elevated account, removed afterwards.
+    /// </summary>
+    public static Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>> ElevatedRunner(string appFolder, ILogger? log = null, IProcessLauncher? launcher = null) =>
+        async (timeout, ct) =>
+        {
+            var manifest = Path.Combine(appFolder, RelativeFolder, ManifestFile);
+            if (!File.Exists(manifest)) throw new FileNotFoundException("HardeningKitty isn't installed next to the app.", manifest);
+            var reportPath = DefaultReportPath();
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                var run = await RunProcessAsync(launcher ?? new SystemProcessLauncher(), SystemCommandRunner.PowerShell, manifest, reportPath, timeout, ct).ConfigureAwait(false);
+                log.Info($"[security-audit] elevated run exit={run.Process.ExitCode} timedOut={run.Process.TimedOut} ms={sw.ElapsedMilliseconds} report_len={run.ReportCsv?.Length ?? -1}");
+                return run;
+            }
+            finally
+            {
+                try { Directory.Delete(Path.GetDirectoryName(reportPath)!, recursive: true); } catch { }
+            }
+        };
+
     protected override async Task<DiagnosticResult> RunCoreAsync(IProgress<string>? progress, CancellationToken ct)
     {
         string? reportPath = null;
         try
         {
             var admin = IsAdmin();
-            reportPath = (_o.ReportPathFactory ?? DefaultReportPath)();
-            Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
-            var args = BuildArguments(ManifestPath, reportPath);
-            Log($"SecurityAudit: start admin={admin} timeout={Timeout} cmd={PowerShellPath} {string.Join(' ', args)}");
-            progress?.Report("Auditing security settings…");
             var sw = Stopwatch.StartNew();
-            ProcessResult pr;
-            try { pr = await _launcher.RunAsync(PowerShellPath, args, Timeout, ct).ConfigureAwait(false); }
+            SecurityAuditRun? run;
+            var elevated = admin;
+            try
+            {
+                run = admin ? null : await RunElevatedAsync(progress, ct).ConfigureAwait(false);
+                if (run is not null) elevated = true;
+                else
+                {
+                    reportPath = (_o.ReportPathFactory ?? DefaultReportPath)();
+                    Log($"SecurityAudit: start admin={admin} timeout={Timeout} cmd={PowerShellPath} {string.Join(' ', BuildArguments(ManifestPath, reportPath))}");
+                    progress?.Report("Auditing security settings…");
+                    run = await RunProcessAsync(_launcher, PowerShellPath, ManifestPath, reportPath, Timeout, ct).ConfigureAwait(false);
+                }
+            }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 Log($"SecurityAudit: cancelled after {sw.ElapsedMilliseconds} ms (process tree killed)");
@@ -109,19 +166,20 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
                 LogError($"SecurityAudit: failed to start PowerShell: {ex}");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
+            var pr = run.Process;
             var head = pr.StdOut.Length > 2048 ? pr.StdOut[..2048] : pr.StdOut;
-            Log($"SecurityAudit: exit={pr.ExitCode} timedOut={pr.TimedOut} ms={sw.ElapsedMilliseconds} stdout_len={pr.StdOut.Length} stderr=\"{pr.StdErr.Trim()}\" stdout_head=\"{head.Replace("\r", "").Replace("\n", " ")}\"");
+            Log($"SecurityAudit: exit={pr.ExitCode} timedOut={pr.TimedOut} elevated={elevated} ms={sw.ElapsedMilliseconds} stdout_len={pr.StdOut.Length} stderr=\"{pr.StdErr.Trim()}\" stdout_head=\"{head.Replace("\r", "").Replace("\n", " ")}\"");
             if (pr.TimedOut)
                 return Result(DiagnosticStatus.Error, $"The security audit took longer than {FormatDuration(Timeout)} and was stopped. Please try again later.", null);
 
-            if (!File.Exists(reportPath))
+            if (run.ReportCsv is not { } csv)
             {
-                LogWarn($"SecurityAudit: no report produced at '{reportPath}'");
+                LogWarn($"SecurityAudit: no report produced (elevated={elevated})");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             IReadOnlyList<AuditFinding> findings;
-            try { findings = HardeningKittyCsv.Parse(await File.ReadAllTextAsync(reportPath, CancellationToken.None).ConfigureAwait(false)); }
-            catch (Exception ex) when (ex is FormatException or IOException)
+            try { findings = HardeningKittyCsv.Parse(csv); }
+            catch (FormatException ex)
             {
                 LogWarn($"SecurityAudit: report unreadable: {ex.Message}");
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
@@ -132,13 +190,70 @@ public sealed class SecurityAuditModule : OnDemandModuleBase
                 return Result(DiagnosticStatus.Error, FailedMessage, null);
             }
             var profile = PcProfile.Parse(pr.StdOut);
-            var report = new SecurityAuditReport(findings, admin ? null : NotAdminNotice, profile);
-            LogWarn($"SecurityAudit: profile={(profile is null ? "unknown" : $"managed={profile.Managed} domain={profile.Domain} entra={profile.EntraJoined} mdm={profile.Mdm} edition={profile.Edition}")} hidden={report.Hidden} parsed {findings.Count} findings passed={report.Passed} warn={report.Warnings} failed={report.Failed} notChecked={report.NotChecked}");
+            var skipped = SkippedForAdmin.Parse(pr.StdOut, elevated ? null : ReadCatalog());
+            if (skipped.Count > 0)
+            {
+                var reported = findings.Select(f => f.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                findings = [.. findings, .. skipped.Where(f => !reported.Contains(f.Id))];
+            }
+            var report = new SecurityAuditReport(findings, null, profile);
+            if (!elevated)
+                report = report with { Notice = skipped.Count > 0 ? SkippedForAdmin.Notice(report, _o.RequestElevation is not null) : NotAdminNotice };
+            LogWarn($"SecurityAudit: profile={(profile is null ? "unknown" : $"managed={profile.Managed} domain={profile.Domain} entra={profile.EntraJoined} mdm={profile.Mdm} edition={profile.Edition}")} hidden={report.Hidden} parsed {findings.Count} findings passed={report.Passed} warn={report.Warnings} failed={report.Failed} notChecked={report.NotChecked} skippedForAdmin={skipped.Count} ({string.Join(",", skipped.Select(f => f.Id))})");
             return Result(report.Status, report.Summary, report);
         }
         finally
         {
             if (reportPath is not null && _o.ReportPathFactory is null) TryDelete(Path.GetDirectoryName(reportPath)!);
+        }
+    }
+
+    /// <summary>
+    /// Without administrator rights: runs the audit in the elevated helper (or the agent service), first asking Windows to start the
+    /// helper when none is connected and asking is allowed. Null when there's none, or it can't run the audit (an older helper), so the
+    /// audit runs here instead. Throws only on cancellation.
+    /// </summary>
+    private async Task<SecurityAuditRun?> RunElevatedAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        var bridge = _o.ElevatedBridge;
+        if (bridge is null) return null;
+        if (!bridge.IsConnected && _o.RequestElevation is { } request)
+        {
+            progress?.Report("Asking Windows for administrator permission…");
+            bool started;
+            try { started = await request(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) { LogWarn($"SecurityAudit: starting the elevated helper failed: {ex.Message}"); started = false; }
+            Log($"SecurityAudit: elevated helper requested, connected={started && bridge.IsConnected}");
+        }
+        if (!bridge.IsConnected) return null;
+        progress?.Report("Auditing security settings with administrator rights…");
+        Log($"SecurityAudit: running in the elevated helper, timeout={Timeout}");
+        try
+        {
+            var run = await bridge.RunSecurityAuditAsync(Timeout, ct).ConfigureAwait(false);
+            if (run is null) LogWarn("SecurityAudit: the elevated helper can't run the audit; running it without administrator rights");
+            return run;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            LogWarn($"SecurityAudit: elevated run failed, running it without administrator rights: {ex.Message}");
+            return null;
+        }
+    }
+
+    private IReadOnlyDictionary<string, (string Category, string Severity)>? ReadCatalog()
+    {
+        try
+        {
+            var path = Path.Combine(ModuleFolder, "lists", DefaultFindingList);
+            return File.Exists(path) ? SkippedForAdmin.Catalog(File.ReadAllText(path)) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            LogWarn($"SecurityAudit: finding list unreadable: {ex.Message}");
+            return null;
         }
     }
 

@@ -116,7 +116,7 @@ public sealed class SecurityAuditTests : IDisposable
     {
         var r = await Module(WritesReport(SampleCsv), admin: false).RefreshAsync(null);
         var rep = Assert.IsType<SecurityAuditReport>(r.Payload);
-        Assert.Equal(SecurityAuditModule.NotAdminNotice, rep.Notice);
+        Assert.Equal(SecurityAuditModule.NotAdminNotice, rep.Notice); // the sample output names no skipped checks
         AssertFriendly(rep.Notice!);
     }
 

@@ -178,7 +178,9 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             serverOptions,
             new RemotePCDiagnostics.Core.Osquery.SystemProcessLauncher(),
             log: pipeLog,
-            selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, pipeLog, token, RelaunchAfterSetup));
+            selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, pipeLog, token, RelaunchAfterSetup),
+            // The app's own install folder (the one this service just started it from) holds the HardeningKitty it ships.
+            securityAuditor: RemotePCDiagnostics.Core.Security.SecurityAuditModule.ElevatedRunner(workDir, pipeLog));
 
         _ = Task.Run(async () =>
         {

@@ -6,8 +6,10 @@ namespace RemotePCDiagnostics.Core.Security;
 public enum AuditOutcome { Passed, Warning, Failed, NotChecked }
 
 /// <summary>One HardeningKitty finding, already mapped to friendly fields.</summary>
+/// <param name="NeedsAdmin">A check HardeningKitty skipped because the audit ran without administrator rights (always Not checked).</param>
 public sealed record AuditFinding(
-    string Id, string Category, string Name, string Severity, string CurrentValue, string RecommendedValue, AuditOutcome Outcome)
+    string Id, string Category, string Name, string Severity, string CurrentValue, string RecommendedValue, AuditOutcome Outcome,
+    bool NeedsAdmin = false)
 {
     public string OutcomeText => Outcome switch
     {
@@ -27,6 +29,7 @@ public sealed record AuditFinding(
         AuditOutcome.Passed => "This setting matches the recommended value.",
         AuditOutcome.Warning => "This setting differs from the recommendation. The risk is low, but consider changing it.",
         AuditOutcome.Failed => "This setting differs from the recommendation and weakens this PC's security. Consider changing it.",
+        _ when NeedsAdmin => "Checking this setting needs administrator rights, which the audit didn't have.",
         _ => "This setting couldn't be checked on this PC.",
     };
 }
@@ -128,6 +131,92 @@ public static class HomeAuditProfile
     };
 
     public static bool IsRelevant(string? id) => id is not null && RelevantIds.Contains(id.Trim());
+}
+
+/// <summary>
+/// The checks HardeningKitty skipped for want of administrator rights. It leaves them out of its report and only prints
+/// "[!] &lt;time&gt; - ID 1103, Store passwords using reversible encryption, Method secedit requires admin privileges. Test skipped."
+/// for each, so they are read back from its output and added to the report as Not checked.
+/// </summary>
+public static class SkippedForAdmin
+{
+    private const string Tail = " requires admin privileges";
+    private const string MethodSeparator = ", Method ";
+
+    /// <summary>Plain names for the skipped checks a home PC cares about (the baseline's own names are written for administrators).</summary>
+    private static readonly Dictionary<string, string> PlainNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["1000"] = "SMBv1 file sharing turned off",
+        ["1103"] = "Passwords not stored with reversible encryption",
+        ["1708"] = "BitLocker drive encryption",
+    };
+
+    /// <summary>The skipped checks in <paramref name="output"/>, in order, one per ID. <paramref name="catalog"/> (the finding list, by ID)
+    /// fills in each one's category and severity when it's known.</summary>
+    public static IReadOnlyList<AuditFinding> Parse(string? output, IReadOnlyDictionary<string, (string Category, string Severity)>? catalog = null)
+    {
+        var list = new List<AuditFinding>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in (output ?? "").Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            var end = line.IndexOf(Tail, StringComparison.Ordinal);
+            if (end < 0) continue;
+            var start = line.IndexOf("ID ", StringComparison.Ordinal);
+            if (start < 0 || start > end) continue;
+            var body = line[(start + 3)..end];
+            var method = body.LastIndexOf(MethodSeparator, StringComparison.Ordinal);
+            if (method < 0) continue;
+            var head = body[..method];
+            var comma = head.IndexOf(", ", StringComparison.Ordinal);
+            if (comma <= 0) continue;
+            var id = head[..comma].Trim();
+            var name = head[(comma + 2)..].Trim();
+            if (id.Length == 0 || name.Length == 0 || !seen.Add(id)) continue;
+            var (category, severity) = catalog is not null && catalog.TryGetValue(id, out var known) ? known : ("", "");
+            list.Add(new AuditFinding(id, category, name, severity, "", "", AuditOutcome.NotChecked, NeedsAdmin: true));
+        }
+        return list;
+    }
+
+    /// <summary>Category and severity by ID from a HardeningKitty finding list CSV; empty when it doesn't read.</summary>
+    public static IReadOnlyDictionary<string, (string Category, string Severity)> Catalog(string? findingListCsv)
+    {
+        var map = new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase);
+        var rows = HardeningKittyCsv.ParseRows(findingListCsv ?? "");
+        if (rows.Count == 0) return map;
+        var header = rows[0].Select(h => h.Trim().TrimStart('\uFEFF')).ToList();
+        int id = header.FindIndex(h => h.Equals("ID", StringComparison.OrdinalIgnoreCase)),
+            cat = header.FindIndex(h => h.Equals("Category", StringComparison.OrdinalIgnoreCase)),
+            sev = header.FindIndex(h => h.Equals("Severity", StringComparison.OrdinalIgnoreCase));
+        if (id < 0) return map;
+        foreach (var r in rows.Skip(1))
+        {
+            string Get(int i) => i >= 0 && i < r.Count ? r[i].Trim() : "";
+            if (Get(id) is { Length: > 0 } key) map.TryAdd(key, (Get(cat), Get(sev)));
+        }
+        return map;
+    }
+
+    /// <summary>
+    /// What the page says when the audit ran without administrator rights: the skipped checks it shows, by name (three at most, home ones first),
+    /// and how to include them. Null when it shows none of them (on a home PC the skipped ones can all be enterprise-only settings).
+    /// </summary>
+    public static string? Notice(SecurityAuditReport report, bool atThePc)
+    {
+        // The ones that matter on any PC first, so those are the ones named.
+        var shown = report.Shown.Where(f => f.NeedsAdmin).OrderBy(f => f.HomeRelevant ? 0 : 1).ToList();
+        if (shown.Count == 0) return null;
+        var names = shown.Take(3).Select(f => PlainNames.TryGetValue(f.Id, out var plain) ? plain : f.Name).ToList();
+        var more = shown.Count - names.Count;
+        var list = more > 0 ? string.Join(", ", names) + $" and {more} more"
+            : names.Count == 1 ? names[0] : string.Join(", ", names.Take(names.Count - 1)) + " and " + names[^1];
+        var what = shown.Count == 1 ? "1 check needs administrator rights and wasn't run" : $"{shown.Count} checks need administrator rights and weren't run";
+        var how = atThePc ? "To include them, start the audit again and choose Yes when Windows asks for permission."
+            : "To include them, ask the person at the PC to start the audit and choose Yes when Windows asks for permission.";
+        if (shown.Count == 1) how = how.Replace("include them", "include it");
+        return $"{what}: {list}. {how}";
+    }
 }
 
 /// <summary>Parses the HardeningKitty report CSV (Export-Csv: ID,Category,Name,Severity,Result,Recommended,TestResult,SeverityFinding,DefaultValue,Filter).</summary>

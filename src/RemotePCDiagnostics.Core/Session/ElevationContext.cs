@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Principal;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Sensors;
 
 namespace RemotePCDiagnostics.Core.Session;
@@ -379,6 +380,18 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
             return null;
 
         return await client.SelfUpdateAsync(channel, relaunchArguments, ct).ConfigureAwait(false);
+    }
+
+    public async Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, CancellationToken ct = default)
+    {
+        AdminPipeClient? client;
+        lock (_stateLock)
+            client = _client;
+
+        if (client is not { IsConnected: true })
+            return null;
+
+        return await client.RunSecurityAuditAsync(timeout, ct).ConfigureAwait(false);
     }
 
     public static string? TryResolveInitialPipeName(IReadOnlyList<string>? args = null)
