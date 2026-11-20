@@ -7,6 +7,7 @@ using RemotePCDiagnostics.Logging;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Workflow;
+using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Session;
 
@@ -159,6 +160,7 @@ internal static class AgentAdminHost
                     autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null,
                     adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null,
                     machineTweaks: OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null,
+                    changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
                     machineSetup: AgentMachineSetup.ForSignedInUser(log));
 
                 var serverTask = Task.Run(async () =>
@@ -264,6 +266,7 @@ internal static class AgentAdminHost
                         autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null,
                         adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null,
                         machineTweaks: OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null,
+                        changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
                         machineSetup: AgentMachineSetup.ForSignedInUser(log));
 
                     await server.RunSingleSessionAsync(cts.Token).ConfigureAwait(false);

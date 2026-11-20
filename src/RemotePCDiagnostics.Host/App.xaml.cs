@@ -79,7 +79,7 @@ public partial class App : Application
         _file.Value.Write($"{DateTimeOffset.Now:O} [{RemotePCDiagnostics.Core.AppBuildInfo.LogStamp}] {message}");
 
     /// <summary>Process exit codes (also used by --undo-all).</summary>
-    public const int ExitOk = 0, ExitUndoPartial = 1, ExitAlreadyRunning = 2, ExitNotAdmin = 5;
+    public const int ExitOk = 0, ExitUndoPartial = 1, ExitAlreadyRunning = 2, ExitNotAdmin = 5; // 5: --undo-all couldn't start the Agent
     private const string InstanceMutexName = @"Global\RemotePCDiagnostics.Host";
     private static Mutex? _instance;
 
@@ -122,23 +122,8 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (_, ex) => Log($"Fatal: {ex.ExceptionObject}");
         base.OnStartup(e);
 
+        // Headless --undo-all runs un-elevated like the rest of the app: the Agent reads the undo journal and does the admin work.
         var isUndoAll = e.Args.Any(a => a.Equals("--undo-all", StringComparison.OrdinalIgnoreCase));
-
-        // Headless --undo-all reverts system-wide changes in ProgramData and requires Administrator privileges.
-        if (isUndoAll && !isAdmin)
-        {
-            Log("--undo-all invoked without administrator rights: requesting elevation");
-            if (!TryElevate(e.Args))
-            {
-                MessageBox.Show(
-                    "Reverting system-wide changes (--undo-all) requires administrator privileges.",
-                    "Administrator Privileges Required",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
-            }
-            Shutdown(ExitNotAdmin);
-            return;
-        }
 
         // One instance per PC (local window and remote session share it); --undo-all also waits its turn.
         // If an elevated instance already holds Global\RemotePCDiagnostics.Host with an admin-only DACL, opening the mutex from a standard user throws UnauthorizedAccessException.
@@ -210,18 +195,32 @@ public partial class App : Application
     /// --undo-all: reverts every journaled change without opening the window, logs the result (Event Log 1600 and the file
     /// log), and exits 0 when everything was undone, 1 otherwise. --restart restarts the PC afterwards (10 s) so Fast Startup and
     /// page file changes finish reverting. Saved benchmark results are kept.
+    /// The app stays un-elevated: it starts the Agent (one UAC prompt, for the Agent), which reads the journal from the
+    /// administrator-only state folder, takes undone changes off it and runs the admin commands. Exits 5 when the Agent didn't start.
     /// </summary>
     private static int RunUndoAll(bool restart)
     {
         try
         {
-            var commands = new SystemCommandRunner(log: HostServices.For<SystemCommandRunner>(Loggers));
-            // --undo-all still relaunches itself elevated and has no Agent, so it makes these changes in its own process for now.
-            // TODO(admin-to-agent A): run --undo-all through the Agent like the window does, then drop this.
-            var admin = new RemotePCDiagnostics.Core.Session.WindowsAdminSettings(HostServices.For<RemotePCDiagnostics.Core.Session.WindowsAdminSettings>(Loggers));
-            var machine = new RemotePCDiagnostics.Core.Session.WindowsMachineTweaks(HostServices.For<RemotePCDiagnostics.Core.Session.WindowsMachineTweaks>(Loggers));
-            var undo = CreateUndoService(new FileChangeJournal(FileChangeJournal.DefaultPath(), HostServices.For<FileChangeJournal>(Loggers)), commands,
-                new WindowsMemorySystem(null, HostServices.For<WindowsMemorySystem>(Loggers), admin, machine), admin);
+            using var agent = new ElevationService(new SessionContext(SessionMode.Local), HostServices.For<ElevationService>(Loggers));
+            var started = Task.Run(() => agent.EnableAdminModeAsync()).GetAwaiter().GetResult();
+            var journal = agent.IsAdminHelperConnected
+                ? Task.Run(() => AgentChangeJournal.LoadAsync(agent, HostServices.For<AgentChangeJournal>(Loggers))).GetAwaiter().GetResult()
+                : null;
+            if (journal is null)
+            {
+                var why = !agent.IsAdminHelperConnected
+                    ? (started.Cancelled ? "Administrator approval for the Agent was cancelled." : started.Message)
+                    : "The Agent on this PC can't read the undo list. Update Remote PC Diagnostics, then try again.";
+                Log("--undo-all: nothing undone. " + why);
+                MessageBox.Show($"Remote PC Diagnostics didn't undo any changes. {why}\n\nUndoing changes needs the Agent, which asks for administrator approval when it starts. Run --undo-all again and approve the prompt.",
+                    "Remote PC Diagnostics", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return ExitNotAdmin;
+            }
+            var commands = new SystemCommandRunner(log: HostServices.For<SystemCommandRunner>(Loggers), elevatedBridge: agent, isProcessElevated: () => false);
+            var admin = new AgentAdminSettings(agent);
+            var machine = new AgentMachineTweaks(agent, HostServices.For<AgentMachineTweaks>(Loggers));
+            var undo = CreateUndoService(journal, commands, new WindowsMemorySystem(null, HostServices.For<WindowsMemorySystem>(Loggers), admin, machine), admin);
             var result = Task.Run(() => undo.UndoAllAsync("Command line (--undo-all)")).GetAwaiter().GetResult();
             Log("--undo-all: " + result.Summary);
             foreach (var i in result.Items) Log($"--undo-all: {(i.Success ? "OK" : i.Skipped ? "LEFT AS IS (permanent)" : "FAILED")} {i.Change.Kind} '{i.Change.Target}': {i.Message}");
@@ -233,30 +232,6 @@ public partial class App : Application
             return result.Failed == 0 ? ExitOk : ExitUndoPartial;
         }
         catch (Exception ex) { Log("--undo-all failed: " + ex); return ExitUndoPartial; }
-    }
-
-    private static bool TryElevate(string[] args)
-    {
-        if (args.Any(a => a.Equals("--elevated", StringComparison.OrdinalIgnoreCase))) return false;
-        var exe = Environment.ProcessPath;
-        if (string.IsNullOrWhiteSpace(exe)) return false;
-        try
-        {
-            var quotedArgs = string.Join(" ", args.Append("--elevated").Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
-            var psi = new System.Diagnostics.ProcessStartInfo(exe, quotedArgs)
-            {
-                UseShellExecute = true,
-                Verb = "runas",
-                WorkingDirectory = AppContext.BaseDirectory
-            };
-            System.Diagnostics.Process.Start(psi);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log($"Elevation declined or failed: {ex.Message}");
-            return false;
-        }
     }
 
     private static void TryActivateExistingWindow()
