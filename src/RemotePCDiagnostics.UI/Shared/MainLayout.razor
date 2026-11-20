@@ -57,6 +57,10 @@
         <ThemeSwitcher />
         <span class="pc" title="Computer name"><Icon Name="pc" Size="16" />@Session.MachineName</span>
     </header>
+    @if (_navigationOpen)
+    {
+        <div class="nav-backdrop" aria-hidden="true" @onclick="() => _navigationOpen = false"></div>
+    }
     <NavRail />
     <main class="content">
         @if (BuildShopWarningBanner() is { } shopWarning)
