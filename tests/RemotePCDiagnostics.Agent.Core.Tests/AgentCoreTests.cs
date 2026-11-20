@@ -438,6 +438,7 @@ public class AgentHubWorkerTests
         Assert.Equal("rpd_live_fleet_key", first.Hello.EnrollmentKey);
         Assert.Equal(ConsentMode.ConsentUnattendedAllowed, first.Hello.ConsentCeiling);
         Assert.Equal(Lifetime.Persistent, first.Hello.Lifetime);
+        Assert.Equal(new DateTimeOffset(2026, 11, 19, 8, 0, 0, TimeSpan.Zero), first.Hello.BootTime.ToDateTimeOffset());
 
         var cmd = new LaunchCommand
         {
@@ -689,6 +690,17 @@ public class AgentHubWorkerTests
         public void Dispose() { }
     }
 
+    [Fact]
+    public void Boot_time_is_now_minus_the_tick_count_rounded_to_the_second()
+    {
+        var now = new DateTimeOffset(2026, 11, 19, 17, 30, 15, 400, TimeSpan.FromHours(-7));
+
+        Assert.Equal(new DateTimeOffset(2026, 11, 20, 0, 0, 15, TimeSpan.Zero), BootTime.From(now, (long)TimeSpan.FromMinutes(30).TotalMilliseconds));
+        // The same boot read a moment later gives the same value.
+        Assert.Equal(BootTime.From(now, 1_000), BootTime.From(now.AddMilliseconds(300), 1_300));
+        Assert.Null(BootTime.From(now, -1));
+    }
+
     private sealed class FakeAgentPlatform : IAgentPlatform
     {
         public string MachineName { get; init; } = "BENCH-PC-01";
@@ -703,6 +715,8 @@ public class AgentHubWorkerTests
         public string GetActiveSignedInUser() => SignedInUser;
         public string GetAgentVersion() => "1.2.0-test";
         public string GetCachedOrInstalledAppVersion() => "1.2.0";
+        public DateTimeOffset? Booted { get; init; } = new DateTimeOffset(2026, 11, 19, 8, 0, 0, TimeSpan.Zero);
+        public DateTimeOffset? GetBootTime() => Booted;
 
         public Task<ConsentOutcome> RequestConsentAsync(string requester, int timeoutSeconds, CancellationToken ct) =>
             ConsentHandler is not null ? ConsentHandler(requester, timeoutSeconds, ct) : Task.FromResult(ConsentResult);
