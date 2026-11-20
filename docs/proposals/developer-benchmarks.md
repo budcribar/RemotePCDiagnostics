@@ -2,7 +2,7 @@
 
 **Status:** Proposed. Not implemented.
 
-Publishing this document grants no implementation approval. It is planning only: a timed clean build of pinned open-source projects, a fast read-only setup check, and scores against CPU-class baselines.
+Publishing this document grants no implementation approval. It is planning only: a timed clean build of pinned open-source projects, a fast read-only setup check, scores against CPU-class baselines, and an opt-in Dev Drive comparison.
 
 ## Clean build
 
@@ -49,13 +49,14 @@ A normal check: `ModuleKind.Check`, slug `DeveloperSetup`, display name "Develop
 1. Toolchain versions for what is installed.
 2. Free space on the volume the temp build would use. Below a floor (starting point: 10 GB), the build is "could not run". The check itself warns. Low disk is not a failed PC.
 3. Whether real-time antivirus is on, and whether the development folders and build tools the existing Defender probe already looks for are excluded. Unreadable exclusions (the non-admin "N/A" result that probe already returns) are "not readable".
-4. Whether that volume is a Windows Dev Drive (`fsutil devdrv query` on Windows 11). Context for the antivirus number. Older Windows has no Dev Drive; say so. Not a Dev Drive is not a failure, and the check does not offer to create one.
+4. Whether that volume is a Windows Dev Drive (`fsutil devdrv query` on Windows 11). Context for the antivirus number. Older Windows has no Dev Drive; say so. Not a Dev Drive is not a failure. When the volume is not a Dev Drive, the check can say "Dev Drive not used; the opt-in test can show how much it would help."
 5. The active power plan, and whether the PC is on battery. The same conditions the benchmark pass already records.
 
 The check may offer these fixes. It lists them and applies none. Each one needs the same explicit approval as every other repair, remote or local:
 
 1. Add the Defender exclusions the existing probe already computed for code folders, the NuGet cache, and compiler processes (`AddDefenderExclusions`). Admin, journaled, undoable. This changes the user's real folders. It is separate from the temporary exclusion used to measure antivirus cost, and that temporary exclusion is removed when the measurement ends.
 2. Switch to the Balanced power plan (`SetBalancedPowerPlan` on Battery & power plan). The previous plan is kept for undo. On battery, say that a comparable score wants the PC plugged in.
+3. A permanent Dev Drive, as its own fix, separate from the opt-in comparison below. Listed, and applied only after its own approval. The comparison does not create one, and a real partition is not this fix.
 
 ## Where each test runs
 
@@ -63,19 +64,37 @@ The check may offer these fixes. It lists them and applies none. Each one needs 
 2. The clean builds take several minutes and saturate the CPU and the disk, so they stay out of Run All and out of the stress suite. A stress run looks for faults under sustained load. These are scores. Add them as optional benchmark kinds on the Benchmark screen, one kind per language, off by default, so today's before/after pass keeps its length. `run_benchmark` starts the kinds that are selected. A pass that leaves them unselected does not run them.
 3. Each run copies the pinned sources into a new temp folder under the user temp directory, one folder per run, builds there, and deletes that folder on success, failure, cancel, and app exit. It does not write into the user's repositories, and it does not leave `bin`, `target`, `node_modules`, or a venv behind.
 4. Pinned sources are shipped with the app, or cached after a download whose hash matches the pin. Every machine builds that tree. The pin and its hash are stored with the result.
+5. The Dev Drive comparison (phase 4) is a benchmark, run on request after its own yes for that run. It stays out of Run All and out of the stress suite. `run_benchmark` does not start it on its own.
+
+## Dev Drive comparison (opt-in)
+
+Phase 4. The same pinned project is built on NTFS and on a temporary Dev Drive, and the result is how the two times compare. It stays off unless the person says yes for that run. It is not part of the developer score and not part of the CPU-class bands.
+
+1. One explicit yes per run, in local mode and in remote mode. The yes is consent for this run. It is not a permissions change, it is not remembered for the next run, and it does not replace the Agent helper's own elevation.
+2. The disk is a dynamically expanding VHDX of about 50 GB, formatted ReFS as a Dev Drive. It is not a real partition, so the PC's existing disk layout is left alone.
+3. Create the VHDX in an RPCD-labeled temp folder with `New-VHD`, mount it, and format it with `Format-Volume -DevDrive`. The volume label marks it as RPCD's, so cleanup only touches that disk.
+4. The existing elevated Agent helper (the admin agent) does the create, format, mount, dismount, and delete. There is no separate elevation prompt. The builds run as the normal user, so the times are what the developer sees. For this work the helper only handles RPCD-labeled disks inside its own temp folder.
+5. Pre-checks, before the yes is offered: Windows 11 22H2 or later with Dev Drive support, the Agent helper present, at least 50 GB free on the volume that would hold the VHDX, and AC power. Otherwise omit the comparison and give the reason. That is not a disabled control and not a failed score.
+6. The project comes from the cached archive of the pin. Nothing is downloaded during the timing. Place one copy in a temp folder on NTFS and one copy in a temp folder on the Dev Drive. Hyperfine, or the same in-app loop, takes the cold and warm medians on each, using the clean-build protocol above. Report the NTFS times, the Dev Drive times, and the percent faster for cold and for warm: `(NTFS median − Dev Drive median) / NTFS median`. When the Dev Drive is slower, say so with the same ratio. Record whether Defender performance mode is active on the Dev Drive. The order is NTFS, then the Dev Drive, and that order is stored with the result.
+7. Cleanup always runs: dismount, delete the VHDX, and delete both temp folders. That includes failure and cancel. On Agent helper startup, sweep leftovers that carry the RPCD label inside that temp folder, from a run that did not get to clean up.
+8. Remote mode shows the same busy-PC warning as the other builds. The connector exposes the comparison as an approval-gated action, the same way as a fix: it is listed, and it runs only after the yes for that run.
+9. When the volume in use is not a Dev Drive, the read-only setup check can say "Dev Drive not used; the opt-in test can show how much it would help." A permanent Dev Drive is a separate fix, with its own approval. This comparison does not create one.
+10. A real partition is deferred. If it is offered later, it is local-only, with its own confirmation, and with a warning to back up first. This phase does not include it.
 
 ## Remote and local
 
 1. The setup check and the builds are software-only, so they are allowed in a remote session.
 2. The builds saturate the CPU and the disk for several minutes. The person at the PC will feel it. Say so before starting, in the UI and in the tool result. Leave the builds out of an unattended idle pass. The setup check can run unattended.
 3. Hide a language that is not installed, rather than showing it disabled. See detection above.
-4. Fixes stay off the read-only run. The Defender exclusion and the power-plan change go through the existing remediation path, one at a time, after explicit approval.
+4. Fixes stay off the read-only run. The Defender exclusion, the power-plan change, and a permanent Dev Drive go through the existing remediation path, one at a time, after explicit approval.
+5. The Dev Drive comparison needs its own yes for that run, local or remote, and shows the busy-PC warning before it starts.
 
 ## Phased plan
 
 1. **Phase 1.** Developer setup, and the C# cold and warm build, with restore timed separately, temp-folder cleanup, and a shipped baseline for that one workload. Record conditions and start saving samples. The optional antivirus comparison (temporary exclusion, second warm median, exclusion removed) is in this phase, and only after approval.
 2. **Phase 2.** Rust (ripgrep), Go (Hugo), and the TypeScript `npm ci` / `tsc` pair, each as its own benchmark kind, still off by default.
 3. **Phase 3.** Python (a pyperformance subset, or the pinned `pip install`) and C/C++ when MSBuild or CMake is present.
+4. **Phase 4.** The opt-in Dev Drive comparison: a temporary ~50 GB VHDX, the same cached pin on NTFS and on that Dev Drive, cold and warm medians, the percent faster, then cleanup. One explicit yes per run. A real partition is not in this phase.
 
 A later phase does not change the check id or a benchmark kind from an earlier phase.
 
@@ -83,7 +102,8 @@ When a phase exists, the connector exposes it like this:
 
 1. `run_check` and `get_check_result` with check id `DeveloperSetup`. That call does not start a build. A stored result is fine; say how old it is, as with the other checks.
 2. `run_benchmark`, `get_benchmark_results`, and `stop_benchmark` for the developer build kinds, only when those kinds are selected. The result has the per-language medians, scores, and bands, the overall score, the languages included, cold and warm separately, the restore times kept out of the score, and the antivirus and power-plan notes. Hidden languages are absent from the payload. The first response says the PC will be busy for several minutes. `stop_benchmark` cancels, and the temp folder is still deleted.
-3. Offered fixes come back from `list_fixes`. `apply_fix` runs one, after approval. The check never applies a fix.
+3. Offered fixes come back from `list_fixes`. `apply_fix` runs one, after approval. The check never applies a fix. A permanent Dev Drive is one of those fixes, with its own approval, and it is separate from the comparison.
+4. The Dev Drive comparison is approval-gated, like a fix. `list_fixes` can offer it, and it runs only after the explicit yes for that run. `run_benchmark` does not start it because a kind was selected. The result is the NTFS and Dev Drive medians, the percent faster, and whether Defender performance mode was active. The first response carries the busy-PC warning. Cancel and failure still run cleanup.
 
 ## Open questions
 
