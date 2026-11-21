@@ -73,7 +73,7 @@ public static class AgentPaths
         var dir = Path.GetDirectoryName(path) ?? ProgramDataDir();
         Directory.CreateDirectory(dir);
         var tempPath = path + ".tmp";
-        File.WriteAllText(tempPath, contents);
+        WriteNewFile(tempPath, contents);
         if (OperatingSystem.IsWindows())
             TryApplyUsersCanReadFileAcl(tempPath);
         File.Move(tempPath, path, overwrite: true);
@@ -131,23 +131,32 @@ public static class AgentPaths
 
     /// <summary>
     /// Writes <c>%ProgramData%\RemotePCDiagnostics\agent.json</c> with Administrators + SYSTEM write/read ACL protection.
-    /// Keeps <c>Users</c> ReadAndExecute on the parent <c>%ProgramData%\RemotePCDiagnostics</c> directory so
-    /// <c>RemotePCDiagnostics.Host.exe</c>'s <c>ProtectedStateFolder</c> check and cached-app execution both work cleanly.
+    /// The parent <c>%ProgramData%\RemotePCDiagnostics</c> directory is taken over first (see <see cref="ProtectedStateFolder.SecureRoot"/>):
+    /// owned by Administrators, <c>Users</c> ReadAndExecute so <c>RemotePCDiagnostics.Host.exe</c>'s <c>ProtectedStateFolder</c> check and
+    /// cached-app execution both work. Never writes through a link: one at the folder refuses the write, one at the file or its temp file
+    /// is removed first.
     /// </summary>
     public static void WriteSecuredConfig(AgentConfig config)
     {
         var path = ConfigPath();
         var dir = Path.GetDirectoryName(path) ?? ProgramDataDir();
-        Directory.CreateDirectory(dir);
+        var defaultLocation = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(ConfigPathEnvVar));
 
-        if (OperatingSystem.IsWindows() && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(ConfigPathEnvVar)))
+        if (OperatingSystem.IsWindows() && defaultLocation)
         {
-            TryApplyParentDirectoryAcl(dir);
+            ProtectedStateFolder.SecureRoot(dir, null);
             EnsureSessionsDirectory();
         }
+        else
+        {
+            Directory.CreateDirectory(dir);
+        }
+        if (DataFolderGuard.IsLink(dir))
+            throw new IOException($"Not writing '{path}': '{dir}' is a link.");
+        DataFolderGuard.RemoveLink(path);
 
         var tempPath = path + ".tmp";
-        using (File.Create(tempPath)) { }
+        WriteNewFile(tempPath, "");
         if (OperatingSystem.IsWindows())
         {
             TryApplyAdminSystemOnlyFileAcl(tempPath);
@@ -162,34 +171,38 @@ public static class AgentPaths
         }
     }
 
+    /// <summary>Creates <paramref name="path"/> as a new file. Whatever was there (a file, a planted link) is removed first, never followed.</summary>
+    private static void WriteNewFile(string path, string contents)
+    {
+        DataFolderGuard.ClearForNewFile(path);
+        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        using var writer = new StreamWriter(stream);
+        writer.Write(contents);
+    }
+
     public static string EnsureSessionsDirectory()
     {
         var dir = AgentLayout.SessionsDirectory();
+        DataFolderGuard.RemoveLink(dir);
         Directory.CreateDirectory(dir);
         if (OperatingSystem.IsWindows() && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(ConfigPathEnvVar)))
         {
-            TryApplyUsersCanModifyDirectoryAcl(dir);
+            TryApplySessionsDirectoryAcl(dir);
         }
         return dir;
     }
 
-    public static void TryApplyUsersCanModifyDirectoryAcl(string dirPath)
+    /// <summary>
+    /// The sessions folder: every user may list it and create files in it, but not folders. Each file belongs to the user who created
+    /// it (CREATOR OWNER): only that user, Administrators and SYSTEM can read, change or delete it, so one user can't read or tamper
+    /// with another user's session file.
+    /// </summary>
+    public static void TryApplySessionsDirectoryAcl(string dirPath)
     {
         try
         {
-            var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
-            var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
-            var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
-            const InheritanceFlags all = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
-
             var dirInfo = new DirectoryInfo(dirPath);
-            var security = new DirectorySecurity();
-            security.SetOwner(admins);
-            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
-            security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
-            security.AddAccessRule(new FileSystemAccessRule(users, FileSystemRights.Modify, all, PropagationFlags.None, AccessControlType.Allow));
-            dirInfo.SetAccessControl(security);
+            dirInfo.SetAccessControl(SessionsDirectorySecurity());
         }
         catch
         {
@@ -197,28 +210,26 @@ public static class AgentPaths
         }
     }
 
-    private static void TryApplyParentDirectoryAcl(string dirPath)
+    internal static DirectorySecurity SessionsDirectorySecurity()
     {
-        try
-        {
-            var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
-            var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
-            var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
-            const InheritanceFlags all = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
+        var creatorOwner = new SecurityIdentifier(WellKnownSidType.CreatorOwnerSid, null);
+        const InheritanceFlags all = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
 
-            var dirInfo = new DirectoryInfo(dirPath);
-            var security = new DirectorySecurity();
-            security.SetOwner(admins);
-            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
-            security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
-            security.AddAccessRule(new FileSystemAccessRule(users, FileSystemRights.ReadAndExecute, all, PropagationFlags.None, AccessControlType.Allow));
-            dirInfo.SetAccessControl(security);
-        }
-        catch
-        {
-            // Non-elevated test directories or restricted filesystems keep default ACLs.
-        }
+        var security = new DirectorySecurity();
+        security.SetOwner(admins);
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
+        // This folder only: list it and add files. No CreateDirectories, so no junctions can be made in it.
+        security.AddAccessRule(new FileSystemAccessRule(users,
+            FileSystemRights.ReadAndExecute | FileSystemRights.CreateFiles | FileSystemRights.Synchronize,
+            InheritanceFlags.None, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(creatorOwner, FileSystemRights.FullControl,
+            InheritanceFlags.ObjectInherit, PropagationFlags.InheritOnly, AccessControlType.Allow));
+        return security;
     }
 
     private static void TryApplyAdminSystemOnlyFileAcl(string filePath)

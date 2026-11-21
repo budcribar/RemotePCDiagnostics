@@ -148,8 +148,8 @@ CopyrightFontSize=8
 ; Plugin and declarative-check drop folders discovered by ModuleLoader and JsonCheck under %ProgramFiles%\RemotePCDiagnostics.
 Name: "{app}\modules"
 Name: "{app}\checks"
-; Shared sessions folder under %ProgramData% so standard user Host instances can publish active-session.json
-Name: "{commonappdata}\RemotePCDiagnostics\sessions"; Permissions: users-modify
+; %ProgramData%\RemotePCDiagnostics and its sessions folder are created and permissioned by the Agent (install step below), which
+; removes links someone may have put there first. Setup doesn't create them: Inno would apply permissions through a planted junction.
 
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

@@ -14,6 +14,9 @@ internal static class AgentRunLoop
             log: log,
             configuredServer: () => config.Server);
         using var platform = new WindowsAgentPlatform(config.Server, log, updater);
+        // Takes %ProgramData%\RemotePCDiagnostics back and clears links or files someone else put in it, before anything is written there.
+        if (OperatingSystem.IsWindows() && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(AgentLayout.ConfigPathEnvVar)))
+            try { ProtectedStateFolder.Ensure(null); } catch { }
         try { AgentPaths.EnsureSessionsDirectory(); } catch { }
         // An in-app update may have replaced this service mid-way (Setup's Agent MSI step): bring the session's app back.
         try { platform.ResumePendingRelaunch(); } catch { }
