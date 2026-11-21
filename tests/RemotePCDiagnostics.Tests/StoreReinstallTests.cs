@@ -506,22 +506,24 @@ public class StoreReinstallTests
         var html = ClientReport.Build(s, null, null, BenchmarkComparison.Build(null, null), DateTimeOffset.Now);
         // Fixed report wording is written as is; journal labels are HTML-encoded.
         var reinstallHeading = "Removed apps that undo reinstalls from the Microsoft Store (for the account signed in at the time; needs internet). Their settings and data aren't restored:";
-        var permanentHeading = "Permanent (can't be undone";
+        var permanentHeading = "Can't be undone (for example";
         Assert.Contains(reinstallHeading, html);
         Assert.Contains(permanentHeading, html);
         var reinstallAt = html.IndexOf(reinstallHeading, StringComparison.Ordinal);
         var permanentAt = html.IndexOf(permanentHeading, StringComparison.Ordinal);
-        var weatherLine = "<li>" + E(weather.Label) + "</li>";
-        var mailLine = "<li>" + E(mail.Label) + "</li>";
+        var weatherLine = $"<li id=\"change-{weather.Id:N}\">" + E(weather.Label);
+        var mailLine = $"<li id=\"change-{mail.Id:N}\">" + E(mail.Label);
         Assert.InRange(html.IndexOf(weatherLine, reinstallAt, StringComparison.Ordinal), reinstallAt, permanentAt);    // under reinstall, not permanent
         Assert.True(html.IndexOf(mailLine, permanentAt, StringComparison.Ordinal) > permanentAt);
-        Assert.Contains("(undo reinstalls it from the Microsoft Store; settings and data aren't restored)", html);
+        Assert.Contains("(reinstalls from the Microsoft Store; settings and data aren't restored)", html);
+        Assert.Contains("data-tag=\"Reinstallable\">Can be reinstalled</span>", html);
+        Assert.Contains("data-tag=\"Permanent\">Permanent</span>", html);
         Assert.Contains("reinstalled from the Microsoft Store by hand", html);
 
         // No journal to read: go by the fix.
         var untracked = new WorkflowState { Fixes = fixes, Approved = ["w"], Outcomes = [new("w", "Remove Weather", true, "Weather removed.")] };
         var html2 = ClientReport.Build(untracked, null, null, BenchmarkComparison.Build(null, null), DateTimeOffset.Now);
-        Assert.Contains("Undo: undo reinstalls it from the Microsoft Store (needs internet); its settings and data aren't restored.", html2);
+        Assert.Contains("Undo: reinstalls it from the Microsoft Store (needs internet); its settings and data aren't restored.", html2);
         Assert.Contains(reinstallHeading, html2);
         Assert.DoesNotContain(permanentHeading, html2);
     }
@@ -545,7 +547,7 @@ public class StoreReinstallTests
         var html = ClientReport.Build(state, null, null, BenchmarkComparison.Build(null, null), DateTimeOffset.Now);
         Assert.Contains(E(Undoability.Describe(c)), html);
         Assert.Contains("Removed apps that undo reinstalls from the Microsoft Store", html);
-        Assert.DoesNotContain("Permanent (can't be undone", html);
+        Assert.DoesNotContain("Can't be undone (for example", html);
     }
 
     [Fact]

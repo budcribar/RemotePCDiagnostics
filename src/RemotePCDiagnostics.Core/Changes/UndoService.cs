@@ -90,6 +90,31 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
         return all;
     }
 
+    /// <summary>
+    /// Undoes one journaled change (the report box's Undo / Reinstall). Same rules as "Undo all": the admin parts run in the Agent, and the
+    /// entry is forgotten once it's undone (or turns out to be permanent). Null = no such entry (already undone, or the journal isn't read yet).
+    /// </summary>
+    public async Task<UndoItemResult?> UndoChangeAsync(Guid id, string actor, CancellationToken ct = default)
+    {
+        if (journal.All.FirstOrDefault(x => x.Id == id) is not { } c) return null;
+        UndoItemResult r;
+        try { r = await UndoOneAsync(c, ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogError($"{c.Kind} '{c.Target}' failed: {ex}");
+            r = new(c, false, AdminRequiredException.MessageOr(ex, "Windows didn't allow undoing it."));
+        }
+        if (r.Success || r.Skipped) journal.Remove(c.Id);
+        Log($"{c.Kind} '{c.Target}': {(r.Success ? "undone" : r.Skipped ? "permanent, skipped" : "failed")} — {r.Message}");
+        try
+        {
+            events?.Invoke(r.Success ? LogLevel.Information : LogLevel.Warning,
+                $"Undo one change\r\nActor: {actor}\r\n  {(r.Success ? "OK" : r.Skipped ? "LEFT AS IS" : "FAILED")}: {c.Label} — {r.Message}");
+        }
+        catch { }
+        return r;
+    }
+
     private async Task<UndoItemResult> UndoOneAsync(ChangeRecord c, CancellationToken ct)
     {
         UndoItemResult Ok(string m) => new(c, true, m);

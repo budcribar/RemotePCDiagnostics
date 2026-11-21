@@ -107,9 +107,8 @@
     case WorkflowStage.Idle or WorkflowStage.Cancelled or WorkflowStage.Failed:
         @if (s.Stage != WorkflowStage.Idle && s.StartedUtc is not null)
         {
-            @* What the stopped run already did to the PC: same report as the saved file. *@
-            <p class="meta" data-testid="wf-report-path">@(s.ReportPath is { } sp ? $"Report saved on this PC: {sp}" : "The report couldn't be saved as a file; it's shown below.")</p>
-            <iframe class="wf-report" data-testid="wf-report" sandbox="allow-same-origin" title="Client report" srcdoc="@ReportHtml(s)"></iframe>
+            @* What the stopped run already did to the PC: the report box, with the same report as the saved file. *@
+            <WorkflowReportBox Html="@ReportHtml(s)" />
         }
         <button class="btn btn-primary" data-testid="wf-start-checks" disabled="@Flow.Busy" @onclick="RunChecks"><Icon Name="play" Size="12" /> Start: run all checks</button>
         break;
@@ -237,7 +236,7 @@
 
     case WorkflowStage.Done:
         @if (Bench.Before is not null && Bench.After is not null) { <section class="banner banner-ok"><div class="banner-text"><div class="banner-title">@Bench.Comparison.OverallText</div></div></section> }
-        @* The next action and the run's date come before the tall report frame, so they're visible without scrolling. *@
+        @* The next action and the run's date come before the report box, so they're visible without scrolling. *@
         <div class="toolbar wf-done-actions">
             @if (s.FinishedUtc is { } fin) { <span class="meta" data-testid="wf-finished">Workflow finished @fin.ToLocalTime().ToString("g")</span> }
             <div class="banner-actions">
@@ -273,8 +272,7 @@
                 </div>
             </div>
         }
-        <p class="meta" data-testid="wf-report-path">@(s.ReportPath is { } p ? $"Report saved on this PC: {p}" : "The report couldn't be saved as a file; it's shown below.")</p>
-        <iframe class="wf-report" data-testid="wf-report" sandbox="allow-same-origin" title="Client report" srcdoc="@ReportHtml(s)"></iframe>
+        <WorkflowReportBox Html="@ReportHtml(s)" />
         break;
 
     default:

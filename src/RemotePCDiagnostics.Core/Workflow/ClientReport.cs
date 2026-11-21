@@ -38,7 +38,12 @@ public static class ClientReport
           .Append("th{font-size:12px;text-transform:uppercase;color:#6b7280}.better{color:#047857;font-weight:600}.worse{color:#b45309;font-weight:600}.same{color:#6b7280}")
           .Append("ul{padding-left:20px}li{margin:3px 0}.note{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;margin:8px 0;font-size:14px}")
           .Append(".alert{background:#fef2f2;border:2px solid #dc2626;color:#7f1d1d;border-radius:8px;padding:12px 16px;margin:12px 0}")
-          .Append("@media print{body{margin:0}.hero,.tech-notes,.warranty{break-inside:avoid}}</style></head><body>");
+          // Colour + label for each change (never colour alone): green undoable, blue reinstallable, red permanent, gray nothing to undo / skipped / undone.
+          .Append(".tag{display:inline-block;font-size:12px;font-weight:600;line-height:1.5;border-radius:999px;padding:0 8px;margin-left:6px;border:1px solid;white-space:nowrap;vertical-align:1px}")
+          .Append(".tag-undo{color:#065f46;background:#d1fae5;border-color:#34d399}.tag-reinstall{color:#1e3a8a;background:#dbeafe;border-color:#60a5fa}")
+          .Append(".tag-perm{color:#991b1b;background:#fee2e2;border-color:#f87171}.tag-none{color:#374151;background:#f3f4f6;border-color:#9ca3af}")
+          .Append(".legend{font-size:13px;color:#4b5563;margin:4px 0 10px}.legend .tag{margin:0 8px 0 0}")
+          .Append("@media print{body{margin:0}.hero,.tech-notes,.warranty{break-inside:avoid}.tag{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>");
 
         if (brand?.HasHeader == true)
         {
@@ -137,6 +142,9 @@ public static class ClientReport
 
         // Fixes: each with its result, the exact settings it changed, and whether undo puts it back.
         sb.Append("<h2>What we fixed</h2>");
+        if (applied.Count > 0 || failed.Count > 0)
+            sb.Append("<div class=\"legend\" data-testid=\"report-legend\">").Append(Tag(ReportTag.Undoable)).Append(Tag(ReportTag.Reinstallable)).Append(Tag(ReportTag.Permanent))
+              .Append(Tag(ReportTag.NothingToUndo)).Append("</div>");
         if (applied.Count == 0) sb.Append("<p>").Append(s.Outcomes.Count == 0 && notAttempted.Count > 0 ? "No changes were made." : "No changes were needed.").Append("</p>");
         else { sb.Append("<ul>"); foreach (var o in applied) Outcome(o); sb.Append("</ul>"); }
         if (failed.Count > 0)
@@ -166,7 +174,7 @@ public static class ClientReport
         if (skipped.Count > 0)
         {
             sb.Append("<h2>Skipped</h2><ul>");
-            foreach (var o in skipped) sb.Append("<li><strong>").Append(E(o.Title)).Append("</strong> — ").Append(E(o.Message)).Append("</li>");
+            foreach (var o in skipped) sb.Append("<li><strong>").Append(E(o.Title)).Append("</strong>").Append(Tag(ReportTag.Skipped)).Append(" — ").Append(E(o.Message)).Append("</li>");
             sb.Append("</ul>");
         }
         if (notAttempted.Count > 0)
@@ -235,34 +243,28 @@ public static class ClientReport
         }
 
         // Undo: what can be put back, what's permanent, and how.
-        var undoable = new List<string>(); var reinstall = new List<string>(); var permanent = new List<string>();
-        foreach (var o in s.Outcomes.Where(o => !o.Skipped))
-        {
-            if (o.Changes is { Count: > 0 } ch)
-                foreach (var c in ch)
-                    (c.Undo switch { Changes.UndoSupport.None or Changes.UndoSupport.PlaceholdersOnly => permanent, Changes.UndoSupport.Reinstall => reinstall, _ => undoable }).Add(c.Text);
-            else if (o.Success)
-                switch (UndoOf(o))
-                {
-                    case Changes.UndoSupport.Full: undoable.Add(o.Title); break;
-                    case Changes.UndoSupport.Reinstall when !s.ChangesTracked: reinstall.Add(o.Title); break;
-                    case Changes.UndoSupport.None or Changes.UndoSupport.PlaceholdersOnly when !s.ChangesTracked: permanent.Add(o.Title); break;
-                }
-        }
+        var items = s.Outcomes.SelectMany(o => ReportItems.For(s, o)).ToList();
+        var undoable = items.Where(i => i.Tag == ReportTag.Undoable).ToList();
+        var reinstall = items.Where(i => i.Tag == ReportTag.Reinstallable).ToList();
+        var permanent = items.Where(i => i.Tag == ReportTag.Permanent).ToList();
+        var undone = items.Where(i => i.Tag == ReportTag.Undone).ToList();
         sb.Append("<h2>Undoing changes</h2>");
-        if (undoable.Count + reinstall.Count + permanent.Count == 0) sb.Append("<p>Nothing lasting was changed, so there's nothing to undo.</p>");
+        if (undoable.Count + reinstall.Count + permanent.Count + undone.Count == 0) sb.Append("<p>Nothing lasting was changed, so there's nothing to undo.</p>");
         else
         {
-            if (undoable.Count > 0) { sb.Append("<p>Can be put back exactly as it was:</p><ul>"); foreach (var x in undoable) sb.Append("<li>").Append(E(x)).Append("</li>"); sb.Append("</ul>"); }
+            if (undoable.Count > 0) { sb.Append("<p>").Append(Tag(ReportTag.Undoable)).Append(" Can be put back exactly as it was:</p><ul>"); foreach (var x in undoable) Line(x); sb.Append("</ul>"); }
             if (reinstall.Count > 0)
             {
-                sb.Append("<p>Removed apps that undo reinstalls from the Microsoft Store (for the account signed in at the time; needs internet). Their settings and data aren't restored:</p><ul>");
-                foreach (var x in reinstall) sb.Append("<li>").Append(E(x)).Append("</li>");
+                sb.Append("<p>").Append(Tag(ReportTag.Reinstallable)).Append(" Removed apps that undo reinstalls from the Microsoft Store (for the account signed in at the time; needs internet). Their settings and data aren't restored:</p><ul>");
+                foreach (var x in reinstall) Line(x);
                 sb.Append("</ul>");
             }
-            if (permanent.Count > 0) { sb.Append("<p>Permanent (can't be undone; for example, installed updates stay installed and deleted files can't be recovered):</p><ul>"); foreach (var x in permanent) sb.Append("<li>").Append(E(x)).Append("</li>"); sb.Append("</ul>"); }
-            sb.Append("<p>To put changes back, open Remote PC Diagnostics and click \"Undo all changes\" (History page), or run <code>RemotePCDiagnostics.Host.exe --undo-all</code> and approve the Agent's administrator prompt (add <code>--restart</code> to restart afterwards). Permanent changes are left as they are.")
-              .Append(reinstall.Count > 0 ? " If an app can't be reinstalled automatically, undo says so and it can be reinstalled from the Microsoft Store by hand." : "").Append("</p>");
+            if (permanent.Count > 0) { sb.Append("<p>").Append(Tag(ReportTag.Permanent)).Append(" Can't be undone (for example, installed updates stay installed and deleted files can't be recovered):</p><ul>"); foreach (var x in permanent) Line(x); sb.Append("</ul>"); }
+            if (undone.Count > 0) { sb.Append("<p>").Append(Tag(ReportTag.Undone)).Append(" Already put back after the service:</p><ul>"); foreach (var x in undone) Line(x); sb.Append("</ul>"); }
+            if (undoable.Count + reinstall.Count > 0)
+                sb.Append("<p>To put one change back, open Remote PC Diagnostics &gt; Service workflow: each change there has its own Undo or Reinstall button. ")
+                  .Append("To put everything back, click \"Undo all changes\" (History page), or run <code>RemotePCDiagnostics.Host.exe --undo-all</code> and approve the Agent's administrator prompt (add <code>--restart</code> to restart afterwards). Permanent changes are left as they are.")
+                  .Append(reinstall.Count > 0 ? " If an app can't be reinstalled automatically, undo says so and it can be reinstalled from the Microsoft Store by hand." : "").Append("</p>");
         }
         if (s.EarlierChanges > 0)
             sb.Append("<p class=\"meta\">\"Undo all changes\" also puts back ").Append(s.EarlierChanges).Append(" earlier change").Append(s.EarlierChanges == 1 ? "" : "s")
@@ -280,32 +282,38 @@ public static class ClientReport
 
         Changes.UndoSupport UndoOf(FixOutcome o) => s.Fixes.FirstOrDefault(f => f.Id == o.FixId)?.Undo ?? Changes.UndoSupport.Full;
 
+        void Line(ReportItem x) =>
+            sb.Append("<li id=\"change-").Append(x.JournalId?.ToString("N") ?? E(x.FixId)).Append("\">").Append(E(x.Text)).Append(Tag(x.Tag, x.WasReinstall, x.UndoneUtc)).Append("</li>");
+
+        string Tag(ReportTag tag, bool wasReinstall = false, DateTimeOffset? when = null) =>
+            $"<span class=\"tag tag-{ReportItems.Css(tag)}\" data-tag=\"{tag}\">{E(ReportItems.Label(tag, wasReinstall))}{(when is { } w ? " " + E(T(w)) : "")}</span>";
+
         void Outcome(FixOutcome o)
         {
             sb.Append("<li><strong>").Append(E(o.Title)).Append("</strong> — ").Append(E(o.Message));
-            if (o.Changes is { Count: > 0 } ch)
+            var lines = ReportItems.For(s, o);
+            if (o.Changes is { Count: > 0 })
             {
                 sb.Append("<ul>");
-                foreach (var c in ch)
-                    sb.Append("<li>").Append(E(c.Text)).Append(" <span class=\"meta\">(").Append(c.Undo switch
-                    {
-                        Changes.UndoSupport.None or Changes.UndoSupport.PlaceholdersOnly => "permanent",
-                        Changes.UndoSupport.Reinstall => "undo reinstalls it from the Microsoft Store; settings and data aren't restored",
-                        _ => "can be undone",
-                    }).Append(")</span></li>");
+                foreach (var x in lines)
+                {
+                    sb.Append("<li id=\"change-").Append(x.JournalId?.ToString("N")).Append("\">").Append(E(x.Text)).Append(Tag(x.Tag, x.WasReinstall, x.UndoneUtc));
+                    if (x.Tag == ReportTag.Reinstallable) sb.Append(" <span class=\"meta\">(reinstalls from the Microsoft Store; settings and data aren't restored)</span>");
+                    sb.Append("</li>");
+                }
                 sb.Append("</ul>");
             }
-            else if (o.Success)
+            else if (lines is [var only])
             {
-                var undo = UndoOf(o) switch
+                sb.Append(Tag(only.Tag));
+                var note = UndoOf(o) switch
                 {
-                    Changes.UndoSupport.Full => "can be undone.",
                     Changes.UndoSupport.PlaceholdersOnly => "deleted files can't be recovered.",
-                    Changes.UndoSupport.None => s.ChangesTracked ? "nothing permanent was changed." : "permanent, can't be undone.",
-                    Changes.UndoSupport.Reinstall => s.ChangesTracked ? "nothing was removed." : "undo reinstalls it from the Microsoft Store (needs internet); its settings and data aren't restored.",
-                    _ => "nothing lasting to undo.",
+                    Changes.UndoSupport.Reinstall when !s.ChangesTracked => "reinstalls it from the Microsoft Store (needs internet); its settings and data aren't restored.",
+                    Changes.UndoSupport.None when !s.ChangesTracked => "can't be undone.",
+                    _ => null,
                 };
-                sb.Append("<div class=\"meta\">Undo: ").Append(undo).Append("</div>");
+                if (note is not null) sb.Append("<div class=\"meta\">Undo: ").Append(note).Append("</div>");
             }
             sb.Append("</li>");
         }

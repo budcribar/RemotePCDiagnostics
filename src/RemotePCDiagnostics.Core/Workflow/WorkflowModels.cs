@@ -51,7 +51,8 @@ public sealed record RepairFinding(string Id, string Title, DiagnosticStatus Lev
 public sealed record RepairDetail(string Label, string Value);
 
 /// <summary>One undo-journal entry written while a fix ran, so the report can say exactly what changed and whether undo puts it back.</summary>
-public sealed record FixChange(Guid JournalId, string Text, Changes.UndoSupport Undo);
+/// <param name="UndoneUtc">When this one change was undone from the report box (Undo / Reinstall); null while it's still in place.</param>
+public sealed record FixChange(Guid JournalId, string Text, Changes.UndoSupport Undo, DateTimeOffset? UndoneUtc = null);
 
 /// <summary>A restart the workflow asked Windows for. <paramref name="BootedUtc"/> is filled in once the app is running again on the new boot.</summary>
 public sealed record WorkflowRestart(string Why, DateTimeOffset RequestedUtc, bool Accepted, DateTimeOffset? BootedUtc = null);
