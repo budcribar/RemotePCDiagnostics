@@ -12,9 +12,14 @@ namespace RemotePCDiagnostics.Host;
 /// Windows measurements for the before/after benchmarks. Only Windows' own programs are started (and closed again);
 /// counters use English names (PDH), so they work on any Windows language.
 /// </summary>
-public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensorProvider? sensors, ILogger? log = null) : IBenchmarkProbes
+public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensorProvider? sensors, ILogger? log = null, DeveloperBuildRunner? devRunner = null) : IBenchmarkProbes
 {
     private void Log(string m) => log.Info("[benchmark] " + m);
+
+    public Task<DeveloperBuildResult?> RunDeveloperCSharpAsync(bool includeAntivirusComparison, IProgress<string>? progress, CancellationToken ct) =>
+        devRunner is null
+            ? Task.FromResult<DeveloperBuildResult?>(null)
+            : devRunner.RunCSharpCleanBuildAsync(new DeveloperBuildOptions(IncludeAntivirusComparison: includeAntivirusComparison), progress, ct).ContinueWith(t => (DeveloperBuildResult?)t.Result, ct, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
     // ---- conditions ----
     [StructLayout(LayoutKind.Sequential)]
@@ -141,9 +146,15 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
     }
 
     // ---- boot ----
-    public async Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct) =>
-        await new WindowsEventLog(commands).QueryAsync(BootRecord.Channel, BootRecord.Query, 20, ct).ConfigureAwait(false)
-        ?? throw new InvalidOperationException("Diagnostics-Performance log unavailable (administrator rights needed)");
+    // Only an administrator can read the Diagnostics-Performance log, so the Agent reads it (wevtutil qe, the one wevtutil use it allows).
+    // Without the Agent nothing is run here: the app never has administrator rights, and the result says to turn on Admin Repair Mode.
+    public async Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct)
+    {
+        if (!commands.HasAdminRights)
+            throw new RemotePCDiagnostics.Core.Session.AdminRequiredException(BenchmarkRunner.BootLogUnreadable);
+        return await new WindowsEventLog(commands).QueryAsync(BootRecord.Channel, BootRecord.Query, 20, ct).ConfigureAwait(false)
+            ?? throw new RemotePCDiagnostics.Core.Session.AdminRequiredException(BenchmarkRunner.BootLogUnreadable);
+    }
 
     // ---- idle resources: memory in use + background processes (sampled several times) ----
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -221,5 +232,98 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
         catch (Exception ex) when (ex is not OperationCanceledException) { Log("inventory script: " + ex.Message); }
 
         return new(diskFreeGb, startupCount, autoSvcCount, taskCount, bloatCount);
+    }
+
+    // ---- Speedometer 3 (headless Chromium over local loopback CDP) ----
+    public async Task<SpeedometerResult?> RunSpeedometerAsync(TimeSpan timeout, string? preferredEngine, CancellationToken ct)
+    {
+        SpeedometerProcessRunner.CleanupOrphanedProfiles();
+        var browser = SelectChromiumBrowser(preferredEngine);
+        if (browser is null)
+            return new(null, Note: "No supported Chromium browser (Edge, Chrome, Brave, or Opera) was found.");
+
+        var (rootDir, error) = await SpeedometerPackage.EnsureAssetsAsync(
+            expectedSha256: SpeedometerPackage.ExpectedSha256,
+            ct: ct).ConfigureAwait(false);
+        if (rootDir is null)
+            return new(null, browser.Engine, browser.DisplayName, browser.Version, Note: error ?? "Speedometer 3 assets are not available.");
+
+        return await SpeedometerProcessRunner.RunAsync(browser, rootDir, timeout, log, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Detects installed Chromium-family browsers RPCD can drive via CDP. When <paramref name="preferredEngine"/> is set
+    /// (e.g. matching the Before pass), reuses that exact engine if installed; otherwise prefers the user's Windows default
+    /// HTTPS browser when it is Chromium (falling back to Edge → Chrome → Brave → Opera).
+    /// </summary>
+    private static SpeedometerBrowser? SelectChromiumBrowser(string? preferredEngine)
+    {
+        var installed = DetectInstalledChromiumBrowsers();
+        if (installed.Count == 0) return null;
+
+        var targetEngine = !string.IsNullOrWhiteSpace(preferredEngine) ? preferredEngine : ReadDefaultHttpsEngine();
+        if (targetEngine is not null)
+        {
+            var match = installed.FirstOrDefault(b => b.Engine.Equals(targetEngine, StringComparison.OrdinalIgnoreCase));
+            if (match is not null) return match;
+        }
+        return installed[0];
+    }
+
+    private static string? ReadDefaultHttpsEngine()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice");
+            var progId = key?.GetValue("ProgId") as string;
+            if (string.IsNullOrWhiteSpace(progId)) return null;
+            if (progId.Contains("MSEdge", StringComparison.OrdinalIgnoreCase)) return "edge";
+            if (progId.Contains("Chrome", StringComparison.OrdinalIgnoreCase)) return "chrome";
+            if (progId.Contains("Brave", StringComparison.OrdinalIgnoreCase)) return "brave";
+            if (progId.Contains("Opera", StringComparison.OrdinalIgnoreCase)) return "opera";
+        }
+        catch { }
+        return null;
+    }
+
+    private static List<SpeedometerBrowser> DetectInstalledChromiumBrowsers()
+    {
+        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+        var candidates = new (string Engine, string Name, string[] Paths)[]
+        {
+            ("edge", "Microsoft Edge", [
+                Path.Combine(pf86, @"Microsoft\Edge\Application\msedge.exe"),
+                Path.Combine(pf, @"Microsoft\Edge\Application\msedge.exe"),
+            ]),
+            ("chrome", "Google Chrome", [
+                Path.Combine(pf, @"Google\Chrome\Application\chrome.exe"),
+                Path.Combine(pf86, @"Google\Chrome\Application\chrome.exe"),
+                Path.Combine(local, @"Google\Chrome\Application\chrome.exe"),
+            ]),
+            ("brave", "Brave", [
+                Path.Combine(pf, @"BraveSoftware\Brave-Browser\Application\brave.exe"),
+                Path.Combine(pf86, @"BraveSoftware\Brave-Browser\Application\brave.exe"),
+                Path.Combine(local, @"BraveSoftware\Brave-Browser\Application\brave.exe"),
+            ]),
+            ("opera", "Opera", [
+                Path.Combine(local, @"Programs\Opera\opera.exe"),
+                Path.Combine(pf, @"Opera\opera.exe"),
+            ]),
+        };
+
+        var result = new List<SpeedometerBrowser>();
+        foreach (var (engine, name, paths) in candidates)
+        {
+            var exe = paths.FirstOrDefault(p => !string.IsNullOrEmpty(p) && File.Exists(p));
+            if (exe is null) continue;
+            string? ver = null;
+            try { ver = FileVersionInfo.GetVersionInfo(exe).ProductVersion?.Split(' ')[0]; } catch { }
+            result.Add(new(engine, name, exe, ver));
+        }
+        return result;
     }
 }

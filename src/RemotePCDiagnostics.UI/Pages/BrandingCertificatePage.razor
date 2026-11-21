@@ -137,7 +137,7 @@ else
         @if (!string.IsNullOrWhiteSpace(_shopName)) { <span class="meta"> — @_shopName</span> }
         else { <span class="meta"> — enter details manually if offline</span> }
     </summary>
-    <div style="margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 16px;">
+    <div style="margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 10px 16px;">
         <label class="wf-field" style="flex-direction:column;align-items:stretch">
             <span class="meta">Shop / business name</span>
             <input data-testid="branding-shop-name" @bind="_shopName" @bind:event="oninput" maxlength="120" placeholder="e.g. Acme PC Repair &amp; Refurb" style="width:100%" />
@@ -180,7 +180,7 @@ else
         <p class="notice notice-error" role="alert" data-testid="branding-logo-error">@_logoError</p>
     }
 
-    <div style="margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px 16px;">
+    <div style="margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 10px 16px;">
         <label style="display:flex;flex-direction:column;gap:4px">
             <span class="meta">Warranty / return policy footer (shown on service reports &amp; QA certificates)</span>
             <input data-testid="branding-warranty" @bind="_warrantyFooter" @bind:event="oninput" maxlength="500" placeholder="e.g. Backed by our 90-Day Parts &amp; Labor Warranty." style="width:100%" />
@@ -193,7 +193,7 @@ else
 
     <label style="display:flex;flex-direction:column;gap:4px;margin-top:10px">
         <span class="meta">Technician QA / service notes</span>
-        <textarea data-testid="branding-notes" @bind="_techNotes" @bind:event="oninput" rows="2" maxlength="2000" placeholder="Optional bench summary (e.g. thermal paste replaced, BIOS updated, passed 25-min extended burn-in)." style="width:100%;font-family:inherit;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit"></textarea>
+        <textarea data-testid="branding-notes" @bind="_techNotes" @bind:event="oninput" rows="2" maxlength="2000" placeholder="Optional bench summary (e.g. thermal paste replaced, BIOS updated, passed 25-min extended burn-in)." style="width:100%;box-sizing:border-box;font-family:inherit;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:inherit"></textarea>
     </label>
 
     <div class="toolbar" style="margin-top: 12px">

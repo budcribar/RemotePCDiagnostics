@@ -249,6 +249,9 @@ public sealed class WorkflowService(
 
     public AutoLogonStatus AutoLogonStatus() => sys.GetAutoLogonStatus();
 
+    /// <summary>Automatic sign-in and continuing after a restart are set up by the Agent: the app never runs as administrator.</summary>
+    public const string NeedsAgentMessage = "Nothing was changed. Turn on Admin Repair Mode so the Agent can set up automatic sign-in and the restarts, then try again.";
+
     // ---- step 2: the tech's one click; everything after runs by itself ----
 
     /// <summary>Starts the unattended part. <paramref name="signIn"/> null = the PC signs in by itself already, or the client will sign in.</summary>
@@ -260,8 +263,15 @@ public sealed class WorkflowService(
         if (signIn is not null)
         {
             var helloOnly = false; try { helloOnly = sys.GetAutoLogonStatus().BlockedByWindowsHello; } catch { }
-            if (!sys.ValidateCredentials(signIn.User, signIn.Domain, signIn.Password)) return helloOnly ? "That password didn't work for this account (on a Windows Hello-only PC where you've never signed in with your password, Windows may not have the password cached locally — tick Skip below so the client signs in with their PIN). Nothing was changed." : "That password didn't work for this account. Nothing was changed.";
-            try { backup = sys.EnableAutoLogon(signIn.User, signIn.Domain, signIn.Password, RestartsInWorkflow); }
+            bool valid;
+            try { valid = await sys.ValidateCredentialsAsync(signIn.User, signIn.Domain, signIn.Password, ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
+            {
+                Log("check password: " + ex.Message);
+                return NeedsAgentMessage;
+            }
+            if (!valid) return helloOnly ? "That password didn't work for this account (on a Windows Hello-only PC where you've never signed in with your password, Windows may not have the password cached locally — tick Skip below so the client signs in with their PIN). Nothing was changed." : "That password didn't work for this account. Nothing was changed.";
+            try { backup = await sys.EnableAutoLogonAsync(signIn.User, signIn.Domain, signIn.Password, RestartsInWorkflow, ct).ConfigureAwait(false); }
             catch (Exception ex)
             {
                 Log("enable auto sign-in: " + ex);
@@ -276,14 +286,14 @@ public sealed class WorkflowService(
         {
             if (backup is not null)
             {
-                try { sys.DisableAutoLogon(backup); }
+                try { await sys.DisableAutoLogonAsync(backup, CancellationToken.None).ConfigureAwait(false); }
                 catch (Exception ex)
                 {
                     Log("disable auto sign-in: " + ex);
                     return "Couldn't set the app to continue after the restart, and automatic sign-in couldn't be turned off again: turn it off by hand (netplwiz).";
                 }
             }
-            return "Couldn't set the app to continue after the restart (administrator rights required). Nothing was changed.";
+            return "Couldn't set the app to continue after the restart. " + NeedsAgentMessage;
         }
         Save(s => s with
         {
@@ -580,6 +590,25 @@ public sealed class WorkflowService(
         Event(LogLevel.Warning, $"Service workflow cancelled\r\nActor: {Actor}\r\nApplied before cancelling: {State.Outcomes.Count(o => o.Success && !o.Skipped)}\r\n{CleanupText()}\r\nReport: {path ?? "(not saved)"}");
     }
 
+    /// <summary>
+    /// Reads the saved workflow again: the Agent keeps it, and it may connect after the app started (nothing could be read then).
+    /// Only while nothing has happened in this run, so it never replaces a workflow in progress. True when it got a saved workflow.
+    /// </summary>
+    public bool Reload()
+    {
+        if (Busy) return false;
+        var saved = LoadState(store);
+        lock (_gate)
+        {
+            var untouched = _state is { Stage: WorkflowStage.Idle, StartedUtc: null, ReviewedUtc: null, Fixes.Count: 0, Log.Count: 0 };
+            if (!untouched || saved.Stage == WorkflowStage.Idle) return false;
+            _state = saved;
+        }
+        Log($"Saved workflow read after the Agent connected (stage {saved.Stage}).");
+        Raise();
+        return true;
+    }
+
     /// <summary>Back to the start (keeps nothing of the old run except saved benchmark results).</summary>
     public void Reset()
     {
@@ -611,7 +640,7 @@ public sealed class WorkflowService(
         }
         if (State.AutoLogonEnabled)
         {
-            try { sys.DisableAutoLogon(State.AutoLogonBackup); Save(s => s with { AutoLogonEnabled = false, AutoLogonRestoredUtc = DateTimeOffset.UtcNow, AutoLogonRestoreError = null }); }
+            try { await sys.DisableAutoLogonAsync(State.AutoLogonBackup, CancellationToken.None).ConfigureAwait(false); Save(s => s with { AutoLogonEnabled = false, AutoLogonRestoredUtc = DateTimeOffset.UtcNow, AutoLogonRestoreError = null }); }
             catch (Exception ex)
             {
                 Log("disable auto sign-in: " + ex);

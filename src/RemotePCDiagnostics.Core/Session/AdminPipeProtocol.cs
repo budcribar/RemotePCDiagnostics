@@ -10,8 +10,13 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Win32.SafeHandles;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Changes;
+using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Plugins;
+using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Core.Sensors;
+using RemotePCDiagnostics.Core.Workflow;
 
 namespace RemotePCDiagnostics.Core.Session;
 
@@ -38,6 +43,105 @@ public interface IElevatedCommandBridge
     /// </summary>
     Task<AppUpdateResult?> SelfUpdateAsync(AppUpdateChannel channel, IReadOnlyList<string>? relaunchArguments = null, CancellationToken ct = default) =>
         Task.FromResult<AppUpdateResult?>(null);
+
+    /// <summary>
+    /// Has the elevated helper run the security audit with administrator rights, with the HardeningKitty installed next to it. Null when
+    /// it can't (not connected, or a helper from before this existed); throws <see cref="OperationCanceledException"/> when cancelled.
+    /// </summary>
+    Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, CancellationToken ct = default) =>
+        Task.FromResult<SecurityAuditRun?>(null);
+
+    /// <summary>
+    /// The workflow's automatic sign-in, done by the Agent (it writes HKLM and an LSA secret). Each throws
+    /// <see cref="InvalidOperationException"/> with the Agent's reason when it can't, and <see cref="NotSupportedException"/> when the
+    /// Agent is from before this existed.
+    /// </summary>
+    Task<bool> ValidateCredentialsAsync(string user, string domain, string password, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't check sign-in passwords.");
+    Task<AutoLogonBackup> EnableAutoLogonAsync(string user, string domain, string password, int logons, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't turn on automatic sign-in.");
+    Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't turn off automatic sign-in.");
+
+    /// <summary>
+    /// Has the Agent run RemotePCDiagnostics.ModuleHost with administrator rights for a module that ships with the app and needs them
+    /// (<paramref name="module"/> is its DLL path, or "--shared"), and returns the app's end of it (<see cref="AgentModuleHost"/>). Throws
+    /// <see cref="InvalidOperationException"/> with the Agent's reason when it can't, and <see cref="NotSupportedException"/> when the
+    /// Agent is from before this existed.
+    /// </summary>
+    Task<IModuleHostConnection> StartModuleHostAsync(string module, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't run modules.");
+
+    /// <summary>
+    /// Has the Agent secure the admin-only state folder, register the app's Windows Event Log source and run the history updates.
+    /// Null when the Agent isn't connected or is from before this existed.
+    /// </summary>
+    Task<MachineSetupResult?> PrepareMachineAsync(CancellationToken ct = default) => Task.FromResult<MachineSetupResult?>(null);
+
+    /// <summary>
+    /// A system setting the fixes and undo change with administrator rights (<see cref="IAdminSettingsBackend"/>), made by the Agent.
+    /// Throws <see cref="InvalidOperationException"/> with the Agent's reason when it can't, and <see cref="AdminRequiredException"/> when the
+    /// Agent isn't connected or is from before this existed.
+    /// </summary>
+    Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default) =>
+        throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+
+    /// <summary>
+    /// App removal, done by the Agent (<see cref="AppRemovalAgent"/>): Store packages for every account, an allowlisted program's
+    /// uninstaller, and allowlisted scheduled tasks. Each throws <see cref="NotSupportedException"/> when the Agent is from before this
+    /// existed, and otherwise returns the Agent's answer (<see cref="AppRemovalAgent.Result.Ok"/> false with its reason when it refused or failed).
+    /// </summary>
+    Task<AppRemovalAgent.Result> RemoveAppxPackagesAsync(IReadOnlyList<RemovableAppx> apps, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't remove apps.");
+    Task<AppRemovalAgent.Result> RunUninstallerAsync(UninstallCommand command, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't run uninstallers.");
+    Task<AppRemovalAgent.Result> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct = default) =>
+        throw new NotSupportedException("The Agent can't change scheduled tasks.");
+
+    /// <summary>
+    /// A machine-wide change (<see cref="IMachineTweaks"/>: HKLM policy values, extension blocklists, the page file, Defender exclusions),
+    /// made by the Agent. The response's <see cref="AdminPipeResponse.StdOut"/> carries what the change reads back. Throws
+    /// <see cref="AdminRequiredException"/> when the Agent isn't connected or is from before this existed.
+    /// </summary>
+    Task<AdminPipeResponse> MachineTweakAsync(AdminPipeTweak tweak, CancellationToken ct = default) =>
+        throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+
+    /// <summary>
+    /// Runs one of the Agent's own scripts (<see cref="AgentScripts"/>): the app sends the name and arguments, never PowerShell. A script
+    /// the Agent refuses comes back with <see cref="SystemCommandRunner.AgentFailedExitCode"/> and the reason in StdErr. Throws
+    /// <see cref="AdminRequiredException"/> when the Agent isn't connected or is from before this existed.
+    /// </summary>
+    Task<ProcessResult> RunAgentScriptAsync(AdminPipeScript script, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine = null) =>
+        throw new AdminRequiredException("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+
+    /// <summary>
+    /// The undo journal (%ProgramData%\RemotePCDiagnostics\state\changes.json, which only administrators can open), read by the
+    /// Agent. Null when it can't (not connected, or an Agent from before this existed).
+    /// </summary>
+    Task<IReadOnlyList<ChangeRecord>?> ReadChangeJournalAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ChangeRecord>?>(null);
+    /// <summary>Has the Agent take one undone change off the journal. False when it couldn't.</summary>
+    Task<bool> RemoveJournalChangeAsync(Guid id, CancellationToken ct = default) => Task.FromResult(false);
+    /// <summary>
+    /// Has the Agent record a change the app just made in the undo journal. False when it couldn't (not connected, or an Agent from
+    /// before this existed); the app keeps the record and tries again when the Agent connects.
+    /// </summary>
+    Task<bool> AddJournalChangeAsync(ChangeRecord change, CancellationToken ct = default) => Task.FromResult(false);
+
+    /// <summary>
+    /// One of the state files the Agent keeps for the app (<see cref="ProtectedStateFiles.AgentManaged"/>) in the state folder only
+    /// administrators can open. <see cref="AgentStateRead.Ok"/> is false when the Agent couldn't read it (not connected, or too old);
+    /// a file that isn't there is Ok with no JSON.
+    /// </summary>
+    Task<AgentStateRead> ReadStateFileAsync(string name, CancellationToken ct = default) => Task.FromResult(AgentStateRead.Failed);
+    /// <summary>Has the Agent save one of those files (null JSON deletes it). False when it couldn't.</summary>
+    Task<bool> WriteStateFileAsync(string name, string? json, CancellationToken ct = default) => Task.FromResult(false);
+}
+
+/// <summary>A state file as the Agent read it: <paramref name="Ok"/> false when it couldn't; <paramref name="Json"/> null when there's no file.</summary>
+public sealed record AgentStateRead(bool Ok, string? Json)
+{
+    public static readonly AgentStateRead Failed = new(false, null);
 }
 
 public static class AdminCommandAllowlist
@@ -53,12 +157,12 @@ public static class AdminCommandAllowlist
             ["powercfg.exe"] = "powercfg.exe",
             ["wevtutil.exe"] = "wevtutil.exe",
             ["pnputil.exe"] = "pnputil.exe",
-            ["reg.exe"] = "reg.exe",
             ["shutdown.exe"] = "shutdown.exe",
             ["tpmtool.exe"] = "tpmtool.exe",
             ["dsregcmd.exe"] = "dsregcmd.exe",
             ["w32tm.exe"] = "w32tm.exe",
-            ["powershell.exe"] = Path.Combine("WindowsPowerShell", "v1.0", "powershell.exe"),
+            // Never powershell.exe or reg.exe: the Agent doesn't run scripts or registry edits the app wrote. Admin PowerShell is one of
+            // the Agent's own scripts (AgentScripts, op agent_script); registry changes are typed ops (system_setting, machine_tweak).
         }.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase);
 
     // What an elevated script from the app never needs: downloading, decoding or compiling code, running a string as code,
@@ -184,7 +288,7 @@ public static class AdminCommandAllowlist
     }
 
     /// <summary>
-    /// Enforces argument constraints on high-risk allowlisted tools (<c>reg.exe</c>, <c>powershell.exe</c>, <c>shutdown.exe</c>)
+    /// Enforces argument constraints on high-risk allowlisted tools (<c>shutdown.exe</c>, <c>wevtutil.exe</c>)
     /// so an un-elevated caller cannot abuse them for arbitrary persistence, registry hijacking, or payload staging.
     /// </summary>
     public static bool TryValidateArguments(string? requestedFileName, IReadOnlyList<string>? arguments, out string? error)
@@ -193,22 +297,16 @@ public static class AdminCommandAllowlist
         var leaf = Path.GetFileName(requestedFileName?.Trim() ?? "");
         var args = arguments ?? [];
 
-        if (string.Equals(leaf, "reg.exe", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(leaf, "wevtutil.exe", StringComparison.OrdinalIgnoreCase))
         {
-            if (args.Count < 2)
+            // Only reading events (qe): clearing, exporting or changing a log isn't something the app asks the Agent to do.
+            if (args.Count < 2 || !string.Equals(args[0].Trim(), "qe", StringComparison.OrdinalIgnoreCase)
+                || args.Skip(1).Any(x => x.StartsWith("/sq", StringComparison.OrdinalIgnoreCase) || x.StartsWith("/lf:true", StringComparison.OrdinalIgnoreCase)))
             {
-                error = "reg.exe requires a subcommand and key path.";
+                error = "wevtutil.exe is restricted to reading events (qe).";
                 return false;
             }
-            var sub = args[0].Trim();
-            if (string.Equals(sub, "query", StringComparison.OrdinalIgnoreCase))
-                return true;
-            if ((string.Equals(sub, "add", StringComparison.OrdinalIgnoreCase) || string.Equals(sub, "delete", StringComparison.OrdinalIgnoreCase))
-                && string.Equals(args[1].Trim(), @"HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce", StringComparison.OrdinalIgnoreCase))
-                return true;
-
-            error = $"reg.exe '{sub}' on '{args[1]}' is not permitted by the elevated repair policy.";
-            return false;
+            return true;
         }
 
         if (string.Equals(leaf, "shutdown.exe", StringComparison.OrdinalIgnoreCase))
@@ -216,29 +314,6 @@ public static class AdminCommandAllowlist
             if (args.Count == 0 || args[0].Trim() is not ("/r" or "/g" or "/a" or "-r" or "-g" or "-a"))
             {
                 error = "shutdown.exe is restricted to /r, /g, and /a.";
-                return false;
-            }
-            return true;
-        }
-
-        if (string.Equals(leaf, "powershell.exe", StringComparison.OrdinalIgnoreCase))
-        {
-            // Require the exact SystemCommandRunner.PowerShellArgs shape:
-            // -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <script>
-            if (args.Count != 6
-                || !string.Equals(args[0], "-NoProfile", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(args[1], "-NonInteractive", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(args[2], "-ExecutionPolicy", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(args[3], "Bypass", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(args[4], "-Command", StringComparison.OrdinalIgnoreCase))
-            {
-                error = "powershell.exe must use the canonical -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command <script> form.";
-                return false;
-            }
-
-            if (FindBlockedPowerShell(args[5]) is { } blocked)
-            {
-                error = $"PowerShell script contains blocked primitive '{blocked}'.";
                 return false;
             }
             return true;
@@ -253,7 +328,41 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("fileName")] string? FileName = null,
     [property: JsonPropertyName("arguments")] IReadOnlyList<string>? Arguments = null,
     [property: JsonPropertyName("timeoutMs")] int TimeoutMs = 60_000,
-    [property: JsonPropertyName("channel")] string? Channel = null);
+    [property: JsonPropertyName("channel")] string? Channel = null,
+    [property: JsonPropertyName("autoLogon")] AdminPipeAutoLogon? AutoLogon = null,
+    [property: JsonPropertyName("module")] string? Module = null,
+    [property: JsonPropertyName("setting")] AdminPipeSetting? Setting = null,
+    [property: JsonPropertyName("appRemoval")] AdminPipeAppRemoval? AppRemoval = null,
+    [property: JsonPropertyName("tweak")] AdminPipeTweak? Tweak = null,
+    [property: JsonPropertyName("script")] AdminPipeScript? Script = null,
+    [property: JsonPropertyName("changeId")] Guid? ChangeId = null,
+    [property: JsonPropertyName("change")] ChangeRecord? Change = null,
+    [property: JsonPropertyName("stateName")] string? StateName = null,
+    [property: JsonPropertyName("stateJson")] string? StateJson = null);
+
+/// <summary>
+/// The app removal requests' arguments: packages by name and publisher id, one uninstall command, or one task path. The Agent checks
+/// each against its own allowlists before doing anything.
+/// </summary>
+public sealed record AdminPipeAppRemoval(
+    [property: JsonPropertyName("packages")] IReadOnlyList<AdminPipePackage>? Packages = null,
+    [property: JsonPropertyName("msi")] bool Msi = false,
+    [property: JsonPropertyName("path")] string? Path = null,
+    [property: JsonPropertyName("arguments")] IReadOnlyList<string>? Arguments = null,
+    [property: JsonPropertyName("taskPath")] string? TaskPath = null,
+    [property: JsonPropertyName("enabled")] bool Enabled = false);
+
+public sealed record AdminPipePackage(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("publisherId")] string PublisherId);
+
+/// <summary>The automatic sign-in requests' arguments. The password is sent only to check it and to turn sign-in on.</summary>
+public sealed record AdminPipeAutoLogon(
+    [property: JsonPropertyName("user")] string? User = null,
+    [property: JsonPropertyName("domain")] string? Domain = null,
+    [property: JsonPropertyName("password")] string? Password = null,
+    [property: JsonPropertyName("logons")] int Logons = 0,
+    [property: JsonPropertyName("backup")] AutoLogonBackup? Backup = null);
 
 public sealed record AdminPipeResponse(
     [property: JsonPropertyName("ok")] bool Ok,
@@ -267,7 +376,16 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("error")] string? Error = null,
     [property: JsonPropertyName("sensors")] SensorSnapshot? Sensors = null,
     [property: JsonPropertyName("drives")] IReadOnlyList<DriveHealth>? Drives = null,
-    [property: JsonPropertyName("updateResult")] AppUpdateResult? UpdateResult = null);
+    [property: JsonPropertyName("updateResult")] AppUpdateResult? UpdateResult = null,
+    [property: JsonPropertyName("report")] string? Report = null,
+    [property: JsonPropertyName("cancelled")] bool Cancelled = false,
+    [property: JsonPropertyName("autoLogonBackup")] AutoLogonBackup? AutoLogonBackup = null,
+    [property: JsonPropertyName("modulePipe")] string? ModulePipe = null,
+    [property: JsonPropertyName("left")] IReadOnlyList<string>? Left = null,
+    [property: JsonPropertyName("taskState")] string? TaskState = null,
+    [property: JsonPropertyName("changes")] IReadOnlyList<ChangeRecord>? Changes = null,
+    [property: JsonPropertyName("stateJson")] string? StateJson = null,
+    [property: JsonPropertyName("setup")] MachineSetupResult? Setup = null);
 
 /// <summary>
 /// Length-prefixed (4-byte little-endian int32 + UTF-8 JSON) framing over Named Pipes with zero third-party dependencies.
@@ -280,6 +398,37 @@ public static class AdminPipeFraming
     public const string OpReadSensors = "read_sensors";
     public const string OpReadDrives = "read_drives";
     public const string OpSelfUpdate = "self_update";
+    /// <summary>Runs the security audit elevated; the response carries the report CSV. The only request the client can cancel.</summary>
+    public const string OpSecurityAudit = "security_audit";
+    /// <summary>Sent while a <see cref="OpSecurityAudit"/> request runs: stops it. It gets no response of its own.</summary>
+    public const string OpCancel = "cancel";
+    public const string OpValidateCredentials = "validate_credentials";
+    public const string OpEnableAutoLogon = "enable_autologon";
+    public const string OpDisableAutoLogon = "disable_autologon";
+    /// <summary>Starts a module host in the Agent for a module that needs administrator; the response names the pipe that carries its lines.</summary>
+    public const string OpModuleHost = "module_host";
+    /// <summary>Secures the state folder, registers the Event Log source and runs the history updates; the response carries what was done.</summary>
+    public const string OpPrepareMachine = "prepare_machine";
+    /// <summary>One <see cref="AdminPipeSetting"/> change (startup apps, services, hibernation, Fast Startup, DNS).</summary>
+    public const string OpSystemSetting = "system_setting";
+    /// <summary>Removes allowlisted Store packages for every account; the response lists the family names still installed.</summary>
+    public const string OpRemoveAppx = "remove_appx";
+    /// <summary>Runs an allowlisted program's own uninstaller (or msiexec /x for its product code).</summary>
+    public const string OpRunUninstaller = "run_uninstaller";
+    /// <summary>Turns an allowlisted scheduled task off or on; the response carries its state afterwards.</summary>
+    public const string OpSetScheduledTask = "set_scheduled_task";
+    /// <summary>The undo journal, which only administrators can open: read it, and take an undone change off it.</summary>
+    public const string OpJournalList = "journal_list";
+    public const string OpJournalRemove = "journal_remove";
+    /// <summary>One <see cref="AdminPipeTweak"/> change (HKLM policy values, extension blocklists, page file, Defender exclusions).</summary>
+    public const string OpMachineTweak = "machine_tweak";
+    /// <summary>One <see cref="AdminPipeScript"/>: the Agent builds and runs that script (Security fixes, updates, clean-up, sign-in tasks).</summary>
+    public const string OpAgentScript = "agent_script";
+    /// <summary>Records a change the app just made in the undo journal.</summary>
+    public const string OpJournalAdd = "journal_add";
+    /// <summary>The workflow and benchmark state files in the state folder: read one, or save it (no JSON deletes it).</summary>
+    public const string OpStateRead = "state_read";
+    public const string OpStateWrite = "state_write";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -485,6 +634,229 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         return new AppUpdateResult(response.Ok, Error: response.Error);
     }
 
+    public async Task<bool> ValidateCredentialsAsync(string user, string domain, string password, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpValidateCredentials, AutoLogon: new(user, domain, password)), ct).ConfigureAwait(false);
+        ThrowIfRefused(r);
+        return r.Ok;
+    }
+
+    public async Task<AutoLogonBackup> EnableAutoLogonAsync(string user, string domain, string password, int logons, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpEnableAutoLogon, AutoLogon: new(user, domain, password, logons)), ct).ConfigureAwait(false);
+        ThrowIfRefused(r);
+        if (!r.Ok || r.AutoLogonBackup is null) throw new InvalidOperationException(r.Error ?? "The Agent didn't turn on automatic sign-in.");
+        return r.AutoLogonBackup;
+    }
+
+    public async Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpDisableAutoLogon, AutoLogon: new(Backup: backup)), ct).ConfigureAwait(false);
+        ThrowIfRefused(r);
+        if (!r.Ok) throw new InvalidOperationException(r.Error ?? "The Agent didn't turn off automatic sign-in.");
+    }
+
+    /// <summary>How long the app waits to open the pipe of a module host the Agent started.</summary>
+    public static TimeSpan ModulePipeConnectTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    public async Task<IModuleHostConnection> StartModuleHostAsync(string module, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpModuleHost, Module: module), ct).ConfigureAwait(false);
+        ThrowIfRefused(r);
+        if (!r.Ok || string.IsNullOrEmpty(r.ModulePipe)) throw new InvalidOperationException(r.Error ?? "The Agent didn't start the module host.");
+        var pipe = new NamedPipeClientStream(".", r.ModulePipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+        try
+        {
+            using var connect = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connect.CancelAfter(ModulePipeConnectTimeout);
+            await pipe.ConnectAsync(connect.Token).ConfigureAwait(false);
+            return new PipeModuleHostConnection(pipe);
+        }
+        catch
+        {
+            pipe.Dispose();
+            throw;
+        }
+    }
+
+    public async Task<MachineSetupResult?> PrepareMachineAsync(CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpPrepareMachine), ct).ConfigureAwait(false);
+        if (!r.Allowed || r.Setup is null)
+        {
+            _log?.Warn($"[admin-pipe] Machine setup not run by the Agent: {r.Error ?? "no result"}");
+            return null;
+        }
+        return r.Setup;
+    }
+
+    public async Task<IReadOnlyList<ChangeRecord>?> ReadChangeJournalAsync(CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpJournalList), ct).ConfigureAwait(false);
+        if (!r.Ok) _log.Warn($"[admin-pipe] Reading the undo journal failed: {r.Error}");
+        return r.Ok ? r.Changes ?? [] : null;
+    }
+
+    public async Task<bool> RemoveJournalChangeAsync(Guid id, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpJournalRemove, ChangeId: id), ct).ConfigureAwait(false);
+        if (!r.Ok) _log.Warn($"[admin-pipe] Removing {id} from the undo journal failed: {r.Error}");
+        return r.Ok;
+    }
+
+    public async Task<bool> AddJournalChangeAsync(ChangeRecord change, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpJournalAdd, Change: change), ct).ConfigureAwait(false);
+        if (!r.Ok) _log.Warn($"[admin-pipe] Recording {change.Kind} '{change.Target}' in the undo journal failed: {r.Error}");
+        return r.Ok;
+    }
+
+    public async Task<AgentStateRead> ReadStateFileAsync(string name, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpStateRead, StateName: name), ct).ConfigureAwait(false);
+        if (!r.Ok) _log.Warn($"[admin-pipe] Reading {name} failed: {r.Error}");
+        return r.Ok ? new AgentStateRead(true, r.StateJson) : AgentStateRead.Failed;
+    }
+
+    public async Task<bool> WriteStateFileAsync(string name, string? json, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpStateWrite, StateName: name, StateJson: json), ct).ConfigureAwait(false);
+        if (!r.Ok) _log.Warn($"[admin-pipe] Saving {name} failed: {r.Error}");
+        return r.Ok;
+    }
+
+    public async Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpSystemSetting, Setting: setting), ct).ConfigureAwait(false);
+        // Not allowed = an Agent from before this existed ("Unknown operation"): it has to be updated before it can make these changes.
+        // (A change the Agent refuses or that fails comes back allowed, with the reason.)
+        if (!r.Allowed)
+            throw new AdminRequiredException("The Agent on this PC can't change this setting yet. Update Remote PC Diagnostics, then try again.");
+        if (!r.Ok) throw new InvalidOperationException(r.Error ?? "The Agent didn't make the change.");
+    }
+
+    public async Task<AppRemovalAgent.Result> RemoveAppxPackagesAsync(IReadOnlyList<RemovableAppx> apps, CancellationToken ct = default) =>
+        AppRemovalResult(await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpRemoveAppx,
+            AppRemoval: new(Packages: apps.Select(a => new AdminPipePackage(a.Name, a.PublisherId)).ToList())), ct).ConfigureAwait(false));
+
+    public async Task<AppRemovalAgent.Result> RunUninstallerAsync(UninstallCommand command, CancellationToken ct = default) =>
+        AppRemovalResult(await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpRunUninstaller,
+            AppRemoval: new(Msi: command.Msi, Path: command.Path, Arguments: command.Arguments)), ct).ConfigureAwait(false));
+
+    public async Task<AppRemovalAgent.Result> SetScheduledTaskEnabledAsync(string path, bool enabled, CancellationToken ct = default) =>
+        AppRemovalResult(await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpSetScheduledTask,
+            AppRemoval: new(TaskPath: path, Enabled: enabled)), ct).ConfigureAwait(false));
+
+    private static AppRemovalAgent.Result AppRemovalResult(AdminPipeResponse r)
+    {
+        ThrowIfRefused(r);
+        return new(r.Ok, r.Error, r.Left, r.ExitCode, r.TaskState);
+    }
+
+    public async Task<AdminPipeResponse> MachineTweakAsync(AdminPipeTweak tweak, CancellationToken ct = default)
+    {
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpMachineTweak, Tweak: tweak, TimeoutMs: 180_000), ct).ConfigureAwait(false);
+        // Not allowed = an Agent from before this existed ("Unknown operation"). A refused or failed change comes back allowed, with the reason.
+        if (!r.Allowed)
+            throw new AdminRequiredException("The Agent on this PC can't make this change yet. Update Remote PC Diagnostics, then try again.");
+        return r;
+    }
+
+    public async Task<ProcessResult> RunAgentScriptAsync(AdminPipeScript script, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine = null)
+    {
+        var timeoutMs = (int)Math.Clamp(timeout.TotalMilliseconds, 1_000, 3_600_000);
+        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpAgentScript, TimeoutMs: timeoutMs, Script: script), ct).ConfigureAwait(false);
+        // Not allowed = an Agent from before this existed ("Unknown operation"). A script it refuses comes back allowed, with the reason.
+        if (!r.Allowed)
+            throw new AdminRequiredException("The Agent on this PC can't make this change yet. Update Remote PC Diagnostics, then try again.");
+        if (r.ExitCode < 0 && !r.TimedOut && r.Error is not null)
+        {
+            _log.Warn($"[admin-pipe] Agent script '{script.Name}' not run: {r.Error}");
+            return new ProcessResult(SystemCommandRunner.AgentFailedExitCode, "", r.Error);
+        }
+        if (outputLine is not null && !string.IsNullOrEmpty(r.StdOut))
+            foreach (var line in r.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+                try { outputLine(line); } catch { }
+        return new ProcessResult(r.ExitCode, r.StdOut, r.StdErr, r.TimedOut);
+    }
+
+    /// <summary>An Agent from before a request existed answers "Unknown operation" (not allowed).</summary>
+    private static void ThrowIfRefused(AdminPipeResponse r)
+    {
+        if (!r.Allowed) throw new NotSupportedException(r.Error ?? "The Agent doesn't support this request.");
+    }
+
+    /// <summary>How long after cancelling the client waits for the helper to answer the cancelled request before dropping the pipe.</summary>
+    public static TimeSpan CancelGrace { get; set; } = TimeSpan.FromSeconds(20);
+
+    public async Task<SecurityAuditRun?> RunSecurityAuditAsync(TimeSpan timeout, CancellationToken ct = default)
+    {
+        var timeoutMs = (int)Math.Clamp(timeout.TotalMilliseconds, 1_000, 3_600_000);
+        var response = await SendCancellableAsync(new AdminPipeRequest(AdminPipeFraming.OpSecurityAudit, TimeoutMs: timeoutMs),
+            TimeSpan.FromMilliseconds(timeoutMs) + TimeSpan.FromMinutes(1), ct).ConfigureAwait(false);
+        if (response is null) return null;
+        if (response.Cancelled) throw new OperationCanceledException(ct);
+        if (!response.Allowed || (!response.Ok && !response.TimedOut))
+        {
+            _log?.Warn($"[admin-pipe] Security audit not run in helper: {response.Error ?? "no report"}");
+            return null;
+        }
+        return new SecurityAuditRun(new ProcessResult(response.ExitCode, response.StdOut, response.StdErr, response.TimedOut), response.Report);
+    }
+
+    /// <summary>
+    /// Sends a request the caller can cancel while it runs: on cancellation it sends <see cref="AdminPipeFraming.OpCancel"/> and waits
+    /// (up to <see cref="CancelGrace"/>) for the request's own answer, so the next request doesn't read a stale one, then throws. Null when
+    /// the helper doesn't answer within <paramref name="wait"/> (the pipe is dropped).
+    /// </summary>
+    private async Task<AdminPipeResponse?> SendCancellableAsync(AdminPipeRequest request, TimeSpan wait, CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        await _requestLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!_pipe.IsConnected)
+                throw new IOException("Admin helper named pipe is disconnected.");
+            await AdminPipeFraming.WriteFrameAsync(_pipe, request, ct).ConfigureAwait(false);
+            // Read without the caller's token: cancelling a pipe read mid-frame would leave half a frame behind. Dispose ends it.
+            var read = AdminPipeFraming.ReadFrameAsync<AdminPipeResponse>(_pipe, CancellationToken.None);
+            try
+            {
+                return await read.WaitAsync(wait, ct).ConfigureAwait(false)
+                    ?? throw new IOException("Admin helper closed the named pipe connection.");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await AdminPipeFraming.WriteFrameAsync(_pipe, new AdminPipeRequest(AdminPipeFraming.OpCancel), CancellationToken.None).ConfigureAwait(false);
+                    await read.WaitAsync(CancelGrace).ConfigureAwait(false);
+                }
+                catch
+                {
+                    _log?.Warn($"[admin-pipe] Helper didn't answer the cancelled '{request.Op}' in time; dropping the pipe.");
+                    Dispose();
+                }
+                throw;
+            }
+            catch (TimeoutException)
+            {
+                _log?.Warn($"[admin-pipe] Helper didn't answer '{request.Op}' within {wait}; dropping the pipe.");
+                Dispose();
+                return null;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            Dispose();
+            throw;
+        }
+        finally
+        {
+            _requestLock.Release();
+        }
+    }
+
     private async Task<AdminPipeResponse> SendAsync(AdminPipeRequest request, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -534,6 +906,8 @@ public sealed record AdminPipeServerOptions
     public string? AllowedClientSid { get; set; }
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(30);
     public Func<NamedPipeServerStream, (bool Allowed, string? Reason)>? CustomClientVerifier { get; set; }
+    /// <summary>Folders vendor uninstallers may be run from (null = Program Files, see <see cref="AppRemoval.IsVendorUninstaller"/>). Tests only.</summary>
+    public IReadOnlyList<string>? UninstallerRoots { get; set; }
 }
 
 /// <summary>
@@ -546,7 +920,17 @@ public sealed class AdminPipeServer(
     IProcessLauncher? launcher = null,
     Func<CancellationToken, Task<SensorSnapshot?>>? sensorReader = null,
     ILogger? log = null,
-    Func<AppUpdateChannel, IReadOnlyList<string>?, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null) : IAsyncDisposable, IDisposable
+    Func<AppUpdateChannel, IReadOnlyList<string>?, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null,
+    Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>>? securityAuditor = null,
+    IAutoLogonBackend? autoLogon = null,
+    AgentModuleHost? moduleHost = null,
+    IAdminSettingsBackend? adminSettings = null,
+    IMachineTweaks? machineTweaks = null,
+    DefenderPaths? defenderPaths = null,
+    string? appFolder = null,
+    Func<IChangeJournal>? changeJournal = null,
+    string? stateFolder = null,
+    IMachineSetup? machineSetup = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -562,6 +946,8 @@ public sealed class AdminPipeServer(
     private readonly IProcessLauncher _launcher = launcher ?? new SystemProcessLauncher();
     private NamedPipeServerStream? _server;
     private int _disposed;
+    /// <summary>Ends the module hosts this session started when the app's session ends.</summary>
+    private readonly CancellationTokenSource _moduleHosts = new();
 
     public async Task RunSingleSessionAsync(CancellationToken ct)
     {
@@ -585,12 +971,28 @@ public sealed class AdminPipeServer(
 
         log.Info($"[admin-pipe-server] Verified client connected on '{options.PipeName}'.");
 
+        try
+        {
+            await ServeAsync(server, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            // The app's session is over: so are the module hosts it asked for.
+            try { _moduleHosts.Cancel(); } catch (ObjectDisposedException) { }
+        }
+    }
+
+    private async Task ServeAsync(NamedPipeServerStream server, CancellationToken ct)
+    {
+        // A request read while a cancellable one ran (the client sends only a cancel then, so this is rare).
+        Task<AdminPipeRequest?>? pendingRead = null;
         while (server.IsConnected && !ct.IsCancellationRequested)
         {
             AdminPipeRequest? request;
             try
             {
-                request = await AdminPipeFraming.ReadFrameAsync<AdminPipeRequest>(server, ct).ConfigureAwait(false);
+                request = await (pendingRead ?? AdminPipeFraming.ReadFrameAsync<AdminPipeRequest>(server, ct)).ConfigureAwait(false);
+                pendingRead = null;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -604,17 +1006,58 @@ public sealed class AdminPipeServer(
 
             if (request is null)
                 break; // Client closed pipe cleanly
+            if (string.Equals(request.Op, AdminPipeFraming.OpCancel, StringComparison.OrdinalIgnoreCase))
+                continue; // Nothing is running to stop (the request finished first); a cancel gets no response.
 
-            var response = await HandleRequestAsync(request, ct).ConfigureAwait(false);
+            AdminPipeResponse response;
+            if (string.Equals(request.Op, AdminPipeFraming.OpSecurityAudit, StringComparison.OrdinalIgnoreCase))
+                (response, pendingRead) = await HandleCancellableAsync(server, request, ct).ConfigureAwait(false);
+            else
+                response = await HandleRequestAsync(request, ct).ConfigureAwait(false);
             try
             {
                 await AdminPipeFraming.WriteFrameAsync(server, response, ct).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is IOException)
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException)
             {
                 log.Warn($"[admin-pipe-server] Pipe write ended: {ex.Message}");
                 break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Runs a request while reading the pipe for a <see cref="AdminPipeFraming.OpCancel"/>, which stops it. Returns its response and the
+    /// read still open (or one that already brought the next request, or the client closing), for the loop to carry on with.
+    /// </summary>
+    private async Task<(AdminPipeResponse Response, Task<AdminPipeRequest?> Next)> HandleCancellableAsync(
+        NamedPipeServerStream server, AdminPipeRequest request, CancellationToken ct)
+    {
+        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var work = HandleRequestAsync(request, runCts.Token);
+        var next = AdminPipeFraming.ReadFrameAsync<AdminPipeRequest>(server, ct);
+        while (true)
+        {
+            if (await Task.WhenAny(work, next).ConfigureAwait(false) == work)
+                return (await work.ConfigureAwait(false), next);
+            AdminPipeRequest? arrived;
+            try { arrived = await next.ConfigureAwait(false); }
+            catch
+            {
+                // The client went away (or the helper is stopping): stop the run, and let the loop see the failed read.
+                runCts.Cancel();
+                return (await work.ConfigureAwait(false), next);
+            }
+            if (arrived is null)
+            {
+                runCts.Cancel();
+                return (await work.ConfigureAwait(false), next);
+            }
+            if (!string.Equals(arrived.Op, AdminPipeFraming.OpCancel, StringComparison.OrdinalIgnoreCase))
+                return (await work.ConfigureAwait(false), next); // Handled after this one's response, in order.
+            log.Info($"[admin-pipe-server] Cancelling '{request.Op}' at the client's request.");
+            runCts.Cancel();
+            next = AdminPipeFraming.ReadFrameAsync<AdminPipeRequest>(server, ct);
         }
     }
 
@@ -789,6 +1232,34 @@ public sealed class AdminPipeServer(
             }
         }
 
+        if (string.Equals(request.Op, AdminPipeFraming.OpSecurityAudit, StringComparison.OrdinalIgnoreCase))
+            return await RunSecurityAuditAsync(request, ct).ConfigureAwait(false);
+
+        if (request.Op is AdminPipeFraming.OpValidateCredentials or AdminPipeFraming.OpEnableAutoLogon or AdminPipeFraming.OpDisableAutoLogon)
+            return await Task.Run(() => HandleAutoLogon(request), ct).ConfigureAwait(false);
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpModuleHost, StringComparison.OrdinalIgnoreCase))
+            return await Task.Run(() => StartModuleHost(request), ct).ConfigureAwait(false);
+        if (string.Equals(request.Op, AdminPipeFraming.OpSystemSetting, StringComparison.OrdinalIgnoreCase))
+            return await Task.Run(() => HandleSystemSetting(request), ct).ConfigureAwait(false);
+        if (request.Op is AdminPipeFraming.OpRemoveAppx or AdminPipeFraming.OpRunUninstaller or AdminPipeFraming.OpSetScheduledTask)
+            return await HandleAppRemovalAsync(request, ct).ConfigureAwait(false);
+
+        if (request.Op is AdminPipeFraming.OpJournalList or AdminPipeFraming.OpJournalRemove or AdminPipeFraming.OpJournalAdd)
+            return await Task.Run(() => HandleJournal(request), ct).ConfigureAwait(false);
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpMachineTweak, StringComparison.OrdinalIgnoreCase))
+            return await Task.Run(() => HandleMachineTweakAsync(request, ct), ct).ConfigureAwait(false);
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpAgentScript, StringComparison.OrdinalIgnoreCase))
+            return await HandleAgentScriptAsync(request, ct).ConfigureAwait(false);
+
+        if (request.Op is AdminPipeFraming.OpStateRead or AdminPipeFraming.OpStateWrite)
+            return await Task.Run(() => HandleStateFile(request), ct).ConfigureAwait(false);
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpPrepareMachine, StringComparison.OrdinalIgnoreCase))
+            return await Task.Run(PrepareMachine, ct).ConfigureAwait(false);
+
         return new AdminPipeResponse(
             Ok: false,
             Allowed: false,
@@ -796,6 +1267,355 @@ public sealed class AdminPipeServer(
             HelperPid: Environment.ProcessId,
             ExitCode: -1,
             Error: $"Unknown operation '{request.Op}'.");
+    }
+
+    private AdminPipeResponse PrepareMachine()
+    {
+        if (machineSetup is null)
+            return new(Ok: false, Allowed: false, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId,
+                Error: "Machine setup is not supported by this elevated helper.");
+        var setup = machineSetup.Prepare();
+        log.Info($"[admin-pipe-server] Machine setup: state folder secured={setup.StateFolderSecured}, event source={setup.EventSourceReady}, " +
+            $"history update={setup.HistoryUpdate}, log move={setup.LogMove}.");
+        return new(Ok: setup.Done, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: setup.Done ? 0 : -1, Setup: setup);
+    }
+
+    /// <summary>The maximum sign-ins automatic sign-in may be turned on for (the workflow needs two).</summary>
+    public const int MaxAutoLogons = 5;
+
+    private AdminPipeResponse HandleAutoLogon(AdminPipeRequest request)
+    {
+        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true, AutoLogonBackup? backup = null) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            Error: error, AutoLogonBackup: backup);
+
+        if (autoLogon is null) return Answer(false, "Automatic sign-in is not supported by this elevated helper.", allowed: false);
+        var a = request.AutoLogon ?? new AdminPipeAutoLogon();
+        try
+        {
+            switch (request.Op)
+            {
+                case AdminPipeFraming.OpValidateCredentials:
+                    if (string.IsNullOrWhiteSpace(a.User) || a.Password is null) return Answer(false, "A user name and password are required.");
+                    return Answer(autoLogon.Validate(a.User, a.Domain ?? "", a.Password));
+                case AdminPipeFraming.OpEnableAutoLogon:
+                    if (string.IsNullOrWhiteSpace(a.User) || a.Password is null) return Answer(false, "A user name and password are required.");
+                    if (a.Logons is < 1 or > MaxAutoLogons) return Answer(false, $"Automatic sign-in is limited to 1 to {MaxAutoLogons} sign-ins.");
+                    var backup = autoLogon.Enable(a.User, a.Domain ?? "", a.Password, a.Logons);
+                    log.Info($"[admin-pipe-server] Automatic sign-in turned on for {a.Domain}\\{a.User} ({a.Logons} sign-ins).");
+                    return Answer(true, backup: backup);
+                default:
+                    // Only Winlogon's own values come back: AutoAdminLogon is "0" or "1", nothing else is written.
+                    if (a.Backup is { AutoAdminLogon: not (null or "0" or "1") })
+                        return Answer(false, "The saved sign-in settings aren't valid.");
+                    autoLogon.Disable(a.Backup);
+                    log.Info("[admin-pipe-server] Automatic sign-in turned off and the previous settings restored.");
+                    return Answer(true);
+            }
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] {request.Op} failed: {ex.Message}");
+            return Answer(false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Starts a module host for a module that ships with the app and needs administrator (<see cref="AgentModuleHost"/>), on a pipe of
+    /// its own with the same protection as this one: only the verified app may open it, once. The response names the pipe; the relay runs
+    /// until the app or the host ends it, or this session ends.
+    /// </summary>
+    private AdminPipeResponse StartModuleHost(AdminPipeRequest request)
+    {
+        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true, string? pipe = null) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            Error: error, ModulePipe: pipe);
+
+        if (moduleHost is null) return Answer(false, "Running modules is not supported by this elevated helper.", allowed: false);
+        var module = request.Module ?? "";
+        var shared = module == AgentModuleHost.Shared;
+        if (!shared && !moduleHost.IsAllowed(module)) return Answer(false, AgentModuleHost.NotAllowed);
+
+        var pipeName = $"{options.PipeName}-module-{Guid.NewGuid():N}";
+        NamedPipeServerStream stream;
+        IModuleHostConnection host;
+        try
+        {
+            stream = CreateSecuredServerStream(options with { PipeName = pipeName });
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] Module pipe not created: {ex.Message}");
+            return Answer(false, $"The Agent couldn't open a pipe for the module host: {ex.Message}");
+        }
+        try
+        {
+            host = moduleHost.Start(module);
+        }
+        catch (Exception ex)
+        {
+            stream.Dispose();
+            log.Warn($"[admin-pipe-server] Module host not started for '{module}': {ex.Message}");
+            return Answer(false, $"The Agent couldn't start the module host: {ex.Message}");
+        }
+
+        var lifetime = _moduleHosts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using (var connect = CancellationTokenSource.CreateLinkedTokenSource(lifetime))
+                {
+                    connect.CancelAfter(options.ConnectTimeout);
+                    await stream.WaitForConnectionAsync(connect.Token).ConfigureAwait(false);
+                }
+                var (verified, reason) = VerifyConnectedClient(stream, options);
+                if (!verified)
+                {
+                    log.Warn($"[admin-pipe-server] Rejected module pipe client: {reason}");
+                    return;
+                }
+                log.Info($"[admin-pipe-server] Module host started for '{(shared ? "shared" : Path.GetFileName(module))}'.");
+                await moduleHost.RelayAsync(stream, host, shared, lifetime).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
+            {
+                log.Info($"[admin-pipe-server] Module host ended: {ex.Message}");
+            }
+            finally
+            {
+                try { host.Dispose(); } catch { }
+                try { stream.Dispose(); } catch { }
+            }
+        });
+        return Answer(true, pipe: pipeName);
+    }
+
+    /// <summary>
+    /// The undo journal for an app that isn't elevated: it reads the records, adds the changes it makes and takes off the ones it
+    /// undid. Only the verified app can connect, and an undo runs in the app, which reaches administrator rights only through this
+    /// pipe's own checked requests (allowlisted commands and values), so a record adds nothing the app couldn't already ask for.
+    /// </summary>
+    private AdminPipeResponse HandleJournal(AdminPipeRequest request)
+    {
+        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true, IReadOnlyList<ChangeRecord>? changes = null) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            Error: error, Changes: changes);
+
+        if (changeJournal is null) return Answer(false, "The undo journal is not supported by this elevated helper.", allowed: false);
+        try
+        {
+            // Opened for each request: the app or another Agent may have changed the file since the last one.
+            var journal = changeJournal();
+            if (request.Op == AdminPipeFraming.OpJournalList) return Answer(true, changes: journal.All);
+            if (request.Op == AdminPipeFraming.OpJournalAdd)
+            {
+                if (ProtectedStateFiles.InvalidChange(request.Change) is { } bad) return Answer(false, bad);
+                journal.Add(request.Change!);
+                log.Info($"[admin-pipe-server] Recorded {request.Change!.Kind} '{request.Change.Target}' in the undo journal.");
+                return Answer(true);
+            }
+            if (request.ChangeId is not { } id || id == Guid.Empty) return Answer(false, "Which change to remove wasn't given.");
+            if (journal.All.All(c => c.Id != id)) return Answer(true); // already gone
+            journal.Remove(id);
+            log.Info($"[admin-pipe-server] Undone change {id} taken off the undo journal.");
+            return Answer(true);
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] {request.Op} failed: {ex.Message}");
+            return Answer(false, ex.Message);
+        }
+    }
+
+    /// <summary>The installed app's folder (the Agent's own): where the sign-in tasks run the Agent launcher from.</summary>
+    private string AppFolder => appFolder ?? AppContext.BaseDirectory;
+
+    private async Task<AdminPipeResponse> HandleAgentScriptAsync(AdminPipeRequest request, CancellationToken ct)
+    {
+        AdminPipeResponse Refused(string error) => new(
+            Ok: false, Allowed: true, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: -1, Error: error);
+
+        if (request.Script is not { Name.Length: > 0 } script) return Refused("No script was named.");
+        var what = $"{script.Name} {string.Join(' ', script.Args ?? [])}";
+        if (AgentScripts.Build(script, AppFolder, out var refusal) is not { } ps)
+        {
+            log.Warn($"[admin-pipe-server] Agent script '{what}' refused: {refusal}");
+            return Refused(refusal ?? "That change isn't allowed.");
+        }
+        // The script is this app's own code; the screen is a second check that nothing in it downloads or runs other code.
+        if (AdminCommandAllowlist.FindBlockedPowerShell(ps) is { } blocked)
+        {
+            log.Warn($"[admin-pipe-server] Agent script '{what}' blocked: contains '{blocked}'.");
+            return Refused($"The script contains '{blocked}', which the Agent doesn't run.");
+        }
+        var timeout = TimeSpan.FromMilliseconds(Math.Clamp(request.TimeoutMs, 1_000, 3_600_000));
+        try
+        {
+            var pr = await _launcher.RunAsync(SystemCommandRunner.PowerShell, SystemCommandRunner.PowerShellArgs(ps), timeout, ct).ConfigureAwait(false);
+            log.Info($"[admin-pipe-server] Agent script '{what}' exit={pr.ExitCode} timedOut={pr.TimedOut}.");
+            return new AdminPipeResponse(
+                Ok: !pr.TimedOut, Allowed: true, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId,
+                ExitCode: pr.ExitCode, StdOut: pr.StdOut, StdErr: pr.StdErr, TimedOut: pr.TimedOut,
+                Error: pr.TimedOut ? "The change timed out." : null);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] Agent script '{what}' failed to start: {ex.Message}");
+            return Refused("PowerShell didn't start: " + ex.Message);
+        }
+    }
+
+    private async Task<AdminPipeResponse> HandleMachineTweakAsync(AdminPipeRequest request, CancellationToken ct)
+    {
+        AdminPipeResponse Answer(bool ok, string? text = null, string? error = null, bool allowed = true) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            StdOut: text ?? "", Error: error);
+
+        if (machineTweaks is null) return Answer(false, error: "Machine-wide changes are not supported by this elevated helper.", allowed: false);
+        if (request.Tweak is not { } t) return Answer(false, error: "No change was sent.");
+        var what = t.Target ?? t.Name ?? $"{t.Folders?.Count ?? 0} folder(s), {t.Processes?.Count ?? 0} program(s)";
+        try
+        {
+            if (MachineTweakRules.Refusal(t, defenderPaths ?? DefenderPaths.Current(options.AllowedClientSid)) is { } refusal)
+            {
+                log.Warn($"[admin-pipe-server] {t.Action} '{what}' refused: {refusal}");
+                return Answer(false, error: refusal);
+            }
+            var (ok, text) = await MachineTweakRules.ApplyAsync(machineTweaks, t, ct).ConfigureAwait(false);
+            log.Info($"[admin-pipe-server] {t.Action} '{what}' {(ok ? "done" : "not done")}.");
+            return ok ? Answer(true, text) : Answer(false, error: text ?? "Windows didn't allow the change.");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] {t.Action} '{what}' failed: {ex.Message}");
+            return Answer(false, error: ex.Message);
+        }
+    }
+
+    /// <summary>The workflow and benchmark state for an app that isn't elevated, by fixed file name only, checked before it's saved.</summary>
+    private AdminPipeResponse HandleStateFile(AdminPipeRequest request)
+    {
+        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true, string? json = null) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            Error: error, StateJson: json);
+
+        if (string.IsNullOrEmpty(stateFolder)) return Answer(false, "State files are not supported by this elevated helper.", allowed: false);
+        if (!ProtectedStateFiles.IsAgentManaged(request.StateName)) return Answer(false, $"'{request.StateName}' isn't a state file the Agent keeps.", allowed: false);
+        var path = Path.Combine(stateFolder, request.StateName!);
+        try
+        {
+            if (request.Op == AdminPipeFraming.OpStateRead)
+                return Answer(true, json: File.Exists(path) ? File.ReadAllText(path) : null);
+
+            if (request.StateJson is null)
+            {
+                if (File.Exists(path)) File.Delete(path);
+                return Answer(true);
+            }
+            if (ProtectedStateFiles.InvalidState(request.StateName!, request.StateJson) is { } bad) return Answer(false, bad);
+            // Never creates the folder: it must already be the secured one (only administrators can open it).
+            if (!Directory.Exists(stateFolder)) return Answer(false, "The state folder isn't set up yet.");
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, request.StateJson);
+            File.Move(tmp, path, overwrite: true);
+            return Answer(true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            log.Warn($"[admin-pipe-server] {request.Op} {request.StateName} failed: {ex.Message}");
+            return Answer(false, ex.Message);
+        }
+    }
+
+    private AdminPipeResponse HandleSystemSetting(AdminPipeRequest request)
+    {
+        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1, Error: error);
+
+        if (adminSettings is null) return Answer(false, "System settings are not supported by this elevated helper.", allowed: false);
+        if (request.Setting is not { } s) return Answer(false, "No setting was sent.");
+        try
+        {
+            if (AdminSettingsRules.Refusal(s, adminSettings.IsDriver) is { } refusal)
+            {
+                log.Warn($"[admin-pipe-server] {s.Action} '{s.Target ?? s.Name}' refused: {refusal}");
+                return Answer(false, refusal);
+            }
+            AdminSettingsRules.Apply(adminSettings, s);
+            log.Info($"[admin-pipe-server] {s.Action} '{s.Target ?? s.Name}' done.");
+            return Answer(true);
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] {s.Action} '{s.Target ?? s.Name}' failed: {ex.Message}");
+            return Answer(false, ex.Message);
+        }
+    }
+
+    private async Task<AdminPipeResponse> HandleAppRemovalAsync(AdminPipeRequest request, CancellationToken ct)
+    {
+        var a = request.AppRemoval ?? new AdminPipeAppRemoval();
+        AppRemovalAgent.Result r;
+        try
+        {
+            r = request.Op switch
+            {
+                AdminPipeFraming.OpRemoveAppx => await AppRemovalAgent.RemoveAppxAsync(_launcher,
+                    (a.Packages ?? []).Select(p => (p.Name, p.PublisherId)).ToList(), ct).ConfigureAwait(false),
+                AdminPipeFraming.OpRunUninstaller => await AppRemovalAgent.RunUninstallerAsync(_launcher,
+                    new UninstallCommand(a.Msi, a.Path ?? "", a.Arguments ?? []), ct, options.UninstallerRoots).ConfigureAwait(false),
+                _ => await AppRemovalAgent.SetScheduledTaskAsync(_launcher, a.TaskPath, a.Enabled, ct).ConfigureAwait(false),
+            };
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            r = new AppRemovalAgent.Result(false, ex.Message, ExitCode: -1);
+        }
+        log.Info($"[admin-pipe-server] {request.Op}: ok={r.Ok} exit={r.ExitCode}{(r.Left is null ? "" : $" left=[{string.Join(", ", r.Left)}]")}{(r.TaskState is null ? "" : " state=" + r.TaskState)}{(r.Error is null ? "" : " " + r.Error)}");
+        return new AdminPipeResponse(
+            Ok: r.Ok, Allowed: true, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: r.ExitCode,
+            Error: r.Error, Left: r.Left, TaskState: r.TaskState);
+    }
+
+    private async Task<AdminPipeResponse> RunSecurityAuditAsync(AdminPipeRequest request, CancellationToken ct)
+    {
+        AdminPipeResponse Fail(string error, bool allowed = true, bool cancelled = false) => new(
+            Ok: false, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: -1,
+            Error: error, Cancelled: cancelled);
+
+        if (securityAuditor is null)
+            return Fail("The security audit is not supported by this elevated helper.", allowed: false);
+        try
+        {
+            var run = await securityAuditor(TimeSpan.FromMilliseconds(Math.Clamp(request.TimeoutMs, 1_000, 3_600_000)), ct).ConfigureAwait(false);
+            return new AdminPipeResponse(
+                Ok: !run.Process.TimedOut && run.ReportCsv is not null,
+                Allowed: true,
+                Elevated: Environment.IsPrivilegedProcess,
+                HelperPid: Environment.ProcessId,
+                ExitCode: run.Process.ExitCode,
+                StdOut: run.Process.StdOut,
+                StdErr: run.Process.StdErr,
+                TimedOut: run.Process.TimedOut,
+                Error: run.Process.TimedOut ? "The audit timed out." : run.ReportCsv is null ? "The audit wrote no report." : null,
+                Report: run.ReportCsv);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return Fail("The audit was cancelled.", cancelled: true);
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] Security audit failed: {ex.Message}");
+            return Fail($"Security audit failed: {ex.Message}");
+        }
     }
 
     private static NamedPipeServerStream CreateSecuredServerStream(AdminPipeServerOptions options)
@@ -955,6 +1775,7 @@ public sealed class AdminPipeServer(
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
         try { _server?.Dispose(); } catch { }
+        try { _moduleHosts.Cancel(); } catch { }
     }
 
     public ValueTask DisposeAsync()

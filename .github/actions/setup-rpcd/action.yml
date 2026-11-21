@@ -1,0 +1,53 @@
+name: Set up RPCD build
+description: Installs the .NET SDK and makes sure the PeakSWC.RemoteBlazorWebView packages can be restored (nuget.org, or packed from source when the pinned version isn't published yet).
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Ensure RemoteBlazorWebView packages
+      shell: pwsh
+      run: |
+        $pkgDir = Join-Path $env:GITHUB_WORKSPACE 'third_party/RemoteBlazorWebView/packages'
+        New-Item -ItemType Directory -Force $pkgDir | Out-Null
+        if (@(Get-ChildItem $pkgDir -Filter 'PeakSWC.RemoteBlazorWebView.Wpf.*.nupkg' -ErrorAction SilentlyContinue).Count -eq 0) {
+          [xml]$props = Get-Content Directory.Build.props
+          $rbwvNode = $props.Project.PropertyGroup | ForEach-Object { $_['RbwvVersion'] } | Where-Object { $_ } | Select-Object -First 1
+          $rbwvVer = if ($rbwvNode -is [System.Xml.XmlElement]) { $rbwvNode.InnerText.Trim() } else { "$rbwvNode".Trim() }
+          $verLower = $rbwvVer.ToLowerInvariant()
+          $onNuGet = $true
+          foreach ($pkg in 'peakswc.remoteblazorwebview.remotecomponents', 'peakswc.remoteblazorwebview.wpf', 'peakswc.remotewebview', 'peakswc.remotewebviewservice.lib') {
+            try {
+              $resp = Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/$pkg/$verLower/$pkg.$verLower.nupkg" -Method Head -UseBasicParsing -TimeoutSec 10
+              if ($resp.StatusCode -ne 200) { $onNuGet = $false; break }
+            } catch { $onNuGet = $false; break }
+          }
+          if ($onNuGet) {
+            "Using PeakSWC.RemoteBlazorWebView packages ($rbwvVer) from nuget.org."
+          } else {
+            $suffix = if ($rbwvVer -match '-(.+)$') { $Matches[1] } else { '' }
+            $work = Join-Path $env:RUNNER_TEMP 'rbwv-build'
+            $srcRoot = Join-Path $work 'RemoteBlazorWebView'
+            $tutorialStub = Join-Path $work 'RemoteBlazorWebViewTutorial'
+            New-Item -ItemType Directory -Force $tutorialStub | Out-Null
+            Set-Content -Path (Join-Path $tutorialStub 'README.md') -Value '# RemoteBlazorWebView'
+            git clone --branch net10 --depth 1 https://github.com/budcribar/RemoteBlazorWebView.git $srcRoot
+            Push-Location (Join-Path $srcRoot 'src/RemoteWebView.Blazor.JS')
+            try {
+              # Enable corepack yarn for Web.JS submodule build invoked by build:production, or use npm + webpack.
+              corepack enable
+              yarn install
+              if ($LASTEXITCODE -ne 0) { throw "yarn install failed ($LASTEXITCODE)" }
+              npm run build:production
+              if ($LASTEXITCODE -ne 0) { throw "JS bundle build failed ($LASTEXITCODE)" }
+            } finally { Pop-Location }
+            foreach ($p in 'RemoteWebViewService.Lib', 'RemoteWebView', 'RemoteBlazorWebView.RemoteComponents', 'RemoteBlazorWebView.Wpf') {
+              $packArgs = @('pack', "$srcRoot/src/$p", '-c', 'Release', '-p:GeneratePackageOnBuild=false', '-o', $pkgDir)
+              if ($suffix) { $packArgs += "-p:VersionSuffix=$suffix" }
+              & dotnet @packArgs
+              if ($LASTEXITCODE -ne 0) { throw "dotnet pack $p failed ($LASTEXITCODE)" }
+            }
+          }
+        }

@@ -1,6 +1,8 @@
 using System.Text.RegularExpressions;
 using RemotePCDiagnostics.Core.Osquery;
 
+using RemotePCDiagnostics.Core.Session;
+
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>Result of a DISM RestoreHealth or SFC /scannow repair, in the same shape as a check finding.</summary>
@@ -99,7 +101,7 @@ public static class WindowsRepair
         string Field(string name) => Regex.Match(o, $@"(?im)^\s*{name}\s*:\s*(.+?)\s*$") is { Success: true } m ? m.Groups[1].Value : "";
         var size = Field("Actual Size of Component Store");
         if (exitCode != 0 || size.Length == 0)
-            return (DiagnosticStatus.Error, exitCode is null ? "DISM didn't finish (no exit code). Run the app as administrator and try again."
+            return (DiagnosticStatus.Error, exitCode is null ? "DISM didn't finish (no exit code). " + ElevationService.AdminRepairHint
                 : $"DISM couldn't analyze the component store (exit code {ExitCodeText(exitCode.Value)}).", false);
         var parts = new List<string> { $"Component store size: {size}" };
         if (Field("Backups and Disabled Features") is { Length: > 0 } backups) parts.Add($"backups and disabled features: {backups}");
@@ -120,7 +122,7 @@ public static class WindowsRepair
             return (DiagnosticStatus.Error, "Windows is waiting for a restart to finish an earlier update or repair (0x800F0806). Restart the PC, then clean up again.", true);
         if (exitCode is 0 or RebootRequiredExitCode && (Has(o, "operation completed successfully") || o.Length == 0))
             return (DiagnosticStatus.Ok, reboot ? "Component store cleaned up; a restart finishes it." : "Component store cleaned up. Restart the PC before repairing the store again.", reboot);
-        if (exitCode is null) return (DiagnosticStatus.Error, "DISM didn't finish (no exit code). Run the app as administrator and try again.", reboot);
+        if (exitCode is null) return (DiagnosticStatus.Error, "DISM didn't finish (no exit code). " + ElevationService.AdminRepairHint, reboot);
         return (DiagnosticStatus.Error, $"DISM couldn't clean up the component store (exit code {ExitCodeText(exitCode.Value)}). See the output.", reboot);
     }
 
@@ -274,7 +276,7 @@ public static class WindowsRepair
             return (DiagnosticStatus.Ok, reboot ? "Windows component store repaired; a restart finishes the repair." : "Windows component store repaired. No restart needed.", reboot);
         if ((exitCode is 0 or RebootRequiredExitCode) && o.Length == 0)
             return (DiagnosticStatus.Ok, "DISM reported success.", reboot);
-        if (exitCode is null) return (DiagnosticStatus.Error, "DISM didn't finish (no exit code). Run the app as administrator and try again.", reboot);
+        if (exitCode is null) return (DiagnosticStatus.Error, "DISM didn't finish (no exit code). " + ElevationService.AdminRepairHint, reboot);
 
         var codeStr = exitCode.Value < 0 ? $"0x{unchecked((uint)exitCode.Value):X8}" : exitCode.Value.ToString();
         var dismSummary = !string.IsNullOrWhiteSpace(dismExcerpt) ? SummarizeDism(dismExcerpt) : null;
@@ -303,7 +305,7 @@ public static class WindowsRepair
         if (clean) return (DiagnosticStatus.Ok, "SFC did not find any integrity violations.", reboot);
         // Localized output: trust the exit code plus CBS showing a finished verify without repairs.
         if (exitCode == 0 && sr.Any(l => Has(l, "Verify complete"))) return (DiagnosticStatus.Ok, "SFC finished and found nothing to repair (from CBS.log).", reboot);
-        if (exitCode is null) return (DiagnosticStatus.Error, "SFC didn't finish (no exit code). Run the app as administrator and try again.", reboot);
+        if (exitCode is null) return (DiagnosticStatus.Error, "SFC didn't finish (no exit code). " + ElevationService.AdminRepairHint, reboot);
         return (DiagnosticStatus.Error, $"SFC couldn't confirm the repair (exit code {exitCode}). See the CBS.log excerpt.", reboot);
     }
 
@@ -402,7 +404,7 @@ public static class WindowsRepair
         if (!commands.IsScripted && !File.Exists(imagePath))
             return (null, "The Windows image is no longer there. Mount the Windows ISO again, run the check again, then repair.");
         var current = ParseCurrentEdition((await commands.RunAsync(dism, ["/English", "/Online", "/Get-CurrentEdition"], ImageInfoTimeout, ct).ConfigureAwait(false))?.StdOut);
-        if (current is null) return (null, "Couldn't read this PC's Windows edition. Run the app as administrator and try again.");
+        if (current is null) return (null, "Couldn't read this PC's Windows edition. " + ElevationService.AdminRepairHint);
         var list = await commands.RunAsync(dism, ["/English", "/Get-WimInfo", $"/WimFile:{imagePath}"], ImageInfoTimeout, ct).ConfigureAwait(false);
         var indexes = ParseWimIndexes(list?.StdOut);
         if (indexes.Count == 0) return (null, "Couldn't read the Windows image. It may be damaged or not a Windows installation image.");

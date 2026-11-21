@@ -173,6 +173,16 @@ internal static class Win32Session
         }
     }
 
+    private const int ERROR_ELEVATION_REQUIRED = 740;
+
+    /// <summary>
+    /// Win32 error 740 from CreateProcessAsUser: the program asks for administrator rights, and the app is always started as
+    /// the signed-in user. Builds from before Nov 19 (and local dev builds) still ask for them.
+    /// </summary>
+    public static string ElevationRequiredMessage(string executablePath) =>
+        $"{executablePath} asks for administrator rights, so it can't start as the signed-in user. It is an old build: " +
+        "install the current Remote PC Diagnostics on this computer, then try again.";
+
     /// <summary>
     /// Starts a command line in the active signed-in user's desktop session when running as <c>LocalSystem</c> in Session 0,
     /// or directly via <see cref="Process.Start(ProcessStartInfo)"/> when running interactively in a user console.
@@ -276,6 +286,8 @@ internal static class Win32Session
                     out var pi))
             {
                 var win32Err = Marshal.GetLastWin32Error();
+                if (win32Err == ERROR_ELEVATION_REQUIRED)
+                    return (null, ElevationRequiredMessage(executablePath));
                 return (null, $"Could not start process in user session (Win32 error {win32Err}: {new Win32Exception(win32Err).Message}).");
             }
 

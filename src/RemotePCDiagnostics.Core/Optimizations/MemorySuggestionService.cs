@@ -178,8 +178,12 @@ public interface IStorageCleanupSystem
 /// <summary>Microsoft Defender settings (exclusions).</summary>
 public interface IDefenderConfig
 {
-    /// <summary>Runs a Defender PowerShell script built by <see cref="DefenderProbe"/> (admin). Output = its stdout.</summary>
-    Task<(bool Ok, string? Output)> RunDefenderScriptAsync(string script, CancellationToken ct) => Task.FromResult<(bool, string?)>((false, null));
+    /// <summary>Adds the exclusions (the Agent does it: it needs administrator rights) and returns them read back
+    /// (<see cref="DefenderProbe.Confirmed"/>). Ok = false when Windows or the Agent refused.</summary>
+    Task<(bool Ok, string? Output)> AddDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) =>
+        Task.FromResult<(bool, string?)>((false, null));
+    /// <summary>Removes exclusions this app added (through the Agent).</summary>
+    Task<bool> RemoveDefenderExclusionsAsync(IReadOnlyList<string> folders, IReadOnlyList<string> processes, CancellationToken ct) => Task.FromResult(false);
 }
 
 /// <summary>Removing and reinstalling allowlisted apps (Store packages, vendor uninstallers, winget).</summary>
@@ -384,7 +388,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 LogError($"{a.Type} '{a.Target}' failed: {ex}");
-                outcome = new(false, "Windows didn't allow that change.");
+                outcome = new(false, AdminRequiredException.MessageOr(ex, "Windows didn't allow that change."));
             }
             string text = outcome.Message;
             long freedMemory = 0;
@@ -437,7 +441,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             LogError($"Undo {u.Type} '{u.Target}' failed: {ex}");
-            outcome = new(false, "Windows didn't allow undoing that change.");
+            outcome = new(false, AdminRequiredException.MessageOr(ex, "Windows didn't allow undoing that change."));
         }
         if (outcome.Success)
         {

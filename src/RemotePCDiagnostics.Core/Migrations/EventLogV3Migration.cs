@@ -13,7 +13,7 @@ public sealed record RawLogEvent(int EventId, LogLevel Level, DateTimeOffset Tim
 /// <summary>The Windows Event Log operations the migration needs (Host: EventLogReader, wevtutil, EventLog.WriteEntry).</summary>
 public interface IEventLogMigrationIo
 {
-    /// <summary>Clearing the log needs administrator.</summary>
+    /// <summary>Clearing the log needs administrator (the migration runs in the Agent).</summary>
     bool IsElevated { get; }
     /// <summary>Every event of source RemotePCDiagnostics in the Application log, oldest first, message text without the "Build:" line the sink adds.</summary>
     IReadOnlyList<RawLogEvent> ReadOurEvents();
@@ -61,7 +61,7 @@ public enum MigrationOutcome
     AlreadyDone,
     /// <summary>No old-format events (every PC except the one that had history before format 3): marker written, log untouched.</summary>
     NothingToMigrate,
-    /// <summary>Old events exist but this start isn't elevated; History shows "history update pending" until an elevated start.</summary>
+    /// <summary>Old events exist but this process isn't elevated; History shows "history update pending" until the Agent runs the update.</summary>
     NeedsElevation,
     /// <summary>Stopped before clearing the log (an event didn't convert, or the backup failed); retried next start.</summary>
     Failed,
@@ -100,7 +100,7 @@ public sealed class EventLogV3Migration(IEventLogMigrationIo io, MigrationMarker
             if (markers.IsDone(MarkerKey)) return MigrationOutcome.AlreadyDone;
             if (LoadPending() is { Cleared: true } resume)
             {
-                if (!io.IsElevated) { Log("an interrupted history update waits for an elevated start"); return MigrationOutcome.NeedsElevation; }
+                if (!io.IsElevated) { Log("an interrupted history update waits for the Agent (administrator)"); return MigrationOutcome.NeedsElevation; }
                 Log($"resuming: {resume.Events.Count(e => !e.Written)} of {resume.Events.Count} events left to write");
                 return WriteBack(resume);
             }
@@ -112,7 +112,7 @@ public sealed class EventLogV3Migration(IEventLogMigrationIo io, MigrationMarker
                 markers.MarkDone(MarkerKey, Now);
                 return MigrationOutcome.NothingToMigrate;
             }
-            if (!io.IsElevated) { Log($"{legacy} old-format results wait for an elevated start"); return MigrationOutcome.NeedsElevation; }
+            if (!io.IsElevated) { Log($"{legacy} old-format results wait for the Agent (administrator)"); return MigrationOutcome.NeedsElevation; }
 
             Directory.CreateDirectory(workDir);
             var backup = Path.Combine(workDir, $"Application-{Now.ToUniversalTime():yyyyMMdd-HHmmss}.evtx");

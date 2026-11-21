@@ -41,6 +41,7 @@ public class ModuleIdsTests
         ["DiskSpace"] = "9c7c4b12-5893-4e40-8ab7-7a2e379b3601",
         ["DuplicateFiles"] = "e22a8740-410a-4da5-a912-21ea7f7d195f",
         ["SleepWake"] = "d8665737-c11d-44ad-b1d3-72b14dcdaedd",
+        ["DeveloperSetup"] = "c4e8a912-3f7b-4d61-9b5e-2e8f1a7c4d03",
     };
 
     [Fact]

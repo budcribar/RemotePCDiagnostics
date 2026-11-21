@@ -38,6 +38,10 @@
 #ifndef AgentConsent
   #define AgentConsent "unattended"
 #endif
+; Release builds keep lzma2/ultra64. CI passes lzma2/fast for builds nobody downloads (pull requests, TestShop-only runs).
+#ifndef Compression
+  #define Compression "lzma2/ultra64"
+#endif
 
 #define AppName "Remote PC Diagnostics"
 #define AppPublisher "Remote PC Diagnostics"
@@ -96,8 +100,14 @@ UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputBaseName}
-Compression=lzma2/ultra64
+Compression={#Compression}
 SolidCompression=yes
+; Compress in 64 MB blocks on 4 threads (the GitHub runners have 4 cores). Single-threaded ultra64 took about 2.5 minutes
+; per installer; the blocks cost a little compression ratio. ISCC is a 32-bit process and 4 ultra64 threads need more
+; memory than it can address ("Out of memory"), so compression runs in the separate 64-bit ISLZMA process.
+LZMANumBlockThreads=4
+LZMABlockSize=65536
+LZMAUseSeparateProcess=yes
 WizardStyle=modern
 WizardResizable=no
 WizardSizePercent=100,100

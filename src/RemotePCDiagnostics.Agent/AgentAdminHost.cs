@@ -5,6 +5,11 @@ using Microsoft.Extensions.Logging;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Logging;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Plugins;
+using RemotePCDiagnostics.Core.Security;
+using RemotePCDiagnostics.Core.Workflow;
+using RemotePCDiagnostics.Core;
+using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Session;
 
@@ -118,7 +123,11 @@ internal static class AgentAdminHost
             Process? hostProcess;
             try
             {
-                hostProcess = Process.Start(startInfo);
+                // The launcher runs elevated (a UAC prompt, or the resume task's highest privileges), but the app never does: on Windows
+                // it's started with the signed-in user's own un-elevated token, and admin work goes through this launcher's pipe.
+                hostProcess = !OperatingSystem.IsWindows() || !Environment.IsPrivilegedProcess ? Process.Start(startInfo)
+                    : useDotnet ? await UnelevatedProcess.StartAsync("dotnet", [hostDll, .. hostArgs], AppContext.BaseDirectory, log).ConfigureAwait(false)
+                    : await UnelevatedProcess.StartAsync(hostExe, hostArgs, AppContext.BaseDirectory, log).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -143,12 +152,23 @@ internal static class AgentAdminHost
                     ConnectTimeout = TimeSpan.FromSeconds(60),
                 };
 
+                var machineTweaks = OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null;
+                StartDevBenchmarkSweep(machineTweaks, log);
+
                 var server = new AdminPipeServer(
                     serverOptions,
                     new SystemProcessLauncher(),
                     sensorReader: sensorReader,
                     log: log,
-                    selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token));
+                    selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token),
+                    securityAuditor: SecurityAuditModule.ElevatedRunner(AppContext.BaseDirectory, log),
+                    autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null,
+                    moduleHost: new AgentModuleHost(AppContext.BaseDirectory, log),
+                    adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null,
+                    machineTweaks: machineTweaks,
+                    changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
+                    stateFolder: ProtectedState.Folder(),
+                    machineSetup: AgentMachineSetup.ForSignedInUser(log));
 
                 var serverTask = Task.Run(async () =>
                 {
@@ -235,6 +255,9 @@ internal static class AgentAdminHost
             {
                 try
                 {
+                    var machineTweaks = OperatingSystem.IsWindows() ? new WindowsMachineTweaks(log) : null;
+                    StartDevBenchmarkSweep(machineTweaks, log);
+
                     using var server = new AdminPipeServer(
                         new AdminPipeServerOptions
                         {
@@ -247,7 +270,17 @@ internal static class AgentAdminHost
                         new SystemProcessLauncher(),
                         sensorReader: sensorReader,
                         log: log,
-                        selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token));
+                        selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token),
+                        // The helper sits in the app's folder, next to the HardeningKitty the app ships.
+                        securityAuditor: SecurityAuditModule.ElevatedRunner(AppContext.BaseDirectory, log),
+                        autoLogon: OperatingSystem.IsWindows() ? new WindowsAutoLogon(log) : null,
+                        // The modules that ship with the app and need administrator run in a module host from the app's folder.
+                        moduleHost: new AgentModuleHost(AppContext.BaseDirectory, log),
+                        adminSettings: OperatingSystem.IsWindows() ? new WindowsAdminSettings(log) : null,
+                        machineTweaks: machineTweaks,
+                        changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
+                        stateFolder: ProtectedState.Folder(),
+                        machineSetup: AgentMachineSetup.ForSignedInUser(log));
 
                     await server.RunSingleSessionAsync(cts.Token).ConfigureAwait(false);
                     return ExitOk;
@@ -263,6 +296,24 @@ internal static class AgentAdminHost
                 }
             }
         }
+    }
+
+    private static void StartDevBenchmarkSweep(IMachineTweaks? tweaks, ILogger log)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var cleaned = await new WindowsDevDriveManager(log).SweepLeftoversAsync(tweaks, CancellationToken.None).ConfigureAwait(false);
+                if (cleaned > 0)
+                    log.Info($"[devdrive] Startup sweep cleaned {cleaned} leftover developer benchmark artifact(s).");
+            }
+            catch (Exception ex)
+            {
+                log.Warn($"[devdrive] Startup sweep failed: {ex.Message}");
+            }
+        });
     }
 
     private sealed class LazySensorProvider : IDisposable

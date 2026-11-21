@@ -11,8 +11,8 @@ public enum ModuleProcessMode
     Default,
     /// <summary>In the app process.</summary>
     InProcess,
-    /// <summary>In RemotePCDiagnostics.ModuleHost: with a restricted, Medium-integrity token, or with the app's own token for a module that
-    /// needs administrator (crash and memory isolation only).</summary>
+    /// <summary>In RemotePCDiagnostics.ModuleHost: with a restricted, Medium-integrity token, or for a module that needs administrator, in a
+    /// module host the Agent runs (the app never runs as administrator).</summary>
     OutOfProcess,
 }
 
@@ -24,7 +24,7 @@ public sealed record ModuleHosting
 {
     /// <summary>The module's check runs in the module host, not the app.</summary>
     public bool OutOfProcess { get; init; }
-    /// <summary>Out of process with the app's own token (the module needs administrator).</summary>
+    /// <summary>Out of process in a module host the Agent runs (the module needs administrator).</summary>
     public bool Elevated { get; init; }
     /// <summary>What the setting asked for.</summary>
     public ModuleProcessMode Requested { get; init; }
@@ -42,7 +42,7 @@ public sealed record ModuleHosting
     public bool CanRunOutOfProcess => InProcessOnly is null;
 
     /// <summary>Shown on the About page.</summary>
-    public string Describe() => OutOfProcess ? (Elevated ? "Out of process (administrator)" : "Out of process (user mode)") : "In process";
+    public string Describe() => OutOfProcess ? (Elevated ? "Out of process (in the Agent)" : "Out of process (user mode)") : "In process";
 
     /// <summary>Where a module that ships with the app runs for <paramref name="requested"/>.</summary>
     public static ModuleHosting For(ModuleManifest manifest, ModuleProcessMode requested)

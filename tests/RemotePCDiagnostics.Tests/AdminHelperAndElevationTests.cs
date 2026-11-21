@@ -44,6 +44,15 @@ public sealed class AdminHelperAndElevationTests
     {
         public bool IsConnected { get; set; } = connected;
         public List<(string FileName, IReadOnlyList<string> Arguments)> Calls { get; } = [];
+        public List<AdminPipeScript> Scripts { get; } = [];
+        public bool ScriptThrows { get; set; }
+
+        public Task<ProcessResult> RunAgentScriptAsync(AdminPipeScript script, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine = null)
+        {
+            if (ScriptThrows) throw new IOException("pipe is broken");
+            Scripts.Add(script);
+            return Task.FromResult(new ProcessResult(0, "done", ""));
+        }
 
         public Task<ProcessResult?> RunElevatedAsync(
             string fileName,
@@ -111,8 +120,8 @@ public sealed class AdminHelperAndElevationTests
         Assert.True(AdminCommandAllowlist.TryResolveSystemTool("DISM.exe", out var dism));
         Assert.EndsWith("DISM.exe", dism, StringComparison.OrdinalIgnoreCase);
 
-        Assert.True(AdminCommandAllowlist.TryResolveSystemTool(SystemCommandRunner.PowerShell, out var ps));
-        Assert.EndsWith("powershell.exe", ps, StringComparison.OrdinalIgnoreCase);
+        // Not PowerShell: the Agent runs only its own scripts (agent_script), never one the app sends.
+        Assert.False(AdminCommandAllowlist.TryResolveSystemTool(SystemCommandRunner.PowerShell, out _));
 
         // Rejects non-allowlisted tools even in System32.
         Assert.False(AdminCommandAllowlist.TryResolveSystemTool("cmd.exe", out _));
@@ -193,18 +202,25 @@ public sealed class AdminHelperAndElevationTests
         var local = new RecordingLauncher((_, _) => new ProcessResult(0, "local", ""));
         var lines = new List<string>();
         var bridge = new FakeBridge(connected: true, (_, _) => new ProcessResult(0, "elevated-line-1\nelevated-line-2", ""));
+        var sfc = SystemCommandRunner.SystemTool("sfc.exe");
 
         var unElevatedRunner = new SystemCommandRunner(
             launcher: local,
             elevatedBridge: bridge,
             isProcessElevated: () => false);
 
-        var res = await unElevatedRunner.RunPowerShellAsync("Write-Output 'ok'", TimeSpan.FromSeconds(10), CancellationToken.None, lines.Add);
+        var res = await unElevatedRunner.RunAsync(sfc, ["/verifyonly"], TimeSpan.FromSeconds(10), CancellationToken.None, lines.Add);
         Assert.NotNull(res);
         Assert.Contains("elevated-line-1", res!.StdOut);
         Assert.Equal(["elevated-line-1", "elevated-line-2"], lines);
         Assert.Single(bridge.Calls);
         Assert.Empty(local.Calls);
+
+        // PowerShell is never sent to the Agent: it runs with the app's own rights.
+        var ps = await unElevatedRunner.RunPowerShellAsync("Write-Output 'ok'", CancellationToken.None);
+        Assert.Equal("local", ps!.StdOut);
+        Assert.Single(bridge.Calls);
+        Assert.Single(local.Calls);
 
         // When already elevated, runs directly without crossing the bridge.
         var elevatedRunner = new SystemCommandRunner(
@@ -212,22 +228,60 @@ public sealed class AdminHelperAndElevationTests
             elevatedBridge: bridge,
             isProcessElevated: () => true);
 
-        var directRes = await elevatedRunner.RunPowerShellAsync("Write-Output 'direct'", CancellationToken.None);
+        var directRes = await elevatedRunner.RunAsync(sfc, ["/verifyonly"], CancellationToken.None);
         Assert.NotNull(directRes);
         Assert.Equal("local", directRes!.StdOut);
         Assert.Single(bridge.Calls);
-        Assert.Single(local.Calls);
-
-        // When bridge disconnects, falls back cleanly to local launcher.
-        bridge.IsConnected = false;
-        var fallbackRes = await unElevatedRunner.RunPowerShellAsync("Write-Output 'fallback'", CancellationToken.None);
-        Assert.NotNull(fallbackRes);
-        Assert.Equal("local", fallbackRes!.StdOut);
         Assert.Equal(2, local.Calls.Count);
+
+        // Without the Agent the tool runs with the app's own rights (and Windows refuses what needs more).
+        bridge.IsConnected = false;
+        var notConnected = await unElevatedRunner.RunAsync(sfc, ["/verifyonly"], CancellationToken.None);
+        Assert.Equal("local", notConnected!.StdOut);
+        Assert.Equal(3, local.Calls.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]   // the pipe broke
+    [InlineData(false)]  // the Agent refused it (an older Agent, or arguments it doesn't allow)
+    public async Task SystemCommandRunner_WhenTheAgentCallFails_DoesNotRunTheToolItself_AndSaysToTurnOnAdminRepairMode(bool throws)
+    {
+        var local = new RecordingLauncher((_, _) => new ProcessResult(0, "local", ""));
+        var bridge = new FakeBridge(connected: true, (_, _) => throws ? throw new IOException("pipe is broken") : null);
+        var runner = new SystemCommandRunner(launcher: local, elevatedBridge: bridge, isProcessElevated: () => false);
+
+        var res = await runner.RunAsync(SystemCommandRunner.SystemTool("dism.exe"), ["/Online", "/Cleanup-Image", "/ScanHealth"], CancellationToken.None);
+
+        Assert.Empty(local.Calls);
+        Assert.NotNull(res);
+        Assert.NotEqual(0, res!.ExitCode);
+        var why = SystemCommandRunner.AgentFailure(res);
+        Assert.NotNull(why);
+        if (throws) Assert.Contains(ElevationService.AdminRepairHint, why);
+        Assert.Null(SystemCommandRunner.AgentFailure(new ProcessResult(1, "", "")));
     }
 
     [Fact]
-    public async Task ElevationService_ManagesHelperConnectionStateAndPreservesRemoteRelaunchFlags()
+    public async Task SystemCommandRunner_AgentScript_GoesToTheAgentByName_AndFailsWithTheHintWhenThePipeBreaks()
+    {
+        var local = new RecordingLauncher((_, _) => new ProcessResult(0, "local", ""));
+        var bridge = new FakeBridge(connected: true, (_, _) => null);
+        var runner = new SystemCommandRunner(launcher: local, elevatedBridge: bridge, isProcessElevated: () => false);
+
+        var ok = await runner.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.CleanTemp), null, CancellationToken.None);
+        Assert.Equal(0, ok!.ExitCode);
+        Assert.Equal(AgentScripts.CleanTemp, Assert.Single(bridge.Scripts).Name);
+        Assert.Empty(local.Calls);
+        Assert.Empty(bridge.Calls);
+
+        bridge.ScriptThrows = true;
+        var broken = await runner.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.CleanTemp), null, CancellationToken.None);
+        Assert.Contains(ElevationService.AdminRepairHint, SystemCommandRunner.AgentFailure(broken));
+        Assert.Empty(local.Calls);
+    }
+
+    [Fact]
+    public async Task ElevationService_ManagesHelperConnectionState()
     {
         var sessionId = Guid.Parse("a8f5e2c1-4b3d-4e9f-8a1c-2d3e4f5a6b7c");
         var session = new SessionContext(
@@ -238,22 +292,9 @@ public sealed class AdminHelperAndElevationTests
             voice: true,
             group: "Acme-PC");
 
-        var relaunchArgs = ElevationService.BuildRelaunchArguments(session);
-        Assert.Equal(
-            [
-                "-u=https://remoteblazorwebview.com:34544",
-                $"-i={sessionId:D}",
-                "-g=acme-pc",
-                "--unattended",
-                "--voice",
-                "--restarted",
-            ],
-            relaunchArgs);
-
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         AdminPipeServer? activeServer = null;
         Task? serverTask = null;
-        IReadOnlyList<string>? capturedRelaunch = null;
 
         using var elevation = new ElevationService(
             session,
@@ -269,11 +310,6 @@ public sealed class AdminHelperAndElevationTests
                     new RecordingLauncher());
                 serverTask = activeServer.RunSingleSessionAsync(token);
                 return await AdminPipeClient.ConnectAsync(req.PipeName, TimeSpan.FromSeconds(10), token);
-            },
-            customRelauncher: (args, _) =>
-            {
-                capturedRelaunch = args;
-                return Task.FromResult(new ElevationResult(true, false, "Relaunched"));
             });
 
         var changedCount = 0;
@@ -289,10 +325,6 @@ public sealed class AdminHelperAndElevationTests
         Assert.True(elevation.IsAdminHelperConnected);
         Assert.True(elevation.HasAdminCapabilities);
         Assert.True(changedCount >= 1);
-
-        var relaunchRes = await elevation.RelaunchElevatedAsync(cts.Token);
-        Assert.True(relaunchRes.Success);
-        Assert.Equal(relaunchArgs, capturedRelaunch);
 
         elevation.Dispose();
         if (serverTask is not null)

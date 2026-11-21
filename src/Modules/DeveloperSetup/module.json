@@ -1,0 +1,12 @@
+{
+  "id": "c4e8a912-3f7b-4d61-9b5e-2e8f1a7c4d03",
+  "slug": "DeveloperSetup",
+  "displayName": "Developer setup",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.DeveloperSetup.DeveloperSetupPlugin",
+  "needsAdmin": false,
+  "hasUi": false,
+  "outOfProcess": false,
+  "portableUi": false,
+  "detailsReplaceReport": false
+}

@@ -4,6 +4,8 @@ using System.Text.Json.Serialization;
 namespace RemotePCDiagnostics.Core.Changes;
 
 /// <summary>Kinds of reversible changes. Each record keeps what was there before, so "Undo all" can put it back.</summary>
+/// <remarks>Written by name everywhere (the journal file and the admin pipe), so adding a kind never shifts the others.</remarks>
+[JsonConverter(typeof(JsonStringEnumConverter<ChangeKind>))]
 public enum ChangeKind
 {
     StartupApp,          // Target = Run-key name; Previous = StartupApproved bytes (base64) or null (value absent)
@@ -59,6 +61,8 @@ public interface IChangeJournal
     /// <summary>Removes the newest record of this kind and target (after a per-item undo elsewhere in the app).</summary>
     void RemoveLatest(ChangeKind kind, string target);
     event Action? Changed;
+    /// <summary>False while the saved journal couldn't be read yet (the Agent isn't connected): <see cref="All"/> then lists only this run's changes.</summary>
+    bool IsLoaded => true;
 }
 
 /// <summary>In-memory journal (tests, or when no file can be written).</summary>
@@ -103,7 +107,7 @@ public class MemoryChangeJournal : IChangeJournal
 /// <summary>Journal saved as JSON in %ProgramData%\RemotePCDiagnostics\state\changes.json (survives restarts; only administrators can change it).</summary>
 public sealed class FileChangeJournal : MemoryChangeJournal
 {
-    private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
+    internal static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
     private readonly string _path;
     private readonly ILogger? _log;
 

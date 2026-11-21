@@ -3,21 +3,24 @@ using System.Diagnostics.Eventing.Reader;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Migrations;
 
-namespace RemotePCDiagnostics.Host;
+using ILogger = Microsoft.Extensions.Logging.ILogger;
+using RemotePCDiagnostics.Logging;
+
+namespace RemotePCDiagnostics.Agent;
 
 /// <summary>Event Log access for <see cref="EventLogV3Migration"/>: EventLogReader to read, wevtutil to back up and clear, EventLog to write.</summary>
 public sealed class WindowsEventLogMigrationIo(ILogger? log) : IEventLogMigrationIo
 {
-    public bool IsElevated => App.IsAdministrator();
+    public bool IsElevated => Environment.IsPrivilegedProcess;
 
-    public IReadOnlyList<RawLogEvent> ReadOurEvents() => ReadOurEvents(EventLogSink.LogName);
+    public IReadOnlyList<RawLogEvent> ReadOurEvents() => ReadOurEvents(AppEventLog.LogName);
 
     /// <summary>Every event of the app's source in a log, oldest first, without the sink's "Build:" line.</summary>
     public static IReadOnlyList<RawLogEvent> ReadOurEvents(string logName, string extraFilter = "")
     {
         var list = new List<RawLogEvent>();
         if (!OperatingSystem.IsWindows()) return list;
-        var q = new EventLogQuery(logName, PathType.LogName, $"*[System[Provider[@Name='{EventLogSink.SourceName}']{extraFilter}]]");
+        var q = new EventLogQuery(logName, PathType.LogName, $"*[System[Provider[@Name='{AppEventLog.SourceName}']{extraFilter}]]");
         using var reader = new EventLogReader(q);
         for (var rec = reader.ReadEvent(); rec is not null; rec = reader.ReadEvent())
         {
@@ -41,16 +44,16 @@ public sealed class WindowsEventLogMigrationIo(ILogger? log) : IEventLogMigratio
         return string.Join(Environment.NewLine, lines);
     }
 
-    public void Backup(string evtxPath) => Wevtutil("epl", EventLogSink.LogName, evtxPath);
+    public void Backup(string evtxPath) => Wevtutil("epl", AppEventLog.LogName, evtxPath);
 
-    public void Clear() => Wevtutil("cl", EventLogSink.LogName);
+    public void Clear() => Wevtutil("cl", AppEventLog.LogName);
 
     public void Write(RawLogEvent e)
     {
         if (!OperatingSystem.IsWindows()) return;
-        if (!EventLog.SourceExists(EventLogSink.SourceName))
-            EventLog.CreateEventSource(new EventSourceCreationData(EventLogSink.SourceName, EventLogSink.LogName));
-        using var el = new EventLog(EventLogSink.LogName) { Source = EventLogSink.SourceName };
+        if (!EventLog.SourceExists(AppEventLog.SourceName))
+            EventLog.CreateEventSource(new EventSourceCreationData(AppEventLog.SourceName, AppEventLog.LogName));
+        using var el = new EventLog(AppEventLog.LogName) { Source = AppEventLog.SourceName };
         var type = e.Level switch { LogLevel.Error => EventLogEntryType.Error, LogLevel.Warning => EventLogEntryType.Warning, _ => EventLogEntryType.Information };
         el.WriteEntry(LogText.Truncate(e.Message) + Environment.NewLine + "Build: " + RemotePCDiagnostics.Core.AppBuildInfo.Version, type, e.EventId);
     }

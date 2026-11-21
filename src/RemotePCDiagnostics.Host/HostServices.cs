@@ -41,6 +41,10 @@ public static class HostServices
         services.AddSingleton<ElevationService>(sp => new ElevationService(sp.GetRequiredService<ISessionContext>(), L<ElevationService>()));
         services.AddSingleton<IElevationContext>(sp => sp.GetRequiredService<ElevationService>());
         services.AddSingleton<IElevatedCommandBridge>(sp => sp.GetRequiredService<ElevationService>());
+        // Startup apps, services, hibernation, Fast Startup and DNS changes that need administrator rights: made by the Agent.
+        services.AddSingleton<IAdminSettingsBackend>(sp => new AgentAdminSettings(sp.GetRequiredService<IElevatedCommandBridge>()));
+        // HKLM policy values, extension blocklists, the page file and Defender exclusions: made by the Agent too.
+        services.AddSingleton<IMachineTweaks>(sp => new AgentMachineTweaks(sp.GetRequiredService<IElevatedCommandBridge>(), L<AgentMachineTweaks>()));
         services.AddSingleton<RemoteUsers>(); // the top bar's "N Remote Users" badge
         services.AddSingleton(_ => AgentModeHost.CreateMonitor()); // Local only / agent link, separate from the session badge
         if (session.Mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
@@ -57,7 +61,8 @@ public static class HostServices
             elevatedBridge: sp.GetRequiredService<IElevatedCommandBridge>(),
             isProcessElevated: () => sp.GetRequiredService<IElevationContext>().IsProcessElevated));
         // One Windows memory/startup adapter for the whole app (undo and memory suggestions share it).
-        services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), L<WindowsMemorySystem>()));
+        services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), L<WindowsMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(),
+            sp.GetRequiredService<IMachineTweaks>(), sp.GetRequiredService<IElevatedCommandBridge>()));
         // Its role interfaces resolve to the same instance, so a consumer can take only the part it uses.
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IMemoryProbe>(sp => sp.GetRequiredService<IMemorySystem>());
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IAppControl>(sp => sp.GetRequiredService<IMemorySystem>());
@@ -74,16 +79,19 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.Areas.IDriveHealthHistoryStore>(_ => new RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore(RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore.DefaultPath(), L<RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore>()));
         services.AddSingleton<ServicesModule>();
         // Reversible changes (with their "before" values) for "Undo all changes" / --undo-all; survives restarts.
-        services.AddSingleton<RemotePCDiagnostics.Core.Changes.IChangeJournal>(_ => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(), L<RemotePCDiagnostics.Core.Changes.FileChangeJournal>()));
-        services.AddSingleton(sp => new ServiceActionService(new WindowsServiceControlBackend(), sp.GetRequiredService<ISessionContext>(), L<ServiceActionService>(),
+        // The app isn't elevated, so the Agent reads and saves it (the state folder is for administrators only).
+        services.AddSingleton<RemotePCDiagnostics.Core.Changes.IChangeJournal>(sp => new RemotePCDiagnostics.Core.Changes.AgentChangeJournal(
+            sp.GetRequiredService<IElevatedCommandBridge>(), sp.GetService<IElevationContext>(), RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(),
+            L<RemotePCDiagnostics.Core.Changes.AgentChangeJournal>()));
+        services.AddSingleton(sp => new ServiceActionService(new WindowsServiceControlBackend(sp.GetRequiredService<IAdminSettingsBackend>()), sp.GetRequiredService<ISessionContext>(), L<ServiceActionService>(),
             journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
         services.AddSingleton(sp => new RebootResumeCoordinator(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<OsqueryRunner>(), RebootResumeCoordinator.DefaultStateFilePath(), log: L<RebootResumeCoordinator>()));
-        // Registry and WMI settings the fixes and undo change in process (Fast Startup, the signed-in user's proxy, adapter DNS).
-        services.AddSingleton<ISystemSettings>(_ => new WindowsSystemSettings(L<WindowsSystemSettings>()));
+        // Registry and WMI settings the fixes and undo change (Fast Startup and adapter DNS through the Agent, the signed-in user's proxy here).
+        services.AddSingleton<ISystemSettings>(sp => new WindowsSystemSettings(L<WindowsSystemSettings>(), sp.GetRequiredService<IAdminSettingsBackend>()));
         services.AddSingleton(sp => new RemediationService(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), L<RemediationService>(), sp.GetRequiredService<RebootResumeCoordinator>(),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(), sp.GetRequiredService<RetrimLog>(), sp.GetRequiredService<ISystemSettings>()));
         services.AddSingleton(sp => CreateUndoService(sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(), sp.GetRequiredService<SystemCommandRunner>(),
-            sp.GetRequiredService<IMemorySystem>(), L<UndoService>(), logEvent));
+            sp.GetRequiredService<IMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(), L<UndoService>(), logEvent));
         // Audio tests (speaker→mic, mic→speaker): on-demand only, own pages, not part of Run All or the stress run.
         services.AddSingleton<RemotePCDiagnostics.Core.Audio.IAudioIo>(_ => new WasapiAudioIo(L<WasapiAudioIo>()));
         // NPU test: on-demand only, own page, not part of Run All or the stress run.
@@ -138,18 +146,40 @@ public static class HostServices
             sp.GetRequiredService<IMemorySystem>(), sp.GetRequiredService<ServicesModule>(), sp.GetRequiredService<ServiceActionService>(),
             sp.GetRequiredService<ISessionContext>(), (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.MemorySuggestion, level, text), L<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(),
             remediation: sp.GetRequiredService<RemediationService>(), journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
+        // Developer setup check & developer clean-build benchmarks (Phase 1 & 2).
+        services.AddSingleton<RemotePCDiagnostics.Core.Benchmarks.IDeveloperSampleStore>(sp => new AgentDeveloperSampleStore(
+            sp.GetRequiredService<IElevatedCommandBridge>(), L<AgentDeveloperSampleStore>()));
+        services.AddSingleton<RemotePCDiagnostics.Core.Benchmarks.IDeveloperEnvironmentProbe>(sp =>
+        {
+            var probesForCond = new WindowsBenchmarkProbes(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISensorProvider>(), L<WindowsBenchmarkProbes>());
+            return new WindowsDeveloperEnvironmentProbe(
+                sp.GetRequiredService<SystemCommandRunner>(),
+                sp.GetRequiredService<IMachineTweaks>(),
+                sp.GetRequiredService<IElevatedCommandBridge>(),
+                probesForCond.ReadConditions,
+                L<WindowsDeveloperEnvironmentProbe>());
+        });
+        services.AddSingleton(sp => new RemotePCDiagnostics.Core.Benchmarks.DeveloperBuildRunner(
+            sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.IDeveloperEnvironmentProbe>(),
+            machineTweaks: sp.GetRequiredService<IMachineTweaks>(),
+            sampleStore: sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.IDeveloperSampleStore>(),
+            log: L<RemotePCDiagnostics.Core.Benchmarks.DeveloperBuildRunner>()));
         // Before/after performance benchmarks (state saved so the "before" survives a restart; event 1500).
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Benchmarks.BenchmarkService(
-            new RemotePCDiagnostics.Core.Benchmarks.BenchmarkRunner(new WindowsBenchmarkProbes(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISensorProvider>(), L<WindowsBenchmarkProbes>()), L<RemotePCDiagnostics.Core.Benchmarks.BenchmarkRunner>()),
-            new RemotePCDiagnostics.Core.Benchmarks.FileBenchmarkStore(RemotePCDiagnostics.Core.Benchmarks.FileBenchmarkStore.DefaultPath(), L<RemotePCDiagnostics.Core.Benchmarks.FileBenchmarkStore>()),
+            new RemotePCDiagnostics.Core.Benchmarks.BenchmarkRunner(
+                new WindowsBenchmarkProbes(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISensorProvider>(), L<WindowsBenchmarkProbes>(), sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.DeveloperBuildRunner>()),
+                L<RemotePCDiagnostics.Core.Benchmarks.BenchmarkRunner>()),
+            new AgentBenchmarkStore(sp.GetRequiredService<IElevatedCommandBridge>(), L<AgentBenchmarkStore>()),
             sp.GetRequiredService<RemediationService>(), sp.GetRequiredService<ISessionContext>(),
-            (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Benchmark, level, text), L<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>()));
+            (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Benchmark, level, text), L<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>(),
+            devRunner: sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.DeveloperBuildRunner>(),
+            devEnv: sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.IDeveloperEnvironmentProbe>()));
         // Service workflow: checks → tech review → restart → before benchmark → fixes → restart → after benchmark → report.
         services.AddSingleton(sp => new RemotePCDiagnostics.Core.Workflow.WorkflowService(
             sp.GetRequiredService<DiagnosticsService>(), sp.GetRequiredService<ResultStore>(), sp.GetRequiredService<RemediationService>(),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>(),
-            new WindowsWorkflowSystem(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), L<WindowsWorkflowSystem>()),
-            new RemotePCDiagnostics.Core.Workflow.FileWorkflowStore(RemotePCDiagnostics.Core.Workflow.FileWorkflowStore.DefaultPath(), L<RemotePCDiagnostics.Core.Workflow.FileWorkflowStore>()),
+            new WindowsWorkflowSystem(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), L<WindowsWorkflowSystem>(), sp.GetRequiredService<IElevatedCommandBridge>()),
+            new AgentWorkflowStore(sp.GetRequiredService<IElevatedCommandBridge>(), L<AgentWorkflowStore>()),
             sp.GetRequiredService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(), sp.GetRequiredService<ISessionContext>(),
             (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Workflow, level, text), L<RemotePCDiagnostics.Core.Workflow.WorkflowService>(),
             journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>(),
@@ -200,7 +230,8 @@ public static class HostServices
             sp.GetService<RemoteSessionHealth>(),
             sp.GetService<IElevationContext>(),
             sp.GetService<IFullscreenService>(),
-            sp.GetService<IAppUpdateService>()));
+            sp.GetService<IAppUpdateService>(),
+            sp.GetService<SystemCommandRunner>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
         return services;
@@ -212,10 +243,11 @@ public static class HostServices
         ModuleLoaderOptions? options = null)
     {
         var log = For<ModuleLoader>(loggers);
-        var launcher = new RestrictedModuleHostLauncher(For<RestrictedModuleHostLauncher>(loggers));
         // Host queries: what a module in user mode asks the app for. The answers come from the app's own services, so they bind when the
-        // container builds the diagnostics service (HostQueryBackendSlot.Bind).
+        // container builds the diagnostics service (HostQueryBackendSlot.Bind). The Agent's connection binds then too: it runs the modules
+        // that need administrator.
         var backend = new HostQueryBackendSlot();
+        var launcher = new RestrictedModuleHostLauncher(For<RestrictedModuleHostLauncher>(loggers), agent: () => backend.Agent);
         services.AddSingleton(backend);
         var hostQueries = new HostQueryServer(() => backend.Value, For<HostQueryServer>(loggers));
         var loader = new ModuleLoader(options ?? new ModuleLoaderOptions { HostVersion = HostVersion() }, plugins, log,
@@ -266,10 +298,10 @@ public static class HostServices
     public static Version HostVersion() => Version.TryParse(AppBuildInfo.Release, out var v) ? v : new Version(0, 0);
 
     /// <summary>The undo service, shared by the window (via the container) and the headless --undo-all run.</summary>
-    public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem memory,
+    public static UndoService CreateUndoService(IChangeJournal journal, SystemCommandRunner commands, IMemorySystem memory, IAdminSettingsBackend admin,
         ILogger? log, Action<int, RemotePCDiagnostics.Core.Logging.LogLevel, string> logEvent) =>
-        new(journal, commands, memory, new WindowsServiceControlBackend(), (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Undo, level, text), log,
-            new WindowsSystemSettings(log));
+        new(journal, commands, memory, new WindowsServiceControlBackend(admin), (level, text) => logEvent(RemotePCDiagnostics.Core.Logging.LogEventIds.Undo, level, text), log,
+            new WindowsSystemSettings(log, admin));
 }
 
 /// <summary>The app's services that answer host queries (<see cref="HostQueryServer"/>), bound once the container exists.</summary>
@@ -277,9 +309,16 @@ public sealed class HostQueryBackendSlot
 {
     public HostQueryBackend? Value { get; private set; }
 
-    public void Bind(IServiceProvider sp) => Value ??= new HostQueryBackend
+    /// <summary>The Agent's connection (Admin Repair Mode or the agent service), for the module host it runs.</summary>
+    public RemotePCDiagnostics.Core.Session.IElevatedCommandBridge? Agent { get; private set; }
+
+    public void Bind(IServiceProvider sp)
     {
-        Sensors = sp.GetService<ISensorProvider>(), Osquery = sp.GetService<OsqueryRunner>(), Commands = sp.GetService<SystemCommandRunner>(),
-        Retrims = sp.GetService<IRetrimHistory>(),
-    };
+        Agent ??= sp.GetService<RemotePCDiagnostics.Core.Session.IElevatedCommandBridge>();
+        Value ??= new HostQueryBackend
+        {
+            Sensors = sp.GetService<ISensorProvider>(), Osquery = sp.GetService<OsqueryRunner>(), Commands = sp.GetService<SystemCommandRunner>(),
+            Retrims = sp.GetService<IRetrimHistory>(),
+        };
+    }
 }

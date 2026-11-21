@@ -10,6 +10,18 @@ mkdirSync(outDir, { recursive: true });
 
 const alive = () => { if (!appPid) return true; try { process.kill(appPid, 0); return true; } catch { return false; } };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Clicks a tri-state "select all" (some -> all -> none) until the Run button it controls is disabled. Each click waits for the
+// page to re-render before the next one: reading the button straight after a click could see the old state and click once too
+// often (none -> all again).
+async function clearSelection(page, toggleId, runId) {
+  for (let i = 0; i < 3; i++) {
+    if (await page.getByTestId(runId).isDisabled()) return;
+    const before = await page.evaluate(id => document.querySelector(`[data-testid="${id}"]`)?.outerHTML ?? '', toggleId);
+    await page.getByTestId(toggleId).click();
+    await page.waitForFunction(([id, html]) => (document.querySelector(`[data-testid="${id}"]`)?.outerHTML ?? '') !== html,
+      [toggleId, before], { timeout: 5_000 }).catch(() => {});
+  }
+}
 
 let browser;
 for (let i = 0; i < 60 && !browser; i++) {
@@ -109,7 +121,7 @@ try {
   if (await page.getByTestId('checks-group-checks').count()) throw new Error('System checks should not be listed on the Stress tests page');
   if (await page.getByTestId('checks-row-securityaudit').count()) throw new Error('The security audit has its own page');
   if (await page.getByTestId('checks-run-stress').isDisabled()) throw new Error('Run selected (stress) should be enabled when idle');
-  for (let i = 0; i < 2 && !(await page.getByTestId('checks-run-stress').isDisabled()); i++) await page.getByTestId('checks-selectall-stress').click();
+  await clearSelection(page, 'checks-selectall-stress', 'checks-run-stress');
   await page.waitForFunction(() => document.querySelector('[data-testid="checks-run-stress"]')?.disabled === true, null, { timeout: 10_000 });
   console.log('Checks and Stress tests pages: run buttons OK');
   await page.screenshot({ path: `${outDir}/stress.png`, fullPage: true });
@@ -122,7 +134,7 @@ try {
   await page.getByTestId('interactive-group').waitFor({ state: 'visible', timeout: 10_000 });
   await page.getByTestId('interactive-detail').waitFor({ state: 'visible', timeout: 10_000 });
   if (await page.getByTestId('interactive-run-selected').isDisabled()) throw new Error('Run selected (interactive) should be enabled when idle');
-  for (let i = 0; i < 2 && !(await page.getByTestId('interactive-run-selected').isDisabled()); i++) await page.getByTestId('interactive-select-all').click();
+  await clearSelection(page, 'interactive-select-all', 'interactive-run-selected');
   await page.waitForFunction(() => document.querySelector('[data-testid="interactive-run-selected"]')?.disabled === true, null, { timeout: 10_000 });
   console.log('Interactive tests page: loaded and selection OK');
   await page.screenshot({ path: `${outDir}/interactive.png`, fullPage: true });

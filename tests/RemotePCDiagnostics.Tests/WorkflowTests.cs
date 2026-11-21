@@ -34,12 +34,23 @@ public class WorkflowTests
         public Task<bool> RestartAsync(TimeSpan d, string m, CancellationToken ct) { Calls.Add("restart"); return Task.FromResult(true); }
         public Task AbortRestartAsync(CancellationToken ct) { Calls.Add("abort"); return Task.CompletedTask; }
         public AutoLogonStatus GetAutoLogonStatus() => new("user", "PC1", false, HelloOnly, null, Email);
-        public bool ValidateCredentials(string u, string d, string p) { Calls.Add($"validate:{d}\\{u}"); return PasswordOk; }
-        public AutoLogonBackup EnableAutoLogon(string u, string d, string p, int n) { Calls.Add($"autologon-on:{n}"); return new("0", "old", "PC1", null, HelloOnly ? 2 : null); }
-        public void DisableAutoLogon(AutoLogonBackup? b)
+        public bool NoAgent;
+        public Task<bool> ValidateCredentialsAsync(string u, string d, string p, CancellationToken ct = default)
+        {
+            if (NoAgent) throw new InvalidOperationException("The Agent isn't connected.");
+            Calls.Add($"validate:{d}\\{u}");
+            return Task.FromResult(PasswordOk);
+        }
+        public Task<AutoLogonBackup> EnableAutoLogonAsync(string u, string d, string p, int n, CancellationToken ct = default)
+        {
+            Calls.Add($"autologon-on:{n}");
+            return Task.FromResult(new AutoLogonBackup("0", "old", "PC1", null, HelloOnly ? 2 : null));
+        }
+        public Task DisableAutoLogonAsync(AutoLogonBackup? b, CancellationToken ct = default)
         {
             Calls.Add("autologon-off:" + b?.DefaultUserName + (b?.PasswordLessBuildVersion is int pv ? $":pl={pv}" : ""));
             if (DisableFails) throw new UnauthorizedAccessException("Access to the Winlogon key was denied.");
+            return Task.CompletedTask;
         }
         public string ReportFile(DateTimeOffset when) => @"C:\Users\Public\Documents\Remote PC Diagnostics\Service report.html";
         public void SaveReport(string path, string html) { Report = html; Calls.Add("report"); }
@@ -109,6 +120,24 @@ public class WorkflowTests
         var flow = new WorkflowService(diag, results, rem, bench, sys, store, memory, session: new SessionContext(SessionMode.Remote),
             delay: (d, c) => { delays.Add(d); return delay?.Invoke(d, c) ?? Task.CompletedTask; }, journal: journal);
         return (flow, sys, store, delays, launcher, probes);
+    }
+
+    // ---- the Agent keeps the state: it can connect after the app started ----
+    [Fact]
+    public void Reload_picks_up_the_saved_workflow_only_while_nothing_happened_in_this_run()
+    {
+        var store = new MemFlowStore();
+        var (flow, _, _, _, _, _) = Make(store);
+        Assert.Equal(WorkflowStage.Idle, flow.State.Stage);
+        Assert.False(flow.Reload()); // still nothing saved
+
+        store.State = new WorkflowState { ReviewRulesVersion = WorkflowService.CurrentReviewRulesVersion, Stage = WorkflowStage.RestartAfter, StartedUtc = DateTimeOffset.UtcNow };
+        Assert.True(flow.Reload());
+        Assert.Equal(WorkflowStage.RestartAfter, flow.State.Stage);
+
+        store.State = store.State with { Stage = WorkflowStage.Done };
+        Assert.False(flow.Reload()); // never replaces a workflow this run already has
+        Assert.Equal(WorkflowStage.RestartAfter, flow.State.Stage);
     }
 
     // ---- catalog ----
@@ -543,6 +572,17 @@ public class WorkflowTests
         Assert.NotNull(await flow.StartAsync(new AutoLogonRequest("user", "PC1", "pw")));
         Assert.Contains("autologon-off:old", sys.Calls);
         Assert.DoesNotContain("restart", sys.Calls);
+    }
+
+    [Fact]
+    public async Task Without_the_Agent_auto_sign_in_says_to_turn_on_admin_repair_mode_and_changes_nothing()
+    {
+        var (flow, sys, _, _, _, _) = Make();
+        await flow.RunChecksAsync();
+        sys.NoAgent = true;
+        Assert.Equal(WorkflowService.NeedsAgentMessage, await flow.StartAsync(new AutoLogonRequest("user", "PC1", "pw")));
+        Assert.DoesNotContain(sys.Calls, c => c.StartsWith("autologon-on") || c == "register" || c == "restart");
+        Assert.DoesNotContain("as administrator", WorkflowService.NeedsAgentMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

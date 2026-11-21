@@ -165,7 +165,12 @@ public class BenchmarkTests
         public Queue<IdleResourceSample?> IdleResources = new();
         public Task<IdleResourceSample?> ReadIdleResourcesAsync(CancellationToken ct) => Task.FromResult(IdleResources.Count > 0 ? IdleResources.Dequeue() : null);
         public BenchmarkConditions ReadConditions() => Plugged;
-        public Task<IdleSample?> SampleIdleAsync(TimeSpan d, CancellationToken ct) => Task.FromResult<IdleSample?>(new(3.5, 42));
+        public Task? IdleGate;
+        public async Task<IdleSample?> SampleIdleAsync(TimeSpan d, CancellationToken ct)
+        {
+            if (IdleGate is { } gate) await gate.WaitAsync(ct).ConfigureAwait(false);
+            return new(3.5, 42);
+        }
         public Task<double?> StartProgramAsync(BuiltInProgram p, CancellationToken ct) { Started.Add(p.Name); return Task.FromResult<double?>(100); }
         public Task<double?> DiskRandomReadIopsAsync(TimeSpan d, CancellationToken ct) => FailDisk ? throw new IOException("no space") : Task.FromResult<double?>(8000);
         public Task<IReadOnlyList<WinEvent>> ReadBootEventsAsync(CancellationToken ct) =>
@@ -188,7 +193,7 @@ public class BenchmarkTests
         var run = await new BenchmarkRunner(probes, resolve: Resolve).RunAsync(BenchmarkPhase.Before, Fast, null, new SyncProgress(progress.Add), default);
         Assert.True(run.Completed, "run stopped early");
         Assert.Contains(progress, p => p.StartsWith("Measuring disk"));
-        Assert.Equal(Enum.GetValues<BenchmarkKind>().Length, run.Measurements.Count);
+        Assert.Equal(Fast.Enabled.Count, run.Measurements.Count);
         Assert.Equal(3.5, run.Get(BenchmarkKind.IdleCpu)!.Median);
         Assert.Equal(42, run.Get(BenchmarkKind.Paging)!.Median);
         Assert.Equal(35, run.Get(BenchmarkKind.BootTime)!.Median);
@@ -391,7 +396,35 @@ public class BenchmarkTests
         Assert.Contains("Stopped waiting", svc.Message);
     }
 
-    /// <summary>The state folder refuses the write, as it does for an app that is not running as administrator.</summary>
+    [Fact]
+    public void Reload_PicksUpTheSavedStateOnceTheAgentConnects()
+    {
+        var store = new MemStore();
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store);
+        Assert.False(svc.Reload()); // nothing to read yet (the Agent isn't connected)
+
+        store.State = new BenchmarkState(Fast, Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 30)), null, RunAfterOnStartup: true);
+        var changed = 0;
+        svc.Changed += () => changed++;
+        Assert.True(svc.Reload());
+        Assert.True(svc.AfterPendingRestart);
+        Assert.NotNull(svc.Before);
+        Assert.Equal(1, changed);
+    }
+
+    [Fact]
+    public async Task Reload_LeavesAWaitingBenchmarkAlone()
+    {
+        var store = new MemStore { State = new BenchmarkState(Fast, Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 30)), null, RunAfterOnStartup: true) };
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, delay: (_, t) => Task.Delay(Timeout.Infinite, t));
+        var resume = svc.ResumeAfterRestartAsync();
+        Assert.Equal(BenchmarkPhase.After, svc.Settling);
+        Assert.False(svc.Reload());
+        svc.Stop();
+        await resume;
+    }
+
+    /// <summary>The state folder refuses the write, as it does when the Agent isn't connected (the app never runs as administrator).</summary>
     private sealed class DeniedStore(BenchmarkState? onDisk = null) : IBenchmarkStore
     {
         public BenchmarkState? Load() => onDisk;
@@ -428,6 +461,268 @@ public class BenchmarkTests
         {
             if (File.Exists(statePath)) File.Delete(statePath);
         }
+    }
+
+    [Fact]
+    public async Task BeginPass_WithoutRestart_SavesTheChoiceOnlyOnceTheRunStarts()
+    {
+        var store = new MemStore();
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store);
+        svc.UpdateSettings(Fast); // restart choice defaults to on
+        Assert.True(svc.Settings.RestartBeforeAfter);
+
+        var started = await svc.BeginPassAsync(BenchmarkPhase.Before, restart: false);
+
+        Assert.True(started.Started);
+        Assert.Null(started.Blocked);
+        Assert.False(svc.Settings.RestartBeforeAfter);
+        Assert.NotNull(svc.Before);
+        Assert.False(store.State!.Settings.RestartBeforeAfter);
+    }
+
+    [Fact]
+    public async Task BeginPass_RefusedBeforeItStarts_LeavesTheRestartChoiceUntouched()
+    {
+        var store = new CountingStore();
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store);
+        svc.UpdateSettings(Fast with { Enabled = [], RestartBeforeAfter = true });
+        var saves = store.Saves;
+
+        var noMeasurements = await svc.BeginPassAsync(BenchmarkPhase.Before, restart: false);
+
+        Assert.False(noMeasurements.Started);
+        Assert.Equal(BenchmarkStartRules.EnabledSetting, noMeasurements.Blocked!.Setting);
+        Assert.Equal("No measurements are selected.", noMeasurements.Blocked.Reason);
+        Assert.True(svc.Settings.RestartBeforeAfter);
+        Assert.Equal(saves, store.Saves);
+
+        svc.UpdateSettings(Fast with { RestartBeforeAfter = true });
+        var noBaseline = await svc.BeginPassAsync(BenchmarkPhase.After, restart: false);
+        Assert.False(noBaseline.Started);
+        Assert.Equal(BenchmarkStartRules.BaselineSetting, noBaseline.Blocked!.Setting);
+        Assert.Equal("Run the before benchmark first.", noBaseline.Blocked.Reason);
+        Assert.True(svc.Settings.RestartBeforeAfter);
+        Assert.Null(svc.Before);
+
+        var noRestart = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), new MemStore());
+        noRestart.UpdateSettings(Fast with { RestartBeforeAfter = false });
+        var unavailable = await noRestart.BeginPassAsync(BenchmarkPhase.Before, restart: true);
+        Assert.False(unavailable.Started);
+        Assert.Equal(BenchmarkStartRules.RestartSetting, unavailable.Blocked!.Setting);
+        Assert.Equal("Restarting isn't available from here.", unavailable.Blocked.Reason);
+        Assert.False(noRestart.Settings.RestartBeforeAfter);
+    }
+
+    [Fact]
+    public async Task BeginPass_RestartRefused_DoesNotFlipTheChoice_AndNamesTheSetting()
+    {
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var runner = new SystemCommandRunner(launcher);
+        var statePath = Path.Combine(Path.GetTempPath(), "rpd-bench-reboot-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var rem = new RemediationService(runner, new SessionContext(SessionMode.Remote), rebootResume: new RebootResumeCoordinator(runner, stateFilePath: statePath, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe"));
+            var settings = Fast with { RestartBeforeAfter = false };
+            var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), new DeniedStore(new BenchmarkState(settings)), rem);
+
+            var refused = await svc.BeginPassAsync(BenchmarkPhase.Before, restart: true);
+
+            Assert.False(refused.Started);
+            Assert.Equal(BenchmarkStartRules.RestartSetting, refused.Blocked!.Setting);
+            Assert.Contains("was not restarted", refused.Blocked.Reason);
+            Assert.False(svc.Settings.RestartBeforeAfter);
+            Assert.False(svc.BeforePendingRestart);
+            Assert.DoesNotContain(launcher.Calls, c => c.File.EndsWith("shutdown.exe", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            if (File.Exists(statePath)) File.Delete(statePath);
+        }
+    }
+
+    [Fact]
+    public async Task BeginPass_WithRestart_SavesTheChoiceOnlyAfterTheRestartIsScheduled()
+    {
+        var store = new MemStore();
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var runner = new SystemCommandRunner(launcher);
+        var statePath = Path.Combine(Path.GetTempPath(), "rpd-bench-reboot-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var rem = new RemediationService(runner, new SessionContext(SessionMode.Remote), rebootResume: new RebootResumeCoordinator(runner, stateFilePath: statePath, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe"));
+            var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, rem);
+            svc.UpdateSettings(Fast with { RestartBeforeAfter = false });
+
+            var started = await svc.BeginPassAsync(BenchmarkPhase.Before, restart: true);
+
+            Assert.True(started.Started);
+            Assert.Null(svc.Blocked);
+            Assert.True(svc.Settings.RestartBeforeAfter);
+            Assert.True(svc.BeforePendingRestart);
+            Assert.True(store.State!.Settings.RestartBeforeAfter);
+        }
+        finally
+        {
+            if (File.Exists(statePath)) File.Delete(statePath);
+        }
+    }
+
+    [Fact]
+    public async Task BeginPass_WhileAPassIsRunning_DoesNotFlipTheRestartChoice()
+    {
+        var store = new MemStore();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probes = new FakeProbes { IdleGate = gate.Task };
+        var svc = new BenchmarkService(new BenchmarkRunner(probes, resolve: Resolve), store);
+        svc.UpdateSettings(Fast);
+        try
+        {
+            var running = svc.BeginPassAsync(BenchmarkPhase.Before, restart: false);
+            var spins = 0;
+            while (svc.Running is null && spins++ < 200)
+                await Task.Delay(10);
+            Assert.Equal(BenchmarkPhase.Before, svc.Running);
+            Assert.False(svc.Settings.RestartBeforeAfter);
+
+            var rejected = await svc.BeginPassAsync(BenchmarkPhase.Before, restart: true);
+
+            Assert.False(rejected.Started);
+            Assert.Equal(BenchmarkStartRules.RunningSetting, rejected.Blocked!.Setting);
+            Assert.Equal("A benchmark is already running.", rejected.Blocked.Reason);
+            Assert.False(svc.Settings.RestartBeforeAfter);
+            gate.SetResult();
+            Assert.True((await running).Started);
+            Assert.False(store.State!.Settings.RestartBeforeAfter);
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
+    }
+
+    [Fact]
+    public async Task PendingRestart_BlocksRestartStarts_ButARunNowDropsTheWaitingPass()
+    {
+        var store = new MemStore
+        {
+            State = new BenchmarkState(Fast with { RestartBeforeAfter = true }, Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 30)), RunAfterOnStartup: true),
+        };
+        var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store);
+
+        var blocked = svc.BlockFor(BenchmarkPhase.After, restart: true);
+        Assert.Equal(BenchmarkStartRules.RestartSetting, blocked!.Setting);
+        Assert.Equal("A restart is already waiting to run a benchmark.", blocked.Reason);
+        Assert.Contains(svc.StartChoices(), c => c.Pass == "after" && c.Restart && !c.Available && c.Setting == BenchmarkStartRules.RestartSetting);
+
+        // The restart was cancelled in Windows (or never came): running now must still be possible.
+        Assert.Null(svc.BlockFor(BenchmarkPhase.After, restart: false));
+        var started = await svc.BeginPassAsync(BenchmarkPhase.After, restart: false);
+
+        Assert.True(started.Started);
+        Assert.False(svc.AfterPendingRestart);
+        Assert.False(store.State!.RunAfterOnStartup);
+        Assert.False(store.State.Settings.RestartBeforeAfter);
+        Assert.NotNull(svc.After);
+    }
+
+    private sealed class FakeClock(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now = now;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    private sealed class RecordingStore : IBenchmarkStore
+    {
+        public readonly List<BenchmarkState> Saved = [];
+        public BenchmarkState? State;
+        public BenchmarkState? Load() => State is null ? null : BenchmarkState.FromJson(State.ToJson());
+        public void Save(BenchmarkState s) { Saved.Add(s); State = s; }
+    }
+
+    private static RemediationService Remediation(ScriptedLauncher launcher, string statePath)
+    {
+        var runner = new SystemCommandRunner(launcher);
+        return new RemediationService(runner, new SessionContext(SessionMode.Remote),
+            rebootResume: new RebootResumeCoordinator(runner, stateFilePath: statePath, executablePath: @"C:\App\RemotePCDiagnostics.Host.exe"));
+    }
+
+    [Fact]
+    public async Task BeginPass_RestartRefusedByWindows_KeepsEarlierResultsAndTheChoice()
+    {
+        var launcher = new ScriptedLauncher((file, _) => file.EndsWith("shutdown.exe", StringComparison.OrdinalIgnoreCase)
+            ? ScriptedLauncher.Fail("Access is denied.") : ScriptedLauncher.Ok(""));
+        var statePath = Path.Combine(Path.GetTempPath(), "rpd-bench-reboot-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var before = Run(BenchmarkPhase.Before, M(BenchmarkKind.BootTime, 30));
+            var after = Run(BenchmarkPhase.After, M(BenchmarkKind.BootTime, 25));
+            var store = new RecordingStore { State = new BenchmarkState(Fast with { RestartBeforeAfter = false }, before, after) };
+            var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, Remediation(launcher, statePath));
+
+            var refused = await svc.BeginPassAsync(BenchmarkPhase.Before, restart: true);
+
+            Assert.False(refused.Started);
+            Assert.Equal(BenchmarkStartRules.RestartSetting, refused.Blocked!.Setting);
+            Assert.Contains(launcher.Calls, c => c.File.EndsWith("shutdown.exe", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(svc.Before);
+            Assert.NotNull(svc.After);
+            Assert.False(svc.BeforePendingRestart);
+            Assert.False(svc.Settings.RestartBeforeAfter);
+            Assert.NotNull(store.State!.Before);
+            Assert.NotNull(store.State.After);
+            Assert.False(store.State.RunBeforeOnStartup);
+            Assert.False(store.State.Settings.RestartBeforeAfter);
+
+            var refusedAfter = await svc.BeginPassAsync(BenchmarkPhase.After, restart: true);
+            Assert.False(refusedAfter.Started);
+            Assert.NotNull(svc.After);
+            Assert.False(svc.AfterPendingRestart);
+            Assert.False(store.State.Settings.RestartBeforeAfter);
+        }
+        finally
+        {
+            if (File.Exists(statePath)) File.Delete(statePath);
+        }
+    }
+
+    [Fact]
+    public async Task BeginPass_WithRestart_SavesTheChoiceInTheSameWriteAsThePendingPass()
+    {
+        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""));
+        var statePath = Path.Combine(Path.GetTempPath(), "rpd-bench-reboot-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var store = new RecordingStore { State = new BenchmarkState(Fast with { RestartBeforeAfter = false }) };
+            var clock = new FakeClock(new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero));
+            var svc = new BenchmarkService(new BenchmarkRunner(new FakeProbes(), resolve: Resolve), store, Remediation(launcher, statePath)) { Clock = clock };
+
+            var started = await svc.BeginPassAsync(BenchmarkPhase.Before, restart: true);
+
+            Assert.True(started.Started);
+            var pending = store.Saved.First(s => s.RunBeforeOnStartup);
+            Assert.True(pending.Settings.RestartBeforeAfter);
+            Assert.Same(pending, store.Saved[^1]); // nothing is written after Windows is asked to restart
+
+            // While Windows counts down, running now is refused too; once the countdown is long past, it is allowed.
+            var imminent = svc.BlockFor(BenchmarkPhase.Before, restart: false);
+            Assert.Equal(BenchmarkStartRules.RestartSetting, imminent!.Setting);
+            Assert.Equal("Windows is about to restart to run a benchmark.", imminent.Reason);
+            clock.Now += BenchmarkService.RestartCountdown + TimeSpan.FromSeconds(1);
+            Assert.Null(svc.BlockFor(BenchmarkPhase.Before, restart: false));
+            Assert.NotNull(svc.BlockFor(BenchmarkPhase.Before, restart: true));
+        }
+        finally
+        {
+            if (File.Exists(statePath)) File.Delete(statePath);
+        }
+    }
+
+    private sealed class CountingStore : IBenchmarkStore
+    {
+        public int Saves;
+        public BenchmarkState? State;
+        public BenchmarkState? Load() => State is null ? null : BenchmarkState.FromJson(State.ToJson());
+        public void Save(BenchmarkState s) { Saves++; State = s; }
     }
 
     [Fact]
@@ -554,8 +849,8 @@ public class BenchmarkTests
     }
 
     [Fact]
-    public void Settings_Default_PassStaysWithinThreeMinutes() =>
-        Assert.InRange(new BenchmarkSettings().EstimatedSeconds(), 140, 180);
+    public void Settings_Default_PassStaysWithinFourMinutes() =>
+        Assert.InRange(new BenchmarkSettings().EstimatedSeconds(), 200, 240);
 
     [Fact]
     public void Comparison_MemoryAndProcessNoise_DontSwingOverall()

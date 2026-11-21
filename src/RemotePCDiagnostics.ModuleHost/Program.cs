@@ -6,9 +6,10 @@ using RemotePCDiagnostics.Core.Plugins;
 // RemotePCDiagnostics.ModuleHost "<module.dll>" | --shared
 // Loads one module (or, with --shared, any number of bundled modules of the same token level) into its own load context and answers the
 // app's requests (one JSON line each) until stdin closes or "exit".
-// Everything here runs with the token the app gave it: a restricted one (no administrator, Medium integrity), or for a module that ships
-// with the app and needs administrator, the app's own (out of process for crash and memory isolation only). A module in user mode asks
-// the app for what needs administrator rights (host queries: "query" lines out, "answer" lines back).
+// Everything here runs with the token it was started with: the app's restricted one (no administrator, Medium integrity), or for the
+// modules that ship with the app and need administrator, the Agent's (the Agent starts this host and relays its lines to the app, which
+// never runs as administrator). A module in user mode asks the app for what needs administrator rights (host queries: "query" lines out,
+// "answer" lines back).
 if (args.Length < 1) { Console.Error.WriteLine("usage: RemotePCDiagnostics.ModuleHost <module.dll> | --shared"); return 2; }
 
 // The protocol owns stdout; anything the module prints goes to stderr (the app's log).

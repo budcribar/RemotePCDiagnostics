@@ -1,78 +1,158 @@
 @page "/benchmark"
 @using RemotePCDiagnostics.Core.Benchmarks
+@using RemotePCDiagnostics.Core.Workflow
 @implements IDisposable
 @inject BenchmarkService Bench
+@inject AppServices App
+@inject ISessionContext Session
 @* Before/after performance benchmarks for a service call: shows the client what the fixes actually changed. *@
 @{
     var s = Bench.Settings;
-    var running = Bench.Running is not null || Bench.Settling is not null;
+    var running = Bench.Running is not null || Bench.Settling is not null || Bench.RunningDeveloperAction;
     var cmp = Bench.Comparison;
     var before = Bench.Before;
     var after = Bench.After;
+    var available = Bench.AvailableBenchmarks;
 }
 <div class="toolbar">
     <span class="icon-badge page-icon"><Icon Name="health" Size="20" /></span><h1 data-rpcd-page="benchmark" data-rpcd-contract="@BrowserContract.Benchmark" data-testid="bench-title">Performance benchmark</h1>
 </div>
-<p class="meta">Measures what the client feels (start-up, how fast programs open, background load, processor and disk speed, website lookups)
-    before and after the fixes, so the difference can be shown with numbers. Only Windows' own programs are opened, and closed again.
-    Run both passes under the same conditions (plugged in, nothing else running).</p>
+<p class="meta">Quick standalone performance snapshots to verify manual changes. Running a full automated tune-up?
+    <a href="/workflow">Use Service workflow →</a></p>
 
-<section class="card bench-settings" data-testid="bench-settings">
-    <div class="card-head"><strong>What to measure</strong><span class="meta">about @Minutes(s.EstimatedSeconds()) per pass</span><span class="svc-actions"><button class="btn-small" data-testid="bench-select-all" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Enabled = [.. Enum.GetValues<BenchmarkKind>()] })">Select all</button><button class="btn-small" data-testid="bench-select-none" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Enabled = [] })">Select none</button></span></div>
-    <div class="bench-kinds">
-        @foreach (var info in Benchmarks.All)
-        {
-            var k = info.Kind;
-            <label class="bench-kind" title="@info.ClientMeaning">
-                <input type="checkbox" data-testid="bench-kind-@k.ToString().ToLowerInvariant()" checked="@s.IsEnabled(k)" disabled="@running"
-                       @onchange="e => Toggle(k, e.Value is true)" /> @info.Title
-            </label>
-        }
-    </div>
-    <div class="bench-options">
-        <label class="meta">Runs per test
-            <select data-testid="bench-runs" disabled="@running" @onchange="SetRuns">
-                @foreach (var n in BenchmarkSettings.RunChoices) { <option value="@n" selected="@(n == s.Runs)">@n</option> }
-            </select>
+<section class="card bench-hero" data-testid="bench-hero">
+    <div class="bench-hero-main">
+        <div class="bench-hero-title">
+            @(before is null
+                ? "Take a performance snapshot"
+                : after is null
+                    ? "Baseline captured — take next snapshot to compare"
+                    : "Comparison ready")
+        </div>
+        <label class="bench-restart-toggle">
+            @* Read-only: the start buttons below choose, and the choice is saved once that pass starts. *@
+            <input type="checkbox" data-testid="bench-restart" checked="@s.RestartBeforeAfter" disabled aria-readonly="true"
+                   title="Set by the button you start a pass with" />
+            <span>Restart the PC first (needed for a fair start-up time). The button you start with sets this.</span>
         </label>
-        <label class="meta"><input type="checkbox" data-testid="bench-restart" checked="@s.RestartBeforeAfter" disabled="@running"
-                                   @onchange="e => Bench.UpdateSettings(s with { RestartBeforeAfter = e.Value is true })" />
-            Restart the PC before each benchmark (needed for a fair start-up time)</label>
+    </div>
+    <div class="bench-hero-actions">
+        @if (running)
+        {
+            <button class="btn btn-stop" data-testid="bench-stop" @onclick="Bench.Stop">Stop</button>
+        }
+        else if (before is null)
+        {
+            @if (s.RestartBeforeAfter)
+            {
+                @StartButton(BenchmarkPhase.Before, true, true, "Restart & Run Snapshot")
+            }
+            else
+            {
+                @StartButton(BenchmarkPhase.Before, false, true, "Run Benchmark Snapshot")
+            }
+            @StartButton(BenchmarkPhase.Before, !s.RestartBeforeAfter, false, s.RestartBeforeAfter ? "Run Benchmark Snapshot" : "Restart & Run Snapshot")
+        }
+        else
+        {
+            @if (s.RestartBeforeAfter)
+            {
+                @StartButton(BenchmarkPhase.After, true, true, after is null ? "Restart & Run Next Snapshot" : "Restart & Re-run After")
+                @StartButton(BenchmarkPhase.Before, true, false, "Re-run baseline")
+            }
+            else
+            {
+                @StartButton(BenchmarkPhase.After, false, true, after is null ? "Run Next Snapshot" : "Re-run After")
+                @StartButton(BenchmarkPhase.Before, false, false, "Re-run baseline")
+            }
+            <button class="btn-small" data-testid="bench-clear" @onclick="Bench.Clear">Start over</button>
+            @StartButton(BenchmarkPhase.After, !s.RestartBeforeAfter, false, s.RestartBeforeAfter
+                ? (after is null ? "Run Next Snapshot" : "Re-run After")
+                : (after is null ? "Restart & Run Next Snapshot" : "Restart & Re-run After"))
+            @StartButton(BenchmarkPhase.Before, !s.RestartBeforeAfter, false, s.RestartBeforeAfter ? "Re-run baseline without restart" : "Restart and re-run baseline")
+        }
     </div>
 </section>
 
-<div class="toolbar bench-actions">
-    @if (running)
-    {
-        <button class="btn btn-stop" data-testid="bench-stop" @onclick="Bench.Stop">Stop</button>
-    }
-    else
-    {
-        @if (s.RestartBeforeAfter)
+<details class="card bench-customize" data-testid="bench-settings">
+    <summary class="bench-customize-summary">
+        <span class="bench-customize-title">
+            <span class="bench-customize-caret" aria-hidden="true">▸</span>
+            <span>Customize tests</span>
+            <span class="meta">(@s.Enabled.Count(Bench.IsKindAvailable) of @available.Count selected · @s.Runs @(s.Runs == 1 ? "run" : "runs") each · about @Minutes(s.EstimatedSeconds()))</span>
+        </span>
+    </summary>
+    <div class="bench-customize-body">
+        <div class="bench-presets">
+            <div class="bench-preset-group">
+                <button type="button" class="btn-small" data-testid="bench-preset-standard" disabled="@running" @onclick="ApplyStandardPreset">Standard (All · 3 runs)</button>
+                <button type="button" class="btn-small" data-testid="bench-preset-quick" disabled="@running" @onclick="ApplyQuickPreset">Quick (Core · 1 run)</button>
+                <button type="button" class="btn-small" data-testid="bench-select-all" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Enabled = available.Select(i => i.Kind).ToList() })">Select all</button>
+                <button type="button" class="btn-small" data-testid="bench-select-none" disabled="@running" @onclick="() => Bench.UpdateSettings(s with { Enabled = [] })">Select none</button>
+            </div>
+            <label class="meta">Runs per test
+                <select data-testid="bench-runs" disabled="@running" @onchange="SetRuns">
+                    @foreach (var n in BenchmarkSettings.RunChoices) { <option value="@n" selected="@(n == s.Runs)">@n</option> }
+                </select>
+            </label>
+        </div>
+        <div class="bench-kinds">
+            @foreach (var info in available)
+            {
+                var k = info.Kind;
+                <label class="bench-kind" title="@info.ClientMeaning">
+                    <input type="checkbox" data-testid="bench-kind-@k.ToString().ToLowerInvariant()" checked="@s.IsEnabled(k)" disabled="@running"
+                           @onchange="e => Toggle(k, e.Value is true)" /> @info.Title
+                </label>
+            }
+        </div>
+        @if (s.HasDeveloperKindEnabled)
         {
-            <button class="btn btn-primary" data-testid="bench-restart-before" disabled="@(running || s.Enabled.Count == 0 || Bench.BeforePendingRestart || Bench.AfterPendingRestart)" @onclick="RestartThenBefore">
-                <Icon Name="refresh" Size="12" /> @(before is null ? "Restart, then run before benchmark" : "Restart, then run before benchmark again")</button>
-            <button class="btn-small" data-testid="bench-run-before" disabled="@(running || s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)"
-                    title="Without restarting: start-up time uses the last few start-ups in Windows' log, which may not be comparable">Run before now (no restart)</button>
+            <p class="notice" data-testid="bench-dev-warning">@DeveloperScoring.BusyPcWarning</p>
         }
-        else
+    </div>
+</details>
+
+@if (Bench.DetectedToolchains.Any(t => t.Language == DeveloperLanguage.CSharp))
+{
+    <section class="card" data-testid="bench-dev-comparisons">
+        <div class="card-head"><strong>Developer comparisons (opt-in, one approval per run)</strong></div>
+        <p class="meta">@DeveloperScoring.BusyPcWarning</p>
+        <div class="bench-hero-actions">
+            <label class="bench-restart-toggle">
+                <input type="checkbox" data-testid="bench-dev-av-confirm" @bind="_confirmAvRun" disabled="@running" />
+                <span>Approve temporary Defender exclusion on the RPCD build temp folder for this run</span>
+            </label>
+            <button type="button" class="btn-small" data-testid="bench-dev-av-run" disabled="@(running || !_confirmAvRun)" @onclick="RunAvComparison">
+                Measure antivirus cost (C#)
+            </button>
+        </div>
+        @if (Bench.LastAntivirusComparison is { } avRes)
         {
-            <button class="btn btn-primary" data-testid="bench-run-before" disabled="@(running || s.Enabled.Count == 0)" @onclick="() => Run(BenchmarkPhase.Before)">
-                <Icon Name="play" Size="12" /> @(before is null ? "Run before benchmark" : "Run before benchmark again")</button>
+            <p class="meta" data-testid="bench-dev-av-result">@avRes.FormatDetail()</p>
         }
-        @if (s.RestartBeforeAfter)
+        @if (Bench.DevDrivePrecheck is { Eligible: true })
         {
-            <button class="btn btn-outline" data-testid="bench-restart-after" disabled="@(running || before is null || Bench.AfterPendingRestart)" @onclick="RestartThenAfter">
-                <Icon Name="refresh" Size="12" /> Restart, then run after benchmark</button>
-            <button class="btn-small" data-testid="bench-run-after" disabled="@(running || before is null)" @onclick="() => Run(BenchmarkPhase.After)" title="Without restarting: start-up time won't be compared">Run after now (no restart)</button>
+            <div class="bench-hero-actions">
+                <label class="bench-restart-toggle">
+                    <input type="checkbox" data-testid="bench-dev-devdrive-confirm" @bind="_confirmDevDriveRun" disabled="@running" />
+                    <span>Approve temporary ~50 GB Dev Drive VHDX (created &amp; removed by Agent) for this run</span>
+                </label>
+                <button type="button" class="btn-small" data-testid="bench-dev-devdrive-run" disabled="@(running || !_confirmDevDriveRun)" @onclick="RunDevDriveComparison">
+                    Compare NTFS vs Dev Drive (C#)
+                </button>
+            </div>
         }
-        else
+        else if (Bench.DevDrivePrecheck is { Reason: { Length: > 0 } ddReason })
         {
-            <button class="btn btn-outline" data-testid="bench-run-after" disabled="@(running || before is null)" @onclick="() => Run(BenchmarkPhase.After)"><Icon Name="play" Size="12" /> Run after benchmark</button>
+            <p class="meta" data-testid="bench-dev-devdrive-note">Dev Drive comparison unavailable: @ddReason</p>
         }
-        @if (before is not null) { <button class="btn-small" data-testid="bench-clear" @onclick="Bench.Clear">Start over</button> }
-    }
-</div>
+        @if (Bench.LastDevDriveComparison is { } ddRes)
+        {
+            <p class="meta" data-testid="bench-dev-devdrive-result">@ddRes.FormatSummary()</p>
+        }
+    </section>
+}
 
 @if (before is not null && !running) { <UndoAllPanel /> }
 
@@ -145,16 +225,139 @@ else if (Bench.Settling is { } settlePhase && Bench.SettleFraction is { } sf && 
     </div>
     <p class="meta" data-testid="bench-conditions">@RunLine("Before", before)
         @if (after is not null) { <br />@RunLine("After", after) }</p>
+
+    <section class="card bench-upload" data-testid="bench-upload-card">
+        <div class="card-head"><strong>Compare with other computers</strong></div>
+        <p class="meta">Uploads the @(after is null ? "baseline" : "latest (after)") results with this PC's model, processor, memory and graphics card to your shop's Admin site,
+            where your computers are ranked side by side for each test.</p>
+        <div class="bench-hero-actions">
+            <button class="btn-small" data-testid="bench-upload" disabled="@(running || _uploading || !CanUpload)" @onclick="UploadAsync">
+                <Icon Name="upload" Size="12" /> @(_uploading ? "Uploading…" : "Upload results")</button>
+            @if (_uploadUrl is { } compareUrl)
+            {
+                <a class="linklike" data-testid="bench-upload-link" href="@compareUrl" target="_blank" rel="noopener noreferrer">Open the comparison →</a>
+            }
+        </div>
+        @if (!CanUpload)
+        {
+            <p class="meta" data-testid="bench-upload-setup">Add your shop API key (rpd_live_…) and relay server on the <a href="/certificates">QA &amp; branding</a> page to upload results.</p>
+        }
+        @if (_uploadMessage is { } um)
+        {
+            <p class="@(_uploadFailed ? "notice notice-error" : "notice")" data-testid="bench-upload-status">@um</p>
+        }
+    </section>
 }
 else if (!running)
 {
-    <p class="status-line" data-testid="bench-empty">No benchmark yet. Run the before benchmark first, then make the fixes, then run the after benchmark.</p>
+    <p class="status-line" data-testid="bench-empty">No snapshot yet. Click the button above to capture a baseline, then run another snapshot after changes to compare.</p>
 }
 
 @code {
+    private static readonly BenchmarkKind[] QuickCoreKinds =
+    [
+        BenchmarkKind.MemoryUsedMb,
+        BenchmarkKind.IdleCpu,
+        BenchmarkKind.CpuMulti,
+        BenchmarkKind.DiskLatency,
+        BenchmarkKind.EnabledStartupApps,
+    ];
+
+    private bool _uploading, _uploadFailed;
+    private string? _uploadMessage, _uploadUrl;
+    private readonly ShopRelayClient _fallbackRelay = new();
+
+    private string? RelayServerUrl =>
+        !string.IsNullOrWhiteSpace(App.Preferences?.Current.RelayServerUrl) ? App.Preferences!.Current.RelayServerUrl : Session.ServerUri?.ToString();
+
+    private string ApiKey => App.Preferences?.Current.ShopApiKey?.Trim() ?? "";
+
+    private bool CanUpload =>
+        ApiKey.StartsWith(ShopRelayClient.ApiKeyPrefix, StringComparison.Ordinal) && ApiKey.Length > ShopRelayClient.ApiKeyPrefix.Length
+        && ShopRelayClient.TryParseRelayUri(RelayServerUrl, out _);
+
+    /// <summary>Sends the latest pass and this PC's hardware to the shop's Admin site over its authenticated API (the shop API key, as hosted reports use).</summary>
+    private async Task UploadAsync()
+    {
+        if (_uploading || !CanUpload || !ShopRelayClient.TryParseRelayUri(RelayServerUrl, out var relayUri) || relayUri is null) return;
+        _uploading = true;
+        _uploadFailed = false;
+        _uploadMessage = "Reading this PC's hardware…";
+        StateHasChanged();
+        try
+        {
+            var hardware = App.Commands is { } commands ? await HardwareIdentityProbe.ReadAsync(commands, CancellationToken.None) : new BenchmarkHardware();
+            var request = BenchmarkUpload.Build(BenchmarkUpload.LatestRun(Bench.Before, Bench.After), MachineIdentity.Read(Session.MachineName), Session.MachineName, hardware);
+            if (request is null)
+            {
+                Fail("There are no measured results to upload yet.");
+                return;
+            }
+            _uploadMessage = "Uploading…";
+            StateHasChanged();
+            var result = await (App.ShopRelay ?? _fallbackRelay).UploadBenchmarkAsync(relayUri, ApiKey, request);
+            switch (result)
+            {
+                case ShopBenchmarkUploadResult.Uploaded up:
+                    _uploadUrl = up.CompareUrl;
+                    _uploadMessage = up.Computers is > 1
+                        ? $"Uploaded {request.Results.Count} results. Your shop now has {up.Computers} computers to compare."
+                        : $"Uploaded {request.Results.Count} results. Upload from another computer to compare them.";
+                    break;
+                case ShopBenchmarkUploadResult.Unauthorized:
+                    Fail("The shop API key was rejected. Check your rpd_live_… key on QA & branding.");
+                    break;
+                case ShopBenchmarkUploadResult.PaymentRequired:
+                    Fail("The shop's subscription or trial is inactive. Renew it on the Admin site's Shop page.");
+                    break;
+                case ShopBenchmarkUploadResult.InvalidRequest bad:
+                    Fail($"Admin did not accept the results: {bad.Error}");
+                    break;
+                case ShopBenchmarkUploadResult.NetworkError net:
+                    Fail($"Could not reach the Admin site: {net.Message}");
+                    break;
+            }
+        }
+        finally
+        {
+            _uploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Fail(string message)
+    {
+        _uploadFailed = true;
+        _uploadMessage = message;
+    }
+
+    private bool _confirmAvRun;
+    private bool _confirmDevDriveRun;
+
     protected override void OnInitialized() => Bench.Changed += OnChanged;
+    protected override Task OnInitializedAsync() => Bench.RefreshDeveloperEnvironmentAsync();
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
     public void Dispose() => Bench.Changed -= OnChanged;
+
+    private void ApplyStandardPreset() =>
+        Bench.UpdateSettings(Bench.Settings with { Enabled = [.. Benchmarks.DefaultEnabled], Runs = 3 });
+
+    private void ApplyQuickPreset() =>
+        Bench.UpdateSettings(Bench.Settings with { Enabled = [.. QuickCoreKinds], Runs = 1 });
+
+    private void RunAvComparison()
+    {
+        if (!_confirmAvRun) return;
+        _confirmAvRun = false; // one explicit yes per run; never remembered
+        _ = Bench.RunAntivirusComparisonAsync(userConfirmed: true);
+    }
+
+    private void RunDevDriveComparison()
+    {
+        if (!_confirmDevDriveRun) return;
+        _confirmDevDriveRun = false; // one explicit yes per run; never remembered
+        _ = Bench.RunDevDriveComparisonAsync(userConfirmed: true);
+    }
 
     private void Toggle(BenchmarkKind k, bool on)
     {
@@ -169,9 +372,25 @@ else if (!running)
         if (int.TryParse(e.Value?.ToString(), out var n)) Bench.UpdateSettings(Bench.Settings with { Runs = n });
     }
 
-    private void Run(BenchmarkPhase phase) => _ = Bench.RunAsync(phase);
-    private async Task RestartThenAfter() => await Bench.RestartThenRunAfterAsync();
-    private async Task RestartThenBefore() => await Bench.RestartThenRunBeforeAsync();
+    private Task Start(BenchmarkPhase phase, bool restart) => Bench.BeginPassAsync(phase, restart);
+
+    private RenderFragment StartButton(BenchmarkPhase phase, bool restart, bool primary, string label) => __builder =>
+    {
+        var block = Bench.BlockFor(phase, restart);
+        var pass = phase == BenchmarkPhase.Before ? "before" : "after";
+        <button class="@(primary ? "btn btn-primary" : "btn-small")"
+                data-testid="@BenchmarkStartRules.Control(phase, restart)"
+                data-action="start-benchmark" data-pass="@pass" data-restart="@(restart ? "true" : "false")"
+                data-blocked-setting="@block?.Setting" data-blocked-reason="@block?.Reason"
+                disabled="@(block is not null)" title="@block?.Reason"
+                @onclick="async () => await Start(phase, restart)">
+            @if (primary)
+            {
+                <Icon Name="@(restart ? "refresh" : "play")" Size="12" />
+            }
+            @label
+        </button>
+    };
 
     private static string Minutes(int seconds) => seconds < 90 ? $"{seconds} s" : $"{Math.Round(seconds / 60.0, 1):0.#} min";
 
@@ -181,6 +400,7 @@ else if (!running)
         {
             <span>@info.Show(v)</span>
             @if (m.Samples.Count > 1) { <div class="meta" title="@string.Join(", ", m.Samples.Select(x => info.Show(x)))">@m.Samples.Count runs · @((m.Spread * 100).ToString("0"))% full range</div> }
+            @if (m.Detail is { } detail) { <div class="meta">@detail</div> }
         }
         else { <span class="meta">@(m?.Note ?? "—")</span> }
     };

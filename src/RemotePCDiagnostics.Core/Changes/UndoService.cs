@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Optimizations;
+using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Changes;
 
@@ -72,7 +73,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 LogError($"{c.Kind} '{c.Target}' failed: {ex}");
-                r = new(c, false, "Windows didn't allow undoing it.");
+                r = new(c, false, AdminRequiredException.MessageOr(ex, "Windows didn't allow undoing it."));
             }
             // Permanent changes are reported once, then forgotten (there's nothing to retry).
             if (r.Success || r.Skipped) journal.Remove(c.Id);
@@ -108,13 +109,20 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 var sep = c.Target.IndexOf('|');
                 if (sep <= 0) return Fail("The exclusion wasn't recorded.");
                 var (kindD, value) = (c.Target[..sep], c.Target[(sep + 1)..]);
-                var removeScript = kindD == "process" ? DefenderProbe.RemoveScript([], [value]) : DefenderProbe.RemoveScript([value], []);
-                return await Ps(removeScript, c, $"Defender scans {(kindD == "process" ? "files opened by " + Path.GetFileName(value) : value)} again.", ct).ConfigureAwait(false);
+                if (memory is null) return Fail("Not available.");
+                // The Agent removes it (it needs administrator rights) and checks it's a folder or build tool this app excludes.
+                var removed = kindD == "process"
+                    ? await memory.RemoveDefenderExclusionsAsync([], [value], ct).ConfigureAwait(false)
+                    : await memory.RemoveDefenderExclusionsAsync([value], [], ct).ConfigureAwait(false);
+                return removed
+                    ? Ok($"Defender scans {(kindD == "process" ? "files opened by " + Path.GetFileName(value) : value)} again.")
+                    : Fail("Windows didn't allow removing the exclusion.");
 
             case ChangeKind.SecuritySetting:
-                if (Security.SecurityFixes.Find(c.Target) is not { } sf || Security.SecurityFixes.RestoreScript(sf.Key, c.Previous) is not { } restore)
+                if (Security.SecurityFixes.Find(c.Target) is not { } sf || Security.SecurityFixes.RestoreScript(sf.Key, c.Previous) is null)
                     return Fail("The original setting wasn't recorded, so it was left as is.");
-                return await Ps(restore, c, sf.UndoDone, ct).ConfigureAwait(false);
+                // The Agent rebuilds the restore from the key and the journaled value (it checks both again).
+                return await AgentScript(AgentScripts.Of(AgentScripts.SecurityRestore, sf.Key, c.Previous ?? ""), c, sf.UndoDone, ct).ConfigureAwait(false);
 
             case ChangeKind.HiberFileType:
                 var hr = await commands.RunAsync(SystemCommandRunner.SystemTool("powercfg.exe"), ["/h", "/type", "full"], ct).ConfigureAwait(false);
@@ -211,7 +219,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                 if (taskState == ScheduledTaskAllowlist.Missing) return Ok("The task no longer exists (it was removed with its app); nothing to turn back on.");
                 if (ScheduledTaskAllowlist.IsEnabledState(taskState)) return Ok("The task is already on.");
                 return ScheduledTaskAllowlist.IsEnabledState(await memory.SetScheduledTaskEnabledAsync(c.Target, true, ct).ConfigureAwait(false))
-                    ? Ok("Scheduled task turned back on.") : Fail("Windows didn't allow turning the task back on (administrator rights needed).");
+                    ? Ok("Scheduled task turned back on.") : Fail("The task wasn't turned back on. " + ElevationService.AdminRepairHint);
 
             case ChangeKind.PageFile:
                 if (memory is null || c.Previous is null) return Fail("The original page file size wasn't recorded.");
@@ -231,14 +239,15 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             LogError($"{c.Kind} {c.Target}: {ex.GetType().Name}: {ex.Message}");
-            return new(c, false, "Couldn't put it back (administrator rights required).");
+            return new(c, false, AdminRequiredException.MessageOr(ex, "Couldn't put it back (administrator rights required)."));
         }
     }
 
-    private async Task<UndoItemResult> Ps(string script, ChangeRecord c, string ok, CancellationToken ct)
+    private async Task<UndoItemResult> AgentScript(AdminPipeScript script, ChangeRecord c, string ok, CancellationToken ct)
     {
-        var pr = await commands.RunPowerShellAsync(script, ct).ConfigureAwait(false);
-        return pr is { ExitCode: 0 } ? new(c, true, ok) : new(c, false, "Couldn't put it back (administrator rights required).");
+        var pr = await commands.RunAgentScriptAsync(script, null, ct).ConfigureAwait(false);
+        return pr is { ExitCode: 0 } ? new(c, true, ok)
+            : new(c, false, SystemCommandRunner.AgentFailure(pr) ?? "Windows didn't allow putting it back.");
     }
 
 

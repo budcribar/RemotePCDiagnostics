@@ -191,12 +191,12 @@ public sealed class ModuleLoader(ModuleLoaderOptions options, PluginRegistrar re
                 if (hosting.OutOfProcess && userMode is not null)
                 {
                     // Its code never loads into the app: the app holds a stand-in that asks the module host to run it (restricted token, or
-                    // the app's own token for a module that needs administrator).
+                    // for a module that needs administrator, a module host the Agent runs).
                     var um = new UserModeModule(path, manifest, d!) { Bundled = true, Elevated = hosting.Elevated };
-                    var outOfProcess = record with { Reason = hosting.Elevated ? "runs out of process, as administrator" : "runs out of process, in user mode", UserMode = true, Hosting = hosting };
+                    var outOfProcess = record with { Reason = hosting.Elevated ? "runs out of process, in the Agent" : "runs out of process, in user mode", UserMode = true, Hosting = hosting };
                     if (registrar.Register(services, new SingleModulePlugin(userMode(um)), pluginId, ModuleSource.BuiltIn, manifest.Id, outOfProcess))
                     {
-                        Log($"built-in {manifest.Slug} ({manifest.Id}) runs out of process{(hosting.Elevated ? " (administrator)" : "")} from {path}");
+                        Log($"built-in {manifest.Slug} ({manifest.Id}) runs out of process{(hosting.Elevated ? " (in the Agent)" : "")} from {path}");
                         // Its page is the app's own code reading only results: it still renders in the app.
                         if (manifest is { HasUi: true, PortableUi: false, ResultOnlyUi: true })
                             registrar.RegisterUiOnly(Instantiate(pluginId, dll, manifest), pluginId, manifest.Id);
@@ -294,8 +294,8 @@ public sealed record UserModeModule(string Path, ModuleManifest Manifest, Module
     /// module page shows no "Unsigned module" banner. It still runs with the restricted token.</summary>
     public bool Bundled { get; init; }
 
-    /// <summary>Ships with the app and needs administrator: the module host runs with the app's own (elevated) token instead of a restricted
-    /// one. Out of process for crash and memory isolation, not for fewer rights.</summary>
+    /// <summary>Ships with the app and needs administrator: the Agent runs its module host with the Agent's rights
+    /// (<see cref="AgentModuleHost"/>), because the app never runs as administrator. Out of process for crash and memory isolation.</summary>
     public bool Elevated { get; init; }
 }
 
