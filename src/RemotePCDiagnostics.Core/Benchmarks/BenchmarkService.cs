@@ -4,6 +4,48 @@ using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Benchmarks;
 
+/// <summary>Why a pass cannot start. <see cref="Setting"/> is the control that blocks it (<c>restartBeforeAfter</c>, <c>enabled</c>, <c>baseline</c> or <c>benchmark</c>).</summary>
+public sealed record BenchmarkBlock(string Setting, string Reason);
+
+/// <summary>One pass an agent can start, and why it cannot when <see cref="Available"/> is false.</summary>
+public sealed record BenchmarkStartChoice(string Pass, bool Restart, string Control, bool Available, string? Setting = null, string? Reason = null);
+
+/// <summary>Result of asking for a pass. <see cref="Started"/> is false when nothing ran and the restart choice was left as it was.</summary>
+public sealed record BenchmarkPassStart(bool Started, BenchmarkBlock? Blocked, RemediationResult? Restart);
+
+/// <summary>Rules for starting a benchmark pass. A refusal names the blocking setting and does not change the restart choice.</summary>
+public static class BenchmarkStartRules
+{
+    public const string RestartSetting = "restartBeforeAfter";
+    public const string EnabledSetting = "enabled";
+    public const string BaselineSetting = "baseline";
+    public const string RunningSetting = "benchmark";
+
+    public static string Control(BenchmarkPhase phase, bool restart) =>
+        (restart ? "bench-restart-" : "bench-run-") + (phase == BenchmarkPhase.Before ? "before" : "after");
+
+    /// <param name="restartPending">A pass is saved to run after a restart.</param>
+    /// <param name="restartImminent">This app asked Windows to restart moments ago, so the restart is still counting down.</param>
+    public static BenchmarkBlock? Block(BenchmarkPhase phase, bool restart, bool busy, bool hasBaseline, bool hasMeasurements, bool restartPending, bool canRestart,
+        bool restartImminent = false)
+    {
+        if (busy)
+            return new(RunningSetting, "A benchmark is already running.");
+        if (!hasMeasurements)
+            return new(EnabledSetting, "No measurements are selected.");
+        if (phase == BenchmarkPhase.After && !hasBaseline)
+            return new(BaselineSetting, "Run the before benchmark first.");
+        if (restartImminent)
+            return new(RestartSetting, "Windows is about to restart to run a benchmark.");
+        // A pass without a restart may still start: the restart may have been cancelled in Windows, and starting it drops the waiting one.
+        if (restart && restartPending)
+            return new(RestartSetting, "A restart is already waiting to run a benchmark.");
+        if (restart && !canRestart)
+            return new(RestartSetting, "Restarting isn't available from here.");
+        return null;
+    }
+}
+
 /// <summary>
 /// Before/after benchmarks for one service call. State (settings, the "before" run, a pending "after") is saved, so the
 /// "before" survives the restart and the "after" can run by itself once the PC is back.
@@ -49,6 +91,17 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public double? SettleFraction { get; private set; }
     public string? Progress { get; private set; }
     public string? Message { get; private set; }
+    /// <summary>The last start that was refused. Cleared when a pass actually starts. A refusal does not change <see cref="BenchmarkSettings.RestartBeforeAfter"/>.</summary>
+    public BenchmarkBlock? Blocked { get; private set; }
+
+    /// <summary>Clock for the restart countdown (tests replace it).</summary>
+    public TimeProvider Clock { get; init; } = TimeProvider.System;
+
+    /// <summary>How long after this app asks Windows to restart (60 s warning) a pass without a restart stays blocked.</summary>
+    public static readonly TimeSpan RestartCountdown = TimeSpan.FromMinutes(2);
+    private DateTimeOffset? _restartScheduledAt;
+    private bool RestartImminent => _restartScheduledAt is { } at && Clock.GetUtcNow() - at < RestartCountdown
+        && (BeforePendingRestart || AfterPendingRestart);
     public BenchmarkComparison Comparison => BenchmarkComparison.Build(Before, After);
 
     // ---- Developer benchmarks (Phase 1 & 2) ----
@@ -127,6 +180,60 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         Save(_state with { Settings = s with { Runs = Math.Clamp(s.Runs, 1, 5), Enabled = s.Enabled.Distinct().ToList() } });
     }
 
+    public BenchmarkBlock? BlockFor(BenchmarkPhase phase, bool restart) => BenchmarkStartRules.Block(
+        phase, restart, Running is not null || Settling is not null || RunningDeveloperAction, Before is not null,
+        Settings.Enabled.Count > 0, BeforePendingRestart || AfterPendingRestart, remediation is not null, RestartImminent);
+
+    public IReadOnlyList<BenchmarkStartChoice> StartChoices() =>
+        new[] { BenchmarkPhase.Before, BenchmarkPhase.After }
+            .SelectMany(phase => new[] { false, true }.Select(restart =>
+            {
+                var block = BlockFor(phase, restart);
+                return new BenchmarkStartChoice(
+                    phase == BenchmarkPhase.Before ? "before" : "after", restart, BenchmarkStartRules.Control(phase, restart),
+                    block is null, block?.Setting, block?.Reason);
+            }))
+            .ToList();
+
+    /// <summary>
+    /// Starts <paramref name="phase"/> with the requested restart choice. The choice is saved only once the pass has started
+    /// (the run is underway, or Windows has been asked to restart). A refusal leaves <see cref="BenchmarkSettings.RestartBeforeAfter"/> as it was.
+    /// </summary>
+    public async Task<BenchmarkPassStart> BeginPassAsync(BenchmarkPhase phase, bool restart, CancellationToken ct = default)
+    {
+        var block = BlockFor(phase, restart);
+        if (block is not null)
+        {
+            Blocked = block;
+            Raise();
+            return new(false, block, null);
+        }
+
+        Blocked = null;
+        if (restart)
+        {
+            var result = phase == BenchmarkPhase.Before
+                ? await RestartThenRunBeforeAsync(ct).ConfigureAwait(false)
+                : await RestartThenRunAfterAsync(ct).ConfigureAwait(false);
+            if (!result.Success)
+            {
+                Blocked = new BenchmarkBlock(BenchmarkStartRules.RestartSetting, result.Message);
+                Raise();
+                return new(false, Blocked, result);
+            }
+            return new(true, null, result);
+        }
+
+        var run = await RunAsync(phase, ct, restartChoice: false).ConfigureAwait(false);
+        if (run is null)
+        {
+            Blocked = new BenchmarkBlock(BenchmarkStartRules.RunningSetting, "A benchmark is already running.");
+            Raise();
+            return new(false, Blocked, null);
+        }
+        return new(true, null, null);
+    }
+
     /// <summary>Starts a new service call: forgets earlier results (settings are kept).</summary>
     public void Clear()
     {
@@ -138,19 +245,33 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public void Stop() { try { _cts?.Cancel(); } catch (ObjectDisposedException) { } }
 
     /// <param name="bootsSince">Before only: count just the start-ups after this time (the service workflow's restart before the baseline).</param>
-    public async Task<BenchmarkRun?> RunAsync(BenchmarkPhase phase, CancellationToken ct = default, DateTimeOffset? bootsSince = null)
+    /// <param name="restartChoice">When set, saved as soon as this run starts and not before. Null leaves the saved choice alone (resume after a restart already recorded it).
+    /// False also drops a pass waiting for a restart: the person chose to run now instead.</param>
+    public async Task<BenchmarkRun?> RunAsync(BenchmarkPhase phase, CancellationToken ct = default, DateTimeOffset? bootsSince = null, bool? restartChoice = null)
     {
+        BenchmarkState? commit = null;
         lock (_gate)
         {
             if (Running is not null || Settling is not null) return null;
+            if (restartChoice is { } choice)
+            {
+                var next = _state with { Settings = _state.Settings with { RestartBeforeAfter = choice } };
+                if (!choice) next = next with { RunBeforeOnStartup = false, RunAfterOnStartup = false, RestartRequestedUtc = null };
+                if (next != _state)
+                {
+                    _state = next;
+                    commit = next;
+                }
+            }
             Running = phase;
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         }
-        Message = null;
-        Raise();
         var cts = _cts;
         try
         {
+            if (commit is not null) store.Save(commit);
+            Message = null;
+            Raise();
             var settings = Settings;
             var prog = new SyncProgress(p => { Progress = p; Raise(); });
             var preferredSpeedometerEngine = phase == BenchmarkPhase.After
@@ -185,10 +306,10 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
         if (remediation is null) return new(false, "Restarting isn't available from here.");
         if (Running is not null || Settling is not null) return new(false, "A benchmark is running.");
         var previous = _state;
-        Save(new BenchmarkState(Settings, RunBeforeOnStartup: true, RestartRequestedUtc: DateTimeOffset.UtcNow));
+        // The restart choice is saved with the pending pass, in one write, before Windows is asked to restart.
+        Save(new BenchmarkState(Settings with { RestartBeforeAfter = true }, RunBeforeOnStartup: true, RestartRequestedUtc: Clock.GetUtcNow()));
         if (store.Load() is not { RunBeforeOnStartup: true }) return RestartNotSaved(previous);
-        var r = await remediation.ExecuteAsync(new AreaAction(RemediationKind.ScheduleCleanRestart, "Restart, then benchmark"), ct).ConfigureAwait(false);
-        if (!r.Success) Save(_state with { RunBeforeOnStartup = false, RestartRequestedUtc = null });
+        var r = await ScheduleRestartAsync(previous, ct).ConfigureAwait(false);
         Message = r.Success ? "Restarting in 60 seconds. The before benchmark runs by itself a few minutes after the PC is back." : r.Message;
         Raise();
         return r;
@@ -198,14 +319,34 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public async Task<RemediationResult> RestartThenRunAfterAsync(CancellationToken ct = default)
     {
         if (remediation is null) return new(false, "Restarting isn't available from here.");
+        if (Running is not null || Settling is not null) return new(false, "A benchmark is running.");
         if (Before is null) return new(false, "Run the before benchmark first.");
         var previous = _state;
-        Save(_state with { RunAfterOnStartup = true });
+        Save(_state with { Settings = _state.Settings with { RestartBeforeAfter = true }, RunAfterOnStartup = true });
         if (store.Load() is not { RunAfterOnStartup: true }) return RestartNotSaved(previous);
-        var r = await remediation.ExecuteAsync(new AreaAction(RemediationKind.ScheduleCleanRestart, "Restart, then benchmark"), ct).ConfigureAwait(false);
-        if (!r.Success) Save(_state with { RunAfterOnStartup = false });
+        var r = await ScheduleRestartAsync(previous, ct).ConfigureAwait(false);
         Message = r.Success ? "Restarting in 60 seconds. The after benchmark runs by itself a few minutes after the PC is back." : r.Message;
         Raise();
+        return r;
+    }
+
+    /// <summary>
+    /// Asks Windows to restart. When it doesn't, everything saved for the restart is put back as it was: the earlier results and the restart choice.
+    /// </summary>
+    private async Task<RemediationResult> ScheduleRestartAsync(BenchmarkState previous, CancellationToken ct)
+    {
+        RemediationResult r;
+        try
+        {
+            r = await remediation!.ExecuteAsync(new AreaAction(RemediationKind.ScheduleCleanRestart, "Restart, then benchmark"), ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            Save(previous);
+            throw;
+        }
+        if (r.Success) _restartScheduledAt = Clock.GetUtcNow();
+        else Save(previous);
         return r;
     }
 
