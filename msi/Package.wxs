@@ -30,9 +30,11 @@
         <Component Id="AgentExecutable" Guid="8A4F2C91-5E7B-4D13-9C84-1F2E6B7A90D3">
           <File Id="AgentExe" Source="$(var.AgentExePath)" Name="RemotePCDiagnostics.Agent.exe" KeyPath="yes" />
           <!-- Stop the current service before InstallFiles, and remove older registrations that would keep running beside it.
-               The current name is not removed here: the install custom action reconfigures it after the files are in place.
-               Agent.exe install waits for Global\RemotePCDiagnostics.Agent before it starts the service. -->
-          <ServiceControl Id="StopExistingAgentService" Name="RemotePCDiagnosticsAgent" Stop="both" Wait="yes" />
+               The current name is not removed here: Agent.exe install reconfigures it after the files are in place.
+               Startup is Automatic, so the PC rejoins the relay as soon as the service process is up. A delayed start is not used.
+               Start="install" starts it on a fresh install and on an upgrade. EnsureAgentServiceRunning does it again
+               after Agent.exe install, including when that step was interrupted, and sets failure restart back on. -->
+          <ServiceControl Id="StopExistingAgentService" Name="RemotePCDiagnosticsAgent" Stop="both" Start="install" Wait="yes" />
           <ServiceControl Id="StopLegacyAgentExeName" Name="RemotePCDiagnostics.Agent" Stop="both" Wait="yes" Remove="both" />
           <ServiceControl Id="StopLegacyAgentDisplayName" Name="Remote PC Diagnostics Agent" Stop="both" Wait="yes" Remove="both" />
           <ServiceControl Id="StopLegacyAgentTaskName" Name="RemotePCDiagnostics Agent" Stop="both" Wait="yes" Remove="both" />
@@ -57,6 +59,21 @@
         Impersonate="no"
         Return="check" />
 
+    <!-- After Agent.exe install on install and upgrade, not on uninstall. start= auto is Automatic. A delayed start is not used.
+         exit /b 0 so an already-running service (sc start returns 1056) does not fail the package. -->
+    <SetProperty
+        Id="EnsureAgentServiceRunning"
+        Value="&quot;[SystemFolder]cmd.exe&quot; /c &quot;sc.exe config RemotePCDiagnosticsAgent start= auto &amp; sc.exe failureflag RemotePCDiagnosticsAgent 0 &amp; sc.exe failure RemotePCDiagnosticsAgent reset= 86400 actions= restart/5000/restart/15000/restart/60000 &amp; sc.exe start RemotePCDiagnosticsAgent &amp; exit /b 0&quot;"
+        Before="EnsureAgentServiceRunning"
+        Sequence="execute" />
+    <CustomAction
+        Id="EnsureAgentServiceRunning"
+        BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+        DllEntry="WixQuietExec"
+        Execute="deferred"
+        Impersonate="no"
+        Return="ignore" />
+
     <SetProperty
         Id="UninstallAgentService"
         Value="&quot;[#AgentExe]&quot; uninstall"
@@ -73,6 +90,7 @@
     <InstallExecuteSequence>
       <Custom Action="UninstallAgentService" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
       <Custom Action="InstallAgentService" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="EnsureAgentServiceRunning" After="InstallAgentService" Condition="NOT REMOVE~=&quot;ALL&quot;" />
     </InstallExecuteSequence>
   </Package>
 </Wix>

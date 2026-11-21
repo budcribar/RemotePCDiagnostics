@@ -68,7 +68,10 @@
 ; The agent service has its own mutex (Global\RemotePCDiagnostics.Agent). It is not listed as AppMutex.
 ; Silent Setup checks AppMutex before it can close anything, and /SUPPRESSMSGBOXES answers Cancel, so a mutex
 ; the agent still holds would make a remote update exit 1. PrepareToInstall stops the old agent instead.
-; Agent.exe install then waits until that mutex is free and only then starts the new service.
+; Agent.exe install waits until that mutex is free, sets the service to Automatic, turns failure restart back
+; on, and starts it. DeinitializeSetup does the same again: it is Setup itself, not the agent process that
+; launched Setup. That agent is stopped by the upgrade and must not be what starts the new service.
+; Startup is Automatic. A delayed start would leave the PC off the relay for about two minutes.
 #define AgentMutexName "Global\RemotePCDiagnostics.Agent"
 #define WebView2ClientId "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 #define WebView2BootstrapUrl "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
@@ -157,7 +160,9 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "
 #if AgentExePath != ""
 ; Stage Agent.exe in {tmp} and invoke 'install'. PrepareToInstall has already stopped the old agent service,
 ; its legacy service names, and the Run keys and scheduled tasks that would start a second copy.
-; install waits until the agent mutex is free and only then starts the new service.
+; install waits until the agent mutex is free, sets Automatic and failure restart, and only then starts the service.
+; These entries are not skipifsilent: a remote update is silent. DeinitializeSetup starts the service again
+; if this entry does not, including when the agent that launched Setup has already been stopped.
 ; A remote update passes /PRESERVEAGENT so install keeps the enrollment key, consent, and lifetime already on the PC.
 Filename: "{tmp}\RemotePCDiagnostics.Agent.exe"; Parameters: "{#AgentInstallParams}"; StatusMsg: "Installing and starting Remote PC Diagnostics Agent service..."; Flags: runhidden waituntilterminated; Check: not PreserveAgentSettings
 Filename: "{tmp}\RemotePCDiagnostics.Agent.exe"; Parameters: "install"; StatusMsg: "Updating Remote PC Diagnostics Agent service..."; Flags: runhidden waituntilterminated; Check: PreserveAgentSettings
@@ -262,13 +267,92 @@ end;
 { Stop every service name this product has used, and remove startup entries that launch a second copy.
   Does not delete the current service and does not taskkill: Setup may be a child of the agent that started
   this update, and sc delete while that process is still alive leaves the old version running with no service
-  record. Agent.exe install deletes legacy names only after the process and the agent mutex are gone. }
-procedure StopOneAgentService(const Name: String);
+  record. Agent.exe install deletes legacy names only after the process and the agent mutex are gone.
+  Failure restart is cleared first so the stop does not launch a second copy that exits 0 and stays stopped.
+  The start type stays Automatic. DeinitializeSetup turns failure restart back on and starts the service. }
+function ServiceQueryText(const Name: String): String;
 var
-  ResultCode: Integer;
+  OutputPath, Text: String;
+  Code: Integer;
+begin
+  Result := '';
+  OutputPath := ExpandConstant('{tmp}\rpcd-sc-query.txt');
+  if Exec(ExpandConstant('{sys}\cmd.exe'), '/C sc query "' + Name + '" > "' + OutputPath + '" 2>&1', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    if LoadStringFromFile(OutputPath, Text) then
+      Result := Text;
+end;
+
+function AgentServiceIsInstalled(): Boolean;
+var
+  Text: String;
+begin
+  Text := ServiceQueryText('RemotePCDiagnosticsAgent');
+  Result := (Pos('STATE', Text) > 0) and (Pos('1060', Text) = 0);
+end;
+
+procedure ScLog(const Args: String);
+var
+  Code: Integer;
+begin
+  if Exec(ExpandConstant('{sys}\sc.exe'), Args, '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    Log('sc ' + Args + ' exited ' + IntToStr(Code) + '.')
+  else
+    Log('Could not start sc.exe for: ' + Args);
+end;
+
+procedure ClearAgentFailureRestart(const Name: String);
+begin
+  ScLog('failureflag "' + Name + '" 0');
+  ScLog('failure "' + Name + '" reset= 0 actions= ""');
+end;
+
+procedure StopOneAgentService(const Name: String);
 begin
   Log('Stopping agent service ''' + Name + ''' before the new agent starts.');
-  Exec(ExpandConstant('{sys}\sc.exe'), 'stop "' + Name + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  ClearAgentFailureRestart(Name);
+  ScLog('stop "' + Name + '"');
+end;
+
+procedure EnsureAgentServiceAutomaticAndRunning();
+var
+  Code, Try: Integer;
+  Text: String;
+begin
+  if not AgentServiceIsInstalled() then
+  begin
+    Log('RemotePCDiagnosticsAgent is not installed. Setup is not starting it.');
+    Exit;
+  end;
+  { Automatic. A delayed start would leave the PC off the relay after boot. }
+  ScLog('config RemotePCDiagnosticsAgent start= auto');
+  ScLog('failureflag RemotePCDiagnosticsAgent 0');
+  ScLog('failure RemotePCDiagnosticsAgent reset= 86400 actions= restart/5000/restart/15000/restart/60000');
+  { A start that finds the previous process still holding the agent mutex exits 0 and stays stopped.
+    Exit 0 does not trip failure restart. Try again once that process is gone. }
+  for Try := 1 to 8 do
+  begin
+    if not Exec(ExpandConstant('{sys}\sc.exe'), 'start RemotePCDiagnosticsAgent', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    begin
+      Log('Could not start sc.exe to start RemotePCDiagnosticsAgent.');
+      Exit;
+    end;
+    if (Code <> 0) and (Code <> 1056) then
+      Log('sc start RemotePCDiagnosticsAgent exited ' + IntToStr(Code) + '.');
+    Sleep(2000);
+    Text := ServiceQueryText('RemotePCDiagnosticsAgent');
+    if Pos('RUNNING', Text) > 0 then
+    begin
+      Log('RemotePCDiagnosticsAgent is set to Automatic and is running.');
+      Exit;
+    end;
+    Log('RemotePCDiagnosticsAgent was not running yet.');
+  end;
+  Log('RemotePCDiagnosticsAgent did not stay running.');
+end;
+
+procedure DeinitializeSetup();
+begin
+  EnsureAgentServiceAutomaticAndRunning();
 end;
 
 procedure RemoveAgentStartupEntries();
@@ -392,6 +476,7 @@ var
   I, ResultCode: Integer;
 begin
   StopPreviousAgents();
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "Remote PC Diagnostics Setup" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   { Setup can run the agent's own uninstall. MSIX cannot (no custom uninstall action); the service removes itself
     once it has seen this install and later finds it gone. install-agent / Install-Computer.cmd only call
     "Agent.exe install ... --lifetime=persistent", so this same uninstall command is what removes them. }

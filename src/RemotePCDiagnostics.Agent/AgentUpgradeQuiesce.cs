@@ -29,9 +29,10 @@ internal static class AgentUpgradeQuiesce
         }
         finally
         {
-            // Failure recovery stays cleared until the caller sets it immediately before start.
-            // The start type is put back so a failed install can start the existing service again.
-            AgentServiceInstaller.RunSc($"config {AgentPaths.ServiceName} start= auto");
+            // Failure restart was cleared so a stop during the copy does not launch a second copy.
+            // Automatic and the restart actions are put back here even when a later step throws.
+            // The start type is never switched off: a killed installer used to leave it that way.
+            AgentServiceRecovery.ApplyAutomatic(line => AgentSingleInstance.Log(line, log));
         }
     }
 
@@ -45,8 +46,10 @@ internal static class AgentUpgradeQuiesce
         {
             if (!AgentInstancePolicy.ShouldDeleteService(service.Name, service.ImagePath)) continue;
             var name = Quote(service.Name);
+            // Legacy names are deleted, so they must not restart while the delete is in progress.
+            // The current service is not in this list and is never set off Automatic.
             AgentServiceInstaller.RunSc($"config {name} start= disabled");
-            AgentServiceInstaller.RunSc($"failure {name} reset= 0 actions= \"\"");
+            AgentServiceInstaller.RunSc(AgentServiceControl.ClearFailureRestart(service.Name));
             StopService(service.Name, log);
             var (code, output) = AgentServiceInstaller.RunSc($"delete {Quote(service.Name)}");
             var line = code == 0
@@ -61,9 +64,14 @@ internal static class AgentUpgradeQuiesce
         switch (action)
         {
             case DisableFailureRestartAction disable:
-                AgentServiceInstaller.RunSc($"config {Quote(disable.ServiceName)} start= disabled");
-                AgentServiceInstaller.RunSc($"failure {Quote(disable.ServiceName)} reset= 0 actions= \"\"");
-                AgentSingleInstance.Log($"{AgentInstancePolicy.LogPrefix} Failure restart disabled for '{disable.ServiceName}' while it is replaced.", log);
+                foreach (var args in AgentServiceControl.ArgumentsFor(disable))
+                    AgentServiceInstaller.RunSc(args);
+                AgentSingleInstance.Log($"{AgentInstancePolicy.LogPrefix} Failure restart disabled for '{disable.ServiceName}' while it is replaced. Startup stays Automatic.", log);
+                break;
+            case EnsureServiceRecoveryAction ensure:
+                foreach (var args in AgentServiceControl.ArgumentsFor(ensure))
+                    AgentServiceInstaller.RunSc(args);
+                AgentSingleInstance.Log($"{AgentInstancePolicy.LogPrefix} '{ensure.ServiceName}' is Automatic and failure restart is on.", log);
                 break;
             case StopServiceAction stop:
                 StopService(stop.ServiceName, log);
@@ -115,16 +123,26 @@ internal static class AgentUpgradeQuiesce
 
     private static void EndLeftoverProcesses(Action<string>? log)
     {
+        var parentsKnown = ProcessLineage.TryParentChain(Environment.ProcessId, out var parents);
+        var inJob = JobBreakawayProcess.IsInJob();
+        IReadOnlyList<int> protectedIds = parentsKnown ? parents : [];
         foreach (var process in AgentMachineSnapshot.OtherProcesses())
         {
+            if (!AgentInstancePolicy.MayTerminateLeftover(process.Pid, Environment.ProcessId, protectedIds, inJob, parentsKnown))
+            {
+                AgentSingleInstance.Log(
+                    $"{AgentInstancePolicy.LogPrefix} Leaving agent process pid {process.Pid} running. Ending it would end Setup before the new service starts.",
+                    log);
+                continue;
+            }
+
             try
             {
                 using var live = System.Diagnostics.Process.GetProcessById(process.Pid);
                 AgentSingleInstance.Log(
                     $"{AgentInstancePolicy.LogPrefix} Ending leftover agent process pid {process.Pid}, version {AgentInstancePolicy.Shown(process.Version)}, path {AgentInstancePolicy.Shown(process.Path)}.",
                     log);
-                // Not the process tree: Setup may be a child of the agent that launched this upgrade.
-                live.Kill(entireProcessTree: false);
+                live.Kill(entireProcessTree: AgentInstancePolicy.KillEntireProcessTree);
                 live.WaitForExit(10_000);
             }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
@@ -133,7 +151,9 @@ internal static class AgentUpgradeQuiesce
             }
         }
 
-        var still = AgentMachineSnapshot.OtherProcesses();
+        var still = AgentMachineSnapshot.OtherProcesses()
+            .Where(process => AgentInstancePolicy.MayTerminateLeftover(process.Pid, Environment.ProcessId, protectedIds, inJob, parentsKnown))
+            .ToList();
         if (still.Count > 0)
         {
             var pids = string.Join(", ", still.Select(static process => process.Pid.ToString(System.Globalization.CultureInfo.InvariantCulture)));
