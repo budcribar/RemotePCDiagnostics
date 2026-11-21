@@ -1,6 +1,7 @@
 using System.ServiceProcess;
 using PeakSWC.RemoteWebView.Agent;
 using RemotePCDiagnostics.Agent.Core;
+using RemotePCDiagnostics.Core.Wake;
 
 namespace RemotePCDiagnostics.Agent;
 
@@ -90,6 +91,15 @@ public static class Program
         var update = new UpdateRpcdCommand { RequestId = "upd-self-check", Channel = "prerelease", Approved = false };
         if (update.Approved)
             throw new InvalidOperationException("An update must stay unapproved until the shop owner sets approved.");
+
+        var magic = WakeAddresses.MagicPacket([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        if (magic.Length != 102 || magic[0] != 0xFF || magic[6] != 0x00 || magic[11] != 0x55)
+            throw new InvalidOperationException("Wake magic packet is the wrong shape.");
+        var wake = new SendWakeCommand { RequestId = "wake-self-check" };
+        wake.TargetMac.Add("00:11:22:33:44:55");
+        wake.Broadcast.Add("192.168.1.255");
+        if (wake.TargetMac.Count != 1 || wake.Broadcast.Count != 1)
+            throw new InvalidOperationException("Wake command did not keep the MAC and the broadcast.");
 
         Console.WriteLine($"RemotePCDiagnostics.Agent self-check OK ({AgentPaths.GetAgentVersion()})");
         return ExitOk;

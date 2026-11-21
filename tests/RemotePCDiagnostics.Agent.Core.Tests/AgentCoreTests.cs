@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using Grpc.Core;
 using PeakSWC.RemoteWebView.Agent;
 using RemotePCDiagnostics.Agent;
+using RemotePCDiagnostics.Core.Wake;
 
 namespace RemotePCDiagnostics.Agent.Core.Tests;
 
@@ -770,6 +771,98 @@ public class AgentHubWorkerTests
     }
 
     [Fact]
+    public async Task Hello_and_heartbeat_carry_the_wake_snapshot()
+    {
+        var machineGuid = Guid.Parse("7e57c0de-0000-4000-8000-0000000000a1");
+        var config = AgentConfig.ForInstall(
+            existing: null,
+            new AgentArgs(AgentCommand.Install, Server: "https://relay.example:34544", Key: "rpd_live_fleet_key", Consent: ConsentCeiling.Unattended),
+            machineGuid);
+        var platform = new FakeAgentPlatform
+        {
+            Wake = new WakeSnapshot(true, true, false, true, "connected",
+            [
+                new RemotePCDiagnostics.Core.Wake.WakeAdapter("Wi-Fi", "Qualcomm FastConnect 7800", "Wi-Fi", "A0:B1:C2:D3:E4:F5", "192.168.1.42", 24, "192.168.1.0", "192.168.1.255", "yes", "Enabled", "Disabled", "Enabled", "Enabled"),
+            ]),
+        };
+        var hub = new FakeAgentHubClient();
+        var worker = new AgentHubWorker(config, platform, new AgentSessionOptions { HeartbeatInterval = TimeSpan.FromMilliseconds(40) });
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var runTask = worker.RunSingleConnectionAsync(hub, cts.Token);
+
+        var hello = await hub.ReadAgentMessageAsync(cts.Token);
+        Assert.Equal(AgentMessage.BodyOneofCase.Hello, hello.BodyCase);
+        Assert.NotNull(hello.Hello.Wake);
+        Assert.True(hello.Hello.Wake.ModernStandby);
+        Assert.Equal("connected", hello.Hello.Wake.StandbyNetwork);
+        var adapter = Assert.Single(hello.Hello.Wake.Adapters);
+        Assert.Equal("A0:B1:C2:D3:E4:F5", adapter.Mac);
+        Assert.Equal("192.168.1.255", adapter.Broadcast);
+        Assert.Equal("yes", adapter.WakeArmed);
+        Assert.Equal("Enabled", adapter.MagicPacket);
+
+        AgentMessage? beat = null;
+        while (beat is null)
+        {
+            var msg = await hub.ReadAgentMessageAsync(cts.Token);
+            if (msg.BodyCase == AgentMessage.BodyOneofCase.Heartbeat)
+                beat = msg;
+        }
+        Assert.NotNull(beat.Heartbeat.Wake);
+        Assert.Equal("A0:B1:C2:D3:E4:F5", Assert.Single(beat.Heartbeat.Wake.Adapters).Mac);
+
+        hub.CompleteServerStream();
+        await runTask;
+    }
+
+    [Fact]
+    public async Task Send_wake_command_returns_what_the_sender_reports()
+    {
+        var machineGuid = Guid.Parse("7e57c0de-0000-4000-8000-0000000000a2");
+        var config = AgentConfig.ForInstall(
+            existing: null,
+            new AgentArgs(AgentCommand.Install, Server: "https://relay.example:34544", Key: "rpd_live_fleet_key", Consent: ConsentCeiling.Unattended),
+            machineGuid);
+        var hub = new FakeAgentHubClient();
+        var worker = new AgentHubWorker(config, new FakeAgentPlatform(), new AgentSessionOptions
+        {
+            HeartbeatInterval = TimeSpan.FromMinutes(5),
+            SendWake = (cmd, _) =>
+            {
+                var report = new WakePacketReport { RequestId = cmd.RequestId, Ok = true, Detail = "Sent 4 UDP packets." };
+                report.Sent.Add(new SentWakePacket { Mac = cmd.TargetMac[0], Destination = cmd.Broadcast[0], Port = 9, Sent = true, InterfaceName = "Wi-Fi" });
+                return Task.FromResult(report);
+            },
+        });
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var runTask = worker.RunSingleConnectionAsync(hub, cts.Token);
+
+        var hello = await hub.ReadAgentMessageAsync(cts.Token);
+        Assert.Null(hello.Hello.Wake);
+
+        var cmd = new SendWakeCommand { RequestId = "wake-1" };
+        cmd.TargetMac.Add("00:11:22:33:44:55");
+        cmd.Broadcast.Add("192.168.1.255");
+        await hub.SendHubCommandAsync(new HubCommand { SendWake = cmd }, cts.Token);
+
+        while (true)
+        {
+            var msg = await hub.ReadAgentMessageAsync(cts.Token);
+            if (msg.BodyCase != AgentMessage.BodyOneofCase.WakePacket)
+                continue;
+            Assert.True(msg.WakePacket.Ok);
+            Assert.Equal("wake-1", msg.WakePacket.RequestId);
+            Assert.Equal("Sent 4 UDP packets.", msg.WakePacket.Detail);
+            Assert.Equal(9, msg.WakePacket.Sent[0].Port);
+            Assert.Equal("192.168.1.255", msg.WakePacket.Sent[0].Destination);
+            break;
+        }
+
+        hub.CompleteServerStream();
+        await runTask;
+    }
+
+    [Fact]
     public void Boot_time_is_now_minus_the_tick_count_rounded_to_the_second()
     {
         var now = new DateTimeOffset(2026, 11, 19, 17, 30, 15, 400, TimeSpan.FromHours(-7));
@@ -796,6 +889,8 @@ public class AgentHubWorkerTests
         public string GetCachedOrInstalledAppVersion() => "1.2.0";
         public DateTimeOffset? Booted { get; init; } = new DateTimeOffset(2026, 11, 19, 8, 0, 0, TimeSpan.Zero);
         public DateTimeOffset? GetBootTime() => Booted;
+        public WakeSnapshot? Wake { get; init; }
+        public Task<WakeSnapshot?> ReadWakeSnapshotAsync(CancellationToken ct) => Task.FromResult(Wake);
 
         public Task<ConsentOutcome> RequestConsentAsync(string requester, int timeoutSeconds, CancellationToken ct) =>
             ConsentHandler is not null ? ConsentHandler(requester, timeoutSeconds, ct) : Task.FromResult(ConsentResult);

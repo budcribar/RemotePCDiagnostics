@@ -3,6 +3,7 @@ using Grpc.Core;
 using Grpc.Net.Client;
 using PeakSWC.RemoteWebView.Agent;
 using RemotePCDiagnostics.Agent.Core;
+using RemotePCDiagnostics.Core.Wake;
 
 namespace RemotePCDiagnostics.Agent;
 
@@ -23,6 +24,8 @@ public interface IAgentPlatform
     string GetCachedOrInstalledAppVersion();
     /// <summary>When Windows last started, so Admin can drop the hardware inventory it kept from before. Null when unknown.</summary>
     DateTimeOffset? GetBootTime() => null;
+    /// <summary>MAC addresses, subnets and whether a magic packet can wake this PC. Null when it could not be read.</summary>
+    Task<WakeSnapshot?> ReadWakeSnapshotAsync(CancellationToken ct) => Task.FromResult<WakeSnapshot?>(null);
     Task<ConsentOutcome> RequestConsentAsync(string requester, int timeoutSeconds, CancellationToken ct);
     Task<(string? ExePath, string? Error)> ResolveHostExecutableAsync(
         Func<LaunchStage, string, int, Task> reportStageAsync,
@@ -70,6 +73,12 @@ public sealed class AgentSessionOptions
 
     /// <summary>The latest update progress, or the one named by request id. Null when this process has no updater.</summary>
     public Func<string, UpdateRpcdProgress?>? ReadUpdateRpcd { get; init; }
+
+    /// <summary>
+    /// Sends a wake packet. Null uses UDP on this computer's own IPv4 interfaces.
+    /// Tests set it so a command does not leave the machine.
+    /// </summary>
+    public Func<SendWakeCommand, CancellationToken, Task<WakePacketReport>>? SendWake { get; init; }
 }
 
 /// <summary>
@@ -98,6 +107,8 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
         Timeout = TimeSpan.FromSeconds(5),
     };
 
+    private readonly CachingWakeInventory _wake = new();
+
     public string MachineName => Environment.MachineName;
     public string GetOsVersion() => Win32Session.GetOsVersionText();
     public string GetActiveSignedInUser() => Win32Session.GetActiveSignedInUser();
@@ -109,6 +120,8 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
     /// Fast Startup on resumes the same kernel session and keeps it.
     /// </summary>
     public DateTimeOffset? GetBootTime() => BootTime.From(DateTimeOffset.UtcNow, Environment.TickCount64);
+
+    public Task<WakeSnapshot?> ReadWakeSnapshotAsync(CancellationToken ct) => _wake.ReadAsync(ct);
 
     public async Task<ConsentOutcome> RequestConsentAsync(string requester, int timeoutSeconds, CancellationToken ct)
     {
@@ -304,6 +317,7 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
     {
         _http.Dispose();
         _statusHttp.Dispose();
+        _wake.Dispose();
     }
 
     private sealed class SystemLaunchedProcess(
@@ -466,6 +480,9 @@ public sealed class AgentHubWorker(
         };
         if (platform.GetBootTime() is { } booted)
             hello.BootTime = Google.Protobuf.WellKnownTypes.Timestamp.FromDateTimeOffset(booted);
+        // A slow powercfg must not hold the first hello. The heartbeat carries the snapshot once it is ready.
+        if (await ReadWakeAsync(token, TimeSpan.FromSeconds(3)).ConfigureAwait(false) is { } helloWake)
+            hello.Wake = helloWake;
 
         await WriteMessageAsync(new AgentMessage { Hello = hello }, token).ConfigureAwait(false);
         Log($"Sent AgentHello (machine={hello.MachineName}, user='{hello.SignedInUser}', version={hello.AgentVersion}).");
@@ -505,6 +522,10 @@ public sealed class AgentHubWorker(
 
                     case HubCommand.BodyOneofCase.UpdateRpcdStatus:
                         _ = HandleUpdateRpcdStatusAsync(command.UpdateRpcdStatus, WriteMessageAsync, token);
+                        break;
+
+                    case HubCommand.BodyOneofCase.SendWake:
+                        _ = HandleSendWakeAsync(command.SendWake, WriteMessageAsync, token);
                         break;
                 }
             }
@@ -549,6 +570,8 @@ public sealed class AgentHubWorker(
                     SessionId = sessionId,
                     CachedAppVersion = platform.GetCachedOrInstalledAppVersion(),
                 };
+                if (await ReadWakeAsync(ct).ConfigureAwait(false) is { } wake)
+                    hb.Wake = wake;
                 await writeAsync(new AgentMessage { Heartbeat = hb }, ct).ConfigureAwait(false);
                 AnnounceLink(true);
             }
@@ -946,6 +969,66 @@ public sealed class AgentHubWorker(
                 $"Launch failed: {ex.Message}",
                 0,
                 streamCts.Token).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<WakeReadiness?> ReadWakeAsync(CancellationToken ct, TimeSpan? bound = null)
+    {
+        using var wait = bound is null ? null : CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (wait is not null) wait.CancelAfter(bound!.Value);
+        var token = wait?.Token ?? ct;
+        try
+        {
+            var snapshot = await platform.ReadWakeSnapshotAsync(token).ConfigureAwait(false);
+            return snapshot is null ? null : WakeRelay.ToReadiness(snapshot);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log($"Wake inventory failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    private async Task HandleSendWakeAsync(
+        SendWakeCommand command,
+        Func<AgentMessage, CancellationToken, Task> writeAsync,
+        CancellationToken ct)
+    {
+        try
+        {
+            var report = _options.SendWake is { } custom
+                ? await custom(command, ct).ConfigureAwait(false)
+                : WakeRelay.Send(command);
+            await writeAsync(new AgentMessage { WakePacket = report }, ct).ConfigureAwait(false);
+            Log($"Wake {command.RequestId}: {(report.Ok ? "sent" : "not sent")} ({report.Sent.Count} row(s)).");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log($"Wake packet failed: {ex.Message}");
+            try
+            {
+                await writeAsync(new AgentMessage
+                {
+                    WakePacket = new WakePacketReport
+                    {
+                        RequestId = command.RequestId ?? "",
+                        Ok = false,
+                        Detail = "The wake packet could not be sent.",
+                    },
+                }, ct).ConfigureAwait(false);
+            }
+            catch { }
         }
     }
 

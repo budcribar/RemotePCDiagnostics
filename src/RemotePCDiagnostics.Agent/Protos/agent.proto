@@ -34,6 +34,7 @@ message AgentMessage {
     Heartbeat heartbeat = 2;
     LaunchProgress progress = 3;
     UpdateRpcdProgress update_rpcd = 4; // progress for an update_rpcd command; the relay forwards it to WatchUpdateRpcd
+    WakePacketReport wake_packet = 5;   // what a send_wake command sent; the relay returns it from SendWake
   }
 }
 
@@ -48,6 +49,7 @@ message AgentHello {
   ConsentMode consent_ceiling = 8;
   Lifetime lifetime = 9;
   google.protobuf.Timestamp boot_time = 10;  // when Windows last started (UTC); unset on older agents
+  WakeReadiness wake = 11;                   // adapters and wake readiness; unset when the agent could not read them
 }
 
 message Heartbeat {
@@ -55,6 +57,7 @@ message Heartbeat {
   bool session_running = 2;
   string session_id = 3;          // the running app's session GUID, if any
   string cached_app_version = 4;
+  WakeReadiness wake = 5;         // same snapshot as AgentHello.wake, refreshed; unset means "no new reading", not "clear it"
 }
 
 enum LaunchStage {
@@ -86,7 +89,61 @@ message HubCommand {
     ReleaseAvailableCommand release_available = 3;
     UpdateRpcdCommand update_rpcd = 4;          // install an official GitHub release; approved must be true
     UpdateRpcdStatusCommand update_rpcd_status = 5; // poll the latest update, or the one named by request_id
+    SendWakeCommand send_wake = 6;              // broadcast magic packets for the MACs; this agent must be awake
   }
+}
+
+// One Ethernet or Wi-Fi adapter. No user names, paths or keys. wake_armed is "yes", "no" or "unknown".
+// magic_packet is "Enabled", "Disabled", "Unsupported" or "Unknown" (the NIC advanced property Wake on Magic Packet).
+message WakeAdapter {
+  string name = 1;
+  string description = 2;
+  string adapter_type = 3;   // "Ethernet" or "Wi-Fi"
+  string mac = 4;            // "AA:BB:CC:DD:EE:FF", empty when the adapter has none
+  string ipv4 = 5;
+  int32 prefix_length = 6;
+  string subnet = 7;         // network address, such as "192.168.1.0"
+  string broadcast = 8;      // subnet broadcast, such as "192.168.1.255"
+  string wake_armed = 9;
+  string magic_packet = 10;
+}
+
+// Whether a magic packet can wake this PC, plus the addresses a peer needs. power_read is false when powercfg /a failed;
+// modern_standby, s3 and hibernate are then meaningless. standby_network is "connected", "disconnected" or empty.
+// The relay copies the latest Hello or Heartbeat value onto AgentInfo.wake and does not clear a stored snapshot when the field is unset.
+message WakeReadiness {
+  bool power_read = 1;
+  bool modern_standby = 2;
+  bool s3 = 3;
+  bool hibernate = 4;
+  string standby_network = 5;
+  repeated WakeAdapter adapters = 6;
+}
+
+// Broadcast a magic packet for each target MAC. broadcast is the sleeping PC's subnet broadcast list (from its WakeReadiness).
+// The agent sends only on its own interfaces whose subnet broadcast is in that list, to that broadcast and to 255.255.255.255, on UDP 9 and 7.
+message SendWakeCommand {
+  string request_id = 1;
+  repeated string target_mac = 2;
+  repeated string broadcast = 3;
+}
+
+// One datagram, or a MAC that was refused. sent is false when error is set.
+message SentWakePacket {
+  string mac = 1;
+  string destination = 2;
+  int32 port = 3;
+  string interface_name = 4;
+  string interface_address = 5;
+  bool sent = 6;
+  string error = 7;
+}
+
+message WakePacketReport {
+  string request_id = 1;
+  bool ok = 2;
+  string detail = 3;
+  repeated SentWakePacket sent = 4;
 }
 
 message LaunchCommand {
@@ -159,6 +216,15 @@ service AgentAdmin {
   rpc UpdateRpcd(UpdateRpcdAdminRequest) returns (UpdateRpcdProgress);
   // Replays the latest progress first, then each change until terminal. request_id empty = the latest update.
   rpc WatchUpdateRpcd(UpdateRpcdWatchRequest) returns (stream UpdateRpcdProgress);
+  // Forwards SendWakeCommand to an awake agent and returns what that agent sent. machine_id is the sender, not the sleeping PC.
+  rpc SendWake(SendWakeAdminRequest) returns (WakePacketReport);
+}
+
+message SendWakeAdminRequest {
+  string machine_id = 1;
+  string request_id = 2;
+  repeated string target_mac = 3;
+  repeated string broadcast = 4;
 }
 
 message UpdateRpcdAdminRequest {
@@ -190,6 +256,7 @@ message AgentInfo {
   string ip_address = 13;
   string group = 14;         // group slug owning this agent, empty for unscoped agents
   google.protobuf.Timestamp boot_time = 15;  // from AgentHello; unset when the agent did not report it
+  WakeReadiness wake = 16;   // from the latest Hello or Heartbeat; unset on older agents
 }
 
 message AgentList {

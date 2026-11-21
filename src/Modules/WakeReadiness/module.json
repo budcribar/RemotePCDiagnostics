@@ -1,0 +1,12 @@
+{
+  "id": "6f2c8a41-9e57-4b13-a8d0-c1e47b5d2f86",
+  "slug": "WakeReadiness",
+  "displayName": "Wake readiness",
+  "contract": "2.0",
+  "entryType": "RemotePCDiagnostics.Modules.WakeReadiness.WakeReadinessPlugin",
+  "group": "power",
+  "order": 300,
+  "needsAdmin": false,
+  "hasUi": false,
+  "outOfProcess": false
+}

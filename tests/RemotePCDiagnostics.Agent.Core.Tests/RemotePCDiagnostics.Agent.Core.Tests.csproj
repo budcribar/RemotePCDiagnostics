@@ -32,6 +32,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Agent.Core\RemotePCDiagnostics.Agent.Core.csproj" />
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Agent\RemotePCDiagnostics.Agent.csproj" />
+    <ProjectReference Include="..\..\src\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
   </ItemGroup>
 
 </Project>
