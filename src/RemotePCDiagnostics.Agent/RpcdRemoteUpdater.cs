@@ -196,8 +196,22 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             return -1;
         }
 
+        // Session 0 (the agent service) can end the Host and still wait for Setup. The elevated helper is in the
+        // Host's kill-on-close job, so it must not: Setup's script closes the Host after Setup has left that job.
+        // Either way the Host has to be gone before Setup initializes. /SUPPRESSMSGBOXES answers the AppMutex
+        // prompt with Cancel, and that Abort is exit code 1, before CloseApplications runs.
+        if (RpcdSetupLog.CanCloseHostBeforeSetup(OperatingSystem.IsWindows() ? Process.GetCurrentProcess().SessionId : -1))
+            RpcdHostShutdown.CloseRunningHost(_log);
+        else
+            _log?.Invoke("[rpcd-update] Leaving Remote PC Diagnostics running until Setup has started. Setup closes it.");
+
         var exit = await AgentSelfUpdater.StartAndWaitAsync(install.InstallerPath, install.Arguments, _stagingDirectory, _log, ct)
             .ConfigureAwait(false);
+        var meaning = InnoSetupExitCodes.Describe(exit);
+        _log?.Invoke($"[rpcd-update] Installer exited with code {exit} ({meaning}).");
+        var tail = RpcdSetupLog.ReadTail(Path.Combine(_stagingDirectory, RpcdSetupLog.FileName));
+        if (!string.IsNullOrWhiteSpace(tail))
+            _log?.Invoke("[rpcd-update] Installer log (tail):" + Environment.NewLine + tail);
         // Setup closed the app. After a good install the restarted agent service usually starts it first; after a failed one the
         // previous build is still there. Either way the request is claimed once, so the app is started once and the file is gone.
         if (relaunch is not null)
@@ -371,18 +385,25 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         }
     }
 
-    internal static UpdateRpcdProgress ToProto(RpcdUpdateStatus status) => new()
+    internal static UpdateRpcdProgress ToProto(RpcdUpdateStatus status)
     {
-        RequestId = status.RequestId ?? "",
-        Stage = status.Stage ?? "",
-        Detail = status.Detail ?? "",
-        Percent = status.Percent ?? 0,
-        OldVersion = status.OldVersion ?? "",
-        NewVersion = status.NewVersion ?? "",
-        Terminal = status.Terminal,
-        Error = status.Error ?? "",
-        Channel = status.Channel ?? "",
-    };
+        var progress = new UpdateRpcdProgress
+        {
+            RequestId = status.RequestId ?? "",
+            Stage = status.Stage ?? "",
+            Detail = status.Detail ?? "",
+            Percent = status.Percent ?? 0,
+            OldVersion = status.OldVersion ?? "",
+            NewVersion = status.NewVersion ?? "",
+            Terminal = status.Terminal,
+            Error = status.Error ?? "",
+            Channel = status.Channel ?? "",
+            InstallerLog = status.InstallerLog ?? "",
+        };
+        if (status.InstallerExitCode is int exitCode)
+            progress.InstallerExitCode = exitCode;
+        return progress;
+    }
 
     /// <summary>True when the app the agent started is still running, so its activity report has to be fresh.</summary>
     public static bool IsTrackedHostRunning()

@@ -45,6 +45,10 @@ public sealed record RpcdUpdateStatus
     public bool Terminal { get; init; }
     public string? Error { get; init; }
     public string? ApprovedBy { get; init; }
+    /// <summary>Process exit code of Setup, set when the attempt failed after Setup was started. 0 is a real code (Setup exited 0 but the version did not change).</summary>
+    public int? InstallerExitCode { get; init; }
+    /// <summary>Masked tail of the Setup <c>/LOG</c> file, set on failure. About the last 200 lines.</summary>
+    public string? InstallerLog { get; init; }
     public DateTimeOffset UpdatedUtc { get; init; }
     /// <summary>
     /// The agent process running this update. The agent service and an app's elevated helper share the status file, so a process
@@ -361,11 +365,24 @@ public sealed class RpcdUpdateSession
                 ct,
                 requireChecksum: true).ConfigureAwait(false);
 
+            var logPath = Path.Combine(run.StagingDirectory, RpcdSetupLog.FileName);
+            try
+            {
+                if (File.Exists(logPath))
+                    File.Delete(logPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A previous log may still be there. The tail is masked before it is stored.
+            }
+
             var arguments = AppUpdateInstaller.BuildSetupArguments(
                 verySilent: true,
                 agentMsiPath: null,
                 run.RelaunchArguments,
-                preserveAgentSettings: true);
+                preserveAgentSettings: true,
+                logPath: logPath,
+                forceCloseApplications: true);
 
             Touch(current with
             {
@@ -391,6 +408,7 @@ public sealed class RpcdUpdateSession
             }
 
             var now = run.ReadInstalledVersion() ?? oldVersion;
+            var installerLog = RpcdSetupLog.ReadTail(logPath);
             if (exit == 0 && RpcdGitHubRelease.InstalledMatches(now, target, oldVersion))
             {
                 Set(current with
@@ -407,13 +425,14 @@ public sealed class RpcdUpdateSession
                 return;
             }
 
+            var still = now ?? oldVersion ?? "the previous version";
             if (exit != 0)
             {
-                Fail(current, oldVersion, $"The installer exited with code {exit}. Remote PC Diagnostics was not changed and is still {now ?? oldVersion ?? "the previous version"}.");
+                Fail(current, oldVersion, InstallerFailed(exit, still), exit, installerLog);
                 return;
             }
 
-            Fail(current, oldVersion, $"The installer finished but Remote PC Diagnostics is still {now ?? oldVersion}. The previous version is still in place.");
+            Fail(current, oldVersion, $"The installer finished but Remote PC Diagnostics is still {still}. The previous version is still in place.", exit, installerLog);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -425,7 +444,10 @@ public sealed class RpcdUpdateSession
         }
     }
 
-    private void Fail(RpcdUpdateStatus current, string? oldVersion, string error) =>
+    private static string InstallerFailed(int exit, string still) =>
+        $"The installer exited with code {exit} ({InnoSetupExitCodes.Describe(exit)}). Remote PC Diagnostics was not changed and is still {still}.";
+
+    private void Fail(RpcdUpdateStatus current, string? oldVersion, string error, int? installerExitCode = null, string? installerLog = null) =>
         Set(current with
         {
             Stage = RpcdUpdateStages.Failed,
@@ -433,6 +455,8 @@ public sealed class RpcdUpdateSession
             OldVersion = oldVersion ?? current.OldVersion,
             Error = error,
             Detail = error,
+            InstallerExitCode = installerExitCode,
+            InstallerLog = installerLog,
             UpdatedUtc = DateTimeOffset.UtcNow,
         });
 

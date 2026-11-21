@@ -257,6 +257,39 @@ begin
   Result := True;
 end;
 
+{ Silent Setup checks AppMutex inside its own initialization, before CloseApplications.
+  /SUPPRESSMSGBOXES answers that OK/Cancel prompt with Cancel, and Setup then exits 1
+  (failed to initialize) without copying a file. A remote update runs while the technician
+  session still has this Host open, so close it before that check. Not /T: when the elevated
+  helper started Setup, Setup is a descendant of the Host, and /T would end Setup too. }
+function InitializeSetup(): Boolean;
+var
+  Code, Tries: Integer;
+begin
+  Result := True;
+  if not WizardSilent() then
+    Exit;
+  if not CheckForMutexes('{#AppMutexName}') then
+    Exit;
+
+  Log('Remote PC Diagnostics is still running. Silent Setup would exit 1 while that mutex is held, before it can close the app. Closing it.');
+  if not Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#AppExeName}', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    Log('Could not start taskkill. Setup will keep failing while the app is running.')
+  else
+    Log('taskkill exited with code ' + IntToStr(Code) + '.');
+
+  for Tries := 1 to 50 do
+  begin
+    if not CheckForMutexes('{#AppMutexName}') then
+    begin
+      Log('Remote PC Diagnostics has exited. Setup can continue.');
+      Exit;
+    end;
+    Sleep(200);
+  end;
+  Log('Remote PC Diagnostics is still running after taskkill. Setup cannot initialize while the application mutex is held.');
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   BundledBootstrapper: String;

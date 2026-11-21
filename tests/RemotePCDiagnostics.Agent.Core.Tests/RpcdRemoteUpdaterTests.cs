@@ -68,6 +68,31 @@ public class RpcdRemoteUpdaterTests
     }
 
     [Fact]
+    public void Progress_payload_carries_the_installer_exit_code_and_log_only_when_set()
+    {
+        var failed = RpcdRemoteUpdater.ToProto(new RpcdUpdateStatus
+        {
+            RequestId = "f74a3e94dacc4484a728a01b8b049db6",
+            Stage = RpcdUpdateStages.Failed,
+            Terminal = true,
+            Error = "The installer exited with code 1.",
+            InstallerExitCode = 1,
+            InstallerLog = "tail",
+        });
+        Assert.Equal(1, failed.InstallerExitCode);
+        Assert.True(failed.HasInstallerExitCode);
+        Assert.Equal("tail", failed.InstallerLog);
+
+        var succeeded = RpcdRemoteUpdater.ToProto(new RpcdUpdateStatus { Stage = RpcdUpdateStages.Succeeded, Terminal = true });
+        Assert.False(succeeded.HasInstallerExitCode);
+        Assert.Equal("", succeeded.InstallerLog);
+
+        var unchanged = RpcdRemoteUpdater.ToProto(new RpcdUpdateStatus { InstallerExitCode = 0, InstallerLog = "still the old build" });
+        Assert.True(unchanged.HasInstallerExitCode);
+        Assert.Equal(0, unchanged.InstallerExitCode);
+    }
+
+    [Fact]
     public void Relaunch_command_line_splits_back_into_restart_arguments()
     {
         var host = @"C:\Program Files\RemotePCDiagnostics\RemotePCDiagnostics.Host.exe";

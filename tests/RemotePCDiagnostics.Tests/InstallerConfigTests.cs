@@ -128,6 +128,15 @@ public sealed class InstallerConfigTests
         Assert.Contains("PreserveAgentSettings", iss);
         Assert.Contains("CmdLineParamExists('/PRESERVEAGENT')", iss);
         Assert.Contains("Parameters: \"install\"; StatusMsg: \"Updating Remote PC Diagnostics Agent service...\"; Flags: runhidden waituntilterminated; Check: PreserveAgentSettings", iss);
+
+        // Silent Setup answers the AppMutex prompt with Cancel and exits 1 before CloseApplications.
+        // InitializeSetup closes the Host first. Not /T, or a Setup started by the elevated helper would die with the Host.
+        Assert.Contains("function InitializeSetup(): Boolean;", iss);
+        Assert.Contains("WizardSilent()", iss);
+        Assert.Contains("CheckForMutexes('{#AppMutexName}')", iss);
+        Assert.Contains("'/F /IM {#AppExeName}'", iss);
+        Assert.DoesNotContain("'/F /T", iss);
+        Assert.DoesNotContain("'/T", iss);
     }
 
     [Fact]
