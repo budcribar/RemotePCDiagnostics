@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Principal;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Bios;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Security;
@@ -412,6 +413,15 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
 
     public Task<bool> WriteStateFileAsync(string name, string? json, CancellationToken ct = default) =>
         ConnectedOrNull() is { } client ? client.WriteStateFileAsync(name, json, ct) : Task.FromResult(false);
+
+    public Task<BiosAgentBitLockerResult> SuspendBitLockerAsync(string systemDrive, CancellationToken ct = default) =>
+        ConnectedClient().SuspendBitLockerAsync(systemDrive, ct);
+
+    public Task<BiosAgentInstallResult> RunBiosInstallerAsync(BiosAgentInstallRequest request, CancellationToken ct = default) =>
+        ConnectedClient().RunBiosInstallerAsync(request, ct);
+
+    public Task<BiosWuaInstallOutcome> InstallBiosWindowsUpdateAsync(Guid updateId, TimeSpan? timeout = null, CancellationToken ct = default) =>
+        ConnectedClient().InstallBiosWindowsUpdateAsync(updateId, timeout, ct);
 
     private AdminPipeClient? ConnectedOrNull()
     {

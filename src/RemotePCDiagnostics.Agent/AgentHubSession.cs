@@ -183,9 +183,10 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             AllowedClientSid = Win32Session.GetActiveUserSid(),
             ConnectTimeout = TimeSpan.FromSeconds(60),
         };
+        var launcher = new RemotePCDiagnostics.Core.Osquery.SystemProcessLauncher();
         var pipeServer = new RemotePCDiagnostics.Core.Session.AdminPipeServer(
             serverOptions,
-            new RemotePCDiagnostics.Core.Osquery.SystemProcessLauncher(),
+            launcher,
             log: pipeLog,
             selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, pipeLog, token, RelaunchAfterSetup),
             // The app's own install folder (the one this service just started it from) holds the HardeningKitty it ships.
@@ -197,7 +198,8 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             // The app isn't elevated: this service keeps its undo journal and its workflow and benchmark state.
             changeJournal: () => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(), pipeLog),
             stateFolder: RemotePCDiagnostics.Core.ProtectedState.Folder(),
-            machineSetup: AgentMachineSetup.ForService(pipeLog));
+            machineSetup: AgentMachineSetup.ForService(pipeLog),
+            biosOperations: new RemotePCDiagnostics.Core.Session.AgentBiosOperations(launcher, log: pipeLog));
         updater?.Bind(serverOptions);
 
         _ = Task.Run(async () =>

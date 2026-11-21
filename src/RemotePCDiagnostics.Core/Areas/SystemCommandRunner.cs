@@ -19,6 +19,8 @@ public sealed class SystemCommandRunner(
     public TimeSpan Timeout { get; } = timeout ?? TimeSpan.FromSeconds(60);
     public ILogger? Log { get; } = log;
     public IElevatedCommandBridge? ElevatedBridge => elevatedBridge;
+    /// <summary>Whether the current process itself is running with administrator privileges (independent of the Agent bridge).</summary>
+    public bool IsProcessElevated => _isProcessElevated();
     /// <summary>Whether an admin tool run through this runner gets administrator rights: the Agent is connected, or this process has them.</summary>
     public bool HasAdminRights => elevatedBridge is { IsConnected: true } || _isProcessElevated();
 
