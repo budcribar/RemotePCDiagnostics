@@ -189,6 +189,71 @@ public class AgentExportsTests
         Assert.Equal("bench-restart-after", BenchmarkStartRules.Control(BenchmarkPhase.After, true));
     }
 
+    [Fact]
+    public void Benchmark_lists_every_kind_and_withholds_a_control_when_the_pc_cannot_run_it()
+    {
+        var settings = new BenchmarkSettings { Enabled = [BenchmarkKind.Speedometer, BenchmarkKind.DeveloperCSharp] };
+        var tests = BenchmarkTestRules.Choices(settings, kind => kind != BenchmarkKind.DeveloperCSharp);
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(AgentExports.BuildBenchmark(
+            settings, null, null, BenchmarkComparison.Build(null, null), null, false, null, false, false, null, tests: tests), AgentJson()));
+        var root = doc.RootElement;
+
+        Assert.Equal(3, BrowserContract.Benchmark);
+        var enabled = root.GetProperty("settings").GetProperty("enabled").EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Equal(["Speedometer", "DeveloperCSharp"], enabled);
+        var rows = root.GetProperty("tests").EnumerateArray().ToList();
+        Assert.Equal(Benchmarks.All.Select(i => i.Kind.ToString()), rows.Select(r => r.GetProperty("id").GetString()));
+
+        var speed = rows.Single(r => r.GetProperty("id").GetString() == "Speedometer");
+        Assert.True(speed.GetProperty("available").GetBoolean());
+        Assert.True(speed.GetProperty("enabled").GetBoolean());
+        Assert.Equal("bench-enable-Speedometer", speed.GetProperty("control").GetString());
+        Assert.False(speed.TryGetProperty("reason", out _));
+
+        var dev = rows.Single(r => r.GetProperty("id").GetString() == "DeveloperCSharp");
+        Assert.False(dev.GetProperty("available").GetBoolean());
+        Assert.True(dev.GetProperty("enabled").GetBoolean());
+        Assert.False(dev.TryGetProperty("control", out _));
+        Assert.Equal(BenchmarkTestRules.UnavailableReason, dev.GetProperty("reason").GetString());
+    }
+
+    [Fact]
+    public void Benchmark_page_enables_a_test_through_the_same_saved_list_the_checkbox_uses()
+    {
+        Assert.Equal("bench-enable-Speedometer", BenchmarkTestRules.Control(BenchmarkKind.Speedometer));
+        Assert.Equal("bench-enable-DeveloperCSharp", BenchmarkTestRules.Control(BenchmarkKind.DeveloperCSharp));
+
+        var settings = new BenchmarkSettings();
+        var withoutSpeed = BenchmarkTestRules.WithEnabled(settings, BenchmarkKind.Speedometer, on: false, available: true);
+        Assert.DoesNotContain(BenchmarkKind.Speedometer, withoutSpeed);
+        Assert.Contains(BenchmarkKind.BootTime, withoutSpeed);
+        var restored = BenchmarkTestRules.WithEnabled(settings with { Enabled = withoutSpeed }, BenchmarkKind.Speedometer, on: true, available: true);
+        Assert.Contains(BenchmarkKind.Speedometer, restored);
+        Assert.Equal(Enum.GetValues<BenchmarkKind>().Where(restored.Contains).ToList(), restored);
+
+        var hidden = BenchmarkTestRules.WithEnabled(settings, BenchmarkKind.DeveloperCSharp, on: true, available: false);
+        Assert.DoesNotContain(BenchmarkKind.DeveloperCSharp, hidden);
+        Assert.Equal(settings.Enabled, hidden);
+        var turnedOff = BenchmarkTestRules.WithEnabled(
+            settings with { Enabled = settings.Enabled.Append(BenchmarkKind.DeveloperCSharp).ToList() },
+            BenchmarkKind.DeveloperCSharp, on: false, available: false);
+        Assert.DoesNotContain(BenchmarkKind.DeveloperCSharp, turnedOff);
+
+        var page = File.ReadAllText(Path.Combine(FindRepoRoot(), "src", "RemotePCDiagnostics.UI", "Pages", "BenchmarkPage.razor"));
+        Assert.Contains("data-testid=\"bench-settings-toggle\"", page, StringComparison.Ordinal);
+        Assert.Contains("aria-expanded=\"@(_customizeOpen ? \"true\" : \"false\")\"", page, StringComparison.Ordinal);
+        Assert.Contains("open=\"@_customizeOpen\"", page, StringComparison.Ordinal);
+        Assert.Contains("data-testid=\"@BenchmarkTestRules.Control(k)\"", page, StringComparison.Ordinal);
+        Assert.Contains("data-bench-test=\"@k\"", page, StringComparison.Ordinal);
+        Assert.Contains("data-enabled=\"@(s.IsEnabled(k) ? \"true\" : \"false\")\"", page, StringComparison.Ordinal);
+        Assert.Contains("@onclick=\"() => Toggle(k, !s.IsEnabled(k))\" @onclick:preventDefault=\"true\"", page, StringComparison.Ordinal);
+        Assert.Contains("BenchmarkTestRules.WithEnabled(Bench.Settings, k, on, Bench.IsKindAvailable(k))", page, StringComparison.Ordinal);
+        Assert.Contains("Bench.UpdateSettings(Bench.Settings with { Enabled = BenchmarkTestRules.WithEnabled", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("bench-kind-", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("@onchange=\"e => Toggle", page, StringComparison.Ordinal);
+    }
+
     private static JsonSerializerOptions AgentJson() => new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

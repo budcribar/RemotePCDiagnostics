@@ -74,8 +74,10 @@
     </div>
 </section>
 
-<details class="card bench-customize" data-testid="bench-settings">
-    <summary class="bench-customize-summary">
+<details class="card bench-customize" data-testid="bench-settings" open="@_customizeOpen">
+    @* The click saves the open state, so a view-only mirror and a controlling mirror show the same panel the start buttons do. *@
+    <summary class="bench-customize-summary" data-testid="bench-settings-toggle" aria-expanded="@(_customizeOpen ? "true" : "false")"
+             @onclick="ToggleCustomize" @onclick:preventDefault="true">
         <span class="bench-customize-title">
             <span class="bench-customize-caret" aria-hidden="true">▸</span>
             <span>Customize tests</span>
@@ -101,8 +103,10 @@
             {
                 var k = info.Kind;
                 <label class="bench-kind" title="@info.ClientMeaning">
-                    <input type="checkbox" data-testid="bench-kind-@k.ToString().ToLowerInvariant()" checked="@s.IsEnabled(k)" disabled="@running"
-                           @onchange="e => Toggle(k, e.Value is true)" /> @info.Title
+                    @* Click saves the enabled list (UpdateSettings). preventDefault keeps the box on that saved value until the redraw. *@
+                    <input type="checkbox" data-testid="@BenchmarkTestRules.Control(k)" data-bench-test="@k"
+                           data-enabled="@(s.IsEnabled(k) ? "true" : "false")" checked="@s.IsEnabled(k)" disabled="@running"
+                           @onclick="() => Toggle(k, !s.IsEnabled(k))" @onclick:preventDefault="true" /> @info.Title
                 </label>
             }
         </div>
@@ -263,6 +267,7 @@ else if (!running)
         BenchmarkKind.EnabledStartupApps,
     ];
 
+    private bool _customizeOpen;
     private bool _uploading, _uploadFailed;
     private string? _uploadMessage, _uploadUrl;
     private readonly ShopRelayClient _fallbackRelay = new();
@@ -359,13 +364,10 @@ else if (!running)
         _ = Bench.RunDevDriveComparisonAsync(userConfirmed: true);
     }
 
-    private void Toggle(BenchmarkKind k, bool on)
-    {
-        var set = Bench.Settings.Enabled.ToList();
-        if (on && !set.Contains(k)) set.Add(k);
-        if (!on) set.Remove(k);
-        Bench.UpdateSettings(Bench.Settings with { Enabled = Enum.GetValues<BenchmarkKind>().Where(set.Contains).ToList() });
-    }
+    private void ToggleCustomize() => _customizeOpen = !_customizeOpen;
+
+    private void Toggle(BenchmarkKind k, bool on) =>
+        Bench.UpdateSettings(Bench.Settings with { Enabled = BenchmarkTestRules.WithEnabled(Bench.Settings, k, on, Bench.IsKindAvailable(k)) });
 
     private void SetRuns(ChangeEventArgs e)
     {

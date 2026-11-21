@@ -653,6 +653,51 @@ public sealed class DeveloperBenchmarkTests : IDisposable
         Assert.True(svc.IsKindAvailable(BenchmarkKind.DeveloperCSharp));
     }
 
+    [Fact]
+    public async Task BenchmarkService_ReportsHiddenKindsAsUnavailable_AndSavesAnEnableTheSameWayThePageDoes()
+    {
+        var env = new FakeDevEnv { Toolchains = [] };
+        var store = new InMemoryBenchmarkStore();
+        var svc = new BenchmarkService(new BenchmarkRunner(new DummyBenchProbes()), store, devEnv: env);
+        await svc.RefreshDeveloperEnvironmentAsync();
+
+        var hidden = svc.TestChoices().Single(t => t.Id == "DeveloperCSharp");
+        Assert.False(hidden.Available);
+        Assert.False(hidden.Enabled);
+        Assert.Null(hidden.Control);
+        Assert.Equal(BenchmarkTestRules.UnavailableReason, hidden.Reason);
+        var speed = svc.TestChoices().Single(t => t.Id == "Speedometer");
+        Assert.True(speed.Available);
+        Assert.True(speed.Enabled);
+        Assert.Equal("bench-enable-Speedometer", speed.Control);
+
+        svc.UpdateSettings(svc.Settings with
+        {
+            Enabled = BenchmarkTestRules.WithEnabled(svc.Settings, BenchmarkKind.Speedometer, on: false, svc.IsKindAvailable(BenchmarkKind.Speedometer)),
+        });
+        Assert.DoesNotContain(BenchmarkKind.Speedometer, store.Load()!.Settings.Enabled);
+        svc.UpdateSettings(svc.Settings with
+        {
+            Enabled = BenchmarkTestRules.WithEnabled(svc.Settings, BenchmarkKind.DeveloperCSharp, on: true, svc.IsKindAvailable(BenchmarkKind.DeveloperCSharp)),
+        });
+        Assert.DoesNotContain(BenchmarkKind.DeveloperCSharp, store.Load()!.Settings.Enabled);
+
+        env.Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "10.0.404", 10)];
+        await svc.RefreshDeveloperEnvironmentAsync();
+        svc.UpdateSettings(svc.Settings with
+        {
+            Enabled = BenchmarkTestRules.WithEnabled(svc.Settings, BenchmarkKind.DeveloperCSharp, on: true, svc.IsKindAvailable(BenchmarkKind.DeveloperCSharp)),
+        });
+        Assert.Contains(BenchmarkKind.DeveloperCSharp, store.Load()!.Settings.Enabled);
+
+        using var doc = JsonDocument.Parse(AgentExports.Benchmark(svc));
+        var dev = doc.RootElement.GetProperty("tests").EnumerateArray().Single(t => t.GetProperty("id").GetString() == "DeveloperCSharp");
+        Assert.True(dev.GetProperty("available").GetBoolean());
+        Assert.True(dev.GetProperty("enabled").GetBoolean());
+        Assert.Equal("bench-enable-DeveloperCSharp", dev.GetProperty("control").GetString());
+        Assert.False(dev.TryGetProperty("reason", out _));
+    }
+
     // ---- Fakes ----
 
     private static void SeedRestoredProject(string proj)
