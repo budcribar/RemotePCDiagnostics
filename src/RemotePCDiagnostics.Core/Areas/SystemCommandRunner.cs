@@ -9,7 +9,8 @@ public sealed class SystemCommandRunner(
     ILogger? log = null,
     TimeSpan? timeout = null,
     IElevatedCommandBridge? elevatedBridge = null,
-    Func<bool>? isProcessElevated = null)
+    Func<bool>? isProcessElevated = null,
+    IAgentNativeOps? nativeOps = null)
 {
     private readonly IProcessLauncher _launcher = launcher ?? new SystemProcessLauncher();
     public IProcessLauncher Launcher => _launcher;
@@ -54,7 +55,8 @@ public sealed class SystemCommandRunner(
 
         if (!_isProcessElevated()
             && elevatedBridge is { IsConnected: true }
-            && AdminCommandAllowlist.TryResolveSystemTool(fileName, out _))
+            && AdminCommandAllowlist.TryResolveSystemTool(fileName, out _)
+            && !AdminCommandAllowlist.RunsWithoutAdmin(fileName, arguments))
         {
             // An admin tool goes to the Agent, and only to the Agent: when the call fails, the app doesn't run it itself (it would only
             // fail later without administrator rights, or half-work). The caller gets a failed result that says why.
@@ -140,12 +142,21 @@ public sealed class SystemCommandRunner(
             return AgentFailed("The Agent isn't connected. " + ElevationService.AdminRepairHint);
         }
 
-        if (AgentScripts.Build(script, AppContext.BaseDirectory, out var refusal) is not { } ps)
+        if (AgentScripts.Plan(script, AppContext.BaseDirectory, out var refusal) is not { } plan)
         {
             Write($"{label} refused: {refusal}");
             return AgentFailed(refusal ?? "That change isn't allowed.");
         }
-        return await RunAsync(PowerShell, PowerShellArgs(ps), timeout, ct, outputLine).ConfigureAwait(false);
+        if (plan.Native is { } native)
+        {
+            // A scripted launcher (tests) makes these changes itself when it can; one that can't answers like an Agent that isn't there.
+            var ops = nativeOps ?? _launcher as IAgentNativeOps ?? (IsScripted ? null : WindowsAgentNativeOps.Instance);
+            if (ops is null) return AgentFailed("The Agent isn't connected. " + ElevationService.AdminRepairHint);
+            var pr = await AgentNativeRunner.RunAsync(ops, native, effectiveTimeout, ct).ConfigureAwait(false);
+            Write($"{label} exit={pr.ExitCode} timedOut={pr.TimedOut} ms={sw.ElapsedMilliseconds} stderr=\"{pr.StdErr.Trim()}\"");
+            return pr.TimedOut ? null : pr;
+        }
+        return await RunAsync(PowerShell, PowerShellArgs(plan.Script!), timeout, ct, outputLine).ConfigureAwait(false);
     }
 
     private void LogResult(string prefix, string fileName, IReadOnlyList<string> arguments, ProcessResult pr, long elapsedMs)

@@ -79,16 +79,21 @@ public sealed class AgentScriptsPipeTests
     [Fact]
     public void The_workflow_task_runs_the_agent_launcher_until_the_workflow_removes_it()
     {
-        var script = AgentScripts.Build(
+        var plan = AgentScripts.Plan(
             AgentScripts.Of(AgentScripts.ResumeTaskRegister, AgentScripts.WorkflowTask, @"PC\ann", "--post-reboot", SessionLaunchOptions.WorkflowArg),
             @"C:\Program Files\RemotePCDiagnostics\", out var refusal);
         Assert.Null(refusal);
-        Assert.Contains(@"-Execute 'C:\Program Files\RemotePCDiagnostics\RemotePCDiagnostics.Agent.exe' -Argument '--launch --post-reboot --workflow'", script);
-        Assert.Contains("-RunLevel Highest", script);
-        Assert.DoesNotContain("EndBoundary", script);
+        var task = Assert.IsType<RegisterTaskAction>(plan!.Native);
+        Assert.Equal(Core.Workflow.WorkflowService.ResumeTaskName, task.TaskName);
+        var xml = System.Xml.Linq.XDocument.Parse(task.TaskXml);
+        System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+        Assert.Equal(@"C:\Program Files\RemotePCDiagnostics\RemotePCDiagnostics.Agent.exe", xml.Descendants(ns + "Command").Single().Value);
+        Assert.Equal("--launch --post-reboot --workflow", xml.Descendants(ns + "Arguments").Single().Value);
+        Assert.Equal("HighestAvailable", xml.Descendants(ns + "RunLevel").Single().Value);
+        Assert.Empty(xml.Descendants(ns + "EndBoundary"));
 
-        var remove = AgentScripts.Build(AgentScripts.Of(AgentScripts.ResumeTaskRemove, AgentScripts.WorkflowTask), null, out _);
-        Assert.Equal(ResumeTaskScript.Remove(Core.Workflow.WorkflowService.ResumeTaskName), remove);
+        var remove = AgentScripts.Plan(AgentScripts.Of(AgentScripts.ResumeTaskRemove, AgentScripts.WorkflowTask), null, out _);
+        Assert.Equal(new RemoveTaskAction(Core.Workflow.WorkflowService.ResumeTaskName), remove!.Native);
     }
 
     [Fact]
@@ -96,12 +101,7 @@ public sealed class AgentScriptsPipeTests
     {
         var requests = new[]
         {
-            AgentScripts.Of(AgentScripts.OptimizeVolume, "CD"),
             AgentScripts.Of(AgentScripts.WindowsUpdate, "drivers"),
-            AgentScripts.Of(AgentScripts.CleanTemp),
-            AgentScripts.Of(AgentScripts.StopProcess, "chrome"),
-            AgentScripts.Of(AgentScripts.ResumeTaskRegister, AgentScripts.RebootTask, @"PC\ann", "--post-reboot"),
-            AgentScripts.Of(AgentScripts.ResumeTaskRemove, AgentScripts.RebootTask),
         }.Concat(SecurityFixes.All.SelectMany(f => new[] { AgentScripts.Of(AgentScripts.SecurityRead, f.Key), AgentScripts.Of(AgentScripts.SecurityApply, f.Key) }));
 
         foreach (var request in requests)
@@ -113,6 +113,47 @@ public sealed class AgentScriptsPipeTests
         }
     }
 
+    public static TheoryData<string, string[], AgentNativeAction> NativePlans() => new()
+    {
+        { AgentScripts.OptimizeVolume, ["CD"], new OptimizeVolumeAction("CD") },
+        { AgentScripts.OptimizeVolume, ["c:"], new OptimizeVolumeAction("C") },
+        { AgentScripts.CleanTemp, [], new CleanTempAction() },
+        { AgentScripts.StopProcess, ["chrome"], new StopProcessAction("chrome") },
+        { AgentScripts.ResumeTaskRemove, [AgentScripts.RebootTask], new RemoveTaskAction(RebootResumeCoordinator.ResumeTaskName) },
+    };
+
+    [Theory]
+    [MemberData(nameof(NativePlans))]
+    public void Simple_changes_are_made_in_CSharp_without_PowerShell(string name, string[] args, AgentNativeAction expected)
+    {
+        var plan = AgentScripts.Plan(AgentScripts.Of(name, args), @"C:\App", out var refusal);
+        Assert.Null(refusal);
+        Assert.Null(plan!.Script);
+        Assert.Equal(expected, plan.Native);
+        Assert.Null(AgentScripts.Build(AgentScripts.Of(name, args), @"C:\App", out var noScript));
+        Assert.NotNull(noScript);
+    }
+
+    [Fact]
+    public async Task The_agent_makes_a_native_change_through_its_ops_and_answers_with_their_result()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var launcher = new ScriptedLauncher((file, _) => file == "agent:StopProcess" ? ScriptedLauncher.Ok("""{"FreedMemoryBytes":1024}""") : ScriptedLauncher.Fail());
+        var (server, task, client) = await StartAsync(launcher, cts.Token);
+        using (server)
+        {
+            await using (client)
+            {
+                var r = await client.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.StopProcess, "chrome"), TimeSpan.FromSeconds(30), cts.Token);
+                Assert.Equal(0, r.ExitCode);
+                Assert.Equal("""{"FreedMemoryBytes":1024}""", r.StdOut);
+            }
+            await task;
+        }
+        Assert.Empty(launcher.Calls); // no PowerShell
+        Assert.Equal(new StopProcessAction("chrome"), Assert.Single(launcher.NativeCalls));
+    }
+
     private static async Task<(AdminPipeServer, Task, AdminPipeClient)> StartAsync(IProcessLauncher launcher, CancellationToken ct)
     {
         var pipeName = $"rpd-test-{Guid.NewGuid():N}";
@@ -121,5 +162,61 @@ public sealed class AgentScriptsPipeTests
         var task = server.RunSingleSessionAsync(ct);
         var client = await AdminPipeClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(10), ct);
         return (server, task, client);
+    }
+}
+
+/// <summary>The pieces of the Agent's C# changes that don't need Windows: the sign-in task's XML and the temp file walk.</summary>
+public sealed class AgentNativeOpsTests
+{
+    [Fact]
+    public void Task_xml_escapes_values_and_matches_the_powershell_task()
+    {
+        var end = new DateTimeOffset(2026, 11, 21, 12, 0, 0, TimeSpan.Zero);
+        var xml = ResumeTaskXml.Build(@"C:\A & B\Agent.exe", "--launch -u=https://x.example/?a=1&b=<2>", @"C:\A & B", @"PC\o'neil", end, highest: false);
+        var doc = System.Xml.Linq.XDocument.Parse(xml);
+        System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+        Assert.Equal(@"C:\A & B\Agent.exe", doc.Descendants(ns + "Command").Single().Value);
+        Assert.Equal("--launch -u=https://x.example/?a=1&b=<2>", doc.Descendants(ns + "Arguments").Single().Value);
+        Assert.Equal("LeastPrivilege", doc.Descendants(ns + "RunLevel").Single().Value);
+        Assert.Equal("InteractiveToken", doc.Descendants(ns + "LogonType").Single().Value);
+        Assert.Equal(@"PC\o'neil", doc.Descendants(ns + "LogonTrigger").Single().Element(ns + "UserId")!.Value);
+        Assert.Equal("PT0S", doc.Descendants(ns + "ExecutionTimeLimit").Single().Value);
+        Assert.Equal("false", doc.Descendants(ns + "DisallowStartIfOnBatteries").Single().Value);
+        Assert.Equal("false", doc.Descendants(ns + "StopIfGoingOnBatteries").Single().Value);
+        Assert.Equal(end.LocalDateTime.ToString("s", System.Globalization.CultureInfo.InvariantCulture), doc.Descendants(ns + "EndBoundary").Single().Value);
+    }
+
+    [Fact]
+    public void Temp_cleaner_removes_only_old_files_and_does_not_follow_links()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"rpcd-clean-{Guid.NewGuid():N}");
+        var outside = Path.Combine(Path.GetTempPath(), $"rpcd-outside-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "sub"));
+            Directory.CreateDirectory(outside);
+            var old = Path.Combine(root, "sub", "old.tmp");
+            var fresh = Path.Combine(root, "fresh.tmp");
+            var keep = Path.Combine(outside, "keep.tmp");
+            File.WriteAllBytes(old, new byte[100]);
+            File.WriteAllBytes(fresh, new byte[50]);
+            File.WriteAllBytes(keep, new byte[10]);
+            File.SetLastWriteTime(old, DateTime.Now.AddDays(-3));
+            File.SetLastWriteTime(keep, DateTime.Now.AddDays(-3));
+            try { Directory.CreateSymbolicLink(Path.Combine(root, "link"), outside); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+
+            var (files, bytes) = TempFileCleaner.Clean([root], DateTime.Now - TempFileCleaner.MinAge);
+
+            Assert.Equal(1, files);
+            Assert.Equal(100, bytes);
+            Assert.False(File.Exists(old));
+            Assert.True(File.Exists(fresh));
+            Assert.True(File.Exists(keep));
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch { }
+            try { Directory.Delete(outside, true); } catch { }
+        }
     }
 }

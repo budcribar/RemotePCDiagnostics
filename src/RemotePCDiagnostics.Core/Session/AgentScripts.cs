@@ -15,8 +15,9 @@ public sealed record AdminPipeScript(
     [property: JsonPropertyName("args")] IReadOnlyList<string>? Args = null);
 
 /// <summary>
-/// The PowerShell the Agent runs with administrator rights for the app, by name. Each entry checks its arguments and builds the script
-/// from this app's own code; anything else is refused. Replaces sending scripts through <c>run_command</c>.
+/// What the Agent does with administrator rights for the app, by name. Each entry checks its arguments, then either builds PowerShell from
+/// this app's own code or names a change the Agent makes in C# (<see cref="AgentNativeAction"/>); anything else is refused. Replaces
+/// sending scripts through <c>run_command</c>.
 /// </summary>
 public static class AgentScripts
 {
@@ -45,51 +46,64 @@ public static class AgentScripts
 
     public static AdminPipeScript Of(string name, params string[] args) => new(name, args);
 
-    /// <summary>The script for <paramref name="request"/>, or null with <paramref name="refusal"/> saying why it isn't run.</summary>
+    /// <summary>
+    /// What the Agent does for <paramref name="request"/>: PowerShell, or a change it makes in C#. Null with <paramref name="refusal"/>
+    /// saying why when it isn't done.
+    /// </summary>
     /// <param name="appFolder">The installed app's folder: the resume task runs the Agent launcher from there (never a path the app sent).</param>
-    public static string? Build(AdminPipeScript request, string? appFolder, out string? refusal, DateTimeOffset? now = null)
+    public static AgentPlan? Plan(AdminPipeScript request, string? appFolder, out string? refusal, DateTimeOffset? now = null)
     {
         string? why = null;
-        var script = Build(request, appFolder, now, r => why = r);
-        refusal = script is null ? why ?? "That change isn't allowed." : null;
-        return script;
+        var plan = Plan(request, appFolder, now, r => why = r);
+        refusal = plan is null ? why ?? "That change isn't allowed." : null;
+        return plan;
     }
 
-    private static string? Build(AdminPipeScript request, string? appFolder, DateTimeOffset? now, Action<string> refused)
+    /// <summary>The PowerShell for <paramref name="request"/>, or null with <paramref name="refusal"/> (also for a change the Agent makes in C#).</summary>
+    public static string? Build(AdminPipeScript request, string? appFolder, out string? refusal, DateTimeOffset? now = null)
+    {
+        var plan = Plan(request, appFolder, out refusal, now);
+        if (plan is { Script: null }) refusal = "The Agent makes this change itself, without PowerShell.";
+        return plan?.Script;
+    }
+
+    private static AgentPlan? Plan(AdminPipeScript request, string? appFolder, DateTimeOffset? now, Action<string> refused)
     {
         var a = request.Args ?? [];
         string? Arg(int i) => i < a.Count ? a[i] : null;
-        string? Refuse(string why) { refused(why); return null; }
+        AgentPlan? Refuse(string why) { refused(why); return null; }
+        static AgentPlan? Ps(string? script) => script is null ? null : new AgentPlan(script, null);
+        static AgentPlan Native(AgentNativeAction action) => new(null, action);
 
         switch (request.Name)
         {
             case SecurityRead or SecurityApply:
                 if (a.Count != 1 || SecurityFixes.Find(Arg(0)) is not { } fix) return Refuse("That isn't a security setting this app changes.");
-                return (request.Name == SecurityRead ? SecurityFixes.ReadScript(fix.Key) : SecurityFixes.ApplyScript(fix.Key)) ?? Refuse("That setting can't be changed here.");
+                return Ps(request.Name == SecurityRead ? SecurityFixes.ReadScript(fix.Key) : SecurityFixes.ApplyScript(fix.Key)) ?? Refuse("That setting can't be changed here.");
 
             case SecurityRestore:
                 if (a.Count != 2 || SecurityFixes.Find(Arg(0)) is not { } restore) return Refuse("That isn't a security setting this app changes.");
-                return SecurityFixes.RestoreScript(restore.Key, Arg(1)) ?? Refuse("The original setting wasn't recorded in a form this app wrote.");
+                return Ps(SecurityFixes.RestoreScript(restore.Key, Arg(1))) ?? Refuse("The original setting wasn't recorded in a form this app wrote.");
 
             case OptimizeVolume:
                 var letters = a.Count == 1 ? RemediationService.DriveLetters(Arg(0)) : "";
                 if (letters.Length == 0) return Refuse("That isn't a drive letter.");
-                return $"$ErrorActionPreference='Stop'; Optimize-Volume -DriveLetter {string.Join(",", letters.ToCharArray())} -ReTrim";
+                return Native(new OptimizeVolumeAction(letters));
 
             case InstallUpdate:
-                return (a.Count == 1 ? RemediationService.BuildInstallUpdateScript(Arg(0)) : null) ?? Refuse("That isn't a Windows Update ID.");
+                return Ps(a.Count == 1 ? RemediationService.BuildInstallUpdateScript(Arg(0)) : null) ?? Refuse("That isn't a Windows Update ID.");
 
             case WindowsUpdate:
                 return a.Count == 1 && Arg(0) is "drivers" or "software"
-                    ? RemediationService.BuildWindowsUpdateScript(Arg(0) == "drivers") : Refuse("Only driver or software updates.");
+                    ? Ps(RemediationService.BuildWindowsUpdateScript(Arg(0) == "drivers")) : Refuse("Only driver or software updates.");
 
             case CleanTemp:
-                return a.Count == 0 ? RemediationService.CleanTempScript : Refuse("Cleaning temporary files takes no arguments.");
+                return a.Count == 0 ? Native(new CleanTempAction()) : Refuse("Cleaning temporary files takes no arguments.");
 
             case StopProcess:
                 var name = a.Count == 1 ? Arg(0)?.Trim() : null;
                 if (!IsProcessName(name) || ProcessProtection.IsProtected(name!)) return Refuse("That process is protected or isn't a process name.");
-                return RemediationService.BuildStopProcessScript(name!);
+                return Native(new StopProcessAction(name!));
 
             case ResumeTaskRegister:
                 if (a.Count < 3 || TaskName(Arg(0)) is not { } task) return Refuse("That isn't a sign-in task this app creates.");
@@ -102,10 +116,11 @@ public static class AgentScripts
                 var agent = appFolder + "\\" + ElevationService.AdminHelperExeName;
                 // The reboot task stops firing once the saved restart state would have expired; the workflow's runs until the workflow removes it.
                 DateTimeOffset? end = Arg(0) == RebootTask ? (now ?? DateTimeOffset.Now).Add(SessionLaunchOptions.PendingRebootMaxAge) : null;
-                return ResumeTaskScript.Register(task, agent, "--launch " + string.Join(' ', launch), appFolder, Arg(1)!, end, highest: true);
+                return Native(new RegisterTaskAction(task, Arg(1)!,
+                    ResumeTaskXml.Build(agent, "--launch " + string.Join(' ', launch), appFolder, Arg(1)!, end, highest: true)));
 
             case ResumeTaskRemove:
-                return a.Count == 1 && TaskName(Arg(0)) is { } remove ? ResumeTaskScript.Remove(remove) : Refuse("That isn't a sign-in task this app creates.");
+                return a.Count == 1 && TaskName(Arg(0)) is { } remove ? Native(new RemoveTaskAction(remove)) : Refuse("That isn't a sign-in task this app creates.");
 
             default:
                 return Refuse($"Unknown script '{request.Name}'.");

@@ -172,7 +172,6 @@ public static class AdminCommandAllowlist
             ["dism.exe"] = "dism.exe",
             ["ipconfig.exe"] = "ipconfig.exe",
             ["netsh.exe"] = "netsh.exe",
-            ["defrag.exe"] = "defrag.exe",
             ["powercfg.exe"] = "powercfg.exe",
             ["wevtutil.exe"] = "wevtutil.exe",
             ["pnputil.exe"] = "pnputil.exe",
@@ -307,37 +306,213 @@ public static class AdminCommandAllowlist
     }
 
     /// <summary>
-    /// Enforces argument constraints on high-risk allowlisted tools (<c>shutdown.exe</c>, <c>wevtutil.exe</c>)
-    /// so an un-elevated caller cannot abuse them for arbitrary persistence, registry hijacking, or payload staging.
+    /// Checks <paramref name="arguments"/> against the command lines the app actually sends each allowlisted tool, and refuses
+    /// anything else. Every tool has its own rule: a fixed list of argument lists, or one of a few shapes with a value the rule parses
+    /// (a GUID, a number, a device name, an image path). A tool without a rule is refused, so adding a tool to the allowlist also
+    /// means saying which arguments it takes.
     /// </summary>
     public static bool TryValidateArguments(string? requestedFileName, IReadOnlyList<string>? arguments, out string? error)
     {
-        error = null;
-        var leaf = Path.GetFileName(requestedFileName?.Trim() ?? "");
+        var leaf = LeafName(requestedFileName).ToLowerInvariant();
         var args = arguments ?? [];
-
-        if (string.Equals(leaf, "wevtutil.exe", StringComparison.OrdinalIgnoreCase))
+        var ok = leaf switch
         {
-            // Only reading events (qe): clearing, exporting or changing a log isn't something the app asks the Agent to do.
-            if (args.Count < 2 || !string.Equals(args[0].Trim(), "qe", StringComparison.OrdinalIgnoreCase)
-                || args.Skip(1).Any(x => x.StartsWith("/sq", StringComparison.OrdinalIgnoreCase) || x.StartsWith("/lf:true", StringComparison.OrdinalIgnoreCase)))
-            {
-                error = "wevtutil.exe is restricted to reading events (qe).";
-                return false;
-            }
-            return true;
-        }
+            "sfc.exe" => IsOneOf(args, ["/verifyonly"], ["/scannow"]),
+            "dism.exe" => IsDismCommand(args),
+            "ipconfig.exe" => IsOneOf(args, ["/flushdns"], ["/renew"]),
+            "netsh.exe" => IsOneOf(args, ["wlan", "show", "interfaces"]),
+            "powercfg.exe" => IsPowerCfgCommand(args),
+            "wevtutil.exe" => IsEventQuery(args),
+            "pnputil.exe" => IsPnpUtilCommand(args),
+            "shutdown.exe" => IsShutdownCommand(args),
+            "tpmtool.exe" => IsOneOf(args, ["getdeviceinformation"]),
+            "dsregcmd.exe" => IsOneOf(args, ["/status"]),
+            "w32tm.exe" => IsOneOf(args, ["/query", "/status", "/verbose"]),
+            _ => false,
+        };
+        error = ok ? null : $"{(leaf.Length > 0 ? leaf : "This tool")} doesn't take these arguments from the app.";
+        return ok;
+    }
 
-        if (string.Equals(leaf, "shutdown.exe", StringComparison.OrdinalIgnoreCase))
+    /// <summary>
+    /// Whether the app runs this command itself, without the Agent, because it needs no administrator rights. Only
+    /// <c>powercfg /batteryreport</c>: it writes its report to a path the app picks, which the Agent never does for the app.
+    /// </summary>
+    public static bool RunsWithoutAdmin(string? fileName, IReadOnlyList<string>? arguments) =>
+        string.Equals(LeafName(fileName), "powercfg.exe", StringComparison.OrdinalIgnoreCase)
+        && arguments is [var first, ..] && Is(first, "/batteryreport");
+
+    /// <summary>The program's file name, after the last <c>\</c> or <c>/</c>.</summary>
+    private static string LeafName(string? fileName)
+    {
+        var trimmed = fileName?.Trim() ?? "";
+        return trimmed[(trimmed.LastIndexOfAny(['\\', '/']) + 1)..];
+    }
+
+    private static bool Is(string? arg, string expected) => string.Equals(arg, expected, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsOneOf(IReadOnlyList<string> args, params string[][] allowed)
+    {
+        foreach (var candidate in allowed)
         {
-            if (args.Count == 0 || args[0].Trim() is not ("/r" or "/g" or "/a" or "-r" or "-g" or "-a"))
-            {
-                error = "shutdown.exe is restricted to /r, /g, and /a.";
-                return false;
-            }
-            return true;
+            if (candidate.Length != args.Count) continue;
+            var same = true;
+            for (var i = 0; i < candidate.Length && same; i++) same = Is(args[i], candidate[i]);
+            if (same) return true;
         }
+        return false;
+    }
 
+    /// <summary>
+    /// A value the app passes as one argument (a device name or instance id, an event channel): not empty, not an option, short,
+    /// and without quotes or control characters.
+    /// </summary>
+    private static bool IsPlainValue(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > maxLength) return false;
+        if (value[0] is '/' or '-' || value != value.Trim()) return false;
+        foreach (var c in value)
+            if (c == '"' || char.IsControl(c)) return false;
+        return true;
+    }
+
+    /// <summary>The component store scans and repairs (WindowsRepair, DismScanHealthModule) and reading a repair image's editions.</summary>
+    private static bool IsDismCommand(IReadOnlyList<string> args)
+    {
+        if (IsOneOf(args,
+                ["/English", "/Online", "/Cleanup-Image", "/ScanHealth"],
+                ["/English", "/Online", "/Cleanup-Image", "/RestoreHealth"],
+                ["/English", "/Online", "/Cleanup-Image", "/AnalyzeComponentStore"],
+                ["/English", "/Online", "/Cleanup-Image", "/StartComponentCleanup"],
+                ["/English", "/Online", "/Get-CurrentEdition"]))
+            return true;
+
+        // /English /Online /Cleanup-Image /RestoreHealth /Source:WIM:<image>:<index> /LimitAccess
+        if (args.Count == 6 && Is(args[0], "/English") && Is(args[1], "/Online") && Is(args[2], "/Cleanup-Image")
+            && Is(args[3], "/RestoreHealth") && Is(args[5], "/LimitAccess"))
+            return IsImageSource(args[4]);
+
+        // /English /Get-WimInfo /WimFile:<image> [/Index:<n>]
+        if (args.Count is 3 or 4 && Is(args[0], "/English") && Is(args[1], "/Get-WimInfo")
+            && TryStripPrefix(args[2], "/WimFile:", out var wim) && Areas.WindowsRepair.IsImagePath(wim))
+            return args.Count == 3 || TryStripPrefix(args[3], "/Index:", out var index) && IsSmallNumber(index, 1, 999);
+
+        return false;
+    }
+
+    /// <summary><c>/Source:WIM:D:\sources\install.wim:3</c> or <c>/Source:ESD:…:3</c>, as <see cref="Areas.WindowsRepair.ImageSourceArg"/> builds it.</summary>
+    private static bool IsImageSource(string arg)
+    {
+        string rest;
+        if (TryStripPrefix(arg, "/Source:WIM:", out var wim)) rest = wim;
+        else if (TryStripPrefix(arg, "/Source:ESD:", out var esd)) rest = esd;
+        else return false;
+        var colon = rest.LastIndexOf(':');
+        return colon > 0 && IsSmallNumber(rest[(colon + 1)..], 1, 999) && Areas.WindowsRepair.IsImagePath(rest[..colon]);
+    }
+
+    private static bool TryStripPrefix(string? arg, string prefix, out string rest)
+    {
+        rest = "";
+        if (arg is null || !arg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        rest = arg[prefix.Length..];
+        return true;
+    }
+
+    private static bool IsSmallNumber(string? value, int min, int max)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > 9) return false;
+        foreach (var c in value)
+            if (c is < '0' or > '9') return false;
+        var n = int.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+        return n >= min && n <= max;
+    }
+
+    /// <summary>
+    /// The sleep and power reads (SleepWakeModule, BatteryPowerModule, DeviceWake), the power plan and device wake fixes and their
+    /// undo, and the hibernation file type. Never <c>/batteryreport</c> or any other command that writes a file (<see cref="RunsWithoutAdmin"/>).
+    /// </summary>
+    private static bool IsPowerCfgCommand(IReadOnlyList<string> args)
+    {
+        if (IsOneOf(args,
+                ["/getactivescheme"], ["/a"], ["/requests"], ["/waketimers"], ["/lastwake"],
+                ["/devicequery", "wake_armed"],
+                ["/h", "/type", "full"], ["/h", "/type", "reduced"]))
+            return true;
+        if (args.Count != 2) return false;
+        // /setactive takes a plan GUID only, never an alias (scheme_min) or anything else.
+        if (Is(args[0], "/setactive")) return Guid.TryParseExact(args[1], "D", out _);
+        // A device by the name powercfg /devicequery gives it, e.g. "HID Keyboard Device (001)".
+        if (Is(args[0], "/devicedisablewake") || Is(args[0], "/deviceenablewake")) return IsPlainValue(args[1], 256);
+        return false;
+    }
+
+    /// <summary>
+    /// Reading events, exactly as <see cref="Areas.WindowsEventLog.Arguments"/> builds it: <c>qe &lt;channel&gt;</c> with only the
+    /// query, count, direction and format options, each at most once. Nothing that reads a log file (/lf), saves or reads a
+    /// bookmark file (/sbm, /bm), or changes, clears or exports a log.
+    /// </summary>
+    private static bool IsEventQuery(IReadOnlyList<string> args)
+    {
+        if (args.Count < 2 || !Is(args[0], "qe") || !IsPlainValue(args[1], 256)) return false;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 2; i < args.Count; i++)
+        {
+            var arg = args[i];
+            var colon = arg.IndexOf(':');
+            if (colon < 0) return false;
+            var name = arg[..colon].ToLowerInvariant();
+            var value = arg[(colon + 1)..];
+            if (!seen.Add(name)) return false;
+            var valid = name switch
+            {
+                "/q" => value.Length is > 0 and <= 4096 && !value.Any(char.IsControl),
+                "/c" => IsSmallNumber(value, 1, 100_000),
+                "/rd" => Is(value, "true") || Is(value, "false"),
+                "/f" => Is(value, "RenderedXml") || Is(value, "xml") || Is(value, "text"),
+                _ => false,
+            };
+            if (!valid) return false;
+        }
+        return true;
+    }
+
+    /// <summary>Restarting or enabling one device by its instance id, and scanning for hardware changes (RemediationService).</summary>
+    private static bool IsPnpUtilCommand(IReadOnlyList<string> args)
+    {
+        if (IsOneOf(args, ["/scan-devices"])) return true;
+        return args.Count == 2 && (Is(args[0], "/restart-device") || Is(args[0], "/enable-device")) && IsPlainValue(args[1], 512);
+    }
+
+    /// <summary>
+    /// Cancelling a restart (<c>/a</c>), or a restart of this PC (<c>/r</c>, or <c>/g</c> to sign back in) with a delay of at most
+    /// ten minutes and an optional message. No other options: not /m (another PC), /s, /p, /f, /o or anything else.
+    /// </summary>
+    private static bool IsShutdownCommand(IReadOnlyList<string> args)
+    {
+        if (args.Count == 0) return false;
+        var first = args[0].Trim();
+        if (first is "/a" or "-a") return args.Count == 1;
+        if (first is not ("/r" or "/g" or "-r" or "-g")) return false;
+        var seenDelay = false;
+        var seenMessage = false;
+        for (var i = 1; i < args.Count; i += 2)
+        {
+            if (i + 1 >= args.Count) return false;
+            var option = args[i].Trim();
+            var value = args[i + 1];
+            if (option is "/t" or "-t" && !seenDelay)
+            {
+                if (!IsSmallNumber(value, 0, 600)) return false;
+                seenDelay = true;
+            }
+            else if (option is "/c" or "-c" && !seenMessage)
+            {
+                if (value.Length > 512 || value.Any(c => c == '"' || char.IsControl(c))) return false;
+                seenMessage = true;
+            }
+            else return false;
+        }
         return true;
     }
 }
@@ -1027,7 +1202,8 @@ public sealed class AdminPipeServer(
     string? appFolder = null,
     Func<IChangeJournal>? changeJournal = null,
     string? stateFolder = null,
-    IMachineSetup? machineSetup = null) : IAsyncDisposable, IDisposable
+    IMachineSetup? machineSetup = null,
+    IAgentNativeOps? nativeOps = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -1646,13 +1822,13 @@ public sealed class AdminPipeServer(
 
         if (request.Script is not { Name.Length: > 0 } script) return Refused("No script was named.");
         var what = $"{script.Name} {string.Join(' ', script.Args ?? [])}";
-        if (AgentScripts.Build(script, AppFolder, out var refusal) is not { } ps)
+        if (AgentScripts.Plan(script, AppFolder, out var refusal) is not { } plan)
         {
             log.Warn($"[admin-pipe-server] Agent script '{what}' refused: {refusal}");
             return Refused(refusal ?? "That change isn't allowed.");
         }
         // The script is this app's own code; the screen is a second check that nothing in it downloads or runs other code.
-        if (AdminCommandAllowlist.FindBlockedPowerShell(ps) is { } blocked)
+        if (plan.Script is { } screened && AdminCommandAllowlist.FindBlockedPowerShell(screened) is { } blocked)
         {
             log.Warn($"[admin-pipe-server] Agent script '{what}' blocked: contains '{blocked}'.");
             return Refused($"The script contains '{blocked}', which the Agent doesn't run.");
@@ -1660,7 +1836,9 @@ public sealed class AdminPipeServer(
         var timeout = TimeSpan.FromMilliseconds(Math.Clamp(request.TimeoutMs, 1_000, 3_600_000));
         try
         {
-            var pr = await _launcher.RunAsync(SystemCommandRunner.PowerShell, SystemCommandRunner.PowerShellArgs(ps), timeout, ct).ConfigureAwait(false);
+            var pr = plan.Native is { } native
+                ? await AgentNativeRunner.RunAsync(nativeOps ?? _launcher as IAgentNativeOps ?? WindowsAgentNativeOps.Instance, native, timeout, ct).ConfigureAwait(false)
+                : await _launcher.RunAsync(SystemCommandRunner.PowerShell, SystemCommandRunner.PowerShellArgs(plan.Script!), timeout, ct).ConfigureAwait(false);
             log.Info($"[admin-pipe-server] Agent script '{what}' exit={pr.ExitCode} timedOut={pr.TimedOut}.");
             return new AdminPipeResponse(
                 Ok: !pr.TimedOut, Allowed: true, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId,
@@ -1671,7 +1849,7 @@ public sealed class AdminPipeServer(
         catch (Exception ex)
         {
             log.Warn($"[admin-pipe-server] Agent script '{what}' failed to start: {ex.Message}");
-            return Refused("PowerShell didn't start: " + ex.Message);
+            return Refused((plan.Native is null ? "PowerShell didn't start: " : "The change failed: ") + ex.Message);
         }
     }
 
