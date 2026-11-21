@@ -494,4 +494,29 @@ public sealed class AdminHelperAndElevationTests
         Assert.Contains("makeappx", scriptText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("no custom uninstall action", scriptText);
     }
+
+    // The agent service starts the app with --admin-pipe=<name> on its command line (AgentHubSession.StartHostProcess).
+    // Missing it made every Admin "Start Diagnostics" start the helper with a UAC prompt instead of using the service's pipe.
+    [Fact]
+    public void Initial_pipe_name_comes_from_the_admin_pipe_argument()
+    {
+        string[] args = ["RemotePCDiagnostics.Host.exe", "-u=https://relay.example:34544", "--unattended", ElevationService.AdminPipeArgPrefix + "rpd-admin-0123abcd"];
+        Assert.Equal("rpd-admin-0123abcd", ElevationService.TryResolveInitialPipeName(args));
+    }
+
+    [Fact]
+    public void Initial_pipe_name_ignores_an_empty_admin_pipe_argument()
+    {
+        string[] args = ["RemotePCDiagnostics.Host.exe", ElevationService.AdminPipeArgPrefix, ElevationService.AdminPipeArgPrefix + " rpd-admin-second "];
+        Assert.Equal("rpd-admin-second", ElevationService.TryResolveInitialPipeName(args));
+    }
+
+    [Fact]
+    public void Initial_pipe_name_with_no_args_reads_this_process_command_line()
+    {
+        // The test runner has no --admin-pipe argument, so the answer is whatever the environment variable says.
+        var expected = Environment.GetEnvironmentVariable(ElevationService.AdminPipeEnvVar)?.Trim();
+        Assert.Equal(string.IsNullOrEmpty(expected) ? null : expected, ElevationService.TryResolveInitialPipeName());
+        Assert.DoesNotContain(Environment.GetCommandLineArgs(), a => a.StartsWith(ElevationService.AdminPipeArgPrefix, StringComparison.OrdinalIgnoreCase));
+    }
 }
