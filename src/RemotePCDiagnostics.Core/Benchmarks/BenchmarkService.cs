@@ -10,6 +10,46 @@ public sealed record BenchmarkBlock(string Setting, string Reason);
 /// <summary>One pass an agent can start, and why it cannot when <see cref="Available"/> is false.</summary>
 public sealed record BenchmarkStartChoice(string Pass, bool Restart, string Control, bool Available, string? Setting = null, string? Reason = null);
 
+/// <summary>
+/// One benchmark kind an agent can turn on or off. <see cref="Control"/> is the checkbox test id when <see cref="Available"/> is true.
+/// A kind the PC cannot run has no control: it is reported, and it cannot be enabled.
+/// </summary>
+public sealed record BenchmarkTestChoice(string Id, bool Available, bool Enabled, string? Control = null, string? Reason = null);
+
+/// <summary>Which benchmark kinds are saved as enabled, and which this PC can turn on.</summary>
+public static class BenchmarkTestRules
+{
+    /// <summary>Shown when a kind is hidden because this PC lacks the hardware or software it measures.</summary>
+    public const string UnavailableReason = "This PC doesn't have the hardware or software this test needs.";
+
+    /// <summary>The checkbox test id for one kind. The id is the kind's name, the same string as <c>settings.enabled</c>.</summary>
+    public static string Control(BenchmarkKind kind) => "bench-enable-" + kind;
+
+    /// <summary>Every kind, in catalog order. Hidden kinds are included as unavailable and have no <see cref="BenchmarkTestChoice.Control"/>.</summary>
+    public static IReadOnlyList<BenchmarkTestChoice> Choices(BenchmarkSettings settings, Func<BenchmarkKind, bool> isAvailable) =>
+        Benchmarks.All.Select(info =>
+        {
+            var available = isAvailable(info.Kind);
+            return new BenchmarkTestChoice(
+                info.Kind.ToString(), available, settings.IsEnabled(info.Kind),
+                available ? Control(info.Kind) : null, available ? null : UnavailableReason);
+        }).ToList();
+
+    /// <summary>
+    /// The enabled list after turning <paramref name="kind"/> on or off, in enum order, the same list the Benchmark page saves.
+    /// Turning a hidden kind on leaves the list as it was.
+    /// </summary>
+    public static IReadOnlyList<BenchmarkKind> WithEnabled(BenchmarkSettings settings, BenchmarkKind kind, bool on, bool available)
+    {
+        if (on && !available)
+            return settings.Enabled;
+        var set = settings.Enabled.ToList();
+        if (on && !set.Contains(kind)) set.Add(kind);
+        if (!on) set.Remove(kind);
+        return Enum.GetValues<BenchmarkKind>().Where(set.Contains).ToList();
+    }
+}
+
 /// <summary>Result of asking for a pass. <see cref="Started"/> is false when nothing ran and the restart choice was left as it was.</summary>
 public sealed record BenchmarkPassStart(bool Started, BenchmarkBlock? Blocked, RemediationResult? Restart);
 
@@ -191,6 +231,9 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public BenchmarkBlock? BlockFor(BenchmarkPhase phase, bool restart) => BenchmarkStartRules.Block(
         phase, restart, Running is not null || Settling is not null || RunningDeveloperAction, Before is not null,
         Settings.Enabled.Count > 0, BeforePendingRestart || AfterPendingRestart, remediation is not null, RestartImminent);
+
+    /// <summary>Every benchmark kind, including kinds hidden on this PC, and the checkbox that toggles each available one.</summary>
+    public IReadOnlyList<BenchmarkTestChoice> TestChoices() => BenchmarkTestRules.Choices(Settings, IsKindAvailable);
 
     public IReadOnlyList<BenchmarkStartChoice> StartChoices() =>
         new[] { BenchmarkPhase.Before, BenchmarkPhase.After }

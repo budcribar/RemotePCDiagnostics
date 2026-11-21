@@ -289,14 +289,15 @@ public static class AgentExports
         bench.Settings, bench.Before, bench.After, bench.Comparison, bench.Running, bench.Settling is not null,
         bench.Progress, bench.BeforePendingRestart, bench.AfterPendingRestart, bench.Message,
         bench.DetectedToolchains, bench.DevDrivePrecheck, bench.LastAntivirusComparison, bench.LastDevDriveComparison,
-        bench.Blocked, bench.StartChoices()), Json);
+        bench.Blocked, bench.StartChoices(), bench.TestChoices()), Json);
 
-    /// <summary>The page's state: settings, what is running or waiting for a restart, each pass, and the comparison.</summary>
+    /// <summary>The page's state: settings, which kinds this PC can enable, what is running or waiting for a restart, each pass, and the comparison.</summary>
     public static object BuildBenchmark(BenchmarkSettings settings, BenchmarkRun? before, BenchmarkRun? after, BenchmarkComparison comparison,
         BenchmarkPhase? running, bool settling, string? progress, bool beforePendingRestart, bool afterPendingRestart, string? message,
         IReadOnlyList<DetectedToolchain>? detectedToolchains = null, DevDrivePrecheckResult? devDrivePrecheck = null,
         DeveloperBuildResult? lastAvComparison = null, DevDriveComparisonResult? lastDevDriveComparison = null,
-        BenchmarkBlock? blocked = null, IReadOnlyList<BenchmarkStartChoice>? starts = null) => new
+        BenchmarkBlock? blocked = null, IReadOnlyList<BenchmarkStartChoice>? starts = null,
+        IReadOnlyList<BenchmarkTestChoice>? tests = null) => new
     {
         schema = SchemaVersion,
         phase = running is { } p ? (p == BenchmarkPhase.Before ? "running-before" : "running-after")
@@ -313,6 +314,15 @@ public static class AgentExports
             enabled = settings.Enabled.Select(k => k.ToString()).ToList(),
             restartBeforeAfter = settings.RestartBeforeAfter,
         },
+        // Every kind. available false means the PC lacks the hardware or software: there is no control to turn it on.
+        tests = tests?.Select(t => new
+        {
+            id = t.Id,
+            available = t.Available,
+            enabled = t.Enabled,
+            control = t.Control,
+            reason = T(t.Reason),
+        }).ToList(),
         // How each pass can be started, and the last refusal. A refusal names the blocking setting and does not change restartBeforeAfter.
         starts = starts?.Select(s => new
         {
