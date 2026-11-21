@@ -30,7 +30,8 @@ public static class ProtectedStateFolder
     {
         try
         {
-            if (!SecureInPlace(appFolder, readers: true, log)) return false;
+            if (!SecureRoot(appFolder, log)) return false;
+            ScrubOnce(appFolder, log);
             var state = new DirectoryInfo(stateFolder);
             state.Create(Wanted(readers: false)); // does nothing when it already exists
             if (IsSecure(state, readers: false)) return true;
@@ -48,6 +49,42 @@ public static class ProtectedStateFolder
         {
             log.Warn($"Protected state: couldn't secure {stateFolder}: {ex.Message}");
             return false;
+        }
+    }
+
+    private static int _scrubbed;
+
+    /// <summary>
+    /// Removes a link at <paramref name="appFolder"/> (the link only: a junction there would make the reset below take over its
+    /// target), then makes it ours: created if missing, owned by Administrators, everyone may read, only Administrators and SYSTEM may
+    /// change. Returns false (after logging why) when it couldn't.
+    /// </summary>
+    public static bool SecureRoot(string appFolder, ILogger? log)
+    {
+        try
+        {
+            DataFolderGuard.RemoveLink(appFolder, log);
+            return SecureInPlace(appFolder, readers: true, log);
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"Protected state: couldn't secure {appFolder}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Once per process (the app asks the Agent to prepare the machine every time it connects).</summary>
+    private static void ScrubOnce(string appFolder, ILogger? log)
+    {
+        if (Interlocked.Exchange(ref _scrubbed, 1) == 1) return;
+        try
+        {
+            DataFolderGuard.Scrub(appFolder, Path.Combine(appFolder, RemotePCDiagnostics.Agent.Core.AgentLayout.SessionsFolderName), log);
+        }
+        catch (Exception ex)
+        {
+            Interlocked.Exchange(ref _scrubbed, 0);
+            log.Warn($"Protected state: couldn't check the contents of {appFolder}: {ex.Message}");
         }
     }
 
