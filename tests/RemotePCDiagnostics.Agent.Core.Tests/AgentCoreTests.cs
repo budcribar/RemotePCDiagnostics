@@ -736,6 +736,8 @@ public class AgentHubWorkerTests
         var secondHub = new FakeAgentHubClient();
         var secondRun = worker.RunSingleConnectionAsync(secondHub, cts.Token);
         _ = await secondHub.ReadAgentMessageAsync(cts.Token); // Hello
+        var again = await ReadProgressAsync(secondHub, cts.Token);
+        Assert.Equal(LaunchStage.StageReady, again.Stage); // the running session is reported again on the new stream
 
         // The relay kept the READY launch, so Admin's end request names the old request ID.
         await secondHub.SendHubCommandAsync(new HubCommand { Cancel = new CancelCommand { RequestId = "req-keep" } }, cts.Token);
@@ -743,6 +745,40 @@ public class AgentHubWorkerTests
         var ended = await ReadProgressAsync(secondHub, cts.Token);
         Assert.Equal(LaunchStage.StageEnded, ended.Stage);
         Assert.Equal("req-keep", ended.RequestId);
+        Assert.True(proc.HasExited);
+
+        secondHub.CompleteServerStream();
+        await secondRun;
+    }
+
+    [Fact]
+    public async Task Ready_session_is_reported_again_after_a_reconnect_so_a_restarted_relay_knows_it()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var proc = new FakeLaunchedProcess();
+        var firstHub = new FakeAgentHubClient();
+        Task firstRun = Task.CompletedTask;
+        var sessionId = Guid.Parse("7e57c0de-0000-4000-8000-000000000055");
+        var worker = await LaunchToReadyAsync(firstHub, proc, "req-relay-restart", Guid.Parse("7e57c0de-0000-4000-8000-000000000054"),
+            sessionId, cts.Token, t => firstRun = t);
+
+        // The relay is redeployed: the stream drops and the new relay has no record of the launch.
+        firstHub.CompleteServerStream();
+        await firstRun.WaitAsync(cts.Token);
+
+        var secondHub = new FakeAgentHubClient();
+        var secondRun = worker.RunSingleConnectionAsync(secondHub, cts.Token);
+        _ = await secondHub.ReadAgentMessageAsync(cts.Token); // Hello
+
+        var again = await ReadProgressAsync(secondHub, cts.Token);
+        Assert.Equal(LaunchStage.StageReady, again.Stage);
+        Assert.Equal("req-relay-restart", again.RequestId);
+        Assert.Equal(sessionId.ToString(), again.SessionId, ignoreCase: true);
+
+        // With the launch known again, the end request closes the app.
+        await secondHub.SendHubCommandAsync(new HubCommand { Cancel = new CancelCommand { RequestId = "req-relay-restart" } }, cts.Token);
+        var ended = await ReadProgressAsync(secondHub, cts.Token);
+        Assert.Equal(LaunchStage.StageEnded, ended.Stage);
         Assert.True(proc.HasExited);
 
         secondHub.CompleteServerStream();
@@ -975,4 +1011,32 @@ public class AgentHubWorkerTests
             }
         }
     }
+}
+
+public class RestartedCopyTests
+{
+    private const string Id = "205523f9-df7d-4f0b-8c7d-31caf7328962";
+
+    [Fact]
+    public void Reads_the_session_id_from_the_agent_command_line() =>
+        Assert.Equal(Id, RestartedCopy.SessionIdFrom($"-u=https://relay.example:34544 -i={Id} -g=test-shop --unattended"));
+
+    [Fact]
+    public void No_session_id_is_null() => Assert.Null(RestartedCopy.SessionIdFrom("--unattended"));
+
+    [Fact]
+    public void A_restarted_copy_of_the_same_session_matches() =>
+        Assert.True(RestartedCopy.IsRestartOf(
+            $"\"C:\\Program Files\\RemotePCDiagnostics\\RemotePCDiagnostics.Host.exe\" -u=https://relay.example:34544 -i={Id} -g=test-shop --unattended --admin --restarted", Id));
+
+    [Theory]
+    [InlineData("-u=https://relay.example:34544 -i=" + Id + " --unattended")] // not marked --restarted
+    [InlineData("-u=https://relay.example:34544 -i=11111111-2222-4333-8444-555555555555 --restarted")] // another session
+    [InlineData("--restarted")] // Local Mode copy
+    [InlineData("")]
+    public void Other_copies_do_not_match(string commandLine) =>
+        Assert.False(RestartedCopy.IsRestartOf(commandLine, Id));
+
+    [Fact]
+    public void No_session_never_matches() => Assert.False(RestartedCopy.IsRestartOf($"-i={Id} --restarted", null));
 }

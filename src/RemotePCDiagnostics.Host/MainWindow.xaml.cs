@@ -44,6 +44,17 @@ public partial class MainWindow : Window
         var launch = SessionLaunchOptions.Resolve(Environment.GetCommandLineArgs().Skip(1), Environment.GetEnvironmentVariable, pendingReboot);
         var mode = launch.Mode;
         _group = launch.Group;
+        // A copy started to reconnect carries on from the previous one (when it began, how many tries). Read it once and take it
+        // out of this process's environment, so other copies this one starts (a restart from a browser, Local Mode) begin afresh.
+        if (mode == SessionMode.Remote)
+            _reconnect = ReconnectCarry.FromEnvironment(Environment.GetEnvironmentVariable, DateTimeOffset.UtcNow);
+        Environment.SetEnvironmentVariable(ReconnectCarry.SinceEnvVar, null);
+        Environment.SetEnvironmentVariable(ReconnectCarry.AttemptEnvVar, null);
+        // The Agent gives the copy it starts its admin pipe on the command line. Copies this one starts again under the same
+        // session (a reconnect, a restart from a browser) inherit it through the environment, so they reach the Agent's pipe
+        // (which follows them) instead of starting an elevated helper of their own with a UAC prompt nobody may be there to answer.
+        if (ElevationService.TryResolveInitialPipeName() is { } agentPipe)
+            Environment.SetEnvironmentVariable(ElevationService.AdminPipeEnvVar, agentPipe);
 
         var sessionCtx = new SessionContext(mode, launch.ServerUri, launch.Id, launch.Unattended, launch.Voice, launch.Group, launch.Admin);
         ActiveSessionInfo.TryWrite(new ActiveSessionInfo(
@@ -275,6 +286,7 @@ public partial class MainWindow : Window
         {
             _readyTimer?.Stop();
             StopReconnectTimer();
+            _reconnect = null;
             HideNativeFallbackCard();
             if (_provider.GetService<ISessionContext>() is SessionContext sc && e.Id != Guid.Empty)
             {
@@ -316,7 +328,8 @@ public partial class MainWindow : Window
             Logger.Info($"Remote Disconnected id={e.Id} url={e.Url} error={e.Exception}");
             _audit.Ended(e.Exception?.Message ?? "");
             _provider.GetService<RemoteUsers>()?.Set(0);
-            var nextState = _remoteUserUrl is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected;
+            // A copy started to reconnect that can't reach the relay yet is still reconnecting, not a session that never started.
+            var nextState = _remoteUserUrl is null && _reconnect is null ? RemoteSessionState.Unreachable : RemoteSessionState.Disconnected;
             _provider.GetService<RemoteSessionHealth>()?.ReportFailure(nextState, e.Exception?.Message);
             SetRemoteState(nextState, e.Exception?.Message);
             if (nextState == RemoteSessionState.Disconnected)
@@ -346,12 +359,11 @@ public partial class MainWindow : Window
 
     private UIElement? _fallbackCard;
     private DispatcherTimer? _reconnectTimer;
-    private int _reconnectAttempt;
-    private const int MaxReconnectAttempts = 4;
-    private readonly Backoff _reconnectBackoff = new();
+    private ReconnectCarry? _reconnect;
     private int _reconnectCountdownSeconds;
     private bool _isAutoReconnecting;
     private System.Windows.Controls.TextBlock? _reconnectCountdownTextBlock;
+    private static readonly System.Net.Http.HttpClient RelayProbe = new() { Timeout = TimeSpan.FromSeconds(5) };
 
     private void StopReconnectTimer()
     {
@@ -364,18 +376,23 @@ public partial class MainWindow : Window
 
     private void StartAutoReconnect()
     {
+        if (_isAutoReconnecting) return; // a startup failure and the Disconnected event that follows it both get here
         StopReconnectTimer();
-        _reconnectAttempt = 0;
-        _reconnectBackoff.Reset();
+        _reconnect ??= ReconnectCarry.Start(DateTimeOffset.UtcNow);
         ScheduleNextReconnect();
     }
 
+    /// <summary>
+    /// Waits, then starts a new copy under the same session id once the relay answers. While the relay can't be reached (Wi-Fi
+    /// still off after a wake, a relay redeploy, the relay still holding the old connection) this copy keeps waiting, longer
+    /// each time, rather than handing over to a copy that would fail too. It gives up after <see cref="ReconnectCarry.Window"/>.
+    /// </summary>
     private void ScheduleNextReconnect()
     {
-        _reconnectAttempt++;
-        if (_reconnectAttempt > MaxReconnectAttempts)
+        var reconnect = _reconnect ??= ReconnectCarry.Start(DateTimeOffset.UtcNow);
+        if (reconnect.Expired(DateTimeOffset.UtcNow))
         {
-            Logger.Warn($"Auto-reconnect failed after {MaxReconnectAttempts} attempts. Releasing active session.");
+            Logger.Warn($"Auto-reconnect gave up after {ReconnectCarry.Window.TotalMinutes:0} minutes ({reconnect.Attempt} tries). Releasing active session.");
             _isAutoReconnecting = false;
             ActiveSessionInfo.TryDelete(expectedProcessId: Environment.ProcessId);
             if (_provider.GetService<ISessionContext>()?.Unattended == true)
@@ -392,9 +409,9 @@ public partial class MainWindow : Window
         }
 
         _isAutoReconnecting = true;
-        var delay = _reconnectBackoff.Next();
+        var delay = reconnect.NextDelay();
         _reconnectCountdownSeconds = (int)Math.Ceiling(delay.TotalSeconds);
-        Logger.Info($"Scheduling auto-reconnect attempt {_reconnectAttempt}/{MaxReconnectAttempts} in {_reconnectCountdownSeconds}s.");
+        Logger.Info($"Scheduling auto-reconnect try {reconnect.Attempt + 1} in {_reconnectCountdownSeconds}s (reconnecting since {reconnect.Since:O}).");
 
         UpdateReconnectCountdownText();
 
@@ -406,19 +423,50 @@ public partial class MainWindow : Window
             if (_reconnectCountdownSeconds <= 0)
             {
                 _reconnectTimer.Stop();
-                Logger.Info($"Executing auto-reconnect attempt {_reconnectAttempt}/{MaxReconnectAttempts} under current session id.");
-                RelaunchSelf(keepRemoteArgs: true);
+                _ = ReconnectWhenRelayAnswersAsync();
             }
         };
         _reconnectTimer.Start();
+    }
+
+    private async Task ReconnectWhenRelayAnswersAsync()
+    {
+        var reconnect = (_reconnect ?? ReconnectCarry.Start(DateTimeOffset.UtcNow)).Next();
+        _reconnect = reconnect;
+        if (_serverUri is not null && !await RelayAnswersAsync(_serverUri).ConfigureAwait(true))
+        {
+            Logger.Info($"Auto-reconnect try {reconnect.Attempt}: relay {RemoteLinkInfo.HostAndPort(_serverUri)} not reachable yet; waiting.");
+            if (_isAutoReconnecting) ScheduleNextReconnect();
+            return;
+        }
+        if (!_isAutoReconnecting) return; // stopped (Exit, Local Mode, a manual retry) while the relay was being checked
+        Logger.Info($"Executing auto-reconnect try {reconnect.Attempt} under current session id.");
+        RelaunchSelf(keepRemoteArgs: true, reconnect);
+    }
+
+    /// <summary>True when the relay answers HTTP at all (any status): the network is back and the relay is up.</summary>
+    private static async Task<bool> RelayAnswersAsync(Uri serverUri)
+    {
+        try
+        {
+            using var response = await RelayProbe.GetAsync(serverUri, System.Net.Http.HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Logger.Info($"Relay check failed: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
     }
 
     private void UpdateReconnectCountdownText()
     {
         if (_reconnectCountdownTextBlock is not null)
         {
-            _reconnectCountdownTextBlock.Text = _isAutoReconnecting && _reconnectCountdownSeconds > 0
-                ? $"Attempting to reconnect in {_reconnectCountdownSeconds}s (attempt {_reconnectAttempt} of {MaxReconnectAttempts})..."
+            _reconnectCountdownTextBlock.Text = _isAutoReconnecting
+                ? _reconnectCountdownSeconds > 0
+                    ? $"Reconnecting in {_reconnectCountdownSeconds}s (try {(_reconnect?.Attempt ?? 0) + 1})..."
+                    : "Checking the relay..."
                 : string.Empty;
         }
     }
@@ -440,6 +488,14 @@ public partial class MainWindow : Window
 
         _readyTimer?.Stop();
         Logger.Error($"Remote startup failed on UI dispatcher: {ex.Message}");
+        if (_reconnect is not null)
+        {
+            // This copy was started to reconnect: keep trying (a relay that is still coming back, or still holds the old connection).
+            _provider.GetService<RemoteSessionHealth>()?.ReportFailure(RemoteSessionState.Disconnected, ex.Message);
+            SetRemoteState(RemoteSessionState.Disconnected, ex.Message);
+            StartAutoReconnect();
+            return true;
+        }
         _provider.GetService<RemoteSessionHealth>()?.ReportFailure(RemoteSessionState.Unreachable, ex.Message);
         SetRemoteState(RemoteSessionState.Unreachable, ex.Message);
         return true;
@@ -655,7 +711,7 @@ public partial class MainWindow : Window
         _fallbackCard = host;
     }
 
-    private void RelaunchSelf(bool keepRemoteArgs)
+    private void RelaunchSelf(bool keepRemoteArgs, ReconnectCarry? reconnect = null)
     {
         var exe = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(exe)) return;
@@ -668,6 +724,10 @@ public partial class MainWindow : Window
                 : ["--restarted"];
             var psi = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory };
             foreach (var arg in args) psi.ArgumentList.Add(arg);
+            if (reconnect is not null && keepRemoteArgs) reconnect.WriteTo(psi.Environment);
+            else ReconnectCarry.ClearIn(psi.Environment);
+            // Local Mode is a session of its own: it must not reach for the Agent pipe of the remote session it replaces.
+            if (!keepRemoteArgs) psi.Environment.Remove(ElevationService.AdminPipeEnvVar);
             Process.Start(psi);
             Close();
         }
