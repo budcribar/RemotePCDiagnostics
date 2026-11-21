@@ -16,7 +16,7 @@ public static class BrowserContract
     public const int Benchmark = 3;
     public const int Certificates = 1;
     public const int History = 2;
-    public const int About = 1;
+    public const int About = 2;
     public const int Module = 3;
 
     /// <summary>Every page marker value and its version.</summary>

@@ -131,6 +131,10 @@ public class AppUpdateTests
         Assert.True(info.UpdateAvailable);
         Assert.Equal(AppInstallKind.MicrosoftStore, info.InstallKind);
         Assert.True(info.CanInstallSilently);
+        Assert.NotNull(service.LastCheck);
+        Assert.True(service.LastCheck.UpdateAvailable);
+        Assert.Equal("Microsoft Store update", service.LastCheck.LatestVersion);
+        Assert.Null(service.LastCheck.Error);
 
         var result = await service.InstallUpdateAsync();
         Assert.True(result.Ok);
@@ -221,6 +225,24 @@ public class AppUpdateTests
     [InlineData("--restarted\" /evil")]
     public void Relaunch_check_rejects_anything_else(string arg) =>
         Assert.False(SessionLaunchOptions.IsRestartCommandLine(["-u=https://server.example.com:34544", arg]));
+
+    [Fact]
+    public async Task Failed_update_check_records_a_fixed_error_and_not_the_exception()
+    {
+        using var http = new HttpClient(new StubHandler(_ =>
+            throw new HttpRequestException("https://secret.example/feed?key=rpd_live_SECRET")));
+        using var service = new AppUpdateService("1.2.0", httpClient: http);
+
+        var info = await service.CheckForUpdateAsync(force: true);
+
+        Assert.False(info.UpdateAvailable);
+        Assert.NotNull(service.LastCheck);
+        Assert.False(service.LastCheck.UpdateAvailable);
+        Assert.Null(service.LastCheck.LatestVersion);
+        Assert.Equal("Update check failed.", service.LastCheck.Error);
+        Assert.DoesNotContain("secret", service.LastCheck.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("rpd_live", service.LastCheck.Error, StringComparison.OrdinalIgnoreCase);
+    }
 
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {
