@@ -3,22 +3,6 @@ using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
-/// <summary>One battery row from osquery <c>battery</c>.</summary>
-public sealed record BatteryStatus(
-    string Model, string Manufacturer, string Chemistry, string State,
-    int? PercentRemaining, int? DesignCapacity, int? MaxCapacity, int? CycleCount)
-{
-    public static BatteryStatus FromRow(IReadOnlyDictionary<string, string> r) => new(
-        r.Str("model"), r.Str("manufacturer"), r.Str("chemistry"), r.Str("state"),
-        r.Int("percent_remaining"), r.Int("designed_capacity"), r.Int("max_capacity"), r.Int("cycle_count"));
-
-    public int? HealthPercent => DesignCapacity is > 0 && MaxCapacity is > 0
-        ? (int)Math.Round(Math.Clamp(MaxCapacity.Value * 100.0 / DesignCapacity.Value, 0, 120))
-        : null;
-
-    public int? WearPercent => HealthPercent is { } h ? Math.Max(0, 100 - h) : null;
-}
-
 /// <summary>
 /// Battery health (wear level, cycle count, charge state via osquery <c>battery</c>) and active Windows power plan
 /// (<c>powercfg /getactivescheme</c>).
@@ -27,7 +11,7 @@ public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner
 {
     public const string ModuleName = ModuleSlugs.BatteryPower;
     public const string BatterySql = "SELECT * FROM battery;";
-    public const int LowBatteryHealthPercent = 70;
+    public const int LowBatteryHealthPercent = BatteryStatus.LowHealthPercent;
 
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.BatteryPower;
@@ -106,9 +90,7 @@ public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner
             cards.Add(new("battery", "Battery health", level, headline, string.Join(" · ", metaParts), ["Detail", "Value"], rows,
                 Note: worn ? "A battery below 70% health holds significantly less charge than when new and may need replacement." : null));
             // Tracked over time: health falling (or capacity dropping) faster than normal is the early sign of a battery to replace.
-            if (health is { } hm) metrics.Add(new("battery.health", "Battery health", hm, "%", MetricTrend.HigherIsBetter));
-            if (b.MaxCapacity is > 0) metrics.Add(new("battery.capacity", "Full charge capacity", b.MaxCapacity.Value, "mWh", MetricTrend.HigherIsBetter));
-            if (b.CycleCount is > 0) metrics.Add(new("battery.cycles", "Charge cycles", b.CycleCount.Value, ""));
+            metrics.AddRange(CheckKeyMetrics.Battery(b));
             parts.Add(health is { } h2 ? $"Battery health {h2}%" + (b.PercentRemaining is { } pr ? $" · {pr}% charged" : "") : "Battery present");
         }
 
