@@ -498,6 +498,70 @@ public sealed class AdminHelperAndElevationTests
     // The agent service starts the app with --admin-pipe=<name> on its command line (AgentHubSession.StartHostProcess).
     // Missing it made every Admin "Start Diagnostics" start the helper with a UAC prompt instead of using the service's pipe.
     [Fact]
+    public async Task AdminPipeServer_ListensAgainAfterTheClientDrops()
+    {
+        var pipeName = $"rpd-again-{Guid.NewGuid():N}";
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var server = new AdminPipeServer(
+            new AdminPipeServerOptions { PipeName = pipeName, ExpectedClientPid = Environment.ProcessId },
+            new RecordingLauncher());
+        var serverTask = server.RunUntilCancelledAsync(cts.Token);
+
+        await using (var first = await AdminPipeClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(10), cts.Token))
+        {
+            Assert.True((await first.PingAsync(cts.Token)).Ok);
+        }
+
+        await using var second = await AdminPipeClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(10), cts.Token);
+        Assert.True((await second.PingAsync(cts.Token)).Ok);
+
+        cts.Cancel();
+        await serverTask;
+    }
+
+    [Fact]
+    public async Task ElevationService_ReconnectsWhenTheAdminPipeComesBack()
+    {
+        var pipeName = $"rpd-rejoin-{Guid.NewGuid():N}";
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+
+        await using var firstServer = new AdminPipeServer(
+            new AdminPipeServerOptions { PipeName = pipeName, ExpectedClientPid = Environment.ProcessId },
+            new RecordingLauncher());
+        var firstTask = firstServer.RunSingleSessionAsync(cts.Token);
+
+        using var elevation = new ElevationService(new SessionContext(SessionMode.Local), initialPipeName: pipeName);
+        Assert.True(await WaitUntilAsync(() => elevation.IsAdminHelperConnected, TimeSpan.FromSeconds(10)));
+
+        await firstServer.DisposeAsync();
+        try { await firstTask; } catch { }
+        try { await elevation.ReportDiagnosticsActivityAsync(null, cts.Token); } catch { }
+        Assert.False(elevation.IsAdminHelperConnected);
+
+        await using var secondServer = new AdminPipeServer(
+            new AdminPipeServerOptions { PipeName = pipeName, ExpectedClientPid = Environment.ProcessId },
+            new RecordingLauncher());
+        var secondTask = secondServer.RunSingleSessionAsync(CancellationToken.None);
+        Assert.True(await WaitUntilAsync(() => elevation.IsAdminHelperConnected, TimeSpan.FromSeconds(12)));
+
+        cts.Cancel();
+        secondServer.Dispose();
+        try { await secondTask; } catch { }
+    }
+
+    private static async Task<bool> WaitUntilAsync(Func<bool> ready, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (ready())
+                return true;
+            await Task.Delay(100);
+        }
+        return ready();
+    }
+
+    [Fact]
     public void Initial_pipe_name_comes_from_the_admin_pipe_argument()
     {
         string[] args = ["RemotePCDiagnostics.Host.exe", "-u=https://relay.example:34544", "--unattended", ElevationService.AdminPipeArgPrefix + "rpd-admin-0123abcd"];

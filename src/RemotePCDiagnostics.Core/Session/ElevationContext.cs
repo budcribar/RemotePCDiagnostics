@@ -81,15 +81,9 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
             : TryResolveInitialPipeName();
         if (!string.IsNullOrEmpty(initialPipe))
         {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                    await TryConnectPipeAsync(initialPipe, TimeSpan.FromSeconds(8), cts.Token).ConfigureAwait(false);
-                }
-                catch { }
-            });
+            // Keep trying for the life of the app. A single connect used to stick: once that pipe died, the client
+            // stayed disposed and the activity probe never reached the agent until the service was restarted.
+            _ = KeepInitialPipeAsync(initialPipe);
         }
         else if (_session.Admin && !IsProcessElevated)
         {
@@ -503,9 +497,43 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         return Process.Start(shellPsi);
     }
 
+    /// <summary>
+    /// Connects to the service pipe, and connects again whenever that client is gone. A dead client is not reused.
+    /// </summary>
+    private async Task KeepInitialPipeAsync(string pipeName)
+    {
+        while (Volatile.Read(ref _disposed) == 0)
+        {
+            if (!IsAdminHelperConnected)
+            {
+                var entered = false;
+                try
+                {
+                    entered = await _enableGate.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                    if (entered && !IsAdminHelperConnected && Volatile.Read(ref _disposed) == 0)
+                    {
+                        _log?.Info($"[elevation] Connecting to admin pipe '{pipeName}'.");
+                        await TryConnectPipeAsync(pipeName, TimeSpan.FromSeconds(3), CancellationToken.None).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _log?.Warn($"[elevation] Admin pipe '{pipeName}' did not connect: {ex.Message}");
+                }
+                finally
+                {
+                    if (entered)
+                        _enableGate.Release();
+                }
+            }
+            try { await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+            catch { return; }
+        }
+    }
+
     private void OnHelperDisconnected()
     {
-        _log.Info("[elevation] Admin Repair Mode helper disconnected.");
+        _log?.Info("[elevation] Admin pipe dropped. The next probe connects again.");
         NotifyChanged();
     }
 

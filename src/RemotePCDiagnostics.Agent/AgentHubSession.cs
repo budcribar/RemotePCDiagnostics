@@ -202,13 +202,42 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
 
         _ = Task.Run(async () =>
         {
-            try { await pipeServer.RunSingleSessionAsync(pipeCts.Token).ConfigureAwait(false); }
+            try
+            {
+                // The host keeps this pipe name for the life of the process. When the connection drops, listen again
+                // instead of leaving the app holding a client that will never reconnect.
+                while (!pipeCts.IsCancellationRequested && !HostExited(proc))
+                {
+                    try
+                    {
+                        await pipeServer.RunSingleSessionAsync(pipeCts.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (pipeCts.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"[rpcd-update] Admin pipe session ended ({ex.Message}). Listening again.");
+                    }
+                    if (pipeCts.IsCancellationRequested || HostExited(proc))
+                        break;
+                    Log("[rpcd-update] Admin pipe dropped. Listening again for the app.");
+                    try { await Task.Delay(TimeSpan.FromSeconds(1), pipeCts.Token).ConfigureAwait(false); }
+                    catch (OperationCanceledException) { break; }
+                }
+            }
             catch (OperationCanceledException) { }
-            catch { }
             finally { pipeServer.Dispose(); }
         });
 
         return (new SystemLaunchedProcess(proc, pipeCts, pipeServer), null);
+    }
+
+    private static bool HostExited(Process proc)
+    {
+        try { return proc.HasExited; }
+        catch { return true; }
     }
 
     /// <summary>

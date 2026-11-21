@@ -106,7 +106,7 @@ Every page renders `[data-testid="activity-data"]` (it sits in the layout, outsi
 - `sequence`: a group run on Checks & Tests, absent when none: `kind` (`run-all`, `checks` for the ticked checks, `stress-tests` for the ticked stress and separate tests), `index` and `total` (1-based, absent until the first step starts), `current` (display name), and `remaining`, the check IDs not started yet in run order. On Run all, `MemoryScan` and `StorageScan` follow the checks.
 - `stressSuite`: the stress suite while it runs, however it was started: `mode`, `index`, `total`, `current`, and `remaining` (pending test IDs).
 - `fix`: the fix running now (`kind`, `target`, `title`, `origin`, `startedAt`, `progress`).
-- `workflow`: the service workflow while it is between Idle and Done/Cancelled/Failed: `stage`, `busy` (working now, as opposed to waiting at Review or for a restart) and `status`.
+- `workflow`: present only for an active stage (`Checking`, `RestartBefore`, `BeforeBenchmark`, `Applying`, `RestartAfter`, `AfterBenchmark`, `Reporting`): `stage`, `busy` (working now, as opposed to waiting for a restart) and `status`. Idle, Review, Done, Cancelled and Failed are left out, including a review parked with `running` false and `busy` false. `update_rpcd` uses the same stages.
 - `benchmark`: a benchmark pass running or settling: `phase` (`running-before`, `running-after`, `settling`) and `progress`.
 
 An agent that is handed control reads this first. When `busy` is true it asks the person whether to stop what is running before it starts anything; it never cancels on its own.
@@ -119,7 +119,7 @@ The layout also renders a hidden `[data-testid="update-rpcd-panel"]` (it is not 
 - `update-rpcd-version`: optional, such as `1.2.0-ci.996.1`. Empty means the current release on that channel.
 - `update-rpcd-approved`: must be checked. Leaving it unchecked refuses the update.
 - `update-rpcd-approved-by`: an audit label only. It is not approval.
-- `update-rpcd-start`: starts the update. Nothing is installed when a check, fix, service workflow, stress test, or benchmark is running.
+- `update-rpcd-start`: starts the update. Nothing is installed when a check, fix, stress test, or benchmark is running, or when the service workflow is in an active stage. A parked Review does not block it. A refusal names that stage.
 - `update-rpcd-data`: schema 1 JSON of the polled status (`stage`, `detail`, `percent`, `oldVersion`, `newVersion`, `terminal`, `error`, `requestId`). Poll it until `terminal` is true. After the agent relaunches the app, read it again for the old and new versions.
 
 ## App faults (`app-fault-data`)
@@ -150,7 +150,7 @@ Windows repair is offered as single steps on the DISM card (`AnalyzeComponentSto
 
 The Service workflow page renders `[data-testid="workflow-data"]` with schema 1 JSON: `stage` (Idle, Checking, Review, RestartBefore, BeforeBenchmark, Applying, RestartAfter, AfterBenchmark, Reporting, Done, Cancelled or Failed), `running`, `busy`, `waitingForRestart`, `status`, `message`, `error`, timestamps and the restart count, `checks` while Checking, `findings`, `recommendations`, `notOffered`, `fixes` (stable `id`, title, why, area and `areaKey`, `areaOpen`, risk, slow, defaultOn, needsAdmin, undo and `approved`), `outcomes` (fixId, succeeded/failed/skipped, message), `repairs`, and on the Review stage `signIn` (`automatic`, `credentialsEntered`, `clientSignsIn`, `canStart`). It never holds the account name or password.
 
-Controls: `wf-start-checks` runs the checks. On Review, an area's fixes render only when its toggle (`data-action="wf-area"`, `data-area-key`) is open; each fix checkbox has `data-action="wf-fix"` and `data-fix-id`. `wf-select-recommended`, `wf-client-signs-in`, `wf-go` (starts restarts, benchmarks and fixes), `wf-start-over`, `wf-cancel`, `wf-restart-now` and `wf-new` act as on screen. Agents must never type into `wf-user` or `wf-password`: the person enters Windows credentials, or chooses to sign in themselves.
+Controls: `wf-start-checks` runs the checks. On Review, an area's fixes render only when its toggle (`data-action="wf-area"`, `data-area-key`) is open; each fix checkbox has `data-action="wf-fix"` and `data-fix-id`. `wf-select-recommended`, `wf-client-signs-in`, `wf-go` (starts restarts, benchmarks and fixes), `wf-start-over`, `wf-dismiss` (hidden; same result as Start over), `wf-cancel`, `wf-restart-now` and `wf-new` act as on screen. A parked Review is not a running workflow. `wf-start-over` and `wf-dismiss` return it to Idle. Leaving the Service workflow page for another page does the same. `wf-cancel` is only on an active stage after Review. Agents must never type into `wf-user` or `wf-password`: the person enters Windows credentials, or chooses to sign in themselves.
 
 ## Interactive tests (`interactive-data`)
 

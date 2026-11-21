@@ -124,7 +124,18 @@ public sealed record WorkflowState
     public ShopBranding? Branding { get; init; }
 
     public bool IsApproved(string id) => Approved.Contains(id);
+
+    /// <summary>The unattended half of a service call (restarts, benchmarks, fixes, report). <c>cancel_workflow</c> stops these.
+    /// Checking is not included: it has not left the PC's own session.</summary>
     public bool IsRunning => Stage is WorkflowStage.RestartBefore or WorkflowStage.BeforeBenchmark or WorkflowStage.Applying
+        or WorkflowStage.RestartAfter or WorkflowStage.AfterBenchmark or WorkflowStage.Reporting;
+
+    /// <summary>
+    /// Stages the activity list and an RPCD update treat as running. Checking is included.
+    /// Idle, Review, Done, Cancelled and Failed are not: a review parked on screen is waiting for a person, not running.
+    /// </summary>
+    public static bool IsActiveStage(WorkflowStage stage) => stage is WorkflowStage.Checking
+        or WorkflowStage.RestartBefore or WorkflowStage.BeforeBenchmark or WorkflowStage.Applying
         or WorkflowStage.RestartAfter or WorkflowStage.AfterBenchmark or WorkflowStage.Reporting;
 
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };

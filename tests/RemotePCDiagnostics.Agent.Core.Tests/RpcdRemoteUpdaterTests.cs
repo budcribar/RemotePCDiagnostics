@@ -1,5 +1,6 @@
 using System.Net;
 using RemotePCDiagnostics.Agent;
+using RemotePCDiagnostics.Agent.Core;
 using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Agent.Core.Tests;
@@ -42,6 +43,76 @@ public class RpcdRemoteUpdaterTests
     }
 
     [Fact]
+    public void A_session_activity_file_is_enough_when_the_admin_pipe_never_reported()
+    {
+        var dir = TempDir();
+        var sessionFile = Path.Combine(dir, "session", AgentLayout.UpdateActivityFileName);
+        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
+        var log = new List<string>();
+        using var logged = NewUpdater(dir, http, sessionFile, TimeSpan.Zero, log);
+
+        Assert.Null(RpcdActivityReport.TryWrite(sessionFile, null, DateTimeOffset.UtcNow));
+        var status = logged.Start(Approved, relaunch: null, trustCallerBusyReason: false);
+
+        Assert.Equal(RpcdUpdateStages.Checking, status.Stage);
+        Assert.DoesNotContain(log, line => line.Contains("[rpcd-update] Probe:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_missing_activity_file_is_logged_and_named_in_the_refusal_detail()
+    {
+        var dir = TempDir();
+        var log = new List<string>();
+        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
+        using var service = NewUpdater(dir, http, Path.Combine(dir, "missing-activity.json"), TimeSpan.Zero, log);
+
+        var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
+
+        Assert.Equal(RpcdUpdateStages.Refused, status.Stage);
+        Assert.Equal(RpcdUpdateSession.ActivityUnconfirmed, status.Error);
+        Assert.Contains(RpcdUpdateSession.ProbeNoReport, status.Detail);
+        Assert.Contains(log, line => line.StartsWith("[rpcd-update] ", StringComparison.Ordinal) && line.Contains(RpcdUpdateSession.ProbeNoReport, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task The_probe_waits_for_the_session_activity_file()
+    {
+        var dir = TempDir();
+        var sessionFile = Path.Combine(dir, "session", AgentLayout.UpdateActivityFileName);
+        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
+        using var service = NewUpdater(dir, http, sessionFile, TimeSpan.FromSeconds(3));
+        var write = Task.Run(async () =>
+        {
+            await Task.Delay(400);
+            RpcdActivityReport.TryWrite(sessionFile, null, DateTimeOffset.UtcNow);
+        });
+
+        var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
+        await write;
+
+        Assert.Equal(RpcdUpdateStages.Checking, status.Stage);
+    }
+
+    [Fact]
+    public void An_unreadable_activity_file_is_named_in_the_refusal_detail()
+    {
+        var dir = TempDir();
+        var sessionFile = Path.Combine(dir, "session-activity.json");
+        File.WriteAllText(sessionFile, "{}");
+        using var held = new FileStream(sessionFile, FileMode.Open, FileAccess.Read, FileShare.None);
+        var log = new List<string>();
+        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
+        using var service = NewUpdater(dir, http, sessionFile, TimeSpan.Zero, log);
+
+        var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
+
+        Assert.Equal(RpcdUpdateStages.Refused, status.Stage);
+        Assert.Contains("could not read", status.Detail);
+        Assert.Contains(log, line => line.Contains("could not read", StringComparison.Ordinal));
+        held.Dispose();
+    }
+
+    [Fact]
     public async Task An_update_running_in_one_agent_process_refuses_one_in_the_other()
     {
         var dir = TempDir();
@@ -79,13 +150,15 @@ public class RpcdRemoteUpdaterTests
         Assert.Null(RpcdRemoteUpdater.SplitRestartCommandLine(line, @"C:\Other\RemotePCDiagnostics.Host.exe"));
     }
 
-    private static RpcdRemoteUpdater NewUpdater(string dir, HttpClient http) => new(
+    private static RpcdRemoteUpdater NewUpdater(string dir, HttpClient http, string? sessionActivityPath = null, TimeSpan? probe = null, List<string>? log = null) => new(
         installedVersion: () => "1.2.0",
         hostRunning: () => true,
         relaunchArguments: () => null,
-        log: null,
+        log: log is null ? null : log.Add,
         http: http,
-        stagingDirectory: dir);
+        stagingDirectory: dir,
+        sessionActivityPath: sessionActivityPath ?? Path.Combine(dir, "session-activity.json"),
+        activityProbeTimeout: probe ?? TimeSpan.Zero);
 
     private static string TempDir()
     {

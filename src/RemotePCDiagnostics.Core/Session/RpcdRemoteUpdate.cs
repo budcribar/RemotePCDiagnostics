@@ -94,6 +94,26 @@ public sealed record RpcdActivityReport(string? BusyReason, DateTimeOffset At)
             return null;
         }
     }
+
+    /// <summary>Writes the report the agent reads. Returns the IO error, or null when the file is in place.</summary>
+    public static string? TryWrite(string path, string? busyReason, DateTimeOffset at)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir))
+                Directory.CreateDirectory(dir);
+            var temp = path + "." + Environment.ProcessId.ToString() + ".tmp";
+            var reason = string.IsNullOrWhiteSpace(busyReason) ? null : busyReason.Trim();
+            File.WriteAllText(temp, new RpcdActivityReport(reason, at).ToJson());
+            File.Move(temp, path, overwrite: true);
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return ex.Message;
+        }
+    }
 }
 
 /// <summary>The verified installer the agent is allowed to start. No other file is installed.</summary>
@@ -124,6 +144,11 @@ public sealed class RpcdUpdateSession
 
     public const string ApprovalRequired = "Shop owner approval is required before Remote PC Diagnostics can be updated on this PC.";
     public const string ActivityUnconfirmed = "A diagnostics session is open, but this agent could not confirm that no check, fix, workflow, or stress test is running. Wait a moment and try again.";
+
+    /// <summary>How recent an activity report must be before a hub update trusts it.</summary>
+    public static readonly TimeSpan ActivityFreshFor = TimeSpan.FromSeconds(90);
+
+    public const string ProbeNoReport = "Probe: no activity report has arrived from the app (admin pipe and session activity file).";
 
     private readonly object _gate = new();
     private readonly Action<RpcdUpdateStatus>? _onStatus;
@@ -171,14 +196,44 @@ public sealed class RpcdUpdateSession
     /// <summary>Null when the app confirmed it is idle recently. A missing report while the app is open refuses the update.</summary>
     public string? ActivityBlock(bool hostRunning, DateTimeOffset utcNow)
     {
-        if (!hostRunning)
-            return null;
+        if (!hostRunning || ActivityDiagnosis(utcNow) is null)
+        {
+            if (!hostRunning)
+                return null;
+            lock (_gate)
+                return _activityReason;
+        }
+        return ActivityUnconfirmed;
+    }
+
+    /// <summary>
+    /// Why the cached report cannot be trusted, or null when it is fresh. The page's activity-data is a different path;
+    /// this is only the report the app wrote for the agent.
+    /// </summary>
+    public string? ActivityDiagnosis(DateTimeOffset utcNow)
+    {
         lock (_gate)
         {
-            if (_activityAt is not { } at || utcNow - at > TimeSpan.FromSeconds(90) || at > utcNow.AddSeconds(5))
-                return ActivityUnconfirmed;
-            return _activityReason;
+            if (_activityAt is not { } at)
+                return ProbeNoReport;
+            var age = utcNow - at;
+            if (age > ActivityFreshFor)
+                return $"Probe: the last activity report is {(int)age.TotalSeconds} seconds old, past the {(int)ActivityFreshFor.TotalSeconds} second limit.";
+            if (at > utcNow.AddSeconds(5))
+                return $"Probe: the activity report is timestamped {(int)(at - utcNow).TotalSeconds} seconds ahead of this agent.";
+            return null;
         }
+    }
+
+    private static string? JoinProbe(string? diagnosis, string? extra)
+    {
+        if (string.IsNullOrWhiteSpace(extra))
+            return string.IsNullOrWhiteSpace(diagnosis) ? null : diagnosis.Trim();
+        if (string.IsNullOrWhiteSpace(diagnosis) || extra.Contains(diagnosis.Trim(), StringComparison.Ordinal))
+            return extra.Trim();
+        if (diagnosis.Contains(extra.Trim(), StringComparison.Ordinal))
+            return diagnosis.Trim();
+        return diagnosis.Trim() + " " + extra.Trim();
     }
 
     public void Restore(RpcdUpdateStatus? status)
@@ -209,13 +264,18 @@ public sealed class RpcdUpdateSession
     /// only through the status file the caller persisted). <paramref name="trustCallerBusyReason"/> is for the app's own pipe request,
     /// which carries the live snapshot; a hub command must not be able to claim the PC is idle.
     /// </summary>
-    public bool TryBegin(RpcdUpdateRequest request, bool hostRunning, bool trustCallerBusyReason, DateTimeOffset utcNow, out RpcdUpdateStatus status)
+    public bool TryBegin(RpcdUpdateRequest request, bool hostRunning, bool trustCallerBusyReason, DateTimeOffset utcNow, out RpcdUpdateStatus status) =>
+        TryBegin(request, hostRunning, trustCallerBusyReason, utcNow, null, out status);
+
+    /// <param name="activityProblem">Why the activity probe failed. Appended to the refusal detail. Null when the caller has no extra fact.</param>
+    public bool TryBegin(RpcdUpdateRequest request, bool hostRunning, bool trustCallerBusyReason, DateTimeOffset utcNow, string? activityProblem, out RpcdUpdateStatus status)
     {
         var requestId = Guid.NewGuid().ToString("N");
         var channel = RpcdGitHubRelease.NormalizeChannel(request.Channel);
         var approvedBy = RpcdGitHubRelease.CleanLabel(request.ApprovedBy);
-        RpcdUpdateStatus Refused(string error, bool persist) 
+        RpcdUpdateStatus Refused(string error, bool persist, string? detail = null)
         {
+            var full = string.IsNullOrWhiteSpace(detail) ? error : error + " " + detail.Trim();
             var refused = new RpcdUpdateStatus
             {
                 RequestId = requestId,
@@ -223,7 +283,7 @@ public sealed class RpcdUpdateSession
                 Channel = channel,
                 Terminal = true,
                 Error = error,
-                Detail = error,
+                Detail = full,
                 ApprovedBy = approvedBy,
                 UpdatedUtc = utcNow,
             };
@@ -256,13 +316,18 @@ public sealed class RpcdUpdateSession
             }
 
             string? busy;
+            string? detail = null;
             if (trustCallerBusyReason)
                 busy = string.IsNullOrWhiteSpace(request.BusyReason) ? null : request.BusyReason.Trim();
             else
+            {
                 busy = ActivityBlock(hostRunning, utcNow);
+                if (busy == ActivityUnconfirmed)
+                    detail = JoinProbe(ActivityDiagnosis(utcNow), activityProblem);
+            }
             if (busy is not null)
             {
-                status = Refused(busy, persist: true);
+                status = Refused(busy, persist: true, detail);
                 return false;
             }
 

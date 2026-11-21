@@ -1049,8 +1049,40 @@ public sealed class AdminPipeServer(
         }
         finally
         {
-            // The app's session is over: so are the module hosts it asked for.
-            try { _moduleHosts.Cancel(); } catch (ObjectDisposedException) { }
+            // A dropped pipe is not the end of the app. Module hosts stay until this server is cancelled or disposed,
+            // so a later listen on the same pipe can serve the same session.
+            if (ct.IsCancellationRequested)
+            {
+                try { _moduleHosts.Cancel(); } catch (ObjectDisposedException) { }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Accepts a client, serves it, and when that pipe drops listens again until <paramref name="ct"/> is cancelled.
+    /// One session used to be the whole lifetime of the server: a dead pipe stayed dead until the agent process was restarted.
+    /// </summary>
+    public async Task RunUntilCancelledAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await RunSingleSessionAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                log.Warn($"[admin-pipe-server] Session on '{options.PipeName}' ended: {ex.Message}");
+            }
+            if (ct.IsCancellationRequested)
+                break;
+            log.Info($"[admin-pipe-server] Listening again on '{options.PipeName}'.");
+            try { await Task.Delay(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { break; }
         }
     }
 

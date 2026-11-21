@@ -142,6 +142,38 @@ public class WorkflowTests
 
     // ---- catalog ----
     [Fact]
+    public void DismissParkedReview_clears_a_review_and_leaves_an_active_stage()
+    {
+        var fix = new WorkflowFix("temp", "Clean temp", "space", "Storage", SuggestionRisk.Low, FixSource.Remediation, 1);
+        var parked = new WorkflowState
+        {
+            Stage = WorkflowStage.Review,
+            ReviewRulesVersion = WorkflowService.CurrentReviewRulesVersion,
+            ReviewedUtc = DateTimeOffset.Parse("2026-11-20T17:06:00Z"),
+            Approved = [fix.Id],
+            Fixes = [fix],
+        };
+        var store = new MemFlowStore { State = parked };
+        var flow = Make(store).Flow;
+        Assert.Equal(WorkflowStage.Review, flow.State.Stage);
+        Assert.False(flow.State.IsRunning);
+        Assert.False(WorkflowState.IsActiveStage(flow.State.Stage));
+
+        Assert.True(flow.DismissParkedReview());
+        Assert.Equal(WorkflowStage.Idle, flow.State.Stage);
+        Assert.Empty(flow.State.Fixes);
+        Assert.False(flow.DismissParkedReview());
+
+        store.State = new WorkflowState { Stage = WorkflowStage.Applying, ReviewRulesVersion = WorkflowService.CurrentReviewRulesVersion };
+        var running = Make(store).Flow;
+        Assert.False(running.DismissParkedReview());
+        Assert.Equal(WorkflowStage.Applying, running.State.Stage);
+        Assert.True(WorkflowService.IsWorkflowRoute("workflow"));
+        Assert.True(WorkflowService.IsWorkflowRoute("/workflow?x=1"));
+        Assert.False(WorkflowService.IsWorkflowRoute("dashboard"));
+    }
+
+    [Fact]
     public async Task LegacyReviewRequiresFreshChecksInsteadOfRestoringStaleDnsApprovals()
     {
         var stale = new WorkflowFix("dns", "Reset DNS", "old recommendation", "Network", SuggestionRisk.Medium,

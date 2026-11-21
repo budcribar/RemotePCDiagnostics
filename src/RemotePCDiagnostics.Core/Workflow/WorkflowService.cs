@@ -618,6 +618,25 @@ public sealed class WorkflowService(
         Save(_ => new WorkflowState());
     }
 
+    /// <summary>
+    /// Drops a review that is only parked. The person left the Service workflow page, chose Start over, or a remote caller
+    /// dismissed it. An active stage is left as it is. True when a review was cleared and the workflow is Idle.
+    /// </summary>
+    public bool DismissParkedReview()
+    {
+        if (Busy || State.Stage != WorkflowStage.Review)
+            return false;
+        Reset();
+        return State.Stage == WorkflowStage.Idle;
+    }
+
+    /// <summary>True when <paramref name="baseRelativePath"/> is the Service workflow page (no leading slash, query ignored).</summary>
+    public static bool IsWorkflowRoute(string? baseRelativePath)
+    {
+        var path = (baseRelativePath ?? "").Split('?', '#')[0].Trim().Trim('/');
+        return path.Equals("workflow", StringComparison.OrdinalIgnoreCase);
+    }
+
     private async Task FailAsync(string message, CancellationToken ct)
     {
         await CleanupAsync(ct).ConfigureAwait(false);
