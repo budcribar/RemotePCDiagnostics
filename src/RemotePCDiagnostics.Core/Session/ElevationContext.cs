@@ -81,14 +81,24 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
             : TryResolveInitialPipeName();
         if (!string.IsNullOrEmpty(initialPipe))
         {
+            // One 8 second try is not enough when the x64 app is starting under emulation on ARM64: the service's
+            // pipe is not listening yet, the connect fails, and the activity heartbeat never reaches the agent.
             _ = Task.Run(async () =>
             {
-                try
+                var deadline = DateTime.UtcNow.AddSeconds(60);
+                while (DateTime.UtcNow < deadline && Volatile.Read(ref _disposed) == 0)
                 {
-                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                    await TryConnectPipeAsync(initialPipe, TimeSpan.FromSeconds(8), cts.Token).ConfigureAwait(false);
+                    if (IsAdminHelperConnected)
+                        return;
+                    try
+                    {
+                        if (await TryConnectPipeAsync(initialPipe, TimeSpan.FromSeconds(8), CancellationToken.None).ConfigureAwait(false))
+                            return;
+                    }
+                    catch { }
+                    try { await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+                    catch { return; }
                 }
-                catch { }
             });
         }
         else if (_session.Admin && !IsProcessElevated)

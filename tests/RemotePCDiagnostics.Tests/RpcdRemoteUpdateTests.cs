@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Session;
@@ -77,6 +78,7 @@ public class RpcdRemoteUpdateTests
 
         Assert.False(started);
         Assert.Equal(RpcdUpdateSession.ActivityUnconfirmed, status.Error);
+        Assert.Contains(RpcdUpdateSession.ProbeNoReport, status.Detail);
     }
 
     [Fact]
@@ -330,11 +332,72 @@ public class RpcdRemoteUpdateTests
 
         var workflow = AgentExports.UpdateBlockReason(new AgentExports.ActivitySnapshot([],
             Workflow: new AgentExports.WorkflowActivity(WorkflowStage.Applying, true, "Applying fixes")));
-        Assert.Contains("service workflow is running", workflow);
+        Assert.Contains("service workflow is running (Applying)", workflow);
 
         var fix = AgentExports.UpdateBlockReason(new AgentExports.ActivitySnapshot([],
             Fix: new FixRun(new AreaAction(RemediationKind.ScheduleCleanRestart, "Restart"), "Restart", "Storage", DateTimeOffset.UtcNow)));
         Assert.Contains("fix is running", fix);
+    }
+
+    public static IEnumerable<object[]> EveryWorkflowStage() =>
+        Enum.GetValues<WorkflowStage>().Select(stage => new object[] { stage });
+
+    [Theory]
+    [MemberData(nameof(EveryWorkflowStage))]
+    public void Update_guard_and_activity_list_agree_on_each_stage(WorkflowStage stage)
+    {
+        var active = WorkflowState.IsActiveStage(stage);
+        var snapshot = new AgentExports.ActivitySnapshot([],
+            Workflow: new AgentExports.WorkflowActivity(stage, Busy: false, Status: null));
+
+        var reason = AgentExports.UpdateBlockReason(snapshot);
+        using var doc = JsonDocument.Parse(AgentExports.Activity(snapshot));
+        var listed = doc.RootElement.TryGetProperty("workflow", out var workflow);
+
+        if (active)
+        {
+            Assert.NotNull(reason);
+            Assert.Contains($"service workflow is running ({stage})", reason);
+            Assert.True(listed);
+            Assert.Equal(stage.ToString(), workflow.GetProperty("stage").GetString());
+        }
+        else
+        {
+            Assert.Null(reason);
+            Assert.False(listed);
+        }
+    }
+
+    [Fact]
+    public void A_parked_review_allows_the_update_even_when_marked_busy()
+    {
+        var reason = AgentExports.UpdateBlockReason(new AgentExports.ActivitySnapshot([],
+            Workflow: new AgentExports.WorkflowActivity(WorkflowStage.Review, Busy: true, Status: "Waiting")));
+        Assert.Null(reason);
+    }
+
+    [Fact]
+    public void A_missing_activity_report_names_the_probe_in_the_refusal_detail()
+    {
+        var now = DateTimeOffset.Parse("2026-11-20T17:06:00Z");
+        var session = new RpcdUpdateSession();
+        var started = session.TryBegin(new RpcdUpdateRequest("prerelease", null, true), hostRunning: true, trustCallerBusyReason: false, now, out var status);
+
+        Assert.False(started);
+        Assert.Equal(RpcdUpdateSession.ActivityUnconfirmed, status.Error);
+        Assert.Contains(RpcdUpdateSession.ProbeNoReport, status.Detail);
+    }
+
+    [Fact]
+    public void A_stale_activity_report_names_its_age()
+    {
+        var now = DateTimeOffset.Parse("2026-11-20T17:06:00Z");
+        var session = new RpcdUpdateSession();
+        session.ReportActivity(null, now.AddMinutes(-5));
+
+        Assert.Contains("300 seconds old", session.ActivityDiagnosis(now));
+        Assert.False(session.TryBegin(new RpcdUpdateRequest("prerelease", null, true), true, false, now, out var status));
+        Assert.Contains("300 seconds old", status.Detail);
     }
 
     private static async Task<RpcdUpdateSession> RunAsync(

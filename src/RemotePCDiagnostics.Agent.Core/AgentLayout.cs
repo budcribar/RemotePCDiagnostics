@@ -16,6 +16,8 @@ public static class AgentLayout
     public const string HostWatchFileName = "agent-host.json";
     public const string SessionsFolderName = "sessions";
     public const string ActiveSessionFileName = "active-session.json";
+    /// <summary>The app's activity report for <c>update_rpcd</c>, next to the session file the service already reads.</summary>
+    public const string UpdateActivityFileName = "rpcd-activity.json";
     public const string AppCacheFolderName = "app";
     public const string AgentLogFileName = "RemotePCDiagnostics.Agent.log";
     public const string ConfigPathEnvVar = "RPD_AGENT_CONFIG_PATH";
@@ -54,6 +56,7 @@ public static class AgentLayout
     public static string HostWatchPath() => Path.Combine(ProgramDataDirectory(), HostWatchFileName);
     public static string SessionsDirectory() => Path.Combine(ProgramDataDirectory(), SessionsFolderName);
     public static string ActiveSessionPath() => Path.Combine(SessionsDirectory(), ActiveSessionFileName);
+    public static string UpdateActivityPath() => Path.Combine(SessionsDirectory(), UpdateActivityFileName);
     public static string LegacyActiveSessionPath() => Path.Combine(ProgramDataDirectory(), ActiveSessionFileName);
     public static string AppCacheDirectory() => Path.Combine(ProgramDataDirectory(), AppCacheFolderName);
     public static string AgentLogPath() => Path.Combine(ProgramDataDirectory(), "logs", AgentLogFileName);

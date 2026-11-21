@@ -9,6 +9,7 @@
 @inject DiagnosticsService Diagnostics
 @inject AppServices App
 @inject ISessionContext Session
+@inject NavigationManager Nav
 @* Service workflow: the tech reviews once; the rest (restarts, benchmarks, fixes, report) runs by itself. *@
 @{
     var s = Flow.State;
@@ -230,6 +231,7 @@
         <div class="toolbar">
             <button class="btn btn-primary" data-testid="wf-go" disabled="@(_starting || !CanStart)" @onclick="Start"><Icon Name="play" Size="12" /> @(_starting ? "Starting…" : $"Start: restart, benchmark, apply {approved} fix{(approved == 1 ? "" : "es")}, report")</button>
             <button class="btn-small" data-testid="wf-start-over" @onclick="StartOver">Start over</button>
+            <button type="button" hidden data-testid="wf-dismiss" @onclick="DismissReview">Dismiss review</button>
         </div>
         break;
 
@@ -468,8 +470,17 @@
         if (App.Elevation is { } elev) elev.Changed += OnChanged;
         LoadLogon();
         foreach (var a in Prefs?.Current.WorkflowOpenAreas ?? []) _openAreas.Add(a);
+        Nav.LocationChanged += OnLeftWorkflow;
         if (Flow.State.Stage == WorkflowStage.Idle && !Flow.Busy && Flow.HasCompletedCheckModuleResults)
             _ = Flow.RunChecksAsync();
+    }
+
+    /// <summary>Leaving this page while a review is only parked drops it. Staying on the page, or a dropped remote session, does not.</summary>
+    private void OnLeftWorkflow(object? sender, LocationChangedEventArgs e)
+    {
+        if (WorkflowService.IsWorkflowRoute(Nav.ToBaseRelativePath(e.Location)))
+            return;
+        Flow.DismissParkedReview();
     }
 
     private void LoadLogon()
@@ -480,6 +491,9 @@
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
     public void Dispose()
     {
+        Nav.LocationChanged -= OnLeftWorkflow;
+        if (!WorkflowService.IsWorkflowRoute(Nav.ToBaseRelativePath(Nav.Uri)))
+            Flow.DismissParkedReview();
         Flow.Changed -= OnChanged;
         Bench.Changed -= OnChanged;
         if (Prefs is not null) Prefs.Changed -= OnChanged;
@@ -569,7 +583,8 @@
 
     private void RunChecks() { _message = null; _ = Flow.RunChecksAsync(forceRerun: _forceRerunNext); _forceRerunNext = false; }
     private bool _forceRerunNext;
-    private void StartOver() { _forceRerunNext = true; Flow.Reset(); }
+    private void DismissReview() => Flow.DismissParkedReview();
+    private void StartOver() { _forceRerunNext = true; DismissReview(); }
 
     private async Task Start()
     {
