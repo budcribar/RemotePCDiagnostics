@@ -43,19 +43,48 @@ public class RpcdRemoteUpdaterTests
     }
 
     [Fact]
-    public void A_session_activity_file_is_enough_when_the_admin_pipe_never_reported()
+    public void An_idle_session_activity_file_alone_does_not_start_a_hub_update()
+    {
+        // Any local process can write the session folder, so its "idle" must not be enough to start an update.
+        var dir = TempDir();
+        var sessionFile = Path.Combine(dir, "session", AgentLayout.UpdateActivityFileName);
+        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
+        using var service = NewUpdater(dir, http, sessionFile, TimeSpan.Zero);
+
+        Assert.Null(RpcdActivityReport.TryWrite(sessionFile, null, DateTimeOffset.UtcNow));
+        var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
+
+        Assert.Equal(RpcdUpdateStages.Refused, status.Stage);
+        Assert.Equal(RpcdUpdateSession.ActivityUnconfirmed, status.Error);
+    }
+
+    [Fact]
+    public void A_busy_session_activity_file_refuses_even_after_an_older_idle_pipe_report()
     {
         var dir = TempDir();
         var sessionFile = Path.Combine(dir, "session", AgentLayout.UpdateActivityFileName);
         using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
-        var log = new List<string>();
-        using var logged = NewUpdater(dir, http, sessionFile, TimeSpan.Zero, log);
+        using var helper = NewUpdater(dir, http, sessionFile);
+        using var service = NewUpdater(dir, http, sessionFile, TimeSpan.Zero);
 
-        Assert.Null(RpcdActivityReport.TryWrite(sessionFile, null, DateTimeOffset.UtcNow));
-        var status = logged.Start(Approved, relaunch: null, trustCallerBusyReason: false);
+        helper.ReportActivity(null);
+        Assert.Null(RpcdActivityReport.TryWrite(sessionFile, "A check is running.", DateTimeOffset.UtcNow.AddSeconds(1)));
+        var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
 
-        Assert.Equal(RpcdUpdateStages.Checking, status.Stage);
-        Assert.DoesNotContain(log, line => line.Contains("[rpcd-update] Probe:", StringComparison.Ordinal));
+        Assert.Equal(RpcdUpdateStages.Refused, status.Stage);
+        Assert.Equal("A check is running.", status.Error);
+    }
+
+    [Fact]
+    public void Trusted_report_ignores_an_idle_session_copy_and_keeps_a_newer_busy_one()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var securedIdle = new RpcdActivityReport(null, now);
+        Assert.Same(securedIdle, RpcdActivityReport.Trusted(securedIdle, new RpcdActivityReport(null, now.AddSeconds(5))));
+        Assert.Null(RpcdActivityReport.Trusted(null, new RpcdActivityReport(null, now)));
+        var busy = new RpcdActivityReport("A fix is running.", now.AddSeconds(5));
+        Assert.Same(busy, RpcdActivityReport.Trusted(securedIdle, busy));
+        Assert.Same(securedIdle, RpcdActivityReport.Trusted(securedIdle, busy with { At = now.AddSeconds(-5) }));
     }
 
     [Fact]
@@ -75,16 +104,16 @@ public class RpcdRemoteUpdaterTests
     }
 
     [Fact]
-    public async Task The_probe_waits_for_the_session_activity_file()
+    public async Task The_probe_waits_for_the_pipe_activity_report()
     {
         var dir = TempDir();
-        var sessionFile = Path.Combine(dir, "session", AgentLayout.UpdateActivityFileName);
         using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
-        using var service = NewUpdater(dir, http, sessionFile, TimeSpan.FromSeconds(3));
+        using var helper = NewUpdater(dir, http);
+        using var service = NewUpdater(dir, http, probe: TimeSpan.FromSeconds(3));
         var write = Task.Run(async () =>
         {
             await Task.Delay(400);
-            RpcdActivityReport.TryWrite(sessionFile, null, DateTimeOffset.UtcNow);
+            helper.ReportActivity(null);
         });
 
         var status = service.Start(Approved, relaunch: null, trustCallerBusyReason: false);
@@ -207,6 +236,79 @@ public class RpcdRemoteUpdaterTests
         var saved = RpcdUpdateStatus.Parse(File.ReadAllText(Path.Combine(dir, RpcdUpdateSeal.FileName)));
         Assert.Equal(RpcdUpdateStages.Succeeded, saved!.Stage);
         Assert.True(saved.Terminal);
+    }
+
+    [Fact]
+    public void A_failed_setup_exit_finishes_an_install_whose_agent_is_gone()
+    {
+        // The elevated helper started Setup, and Setup closed the app, which ended the helper before Setup returned.
+        var dir = TempDir();
+        var open = new RpcdUpdateStatus
+        {
+            RequestId = "req-helper",
+            Stage = RpcdUpdateStages.Installing,
+            OldVersion = "1.2.0",
+            NewVersion = "1.3.0",
+            Percent = 100,
+            Terminal = false,
+            Detail = "Installing RPCD.",
+            UpdatedUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+            OwnerPid = 424242,
+        };
+        File.WriteAllText(Path.Combine(dir, RpcdUpdateSeal.FileName), open.ToJson());
+        File.WriteAllText(Path.Combine(dir, ScheduledSetup.ExitCodeFileName), "5\r\n");
+
+        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
+        using var service = NewUpdater(dir, http, installedVersion: "1.2.0");
+        var current = service.Current("req-helper");
+
+        Assert.NotNull(current);
+        Assert.Equal(RpcdUpdateStages.Failed, current.Stage);
+        Assert.True(current.Terminal);
+        Assert.Equal(5, current.InstallerExitCode);
+        Assert.Contains("code 5", current.Error);
+        var saved = RpcdUpdateStatus.Parse(File.ReadAllText(Path.Combine(dir, RpcdUpdateSeal.FileName)));
+        Assert.True(saved!.Terminal);
+    }
+
+    [Fact]
+    public void A_zero_setup_exit_is_left_to_the_version_check()
+    {
+        var installing = new RpcdUpdateStatus
+        {
+            RequestId = "r",
+            Stage = RpcdUpdateStages.Installing,
+            OldVersion = "1.2.0",
+            NewVersion = "1.3.0",
+            UpdatedUtc = DateTimeOffset.UtcNow,
+        };
+        Assert.Same(installing, RpcdUpdateSeal.ApplySetupExit(installing, 0, "1.2.0", null, DateTimeOffset.UtcNow));
+        Assert.Same(installing, RpcdUpdateSeal.ApplySetupExit(installing, null, "1.2.0", null, DateTimeOffset.UtcNow));
+        var done = installing with { Stage = RpcdUpdateStages.Succeeded, Terminal = true };
+        Assert.Same(done, RpcdUpdateSeal.ApplySetupExit(done, 5, "1.3.0", null, DateTimeOffset.UtcNow));
+        var failed = RpcdUpdateSeal.ApplySetupExit(installing, 1, "1.2.0", "log tail", DateTimeOffset.UtcNow);
+        Assert.Equal(RpcdUpdateStages.Failed, failed.Stage);
+        Assert.Equal("log tail", failed.InstallerLog);
+    }
+
+    [Theory]
+    [InlineData("Running", true)]
+    [InlineData("Queued", true)]
+    [InlineData("", true)]
+    [InlineData(null, true)]
+    [InlineData("Ready", false)]
+    [InlineData("ready\r\n", false)]
+    [InlineData("Disabled", false)]
+    [InlineData("Missing", false)]
+    public void The_setup_wait_stops_only_when_the_task_is_known_to_have_ended(string? state, bool mayRun) =>
+        Assert.Equal(mayRun, ScheduledSetup.MayStillRun(state));
+
+    [Fact]
+    public void The_task_state_query_quotes_the_task_name()
+    {
+        var query = ScheduledSetup.StateQuery("Shop's Setup");
+        Assert.Contains("-TaskName 'Shop''s Setup'", query);
+        Assert.Contains("'Missing'", query);
     }
 
     private static RpcdRemoteUpdater NewUpdater(string dir, HttpClient http, string? sessionActivityPath = null, TimeSpan? probe = null, List<string>? log = null, string? installedVersion = null) => new(

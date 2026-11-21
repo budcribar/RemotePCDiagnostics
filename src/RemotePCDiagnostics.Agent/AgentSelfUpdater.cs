@@ -4,6 +4,7 @@ using System.Security.Principal;
 using Microsoft.Extensions.Logging;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Session;
+using RemotePCDiagnostics.Agent.Core;
 using RemotePCDiagnostics.Logging;
 
 namespace RemotePCDiagnostics.Agent;
@@ -186,14 +187,45 @@ internal static class AgentSelfUpdater
     {
         if (OperatingSystem.IsWindows() && JobBreakawayProcess.IsInJob())
         {
-            if (JobBreakawayProcess.TryStart(installerPath, arguments, stagingDir, out var detached))
+            // The elevated helper is in the app's kill-on-close job, and Setup closes the app, so this process usually dies
+            // before Setup returns. Setup runs under a cmd script that leaves its exit code in the staging folder, and the
+            // next agent process to read the status turns a failed exit into a final failure (RpcdUpdateSeal.ApplySetupExit).
+            var exitPath = Path.Combine(stagingDir, ScheduledSetup.ExitCodeFileName);
+            var batchPath = Path.Combine(stagingDir, ScheduledSetup.BatchFileName);
+            var batch = ScheduledSetup.BatchScript(installerPath, arguments, exitPath);
+            var wrapped = false;
+            if (ScheduledSetup.IsAscii(batch))
+            {
+                try
+                {
+                    if (File.Exists(exitPath))
+                        File.Delete(exitPath);
+                    File.WriteAllText(batchPath, batch, System.Text.Encoding.ASCII);
+                    wrapped = true;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    log?.Invoke($"[rpcd-update] Could not write Setup's exit-code script, starting Setup directly: {ex.Message}");
+                }
+            }
+
+            var cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+            var started = wrapped
+                ? JobBreakawayProcess.TryStart(cmd, "/d /c " + WindowsCommandLine.Quote(batchPath), stagingDir, out var detached)
+                : JobBreakawayProcess.TryStart(installerPath, arguments, stagingDir, out detached);
+            if (started)
             {
                 if (detached is null)
                     return -1;
                 using (detached)
                 {
                     await detached.WaitForExitAsync(ct).ConfigureAwait(false);
-                    return detached.ExitCode;
+                    if (!wrapped)
+                        return detached.ExitCode;
+                    var code = ReadSetupExit(exitPath);
+                    TryDelete(exitPath);
+                    TryDelete(batchPath);
+                    return code ?? -1;
                 }
             }
 
@@ -228,6 +260,32 @@ internal static class AgentSelfUpdater
     }
 
     internal static void PrepareStaging(string stagingDir) => PrepareSecuredStagingDirectory(stagingDir);
+
+    /// <summary>The exit code Setup's cmd script wrote, or null when it has not written one.</summary>
+    internal static int? ReadSetupExit(string exitPath)
+    {
+        try
+        {
+            return File.Exists(exitPath) ? ScheduledSetup.ParseExitCode(File.ReadAllText(exitPath)) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The next update clears it before starting Setup.
+        }
+    }
 
     private sealed class CallbackLogger(Action<string>? log) : ILogger
     {

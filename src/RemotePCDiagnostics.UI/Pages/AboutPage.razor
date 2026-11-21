@@ -101,6 +101,8 @@
 
     private AboutMachineFacts? _machine;
     private DateTimeOffset _machineAt;
+    private AgentEnrollmentFacts? _enrollment;
+    private int _enrollmentAsking;
 
     private string ReportJson => AboutReport.ToJson(BuildInput());
 
@@ -109,6 +111,31 @@
         AgentLink.Changed += OnChanged;
         if (App.AppUpdate is { } updates)
             updates.Changed += OnChanged;
+        _ = AskEnrollmentAsync();
+    }
+
+    /// <summary>agent.json is admin and SYSTEM only, so the machine id and shop group come from the Agent over the admin pipe.</summary>
+    private async Task AskEnrollmentAsync()
+    {
+        if (_enrollment is not null || App.Elevation is not IElevatedCommandBridge bridge)
+            return;
+        if (Interlocked.Exchange(ref _enrollmentAsking, 1) != 0)
+            return;
+        try
+        {
+            var facts = await bridge.ReadAgentEnrollmentAsync();
+            if (facts is not null)
+            {
+                _enrollment = facts;
+                _machine = null;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch { }
+        finally
+        {
+            Volatile.Write(ref _enrollmentAsking, 0);
+        }
     }
 
     public void Dispose()
@@ -121,6 +148,7 @@
     private void OnChanged()
     {
         _machine = null;
+        _ = AskEnrollmentAsync();
         _ = InvokeAsync(StateHasChanged);
     }
 
@@ -163,7 +191,7 @@
             return _machine;
         try
         {
-            _machine = AboutMachineFacts.Read();
+            _machine = AboutMachineFacts.Read().WithEnrollment(_enrollment);
             _machineAt = now;
             return _machine;
         }

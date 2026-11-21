@@ -99,6 +99,18 @@ public sealed record RpcdActivityReport(string? BusyReason, DateTimeOffset At)
         }
     }
 
+    /// <summary>
+    /// The report the agent may act on. <paramref name="secured"/> came over the admin pipe into the admin-only staging folder.
+    /// <paramref name="session"/> is the copy in the users-writable session folder, so it counts only when it says busy and is
+    /// newer than the secured copy. It can hold an update back, never confirm idle.
+    /// </summary>
+    public static RpcdActivityReport? Trusted(RpcdActivityReport? secured, RpcdActivityReport? session)
+    {
+        if (session is { BusyReason: { } busy } && !string.IsNullOrWhiteSpace(busy) && (secured is null || session.At > secured.At))
+            return session;
+        return secured;
+    }
+
     /// <summary>Writes the report the agent reads. Returns the IO error, or null when the file is in place.</summary>
     public static string? TryWrite(string path, string? busyReason, DateTimeOffset at)
     {
@@ -136,7 +148,7 @@ public sealed class RpcdUpdateRun
 }
 
 /// <summary>
-/// Shop-owner update of the installed RPCD build from the official GitHub release.
+/// Technician-approved update of the installed RPCD build from the official GitHub release.
 /// Refuses without approval, while diagnostics work is running, or when the PC is already on that build.
 /// The installer is downloaded only from GitHub and only after its SHA-256 matches. A failed check leaves the
 /// installed build untouched. Inno Setup rolls back a failed copy; a non-zero exit is reported with the old version.
@@ -146,7 +158,7 @@ public sealed class RpcdUpdateSession
     /// <summary>How long an <c>installing</c> status may sit unchanged, after this process is no longer running Setup, before it is a failure.</summary>
     public static readonly TimeSpan InstallGiveUp = TimeSpan.FromMinutes(20);
 
-    public const string ApprovalRequired = "Shop owner approval is required before Remote PC Diagnostics can be updated on this PC.";
+    public const string ApprovalRequired = "Technician approval is required before Remote PC Diagnostics can be updated on this PC.";
     public const string ActivityUnconfirmed = "A diagnostics session is open, but this agent could not confirm that no check, fix, workflow, or stress test is running. Wait a moment and try again.";
 
     /// <summary>How recent an activity report must be before a hub update trusts it.</summary>
@@ -828,6 +840,32 @@ public static class RpcdUpdateSeal
             NewVersion = version,
             Error = null,
             Detail = $"RPCD {version} is installed (was {status.OldVersion ?? "unknown"}). The app is reconnecting.",
+            UpdatedUtc = utcNow,
+        };
+    }
+
+    /// <summary>
+    /// Finishes an <c>installing</c> status from the exit code Setup's wrapper script wrote, for when the agent that started
+    /// Setup is gone. In the elevated helper that is expected: Setup closes the app, and the helper is in the app's kill-on-close
+    /// job. A zero exit, or a version that now matches, is left to <see cref="Seal"/> and <c>Agent.exe install</c>.
+    /// </summary>
+    public static RpcdUpdateStatus ApplySetupExit(RpcdUpdateStatus status, int? exitCode, string? installedVersion, string? installerLog, DateTimeOffset utcNow)
+    {
+        if (exitCode is not int exit || exit == 0
+            || status.Terminal
+            || status.Stage is not (RpcdUpdateStages.Installing or RpcdUpdateStages.Relaunching)
+            || RpcdGitHubRelease.InstalledMatches(installedVersion, status.NewVersion ?? "", status.OldVersion))
+            return status;
+        var still = installedVersion ?? status.OldVersion ?? "the previous version";
+        var error = $"The installer exited with code {exit} ({InnoSetupExitCodes.Describe(exit)}). Remote PC Diagnostics was not changed and is still {still}.";
+        return status with
+        {
+            Stage = RpcdUpdateStages.Failed,
+            Terminal = true,
+            Error = error,
+            Detail = error,
+            InstallerExitCode = exit,
+            InstallerLog = installerLog ?? status.InstallerLog,
             UpdatedUtc = utcNow,
         };
     }

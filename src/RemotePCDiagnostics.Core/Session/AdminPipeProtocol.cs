@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Win32.SafeHandles;
+using RemotePCDiagnostics.Agent.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Optimizations;
@@ -46,6 +47,10 @@ public interface IElevatedCommandBridge
 
     /// <summary>Tells the agent what diagnostics work is running so a later <c>update_rpcd</c> can refuse. Empty means idle.</summary>
     Task ReportDiagnosticsActivityAsync(string? busyReason, CancellationToken ct = default) => Task.CompletedTask;
+
+    /// <summary>The machine id and shop group the Agent is enrolled with. Null when the agent is not connected or is too old to say.</summary>
+    Task<AgentEnrollmentFacts?> ReadAgentEnrollmentAsync(CancellationToken ct = default) =>
+        Task.FromResult<AgentEnrollmentFacts?>(null);
 
     /// <summary>
     /// Asks the agent to install an official RPCD release. Null when the agent is not connected.
@@ -405,7 +410,16 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("changes")] IReadOnlyList<ChangeRecord>? Changes = null,
     [property: JsonPropertyName("stateJson")] string? StateJson = null,
     [property: JsonPropertyName("setup")] MachineSetupResult? Setup = null,
-    [property: JsonPropertyName("updateStatus")] RpcdUpdateStatus? UpdateStatus = null);
+    [property: JsonPropertyName("updateStatus")] RpcdUpdateStatus? UpdateStatus = null,
+    [property: JsonPropertyName("enrollment")] AgentEnrollmentFacts? Enrollment = null);
+
+/// <summary>
+/// The public part of agent.json, which only administrators and SYSTEM can read: the machine id and the shop group.
+/// The enrollment key and the server URL never leave the Agent.
+/// </summary>
+public sealed record AgentEnrollmentFacts(
+    [property: JsonPropertyName("machineId")] string? MachineId,
+    [property: JsonPropertyName("group")] string? Group);
 
 /// <summary>
 /// Length-prefixed (4-byte little-endian int32 + UTF-8 JSON) framing over Named Pipes with zero third-party dependencies.
@@ -424,6 +438,8 @@ public static class AdminPipeFraming
     public const string OpUpdateRpcdStatus = "update_rpcd_status";
     /// <summary>The app telling the agent what diagnostics work is running. An empty <c>busyReason</c> means idle.</summary>
     public const string OpReportActivity = "report_activity";
+    /// <summary>The machine id and shop group from agent.json, which the un-elevated app cannot read itself.</summary>
+    public const string OpAgentEnrollment = "agent_enrollment";
     /// <summary>Runs the security audit elevated; the response carries the report CSV. The only request the client can cancel.</summary>
     public const string OpSecurityAudit = "security_audit";
     /// <summary>Sent while a <see cref="OpSecurityAudit"/> request runs: stops it. It gets no response of its own.</summary>
@@ -663,6 +679,12 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
     public async Task ReportDiagnosticsActivityAsync(string? busyReason, CancellationToken ct = default)
     {
         await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpReportActivity, BusyReason: busyReason), ct).ConfigureAwait(false);
+    }
+
+    public async Task<AgentEnrollmentFacts?> ReadAgentEnrollmentAsync(CancellationToken ct = default)
+    {
+        var response = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpAgentEnrollment), ct).ConfigureAwait(false);
+        return response.Ok ? response.Enrollment : null;
     }
 
     public async Task<RpcdUpdateStatus?> StartRpcdUpdateAsync(RpcdUpdateRequest request, IReadOnlyList<string>? relaunchArguments = null, CancellationToken ct = default)
@@ -980,6 +1002,9 @@ public sealed record AdminPipeServerOptions
 
     /// <summary>The app's latest "what is running" line. Empty or null means idle.</summary>
     public Action<string?>? ReportActivity { get; set; }
+
+    /// <summary>The agent.json that <c>agent_enrollment</c> reads. Null is the installed one. Tests only.</summary>
+    public string? EnrollmentConfigPath { get; set; }
 }
 
 /// <summary>
@@ -1296,6 +1321,17 @@ public sealed class AdminPipeServer(
         {
             options.ReportActivity?.Invoke(request.BusyReason);
             return new AdminPipeResponse(Ok: true, Allowed: true, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: 0);
+        }
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpAgentEnrollment, StringComparison.OrdinalIgnoreCase))
+        {
+            return new AdminPipeResponse(
+                Ok: true,
+                Allowed: true,
+                Elevated: Environment.IsPrivilegedProcess,
+                HelperPid: Environment.ProcessId,
+                ExitCode: 0,
+                Enrollment: AboutMachineFacts.ReadEnrollmentFile(options.EnrollmentConfigPath ?? AgentLayout.ConfigPath()));
         }
 
         if (string.Equals(request.Op, AdminPipeFraming.OpUpdateRpcdStatus, StringComparison.OrdinalIgnoreCase))

@@ -48,7 +48,7 @@ Add an MCP tool `update_rpcd`:
 | `computer` | yes | The computer name `list_computers` uses. |
 | `channel` | yes | `stable` or `prerelease`. |
 | `version` | no | Exact build, such as `1.2.0-ci.996.1`. Omit for the current release on `channel`. |
-| `approved` | yes | Must be true. The tool refuses when it is false or missing. The shop owner has to approve this install. Do not set it from `updateAvailable` alone. |
+| `approved` | yes | Must be true. The tool refuses when it is false or missing. A technician of the shop has to approve this install. Do not set it from `updateAvailable` alone. |
 | `approvedBy` | no | Short audit label, such as a role. Not a customer name, email, or computer name. |
 
 The tool returns the first snapshot immediately (`checking`, or a terminal refusal). It does not wait for Setup. A second tool, or the same tool with no new install, polls:

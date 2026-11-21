@@ -89,7 +89,7 @@ public static class Program
 
         var update = new UpdateRpcdCommand { RequestId = "upd-self-check", Channel = "prerelease", Approved = false };
         if (update.Approved)
-            throw new InvalidOperationException("An update must stay unapproved until the shop owner sets approved.");
+            throw new InvalidOperationException("An update must stay unapproved until a technician sets approved.");
 
         Console.WriteLine($"RemotePCDiagnostics.Agent self-check OK ({AgentPaths.GetAgentVersion()})");
         return ExitOk;

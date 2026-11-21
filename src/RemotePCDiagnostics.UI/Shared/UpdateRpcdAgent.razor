@@ -146,8 +146,9 @@
     }
 
     /// <summary>
-    /// Publishes what is running. The file is the same verdict as activity-data, written where the agent service can read it
-    /// without the admin pipe. The pipe copy is best-effort: a missed connect must not leave the file unpublished.
+    /// Publishes what is running. The pipe copy is the one that lets a hub update see the app as idle; the heartbeat resends it
+    /// after a missed connect. The session-folder file is the same verdict, but any local process can write that folder,
+    /// so the agent uses it only to hold an update back while something is running.
     /// </summary>
     private async Task ReportAsync(bool force = false)
     {

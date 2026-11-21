@@ -695,8 +695,8 @@ public class AgentHubWorkerTests
                     RequestId = "upd-1",
                     Stage = "refused",
                     Terminal = true,
-                    Error = "Shop owner approval is required before Remote PC Diagnostics can be updated on this PC.",
-                    Detail = "Shop owner approval is required before Remote PC Diagnostics can be updated on this PC.",
+                    Error = "Technician approval is required before Remote PC Diagnostics can be updated on this PC.",
+                    Detail = "Technician approval is required before Remote PC Diagnostics can be updated on this PC.",
                     Channel = command.Channel,
                 };
                 await report(latest, ct);
