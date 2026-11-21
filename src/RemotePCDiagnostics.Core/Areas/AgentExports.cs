@@ -86,6 +86,34 @@ public static class AgentExports
     /// </summary>
     public static string Activity(ActivitySnapshot snapshot) => JsonSerializer.Serialize(BuildActivity(snapshot), Json);
 
+    /// <summary>
+    /// Why an RPCD update must not start, or null when nothing it would interrupt is running.
+    /// A check, a fix, the service workflow (including while it waits at review), a stress test, or a benchmark.
+    /// </summary>
+    public static string? UpdateBlockReason(ActivitySnapshot s)
+    {
+        var reasons = new List<string>();
+        if (s.Checks.Count == 1)
+            reasons.Add($"A check is running ({s.Checks[0].Id}).");
+        else if (s.Checks.Count > 1)
+            reasons.Add($"{s.Checks.Count} checks are running.");
+        if (s.Sequence is { } sequence)
+            reasons.Add(sequence.Group == CheckGroup.Stress
+                ? "A stress test sequence is running."
+                : sequence.RunAll ? "Run all is still running." : "A check sequence is running.");
+        if (s.StressSuite is { Finished: false })
+            reasons.Add("A stress test is running.");
+        if (s.Fix is not null)
+            reasons.Add("A fix is running.");
+        if (s.Workflow is { } flow && !IdleStages.Contains(flow.Stage))
+            reasons.Add("The service workflow is running.");
+        if (s.BenchmarkRunning is not null || s.BenchmarkSettling)
+            reasons.Add("A benchmark is running.");
+        if (reasons.Count == 0)
+            return null;
+        return string.Join(" ", reasons) + " Wait until it finishes before updating Remote PC Diagnostics.";
+    }
+
     private static readonly HashSet<Workflow.WorkflowStage> IdleStages =
         [Workflow.WorkflowStage.Idle, Workflow.WorkflowStage.Done, Workflow.WorkflowStage.Cancelled, Workflow.WorkflowStage.Failed];
 
@@ -260,13 +288,15 @@ public static class AgentExports
     public static string Benchmark(BenchmarkService bench) => JsonSerializer.Serialize(BuildBenchmark(
         bench.Settings, bench.Before, bench.After, bench.Comparison, bench.Running, bench.Settling is not null,
         bench.Progress, bench.BeforePendingRestart, bench.AfterPendingRestart, bench.Message,
-        bench.DetectedToolchains, bench.DevDrivePrecheck, bench.LastAntivirusComparison, bench.LastDevDriveComparison), Json);
+        bench.DetectedToolchains, bench.DevDrivePrecheck, bench.LastAntivirusComparison, bench.LastDevDriveComparison,
+        bench.Blocked, bench.StartChoices()), Json);
 
     /// <summary>The page's state: settings, what is running or waiting for a restart, each pass, and the comparison.</summary>
     public static object BuildBenchmark(BenchmarkSettings settings, BenchmarkRun? before, BenchmarkRun? after, BenchmarkComparison comparison,
         BenchmarkPhase? running, bool settling, string? progress, bool beforePendingRestart, bool afterPendingRestart, string? message,
         IReadOnlyList<DetectedToolchain>? detectedToolchains = null, DevDrivePrecheckResult? devDrivePrecheck = null,
-        DeveloperBuildResult? lastAvComparison = null, DevDriveComparisonResult? lastDevDriveComparison = null) => new
+        DeveloperBuildResult? lastAvComparison = null, DevDriveComparisonResult? lastDevDriveComparison = null,
+        BenchmarkBlock? blocked = null, IReadOnlyList<BenchmarkStartChoice>? starts = null) => new
     {
         schema = SchemaVersion,
         phase = running is { } p ? (p == BenchmarkPhase.Before ? "running-before" : "running-after")
@@ -283,6 +313,17 @@ public static class AgentExports
             enabled = settings.Enabled.Select(k => k.ToString()).ToList(),
             restartBeforeAfter = settings.RestartBeforeAfter,
         },
+        // How each pass can be started, and the last refusal. A refusal names the blocking setting and does not change restartBeforeAfter.
+        starts = starts?.Select(s => new
+        {
+            pass = s.Pass,
+            restart = s.Restart,
+            control = s.Control,
+            available = s.Available,
+            setting = s.Setting,
+            reason = T(s.Reason),
+        }).ToList(),
+        blocked = blocked is null ? null : new { setting = blocked.Setting, reason = T(blocked.Reason) },
         before = Pass(before),
         after = Pass(after),
         overallPercent = before is not null && after is not null ? comparison.OverallPercent : null,

@@ -28,6 +28,21 @@ public class ActiveSessionTests
         Assert.Equal("testgroup", parsed.Group);
         Assert.Equal("Remote", parsed.Mode);
         Assert.Equal(now, parsed.StartedUtc);
+        Assert.False(parsed.Unattended);
+        Assert.False(parsed.Voice);
+    }
+
+    [Fact]
+    public void ActiveSessionInfo_ReadsAFileWrittenBeforeUnattendedAndVoice()
+    {
+        var json = """
+            {"ProcessId":1234,"Running":true,"SessionId":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","Group":"testgroup","Mode":"Remote","StartedUtc":"2026-11-20T00:00:00+00:00"}
+            """;
+        var parsed = ActiveSessionInfo.Parse(json);
+        Assert.NotNull(parsed);
+        Assert.False(parsed.Unattended);
+        Assert.False(parsed.Voice);
+        Assert.Equal("testgroup", parsed.Group);
     }
 
     [Fact]

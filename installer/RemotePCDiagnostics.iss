@@ -151,7 +151,9 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "
 [Run]
 #if AgentExePath != ""
 ; Stage Agent.exe in {tmp} and invoke 'install' so any running RemotePCDiagnosticsAgent service is stopped cleanly before updating Program Files.
-Filename: "{tmp}\RemotePCDiagnostics.Agent.exe"; Parameters: "{#AgentInstallParams}"; StatusMsg: "Installing and starting Remote PC Diagnostics Agent service..."; Flags: runhidden waituntilterminated
+; A remote update passes /PRESERVEAGENT so install keeps the enrollment key, consent, and lifetime already on the PC.
+Filename: "{tmp}\RemotePCDiagnostics.Agent.exe"; Parameters: "{#AgentInstallParams}"; StatusMsg: "Installing and starting Remote PC Diagnostics Agent service..."; Flags: runhidden waituntilterminated; Check: not PreserveAgentSettings
+Filename: "{tmp}\RemotePCDiagnostics.Agent.exe"; Parameters: "install"; StatusMsg: "Updating Remote PC Diagnostics Agent service..."; Flags: runhidden waituntilterminated; Check: PreserveAgentSettings
 #endif
 ; In-app updates (AppUpdateService / the agent's AgentSelfUpdater) pass /AGENTMSI=<verified Agent MSI> when the persistent
 ; agent service is installed: Setup upgrades it here, because the app and its elevated helper are closed by now and cannot.
@@ -203,6 +205,12 @@ end;
 function ShouldRelaunchAfterUpdate(): Boolean;
 begin
   Result := WizardSilent() and HasSetupParam('RELAUNCHARGS');
+end;
+
+{ Remote update: install the agent service again without --consent, --lifetime, --key, or --server, so the existing ones stay. }
+function PreserveAgentSettings(): Boolean;
+begin
+  Result := CmdLineParamExists('/PRESERVEAGENT');
 end;
 
 function HasValidWebView2Version(const RootKey: Integer): Boolean;

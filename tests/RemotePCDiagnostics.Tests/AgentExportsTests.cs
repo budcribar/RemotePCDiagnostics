@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Benchmarks;
@@ -130,6 +131,80 @@ public class AgentExportsTests
         var reason = doc.RootElement.GetProperty("developer").GetProperty("csharpUnavailableReason").GetString();
         Assert.Contains(".NET SDK 8 or newer", reason);
         Assert.Contains("6.0.428", reason);
+    }
+
+    [Fact]
+    public void Benchmark_names_the_blocking_setting_and_leaves_it_out_when_the_pass_can_start()
+    {
+        var at = DateTimeOffset.Parse("2026-11-16T10:00:00Z");
+        var before = new BenchmarkRun(BenchmarkPhase.Before, at, new BenchmarkConditions(false, 50, "Balanced"),
+            [new BenchmarkMeasurement(BenchmarkKind.ProgramStart, [400])]);
+        var starts = new BenchmarkStartChoice[]
+        {
+            new("before", false, "bench-run-before", true),
+            new("before", true, "bench-restart-before", false, BenchmarkStartRules.RestartSetting, "Restarting isn't available from here."),
+            new("after", false, "bench-run-after", true),
+            new("after", true, "bench-restart-after", false, BenchmarkStartRules.RestartSetting, "Restarting isn't available from here."),
+        };
+        var blocked = new BenchmarkBlock(BenchmarkStartRules.RestartSetting, "Restarting isn't available from here.");
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(AgentExports.BuildBenchmark(
+            new BenchmarkSettings { RestartBeforeAfter = false }, before, null, BenchmarkComparison.Build(before, null),
+            null, false, null, false, false, null, starts: starts, blocked: blocked), AgentJson()));
+        var root = doc.RootElement;
+
+        Assert.False(root.GetProperty("settings").GetProperty("restartBeforeAfter").GetBoolean());
+        Assert.Equal("restartBeforeAfter", root.GetProperty("blocked").GetProperty("setting").GetString());
+        Assert.Equal("Restarting isn't available from here.", root.GetProperty("blocked").GetProperty("reason").GetString());
+        var restart = root.GetProperty("starts").EnumerateArray().Single(s => s.GetProperty("control").GetString() == "bench-restart-before");
+        Assert.False(restart.GetProperty("available").GetBoolean());
+        Assert.Equal("restartBeforeAfter", restart.GetProperty("setting").GetString());
+        Assert.Equal("Restarting isn't available from here.", restart.GetProperty("reason").GetString());
+        var run = root.GetProperty("starts").EnumerateArray().Single(s => s.GetProperty("control").GetString() == "bench-run-before");
+        Assert.True(run.GetProperty("available").GetBoolean());
+        Assert.False(run.TryGetProperty("setting", out _));
+        Assert.False(run.TryGetProperty("reason", out _));
+    }
+
+    [Fact]
+    public void Benchmark_page_does_not_write_the_restart_choice_from_the_checkbox()
+    {
+        var page = File.ReadAllText(Path.Combine(FindRepoRoot(), "src", "RemotePCDiagnostics.UI", "Pages", "BenchmarkPage.razor"));
+
+        Assert.Contains("data-testid=\"bench-restart\" checked=\"@s.RestartBeforeAfter\" disabled aria-readonly=\"true\"", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("@onchange=\"EchoCommittedRestart\"", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("RestartBeforeAfter = e.Value", page, StringComparison.Ordinal);
+        Assert.Contains("BeginPassAsync", page, StringComparison.Ordinal);
+        Assert.Contains("data-blocked-setting", page, StringComparison.Ordinal);
+        Assert.Contains("data-blocked-reason", page, StringComparison.Ordinal);
+        Assert.Contains("StartButton(BenchmarkPhase.Before, true", page, StringComparison.Ordinal);
+        Assert.Contains("StartButton(BenchmarkPhase.Before, false", page, StringComparison.Ordinal);
+        Assert.Contains("StartButton(BenchmarkPhase.Before, !s.RestartBeforeAfter", page, StringComparison.Ordinal);
+        Assert.Contains("StartButton(BenchmarkPhase.After, true", page, StringComparison.Ordinal);
+        Assert.Contains("StartButton(BenchmarkPhase.After, false", page, StringComparison.Ordinal);
+        Assert.Contains("StartButton(BenchmarkPhase.After, !s.RestartBeforeAfter", page, StringComparison.Ordinal);
+        Assert.Equal("bench-run-before", BenchmarkStartRules.Control(BenchmarkPhase.Before, false));
+        Assert.Equal("bench-restart-before", BenchmarkStartRules.Control(BenchmarkPhase.Before, true));
+        Assert.Equal("bench-run-after", BenchmarkStartRules.Control(BenchmarkPhase.After, false));
+        Assert.Equal("bench-restart-after", BenchmarkStartRules.Control(BenchmarkPhase.After, true));
+    }
+
+    private static JsonSerializerOptions AgentJson() => new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "RemotePCDiagnostics.sln")))
+                return dir.FullName;
+            dir = dir.Parent;
+        }
+        throw new DirectoryNotFoundException("Could not locate repository root containing RemotePCDiagnostics.sln.");
     }
 
     [Fact]

@@ -674,6 +674,85 @@ public class AgentHubWorkerTests
         Assert.Equal("Launch cancelled", terminal.Detail);
     }
 
+    [Fact]
+    public async Task Update_without_approval_is_refused_and_a_status_poll_returns_it()
+    {
+        var config = AgentConfig.ForInstall(
+            existing: null,
+            new AgentArgs(AgentCommand.Install, Server: "https://relay.example:34544", Consent: ConsentCeiling.Unattended),
+            Guid.Parse("7e57c0de-0000-4000-8000-000000000041"));
+        UpdateRpcdCommand? seen = null;
+        UpdateRpcdProgress? latest = null;
+        var hub = new FakeAgentHubClient();
+        var worker = new AgentHubWorker(config, new FakeAgentPlatform(), new AgentSessionOptions
+        {
+            HeartbeatInterval = TimeSpan.FromMinutes(5),
+            UpdateRpcd = async (command, report, ct) =>
+            {
+                seen = command;
+                latest = new UpdateRpcdProgress
+                {
+                    RequestId = "upd-1",
+                    Stage = "refused",
+                    Terminal = true,
+                    Error = "Shop owner approval is required before Remote PC Diagnostics can be updated on this PC.",
+                    Detail = "Shop owner approval is required before Remote PC Diagnostics can be updated on this PC.",
+                    Channel = command.Channel,
+                };
+                await report(latest, ct);
+            },
+            ReadUpdateRpcd = _ => latest,
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var runTask = worker.RunSingleConnectionAsync(hub, cts.Token);
+        _ = await hub.ReadAgentMessageAsync(cts.Token);
+
+        await hub.SendHubCommandAsync(new HubCommand
+        {
+            UpdateRpcd = new UpdateRpcdCommand
+            {
+                RequestId = "upd-1",
+                Channel = "prerelease",
+                Version = "1.2.0-ci.996.1",
+                Approved = false,
+                ApprovedBy = "shop owner",
+            },
+        }, cts.Token);
+
+        UpdateRpcdProgress? progress = null;
+        while (progress is null)
+        {
+            var msg = await hub.ReadAgentMessageAsync(cts.Token);
+            if (msg.BodyCase == AgentMessage.BodyOneofCase.UpdateRpcd)
+                progress = msg.UpdateRpcd;
+        }
+
+        Assert.NotNull(seen);
+        Assert.False(seen.Approved);
+        Assert.Equal("prerelease", seen.Channel);
+        Assert.Equal("1.2.0-ci.996.1", seen.Version);
+        Assert.Equal("refused", progress.Stage);
+        Assert.True(progress.Terminal);
+        Assert.Contains("approval", progress.Error);
+
+        await hub.SendHubCommandAsync(new HubCommand
+        {
+            UpdateRpcdStatus = new UpdateRpcdStatusCommand { RequestId = "upd-1" },
+        }, cts.Token);
+        UpdateRpcdProgress? polled = null;
+        while (polled is null)
+        {
+            var msg = await hub.ReadAgentMessageAsync(cts.Token);
+            if (msg.BodyCase == AgentMessage.BodyOneofCase.UpdateRpcd && msg.UpdateRpcd.RequestId == "upd-1" && msg.UpdateRpcd.Stage == "refused")
+                polled = msg.UpdateRpcd;
+        }
+        Assert.True(polled.Terminal);
+
+        hub.CompleteServerStream();
+        await runTask;
+    }
+
     private sealed class FakeLaunchedProcess : IAgentLaunchedProcess
     {
         private readonly TaskCompletionSource<uint> _exitTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -87,6 +87,10 @@ public static class Program
         if (!line.Contains("-g=acme-msp", StringComparison.Ordinal))
             throw new InvalidOperationException($"Expected -g=acme-msp in command line, got: {line}");
 
+        var update = new UpdateRpcdCommand { RequestId = "upd-self-check", Channel = "prerelease", Approved = false };
+        if (update.Approved)
+            throw new InvalidOperationException("An update must stay unapproved until the shop owner sets approved.");
+
         Console.WriteLine($"RemotePCDiagnostics.Agent self-check OK ({AgentPaths.GetAgentVersion()})");
         return ExitOk;
     }
