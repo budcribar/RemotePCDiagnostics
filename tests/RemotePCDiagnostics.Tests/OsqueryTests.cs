@@ -115,6 +115,32 @@ public class OsqueryJsonTests
         Assert.Equal("32 GB", HardwareInventory.FormatBytes(34359738368));
         Assert.Equal("—", HardwareInventory.FormatBytes(null));
     }
+
+    [Theory]
+    [InlineData("-1", "")]
+    [InlineData("Default string", "")]
+    [InlineData("To Be Filled By O.E.M.", "")]
+    [InlineData("A01", "A01")]
+    public void SystemInfo_DropsUnsetFirmwareVersions(string raw, string expected)
+    {
+        var row = new Dictionary<string, string> { ["hardware_version"] = raw, ["board_version"] = raw };
+        var s = SystemInfo.FromRow(row);
+        Assert.Equal(expected, s.HardwareVersion);
+        Assert.Equal(expected, s.BoardVersion);
+    }
+
+    [Theory]
+    [InlineData("3840 x 2160 x 4294967296 colors", "3840 x 2160, 32-bit color")]
+    [InlineData("1920 x 1080 x 16777216 colors", "1920 x 1080, 24-bit color")]
+    [InlineData("1024 x 768 x 65536 colors", "1024 x 768, 16-bit color")]
+    [InlineData("1920 x 1080 x 1000 colors", "1920 x 1080 x 1000 colors")]
+    [InlineData("", "")]
+    [InlineData("Unknown", "Unknown")]
+    public void GpuInfo_ShowsColorDepthInBits(string raw, string expected)
+    {
+        var g = GpuInfo.FromRow(new Dictionary<string, string> { ["model"] = "GPU", ["video_mode"] = raw });
+        Assert.Equal(expected, g.VideoMode);
+    }
 }
 
 public class OsqueryRunnerTests
