@@ -1,0 +1,124 @@
+@using RemotePCDiagnostics.Core.Changes
+@using RemotePCDiagnostics.Core.Workflow
+@using Microsoft.Extensions.DependencyInjection
+@using Microsoft.JSInterop
+@inject WorkflowService Flow
+@inject IServiceProvider Services
+@inject IJSRuntime JS
+@* The client report after a run: a short summary, every change colour-coded with its label and its own Undo / Reinstall / Apply again
+   button, and "Open report" for the full report (the saved file). The full report shows here only on request, so the page stays short.
+   Every button runs through WorkflowService and UndoService, whose admin parts run in the Agent: the app itself never runs as administrator. *@
+@{
+    var s = Flow.State;
+    var items = s.Outcomes.SelectMany(o => ReportItems.For(s, o)).ToList();
+    var skipped = s.Outcomes.Count(o => o.Skipped);
+    var failed = s.Outcomes.Count(o => !o.Success && !o.Skipped);
+    var canAct = Flow.CanChangeAfterRun && _busy is null;
+}
+<section class="card wf-section wf-report-box" data-testid="wf-report-box">
+    <div class="card-head">
+        <strong>Client report</strong>
+        <span class="wf-report-links">
+            <button type="button" class="btn btn-primary btn-small" data-testid="wf-open-report" @onclick="OpenReport"><Icon Name="cert" Size="12" /> Open report</button>
+            <button type="button" class="linklike" data-testid="wf-toggle-preview" aria-expanded="@(_preview ? "true" : "false")" @onclick="() => _preview = !_preview">@(_preview ? "Hide preview" : "Show preview")</button>
+        </span>
+    </div>
+    <p class="meta" data-testid="wf-report-path">@(s.ReportPath is { } p ? $"Saved on this PC: {p}" : "The report couldn't be saved as a file. Open report shows it in a browser tab.")</p>
+    <div class="wf-report-counts" data-testid="wf-report-counts">
+        @Count(items, ReportTag.Undoable) @Count(items, ReportTag.Reinstallable) @Count(items, ReportTag.Permanent) @Count(items, ReportTag.NothingToUndo) @Count(items, ReportTag.Undone)
+        @if (skipped > 0) { <span class="tag tag-none" data-tag="Skipped">@skipped skipped</span> }
+        @if (failed > 0) { <span class="tag tag-perm" data-tag="Failed">@failed couldn't be applied</span> }
+    </div>
+    @if (_message is { } m) { <p class="notice" role="status" data-testid="wf-change-message">@m</p> }
+    @if (items.Count == 0)
+    {
+        <p class="meta">Nothing lasting was changed, so there's nothing to undo.</p>
+    }
+    else
+    {
+        <ul class="wf-changes" data-testid="wf-changes">
+            @foreach (var x in items)
+            {
+                var item = x;
+                var key = item.JournalId?.ToString("N") ?? item.FixId;
+                <li class="wf-change wf-edge-@ReportItems.Css(item.Tag)" data-testid="wf-change" data-change-id="@key" data-fix-id="@item.FixId" data-tag="@item.Tag">
+                    <span class="wf-change-text">
+                        @if (item.Text != item.FixTitle) { <span class="meta">@item.FixTitle</span> }
+                        @item.Text
+                    </span>
+                    <span class="tag tag-@ReportItems.Css(item.Tag)">@ReportItems.Label(item.Tag, item.WasReinstall)@(item.UndoneUtc is { } u ? " " + u.ToLocalTime().ToString("t") : "")</span>
+                    @if (item.CanUndo)
+                    {
+                        <button type="button" class="btn-small" data-testid="wf-change-undo" data-action="@(item.Tag == ReportTag.Reinstallable ? "reinstall" : "undo")" disabled="@(!canAct)"
+                                @onclick="() => UndoAsync(item)">@(_busy == key ? (item.Tag == ReportTag.Reinstallable ? "Reinstalling…" : "Undoing…") : item.Tag == ReportTag.Reinstallable ? "Reinstall" : "Undo")</button>
+                    }
+                    else if (item.CanReapply && _firstUndone.Add(item.FixId))
+                    {
+                        @* One button per fix: it runs the whole fix again. *@
+                        <button type="button" class="btn-small" data-testid="wf-change-reapply" data-action="reapply" disabled="@(!canAct)"
+                                @onclick="() => ReapplyAsync(item)">@(_busy == item.FixId ? "Applying…" : item.WasReinstall ? "Remove again" : "Apply again")</button>
+                    }
+                </li>
+            }
+        </ul>
+        _firstUndone.Clear();
+    }
+    @if (_preview)
+    {
+        <iframe class="wf-report" data-testid="wf-report" sandbox="allow-same-origin" title="Client report" srcdoc="@Html"></iframe>
+    }
+</section>
+
+@code {
+    /// <summary>The report exactly as shown in the file (built by the page for runs saved by an older version).</summary>
+    [Parameter, EditorRequired] public string Html { get; set; } = "";
+
+    private bool _preview;
+    private string? _busy, _message;
+    private readonly HashSet<string> _firstUndone = [];
+
+    private static RenderFragment Count(List<ReportItem> items, ReportTag tag) => __builder =>
+    {
+        var n = items.Count(i => i.Tag == tag);
+        if (n > 0) { <span class="tag tag-@ReportItems.Css(tag)" data-tag="@tag">@n · @ReportItems.Label(tag)</span> }
+    };
+
+    private async Task UndoAsync(ReportItem item)
+    {
+        if (item.JournalId is not { } id || _busy is not null) return;
+        if (Services.GetService<UndoService>() is not { } undo) { _message = "Undo isn't available in this window."; return; }
+        _busy = id.ToString("N"); _message = null;
+        try { _message = await Flow.UndoChangeAsync(undo, id); }
+        finally { _busy = null; }
+    }
+
+    private async Task ReapplyAsync(ReportItem item)
+    {
+        if (_busy is not null) return;
+        _busy = item.FixId; _message = null;
+        try { _message = await Flow.ReapplyFixAsync(item.FixId); }
+        finally { _busy = null; }
+    }
+
+    /// <summary>
+    /// On this PC: the saved file in the default browser. For a remote technician (Admin), or when there's no file: the same report in a
+    /// new browser tab on their side.
+    /// </summary>
+    private async Task OpenReport()
+    {
+        _message = null;
+        var remote = true;
+        try { remote = await JS.InvokeAsync<bool>("rpdSession.isRemoteDisplay"); } catch { }
+        var path = Flow.State.ReportPath;
+        if (!remote && path is { Length: > 0 } && path.EndsWith(".html", StringComparison.OrdinalIgnoreCase) && File.Exists(path))
+        {
+            try { using var _ = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }); return; }
+            catch (Exception) { /* no default browser: fall back to a tab */ }
+        }
+        try
+        {
+            if (!await JS.InvokeAsync<bool>("rpdSession.openHtml", Html)) _message = "Couldn't open the report. Use Show preview instead.";
+        }
+        catch (JSException) { _message = "Couldn't open the report. Use Show preview instead."; }
+    }
+}

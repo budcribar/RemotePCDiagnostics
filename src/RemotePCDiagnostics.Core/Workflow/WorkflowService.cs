@@ -632,6 +632,99 @@ public sealed class WorkflowService(
         return State.Stage == WorkflowStage.Idle;
     }
 
+    // ---- after the run: one-change Undo / Reinstall and Apply / Remove again, from the report box ----
+
+    /// <summary>Report-box actions are only offered on a finished or stopped run, and one at a time.</summary>
+    public bool CanChangeAfterRun => !Busy && State.StartedUtc is not null && State.Stage is WorkflowStage.Done or WorkflowStage.Cancelled or WorkflowStage.Failed;
+
+    /// <summary>
+    /// Undoes one change this run made (Undo, or Reinstall for a removed Store app) through <paramref name="undo"/>, whose admin parts run in
+    /// the Agent like "Undo all". Marks it undone in the report and saves the report again. Returns the message to show.
+    /// </summary>
+    public async Task<string> UndoChangeAsync(UndoService undo, Guid journalId, CancellationToken ct = default)
+    {
+        if (!CanChangeAfterRun) return "Wait until the service workflow has finished.";
+        var change = State.Outcomes.SelectMany(o => o.Changes ?? []).FirstOrDefault(c => c.JournalId == journalId);
+        if (change is null) return "That change isn't part of this service.";
+        if (change.UndoneUtc is not null) return "Already undone.";
+        if (change.Undo is not (UndoSupport.Full or UndoSupport.Reinstall)) return "This change is permanent, so it can't be undone.";
+        if (journal is { IsLoaded: false }) return "The undo list is kept by the Agent. Turn on Admin Repair Mode, then try again.";
+        Busy = true; Raise();
+        try
+        {
+            var r = await undo.UndoChangeAsync(journalId, Actor, ct).ConfigureAwait(false);
+            // Not in the journal any more: "Undo all" (or the History page) already put it back.
+            if (r is null || r.Success)
+            {
+                MarkUndone(journalId, DateTimeOffset.UtcNow);
+                RewriteReport();
+                var message = r?.Message ?? "Already put back by an earlier undo.";
+                Note($"Undid \"{change.Text}\": {message}");
+                return message;
+            }
+            Note($"Couldn't undo \"{change.Text}\": {r.Message}");
+            return r.Message;
+        }
+        finally { Busy = false; Raise(); }
+    }
+
+    /// <summary>
+    /// Runs an undone fix again ("Apply again", or "Remove again" for a reinstalled app), the same way the workflow applied it, and records what
+    /// it changed this time so it can be undone again. Saves the report again. Returns the message to show.
+    /// </summary>
+    public async Task<string> ReapplyFixAsync(string fixId, CancellationToken ct = default)
+    {
+        if (!CanChangeAfterRun) return "Wait until the service workflow has finished.";
+        var outcome = State.Outcomes.FirstOrDefault(o => o.FixId == fixId);
+        var fix = State.Fixes.FirstOrDefault(f => f.Id == fixId);
+        if (outcome is null || fix is null || !ReportItems.CanReapply(State, outcome)) return "Undo this fix first, then it can be applied again.";
+        Busy = true; Raise();
+        try
+        {
+            IReadOnlyList<MemorySuggestion> fresh = [];
+            if (fix.Source == FixSource.Memory && memory is not null)
+            {
+                await memory.ScanAsync(ct).ConfigureAwait(false);
+                fresh = [.. memory.Suggestions, .. memory.StorageSuggestions];
+            }
+            var before = JournalIds();
+            FixOutcome o;
+            try { o = await ApplyOneAsync(fix, fresh, ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { LogError($"reapply {fixId} failed: {ex}"); o = new(fix.Id, fix.Title, false, "Windows didn't allow this change."); }
+            var added = NewChanges(before);
+            if (o.Success && !o.Skipped && added.Count > 0)
+            {
+                Save(s => s with
+                {
+                    Outcomes = s.Outcomes.Select(x => x.FixId != fixId ? x
+                        : x with { Message = o.Message, Changes = [.. (x.Changes ?? []).Where(c => c.UndoneUtc is null), .. added] }).ToList(),
+                });
+                RewriteReport();
+                Note($"Applied \"{fix.Title}\" again: {o.Message}");
+                return o.Message;
+            }
+            var why = o.Success ? (o.Skipped ? o.Message : "Nothing needed changing: it's already set.") : o.Message;
+            Note($"Couldn't apply \"{fix.Title}\" again: {why}");
+            return why;
+        }
+        finally { Busy = false; Raise(); }
+    }
+
+    private void MarkUndone(Guid journalId, DateTimeOffset when) =>
+        Save(s => s with
+        {
+            Outcomes = s.Outcomes.Select(o => o.Changes is { } ch && ch.Any(c => c.JournalId == journalId)
+                ? o with { Changes = ch.Select(c => c.JournalId == journalId ? c with { UndoneUtc = when } : c).ToList() }
+                : o).ToList(),
+        });
+
+    /// <summary>Saves the report again in the same file, so the file and the page show what's undone now.</summary>
+    private void RewriteReport()
+    {
+        try { SaveAndStoreReport(State.FinishedUtc?.ToLocalTime() ?? DateTimeOffset.Now, State.Branding, preferredPath: State.ReportPath); }
+        catch (Exception ex) { LogWarn("report rewrite failed: " + ex.Message); }
+    }
+
     /// <summary>True when <paramref name="baseRelativePath"/> is the Service workflow page (no leading slash, query ignored).</summary>
     public static bool IsWorkflowRoute(string? baseRelativePath)
     {
