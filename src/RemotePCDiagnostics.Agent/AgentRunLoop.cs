@@ -11,7 +11,8 @@ internal static class AgentRunLoop
             installedVersion: AgentPaths.GetInstalledOrCachedAppVersion,
             hostRunning: RpcdRemoteUpdater.IsTrackedHostRunning,
             relaunchArguments: () => RpcdRemoteUpdater.RelaunchForActiveSession(config.Server),
-            log: log);
+            log: log,
+            configuredServer: () => config.Server);
         using var platform = new WindowsAgentPlatform(config.Server, log, updater);
         try { AgentPaths.EnsureSessionsDirectory(); } catch { }
         // An in-app update may have replaced this service mid-way (Setup's Agent MSI step): bring the session's app back.

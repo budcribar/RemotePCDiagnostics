@@ -46,6 +46,11 @@ public sealed record RpcdUpdateStatus
     public string? Error { get; init; }
     public string? ApprovedBy { get; init; }
     public DateTimeOffset UpdatedUtc { get; init; }
+    /// <summary>
+    /// The agent process running this update. The agent service and an app's elevated helper share the status file, so a process
+    /// that starts while another one is downloading must not call that update dead.
+    /// </summary>
+    public int? OwnerPid { get; init; }
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -58,6 +63,31 @@ public sealed record RpcdUpdateStatus
         try
         {
             return JsonSerializer.Deserialize<RpcdUpdateStatus>(json, Json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+}
+
+/// <summary>
+/// The app's last "what is running" report, saved so the agent service sees it when the app reported to its own elevated helper.
+/// A null <see cref="BusyReason"/> means idle.
+/// </summary>
+public sealed record RpcdActivityReport(string? BusyReason, DateTimeOffset At)
+{
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    public string ToJson() => JsonSerializer.Serialize(this, Json);
+
+    public static RpcdActivityReport? Parse(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize<RpcdActivityReport>(json, Json);
         }
         catch (JsonException)
         {
@@ -101,15 +131,40 @@ public sealed class RpcdUpdateSession
     private string? _activityReason;
     private DateTimeOffset? _activityAt;
     private int _localInstaller;
+    private readonly int _ownerPid;
 
-    public RpcdUpdateSession(Action<RpcdUpdateStatus>? onStatus = null) => _onStatus = onStatus;
+    public RpcdUpdateSession(Action<RpcdUpdateStatus>? onStatus = null, int? ownerPid = null)
+    {
+        _onStatus = onStatus;
+        _ownerPid = ownerPid ?? Environment.ProcessId;
+    }
 
+    /// <summary>Records the app's report. A report older than the one already held (another process's copy) is ignored.</summary>
     public void ReportActivity(string? busyReason, DateTimeOffset utcNow)
     {
         lock (_gate)
         {
+            if (_activityAt is { } held && utcNow < held)
+                return;
             _activityReason = string.IsNullOrWhiteSpace(busyReason) ? null : busyReason.Trim();
             _activityAt = utcNow;
+        }
+    }
+
+    /// <summary>
+    /// Takes a status another process saved when it is newer than the one held here, so both agent processes refuse a second update
+    /// and report the same progress. Ignored while this process is running Setup.
+    /// </summary>
+    public void Adopt(RpcdUpdateStatus? saved)
+    {
+        if (saved is null)
+            return;
+        lock (_gate)
+        {
+            if (Volatile.Read(ref _localInstaller) != 0)
+                return;
+            if (_status is null || saved.UpdatedUtc > _status.UpdatedUtc)
+                _status = saved;
         }
     }
 
@@ -175,6 +230,7 @@ public sealed class RpcdUpdateSession
             return persist ? Set(refused) : refused;
         }
 
+        // One lock from the in-progress check to the checking status, so two requests at once cannot both start.
         lock (_gate)
         {
             if (_status is { Terminal: false } && utcNow - _status.UpdatedUtc < InstallGiveUp)
@@ -182,47 +238,48 @@ public sealed class RpcdUpdateSession
                 status = Refused("An RPCD update is already in progress.", persist: false);
                 return false;
             }
-        }
 
-        if (!request.Approved)
-        {
-            status = Refused(ApprovalRequired, persist: true);
-            return false;
-        }
-        if (channel is null)
-        {
-            status = Refused("Channel must be stable or prerelease.", persist: true);
-            return false;
-        }
-        if (!string.IsNullOrWhiteSpace(request.Version) && AppVersionComparer.Normalize(request.Version) is null)
-        {
-            status = Refused("Version must look like 1.2.0 or 1.2.0-ci.996.1.", persist: true);
-            return false;
-        }
+            if (!request.Approved)
+            {
+                status = Refused(ApprovalRequired, persist: true);
+                return false;
+            }
+            if (channel is null)
+            {
+                status = Refused("Channel must be stable or prerelease.", persist: true);
+                return false;
+            }
+            if (!string.IsNullOrWhiteSpace(request.Version) && AppVersionComparer.Normalize(request.Version) is null)
+            {
+                status = Refused("Version must look like 1.2.0 or 1.2.0-ci.996.1.", persist: true);
+                return false;
+            }
 
-        string? busy;
-        if (trustCallerBusyReason)
-            busy = string.IsNullOrWhiteSpace(request.BusyReason) ? null : request.BusyReason.Trim();
-        else
-            busy = ActivityBlock(hostRunning, utcNow);
-        if (busy is not null)
-        {
-            status = Refused(busy, persist: true);
-            return false;
-        }
+            string? busy;
+            if (trustCallerBusyReason)
+                busy = string.IsNullOrWhiteSpace(request.BusyReason) ? null : request.BusyReason.Trim();
+            else
+                busy = ActivityBlock(hostRunning, utcNow);
+            if (busy is not null)
+            {
+                status = Refused(busy, persist: true);
+                return false;
+            }
 
-        status = Set(new RpcdUpdateStatus
-        {
-            RequestId = requestId,
-            Stage = RpcdUpdateStages.Checking,
-            Channel = channel,
-            Detail = "Checking the official GitHub release...",
-            OldVersion = null,
-            ApprovedBy = approvedBy,
-            Terminal = false,
-            UpdatedUtc = utcNow,
-        });
-        return true;
+            status = Set(new RpcdUpdateStatus
+            {
+                RequestId = requestId,
+                Stage = RpcdUpdateStages.Checking,
+                Channel = channel,
+                Detail = "Checking the official GitHub release...",
+                OldVersion = null,
+                ApprovedBy = approvedBy,
+                Terminal = false,
+                UpdatedUtc = utcNow,
+                OwnerPid = _ownerPid,
+            });
+            return true;
+        }
     }
 
     public async Task ExecuteAsync(RpcdUpdateRequest request, RpcdUpdateRun run, CancellationToken ct)

@@ -152,11 +152,6 @@ internal static class AgentSelfUpdater
         }
     }
 
-    /// <summary>
-    /// Starts Setup so that it outlives this process. In the elevated helper, this process is in a kill-on-close job that the
-    /// Host holds, and Setup closes the Host: a Setup started inside that job is ended with it, before it installs anything,
-    /// and the PC stays on the old build (see <see cref="JobBreakawayProcess"/>).
-    /// </summary>
     /// <summary>Starts a verified Setup and waits for it. Returns the process exit code, or -1 when Setup did not start.</summary>
     internal static async Task<int> StartAndWaitAsync(
         string installerPath,
@@ -195,6 +190,11 @@ internal static class AgentSelfUpdater
             log?.Invoke(formatter(state, exception));
     }
 
+    /// <summary>
+    /// Starts Setup so that it outlives this process. In the elevated helper, this process is in a kill-on-close job that the
+    /// Host holds, and Setup closes the Host: a Setup started inside that job is ended with it, before it installs anything,
+    /// and the PC stays on the old build (see <see cref="JobBreakawayProcess"/>).
+    /// </summary>
     private static Process? StartInstaller(string installerPath, string arguments, string stagingDir, ILogger log, out bool started)
     {
         if (JobBreakawayProcess.IsInJob())

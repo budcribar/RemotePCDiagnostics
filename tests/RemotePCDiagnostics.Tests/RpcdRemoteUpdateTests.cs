@@ -105,6 +105,61 @@ public class RpcdRemoteUpdateTests
     }
 
     [Fact]
+    public void Requests_at_the_same_moment_start_only_one_update()
+    {
+        var session = new RpcdUpdateSession();
+        var now = DateTimeOffset.UtcNow;
+        var started = 0;
+        Parallel.For(0, 32, i =>
+        {
+            if (session.TryBegin(new RpcdUpdateRequest("stable", null, true, BusyReason: ""), false, true, now, out _))
+                Interlocked.Increment(ref started);
+        });
+        Assert.Equal(1, started);
+    }
+
+    [Fact]
+    public void An_update_another_agent_process_saved_refuses_a_second_one()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var session = new RpcdUpdateSession(ownerPid: 1);
+        session.Adopt(new RpcdUpdateStatus
+        {
+            RequestId = "other",
+            Stage = RpcdUpdateStages.Downloading,
+            Terminal = false,
+            UpdatedUtc = now.AddSeconds(-10),
+            OwnerPid = 2,
+        });
+
+        Assert.False(session.TryBegin(new RpcdUpdateRequest("stable", null, true, BusyReason: ""), false, true, now, out var status));
+        Assert.Equal(RpcdUpdateStages.Refused, status.Stage);
+        Assert.Contains("already in progress", status.Error);
+        Assert.Equal("other", session.Current(null, null, now)!.RequestId);
+    }
+
+    [Fact]
+    public void An_older_saved_status_does_not_replace_a_newer_one()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var session = new RpcdUpdateSession();
+        Assert.True(session.TryBegin(new RpcdUpdateRequest("stable", null, true, BusyReason: ""), false, true, now, out var mine));
+        session.Adopt(new RpcdUpdateStatus { RequestId = "stale", Stage = RpcdUpdateStages.Failed, Terminal = true, UpdatedUtc = now.AddMinutes(-5) });
+        Assert.Equal(mine.RequestId, session.Current(null, null, now)!.RequestId);
+        Assert.Equal(Environment.ProcessId, mine.OwnerPid);
+    }
+
+    [Fact]
+    public void An_older_activity_report_does_not_hide_a_newer_busy_one()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var session = new RpcdUpdateSession();
+        session.ReportActivity("A check is running (Sensors).", now);
+        session.ReportActivity(null, now.AddSeconds(-20));
+        Assert.Equal("A check is running (Sensors).", session.ActivityBlock(hostRunning: true, now));
+    }
+
+    [Fact]
     public async Task Already_up_to_date_does_not_download_or_install()
     {
         var installer = new Installer();

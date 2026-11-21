@@ -23,7 +23,13 @@
     private bool _approved;
     private string? _json;
     private CancellationTokenSource? _poll;
+    private readonly CancellationTokenSource _heartbeat = new();
     private string? _lastReported;
+
+    /// <summary>
+    /// The agent refuses a hub update when the app's last report is older than 90 seconds, so an idle app has to keep saying so.
+    /// </summary>
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(30);
 
     protected override void OnInitialized()
     {
@@ -33,8 +39,20 @@
         Bench.Changed += OnChanged;
         if (App.Remediation is { } fixes) fixes.RunChanged += OnChanged;
         if (App.Workflow is { } workflow) workflow.Changed += OnChanged;
-        _ = ReportAsync();
+        _ = ReportAsync(force: true);
         _ = RefreshAsync();
+        _ = HeartbeatAsync(_heartbeat.Token);
+    }
+
+    private async Task HeartbeatAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(HeartbeatInterval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+                await ReportAsync(force: true);
+        }
+        catch (OperationCanceledException) { }
     }
 
     private AgentExports.ActivitySnapshot Snapshot()
@@ -125,15 +143,19 @@
         catch { }
     }
 
-    private async Task ReportAsync()
+    /// <summary>Sends what is running when it changed, or every time when <paramref name="force"/> (the heartbeat).</summary>
+    private async Task ReportAsync(bool force = false)
     {
         if (App.Elevation is not IElevatedCommandBridge bridge)
             return;
         var reason = AgentExports.UpdateBlockReason(Snapshot());
-        if (string.Equals(reason, _lastReported, StringComparison.Ordinal))
+        if (!force && string.Equals(reason, _lastReported, StringComparison.Ordinal))
             return;
-        _lastReported = reason;
-        try { await bridge.ReportDiagnosticsActivityAsync(reason); }
+        try
+        {
+            await bridge.ReportDiagnosticsActivityAsync(reason);
+            _lastReported = reason;
+        }
         catch { }
     }
 
@@ -157,6 +179,8 @@
     {
         try { _poll?.Cancel(); } catch { }
         _poll?.Dispose();
+        try { _heartbeat.Cancel(); } catch { }
+        _heartbeat.Dispose();
         Diagnostics.ProgressChanged -= OnProgress;
         Diagnostics.StressSuiteProgressChanged -= OnStress;
         Screen.Changed -= OnChanged;

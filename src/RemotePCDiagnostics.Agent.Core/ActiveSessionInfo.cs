@@ -10,7 +10,8 @@ public sealed record ActiveSessionInfo(
     string? Mode,
     DateTimeOffset StartedUtc,
     bool Unattended = false,
-    bool Voice = false)
+    bool Voice = false,
+    bool? Admin = null)
 {
     public static ActiveSessionInfo? Parse(string? json)
     {
