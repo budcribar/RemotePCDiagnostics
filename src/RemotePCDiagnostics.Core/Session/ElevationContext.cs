@@ -392,15 +392,22 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
             return _client is { IsConnected: true } c ? c : throw new AdminRequiredException("The Agent isn't connected. " + AdminRepairHint);
     }
 
+    /// <summary>
+    /// The Agent's admin pipe this process was started with: <c>--admin-pipe=&lt;name&gt;</c> on the command line (the agent
+    /// service passes it that way when Admin starts a session), else <see cref="AdminPipeEnvVar"/> (set by <c>Agent.exe --launch</c>).
+    /// With no <paramref name="args"/>, reads this process's own command line, so the app connects to the service's pipe
+    /// instead of starting the helper with a UAC prompt.
+    /// </summary>
     public static string? TryResolveInitialPipeName(IReadOnlyList<string>? args = null)
     {
-        if (args is not null)
+        args ??= Environment.GetCommandLineArgs();
+        foreach (var a in args)
         {
-            foreach (var a in args)
-            {
-                if (a.StartsWith(AdminPipeArgPrefix, StringComparison.OrdinalIgnoreCase))
-                    return a[AdminPipeArgPrefix.Length..].Trim();
-            }
+            if (a is null || !a.StartsWith(AdminPipeArgPrefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var name = a[AdminPipeArgPrefix.Length..].Trim();
+            if (name.Length > 0)
+                return name;
         }
         var fromEnv = Environment.GetEnvironmentVariable(AdminPipeEnvVar)?.Trim();
         return !string.IsNullOrEmpty(fromEnv) ? fromEnv : null;
