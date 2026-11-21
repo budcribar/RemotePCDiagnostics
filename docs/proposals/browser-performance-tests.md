@@ -16,7 +16,7 @@ The core test is Speedometer 3, the industry-standard browser responsiveness ben
 
 1. **Packaging.** Pin one **pre-built** Speedometer 3 release asset from the open-source WebKit Speedometer repository (https://github.com/WebKit/Speedometer) that serves directly from `index.html` with no build step. The repo's `LICENSE` is the 2-clause BSD license, with copyrights held by Apple, Google, Mozilla, and Microsoft. Redistribution in binary form must keep that notice and the disclaimer, so the zip includes the `LICENSE` file. Record the zip's SHA-256 in the app and **bundle the zip in the installer** (~2–3 MB) so offline benches work out of the box with Speedometer on by default; if missing (e.g., portable copy), download the pinned release asset on first use, verify its SHA-256, and extract to `%LocalAppData%\RemotePCDiagnostics\benchmarks\speedometer\<version>` with Zip-Slip path validation (`Path.GetFullPath` confined inside the target directory). Later runs reuse that folder. A failed download or a hash mismatch is "could not run", with the reason. It is not a failed score.
 2. **Serving.** For the length of the run, serve the extracted files from a small HTTP server on `127.0.0.1` and a random port. The page is that HTTP URL. It is not opened with `file://`.
-3. **Browser selection.** Detect installed browsers RPCD can drive (Chromium: Chrome, Edge, Brave, and Opera). Anything else, including Firefox, is omitted until it can be driven, the same way a PC with no NPU omits the NPU test (`ModuleState.NotPresent`, not a disabled row). By default, auto-select the user's default driveable browser (falling back to Edge → Chrome → Brave → Opera) so a 1-click benchmark runs without a blocking picker. In Customize tests, the person may pick additional installed browsers; each gets its own score and baseline, shown side by side. When no driveable browser is installed, the run can use the WebView2 fallback, labeled `webview2`. Over the connector, the usable list comes back first and `run_benchmark` runs the caller's chosen browsers (or the auto-selected default when Speedometer is enabled without an override).
+3. **Browser selection.** Detect installed browsers RPCD can drive (Chromium: Chrome, Edge, Brave, and Opera). Anything else, including Firefox, is omitted until it can be driven, the same way a PC with no NPU omits the NPU test (`ModuleState.NotPresent`, not a disabled row). By default, auto-select the user's default driveable browser (falling back to Edge → Chrome → Brave → Opera) so a 1-click benchmark runs without a blocking picker. In Customize tests, the person may pick additional installed browsers; each gets its own score and baseline, shown side by side. When no driveable browser is installed, the run can use the WebView2 fallback, labeled `webview2`. Over the connector, the usable list comes back first and `run_benchmark` runs the caller's chosen browsers (or the auto-selected default when Speedometer is enabled without an override). Speedometer itself has to be in the confirmed enabled set before that call; see [Requested benchmark runs](#requested-benchmark-runs).
 4. **Launch.** Do **not** launch minimized — Chromium throttles `requestAnimationFrame`, timers, and compositor paints in minimized or occluded windows, which depresses and destabilizes Speedometer scores. Launch with a fresh temporary profile and flags such as `--headless=new --user-data-dir=<temp> --no-first-run --no-default-browser-check --remote-debugging-address=127.0.0.1 --remote-debugging-port=0`, opening `http://127.0.0.1:<port>/?startAutomatically=true` (never pass `--remote-allow-origins=*`). Read the assigned ephemeral CDP port from `<temp>\DevToolsActivePort` to avoid port collisions. Confirm `--headless=new` parity against a visible window (with `--disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling`) and confirm the automation query option for the pinned release before shipping. The temporary profile keeps the score comparable and leaves the user's tabs and extensions untouched. Extension cost belongs to the health check. Close the browser process when the run finishes.
 5. **Result.** Read the score through the Chrome DevTools Protocol using a small built-in `ClientWebSocket` CDP client (~150 lines, zero extra NuGet dependencies — do not bundle Playwright for .NET into the customer desktop app). Poll until the run is done, then read the final score and the per-test breakdown. Do not scrape the screen. The WebView2 fallback uses its own user-data folder and reads the score with `ExecuteScriptAsync` (confirming it is not occlusion-throttled before shipping). Leave the UI's WebView2 alone. A `webview2` score is the Edge engine, so its baseline stays separate from desktop Chrome, Edge, Brave, and Opera.
 6. **Cleanup.** Always close the browser process, delete the temporary profile, and stop the local HTTP server — including on cancel or timeout (**about 3 minutes per pass**, not per multi-browser job). Also sweep orphaned `%TEMP%\rpcd-speedometer-*` folders from prior crashed runs on startup.
@@ -91,7 +91,7 @@ Each row names the check or fix that produced it. One-click rows are actions on 
 ## Where each test runs
 
 1. Browser health is a normal check. It is in Run All and starts from `run_check`.
-2. Speedometer 3 is **on by default** on the Benchmark screen (1 pass on the auto-selected default Chromium browser, adding ~60 seconds; extra browsers can be added in Customize tests). MotionMark and JetStream 2 take several minutes and load the GPU/CPU heavily, so they stay **off by default** on the Benchmark screen. None of them run in Checks `Run All`. `run_benchmark` runs Speedometer by default when enabled (and runs MotionMark/JetStream only when selected). They are benchmark scores, not stress-suite steps: a stress run looks for faults under sustained load.
+2. Speedometer 3 is **on by default** on the Benchmark screen (1 pass on the auto-selected default Chromium browser, adding ~60 seconds; extra browsers can be added in Customize tests). MotionMark and JetStream 2 take several minutes and load the GPU/CPU heavily, so they stay **off by default** on the Benchmark screen. None of them run in Checks `Run All`. That screen default is not the set to run when someone asks for a benchmark. Follow [Requested benchmark runs](#requested-benchmark-runs): turn every test off, enable only what was asked (or every available test for a run-all), confirm, then `run_benchmark`. They are benchmark scores, not stress-suite steps: a stress run looks for faults under sustained load.
 3. Page load needs the network and is longer than a check, so it stays out of Run All. On-demand tests already list on the Stress tests page as separate steps (DISM, the large-file scan) and are left out of the stress suite. Put page load there, unticked. `run_check` starts it.
 
 ## Remote and local
@@ -128,10 +128,41 @@ The memory suggestions then point at `BrowserHealth` for those items. They do no
 2. **Phase 2.** Page-load timing, read next to the network and DNS results.
 3. **Phase 3.** MotionMark and JetStream as further optional benchmark kinds, still off by default. Refine seed percentile bands with aggregated samples once enough AC runs exist.
 
+## Requested benchmark runs
+
+`run_benchmark` measures the tests already enabled on that PC. The tests named in the request take effect only after the sequence below. The saved list is often stale: Speedometer is on by default and DeveloperCSharp is off by default, so a pass can measure browsing speed and skip the C# build that was asked for.
+
+When the person asks for specific tests, or to run all benchmarks, set the list and confirm it before starting. That request is the yes to change the saved enabled set.
+
+1. `set_benchmark_tests` with `enabled` empty (`[]`). That turns every test off.
+2. `set_benchmark_tests` again with `enabled` set to only the requested ids. For "run all benchmarks", that list is every id in `report.available` (every test with a checkbox). The saved default is not "all".
+3. Confirm the enabled list matches that set exactly. `set_benchmark_tests` returns `tests_set` with `report.enabled`. The same fact is in `bench-report-data`: `settings.enabled`, and each `tests` row's `enabled`. On the page, contract 3 marks it on `bench-enable-{Kind}` (`data-bench-test`, `data-enabled`).
+4. Call `run_benchmark` only when that list is exactly the requested ids. When it is not, leave the pass unstarted.
+
+Example, C# clean build only:
+
+```
+set_benchmark_tests enabled=[]
+set_benchmark_tests enabled=["DeveloperCSharp"]
+confirm report.enabled is ["DeveloperCSharp"]
+run_benchmark
+```
+
+Example, every available test:
+
+```
+set_benchmark_tests enabled=[]
+set_benchmark_tests enabled=[<every id in report.available>]
+confirm report.enabled equals that available list
+run_benchmark
+```
+
+If a named test is unavailable (no checkbox; the page's `reason`), `set_benchmark_tests` returns `invalid_argument` and changes nothing. Say why and leave the pass unstarted.
+
 When a phase exists, the connector exposes it like this:
 
 1. `run_check` and `get_check_result` with check id `BrowserHealth` (phase 1) and `PageLoad` (phase 2).
-2. `run_benchmark`, `get_benchmark_results`, and `stop_benchmark` for Speedometer (on by default for the auto-selected default Chromium browser, or the explicit browser list passed by the caller) and for MotionMark and JetStream when selected. The connector returns the usable browser list, and does not substitute `webview2` unless the caller names it.
+2. `run_benchmark`, `get_benchmark_results`, and `stop_benchmark` for Speedometer (the auto-selected default Chromium browser, or the explicit browser list passed by the caller) and for MotionMark and JetStream, only after the enabled list has been cleared, set to the requested kinds, and confirmed, as in [Requested benchmark runs](#requested-benchmark-runs). The connector runs each of those kinds only when it is in the confirmed enabled list. The connector returns the usable browser list, and does not substitute `webview2` unless the caller names it.
 3. Offered fixes come back from `list_fixes`. `apply_fix` runs one, after approval. The check never applies a fix.
 
 ## Open questions

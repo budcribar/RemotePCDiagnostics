@@ -71,7 +71,7 @@ The check may offer these fixes. It lists them and applies none. Each one needs 
 ## Where each test runs
 
 1. Developer setup is a normal check. It is in Run All and starts from `run_check`.
-2. The clean builds take several minutes and saturate the CPU and the disk, so they stay out of Run All and out of the stress suite. A stress run looks for faults under sustained load. These are scores. Add them as optional benchmark kinds on the Benchmark screen, one kind per language, off by default, so today's before/after pass keeps its length. `run_benchmark` starts the kinds that are selected. A pass that leaves them unselected does not run them.
+2. The clean builds take several minutes and saturate the CPU and the disk, so they stay out of Run All and out of the stress suite. A stress run looks for faults under sustained load. These are scores. Add them as optional benchmark kinds on the Benchmark screen, one kind per language, off by default, so today's before/after pass keeps its length. A pass runs only the kinds that are enabled. Do not call `run_benchmark` on the saved selection: follow [Requested benchmark runs](#requested-benchmark-runs). A kind left out of the confirmed enabled list does not run.
 3. Each run copies the pinned sources into a new temp folder under the user temp directory, one folder per run, builds there, and deletes that folder on success, failure, cancel, and app exit. It does not write into the user's repositories, and it does not leave `bin`, `target`, `node_modules`, or a venv behind.
 4. Pinned sources are shipped with the app, or cached after a download whose hash matches the pin. Every machine builds that tree. The pin and its hash are stored with the result.
 5. The Dev Drive comparison (phase 2) is a benchmark, run on request after its own yes for that run. It stays out of Run All and out of the stress suite. `run_benchmark` does not start it on its own.
@@ -118,10 +118,41 @@ Without the Agent, these steps are left out with the usual hint to repair the Ag
 
 A later phase does not change the check id or a benchmark kind from an earlier phase.
 
+## Requested benchmark runs
+
+`run_benchmark` measures the tests already enabled on that PC. The tests named in the request take effect only after the sequence below. The saved list is often stale: Speedometer is on by default and DeveloperCSharp is off by default, so a pass can measure browsing speed and skip the C# build that was asked for.
+
+When the person asks for specific tests, or to run all benchmarks, set the list and confirm it before starting. That request is the yes to change the saved enabled set.
+
+1. `set_benchmark_tests` with `enabled` empty (`[]`). That turns every test off.
+2. `set_benchmark_tests` again with `enabled` set to only the requested ids. For "run all benchmarks", that list is every id in `report.available` (every test with a checkbox). The saved default is not "all".
+3. Confirm the enabled list matches that set exactly. `set_benchmark_tests` returns `tests_set` with `report.enabled`. The same fact is in `bench-report-data`: `settings.enabled`, and each `tests` row's `enabled`. On the page, contract 3 marks it on `bench-enable-{Kind}` (`data-bench-test`, `data-enabled`).
+4. Call `run_benchmark` only when that list is exactly the requested ids. When it is not, leave the pass unstarted.
+
+Example, C# clean build only:
+
+```
+set_benchmark_tests enabled=[]
+set_benchmark_tests enabled=["DeveloperCSharp"]
+confirm report.enabled is ["DeveloperCSharp"]
+run_benchmark
+```
+
+Example, every available test:
+
+```
+set_benchmark_tests enabled=[]
+set_benchmark_tests enabled=[<every id in report.available>]
+confirm report.enabled equals that available list
+run_benchmark
+```
+
+If a named test is unavailable (no checkbox; the page's `reason`), `set_benchmark_tests` returns `invalid_argument` and changes nothing. Say why and leave the pass unstarted.
+
 When a phase exists, the connector exposes it like this:
 
 1. `run_check` and `get_check_result` with check id `DeveloperSetup`. That call does not start a build. A stored result is fine; say how old it is, as with the other checks.
-2. `run_benchmark`, `get_benchmark_results`, and `stop_benchmark` for the developer build kinds, only when those kinds are selected. The result has the per-language medians, scores, and bands, the overall score, the languages included, cold and warm separately, the restore times kept out of the score, and the antivirus and power-plan notes. Hidden languages are absent from the payload. The first response says the PC will be busy for several minutes. `stop_benchmark` cancels, and the temp folder is still deleted.
+2. `run_benchmark`, `get_benchmark_results`, and `stop_benchmark` for the developer build kinds, only after the enabled list has been cleared, set to the requested kinds, and confirmed, as in [Requested benchmark runs](#requested-benchmark-runs). The result has the per-language medians, scores, and bands, the overall score, the languages included, cold and warm separately, the restore times kept out of the score, and the antivirus and power-plan notes. Hidden languages are absent from the payload. The first response says the PC will be busy for several minutes. `stop_benchmark` cancels, and the temp folder is still deleted.
 3. Offered fixes come back from `list_fixes`. `apply_fix` runs one, after approval. The check never applies a fix. A permanent Dev Drive is one of those fixes, with its own approval, and it is separate from the comparison.
 4. The Dev Drive comparison is approval-gated, like a fix. `list_fixes` can offer it, and it runs only after the explicit yes for that run. `run_benchmark` does not start it because a kind was selected. The result is the NTFS and Dev Drive medians, the percent faster, and whether Defender performance mode was active. The first response carries the busy-PC warning. Cancel and failure still run cleanup.
 
