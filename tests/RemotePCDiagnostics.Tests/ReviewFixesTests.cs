@@ -30,10 +30,6 @@ public class ReviewFixesTests
         Assert.Contains("KB5031455", res.Message);
     }
 
-    [Fact]
-    public void WindowsUpdateScript_ReportsTheInstallResultCode() =>
-        Assert.Contains("InstallResult", RemediationService.BuildWindowsUpdateScript(driversOnly: false));
-
     // 2. Memory test: BAD lines count as errors even if the helper dies before its next PROGRESS/DONE.
     [Fact]
     public async Task MemoryTest_BadWordsBeforeCrash_AreMemoryErrors()

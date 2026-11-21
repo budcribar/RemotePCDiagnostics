@@ -8,9 +8,9 @@ namespace RemotePCDiagnostics.Core.Security;
 public sealed record SecurityFix(string Key, string Label, string ButtonText, string WhatItIs, string WhatHappens, string? Caveat, string Done, string UndoDone, bool DefaultOn = true);
 
 /// <summary>
-/// The fixed set of security settings the Security essentials check offers to change, with the PowerShell that reads, applies and
-/// restores each one. Scripts are built only from constants here; a journaled previous value is parsed and validated before it is used,
-/// so nothing read back from the journal file reaches PowerShell as text.
+/// The fixed set of security settings the Security essentials check offers to change. The Agent reads, applies and restores them in C#
+/// (<see cref="AgentSecuritySettings"/>) from the constants here; a journaled previous value is parsed and validated
+/// (<see cref="ParsePrevious"/>) before the Agent uses it.
 /// </summary>
 public static class SecurityFixes
 {
@@ -76,47 +76,6 @@ public static class SecurityFixes
 
     public static SecurityFix? Find(string? key) => All.FirstOrDefault(f => string.Equals(f.Key, key, StringComparison.OrdinalIgnoreCase));
 
-    private static string IdList => string.Join(",", SafeAsrRules.Select(r => $"'{r.Id}'"));
-
-    private static string ReadDword(string key, string value) =>
-        $"$v=(Get-ItemProperty -Path '{key}' -Name '{value}' -ErrorAction SilentlyContinue).'{value}';if($null -eq $v){{''}}else{{[int64]$v}}";
-
-    /// <summary>Prints the setting's current value in journal form (see <see cref="ParsePrevious"/>). Read-only.</summary>
-    public static string? ReadScript(string key) => Find(key)?.Key switch
-    {
-        Pua => "$ErrorActionPreference='Stop';[int](Get-MpPreference).PUAProtection",
-        NetworkProtection => "$ErrorActionPreference='Stop';[int](Get-MpPreference).EnableNetworkProtection",
-        AsrRules => "$ErrorActionPreference='Stop';$p=Get-MpPreference;$m=@{};$ids=@($p.AttackSurfaceReductionRules_Ids);$a=@($p.AttackSurfaceReductionRules_Actions);" +
-                    "for($i=0;$i -lt $ids.Count;$i++){if($ids[$i]){$m[$ids[$i].ToLowerInvariant()]=$a[$i]}};" +
-                    $"(@({IdList})|ForEach-Object{{if($m.ContainsKey($_)){{$_+'='+[int]$m[$_]}}else{{$_+'='}}}}) -join ';'",
-        Llmnr => ReadDword(LlmnrKey, LlmnrValue),
-        AutoRun => ReadDword(AutoRunKey, AutoRunValue),
-        GuestLogons => ReadDword(GuestKey, GuestValue),
-        _ => null,
-    };
-
-    /// <summary>Changes the setting, then reads it back: exits 0 only when Windows kept the new value (Tamper Protection or an
-    /// organization's policy can silently refuse a Defender change).</summary>
-    public static string? ApplyScript(string key) => Find(key)?.Key switch
-    {
-        Pua => "$ErrorActionPreference='Stop';Set-MpPreference -PUAProtection 1;if([int](Get-MpPreference).PUAProtection -ne 1){exit 3}",
-        NetworkProtection => "$ErrorActionPreference='Stop';Set-MpPreference -EnableNetworkProtection 1;if([int](Get-MpPreference).EnableNetworkProtection -ne 1){exit 3}",
-        AsrRules => $"$ErrorActionPreference='Stop';$r=@({IdList});Add-MpPreference -AttackSurfaceReductionRules_Ids $r -AttackSurfaceReductionRules_Actions ($r|ForEach-Object{{'Enabled'}});" +
-                    "$p=Get-MpPreference;$ids=@($p.AttackSurfaceReductionRules_Ids|ForEach-Object{$_.ToLowerInvariant()});foreach($x in $r){if($ids -notcontains $x){exit 3}}",
-        Llmnr => WriteDword(LlmnrKey, LlmnrValue, 0),
-        AutoRun => WriteDword(AutoRunKey, AutoRunValue, AutoRunAllDrives),
-        GuestLogons => WriteDword(GuestKey, GuestValue, 0),
-        _ => null,
-    };
-
-    private static string WriteDword(string key, string value, long data) =>
-        $"$ErrorActionPreference='Stop';if(-not(Test-Path '{key}')){{New-Item -Path '{key}' -Force|Out-Null}};" +
-        $"New-ItemProperty -Path '{key}' -Name '{value}' -PropertyType DWord -Value {data.ToString(CultureInfo.InvariantCulture)} -Force|Out-Null";
-
-    private static string RestoreDword(string key, string value, long? data) => data is { } d
-        ? WriteDword(key, value, d)
-        : $"$ErrorActionPreference='Stop';Remove-ItemProperty -Path '{key}' -Name '{value}' -ErrorAction SilentlyContinue";
-
     /// <summary>A journaled previous value: one number ("2"), "" (the registry value didn't exist), or for ASR "guid=action;guid=" (empty = rule not set).</summary>
     public sealed record Previous(long? Value, IReadOnlyList<(string Id, int? Action)> Rules);
 
@@ -148,23 +107,5 @@ public static class SecurityFixes
             default:
                 return null;
         }
-    }
-
-    /// <summary>Puts the setting back to the journaled value; null when the key or value isn't valid (nothing is run).</summary>
-    public static string? RestoreScript(string key, string? previous)
-    {
-        if (ParsePrevious(key, previous) is not { } p) return null;
-        return Find(key)!.Key switch
-        {
-            Pua => $"$ErrorActionPreference='Stop';Set-MpPreference -PUAProtection {p.Value!.Value.ToString(CultureInfo.InvariantCulture)}",
-            NetworkProtection => $"$ErrorActionPreference='Stop';Set-MpPreference -EnableNetworkProtection {p.Value!.Value.ToString(CultureInfo.InvariantCulture)}",
-            Llmnr => RestoreDword(LlmnrKey, LlmnrValue, p.Value),
-            AutoRun => RestoreDword(AutoRunKey, AutoRunValue, p.Value),
-            GuestLogons => RestoreDword(GuestKey, GuestValue, p.Value),
-            AsrRules => "$ErrorActionPreference='Stop';" + string.Concat(p.Rules.Select(r => r.Action is { } a
-                ? $"Add-MpPreference -AttackSurfaceReductionRules_Ids '{r.Id}' -AttackSurfaceReductionRules_Actions {a.ToString(CultureInfo.InvariantCulture)};"
-                : $"Remove-MpPreference -AttackSurfaceReductionRules_Ids '{r.Id}';")),
-            _ => null,
-        };
     }
 }

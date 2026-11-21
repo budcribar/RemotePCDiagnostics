@@ -729,7 +729,7 @@ public class WorkflowTests
         if (file.StartsWith("powercfg", StringComparison.OrdinalIgnoreCase))
             return ScriptedLauncher.Ok(args.Contains("/getactivescheme") ? "Power Scheme GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c  (High performance)" : "");
         if (file == "agent:CleanTemp") return ScriptedLauncher.Ok("""{"RemovedFiles":42,"FreedBytes":524288000}""");
-        if (cmd.Contains("CreateUpdateSearcher")) return ScriptedLauncher.Ok("""{"Count":3,"Installed":3,"InstallResult":2,"Titles":["KB5001 Security update","KB5002 .NET update","KB5003 Defender update"]}""");
+        if (file == "agent:WindowsUpdate") return ScriptedLauncher.Ok("""{"Count":3,"Installed":3,"InstallResult":2,"Titles":["KB5001 Security update","KB5002 .NET update","KB5003 Defender update"]}""");
         return ScriptedLauncher.Ok("");
     }
 

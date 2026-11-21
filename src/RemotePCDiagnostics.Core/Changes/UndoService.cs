@@ -119,7 +119,7 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
                     : Fail("Windows didn't allow removing the exclusion.");
 
             case ChangeKind.SecuritySetting:
-                if (Security.SecurityFixes.Find(c.Target) is not { } sf || Security.SecurityFixes.RestoreScript(sf.Key, c.Previous) is null)
+                if (Security.SecurityFixes.Find(c.Target) is not { } sf || Security.SecurityFixes.ParsePrevious(sf.Key, c.Previous) is null)
                     return Fail("The original setting wasn't recorded, so it was left as is.");
                 // The Agent rebuilds the restore from the key and the journaled value (it checks both again).
                 return await AgentScript(AgentScripts.Of(AgentScripts.SecurityRestore, sf.Key, c.Previous ?? ""), c, sf.UndoDone, ct).ConfigureAwait(false);

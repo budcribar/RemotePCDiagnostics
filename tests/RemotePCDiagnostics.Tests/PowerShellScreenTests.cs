@@ -36,8 +36,6 @@ public class PowerShellScreenTests
         [
             SecurityAuditModule.BuildScript(@"C:\Program Files\RemotePCDiagnostics\HardeningKitty\HardeningKitty.psd1", @"C:\Users\me\AppData\Local\Temp\hk.csv"),
             PcProfile.DetectScript,
-            RemediationService.BuildWindowsUpdateScript(driversOnly: false),
-            RemediationService.BuildWindowsUpdateScript(driversOnly: true),
             RebootResumeCoordinator.BuildRegisterResumeTaskScript(
                 @"C:\Program Files\RemotePCDiagnostics\RemotePCDiagnostics.Host.exe",
                 "\"C:\\Program Files\\RemotePCDiagnostics\\RemotePCDiagnostics.Host.exe\" -u=https://server.example.com:34544 -i=748279c7-4309-452c-8b30-e02ec52e498f --post-reboot",

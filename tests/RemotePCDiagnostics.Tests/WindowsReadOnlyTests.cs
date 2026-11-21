@@ -35,21 +35,16 @@ public class WindowsReadOnlyTests
         { "PendingUpdates", true },       // prints its JSON even when Windows Update can't be asked
     };
 
-    /// <summary>Scripts that change the PC: never run by a test.</summary>
-    private static readonly string[] Changing = ["InstallUpdate", "WindowsUpdate"];
     /// <summary>Needs the Windows Search service, which a PC may have turned off: run, but its exit code isn't asserted.</summary>
     private const string SearchIndex = "SearchIndexProjects";
 
     [Fact]
     public void Every_embedded_script_is_listed_here_and_loads()
     {
-        var listed = ReadOnlyScripts.Select(r => (string)((ITheoryDataRow)r).GetData()[0]!).Concat(Changing).Append(SearchIndex).Order(StringComparer.Ordinal).ToList();
+        var listed = ReadOnlyScripts.Select(r => (string)((ITheoryDataRow)r).GetData()[0]!).Append(SearchIndex).Order(StringComparer.Ordinal).ToList();
         Assert.Equal(listed, PowerShellScripts.Names);
         Assert.All(PowerShellScripts.Names, n => Assert.False(string.IsNullOrWhiteSpace(PowerShellScripts.Get(n))));
         Assert.Throws<InvalidOperationException>(() => PowerShellScripts.Get("NoSuchScript"));
-        Assert.Contains("Type='Driver'", RemediationService.BuildWindowsUpdateScript(driversOnly: true));
-        Assert.Contains("Type='Software'", RemediationService.BuildWindowsUpdateScript(driversOnly: false));
-        Assert.DoesNotContain("__CRITERIA__", RemediationService.BuildWindowsUpdateScript(driversOnly: false));
     }
 
     [WindowsTheory]
