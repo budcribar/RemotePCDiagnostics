@@ -481,8 +481,7 @@ public sealed class RpcdUpdateSession
                 release.Choice.Sha256Url,
                 run.StagingDirectory,
                 progress => ReportDownload(current, oldVersion, target, progress),
-                ct,
-                requireChecksum: true).ConfigureAwait(false);
+                ct).ConfigureAwait(false);
 
             // Same download and SHA-256 check as AgentSelfUpdater / AppUpdateService. Required here: a missing or
             // unverified MSI must not end as success with the service left on the old build.
@@ -896,7 +895,7 @@ public static class RpcdGitHubRelease
                 return new RpcdReleaseFetch(null, "Refusing to download the installer from a URL that is not the official GitHub release.");
             var shaName = exeName + ".sha256";
             if (!shaByName.TryGetValue(shaName, out var shaUrl) || !AppVersionComparer.IsTrustedDownloadUrl(shaUrl))
-                return new RpcdReleaseFetch(null, "The GitHub release has no SHA-256 checksum for the installer. The update was not installed.");
+                return new RpcdReleaseFetch(null, AppUpdateInstaller.MissingChecksumMessage);
 
             var filenameVersion = FilenameVersion(exeName);
             var version = ParseBuildVersion(notes) ?? filenameVersion ?? AppVersionComparer.Normalize(tag);

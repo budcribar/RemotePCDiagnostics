@@ -122,6 +122,66 @@ public class AppUpdateTests
     }
 
     [Fact]
+    public async Task Download_and_verify_refuses_an_installer_without_a_checksum()
+    {
+        const string exeUrl = "https://github.com/budcribar/RemotePCDiagnostics/releases/download/v1.3.0/RemotePCDiagnostics-Setup-1.3.0-win-x64.exe";
+        var requests = 0;
+        using var http = new HttpClient(new StubHandler(_ =>
+        {
+            requests++;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3]) };
+        }));
+
+        var dir = Path.Combine(Path.GetTempPath(), $"rpcd-update-test-{Guid.NewGuid():N}");
+        try
+        {
+            foreach (var sha in new[] { null, "", "  " })
+            {
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    AppUpdateInstaller.DownloadAndVerifyAsync(http, exeUrl, sha, dir, null, default));
+                Assert.Equal(AppUpdateInstaller.MissingChecksumMessage, ex.Message);
+            }
+            Assert.Equal(0, requests);
+            Assert.False(Directory.Exists(dir) && Directory.EnumerateFiles(dir).Any());
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task Optional_agent_msi_without_a_checksum_is_skipped_not_installed()
+    {
+        const string msiUrl = "https://github.com/budcribar/RemotePCDiagnostics/releases/download/v1.3.0/RemotePCDiagnostics.Agent-1.3.0-win-x64.msi";
+        var requests = 0;
+        using var http = new HttpClient(new StubHandler(_ =>
+        {
+            requests++;
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3]) };
+        }));
+
+        var dir = Path.Combine(Path.GetTempPath(), $"rpcd-update-test-{Guid.NewGuid():N}");
+        try
+        {
+            string? skipped = null;
+            var path = await AppUpdateInstaller.DownloadAgentMsiAsync(
+                http, msiUrl, sha256Url: null, dir, required: false, progress: null, onSkipped: m => skipped = m, default);
+            Assert.Null(path);
+            Assert.NotNull(skipped);
+            Assert.Equal(0, requests);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => AppUpdateInstaller.DownloadAgentMsiAsync(
+                http, msiUrl, sha256Url: null, dir, required: true, progress: null, onSkipped: null, default));
+            Assert.Equal(0, requests);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
     public async Task Store_backend_handles_check_and_install_for_packaged_apps()
     {
         var store = new FakeStoreBackend(isPackaged: true, updateAvailable: true, canSilent: true);

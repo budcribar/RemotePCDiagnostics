@@ -344,20 +344,26 @@ public static class AppUpdateInstaller
         throw new InvalidOperationException("Too many redirects while downloading update.");
     }
 
+    public const string MissingChecksumMessage = "The GitHub release has no SHA-256 checksum for the installer. The update was not installed.";
+
+    /// <summary>
+    /// Downloads an installer from a trusted release URL into <paramref name="stagingDirectory"/> and checks it against the
+    /// release's <c>.sha256</c> file. Throws when there is no checksum URL, the checksum can't be read, or it doesn't match.
+    /// </summary>
     public static async Task<string> DownloadAndVerifyAsync(
         HttpClient http,
         string downloadUrl,
         string? sha256Url,
         string stagingDirectory,
         Action<AppUpdateProgress>? progress,
-        CancellationToken ct,
-        bool requireChecksum = false)
+        CancellationToken ct)
     {
         if (!AppVersionComparer.IsTrustedDownloadUrl(downloadUrl))
             throw new InvalidOperationException("Refusing to download update from an untrusted URL.");
-        if (requireChecksum && string.IsNullOrWhiteSpace(sha256Url))
-            throw new InvalidOperationException("The GitHub release has no SHA-256 checksum for the installer. The update was not installed.");
-        if (!string.IsNullOrWhiteSpace(sha256Url) && !AppVersionComparer.IsTrustedDownloadUrl(sha256Url))
+        // Every caller runs the result elevated (Setup installs per machine and runs the Agent MSI), so a checksum is always required.
+        if (string.IsNullOrWhiteSpace(sha256Url))
+            throw new InvalidOperationException(MissingChecksumMessage);
+        if (!AppVersionComparer.IsTrustedDownloadUrl(sha256Url))
             throw new InvalidOperationException("Refusing to download checksum from an untrusted URL.");
 
         Directory.CreateDirectory(stagingDirectory);
@@ -401,10 +407,9 @@ public static class AppUpdateInstaller
                 }
             }
 
-            if (!string.IsNullOrWhiteSpace(sha256Url))
+            progress?.Invoke(new AppUpdateProgress("verifying", null, "Verifying SHA-256 checksum..."));
+            using (var shaResp = await GetFollowingAllowedRedirectsAsync(http, sha256Url, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false))
             {
-                progress?.Invoke(new AppUpdateProgress("verifying", null, "Verifying SHA-256 checksum..."));
-                using var shaResp = await GetFollowingAllowedRedirectsAsync(http, sha256Url, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false);
                 shaResp.EnsureSuccessStatusCode();
                 var shaText = await shaResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 var expected = AppVersionComparer.ParseSha256Text(shaText)
@@ -427,8 +432,8 @@ public static class AppUpdateInstaller
 
     /// <summary>
     /// Downloads the Agent MSI the way <c>AgentSelfUpdater</c> and <see cref="AppUpdateService"/> do.
-    /// <paramref name="required"/> false keeps that path: a missing URL or a failed check returns null and
-    /// <paramref name="onSkipped"/> hears why. <paramref name="required"/> true is the remote update: no MSI, no checksum,
+    /// <paramref name="required"/> false keeps that path: a missing URL, a missing checksum, or a failed check returns null
+    /// (nothing unverified is handed to Setup) and <paramref name="onSkipped"/> hears why. <paramref name="required"/> true is the remote update: no MSI, no checksum,
     /// or a failed check throws, and the caller must not report success.
     /// </summary>
     public static async Task<string?> DownloadAgentMsiAsync(
@@ -453,7 +458,7 @@ public static class AppUpdateInstaller
 
         try
         {
-            return await DownloadAndVerifyAsync(http, msiUrl, sha256Url, stagingDirectory, progress, ct, requireChecksum: required)
+            return await DownloadAndVerifyAsync(http, msiUrl, sha256Url, stagingDirectory, progress, ct)
                 .ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
