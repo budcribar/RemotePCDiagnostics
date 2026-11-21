@@ -272,14 +272,16 @@ end;
   The start type stays Automatic. DeinitializeSetup turns failure restart back on and starts the service. }
 function ServiceQueryText(const Name: String): String;
 var
-  OutputPath, Text: String;
+  OutputPath: String;
+  Text: AnsiString;
   Code: Integer;
 begin
   Result := '';
   OutputPath := ExpandConstant('{tmp}\rpcd-sc-query.txt');
+  { LoadStringFromFile takes an AnsiString; sc query writes ASCII. }
   if Exec(ExpandConstant('{sys}\cmd.exe'), '/C sc query "' + Name + '" > "' + OutputPath + '" 2>&1', '', SW_HIDE, ewWaitUntilTerminated, Code) then
     if LoadStringFromFile(OutputPath, Text) then
-      Result := Text;
+      Result := String(Text);
 end;
 
 function AgentServiceIsInstalled(): Boolean;
