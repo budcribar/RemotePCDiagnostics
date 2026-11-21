@@ -79,24 +79,18 @@ internal static class AgentSelfUpdater
         }
 
         string? msiPath = null;
-        if (!string.IsNullOrWhiteSpace(selected.AgentMsiUrl)
-            && File.Exists(AgentPaths.DefaultInstalledAgentExe()))
+        if (File.Exists(AgentPaths.DefaultInstalledAgentExe()))
         {
-            try
-            {
-                msiPath = await AppUpdateInstaller.DownloadAndVerifyAsync(
-                    http,
-                    selected.AgentMsiUrl,
-                    selected.AgentMsiSha256Url,
-                    stagingDir,
-                    progress: null,
-                    ct).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                // Desktop update can still proceed even if the optional Agent MSI download fails.
-                log.Warn($"[agent-update] Agent MSI download/verification skipped: {ex.Message}");
-            }
+            // A failed MSI check does not block the desktop update. Remote update_rpcd uses the same helper with required: true.
+            msiPath = await AppUpdateInstaller.DownloadAgentMsiAsync(
+                http,
+                selected.AgentMsiUrl,
+                selected.AgentMsiSha256Url,
+                stagingDir,
+                required: false,
+                progress: null,
+                onSkipped: message => log.Warn($"[agent-update] Agent MSI download/verification skipped: {message}"),
+                ct).ConfigureAwait(false);
         }
 
         // Setup closes the app, and this helper (a child of the app) ends with it, so nothing may be left for this process

@@ -80,7 +80,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
     public RpcdUpdateStatus? Current(string? requestId)
     {
         LoadShared();
-        return _session.Current(requestId, _installedVersion(), DateTimeOffset.UtcNow);
+        return _session.Current(requestId, _installedVersion(), DateTimeOffset.UtcNow, ReadInstalledAgentProductVersion());
     }
 
     public RpcdUpdateStatus Start(RpcdUpdateRequest request, IReadOnlyList<string>? relaunch, bool trustCallerBusyReason)
@@ -142,6 +142,8 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             StagingDirectory = _stagingDirectory,
             RelaunchArguments = null,
             UtcNow = now,
+            IsPersistentAgentInstalled = PersistentAgentInstalled,
+            ReadInstalledAgentVersion = ReadInstalledAgentProductVersion,
             RunInstaller = (install, ct) => RunInstallerAsync(install, relaunchArgs, ct),
         };
         _ = Task.Run(() => _session.ExecuteAsync(request, run, CancellationToken.None));
@@ -405,7 +407,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             if (original is null)
                 return;
             // This process is the service, so a version that now matches was installed and the service is up.
-            var status = RpcdUpdateSeal.Seal(FinishFromSetupExit(original) ?? original, InstalledHostVersion(), serviceRunning: true, DateTimeOffset.UtcNow);
+            var status = RpcdUpdateSeal.Seal(FinishFromSetupExit(original) ?? original, InstalledHostVersion(), serviceRunning: true, DateTimeOffset.UtcNow, ReadInstalledAgentProductVersion());
             if (status is { Terminal: false }
                 && status.Stage is not (RpcdUpdateStages.Installing or RpcdUpdateStages.Relaunching)
                 && !IsOtherProcessAlive(status.OwnerPid))
@@ -421,7 +423,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
                 };
             }
             _session.Restore(status);
-            var reconciled = _session.Current(null, InstalledHostVersion(), DateTimeOffset.UtcNow);
+            var reconciled = _session.Current(null, InstalledHostVersion(), DateTimeOffset.UtcNow, ReadInstalledAgentProductVersion());
             if (reconciled is not null && (reconciled.Stage != original.Stage || reconciled.Terminal != original.Terminal))
                 Persist(reconciled);
         }
@@ -440,8 +442,18 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         if (status is null || status.Terminal || status.Stage is not (RpcdUpdateStages.Installing or RpcdUpdateStages.Relaunching))
             return status;
         var exit = AgentSelfUpdater.ReadSetupExit(Path.Combine(_stagingDirectory, ScheduledSetup.ExitCodeFileName));
-        if (exit is null or 0)
+        if (exit is null)
             return status;
+        if (exit == 0)
+        {
+            var agentChecked = RpcdUpdateSeal.ApplyZeroExitAgentCheck(status, exit, InstalledHostVersion(), ReadInstalledAgentProductVersion(), DateTimeOffset.UtcNow);
+            if (agentChecked.Terminal)
+            {
+                _log?.Invoke("[rpcd-update] Setup exited 0 but the agent service is not the target build.");
+                Persist(agentChecked);
+            }
+            return agentChecked;
+        }
         var finished = RpcdUpdateSeal.ApplySetupExit(
             status,
             exit,
@@ -489,7 +501,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             var parsed = RpcdUpdateStatus.Parse(File.ReadAllText(path));
             if (parsed is null)
                 return;
-            var done = RpcdUpdateSeal.Seal(parsed, installedVersion, serviceRunning, DateTimeOffset.UtcNow);
+            var done = RpcdUpdateSeal.Seal(parsed, installedVersion, serviceRunning, DateTimeOffset.UtcNow, ReadInstalledAgentProductVersion());
             if (RpcdUpdateSeal.KeepSealedSuccess(parsed, done))
                 return;
             if (done.Stage == parsed.Stage && done.Terminal == parsed.Terminal)
@@ -571,11 +583,23 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             Error = status.Error ?? "",
             Channel = status.Channel ?? "",
             InstallerLog = status.InstallerLog ?? "",
+            OldAgentVersion = status.OldAgentVersion ?? "",
+            AgentVersion = status.AgentVersion ?? "",
         };
         if (status.InstallerExitCode is int exitCode)
             progress.InstallerExitCode = exitCode;
         return progress;
     }
+
+    /// <summary>The persistent service executable, not the copy of Agent.exe that ships inside the desktop app.</summary>
+    internal static bool PersistentAgentInstalled()
+    {
+        try { return File.Exists(AgentLayout.DefaultAgentExe()); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    internal static string? ReadInstalledAgentProductVersion() =>
+        RpcdProductVersion.ReadFile(AgentLayout.DefaultAgentExe());
 
     /// <summary>True when the app the agent started is still running, so its activity report has to be fresh.</summary>
     public static bool IsTrackedHostRunning()
