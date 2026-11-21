@@ -418,6 +418,26 @@ body.ct-resizing { user-select: none; cursor: col-resize; }
 .ct-detail-title { flex: 1; min-width: 0; }
 .ct-detail-title .meta { margin: 4px 0 0; }
 .ct-run-one { width: auto; flex: none; }
+/* The selected check's card (ChecksPage Detail). Not run: dashed outline, title, "Not run", History and Play only. After a run:
+   solid outline with a status-coloured left edge, the result's facts as bullets and a Details toggle that expands the result below. */
+.ct-detail-head.ct-card { display: block; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background-color: var(--surface); }
+.ct-detail-head.ct-card-notrun { border: 2px dashed color-mix(in srgb, var(--text-muted) 70%, transparent); background-color: var(--bg); }
+.ct-detail-head.ct-card-ok { border-left: 4px solid var(--chip-ok); }
+.ct-detail-head.ct-card-warn { border-left: 4px solid var(--chip-warn); }
+.ct-detail-head.ct-card-err { border-left: 4px solid var(--chip-err); }
+.ct-detail-head.ct-card-running { border-left: 4px solid var(--dot-running); }
+.ct-detail-head.ct-card-na { border-left: 4px solid var(--chip-na); }
+.ct-card-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ct-card-top h2 { margin: 0; font-size: 16px; }
+.ct-card-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 12px; }
+.ct-history-link { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+.ct-play { width: 34px; height: 30px; padding: 0; display: inline-grid; place-items: center; }
+.ct-detail-head .ct-detail-title { margin: 6px 0 0 46px; }
+.ct-detail-head .ct-detail-title:empty { display: none; }
+.ct-detail-title .card-list.ct-result-facts { margin: 0; gap: 3px; }
+.ct-details-toggle { margin-top: 6px; font-size: 13px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+.ct-details-toggle .ct-caret { display: inline-block; width: 1em; }
+@media (max-width: 560px) { .ct-detail-head .ct-detail-title { margin-left: 0; } }
 .ct-detail-body .toolbar > h1, .ct-detail-body .toolbar > .page-icon { display: none; }
 .ct-detail-body > .toolbar:not(:has(button, select, input, label)), .ct-detail-body > .status-line { display: none; }
 @media (max-width: 900px) {
