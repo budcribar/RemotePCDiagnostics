@@ -13,7 +13,7 @@ Reuse existing `data-testid` selectors for buttons where they already identify t
 | `stress` | Shared Checks selectors plus `checks-mode-quick` and `checks-mode-extended` | Give this route its own marker despite the shared component. Expose the selected mode, test scope, phase, and terminal status per test. |
 | `interactive` | `interactive-run-selected`, `interactive-stop`, device-specific cancel and outcome IDs | Identify keyboard, display, webcam, and each audio direction by stable test ID. Expose waiting for a person, active device, layout selection, and whether an outcome was measured or entered by a person. |
 | `security-audit` | `audit-title`, `audit-start`, `audit-cancel`, `audit-status`, `audit-row-{id}`, `audit-drawer-close` | Identify baseline, active filters, result provenance, and current finding. Keep the page recognizable when the audit is unavailable. |
-| `benchmark` | `bench-title`, `bench-run-before`, `bench-run-after`, `bench-restart-before`, `bench-restart-after`, `bench-stop`, `bench-clear`, `bench-settings-toggle`, `bench-enable-{Kind}` | Expose phase, restart requirement, measurement settings, baseline identity, and units. A restart action must be separately identifiable from a no-restart run. `bench-enable-{Kind}` turns one measurement on or off; Kind is the PascalCase name also used in `settings.enabled`. |
+| `benchmark` | `bench-title`, `bench-run-before`, `bench-run-after`, `bench-restart-before`, `bench-restart-after`, `bench-stop`, `bench-clear`, `bench-settings-toggle`, `bench-enable-{Kind}` | Expose phase, restart requirement, measurement settings, baseline identity, and units. A restart action must be separately identifiable from a no-restart run. `bench-enable-{Kind}` turns one measurement on or off; Kind is the PascalCase name also used in `settings.enabled`. Start a pass only after every available test has been turned off and then only the requested kinds turned back on, and `settings.enabled` matches that set. See [Which tests a pass runs](#which-tests-a-pass-runs). |
 | `workflow` | `wf-title`, `wf-start-checks`, `wf-go`, `wf-restart-now`, `wf-cancel`, `wf-finished` | Mark diagnostic, review, repair, restart, and report phases. Give each selected fix a stable ID and expose its outcome. Give **Start over** its own selector. Keep sign-in inputs out of agent-readable workflow metadata. |
 | `certificates` | `branding-title`, `bench-qa-start`, `bench-qa-stop`, `branding-save`, `branding-clear`, `qa-save-html`, `publish-hosted-cert` | Mark the QA run scope, branding save outcome, certificate preview identity, and export or publication state. Scope preview headings separately from the page heading. |
 | `history` | `history-day`, `history-filter-range`, `history-filter-test`, `history-filter-outcome`, `history-details` | Add exact capture time and a stable record key to each row. Expose the selected record and active filters. Distinguish an earlier diagnostic from an applied fix. |
@@ -154,6 +154,39 @@ The Benchmark page's start buttons are `bench-run-before`, `bench-restart-before
 From contract 3, choose which measurements run before starting a pass. Read `tests` in `bench-report-data` (the element is on the page for a view-only mirror and a controlling mirror). Each `id` matches `settings.enabled`. `available: true` means the checkbox `control` (`bench-enable-Speedometer`, `bench-enable-DeveloperCSharp`, and the same form for every other kind) can turn that measurement on or off. `available: false` means the page hides that measurement because this PC lacks the hardware or software it needs: `reason` says so, and there is no `control` to click. A hidden kind stays out of the enable checkboxes even when `enabled` is still true from an earlier save.
 
 The checkboxes are inside the Customize tests panel. When `bench-settings-toggle` has `aria-expanded="false"`, click it and wait until `aria-expanded` is `true` (the panel's open state is rendered for both mirrors, the same way a start button is). Then click `bench-enable-{id}`. The checkbox also carries `data-bench-test` (the kind id) and `data-enabled` (`true` or `false`) for the saved value. That click saves the enabled list through the same update the checkbox uses. Wait until that row's `enabled` matches what was asked and `settings.enabled` lists the same ids. A second click sets the opposite value, so leave the checkbox alone while the copy still shows the previous value. While a pass is running or settling the checkbox is disabled and the saved list stays as it was. A click changes the list when that mirror is in control, the same way `bench-run-before` starts a pass only then.
+
+### Which tests a pass runs
+
+A pass runs the saved enabled list. That list is whatever was last saved on this PC. Speedometer is on by default and DeveloperCSharp is off by default, so the list can be stale. Leave the start buttons alone until the list is the one that was asked for.
+
+When specific tests were requested, or the request is to run all benchmarks:
+
+1. Turn every available test off. With the connector, `set_benchmark_tests` and `enabled: []`. On the page, open Customize tests and clear every `bench-enable-{id}` whose `data-enabled` is `true`.
+2. Enable only the requested ids. `set_benchmark_tests` with `enabled` set to that list, or click only those `bench-enable-{id}` checkboxes. For a request to run all benchmarks, the list is every `tests` entry with `available: true` (`report.available`). The saved default is not "all".
+3. Confirm the enabled list matches exactly before any start button. `set_benchmark_tests` returns `tests_set` with `report.enabled`. In `bench-report-data`, `settings.enabled` is that same list, and each `tests` row's `enabled` is true only for those ids (every other available id is false). Each `bench-enable-{id}` `data-enabled` agrees (`data-bench-test` is the id).
+4. Only then start the pass (`run_benchmark`, or `bench-run-before` / `bench-restart-before` / the after buttons). A list that still has another id, or is missing a requested id, is not a match: leave the pass unstarted.
+
+A request for those tests is the yes to change the saved enabled set.
+
+Example, C# clean build only:
+
+```
+set_benchmark_tests enabled=[]
+set_benchmark_tests enabled=["DeveloperCSharp"]
+confirm report.enabled is ["DeveloperCSharp"]
+run_benchmark
+```
+
+Example, every available test:
+
+```
+set_benchmark_tests enabled=[]
+set_benchmark_tests enabled=[<every id in report.available>]
+confirm report.enabled equals that available list
+run_benchmark
+```
+
+If a named test is unavailable (no checkbox; `reason` on that `tests` row), `set_benchmark_tests` returns `invalid_argument` and changes nothing. Say why and leave the pass unstarted. An unavailable kind that is still saved as enabled has no checkbox to clear. When `settings.enabled` still contains it after the empty call, the list does not match, so leave the pass unstarted.
 
 ## Hardware inventory report
 

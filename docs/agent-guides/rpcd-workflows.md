@@ -38,11 +38,42 @@ Some details pages have sortable tables, drawers, review marks, service actions,
 | Stress tests | Verify the intended CPU, memory, disk speed, GPU, or network stability test and selected scope. Run only the requested test or suite. Record measurements and units, each terminal outcome, and cancellation or skipped tests. Check the suite still has control after reconnecting. Use a designated test machine for release verification because stress tests can load the PC. |
 | Interactive tests | Choose the individual test or verify the exact selection before starting. Coordinate with the person at the PC when physical input, a visual judgment, or audio is required. Capture the test's measured evidence separately from a person's pass or fail judgment. |
 | Security audit | Open the audit and read its findings, severity, and unavailable sections. Review the details of each requested check. Keep remediation separate from inspection. |
-| Benchmark | Select the measurements, run and record the **before** baseline, then use the matching **after** pass. Compare like-for-like metrics and units. Record whether each pass included a restart. Use a restart action only when explicitly requested, and verify the pending phase before resuming. **Start over** clears the comparison. |
+| Benchmark | Set the enabled tests, confirm that list, then run. Do not start a pass on whatever is already ticked. See [Performance benchmark](#performance-benchmark). |
 | Service workflow | Run the diagnostics phase, inspect the findings and proposed fixes, and verify exactly which actions are selected. The action that starts restart, benchmark, fixes, and reporting changes the PC. Review the scope with the user before starting. Follow progress through reconnects, and report completed, skipped, and failed actions separately. Let the user handle Windows credentials directly. |
 | QA & branding | Inspect the bench QA scope before running it. Keep QA results, branding changes, and certificate generation or sharing as separate tasks. Verify the branding preview before a requested save. Verify the finished certificate and requested output destination before export or sharing. |
 | History | Identify the computer, check name, capture time, and status before reading an earlier run. Attribute every historical result to its timestamp. For a requested export, verify the scope and destination first. |
 | About | Read the app version and any available build details. Use the running RPCD version to choose a tested guide. |
+
+### Performance benchmark
+
+`run_benchmark` measures the tests already enabled on that PC. The saved list is per PC and is often stale: Speedometer is on by default and DeveloperCSharp is off by default, so a pass can measure browsing speed and skip a requested C# build. A request for specific tests, or to run all benchmarks, is the yes to change that saved list. Set it and confirm it before starting.
+
+1. `set_benchmark_tests` with `enabled` empty (`[]`). That turns every test off.
+2. `set_benchmark_tests` again with `enabled` set to only the requested ids, for example `["DeveloperCSharp"]`. For a request to run all benchmarks, that list is every id in `report.available` (every test with a checkbox, `available: true`). The saved default is not "all".
+3. Confirm the enabled list matches that set exactly, and nothing else. Read `report.enabled` from the `tests_set` result. The same fact is in `bench-report-data`: `settings.enabled`, and each `tests` row's `enabled` (`id`, `available`, `control` when the PC can run it). On the page, contract 3 marks it on `bench-enable-{Kind}` (`data-bench-test`, `data-enabled`).
+4. Call `run_benchmark` only when that list is exactly the requested ids. When it is not, leave the pass unstarted.
+
+Example, C# clean build only:
+
+```
+set_benchmark_tests enabled=[]
+set_benchmark_tests enabled=["DeveloperCSharp"]
+confirm report.enabled is ["DeveloperCSharp"]
+run_benchmark
+```
+
+Example, every available test:
+
+```
+set_benchmark_tests enabled=[]
+set_benchmark_tests enabled=[<every id in report.available>]
+confirm report.enabled equals that available list
+run_benchmark
+```
+
+If a named test is unavailable (no checkbox; the page's `reason`), `set_benchmark_tests` returns `invalid_argument` and changes nothing. Say why and leave the pass unstarted. An unavailable kind that is still saved as enabled has no checkbox to clear. When `settings.enabled` still contains it after the empty call, the list does not match, so leave the pass unstarted.
+
+Then record the **before** baseline and use the matching **after** pass. Compare like-for-like metrics and units. Record whether each pass included a restart. Use a restart action only when explicitly requested, and verify the pending phase before resuming. **Start over** clears the comparison. The service workflow's before and after passes use this same saved list. When the person named which tests those passes should include, set and confirm the list before starting the workflow.
 
 For **Keyboard**, compare layout candidates with the actual keyboard and have the person at the PC confirm the layout and press the keys. Browser-generated key presses are not physical keyboard evidence. For **Display**, have the person look at the panel and report defects. For **Webcam**, verify the selected device and ask the person to confirm the preview and outcome. For **Speaker to microphone** and **Microphone to speaker**, verify the direction and devices, coordinate playback or speech with the person, and record what was measured and what they confirmed. Treat reset, pass with note, failure, cancellation and unavailable hardware as distinct outcomes.
 
