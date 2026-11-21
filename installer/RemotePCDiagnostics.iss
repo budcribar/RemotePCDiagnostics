@@ -65,6 +65,11 @@
   #endif
 #endif
 #define AppMutexName "Global\RemotePCDiagnostics.Host"
+; The agent service has its own mutex (Global\RemotePCDiagnostics.Agent). It is not listed as AppMutex.
+; Silent Setup checks AppMutex before it can close anything, and /SUPPRESSMSGBOXES answers Cancel, so a mutex
+; the agent still holds would make a remote update exit 1. PrepareToInstall stops the old agent instead.
+; Agent.exe install then waits until that mutex is free and only then starts the new service.
+#define AgentMutexName "Global\RemotePCDiagnostics.Agent"
 #define WebView2ClientId "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 #define WebView2BootstrapUrl "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
 #define WorkflowResumeTaskName "Remote PC Diagnostics - continue service workflow"
@@ -150,7 +155,9 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "
 
 [Run]
 #if AgentExePath != ""
-; Stage Agent.exe in {tmp} and invoke 'install' so any running RemotePCDiagnosticsAgent service is stopped cleanly before updating Program Files.
+; Stage Agent.exe in {tmp} and invoke 'install'. PrepareToInstall has already stopped the old agent service,
+; its legacy service names, and the Run keys and scheduled tasks that would start a second copy.
+; install waits until the agent mutex is free and only then starts the new service.
 ; A remote update passes /PRESERVEAGENT so install keeps the enrollment key, consent, and lifetime already on the PC.
 Filename: "{tmp}\RemotePCDiagnostics.Agent.exe"; Parameters: "{#AgentInstallParams}"; StatusMsg: "Installing and starting Remote PC Diagnostics Agent service..."; Flags: runhidden waituntilterminated; Check: not PreserveAgentSettings
 Filename: "{tmp}\RemotePCDiagnostics.Agent.exe"; Parameters: "install"; StatusMsg: "Updating Remote PC Diagnostics Agent service..."; Flags: runhidden waituntilterminated; Check: PreserveAgentSettings
@@ -252,6 +259,45 @@ begin
   DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing), SetupMessage(msgPreparingDesc), @OnDownloadProgress);
 end;
 
+{ Stop every service name this product has used, and remove startup entries that launch a second copy.
+  Does not delete the current service and does not taskkill: Setup may be a child of the agent that started
+  this update, and sc delete while that process is still alive leaves the old version running with no service
+  record. Agent.exe install deletes legacy names only after the process and the agent mutex are gone. }
+procedure StopOneAgentService(const Name: String);
+var
+  ResultCode: Integer;
+begin
+  Log('Stopping agent service ''' + Name + ''' before the new agent starts.');
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop "' + Name + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+procedure RemoveAgentStartupEntries();
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "RemotePCDiagnostics Agent" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "RemotePCDiagnosticsAgent" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "Remote PC Diagnostics Agent" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnosticsAgent');
+  RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnostics Agent');
+  RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Remote PC Diagnostics Agent');
+  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnosticsAgent');
+  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnostics Agent');
+  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Remote PC Diagnostics Agent');
+  RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\RunOnce', 'RemotePCDiagnosticsAgent');
+  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\RunOnce', 'RemotePCDiagnosticsAgent');
+end;
+
+procedure StopPreviousAgents();
+begin
+  Log('Stopping any running Remote PC Diagnostics Agent before installing {#AgentMutexName}.');
+  StopOneAgentService('RemotePCDiagnosticsAgent');
+  StopOneAgentService('RemotePCDiagnostics.Agent');
+  StopOneAgentService('Remote PC Diagnostics Agent');
+  StopOneAgentService('RemotePCDiagnostics Agent');
+  RemoveAgentStartupEntries();
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
@@ -263,6 +309,9 @@ var
   ResultCode: Integer;
 begin
   Result := '';
+  { Before files are copied and before [Run] starts the new agent. Almost every PC has WebView2, and the
+    check below returns immediately, so this has to run first. }
+  StopPreviousAgents();
   if CmdLineParamExists('/SKIPWEBVIEW2') or IsWebView2Installed() then
     Exit;
 
@@ -309,6 +358,7 @@ var
   AgentDir, AgentExe, ProgramDataDir: String;
   I, ResultCode: Integer;
 begin
+  StopPreviousAgents();
   { Setup can run the agent's own uninstall. MSIX cannot (no custom uninstall action); the service removes itself
     once it has seen this install and later finds it gone. install-agent / Install-Computer.cmd only call
     "Agent.exe install ... --lifetime=persistent", so this same uninstall command is what removes them. }
@@ -328,10 +378,13 @@ begin
   { Idempotent if uninstall already did this. Covers a missing exe or an uninstall that did not start. }
   Exec(ExpandConstant('{sys}\sc.exe'), 'stop RemotePCDiagnosticsAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sys}\sc.exe'), 'delete RemotePCDiagnosticsAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "RemotePCDiagnostics Agent" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "RemotePCDiagnosticsAgent" /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  RegDeleteValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnosticsAgent');
-  RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RemotePCDiagnosticsAgent');
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop "RemotePCDiagnostics.Agent"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'delete "RemotePCDiagnostics.Agent"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop "Remote PC Diagnostics Agent"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'delete "Remote PC Diagnostics Agent"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop "RemotePCDiagnostics Agent"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'delete "RemotePCDiagnostics Agent"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  RemoveAgentStartupEntries();
 
   for I := 1 to 10 do
   begin
@@ -351,6 +404,8 @@ begin
     DeleteFile(ProgramDataDir + '\agent-status.json');
   if FileExists(ProgramDataDir + '\agent-host.json') then
     DeleteFile(ProgramDataDir + '\agent-host.json');
+  if FileExists(ProgramDataDir + '\agent-instance.txt') then
+    DeleteFile(ProgramDataDir + '\agent-instance.txt');
   if FileExists(ProgramDataDir + '\active-session.json') then
     DeleteFile(ProgramDataDir + '\active-session.json');
   if DirExists(ProgramDataDir + '\sessions') then
