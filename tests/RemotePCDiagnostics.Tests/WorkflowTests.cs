@@ -1,3 +1,5 @@
+using Bunit;
+using Microsoft.Extensions.DependencyInjection;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Checks;
@@ -757,6 +759,130 @@ public class WorkflowTests
     private static string Id(WorkflowService flow, Func<WorkflowFix, bool> which) => flow.State.Fixes.Single(which).Id;
 
     [Fact]
+    public async Task ReportBox_UndoesOneChange_ThenAppliesTheFixAgain_AndRewritesTheReport()
+    {
+        var (flow, sys, _, mem, journal) = MakeFull();
+        await flow.RunChecksAsync();
+        Assert.Null(await flow.StartAsync(new AutoLogonRequest("user", "PC1", "secret")));
+        sys.Uptime = TimeSpan.Zero;
+        await flow.ResumeAsync();
+        await flow.ResumeAsync();
+        Assert.Equal(WorkflowStage.Done, flow.State.Stage);
+        Assert.True(flow.CanChangeAfterRun);
+
+        var startup = flow.State.Outcomes.Single(o => o.Changes?.Any(c => c.Text.Contains("Spotify")) == true);
+        var change = startup.Changes!.Single(c => c.Text.Contains("Spotify"));
+        Assert.Equal(UndoSupport.Full, change.Undo);
+        var item = ReportItems.Applied(flow.State).Single(i => i.JournalId == change.JournalId);
+        Assert.Equal(ReportTag.Undoable, item.Tag);
+        Assert.True(item.CanUndo);
+        Assert.Contains($"id=\"change-{change.JournalId:N}\"", flow.State.ReportHtml);
+        Assert.Contains("data-tag=\"Undoable\">Can be undone</span>", flow.State.ReportHtml);
+
+        // A permanent change has no Undo.
+        var permanent = flow.State.Outcomes.SelectMany(o => o.Changes ?? []).First(c => c.Undo == UndoSupport.None);
+        var undo = new UndoService(journal, new SystemCommandRunner(new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""))), mem);
+        Assert.Equal("This change is permanent, so it can't be undone.", await flow.UndoChangeAsync(undo, permanent.JournalId));
+        Assert.Contains(journal.All, c => c.Id == permanent.JournalId);
+
+        // Undo just the startup app: the journal forgets it, the report marks it undone, the file is saved again.
+        await flow.UndoChangeAsync(undo, change.JournalId);
+        Assert.DoesNotContain(journal.All, c => c.Id == change.JournalId);
+        Assert.NotNull(flow.State.Outcomes.SelectMany(o => o.Changes ?? []).Single(c => c.JournalId == change.JournalId).UndoneUtc);
+        Assert.Equal(flow.State.ReportHtml, sys.Report);
+        Assert.Contains("data-tag=\"Undone\">Undone", sys.Report);
+        Assert.Contains("Already put back after the service", sys.Report);
+        Assert.Equal("Already undone.", await flow.UndoChangeAsync(undo, change.JournalId));
+        var undone = ReportItems.Applied(flow.State).Single(i => i.JournalId == change.JournalId);
+        Assert.Equal(ReportTag.Undone, undone.Tag);
+        Assert.True(undone.CanReapply);
+
+        // Apply again: the fix runs again and its new change can be undone again.
+        mem.Approved.Remove("Spotify"); // the fake reports Spotify at startup again once it's back
+        await flow.ReapplyFixAsync(startup.FixId);
+        var again = flow.State.Outcomes.Single(o => o.FixId == startup.FixId).Changes!;
+        var redo = Assert.Single(again);
+        Assert.Null(redo.UndoneUtc);
+        Assert.NotEqual(change.JournalId, redo.JournalId);
+        Assert.Contains(journal.All, c => c.Id == redo.JournalId);
+        Assert.DoesNotContain("data-tag=\"Undone\"", sys.Report);
+    }
+
+    [Fact]
+    public void ReportBox_ShowsEachChange_WithItsColourLabelAndButton()
+    {
+        var now = DateTimeOffset.Now;
+        var state = new WorkflowState
+        {
+            Stage = WorkflowStage.Done, StartedUtc = now.AddMinutes(-35), FinishedUtc = now, ReviewedUtc = now.AddMinutes(-40), ChangesTracked = true, Machine = "DESKTOP-TEST01",
+            ReviewRulesVersion = WorkflowService.CurrentReviewRulesVersion,
+            Fixes =
+            [
+                new("startup", "Stop Spotify starting with Windows", "", "Startup", SuggestionRisk.Low, FixSource.Remediation, 1),
+                new("dns", "Use public DNS on Wi-Fi", "", "Network", SuggestionRisk.Low, FixSource.Remediation, 2),
+                new("weather", "Remove Weather", "", "Apps", SuggestionRisk.Low, FixSource.Memory, 3, Undo: UndoSupport.Reinstall),
+                new("updates", "Install Windows updates", "", "Updates", SuggestionRisk.Low, FixSource.Remediation, 4, Undo: UndoSupport.None),
+                new("flush", "Flush DNS cache", "", "Network", SuggestionRisk.Low, FixSource.Remediation, 5, Undo: UndoSupport.NothingToUndo),
+                new("transparency", "Turn off transparency effects", "", "Display", SuggestionRisk.Low, FixSource.Memory, 6),
+                new("clips", "Remove Clipchamp", "", "Apps", SuggestionRisk.Low, FixSource.Memory, 7, Undo: UndoSupport.Reinstall),
+            ],
+            Approved = ["startup", "dns", "weather", "updates", "flush", "transparency", "clips"],
+            Outcomes =
+            [
+                new("startup", "Stop Spotify starting with Windows", true, "Spotify won't start with Windows.", Changes: [new(Guid.NewGuid(), "Spotify won't start with Windows", UndoSupport.Full)]),
+                new("dns", "Use public DNS on Wi-Fi", true, "Public DNS set.", Changes: [new(Guid.NewGuid(), "Public DNS set on Wi-Fi (was automatic)", UndoSupport.Full, now.AddMinutes(2))]),
+                new("weather", "Remove Weather", true, "Weather removed.", Changes: [new(Guid.NewGuid(), "Removed Weather (Microsoft.BingWeather)", UndoSupport.Reinstall)]),
+                new("clips", "Remove Clipchamp", true, "Clipchamp removed.", Changes: [new(Guid.NewGuid(), "Removed Clipchamp (Clipchamp.Clipchamp)", UndoSupport.Reinstall, now.AddMinutes(3))]),
+                new("updates", "Install Windows updates", true, "Installed 2 of 2 Windows update(s)", Changes: [new(Guid.NewGuid(), "Installed KB5001 Security update, KB5002 .NET update", UndoSupport.None)]),
+                new("flush", "Flush DNS cache", true, "DNS cache flushed."),
+                new("transparency", "Turn off transparency effects", true, "Not needed any more after the restart.", Skipped: true),
+            ],
+        };
+        state = state with { ReportPath = @"C:\Users\Public\Documents\Remote PC Diagnostics\Service report 2026-11-21.html" };
+        var html = ClientReport.Build(state, null, null, BenchmarkComparison.Build(null, null), now);
+        state = state with { ReportHtml = html };
+        var store = new MemFlowStore { State = state };
+        var (flow, _, _, _, _, _) = Make(store);
+        Assert.NotNull(flow.State.Outcomes.Single(o => o.FixId == "dns").Changes![0].UndoneUtc); // survives the JSON round trip
+        using var ctx = new Bunit.BunitContext();
+        ctx.JSInterop.Mode = Bunit.JSRuntimeMode.Loose;
+        ctx.Services.AddSingleton(flow);
+        var cut = ctx.Render<RemotePCDiagnostics.UI.Shared.WorkflowReportBox>(ps => ps.Add(x => x.Html, html));
+        Assert.Null(cut.FindAll("[data-testid='wf-report']").FirstOrDefault()); // the full report only on request
+        Assert.Equal(["undo", "reapply", "reinstall", "reapply"], cut.FindAll("[data-testid^='wf-change-']").Where(b => b.TagName == "BUTTON").Select(b => b.GetAttribute("data-action")));
+        Assert.Equal(["Undo", "Apply again", "Reinstall", "Remove again"], cut.FindAll("button[data-testid^='wf-change-']").Select(b => b.TextContent.Trim()));
+        Assert.Equal(["Undoable", "Undone", "Reinstallable", "Undone", "Permanent", "NothingToUndo"], cut.FindAll("[data-testid='wf-change']").Select(li => li.GetAttribute("data-tag")));
+        cut.Find("[data-testid='wf-toggle-preview']").Click();
+        Assert.NotNull(cut.Find("[data-testid='wf-report']"));
+    }
+
+    [Fact]
+    public void ReportItems_Tags_EachChange_WithColourAndLabel()
+    {
+        var s = new WorkflowState
+        {
+            ChangesTracked = true,
+            Fixes = [new("a", "A", "", "X", SuggestionRisk.Low, FixSource.Remediation, 1), new("r", "R", "", "X", SuggestionRisk.Low, FixSource.Memory, 2)],
+            Outcomes =
+            [
+                new("a", "A", true, "ok", Changes: [new(Guid.NewGuid(), "one", UndoSupport.Full), new(Guid.NewGuid(), "two", UndoSupport.None)]),
+                new("r", "R", true, "ok", Changes: [new(Guid.NewGuid(), "app", UndoSupport.Reinstall, DateTimeOffset.UtcNow)]),
+                new("s", "S", true, "skipped", Skipped: true),
+            ],
+        };
+        var items = ReportItems.Applied(s);
+        Assert.Equal([ReportTag.Undoable, ReportTag.Permanent, ReportTag.Undone], items.Select(i => i.Tag));
+        Assert.Equal("Reinstalled", ReportItems.Label(items[2].Tag, items[2].WasReinstall));
+        Assert.True(items[2].CanReapply);                       // every change it can put back is put back
+        Assert.False(items[0].CanReapply);
+        Assert.Equal(["undo", "perm", "none"], items.Select(i => ReportItems.Css(i.Tag)));
+        var html = ClientReport.Build(s, null, null, BenchmarkComparison.Build(null, null), DateTimeOffset.Now);
+        Assert.Contains("data-tag=\"Skipped\">Skipped</span>", html);
+        Assert.Contains("data-tag=\"Undone\">Reinstalled ", html);
+        Assert.Contains("report-legend", html);
+    }
+
+    [Fact]
     public async Task FullRun_Report_RecordsEveryChange_Failure_Skip_Unticked_SideEffects_Undo_AndBenchmarks()
     {
         var (flow, sys, store, mem, journal) = MakeFull();
@@ -824,7 +950,7 @@ public class WorkflowTests
         Assert.Contains(recorded, c => c.Undo == UndoSupport.None && c.Text.Contains("Temporary files"));
         Assert.Contains("Undoing changes", html);
         Assert.Contains("Can be put back exactly as it was", html);
-        Assert.Contains("Permanent (can't be undone", html);
+        Assert.Contains("Can't be undone (for example", html);
         Assert.DoesNotContain("placeholder", html);
         Assert.Contains("--undo-all", html);
         Assert.Contains("Undo all changes", html);
@@ -906,8 +1032,9 @@ public class WorkflowTests
         var s = new WorkflowState { Fixes = fixes, Approved = ["a", "b"], Outcomes = [new("a", "Rescan devices", true, "Scanned."), new("b", "Enable the webcam", true, "Enabled webcam")] };
         var html = ClientReport.Build(s, null, null, BenchmarkComparison.Build(null, null), DateTimeOffset.Now);
         Assert.DoesNotContain("What the service itself did", html);
-        Assert.Contains("Undo: nothing lasting to undo.", html);
-        Assert.Contains("Undo: permanent, can't be undone.", html);       // no journal to read: go by the fix
+        Assert.Contains("data-tag=\"NothingToUndo\">Nothing to undo</span>", html);
+        Assert.Contains("Undo: can't be undone.", html);
+        Assert.Contains("data-tag=\"Permanent\">Permanent</span>", html);       // no journal to read: go by the fix
         Assert.Contains("The before measurement couldn&#39;t be taken", html);
     }
 

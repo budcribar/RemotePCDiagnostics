@@ -411,6 +411,25 @@
 
     window.saveAsFile = saveAsFile;
 
+    // Opens an HTML page the app built (the client report) in a new tab of whichever browser shows the app: the remote technician's for a
+    // remote session. The blob holds only that markup; nothing is fetched or run.
+    function openHtml(content) {
+        try {
+            const url = URL.createObjectURL(new Blob([content], { type: 'text/html;charset=utf-8' }));
+            const a = document.createElement('a');
+            a.href = url;
+            a.target = '_blank';
+            a.rel = 'noopener';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 60000);
+            return true;
+        } catch (e) {
+            console.error('openHtml failed:', e);
+            return false;
+        }
+    }
+
     function getControlInfo() {
         const isRemote = isRemoteDisplay();
         let hasRemoteSession = false;
@@ -484,6 +503,7 @@
     window.rpdSession = {
         isRemoteDisplay,
         saveAsFile,
+        openHtml,
         getControlInfo,
         releaseControlToLocal,
         subscribeControl: (dotNetRef) => {

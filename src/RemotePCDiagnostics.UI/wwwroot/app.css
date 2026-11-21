@@ -566,6 +566,33 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 .wf-field { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
 .wf-field input { width: min(320px, 70vw); }
 .wf-report { width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+/* "Not run" steps: dashed and muted, but still readable on the dark theme (the light theme's border/text tokens vanish there). */
+[data-theme="dark"] .wf-step.wf-todo { border-color: #5d7387; color: #a9bac7; background: rgba(255,255,255,.03); opacity: 1; }
+[data-theme="dark"] .wf-step.wf-todo .wf-step-badge { border-color: #5d7387; }
+[data-theme="dark"] .wf-step.wf-todo .wf-step-caption { color: #93a6b5; }
+[data-theme="dark"] .wf-swatch-todo { border-color: #5d7387; background: rgba(255,255,255,.03); }
+[data-theme="dark"] .wf-conn-todo { background: #5d7387; opacity: .8; }
+/* Report box: the client report's summary and one row per change, each colour-coded with its label and its action. */
+.wf-report-box .card-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.wf-report-links { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.wf-report-counts { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.wf-changes { list-style: none; padding: 0; margin: 0; }
+.wf-change { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 0 8px 10px; border-bottom: 1px solid var(--border); border-left: 4px solid var(--tag-none-edge); }
+.wf-change:last-child { border-bottom: 0; }
+.wf-change-text { flex: 1 1 260px; min-width: 0; }
+.wf-change-text .meta { display: block; }
+.wf-change.wf-edge-undo { border-left-color: var(--tag-undo-edge); } .wf-change.wf-edge-reinstall { border-left-color: var(--tag-reinstall-edge); }
+.wf-change.wf-edge-perm { border-left-color: var(--tag-perm-edge); }
+.tag { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; border: 1px solid; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.tag-undo { color: var(--tag-undo-fg); background: var(--tag-undo-bg); border-color: var(--tag-undo-edge); }
+.tag-reinstall { color: var(--tag-reinstall-fg); background: var(--tag-reinstall-bg); border-color: var(--tag-reinstall-edge); }
+.tag-perm { color: var(--tag-perm-fg); background: var(--tag-perm-bg); border-color: var(--tag-perm-edge); }
+.tag-none { color: var(--tag-none-fg); background: var(--tag-none-bg); border-color: var(--tag-none-edge); }
+:root { --tag-undo-fg: #065f46; --tag-undo-bg: #d1fae5; --tag-undo-edge: #34d399; --tag-reinstall-fg: #1e3a8a; --tag-reinstall-bg: #dbeafe; --tag-reinstall-edge: #60a5fa;
+    --tag-perm-fg: #991b1b; --tag-perm-bg: #fee2e2; --tag-perm-edge: #f87171; --tag-none-fg: #374151; --tag-none-bg: #f3f4f6; --tag-none-edge: #9ca3af; }
+[data-theme="dark"] { --tag-undo-fg: #6ee7b7; --tag-undo-bg: rgba(16,185,129,.14); --tag-undo-edge: #10b981; --tag-reinstall-fg: #93c5fd; --tag-reinstall-bg: rgba(59,130,246,.16); --tag-reinstall-edge: #3b82f6;
+    --tag-perm-fg: #fca5a5; --tag-perm-bg: rgba(239,68,68,.15); --tag-perm-edge: #ef4444; --tag-none-fg: #c3cfd8; --tag-none-bg: rgba(255,255,255,.06); --tag-none-edge: #6b7f8f; }
+.wf-report-box .wf-report { margin-top: 10px; }
 .wf-log { margin-top: 16px; }
 .wf-overall-progress { max-width: 100%; margin: 8px 0 12px; }
 .wf-check-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
