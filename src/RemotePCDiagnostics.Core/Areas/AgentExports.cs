@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using RemotePCDiagnostics.Core.Benchmarks;
+using RemotePCDiagnostics.Core.Checks;
 using RemotePCDiagnostics.Core.History;
 using RemotePCDiagnostics.Core.Security;
 
@@ -199,6 +200,25 @@ public static class AgentExports
             }).ToList(),
         };
     }
+
+    // ---- Which checks are turned on -------------------------------------------------------------------------------------
+
+    /// <summary>The Checks page's enablement for browser agents (checks-report-data): every diagnostic check, hidden hardware included.</summary>
+    public static string CheckEnablement(IReadOnlyList<CheckChoice> checks) => JsonSerializer.Serialize(BuildCheckEnablement(checks), Json);
+
+    public static object BuildCheckEnablement(IEnumerable<CheckChoice> checks) => new
+    {
+        schema = SchemaVersion,
+        checks = checks.Select(c => new
+        {
+            id = V(c.Id),
+            title = V(c.Title),
+            category = V(c.Category),
+            available = c.Available,
+            enabled = c.Enabled,
+            reason = T(c.Reason),
+        }).ToList(),
+    };
 
     // ---- Security audit -------------------------------------------------------------------------------------------------
 

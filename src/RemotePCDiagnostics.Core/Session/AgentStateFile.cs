@@ -1,4 +1,5 @@
 using RemotePCDiagnostics.Core.Benchmarks;
+using RemotePCDiagnostics.Core.Checks;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Workflow;
 
@@ -80,4 +81,14 @@ public sealed class AgentBenchmarkStore(AgentStateFile file) : IBenchmarkStore
 
     public BenchmarkState? Load() => BenchmarkState.FromJson(file.Read());
     public void Save(BenchmarkState state) => file.Write(state.ToJson());
+}
+
+/// <summary>Which diagnostic checks are turned on, kept by the Agent (see <see cref="AgentStateFile"/>).</summary>
+public sealed class AgentCheckSettingsStore(AgentStateFile file) : ICheckSettingsStore
+{
+    public AgentCheckSettingsStore(IElevatedCommandBridge agent, ILogger? log = null)
+        : this(new AgentStateFile(agent, ProtectedState.CheckSettingsFile, FileCheckSettingsStore.DefaultPath(), log)) { }
+
+    public CheckSettings? Load() => CheckSettings.FromJson(file.Read());
+    public void Save(CheckSettings settings) => file.Write(settings.ToJson());
 }

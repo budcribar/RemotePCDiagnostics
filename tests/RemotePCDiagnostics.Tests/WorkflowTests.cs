@@ -1,5 +1,6 @@
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Checks;
 using RemotePCDiagnostics.Core.Benchmarks;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Optimizations;
@@ -102,10 +103,10 @@ public class WorkflowTests
     private static (WorkflowService Flow, Sys Sys, IWorkflowStore Store, List<TimeSpan> Delays, ScriptedLauncher Launcher, Probes Probes) Make(
         Func<string, IReadOnlyList<string>, ProcessResult>? run, IChangeJournal? journal, IMemorySystem? memorySystem, IDiagnosticModule[] modules,
         IWorkflowStore? flowStore = null, IBenchmarkStore? benchmarkStore = null, Sys? system = null, Probes? benchmarkProbes = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null, ISystemSettings? settings = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null, ISystemSettings? settings = null, CheckSettingsService? checks = null)
     {
         var results = new ResultStore();
-        var diag = new DiagnosticsService(results, modules);
+        var diag = new DiagnosticsService(results, modules, checks: checks);
         var launcher = new ScriptedLauncher(run ?? ((file, args) => ScriptedLauncher.Ok(args.Any(a => a.Contains("RemovedFiles")) ? """{"RemovedFiles":42,"FreedBytes":524288000}""" : """{"Count":0}""")));
         var rem = new RemediationService(new SystemCommandRunner(launcher), new SessionContext(SessionMode.Remote), journal: journal,
             settings: settings ?? new FakeSystemSettings { DefaultDns = "" });
@@ -1145,6 +1146,37 @@ public class WorkflowTests
         await flow.RunChecksAsync(forceRerun: true);
         Assert.Equal(2, mod1.Runs);
         Assert.Equal(2, mod2.Runs);
+    }
+
+    [Fact]
+    public async Task RunChecksAsync_SkipsATurnedOffCheck_AndDoesNotKeepTheEarlierResult()
+    {
+        var drive = new CountingAreaModule(ModuleSlugs.DriveHealth, Report(Clean));
+        var hogs = new CountingAreaModule(ModuleSlugs.ResourceHogs, Report(PowerPlan));
+        var settings = new CheckSettingsService(new MemoryCheckSettingsStore());
+        var (flow, _, _, _, _, _) = Make(null, null, null, [hogs, drive], checks: settings);
+
+        await flow.RunChecksAsync();
+        Assert.Equal(1, drive.Runs);
+        Assert.Equal(1, hogs.Runs);
+
+        settings.SetEnabled(drive.Name, on: false, available: true);
+        await flow.RunChecksAsync();
+
+        Assert.Equal(1, drive.Runs);
+        Assert.Equal(1, hogs.Runs);
+        var skipped = flow.CheckItems.Single(c => c.Id == drive.Name);
+        Assert.Equal(DiagnosticStatus.Warning, skipped.Status);
+        Assert.Contains("Skipped", skipped.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(flow.State.Findings, f => f.Contains("turned off", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(RowKind.Skipped, CheckRows.KindOf(CheckEnableRules.SkippedResult(drive.Name, drive.Id)));
+    }
+
+    private sealed class MemoryCheckSettingsStore : ICheckSettingsStore
+    {
+        public CheckSettings? State;
+        public CheckSettings? Load() => State;
+        public void Save(CheckSettings settings) => State = settings;
     }
 
     private static string E(string s) => System.Net.WebUtility.HtmlEncode(s);

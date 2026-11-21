@@ -8,7 +8,7 @@ namespace RemotePCDiagnostics.Core;
 /// </summary>
 public static class ProtectedState
 {
-    public const string ChangesFile = "changes.json", WorkflowFile = "workflow.json", PendingRebootFile = "pending-reboot.json", BenchmarksFile = "benchmarks.json", DevBenchmarksFile = "dev-benchmarks.json";
+    public const string ChangesFile = "changes.json", WorkflowFile = "workflow.json", PendingRebootFile = "pending-reboot.json", BenchmarksFile = "benchmarks.json", DevBenchmarksFile = "dev-benchmarks.json", CheckSettingsFile = "check-settings.json";
 
     /// <summary>Every file that moved from %LOCALAPPDATA%\RemotePCDiagnostics to the state folder.</summary>
     public static readonly IReadOnlyList<string> FileNames = [ChangesFile, WorkflowFile, PendingRebootFile, BenchmarksFile];
@@ -34,7 +34,7 @@ public static class ProtectedState
 public static class ProtectedStateFiles
 {
     /// <summary>The state files the app reads and saves through the Agent. The undo journal has its own requests.</summary>
-    public static readonly IReadOnlyList<string> AgentManaged = [ProtectedState.WorkflowFile, ProtectedState.BenchmarksFile, ProtectedState.DevBenchmarksFile];
+    public static readonly IReadOnlyList<string> AgentManaged = [ProtectedState.WorkflowFile, ProtectedState.BenchmarksFile, ProtectedState.DevBenchmarksFile, ProtectedState.CheckSettingsFile];
 
     /// <summary>A browser's whole Local State file is the largest "before" value a change keeps.</summary>
     public const int MaxPreviousChars = 4 * 1024 * 1024;
@@ -49,6 +49,7 @@ public static class ProtectedStateFiles
         ProtectedState.WorkflowFile => Workflow.WorkflowState.FromJson(json) is null ? "That isn't a saved workflow." : null,
         ProtectedState.BenchmarksFile => Benchmarks.BenchmarkState.FromJson(json) is null ? "That isn't saved benchmark state." : null,
         ProtectedState.DevBenchmarksFile => Benchmarks.DeveloperSampleHistory.FromJson(json) is null ? "That isn't saved developer benchmark samples." : null,
+        ProtectedState.CheckSettingsFile => Checks.CheckSettings.FromJson(json) is null ? "That isn't saved check settings." : null,
         _ => $"'{name}' isn't a state file the Agent keeps.",
     };
 

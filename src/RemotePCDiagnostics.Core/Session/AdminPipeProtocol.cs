@@ -452,7 +452,7 @@ public static class AdminPipeFraming
     public const string OpAgentScript = "agent_script";
     /// <summary>Records a change the app just made in the undo journal.</summary>
     public const string OpJournalAdd = "journal_add";
-    /// <summary>The workflow and benchmark state files in the state folder: read one, or save it (no JSON deletes it).</summary>
+    /// <summary>The workflow, benchmark and check-settings files in the state folder: read one, or save it (no JSON deletes it).</summary>
     public const string OpStateRead = "state_read";
     public const string OpStateWrite = "state_write";
 

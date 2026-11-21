@@ -1,4 +1,5 @@
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Checks;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Plugins;
 using RemotePCDiagnostics.Core.Preferences;
@@ -30,4 +31,5 @@ public sealed record AppServices(
     IElevationContext? Elevation = null,
     IFullscreenService? Fullscreen = null,
     IAppUpdateService? AppUpdate = null,
-    SystemCommandRunner? Commands = null);
+    SystemCommandRunner? Commands = null,
+    CheckSettingsService? CheckSettings = null);

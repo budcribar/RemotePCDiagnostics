@@ -9,7 +9,7 @@ Reuse existing `data-testid` selectors for buttons where they already identify t
 | Proposed page ID | Existing selectors to keep | Add or clarify |
 | --- | --- | --- |
 | `dashboard` | `dashboard-title`, `dashboard-runall`, `dashboard-checks-stop`, `dashboard-card-osquery` | Stable IDs for summary targets and exact freshness metadata on each result. Distinguish the check suite from the short and extended stress actions. |
-| `checks` | `checks-title`, `checks-row-{slug}`, `checks-select-{slug}`, `checks-detail`, `checks-run-one`, `checks-run-{group}` | Put the selected check ID on the detail panel and its run action. Publish selected check IDs for batch actions. Keep details selection distinct from the Include checkbox. |
+| `checks` | `checks-title`, `checks-row-{slug}`, `checks-select-{slug}`, `checks-detail`, `checks-run-one`, `checks-run-{group}`, `checks-settings-toggle`, `check-enable-{checkId}`, `checks-enable-all`, `checks-disable-all` | Put the selected check ID on the detail panel and its run action. Publish selected check IDs for batch actions. Keep details selection distinct from the Include checkbox. `check-enable-{checkId}` turns one diagnostic check on or off; checkId is the id `list_checks` returns. |
 | `stress` | Shared Checks selectors plus `checks-mode-quick` and `checks-mode-extended` | Give this route its own marker despite the shared component. Expose the selected mode, test scope, phase, and terminal status per test. |
 | `interactive` | `interactive-run-selected`, `interactive-stop`, device-specific cancel and outcome IDs | Identify keyboard, display, webcam, and each audio direction by stable test ID. Expose waiting for a person, active device, layout selection, and whether an outcome was measured or entered by a person. |
 | `security-audit` | `audit-title`, `audit-start`, `audit-cancel`, `audit-status`, `audit-row-{id}`, `audit-drawer-close` | Identify baseline, active filters, result provenance, and current finding. Keep the page recognizable when the audit is unavailable. |
@@ -37,6 +37,7 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | checks | 1 | Same, including `checks-list-data`, `area-report-data`, generic `run-check`/`cancel-check` markers, fix and service action metadata |
 | checks | 2 | Storage bytes: `total-storage-bytes`, `free-storage-bytes` and `used-storage-bytes` under `drive-health-counts`, and the new `disk-space-counts` block. The Drive health report gains a `capacity` card that the drive counts leave out. A finished Large files & folders or Duplicate files scan shows the generic report (`area-status`, cards, drawers and their fix buttons) like any other check; only DISM and SFC keep the scan output panel with `checks-scan-fixes` |
 | checks | 3 | Fixes: `fix-data` (the running fix and the last result) on every check page, `remediation-running` with `remediation-working` and `remediation-stop` while a fix runs, `remediation-busy` on a second fix, and the `pending-updates` and `pending-driver-updates` cards with an `InstallUpdate` fix per update |
+| checks | 4 | Per-check enable checkboxes `check-enable-{checkId}` (`checkId` is the id `list_checks` returns, such as `check-enable-Osquery`). Each checkbox has `data-check-id`, `data-enabled` (`true` or `false`) and `data-available` (`true`). They sit in `checks-settings`; `checks-settings-toggle` opens that panel (`aria-expanded`, and the `<details>` `open` state is the one both mirrors render). `checks-enable-all` and `checks-disable-all` turn every available check on or off. `checks-report-data` lists every diagnostic check, with `available`, `enabled` and `reason` when the check is hidden. A hidden check has no checkbox |
 | stress | 1 | Same, including `stress-data` |
 | interactive | 1 | Same, including `interactive-data` with `reportIf` hints |
 | security-audit | 1 | Same, including `audit-report-data` |
@@ -58,6 +59,28 @@ The Checks page renders one hidden `[data-testid="checks-list-data"]` element li
 While a check runs, the detail header keeps `data-run-id` for the whole run, including while a scan reports its percent or a stress test its live readings. Builds up to 1.2.0-ci.701 dropped it after the first live update: there a header with `data-run-state="running"` and no `data-run-id` is still the run that was started.
 
 Run and cancel controls are marked generically: `[data-action="run-check"][data-check-id]` (the detail panel's `checks-run-one`, a check's own Start such as the NPU test's, and a card's suggested next check such as `card-run-check-graphics`, which runs `GpuStress`; `area-report-data` lists it as the card's `runCheck`) and `[data-action="cancel-check"][data-check-id]` (`checks-cancel-scan`, and the NPU test's Cancel). A disabled `checks-run-one` has the tooltip "Unavailable while other checks are running". While DISM or SFC runs, `checks-run-one` on the other integrity scan is disabled and carries `data-blocked-by` with the running scan's check ID.
+
+## Which checks run (`checks-report-data`)
+
+From contract 4, the Checks page (`data-rpcd-page="checks"`) renders one hidden `[data-testid="checks-report-data"]` element. It is on the page for a view-only mirror and a controlling mirror. `data-report` holds schema 1 JSON:
+
+```json
+{
+  "schema": 1,
+  "checks": [
+    { "id": "Osquery", "title": "Hardware inventory", "category": "Hardware", "available": true, "enabled": true },
+    { "id": "DriveHealth", "title": "Drive health & free space", "category": "Storage", "available": false, "enabled": true, "reason": "No drive found" }
+  ]
+}
+```
+
+`checks` is every diagnostic check in catalog order, the same ids `list_checks` returns (`id` on `checks-list-data`), plus a check hidden because this PC lacks the hardware it measures. `category` is the English group name (Hardware, Storage, Windows, and the same names the catalog uses; an unknown group is Other). `enabled` is the saved value, including a check that was turned on before this PC lost the hardware. `reason` is present only when `available` is false.
+
+`available: true` means the checkbox `check-enable-{id}` (`check-enable-Osquery`, and the same form for every other check) can turn that check on or off. The checkbox also carries `data-check-id` (the check id), `data-enabled` (`true` or `false`) and `data-available` (`true`). `available: false` means the page hides that check: `reason` says so, and there is no checkbox to click. A hidden check stays out of the enable checkboxes even when `enabled` is still true from an earlier save.
+
+The checkboxes are inside the Which checks run panel. When `checks-settings-toggle` has `aria-expanded="false"`, click it and wait until `aria-expanded` is `true` (the panel's open state is rendered for both mirrors, the same way a start button is). Then click `check-enable-{id}`. That click saves the enabled set through the same update the checkbox uses. Wait until that row's `enabled` matches what was asked. A second click sets the opposite value, so leave the checkbox alone while the copy still shows the previous value. `checks-enable-all` and `checks-disable-all` do the same for every available check and leave hidden checks as they were. While a check, a group run or a stress test is running the checkbox and the bulk buttons are disabled and the saved set stays as it was. A click changes the set when that mirror is in control.
+
+The saved set is per PC (the protected state file `check-settings.json`, kept by the Agent the same way benchmark settings are). A check that is not turned off is enabled, including a check added after the file was saved. Run all, the service workflow, and any run started through `RunAsync` (a detail-panel Run, `run-check`, Run with dependencies, the dashboard's Run all, and the quick checks before a stress suite) record a turned-off check as Skipped and do not run it. The Checks row says Skipped, not failed. Stress tests, interactive tests and the security audit are not in this set.
 
 ## Full report copy (`area-report-data`)
 

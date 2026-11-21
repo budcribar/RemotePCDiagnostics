@@ -1,5 +1,6 @@
 @page "/"
 @page "/dashboard"
+@using RemotePCDiagnostics.Core.Checks
 @using RemotePCDiagnostics.Core.Osquery
 @using RemotePCDiagnostics.Core.Sensors
 @inherits StoreAwareComponent
@@ -27,7 +28,7 @@
     var activeCheck = checkItems.FirstOrDefault(c => c.Status == DiagnosticStatus.Running);
     var checksNotRunCount = nonCardChecks.Count(m => Store.Get(m.Name).Status == DiagnosticStatus.NotRun);
     var stressBusy = suiteBusy || Diagnostics.IsAnyStressRunning;
-    var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled); }), suite);
+    var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled, CheckEnableRules.IsTurnedOff(r)); }), suite);
     var last = nonCardChecks.Select(m => Store.Get(m.Name)).Where(r => r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running)).Select(r => (DateTimeOffset?)r.Timestamp).Max();
     var problemRanks = summary.Problems.ToDictionary(p => p.Name, p => p.IsError ? 0 : 1, StringComparer.OrdinalIgnoreCase);
     if (_cardRanks is null || (!checking && !stressBusy && !all.Any(r => r.Status == DiagnosticStatus.Running)))

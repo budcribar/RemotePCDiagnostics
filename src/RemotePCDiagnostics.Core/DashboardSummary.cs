@@ -1,7 +1,7 @@
 namespace RemotePCDiagnostics.Core;
 
 /// <summary>One module as seen by the Dashboard banner.</summary>
-public sealed record BannerModule(string Name, string DisplayName, bool OnDemand, bool IsStress, DiagnosticStatus Status, string? Message = null, bool Cancelled = false);
+public sealed record BannerModule(string Name, string DisplayName, bool OnDemand, bool IsStress, DiagnosticStatus Status, string? Message = null, bool Cancelled = false, bool Skipped = false);
 
 /// <summary>A module that needs a look, in the banner title.</summary>
 public sealed record BannerProblem(string Name, string DisplayName, bool IsError);
@@ -59,7 +59,7 @@ public sealed class DashboardSummary
         var list = modules.ToList();
         var problems = list
             .Select((m, i) => (m, i))
-            .Where(x => x.m.Status is DiagnosticStatus.Warning or DiagnosticStatus.Error && !IsCancelled(x.m))
+            .Where(x => x.m.Status is DiagnosticStatus.Warning or DiagnosticStatus.Error && !IsCancelled(x.m) && !x.m.Skipped)
             .OrderBy(x => x.m.Status == DiagnosticStatus.Error ? 0 : 1).ThenBy(x => x.i)
             .Select(x => new BannerProblem(x.m.Name, x.m.DisplayName, x.m.Status == DiagnosticStatus.Error))
             .ToList();
