@@ -61,12 +61,21 @@ public sealed class AgentSessionOptions
     /// Relay pushed a new RPCD release version hint (stable, prerelease). Must not throw.
     /// </summary>
     public Action<string?, string?>? ReleaseAnnounced { get; init; }
+
+    /// <summary>
+    /// Install an official RPCD release. The callback reports progress, including the terminal snapshot.
+    /// Null when this process has no updater: the hub answers with a failed progress and installs nothing.
+    /// </summary>
+    public Func<UpdateRpcdCommand, Func<UpdateRpcdProgress, CancellationToken, Task>, CancellationToken, Task>? UpdateRpcd { get; init; }
+
+    /// <summary>The latest update progress, or the one named by request id. Null when this process has no updater.</summary>
+    public Func<string, UpdateRpcdProgress?>? ReadUpdateRpcd { get; init; }
 }
 
 /// <summary>
 /// Production Windows implementation of <see cref="IAgentPlatform"/> backed by <see cref="Win32Session"/> and <see cref="AgentPaths"/>.
 /// </summary>
-internal sealed class WindowsAgentPlatform(string? configuredServer = null, Action<string>? log = null) : IAgentPlatform, IDisposable
+internal sealed class WindowsAgentPlatform(string? configuredServer = null, Action<string>? log = null, RpcdRemoteUpdater? updater = null) : IAgentPlatform, IDisposable
 {
     /// <summary>The agent log line format (<c>RemotePCDiagnostics.Agent.log</c>), so the session pipe's lines land next to the agent's.</summary>
     private void Log(string message) => log?.Invoke($"{DateTimeOffset.Now:O} [agent] {message}");
@@ -189,6 +198,7 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             changeJournal: () => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(RemotePCDiagnostics.Core.Changes.FileChangeJournal.DefaultPath(), pipeLog),
             stateFolder: RemotePCDiagnostics.Core.ProtectedState.Folder(),
             machineSetup: AgentMachineSetup.ForService(pipeLog));
+        updater?.Bind(serverOptions);
 
         _ = Task.Run(async () =>
         {
@@ -458,6 +468,14 @@ public sealed class AgentHubWorker(
                                 command.ReleaseAvailable.PrereleaseVersion);
                         }
                         catch { }
+                        break;
+
+                    case HubCommand.BodyOneofCase.UpdateRpcd:
+                        _ = HandleUpdateRpcdAsync(command.UpdateRpcd, WriteMessageAsync, token);
+                        break;
+
+                    case HubCommand.BodyOneofCase.UpdateRpcdStatus:
+                        _ = HandleUpdateRpcdStatusAsync(command.UpdateRpcdStatus, WriteMessageAsync, token);
                         break;
                 }
             }
@@ -899,6 +917,69 @@ public sealed class AgentHubWorker(
                 $"Launch failed: {ex.Message}",
                 0,
                 streamCts.Token).ConfigureAwait(false);
+        }
+    }
+
+    private async Task HandleUpdateRpcdAsync(
+        UpdateRpcdCommand command,
+        Func<AgentMessage, CancellationToken, Task> writeAsync,
+        CancellationToken ct)
+    {
+        try
+        {
+            if (_options.UpdateRpcd is null)
+            {
+                await writeAsync(new AgentMessage
+                {
+                    UpdateRpcd = new UpdateRpcdProgress
+                    {
+                        RequestId = command.RequestId ?? "",
+                        Stage = "failed",
+                        Terminal = true,
+                        Error = "This agent cannot install RPCD updates.",
+                        Detail = "This agent cannot install RPCD updates.",
+                        Channel = command.Channel ?? "",
+                    },
+                }, ct).ConfigureAwait(false);
+                return;
+            }
+
+            await _options.UpdateRpcd(
+                command,
+                (progress, reportCt) => writeAsync(new AgentMessage { UpdateRpcd = progress }, reportCt),
+                ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log($"[rpcd-update] {ex.Message}");
+        }
+    }
+
+    private async Task HandleUpdateRpcdStatusAsync(
+        UpdateRpcdStatusCommand command,
+        Func<AgentMessage, CancellationToken, Task> writeAsync,
+        CancellationToken ct)
+    {
+        try
+        {
+            var progress = _options.ReadUpdateRpcd?.Invoke(command.RequestId ?? "")
+                ?? new UpdateRpcdProgress
+                {
+                    RequestId = command.RequestId ?? "",
+                    Stage = "idle",
+                    Detail = "No RPCD update has been requested.",
+                };
+            await writeAsync(new AgentMessage { UpdateRpcd = progress }, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log($"[rpcd-update] {ex.Message}");
         }
     }
 

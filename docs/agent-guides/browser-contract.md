@@ -106,6 +106,17 @@ Every page renders `[data-testid="activity-data"]` (it sits in the layout, outsi
 
 An agent that is handed control reads this first. When `busy` is true it asks the person whether to stop what is running before it starts anything; it never cancels on its own.
 
+## Remote update (`update-rpcd-data`)
+
+The layout also renders a hidden `[data-testid="update-rpcd-panel"]` (it is not part of the visible page). It is how a browser agent in an authorized session asks this PC to install an official RPCD release. The fleet agent does the download and the install. See [update-rpcd.md](../update-rpcd.md).
+
+- `update-rpcd-channel`: `stable` or `prerelease`.
+- `update-rpcd-version`: optional, such as `1.2.0-ci.996.1`. Empty means the current release on that channel.
+- `update-rpcd-approved`: must be checked. Leaving it unchecked refuses the update.
+- `update-rpcd-approved-by`: an audit label only. It is not approval.
+- `update-rpcd-start`: starts the update. Nothing is installed when a check, fix, service workflow, stress test, or benchmark is running.
+- `update-rpcd-data`: schema 1 JSON of the polled status (`stage`, `detail`, `percent`, `oldVersion`, `newVersion`, `terminal`, `error`, `requestId`). Poll it until `terminal` is true. After the agent relaunches the app, read it again for the old and new versions.
+
 ## App faults (`app-fault-data`)
 
 Every page renders `[data-testid="app-fault-data"]` (it sits in the layout, outside the page) with schema 1 JSON: `seq`, the number of faults the app has recorded so far, and `last` (`seq`, `page`, `type`, `message`, `at`) for the latest one, absent when there has been none. A fault is a page that threw while it drew or handled a click. `seq` only grows.

@@ -152,6 +152,44 @@ internal static class AgentSelfUpdater
         }
     }
 
+    /// <summary>Starts a verified Setup and waits for it. Returns the process exit code, or -1 when Setup did not start.</summary>
+    internal static async Task<int> StartAndWaitAsync(
+        string installerPath,
+        string arguments,
+        string stagingDir,
+        Action<string>? log,
+        CancellationToken ct)
+    {
+        Process? proc;
+        try
+        {
+            proc = StartInstaller(installerPath, arguments, stagingDir, new CallbackLogger(log), out var started);
+            if (!started || proc is null)
+                return -1;
+        }
+        catch (Exception ex)
+        {
+            log?.Invoke($"[rpcd-update] Failed to start the installer: {ex.Message}");
+            return -1;
+        }
+
+        using (proc)
+        {
+            await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+            return proc.ExitCode;
+        }
+    }
+
+    internal static void PrepareStaging(string stagingDir) => PrepareSecuredStagingDirectory(stagingDir);
+
+    private sealed class CallbackLogger(Action<string>? log) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => log is not null;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            log?.Invoke(formatter(state, exception));
+    }
+
     /// <summary>
     /// Starts Setup so that it outlives this process. In the elevated helper, this process is in a kill-on-close job that the
     /// Host holds, and Setup closes the Host: a Setup started inside that job is ended with it, before it installs anything,

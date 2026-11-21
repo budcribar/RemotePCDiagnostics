@@ -123,6 +123,11 @@ public sealed class InstallerConfigTests
         Assert.Contains("Exec(AgentExe, 'uninstall'", iss);
         Assert.Contains("delete RemotePCDiagnosticsAgent", iss);
         Assert.Contains(@"agent.json", iss);
+
+        // A remote update reinstalls the agent service without replacing enrollment, consent, or lifetime.
+        Assert.Contains("PreserveAgentSettings", iss);
+        Assert.Contains("CmdLineParamExists('/PRESERVEAGENT')", iss);
+        Assert.Contains("Parameters: \"install\"; StatusMsg: \"Updating Remote PC Diagnostics Agent service...\"; Flags: runhidden waituntilterminated; Check: PreserveAgentSettings", iss);
     }
 
     [Fact]
