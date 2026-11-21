@@ -274,7 +274,9 @@ public static class AppUpdateInstaller
         bool verySilent,
         string? agentMsiPath,
         IReadOnlyList<string>? relaunchArguments,
-        bool preserveAgentSettings = false)
+        bool preserveAgentSettings = false,
+        string? logPath = null,
+        bool forceCloseApplications = false)
     {
         var parts = new List<string>
         {
@@ -283,12 +285,18 @@ public static class AppUpdateInstaller
             "/CLOSEAPPLICATIONS",
             "/NORESTART",
         };
+        // Silent Setup otherwise asks a locked file to close and, with /SUPPRESSMSGBOXES, answers Abort.
+        if (forceCloseApplications)
+            parts.Add("/FORCECLOSEAPPLICATIONS");
         if (preserveAgentSettings)
             parts.Add($"/{SetupPreserveAgentParam}");
         if (!string.IsNullOrWhiteSpace(agentMsiPath) && !agentMsiPath.Contains('"'))
             parts.Add($"\"/{SetupAgentMsiParam}={agentMsiPath}\"");
         if (relaunchArguments is { Count: > 0 } && relaunchArguments.All(a => !a.Contains('"')))
             parts.Add($"\"/{SetupRelaunchArgsParam}={string.Join(' ', relaunchArguments)}\"");
+        // Always last so a path with spaces stays one argument. A quote in the path is refused: /LOG would make Setup exit 1.
+        if (RpcdSetupLog.LogSwitch(logPath) is { } logSwitch)
+            parts.Add(logSwitch);
         return string.Join(' ', parts);
     }
 

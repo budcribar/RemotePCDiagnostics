@@ -182,7 +182,7 @@ The layout also renders a hidden `[data-testid="update-rpcd-panel"]` (it is not 
 - `update-rpcd-approved`: must be checked. Leaving it unchecked refuses the update.
 - `update-rpcd-approved-by`: an audit label only. It is not approval.
 - `update-rpcd-start`: starts the update. Nothing is installed when a check, fix, stress test, or benchmark is running, or when the service workflow is in an active stage. A parked Review does not block it. A refusal names that stage.
-- `update-rpcd-data`: schema 1 JSON of the polled status (`stage`, `detail`, `percent`, `oldVersion`, `newVersion`, `terminal`, `error`, `requestId`). Poll it until `terminal` is true. After the agent relaunches the app, read it again for the old and new versions.
+- `update-rpcd-data`: schema 1 JSON of the polled status (`stage`, `detail`, `percent`, `oldVersion`, `newVersion`, `terminal`, `error`, `requestId`, and on failure `installerExitCode` and `installerLog`). Poll it until `terminal` is true. After the agent relaunches the app, read it again for the old and new versions. `installerLog` is the masked tail of Setup's log.
 
 ## App faults (`app-fault-data`)
 

@@ -243,6 +243,9 @@ public class RpcdRemoteUpdateTests
         Assert.Equal(1, installer.Calls);
         Assert.Contains("/VERYSILENT", installer.Arguments);
         Assert.Contains("/PRESERVEAGENT", installer.Arguments);
+        Assert.Contains("/FORCECLOSEAPPLICATIONS", installer.Arguments);
+        Assert.Contains("/LOG=\"", installer.Arguments);
+        Assert.Contains(RpcdSetupLog.FileName, installer.Arguments);
         Assert.DoesNotContain("AGENTMSI", installer.Arguments);
         Assert.Contains("/RELAUNCHARGS=", installer.Arguments);
 
@@ -252,6 +255,8 @@ public class RpcdRemoteUpdateTests
         Assert.Equal(OldVersion, status.OldVersion);
         Assert.Equal(NewVersion, status.NewVersion);
         Assert.Null(status.Error);
+        Assert.Null(status.InstallerExitCode);
+        Assert.Null(status.InstallerLog);
     }
 
     [Fact]
@@ -262,8 +267,48 @@ public class RpcdRemoteUpdateTests
         var status = session.Current(null, OldVersion, DateTimeOffset.UtcNow);
         Assert.Equal(RpcdUpdateStages.Failed, status!.Stage);
         Assert.Contains("exited with code 5", status.Error);
+        Assert.Contains(InnoSetupExitCodes.Describe(5), status.Error);
         Assert.Contains(OldVersion, status.Error);
         Assert.Equal(OldVersion, status.OldVersion);
+        Assert.Equal(5, status.InstallerExitCode);
+    }
+
+    [Fact]
+    public async Task Installer_failure_keeps_the_masked_log_tail_and_the_exit_code()
+    {
+        var lines = new string[RpcdSetupLog.TailLines + 25];
+        for (var i = 0; i < lines.Length; i++)
+            lines[i] = $"line {i}";
+        lines[^1] = @"User profile C:\Users\budcribar\AppData\Local\Temp\is-1.tmp and shop@example.com --key=super-secret";
+        var installer = new Installer { ExitCode = 1, Log = string.Join('\n', lines) };
+
+        var session = await RunAsync(OldVersion, NewVersion, null, installer, readBack: OldVersion);
+        var status = session.Current(null, OldVersion, DateTimeOffset.UtcNow);
+
+        Assert.Equal(1, status!.InstallerExitCode);
+        Assert.Contains("failed to initialize", status.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(status.InstallerLog);
+        Assert.Equal("line 25", status.InstallerLog.Split('\n')[0]);
+        Assert.Contains(@"C:\Users\<user>\AppData", status.InstallerLog);
+        Assert.DoesNotContain("budcribar", status.InstallerLog);
+        Assert.Contains("<email>", status.InstallerLog);
+        Assert.DoesNotContain("shop@example.com", status.InstallerLog);
+        Assert.Contains("--key=<redacted>", status.InstallerLog);
+        Assert.DoesNotContain("super-secret", status.InstallerLog);
+
+        var roundTrip = RpcdUpdateStatus.Parse(status.ToJson());
+        Assert.Equal(status.InstallerExitCode, roundTrip!.InstallerExitCode);
+        Assert.Equal(status.InstallerLog, roundTrip.InstallerLog);
+    }
+
+    [Fact]
+    public async Task A_zero_exit_that_does_not_change_the_version_keeps_the_log()
+    {
+        var installer = new Installer { ExitCode = 0, Log = "Setup finished without copying." };
+        var session = await RunAsync(OldVersion, NewVersion, null, installer, readBack: OldVersion);
+        var status = session.Current(null, OldVersion, DateTimeOffset.UtcNow);
+        Assert.Equal(0, status!.InstallerExitCode);
+        Assert.Equal("Setup finished without copying.", status.InstallerLog);
     }
 
     [Fact]
@@ -308,6 +353,52 @@ public class RpcdRemoteUpdateTests
         var done = RpcdGitHubRelease.Reconcile(status, OldVersion, DateTimeOffset.UtcNow, RpcdUpdateSession.InstallGiveUp);
         Assert.Equal(RpcdUpdateStages.Failed, done.Stage);
         Assert.Contains("still " + OldVersion, done.Error);
+    }
+
+    [Theory]
+    [InlineData(0, "finished")]
+    [InlineData(1, "initialize")]
+    [InlineData(2, "cancelled before")]
+    [InlineData(3, "memory")]
+    [InlineData(4, "copying")]
+    [InlineData(5, "Abort")]
+    [InlineData(6, "debugger")]
+    [InlineData(7, "Preparing to Install")]
+    [InlineData(8, "/NORESTART")]
+    [InlineData(-1, "did not start")]
+    public void Inno_exit_codes_map_to_a_sentence(int code, string phrase)
+    {
+        var text = InnoSetupExitCodes.Describe(code);
+        Assert.Contains(phrase, text, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEqual(InnoSetupExitCodes.Describe(99), text);
+    }
+
+    [Fact]
+    public void Setup_log_switch_quotes_the_path_and_refuses_a_quote_inside_it()
+    {
+        Assert.Equal(@"/LOG=""C:\ProgramData\RemotePCDiagnostics\Updates\rpcd-setup.log""",
+            RpcdSetupLog.LogSwitch(@"C:\ProgramData\RemotePCDiagnostics\Updates\rpcd-setup.log"));
+        Assert.Null(RpcdSetupLog.LogSwitch(@"C:\ProgramData\Remote""PC\rpcd-setup.log"));
+        Assert.Null(RpcdSetupLog.LogSwitch(null));
+    }
+
+    [Fact]
+    public void Only_the_agent_service_closes_the_host_before_setup()
+    {
+        Assert.True(RpcdSetupLog.CanCloseHostBeforeSetup(0));
+        Assert.False(RpcdSetupLog.CanCloseHostBeforeSetup(1));
+        Assert.False(RpcdSetupLog.CanCloseHostBeforeSetup(-1));
+    }
+
+    [Fact]
+    public void Log_tail_masks_a_long_path_prefix_and_keeps_the_end()
+    {
+        var text = new string('x', RpcdSetupLog.MaxChars + 50) + "\n" + @"\\?\C:\Users\Ada Lovelace\Desktop\notes.txt";
+        var tail = RpcdSetupLog.Tail(text);
+        Assert.NotNull(tail);
+        Assert.True(tail.Length <= RpcdSetupLog.MaxChars);
+        Assert.Contains(@"C:\Users\<user>\Desktop\notes.txt", tail);
+        Assert.DoesNotContain("Ada Lovelace", tail);
     }
 
     [Fact]
@@ -433,18 +524,21 @@ public class RpcdRemoteUpdateTests
 
         var session = new RpcdUpdateSession();
         var now = DateTimeOffset.UtcNow;
+        var staging = directory ?? TempDir();
         Assert.True(session.TryBegin(new RpcdUpdateRequest("prerelease", explicitVersion, true), false, true, now, out _));
         await session.ExecuteAsync(new RpcdUpdateRequest("prerelease", explicitVersion, true), new RpcdUpdateRun
         {
             Http = http,
             InstalledVersion = installed,
             ReadInstalledVersion = () => readBack,
-            StagingDirectory = directory ?? TempDir(),
+            StagingDirectory = staging,
             RelaunchArguments = ["-u=https://server.example.com:34544", "-i=748279c7-4309-452c-8b30-e02ec52e498f", "--restarted"],
             RunInstaller = (install, _) =>
             {
                 installer.Calls++;
                 installer.Arguments = install.Arguments;
+                if (installer.Log is not null)
+                    File.WriteAllText(Path.Combine(staging, RpcdSetupLog.FileName), installer.Log);
                 return Task.FromResult(installer.ExitCode);
             },
             UtcNow = now,
@@ -480,6 +574,7 @@ public class RpcdRemoteUpdateTests
         public int Calls { get; set; }
         public int ExitCode { get; set; }
         public string? Arguments { get; set; }
+        public string? Log { get; set; }
     }
 
     private sealed class Stub(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
