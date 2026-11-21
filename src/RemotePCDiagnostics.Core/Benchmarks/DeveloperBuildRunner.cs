@@ -524,7 +524,7 @@ public sealed class DeveloperBuildRunner(
         sw.Stop();
         var seconds = Math.Max(0.001, Math.Round(sw.Elapsed.TotalSeconds, 3));
         if (r.ExitCode == 0 && !r.TimedOut) return (true, seconds, null);
-        return (false, seconds, new CommandFailure(r.ExitCode, r.TimedOut, r.StdOut, r.StdErr));
+        return (false, seconds, new CommandFailure(r.ExitCode, r.TimedOut, r.StdOut, r.StdErr, workingDirectory));
     }
 
     /// <summary>
@@ -617,12 +617,12 @@ public sealed class DeveloperBuildRunner(
     /// Failure text for the Benchmark page and the Admin export: the process exit code (or a timeout)
     /// plus the first compiler/restore error lines, or the tail of the output when it named no error.
     /// </summary>
-    public static string FormatToolFailure(string what, int exitCode, bool timedOut, string? stdOut, string? stdErr)
+    public static string FormatToolFailure(string what, int exitCode, bool timedOut, string? stdOut, string? stdErr, string? workDir = null)
     {
         var how = timedOut
             ? "timed out"
             : "exit " + exitCode.ToString(CultureInfo.InvariantCulture);
-        var detail = SummarizeToolOutput(stdOut, stdErr);
+        var detail = ScrubPaths(SummarizeToolOutput(stdOut, stdErr), workDir, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
         return detail is null
             ? $"Could not run: {what} failed ({how})."
             : $"Could not run: {what} failed ({how}). {detail}";
@@ -669,10 +669,52 @@ public sealed class DeveloperBuildRunner(
         return trimmed.Length <= max ? trimmed : trimmed[..(max - 1)].TrimEnd() + "…";
     }
 
-    private readonly record struct CommandFailure(int ExitCode, bool TimedOut, string? StdOut, string? StdErr)
+    /// <summary>
+    /// Keeps the Windows user name out of the note shown on the page and sent in the Admin export.
+    /// dotnet error lines name full paths such as <c>C:\Users\name\AppData\Local\Temp\rpcd-build-…\BenchApp\Program.cs</c>:
+    /// the build folder becomes <c>&lt;build folder&gt;</c> and the rest of the profile becomes <c>%USERPROFILE%</c>.
+    /// </summary>
+    public static string? ScrubPaths(string? text, string? workDir, string? userProfile)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        foreach (var (path, label) in new[] { (workDir, "<build folder>"), (userProfile, "%USERPROFILE%") })
+        {
+            var trimmed = path?.TrimEnd('\\', '/');
+            if (string.IsNullOrEmpty(trimmed) || trimmed.Length < 3) continue;
+            text = text.Replace(trimmed, label, comparison);
+        }
+        return MaskUsersFolderNames(text);
+    }
+
+    /// <summary>
+    /// Replaces the folder after any <c>\Users\</c> with <c>&lt;user&gt;</c>. Catches profile paths the exact
+    /// replacement misses, such as the 8.3 short form (<c>C:\Users\BUDCR~1\…</c>) that the temp folder can use.
+    /// </summary>
+    private static string MaskUsersFolderNames(string text)
+    {
+        const string marker = "\\Users\\";
+        var sb = new StringBuilder(text.Length);
+        var i = 0;
+        while (i < text.Length)
+        {
+            var hit = text.IndexOf(marker, i, StringComparison.OrdinalIgnoreCase);
+            if (hit < 0) { sb.Append(text, i, text.Length - i); break; }
+            var nameStart = hit + marker.Length;
+            var nameEnd = nameStart;
+            while (nameEnd < text.Length && text[nameEnd] is not ('\\' or '/' or '\'' or '"' or ':' or '|'))
+                nameEnd++;
+            sb.Append(text, i, nameStart - i);
+            if (nameEnd > nameStart) sb.Append("<user>");
+            i = nameEnd;
+        }
+        return sb.ToString();
+    }
+
+    private readonly record struct CommandFailure(int ExitCode, bool TimedOut, string? StdOut, string? StdErr, string? WorkDir = null)
     {
         public static CommandFailure Empty { get; } = new(-1, false, null, null);
-        public string Format(string what) => FormatToolFailure(what, ExitCode, TimedOut, StdOut, StdErr);
+        public string Format(string what) => FormatToolFailure(what, ExitCode, TimedOut, StdOut, StdErr, WorkDir);
     }
 
     private DeveloperBuildResult FailCommand(DeveloperLanguage lang, string what, CommandFailure? failure, DetectedToolchain? tc, string sha256, double? restoreSecs)

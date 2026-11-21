@@ -351,6 +351,47 @@ public sealed class DeveloperBenchmarkTests : IDisposable
     }
 
     [Fact]
+    public void ScrubPaths_HidesTheBuildFolder_TheProfile_AndShortProfileNames()
+    {
+        var profile = @"C:\Users\Jane Doe";
+        var work = profile + @"\AppData\Local\Temp\rpcd-build-abc";
+        var text = work + @"\BenchApp\Program.cs(3,1): error CS0103 | "
+            + profile + @"\.nuget\packages\x : error NU1101 | "
+            + @"C:\Users\JANEDO~1\AppData\Local\Temp\rpcd-build-abc\BenchApp.csproj : error NETSDK1004";
+
+        var scrubbed = DeveloperBuildRunner.ScrubPaths(text, work, profile)!;
+
+        Assert.DoesNotContain("Jane", scrubbed, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("JANEDO~1", scrubbed);
+        Assert.Contains(@"<build folder>\BenchApp\Program.cs(3,1): error CS0103", scrubbed);
+        Assert.Contains(@"%USERPROFILE%\.nuget\packages\x : error NU1101", scrubbed);
+        Assert.Contains(@"C:\Users\<user>\AppData", scrubbed);
+        Assert.Null(DeveloperBuildRunner.ScrubPaths(null, work, profile));
+    }
+
+    [Fact]
+    public async Task CSharpCleanBuild_FailureNote_DoesNotNameTheBuildFolder()
+    {
+        var env = new FakeDevEnv { Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "9.0.200", 9)] };
+        string? buildFolder = null;
+        var launcher = new FakeLauncher((_, args) =>
+        {
+            buildFolder ??= Directory.GetParent(Path.GetDirectoryName(args[1])!)!.FullName;
+            return args[0] == "restore"
+                ? new(0, "restore ok", "")
+                : new(1, "", Path.Combine(buildFolder, "BenchApp", "Program.cs") + "(3,1): error CS0103: The name 'x' does not exist\r\n");
+        });
+        var runner = new DeveloperBuildRunner(env, launcher, tempRootOverride: _root);
+        var res = await runner.RunCSharpCleanBuildAsync(new DeveloperBuildOptions(ColdRepeats: 1, WarmWarmups: 0, WarmRepeats: 1, AllowHyperfine: false));
+
+        Assert.False(res.Succeeded);
+        Assert.NotNull(buildFolder);
+        Assert.DoesNotContain(buildFolder!, res.Note);
+        Assert.Contains("<build folder>", res.Note);
+        Assert.Contains("error CS0103", res.Note);
+    }
+
+    [Fact]
     public async Task CSharpCleanBuild_KeepsNuGetAssets_SoNoRestoreBuildSucceeds()
     {
         var tempRoot = Path.Combine(_root, "assets");
@@ -470,13 +511,17 @@ public sealed class DeveloperBenchmarkTests : IDisposable
     [Fact]
     public async Task CSharpPin_RealSdk_BuildsAfterCleanKeepsRestoreAssets()
     {
+        // A missing or too-old SDK shows as Skipped, not Passed, so a run that never built anything is visible.
         var dotnet = FindDotnet();
-        if (dotnet is null) return;
+        if (dotnet is null)
+            Assert.Skip("No dotnet SDK found on PATH, DOTNET_HOST_PATH or DOTNET_ROOT; the real clean-build test did not run.");
 
         IProcessLauncher launcher = new SystemProcessLauncher();
         var version = await launcher.RunAsync(dotnet, ["--version"], TimeSpan.FromSeconds(20), CancellationToken.None, _root);
+        Assert.True(version.ExitCode == 0, DeveloperBuildRunner.FormatToolFailure("dotnet --version", version.ExitCode, version.TimedOut, version.StdOut, version.StdErr));
         var major = DeveloperScoring.ParseMajorVersion(version.StdOut);
-        if (version.ExitCode != 0 || DeveloperCSharpPin.TargetFrameworkForSdk(major) is null) return;
+        if (DeveloperCSharpPin.TargetFrameworkForSdk(major) is null)
+            Assert.Skip($"dotnet SDK {version.StdOut.Trim()} is older than the pin can build; the real clean-build test did not run.");
 
         var temp = Path.Combine(_root, "real-sdk");
         var (project, _) = DeveloperCSharpPin.Materialize(temp, major!.Value);
@@ -493,6 +538,9 @@ public sealed class DeveloperBenchmarkTests : IDisposable
     private static string? FindDotnet()
     {
         var name = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
+        // `dotnet test` sets DOTNET_HOST_PATH to the dotnet that launched the run, even when it is not on PATH.
+        var host = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
+        if (!string.IsNullOrWhiteSpace(host) && File.Exists(host)) return host;
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
