@@ -1,3 +1,4 @@
+using System.Text.Json;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Benchmarks;
@@ -276,6 +277,326 @@ public sealed class DeveloperBenchmarkTests : IDisposable
     }
 
     [Fact]
+    public void CSharpPin_TargetsTheInstalledSdk_AndNotANewerOrX64OnlyFramework()
+    {
+        Assert.Equal("net9.0", DeveloperCSharpPin.TargetFrameworkForSdk(9));
+        Assert.Equal("net8.0", DeveloperCSharpPin.TargetFrameworkForSdk(8));
+        Assert.Equal("net10.0", DeveloperCSharpPin.TargetFrameworkForSdk(10));
+        Assert.Equal("net11.0", DeveloperCSharpPin.TargetFrameworkForSdk(11));
+        Assert.Null(DeveloperCSharpPin.TargetFrameworkForSdk(7));
+        Assert.Null(DeveloperCSharpPin.TargetFrameworkForSdk(null));
+        Assert.Contains("6.0.428", DeveloperCSharpPin.UnsupportedSdkReason("6.0.428", 6));
+        Assert.Null(DeveloperCSharpPin.UnsupportedSdkReason("9.0.200", 9));
+
+        var (proj, _) = DeveloperCSharpPin.Materialize(Path.Combine(_root, "pin9"), 9);
+        var text = File.ReadAllText(proj);
+        Assert.Contains("<TargetFramework>net9.0</TargetFramework>", text);
+        Assert.DoesNotContain("net10.0", text);
+        Assert.DoesNotContain("RuntimeIdentifier", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("win-x64", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CleanBuildOutputs_DeletesCompilerOutputs_AndKeepsNuGetRestoreAssets()
+    {
+        var proj = Path.Combine(_root, "clean", "BenchApp");
+        var obj = Path.Combine(proj, "obj");
+        Directory.CreateDirectory(Path.Combine(obj, "Release"));
+        Directory.CreateDirectory(Path.Combine(proj, "bin", "Release"));
+        File.WriteAllText(Path.Combine(obj, "project.assets.json"), "{}");
+        File.WriteAllText(Path.Combine(obj, "project.nuget.cache"), "{}");
+        File.WriteAllText(Path.Combine(obj, "BenchApp.csproj.nuget.g.props"), "<Project />");
+        File.WriteAllText(Path.Combine(obj, "BenchApp.csproj.nuget.g.targets"), "<Project />");
+        File.WriteAllText(Path.Combine(obj, "BenchApp.csproj.nuget.dgspec.json"), "{}");
+        File.WriteAllText(Path.Combine(obj, "AssemblyInfo.cs"), "// compiler");
+        File.WriteAllText(Path.Combine(obj, "Release", "out.dll"), "dll");
+        File.WriteAllText(Path.Combine(proj, "bin", "Release", "out.dll"), "dll");
+
+        DeveloperBuildRunner.CleanBuildOutputs(Path.Combine(_root, "clean"));
+
+        Assert.True(File.Exists(Path.Combine(obj, "project.assets.json")));
+        Assert.True(File.Exists(Path.Combine(obj, "project.nuget.cache")));
+        Assert.True(File.Exists(Path.Combine(obj, "BenchApp.csproj.nuget.g.props")));
+        Assert.True(File.Exists(Path.Combine(obj, "BenchApp.csproj.nuget.g.targets")));
+        Assert.True(File.Exists(Path.Combine(obj, "BenchApp.csproj.nuget.dgspec.json")));
+        Assert.False(File.Exists(Path.Combine(obj, "AssemblyInfo.cs")));
+        Assert.False(Directory.Exists(Path.Combine(obj, "Release")));
+        Assert.False(Directory.Exists(Path.Combine(proj, "bin")));
+    }
+
+    [Fact]
+    public void CleanPrepareCommand_KeepsNuGetAssets_AndDoesNotUseBrokenInclude()
+    {
+        var cmd = DeveloperBuildRunner.CleanPrepareCommand(Path.Combine(_root, "work"));
+        Assert.Contains("project.assets.json", cmd);
+        Assert.Contains("nuget.g.props", cmd);
+        Assert.DoesNotContain("-Include bin,obj", cmd);
+    }
+
+    [Fact]
+    public void FormatToolFailure_ReportsExitCode_AndFirstErrorLines()
+    {
+        var text = DeveloperBuildRunner.FormatToolFailure("cold dotnet build", 1, timedOut: false,
+            "Build FAILED.\r\n    1 Error(s)\r\n",
+            "BenchApp.csproj : error NETSDK1004: Assets file 'project.assets.json' not found.\r\nerror CS0103: The name 'x' does not exist\r\n");
+        Assert.Contains("Could not run: cold dotnet build failed (exit 1).", text);
+        Assert.Contains("error NETSDK1004", text);
+        Assert.Contains("error CS0103", text);
+        Assert.DoesNotContain("Error(s)", text);
+
+        var timed = DeveloperBuildRunner.FormatToolFailure("cold dotnet build", -1, timedOut: true, null, null);
+        Assert.Equal("Could not run: cold dotnet build failed (timed out).", timed);
+        Assert.False(DeveloperBuildRunner.IsToolErrorLine("    1 Error(s)"));
+        Assert.True(DeveloperBuildRunner.IsToolErrorLine("error NETSDK1004: Assets file not found."));
+    }
+
+    [Fact]
+    public void ScrubPaths_HidesTheBuildFolder_TheProfile_AndShortProfileNames()
+    {
+        var profile = @"C:\Users\Jane Doe";
+        var work = profile + @"\AppData\Local\Temp\rpcd-build-abc";
+        var text = work + @"\BenchApp\Program.cs(3,1): error CS0103 | "
+            + profile + @"\.nuget\packages\x : error NU1101 | "
+            + @"C:\Users\JANEDO~1\AppData\Local\Temp\rpcd-build-abc\BenchApp.csproj : error NETSDK1004";
+
+        var scrubbed = DeveloperBuildRunner.ScrubPaths(text, work, profile)!;
+
+        Assert.DoesNotContain("Jane", scrubbed, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("JANEDO~1", scrubbed);
+        Assert.Contains(@"<build folder>\BenchApp\Program.cs(3,1): error CS0103", scrubbed);
+        Assert.Contains(@"%USERPROFILE%\.nuget\packages\x : error NU1101", scrubbed);
+        Assert.Contains(@"C:\Users\<user>\AppData", scrubbed);
+        Assert.Null(DeveloperBuildRunner.ScrubPaths(null, work, profile));
+    }
+
+    [Fact]
+    public async Task CSharpCleanBuild_FailureNote_DoesNotNameTheBuildFolder()
+    {
+        var env = new FakeDevEnv { Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "9.0.200", 9)] };
+        string? buildFolder = null;
+        var launcher = new FakeLauncher((_, args) =>
+        {
+            buildFolder ??= Directory.GetParent(Path.GetDirectoryName(args[1])!)!.FullName;
+            return args[0] == "restore"
+                ? new(0, "restore ok", "")
+                : new(1, "", Path.Combine(buildFolder, "BenchApp", "Program.cs") + "(3,1): error CS0103: The name 'x' does not exist\r\n");
+        });
+        var runner = new DeveloperBuildRunner(env, launcher, tempRootOverride: _root);
+        var res = await runner.RunCSharpCleanBuildAsync(new DeveloperBuildOptions(ColdRepeats: 1, WarmWarmups: 0, WarmRepeats: 1, AllowHyperfine: false));
+
+        Assert.False(res.Succeeded);
+        Assert.NotNull(buildFolder);
+        Assert.DoesNotContain(buildFolder!, res.Note);
+        Assert.Contains("<build folder>", res.Note);
+        Assert.Contains("error CS0103", res.Note);
+    }
+
+    [Fact]
+    public async Task CSharpCleanBuild_KeepsNuGetAssets_SoNoRestoreBuildSucceeds()
+    {
+        var tempRoot = Path.Combine(_root, "assets");
+        Directory.CreateDirectory(tempRoot);
+        string? work = null;
+        var launcher = new FakeLauncher((_, args) =>
+        {
+            var project = args[1];
+            work ??= Directory.GetParent(Path.GetDirectoryName(project)!)!.FullName;
+            if (args[0] == "restore")
+            {
+                foreach (var proj in Directory.EnumerateFiles(work, "*.csproj", SearchOption.AllDirectories))
+                    SeedRestoredProject(proj);
+                return new(0, "", "");
+            }
+
+            foreach (var proj in Directory.EnumerateFiles(work, "*.csproj", SearchOption.AllDirectories))
+            {
+                var dir = Path.GetDirectoryName(proj)!;
+                var obj = Path.Combine(dir, "obj");
+                var name = Path.GetFileName(proj);
+                if (!File.Exists(Path.Combine(obj, "project.assets.json"))
+                    || !File.Exists(Path.Combine(obj, name + ".nuget.g.props"))
+                    || !File.Exists(Path.Combine(obj, name + ".nuget.g.targets")))
+                {
+                    return new(1, "", "error NETSDK1004: Assets file 'project.assets.json' not found. Run a NuGet package restore to generate this file.");
+                }
+                if (Directory.Exists(Path.Combine(dir, "bin"))
+                    || File.Exists(Path.Combine(obj, "Release", "out.dll"))
+                    || File.Exists(Path.Combine(obj, "AssemblyInfo.cs")))
+                    return new(1, "", "error : compiler outputs were left in place");
+            }
+            return new(0, "ok", "");
+        });
+
+        var env = new FakeDevEnv { Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "9.0.200", 9)] };
+        var runner = new DeveloperBuildRunner(env, launcher, tempRootOverride: tempRoot);
+        var res = await runner.RunCSharpCleanBuildAsync(new DeveloperBuildOptions(ColdRepeats: 1, WarmWarmups: 0, WarmRepeats: 1, AllowHyperfine: false));
+
+        Assert.True(res.Succeeded, res.Note);
+    }
+
+    [Fact]
+    public async Task CSharpCleanBuild_WhenBuildFails_ReportsExitCodeAndErrorLines()
+    {
+        var env = new FakeDevEnv { Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "9.0.200", 9)] };
+        var launcher = new FakeLauncher((_, args) => args[0] == "restore"
+            ? new(0, "restore ok", "")
+            : new(1, "Build FAILED.\r\n    1 Error(s)\r\n",
+                "BenchApp.csproj : error NETSDK1004: Assets file 'obj\\project.assets.json' not found. Run a NuGet package restore to generate this file.\r\n"));
+        var runner = new DeveloperBuildRunner(env, launcher, tempRootOverride: _root);
+        var res = await runner.RunCSharpCleanBuildAsync(new DeveloperBuildOptions(ColdRepeats: 1, WarmWarmups: 0, WarmRepeats: 1, AllowHyperfine: false));
+
+        Assert.False(res.Succeeded);
+        Assert.Equal(1, res.ToolExitCode);
+        Assert.Contains("Could not run: cold dotnet build failed (exit 1).", res.Note);
+        Assert.Contains("error NETSDK1004", res.Note);
+        Assert.DoesNotContain("1 Error(s)", res.Note);
+        Assert.Equal(res.Note, res.FormatDetail());
+    }
+
+    [Fact]
+    public async Task CSharpCleanBuild_RunsDotnetInTheWritableTempFolder()
+    {
+        var tempRoot = Path.Combine(_root, "cwd-run");
+        Directory.CreateDirectory(tempRoot);
+        var launcher = new RecordingLauncher();
+        var env = new FakeDevEnv { Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "9.0.200", 9)] };
+        var runner = new DeveloperBuildRunner(env, launcher, tempRootOverride: tempRoot);
+        var res = await runner.RunCSharpCleanBuildAsync(new DeveloperBuildOptions(ColdRepeats: 1, WarmWarmups: 0, WarmRepeats: 1, AllowHyperfine: false));
+
+        Assert.True(res.Succeeded, res.Note);
+        Assert.NotEmpty(launcher.Directories);
+        Assert.All(launcher.Directories, dir =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(dir));
+            Assert.StartsWith(tempRoot, dir, StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    [Fact]
+    public async Task SystemProcessLauncher_RunsInTheRequestedDirectory()
+    {
+        var dir = Path.Combine(_root, "cwd check");
+        Directory.CreateDirectory(dir);
+        var exe = OperatingSystem.IsWindows() ? Path.Combine(Environment.SystemDirectory, "cmd.exe") : "/bin/sh";
+        // No spaces in the Windows command: ArgumentList quoting would otherwise hide cmd's redirection.
+        IReadOnlyList<string> args = OperatingSystem.IsWindows()
+            ? ["/c", "cd>cwd-ok.txt"]
+            : ["-c", "printf ok > cwd-ok.txt"];
+        IProcessLauncher launcher = new SystemProcessLauncher();
+        var result = await launcher.RunAsync(exe, args, TimeSpan.FromSeconds(15), CancellationToken.None, dir);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(File.Exists(Path.Combine(dir, "cwd-ok.txt")));
+    }
+
+    [Fact]
+    public async Task BenchmarkService_HidesCSharp_WhenSdkIsOlderThanThePin()
+    {
+        var env = new FakeDevEnv { Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "6.0.428", 6)] };
+        var svc = new BenchmarkService(new BenchmarkRunner(new DummyBenchProbes()), new InMemoryBenchmarkStore(), devRunner: new DeveloperBuildRunner(env), devEnv: env);
+        await svc.RefreshDeveloperEnvironmentAsync();
+        Assert.False(svc.IsKindAvailable(BenchmarkKind.DeveloperCSharp));
+        Assert.DoesNotContain(svc.AvailableBenchmarks, i => i.Kind == BenchmarkKind.DeveloperCSharp);
+
+        var res = await new DeveloperBuildRunner(env, new FakeLauncher((_, _) => new(0, "", "")), tempRootOverride: _root).RunCSharpCleanBuildAsync();
+        Assert.False(res.Succeeded);
+        Assert.Contains(".NET SDK 8 or newer", res.Note);
+        Assert.Contains("6.0.428", res.Note);
+
+        env.Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "9.0.200", 9)];
+        await svc.RefreshDeveloperEnvironmentAsync();
+        Assert.True(svc.IsKindAvailable(BenchmarkKind.DeveloperCSharp));
+    }
+
+    [Fact]
+    public async Task CSharpPin_RealSdk_BuildsAfterCleanKeepsRestoreAssets()
+    {
+        // A missing or too-old SDK shows as Skipped, not Passed, so a run that never built anything is visible.
+        var dotnet = FindDotnet();
+        if (dotnet is null)
+            Assert.Skip("No dotnet SDK found on PATH, DOTNET_HOST_PATH or DOTNET_ROOT; the real clean-build test did not run.");
+
+        IProcessLauncher launcher = new SystemProcessLauncher();
+        var version = await launcher.RunAsync(dotnet, ["--version"], TimeSpan.FromSeconds(20), CancellationToken.None, _root);
+        Assert.True(version.ExitCode == 0, DeveloperBuildRunner.FormatToolFailure("dotnet --version", version.ExitCode, version.TimedOut, version.StdOut, version.StdErr));
+        var major = DeveloperScoring.ParseMajorVersion(version.StdOut);
+        if (DeveloperCSharpPin.TargetFrameworkForSdk(major) is null)
+            Assert.Skip($"dotnet SDK {version.StdOut.Trim()} is older than the pin can build; the real clean-build test did not run.");
+
+        var temp = Path.Combine(_root, "real-sdk");
+        var (project, _) = DeveloperCSharpPin.Materialize(temp, major!.Value);
+        var restore = await launcher.RunAsync(dotnet, ["restore", project, "--ignore-failed-sources", "-v", "q"], TimeSpan.FromMinutes(3), CancellationToken.None, temp);
+        Assert.True(restore.ExitCode == 0, DeveloperBuildRunner.FormatToolFailure("dotnet restore", restore.ExitCode, restore.TimedOut, restore.StdOut, restore.StdErr));
+
+        DeveloperBuildRunner.CleanBuildOutputs(temp);
+        Assert.True(File.Exists(Path.Combine(temp, "BenchApp", "obj", "project.assets.json")));
+
+        var build = await launcher.RunAsync(dotnet, ["build", project, "-c", "Release", "--no-restore", "-v", "q"], TimeSpan.FromMinutes(3), CancellationToken.None, temp);
+        Assert.True(build.ExitCode == 0, DeveloperBuildRunner.FormatToolFailure("cold dotnet build", build.ExitCode, build.TimedOut, build.StdOut, build.StdErr));
+    }
+
+    private static string? FindDotnet()
+    {
+        var name = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
+        // `dotnet test` sets DOTNET_HOST_PATH to the dotnet that launched the run, even when it is not on PATH.
+        var host = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
+        if (!string.IsNullOrWhiteSpace(host) && File.Exists(host)) return host;
+        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var candidate = Path.Combine(dir.Trim().Trim('"'), name);
+            if (File.Exists(candidate)) return candidate;
+        }
+        var home = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        if (string.IsNullOrWhiteSpace(home))
+            home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet");
+        var fallback = Path.Combine(home, name);
+        return File.Exists(fallback) ? fallback : null;
+    }
+
+    [Fact]
+    public async Task AdminExport_IncludesTheBuildExitCode_AndWhyAnOldSdkIsHidden()
+    {
+        const string note = "Could not run: cold dotnet build failed (exit 1). error NETSDK1004: Assets file not found.";
+        var dev = new DeveloperBuildResult(DeveloperLanguage.CSharp, DeveloperCSharpPin.PinId, "ABC", "9.0.200", 9,
+            1.2, null, [], null, [], Note: note, ToolExitCode: 1);
+        var run = new BenchmarkRun(BenchmarkPhase.Before, DateTimeOffset.Parse("2026-11-20T10:00:00Z"),
+            new BenchmarkConditions(false, 40, "Balanced"),
+            [new BenchmarkMeasurement(BenchmarkKind.DeveloperCSharp, [], note, DeveloperBuild: dev)]);
+        var env = new FakeDevEnv { Toolchains = [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "6.0.428", 6)] };
+        var store = new InMemoryBenchmarkStore();
+        store.Save(new BenchmarkState(new BenchmarkSettings(), run));
+        var svc = new BenchmarkService(new BenchmarkRunner(new DummyBenchProbes()), store, devRunner: new DeveloperBuildRunner(env), devEnv: env);
+        await svc.RefreshDeveloperEnvironmentAsync();
+
+        using var doc = JsonDocument.Parse(AgentExports.Benchmark(svc));
+        var measurement = doc.RootElement.GetProperty("before").GetProperty("measurements")[0];
+        Assert.Contains("exit 1", measurement.GetProperty("note").GetString());
+        Assert.Contains("NETSDK1004", measurement.GetProperty("developerBuild").GetProperty("note").GetString());
+        Assert.Equal(1, measurement.GetProperty("developerBuild").GetProperty("toolExitCode").GetInt32());
+        Assert.Contains("6.0.428", doc.RootElement.GetProperty("developer").GetProperty("csharpUnavailableReason").GetString());
+    }
+
+    [Fact]
+    public void DeveloperSetup_WarnsWhenCSharpSdkCannotBuildTheBenchmark_AndStaysQuietForSdk9()
+    {
+        var old = DeveloperSetupModule.Build(
+            [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "6.0.428", 6)],
+            40, null, new(true, false, true), new(false, 40, "Balanced"));
+        Assert.Equal(DiagnosticStatus.Warning, old.Status);
+        var card = Assert.Single(old.Cards, c => c.Id == "toolchains");
+        Assert.Contains(".NET SDK 8 or newer", card.Meta);
+        Assert.Contains("6.0.428", card.Meta);
+        Assert.Contains("hidden", card.Meta);
+
+        var current = DeveloperSetupModule.Build(
+            [new(DeveloperLanguage.CSharp, ".NET SDK (C#)", "dotnet", "9.0.200", 9)],
+            40, null, new(true, false, true), new(false, 40, "Balanced"));
+        Assert.Equal(DiagnosticStatus.Ok, current.Status);
+        Assert.DoesNotContain("hidden", Assert.Single(current.Cards, c => c.Id == "toolchains").Meta);
+    }
+
+    [Fact]
     public void ParseHyperfineTimes_ExtractsTimesArray()
     {
         var times = DeveloperBuildRunner.ParseHyperfineTimes("""{"results":[{"times":[3.1234,2.9876,3.05]}]}""");
@@ -334,12 +655,45 @@ public sealed class DeveloperBenchmarkTests : IDisposable
 
     // ---- Fakes ----
 
+    private static void SeedRestoredProject(string proj)
+    {
+        var dir = Path.GetDirectoryName(proj)!;
+        var obj = Path.Combine(dir, "obj");
+        var name = Path.GetFileName(proj);
+        Directory.CreateDirectory(Path.Combine(obj, "Release"));
+        File.WriteAllText(Path.Combine(obj, "project.assets.json"), "{}");
+        File.WriteAllText(Path.Combine(obj, "project.nuget.cache"), "{}");
+        File.WriteAllText(Path.Combine(obj, name + ".nuget.g.props"), "<Project />");
+        File.WriteAllText(Path.Combine(obj, name + ".nuget.g.targets"), "<Project />");
+        File.WriteAllText(Path.Combine(obj, name + ".nuget.dgspec.json"), "{}");
+        File.WriteAllText(Path.Combine(obj, "AssemblyInfo.cs"), "// compiler");
+        File.WriteAllText(Path.Combine(obj, "Release", "out.dll"), "dll");
+        var bin = Path.Combine(dir, "bin");
+        Directory.CreateDirectory(bin);
+        File.WriteAllText(Path.Combine(bin, "out.dll"), "dll");
+    }
+
     private sealed class FakeLauncher(Func<string, IReadOnlyList<string>, ProcessResult> run) : IProcessLauncher
     {
         public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct = default)
         {
             ct.ThrowIfCancellationRequested();
             return Task.FromResult(run(fileName, arguments));
+        }
+    }
+
+    private sealed class RecordingLauncher : IProcessLauncher
+    {
+        public List<string?> Directories { get; } = [];
+
+        public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct = default) =>
+            RunAsync(fileName, arguments, timeout, ct, null);
+
+        public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct, string? workingDirectory)
+        {
+            ct.ThrowIfCancellationRequested();
+            Directories.Add(workingDirectory);
+            return Task.FromResult(new ProcessResult(0, "", ""));
         }
     }
 

@@ -111,12 +111,20 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     public DevDriveComparisonResult? LastDevDriveComparison { get; private set; }
     public bool RunningDeveloperAction { get; private set; }
 
-    /// <summary>True when a benchmark kind should be shown on this PC. Developer kinds are hidden when their toolchain is absent (NPU rule).</summary>
+    /// <summary>
+    /// True when a benchmark kind should be shown on this PC. Developer kinds are hidden when their toolchain is absent,
+    /// and the C# clean build is also hidden when the installed SDK is older than the pin can target (NPU rule: do not offer a test this PC cannot run).
+    /// </summary>
     public bool IsKindAvailable(BenchmarkKind kind)
     {
         if (!Benchmarks.IsDeveloperKind(kind)) return true;
         var lang = Benchmarks.LanguageFor(kind);
-        return lang is not null && DetectedToolchains.Any(t => t.Language == lang.Value);
+        if (lang is null) return false;
+        var tc = DetectedToolchains.FirstOrDefault(t => t.Language == lang.Value);
+        if (tc is null) return false;
+        if (lang == DeveloperLanguage.CSharp)
+            return DeveloperCSharpPin.TargetFrameworkForSdk(tc.MajorVersion) is not null;
+        return true;
     }
 
     public IReadOnlyList<BenchmarkInfo> AvailableBenchmarks =>

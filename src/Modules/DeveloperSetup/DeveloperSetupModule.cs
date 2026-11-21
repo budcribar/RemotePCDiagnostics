@@ -64,13 +64,23 @@ public sealed class DeveloperSetupModule(IDeveloperEnvironmentProbe? probe = nul
         }
         else
         {
-            var rows = toolchains.Select(t => new AreaRow(AreaLevel.Ok, [t.DisplayName, t.Version])).ToList();
-            cards.Add(new("toolchains", "Developer toolchains", AreaLevel.Ok,
+            var csharp = toolchains.FirstOrDefault(t => t.Language == DeveloperLanguage.CSharp);
+            var csharpBlocked = csharp is null ? null : DeveloperCSharpPin.UnsupportedSdkReason(csharp.Version, csharp.MajorVersion);
+            var rows = toolchains.Select(t =>
+            {
+                var blocked = t.Language == DeveloperLanguage.CSharp ? DeveloperCSharpPin.UnsupportedSdkReason(t.Version, t.MajorVersion) : null;
+                return new AreaRow(blocked is null ? AreaLevel.Ok : AreaLevel.Warning, [t.DisplayName, t.Version], Detail: blocked);
+            }).ToList();
+            var meta = csharpBlocked is null
+                ? string.Join(", ", toolchains.Select(t => t.DisplayName))
+                : csharpBlocked + " The C# clean-build benchmark stays hidden on this PC.";
+            cards.Add(new("toolchains", "Developer toolchains", csharpBlocked is null ? AreaLevel.Ok : AreaLevel.Warning,
                 $"{toolchains.Count} toolchain{(toolchains.Count == 1 ? "" : "s")} installed",
-                string.Join(", ", toolchains.Select(t => t.DisplayName)),
+                meta,
                 ["Toolchain", "Version"],
                 rows));
             summaryParts.Add($"{toolchains.Count} toolchain{(toolchains.Count == 1 ? "" : "s")}");
+            if (csharpBlocked is not null) summaryParts.Add("C# SDK older than the clean-build benchmark needs");
         }
 
         // 2. Temp volume free space (10 GB floor: warns, never fails)

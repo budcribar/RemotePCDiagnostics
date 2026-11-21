@@ -32,18 +32,34 @@ public static class DeveloperCSharpPin
 {
     public const string PinId = "csharp-rpcd-bench-v1";
 
+    /// <summary>Oldest SDK major this pin can build. Older SDKs are hidden rather than offered a project they cannot compile.</summary>
+    public const int MinSdkMajor = 8;
+
+    /// <summary>
+    /// Target framework the installed SDK can build: <c>net8.0</c> for SDK 8, <c>net9.0</c> for SDK 9, and so on.
+    /// Null when the major is missing or older than <see cref="MinSdkMajor"/> (those SDKs cannot build this pin).
+    /// </summary>
+    public static string? TargetFrameworkForSdk(int? sdkMajor) =>
+        sdkMajor is >= MinSdkMajor and int major
+            ? string.Create(CultureInfo.InvariantCulture, $"net{major}.0")
+            : null;
+
+    /// <summary>Why the C# benchmark cannot be offered for this SDK, or null when it can.</summary>
+    public static string? UnsupportedSdkReason(string? version, int? major)
+    {
+        if (TargetFrameworkForSdk(major) is not null) return null;
+        var shown = string.IsNullOrWhiteSpace(version) ? "an unrecognized version" : version.Trim();
+        return string.Create(CultureInfo.InvariantCulture,
+            $"The C# clean-build benchmark needs .NET SDK {MinSdkMajor} or newer (this PC has {shown}).");
+    }
+
     /// <summary>
     /// Materializes the pinned 5-project C# solution into <paramref name="targetDir"/> and returns the solution path and SHA-256 hash of all source files.
     /// </summary>
     public static (string SolutionPath, string TreeSha256) Materialize(string targetDir, int sdkMajor = 10)
     {
-        var tfm = sdkMajor switch
-        {
-            >= 10 => "net10.0",
-            9 => "net9.0",
-            8 => "net8.0",
-            _ => "net8.0",
-        };
+        var tfm = TargetFrameworkForSdk(sdkMajor)
+            ?? throw new ArgumentOutOfRangeException(nameof(sdkMajor), sdkMajor, UnsupportedSdkReason(sdkMajor.ToString(CultureInfo.InvariantCulture), sdkMajor));
 
         Directory.CreateDirectory(targetDir);
         var files = BuildFiles(tfm);
@@ -176,6 +192,8 @@ public sealed class DeveloperBuildRunner(
         var dotnet = toolchains.FirstOrDefault(t => t.Language == DeveloperLanguage.CSharp);
         if (dotnet is null)
             return Failed(DeveloperLanguage.CSharp, "dotnet SDK is not installed.");
+        if (DeveloperCSharpPin.UnsupportedSdkReason(dotnet.Version, dotnet.MajorVersion) is { } tooOld)
+            return Failed(DeveloperLanguage.CSharp, "Could not run: " + tooOld, dotnet);
 
         var freeGb = env.ReadTempVolumeFreeGb();
         if (freeGb is not null && freeGb.Value < DeveloperScoring.MinFreeDiskGb)
@@ -189,7 +207,7 @@ public sealed class DeveloperBuildRunner(
         try
         {
             progress?.Report("Preparing pinned C# benchmark sources…");
-            var (projectPath, sha256) = DeveloperCSharpPin.Materialize(workDir, dotnet.MajorVersion ?? 10);
+            var (projectPath, sha256) = DeveloperCSharpPin.Materialize(workDir, dotnet.MajorVersion!.Value);
 
             var conditions = env.ReadConditions();
             var (comparable, condNotes) = DeveloperScoring.CheckComparability(conditions.OnBattery, conditions.PowerPlan, thermallyThrottling: false);
@@ -199,25 +217,25 @@ public sealed class DeveloperBuildRunner(
 
             // 1. Restore (timed separately, excluded from build score)
             progress?.Report("Timing C# restore (kept separate from build score)…");
-            var (restoreOk, restoreSecs, restoreErr) = await TimedCommandAsync(dotnet.ExecutablePath, ["restore", projectPath, "--ignore-failed-sources", "-v", "q"], options.EffectiveTimeout, ct).ConfigureAwait(false);
+            var (restoreOk, restoreSecs, restoreFail) = await TimedCommandAsync(dotnet.ExecutablePath, ["restore", projectPath, "--ignore-failed-sources", "-v", "q"], options.EffectiveTimeout, ct, workDir).ConfigureAwait(false);
             if (!restoreOk)
-                return Failed(DeveloperLanguage.CSharp, $"Could not run: dotnet restore failed ({restoreErr ?? "error"}).", dotnet, sha256, restoreSecs);
+                return FailCommand(DeveloperLanguage.CSharp, "dotnet restore", restoreFail, dotnet, sha256, restoreSecs);
 
             var hyperfine = options.AllowHyperfine ? env.FindHyperfine() : null;
             var usedHyperfine = false;
 
             // 2. Cold clean builds
             progress?.Report($"Running cold C# clean builds ({options.ColdRepeats} repeats)…");
-            var coldSamples = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.ColdRepeats, warmups: 0, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
-            if (coldSamples.Count == 0)
-                return Failed(DeveloperLanguage.CSharp, "Could not run: cold dotnet build failed.", dotnet, sha256, restoreSecs);
+            var (coldSamples, coldFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.ColdRepeats, warmups: 0, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            if (coldFail is not null || coldSamples.Count == 0)
+                return FailCommand(DeveloperLanguage.CSharp, "cold dotnet build", coldFail, dotnet, sha256, restoreSecs);
             if (hyperfine is not null) usedHyperfine = true;
 
-            // 3. Warm clean builds (1 warmup discarded, outputs deleted before EVERY repeat so compiler does full work)
+            // 3. Warm clean builds (1 warmup discarded, compiler outputs deleted before EVERY repeat so the compiler does full work)
             progress?.Report($"Running warm C# clean builds ({options.WarmRepeats} repeats)…");
-            var warmSamples = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
-            if (warmSamples.Count == 0)
-                return Failed(DeveloperLanguage.CSharp, "Could not run: warm dotnet build failed.", dotnet, sha256, restoreSecs);
+            var (warmSamples, warmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            if (warmFail is not null || warmSamples.Count == 0)
+                return FailCommand(DeveloperLanguage.CSharp, "warm dotnet build", warmFail, dotnet, sha256, restoreSecs);
 
             // 4. Optional approval-gated Antivirus comparison (temporary exclusion through Agent, then removed in finally)
             IReadOnlyList<double>? warmExcludedSamples = null;
@@ -230,8 +248,14 @@ public sealed class DeveloperBuildRunner(
                 {
                     tempExclusionAdded = true;
                     progress?.Report($"Running warm C# clean builds with temporary exclusion ({options.WarmRepeats} repeats)…");
-                    warmExcludedSamples = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
-                    warmExcludedMedian = DeveloperScoring.Median(warmExcludedSamples);
+                    var (excluded, excludedFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, projectPath, workDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+                    if (excludedFail is null && excluded.Count > 0)
+                    {
+                        warmExcludedSamples = excluded;
+                        warmExcludedMedian = DeveloperScoring.Median(excluded);
+                    }
+                    else
+                        Log((excludedFail ?? CommandFailure.Empty).Format("warm dotnet build with temporary exclusion"));
                 }
             }
 
@@ -321,6 +345,8 @@ public sealed class DeveloperBuildRunner(
         var dotnet = toolchains.FirstOrDefault(t => t.Language == DeveloperLanguage.CSharp);
         if (dotnet is null)
             return new(false, DeveloperCSharpPin.PinId, "", Note: "dotnet SDK is not installed.");
+        if (DeveloperCSharpPin.UnsupportedSdkReason(dotnet.Version, dotnet.MajorVersion) is { } tooOld)
+            return new(false, DeveloperCSharpPin.PinId, "", Note: tooOld);
 
         var tempRoot = tempRootOverride ?? Path.GetTempPath();
         var ntfsDir = Path.Combine(tempRoot, $"{DevDriveRules.BuildTempPrefix}ntfs-{Guid.NewGuid():N}");
@@ -331,17 +357,19 @@ public sealed class DeveloperBuildRunner(
         {
             // 1. NTFS pass first (order: NTFS, then Dev Drive)
             progress?.Report("Preparing pinned C# sources on NTFS…");
-            var (ntfsProj, sha256) = DeveloperCSharpPin.Materialize(ntfsDir, dotnet.MajorVersion ?? 10);
-            var (rOk, _, rErr) = await TimedCommandAsync(dotnet.ExecutablePath, ["restore", ntfsProj, "--ignore-failed-sources", "-v", "q"], options.EffectiveTimeout, ct).ConfigureAwait(false);
+            var (ntfsProj, sha256) = DeveloperCSharpPin.Materialize(ntfsDir, dotnet.MajorVersion!.Value);
+            var (rOk, _, rFail) = await TimedCommandAsync(dotnet.ExecutablePath, ["restore", ntfsProj, "--ignore-failed-sources", "-v", "q"], options.EffectiveTimeout, ct, ntfsDir).ConfigureAwait(false);
             if (!rOk)
-                return new(false, DeveloperCSharpPin.PinId, sha256, Note: $"NTFS restore failed ({rErr ?? "error"}).");
+                return new(false, DeveloperCSharpPin.PinId, sha256, Note: (rFail ?? CommandFailure.Empty).Format("NTFS dotnet restore"));
 
             var hyperfine = options.AllowHyperfine ? env.FindHyperfine() : null;
             progress?.Report("Timing C# clean builds on NTFS (cold & warm)…");
-            var ntfsCold = DeveloperScoring.Median(await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ntfsProj, ntfsDir, options.ColdRepeats, 0, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false));
-            var ntfsWarm = DeveloperScoring.Median(await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ntfsProj, ntfsDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false));
-            if (ntfsCold is null || ntfsWarm is null)
-                return new(false, DeveloperCSharpPin.PinId, sha256, Note: "NTFS build failed.");
+            var (ntfsColdSamples, ntfsColdFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ntfsProj, ntfsDir, options.ColdRepeats, 0, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            var (ntfsWarmSamples, ntfsWarmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ntfsProj, ntfsDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            var ntfsCold = DeveloperScoring.Median(ntfsColdSamples);
+            var ntfsWarm = DeveloperScoring.Median(ntfsWarmSamples);
+            if (ntfsColdFail is not null || ntfsWarmFail is not null || ntfsCold is null || ntfsWarm is null)
+                return new(false, DeveloperCSharpPin.PinId, sha256, Note: (ntfsColdFail ?? ntfsWarmFail ?? CommandFailure.Empty).Format("NTFS dotnet build"));
 
             // 2. Ask Agent to create & mount temporary ~50 GB Dev Drive VHDX
             progress?.Report("Creating temporary 50 GB Dev Drive VHDX through Agent…");
@@ -357,16 +385,18 @@ public sealed class DeveloperBuildRunner(
 
             // 3. Dev Drive pass
             progress?.Report("Preparing pinned C# sources on temporary Dev Drive…");
-            var (ddProj, _) = DeveloperCSharpPin.Materialize(devDriveBuildDir, dotnet.MajorVersion ?? 10);
-            var (ddRestoreOk, _, ddRestoreErr) = await TimedCommandAsync(dotnet.ExecutablePath, ["restore", ddProj, "--ignore-failed-sources", "-v", "q"], options.EffectiveTimeout, ct).ConfigureAwait(false);
+            var (ddProj, _) = DeveloperCSharpPin.Materialize(devDriveBuildDir, dotnet.MajorVersion!.Value);
+            var (ddRestoreOk, _, ddRestoreFail) = await TimedCommandAsync(dotnet.ExecutablePath, ["restore", ddProj, "--ignore-failed-sources", "-v", "q"], options.EffectiveTimeout, ct, devDriveBuildDir).ConfigureAwait(false);
             if (!ddRestoreOk)
-                return new(false, DeveloperCSharpPin.PinId, sha256, Note: $"Dev Drive restore failed ({ddRestoreErr ?? "error"}).");
+                return new(false, DeveloperCSharpPin.PinId, sha256, Note: (ddRestoreFail ?? CommandFailure.Empty).Format("Dev Drive dotnet restore"));
 
             progress?.Report("Timing C# clean builds on temporary Dev Drive (cold & warm)…");
-            var ddCold = DeveloperScoring.Median(await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ddProj, devDriveBuildDir, options.ColdRepeats, 0, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false));
-            var ddWarm = DeveloperScoring.Median(await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ddProj, devDriveBuildDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false));
-            if (ddCold is null || ddWarm is null)
-                return new(false, DeveloperCSharpPin.PinId, sha256, Note: "Dev Drive build failed.");
+            var (ddColdSamples, ddColdFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ddProj, devDriveBuildDir, options.ColdRepeats, 0, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            var (ddWarmSamples, ddWarmFail) = await MeasureCleanBuildsAsync(dotnet.ExecutablePath, ddProj, devDriveBuildDir, options.WarmRepeats, options.WarmWarmups, hyperfine, options.EffectiveTimeout, ct).ConfigureAwait(false);
+            var ddCold = DeveloperScoring.Median(ddColdSamples);
+            var ddWarm = DeveloperScoring.Median(ddWarmSamples);
+            if (ddColdFail is not null || ddWarmFail is not null || ddCold is null || ddWarm is null)
+                return new(false, DeveloperCSharpPin.PinId, sha256, Note: (ddColdFail ?? ddWarmFail ?? CommandFailure.Empty).Format("Dev Drive dotnet build"));
 
             return new(
                 Succeeded: true,
@@ -392,7 +422,7 @@ public sealed class DeveloperBuildRunner(
         }
     }
 
-    private async Task<IReadOnlyList<double>> MeasureCleanBuildsAsync(
+    private async Task<(IReadOnlyList<double> Samples, CommandFailure? Failure)> MeasureCleanBuildsAsync(
         string dotnetExe,
         string projectPath,
         string workDir,
@@ -405,21 +435,23 @@ public sealed class DeveloperBuildRunner(
         if (hyperfineExe is not null)
         {
             var hfSamples = await TryMeasureWithHyperfineAsync(hyperfineExe, dotnetExe, projectPath, workDir, repeats, warmups, timeout, ct).ConfigureAwait(false);
-            if (hfSamples is { Count: > 0 }) return hfSamples;
+            if (hfSamples is { Count: > 0 }) return (hfSamples, null);
         }
 
-        // In-app loop matching hyperfine's protocol: delete bin/obj before every repeat so the compiler does full work.
+        // In-app loop matching hyperfine's protocol: delete compiler outputs before every repeat so the compiler
+        // does full work, but keep the NuGet restore assets. `dotnet build --no-restore` fails with NETSDK1004
+        // when project.assets.json (written by the separately timed restore) has been deleted.
         var samples = new List<double>();
         for (var i = 0; i < warmups + Math.Max(1, repeats); i++)
         {
             ct.ThrowIfCancellationRequested();
             CleanBuildOutputs(workDir);
-            var (ok, seconds, _) = await TimedCommandAsync(dotnetExe, ["build", projectPath, "-c", "Release", "--no-restore", "-v", "q"], timeout, ct).ConfigureAwait(false);
-            if (!ok) return [];
+            var (ok, seconds, failure) = await TimedCommandAsync(dotnetExe, ["build", projectPath, "-c", "Release", "--no-restore", "-v", "q"], timeout, ct, workDir).ConfigureAwait(false);
+            if (!ok) return ([], failure ?? CommandFailure.Empty);
             if (i >= warmups)
                 samples.Add(Math.Round(seconds, 3));
         }
-        return samples;
+        return (samples, null);
     }
 
     private async Task<IReadOnlyList<double>?> TryMeasureWithHyperfineAsync(
@@ -435,9 +467,7 @@ public sealed class DeveloperBuildRunner(
         var jsonOut = Path.Combine(workDir, $"hf-{Guid.NewGuid():N}.json");
         try
         {
-            var prepare = OperatingSystem.IsWindows()
-                ? $"powershell -NoProfile -Command \"Get-ChildItem -Path '{workDir}' -Recurse -Directory -Include bin,obj | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue\""
-                : $"find '{workDir}' -type d \\( -name bin -o -name obj \\) -exec rm -rf {{}} +";
+            var prepare = CleanPrepareCommand(workDir);
             var cmd = $"\"{dotnetExe}\" build \"{projectPath}\" -c Release --no-restore -v q";
             var args = new List<string>
             {
@@ -448,7 +478,7 @@ public sealed class DeveloperBuildRunner(
                 cmd,
             };
             var totalTimeout = TimeSpan.FromSeconds(timeout.TotalSeconds * (repeats + warmups + 1));
-            var r = await _launcher.RunAsync(hyperfineExe, args, totalTimeout, ct).ConfigureAwait(false);
+            var r = await _launcher.RunAsync(hyperfineExe, args, totalTimeout, ct, workDir).ConfigureAwait(false);
             if (r.ExitCode != 0 || !File.Exists(jsonOut)) return null;
             return ParseHyperfineTimes(await File.ReadAllTextAsync(jsonOut, ct).ConfigureAwait(false));
         }
@@ -486,25 +516,213 @@ public sealed class DeveloperBuildRunner(
         catch (JsonException) { return null; }
     }
 
-    private async Task<(bool Ok, double Seconds, string? Error)> TimedCommandAsync(string exe, IReadOnlyList<string> args, TimeSpan timeout, CancellationToken ct)
+    private async Task<(bool Ok, double Seconds, CommandFailure? Failure)> TimedCommandAsync(
+        string exe, IReadOnlyList<string> args, TimeSpan timeout, CancellationToken ct, string? workingDirectory)
     {
         var sw = Stopwatch.StartNew();
-        var r = await _launcher.RunAsync(exe, args, timeout, ct).ConfigureAwait(false);
+        var r = await _launcher.RunAsync(exe, args, timeout, ct, workingDirectory).ConfigureAwait(false);
         sw.Stop();
-        var err = r.ExitCode == 0 ? null : (string.IsNullOrWhiteSpace(r.StdErr) ? r.StdOut : r.StdErr)?.Trim();
-        return (r.ExitCode == 0, Math.Max(0.001, Math.Round(sw.Elapsed.TotalSeconds, 3)), err);
+        var seconds = Math.Max(0.001, Math.Round(sw.Elapsed.TotalSeconds, 3));
+        if (r.ExitCode == 0 && !r.TimedOut) return (true, seconds, null);
+        return (false, seconds, new CommandFailure(r.ExitCode, r.TimedOut, r.StdOut, r.StdErr, workingDirectory));
     }
 
-    /// <summary>Deletes all <c>bin</c> and <c>obj</c> directories under <paramref name="root"/> before each clean build repeat.</summary>
+    /// <summary>
+    /// True for the files <c>dotnet restore</c> writes into <c>obj</c> that <c>dotnet build --no-restore</c> still needs.
+    /// </summary>
+    public static bool IsNuGetRestoreAsset(string fileName)
+    {
+        if (fileName.Equals("project.assets.json", StringComparison.OrdinalIgnoreCase)) return true;
+        if (fileName.Equals("project.nuget.cache", StringComparison.OrdinalIgnoreCase)) return true;
+        if (fileName.EndsWith(".nuget.g.props", StringComparison.OrdinalIgnoreCase)) return true;
+        if (fileName.EndsWith(".nuget.g.targets", StringComparison.OrdinalIgnoreCase)) return true;
+        if (fileName.EndsWith(".nuget.dgspec.json", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Command hyperfine runs before each repeat. Deletes <c>bin</c> and compiler outputs under <c>obj</c>,
+    /// and leaves the NuGet restore assets in place. Windows PowerShell's <c>-Include</c> does not match
+    /// <c>bin</c>/<c>obj</c> unless the path itself contains a wildcard, so this uses <c>-Filter</c>.
+    /// </summary>
+    public static string CleanPrepareCommand(string workDir)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var path = workDir.Replace("'", "''");
+            return "powershell -NoProfile -Command \""
+                + "$root='" + path + "'; "
+                + "$bins=@(Get-ChildItem -LiteralPath $root -Recurse -Directory -Filter bin -ErrorAction SilentlyContinue); "
+                + "foreach($b in $bins){ Remove-Item -LiteralPath $b.FullName -Recurse -Force -ErrorAction SilentlyContinue }; "
+                + "$objs=@(Get-ChildItem -LiteralPath $root -Recurse -Directory -Filter obj -ErrorAction SilentlyContinue); "
+                + "foreach($o in $objs){ Get-ChildItem -LiteralPath $o.FullName -Force -ErrorAction SilentlyContinue | "
+                + "Where-Object { $n=$_.Name; $n -ne 'project.assets.json' -and $n -ne 'project.nuget.cache' -and $n -notlike '*.nuget.g.props' -and $n -notlike '*.nuget.g.targets' -and $n -notlike '*.nuget.dgspec.json' } | "
+                + "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }\"";
+        }
+
+        var quoted = workDir.Replace("'", "'\\''");
+        return "find '" + quoted + "' -type d -name bin -prune -exec rm -rf {} + ; "
+            + "find '" + quoted + "' -type d -name obj -exec sh -c '"
+            + "for p in \"$1\"/*; do [ -e \"$p\" ] || continue; b=$(basename \"$p\"); "
+            + "case \"$b\" in project.assets.json|project.nuget.cache|*.nuget.g.props|*.nuget.g.targets|*.nuget.dgspec.json) ;; *) rm -rf \"$p\" ;; esac; "
+            + "done' _ {} \\;";
+    }
+
+    /// <summary>
+    /// Deletes compiler outputs under <paramref name="root"/> before each clean build repeat.
+    /// <c>bin</c> is removed entirely. Under <c>obj</c>, compile artifacts go and NuGet restore assets stay,
+    /// so the timed <c>dotnet build --no-restore</c> recompiles without repeating restore.
+    /// </summary>
     public static void CleanBuildOutputs(string root)
     {
         if (!Directory.Exists(root)) return;
-        foreach (var dir in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).ToList())
+        List<string> dirs;
+        try { dirs = Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).ToList(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; }
+
+        foreach (var dir in dirs)
         {
-            var name = Path.GetFileName(dir);
-            if (name.Equals("bin", StringComparison.OrdinalIgnoreCase) || name.Equals("obj", StringComparison.OrdinalIgnoreCase))
+            if (!Directory.Exists(dir)) continue;
+            if (Path.GetFileName(dir).Equals("bin", StringComparison.OrdinalIgnoreCase))
                 TryDeleteDirectory(dir);
         }
+
+        foreach (var dir in dirs)
+        {
+            if (!Directory.Exists(dir)) continue;
+            if (!Path.GetFileName(dir).Equals("obj", StringComparison.OrdinalIgnoreCase)) continue;
+            CleanObjKeepRestoreAssets(dir);
+        }
+    }
+
+    private static void CleanObjKeepRestoreAssets(string objDir)
+    {
+        string[] entries;
+        try { entries = Directory.GetFileSystemEntries(objDir); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; }
+
+        foreach (var entry in entries)
+        {
+            if (IsNuGetRestoreAsset(Path.GetFileName(entry))) continue;
+            try
+            {
+                if (Directory.Exists(entry)) Directory.Delete(entry, recursive: true);
+                else File.Delete(entry);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    /// <summary>
+    /// Failure text for the Benchmark page and the Admin export: the process exit code (or a timeout)
+    /// plus the first compiler/restore error lines, or the tail of the output when it named no error.
+    /// </summary>
+    public static string FormatToolFailure(string what, int exitCode, bool timedOut, string? stdOut, string? stdErr, string? workDir = null)
+    {
+        var how = timedOut
+            ? "timed out"
+            : "exit " + exitCode.ToString(CultureInfo.InvariantCulture);
+        var detail = ScrubPaths(SummarizeToolOutput(stdOut, stdErr), workDir, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        return detail is null
+            ? $"Could not run: {what} failed ({how})."
+            : $"Could not run: {what} failed ({how}). {detail}";
+    }
+
+    /// <summary>First error lines from a dotnet/MSBuild log, or the last few lines when none are marked as errors.</summary>
+    public static string? SummarizeToolOutput(string? stdOut, string? stdErr)
+    {
+        var lines = ReadOutputLines(stdErr).Concat(ReadOutputLines(stdOut)).ToList();
+        var picked = lines.Where(IsToolErrorLine).Distinct(StringComparer.Ordinal).Take(4).ToList();
+        if (picked.Count == 0)
+            picked = lines.TakeLast(4).Distinct(StringComparer.Ordinal).ToList();
+        if (picked.Count == 0) return null;
+        var text = string.Join(" | ", picked.Select(TrimDetailLine));
+        const int max = 700;
+        if (text.Length <= max) return text;
+        return text[..(max - 1)].TrimEnd() + "…";
+    }
+
+    /// <summary>A compiler, NuGet, or MSBuild error line (<c>error CS…</c>, <c>: error NETSDK…</c>), not the trailing "N Error(s)" summary.</summary>
+    public static bool IsToolErrorLine(string line)
+    {
+        var span = line.AsSpan().Trim();
+        if (span.Length == 0) return false;
+        if (span.Contains(": error", StringComparison.OrdinalIgnoreCase)) return true;
+        return span.StartsWith("error", StringComparison.OrdinalIgnoreCase)
+            && (span.Length == 5 || span[5] is ' ' or ':' or '\t');
+    }
+
+    private static IEnumerable<string> ReadOutputLines(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) yield break;
+        foreach (var raw in text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.Trim();
+            if (line.Length > 0) yield return line;
+        }
+    }
+
+    private static string TrimDetailLine(string line)
+    {
+        const int max = 240;
+        var trimmed = line.Trim();
+        return trimmed.Length <= max ? trimmed : trimmed[..(max - 1)].TrimEnd() + "…";
+    }
+
+    /// <summary>
+    /// Keeps the Windows user name out of the note shown on the page and sent in the Admin export.
+    /// dotnet error lines name full paths such as <c>C:\Users\name\AppData\Local\Temp\rpcd-build-…\BenchApp\Program.cs</c>:
+    /// the build folder becomes <c>&lt;build folder&gt;</c> and the rest of the profile becomes <c>%USERPROFILE%</c>.
+    /// </summary>
+    public static string? ScrubPaths(string? text, string? workDir, string? userProfile)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        foreach (var (path, label) in new[] { (workDir, "<build folder>"), (userProfile, "%USERPROFILE%") })
+        {
+            var trimmed = path?.TrimEnd('\\', '/');
+            if (string.IsNullOrEmpty(trimmed) || trimmed.Length < 3) continue;
+            text = text.Replace(trimmed, label, comparison);
+        }
+        return MaskUsersFolderNames(text);
+    }
+
+    /// <summary>
+    /// Replaces the folder after any <c>\Users\</c> with <c>&lt;user&gt;</c>. Catches profile paths the exact
+    /// replacement misses, such as the 8.3 short form (<c>C:\Users\BUDCR~1\…</c>) that the temp folder can use.
+    /// </summary>
+    private static string MaskUsersFolderNames(string text)
+    {
+        const string marker = "\\Users\\";
+        var sb = new StringBuilder(text.Length);
+        var i = 0;
+        while (i < text.Length)
+        {
+            var hit = text.IndexOf(marker, i, StringComparison.OrdinalIgnoreCase);
+            if (hit < 0) { sb.Append(text, i, text.Length - i); break; }
+            var nameStart = hit + marker.Length;
+            var nameEnd = nameStart;
+            while (nameEnd < text.Length && text[nameEnd] is not ('\\' or '/' or '\'' or '"' or ':' or '|'))
+                nameEnd++;
+            sb.Append(text, i, nameStart - i);
+            if (nameEnd > nameStart) sb.Append("<user>");
+            i = nameEnd;
+        }
+        return sb.ToString();
+    }
+
+    private readonly record struct CommandFailure(int ExitCode, bool TimedOut, string? StdOut, string? StdErr, string? WorkDir = null)
+    {
+        public static CommandFailure Empty { get; } = new(-1, false, null, null);
+        public string Format(string what) => FormatToolFailure(what, ExitCode, TimedOut, StdOut, StdErr, WorkDir);
+    }
+
+    private DeveloperBuildResult FailCommand(DeveloperLanguage lang, string what, CommandFailure? failure, DetectedToolchain? tc, string sha256, double? restoreSecs)
+    {
+        var fail = failure ?? CommandFailure.Empty;
+        var note = fail.Format(what);
+        Log(note);
+        return Failed(lang, note, tc, sha256, restoreSecs, fail.ExitCode);
     }
 
     private static void TryDeleteDirectory(string path)
@@ -517,6 +735,6 @@ public sealed class DeveloperBuildRunner(
         catch { }
     }
 
-    private static DeveloperBuildResult Failed(DeveloperLanguage lang, string note, DetectedToolchain? tc = null, string sha256 = "", double? restoreSecs = null) =>
-        new(lang, DeveloperCSharpPin.PinId, sha256, tc?.Version, tc?.MajorVersion, restoreSecs, null, [], null, [], Note: note);
+    private static DeveloperBuildResult Failed(DeveloperLanguage lang, string note, DetectedToolchain? tc = null, string sha256 = "", double? restoreSecs = null, int? toolExitCode = null) =>
+        new(lang, DeveloperCSharpPin.PinId, sha256, tc?.Version, tc?.MajorVersion, restoreSecs, null, [], null, [], Note: note, ToolExitCode: toolExitCode);
 }

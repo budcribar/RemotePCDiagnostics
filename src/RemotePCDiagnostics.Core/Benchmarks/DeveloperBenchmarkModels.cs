@@ -283,7 +283,8 @@ public sealed record DeveloperBuildResult(
     DeveloperBand Band = DeveloperBand.NoBaseline,
     bool Comparable = true,
     IReadOnlyList<string>? ConditionNotes = null,
-    string? Note = null)
+    string? Note = null,
+    int? ToolExitCode = null)
 {
     public bool Succeeded => WarmMedianSeconds is > 0;
     public double? AntivirusCostSeconds => WarmMedianSeconds is > 0 && WarmExcludedMedianSeconds is > 0

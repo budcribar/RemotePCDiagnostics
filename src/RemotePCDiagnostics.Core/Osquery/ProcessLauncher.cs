@@ -9,16 +9,30 @@ public sealed record ProcessResult(int ExitCode, string StdOut, string StdErr, b
 public interface IProcessLauncher
 {
     Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs the process with <paramref name="workingDirectory"/> as its current directory when the launcher can.
+    /// The default ignores the directory and calls <see cref="RunAsync(string, IReadOnlyList{string}, TimeSpan, CancellationToken)"/>.
+    /// </summary>
+    Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken, string? workingDirectory)
+        => RunAsync(fileName, arguments, timeout, cancellationToken);
 }
 
 /// <summary>Starts a real process with no console window, capturing stdout and stderr.</summary>
 public sealed class SystemProcessLauncher : IProcessLauncher
 {
     public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken) =>
-        RunAsync(fileName, arguments, timeout, cancellationToken, null);
+        RunAsync(fileName, arguments, timeout, cancellationToken, outputLine: null, workingDirectory: null);
+
+    Task<ProcessResult> IProcessLauncher.RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken, string? workingDirectory) =>
+        RunAsync(fileName, arguments, timeout, cancellationToken, outputLine: null, workingDirectory: workingDirectory);
+
+    public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout,
+        CancellationToken cancellationToken, Action<string>? outputLine) =>
+        RunAsync(fileName, arguments, timeout, cancellationToken, outputLine, workingDirectory: null);
 
     public async Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout,
-        CancellationToken cancellationToken, Action<string>? outputLine)
+        CancellationToken cancellationToken, Action<string>? outputLine, string? workingDirectory)
     {
         var psi = new ProcessStartInfo(fileName)
         {
@@ -26,7 +40,11 @@ public sealed class SystemProcessLauncher : IProcessLauncher
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            WorkingDirectory = Path.GetDirectoryName(fileName) ?? "",
+            // Callers that name a directory (the developer build temp folder) must not inherit the
+            // executable's folder: that is often Program Files, which a non-elevated build cannot write.
+            WorkingDirectory = !string.IsNullOrWhiteSpace(workingDirectory)
+                ? workingDirectory
+                : Path.GetDirectoryName(fileName) ?? "",
         };
         foreach (var a in arguments) psi.ArgumentList.Add(a);
 
