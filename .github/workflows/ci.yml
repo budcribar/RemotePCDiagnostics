@@ -841,6 +841,26 @@ jobs:
           name: RemotePCDiagnostics-Agent-win-x64
           path: release-assets
 
+      # In-app, helper and remote updates refuse an installer or Agent MSI without a matching .sha256 asset,
+      # so a release that is missing one (or has a stale one) must not be published.
+      - name: Verify every installer has a matching SHA-256 file
+        working-directory: release-assets
+        run: |
+          shopt -s nullglob
+          count=0
+          for f in *.exe *.msi *.msix; do
+            if [[ ! -f "$f.sha256" ]]; then
+              echo "::error::Missing checksum file $f.sha256"
+              exit 1
+            fi
+            sha256sum --check --strict "$f.sha256"
+            count=$((count + 1))
+          done
+          if [[ $count -lt 5 ]]; then
+            echo "::error::Expected at least 5 release binaries, found $count"
+            exit 1
+          fi
+
       - name: Publish release or rolling pre-release
         env:
           GH_TOKEN: ${{ github.token }}
