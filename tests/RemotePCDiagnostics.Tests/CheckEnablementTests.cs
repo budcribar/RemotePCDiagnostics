@@ -168,7 +168,7 @@ public class CheckEnablementTests
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
     };
 
-    private static string FindRepoRoot()
+    internal static string FindRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)

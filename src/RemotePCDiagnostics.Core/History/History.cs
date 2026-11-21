@@ -22,6 +22,8 @@ public sealed record HistoryEntry(
     /// <summary>The instance's label at run time ("Instance:"), so History can name a drive that has since been removed.</summary>
     public string? Instance { get; init; }
     public string? Measurement(string name) => Measurements.FirstOrDefault(m => m.Name == name)?.Value;
+    /// <summary>The numbers the check tracks over time ("Key metrics:"), as it named them; empty for results written without any.</summary>
+    public IReadOnlyList<KeyMetric> KeyMetrics { get; init; } = [];
 }
 
 /// <summary>Useful expansion fields, including cleanup of older generic payload snapshots.</summary>
@@ -128,6 +130,7 @@ public static class HistoryEventParser
             var measurements = new List<HistoryMeasurement>();
             var oldDetails = new List<HistoryMeasurement>();
             var details = new List<string>();
+            var keyMetrics = new List<KeyMetric>();
             string? section = null;
             foreach (var raw in lines)
             {
@@ -135,7 +138,8 @@ public static class HistoryEventParser
                 if (raw[0] == ' ')
                 {
                     var t = raw.Trim();
-                    if (section == "Measurements") { var i = t.IndexOf('='); if (i > 0) measurements.Add(new(t[..i].Trim(), t[(i + 1)..].Trim())); }
+                    if (section == "Key metrics") { if (KeyMetricText.Parse(t) is { } km) keyMetrics.Add(km); }
+                    else if (section == "Measurements") { var i = t.IndexOf('='); if (i > 0) measurements.Add(new(t[..i].Trim(), t[(i + 1)..].Trim())); }
                     else if (section == "Details") { if (details.Count < MaxDetailLines) details.Add(t.Length > 300 ? t[..300] + "…" : t); var i = t.IndexOf(": ", StringComparison.Ordinal); if (i > 0 && IsSimpleValue(t[(i + 2)..])) oldDetails.Add(new(t[..i].Trim(), t[(i + 2)..].Trim())); }
                     continue;
                 }
@@ -143,7 +147,7 @@ public static class HistoryEventParser
                 if (c <= 0) continue;
                 var key = raw[..c].Trim();
                 var value = raw[(c + 1)..].Trim();
-                if (value.Length == 0 && key is "Measurements" or "Details") { section = key; continue; }
+                if (value.Length == 0 && key is "Measurements" or "Details" or "Key metrics") { section = key; continue; }
                 section = null;
                 fields.TryAdd(key, value);
             }
@@ -182,6 +186,7 @@ public static class HistoryEventParser
                 {
                     ModuleId = moduleId, Format = format, IsLegacy = format < ResultEventLogger.FormatVersion || moduleId == Guid.Empty,
                     InstanceId = fields.GetValueOrDefault("Instance id"), Instance = fields.GetValueOrDefault("Instance"),
+                    KeyMetrics = keyMetrics,
                 };
         }
         catch { return null; }
