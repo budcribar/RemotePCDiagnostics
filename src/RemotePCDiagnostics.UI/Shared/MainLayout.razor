@@ -13,49 +13,53 @@
     <header class="topbar">
         <button class="nav-toggle" aria-label="Toggle navigation" aria-controls="main-navigation" aria-expanded="@(_navigationOpen ? "true" : "false")" @onclick="() => _navigationOpen = !_navigationOpen">Menu</button>
         <span class="title"><Icon Name="health" Size="22" Class="logo" />RemotePCDiagnostics</span>
-        <button type="button"
-                class="agent-shop-pill @AgentPillCssClass"
-                data-testid="shop-connection-pill"
-                title="@AgentPillTooltip"
-                aria-label="@AgentPillTooltip"
-                @onclick="OpenConnectDialog">
-            <Icon Name="net" Size="14" />
-            <span class="agent-shop-pill-label" data-testid="agent-mode-badge" title="@AgentPillTooltip">@AgentPillLabel</span>
-            @if (Remote.Count > 0)
-            {
-                <span class="badge shop-users-badge" data-testid="shop-users-count">@Remote.Count</span>
-            }
-        </button>
-        <span class="topbar-spacer"></span>
-        @if (AvailableUpdate is { UpdateAvailable: true } update)
-        {
+        <div class="topbar-pills" role="region" aria-label="Session controls">
             <button type="button"
-                    class="badge app-update-pill"
-                    data-testid="app-update-pill"
-                    title="@(update.InstallKind == AppInstallKind.MicrosoftStore ? "A Microsoft Store update is available" : $"Update to Remote PC Diagnostics {update.LatestVersion}")"
-                    @onclick="OpenUpdateDialog">
-                <span>@(update.InstallKind == AppInstallKind.MicrosoftStore ? "Update available" : $"Update {update.LatestVersion}")</span>
+                    class="agent-shop-pill @AgentPillCssClass"
+                    data-testid="shop-connection-pill"
+                    title="@AgentPillTooltip"
+                    aria-label="@AgentPillTooltip"
+                    @onclick="OpenConnectDialog">
+                <Icon Name="net" Size="14" />
+                <span class="agent-shop-pill-label" data-testid="agent-mode-badge" title="@AgentPillTooltip">@AgentPillLabel</span>
+                @if (Remote.Count > 0)
+                {
+                    <span class="badge shop-users-badge" data-testid="shop-users-count">@Remote.Count</span>
+                }
             </button>
-        }
-        @if (App.Elevation is { } elevation && elevation.HasAdminCapabilities)
-        {
-            <span class="admin-mode-slot" data-testid="admin-mode-badge">
-                <span class="badge admin-mode-pill admin-mode-ready"
-                      data-testid="admin-mode-ready"
-                      title="@(elevation.IsProcessElevated ? "Running with Administrator privileges" : "Elevated helper connected. Low-level hardware sensors and system repairs are unlocked.")"
-                      aria-label="@(elevation.IsProcessElevated ? "Running with Administrator privileges" : "Elevated helper connected. Low-level hardware sensors and system repairs are unlocked.")">
-                    <Icon Name="cert" Size="14" />
-                    <span>Advanced Mode</span>
+            <span class="topbar-spacer"></span>
+            @if (AvailableUpdate is { UpdateAvailable: true } update)
+            {
+                <button type="button"
+                        class="badge app-update-pill"
+                        data-testid="app-update-pill"
+                        title="@(update.InstallKind == AppInstallKind.MicrosoftStore ? "A Microsoft Store update is available" : $"Update to Remote PC Diagnostics {update.LatestVersion}")"
+                        @onclick="OpenUpdateDialog">
+                    <span>@(update.InstallKind == AppInstallKind.MicrosoftStore ? "Update available" : $"Update {update.LatestVersion}")</span>
+                </button>
+            }
+            @if (App.Elevation is { HasAdminCapabilities: false })
+            {
+                <span class="admin-mode-slot" data-testid="admin-mode-badge">
+                    <button type="button"
+                            class="badge admin-mode-pill admin-mode-restricted"
+                            data-testid="admin-mode-restricted"
+                            title="Agent not connected. Low-level hardware sensors and system repairs require the Agent."
+                            aria-label="Restricted Mode. Agent not connected. Low-level hardware sensors and system repairs require the Agent."
+                            @onclick="OpenConnectDialog">
+                        <Icon Name="lock" Size="14" />
+                        <span>Restricted Mode</span>
+                    </button>
                 </span>
-            </span>
-        }
-        @if (Session.Mode == SessionMode.Remote)
-        {
-            @* RemoteBlazorWebView draws each browser's own give/take/voice bar over this placeholder. *@
-            <div id="rbwv-session-controls" class="topbar-control" data-restart="true"></div>
-        }
-        <ThemeSwitcher />
-        <span class="pc" title="Computer name"><Icon Name="pc" Size="16" />@Session.MachineName</span>
+            }
+            @if (Session.Mode == SessionMode.Remote)
+            {
+                @* RemoteBlazorWebView draws each browser's own give/take/voice bar over this placeholder. *@
+                <div id="rbwv-session-controls" class="topbar-control" data-restart="true"></div>
+            }
+            <ThemeSwitcher />
+            <span class="pc" title="Computer name"><Icon Name="pc" Size="14" />@Session.MachineName</span>
+        </div>
     </header>
     @if (_navigationOpen)
     {

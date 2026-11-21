@@ -111,6 +111,8 @@
                             el.textContent = 'Restarting…';
                             el.classList.remove('rbwv-in-control', 'rbwv-remote-control');
                         }
+                        const bar = el.closest('.rbwv-control-bar');
+                        if (bar) syncControlToggle(bar, !isRemoteDisplay(), null, true);
                     }
                     return;
                 }
@@ -153,7 +155,206 @@
                     el.title = 'Remote technician has control';
                 }
             }
+            const bar = el.closest('.rbwv-control-bar');
+            if (bar) {
+                syncControlToggle(bar, !isRemoteDisplay(), isLocal, false);
+            }
         }
+    }
+
+    function ensureSegmentedSlider(container) {
+        if (!container) return;
+        let thumb = container.querySelector(':scope > .rpd-seg-thumb');
+        if (!thumb) {
+            thumb = document.createElement('span');
+            thumb.className = 'rpd-seg-thumb';
+            thumb.setAttribute('aria-hidden', 'true');
+            container.prepend(thumb);
+        }
+        container.classList.add('has-thumb');
+
+        if (!container.dataset.rpdSwipeBound) {
+            container.dataset.rpdSwipeBound = '1';
+            let pointerId = null;
+            let startX = 0;
+            let thumbStartLeft = 0;
+            let dragging = false;
+
+            const buttons = () => Array.from(container.querySelectorAll(':scope > button'));
+            const bounds = () => {
+                const btns = buttons();
+                if (!btns.length) return { min: 2, max: 2 };
+                const first = btns[0];
+                const last = btns[btns.length - 1];
+                return { min: first.offsetLeft, max: last.offsetLeft + last.offsetWidth };
+            };
+
+            container.addEventListener('pointerdown', e => {
+                if (e.button !== 0 && e.pointerType === 'mouse') return;
+                const active = container.querySelector(':scope > button.on');
+                if (!active) return;
+                pointerId = e.pointerId;
+                startX = e.clientX;
+                thumbStartLeft = active.offsetLeft;
+                dragging = false;
+            });
+
+            container.addEventListener('pointermove', e => {
+                if (pointerId !== e.pointerId) return;
+                const dx = e.clientX - startX;
+                if (!dragging && Math.abs(dx) < 5) return;
+                if (!dragging) {
+                    dragging = true;
+                    container.classList.add('is-dragging');
+                    try { container.setPointerCapture(pointerId); } catch (_) { }
+                }
+                const t = container.querySelector(':scope > .rpd-seg-thumb');
+                if (!t) return;
+                const b = bounds();
+                const w = t.offsetWidth || 48;
+                const x = Math.max(b.min, Math.min(b.max - w, thumbStartLeft + dx));
+                t.style.transform = `translateX(${x}px)`;
+                e.preventDefault();
+            });
+
+            const finishDrag = e => {
+                if (pointerId !== e.pointerId) return;
+                const wasDragging = dragging;
+                pointerId = null;
+                dragging = false;
+                container.classList.remove('is-dragging');
+                if (!wasDragging) return;
+                const t = container.querySelector(':scope > .rpd-seg-thumb');
+                const center = t ? (new DOMMatrixReadOnly(getComputedStyle(t).transform).m41 + t.offsetWidth / 2) : 0;
+                const enabled = buttons().filter(btn => !btn.disabled);
+                let best = null;
+                let bestDist = Infinity;
+                for (const btn of enabled) {
+                    const btnCenter = btn.offsetLeft + btn.offsetWidth / 2;
+                    const dist = Math.abs(btnCenter - center);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        best = btn;
+                    }
+                }
+                if (best && !best.classList.contains('on')) {
+                    best.click();
+                }
+                positionSegmentedThumb(container);
+                // Swallow the trailing click synthesized after a drag
+                const suppress = ev => { ev.stopPropagation(); ev.preventDefault(); };
+                container.addEventListener('click', suppress, { capture: true, once: true });
+                setTimeout(() => container.removeEventListener('click', suppress, { capture: true }), 0);
+            };
+
+            container.addEventListener('pointerup', finishDrag);
+            container.addEventListener('pointercancel', finishDrag);
+        }
+
+        positionSegmentedThumb(container);
+    }
+
+    function positionSegmentedThumb(container) {
+        if (!container || container.classList.contains('is-dragging')) return;
+        const thumb = container.querySelector(':scope > .rpd-seg-thumb');
+        const active = container.querySelector(':scope > button.on');
+        if (!thumb || !active || active.offsetWidth === 0) return;
+        thumb.style.width = `${active.offsetWidth}px`;
+        thumb.style.transform = `translateX(${active.offsetLeft}px)`;
+    }
+
+    function syncSegmentedControls() {
+        for (const sw of document.querySelectorAll('.theme-switch, .rpd-control-toggle')) {
+            ensureSegmentedSlider(sw);
+        }
+    }
+
+    function syncControlToggle(bar, isOwner, iHaveControl, restarting) {
+        if (!bar) return;
+        let toggle = bar.querySelector(':scope > .rpd-control-toggle');
+        if (restarting || iHaveControl === null) {
+            bar.classList.remove('rpd-has-toggle');
+            if (toggle) toggle.hidden = true;
+            return;
+        }
+
+        const giveBtn = bar.querySelector('.rbwv-control-give');
+        const takeBtn = bar.querySelector('.rbwv-control-take');
+        const remoteHasControl = isOwner ? !iHaveControl : iHaveControl;
+
+        if (!toggle) {
+            toggle = document.createElement('div');
+            toggle.className = 'rpd-control-toggle';
+            toggle.setAttribute('role', 'radiogroup');
+            toggle.setAttribute('aria-label', 'Control ownership');
+            toggle.dataset.testid = 'control-toggle';
+
+            const makeBtn = (side, label) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'rpd-seg-btn';
+                btn.setAttribute('role', 'radio');
+                btn.dataset.side = side;
+                btn.dataset.testid = `control-${side}`;
+                const dot = document.createElement('span');
+                dot.className = 'rpd-seg-dot';
+                dot.setAttribute('aria-hidden', 'true');
+                const txt = document.createElement('span');
+                txt.textContent = label;
+                btn.append(dot, txt);
+                btn.addEventListener('click', () => {
+                    if (btn.disabled || btn.classList.contains('on')) return;
+                    const g = bar.querySelector('.rbwv-control-give');
+                    const t = bar.querySelector('.rbwv-control-take');
+                    if (side === 'local') {
+                        if (isOwner && t) t.click();
+                        else if (!isOwner && g) g.click();
+                    } else if (side === 'remote') {
+                        if (isOwner && g) g.click();
+                    }
+                });
+                return btn;
+            };
+
+            toggle.append(makeBtn('remote', 'Remote'), makeBtn('local', 'Local'));
+            bar.prepend(toggle);
+        }
+
+        toggle.hidden = false;
+        bar.classList.add('rpd-has-toggle');
+        toggle.classList.toggle('is-you', iHaveControl === true);
+        toggle.classList.toggle('is-other', iHaveControl === false);
+
+        const remoteBtn = toggle.querySelector('[data-side="remote"]');
+        const localBtn = toggle.querySelector('[data-side="local"]');
+        if (remoteBtn && localBtn) {
+            remoteBtn.classList.toggle('on', remoteHasControl);
+            remoteBtn.setAttribute('aria-checked', remoteHasControl ? 'true' : 'false');
+            localBtn.classList.toggle('on', !remoteHasControl);
+            localBtn.setAttribute('aria-checked', !remoteHasControl ? 'true' : 'false');
+
+            if (isOwner) {
+                remoteBtn.disabled = !remoteHasControl && !giveBtn;
+                localBtn.disabled = remoteHasControl && !takeBtn;
+                remoteBtn.title = remoteHasControl
+                    ? 'Remote technician has control'
+                    : (giveBtn ? 'Give control to remote technician' : 'No remote technician connected');
+                localBtn.title = !remoteHasControl
+                    ? 'You have control'
+                    : 'Take control back';
+            } else {
+                remoteBtn.disabled = !remoteHasControl;
+                localBtn.disabled = remoteHasControl && !giveBtn;
+                remoteBtn.title = remoteHasControl
+                    ? 'You have control'
+                    : 'Waiting for host to give control';
+                localBtn.title = !remoteHasControl
+                    ? 'Host has control'
+                    : 'Give control back to host';
+            }
+        }
+
+        ensureSegmentedSlider(toggle);
     }
 
     function isRemoteDisplay() {
@@ -308,20 +509,35 @@
         }
     }
 
+    function bindTopbarPillScroll() {
+        for (const strip of document.querySelectorAll('.topbar-pills')) {
+            if (strip.dataset.rpdScrollBound) continue;
+            strip.dataset.rpdScrollBound = '1';
+            strip.addEventListener('scroll', () => {
+                window.dispatchEvent(new Event('scroll'));
+            }, { passive: true });
+        }
+    }
+
+    window.addEventListener('resize', () => requestAnimationFrame(syncSegmentedControls));
     new MutationObserver(() => {
         refresh();
         markDesktopHost();
         updateVoiceStatus();
         updateControlStatus();
+        syncSegmentedControls();
+        bindTopbarPillScroll();
         notifyControlSubscribers();
         hookVoice();
         hookControl();
-    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class'] });
 
     refresh();
     markDesktopHost();
     updateVoiceStatus();
     updateControlStatus();
+    syncSegmentedControls();
+    bindTopbarPillScroll();
     hookVoice();
     hookControl();
 })();

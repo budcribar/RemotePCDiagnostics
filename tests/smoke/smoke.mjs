@@ -62,16 +62,15 @@ try {
     console.log('Shop info dialog: open/close OK');
   }
 
-  // Simulated standard user (RPD_SIMULATE_STANDARD_USER=1) is not treated as elevated, so the
-  // Advanced Mode badge stays hidden until Admin Repair Mode connects the Agent helper.
-  // That connection is exercised later from the service workflow page.
+  // Simulated standard user (RPD_SIMULATE_STANDARD_USER=1) is not connected to the Agent helper,
+  // so the Restricted Mode pill is shown until Admin Repair Mode connects the helper.
   const simulateStandardUser = process.env.RPD_SIMULATE_STANDARD_USER === '1';
   if (!simulateStandardUser) {
-    await page.getByTestId('admin-mode-ready').waitFor({ state: 'visible', timeout: 10_000 });
-    console.log('Advanced Mode badge: visible');
+    await page.getByTestId('admin-mode-restricted').waitFor({ state: 'hidden', timeout: 10_000 });
+    console.log('Agent helper connected: Restricted Mode pill hidden');
   } else {
-    await page.getByTestId('admin-mode-ready').waitFor({ state: 'hidden', timeout: 10_000 });
-    console.log('Simulated standard user: Advanced Mode badge hidden until the helper connects');
+    await page.getByTestId('admin-mode-restricted').waitFor({ state: 'visible', timeout: 10_000 });
+    console.log('Simulated standard user: Restricted Mode pill visible until the helper connects');
   }
 
   // Theme switcher: each choice must update data-theme / data-theme-choice on <html>.
@@ -180,9 +179,9 @@ try {
     await page.screenshot({ path: `${outDir}/workflow-standard-user.png`, fullPage: true });
 
     await page.getByTestId('wf-enable-admin-btn').click();
-    await page.getByTestId('admin-mode-ready').waitFor({ state: 'visible', timeout: 15_000 });
+    await page.getByTestId('admin-mode-restricted').waitFor({ state: 'hidden', timeout: 15_000 });
     await page.getByTestId('wf-admin-callout').waitFor({ state: 'detached', timeout: 15_000 });
-    console.log('Admin Repair Mode helper connected over Named Pipe; UI switched to Advanced Mode');
+    console.log('Admin Repair Mode helper connected over Named Pipe; Restricted Mode pill hidden');
   }
 
   await page.getByTestId('nav-about').click();
