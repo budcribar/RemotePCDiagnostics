@@ -24,7 +24,7 @@ public record DiagnosticResult(
     public string? InstanceLabel { get; init; }
 
     public static DiagnosticResult NotRun(string module) =>
-        new(module, DiagnosticStatus.NotRun, "Not run yet", DateTimeOffset.Now);
+        new(module, DiagnosticStatus.NotRun, "Not run", DateTimeOffset.Now);
 }
 
 /// <summary>Strongly typed result wrapper.</summary>

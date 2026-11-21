@@ -106,7 +106,7 @@ public class UiReviewFixesTests
 
     // ---- Temperatures text ----
     [Theory]
-    [InlineData(0, "fan speed not reported")] [InlineData(1, "1 fan")] [InlineData(3, "3 fans")]
+    [InlineData(0, "")] [InlineData(1, "1 fan")] [InlineData(3, "3 fans")]
     public void Fans_Text(int n, string expected) => Assert.Equal(expected, LibreHardwareMonitorModule.FansText(n));
 
     [Fact]

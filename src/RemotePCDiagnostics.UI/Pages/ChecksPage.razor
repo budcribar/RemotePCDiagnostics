@@ -122,7 +122,7 @@
             _lastRuns = RemotePCDiagnostics.Core.History.HistoryQuery.LatestByModule(RemotePCDiagnostics.Core.History.HistoryNames.Normalize(read.Entries, Diagnostics.Catalog));
             await InvokeAsync(StateHasChanged);
         }
-        catch { /* no history source: rows just say "Not run yet" */ }
+        catch { /* no history source: rows just say "Not run" */ }
     }
     private RemotePCDiagnostics.Core.History.HistoryEntry? LastRun(IDiagnosticModule m) => _lastRuns.GetValueOrDefault(m.Name);
 
@@ -296,7 +296,7 @@
                         var isSel = string.Equals(Screen.SelectedModule, m.Name, StringComparison.OrdinalIgnoreCase);
                         var prev = kind == RowKind.NotRun ? LastRun(m) : null;
                         var prog = kind == RowKind.Running ? Diagnostics.GetProgress(m.Name) : null;
-                        var line = kind == RowKind.NotRun ? (prev is { } pv ? $"Last run {pv.LocalTime:g}: {pv.Outcome} · {pv.Summary}" : "Not run yet") : kind == RowKind.Running ? (string.IsNullOrWhiteSpace(r.Message) || r.Message == "Running..." ? "In progress" : r.Message) : r.Message;
+                        var line = kind == RowKind.NotRun ? (prev is { } pv ? $"Last run {pv.LocalTime:g}: {pv.Outcome} · {pv.Summary}" : "Not run") : kind == RowKind.Running ? (string.IsNullOrWhiteSpace(r.Message) || r.Message == "Running..." ? "In progress" : r.Message) : r.Message;
                         <div @key="mod.Name" class="ct-row @(isSel ? "selected" : "") @(kind == RowKind.Running ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
                              data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => SelectAndShowAsync(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
                             <button class="ct-check" role="checkbox" aria-checked="@(Screen.IsSelected(m.Name) ? "true" : "false")" aria-label="Include @m.DisplayName"
@@ -346,7 +346,7 @@
                     <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-detail-status">@CheckRows.Label(kind, RunLabel(m))</span></div>
                 <div class="meta" data-testid="checks-detail-sub">
                     @if (kind == RowKind.NotRun && LastRun(m) is { } lr) { <span data-testid="checks-detail-lastrun">Not run in this session · last run @lr.LocalTime.ToString("g"): @lr.Outcome · @lr.Summary <a href="@($"history?module={Uri.EscapeDataString(lr.Module)}&run={lr.TimeUtc.UtcTicks}")">View details in History</a></span> }
-                    else if (kind == RowKind.NotRun) { <span>Not run yet in this session.</span> }
+                    else if (kind == RowKind.NotRun) { <span>Not run in this session.</span> }
                     else if (kind == RowKind.Running) { <span>Started @r.Timestamp.ToLocalTime().ToString("t")</span> }
                     else { <CardList Text="@($"{r.Message} · {r.Timestamp.ToLocalTime():g}")" /> }
                 </div>

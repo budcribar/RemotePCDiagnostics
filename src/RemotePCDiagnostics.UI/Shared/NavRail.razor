@@ -1,5 +1,5 @@
 @inherits StoreAwareComponent
-<nav id="main-navigation" class="rail" aria-label="Main">
+<nav id="main-navigation" class="rail" aria-label="Main" @onclick="HandleNavClick">
     <NavLink title="Dashboard" href="dashboard" Match="NavLinkMatch.All" data-testid="nav-dashboard"><Icon Name="dash" /><span class="nav-text">Dashboard</span></NavLink>
     <NavLink title="Service workflow" href="workflow" data-testid="nav-workflow"><Icon Name="play" /><span class="nav-text">Service workflow</span></NavLink>
     <NavLink title="Checks" href="checks" data-testid="nav-checks"><Icon Name="dash" /><span class="nav-text">Checks</span></NavLink>
@@ -11,3 +11,9 @@
     <NavLink title="History" href="history" data-testid="nav-history"><Icon Name="hist" /><span class="nav-text">History</span></NavLink>
     <NavLink title="About" href="about" data-testid="nav-about"><Icon Name="pc" /><span class="nav-text">About</span></NavLink>
 </nav>
+
+@code {
+    [Parameter] public EventCallback OnNavigate { get; set; }
+
+    private Task HandleNavClick() => OnNavigate.HasDelegate ? OnNavigate.InvokeAsync() : Task.CompletedTask;
+}

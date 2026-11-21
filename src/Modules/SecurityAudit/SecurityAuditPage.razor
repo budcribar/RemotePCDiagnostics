@@ -31,7 +31,7 @@ else
         }
         else
         {
-            <span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start audit to begin.", DiagnosticStatus.Running => $"Auditing security settings… {Elapsed}", _ => r.Message })</span>
+            <span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run. Press Start audit to begin.", DiagnosticStatus.Running => $"Auditing security settings… {Elapsed}", _ => r.Message })</span>
         }
         @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
     </p>
@@ -169,7 +169,7 @@ else
             _lastRun = latest.GetValueOrDefault(module);
             await InvokeAsync(StateHasChanged);
         }
-        catch { /* no history source: keep "Not run yet" */ }
+        catch { /* no history source: keep "Not run" */ }
     }
 
     protected override void OnInitialized()

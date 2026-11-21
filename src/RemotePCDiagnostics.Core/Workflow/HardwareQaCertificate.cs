@@ -394,7 +394,7 @@ public static class HardwareQaCertificate
     {
         if (CheckEnableRules.IsTurnedOff(r))
             return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, r.Message);
-        var summary = r.Status == DiagnosticStatus.NotRun ? "Not run yet"
+        var summary = r.Status == DiagnosticStatus.NotRun ? "Not run"
             : r.Status == DiagnosticStatus.Ok && !string.IsNullOrWhiteSpace(okOverride) ? okOverride
             : string.IsNullOrWhiteSpace(r.Message) ? r.Status.ToString() : r.Message;
         return new HardwareQaItem(id, label, r.Status, summary, r.Cancelled);
@@ -405,7 +405,7 @@ public static class HardwareQaCertificate
         if (CheckEnableRules.IsTurnedOff(r))
             return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, r.Message);
         if (r.Status == DiagnosticStatus.NotRun)
-            return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, "Not run yet");
+            return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, "Not run");
         var summary = r.Report() is AreaReport ar && !string.IsNullOrWhiteSpace(ar.Summary) ? ar.Summary : r.Message;
         return new HardwareQaItem(id, label, r.Status, summary, r.Cancelled);
     }
@@ -415,7 +415,7 @@ public static class HardwareQaCertificate
         if (CheckEnableRules.IsTurnedOff(r))
             return new HardwareQaItem("sensors", "Thermal & cooling sensors", DiagnosticStatus.NotRun, r.Message);
         if (r.Status == DiagnosticStatus.NotRun)
-            return new HardwareQaItem("sensors", "Thermal & cooling sensors", DiagnosticStatus.NotRun, "Not run yet");
+            return new HardwareQaItem("sensors", "Thermal & cooling sensors", DiagnosticStatus.NotRun, "Not run");
         if (r.Report() is SensorReport sr)
         {
             var cpu = sr.Groups.FirstOrDefault(g => g.Id == "cpu")?.Hottest;
@@ -432,7 +432,7 @@ public static class HardwareQaCertificate
     private static HardwareQaItem BuildDiskSpeedItem(DiagnosticResult r)
     {
         if (r.Status == DiagnosticStatus.NotRun)
-            return new HardwareQaItem("disk-speed", "Storage read/write verification", DiagnosticStatus.NotRun, "Not run yet");
+            return new HardwareQaItem("disk-speed", "Storage read/write verification", DiagnosticStatus.NotRun, "Not run");
         if (r.Report() is DiskSpeedReport dr && dr.SequentialReadMBps is { } sr && dr.SequentialWriteMBps is { } sw)
             return new HardwareQaItem("disk-speed", "Storage read/write verification", r.Status,
                 $"Seq read {sr:0} MB/s · Seq write {sw:0} MB/s · {dr.DataErrors} data errors", r.Cancelled);
@@ -442,7 +442,7 @@ public static class HardwareQaCertificate
     private static HardwareQaItem BuildAudioItem(DiagnosticResult spkToMic, DiagnosticResult micToSpk)
     {
         if (spkToMic.Status == DiagnosticStatus.NotRun && micToSpk.Status == DiagnosticStatus.NotRun)
-            return new HardwareQaItem("audio", "Audio loopback (speaker & mic)", DiagnosticStatus.NotRun, "Not run yet (dongle-free WASAPI check)");
+            return new HardwareQaItem("audio", "Audio loopback (speaker & mic)", DiagnosticStatus.NotRun, "Not run (dongle-free WASAPI check)");
 
         if (spkToMic.Status != DiagnosticStatus.NotRun && micToSpk.Status == DiagnosticStatus.NotRun)
             return new HardwareQaItem("audio", "Audio loopback (speaker & mic)", spkToMic.Status, spkToMic.Message, spkToMic.Cancelled);
@@ -458,7 +458,7 @@ public static class HardwareQaCertificate
     private static HardwareQaItem BuildIntegrityItem(DiagnosticResult dism, DiagnosticResult sfc)
     {
         if (dism.Status == DiagnosticStatus.NotRun && sfc.Status == DiagnosticStatus.NotRun)
-            return new HardwareQaItem("integrity", "Windows image & SFC integrity", DiagnosticStatus.NotRun, "Not run yet");
+            return new HardwareQaItem("integrity", "Windows image & SFC integrity", DiagnosticStatus.NotRun, "Not run");
         if (dism.Status != DiagnosticStatus.NotRun && sfc.Status == DiagnosticStatus.NotRun)
             return new HardwareQaItem("integrity", "Windows image & SFC integrity", dism.Status, $"DISM: {dism.Message}", dism.Cancelled);
         if (sfc.Status != DiagnosticStatus.NotRun && dism.Status == DiagnosticStatus.NotRun)
@@ -493,7 +493,7 @@ public static class HardwareQaCertificate
 
         var bsod = store.Get(ModuleSlugs.BsodHistory);
         if (bsod.Status == DiagnosticStatus.NotRun)
-            return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, "Not run yet");
+            return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, "Not run");
         if (bsod.Report() is AreaReport bsodRep)
         {
             var sysCards = bsodRep.Cards.Where(c => c.Id is "bsods" or "power" or "whea").ToList();
@@ -532,7 +532,7 @@ public static class HardwareQaCertificate
         {
             var summary = qa is { UniqueKeysPressed: > 0 }
                 ? $"In progress ({qa.UniqueKeysPressed} {(qa.UniqueKeysPressed == 1 ? "key" : "keys")} pressed · {qa.PeakKeyRollover}-key rollover) — mark Pass or Fail"
-                : "Not run yet (interactive bench check)";
+                : "Not run (interactive bench check)";
             return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, summary);
         }
 
@@ -559,7 +559,7 @@ public static class HardwareQaCertificate
         {
             var summary = qa is { SolidColorsInspected: > 0 }
                 ? $"In progress ({qa.SolidColorsInspected} test {(qa.SolidColorsInspected == 1 ? "pattern" : "patterns")} inspected) — mark Pass or Fail"
-                : "Not run yet (interactive bench check)";
+                : "Not run (interactive bench check)";
             return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, summary);
         }
 

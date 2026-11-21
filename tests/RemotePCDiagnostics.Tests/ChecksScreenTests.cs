@@ -22,7 +22,7 @@ public class ChecksScreenTests
     [InlineData(DiagnosticStatus.Error, "bad", RowKind.Critical)]
     [InlineData(DiagnosticStatus.Warning, "Cancelled", RowKind.Cancelled)]
     [InlineData(DiagnosticStatus.Warning, "Stopped", RowKind.Cancelled)]
-    [InlineData(DiagnosticStatus.NotRun, "Not run yet", RowKind.NotRun)]
+    [InlineData(DiagnosticStatus.NotRun, "Not run", RowKind.NotRun)]
     [InlineData(DiagnosticStatus.Running, "Running…", RowKind.Running)]
     public void KindOf_MatchesRealResult(DiagnosticStatus st, string msg, RowKind expected) =>
         Assert.Equal(expected, CheckRows.KindOf(new DiagnosticResult("M", st, msg, DateTimeOffset.Now) { Cancelled = expected == RowKind.Cancelled }));

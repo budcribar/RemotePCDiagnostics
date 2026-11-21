@@ -20,23 +20,27 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender) return;
-        var prefs = App.Preferences;
-        try
+        if (firstRender)
         {
-            if (prefs?.Current.Theme is { } saved)
+            var prefs = App.Preferences;
+            try
             {
-                _choice = ThemePreference.Parse(saved);
-                await JS.InvokeAsync<string>("rpdTheme.set", ThemePreference.ToStorage(_choice));
+                if (prefs?.Current.Theme is { } saved)
+                {
+                    _choice = ThemePreference.Parse(saved);
+                    await JS.InvokeAsync<string>("rpdTheme.set", ThemePreference.ToStorage(_choice));
+                }
+                else
+                {
+                    _choice = ThemePreference.Parse(await JS.InvokeAsync<string>("rpdTheme.get"));
+                    if (_choice != ThemePreference.Default) prefs?.Update(p => p with { Theme = ThemePreference.ToStorage(_choice) }); // keep a choice made before this existed
+                }
+                StateHasChanged();
             }
-            else
-            {
-                _choice = ThemePreference.Parse(await JS.InvokeAsync<string>("rpdTheme.get"));
-                if (_choice != ThemePreference.Default) prefs?.Update(p => p with { Theme = ThemePreference.ToStorage(_choice) }); // keep a choice made before this existed
-            }
-            StateHasChanged();
+            catch (Exception) { /* script missing: keep default */ }
         }
-        catch (Exception) { /* script missing: keep default */ }
+        try { await JS.InvokeVoidAsync("rpdSyncSegmentedControls"); }
+        catch (Exception) { /* dialogs.js missing (e.g. unit tests) */ }
     }
 
     async Task SetAsync(ThemeChoice c)

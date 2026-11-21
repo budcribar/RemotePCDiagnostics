@@ -52,7 +52,7 @@
 
 <p data-testid="diskspeed-status" class="status-line @(running ? "is-running" : "")">
     <span class="@DotClass(r.Status)"></span>
-    @(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
+    @(r.Status switch { DiagnosticStatus.NotRun => "Not run. Press Start when you're ready.", DiagnosticStatus.Running => "Running…", _ => r.Message })
     @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
 </p>
 @if (health.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error)

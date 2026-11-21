@@ -48,7 +48,7 @@
 <div class="toolbar dash-controls" data-testid="dashboard-controls">
     <div class="meta">
         <div class="banner-sub">
-            <span data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {RemotePCDiagnostics.Core.History.TimeText.Ago(l, now)}" : "Live readings only, checks not run yet")</span>
+            <span data-testid="dashboard-last-checked">@(last is { } l ? $"Last checked {RemotePCDiagnostics.Core.History.TimeText.Ago(l, now)}" : "Live readings only, checks not run")</span>
             @if (checksNotRunCount > 0 && !checking)
             {
                 <span> · </span><a href="checks" class="banner-more banner-more-small" data-testid="dashboard-checks-notrun">@checksNotRunCount system @(checksNotRunCount == 1 ? "check" : "checks") not run</a>
@@ -220,11 +220,11 @@
              @onclick="() => Open(name)" @onkeydown="e => Key(e, name)">
             <div class="card-head"><span class="icon-badge icon-@StatusChip.Kind(r.Status)"><Icon Name="@Icon.ForModule(m.Name)" /></span><strong title="@m.DisplayName">@m.DisplayName</strong>
                 <StatusChip Status="@r.Status" /></div>
-            @if (r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun)
+            @if (r.Status == DiagnosticStatus.Running)
             {
-                <div class="card-msg card-msg-full"><span>@(r.Status == DiagnosticStatus.Running ? "Checking…" : "Not checked yet")</span></div>
+                <div class="card-msg card-msg-full"><span>Checking…</span></div>
             }
-            else
+            else if (r.Status != DiagnosticStatus.NotRun)
             {
                 <div class="card-msg card-msg-full"><CardList Text="@r.Message" Strong="true" /></div>
                 <div class="meta card-foot updated-ago" title="@r.Timestamp.ToLocalTime().ToString("g")">Updated @RemotePCDiagnostics.Core.History.TimeText.Ago(r.Timestamp, now)</div>

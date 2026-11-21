@@ -37,7 +37,7 @@ else
     </div>
     <p data-testid="s2m-status" class="@(running ? "status-line is-running" : r.Status == DiagnosticStatus.Error && rep is null ? "status-line error-text" : "status-line")">
         <span class="@DotClass(r.Status)"></span>
-        <span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run yet. Press Start to begin.", DiagnosticStatus.Running => "Playing the test tone and listening…", _ => r.Message })</span>
+        <span>@(r.Status switch { DiagnosticStatus.NotRun => "Not run. Press Start to begin.", DiagnosticStatus.Running => "Playing the test tone and listening…", _ => r.Message })</span>
         @if (running) { <span class="running-badge" data-testid="running-badge"><span class="running-badge-dot"></span>Running</span> }
     </p>
     @if (running) { <div class="run-progress run-progress-indeterminate" data-testid="s2m-run-progress" aria-hidden="true"><div></div></div> }

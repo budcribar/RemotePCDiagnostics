@@ -65,7 +65,7 @@
     {
         <div class="nav-backdrop" aria-hidden="true" @onclick="() => _navigationOpen = false"></div>
     }
-    <NavRail />
+    <NavRail OnNavigate="() => _navigationOpen = false" />
     <main class="content">
         @if (BuildShopWarningBanner() is { } shopWarning)
         {

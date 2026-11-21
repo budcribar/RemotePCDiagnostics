@@ -362,11 +362,11 @@ public class BenchQaAndWheaTests
         store.Set(new DiagnosticResult(ModuleSlugs.DriveHealth, DiagnosticStatus.Ok, "Healthy", now));
         store.Set(new DiagnosticResult(ModuleSlugs.Sensors, DiagnosticStatus.Ok, "Temps OK", now));
 
-        // When not run yet
+        // When not run
         var snapNotRun = HardwareQaCertificate.Capture(store, "BENCH-SEC-01", now);
         var secItemNotRun = snapNotRun.Items.Single(i => i.Id == "security");
         Assert.Equal(DiagnosticStatus.NotRun, secItemNotRun.Status);
-        Assert.Equal("Not run yet", secItemNotRun.Summary);
+        Assert.Equal("Not run", secItemNotRun.Summary);
         Assert.Equal(HardwareQaVerdict.CertifiedPass, snapNotRun.Verdict);
 
         // When security audit reports warnings

@@ -54,18 +54,27 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
         var s = report.Snapshot; // already filtered to readings with data by BuildReport
         if (s.Readings.Count == 0)
             return s.IsElevated ? "No temperature or fan sensors found" : "No sensors found. " + ElevationService.AdminRepairHint;
-        string T(string id) => report.Groups.First(g => g.Id == id).Hottest is { } v ? $"{v:0}°C" : "—";
+        var parts = new List<string>(4);
+        if (report.Groups.FirstOrDefault(g => g.Id == "cpu")?.Hottest is { } cpu) parts.Add($"CPU {cpu:0}°C");
+        if (report.Groups.FirstOrDefault(g => g.Id == "gpu")?.Hottest is { } gpu) parts.Add($"GPU {gpu:0}°C");
+        if (report.Groups.FirstOrDefault(g => g.Id == "storage") is { } storage && StorageText(storage) is { } st) parts.Add($"Storage {st}");
+        if (parts.Count == 0 && report.Groups.FirstOrDefault(g => g.Id == "board")?.Hottest is { } board) parts.Add($"Board {board:0}°C");
         var fans = s.Readings.Where(r => r.SensorType == SensorKind.Fan).ToList();
-        var text = $"CPU {T("cpu")} · GPU {T("gpu")} · Storage {StorageText(report.Groups.First(g => g.Id == "storage"))} · {FansText(fans.Count, fans.Count(r => r.Value == 0))}";
+        var fansText = FansText(fans.Count, fans.Count(r => r.Value == 0));
+        if (!string.IsNullOrEmpty(fansText)) parts.Add(fansText);
+        if (parts.Count == 0)
+            return s.IsElevated ? "No temperature or fan sensors found" : "No sensors found. " + ElevationService.AdminRepairHint;
+        var text = string.Join(" · ", parts);
         return s.IsElevated ? text : text + " (some sensors need administrator rights)";
     }
 
-    /// <summary>"fan speed not reported" (many laptops don't expose fans), "1 fan", "3 fans"; stopped (0 RPM) fans are
+    /// <summary>"" when no fans are reported, otherwise "1 fan", "3 fans"; stopped (0 RPM) fans are
     /// still counted and called out: "1 fan, stopped", "3 fans, 1 stopped".</summary>
     public static string FansText(int fans, int stopped = 0)
     {
-        var text = fans switch { 0 => "fan speed not reported", 1 => "1 fan", _ => $"{fans} fans" };
-        if (stopped <= 0 || fans == 0) return text;
+        if (fans <= 0) return "";
+        var text = fans == 1 ? "1 fan" : $"{fans} fans";
+        if (stopped <= 0) return text;
         return fans == 1 || stopped >= fans ? text + ", stopped" : $"{text}, {stopped} stopped";
     }
 
@@ -90,11 +99,11 @@ public sealed class LibreHardwareMonitorModule(ISensorProvider provider) : IDiag
     }
 
     /// <summary>"42°C" (overall drive temperature, matching Drive health), or "42°C (hottest sensor 64°C)" when an internal
-    /// sensor such as the controller runs notably hotter, so the two numbers can be reconciled.</summary>
-    public static string StorageText(SensorGroup storage)
+    /// sensor such as the controller runs notably hotter, so the two numbers can be reconciled. Null when no drive reports.</summary>
+    public static string? StorageText(SensorGroup storage)
     {
         var overall = DriveOverall(storage.Readings.Select(r => r.Reading));
-        if (overall is not { } o) return "—";
+        if (overall is not { } o) return null;
         return storage.Hottest is { } h && h - o >= StorageSensorGapC ? $"{o:0}°C (hottest sensor {h:0}°C)" : $"{o:0}°C";
     }
 

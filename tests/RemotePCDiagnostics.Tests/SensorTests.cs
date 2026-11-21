@@ -86,7 +86,7 @@ public class LibreHardwareMonitorModuleTests
     }
 
     [Fact]
-    public void Summarize_WhenElevatedAndZeroFans_DisplaysFanSpeedNotReportedWithoutAdminWarning()
+    public void Summarize_WhenElevatedAndZeroFans_OmitsFanSpeedWithoutAdminWarning()
     {
         var snapshot = new SensorSnapshot([
             new("AMD Ryzen 7 5700U", HardwareKind.Cpu, "Core (Tctl/Tdie)", SensorKind.Temperature, 50, 40, 60, "°C"),
@@ -97,9 +97,9 @@ public class LibreHardwareMonitorModuleTests
         var report = LibreHardwareMonitorModule.BuildReport(snapshot);
         var summary = LibreHardwareMonitorModule.Summarize(report);
 
-        Assert.Contains("fan speed not reported", summary);
+        Assert.DoesNotContain("fan speed not reported", summary);
         Assert.DoesNotContain("administrator rights", summary);
-        Assert.Equal("CPU 50°C · GPU 45°C · Storage 40°C · fan speed not reported", summary);
+        Assert.Equal("CPU 50°C · GPU 45°C · Storage 40°C", summary);
     }
 
     [Fact]
@@ -114,9 +114,25 @@ public class LibreHardwareMonitorModuleTests
         var report = LibreHardwareMonitorModule.BuildReport(snapshot);
         var summary = LibreHardwareMonitorModule.Summarize(report);
 
-        Assert.Contains("fan speed not reported", summary);
+        Assert.DoesNotContain("fan speed not reported", summary);
         Assert.Contains("(some sensors need administrator rights)", summary);
-        Assert.Equal("CPU 50°C · GPU 45°C · Storage 40°C · fan speed not reported (some sensors need administrator rights)", summary);
+        Assert.Equal("CPU 50°C · GPU 45°C · Storage 40°C (some sensors need administrator rights)", summary);
+    }
+
+    [Fact]
+    public void Summarize_OmitsUnreadGpuAndFans()
+    {
+        var snapshot = new SensorSnapshot([
+            new("Snapdragon X Elite", HardwareKind.Cpu, "CPU Package", SensorKind.Temperature, 65, 55, 70, "°C"),
+            new("NVMe Drive", HardwareKind.Storage, "Composite Temperature", SensorKind.Temperature, 42, 38, 45, "°C"),
+        ], IsElevated: true);
+
+        var summary = LibreHardwareMonitorModule.Summarize(LibreHardwareMonitorModule.BuildReport(snapshot));
+
+        Assert.Equal("CPU 65°C · Storage 42°C", summary);
+        Assert.DoesNotContain("GPU", summary);
+        Assert.DoesNotContain("—", summary);
+        Assert.DoesNotContain("fan", summary, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -184,13 +200,13 @@ public class LibreHardwareMonitorModuleTests
             new("Drive B", HardwareKind.Storage, "Composite Temperature", SensorKind.Temperature, 38, null, null, "°C"),
         ], IsElevated: true);
         var summary = LibreHardwareMonitorModule.Summarize(LibreHardwareMonitorModule.BuildReport(snapshot));
-        Assert.Contains("Storage 43°C ·", summary);
+        Assert.Equal("Storage 43°C", summary);
         Assert.DoesNotContain("hottest sensor", summary);
     }
 
     [Theory]
     [InlineData(1, 0, "1 fan")] [InlineData(1, 1, "1 fan, stopped")] [InlineData(3, 1, "3 fans, 1 stopped")]
-    [InlineData(2, 2, "2 fans, stopped")] [InlineData(0, 0, "fan speed not reported")]
+    [InlineData(2, 2, "2 fans, stopped")] [InlineData(0, 0, "")]
     public void FansText_KeepsCountAndNamesStopped(int fans, int stopped, string expected) =>
         Assert.Equal(expected, LibreHardwareMonitorModule.FansText(fans, stopped));
 }
@@ -221,8 +237,9 @@ public class SensorNoDataTests
         var r = Assert.IsType<DiagnosticResult<SensorReport>>(await m.RefreshAsync(null));
         var rep = r.Data!;
         Assert.Null(rep.Groups.First(g => g.Id == "cpu").Hottest);
-        Assert.Contains("CPU —", r.Message);
-        Assert.DoesNotContain("CPU 0°C", r.Message);
+        Assert.Equal("Storage 40°C", r.Message);
+        Assert.DoesNotContain("CPU", r.Message);
+        Assert.DoesNotContain("GPU", r.Message);
         Assert.Equal(["storage"], rep.VisibleGroups.Select(g => g.Id));
         Assert.Equal("Not reported by this PC: CPU temperatures, GPU temperatures, board and memory temperatures", rep.MissingText);
         Assert.DoesNotContain("fans", rep.VisibleGroups.Select(g => g.Id));

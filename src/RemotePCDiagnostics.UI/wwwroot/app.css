@@ -128,7 +128,7 @@ code, pre, kbd, samp { font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono
 [data-theme="light"] .card { border-color: transparent; }
 .card-head { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 13.5px; }
 .card-head strong { flex: 1; min-width: 0; white-space: nowrap; font-weight: 600; color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; }
-.card-head .dot { width: 8px; height: 8px; margin: 0; }
+.card-head > .dot { width: 8px; height: 8px; margin: 0; }
 .headline { margin: 10px 0 4px; font-size: 18px; font-weight: 700; font-family: var(--font-num); font-variant-numeric: tabular-nums; color: var(--text-strong); overflow-wrap: anywhere; }
 .meta { color: var(--text-muted); font-size: 12.5px; margin-bottom: 6px; }
 p.meta { max-width: 820px; font-size: 13px; }
@@ -314,7 +314,7 @@ p.meta, .content > .meta { max-width: 75ch; font-size: 14px; line-height: 1.55; 
 .cards > .card { display: flex; flex-direction: column; }
 .cards > .card > .meta:last-child { margin-top: auto; padding-top: 6px; margin-bottom: 0; }
 .card-head { font-size: 15px; align-items: flex-start; }
-.card-head .dot { margin-top: 6px; }
+.card-head > .dot { margin-top: 6px; }
 .card-head .icon-badge, .card-head .chip { margin-top: 0; }
 .card-head strong { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.35; }
 .card-head:has(.icon-badge) { align-items: center; }
@@ -343,7 +343,8 @@ p.meta, .content > .meta { max-width: 75ch; font-size: 14px; line-height: 1.55; 
 .test-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px; }
 .test-name { font-size: 15px; }
 .section-title { font-size: 13px; color: var(--text-muted); }
-.chip { font-size: 12px; }
+.chip { font-size: 12px; line-height: 1; padding: 5px 9px; }
+.chip .dot { margin: 0; }
 table.detail { font-size: 14px; }
 table.sortable .sort-arrow { color: var(--text-muted); }
 .gauge-sub { fill: var(--text-muted); }
@@ -400,7 +401,7 @@ body.ct-resizing { user-select: none; cursor: col-resize; }
 .ct-row.selected { border-color: var(--accent); box-shadow: var(--glow-soft); background: var(--surface-active); }
 .ct-row:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .ct-row .ct-check { margin-top: 0; }
-.ct-row .dot { margin-right: 0; }
+.ct-row > .dot { margin-right: 0; }
 .ct-row-text { flex: 1; min-width: 0; }
 .ct-row-name { font-weight: 600; overflow-wrap: break-word; }
 .ct-row-summary { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -607,8 +608,8 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 }
 
 /* ---- Running-state animations (shared by all test pages). Plain CSS; only opacity/transform animate. ---- */
-.running-badge { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); white-space: nowrap; }
-.running-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: run-dot 1.4s ease-in-out infinite; }
+.running-badge { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; line-height: 1; color: var(--accent); background: var(--accent-soft); white-space: nowrap; }
+.running-badge-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--accent); animation: run-dot 1.4s ease-in-out infinite; }
 @keyframes run-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
 .status-line.is-running, .card.is-running, .ct-row.is-running { position: relative; }
 .status-line.is-running::after, .card.is-running::after, .ct-row.is-running::after {
@@ -1229,6 +1230,9 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
     inset: 0;
     background: var(--backdrop);
     z-index: 18;
+  }
+  body:has(.app.nav-open) .rbwv-control-bar {
+    display: none !important;
   }
   .rail {
     position: fixed;

@@ -301,7 +301,7 @@
 
                     <p data-testid="webcam-status" class="@(camRunning ? "status-line is-running" : camResult.Status == DiagnosticStatus.Error && camRep is null ? "status-line error-text" : "status-line")">
                         <span class="@DotClass(camResult.Status)"></span>
-                        <span>@(camRunning ? "Capturing from the camera…" : camResult.Status == DiagnosticStatus.NotRun ? "Not run yet. Press Start test to begin." : camResult.Message)</span>
+                        <span>@(camRunning ? "Capturing from the camera…" : camResult.Status == DiagnosticStatus.NotRun ? "Not run. Press Start test to begin." : camResult.Message)</span>
                         @if (camRunning)
                         {
                             <span class="running-badge" data-testid="webcam-running-badge"><span class="running-badge-dot"></span>Running</span>
@@ -393,7 +393,7 @@
 
                     <p data-testid="speakertomic-status" class="@(s2mRunning ? "status-line is-running" : s2mResult.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
                         <span class="@DotClass(s2mResult.Status)"></span>
-                        <span>@(s2mRunning ? "Playing the test tone and listening…" : s2mResult.Status == DiagnosticStatus.NotRun ? "Not run yet. Press Start test to begin." : s2mResult.Message)</span>
+                        <span>@(s2mRunning ? "Playing the test tone and listening…" : s2mResult.Status == DiagnosticStatus.NotRun ? "Not run. Press Start test to begin." : s2mResult.Message)</span>
                         @if (s2mRunning)
                         {
                             <span class="running-badge" data-testid="speakertomic-running-badge"><span class="running-badge-dot"></span>Running</span>
@@ -481,7 +481,7 @@
 
                     <p data-testid="mictospeaker-status" class="@(m2sRunning ? "status-line is-running" : m2sResult.Status == DiagnosticStatus.Error ? "status-line error-text" : "status-line")">
                         <span class="@DotClass(m2sResult.Status)"></span>
-                        <span>@(m2sRunning ? (_audioHalfDuplex ? "Recording, then playing it back… speak now." : "Playing the microphone through the speaker… speak now.") : m2sResult.Status == DiagnosticStatus.NotRun ? "Not run yet. Press Start monitor to begin." : m2sResult.Message)</span>
+                        <span>@(m2sRunning ? (_audioHalfDuplex ? "Recording, then playing it back… speak now." : "Playing the microphone through the speaker… speak now.") : m2sResult.Status == DiagnosticStatus.NotRun ? "Not run. Press Start monitor to begin." : m2sResult.Message)</span>
                         @if (m2sRunning)
                         {
                             <span class="running-badge" data-testid="mictospeaker-running-badge"><span class="running-badge-dot"></span>Running</span>

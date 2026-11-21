@@ -183,6 +183,19 @@
             let thumbStartLeft = 0;
             let dragging = false;
 
+            // Watch only button state attributes inside this segmented control so Blazor class="on" updates
+            // (clicks, keyboard, initial preference load, remote updates) immediately slide the thumb without
+            // re-enabling a document-wide attribute observer.
+            new MutationObserver(mutations => {
+                if (mutations.some(m => m.target && m.target.tagName === 'BUTTON')) {
+                    positionSegmentedThumb(container);
+                }
+            }).observe(container, { subtree: true, attributes: true, attributeFilter: ['class', 'aria-checked', 'aria-pressed'] });
+
+            if (typeof ResizeObserver !== 'undefined') {
+                new ResizeObserver(() => positionSegmentedThumb(container)).observe(container);
+            }
+
             const buttons = () => Array.from(container.querySelectorAll(':scope > button'));
             const bounds = () => {
                 const btns = buttons();
@@ -525,10 +538,11 @@
         });
     }
 
+    window.rpdSyncSegmentedControls = syncSegmentedControls;
+
     document.addEventListener('click', e => {
         if (e.target && e.target.closest && e.target.closest('.theme-switch')) {
             scheduleSegmentedSync();
-            setTimeout(scheduleSegmentedSync, 50);
         }
     }, true);
 
