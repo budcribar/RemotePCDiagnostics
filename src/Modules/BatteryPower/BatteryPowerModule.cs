@@ -69,6 +69,7 @@ public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner
         if (batteries is null && powerPlan is null) return AreaReport.Failed("Couldn't read battery and power settings on this PC.");
         var cards = new List<AreaCard>();
         var parts = new List<string>();
+        var metrics = new List<KeyMetric>();
 
         if (batteries is null)
             cards.Add(AreaCard.Failed("battery", "Battery health", "Couldn't read battery details."));
@@ -104,6 +105,10 @@ public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner
 
             cards.Add(new("battery", "Battery health", level, headline, string.Join(" · ", metaParts), ["Detail", "Value"], rows,
                 Note: worn ? "A battery below 70% health holds significantly less charge than when new and may need replacement." : null));
+            // Tracked over time: health falling (or capacity dropping) faster than normal is the early sign of a battery to replace.
+            if (health is { } hm) metrics.Add(new("battery.health", "Battery health", hm, "%", MetricTrend.HigherIsBetter));
+            if (b.MaxCapacity is > 0) metrics.Add(new("battery.capacity", "Full charge capacity", b.MaxCapacity.Value, "mWh", MetricTrend.HigherIsBetter));
+            if (b.CycleCount is > 0) metrics.Add(new("battery.cycles", "Charge cycles", b.CycleCount.Value, ""));
             parts.Add(health is { } h2 ? $"Battery health {h2}%" + (b.PercentRemaining is { } pr ? $" · {pr}% charged" : "") : "Battery present");
         }
 
@@ -121,6 +126,6 @@ public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner
         if (!string.IsNullOrWhiteSpace(powerPlan)) parts.Add($"{planName} plan");
 
         var status = AreaReport.Worst(cards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));
-        return new(cards, string.Join(" · ", parts), status);
+        return new(cards, string.Join(" · ", parts), status) { KeyMetrics = metrics.Count > 0 ? metrics : null };
     }
 }

@@ -107,8 +107,21 @@ public sealed record SensorGroup(string Id, string Title, IReadOnlyList<Evaluate
     public double? Hottest => Readings.Where(r => !r.Reading.IsLimit).Select(r => r.Reading.Value).Where(v => v.HasValue).DefaultIfEmpty().Max();
 }
 
-public sealed record SensorReport(SensorSnapshot Snapshot, IReadOnlyList<SensorGroup> Groups)
+public sealed record SensorReport(SensorSnapshot Snapshot, IReadOnlyList<SensorGroup> Groups) : IKeyMetrics
 {
+    /// <summary>Peak CPU and GPU temperatures: creeping up over weeks is the sign of dust or dried thermal paste.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyList<KeyMetric>? KeyMetrics
+    {
+        get
+        {
+            var list = new List<KeyMetric>();
+            if (Groups.FirstOrDefault(g => g.Id == "cpu")?.Hottest is { } cpu) list.Add(new("sensors.cpu", "Peak CPU temperature", Math.Round(cpu), "°C", MetricTrend.LowerIsBetter));
+            if (Groups.FirstOrDefault(g => g.Id == "gpu")?.Hottest is { } gpu) list.Add(new("sensors.gpu", "Peak GPU temperature", Math.Round(gpu), "°C", MetricTrend.LowerIsBetter));
+            return list.Count > 0 ? list : null;
+        }
+    }
+
     /// <summary>Compact fingerprint of what the page shows; equal fingerprints mean nothing visible changed.</summary>
     public static string Signature(string status, string? message, SensorReport? report)
     {

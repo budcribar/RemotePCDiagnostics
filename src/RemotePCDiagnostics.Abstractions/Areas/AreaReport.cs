@@ -97,8 +97,11 @@ public sealed record AreaCard(
 
 /// <summary>Payload of an area module: the cards, a one-line summary for the Dashboard, and the overall status.</summary>
 public sealed record AreaReport(IReadOnlyList<AreaCard> Cards, string Summary, DiagnosticStatus Status, string? Notice = null, IReadOnlyList<AreaCard>? ReviewedCards = null, bool Cancelled = false)
-    : IRunEnd
+    : IRunEnd, IKeyMetrics
 {
+    /// <summary>The numbers this check tracks over time (see <see cref="KeyMetric"/>); null when it tracks none or couldn't read them.</summary>
+    public IReadOnlyList<KeyMetric>? KeyMetrics { get; init; }
+
     /// <summary>
     /// Set when the check never reached a verdict (the tool was blocked, didn't start, or ended without a recognizable result): History
     /// and the Checks screen show "Couldn't run" with this reason instead of Critical. <see cref="Status"/> stays Error so nothing treats

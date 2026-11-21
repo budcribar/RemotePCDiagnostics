@@ -133,6 +133,9 @@ public sealed class ResultEventLogger
         _ => LogLevel.Information,
     };
 
+    /// <summary>At most this many key metrics are written per result (a check charts one or two; the rest are for Admin).</summary>
+    public const int MaxKeyMetrics = 8;
+
     /// <summary>Message format version written in "Format:" (parsed back by <see cref="History.HistoryEventParser"/>).</summary>
     public const int FormatVersion = 3;
 
@@ -166,6 +169,11 @@ public sealed class ResultEventLogger
         {
             sb.AppendLine("Measurements:");
             foreach (var (n, v) in ms) sb.Append("  ").Append(n).Append('=').AppendLine(One(v));
+        }
+        if (r.Payload is IKeyMetrics { KeyMetrics: { Count: > 0 } keyMetrics })
+        {
+            sb.AppendLine("Key metrics:");
+            foreach (var k in keyMetrics.Take(MaxKeyMetrics)) sb.Append("  ").AppendLine(History.KeyMetricText.Format(k));
         }
         var details = Details(r.Payload);
         if (details.Length > 0) sb.Append("Details:").AppendLine().Append(details);
