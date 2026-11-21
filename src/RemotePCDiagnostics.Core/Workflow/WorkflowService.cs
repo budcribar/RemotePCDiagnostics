@@ -1,5 +1,6 @@
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Benchmarks;
+using RemotePCDiagnostics.Core.Checks;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Logging;
 using RemotePCDiagnostics.Core.Optimizations;
@@ -142,7 +143,8 @@ public sealed class WorkflowService(
             foreach (var m in modules)
             {
                 ct.ThrowIfCancellationRequested();
-                var existing = !forceRerun ? results.Get(m.Name) : null;
+                // A check turned off on this PC is skipped even when an earlier result is still stored, so the review doesn't keep that result.
+                var existing = !forceRerun && !diag.IsTurnedOff(m.Name) ? results.Get(m.Name) : null;
                 if (existing is not null && IsCompletedResult(existing))
                 {
                     UpdateCheckItem(m.Name, item => item with { Status = existing.Status, Message = existing.Message, Step = 1, Total = 1 });
@@ -206,7 +208,7 @@ public sealed class WorkflowService(
             var snapshot = results.Snapshot.Values.ToList();
             var fixes = FixCatalog.Build(snapshot, suggestions, remediation, diag.Catalog);
             var notOffered = FixCatalog.NotOffered(snapshot, suggestions, remediation);
-            var findings = snapshot.Where(r => r.Status is DiagnosticStatus.Warning or DiagnosticStatus.Error && !Cancellation.IsCancelled(r))
+            var findings = snapshot.Where(r => r.Status is DiagnosticStatus.Warning or DiagnosticStatus.Error && !Cancellation.IsCancelled(r) && !CheckEnableRules.IsTurnedOff(r))
                 .Select(r => $"{diag.Catalog.DisplayName(r.ModuleName)}: {r.Message} (scan {r.Timestamp:O})").ToList();
             var hw = results.Get(ModuleSlugs.Osquery).Payload is HardwareInventory inv ? inv.FriendlySummary() : "";
             Save(s => s with

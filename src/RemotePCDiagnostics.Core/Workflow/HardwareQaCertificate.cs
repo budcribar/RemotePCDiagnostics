@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Checks;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Stress;
@@ -391,6 +392,8 @@ public static class HardwareQaCertificate
 
     private static HardwareQaItem BuildSimpleItem(string id, string label, DiagnosticResult r, string? okOverride = null)
     {
+        if (CheckEnableRules.IsTurnedOff(r))
+            return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, r.Message);
         var summary = r.Status == DiagnosticStatus.NotRun ? "Not run yet"
             : r.Status == DiagnosticStatus.Ok && !string.IsNullOrWhiteSpace(okOverride) ? okOverride
             : string.IsNullOrWhiteSpace(r.Message) ? r.Status.ToString() : r.Message;
@@ -399,6 +402,8 @@ public static class HardwareQaCertificate
 
     private static HardwareQaItem BuildAreaItem(string id, string label, DiagnosticResult r)
     {
+        if (CheckEnableRules.IsTurnedOff(r))
+            return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, r.Message);
         if (r.Status == DiagnosticStatus.NotRun)
             return new HardwareQaItem(id, label, DiagnosticStatus.NotRun, "Not run yet");
         var summary = r.Report() is AreaReport ar && !string.IsNullOrWhiteSpace(ar.Summary) ? ar.Summary : r.Message;
@@ -407,6 +412,8 @@ public static class HardwareQaCertificate
 
     private static HardwareQaItem BuildSensorsItem(DiagnosticResult r)
     {
+        if (CheckEnableRules.IsTurnedOff(r))
+            return new HardwareQaItem("sensors", "Thermal & cooling sensors", DiagnosticStatus.NotRun, r.Message);
         if (r.Status == DiagnosticStatus.NotRun)
             return new HardwareQaItem("sensors", "Thermal & cooling sensors", DiagnosticStatus.NotRun, "Not run yet");
         if (r.Report() is SensorReport sr)

@@ -1,4 +1,5 @@
 @using RemotePCDiagnostics.Core.Areas
+@using RemotePCDiagnostics.Core.Checks
 @page "/checks"
 @page "/stress"
 @using Microsoft.JSInterop
@@ -11,11 +12,14 @@
 @* Two pages share this screen: /checks (read-only system checks) and /stress (stress tests, audio, webcam, NPU). The list is on the left,
    the selected test's real page on the right. *@
 @{
-    var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled); }), Diagnostics.LastStressSuiteProgress);
+    var summary = DashboardSummary.Build(Diagnostics.Modules.Select(m => { var r = Store.Get(m.Name); return new BannerModule(m.Name, m.DisplayName, !m.IncludeInRunAll, m is IStressSuiteModule, r.Status, r.Message, r.Cancelled, CheckEnableRules.IsTurnedOff(r)); }), Diagnostics.LastStressSuiteProgress);
     // Only this page's tests count: the auto-run sensor and inventory checks alone don't make the Stress tests page say "healthy".
-    var anyResult = Screen.Modules(_group).Any(m => Store.Get(m.Name).Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running));
+    var anyResult = Screen.Modules(_group).Any(m => { var r = Store.Get(m.Name); return r.Status is not (DiagnosticStatus.NotRun or DiagnosticStatus.Running) && !CheckEnableRules.IsTurnedOff(r); });
     var banner = ChecksBanner.Build(summary, Screen.Progress, anyResult, _group == CheckGroup.Stress ? "No tests run in this session" : "Not checked yet");
     var selected = Screen.SelectedIn(_group);
+    var checkChoices = _group == CheckGroup.Checks ? Diagnostics.CheckChoices() : [];
+    var availableChecks = checkChoices.Where(c => c.Available).ToList();
+    var enabledChecks = availableChecks.Count(c => c.Enabled);
 }
 <div class="ct-page">
     <div class="toolbar"><span class="icon-badge page-icon"><Icon Name="dash" Size="20" /></span><h1 data-rpcd-page="@(_group == CheckGroup.Stress ? "stress" : "checks")" data-rpcd-contract="@(_group == CheckGroup.Stress ? BrowserContract.Stress : BrowserContract.Checks)" data-testid="checks-title">@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")</h1>
@@ -45,6 +49,39 @@
     {
         <AgentData TestId="stress-data" Json="@StressJson()" />
     }
+    else
+    {
+        <AgentData TestId="checks-report-data" Json="@AgentExports.CheckEnablement(checkChoices)" />
+        <details class="card bench-customize" data-testid="checks-settings" open="@_checksOpen">
+            @* The click saves the open state, so a view-only mirror and a controlling mirror show the same panel the start buttons do. *@
+            <summary class="bench-customize-summary" data-testid="checks-settings-toggle" aria-expanded="@(_checksOpen ? "true" : "false")"
+                     @onclick="ToggleChecksPanel" @onclick:preventDefault="true">
+                <span class="bench-customize-title">
+                    <span class="bench-customize-caret" aria-hidden="true">▸</span>
+                    <span>Which checks run</span>
+                    <span class="meta">(@enabledChecks of @availableChecks.Count on)</span>
+                </span>
+            </summary>
+            <div class="bench-customize-body">
+                <div class="bench-preset-group">
+                    <button type="button" class="btn-small" data-testid="checks-enable-all" disabled="@ChecksLocked" @onclick="() => SetAllChecks(true)">Enable all</button>
+                    <button type="button" class="btn-small" data-testid="checks-disable-all" disabled="@ChecksLocked" @onclick="() => SetAllChecks(false)">Disable all</button>
+                </div>
+                <div class="bench-kinds">
+                    @foreach (var choice in availableChecks)
+                    {
+                        var check = choice;
+                        <label class="bench-kind">
+                            @* Click saves the enabled set. preventDefault keeps the box on that saved value until the redraw. *@
+                            <input type="checkbox" data-testid="@CheckEnableRules.Control(check.Id)" data-check-id="@check.Id"
+                                   data-enabled="@(check.Enabled ? "true" : "false")" data-available="true" checked="@check.Enabled" disabled="@ChecksLocked"
+                                   @onclick="() => ToggleCheck(check)" @onclick:preventDefault="true" /> @check.Title
+                        </label>
+                    }
+                </div>
+            </div>
+        </details>
+    }
     <div class="ct-workspace" data-testid="checks-workspace">
         <section class="ct-list" aria-label="@(_group == CheckGroup.Stress ? "Stress tests" : "Checks")">
             @if (_group == CheckGroup.Checks)
@@ -71,6 +108,7 @@
         base.OnInitialized();
         Screen.Changed += OnScreenChanged;
         Nav.LocationChanged += OnLocationChanged;
+        if (App.CheckSettings is { } checks) checks.Changed += OnScreenChanged;
         _ = LoadLastRunsAsync();
     }
 
@@ -102,7 +140,31 @@
         try { await JS.InvokeVoidAsync("rpdSplit.init"); } catch { /* no JS helper (older host page): fixed 55% split */ }
     }
 
-    public override void Dispose() { Screen.Changed -= OnScreenChanged; Nav.LocationChanged -= OnLocationChanged; base.Dispose(); }
+    public override void Dispose()
+    {
+        Screen.Changed -= OnScreenChanged;
+        Nav.LocationChanged -= OnLocationChanged;
+        if (App.CheckSettings is { } checks) checks.Changed -= OnScreenChanged;
+        base.Dispose();
+    }
+
+    private bool _checksOpen;
+    /// <summary>The enablement checkboxes stay on the saved set while a check, a group run or a stress test is going.</summary>
+    private bool ChecksLocked => Screen.IsBusy || Diagnostics.IsAnyRunning;
+
+    private void ToggleChecksPanel() => _checksOpen = !_checksOpen;
+
+    private void ToggleCheck(CheckChoice check)
+    {
+        if (ChecksLocked || App.CheckSettings is null) return;
+        App.CheckSettings.SetEnabled(check.Id, !check.Enabled, check.Available);
+    }
+
+    private void SetAllChecks(bool on)
+    {
+        if (ChecksLocked || App.CheckSettings is null) return;
+        App.CheckSettings.SetAll(Diagnostics.CheckChoices().Where(c => c.Available).Select(c => c.Id), on);
+    }
 
     /// <summary>The Stress tests page's state for browser agents (stress-data).</summary>
     private string StressJson()

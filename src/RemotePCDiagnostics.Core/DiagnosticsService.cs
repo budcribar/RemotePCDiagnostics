@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using RemotePCDiagnostics.Core.Checks;
 
 namespace RemotePCDiagnostics.Core;
 
@@ -106,6 +107,7 @@ public sealed class DiagnosticsService
 
     private readonly List<IDiagnosticModule> _modules = new();
     private readonly ResultStore _store;
+    private readonly CheckSettingsService? _checks;
     private readonly ConcurrentDictionary<string, Task<DiagnosticResult>> _inFlight = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<Task>> _inFlightCleanups = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, CheckProgress> _progress = new(StringComparer.OrdinalIgnoreCase);
@@ -123,9 +125,10 @@ public sealed class DiagnosticsService
     /// results through it; <see cref="Modules"/> stays the list of runnable modules.</summary>
     public ModuleCatalog Catalog { get; }
 
-    public DiagnosticsService(ResultStore store, IEnumerable<IDiagnosticModule>? modules = null, ModuleCatalog? catalog = null)
+    public DiagnosticsService(ResultStore store, IEnumerable<IDiagnosticModule>? modules = null, ModuleCatalog? catalog = null, CheckSettingsService? checks = null)
     {
         _store = store;
+        _checks = checks;
         Catalog = catalog ?? new ModuleCatalog();
         foreach (var m in modules ?? []) Register(m);
         RejectDependencyCycles();
@@ -312,6 +315,17 @@ public sealed class DiagnosticsService
     /// <summary>Stress tests know from their own report (not the message) when the user stopped them: flag it as cancelled.</summary>
     private static DiagnosticResult MarkStopped(IDiagnosticModule module, DiagnosticResult r) =>
         !r.Cancelled && module is IStressSuiteModule stress && stress.IsStoppedByUserResult(r) ? r with { Cancelled = true } : r;
+
+    /// <summary>Every diagnostic check, including ones hidden because the hardware is missing, and whether each one is turned on.</summary>
+    public IReadOnlyList<CheckChoice> CheckChoices() => CheckEnableRules.Choices(this, _checks?.Settings ?? new CheckSettings());
+
+    /// <summary>True when <paramref name="moduleName"/> is a diagnostic check that has been turned off on this PC.</summary>
+    public bool IsTurnedOff(string moduleName)
+    {
+        if (_checks is null) return false;
+        var module = _modules.FirstOrDefault(m => string.Equals(m.Name, moduleName, StringComparison.OrdinalIgnoreCase));
+        return module is { IncludeInRunAll: true } && !_checks.IsEnabled(module.Name);
+    }
 
     public async Task<DiagnosticResult> RunAsync(string moduleName, IProgress<string>? progress = null, CancellationToken ct = default)
     {
@@ -501,6 +515,11 @@ public sealed class DiagnosticsService
 
     private Task<DiagnosticResult> StartRun(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, out Func<Task>? cleanupOnce, string? onlyInstance = null, bool gateInstances = false)
     {
+        if (TurnedOffResult(module) is { } skipped)
+        {
+            cleanupOnce = null;
+            return Task.FromResult(skipped);
+        }
         Task<DiagnosticResult> task;
         lock (_gate)
         {
@@ -560,6 +579,16 @@ public sealed class DiagnosticsService
             _ = task.ContinueWith(_ => ProgressChanged -= OnProgress, TaskScheduler.Default);
         }
         return ct.CanBeCanceled ? task.WaitAsync(ct) : task;
+    }
+
+    /// <summary>A turned-off diagnostic check is recorded as skipped and not run. Other modules (stress tests, on-demand scans) are unchanged.</summary>
+    private DiagnosticResult? TurnedOffResult(IDiagnosticModule module)
+    {
+        if (_checks is null || !module.IncludeInRunAll || _checks.IsEnabled(module.Name)) return null;
+        var result = CheckEnableRules.SkippedResult(module.Name, module.Id);
+        _store.Set(result);
+        try { Log.Info($"{module.Name}: {result.Message}"); } catch { }
+        return result;
     }
 
     private async Task<DiagnosticResult> RunCoreAsync(IDiagnosticModule module, Guid runId, IProgress<string>? progress, CancellationToken ct, string? onlyInstance, bool gateInstances)

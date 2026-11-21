@@ -70,8 +70,8 @@ public partial class MainWindow : Window
             {
                 if (elevation.IsAdminHelperConnected)
                 {
-                    // Admin-only setup (state folder, Event Log source, history updates) first, then the workflow and benchmark state the
-                    // Agent keeps in that folder: an app started before the Agent connected read nothing, so read it now and carry on.
+                    // Admin-only setup (state folder, Event Log source, history updates) first, then the workflow, benchmark and check
+                    // settings the Agent keeps in that folder: an app started before the Agent connected read nothing, so read it now and carry on.
                     _ = Task.Run(async () =>
                     {
                         await App.PrepareMachineThroughAgentAsync(elevation).ConfigureAwait(false);
@@ -92,6 +92,10 @@ public partial class MainWindow : Window
                                 if (benchmarks.Reload()) await benchmarks.ResumeAfterRestartAsync().ConfigureAwait(false);
                             }
                             catch (Exception ex) { Logger.Warn($"Benchmark state reload through the Agent failed: {ex.Message}"); }
+                        }), Task.Run(() =>
+                        {
+                            try { provider.GetRequiredService<RemotePCDiagnostics.Core.Checks.CheckSettingsService>().Reload(); }
+                            catch (Exception ex) { Logger.Warn($"Check settings reload through the Agent failed: {ex.Message}"); }
                         })).ConfigureAwait(false);
                     });
                     if (provider.GetService<ISensorProvider>() is LhmSensorProvider lhm)

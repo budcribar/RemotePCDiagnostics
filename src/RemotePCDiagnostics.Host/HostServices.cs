@@ -3,6 +3,7 @@ using PeakSWC.RemoteBlazorWebView;
 using PeakSWC.RemoteWebView;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Checks;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
@@ -128,10 +129,13 @@ public static class HostServices
                 frames.OnDisposed = () => AppDomain.CurrentDomain.ProcessExit -= onExit;
                 return frames;
             });
+        services.AddSingleton(sp => new CheckSettingsService(
+            new AgentCheckSettingsStore(sp.GetRequiredService<IElevatedCommandBridge>(), L<AgentCheckSettingsStore>())));
         services.AddSingleton(sp =>
         {
             sp.GetService<HostQueryBackendSlot>()?.Bind(sp);
-            var diag = new DiagnosticsService(sp.GetRequiredService<ResultStore>(), sp.GetServices<IDiagnosticModule>());
+            var diag = new DiagnosticsService(sp.GetRequiredService<ResultStore>(), sp.GetServices<IDiagnosticModule>(),
+                checks: sp.GetRequiredService<CheckSettingsService>());
             diag.Log = L<DiagnosticsService>();
             sp.GetRequiredService<PluginRegistrar>().ApplyTo(diag.Catalog); // where each module came from, its details UI
             diag.RejectDependencyCycles(); // now that plugin DependsOn / RunAfter are known
@@ -231,7 +235,8 @@ public static class HostServices
             sp.GetService<IElevationContext>(),
             sp.GetService<IFullscreenService>(),
             sp.GetService<IAppUpdateService>(),
-            sp.GetService<SystemCommandRunner>()));
+            sp.GetService<SystemCommandRunner>(),
+            sp.GetService<CheckSettingsService>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
         return services;
