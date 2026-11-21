@@ -48,6 +48,7 @@ public sealed record AboutMachineFacts(string? AgentVersion, string? AgentServic
     /// <summary>
     /// Reads the installed agent executable's version, the Windows service state, and the public enrollment facts
     /// (<c>machineId</c> and <c>group</c> only). A missing file or a failed query is null, not an error.
+    /// The un-elevated app cannot read agent.json, so its id and group come from <see cref="WithEnrollment"/>.
     /// </summary>
     public static AboutMachineFacts Read(string? agentExePath = null, string? configPath = null, Func<string?>? serviceStatus = null)
     {
@@ -58,6 +59,26 @@ public sealed record AboutMachineFacts(string? AgentVersion, string? AgentServic
             AgentServiceStatus = ReadServiceStatus(serviceStatus),
         };
     }
+
+    /// <summary>
+    /// What the Agent answers to <c>agent_enrollment</c>. agent.json is admin and SYSTEM only, so only the Agent can call this
+    /// on a real install; the app asks for it over the admin pipe.
+    /// </summary>
+    public static AgentEnrollmentFacts ReadEnrollmentFile(string path)
+    {
+        var facts = ReadEnrollment(ReadText(path));
+        return new AgentEnrollmentFacts(facts.AgentId, facts.ShopGroup);
+    }
+
+    /// <summary>The facts with the Agent's enrollment answer filled in where this process could not read agent.json.</summary>
+    public AboutMachineFacts WithEnrollment(AgentEnrollmentFacts? enrollment) =>
+        enrollment is null
+            ? this
+            : this with
+            {
+                AgentId = AgentId ?? (Guid.TryParse(enrollment.MachineId, out var id) && id != Guid.Empty ? id.ToString("D") : null),
+                ShopGroup = ShopGroup ?? AgentLayout.NormalizeShopGroup(enrollment.Group),
+            };
 
     /// <summary>Parses agent.json for the machine id and shop group. The key and the server URL are ignored.</summary>
     public static AboutMachineFacts ReadEnrollment(string? json)

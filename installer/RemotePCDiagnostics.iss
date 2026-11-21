@@ -272,14 +272,16 @@ end;
   The start type stays Automatic. DeinitializeSetup turns failure restart back on and starts the service. }
 function ServiceQueryText(const Name: String): String;
 var
-  OutputPath, Text: String;
+  OutputPath: String;
+  Text: AnsiString;
   Code: Integer;
 begin
   Result := '';
   OutputPath := ExpandConstant('{tmp}\rpcd-sc-query.txt');
+  { LoadStringFromFile takes an AnsiString; sc query writes ASCII. }
   if Exec(ExpandConstant('{sys}\cmd.exe'), '/C sc query "' + Name + '" > "' + OutputPath + '" 2>&1', '', SW_HIDE, ewWaitUntilTerminated, Code) then
     if LoadStringFromFile(OutputPath, Text) then
-      Result := Text;
+      Result := String(Text);
 end;
 
 function AgentServiceIsInstalled(): Boolean;
@@ -315,7 +317,7 @@ end;
 
 procedure EnsureAgentServiceAutomaticAndRunning();
 var
-  Code, Try: Integer;
+  Code, Attempt: Integer;
   Text: String;
 begin
   if not AgentServiceIsInstalled() then
@@ -329,7 +331,7 @@ begin
   ScLog('failure RemotePCDiagnosticsAgent reset= 86400 actions= restart/5000/restart/15000/restart/60000');
   { A start that finds the previous process still holding the agent mutex exits 0 and stays stopped.
     Exit 0 does not trip failure restart. Try again once that process is gone. }
-  for Try := 1 to 8 do
+  for Attempt := 1 to 8 do
   begin
     if not Exec(ExpandConstant('{sys}\sc.exe'), 'start RemotePCDiagnosticsAgent', '', SW_HIDE, ewWaitUntilTerminated, Code) then
     begin

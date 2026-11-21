@@ -7,9 +7,10 @@ namespace RemotePCDiagnostics.Agent;
 
 /// <summary>
 /// Holds <see cref="AgentInstancePolicy.MutexName"/> for the life of this process.
-/// The ACL grants LocalSystem, Administrators, service accounts, and ordinary users the right to open it,
-/// so a service in session 0 and a console or dev process in another session contend for the same instance.
-/// A default mutex DACL created by LocalSystem or an elevated process denies the other context.
+/// The ACL grants only LocalSystem and Administrators, so the service in session 0 and an elevated console,
+/// helper or dev process in another session contend for the same instance.
+/// A standard user cannot open it: if one could, it could keep a handle and take the mutex when the service
+/// stops for an upgrade, and the new service would then refuse to start.
 /// </summary>
 internal static class AgentSingleInstance
 {
@@ -238,8 +239,8 @@ internal static class AgentSingleInstance
     }
 
     /// <summary>
-    /// Everyone can wait on and release the mutex. LocalSystem creates it; a console or dev process has to open it.
-    /// Full control for those SIDs is what makes the create succeed for the creator as well.
+    /// Only LocalSystem and Administrators can open the mutex. LocalSystem or an elevated process creates it.
+    /// Users, Interactive and Everyone are left out on purpose (see the class summary).
     /// </summary>
     private static MutexSecurity Access()
     {
@@ -248,12 +249,6 @@ internal static class AgentSingleInstance
             security.AddAccessRule(new MutexAccessRule(new SecurityIdentifier(sid, null), MutexRights.FullControl, AccessControlType.Allow));
         Allow(WellKnownSidType.LocalSystemSid);
         Allow(WellKnownSidType.BuiltinAdministratorsSid);
-        Allow(WellKnownSidType.ServiceSid);
-        Allow(WellKnownSidType.LocalServiceSid);
-        Allow(WellKnownSidType.NetworkServiceSid);
-        Allow(WellKnownSidType.BuiltinUsersSid);
-        Allow(WellKnownSidType.InteractiveSid);
-        Allow(WellKnownSidType.WorldSid);
         return security;
     }
 

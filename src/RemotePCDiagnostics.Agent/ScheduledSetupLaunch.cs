@@ -109,23 +109,31 @@ internal static class ScheduledSetupLaunch
     }
 }
 
-/// <summary>Waits until the task's cmd script has written Setup's exit code. Does not stop the task if this process is cancelled.</summary>
+/// <summary>
+/// Waits until the task's cmd script has written Setup's exit code. Gives up with <see cref="ScheduledSetup.NoExitCode"/> when
+/// the task has stopped without writing one (killed at its time limit, or cmd failed) or after <see cref="ScheduledSetup.WaitLimit"/>.
+/// Does not stop the task if this process is cancelled.
+/// </summary>
 internal sealed class ScheduledSetupWait : IDisposable
 {
     private readonly string _exitPath;
     private readonly string _taskArgument;
     private readonly Action<string>? _log;
+    private readonly Func<string?> _taskState;
     private int _disposed;
 
-    public ScheduledSetupWait(string exitPath, string taskArgument, Action<string>? log)
+    public ScheduledSetupWait(string exitPath, string taskArgument, Action<string>? log, Func<string?>? taskState = null)
     {
         _exitPath = exitPath;
         _taskArgument = taskArgument;
         _log = log;
+        _taskState = taskState ?? (() => QueryTaskState(AgentLayout.SetupTaskName));
     }
 
     public async Task<int> WaitAsync(CancellationToken ct)
     {
+        var started = DateTime.UtcNow;
+        var nextCheck = started + ScheduledSetup.StateCheckAfter;
         while (true)
         {
             var code = ReadCode();
@@ -134,7 +142,67 @@ internal sealed class ScheduledSetupWait : IDisposable
                 Cleanup();
                 return exit;
             }
+
+            var now = DateTime.UtcNow;
+            if (now - started > ScheduledSetup.WaitLimit)
+            {
+                _log?.Invoke($"[rpcd-update] Setup's task has not reported an exit code after {(int)ScheduledSetup.WaitLimit.TotalMinutes} minutes. Giving up on it.");
+                Cleanup();
+                return ScheduledSetup.NoExitCode;
+            }
+
+            if (now >= nextCheck)
+            {
+                nextCheck = now + ScheduledSetup.StateCheckEvery;
+                var state = _taskState();
+                if (!ScheduledSetup.MayStillRun(state))
+                {
+                    // The script writes the code as its last step; give a write that just landed one more look.
+                    await Task.Delay(2000, ct).ConfigureAwait(false);
+                    if (ReadCode() is int late)
+                    {
+                        Cleanup();
+                        return late;
+                    }
+                    _log?.Invoke($"[rpcd-update] Setup's task is {state?.Trim()} and did not write an exit code. Setup was stopped or never ran.");
+                    Cleanup();
+                    return ScheduledSetup.NoExitCode;
+                }
+            }
+
             await Task.Delay(500, ct).ConfigureAwait(false);
+        }
+    }
+
+    private static string? QueryTaskState(string taskName)
+    {
+        var exe = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+        if (!File.Exists(exe))
+            exe = "powershell.exe";
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = exe,
+                ArgumentList = { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ScheduledSetup.StateQuery(taskName) },
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            });
+            if (proc is null)
+                return null;
+            var output = proc.StandardOutput.ReadToEnd();
+            if (!proc.WaitForExit(20_000))
+            {
+                try { proc.Kill(); } catch { /* Already gone. */ }
+                return null;
+            }
+            return proc.ExitCode == 0 ? output.Trim() : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 

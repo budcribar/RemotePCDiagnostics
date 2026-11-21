@@ -63,6 +63,39 @@ public class AboutReportTests
     }
 
     [Fact]
+    public void The_agent_answers_enrollment_for_the_app_that_cannot_read_agent_json()
+    {
+        var dir = Directory.CreateTempSubdirectory("rpcd-about-enroll-").FullName;
+        try
+        {
+            var config = Path.Combine(dir, "agent.json");
+            File.WriteAllText(config, $$"""
+                {"machineId":"{{AgentId}}","key":"{{Secret}}","server":"https://relay.example/secret","group":"TestShop"}
+                """);
+            var answer = AboutMachineFacts.ReadEnrollmentFile(config);
+            Assert.Equal(AgentId, answer.MachineId);
+            Assert.Equal("testshop", answer.Group);
+            var wire = JsonSerializer.Serialize(answer);
+            Assert.DoesNotContain(Secret, wire, StringComparison.Ordinal);
+            Assert.DoesNotContain("relay.example", wire, StringComparison.Ordinal);
+
+            // The app's own read of agent.json is denied, so it has nothing until the Agent answers.
+            var unreadable = AboutMachineFacts.Read(Path.Combine(dir, "absent.exe"), Path.Combine(dir, "denied.json"), () => "Running");
+            Assert.Null(unreadable.AgentId);
+            var merged = unreadable.WithEnrollment(answer);
+            Assert.Equal(AgentId, merged.AgentId);
+            Assert.Equal("testshop", merged.ShopGroup);
+            Assert.Equal("Running", merged.AgentServiceStatus);
+            Assert.Same(unreadable, unreadable.WithEnrollment(null));
+            Assert.Null(unreadable.WithEnrollment(new AgentEnrollmentFacts("not-a-guid", null)).AgentId);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    [Fact]
     public void Enrollment_file_contributes_the_agent_id_and_group_and_not_the_key()
     {
         var raw = $$"""

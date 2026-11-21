@@ -86,7 +86,8 @@ internal sealed class RpcdRemoteUpdater : IDisposable
     public RpcdUpdateStatus Start(RpcdUpdateRequest request, IReadOnlyList<string>? relaunch, bool trustCallerBusyReason)
     {
         // A hub command must not trust its own "idle". The page's activity-data is what get_session_status reads.
-        // The app writes that same verdict to the session folder (and, when the admin pipe is up, to the staging file).
+        // The app sends that same verdict over the admin pipe (the staging file) and writes it to the session folder.
+        // Only the pipe copy can confirm idle; the session copy can only add a busy reason (see ReadActivityFiles).
         // On a slow ARM64 box the write can land just after this call, so wait before refusing.
         string? probeProblem = null;
         if (!trustCallerBusyReason && _hostRunning())
@@ -298,7 +299,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         try
         {
             if (File.Exists(_statusPath))
-                _session.Adopt(RpcdUpdateStatus.Parse(File.ReadAllText(_statusPath)));
+                _session.Adopt(FinishFromSetupExit(RpcdUpdateStatus.Parse(File.ReadAllText(_statusPath))));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -324,19 +325,17 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         }
     }
 
-    /// <summary>Null when a fresh report is now held. Otherwise why the files did not confirm the page.</summary>
+    /// <summary>
+    /// Null when a fresh report is now held. Otherwise why the files did not confirm the page.
+    /// Only the staging copy, which the app sends over the admin pipe, can say the app is idle. Any local process can write the
+    /// session folder, so its copy is used only when it says the app is busy: a forged file can hold an update back but never start one.
+    /// </summary>
     private string? ReadActivityFiles(DateTimeOffset reportedAt)
     {
-        string? ioProblem = null;
-        RpcdActivityReport? best = null;
-        foreach (var path in new[] { _sessionActivityPath, _activityPath })
-        {
-            var (report, error) = ReadActivityFile(path);
-            if (error is not null)
-                ioProblem = error;
-            if (report is not null && (best is null || report.At >= best.At))
-                best = report;
-        }
+        var (secured, securedError) = ReadActivityFile(_activityPath);
+        var (session, sessionError) = ReadActivityFile(_sessionActivityPath);
+        var best = RpcdActivityReport.Trusted(secured, session);
+        var ioProblem = securedError ?? sessionError;
         if (best is not null)
             _session.ReportActivity(best.BusyReason, best.At);
         var diagnosis = _session.ActivityDiagnosis(reportedAt);
@@ -406,7 +405,7 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             if (original is null)
                 return;
             // This process is the service, so a version that now matches was installed and the service is up.
-            var status = RpcdUpdateSeal.Seal(original, InstalledHostVersion(), serviceRunning: true, DateTimeOffset.UtcNow);
+            var status = RpcdUpdateSeal.Seal(FinishFromSetupExit(original) ?? original, InstalledHostVersion(), serviceRunning: true, DateTimeOffset.UtcNow);
             if (status is { Terminal: false }
                 && status.Stage is not (RpcdUpdateStages.Installing or RpcdUpdateStages.Relaunching)
                 && !IsOtherProcessAlive(status.OwnerPid))
@@ -430,6 +429,31 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         {
             _log?.Invoke($"[rpcd-update] Could not read the saved update status: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// An <c>installing</c> status whose Setup already wrote a failed exit code, made final and saved. This is how a hub update
+    /// from the elevated helper ends: Setup closes the app, which ends the helper before Setup returns.
+    /// </summary>
+    private RpcdUpdateStatus? FinishFromSetupExit(RpcdUpdateStatus? status)
+    {
+        if (status is null || status.Terminal || status.Stage is not (RpcdUpdateStages.Installing or RpcdUpdateStages.Relaunching))
+            return status;
+        var exit = AgentSelfUpdater.ReadSetupExit(Path.Combine(_stagingDirectory, ScheduledSetup.ExitCodeFileName));
+        if (exit is null or 0)
+            return status;
+        var finished = RpcdUpdateSeal.ApplySetupExit(
+            status,
+            exit,
+            InstalledHostVersion(),
+            RpcdSetupLog.ReadTail(Path.Combine(_stagingDirectory, RpcdSetupLog.FileName)),
+            DateTimeOffset.UtcNow);
+        if (finished.Terminal)
+        {
+            _log?.Invoke($"[rpcd-update] Setup exited with code {exit} after the agent that started it had stopped. Recording the failure.");
+            Persist(finished);
+        }
+        return finished;
     }
 
     private void Persist(RpcdUpdateStatus status)

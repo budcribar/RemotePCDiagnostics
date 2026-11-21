@@ -308,6 +308,16 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         await client.ReportDiagnosticsActivityAsync(busyReason, ct).ConfigureAwait(false);
     }
 
+    public async Task<AgentEnrollmentFacts?> ReadAgentEnrollmentAsync(CancellationToken ct = default)
+    {
+        AdminPipeClient? client;
+        lock (_stateLock)
+            client = _client;
+        if (client is not { IsConnected: true })
+            return null;
+        return await client.ReadAgentEnrollmentAsync(ct).ConfigureAwait(false);
+    }
+
     public async Task<RpcdUpdateStatus?> StartRpcdUpdateAsync(RpcdUpdateRequest request, IReadOnlyList<string>? relaunchArguments = null, CancellationToken ct = default)
     {
         AdminPipeClient? client;

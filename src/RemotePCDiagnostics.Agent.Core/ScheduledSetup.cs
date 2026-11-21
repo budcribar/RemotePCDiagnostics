@@ -90,6 +90,38 @@ public static class ScheduledSetup
             .Replace(">", "&gt;", StringComparison.Ordinal)
             .Replace("\"", "&quot;", StringComparison.Ordinal);
 
+    /// <summary>The exit code reported when the task stopped, or ran out of time, without its script writing one.</summary>
+    public const int NoExitCode = -1;
+
+    /// <summary>The task's 2-hour limit plus time for Task Scheduler to end it. A wait never runs longer than this.</summary>
+    public static readonly TimeSpan WaitLimit = TimeSpan.FromHours(2) + TimeSpan.FromMinutes(10);
+
+    /// <summary>How long after the start the task's state is first checked, and how often after that.</summary>
+    public static readonly TimeSpan StateCheckAfter = TimeSpan.FromSeconds(30);
+    public static readonly TimeSpan StateCheckEvery = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// The PowerShell that prints the Setup task's state. <c>State</c> is an enum, so the name is the same in every Windows language;
+    /// schtasks /Query prints a translated status. Prints <c>Missing</c> when the task is gone.
+    /// </summary>
+    public static string StateQuery(string taskName) =>
+        "$t = Get-ScheduledTask -TaskName '" + taskName.Replace("'", "''", StringComparison.Ordinal) + "' -ErrorAction SilentlyContinue; "
+        + "if ($null -eq $t) { 'Missing' } else { [string]$t.State }";
+
+    /// <summary>
+    /// False when the task is known to have stopped: <c>Ready</c>, <c>Disabled</c> or <c>Missing</c>.
+    /// A failed or empty query is not proof, so it keeps waiting (until <see cref="WaitLimit"/>).
+    /// </summary>
+    public static bool MayStillRun(string? state)
+    {
+        if (string.IsNullOrWhiteSpace(state))
+            return true;
+        var name = state.Trim();
+        return !(name.Equals("Ready", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Disabled", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Missing", StringComparison.OrdinalIgnoreCase));
+    }
+
     public static int? ParseExitCode(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
