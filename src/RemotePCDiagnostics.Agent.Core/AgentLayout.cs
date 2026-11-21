@@ -34,6 +34,12 @@ public static class AgentLayout
     public const string RunValueName = "RemotePCDiagnosticsAgent";
     public const string ScheduledTaskName = "RemotePCDiagnostics Agent";
 
+    /// <summary>
+    /// One-shot task that runs Setup outside the service job. Not removed during upgrade: that cleanup runs while
+    /// this task is still the installer. Uninstall deletes it by this name.
+    /// </summary>
+    public const string SetupTaskName = "Remote PC Diagnostics Setup";
+
     public static string ProgramDataDirectory()
     {
         var customConfig = Environment.GetEnvironmentVariable(ConfigPathEnvVar)?.Trim();

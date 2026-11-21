@@ -304,7 +304,7 @@ internal static class AgentAdminHost
     }
 
     private static RpcdRemoteUpdater NewUpdater(ILogger log) => new(
-        AgentPaths.GetInstalledOrCachedAppVersion,
+        AgentPaths.GetUpdateInstalledVersion,
         RpcdRemoteUpdater.IsTrackedHostRunning,
         () => RpcdRemoteUpdater.RelaunchForActiveSession(AgentPaths.TryLoadConfig(out _)?.Server),
         message => log.Info(message),

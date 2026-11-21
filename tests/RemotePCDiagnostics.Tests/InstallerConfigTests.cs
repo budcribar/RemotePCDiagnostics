@@ -1,4 +1,5 @@
 using System.Xml.Linq;
+using RemotePCDiagnostics.Agent.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Plugins;
 using RemotePCDiagnostics.Core.Workflow;
@@ -244,7 +245,7 @@ public sealed class InstallerConfigTests
         Assert.Contains("agent-instance.txt", iss);
 
         var wxs = File.ReadAllText(Path.Combine(root, "msi", "Package.wxs"));
-        Assert.Contains("Name=\"RemotePCDiagnosticsAgent\" Stop=\"both\" Wait=\"yes\"", wxs);
+        Assert.Contains("Name=\"RemotePCDiagnosticsAgent\" Stop=\"both\" Start=\"install\" Wait=\"yes\"", wxs);
         Assert.Contains("Name=\"RemotePCDiagnostics.Agent\" Stop=\"both\" Wait=\"yes\" Remove=\"both\"", wxs);
         Assert.Contains("Name=\"Remote PC Diagnostics Agent\" Stop=\"both\" Wait=\"yes\" Remove=\"both\"", wxs);
         Assert.Contains("Name=\"RemotePCDiagnostics Agent\" Stop=\"both\" Wait=\"yes\" Remove=\"both\"", wxs);
@@ -252,5 +253,47 @@ public sealed class InstallerConfigTests
         var stopAt = wxs.IndexOf("StopExistingAgentService", StringComparison.Ordinal);
         var installAt = wxs.IndexOf("After=\"InstallFiles\"", StringComparison.Ordinal);
         Assert.True(stopAt > 0 && stopAt < installAt);
+    }
+
+    [Fact]
+    public void Install_and_upgrade_set_Automatic_and_start_the_service()
+    {
+        var root = FindRepoRoot();
+        var iss = File.ReadAllText(Path.Combine(root, "installer", "RemotePCDiagnostics.iss"));
+        var wxs = File.ReadAllText(Path.Combine(root, "msi", "Package.wxs"));
+
+        // Both packages say Automatic. Delayed start would leave the PC off the relay after boot.
+        Assert.Contains("start= " + AgentServiceControl.AutomaticStartType, iss);
+        Assert.Contains(AgentServiceControl.FailureRestartActions, iss);
+        Assert.Contains(AgentServiceControl.ClearedFailureActions, iss);
+        Assert.DoesNotContain("delayed-auto", iss);
+        Assert.DoesNotContain("start= disabled", iss);
+        Assert.Contains("procedure DeinitializeSetup();", iss);
+        Assert.Contains("EnsureAgentServiceAutomaticAndRunning();", iss);
+        Assert.Contains("procedure EnsureAgentServiceAutomaticAndRunning();", iss);
+
+        var stop = iss.IndexOf("procedure StopOneAgentService", StringComparison.Ordinal);
+        var afterStop = iss.IndexOf("procedure EnsureAgentServiceAutomaticAndRunning", stop, StringComparison.Ordinal);
+        var body = iss[stop..afterStop];
+        var clearAt = body.IndexOf("ClearAgentFailureRestart(Name);", StringComparison.Ordinal);
+        var stopAt = body.IndexOf("stop \"", StringComparison.Ordinal);
+        Assert.True(clearAt >= 0 && stopAt > clearAt, "Failure restart is cleared before the service is stopped.");
+
+        // Silent and /PRESERVEAGENT both run Agent.exe install. The ensure step is not behind skipifsilent.
+        var preserve = iss.IndexOf("Check: PreserveAgentSettings", StringComparison.Ordinal);
+        var preserveLine = iss.LastIndexOf("Filename:", preserve, StringComparison.Ordinal);
+        Assert.DoesNotContain("skipifsilent", iss[preserveLine..preserve]);
+        Assert.Contains(AgentLayout.SetupTaskName, iss);
+
+        Assert.Contains("start= " + AgentServiceControl.AutomaticStartType, wxs);
+        Assert.Contains(AgentServiceControl.FailureRestartActions, wxs);
+        Assert.Contains("Start=\"install\"", wxs);
+        Assert.DoesNotContain("delayed-auto", wxs);
+        Assert.DoesNotContain("start= disabled", wxs);
+        Assert.Contains("Id=\"EnsureAgentServiceRunning\"", wxs);
+        var install = wxs.IndexOf("After=\"InstallFiles\"", StringComparison.Ordinal);
+        var ensure = wxs.IndexOf("After=\"InstallAgentService\"", StringComparison.Ordinal);
+        Assert.True(install > 0 && ensure > install);
+        Assert.Contains("NOT REMOVE~=&quot;ALL&quot;", wxs);
     }
 }

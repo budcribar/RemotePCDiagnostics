@@ -16,6 +16,19 @@ public static class AgentInstancePolicy
     /// <summary>Clean exit. Must stay 0 so the service recovery actions do not run.</summary>
     public const int ExitAlreadyRunning = 0;
 
+    /// <summary>
+    /// How long a new process waits when the mutex is taken. The holder is often the previous service, already
+    /// exiting: <c>TerminateProcess</c> and a service stop both leave the mutex owned for a moment, and the pid can
+    /// still look alive. Exiting 0 in that window stops the new service cleanly, and recovery does not restart a clean exit.
+    /// </summary>
+    public static readonly TimeSpan DyingHolderWait = TimeSpan.FromSeconds(8);
+
+    /// <summary>
+    /// Leftover agent processes are ended without their children. Setup can be a child of the agent that started
+    /// the update; a tree kill would end Setup before it starts the new service.
+    /// </summary>
+    public const bool KillEntireProcessTree = false;
+
     public const string LogPrefix = "[agent-instance]";
 
     /// <summary>
@@ -123,10 +136,11 @@ public static class AgentInstancePolicy
     }
 
     /// <summary>
-    /// What an upgrade does before it starts the service. Stops come first, while failure recovery is turned off.
-    /// Startup entries are removed next so they cannot launch a second copy. Leftover processes are ended, then the
-    /// mutex must be free, and only then are legacy services deleted. Deleting a service while its process is still
-    /// running drops SCM's tracking and leaves that process beside the new one.
+    /// What an upgrade does before it starts the service. Failure restart is turned off first, then each service is
+    /// stopped. The start type stays Automatic: switching it off is what left the service stopped when the installer
+    /// died with the old agent. Startup entries are removed next. Leftover processes that are not an ancestor of this
+    /// process are ended without their process tree. The mutex must be free, and only then are legacy services deleted.
+    /// Recovery (Automatic plus failure restart) is put back last. The caller starts the service after that.
     /// </summary>
     public static IReadOnlyList<AgentUpgradeAction> BeforeStart(IEnumerable<AgentServiceRegistration> services)
     {
@@ -149,7 +163,45 @@ public static class AgentInstancePolicy
             if (string.IsNullOrWhiteSpace(service.Name) || !deleted.Add(service.Name)) continue;
             plan.Add(new DeleteServiceAction(service.Name));
         }
+        plan.Add(new EnsureServiceRecoveryAction(AgentLayout.ServiceName));
         return plan;
+    }
+
+    /// <summary>
+    /// True while a failed mutex take should be retried. A holder that has already exited, a holder that is still
+    /// listed because it is being killed, and a live second copy all wait out <paramref name="giveUp"/>. Stopping at
+    /// the first busy mutex made the new service exit 0 and stay stopped.
+    /// </summary>
+    public static bool ShouldWaitForDyingHolder(
+        AgentInstanceClaim? claim,
+        bool claimPidAlive,
+        IReadOnlyList<AgentProcessSighting> others,
+        TimeSpan waited,
+        TimeSpan giveUp)
+    {
+        _ = claim;
+        _ = claimPidAlive;
+        _ = others;
+        return waited < giveUp;
+    }
+
+    /// <summary>
+    /// A leftover agent process may be killed when it is not this process and not an ancestor in the same
+    /// kill-on-close job. Killing that ancestor closes the job and ends Setup, which is the process that starts the new service.
+    /// When the parent chain cannot be read and this process is in such a job, nothing is killed.
+    /// </summary>
+    public static bool MayTerminateLeftover(int pid, int selfPid, IReadOnlyList<int> protectedPids, bool inKillOnCloseJob, bool parentsKnown)
+    {
+        if (pid <= 0 || pid == selfPid)
+            return false;
+        foreach (var id in protectedPids)
+        {
+            if (id == pid)
+                return false;
+        }
+        if (inKillOnCloseJob && !parentsKnown)
+            return false;
+        return true;
     }
 
     public static AgentStartupReport DescribeStartup(
@@ -178,6 +230,15 @@ public static class AgentInstancePolicy
                 lines.Add(DescribeStaleService(service));
         }
         return new AgentStartupReport(true, lines);
+    }
+
+    public static string DescribeDyingHolder(AgentInstanceClaim? claim, bool claimPidAlive)
+    {
+        if (claim is null)
+            return $"{LogPrefix} {MutexName} is held but no holder is recorded. Waiting for the previous process to exit instead of stopping this service.";
+        if (!claimPidAlive)
+            return $"{LogPrefix} {MutexName} is still held by pid {claim.Pid}, which has exited. Waiting for Windows to release it instead of stopping this service.";
+        return $"{LogPrefix} {MutexName} is held by pid {claim.Pid}, version {Shown(claim.Version)}, which is still exiting. Waiting instead of stopping this service.";
     }
 
     public static string DescribeDenial(AgentInstanceClaim? claim, IReadOnlyList<AgentProcessSighting> others)
@@ -281,3 +342,6 @@ public sealed record TerminateLeftoverProcessesAction : AgentUpgradeAction;
 public sealed record WaitForInstanceMutexAction : AgentUpgradeAction;
 
 public sealed record DeleteServiceAction(string ServiceName) : AgentUpgradeAction;
+
+/// <summary>Puts Automatic startup and failure restart back on the service that is about to be started.</summary>
+public sealed record EnsureServiceRecoveryAction(string ServiceName) : AgentUpgradeAction;

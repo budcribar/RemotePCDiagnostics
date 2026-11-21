@@ -8,7 +8,7 @@ internal static class AgentRunLoop
     public static async Task RunAsync(AgentConfig config, Action<string>? log, CancellationToken ct)
     {
         using var updater = new RpcdRemoteUpdater(
-            installedVersion: AgentPaths.GetInstalledOrCachedAppVersion,
+            installedVersion: AgentPaths.GetUpdateInstalledVersion,
             hostRunning: RpcdRemoteUpdater.IsTrackedHostRunning,
             relaunchArguments: () => RpcdRemoteUpdater.RelaunchForActiveSession(config.Server),
             log: log,

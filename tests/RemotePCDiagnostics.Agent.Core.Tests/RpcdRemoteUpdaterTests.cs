@@ -175,8 +175,42 @@ public class RpcdRemoteUpdaterTests
         Assert.Null(RpcdRemoteUpdater.SplitRestartCommandLine(line, @"C:\Other\RemotePCDiagnostics.Host.exe"));
     }
 
-    private static RpcdRemoteUpdater NewUpdater(string dir, HttpClient http, string? sessionActivityPath = null, TimeSpan? probe = null, List<string>? log = null) => new(
-        installedVersion: () => "1.2.0",
+    [Fact]
+    public void A_restarted_service_records_success_for_an_install_the_old_process_left_open()
+    {
+        var dir = TempDir();
+        var version = AgentPaths.GetInstalledHostProductVersion();
+        if (string.IsNullOrWhiteSpace(version))
+            version = "1.2.0-ci.1052.1";
+        var open = new RpcdUpdateStatus
+        {
+            RequestId = "req-restart",
+            Stage = RpcdUpdateStages.Installing,
+            OldVersion = "1.2.0-ci.1043.1",
+            NewVersion = version,
+            Percent = 100,
+            Terminal = false,
+            Detail = "Installing RPCD.",
+            UpdatedUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+            OwnerPid = 424242,
+        };
+        File.WriteAllText(Path.Combine(dir, RpcdUpdateSeal.FileName), open.ToJson());
+
+        using var http = new HttpClient(new Stub(() => new HttpResponseMessage(HttpStatusCode.NotFound)));
+        using var restarted = NewUpdater(dir, http, installedVersion: version);
+        var current = restarted.Current(null);
+
+        Assert.NotNull(current);
+        Assert.Equal(RpcdUpdateStages.Succeeded, current.Stage);
+        Assert.True(current.Terminal);
+        Assert.Equal("1.2.0-ci.1043.1", current.OldVersion);
+        var saved = RpcdUpdateStatus.Parse(File.ReadAllText(Path.Combine(dir, RpcdUpdateSeal.FileName)));
+        Assert.Equal(RpcdUpdateStages.Succeeded, saved!.Stage);
+        Assert.True(saved.Terminal);
+    }
+
+    private static RpcdRemoteUpdater NewUpdater(string dir, HttpClient http, string? sessionActivityPath = null, TimeSpan? probe = null, List<string>? log = null, string? installedVersion = null) => new(
+        installedVersion: () => installedVersion ?? "1.2.0",
         hostRunning: () => true,
         relaunchArguments: () => null,
         log: log is null ? null : log.Add,

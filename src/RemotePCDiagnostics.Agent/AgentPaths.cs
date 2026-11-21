@@ -241,6 +241,26 @@ public static class AgentPaths
         }
     }
 
+    /// <summary>
+    /// Product version of the Host Setup just copied. The ProgramData app cache is not consulted: it can still name
+    /// the build from before this install, which would leave an <c>installing</c> update from ever looking finished.
+    /// </summary>
+    public static string GetInstalledHostProductVersion()
+    {
+        var installed = TryFindLocalInstalledHostExe();
+        return installed is null ? "" : ReadProductVersion(installed);
+    }
+
+    /// <summary>
+    /// Version a remote update should compare and seal against. The installed Host wins over the ProgramData
+    /// app cache, which can still name the build from before Setup copied the new files.
+    /// </summary>
+    public static string GetUpdateInstalledVersion()
+    {
+        var host = GetInstalledHostProductVersion();
+        return string.IsNullOrWhiteSpace(host) ? GetInstalledOrCachedAppVersion() : host;
+    }
+
     public static string GetInstalledOrCachedAppVersion()
     {
         var cached = GetCachedVersion(AppCacheRootDir());
@@ -252,24 +272,30 @@ public static class AgentPaths
         var installed = TryFindLocalInstalledHostExe() ?? TryFindStoreHostExe();
         if (installed is not null)
         {
-            try
-            {
-                var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(installed);
-                if (!string.IsNullOrWhiteSpace(info.ProductVersion))
-                {
-                    var plus = info.ProductVersion.IndexOf('+');
-                    return plus > 0 ? info.ProductVersion[..plus] : info.ProductVersion;
-                }
-                if (!string.IsNullOrWhiteSpace(info.FileVersion))
-                    return info.FileVersion;
-            }
-            catch
-            {
-                // Ignore version inspection errors.
-            }
-            return "installed";
+            var version = ReadProductVersion(installed);
+            return string.IsNullOrEmpty(version) ? "installed" : version;
         }
 
+        return "";
+    }
+
+    private static string ReadProductVersion(string path)
+    {
+        try
+        {
+            var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
+            if (!string.IsNullOrWhiteSpace(info.ProductVersion))
+            {
+                var plus = info.ProductVersion.IndexOf('+');
+                return plus > 0 ? info.ProductVersion[..plus] : info.ProductVersion;
+            }
+            if (!string.IsNullOrWhiteSpace(info.FileVersion))
+                return info.FileVersion;
+        }
+        catch
+        {
+            // Ignore version inspection errors.
+        }
         return "";
     }
 

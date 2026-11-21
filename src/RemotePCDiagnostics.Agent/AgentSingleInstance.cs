@@ -13,89 +13,111 @@ namespace RemotePCDiagnostics.Agent;
 /// </summary>
 internal static class AgentSingleInstance
 {
-    /// <summary>The running instance, or null when another instance already holds the mutex. Null logs the reason.</summary>
+    /// <summary>The running instance, or null when another live instance already holds the mutex. Null logs the reason.</summary>
     public static Lease? Acquire(Action<string>? alsoLog)
     {
         if (!OperatingSystem.IsWindows())
             return new Lease(null);
 
-        var others = AgentMachineSnapshot.OtherProcesses();
-        var services = AgentMachineSnapshot.ReadServices();
-        var claim = AgentMachineSnapshot.ReadClaim();
-        var currentImage = Environment.ProcessPath;
+        var waited = TimeSpan.Zero;
+        var announcedWait = false;
+        var announcedSession = false;
+        while (true)
+        {
+            var others = AgentMachineSnapshot.OtherProcesses();
+            var services = AgentMachineSnapshot.ReadServices();
+            var claim = AgentMachineSnapshot.ReadClaim();
+            var currentImage = Environment.ProcessPath;
 
-        Mutex? mutex = null;
-        var global = true;
-        try
-        {
-            mutex = CreateOrOpen(AgentInstancePolicy.MutexName);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            Log(AgentInstancePolicy.LogPrefix + " " + AgentInstancePolicy.MutexName + " exists but this process cannot open it. Exiting without starting.", alsoLog);
-            Log(AgentInstancePolicy.DescribeDenial(claim, others), alsoLog);
-            return null;
-        }
-
-        if (mutex is null)
-        {
-            global = false;
+            Mutex? mutex = null;
+            var global = true;
             try
             {
-                mutex = CreateOrOpen(AgentInstancePolicy.SessionMutexName);
+                mutex = CreateOrOpen(AgentInstancePolicy.MutexName);
             }
             catch (UnauthorizedAccessException)
             {
-                Log(AgentInstancePolicy.LogPrefix + " Could not open a session mutex either. Exiting without starting.", alsoLog);
+                Log(AgentInstancePolicy.LogPrefix + " " + AgentInstancePolicy.MutexName + " exists but this process cannot open it. Exiting without starting.", alsoLog);
+                Log(AgentInstancePolicy.DescribeDenial(claim, others), alsoLog);
                 return null;
             }
-            if (mutex is not null)
-                Log(AgentInstancePolicy.LogPrefix + " This process cannot create " + AgentInstancePolicy.MutexName + ". Using " + AgentInstancePolicy.SessionMutexName + " for this session.", alsoLog);
-        }
 
-        if (mutex is null)
-        {
-            Log(AgentInstancePolicy.LogPrefix + " Could not create an instance mutex. Continuing as the only copy this process can see.", alsoLog);
-            LogIdentityAndStale(alsoLog, abandoned: false, claim, others, services, currentImage);
-            return new Lease(null);
-        }
+            if (mutex is null)
+            {
+                global = false;
+                try
+                {
+                    mutex = CreateOrOpen(AgentInstancePolicy.SessionMutexName);
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    Log(AgentInstancePolicy.LogPrefix + " Could not open a session mutex either. Exiting without starting.", alsoLog);
+                    return null;
+                }
+                if (mutex is not null && !announcedSession)
+                {
+                    announcedSession = true;
+                    Log(AgentInstancePolicy.LogPrefix + " This process cannot create " + AgentInstancePolicy.MutexName + ". Using " + AgentInstancePolicy.SessionMutexName + " for this session.", alsoLog);
+                }
+            }
 
-        var owned = false;
-        var abandoned = false;
-        try
-        {
-            owned = mutex.WaitOne(0);
-        }
-        catch (AbandonedMutexException)
-        {
-            owned = true;
-            abandoned = true;
-        }
-        catch (Exception ex)
-        {
-            Log(AgentInstancePolicy.LogPrefix + " Could not wait on the instance mutex: " + ex.Message + ". Exiting without starting.", alsoLog);
+            if (mutex is null)
+            {
+                Log(AgentInstancePolicy.LogPrefix + " Could not create an instance mutex. Continuing as the only copy this process can see.", alsoLog);
+                LogIdentityAndStale(alsoLog, abandoned: false, claim, others, services, currentImage);
+                return new Lease(null);
+            }
+
+            var owned = false;
+            var abandoned = false;
+            try
+            {
+                owned = mutex.WaitOne(0);
+            }
+            catch (AbandonedMutexException)
+            {
+                owned = true;
+                abandoned = true;
+            }
+            catch (Exception ex)
+            {
+                Log(AgentInstancePolicy.LogPrefix + " Could not wait on the instance mutex: " + ex.Message + ". Exiting without starting.", alsoLog);
+                mutex.Dispose();
+                return null;
+            }
+
+            if (owned)
+            {
+                if (global)
+                {
+                    AgentMachineSnapshot.WriteClaim(new AgentInstanceClaim(
+                        Environment.ProcessId,
+                        AgentPaths.GetAgentVersion(),
+                        currentImage,
+                        DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
+                }
+
+                LogIdentityAndStale(alsoLog, abandoned, claim, others, services, currentImage);
+                return new Lease(mutex);
+            }
+
             mutex.Dispose();
-            return null;
-        }
+            var alive = claim is not null && AgentMachineSnapshot.PidAlive(claim.Pid);
+            if (!AgentInstancePolicy.ShouldWaitForDyingHolder(claim, alive, others, waited, AgentInstancePolicy.DyingHolderWait))
+            {
+                Log(AgentInstancePolicy.DescribeDenial(claim, others), alsoLog);
+                return null;
+            }
 
-        if (!owned)
-        {
-            Log(AgentInstancePolicy.DescribeDenial(claim, others), alsoLog);
-            mutex.Dispose();
-            return null;
-        }
+            if (!announcedWait)
+            {
+                announcedWait = true;
+                Log(AgentInstancePolicy.DescribeDyingHolder(claim, alive), alsoLog);
+            }
 
-        if (global)
-        {
-            AgentMachineSnapshot.WriteClaim(new AgentInstanceClaim(
-                Environment.ProcessId,
-                AgentPaths.GetAgentVersion(),
-                currentImage,
-                DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
+            Thread.Sleep(200);
+            waited += TimeSpan.FromMilliseconds(200);
         }
-
-        LogIdentityAndStale(alsoLog, abandoned, claim, others, services, currentImage);
-        return new Lease(mutex);
     }
 
     /// <summary>True when no process holds the global mutex. An abandoned mutex counts as free. Does not keep it.</summary>

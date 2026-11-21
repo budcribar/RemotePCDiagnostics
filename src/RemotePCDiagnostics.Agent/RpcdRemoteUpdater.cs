@@ -8,7 +8,8 @@ namespace RemotePCDiagnostics.Agent;
 /// <summary>
 /// Fleet-agent side of <c>update_rpcd</c>. Downloads the official GitHub installer, requires a matching SHA-256,
 /// installs silently without replacing enrollment, consent, or lifetime, then relaunches RPCD so the session reconnects.
-/// Status is written where a later process can read it: Setup stops this service, and the new one finishes the story.
+/// Status is written where a later process can read it: Setup stops this service. Agent.exe install, which Setup
+/// runs outside this process, and the new service both seal that file so the relay's next read is terminal.
 /// </summary>
 internal sealed class RpcdRemoteUpdater : IDisposable
 {
@@ -224,6 +225,10 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         else
             _log?.Invoke("[rpcd-update] Leaving Remote PC Diagnostics running until Setup has started. Setup closes it.");
 
+        // Cleared before Setup stops this service, so a crash during the hand-off does not start a second copy
+        // that exits 0 and stays stopped. StartAndWait puts the actions back when Setup returns. Setup also puts
+        // them back and starts the service, including when this process has already been stopped.
+        AgentServiceRecovery.ClearFailureRestart(_log);
         var exit = await AgentSelfUpdater.StartAndWaitAsync(install.InstallerPath, install.Arguments, _stagingDirectory, _log, ct)
             .ConfigureAwait(false);
         var meaning = InnoSetupExitCodes.Describe(exit);
@@ -397,7 +402,11 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         {
             if (!File.Exists(_statusPath))
                 return;
-            var status = RpcdUpdateStatus.Parse(File.ReadAllText(_statusPath));
+            var original = RpcdUpdateStatus.Parse(File.ReadAllText(_statusPath));
+            if (original is null)
+                return;
+            // This process is the service, so a version that now matches was installed and the service is up.
+            var status = RpcdUpdateSeal.Seal(original, InstalledHostVersion(), serviceRunning: true, DateTimeOffset.UtcNow);
             if (status is { Terminal: false }
                 && status.Stage is not (RpcdUpdateStages.Installing or RpcdUpdateStages.Relaunching)
                 && !IsOtherProcessAlive(status.OwnerPid))
@@ -413,8 +422,8 @@ internal sealed class RpcdRemoteUpdater : IDisposable
                 };
             }
             _session.Restore(status);
-            var reconciled = _session.Current(null, _installedVersion(), DateTimeOffset.UtcNow);
-            if (reconciled is not null && status is not null && (reconciled.Stage != status.Stage || reconciled.Terminal != status.Terminal))
+            var reconciled = _session.Current(null, InstalledHostVersion(), DateTimeOffset.UtcNow);
+            if (reconciled is not null && (reconciled.Stage != original.Stage || reconciled.Terminal != original.Terminal))
                 Persist(reconciled);
         }
         catch (Exception ex)
@@ -423,7 +432,63 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         }
     }
 
-    private void Persist(RpcdUpdateStatus status) => WriteAtomically(_statusPath, status.ToJson(), "update status");
+    private void Persist(RpcdUpdateStatus status)
+    {
+        try
+        {
+            if (File.Exists(_statusPath)
+                && RpcdUpdateStatus.Parse(File.ReadAllText(_statusPath)) is { } onDisk
+                && RpcdUpdateSeal.KeepSealedSuccess(onDisk, status))
+            {
+                _log?.Invoke("[rpcd-update] The installed update was already recorded as succeeded. Leaving that status in place.");
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The write below is this process's copy.
+        }
+        WriteAtomically(_statusPath, status.ToJson(), "update status");
+    }
+
+    /// <summary>
+    /// Called from <c>Agent.exe install</c> after Setup has copied the new files. This process is not the agent
+    /// that launched Setup, so the result is recorded even when that agent has already been stopped.
+    /// </summary>
+    internal static void SealStatusFile(string? installedVersion, bool serviceRunning, Action<string>? log)
+    {
+        try
+        {
+            var path = Path.Combine(AgentSelfUpdater.StagingDirectory(), RpcdUpdateSeal.FileName);
+            if (!File.Exists(path))
+                return;
+            var parsed = RpcdUpdateStatus.Parse(File.ReadAllText(path));
+            if (parsed is null)
+                return;
+            var done = RpcdUpdateSeal.Seal(parsed, installedVersion, serviceRunning, DateTimeOffset.UtcNow);
+            if (RpcdUpdateSeal.KeepSealedSuccess(parsed, done))
+                return;
+            if (done.Stage == parsed.Stage && done.Terminal == parsed.Terminal)
+                return;
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir))
+                Directory.CreateDirectory(dir);
+            var temp = path + ".seal.tmp";
+            File.WriteAllText(temp, done.ToJson());
+            File.Move(temp, path, overwrite: true);
+            log?.Invoke($"[rpcd-update] Recorded {done.Stage} after install.");
+        }
+        catch (Exception ex)
+        {
+            log?.Invoke($"[rpcd-update] Could not record the update result after install: {ex.Message}");
+        }
+    }
+
+    private string? InstalledHostVersion()
+    {
+        var host = AgentPaths.GetInstalledHostProductVersion();
+        return string.IsNullOrWhiteSpace(host) ? _installedVersion() : host;
+    }
 
     private void WriteAtomically(string path, string json, string what)
     {

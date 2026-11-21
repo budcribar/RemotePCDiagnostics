@@ -85,25 +85,26 @@ internal static class AgentServiceInstaller
             }
 
             var binPathValue = $"\"{targetExe}\" run";
+            var startType = AgentServiceControl.AutomaticStartType;
             if (!ServiceExists())
             {
-                var (createCode, createOut) = RunSc($"create {AgentPaths.ServiceName} binPath= \"{EscapeForSc(binPathValue)}\" start= auto DisplayName= \"{AgentPaths.ServiceDisplayName}\"");
+                var (createCode, createOut) = RunSc($"create {AgentPaths.ServiceName} binPath= \"{EscapeForSc(binPathValue)}\" start= {startType} DisplayName= \"{AgentPaths.ServiceDisplayName}\"");
                 if (createCode != 0)
                     throw new InvalidOperationException($"sc.exe create failed ({createCode}): {createOut}");
             }
             else
             {
-                var (cfgCode, cfgOut) = RunSc($"config {AgentPaths.ServiceName} binPath= \"{EscapeForSc(binPathValue)}\" start= auto DisplayName= \"{AgentPaths.ServiceDisplayName}\"");
+                var (cfgCode, cfgOut) = RunSc($"config {AgentPaths.ServiceName} binPath= \"{EscapeForSc(binPathValue)}\" start= {startType} DisplayName= \"{AgentPaths.ServiceDisplayName}\"");
                 if (cfgCode != 0)
                     throw new InvalidOperationException($"sc.exe config failed ({cfgCode}): {cfgOut}");
             }
 
             RunSc($"description {AgentPaths.ServiceName} \"{AgentPaths.ServiceDescription}\"");
-            // A clean exit (another instance already holds the mutex) must not count as a crash.
-            RunSc($"failureflag {AgentPaths.ServiceName} 0");
-            RunSc($"failure {AgentPaths.ServiceName} reset= 86400 actions= restart/5000/restart/15000/restart/60000");
+            // Automatic, then failure restart, then start. A clean exit must not count as a crash, so failureflag is reset.
+            AgentServiceRecovery.ApplyAutomatic(Console.WriteLine);
 
-            StartServiceAndWait(TimeSpan.FromSeconds(15));
+            StartServiceAndWait(ServiceStartTimeout);
+            RpcdRemoteUpdater.SealStatusFile(InstalledVersionForSeal(), serviceRunning: true, Console.WriteLine);
 
             Console.WriteLine($"Installed and started '{AgentPaths.ServiceName}'.");
             Console.WriteLine($"  Executable: {targetExe}");
@@ -117,11 +118,10 @@ internal static class AgentServiceInstaller
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Agent installation failed: {ex.Message}");
-            // A leftover process is already an agent. Starting the service as well would be the second copy.
-            if (!OperatingSystem.IsWindows() || AgentMachineSnapshot.OtherProcesses().Count == 0)
-                TryStartExistingServiceAfterFailedInstall();
-            else
-                Console.Error.WriteLine("Left the existing agent process running. The new service was not started.");
+            // A dying holder used to make this skip the start, which left the service stopped after the old process exited.
+            // The start waits out that holder. A process that is actually still running keeps the mutex and this start exits.
+            var started = TryStartExistingServiceAfterFailedInstall();
+            RpcdRemoteUpdater.SealStatusFile(InstalledVersionForSeal(), started, Console.Error.WriteLine);
             return PauseIfRequested(args, ExitError);
         }
     }
@@ -311,35 +311,74 @@ internal static class AgentServiceInstaller
         }
     }
 
+    /// <summary>How long install waits for the service to stay running. Longer than <see cref="AgentInstancePolicy.DyingHolderWait"/>.</summary>
+    internal static readonly TimeSpan ServiceStartTimeout = TimeSpan.FromSeconds(25);
+
+    /// <summary>The Host on disk, which Setup has just copied. The app cache can still name the previous build.</summary>
+    private static string InstalledVersionForSeal()
+    {
+        return AgentPaths.GetUpdateInstalledVersion();
+    }
+
     /// <summary>
     /// A failed install has already stopped the previous service. Start it again so the PC is not left with no agent.
     /// Failure recovery was cleared for the replacement and is put back here.
     /// </summary>
-    private static void TryStartExistingServiceAfterFailedInstall()
+    private static bool TryStartExistingServiceAfterFailedInstall()
     {
         try
         {
-            if (!ServiceExists()) return;
-            RunSc($"config {AgentPaths.ServiceName} start= auto");
-            RunSc($"failureflag {AgentPaths.ServiceName} 0");
-            RunSc($"failure {AgentPaths.ServiceName} reset= 86400 actions= restart/5000/restart/15000/restart/60000");
-            StartServiceAndWait(TimeSpan.FromSeconds(15));
+            if (!ServiceExists()) return false;
+            AgentServiceRecovery.ApplyAutomatic(Console.Error.WriteLine);
+            StartServiceAndWait(ServiceStartTimeout);
             Console.Error.WriteLine("The existing agent service was started again after the install failed.");
+            return true;
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine("The agent service was not started again: " + ex.Message);
+            return false;
         }
     }
 
     private static void StartServiceAndWait(TimeSpan timeout)
     {
-        using var sc = new ServiceController(AgentPaths.ServiceName);
-        if (sc.Status == ServiceControllerStatus.Stopped)
+        var deadline = DateTime.UtcNow + timeout;
+        Exception? last = null;
+        while (DateTime.UtcNow < deadline)
         {
-            sc.Start();
+            try
+            {
+                using var sc = new ServiceController(AgentPaths.ServiceName);
+                sc.Refresh();
+                if (sc.Status == ServiceControllerStatus.Running)
+                {
+                    // OnStart of a second instance returns, then stops itself about a second later. That exit is 0,
+                    // so failure restart does not bring it back. Wait to see the stop, then start once more.
+                    var confirm = TimeSpan.FromMilliseconds(1500);
+                    var remain = deadline - DateTime.UtcNow;
+                    if (remain < confirm)
+                        confirm = remain;
+                    if (confirm > TimeSpan.Zero)
+                        Thread.Sleep(confirm);
+                    sc.Refresh();
+                    if (sc.Status == ServiceControllerStatus.Running)
+                        return;
+                    continue;
+                }
+
+                if (sc.Status == ServiceControllerStatus.Stopped)
+                    sc.Start();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or System.TimeoutException)
+            {
+                last = ex;
+            }
+
+            Thread.Sleep(300);
         }
-        sc.WaitForStatus(ServiceControllerStatus.Running, timeout);
+
+        throw new System.TimeoutException($"Service '{AgentPaths.ServiceName}' did not stay running.", last);
     }
 
     private static void CopyAgentDeployment(string currentExe, string targetDir, string targetExe)

@@ -114,6 +114,14 @@ public class AgentInstancePolicyTests
         var terminate = plan.ToList().FindIndex(action => action is TerminateLeftoverProcessesAction);
         Assert.True(launchers > currentStop && terminate > launchers && waitAt > terminate);
 
+        var ensure = Assert.IsType<EnsureServiceRecoveryAction>(plan[^1]);
+        Assert.Equal(AgentLayout.ServiceName, ensure.ServiceName);
+        Assert.True(plan.ToList().FindIndex(action => action is EnsureServiceRecoveryAction) > waitAt);
+        var disableCurrent = Assert.Single(plan.OfType<DisableFailureRestartAction>(), action => action.ServiceName == AgentLayout.ServiceName);
+        Assert.DoesNotContain(AgentServiceControl.ArgumentsFor(disableCurrent), arg => arg.Contains("start=", StringComparison.Ordinal));
+        Assert.Contains(AgentServiceControl.ArgumentsFor(ensure), arg => arg.Contains("start= " + AgentServiceControl.AutomaticStartType, StringComparison.Ordinal));
+        Assert.Contains(AgentServiceControl.ArgumentsFor(ensure), arg => arg.Contains(AgentServiceControl.FailureRestartActions, StringComparison.Ordinal));
+
         var sideBySide = AgentInstancePolicy.SideBySideInstallPaths(services, CurrentExe);
         Assert.Contains(LegacyExe, sideBySide);
         Assert.Contains(@"C:\Tools\RemotePCDiagnostics.Agent.exe", sideBySide);
@@ -137,5 +145,55 @@ public class AgentInstancePolicyTests
         Assert.Equal(claim, parsed);
         Assert.Null(AgentInstanceClaim.Parse("version=only"));
         Assert.Null(AgentInstanceClaim.Parse(null));
+    }
+
+    [Fact]
+    public void A_dying_holder_is_not_treated_as_a_second_instance()
+    {
+        Assert.False(AgentInstancePolicy.KillEntireProcessTree);
+        var wait = AgentInstancePolicy.DyingHolderWait;
+        var claim = new AgentInstanceClaim(50, "1.2.0-ci.1043.1", CurrentExe, null);
+        var dying = new AgentProcessSighting(50, CurrentExe, "1.2.0-ci.1043.1");
+
+        Assert.True(AgentInstancePolicy.ShouldWaitForDyingHolder(claim, claimPidAlive: false, [dying], TimeSpan.Zero, wait));
+        Assert.True(AgentInstancePolicy.ShouldWaitForDyingHolder(claim, claimPidAlive: true, [dying], TimeSpan.FromSeconds(1), wait));
+        Assert.True(AgentInstancePolicy.ShouldWaitForDyingHolder(null, false, [], TimeSpan.Zero, wait));
+        Assert.False(AgentInstancePolicy.ShouldWaitForDyingHolder(claim, true, [dying], wait, wait));
+
+        var waiting = AgentInstancePolicy.DescribeDyingHolder(claim, claimPidAlive: false);
+        Assert.Contains("pid 50", waiting, StringComparison.Ordinal);
+        Assert.Contains("Waiting", waiting, StringComparison.Ordinal);
+        Assert.DoesNotContain("exiting without starting", waiting, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Upgrade_does_not_kill_the_process_whose_job_contains_Setup()
+    {
+        const int self = 10;
+        const int ancestor = 4;
+        const int other = 77;
+
+        Assert.False(AgentInstancePolicy.MayTerminateLeftover(0, self, [], inKillOnCloseJob: false, parentsKnown: true));
+        Assert.False(AgentInstancePolicy.MayTerminateLeftover(self, self, [], inKillOnCloseJob: false, parentsKnown: true));
+        Assert.False(AgentInstancePolicy.MayTerminateLeftover(ancestor, self, [ancestor], inKillOnCloseJob: true, parentsKnown: true));
+        Assert.False(AgentInstancePolicy.MayTerminateLeftover(other, self, [], inKillOnCloseJob: true, parentsKnown: false));
+        Assert.True(AgentInstancePolicy.MayTerminateLeftover(other, self, [ancestor], inKillOnCloseJob: false, parentsKnown: true));
+        Assert.True(AgentInstancePolicy.MayTerminateLeftover(other, self, [ancestor], inKillOnCloseJob: true, parentsKnown: true));
+    }
+
+    [Fact]
+    public void Failure_restart_is_cleared_without_turning_Automatic_off()
+    {
+        var cleared = AgentServiceControl.ArgumentsFor(new DisableFailureRestartAction("Remote PC Diagnostics Agent"));
+        Assert.Equal(2, cleared.Count);
+        Assert.DoesNotContain(cleared, arg => arg.Contains("start=", StringComparison.Ordinal));
+        Assert.Contains(cleared, arg => arg.Contains(AgentServiceControl.ClearedFailureActions, StringComparison.Ordinal));
+        Assert.Contains("\"Remote PC Diagnostics Agent\"", cleared[1], StringComparison.Ordinal);
+
+        var restored = AgentServiceControl.ArgumentsFor(new EnsureServiceRecoveryAction(AgentLayout.ServiceName));
+        Assert.Contains($"start= {AgentServiceControl.AutomaticStartType}", string.Join('\n', restored), StringComparison.Ordinal);
+        Assert.DoesNotContain("delayed-auto", string.Join('\n', restored), StringComparison.Ordinal);
+        Assert.DoesNotContain("start= disabled", string.Join('\n', restored), StringComparison.Ordinal);
+        Assert.DoesNotContain(AgentLayout.SetupTaskName, AgentRemoval.ScheduledTaskNames);
     }
 }

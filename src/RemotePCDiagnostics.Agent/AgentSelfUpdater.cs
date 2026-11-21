@@ -152,7 +152,11 @@ internal static class AgentSelfUpdater
         }
     }
 
-    /// <summary>Starts a verified Setup and waits for it. Returns the process exit code, or -1 when Setup did not start.</summary>
+    /// <summary>
+    /// Starts a verified Setup and waits for it. Returns the process exit code, or -1 when Setup did not start.
+    /// From the agent service, Setup is started outside the service job. That job kills child processes when the
+    /// service exits, and the upgrade Setup runs stops this service.
+    /// </summary>
     internal static async Task<int> StartAndWaitAsync(
         string installerPath,
         string arguments,
@@ -160,6 +164,49 @@ internal static class AgentSelfUpdater
         Action<string>? log,
         CancellationToken ct)
     {
+        try
+        {
+            return await WaitForSetupAsync(installerPath, arguments, stagingDir, log, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            // The caller cleared failure restart before this. Put Automatic and the actions back whether Setup
+            // finished or never started. Starting the process is Setup's post-install step: this process may
+            // still hold the instance mutex, and a start from here would exit 0 as a second instance.
+            AgentServiceRecovery.ApplyAutomatic(log);
+        }
+    }
+
+    private static async Task<int> WaitForSetupAsync(
+        string installerPath,
+        string arguments,
+        string stagingDir,
+        Action<string>? log,
+        CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows() && JobBreakawayProcess.IsInJob())
+        {
+            if (JobBreakawayProcess.TryStart(installerPath, arguments, stagingDir, out var detached))
+            {
+                if (detached is null)
+                    return -1;
+                using (detached)
+                {
+                    await detached.WaitForExitAsync(ct).ConfigureAwait(false);
+                    return detached.ExitCode;
+                }
+            }
+
+            log?.Invoke("[rpcd-update] This process is in a job that does not allow breakaway. Starting Setup as a scheduled task so stopping the service does not stop Setup.");
+            if (ScheduledSetupLaunch.TryStart(installerPath, arguments, stagingDir, log, out var wait) && wait is not null)
+            {
+                using (wait)
+                    return await wait.WaitAsync(ct).ConfigureAwait(false);
+            }
+
+            log?.Invoke("[rpcd-update] Could not start Setup outside the service job. A child Setup ends when this service ends.");
+        }
+
         Process? proc;
         try
         {

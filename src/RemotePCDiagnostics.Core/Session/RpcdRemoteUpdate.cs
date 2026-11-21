@@ -777,3 +777,68 @@ public static class RpcdGitHubRelease
         }
     }
 }
+
+/// <summary>
+/// The update result written by a process that outlives the agent that launched Setup.
+/// Setup stops that agent, so the <c>installing</c> line it already reported is otherwise the last word.
+/// </summary>
+public static class RpcdUpdateSeal
+{
+    public const string FileName = "rpcd-update-status.json";
+
+    /// <summary>Tail of the failure stored when the new files are on disk and the service is not running.</summary>
+    public const string ServiceNotRunning = "is installed, but the Remote PC Diagnostics Agent service is not running.";
+
+    /// <summary>
+    /// Turns <c>installing</c> into a terminal stage once the target version is on disk.
+    /// <paramref name="serviceRunning"/> false means the files are updated and the service is not, which is still terminal:
+    /// the relay stops polling only when <see cref="RpcdUpdateStatus.Terminal"/> is set.
+    /// A later call with the service running promotes that specific failure to success.
+    /// </summary>
+    public static RpcdUpdateStatus Seal(RpcdUpdateStatus status, string? installedVersion, bool serviceRunning, DateTimeOffset utcNow)
+    {
+        if (status.Terminal)
+            return PromoteIfServiceStarted(status, installedVersion, serviceRunning, utcNow);
+        var done = RpcdGitHubRelease.Reconcile(status, installedVersion, utcNow, RpcdUpdateSession.InstallGiveUp);
+        if (done.Stage != RpcdUpdateStages.Succeeded || serviceRunning)
+            return done;
+        var error = $"RPCD {done.NewVersion} {ServiceNotRunning}";
+        return done with
+        {
+            Stage = RpcdUpdateStages.Failed,
+            Terminal = true,
+            Error = error,
+            Detail = error,
+        };
+    }
+
+    private static RpcdUpdateStatus PromoteIfServiceStarted(RpcdUpdateStatus status, string? installedVersion, bool serviceRunning, DateTimeOffset utcNow)
+    {
+        if (!serviceRunning
+            || status.Stage != RpcdUpdateStages.Failed
+            || status.Error is null
+            || !status.Error.Contains(ServiceNotRunning, StringComparison.Ordinal)
+            || !RpcdGitHubRelease.InstalledMatches(installedVersion, status.NewVersion ?? "", status.OldVersion))
+            return status;
+        var version = AppVersionComparer.Normalize(installedVersion) ?? installedVersion;
+        return status with
+        {
+            Stage = RpcdUpdateStages.Succeeded,
+            Terminal = true,
+            NewVersion = version,
+            Error = null,
+            Detail = $"RPCD {version} is installed (was {status.OldVersion ?? "unknown"}). The app is reconnecting.",
+            UpdatedUtc = utcNow,
+        };
+    }
+
+    /// <summary>
+    /// A later write from the agent that launched Setup must not replace a success already recorded by install.
+    /// That agent is stopped while Setup is still running and can wake up just long enough to store a failure.
+    /// </summary>
+    public static bool KeepSealedSuccess(RpcdUpdateStatus onDisk, RpcdUpdateStatus incoming) =>
+        onDisk.Terminal
+        && onDisk.Stage == RpcdUpdateStages.Succeeded
+        && string.Equals(onDisk.RequestId, incoming.RequestId, StringComparison.Ordinal)
+        && incoming.Stage != RpcdUpdateStages.Succeeded;
+}
