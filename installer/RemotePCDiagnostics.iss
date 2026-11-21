@@ -29,6 +29,11 @@
 #ifndef AgentExePath
   #define AgentExePath ""
 #endif
+; Plain Setup (not the TestShop bundle) embeds the Agent MSI and runs it on upgrade when the service is already installed.
+; The enrollment key is not compiled into that Setup. Pass AgentExePath or AgentMsiPath, not both.
+#ifndef AgentMsiPath
+  #define AgentMsiPath ""
+#endif
 #ifndef AgentServerUrl
   #define AgentServerUrl "https://server.remoteblazorwebview.com:34544"
 #endif
@@ -151,6 +156,9 @@ Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 #if AgentExePath != ""
 Source: "{#AgentExePath}"; DestDir: "{tmp}"; DestName: "RemotePCDiagnostics.Agent.exe"; Flags: ignoreversion
 #endif
+#if AgentMsiPath != ""
+Source: "{#AgentMsiPath}"; DestDir: "{tmp}"; DestName: "RemotePCDiagnostics.Agent.msi"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "{#RemoteParameters}"; WorkingDir: "{app}"; Comment: "Start a remote session (shared screen and voice)"
@@ -167,9 +175,14 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "
 Filename: "{tmp}\RemotePCDiagnostics.Agent.exe"; Parameters: "{#AgentInstallParams}"; StatusMsg: "Installing and starting Remote PC Diagnostics Agent service..."; Flags: runhidden waituntilterminated; Check: not PreserveAgentSettings
 Filename: "{tmp}\RemotePCDiagnostics.Agent.exe"; Parameters: "install"; StatusMsg: "Updating Remote PC Diagnostics Agent service..."; Flags: runhidden waituntilterminated; Check: PreserveAgentSettings
 #endif
-; In-app updates (AppUpdateService / the agent's AgentSelfUpdater) pass /AGENTMSI=<verified Agent MSI> when the persistent
-; agent service is installed: Setup upgrades it here, because the app and its elevated helper are closed by now and cannot.
+; In-app Update and update_rpcd pass /AGENTMSI=<verified Agent MSI> when the persistent agent service is installed.
+; No SERVER_URL, ENROLLMENT_KEY, CONSENT, or LIFETIME: empty properties keep the machine id, key, consent, lifetime, and group.
 Filename: "{sys}\msiexec.exe"; Parameters: "/i ""{param:AGENTMSI}"" /qn /norestart"; StatusMsg: "Updating Remote PC Diagnostics Agent service..."; Check: HasSetupParam('AGENTMSI'); Flags: runhidden waituntilterminated
+#if AgentMsiPath != ""
+; Plain Setup, upgrade only. The MSI compiled into this package, and only when /AGENTMSI was not passed (that one wins).
+; A fresh install has no service, so this does not enrol an agent. The same msiexec line: no enrollment properties.
+Filename: "{sys}\msiexec.exe"; Parameters: "/i ""{tmp}\RemotePCDiagnostics.Agent.msi"" /qn /norestart"; StatusMsg: "Updating Remote PC Diagnostics Agent service..."; Check: ShouldUpgradeBundledAgent; Flags: runhidden waituntilterminated
+#endif
 ; In-app updates also pass /RELAUNCHARGS=<the app's restart command line> (same relay, session id and group), so the app comes
 ; back into the remote session it was in. The entry below it skips silent installs, so without this nothing restarts the app.
 Filename: "{app}\{#AppExeName}"; Parameters: "{param:RELAUNCHARGS}"; WorkingDir: "{app}"; Check: ShouldRelaunchAfterUpdate; Flags: nowait shellexec runasoriginaluser
@@ -291,6 +304,14 @@ begin
   Text := ServiceQueryText('RemotePCDiagnosticsAgent');
   Result := (Pos('STATE', Text) > 0) and (Pos('1060', Text) = 0);
 end;
+
+#if AgentMsiPath != ""
+{ Upgrade an agent that is already installed. /AGENTMSI is the caller-supplied MSI, so the bundled one stays unused. }
+function ShouldUpgradeBundledAgent(): Boolean;
+begin
+  Result := (not HasSetupParam('AGENTMSI')) and AgentServiceIsInstalled();
+end;
+#endif
 
 procedure ScLog(const Args: String);
 var

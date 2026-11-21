@@ -296,4 +296,57 @@ public sealed class InstallerConfigTests
         Assert.True(install > 0 && ensure > install);
         Assert.Contains("NOT REMOVE~=&quot;ALL&quot;", wxs);
     }
+
+    [Fact]
+    public void Plain_setup_upgrades_an_installed_agent_from_the_bundled_msi_without_an_enrollment_key()
+    {
+        var root = FindRepoRoot();
+        var iss = File.ReadAllText(Path.Combine(root, "installer", "RemotePCDiagnostics.iss"));
+        var script = File.ReadAllText(Path.Combine(root, "installer", "Build-Installer.ps1"));
+
+        Assert.Contains("#ifndef AgentMsiPath", iss);
+        Assert.Contains("function ShouldUpgradeBundledAgent(): Boolean;", iss);
+        Assert.Contains("(not HasSetupParam('AGENTMSI')) and AgentServiceIsInstalled()", iss);
+        Assert.Contains("DestName: \"RemotePCDiagnostics.Agent.msi\"", iss);
+
+        var bundled = iss.IndexOf("Check: ShouldUpgradeBundledAgent", StringComparison.Ordinal);
+        var bundledLine = iss[iss.LastIndexOf("Filename:", bundled, StringComparison.Ordinal)..iss.IndexOf('\n', bundled)];
+        Assert.Contains("/i \"\"{tmp}\\RemotePCDiagnostics.Agent.msi\"\" /qn /norestart", bundledLine);
+        Assert.DoesNotContain("ENROLLMENT_KEY", bundledLine);
+        Assert.DoesNotContain("SERVER_URL", bundledLine);
+        Assert.DoesNotContain("--key", bundledLine);
+
+        var passed = iss.IndexOf("Check: HasSetupParam('AGENTMSI')", StringComparison.Ordinal);
+        var passedLine = iss[iss.LastIndexOf("Filename:", passed, StringComparison.Ordinal)..iss.IndexOf('\n', passed)];
+        Assert.Contains("{param:AGENTMSI}", passedLine);
+        Assert.DoesNotContain("ENROLLMENT_KEY", passedLine);
+        Assert.DoesNotContain("SERVER_URL", passedLine);
+
+        Assert.Contains("-AgentMsiPath", script);
+        Assert.Contains("not both", script);
+    }
+
+    [Fact]
+    public void Ci_plain_setup_embeds_the_agent_msi_and_the_testshop_bundle_does_not()
+    {
+        var ci = File.ReadAllText(Path.Combine(FindRepoRoot(), ".github", "workflows", "ci.yml"));
+        var installerAt = ci.IndexOf("Build and smoke-test Windows installer", StringComparison.Ordinal);
+        var testshopAt = ci.IndexOf("Build and smoke-test TestShop", StringComparison.Ordinal);
+        Assert.True(installerAt > 0 && testshopAt > installerAt);
+
+        var installerJob = ci[installerAt..testshopAt];
+        var setupBuilds = installerJob.Split('\n').Where(line => line.Contains("Build-Installer.ps1", StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(setupBuilds);
+        Assert.All(setupBuilds, line => Assert.DoesNotContain("-AgentEnrollmentKey", line));
+        Assert.All(setupBuilds, line => Assert.DoesNotContain("-AgentExePath", line));
+        Assert.Contains(setupBuilds, line => line.Contains("-AgentMsiPath $agentMsi", StringComparison.Ordinal));
+        Assert.Contains("Plain Setup installed the agent service on a fresh PC", installerJob);
+        Assert.Contains("Setup upgrade changed agent.json", installerJob);
+        Assert.Contains("$smokeServer = 'http://127.0.0.1:9'", installerJob);
+
+        var agentAt = ci.IndexOf("\n  agent:", testshopAt, StringComparison.Ordinal);
+        var testshopJob = ci[testshopAt..agentAt];
+        Assert.Contains("-AgentExePath $agentExe", testshopJob);
+        Assert.DoesNotContain("-AgentMsiPath", testshopJob);
+    }
 }

@@ -186,6 +186,24 @@ public class RpcdRemoteUpdaterTests
         var succeeded = RpcdRemoteUpdater.ToProto(new RpcdUpdateStatus { Stage = RpcdUpdateStages.Succeeded, Terminal = true });
         Assert.False(succeeded.HasInstallerExitCode);
         Assert.Equal("", succeeded.InstallerLog);
+        Assert.Equal("", succeeded.OldAgentVersion);
+        Assert.Equal("", succeeded.AgentVersion);
+
+        var agentBehind = RpcdRemoteUpdater.ToProto(new RpcdUpdateStatus
+        {
+            Stage = RpcdUpdateStages.AgentNotUpdated,
+            Terminal = true,
+            OldVersion = "1.2.0-ci.991.1",
+            NewVersion = "1.2.0-ci.996.1",
+            OldAgentVersion = "1.2.0-ci.991.1",
+            AgentVersion = "1.2.0-ci.991.1",
+            Error = "RPCD 1.2.0-ci.996.1 is installed, but the agent service is 1.2.0-ci.991.1 instead of 1.2.0-ci.996.1.",
+        });
+        Assert.Equal(RpcdUpdateStages.AgentNotUpdated, agentBehind.Stage);
+        Assert.True(agentBehind.Terminal);
+        Assert.Equal("1.2.0-ci.991.1", agentBehind.OldAgentVersion);
+        Assert.Equal("1.2.0-ci.991.1", agentBehind.AgentVersion);
+        Assert.Equal("1.2.0-ci.996.1", agentBehind.NewVersion);
 
         var unchanged = RpcdRemoteUpdater.ToProto(new RpcdUpdateStatus { InstallerExitCode = 0, InstallerLog = "still the old build" });
         Assert.True(unchanged.HasInstallerExitCode);

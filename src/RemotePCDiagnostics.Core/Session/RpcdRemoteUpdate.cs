@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 
@@ -16,8 +17,10 @@ public static class RpcdUpdateStages
     public const string Relaunching = "relaunching";
     public const string Succeeded = "succeeded";
     public const string Failed = "failed";
+    /// <summary>The app reached the target and the installed agent service did not. Terminal. Not a success.</summary>
+    public const string AgentNotUpdated = "agent_not_updated";
 
-    public static bool IsTerminal(string? stage) => stage is Refused or AlreadyUpToDate or Succeeded or Failed;
+    public static bool IsTerminal(string? stage) => stage is Refused or AlreadyUpToDate or Succeeded or Failed or AgentNotUpdated;
 }
 
 /// <summary>
@@ -41,6 +44,12 @@ public sealed record RpcdUpdateStatus
     public int? Percent { get; init; }
     public string? OldVersion { get; init; }
     public string? NewVersion { get; init; }
+    /// <summary>True when a persistent agent service was installed, so success requires that service's version as well as the app.</summary>
+    public bool UpdateAgent { get; init; }
+    /// <summary>Agent service product version before the attempt. Set only when <see cref="UpdateAgent"/> is true.</summary>
+    public string? OldAgentVersion { get; init; }
+    /// <summary>Agent service product version after the attempt.</summary>
+    public string? AgentVersion { get; init; }
     public string? Channel { get; init; }
     public bool Terminal { get; init; }
     public string? Error { get; init; }
@@ -143,6 +152,13 @@ public sealed class RpcdUpdateRun
     public required Func<string?> ReadInstalledVersion { get; init; }
     public required string StagingDirectory { get; init; }
     public IReadOnlyList<string>? RelaunchArguments { get; init; }
+    /// <summary>
+    /// True when <c>C:\Program Files\RemotePCDiagnosticsAgent\RemotePCDiagnostics.Agent.exe</c> is installed.
+    /// The update then downloads that release's Agent MSI and passes it as <c>/AGENTMSI</c>, the same way the in-app Update does.
+    /// </summary>
+    public Func<bool>? IsPersistentAgentInstalled { get; init; }
+    /// <summary>Product version of the installed agent service executable. Null when it cannot be read.</summary>
+    public Func<string?>? ReadInstalledAgentVersion { get; init; }
     public required Func<RpcdPreparedInstall, CancellationToken, Task<int>> RunInstaller { get; init; }
     public DateTimeOffset UtcNow { get; init; } = DateTimeOffset.UtcNow;
 }
@@ -258,7 +274,7 @@ public sealed class RpcdUpdateSession
             _status = status;
     }
 
-    public RpcdUpdateStatus? Current(string? requestId, string? installedVersion, DateTimeOffset utcNow)
+    public RpcdUpdateStatus? Current(string? requestId, string? installedVersion, DateTimeOffset utcNow, string? installedAgentVersion = null)
     {
         RpcdUpdateStatus? status;
         lock (_gate)
@@ -266,7 +282,7 @@ public sealed class RpcdUpdateSession
             if (_status is null)
                 return null;
             if (Volatile.Read(ref _localInstaller) == 0)
-                _status = RpcdGitHubRelease.Reconcile(_status, installedVersion, utcNow, InstallGiveUp);
+                _status = RpcdGitHubRelease.Reconcile(_status, installedVersion, utcNow, InstallGiveUp, installedAgentVersion);
             status = _status;
         }
         if (!string.IsNullOrEmpty(requestId)
@@ -383,6 +399,22 @@ public sealed class RpcdUpdateSession
             }
 
             var target = release.Choice.Version;
+            bool updateAgent;
+            string? oldAgent;
+            try
+            {
+                updateAgent = run.IsPersistentAgentInstalled?.Invoke() == true;
+                oldAgent = updateAgent ? run.ReadInstalledAgentVersion?.Invoke() : null;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Fail(current, oldVersion, "Could not tell whether the agent service is installed. The update was not installed. " + ex.Message);
+                return;
+            }
+
+            // Later `current with` copies keep this, including the status another process seals after Setup stops this one.
+            current = current with { UpdateAgent = updateAgent, OldAgentVersion = oldAgent };
+
             if (!string.IsNullOrWhiteSpace(oldVersion))
             {
                 var newer = AppVersionComparer.IsNewer(target, oldVersion);
@@ -392,11 +424,10 @@ public sealed class RpcdUpdateSession
                     Fail(current, oldVersion, $"Cannot tell whether {target} is newer than {oldVersion}. The update was not installed.");
                     return;
                 }
-                if (newer != true)
+                // A newer app on the PC is not replaced with an older release, even when its agent is behind.
+                if (newer == false && !same)
                 {
-                    var error = same
-                        ? $"RPCD {oldVersion} is already up to date on the {channel} channel ({target})."
-                        : $"RPCD {oldVersion} is newer than the published {target}.";
+                    var error = $"RPCD {oldVersion} is newer than the published {target}.";
                     Set(current with
                     {
                         Stage = RpcdUpdateStages.AlreadyUpToDate,
@@ -409,6 +440,29 @@ public sealed class RpcdUpdateSession
                     });
                     return;
                 }
+                var agentBehind = updateAgent && !RpcdGitHubRelease.SameBuild(oldAgent, target);
+                if (newer != true && !agentBehind)
+                {
+                    var error = $"RPCD {oldVersion} is already up to date on the {channel} channel ({target}).";
+                    Set(current with
+                    {
+                        Stage = RpcdUpdateStages.AlreadyUpToDate,
+                        Terminal = true,
+                        OldVersion = oldVersion,
+                        NewVersion = target,
+                        Error = error,
+                        Detail = error,
+                        UpdatedUtc = DateTimeOffset.UtcNow,
+                    });
+                    return;
+                }
+            }
+
+            if (updateAgent && string.IsNullOrWhiteSpace(release.Choice.AgentMsiUrl))
+            {
+                Fail(current, oldVersion, release.Choice.AgentMsiError
+                    ?? "The release has no verified Agent MSI. The update was not installed.");
+                return;
             }
 
             Touch(current with
@@ -426,21 +480,30 @@ public sealed class RpcdUpdateSession
                 release.Choice.InstallerUrl,
                 release.Choice.Sha256Url,
                 run.StagingDirectory,
-                progress =>
-                {
-                    var stage = progress.Stage == "verifying" ? RpcdUpdateStages.Verifying : RpcdUpdateStages.Downloading;
-                    Touch(current with
-                    {
-                        Stage = stage,
-                        OldVersion = oldVersion,
-                        NewVersion = target,
-                        Detail = progress.Message,
-                        Percent = progress.Percent,
-                        UpdatedUtc = DateTimeOffset.UtcNow,
-                    });
-                },
+                progress => ReportDownload(current, oldVersion, target, progress),
                 ct,
                 requireChecksum: true).ConfigureAwait(false);
+
+            // Same download and SHA-256 check as AgentSelfUpdater / AppUpdateService. Required here: a missing or
+            // unverified MSI must not end as success with the service left on the old build.
+            string? agentMsiPath = null;
+            if (updateAgent)
+            {
+                agentMsiPath = await AppUpdateInstaller.DownloadAgentMsiAsync(
+                    run.Http,
+                    release.Choice.AgentMsiUrl,
+                    release.Choice.AgentMsiSha256Url,
+                    run.StagingDirectory,
+                    required: true,
+                    progress => ReportDownload(current, oldVersion, target, progress),
+                    onSkipped: null,
+                    ct).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(agentMsiPath))
+                {
+                    Fail(current, oldVersion, "The Agent MSI could not be verified. The update was not installed.");
+                    return;
+                }
+            }
 
             var logPath = Path.Combine(run.StagingDirectory, RpcdSetupLog.FileName);
             try
@@ -453,9 +516,11 @@ public sealed class RpcdUpdateSession
                 // A previous log may still be there. The tail is masked before it is stored.
             }
 
+            // /AGENTMSI is the in-app path: Setup runs msiexec with no SERVER_URL, ENROLLMENT_KEY, CONSENT, or LIFETIME.
+            // Empty MSI properties do not replace the machine id, key, consent, lifetime, or group already in agent.json.
             var arguments = AppUpdateInstaller.BuildSetupArguments(
                 verySilent: true,
-                agentMsiPath: null,
+                agentMsiPath,
                 run.RelaunchArguments,
                 preserveAgentSettings: true,
                 logPath: logPath,
@@ -466,7 +531,9 @@ public sealed class RpcdUpdateSession
                 Stage = RpcdUpdateStages.Installing,
                 OldVersion = oldVersion,
                 NewVersion = target,
-                Detail = $"Installing RPCD {target}. The previous enrollment, consent, and lifetime settings are kept.",
+                Detail = updateAgent
+                    ? $"Installing RPCD {target} and the agent service. The previous enrollment, consent, and lifetime settings are kept."
+                    : $"Installing RPCD {target}. The previous enrollment, consent, and lifetime settings are kept.",
                 Percent = 100,
                 UpdatedUtc = DateTimeOffset.UtcNow,
             });
@@ -485,16 +552,28 @@ public sealed class RpcdUpdateSession
             }
 
             var now = run.ReadInstalledVersion() ?? oldVersion;
-            var installerLog = RpcdSetupLog.ReadTail(logPath);
-            if (exit == 0 && RpcdGitHubRelease.InstalledMatches(now, target, oldVersion))
+            string? agentNow = null;
+            if (updateAgent)
             {
+                try { agentNow = run.ReadInstalledAgentVersion?.Invoke(); }
+                catch (Exception ex) when (ex is not OperationCanceledException) { agentNow = null; }
+            }
+            var installerLog = RpcdSetupLog.ReadTail(logPath);
+            var appOk = exit == 0 && RpcdGitHubRelease.InstalledMatches(now, target, oldVersion);
+            var agentOk = !updateAgent || RpcdGitHubRelease.SameBuild(agentNow, target);
+            if (appOk && agentOk)
+            {
+                var detail = updateAgent
+                    ? $"RPCD {now} is installed (was {oldVersion ?? "unknown"}). The agent service is {agentNow}. The app is reconnecting."
+                    : $"RPCD {now} is installed (was {oldVersion ?? "unknown"}). The app is reconnecting.";
                 Set(current with
                 {
                     Stage = RpcdUpdateStages.Succeeded,
                     Terminal = true,
                     OldVersion = oldVersion,
                     NewVersion = now,
-                    Detail = $"RPCD {now} is installed (was {oldVersion ?? "unknown"}). The app is reconnecting.",
+                    AgentVersion = updateAgent ? AppVersionComparer.Normalize(agentNow) ?? agentNow : null,
+                    Detail = detail,
                     Error = null,
                     Percent = 100,
                     UpdatedUtc = DateTimeOffset.UtcNow,
@@ -509,6 +588,26 @@ public sealed class RpcdUpdateSession
                 return;
             }
 
+            if (appOk && updateAgent)
+            {
+                var error = RpcdGitHubRelease.AgentNotUpdatedError(now, agentNow, target);
+                Set(current with
+                {
+                    Stage = RpcdUpdateStages.AgentNotUpdated,
+                    Terminal = true,
+                    OldVersion = oldVersion,
+                    NewVersion = AppVersionComparer.Normalize(now) ?? now,
+                    AgentVersion = string.IsNullOrWhiteSpace(agentNow) ? null : AppVersionComparer.Normalize(agentNow) ?? agentNow,
+                    Error = error,
+                    Detail = error,
+                    InstallerExitCode = exit,
+                    InstallerLog = installerLog,
+                    Percent = 100,
+                    UpdatedUtc = DateTimeOffset.UtcNow,
+                });
+                return;
+            }
+
             Fail(current, oldVersion, $"The installer finished but Remote PC Diagnostics is still {still}. The previous version is still in place.", exit, installerLog);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -519,6 +618,20 @@ public sealed class RpcdUpdateSession
         {
             Fail(current, oldVersion, ex.Message);
         }
+    }
+
+    private void ReportDownload(RpcdUpdateStatus current, string? oldVersion, string target, AppUpdateProgress progress)
+    {
+        var stage = progress.Stage == "verifying" ? RpcdUpdateStages.Verifying : RpcdUpdateStages.Downloading;
+        Touch(current with
+        {
+            Stage = stage,
+            OldVersion = oldVersion,
+            NewVersion = target,
+            Detail = progress.Message,
+            Percent = progress.Percent,
+            UpdatedUtc = DateTimeOffset.UtcNow,
+        });
     }
 
     private static string InstallerFailed(int exit, string still) =>
@@ -549,7 +662,18 @@ public sealed class RpcdUpdateSession
     }
 }
 
-public sealed record RpcdReleaseChoice(string Version, string Tag, string InstallerUrl, string Sha256Url, string? ReleaseUrl, string? FilenameVersion);
+/// <param name="AgentMsiUrl">The Agent MSI from the same release, when one was published with a trusted checksum.</param>
+/// <param name="AgentMsiError">Why that MSI could not be selected. Fatal only when a persistent agent service is installed.</param>
+public sealed record RpcdReleaseChoice(
+    string Version,
+    string Tag,
+    string InstallerUrl,
+    string Sha256Url,
+    string? ReleaseUrl,
+    string? FilenameVersion,
+    string? AgentMsiUrl = null,
+    string? AgentMsiSha256Url = null,
+    string? AgentMsiError = null);
 
 public sealed record RpcdReleaseFetch(RpcdReleaseChoice? Choice, string? Error);
 
@@ -558,6 +682,10 @@ public static class RpcdGitHubRelease
 {
     public const string ApiRoot = "https://api.github.com/repos/budcribar/RemotePCDiagnostics";
     public const string PrereleaseTag = "prerelease";
+    public const string AgentMsiPrefix = "RemotePCDiagnostics.Agent-";
+    public const string AgentMsiSuffix = "-win-x64.msi";
+    public const string AgentMsiMissing = "The release has no Agent MSI (RemotePCDiagnostics.Agent-<version>-win-x64.msi). The update was not installed.";
+    public const string AgentMsiChecksumMissing = "The GitHub release has no SHA-256 checksum for the Agent MSI. The update was not installed.";
     private const string SetupPrefix = "RemotePCDiagnostics-Setup-";
     private const string SetupSuffix = "-win-x64.exe";
 
@@ -610,31 +738,72 @@ public static class RpcdGitHubRelease
 
     public static bool InstalledMatches(string? installed, string target, string? oldVersion)
     {
+        if (SameBuild(installed, target))
+            return true;
         if (string.IsNullOrWhiteSpace(installed))
             return false;
-        if (string.Equals(AppVersionComparer.Normalize(installed), AppVersionComparer.Normalize(target), StringComparison.OrdinalIgnoreCase))
-            return true;
         return AppVersionComparer.IsNewer(installed, oldVersion) == true
             && AppVersionComparer.IsNewer(target, installed) != true;
+    }
+
+    /// <summary>True when both strings are the same RPCD build, ignoring a leading <c>v</c> and <c>+commit</c> metadata.</summary>
+    public static bool SameBuild(string? installed, string? target) =>
+        !string.IsNullOrWhiteSpace(installed)
+        && !string.IsNullOrWhiteSpace(target)
+        && string.Equals(AppVersionComparer.Normalize(installed), AppVersionComparer.Normalize(target), StringComparison.OrdinalIgnoreCase);
+
+    public static string AgentNotUpdatedError(string? appVersion, string? agentVersion, string target)
+    {
+        var appText = string.IsNullOrWhiteSpace(appVersion) ? "unknown" : appVersion.Trim();
+        var agentText = string.IsNullOrWhiteSpace(agentVersion) ? "unknown" : agentVersion.Trim();
+        return $"RPCD {appText} is installed, but the agent service is {agentText} instead of {target}.";
     }
 
     /// <summary>
     /// After this process stopped running Setup: the installed version caught the target, or the install sat unfinished
     /// long enough that the previous build is still the one on disk.
     /// </summary>
-    public static RpcdUpdateStatus Reconcile(RpcdUpdateStatus status, string? installedVersion, DateTimeOffset utcNow, TimeSpan giveUp)
+    public static RpcdUpdateStatus Reconcile(RpcdUpdateStatus status, string? installedVersion, DateTimeOffset utcNow, TimeSpan giveUp, string? installedAgentVersion = null)
     {
         if (status.Terminal || status.Stage is not (RpcdUpdateStages.Installing or RpcdUpdateStages.Relaunching))
             return status;
         if (InstalledMatches(installedVersion, status.NewVersion ?? "", status.OldVersion))
         {
+            var target = status.NewVersion ?? "";
+            // Setup copies the app before [Run] starts the Agent MSI. While that MSI may still be running, an agent
+            // that is not on the target yet is not a success and not yet a failure.
+            if (status.UpdateAgent && !SameBuild(installedAgentVersion, target))
+            {
+                if (utcNow - status.UpdatedUtc <= giveUp)
+                    return status;
+                var error = AgentNotUpdatedError(installedVersion, installedAgentVersion, target);
+                return status with
+                {
+                    Stage = RpcdUpdateStages.AgentNotUpdated,
+                    Terminal = true,
+                    NewVersion = AppVersionComparer.Normalize(installedVersion) ?? installedVersion,
+                    AgentVersion = string.IsNullOrWhiteSpace(installedAgentVersion)
+                        ? null
+                        : AppVersionComparer.Normalize(installedAgentVersion) ?? installedAgentVersion,
+                    Error = error,
+                    Detail = error,
+                    UpdatedUtc = utcNow,
+                };
+            }
+            var agentNow = status.UpdateAgent
+                ? AppVersionComparer.Normalize(installedAgentVersion) ?? installedAgentVersion
+                : status.AgentVersion;
+            var detail = status.UpdateAgent
+                ? $"RPCD {installedVersion} is installed (was {status.OldVersion ?? "unknown"}). The agent service is {agentNow}. The app is reconnecting."
+                : $"RPCD {installedVersion} is installed (was {status.OldVersion ?? "unknown"}). The app is reconnecting.";
             return status with
             {
                 Stage = RpcdUpdateStages.Succeeded,
                 Terminal = true,
                 NewVersion = AppVersionComparer.Normalize(installedVersion) ?? installedVersion,
+                AgentVersion = agentNow,
                 Error = null,
-                Detail = $"RPCD {installedVersion} is installed (was {status.OldVersion ?? "unknown"}). The app is reconnecting.",
+                Detail = detail,
                 UpdatedUtc = utcNow,
             };
         }
@@ -695,6 +864,7 @@ public static class RpcdGitHubRelease
             string? exeUrl = null;
             string? exeName = null;
             var shaByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var agentMsi = new List<(string Name, string Url)>();
             foreach (var asset in assets.EnumerateArray())
             {
                 var name = asset.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
@@ -715,6 +885,9 @@ public static class RpcdGitHubRelease
                     exeName = name;
                     exeUrl = url;
                 }
+                if (name.StartsWith(AgentMsiPrefix, StringComparison.OrdinalIgnoreCase)
+                    && name.EndsWith(AgentMsiSuffix, StringComparison.OrdinalIgnoreCase))
+                    agentMsi.Add((name, url));
             }
 
             if (exeUrl is null || exeName is null)
@@ -730,7 +903,8 @@ public static class RpcdGitHubRelease
             if (version is null)
                 return new RpcdReleaseFetch(null, "The GitHub release did not name an RPCD version.");
 
-            return new RpcdReleaseFetch(new RpcdReleaseChoice(version, tag ?? "", exeUrl, shaUrl, releaseUrl, filenameVersion), null);
+            var (msiUrl, msiSha, msiError) = ChooseAgentMsi(agentMsi, shaByName, version, filenameVersion);
+            return new RpcdReleaseFetch(new RpcdReleaseChoice(version, tag ?? "", exeUrl, shaUrl, releaseUrl, filenameVersion, msiUrl, msiSha, msiError), null);
         }
         catch (JsonException)
         {
@@ -750,6 +924,84 @@ public static class RpcdGitHubRelease
                 || string.Equals(choice.Tag, PrereleaseTag, StringComparison.OrdinalIgnoreCase);
         return !choice.Version.Contains("-ci.", StringComparison.OrdinalIgnoreCase)
             || tag.StartsWith('v') || tag.StartsWith('V');
+    }
+
+    /// <summary>
+    /// The Agent MSI published next to Setup. A release names the file with the base version
+    /// (<c>RemotePCDiagnostics.Agent-1.2.0-win-x64.msi</c>) while the notes name the CI build, so a single trusted
+    /// MSI is that release's package. Several MSIs have to match the build version or the Setup file name.
+    /// </summary>
+    public static (string? Url, string? Sha256Url, string? Error) ChooseAgentMsi(
+        IReadOnlyList<(string Name, string Url)> candidates,
+        IReadOnlyDictionary<string, string> shaByName,
+        string version,
+        string? setupFilenameVersion)
+    {
+        if (candidates.Count == 0)
+            return (null, null, AgentMsiMissing);
+
+        var trusted = new List<(string Url, string Sha, string? FileVersion)>();
+        var sawUntrusted = false;
+        var sawMissingSha = false;
+        foreach (var (name, url) in candidates)
+        {
+            if (!AppVersionComparer.IsTrustedDownloadUrl(url))
+            {
+                sawUntrusted = true;
+                continue;
+            }
+            if (!shaByName.TryGetValue(name + ".sha256", out var sha) || !AppVersionComparer.IsTrustedDownloadUrl(sha))
+            {
+                sawMissingSha = true;
+                continue;
+            }
+            trusted.Add((url, sha, AgentMsiFileVersion(name)));
+        }
+
+        if (trusted.Count == 0)
+        {
+            if (sawMissingSha)
+                return (null, null, AgentMsiChecksumMissing);
+            if (sawUntrusted)
+                return (null, null, "Refusing to download the Agent MSI from a URL that is not the official GitHub release.");
+            return (null, null, AgentMsiMissing);
+        }
+
+        var target = AppVersionComparer.Normalize(version);
+        var setupVersion = AppVersionComparer.Normalize(setupFilenameVersion);
+        (string Url, string Sha, string? FileVersion)? pick = null;
+        foreach (var item in trusted)
+        {
+            if (item.FileVersion is not null && string.Equals(item.FileVersion, target, StringComparison.OrdinalIgnoreCase))
+            {
+                pick = item;
+                break;
+            }
+        }
+        if (pick is null && setupVersion is not null)
+        {
+            foreach (var item in trusted)
+            {
+                if (string.Equals(item.FileVersion, setupVersion, StringComparison.OrdinalIgnoreCase))
+                {
+                    pick = item;
+                    break;
+                }
+            }
+        }
+        if (pick is null && trusted.Count == 1)
+            pick = trusted[0];
+        if (pick is null)
+            return (null, null, $"The release lists more than one Agent MSI and none matches {version}. The update was not installed.");
+        return (pick.Value.Url, pick.Value.Sha, null);
+    }
+
+    public static string? AgentMsiFileVersion(string name)
+    {
+        if (!name.StartsWith(AgentMsiPrefix, StringComparison.OrdinalIgnoreCase)
+            || !name.EndsWith(AgentMsiSuffix, StringComparison.OrdinalIgnoreCase))
+            return null;
+        return AppVersionComparer.Normalize(name[AgentMsiPrefix.Length..^AgentMsiSuffix.Length]);
     }
 
     private static string? FilenameVersion(string exeName)
@@ -807,11 +1059,11 @@ public static class RpcdUpdateSeal
     /// the relay stops polling only when <see cref="RpcdUpdateStatus.Terminal"/> is set.
     /// A later call with the service running promotes that specific failure to success.
     /// </summary>
-    public static RpcdUpdateStatus Seal(RpcdUpdateStatus status, string? installedVersion, bool serviceRunning, DateTimeOffset utcNow)
+    public static RpcdUpdateStatus Seal(RpcdUpdateStatus status, string? installedVersion, bool serviceRunning, DateTimeOffset utcNow, string? installedAgentVersion = null)
     {
         if (status.Terminal)
             return PromoteIfServiceStarted(status, installedVersion, serviceRunning, utcNow);
-        var done = RpcdGitHubRelease.Reconcile(status, installedVersion, utcNow, RpcdUpdateSession.InstallGiveUp);
+        var done = RpcdGitHubRelease.Reconcile(status, installedVersion, utcNow, RpcdUpdateSession.InstallGiveUp, installedAgentVersion);
         if (done.Stage != RpcdUpdateStages.Succeeded || serviceRunning)
             return done;
         var error = $"RPCD {done.NewVersion} {ServiceNotRunning}";
@@ -871,6 +1123,34 @@ public static class RpcdUpdateSeal
     }
 
     /// <summary>
+    /// Setup exited 0 and the app matches, but the agent service that was installed is not the target build.
+    /// That is terminal immediately. Reconcile still waits while Setup may be inside the MSI step and no exit code has been written.
+    /// </summary>
+    public static RpcdUpdateStatus ApplyZeroExitAgentCheck(RpcdUpdateStatus status, int? exitCode, string? installedApp, string? installedAgent, DateTimeOffset utcNow)
+    {
+        var target = status.NewVersion ?? "";
+        if (exitCode is not 0
+            || status.Terminal
+            || !status.UpdateAgent
+            || status.Stage is not (RpcdUpdateStages.Installing or RpcdUpdateStages.Relaunching)
+            || !RpcdGitHubRelease.InstalledMatches(installedApp, target, status.OldVersion)
+            || RpcdGitHubRelease.SameBuild(installedAgent, target))
+            return status;
+        var error = RpcdGitHubRelease.AgentNotUpdatedError(installedApp, installedAgent, target);
+        return status with
+        {
+            Stage = RpcdUpdateStages.AgentNotUpdated,
+            Terminal = true,
+            NewVersion = AppVersionComparer.Normalize(installedApp) ?? installedApp,
+            AgentVersion = string.IsNullOrWhiteSpace(installedAgent) ? null : AppVersionComparer.Normalize(installedAgent) ?? installedAgent,
+            Error = error,
+            Detail = error,
+            InstallerExitCode = 0,
+            UpdatedUtc = utcNow,
+        };
+    }
+
+    /// <summary>
     /// A later write from the agent that launched Setup must not replace a success already recorded by install.
     /// That agent is stopped while Setup is still running and can wake up just long enough to store a failure.
     /// </summary>
@@ -879,4 +1159,27 @@ public static class RpcdUpdateSeal
         && onDisk.Stage == RpcdUpdateStages.Succeeded
         && string.Equals(onDisk.RequestId, incoming.RequestId, StringComparison.Ordinal)
         && incoming.Stage != RpcdUpdateStages.Succeeded;
+}
+
+/// <summary>Product version of an installed executable, without <c>+commit</c> metadata. Null when the file is missing.</summary>
+public static class RpcdProductVersion
+{
+    public static string? ReadFile(string? path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return null;
+            var info = FileVersionInfo.GetVersionInfo(path);
+            var version = string.IsNullOrWhiteSpace(info.ProductVersion) ? info.FileVersion : info.ProductVersion;
+            if (string.IsNullOrWhiteSpace(version))
+                return null;
+            var plus = version.IndexOf('+');
+            return (plus > 0 ? version[..plus] : version).Trim();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
 }

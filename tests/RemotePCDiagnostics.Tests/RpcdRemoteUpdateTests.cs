@@ -247,6 +247,7 @@ public class RpcdRemoteUpdateTests
         Assert.Contains("/LOG=\"", installer.Arguments);
         Assert.Contains(RpcdSetupLog.FileName, installer.Arguments);
         Assert.DoesNotContain("AGENTMSI", installer.Arguments);
+        Assert.False(session.Current(null, NewVersion, DateTimeOffset.UtcNow)!.UpdateAgent);
         Assert.Contains("/RELAUNCHARGS=", installer.Arguments);
 
         var status = session.Current(null, NewVersion, DateTimeOffset.UtcNow);
@@ -257,6 +258,188 @@ public class RpcdRemoteUpdateTests
         Assert.Null(status.Error);
         Assert.Null(status.InstallerExitCode);
         Assert.Null(status.InstallerLog);
+    }
+
+    [Fact]
+    public async Task An_installed_agent_is_updated_from_the_verified_release_msi()
+    {
+        var installer = new Installer { ExitCode = 0 };
+        var session = await RunAsync(
+            OldVersion, NewVersion, null, installer, readBack: NewVersion,
+            agentInstalled: true, agentBefore: OldVersion, agentAfter: NewVersion, includeAgentMsi: true);
+
+        Assert.Equal(1, installer.Calls);
+        Assert.Contains("/PRESERVEAGENT", installer.Arguments);
+        Assert.Contains("/AGENTMSI=", installer.Arguments);
+        Assert.Contains("RemotePCDiagnostics.Agent-" + NewVersion + "-win-x64.msi", installer.Arguments);
+        Assert.DoesNotContain("ENROLLMENT_KEY", installer.Arguments);
+        Assert.DoesNotContain("SERVER_URL", installer.Arguments);
+        Assert.DoesNotContain("--key=", installer.Arguments);
+
+        var status = session.Current(null, NewVersion, DateTimeOffset.UtcNow, NewVersion);
+        Assert.Equal(RpcdUpdateStages.Succeeded, status!.Stage);
+        Assert.True(status.UpdateAgent);
+        Assert.Equal(OldVersion, status.OldAgentVersion);
+        Assert.Equal(NewVersion, status.AgentVersion);
+        Assert.Equal(NewVersion, status.NewVersion);
+    }
+
+    [Fact]
+    public async Task A_missing_agent_msi_fails_before_setup_when_the_service_is_installed()
+    {
+        var installer = new Installer();
+        var session = await RunAsync(OldVersion, NewVersion, null, installer, OldVersion, agentInstalled: true, agentBefore: OldVersion);
+
+        Assert.Equal(0, installer.Calls);
+        var status = session.Current(null, OldVersion, DateTimeOffset.UtcNow, OldVersion);
+        Assert.Equal(RpcdUpdateStages.Failed, status!.Stage);
+        Assert.True(status.Terminal);
+        Assert.Contains(RpcdGitHubRelease.AgentMsiMissing, status.Error);
+        Assert.NotEqual(RpcdUpdateStages.Succeeded, status.Stage);
+    }
+
+    [Fact]
+    public async Task An_agent_msi_checksum_mismatch_does_not_start_setup()
+    {
+        var installer = new Installer();
+        var session = await RunAsync(
+            OldVersion, NewVersion, null, installer, OldVersion,
+            agentInstalled: true, agentBefore: OldVersion, includeAgentMsi: true, badAgentHash: true);
+
+        Assert.Equal(0, installer.Calls);
+        var status = session.Current(null, OldVersion, DateTimeOffset.UtcNow, OldVersion);
+        Assert.Equal(RpcdUpdateStages.Failed, status!.Stage);
+        Assert.Contains("Agent MSI", status.Error);
+        Assert.Contains("SHA-256", status.Error);
+    }
+
+    [Fact]
+    public async Task Success_requires_the_agent_service_version_when_one_is_installed()
+    {
+        var installer = new Installer { ExitCode = 0 };
+        var session = await RunAsync(
+            OldVersion, NewVersion, null, installer, readBack: NewVersion,
+            agentInstalled: true, agentBefore: OldVersion, agentAfter: OldVersion, includeAgentMsi: true);
+
+        Assert.Equal(1, installer.Calls);
+        var status = session.Current(null, NewVersion, DateTimeOffset.UtcNow, OldVersion);
+        Assert.Equal(RpcdUpdateStages.AgentNotUpdated, status!.Stage);
+        Assert.True(status.Terminal);
+        Assert.NotEqual(RpcdUpdateStages.Succeeded, status.Stage);
+        Assert.Equal(NewVersion, status.NewVersion);
+        Assert.Equal(OldVersion, status.OldAgentVersion);
+        Assert.Equal(OldVersion, status.AgentVersion);
+        Assert.Contains(NewVersion, status.Error);
+        Assert.Contains(OldVersion, status.Error);
+        Assert.Equal(0, status.InstallerExitCode);
+    }
+
+    [Fact]
+    public async Task An_app_that_is_current_still_updates_when_the_agent_is_behind()
+    {
+        var installer = new Installer { ExitCode = 0 };
+        var session = await RunAsync(
+            NewVersion, NewVersion, null, installer, readBack: NewVersion,
+            agentInstalled: true, agentBefore: OldVersion, agentAfter: NewVersion, includeAgentMsi: true);
+
+        Assert.Equal(1, installer.Calls);
+        Assert.Contains("/AGENTMSI=", installer.Arguments);
+        Assert.Equal(RpcdUpdateStages.Succeeded, session.Current(null, NewVersion, DateTimeOffset.UtcNow, NewVersion)!.Stage);
+    }
+
+    [Fact]
+    public async Task A_newer_app_is_not_downgraded_to_refresh_an_older_agent()
+    {
+        var installer = new Installer();
+        var newer = "1.2.0-ci.997.1";
+        var session = await RunAsync(
+            newer, NewVersion, null, installer, readBack: newer,
+            agentInstalled: true, agentBefore: OldVersion, includeAgentMsi: true);
+
+        Assert.Equal(0, installer.Calls);
+        var status = session.Current(null, newer, DateTimeOffset.UtcNow, OldVersion);
+        Assert.Equal(RpcdUpdateStages.AlreadyUpToDate, status!.Stage);
+        Assert.Contains("newer than the published", status.Error);
+    }
+
+    [Fact]
+    public void Release_parse_selects_the_base_version_agent_msi_from_the_same_release()
+    {
+        var setup = "RemotePCDiagnostics-Setup-1.2.0-win-x64.exe";
+        var msi = "RemotePCDiagnostics.Agent-1.2.0-win-x64.msi";
+        var root = "https://github.com/budcribar/RemotePCDiagnostics/releases/download/prerelease/";
+        var json = "{\"tag_name\":\"prerelease\",\"body\":\"Build version: `" + NewVersion + "`\\n\",\"assets\":["
+            + Asset(setup, root + setup) + ","
+            + Asset(setup + ".sha256", root + setup + ".sha256") + ","
+            + Asset(msi, root + msi) + ","
+            + Asset(msi + ".sha256", root + msi + ".sha256") + ","
+            + Asset("RemotePCDiagnostics-TestShop-Setup-1.2.0-win-x64.exe", root + "RemotePCDiagnostics-TestShop-Setup-1.2.0-win-x64.exe")
+            + "]}";
+
+        var parsed = RpcdGitHubRelease.Parse(json, null);
+        Assert.Null(parsed.Error);
+        Assert.Equal(NewVersion, parsed.Choice!.Version);
+        Assert.Equal(root + msi, parsed.Choice.AgentMsiUrl);
+        Assert.Equal(root + msi + ".sha256", parsed.Choice.AgentMsiSha256Url);
+        Assert.Null(parsed.Choice.AgentMsiError);
+    }
+
+    [Fact]
+    public void Release_parse_reports_a_missing_agent_msi_checksum()
+    {
+        var setup = "RemotePCDiagnostics-Setup-1.2.0-win-x64.exe";
+        var msi = "RemotePCDiagnostics.Agent-1.2.0-win-x64.msi";
+        var root = "https://github.com/budcribar/RemotePCDiagnostics/releases/download/prerelease/";
+        var json = "{\"tag_name\":\"prerelease\",\"body\":\"Build version: `" + NewVersion + "`\\n\",\"assets\":["
+            + Asset(setup, root + setup) + ","
+            + Asset(setup + ".sha256", root + setup + ".sha256") + ","
+            + Asset(msi, root + msi)
+            + "]}";
+
+        var parsed = RpcdGitHubRelease.Parse(json, null);
+        Assert.Null(parsed.Error);
+        Assert.Null(parsed.Choice!.AgentMsiUrl);
+        Assert.Equal(RpcdGitHubRelease.AgentMsiChecksumMissing, parsed.Choice.AgentMsiError);
+    }
+
+    [Fact]
+    public void Reconcile_does_not_succeed_when_the_agent_service_is_still_old()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var status = new RpcdUpdateStatus
+        {
+            RequestId = "req",
+            Stage = RpcdUpdateStages.Installing,
+            OldVersion = OldVersion,
+            NewVersion = NewVersion,
+            UpdateAgent = true,
+            OldAgentVersion = OldVersion,
+            UpdatedUtc = now.AddMinutes(-2),
+        };
+
+        var waiting = RpcdGitHubRelease.Reconcile(status, NewVersion, now, RpcdUpdateSession.InstallGiveUp, OldVersion);
+        Assert.Equal(RpcdUpdateStages.Installing, waiting.Stage);
+        Assert.False(waiting.Terminal);
+
+        var late = RpcdGitHubRelease.Reconcile(status with { UpdatedUtc = now.AddMinutes(-30) }, NewVersion, now, RpcdUpdateSession.InstallGiveUp, OldVersion);
+        Assert.Equal(RpcdUpdateStages.AgentNotUpdated, late.Stage);
+        Assert.True(late.Terminal);
+        Assert.Equal(NewVersion, late.NewVersion);
+        Assert.Equal(OldVersion, late.AgentVersion);
+        Assert.Contains(NewVersion, late.Error);
+        Assert.Contains(OldVersion, late.Error);
+
+        var done = RpcdUpdateSeal.Seal(status, NewVersion, serviceRunning: true, now, NewVersion);
+        Assert.Equal(RpcdUpdateStages.Succeeded, done.Stage);
+        Assert.Equal(NewVersion, done.AgentVersion);
+
+        var afterSetup = RpcdUpdateSeal.ApplyZeroExitAgentCheck(status, 0, NewVersion, OldVersion, now);
+        Assert.Equal(RpcdUpdateStages.AgentNotUpdated, afterSetup.Stage);
+        Assert.True(afterSetup.Terminal);
+        Assert.Equal(0, afterSetup.InstallerExitCode);
+        Assert.Equal(NewVersion, afterSetup.NewVersion);
+        Assert.Equal(OldVersion, afterSetup.AgentVersion);
+        Assert.Same(status, RpcdUpdateSeal.ApplyZeroExitAgentCheck(status, null, NewVersion, OldVersion, now));
     }
 
     [Fact]
@@ -501,22 +684,37 @@ public class RpcdRemoteUpdateTests
         bool badHash = false,
         bool testShopOnly = false,
         string? exeUrl = null,
-        string? directory = null)
+        string? directory = null,
+        bool agentInstalled = false,
+        string? agentBefore = null,
+        string? agentAfter = null,
+        bool includeAgentMsi = false,
+        bool badAgentHash = false)
     {
         var payload = Encoding.UTF8.GetBytes("official-installer");
         var hash = badHash ? new string('a', 64) : Convert.ToHexStringLower(SHA256.HashData(payload));
-        var body = ReleaseJson(releaseVersion, includeSha, testShopOnly, exeUrl, hash);
+        var msiPayload = Encoding.UTF8.GetBytes("official-agent-msi");
+        var msiHash = badAgentHash ? new string('b', 64) : Convert.ToHexStringLower(SHA256.HashData(msiPayload));
+        var msiName = "RemotePCDiagnostics.Agent-" + releaseVersion + "-win-x64.msi";
+        var body = ReleaseJson(releaseVersion, includeSha, testShopOnly, exeUrl, hash, includeAgentMsi, msiName);
         using var http = new HttpClient(new Stub(req =>
         {
             var url = req.RequestUri!.AbsoluteUri;
-            if (url.Contains("/releases/", StringComparison.Ordinal) && !url.EndsWith(".exe", StringComparison.Ordinal) && !url.EndsWith(".sha256", StringComparison.Ordinal))
+            if (url.Contains("/releases/", StringComparison.Ordinal)
+                && !url.EndsWith(".exe", StringComparison.Ordinal)
+                && !url.EndsWith(".sha256", StringComparison.Ordinal)
+                && !url.EndsWith(".msi", StringComparison.Ordinal))
             {
                 if (url.Contains("/releases/tags/prerelease", StringComparison.Ordinal) || url.EndsWith("/releases/latest", StringComparison.Ordinal))
                     return Json(body);
                 return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{\"message\":\"Not Found\"}") };
             }
+            if (url.EndsWith(".msi.sha256", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(msiHash + "  " + msiName + "\n") };
             if (url.EndsWith(".sha256", StringComparison.Ordinal))
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(hash + "  " + ExeName + "\n") };
+            if (url.EndsWith(".msi", StringComparison.Ordinal))
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(msiPayload) };
             if (url == (exeUrl ?? ExeUrl))
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(payload) };
             return new HttpResponseMessage(HttpStatusCode.NotFound);
@@ -525,6 +723,7 @@ public class RpcdRemoteUpdateTests
         var session = new RpcdUpdateSession();
         var now = DateTimeOffset.UtcNow;
         var staging = directory ?? TempDir();
+        var agentUpdated = false;
         Assert.True(session.TryBegin(new RpcdUpdateRequest("prerelease", explicitVersion, true), false, true, now, out _));
         await session.ExecuteAsync(new RpcdUpdateRequest("prerelease", explicitVersion, true), new RpcdUpdateRun
         {
@@ -533,10 +732,13 @@ public class RpcdRemoteUpdateTests
             ReadInstalledVersion = () => readBack,
             StagingDirectory = staging,
             RelaunchArguments = ["-u=https://server.example.com:34544", "-i=748279c7-4309-452c-8b30-e02ec52e498f", "--restarted"],
+            IsPersistentAgentInstalled = () => agentInstalled,
+            ReadInstalledAgentVersion = () => agentUpdated ? agentAfter : agentBefore,
             RunInstaller = (install, _) =>
             {
                 installer.Calls++;
                 installer.Arguments = install.Arguments;
+                agentUpdated = true;
                 if (installer.Log is not null)
                     File.WriteAllText(Path.Combine(staging, RpcdSetupLog.FileName), installer.Log);
                 return Task.FromResult(installer.ExitCode);
@@ -546,18 +748,27 @@ public class RpcdRemoteUpdateTests
         return session;
     }
 
-    private static string ReleaseJson(string version, bool includeSha, bool testShopOnly, string? exeUrl, string hash)
+    private static string ReleaseJson(string version, bool includeSha, bool testShopOnly, string? exeUrl, string hash, bool includeAgentMsi = false, string? msiName = null)
     {
         var name = testShopOnly ? "RemotePCDiagnostics-TestShop-Setup-1.2.0-win-x64.exe" : ExeName;
         var url = exeUrl ?? "https://github.com/budcribar/RemotePCDiagnostics/releases/download/prerelease/" + name;
         var assets = new StringBuilder();
-        assets.Append("{\"name\":\"").Append(name).Append("\",\"browser_download_url\":\"").Append(url).Append("\"}");
+        assets.Append(Asset(name, url));
         if (includeSha && !testShopOnly)
-            assets.Append(",{\"name\":\"").Append(name).Append(".sha256\",\"browser_download_url\":\"").Append(url).Append(".sha256\"}");
+            assets.Append(',').Append(Asset(name + ".sha256", url + ".sha256"));
+        if (includeAgentMsi && !testShopOnly && msiName is not null)
+        {
+            var msiUrl = "https://github.com/budcribar/RemotePCDiagnostics/releases/download/prerelease/" + msiName;
+            assets.Append(',').Append(Asset(msiName, msiUrl));
+            assets.Append(',').Append(Asset(msiName + ".sha256", msiUrl + ".sha256"));
+        }
         _ = hash;
         return "{\"tag_name\":\"prerelease\",\"prerelease\":true,\"html_url\":\"https://github.com/budcribar/RemotePCDiagnostics/releases/tag/prerelease\",\"body\":\"Build version: `"
             + version + "`\\n\",\"assets\":[" + assets + "]}";
     }
+
+    private static string Asset(string name, string url) =>
+        "{\"name\":\"" + name + "\",\"browser_download_url\":\"" + url + "\"}";
 
     private static string TempDir()
     {

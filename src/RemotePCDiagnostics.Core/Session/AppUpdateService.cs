@@ -425,6 +425,48 @@ public static class AppUpdateInstaller
         }
     }
 
+    /// <summary>
+    /// Downloads the Agent MSI the way <c>AgentSelfUpdater</c> and <see cref="AppUpdateService"/> do.
+    /// <paramref name="required"/> false keeps that path: a missing URL or a failed check returns null and
+    /// <paramref name="onSkipped"/> hears why. <paramref name="required"/> true is the remote update: no MSI, no checksum,
+    /// or a failed check throws, and the caller must not report success.
+    /// </summary>
+    public static async Task<string?> DownloadAgentMsiAsync(
+        HttpClient http,
+        string? msiUrl,
+        string? sha256Url,
+        string stagingDirectory,
+        bool required,
+        Action<AppUpdateProgress>? progress,
+        Action<string>? onSkipped,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(msiUrl))
+        {
+            if (!required)
+                return null;
+            throw new InvalidOperationException("The GitHub release has no Agent MSI for this version. The update was not installed.");
+        }
+
+        if (required && string.IsNullOrWhiteSpace(sha256Url))
+            throw new InvalidOperationException(RpcdGitHubRelease.AgentMsiChecksumMissing);
+
+        try
+        {
+            return await DownloadAndVerifyAsync(http, msiUrl, sha256Url, stagingDirectory, progress, ct, requireChecksum: required)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (!required)
+            {
+                onSkipped?.Invoke(ex.Message);
+                return null;
+            }
+            throw new InvalidOperationException("The Agent MSI could not be verified. The update was not installed. " + ex.Message, ex);
+        }
+    }
+
     public static async Task<string> ComputeFileSha256Async(string filePath, CancellationToken ct)
     {
         await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
@@ -605,17 +647,17 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
 
             // The persistent agent service is upgraded by Setup too (it runs elevated), so it does not stay on the old build.
             string? agentMsiPath = null;
-            if (!string.IsNullOrWhiteSpace(info.AgentMsiUrl) && _agentServiceInstalled())
+            if (_agentServiceInstalled())
             {
-                try
-                {
-                    agentMsiPath = await AppUpdateInstaller.DownloadAndVerifyAsync(
-                        _http, info.AgentMsiUrl, info.AgentMsiSha256Url, stagingDir, progress: null, ct).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _log?.Warn($"[app-update] Agent MSI download/verification skipped: {ex.Message}");
-                }
+                agentMsiPath = await AppUpdateInstaller.DownloadAgentMsiAsync(
+                    _http,
+                    info.AgentMsiUrl,
+                    info.AgentMsiSha256Url,
+                    stagingDir,
+                    required: false,
+                    progress: null,
+                    onSkipped: message => _log?.Warn($"[app-update] Agent MSI download/verification skipped: {message}"),
+                    ct).ConfigureAwait(false);
             }
 
             progress?.Invoke(new AppUpdateProgress("installing", 100, "Launching installer..."));

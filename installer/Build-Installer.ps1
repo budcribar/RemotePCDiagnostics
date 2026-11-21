@@ -18,6 +18,7 @@ param(
     [string] $RemoteServerUrl = '',
     [string] $ShopGroup = '',
     [string] $AgentExePath = '',
+    [string] $AgentMsiPath = '',
     [string] $AgentServerUrl = '',
     [string] $AgentEnrollmentKey = '',
     [string] $AgentConsent = '',
@@ -254,12 +255,22 @@ if (-not [string]::IsNullOrWhiteSpace($RemoteServerUrl)) {
 if (-not [string]::IsNullOrWhiteSpace($ShopGroup)) {
     $IsccArgs += "/DShopGroup=$ShopGroup"
 }
+if (-not [string]::IsNullOrWhiteSpace($AgentExePath) -and -not [string]::IsNullOrWhiteSpace($AgentMsiPath)) {
+    throw "Pass -AgentExePath or -AgentMsiPath, not both. The TestShop bundle installs the agent exe. The regular Setup embeds the Agent MSI."
+}
 if (-not [string]::IsNullOrWhiteSpace($AgentExePath)) {
     if (-not (Test-Path -LiteralPath $AgentExePath)) {
         throw "Specified AgentExePath was not found: $AgentExePath"
     }
     $ResolvedAgentExe = (Resolve-Path -LiteralPath $AgentExePath).Path
     $IsccArgs += "/DAgentExePath=$ResolvedAgentExe"
+}
+if (-not [string]::IsNullOrWhiteSpace($AgentMsiPath)) {
+    if (-not (Test-Path -LiteralPath $AgentMsiPath)) {
+        throw "Specified AgentMsiPath was not found: $AgentMsiPath"
+    }
+    $ResolvedAgentMsi = (Resolve-Path -LiteralPath $AgentMsiPath).Path
+    $IsccArgs += "/DAgentMsiPath=$ResolvedAgentMsi"
 }
 if (-not [string]::IsNullOrWhiteSpace($AgentServerUrl)) {
     $IsccArgs += "/DAgentServerUrl=$AgentServerUrl"

@@ -125,8 +125,9 @@ message UpdateRpcdStatusCommand {
   string request_id = 1;
 }
 
-// One pollable snapshot. terminal is true for refused, already_up_to_date, succeeded, and failed.
+// One pollable snapshot. terminal is true for refused, already_up_to_date, succeeded, failed, and agent_not_updated.
 // old_version is the build before the attempt. new_version is the release being installed, then the build now on disk.
+// agent_not_updated means the app is new_version and the installed agent service is not that build.
 message UpdateRpcdProgress {
   string request_id = 1;
   string stage = 2;
@@ -142,6 +143,11 @@ message UpdateRpcdProgress {
   // The relay's copy of this message has to carry both fields or WatchUpdateRpcd drops them.
   string installer_log = 10;
   optional int32 installer_exit_code = 11;
+  // Set when a persistent agent service was installed before this update.
+  // old_agent_version is that build. agent_version is the service executable after the attempt.
+  // The relay's copy of this message has to carry both fields or WatchUpdateRpcd drops them.
+  string old_agent_version = 12;
+  string agent_version = 13;
 }
 
 // ---------------------------------------------------------------------------------------------
