@@ -147,7 +147,21 @@ try {
   await page.getByTestId('checks-expand-all').click();
 
   // Resource hogs: "Ways to use less memory" renders (suggestions, or the empty/error state). Actions are never clicked here.
+  // A check's card shows nothing below it until it has run: run it, then open its Details (a passed check starts collapsed).
   await page.getByTestId('checks-row-resourcehogs').click();
+  const hogsHead = '[data-testid="checks-detail"] [data-check-id="ResourceHogs"]';
+  await page.locator(`${hogsHead}[data-run-state="notrun"]`).waitFor({ state: 'visible', timeout: 15_000 });
+  if ((await page.locator('[data-testid="checks-detail-body"]').innerText()).trim() !== '') throw new Error('A not-run check card should show nothing below it');
+  await page.waitForFunction(() => !document.querySelector('[data-testid="checks-run-one"]')?.disabled, null, { timeout: 60_000 });
+  await page.getByTestId('checks-run-one').click();
+  await page.waitForFunction(sel => !['notrun', 'running'].includes(document.querySelector(sel)?.getAttribute('data-run-state') ?? 'notrun'), hogsHead, { timeout: 120_000 });
+  const detailsToggle = page.getByTestId('checks-details-toggle');
+  if (await detailsToggle.getAttribute('aria-expanded') === 'false') {
+    if (await page.getByTestId('checks-detail-body').isVisible()) throw new Error('Collapsed Details should hide the result');
+    await detailsToggle.click();
+    await page.locator('[data-testid="checks-details-toggle"][aria-expanded="true"]').waitFor({ state: 'visible', timeout: 10_000 });
+  }
+  console.log('Resource hogs card: ran, Details', await detailsToggle.getAttribute('aria-expanded') === 'true' ? 'open' : 'closed');
   await page.getByTestId('mem-suggest-title').waitFor({ state: 'visible', timeout: 60_000 });
   await page.locator('[data-testid^="mem-sug-"], [data-testid="mem-empty"], [data-testid="mem-error"]').first().waitFor({ state: 'visible', timeout: 120_000 });
   console.log(`Memory suggestions: ${await page.locator('[data-testid^="mem-sug-"]').count()} card(s); ${await page.getByTestId('mem-summary').innerText().catch(() => 'no summary')}`);
