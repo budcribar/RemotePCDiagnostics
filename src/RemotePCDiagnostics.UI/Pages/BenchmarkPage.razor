@@ -30,9 +30,10 @@
                     : "Comparison ready")
         </div>
         <label class="bench-restart-toggle">
-            <input @key="_restartEcho" type="checkbox" data-testid="bench-restart" checked="@s.RestartBeforeAfter" disabled="@running"
-                   @onchange="EchoCommittedRestart" />
-            <span>Restart the PC first (needed for a fair start-up time)</span>
+            @* Read-only: the start buttons below choose, and the choice is saved once that pass starts. *@
+            <input type="checkbox" data-testid="bench-restart" checked="@s.RestartBeforeAfter" disabled aria-readonly="true"
+                   title="Set by the button you start a pass with" />
+            <span>Restart the PC first (needed for a fair start-up time). The button you start with sets this.</span>
         </label>
     </div>
     <div class="bench-hero-actions">
@@ -370,13 +371,6 @@ else if (!running)
     {
         if (int.TryParse(e.Value?.ToString(), out var n)) Bench.UpdateSettings(Bench.Settings with { Runs = n });
     }
-
-    /// <summary>
-    /// The checkbox shows the restart choice the last started pass used. Clicking it does not write that choice:
-    /// a rejected start must leave it unchanged. The pass buttons save it once the pass has actually started.
-    /// </summary>
-    private int _restartEcho;
-    private void EchoCommittedRestart(ChangeEventArgs _) => _restartEcho++;
 
     private Task Start(BenchmarkPhase phase, bool restart) => Bench.BeginPassAsync(phase, restart);
 
