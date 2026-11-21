@@ -328,13 +328,13 @@ public class GranularFixTests
     }
 
     [Fact]
-    public void Install_script_takes_only_a_Windows_Update_ID()
+    public void Install_takes_only_a_Windows_Update_ID()
     {
-        var script = RemediationService.BuildInstallUpdateScript(Id1.ToUpperInvariant())!;
-        Assert.Contains($"UpdateID=''{Id1}''", script);
-        Assert.DoesNotContain("__UPDATE_ID__", script);
-        Assert.Null(RemediationService.BuildInstallUpdateScript("x' or 'a'='a"));
-        Assert.Null(RemediationService.BuildInstallUpdateScript(null));
+        var plan = AgentScripts.Plan(AgentScripts.Of(AgentScripts.InstallUpdate, Id1.ToUpperInvariant()), null, out _)!;
+        Assert.Equal(new InstallUpdateAction(Guid.Parse(Id1)), plan.Native);
+        Assert.Null(AgentScripts.Plan(AgentScripts.Of(AgentScripts.InstallUpdate, "x' or 'a'='a"), null, out var refusal));
+        Assert.NotNull(refusal);
+        Assert.Null(AgentScripts.Plan(AgentScripts.Of(AgentScripts.InstallUpdate), null, out _));
     }
 
     [Theory]
@@ -356,17 +356,17 @@ public class GranularFixTests
     }
 
     [Fact]
-    public async Task Installing_one_update_runs_the_script_for_that_update_only()
+    public async Task Installing_one_update_asks_the_agent_for_that_update_only()
     {
         var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok("""{"Found":true,"Installed":true,"ResultCode":2,"HResult":0,"RebootRequired":true,"Title":"Realtek - Net","Error":""}"""));
         var result = await Service(launcher).ExecuteAsync(new(RemediationKind.InstallUpdate, "Install", Id2, "Realtek - Net"));
         Assert.True(result.Success);
         Assert.True(result.RestartNeeded);
-        Assert.Contains(Id2, Assert.Single(launcher.Calls).Args[^1]);
+        Assert.Equal(new InstallUpdateAction(Guid.Parse(Id2)), Assert.Single(launcher.NativeCalls));
 
         var refused = await Service(launcher).ExecuteAsync(new(RemediationKind.InstallUpdate, "Install", "nope"));
         Assert.False(refused.Success);
-        Assert.Single(launcher.Calls);
+        Assert.Single(launcher.NativeCalls);
     }
 
     [Fact]

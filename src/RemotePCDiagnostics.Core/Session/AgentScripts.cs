@@ -72,18 +72,18 @@ public static class AgentScripts
         var a = request.Args ?? [];
         string? Arg(int i) => i < a.Count ? a[i] : null;
         AgentPlan? Refuse(string why) { refused(why); return null; }
-        static AgentPlan? Ps(string? script) => script is null ? null : new AgentPlan(script, null);
         static AgentPlan Native(AgentNativeAction action) => new(null, action);
 
         switch (request.Name)
         {
             case SecurityRead or SecurityApply:
                 if (a.Count != 1 || SecurityFixes.Find(Arg(0)) is not { } fix) return Refuse("That isn't a security setting this app changes.");
-                return Ps(request.Name == SecurityRead ? SecurityFixes.ReadScript(fix.Key) : SecurityFixes.ApplyScript(fix.Key)) ?? Refuse("That setting can't be changed here.");
+                return Native(request.Name == SecurityRead ? new SecurityReadAction(fix.Key) : new SecurityApplyAction(fix.Key));
 
             case SecurityRestore:
                 if (a.Count != 2 || SecurityFixes.Find(Arg(0)) is not { } restore) return Refuse("That isn't a security setting this app changes.");
-                return Ps(SecurityFixes.RestoreScript(restore.Key, Arg(1))) ?? Refuse("The original setting wasn't recorded in a form this app wrote.");
+                return SecurityFixes.ParsePrevious(restore.Key, Arg(1)) is { } previous
+                    ? Native(new SecurityRestoreAction(restore.Key, previous)) : Refuse("The original setting wasn't recorded in a form this app wrote.");
 
             case OptimizeVolume:
                 var letters = a.Count == 1 ? RemediationService.DriveLetters(Arg(0)) : "";
@@ -91,11 +91,11 @@ public static class AgentScripts
                 return Native(new OptimizeVolumeAction(letters));
 
             case InstallUpdate:
-                return Ps(a.Count == 1 ? RemediationService.BuildInstallUpdateScript(Arg(0)) : null) ?? Refuse("That isn't a Windows Update ID.");
+                return a.Count == 1 && Guid.TryParse(Arg(0), out var updateId) ? Native(new InstallUpdateAction(updateId)) : Refuse("That isn't a Windows Update ID.");
 
             case WindowsUpdate:
                 return a.Count == 1 && Arg(0) is "drivers" or "software"
-                    ? Ps(RemediationService.BuildWindowsUpdateScript(Arg(0) == "drivers")) : Refuse("Only driver or software updates.");
+                    ? Native(new WindowsUpdateAction(Arg(0) == "drivers")) : Refuse("Only driver or software updates.");
 
             case CleanTemp:
                 return a.Count == 0 ? Native(new CleanTempAction()) : Refuse("Cleaning temporary files takes no arguments.");
