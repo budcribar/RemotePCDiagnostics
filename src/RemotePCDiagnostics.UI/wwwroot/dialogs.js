@@ -283,7 +283,7 @@
 
         const giveBtn = bar.querySelector('.rbwv-control-give');
         const takeBtn = bar.querySelector('.rbwv-control-take');
-        const remoteHasControl = isOwner ? !iHaveControl : iHaveControl;
+        const localHasControl = iHaveControl === true;
 
         if (!toggle) {
             toggle = document.createElement('div');
@@ -309,11 +309,10 @@
                     if (btn.disabled || btn.classList.contains('on')) return;
                     const g = bar.querySelector('.rbwv-control-give');
                     const t = bar.querySelector('.rbwv-control-take');
-                    if (side === 'local') {
-                        if (isOwner && t) t.click();
-                        else if (!isOwner && g) g.click();
-                    } else if (side === 'remote') {
-                        if (isOwner && g) g.click();
+                    if (side === 'remote') {
+                        if (g) g.click();
+                    } else if (side === 'local') {
+                        if (t) t.click();
                     }
                 });
                 return btn;
@@ -325,35 +324,29 @@
 
         toggle.hidden = false;
         bar.classList.add('rpd-has-toggle');
-        toggle.classList.toggle('is-you', iHaveControl === true);
-        toggle.classList.toggle('is-other', iHaveControl === false);
+        toggle.classList.toggle('is-you', localHasControl);
+        toggle.classList.toggle('is-other', !localHasControl);
 
         const remoteBtn = toggle.querySelector('[data-side="remote"]');
         const localBtn = toggle.querySelector('[data-side="local"]');
         if (remoteBtn && localBtn) {
-            remoteBtn.classList.toggle('on', remoteHasControl);
-            remoteBtn.setAttribute('aria-checked', remoteHasControl ? 'true' : 'false');
-            localBtn.classList.toggle('on', !remoteHasControl);
-            localBtn.setAttribute('aria-checked', !remoteHasControl ? 'true' : 'false');
+            remoteBtn.classList.toggle('on', !localHasControl);
+            remoteBtn.setAttribute('aria-checked', !localHasControl ? 'true' : 'false');
+            localBtn.classList.toggle('on', localHasControl);
+            localBtn.setAttribute('aria-checked', localHasControl ? 'true' : 'false');
 
-            if (isOwner) {
-                remoteBtn.disabled = !remoteHasControl && !giveBtn;
-                localBtn.disabled = remoteHasControl && !takeBtn;
-                remoteBtn.title = remoteHasControl
-                    ? 'Remote technician has control'
-                    : (giveBtn ? 'Give control to remote technician' : 'No remote technician connected');
-                localBtn.title = !remoteHasControl
-                    ? 'You have control'
-                    : 'Take control back';
+            if (localHasControl) {
+                localBtn.disabled = false;
+                remoteBtn.disabled = !giveBtn;
+                localBtn.title = 'You have control';
+                remoteBtn.title = giveBtn
+                    ? (isOwner ? 'Give control to remote technician' : 'Give control back to host')
+                    : 'No other user connected';
             } else {
-                remoteBtn.disabled = !remoteHasControl;
-                localBtn.disabled = remoteHasControl && !giveBtn;
-                remoteBtn.title = remoteHasControl
-                    ? 'You have control'
-                    : 'Waiting for host to give control';
-                localBtn.title = !remoteHasControl
-                    ? 'Host has control'
-                    : 'Give control back to host';
+                remoteBtn.disabled = false;
+                localBtn.disabled = !takeBtn;
+                remoteBtn.title = isOwner ? 'Remote technician has control' : 'Host has control';
+                localBtn.title = takeBtn ? 'Take control' : 'Waiting for host to give control';
             }
         }
 

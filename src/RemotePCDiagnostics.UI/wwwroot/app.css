@@ -103,7 +103,7 @@ code, pre, kbd, samp { font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono
 .theme-switch { position: relative; display: inline-flex; align-items: center; height: 30px; padding: 2px; gap: 2px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); box-sizing: border-box; flex: none; touch-action: none; user-select: none; }
 .theme-switch .rpd-seg-thumb { position: absolute; top: 2px; left: 0; height: 24px; border-radius: 999px; background: #1d4ed8; pointer-events: none; z-index: 0; transition: transform .18s cubic-bezier(.2, .8, .2, 1), width .18s cubic-bezier(.2, .8, .2, 1), background-color .18s ease; }
 .theme-switch.is-dragging .rpd-seg-thumb { transition: none; }
-.theme-switch button { position: relative; z-index: 1; height: 24px; border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 600; padding: 0 10px; line-height: 1; white-space: nowrap; }
+.theme-switch button { position: relative; z-index: 1; height: 24px; min-height: 24px; border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 600; padding: 0 10px; line-height: 1; white-space: nowrap; }
 .theme-switch button:hover:not(.on) { color: var(--text); background: var(--surface-hover); }
 .theme-switch button.on { background: #1d4ed8; color: #ffffff; box-shadow: none; }
 .theme-switch.has-thumb button.on { background: transparent; color: #ffffff; }
@@ -777,6 +777,7 @@ table.detail tr.row-detail td { white-space: normal; }
     align-items: center;
     gap: 5px;
     height: 24px;
+    min-height: 24px;
     padding: 0 10px;
     border: 0;
     border-radius: 999px;
@@ -979,6 +980,7 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
   flex: none;
   cursor: pointer;
   height: 30px;
+  min-height: 30px;
   padding: 0 11px;
   border-radius: 999px;
   font-size: 12px;
@@ -1113,7 +1115,7 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
 
 /* ---------- Admin Repair Mode (Store Policy 10.2.9 asInvoker + Elevated Helper) ---------- */
 .admin-mode-slot { display: inline-flex; align-items: center; flex: none; max-width: 100%; }
-.admin-mode-pill { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; flex: none; height: 30px; padding: 0 11px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1; box-sizing: border-box; }
+.admin-mode-pill { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; flex: none; height: 30px; min-height: 30px; padding: 0 11px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1; box-sizing: border-box; }
 .admin-mode-standard,
 .admin-mode-restricted { border: 1px solid var(--warn-border); background: var(--warn-bg); color: var(--warn-fg); cursor: pointer; }
 .admin-mode-standard:hover:not(:disabled),
@@ -1128,7 +1130,7 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
 .wf-admin-callout { margin: 10px 0 14px; }
 
 /* ---------- In-app Update Indicator ---------- */
-.app-update-pill { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--accent); background: rgba(14, 165, 233, .12); color: var(--accent); font-size: 12px; font-weight: 600; line-height: 1; cursor: pointer; white-space: nowrap; flex: none; box-sizing: border-box; }
+.app-update-pill { display: inline-flex; align-items: center; gap: 6px; height: 30px; min-height: 30px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--accent); background: rgba(14, 165, 233, .12); color: var(--accent); font-size: 12px; font-weight: 600; line-height: 1; cursor: pointer; white-space: nowrap; flex: none; box-sizing: border-box; }
 .app-update-pill:hover { filter: brightness(1.08); }
 .app-update-modal { width: min(500px, calc(100vw - 24px)); }
 .app-update-body { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 16px; }
