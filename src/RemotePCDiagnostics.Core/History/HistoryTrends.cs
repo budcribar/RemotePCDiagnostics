@@ -63,8 +63,8 @@ public sealed record TrendSeries(string Id, string Label, string Unit, MetricTre
 /// <summary>Builds the History trend view of one check: its key metrics over time, and each run's key value for the run list.</summary>
 public static class HistoryTrends
 {
-    /// <summary>At most this many runs per chart; older ones drop off the left.</summary>
-    public const int MaxPoints = 60;
+    /// <summary>At most this many runs per chart (a few months of daily runs); older ones drop off the left.</summary>
+    public const int MaxPoints = 200;
 
     /// <summary>The run's key metrics. Stress tests written before key metrics existed have one, from their measurements.</summary>
     public static IReadOnlyList<KeyMetric> Metrics(HistoryEntry e)
