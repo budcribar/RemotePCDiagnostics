@@ -27,6 +27,11 @@ internal static class AgentRunLoop
             ReleaseAnnounced = (stable, prerelease) => publisher.PublishRelease(stable, prerelease),
             UpdateRpcd = updater.HandleHubAsync,
             ReadUpdateRpcd = requestId => updater.ToProgress(requestId),
+            SaveAgentToken = assigned =>
+            {
+                config.AgentToken = assigned;
+                AgentPaths.WriteSecuredConfig(config);
+            },
         });
         var watch = DesktopInstallWatch.RunAsync(linked.Token, log, () =>
         {
