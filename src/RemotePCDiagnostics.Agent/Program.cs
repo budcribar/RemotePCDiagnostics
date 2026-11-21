@@ -112,6 +112,12 @@ public static class Program
             return ExitOk;
         }
 
+        // Console and dev mode take the same mutex as the service. Exit 0 is deliberate: a non-zero code is a
+        // service failure, and the installed recovery actions would start another copy.
+        using var instance = AgentSingleInstance.Acquire(Console.Error.WriteLine);
+        if (instance is null)
+            return AgentInstancePolicy.ExitAlreadyRunning;
+
         using var cts = new CancellationTokenSource();
         ConsoleCancelEventHandler onCancel = (_, e) =>
         {

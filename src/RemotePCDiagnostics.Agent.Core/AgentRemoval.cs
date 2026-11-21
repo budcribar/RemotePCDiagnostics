@@ -28,6 +28,7 @@ public static class AgentRemoval
             Path.Combine(root, AgentLayout.StatusFileName),
             Path.Combine(root, AgentLayout.HostWatchFileName),
             Path.Combine(root, "logs", AgentLayout.AgentLogFileName),
+            Path.Combine(root, AgentLayout.InstanceClaimFileName),
         ];
     }
 
@@ -37,7 +38,8 @@ public static class AgentRemoval
         return name.Equals(AgentLayout.ConfigFileName, StringComparison.OrdinalIgnoreCase)
             || name.Equals(AgentLayout.StatusFileName, StringComparison.OrdinalIgnoreCase)
             || name.Equals(AgentLayout.HostWatchFileName, StringComparison.OrdinalIgnoreCase)
-            || name.Equals(AgentLayout.AgentLogFileName, StringComparison.OrdinalIgnoreCase);
+            || name.Equals(AgentLayout.AgentLogFileName, StringComparison.OrdinalIgnoreCase)
+            || name.Equals(AgentLayout.InstanceClaimFileName, StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsAgentInstallDirectory(string? directory)

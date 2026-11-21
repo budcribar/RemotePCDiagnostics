@@ -29,7 +29,13 @@
       <Directory Id="INSTALLFOLDER" Name="RemotePCDiagnosticsAgent">
         <Component Id="AgentExecutable" Guid="8A4F2C91-5E7B-4D13-9C84-1F2E6B7A90D3">
           <File Id="AgentExe" Source="$(var.AgentExePath)" Name="RemotePCDiagnostics.Agent.exe" KeyPath="yes" />
+          <!-- Stop the current service before InstallFiles, and remove older registrations that would keep running beside it.
+               The current name is not removed here: the install custom action reconfigures it after the files are in place.
+               Agent.exe install waits for Global\RemotePCDiagnostics.Agent before it starts the service. -->
           <ServiceControl Id="StopExistingAgentService" Name="RemotePCDiagnosticsAgent" Stop="both" Wait="yes" />
+          <ServiceControl Id="StopLegacyAgentExeName" Name="RemotePCDiagnostics.Agent" Stop="both" Wait="yes" Remove="both" />
+          <ServiceControl Id="StopLegacyAgentDisplayName" Name="Remote PC Diagnostics Agent" Stop="both" Wait="yes" Remove="both" />
+          <ServiceControl Id="StopLegacyAgentTaskName" Name="RemotePCDiagnostics Agent" Stop="both" Wait="yes" Remove="both" />
         </Component>
       </Directory>
     </StandardDirectory>

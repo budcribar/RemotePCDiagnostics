@@ -203,4 +203,45 @@ public sealed class InstallerConfigTests
             Assert.DoesNotContain(bytes, b => b > 127);
         }
     }
+
+    [Fact]
+    public void Upgrade_stops_the_old_agent_before_the_new_one_starts()
+    {
+        var root = FindRepoRoot();
+        var iss = File.ReadAllText(Path.Combine(root, "installer", "RemotePCDiagnostics.iss"));
+
+        // The Host mutex stays the only AppMutex. Adding the agent mutex makes a silent update exit 1
+        // while the agent that launched Setup is still running. PR #128 owns that Host-mutex path.
+        Assert.Contains(@"#define AppMutexName ""Global\RemotePCDiagnostics.Host""", iss);
+        Assert.Contains("AppMutex={#AppMutexName}", iss);
+        Assert.Contains(@"#define AgentMutexName ""Global\RemotePCDiagnostics.Agent""", iss);
+        Assert.Contains("not listed as AppMutex", iss);
+        Assert.DoesNotContain("AppMutex={#AppMutexName},{#AgentMutexName}", iss);
+        Assert.DoesNotContain("AppMutex={#AgentMutexName}", iss);
+
+        var prepare = iss.IndexOf("function PrepareToInstall", StringComparison.Ordinal);
+        var stopCall = iss.IndexOf("StopPreviousAgents();", prepare, StringComparison.Ordinal);
+        var webViewExit = iss.IndexOf("IsWebView2Installed()", prepare, StringComparison.Ordinal);
+        Assert.True(stopCall > prepare && stopCall < webViewExit, "The old agent has to be stopped before PrepareToInstall can return early.");
+        Assert.True(iss.IndexOf("procedure StopPreviousAgents", StringComparison.Ordinal) < prepare);
+
+        Assert.Contains("StopOneAgentService('RemotePCDiagnosticsAgent');", iss);
+        Assert.Contains("StopOneAgentService('RemotePCDiagnostics.Agent');", iss);
+        Assert.Contains("StopOneAgentService('Remote PC Diagnostics Agent');", iss);
+        Assert.Contains("StopOneAgentService('RemotePCDiagnostics Agent');", iss);
+        Assert.Contains("/Delete /TN \"Remote PC Diagnostics Agent\" /F", iss);
+        Assert.Contains("does not taskkill", iss);
+        Assert.Contains("delete \"RemotePCDiagnostics.Agent\"", iss);
+        Assert.Contains("agent-instance.txt", iss);
+
+        var wxs = File.ReadAllText(Path.Combine(root, "msi", "Package.wxs"));
+        Assert.Contains("Name=\"RemotePCDiagnosticsAgent\" Stop=\"both\" Wait=\"yes\"", wxs);
+        Assert.Contains("Name=\"RemotePCDiagnostics.Agent\" Stop=\"both\" Wait=\"yes\" Remove=\"both\"", wxs);
+        Assert.Contains("Name=\"Remote PC Diagnostics Agent\" Stop=\"both\" Wait=\"yes\" Remove=\"both\"", wxs);
+        Assert.Contains("Name=\"RemotePCDiagnostics Agent\" Stop=\"both\" Wait=\"yes\" Remove=\"both\"", wxs);
+        Assert.Contains("After=\"InstallFiles\"", wxs);
+        var stopAt = wxs.IndexOf("StopExistingAgentService", StringComparison.Ordinal);
+        var installAt = wxs.IndexOf("After=\"InstallFiles\"", StringComparison.Ordinal);
+        Assert.True(stopAt > 0 && stopAt < installAt);
+    }
 }

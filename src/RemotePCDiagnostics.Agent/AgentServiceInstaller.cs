@@ -68,8 +68,10 @@ internal static class AgentServiceInstaller
             }
             AgentPaths.WriteSecuredConfig(merged);
 
-            // Stop any running instance first so the installed binary can be updated cleanly.
-            StopServiceIfRunning(TimeSpan.FromSeconds(15));
+            // Stop every agent service, Run key, and scheduled task, and wait until the instance mutex is free,
+            // before the new service is created or started. A second name or a process SCM no longer tracks
+            // otherwise keeps the old version running beside this one.
+            AgentUpgradeQuiesce.PrepareForInstall(Console.WriteLine);
 
             var currentExe = Environment.ProcessPath
                 ?? throw new InvalidOperationException("Cannot determine the current agent executable path.");
@@ -97,6 +99,8 @@ internal static class AgentServiceInstaller
             }
 
             RunSc($"description {AgentPaths.ServiceName} \"{AgentPaths.ServiceDescription}\"");
+            // A clean exit (another instance already holds the mutex) must not count as a crash.
+            RunSc($"failureflag {AgentPaths.ServiceName} 0");
             RunSc($"failure {AgentPaths.ServiceName} reset= 86400 actions= restart/5000/restart/15000/restart/60000");
 
             StartServiceAndWait(TimeSpan.FromSeconds(15));
@@ -113,6 +117,11 @@ internal static class AgentServiceInstaller
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Agent installation failed: {ex.Message}");
+            // A leftover process is already an agent. Starting the service as well would be the second copy.
+            if (!OperatingSystem.IsWindows() || AgentMachineSnapshot.OtherProcesses().Count == 0)
+                TryStartExistingServiceAfterFailedInstall();
+            else
+                Console.Error.WriteLine("Left the existing agent process running. The new service was not started.");
             return PauseIfRequested(args, ExitError);
         }
     }
@@ -153,6 +162,7 @@ internal static class AgentServiceInstaller
         var lines = new List<string>();
         if (OperatingSystem.IsWindows())
         {
+            AgentUpgradeQuiesce.RemoveLegacyServices(lines.Add);
             if (stopService && ServiceExists())
             {
                 StopServiceIfRunning(TimeSpan.FromSeconds(15));
@@ -301,6 +311,27 @@ internal static class AgentServiceInstaller
         }
     }
 
+    /// <summary>
+    /// A failed install has already stopped the previous service. Start it again so the PC is not left with no agent.
+    /// Failure recovery was cleared for the replacement and is put back here.
+    /// </summary>
+    private static void TryStartExistingServiceAfterFailedInstall()
+    {
+        try
+        {
+            if (!ServiceExists()) return;
+            RunSc($"config {AgentPaths.ServiceName} start= auto");
+            RunSc($"failureflag {AgentPaths.ServiceName} 0");
+            RunSc($"failure {AgentPaths.ServiceName} reset= 86400 actions= restart/5000/restart/15000/restart/60000");
+            StartServiceAndWait(TimeSpan.FromSeconds(15));
+            Console.Error.WriteLine("The existing agent service was started again after the install failed.");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("The agent service was not started again: " + ex.Message);
+        }
+    }
+
     private static void StartServiceAndWait(TimeSpan timeout)
     {
         using var sc = new ServiceController(AgentPaths.ServiceName);
@@ -386,7 +417,7 @@ internal static class AgentServiceInstaller
 
     private static string EscapeForSc(string value) => value.Replace("\"", "\\\"");
 
-    private static (int ExitCode, string Output) RunSc(string arguments)
+    internal static (int ExitCode, string Output) RunSc(string arguments)
     {
         var scExe = Path.Combine(Environment.SystemDirectory, "sc.exe");
         if (!File.Exists(scExe))
@@ -419,6 +450,7 @@ internal sealed class AgentWindowsService : ServiceBase
     private readonly AgentConfig _config;
     private CancellationTokenSource? _cts;
     private Task? _workerTask;
+    private AgentSingleInstance.Lease? _instance;
 
     public AgentWindowsService(AgentConfig config)
     {
@@ -431,8 +463,27 @@ internal sealed class AgentWindowsService : ServiceBase
 
     protected override void OnStart(string[] args)
     {
-        _cts = new CancellationTokenSource();
         var logFile = Path.Combine(AgentPaths.ProgramDataDir(), "logs", "RemotePCDiagnostics.Agent.log");
+        _instance = AgentSingleInstance.Acquire(null);
+        if (_instance is null)
+        {
+            // Stop() from inside OnStart throws. Report stopped with exit code 0 after SCM has finished the start,
+            // so the restart-on-failure actions do not launch another copy.
+            ExitCode = AgentInstancePolicy.ExitAlreadyRunning;
+            var thread = new Thread(() =>
+            {
+                Thread.Sleep(1000);
+                StopBecauseAlreadyRunning(logFile);
+            })
+            {
+                IsBackground = true,
+                Name = "agent-already-running",
+            };
+            thread.Start();
+            return;
+        }
+
+        _cts = new CancellationTokenSource();
 
         _workerTask = Task.Run(async () =>
         {
@@ -456,8 +507,24 @@ internal sealed class AgentWindowsService : ServiceBase
 
     protected override void OnShutdown() => StopWorker();
 
+    private void StopBecauseAlreadyRunning(string logFile)
+    {
+        try
+        {
+            Stop();
+        }
+        catch (Exception ex)
+        {
+            AppendLogLineSafe(logFile, $"{AgentInstancePolicy.LogPrefix} Could not report a clean stop ({ex.Message}). Exiting 0.");
+            Environment.ExitCode = AgentInstancePolicy.ExitAlreadyRunning;
+            Environment.Exit(AgentInstancePolicy.ExitAlreadyRunning);
+        }
+    }
+
     private void StopWorker()
     {
+        try { _instance?.Dispose(); } catch { }
+        _instance = null;
         try { _cts?.Cancel(); } catch { }
         if (_workerTask is not null)
         {

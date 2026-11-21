@@ -20,6 +20,8 @@ public static class AgentLayout
     public const string UpdateActivityFileName = "rpcd-activity.json";
     public const string AppCacheFolderName = "app";
     public const string AgentLogFileName = "RemotePCDiagnostics.Agent.log";
+    /// <summary>Pid and version of the process that holds <c>Global\RemotePCDiagnostics.Agent</c>. Written for the copy that has to exit.</summary>
+    public const string InstanceClaimFileName = "agent-instance.txt";
     public const string ConfigPathEnvVar = "RPD_AGENT_CONFIG_PATH";
 
     /// <summary>Inno Setup AppId, without braces. The agent MSI upgrade code is a different id and must not match.</summary>
@@ -60,6 +62,7 @@ public static class AgentLayout
     public static string LegacyActiveSessionPath() => Path.Combine(ProgramDataDirectory(), ActiveSessionFileName);
     public static string AppCacheDirectory() => Path.Combine(ProgramDataDirectory(), AppCacheFolderName);
     public static string AgentLogPath() => Path.Combine(ProgramDataDirectory(), "logs", AgentLogFileName);
+    public static string InstanceClaimPath() => Path.Combine(ProgramDataDirectory(), InstanceClaimFileName);
 
     public static string DefaultInstallDirectory() =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), InstallFolderName);
