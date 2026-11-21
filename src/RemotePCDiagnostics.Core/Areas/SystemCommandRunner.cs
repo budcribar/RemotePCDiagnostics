@@ -54,7 +54,8 @@ public sealed class SystemCommandRunner(
 
         if (!_isProcessElevated()
             && elevatedBridge is { IsConnected: true }
-            && AdminCommandAllowlist.TryResolveSystemTool(fileName, out _))
+            && AdminCommandAllowlist.TryResolveSystemTool(fileName, out _)
+            && !AdminCommandAllowlist.RunsWithoutAdmin(fileName, arguments))
         {
             // An admin tool goes to the Agent, and only to the Agent: when the call fails, the app doesn't run it itself (it would only
             // fail later without administrator rights, or half-work). The caller gets a failed result that says why.
