@@ -63,6 +63,14 @@
         }
     }
 
+    function updateDocumentTitle() {
+        const shell = document.querySelector('.app[data-rpcd-machine]');
+        const machine = (shell?.dataset.rpcdMachine || document.querySelector('.topbar .pc')?.textContent || '').trim();
+        if (machine && document.title !== machine) {
+            document.title = machine;
+        }
+    }
+
     function updateVoiceStatus() {
         const statuses = document.querySelectorAll('.rbwv-voice-status');
         for (const el of statuses) {
@@ -550,6 +558,7 @@
     new MutationObserver(() => {
         refresh();
         markDesktopHost();
+        updateDocumentTitle();
         updateVoiceStatus();
         updateControlStatus();
         scheduleSegmentedSync();
@@ -561,6 +570,7 @@
 
     refresh();
     markDesktopHost();
+    updateDocumentTitle();
     updateVoiceStatus();
     updateControlStatus();
     scheduleSegmentedSync();

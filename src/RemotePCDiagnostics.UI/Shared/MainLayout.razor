@@ -9,6 +9,7 @@
 @inject RemoteUsers Remote
 @inject AgentModeMonitor AgentLink
 <div class="app @(_navigationOpen ? "nav-open" : "")" data-rpcd-version="@AppBuildInfo.Version"
+     data-rpcd-machine="@Session.MachineName"
      data-rpcd-control="unknown" data-rpcd-connection="unknown">
     <header class="topbar">
         <button class="nav-toggle" aria-label="Toggle navigation" aria-controls="main-navigation" aria-expanded="@(_navigationOpen ? "true" : "false")" @onclick="() => _navigationOpen = !_navigationOpen">Menu</button>

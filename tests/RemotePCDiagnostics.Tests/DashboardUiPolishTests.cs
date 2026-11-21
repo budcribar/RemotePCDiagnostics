@@ -133,6 +133,27 @@ public class DashboardUiPolishTests : BunitContext
         Assert.Contains("body:has(.app.nav-open) .rbwv-control-bar", css);
     }
 
+    [Fact]
+    public void HostIndexAndDialogs_SetRpcdFaviconAndComputerNameTabTitle()
+    {
+        var root = RepoRoot();
+        var indexHtml = File.ReadAllText(Path.Combine(root, "src", "RemotePCDiagnostics.Host", "wwwroot", "index.html"));
+        var svg = File.ReadAllText(Path.Combine(root, "src", "RemotePCDiagnostics.Host", "Assets", "diagnostics-icon.svg")).Trim();
+        var expectedSvgHref = "data:image/svg+xml," + Uri.EscapeDataString(svg);
+
+        Assert.Contains($"<link rel=\"icon\" type=\"image/svg+xml\" href=\"{expectedSvgHref}\" />", indexHtml);
+        Assert.Contains("<link rel=\"alternate icon\" type=\"image/png\" sizes=\"32x32\" href=\"data:image/png;base64,", indexHtml);
+        Assert.Contains("new URLSearchParams(window.location.search).get('pc')", indexHtml);
+
+        var mainLayout = File.ReadAllText(Path.Combine(root, "src", "RemotePCDiagnostics.UI", "Shared", "MainLayout.razor"));
+        Assert.Contains("data-rpcd-machine=\"@Session.MachineName\"", mainLayout);
+
+        var dialogsJs = File.ReadAllText(Path.Combine(root, "src", "RemotePCDiagnostics.UI", "wwwroot", "dialogs.js"));
+        Assert.Contains("function updateDocumentTitle()", dialogsJs);
+        Assert.Contains("document.querySelector('.app[data-rpcd-machine]')", dialogsJs);
+        Assert.Contains("document.title = machine;", dialogsJs);
+    }
+
     private static string RepoRoot()
     {
         for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
