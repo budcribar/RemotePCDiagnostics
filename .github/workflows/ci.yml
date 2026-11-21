@@ -323,38 +323,23 @@ jobs:
           "Installer silent install, package check, and silent uninstall verified."
 
           # Upgrade: an agent that is already installed is refreshed by the bundled MSI, and its enrollment is kept.
-          # The MSI is pointed at loopback so this runner never enrols with the public relay. The key is in the MSI file
-          # name only, not in Setup.
-          $smokeDir = Join-Path $env:RUNNER_TEMP 'rpd-setup-agent-upgrade'
-          if (Test-Path $smokeDir) { Remove-Item $smokeDir -Recurse -Force }
-          New-Item -ItemType Directory -Force $smokeDir | Out-Null
+          # Install with Agent.exe, not this MSI. msiexec /i of a product that is already installed returns 1603 under
+          # /qn and does not put back a file that was removed. The relay is loopback so this runner never enrols publicly.
+          # The key is passed only to Agent.exe, not compiled into Setup.
           $smokeServer = 'http://127.0.0.1:9'
           $smokeKey = 'rpd_inv_setupsmoke123456'
-          $b64Loopback = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($smokeServer)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-          $tokenizedMsi = Join-Path $smokeDir "RemotePCDiagnostics-Agent.up.$smokeKey.h.$b64Loopback.pkg.msi"
-          Copy-Item -LiteralPath $agentMsi -Destination $tokenizedMsi -Force
-          $msiLog = Join-Path $env:GITHUB_WORKSPACE 'artifacts/setup-agent-msi-install.log'
-          $msiProc = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', "`"$tokenizedMsi`"", '/qn', '/norestart', '/l*v', "`"$msiLog`"") -Wait -PassThru
-          if ($msiProc.ExitCode -ne 0) {
-            if (Test-Path $msiLog) { Get-Content $msiLog -Tail 80 | Write-Host }
-            throw "Agent MSI install before the Setup upgrade failed with exit code $($msiProc.ExitCode)"
+          $agentInstallLog = Join-Path $env:GITHUB_WORKSPACE 'artifacts/setup-agent-exe-install.log'
+          $agentInstall = Start-Process -FilePath $agentDest -ArgumentList "install --server=$smokeServer --key=$smokeKey --consent=unattended --lifetime=persistent" -Wait -PassThru -RedirectStandardOutput $agentInstallLog -RedirectStandardError "$agentInstallLog.err"
+          if ($agentInstall.ExitCode -ne 0) {
+            Get-Content $agentInstallLog, "$agentInstallLog.err" -ErrorAction SilentlyContinue | Write-Host
+            throw "Agent.exe install before the Setup upgrade failed with exit code $($agentInstall.ExitCode)"
           }
           $installedCfg = 'C:\ProgramData\RemotePCDiagnostics\agent.json'
+          if (-not (Test-Path -LiteralPath $serviceExe)) { throw "Agent.exe install did not write $serviceExe" }
           $before = Get-Content -LiteralPath $installedCfg -Raw | ConvertFrom-Json
           if ($before.key -ne $smokeKey -or $before.server -ne $smokeServer -or $before.consent -ne 'unattended' -or $before.lifetime -ne 'persistent') {
             throw "Unexpected agent.json before Setup upgrade: $(Get-Content -LiteralPath $installedCfg -Raw)"
           }
-          try { sc.exe stop RemotePCDiagnosticsAgent | Out-Null } catch { }
-          for ($i = 0; $i -lt 30; $i++) {
-            $svc = Get-Service -Name 'RemotePCDiagnosticsAgent' -ErrorAction SilentlyContinue
-            if ($null -eq $svc -or $svc.Status -eq 'Stopped') { break }
-            Start-Sleep -Seconds 1
-          }
-          Get-Process -Name 'RemotePCDiagnostics.Agent' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 1
-          if (-not (Test-Path -LiteralPath $serviceExe)) { throw "Agent MSI did not install $serviceExe" }
-          Remove-Item -LiteralPath $serviceExe -Force
-          if (Test-Path -LiteralPath $serviceExe) { throw "Could not remove $serviceExe before the Setup upgrade" }
 
           $upgradeDir = Join-Path $env:RUNNER_TEMP 'rpd-installed-upgrade'
           if (Test-Path $upgradeDir) { Remove-Item $upgradeDir -Recurse -Force }
@@ -366,8 +351,13 @@ jobs:
           }
           if (-not (Test-Path -LiteralPath $upgradeLog)) { throw "Setup upgrade did not write $upgradeLog" }
           $upgradeText = Get-Content -LiteralPath $upgradeLog -Raw
-          if ($upgradeText -notmatch 'RemotePCDiagnostics\.Agent\.msi') { throw 'Setup upgrade log does not show the bundled Agent MSI running' }
-          if (-not (Test-Path -LiteralPath $serviceExe)) { throw 'Setup upgrade did not restore the agent service executable' }
+          $msiExit = [regex]::Match($upgradeText, 'msiexec\.exe[\s\S]{0,500}?Process exit code: (\d+)')
+          if (-not $msiExit.Success) { throw 'Setup upgrade log does not show the bundled Agent MSI running' }
+          if ($msiExit.Groups[1].Value -ne '0') {
+            Get-Content $upgradeLog -Tail 40 | Write-Host
+            throw "Bundled Agent MSI exited $($msiExit.Groups[1].Value)"
+          }
+          if (-not (Test-Path -LiteralPath $serviceExe)) { throw 'Setup upgrade removed the agent service executable' }
           $after = Get-Content -LiteralPath $installedCfg -Raw | ConvertFrom-Json
           if ($after.key -ne $before.key -or $after.server -ne $before.server -or $after.consent -ne $before.consent -or $after.lifetime -ne $before.lifetime -or $after.machineId -ne $before.machineId) {
             throw "Setup upgrade changed agent.json: $(Get-Content -LiteralPath $installedCfg -Raw)"
