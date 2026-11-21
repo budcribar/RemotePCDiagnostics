@@ -674,6 +674,110 @@ public class AgentHubWorkerTests
         Assert.Equal("Launch cancelled", terminal.Detail);
     }
 
+    private static async Task<AgentHubWorker> LaunchToReadyAsync(
+        FakeAgentHubClient hub, FakeLaunchedProcess proc, string requestId, Guid machineGuid, Guid sessionGuid,
+        CancellationToken ct, Action<Task> keepRunTask)
+    {
+        var config = AgentConfig.ForInstall(
+            existing: null,
+            new AgentArgs(AgentCommand.Install, Server: "https://relay.example:34544", Consent: ConsentCeiling.Unattended),
+            machineGuid);
+        var platform = new FakeAgentPlatform { ProcessFactory = (_, _) => (proc, null) };
+        var worker = new AgentHubWorker(config, platform, new AgentSessionOptions
+        {
+            HeartbeatInterval = TimeSpan.FromMinutes(5),
+            StatusPollInterval = TimeSpan.FromMilliseconds(10),
+        });
+        keepRunTask(worker.RunSingleConnectionAsync(hub, ct));
+        _ = await hub.ReadAgentMessageAsync(ct); // Hello
+        await hub.SendHubCommandAsync(new HubCommand
+        {
+            Launch = new LaunchCommand
+            {
+                RequestId = requestId,
+                SessionId = sessionGuid.ToString("D"),
+                ServerUrl = "https://relay.example:34544",
+                Requester = "Alice Tech",
+            },
+        }, ct);
+        while (true)
+        {
+            var msg = await hub.ReadAgentMessageAsync(ct);
+            if (msg.BodyCase == AgentMessage.BodyOneofCase.Progress && msg.Progress.Stage == LaunchStage.StageReady)
+                return worker;
+        }
+    }
+
+    private static async Task<LaunchProgress> ReadProgressAsync(FakeAgentHubClient hub, CancellationToken ct)
+    {
+        while (true)
+        {
+            var msg = await hub.ReadAgentMessageAsync(ct);
+            if (msg.BodyCase == AgentMessage.BodyOneofCase.Progress)
+                return msg.Progress;
+        }
+    }
+
+    [Fact]
+    public async Task End_request_after_a_reconnect_still_closes_a_ready_session()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var proc = new FakeLaunchedProcess();
+        var firstHub = new FakeAgentHubClient();
+        Task firstRun = Task.CompletedTask;
+        var worker = await LaunchToReadyAsync(firstHub, proc, "req-keep", Guid.Parse("7e57c0de-0000-4000-8000-000000000050"),
+            Guid.Parse("7e57c0de-0000-4000-8000-000000000051"), cts.Token, t => firstRun = t);
+
+        // The stream drops (relay redeploy, network blip) while the app keeps running.
+        firstHub.CompleteServerStream();
+        await firstRun.WaitAsync(cts.Token);
+        Assert.False(proc.HasExited);
+
+        var secondHub = new FakeAgentHubClient();
+        var secondRun = worker.RunSingleConnectionAsync(secondHub, cts.Token);
+        _ = await secondHub.ReadAgentMessageAsync(cts.Token); // Hello
+
+        // The relay kept the READY launch, so Admin's end request names the old request ID.
+        await secondHub.SendHubCommandAsync(new HubCommand { Cancel = new CancelCommand { RequestId = "req-keep" } }, cts.Token);
+
+        var ended = await ReadProgressAsync(secondHub, cts.Token);
+        Assert.Equal(LaunchStage.StageEnded, ended.Stage);
+        Assert.Equal("req-keep", ended.RequestId);
+        Assert.True(proc.HasExited);
+
+        secondHub.CompleteServerStream();
+        await secondRun;
+    }
+
+    [Fact]
+    public async Task Ready_session_that_closes_while_disconnected_reports_ended_on_the_next_stream()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var proc = new FakeLaunchedProcess();
+        var firstHub = new FakeAgentHubClient();
+        Task firstRun = Task.CompletedTask;
+        var worker = await LaunchToReadyAsync(firstHub, proc, "req-offline-close", Guid.Parse("7e57c0de-0000-4000-8000-000000000052"),
+            Guid.Parse("7e57c0de-0000-4000-8000-000000000053"), cts.Token, t => firstRun = t);
+
+        firstHub.CompleteServerStream();
+        await firstRun.WaitAsync(cts.Token);
+
+        // The person closes the app while the agent is offline.
+        proc.CompleteExit(0);
+        await Task.Delay(200, cts.Token);
+
+        var secondHub = new FakeAgentHubClient();
+        var secondRun = worker.RunSingleConnectionAsync(secondHub, cts.Token);
+        _ = await secondHub.ReadAgentMessageAsync(cts.Token); // Hello
+
+        var ended = await ReadProgressAsync(secondHub, cts.Token);
+        Assert.Equal(LaunchStage.StageEnded, ended.Stage);
+        Assert.Equal("req-offline-close", ended.RequestId);
+
+        secondHub.CompleteServerStream();
+        await secondRun;
+    }
+
     [Fact]
     public async Task Update_without_approval_is_refused_and_a_status_poll_returns_it()
     {
