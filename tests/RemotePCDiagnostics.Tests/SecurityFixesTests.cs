@@ -100,19 +100,6 @@ public class SecurityFixesTests
         Assert.Equal("Real-time protection is off", Card(rep, "antivirus").Headline);
     }
 
-    [Fact]
-    public void Every_fix_has_read_and_apply_scripts()
-    {
-        Assert.Equal(6, SecurityFixes.All.Count);
-        foreach (var f in SecurityFixes.All)
-        {
-            Assert.NotNull(SecurityFixes.ReadScript(f.Key));
-            Assert.NotNull(SecurityFixes.ApplyScript(f.Key));
-        }
-        Assert.Null(SecurityFixes.ReadScript("firewall"));
-        Assert.Null(SecurityFixes.ApplyScript("x; Remove-Item C:\\"));
-    }
-
     [Theory]
     [InlineData("pua", "0", true)]
     [InlineData("pua", "2", true)]
@@ -129,18 +116,6 @@ public class SecurityFixesTests
     public void Journaled_values_are_validated_before_restore(string key, string previous, bool valid)
     {
         Assert.Equal(valid, SecurityFixes.ParsePrevious(key, previous) is not null);
-        Assert.Equal(valid, SecurityFixes.RestoreScript(key, previous) is not null);
-    }
-
-    [Fact]
-    public void Restore_puts_back_or_removes()
-    {
-        Assert.EndsWith("Set-MpPreference -PUAProtection 2", SecurityFixes.RestoreScript(SecurityFixes.Pua, "2"));
-        Assert.Contains("Remove-ItemProperty", SecurityFixes.RestoreScript(SecurityFixes.Llmnr, ""));
-        Assert.Contains("-Value 1 ", SecurityFixes.RestoreScript(SecurityFixes.Llmnr, "1"));
-        var asr = SecurityFixes.RestoreScript(SecurityFixes.AsrRules, "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2=;56a863a9-875e-4185-98a7-b882c64b5ce5=2")!;
-        Assert.Contains("Remove-MpPreference -AttackSurfaceReductionRules_Ids '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2'", asr);
-        Assert.Contains("Add-MpPreference -AttackSurfaceReductionRules_Ids '56a863a9-875e-4185-98a7-b882c64b5ce5' -AttackSurfaceReductionRules_Actions 2", asr);
     }
 
     [Fact]

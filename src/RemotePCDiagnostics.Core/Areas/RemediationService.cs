@@ -464,7 +464,7 @@ public sealed class RemediationService(
 
         RemediationKind.CleanTempFiles => await RunCleanTempFilesAsync(ct).ConfigureAwait(false),
 
-        RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf && Security.SecurityFixes.ApplyScript(sf.Key) is not null
+        RemediationKind.ApplySecuritySetting => Security.SecurityFixes.Find(action.Target) is { } sf
             ? await RunAgentScriptAsync(AgentScripts.Of(AgentScripts.SecurityApply, sf.Key), sf.Done,
                 $"Couldn't change {sf.Label.ToLowerInvariant()} (Windows refused the change; Tamper Protection or an organization policy may be blocking it).", ct).ConfigureAwait(false)
             : new(false, "This setting isn't one this app changes."),
@@ -733,16 +733,15 @@ public sealed class RemediationService(
         return new(false, "Couldn't flush DNS cache or renew IP configuration.");
     }
 
-    public static string BuildWindowsUpdateScript(bool driversOnly) =>
-        Scripts.PowerShellScripts.Get("WindowsUpdate").Replace("__CRITERIA__", driversOnly ? "IsInstalled=0 and Type='Driver'" : "IsInstalled=0 and Type='Software'");
-
     private async Task<RemediationResult> RunWindowsUpdateAsync(bool driversOnly, CancellationToken ct)
     {
         var kindWord = driversOnly ? "driver" : "Windows";
         var pr = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.WindowsUpdate, driversOnly ? "drivers" : "software"), UpdateTimeout, ct).ConfigureAwait(false);
         PendingUpdates.Invalidate();
         if (pr is not { ExitCode: 0 } || string.IsNullOrWhiteSpace(pr.StdOut))
-            return new(false, $"Couldn't check Windows Update for {kindWord} updates.");
+            return new(false, SystemCommandRunner.AgentFailure(pr)
+                ?? (pr?.StdErr.Trim() is { Length: > 0 } why ? $"Couldn't check Windows Update for {kindWord} updates: {AreaReportExport.Text(why, 300)}"
+                    : $"Couldn't check Windows Update for {kindWord} updates."));
 
         try
         {
@@ -778,7 +777,10 @@ public sealed class RemediationService(
                 return new(true, $"Installed {installed} of {count} {kindWord} update(s): {sample}." + (restart ? " Restart the PC to finish." : ""),
                     UpdatesInstalled: installed, RestartNeeded: restart);
             if (installResult is 4 or 5)
-                return new(false, $"Found {count} {kindWord} update(s) ({sample}) but Windows couldn't install them. Try again from Settings > Windows Update.");
+            {
+                var why = root.TryGetProperty("Error", out var er) && er.GetString() is { Length: > 0 } e ? $" ({AreaReportExport.Text(e, 300)})" : "";
+                return new(false, $"Found {count} {kindWord} update(s) ({sample}) but Windows couldn't install them{why}. Try again from Settings > Windows Update.");
+            }
             return new(true, $"Found {count} available {kindWord} update(s) ({sample}) and triggered Windows Update scan/download.");
         }
         catch
@@ -787,13 +789,9 @@ public sealed class RemediationService(
         }
     }
 
-    /// <summary>The script that installs one update by its Windows Update ID; null when <paramref name="updateId"/> isn't one.</summary>
-    public static string? BuildInstallUpdateScript(string? updateId) =>
-        Guid.TryParse(updateId, out var id) ? Scripts.PowerShellScripts.Get("InstallUpdate").Replace("__UPDATE_ID__", id.ToString("D")) : null;
-
     private async Task<RemediationResult> RunInstallUpdateAsync(AreaAction action, CancellationToken ct)
     {
-        if (BuildInstallUpdateScript(action.Target) is null || !Guid.TryParse(action.Target, out var updateId)) return new(false, "This update has no Windows Update ID.");
+        if (!Guid.TryParse(action.Target, out var updateId)) return new(false, "This update has no Windows Update ID.");
         var pr = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.InstallUpdate, updateId.ToString("D")), UpdateTimeout, ct).ConfigureAwait(false);
         PendingUpdates.Invalidate();
         return ParseInstallUpdate(pr is { ExitCode: 0 } ? pr.StdOut : null, Display(action));
@@ -877,7 +875,7 @@ public sealed class RemediationService(
                 case RemediationKind.DisableSystemProxy:
                     return settings?.GetUserProxyEnable() == 1
                         ? Rec(Changes.ChangeKind.SystemProxy, "", "1", "System proxy turned off") : null;
-                case RemediationKind.ApplySecuritySetting when Security.SecurityFixes.Find(action.Target) is { } sf && Security.SecurityFixes.ReadScript(sf.Key) is not null:
+                case RemediationKind.ApplySecuritySetting when Security.SecurityFixes.Find(action.Target) is { } sf:
                     var cur = await commands.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.SecurityRead, sf.Key), null, ct).ConfigureAwait(false);
 
                     var prev = cur is { ExitCode: 0 } ? cur.StdOut.Trim() : null;

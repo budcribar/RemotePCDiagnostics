@@ -13,10 +13,10 @@ namespace RemotePCDiagnostics.Tests;
 public sealed class AgentScriptsPipeTests
 {
     [Fact]
-    public async Task The_agent_builds_the_script_itself_and_runs_it()
+    public async Task The_agent_makes_the_security_and_update_changes_itself()
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var launcher = new ScriptedLauncher((_, _) => ScriptedLauncher.Ok("was 0"));
+        var launcher = new ScriptedLauncher((file, _) => file == "agent:SecurityRead" ? ScriptedLauncher.Ok("0") : ScriptedLauncher.Ok("""{"Found":false}"""));
         var (server, task, client) = await StartAsync(launcher, cts.Token);
         using (server)
         {
@@ -24,7 +24,7 @@ public sealed class AgentScriptsPipeTests
             {
                 var r = await client.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.SecurityRead, SecurityFixes.Llmnr), TimeSpan.FromSeconds(30), cts.Token);
                 Assert.Equal(0, r.ExitCode);
-                Assert.Equal("was 0", r.StdOut);
+                Assert.Equal("0", r.StdOut);
 
                 var update = await client.RunAgentScriptAsync(AgentScripts.Of(AgentScripts.InstallUpdate, "748279c7-4309-452c-8b30-e02ec52e498f"), TimeSpan.FromSeconds(30), cts.Token);
                 Assert.Equal(0, update.ExitCode);
@@ -32,10 +32,10 @@ public sealed class AgentScriptsPipeTests
             await task;
         }
 
-        Assert.Equal(2, launcher.Calls.Count);
-        Assert.All(launcher.Calls, c => Assert.EndsWith("powershell.exe", c.File, StringComparison.OrdinalIgnoreCase));
-        Assert.Equal(SystemCommandRunner.PowerShellArgs(SecurityFixes.ReadScript(SecurityFixes.Llmnr)!), launcher.Calls[0].Args);
-        Assert.Equal(SystemCommandRunner.PowerShellArgs(RemediationService.BuildInstallUpdateScript("748279c7-4309-452c-8b30-e02ec52e498f")!), launcher.Calls[1].Args);
+        Assert.Empty(launcher.Calls);   // no PowerShell
+        Assert.Equal<AgentNativeAction>(
+            [new SecurityReadAction(SecurityFixes.Llmnr), new InstallUpdateAction(Guid.Parse("748279c7-4309-452c-8b30-e02ec52e498f"))],
+            launcher.NativeCalls);
     }
 
     public static TheoryData<string, string[]> Refused() => new()
@@ -97,20 +97,24 @@ public sealed class AgentScriptsPipeTests
     }
 
     [Fact]
-    public void Every_agent_script_passes_the_powershell_screen()
+    public void Windows_update_and_security_fixes_run_without_powershell()
     {
         var requests = new[]
         {
             AgentScripts.Of(AgentScripts.WindowsUpdate, "drivers"),
-        }.Concat(SecurityFixes.All.SelectMany(f => new[] { AgentScripts.Of(AgentScripts.SecurityRead, f.Key), AgentScripts.Of(AgentScripts.SecurityApply, f.Key) }));
+            AgentScripts.Of(AgentScripts.WindowsUpdate, "software"),
+            AgentScripts.Of(AgentScripts.InstallUpdate, "748279c7-4309-452c-8b30-e02ec52e498f"),
+            AgentScripts.Of(AgentScripts.SecurityRestore, SecurityFixes.AsrRules, "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2=;56a863a9-875e-4185-98a7-b882c64b5ce5=2"),
+        }.Concat(SecurityFixes.All.SelectMany(f => new[] { AgentScripts.Of(AgentScripts.SecurityRead, f.Key), AgentScripts.Of(AgentScripts.SecurityApply, f.Key) })).ToArray();
 
         foreach (var request in requests)
         {
-            var script = AgentScripts.Build(request, @"C:\App", out var refusal);
-            if (script is null && request.Name == AgentScripts.SecurityApply) continue; // a fix that only reads
-            Assert.True(script is not null, $"{request.Name} {string.Join(' ', request.Args ?? [])}: {refusal}");
-            Assert.Null(AdminCommandAllowlist.FindBlockedPowerShell(script));
+            var plan = AgentScripts.Plan(request, @"C:\App", out var refusal);
+            Assert.True(plan is { Script: null, Native: not null }, $"{request.Name} {string.Join(' ', request.Args ?? [])}: {refusal}");
         }
+        Assert.Equal(new WindowsUpdateAction(DriversOnly: true), AgentScripts.Plan(requests[0], null, out _)!.Native);
+        var restore = Assert.IsType<SecurityRestoreAction>(AgentScripts.Plan(requests[3], null, out _)!.Native);
+        Assert.Equal([("9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2", (int?)null), ("56a863a9-875e-4185-98a7-b882c64b5ce5", 2)], restore.Previous.Rules);
     }
 
     public static TheoryData<string, string[], AgentNativeAction> NativePlans() => new()
