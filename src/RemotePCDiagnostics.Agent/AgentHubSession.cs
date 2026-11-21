@@ -365,6 +365,13 @@ public sealed class AgentHubWorker(
     private bool _linkAnnounced;
     private volatile bool _stopAfterSingleSession;
 
+    // A session that reached READY outlives the Connect stream that launched it: the relay keeps a READY launch through a
+    // disconnect, so after a reconnect an end request (CancelCommand) for it must still close the app, and its "ended" stage
+    // must still reach the relay. These point at whichever stream is current.
+    private Func<AgentMessage, CancellationToken, Task>? _currentWrite;
+    private CancellationTokenSource? _currentStreamCts;
+    private LaunchProgress? _undeliveredEnd;
+
     /// <summary>
     /// Runs the persistent reconnection loop against <see cref="AgentConfig.Server"/> until <paramref name="stoppingToken"/> is cancelled
     /// (or until a <see cref="AgentLifetime.Session"/> agent finishes one session).
@@ -471,6 +478,21 @@ public sealed class AgentHubWorker(
         Log($"Sent AgentHello (machine={hello.MachineName}, user='{hello.SignedInUser}', version={hello.AgentVersion}).");
         AnnounceLink(true);
 
+        LaunchProgress? undelivered;
+        lock (_stateGate)
+        {
+            _currentWrite = WriteMessageAsync;
+            _currentStreamCts = streamCts;
+            undelivered = _undeliveredEnd;
+            _undeliveredEnd = null;
+        }
+        if (undelivered is not null)
+        {
+            // The app of a READY session closed while no stream was up: tell the relay now, so it stops holding the launch.
+            try { await WriteMessageAsync(new AgentMessage { Progress = undelivered }, token).ConfigureAwait(false); }
+            catch { lock (_stateGate) _undeliveredEnd ??= undelivered; }
+        }
+
         var heartbeatTask = PumpHeartbeatsAsync(WriteMessageAsync, token);
         Task? activeLaunchTask = null;
 
@@ -482,7 +504,7 @@ public sealed class AgentHubWorker(
                 switch (command.BodyCase)
                 {
                     case HubCommand.BodyOneofCase.Launch:
-                        activeLaunchTask = HandleLaunchCommand(command.Launch, WriteMessageAsync, streamCts);
+                        activeLaunchTask = HandleLaunchCommand(command.Launch, WriteMessageAsync, streamCts, ct);
                         break;
 
                     case HubCommand.BodyOneofCase.Cancel:
@@ -511,8 +533,17 @@ public sealed class AgentHubWorker(
         }
         finally
         {
+            lock (_stateGate)
+            {
+                if (ReferenceEquals(_currentStreamCts, streamCts))
+                {
+                    _currentWrite = null;
+                    _currentStreamCts = null;
+                }
+            }
             await streamCts.CancelAsync().ConfigureAwait(false);
             try { await heartbeatTask.ConfigureAwait(false); } catch { }
+            // Completes when the launch ends, or once it reached READY and no longer depends on this stream.
             if (activeLaunchTask is not null)
             {
                 try { await activeLaunchTask.ConfigureAwait(false); } catch { }
@@ -668,7 +699,8 @@ public sealed class AgentHubWorker(
     private Task HandleLaunchCommand(
         LaunchCommand launch,
         Func<AgentMessage, CancellationToken, Task> writeAsync,
-        CancellationTokenSource streamCts)
+        CancellationTokenSource streamCts,
+        CancellationToken stoppingToken)
     {
         CancellationTokenSource launchCts;
         lock (_stateGate)
@@ -690,11 +722,12 @@ public sealed class AgentHubWorker(
             _activeLaunchCts = launchCts;
         }
 
-        return Task.Run(async () =>
+        var detached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var run = Task.Run(async () =>
         {
             try
             {
-                await ExecuteLaunchCoreAsync(launch, writeAsync, launchCts.Token, streamCts).ConfigureAwait(false);
+                await ExecuteLaunchCoreAsync(launch, writeAsync, launchCts, streamCts, stoppingToken, detached).ConfigureAwait(false);
             }
             finally
             {
@@ -707,8 +740,10 @@ public sealed class AgentHubWorker(
                     }
                 }
                 launchCts.Dispose();
+                detached.TrySetResult();
             }
         }, CancellationToken.None);
+        return Task.WhenAny(run, detached.Task);
     }
 
     private void HandleCancelCommand(CancelCommand cancel)
@@ -735,9 +770,12 @@ public sealed class AgentHubWorker(
     private async Task ExecuteLaunchCoreAsync(
         LaunchCommand launch,
         Func<AgentMessage, CancellationToken, Task> writeAsync,
-        CancellationToken launchCt,
-        CancellationTokenSource streamCts)
+        CancellationTokenSource launchCts,
+        CancellationTokenSource streamCts,
+        CancellationToken stoppingToken,
+        TaskCompletionSource detached)
     {
+        var launchCt = launchCts.Token;
         RememberGroup(launch.Group);
         AnnounceLink(true);
 
@@ -890,12 +928,25 @@ public sealed class AgentHubWorker(
                     }
                 }
 
-                // Wait until the Host process exits (or the launch/stream is cancelled).
+                // From READY on, the session no longer depends on the stream that launched it: a dropped stream must not
+                // forget the running app (the relay keeps a READY launch and later sends the end request on a new stream).
+                // Only an end request for this launch or the agent stopping ends the wait.
+                using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                lock (_stateGate)
+                {
+                    if (string.Equals(_activeRequestId, launch.RequestId, StringComparison.OrdinalIgnoreCase))
+                        _activeLaunchCts = sessionCts;
+                }
+                // An end request that arrived while switching over cancelled the launch token instead.
+                if (launchCt.IsCancellationRequested && !streamCts.IsCancellationRequested)
+                    sessionCts.Cancel();
+                detached.TrySetResult();
+
                 try
                 {
-                    await proc.WaitForExitAsync(launchCt).ConfigureAwait(false);
+                    await proc.WaitForExitAsync(sessionCts.Token).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (!streamCts.IsCancellationRequested)
+                catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
                 {
                     proc.Kill();
                 }
@@ -908,20 +959,18 @@ public sealed class AgentHubWorker(
                     }
                 }
 
-                await ReportProgressSafeAsync(
-                    writeAsync,
-                    launch.RequestId,
-                    sessionIdStr,
-                    LaunchStage.StageEnded,
-                    "Session ended",
-                    0,
-                    streamCts.Token).ConfigureAwait(false);
+                await ReportEndedAsync(launch.RequestId, sessionIdStr, stoppingToken).ConfigureAwait(false);
 
                 if (config.AgentLifetime == AgentLifetime.Session)
                 {
                     _stopAfterSingleSession = true;
                     await platform.RemoveSelfAfterSessionAsync().ConfigureAwait(false);
-                    await streamCts.CancelAsync().ConfigureAwait(false);
+                    CancellationTokenSource? current;
+                    lock (_stateGate) current = _currentStreamCts;
+                    if (current is not null)
+                    {
+                        try { await current.CancelAsync().ConfigureAwait(false); } catch (ObjectDisposedException) { }
+                    }
                 }
             }
         }
@@ -1043,6 +1092,44 @@ public sealed class AgentHubWorker(
         catch
         {
             // Stream closed while sending progress.
+        }
+    }
+
+    /// <summary>
+    /// Reports a READY session's "ended" stage on whichever stream is up now; with none up, the next connection sends it.
+    /// </summary>
+    private async Task ReportEndedAsync(string requestId, string sessionId, CancellationToken stoppingToken)
+    {
+        var progress = new LaunchProgress
+        {
+            RequestId = requestId,
+            SessionId = sessionId ?? "",
+            Stage = LaunchStage.StageEnded,
+            Detail = "Session ended",
+            Percent = 0,
+        };
+        Func<AgentMessage, CancellationToken, Task>? write;
+        CancellationToken streamToken;
+        lock (_stateGate)
+        {
+            write = _currentWrite;
+            streamToken = _currentStreamCts?.Token ?? CancellationToken.None;
+            if (write is null)
+            {
+                _undeliveredEnd = progress;
+                return;
+            }
+        }
+        if (stoppingToken.IsCancellationRequested)
+            return;
+        try
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, streamToken);
+            await write(new AgentMessage { Progress = progress }, linked.Token).ConfigureAwait(false);
+        }
+        catch
+        {
+            lock (_stateGate) _undeliveredEnd ??= progress;
         }
     }
 
