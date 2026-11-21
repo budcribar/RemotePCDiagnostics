@@ -10,10 +10,21 @@ public sealed record SystemInfo(
 {
     public static SystemInfo FromRow(IReadOnlyDictionary<string, string> r) => new(
         r.Str("hostname"), r.Str("computer_name"), r.Str("uuid"),
-        r.Str("hardware_vendor"), r.Str("hardware_model"), r.Str("hardware_version"), r.Str("hardware_serial"),
-        r.Str("board_vendor"), r.Str("board_model"), r.Str("board_version"), r.Str("board_serial"),
+        r.Str("hardware_vendor"), r.Str("hardware_model"), Reported(r.Str("hardware_version")), r.Str("hardware_serial"),
+        r.Str("board_vendor"), r.Str("board_model"), Reported(r.Str("board_version")), r.Str("board_serial"),
         r.Str("cpu_brand"), r.Str("cpu_type"), r.Int("cpu_physical_cores"), r.Int("cpu_logical_cores"), r.Int("cpu_sockets"),
         r.Long("physical_memory"));
+
+    /// <summary>
+    /// Empty when the firmware left the field unset: osquery reports a missing SMBIOS version as -1, and many boards ship
+    /// OEM filler text instead of a value. Anything else is kept as it came.
+    /// </summary>
+    internal static string Reported(string raw) => Unset.Contains(raw.Trim()) ? "" : raw;
+
+    private static readonly HashSet<string> Unset = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "-1", "None", "Default string", "To Be Filled By O.E.M.", "System Version", "Not Applicable", "Not Specified",
+    };
 }
 
 /// <summary>osquery <c>cpu_info</c> (Windows; one row per socket).</summary>
@@ -57,7 +68,23 @@ public sealed record DiskInfo(
 public sealed record GpuInfo(string Model, string Manufacturer, string Series, string DriverVersion, string DriverDate, string VideoMode)
 {
     public static GpuInfo FromRow(IReadOnlyDictionary<string, string> r) => new(
-        r.Str("model"), r.Str("manufacturer"), r.Str("series"), r.Str("driver_version"), FormatDriverDate(r.Str("driver_date")), r.Str("video_mode"));
+        r.Str("model"), r.Str("manufacturer"), r.Str("series"), r.Str("driver_version"), FormatDriverDate(r.Str("driver_date")), FormatVideoMode(r.Str("video_mode")));
+
+    /// <summary>
+    /// Windows describes the mode as "3840 x 2160 x 4294967296 colors", counting colors as 2^bits. Shown as
+    /// "3840 x 2160, 32-bit color". Text in any other shape is kept as it came.
+    /// </summary>
+    internal static string FormatVideoMode(string raw)
+    {
+        const string suffix = " colors";
+        if (!raw.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            return raw;
+        var body = raw[..^suffix.Length];
+        var cut = body.LastIndexOf(" x ", StringComparison.Ordinal);
+        if (cut <= 0 || !ulong.TryParse(body[(cut + 3)..], out var colors) || colors < 2 || !ulong.IsPow2(colors))
+            return raw;
+        return $"{body[..cut]}, {System.Numerics.BitOperations.Log2(colors)}-bit color";
+    }
 
     /// <summary>Unix seconds to yyyy-MM-dd; any other text is kept as it came.</summary>
     internal static string FormatDriverDate(string raw) =>
