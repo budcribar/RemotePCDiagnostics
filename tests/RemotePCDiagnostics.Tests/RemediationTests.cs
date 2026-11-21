@@ -1,11 +1,16 @@
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.History;
 using RemotePCDiagnostics.Core.Session;
+using System.Xml.Linq;
 
 namespace RemotePCDiagnostics.Tests;
 
 public class RemediationTests
 {
+    private static readonly XNamespace TaskNs = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+    private static XElement? Element(XDocument task, string name) => task.Descendants(TaskNs + name).FirstOrDefault();
+    private static string? Text(XDocument task, string name) => Element(task, name)?.Value;
+
     [Fact]
     public async Task Group1_DriverAndWindowsUpdates_And_PnpUtil()
     {
@@ -165,9 +170,8 @@ public class RemediationTests
         var res = await svc.ExecuteAsync(new(RemediationKind.OptimizeSsd, "Optimize / Retrim SSD", "D", "WD Blue SN580"));
 
         Assert.True(res.Success);
-        var script = Assert.Single(launcher.Calls).Args[^1];
-        Assert.Contains("-DriveLetter D", script);
-        Assert.DoesNotContain("-DriveLetter C", script);
+        Assert.Empty(launcher.Calls); // the Agent retrims in C#, no PowerShell
+        Assert.Equal(new OptimizeVolumeAction("D"), Assert.Single(launcher.NativeCalls));
     }
 
     [Theory]
@@ -276,7 +280,7 @@ public class RemediationTests
     [Fact]
     public async Task Reboot_WhenTheResumeTaskCannotBeRegistered_FallsBackToRunOnce()
     {
-        var launcher = new ScriptedLauncher((file, args) => file.Equals("powershell.exe", StringComparison.OrdinalIgnoreCase) && args[^1].Contains("Register-ScheduledTask")
+        var launcher = new ScriptedLauncher((file, args) => file == "agent:RegisterTask" || file.Equals("powershell.exe", StringComparison.OrdinalIgnoreCase) && args[^1].Contains("Register-ScheduledTask")
             ? ScriptedLauncher.Fail("Access is denied.") : ScriptedLauncher.Ok(""));
         var statePath = Path.Combine(Path.GetTempPath(), $"rpcd-resume-{Guid.NewGuid():N}.json");
         try
@@ -313,15 +317,21 @@ public class RemediationTests
         var now = new DateTimeOffset(2026, 11, 20, 15, 0, 0, TimeSpan.Zero);
         var request = AgentScripts.Of(AgentScripts.ResumeTaskRegister, AgentScripts.RebootTask, @"PC\ann", "-u=https://server.example.com:34544",
             "-i=748279c7-4309-452c-8b30-e02ec52e498f", "--post-reboot");
-        var script = AgentScripts.Build(request, @"C:\Bud's Apps", out var refusal, now);
+        var plan = AgentScripts.Plan(request, @"C:\Bud's Apps", out var refusal, now);
 
         Assert.Null(refusal);
-        Assert.Contains(@"-Execute 'C:\Bud''s Apps\RemotePCDiagnostics.Agent.exe' -Argument '--launch -u=https://server.example.com:34544 -i=748279c7-4309-452c-8b30-e02ec52e498f --post-reboot' -WorkingDirectory 'C:\Bud''s Apps'", script);
+        var task = Assert.IsType<RegisterTaskAction>(plan!.Native);
+        var xml = XDocument.Parse(task.TaskXml);
+        Assert.Equal(@"C:\Bud's Apps\RemotePCDiagnostics.Agent.exe", Text(xml, "Command"));
+        Assert.Equal("--launch -u=https://server.example.com:34544 -i=748279c7-4309-452c-8b30-e02ec52e498f --post-reboot", Text(xml, "Arguments"));
+        Assert.Equal(@"C:\Bud's Apps", Text(xml, "WorkingDirectory"));
         // Highest only for the Agent's launcher, so there is no UAC prompt after the restart; it starts the app as the signed-in user.
-        Assert.Contains("-RunLevel Highest", script);
-        Assert.Contains($"-TaskName '{RebootResumeCoordinator.ResumeTaskName}'", script);
+        Assert.Equal("HighestAvailable", Text(xml, "RunLevel"));
+        Assert.Equal(@"PC\ann", task.User);
+        Assert.Equal(@"PC\ann", Text(xml, "UserId"));
+        Assert.Equal(RebootResumeCoordinator.ResumeTaskName, task.TaskName);
         var end = now.Add(SessionLaunchOptions.PendingRebootMaxAge).LocalDateTime.ToString("s", System.Globalization.CultureInfo.InvariantCulture);
-        Assert.Contains($"$t.EndBoundary='{end}'", script);
+        Assert.Equal(end, Text(xml, "EndBoundary"));
     }
 
     [Theory]
@@ -345,7 +355,7 @@ public class RemediationTests
         Assert.Empty(remSvc.Recent);
         Assert.Equal(cleared, coordinator.LoadPendingState() is null);
         Assert.Equal(cleared, launcher.Calls.Any(c => c.File.EndsWith("reg.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains("delete") && c.Args.Contains(RebootResumeCoordinator.RunOnceValueName)));
-        Assert.Equal(cleared, launcher.Calls.Any(c => c.File.EndsWith("powershell.exe", StringComparison.OrdinalIgnoreCase) && c.Args[^1].Contains("Unregister-ScheduledTask") && c.Args[^1].Contains(RebootResumeCoordinator.ResumeTaskName)));
+        Assert.Equal(cleared, launcher.NativeCalls.Contains(new RemoveTaskAction(RebootResumeCoordinator.ResumeTaskName)));
     }
 
     [Fact]
@@ -381,13 +391,15 @@ public class RemediationTests
             coordinator.LastRegisteredCommandLine);
         // It is registered as a sign-in task (the Agent's script: its launcher, from its own folder, with highest privileges), not as a RunOnce
         // entry, and the restart asks Windows to sign the same user back in (shutdown /g).
-        var register = Assert.Single(launcher.Calls, c => c.File.EndsWith("powershell.exe", StringComparison.OrdinalIgnoreCase) && c.Args[^1].Contains("Register-ScheduledTask")).Args[^1];
-        Assert.Contains($"-TaskName '{RebootResumeCoordinator.ResumeTaskName}'", register);
-        Assert.Contains(ElevationService.AdminHelperExeName + "' -Argument '--launch -u=https://remoteblazorwebview.com:34544 -i=bfdffa8b-70ac-4740-bdb1-c7f62a0b598f --post-reboot'", register);
-        Assert.DoesNotContain("RemotePCDiagnostics.Host.exe", register);
-        Assert.Contains("-AtLogOn", register);
-        Assert.Contains("-RunLevel Highest", register);
-        Assert.Contains("$t.EndBoundary='", register);
+        var task = Assert.IsType<RegisterTaskAction>(Assert.Single(launcher.NativeCalls, a => a is RegisterTaskAction));
+        Assert.Equal(RebootResumeCoordinator.ResumeTaskName, task.TaskName);
+        var xml = XDocument.Parse(task.TaskXml);
+        Assert.EndsWith(ElevationService.AdminHelperExeName, Text(xml, "Command"));
+        Assert.Equal("--launch -u=https://remoteblazorwebview.com:34544 -i=bfdffa8b-70ac-4740-bdb1-c7f62a0b598f --post-reboot", Text(xml, "Arguments"));
+        Assert.DoesNotContain("RemotePCDiagnostics.Host.exe", task.TaskXml);
+        Assert.NotNull(Element(xml, "LogonTrigger"));
+        Assert.Equal("HighestAvailable", Text(xml, "RunLevel"));
+        Assert.NotNull(Text(xml, "EndBoundary"));
         Assert.DoesNotContain(launcher.Calls, c => c.File.EndsWith("reg.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains("add"));
         Assert.Contains(launcher.Calls, c => c.File.EndsWith("shutdown.exe", StringComparison.OrdinalIgnoreCase) && c.Args.Contains("/g") && !c.Args.Contains("/r"));
 

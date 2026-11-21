@@ -637,7 +637,6 @@ public sealed class RemediationService(
     private static string Display(AreaAction a) =>
         !string.IsNullOrWhiteSpace(a.TargetLabel) ? a.TargetLabel : !string.IsNullOrWhiteSpace(a.Target) ? a.Target : "item";
 
-    private static string EscapeSingleQuotes(string s) => s.Replace("'", "''");
 
     /// <summary>The DNS servers "Use public DNS" sets: Cloudflare, then Google.</summary>
     public static readonly IReadOnlyList<string> PublicDns = ["1.1.1.1", "8.8.8.8"];
@@ -732,16 +731,6 @@ public sealed class RemediationService(
         if (flush is { ExitCode: 0 })
             return new(true, "Flushed DNS cache (IP lease renewal wasn't needed or uses static IP).");
         return new(false, "Couldn't flush DNS cache or renew IP configuration.");
-    }
-
-    /// <summary>Ends every process named <paramref name="processName"/> and prints the memory they used.</summary>
-    public static string BuildStopProcessScript(string processName)
-    {
-        var escaped = EscapeSingleQuotes(processName);
-        return $"$ErrorActionPreference='Stop'; " +
-               $"$mem = [int64]((Get-Process -Name '{escaped}' -ErrorAction SilentlyContinue | Measure-Object WorkingSet64 -Sum).Sum); " +
-               $"Stop-Process -Name '{escaped}' -Force; " +
-               $"[pscustomobject]@{{ FreedMemoryBytes = $mem }} | ConvertTo-Json -Compress";
     }
 
     public static string BuildWindowsUpdateScript(bool driversOnly) =>
@@ -841,8 +830,6 @@ public sealed class RemediationService(
             return new(false, $"Couldn't read Windows Update's answer for {label}.");
         }
     }
-
-    public static string CleanTempScript => Scripts.PowerShellScripts.Get("CleanTempFiles");
 
     private async Task<RemediationResult> RunCleanTempFilesAsync(CancellationToken ct)
     {

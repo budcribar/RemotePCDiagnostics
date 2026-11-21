@@ -36,7 +36,7 @@ public class WindowsReadOnlyTests
     };
 
     /// <summary>Scripts that change the PC: never run by a test.</summary>
-    private static readonly string[] Changing = ["CleanTempFiles", "InstallUpdate", "WindowsUpdate"];
+    private static readonly string[] Changing = ["InstallUpdate", "WindowsUpdate"];
     /// <summary>Needs the Windows Search service, which a PC may have turned off: run, but its exit code isn't asserted.</summary>
     private const string SearchIndex = "SearchIndexProjects";
 

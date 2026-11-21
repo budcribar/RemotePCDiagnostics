@@ -1,12 +1,35 @@
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Tests;
 
-/// <summary>Launcher fake keyed on the executable file name (osqueryi, powershell, wevtutil) and full argument list.</summary>
-internal sealed class ScriptedLauncher(Func<string, IReadOnlyList<string>, ProcessResult> run) : IProcessLauncher
+/// <summary>
+/// Launcher fake keyed on the executable file name (osqueryi, powershell, wevtutil) and full argument list. It also stands in for the
+/// changes the Agent makes in C# (<see cref="IAgentNativeOps"/>): each goes to <c>run</c> as file "agent:&lt;action&gt;" with the action's
+/// values as arguments, and is recorded in <see cref="NativeCalls"/> (not <see cref="Calls"/>).
+/// </summary>
+internal sealed class ScriptedLauncher(Func<string, IReadOnlyList<string>, ProcessResult> run) : IProcessLauncher, IAgentNativeOps
 {
     public List<(string File, IReadOnlyList<string> Args)> Calls { get; } = new();
+    public List<AgentNativeAction> NativeCalls { get; } = new();
+
+    public Task<ProcessResult> RunAsync(AgentNativeAction action, CancellationToken ct)
+    {
+        lock (NativeCalls) NativeCalls.Add(action);
+        IReadOnlyList<string> args = action switch
+        {
+            StopProcessAction s => [s.ProcessName],
+            OptimizeVolumeAction o => [o.DriveLetters],
+            RegisterTaskAction r => [r.TaskName, r.User, r.TaskXml],
+            RemoveTaskAction r => [r.TaskName],
+            _ => [],
+        };
+        return Task.FromResult(run(NativeName(action), args));
+    }
+
+    /// <summary>"agent:StopProcess", "agent:CleanTemp", …: the file name <c>run</c> gets for a change the Agent makes in C#.</summary>
+    public static string NativeName(AgentNativeAction action) => "agent:" + action.GetType().Name.Replace("Action", "");
     public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct)
     {
         lock (Calls) Calls.Add((fileName, arguments));

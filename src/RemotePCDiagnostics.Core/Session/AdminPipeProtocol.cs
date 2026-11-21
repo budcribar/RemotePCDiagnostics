@@ -1202,7 +1202,8 @@ public sealed class AdminPipeServer(
     string? appFolder = null,
     Func<IChangeJournal>? changeJournal = null,
     string? stateFolder = null,
-    IMachineSetup? machineSetup = null) : IAsyncDisposable, IDisposable
+    IMachineSetup? machineSetup = null,
+    IAgentNativeOps? nativeOps = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -1821,13 +1822,13 @@ public sealed class AdminPipeServer(
 
         if (request.Script is not { Name.Length: > 0 } script) return Refused("No script was named.");
         var what = $"{script.Name} {string.Join(' ', script.Args ?? [])}";
-        if (AgentScripts.Build(script, AppFolder, out var refusal) is not { } ps)
+        if (AgentScripts.Plan(script, AppFolder, out var refusal) is not { } plan)
         {
             log.Warn($"[admin-pipe-server] Agent script '{what}' refused: {refusal}");
             return Refused(refusal ?? "That change isn't allowed.");
         }
         // The script is this app's own code; the screen is a second check that nothing in it downloads or runs other code.
-        if (AdminCommandAllowlist.FindBlockedPowerShell(ps) is { } blocked)
+        if (plan.Script is { } screened && AdminCommandAllowlist.FindBlockedPowerShell(screened) is { } blocked)
         {
             log.Warn($"[admin-pipe-server] Agent script '{what}' blocked: contains '{blocked}'.");
             return Refused($"The script contains '{blocked}', which the Agent doesn't run.");
@@ -1835,7 +1836,9 @@ public sealed class AdminPipeServer(
         var timeout = TimeSpan.FromMilliseconds(Math.Clamp(request.TimeoutMs, 1_000, 3_600_000));
         try
         {
-            var pr = await _launcher.RunAsync(SystemCommandRunner.PowerShell, SystemCommandRunner.PowerShellArgs(ps), timeout, ct).ConfigureAwait(false);
+            var pr = plan.Native is { } native
+                ? await AgentNativeRunner.RunAsync(nativeOps ?? _launcher as IAgentNativeOps ?? WindowsAgentNativeOps.Instance, native, timeout, ct).ConfigureAwait(false)
+                : await _launcher.RunAsync(SystemCommandRunner.PowerShell, SystemCommandRunner.PowerShellArgs(plan.Script!), timeout, ct).ConfigureAwait(false);
             log.Info($"[admin-pipe-server] Agent script '{what}' exit={pr.ExitCode} timedOut={pr.TimedOut}.");
             return new AdminPipeResponse(
                 Ok: !pr.TimedOut, Allowed: true, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId,
@@ -1846,7 +1849,7 @@ public sealed class AdminPipeServer(
         catch (Exception ex)
         {
             log.Warn($"[admin-pipe-server] Agent script '{what}' failed to start: {ex.Message}");
-            return Refused("PowerShell didn't start: " + ex.Message);
+            return Refused((plan.Native is null ? "PowerShell didn't start: " : "The change failed: ") + ex.Message);
         }
     }
 
