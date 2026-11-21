@@ -200,13 +200,17 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             machineSetup: AgentMachineSetup.ForService(pipeLog));
         updater?.Bind(serverOptions);
 
+        var launched = new SystemLaunchedProcess(proc, pipeCts, pipeServer, hostExePath,
+            RestartedCopy.SessionIdFrom(fullCommandLine), serverOptions, Log);
+
         _ = Task.Run(async () =>
         {
             try
             {
-                // The host keeps this pipe name for the life of the process. When the connection drops, listen again
+                // The host keeps this pipe name for the life of the process, and a copy it starts again under the same session
+                // (a reconnect, a restart) inherits it. When the connection drops, listen again for whichever copy is current
                 // instead of leaving the app holding a client that will never reconnect.
-                while (!pipeCts.IsCancellationRequested && !HostExited(proc))
+                while (!pipeCts.IsCancellationRequested && !launched.HasExited)
                 {
                     try
                     {
@@ -220,7 +224,7 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
                     {
                         Log($"[rpcd-update] Admin pipe session ended ({ex.Message}). Listening again.");
                     }
-                    if (pipeCts.IsCancellationRequested || HostExited(proc))
+                    if (pipeCts.IsCancellationRequested || launched.HasExited)
                         break;
                     Log("[rpcd-update] Admin pipe dropped. Listening again for the app.");
                     try { await Task.Delay(TimeSpan.FromSeconds(1), pipeCts.Token).ConfigureAwait(false); }
@@ -231,13 +235,7 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             finally { pipeServer.Dispose(); }
         });
 
-        return (new SystemLaunchedProcess(proc, pipeCts, pipeServer), null);
-    }
-
-    private static bool HostExited(Process proc)
-    {
-        try { return proc.HasExited; }
-        catch { return true; }
+        return (launched, null);
     }
 
     /// <summary>
@@ -306,17 +304,35 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
         _statusHttp.Dispose();
     }
 
+    /// <summary>
+    /// The app the Agent started, followed across the copies it starts of itself. The app reconnects to the relay (and restarts
+    /// when a browser asks) by starting a new copy under the same session id with --restarted and then closing; that copy is the
+    /// same session. When the current copy exits, a child of it running the same exe with that session id and --restarted
+    /// becomes the current one: the admin pipe accepts it, Kill closes it, and the session only ends when the last copy exits.
+    /// </summary>
     private sealed class SystemLaunchedProcess(
         Process process,
         CancellationTokenSource? pipeCts = null,
-        RemotePCDiagnostics.Core.Session.AdminPipeServer? pipeServer = null) : IAgentLaunchedProcess
+        RemotePCDiagnostics.Core.Session.AdminPipeServer? pipeServer = null,
+        string? hostExePath = null,
+        string? sessionId = null,
+        RemotePCDiagnostics.Core.Session.AdminPipeServerOptions? pipeOptions = null,
+        Action<string>? log = null) : IAgentLaunchedProcess
     {
+        private readonly object _gate = new();
+        private Process _current = process;
+        private readonly List<Process> _previous = [];
+
         public bool HasExited
         {
             get
             {
-                try { return process.HasExited; }
-                catch { return true; }
+                lock (_gate)
+                {
+                    if (!Exited(_current)) return false;
+                    // Checked without waiting: the pipe loop and the launch loop look often.
+                    return !TryFollowSuccessorNoLock();
+                }
             }
         }
 
@@ -324,16 +340,48 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
         {
             get
             {
-                try { return unchecked((uint)process.ExitCode); }
-                catch { return 1; }
+                lock (_gate)
+                {
+                    try { return unchecked((uint)_current.ExitCode); }
+                    catch { return 1; }
+                }
             }
         }
 
-        public Task WaitForExitAsync(CancellationToken ct) => process.WaitForExitAsync(ct);
+        public async Task WaitForExitAsync(CancellationToken ct)
+        {
+            while (true)
+            {
+                Process current;
+                lock (_gate) current = _current;
+                await current.WaitForExitAsync(ct).ConfigureAwait(false);
+
+                // The new copy is started before the old one closes, so it is normally there at once; allow a moment.
+                var deadline = DateTime.UtcNow + RestartedCopy.SuccessorWait;
+                var followed = false;
+                while (true)
+                {
+                    lock (_gate)
+                    {
+                        if (!ReferenceEquals(_current, current) || TryFollowSuccessorNoLock())
+                        {
+                            followed = true;
+                            break;
+                        }
+                    }
+                    if (DateTime.UtcNow >= deadline) break;
+                    await Task.Delay(TimeSpan.FromMilliseconds(250), ct).ConfigureAwait(false);
+                }
+                if (!followed) return;
+            }
+        }
 
         public void Kill()
         {
-            try { process.Kill(entireProcessTree: true); } catch { }
+            lock (_gate)
+            {
+                try { _current.Kill(entireProcessTree: true); } catch { }
+            }
         }
 
         public void Dispose()
@@ -341,7 +389,71 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             try { pipeCts?.Cancel(); } catch { }
             pipeCts?.Dispose();
             try { pipeServer?.Dispose(); } catch { }
-            process.Dispose();
+            lock (_gate)
+            {
+                _current.Dispose();
+                foreach (var p in _previous) p.Dispose();
+                _previous.Clear();
+            }
+        }
+
+        private static bool Exited(Process p)
+        {
+            try { return p.HasExited; }
+            catch { return true; }
+        }
+
+        /// <summary>Moves to the exited copy's restarted child, if there is one. Caller holds <see cref="_gate"/>.</summary>
+        private bool TryFollowSuccessorNoLock()
+        {
+            if (!OperatingSystem.IsWindows() || string.IsNullOrEmpty(hostExePath) || string.IsNullOrEmpty(sessionId))
+                return false;
+            int parentId;
+            try { parentId = _current.Id; }
+            catch { return false; }
+
+            var next = FindRestartedChild(parentId, hostExePath, sessionId);
+            if (next is null) return false;
+
+            _previous.Add(_current);
+            _current = next;
+            if (pipeOptions is not null)
+                pipeOptions.ExpectedClientPid = next.Id; // the pipe now accepts the new copy, and only it
+            log?.Invoke($"{DateTimeOffset.Now:O} [agent] The app restarted itself for session {sessionId} (pid {parentId} -> {next.Id}); following the new copy.");
+            return true;
+        }
+
+        [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+        private static Process? FindRestartedChild(int parentId, string hostExePath, string sessionId)
+        {
+            try
+            {
+                var expected = Path.GetFullPath(hostExePath);
+                using var searcher = new System.Management.ManagementObjectSearcher(
+                    $"SELECT ProcessId, ExecutablePath, CommandLine FROM Win32_Process WHERE ParentProcessId = {parentId}");
+                foreach (var o in searcher.Get())
+                {
+                    using (o)
+                    {
+                        var path = o["ExecutablePath"] as string;
+                        if (string.IsNullOrEmpty(path) ||
+                            !string.Equals(Path.GetFullPath(path), expected, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (!RestartedCopy.IsRestartOf(o["CommandLine"] as string, sessionId))
+                            continue;
+                        if (o["ProcessId"] is not uint pid) continue;
+                        try
+                        {
+                            var child = Process.GetProcessById((int)pid);
+                            if (!child.HasExited) return child;
+                            child.Dispose();
+                        }
+                        catch (ArgumentException) { } // it has already gone
+                    }
+                }
+            }
+            catch (Exception) { }
+            return null;
         }
     }
 }
@@ -491,6 +603,30 @@ public sealed class AgentHubWorker(
             // The app of a READY session closed while no stream was up: tell the relay now, so it stops holding the launch.
             try { await WriteMessageAsync(new AgentMessage { Progress = undelivered }, token).ConfigureAwait(false); }
             catch { lock (_stateGate) _undeliveredEnd ??= undelivered; }
+        }
+
+        // A READY session is still running on this new stream: say so again. A relay that restarted (a redeploy) has forgotten
+        // the launch, and without it an end request finds nothing to close ("not started through the agent"). A relay that
+        // kept it just stores the same stage again.
+        LaunchProgress? stillRunning = null;
+        lock (_stateGate)
+        {
+            if (_sessionRunning && !string.IsNullOrEmpty(_activeRequestId) && !string.IsNullOrEmpty(_runningSessionId))
+            {
+                stillRunning = new LaunchProgress
+                {
+                    RequestId = _activeRequestId,
+                    SessionId = _runningSessionId,
+                    Stage = LaunchStage.StageReady,
+                    Detail = "Remote PC Diagnostics is still running",
+                    Percent = 100,
+                };
+            }
+        }
+        if (stillRunning is not null)
+        {
+            try { await WriteMessageAsync(new AgentMessage { Progress = stillRunning }, token).ConfigureAwait(false); }
+            catch { /* the next connection says it again */ }
         }
 
         var heartbeatTask = PumpHeartbeatsAsync(WriteMessageAsync, token);
