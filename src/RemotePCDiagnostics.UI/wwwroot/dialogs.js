@@ -166,12 +166,15 @@
         if (!container) return;
         let thumb = container.querySelector(':scope > .rpd-seg-thumb');
         if (!thumb) {
+            if (container.classList.contains('theme-switch')) return;
             thumb = document.createElement('span');
             thumb.className = 'rpd-seg-thumb';
             thumb.setAttribute('aria-hidden', 'true');
             container.prepend(thumb);
         }
-        container.classList.add('has-thumb');
+        if (!container.classList.contains('has-thumb')) {
+            container.classList.add('has-thumb');
+        }
 
         if (!container.dataset.rpdSwipeBound) {
             container.dataset.rpdSwipeBound = '1';
@@ -519,24 +522,41 @@
         }
     }
 
-    window.addEventListener('resize', () => requestAnimationFrame(syncSegmentedControls));
+    let segSyncQueued = false;
+    function scheduleSegmentedSync() {
+        if (segSyncQueued) return;
+        segSyncQueued = true;
+        requestAnimationFrame(() => {
+            segSyncQueued = false;
+            syncSegmentedControls();
+        });
+    }
+
+    document.addEventListener('click', e => {
+        if (e.target && e.target.closest && e.target.closest('.theme-switch')) {
+            scheduleSegmentedSync();
+            setTimeout(scheduleSegmentedSync, 50);
+        }
+    }, true);
+
+    window.addEventListener('resize', scheduleSegmentedSync);
     new MutationObserver(() => {
         refresh();
         markDesktopHost();
         updateVoiceStatus();
         updateControlStatus();
-        syncSegmentedControls();
+        scheduleSegmentedSync();
         bindTopbarPillScroll();
         notifyControlSubscribers();
         hookVoice();
         hookControl();
-    }).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class'] });
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
 
     refresh();
     markDesktopHost();
     updateVoiceStatus();
     updateControlStatus();
-    syncSegmentedControls();
+    scheduleSegmentedSync();
     bindTopbarPillScroll();
     hookVoice();
     hookControl();
