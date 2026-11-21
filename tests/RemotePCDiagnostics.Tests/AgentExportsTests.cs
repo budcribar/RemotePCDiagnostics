@@ -137,7 +137,8 @@ public class AgentExportsTests
     {
         var page = File.ReadAllText(Path.Combine(FindRepoRoot(), "src", "RemotePCDiagnostics.UI", "Pages", "BenchmarkPage.razor"));
 
-        Assert.Contains("EchoCommittedRestart", page, StringComparison.Ordinal);
+        Assert.Contains("data-testid=\"bench-restart\" checked=\"@s.RestartBeforeAfter\" disabled aria-readonly=\"true\"", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("@onchange=\"EchoCommittedRestart\"", page, StringComparison.Ordinal);
         Assert.DoesNotContain("RestartBeforeAfter = e.Value", page, StringComparison.Ordinal);
         Assert.Contains("BeginPassAsync", page, StringComparison.Ordinal);
         Assert.Contains("data-blocked-setting", page, StringComparison.Ordinal);
