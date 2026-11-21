@@ -1,6 +1,6 @@
 # RPCD browser contract plan
 
-The first implementation renders `data-rpcd-page` on page headings or on a hidden marker for module and audit routes. Use a DOM query for those hidden markers. Checks and Stress have distinct values. Checks details expose the check ID, run state, result source, run and result IDs for DiagnosticsService runs, and an exact completion timestamp. History rows expose the module and exact timestamp. About exposes the build version. The workflow heading exposes its stage. The application shell exposes the full `data-rpcd-version` and initializes `data-rpcd-control` and `data-rpcd-connection` to `unknown`. Each mirror updates its own shell from the relay. The table below includes further proposals.
+The first implementation renders `data-rpcd-page` on page headings or on a hidden marker for module and audit routes. Use a DOM query for those hidden markers. Checks and Stress have distinct values. Checks details expose the check ID, run state, result source, run and result IDs for DiagnosticsService runs, and an exact completion timestamp. History rows expose the module and exact timestamp. About exposes the build version and, from contract 2, `about-report-data`. The workflow heading exposes its stage. The application shell exposes the full `data-rpcd-version` and initializes `data-rpcd-control` and `data-rpcd-connection` to `unknown`. Each mirror updates its own shell from the relay. The table below includes further proposals.
 
 Give each rendered page one `data-rpcd-page` marker on its content root. Set it when the destination renders so a browser agent can wait through remote navigation. Keep the marker on loading, empty, and unavailable views for that destination. Use the heading or existing ID below as the fallback until the marker ships.
 
@@ -17,7 +17,7 @@ Reuse existing `data-testid` selectors for buttons where they already identify t
 | `workflow` | `wf-title`, `wf-start-checks`, `wf-go`, `wf-restart-now`, `wf-cancel`, `wf-finished` | Mark diagnostic, review, repair, restart, and report phases. Give each selected fix a stable ID and expose its outcome. Give **Start over** its own selector. Keep sign-in inputs out of agent-readable workflow metadata. |
 | `certificates` | `branding-title`, `bench-qa-start`, `bench-qa-stop`, `branding-save`, `branding-clear`, `qa-save-html`, `publish-hosted-cert` | Mark the QA run scope, branding save outcome, certificate preview identity, and export or publication state. Scope preview headings separately from the page heading. |
 | `history` | `history-day`, `history-filter-range`, `history-filter-test`, `history-filter-outcome`, `history-details` | Add exact capture time and a stable record key to each row. Expose the selected record and active filters. Distinguish an earlier diagnostic from an applied fix. |
-| `about` | `about-title`, `about-version`, `about-builtin-modules`, `about-plugins` | Expose the full running build version for guide lookup and stable module IDs for availability. Keep plugin settings actions distinct from version lookup. |
+| `about` | `about-title`, `about-version`, `about-builtin-modules`, `about-plugins`, `nav-about` | Expose the full running build in `about-report-data`. Keep plugin settings actions distinct from version lookup. Open the page with `nav-about` (route `about`). |
 | `module` | `area-title`, `area-requery`, `area-status`, `area-missing`, module-specific selectors such as `osquery-requery` | Expose the module slug and share the same result identity as the Checks panel. Scope drawers and service or remediation actions to the affected item. |
 
 Use `.app[data-rpcd-version]` as the canonical selector for control and connection metadata. Require `in-control` and an enabled action before clicking. Older relays can report control without a connection state. A known offline, connecting, reconnecting, or disconnected state clears confirmed control. On relays without a connection state, RemoteBlazorWebView's connection-lost notice (`#rbwv-connection-lost`) reads as disconnected. Never include credentials or ticket URLs.
@@ -46,7 +46,8 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | certificates | 1 | Same |
 | history | 1 | Same, including `history-data` |
 | history | 2 | `history-data` names the test and result filters (`testFilter`, `outcomeFilter`); `history-loading` is present through every reload, not only the first read |
-| about | 1 | Same |
+| about | 1 | Same, including `about-version` |
+| about | 2 | `about-report-data` (schema 1) on the page root: app version, informational version, channel, process and OS architecture, agent version and service status, whether the agent is connected, session mode (`local` or `agent`), shop group, shop name and agent id, machine name, OS, masked install path, and the last update check. No enrollment key, shop API key, relay URL or contact details |
 | module | 1 | Same (a module's own page outside Checks) |
 | module | 2 | The storage bytes of checks version 2. `disk-space-counts` is also present before the first scan, then without `data-result-run-id` |
 | module | 3 | The fix metadata of checks version 3 |
@@ -78,8 +79,46 @@ The same hidden pattern serves three more pages. Each element carries `data-sche
 | `audit-report-data` | Security audit, once an audit has finished (`data-result-run-id` is the audit run) | Status, notice, whether it is a home PC and how many enterprise settings are hidden, the passed/warning/failed/not-checked/high-risk counts, and every shown finding that did not pass (up to 200), failed first, with id, category, name, severity, outcome, current and recommended values |
 | `history-data` | History, after it loads | The page's filters (`range`; from contract 2 `testFilter`, a check ID, and `outcomeFilter`, both empty when the page lists all), whether the Event Log was readable, `entryCount` and `fixCount` for those filters, and the results and fixes the page lists for them, newest first (up to 200 results and 100 fixes), with measurements and detail lines |
 | `bench-report-data` | Benchmark, always | `phase` (`no-baseline`, `running-before`, `running-after`, `settling`, `restart-pending-before`, `restart-pending-after`, `baseline-ready` or `compared`), progress and message, the enabled measurements and restart setting, each pass with its conditions and medians, and once both passes exist the overall change and one delta per measurement with units, verdict and percent. From contract 2, `starts` lists every pass (`before`, `after`) with and without a restart: `control`, `available`, and when it cannot start the blocking `setting` (`restartBeforeAfter`, `enabled`, `baseline` or `benchmark`) and `reason`. `blocked` is the last refused start, the same `setting` and `reason`, and is absent when the last start ran. From contract 3, `tests` lists every kind in catalog order: `id` (the same string as `settings.enabled`), `available`, `enabled` (saved, including a kind that was turned on before this PC lost the hardware or software), `control` (`bench-enable-{id}`, only when `available` is true) and `reason` (only when `available` is false) |
+| `about-report-data` | About, always (contract 2) | Schema 1. See [About](#about-about-report-data) |
 
 To change what History lists, choose in `history-filter-range`, `history-filter-test` (option values are check IDs) or `history-filter-outcome`, then wait until `history-loading` is gone and `history-data` names the chosen value. `history-loading` is present while the page reads the Event Log: on first load, after a range change, and from a result arriving until it is listed. The page draws no filters while it has no results at all.
+
+## About (`about-report-data`)
+
+The About page's content root is `[data-rpcd-page="about"][data-rpcd-contract="2"]`. The route is `about`. Open it the same way as Interactive tests: click `[data-testid="nav-about"]` and wait until that page marker is present. The navigation target name is `about`. There is no separate navigate command; the rail link is the hook, and `about` is one of the pages that link already exposes.
+
+Then read `[data-testid="about-report-data"]`. It is on the page for a view-only mirror and a controlling mirror. `data-schema="1"` and `data-report` hold this JSON. Every key is present. Unknown strings, the update check and the update result are JSON `null`. Text is capped and treated as untrusted.
+
+```json
+{
+  "schema": 1,
+  "appVersion": "1.2.0",
+  "informationalVersion": "1.2.0-ci.12.1+abc",
+  "build": "1.2.0-ci.12.1+abc",
+  "channel": "prerelease",
+  "architecture": { "process": "X64", "os": "X64" },
+  "agentVersion": null,
+  "agentServiceStatus": null,
+  "agentConnected": false,
+  "mode": "local",
+  "shop": { "group": "testshop", "name": "Northwind", "agentId": null },
+  "machineName": "PC",
+  "osVersion": "Microsoft Windows 10.0.26100",
+  "installPath": "C:\\Program Files\\RemotePCDiagnostics",
+  "lastUpdateCheck": null,
+  "lastUpdateResult": null
+}
+```
+
+- `appVersion` is the release (`1.2.0`). `informationalVersion` and `build` are the same string: the full informational version, including `-ci` or `-local` and the git revision when the build has one.
+- `channel` is `prerelease` when that version contains `-ci.`, otherwise `stable`.
+- `architecture.process` and `architecture.os` are the process and operating-system architectures (`X64`, `Arm64`, `X86`, and the other runtime names).
+- `agentVersion` is the installed agent executable's product version. `agentServiceStatus` is `Running`, `Stopped`, `StartPending`, `StopPending`, `ContinuePending`, `PausePending`, `Paused` or `Not installed`.
+- `agentConnected` is true only while the agent's relay link is up and fresh (the same fact as the top-bar badge).
+- `mode` is `local` for a session at the PC and `agent` when the agent opened a remote session.
+- `shop.group` is the live session's shop group, otherwise the saved shop slug, otherwise the connected agent's status group, otherwise the group stored with the agent install. `shop.name` is the shop's display name. `shop.agentId` is the agent's machine id (a guid). The enrollment key, the shop API key, the relay URL, and shop phone, email and address are not in this object.
+- `installPath` is the folder the app is running from. A profile path is `%USERPROFILE%`, and the folder under `Users` or `home` is `<user>`.
+- `lastUpdateCheck` is the UTC time of the last update check in this process (`O` format). `lastUpdateResult` is `{ "updateAvailable", "latestVersion", "error" }`. `error` is `Update check failed.` when the check itself failed, and is never a URL or a response body. Both are null when this process has not checked yet.
 
 ## Stress tests (`stress-data`)
 
@@ -106,7 +145,7 @@ Every page renders `[data-testid="activity-data"]` (it sits in the layout, outsi
 - `sequence`: a group run on Checks & Tests, absent when none: `kind` (`run-all`, `checks` for the ticked checks, `stress-tests` for the ticked stress and separate tests), `index` and `total` (1-based, absent until the first step starts), `current` (display name), and `remaining`, the check IDs not started yet in run order. On Run all, `MemoryScan` and `StorageScan` follow the checks.
 - `stressSuite`: the stress suite while it runs, however it was started: `mode`, `index`, `total`, `current`, and `remaining` (pending test IDs).
 - `fix`: the fix running now (`kind`, `target`, `title`, `origin`, `startedAt`, `progress`).
-- `workflow`: the service workflow while it is between Idle and Done/Cancelled/Failed: `stage`, `busy` (working now, as opposed to waiting at Review or for a restart) and `status`.
+- `workflow`: present only for an active stage (`Checking`, `RestartBefore`, `BeforeBenchmark`, `Applying`, `RestartAfter`, `AfterBenchmark`, `Reporting`): `stage`, `busy` (working now, as opposed to waiting for a restart) and `status`. Idle, Review, Done, Cancelled and Failed are left out, including a review parked with `running` false and `busy` false. `update_rpcd` uses the same stages.
 - `benchmark`: a benchmark pass running or settling: `phase` (`running-before`, `running-after`, `settling`) and `progress`.
 
 An agent that is handed control reads this first. When `busy` is true it asks the person whether to stop what is running before it starts anything; it never cancels on its own.
@@ -119,7 +158,7 @@ The layout also renders a hidden `[data-testid="update-rpcd-panel"]` (it is not 
 - `update-rpcd-version`: optional, such as `1.2.0-ci.996.1`. Empty means the current release on that channel.
 - `update-rpcd-approved`: must be checked. Leaving it unchecked refuses the update.
 - `update-rpcd-approved-by`: an audit label only. It is not approval.
-- `update-rpcd-start`: starts the update. Nothing is installed when a check, fix, service workflow, stress test, or benchmark is running.
+- `update-rpcd-start`: starts the update. Nothing is installed when a check, fix, stress test, or benchmark is running, or when the service workflow is in an active stage. A parked Review does not block it. A refusal names that stage.
 - `update-rpcd-data`: schema 1 JSON of the polled status (`stage`, `detail`, `percent`, `oldVersion`, `newVersion`, `terminal`, `error`, `requestId`, and on failure `installerExitCode` and `installerLog`). Poll it until `terminal` is true. After the agent relaunches the app, read it again for the old and new versions. `installerLog` is the masked tail of Setup's log.
 
 ## App faults (`app-fault-data`)
@@ -150,7 +189,7 @@ Windows repair is offered as single steps on the DISM card (`AnalyzeComponentSto
 
 The Service workflow page renders `[data-testid="workflow-data"]` with schema 1 JSON: `stage` (Idle, Checking, Review, RestartBefore, BeforeBenchmark, Applying, RestartAfter, AfterBenchmark, Reporting, Done, Cancelled or Failed), `running`, `busy`, `waitingForRestart`, `status`, `message`, `error`, timestamps and the restart count, `checks` while Checking, `findings`, `recommendations`, `notOffered`, `fixes` (stable `id`, title, why, area and `areaKey`, `areaOpen`, risk, slow, defaultOn, needsAdmin, undo and `approved`), `outcomes` (fixId, succeeded/failed/skipped, message), `repairs`, and on the Review stage `signIn` (`automatic`, `credentialsEntered`, `clientSignsIn`, `canStart`). It never holds the account name or password.
 
-Controls: `wf-start-checks` runs the checks. On Review, an area's fixes render only when its toggle (`data-action="wf-area"`, `data-area-key`) is open; each fix checkbox has `data-action="wf-fix"` and `data-fix-id`. `wf-select-recommended`, `wf-client-signs-in`, `wf-go` (starts restarts, benchmarks and fixes), `wf-start-over`, `wf-cancel`, `wf-restart-now` and `wf-new` act as on screen. Agents must never type into `wf-user` or `wf-password`: the person enters Windows credentials, or chooses to sign in themselves.
+Controls: `wf-start-checks` runs the checks. On Review, an area's fixes render only when its toggle (`data-action="wf-area"`, `data-area-key`) is open; each fix checkbox has `data-action="wf-fix"` and `data-fix-id`. `wf-select-recommended`, `wf-client-signs-in`, `wf-go` (starts restarts, benchmarks and fixes), `wf-start-over`, `wf-dismiss` (hidden; same result as Start over), `wf-cancel`, `wf-restart-now` and `wf-new` act as on screen. A parked Review is not a running workflow. `wf-start-over` and `wf-dismiss` return it to Idle. Leaving the Service workflow page for another page does the same. `wf-cancel` is only on an active stage after Review. Agents must never type into `wf-user` or `wf-password`: the person enters Windows credentials, or chooses to sign in themselves.
 
 ## Interactive tests (`interactive-data`)
 
@@ -181,7 +220,7 @@ These selectors are implemented in source and are ready for verification on an i
 | Audit and remediation | Add finding and action identifiers, result scope, confirmation state, permission requirements, and structured outcomes. Audit findings and repair results need distinct records. |
 | Benchmark and service workflow | Correlate before and after phases and measurements, label stopped or partial baselines, and preserve run identity across reboot. Expose selected fixes and their outcomes. |
 | QA, reports, and branding | Identify the active run and its selected checks, and distinguish preview, saved, exported, and published states. Correlate the certificate with the results used to generate it. |
-| History, About, and module pages | Verify stable history record identity, filters, and provenance. Expose module availability and reasons. Give standalone module results the same identity and freshness contract as Checks. |
+| History and module pages | Verify stable history record identity, filters, and provenance. Expose module availability and reasons. Give standalone module results the same identity and freshness contract as Checks. About's build and enrollment facts are `about-report-data` (contract 2). |
 
 ## Tests for UI releases
 

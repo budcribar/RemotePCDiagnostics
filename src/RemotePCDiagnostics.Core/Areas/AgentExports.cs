@@ -81,14 +81,16 @@ public static class AgentExports
 
     /// <summary>
     /// What is running now (activity-data, on every page): checks and scans, a group run with the steps still to come, the stress
-    /// suite, a fix, the service workflow and a benchmark pass. <c>busy</c> is true when any of them is. An agent that takes over a
+    /// suite, a fix, an active service-workflow stage and a benchmark pass. A parked review is left out, the same stages
+    /// <see cref="UpdateBlockReason"/> uses. <c>busy</c> is true when any of them is working now. An agent that takes over a
     /// session reads this first, so it can ask the person before stopping anything.
     /// </summary>
     public static string Activity(ActivitySnapshot snapshot) => JsonSerializer.Serialize(BuildActivity(snapshot), Json);
 
     /// <summary>
     /// Why an RPCD update must not start, or null when nothing it would interrupt is running.
-    /// A check, a fix, the service workflow (including while it waits at review), a stress test, or a benchmark.
+    /// A check, a fix, an active service-workflow stage, a stress test, or a benchmark.
+    /// Review, Idle, Done, Cancelled and Failed are not running. A refusal names the stage.
     /// </summary>
     public static string? UpdateBlockReason(ActivitySnapshot s)
     {
@@ -105,8 +107,8 @@ public static class AgentExports
             reasons.Add("A stress test is running.");
         if (s.Fix is not null)
             reasons.Add("A fix is running.");
-        if (s.Workflow is { } flow && !IdleStages.Contains(flow.Stage))
-            reasons.Add("The service workflow is running.");
+        if (s.Workflow is { } flow && Workflow.WorkflowState.IsActiveStage(flow.Stage))
+            reasons.Add($"The service workflow is running ({flow.Stage}).");
         if (s.BenchmarkRunning is not null || s.BenchmarkSettling)
             reasons.Add("A benchmark is running.");
         if (reasons.Count == 0)
@@ -114,12 +116,9 @@ public static class AgentExports
         return string.Join(" ", reasons) + " Wait until it finishes before updating Remote PC Diagnostics.";
     }
 
-    private static readonly HashSet<Workflow.WorkflowStage> IdleStages =
-        [Workflow.WorkflowStage.Idle, Workflow.WorkflowStage.Done, Workflow.WorkflowStage.Cancelled, Workflow.WorkflowStage.Failed];
-
     public static object BuildActivity(ActivitySnapshot s)
     {
-        var workflow = s.Workflow is { } w && !IdleStages.Contains(w.Stage) ? w : null;
+        var workflow = s.Workflow is { } w && Workflow.WorkflowState.IsActiveStage(w.Stage) ? w : null;
         var stress = s.StressSuite is { Finished: false } p ? p : null;
         var benchmark = s.BenchmarkRunning is not null || s.BenchmarkSettling;
         var busy = s.Checks.Count > 0 || s.Sequence is not null || stress is not null || s.Fix is not null || benchmark

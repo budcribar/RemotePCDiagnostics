@@ -22,6 +22,8 @@ internal sealed class RpcdRemoteUpdater : IDisposable
     private readonly string _stagingDirectory;
     private readonly string _statusPath;
     private readonly string _activityPath;
+    private readonly string _sessionActivityPath;
+    private readonly TimeSpan _activityProbeTimeout;
     private readonly string _lockPath;
     private readonly Action<string>? _log;
 
@@ -36,13 +38,17 @@ internal sealed class RpcdRemoteUpdater : IDisposable
         Action<string>? log,
         HttpClient? http = null,
         string? stagingDirectory = null,
-        Func<string?>? configuredServer = null)
+        Func<string?>? configuredServer = null,
+        string? sessionActivityPath = null,
+        TimeSpan? activityProbeTimeout = null)
     {
         _installedVersion = installedVersion;
         _hostRunning = hostRunning;
         _relaunchArguments = relaunchArguments;
         _configuredServer = configuredServer ?? (() => null);
         _log = log;
+        _sessionActivityPath = sessionActivityPath ?? AgentLayout.UpdateActivityPath();
+        _activityProbeTimeout = activityProbeTimeout ?? TimeSpan.FromSeconds(15);
         _ownsHttp = http is null;
         _http = http ?? new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
         {
@@ -78,9 +84,15 @@ internal sealed class RpcdRemoteUpdater : IDisposable
 
     public RpcdUpdateStatus Start(RpcdUpdateRequest request, IReadOnlyList<string>? relaunch, bool trustCallerBusyReason)
     {
-        var now = DateTimeOffset.UtcNow;
+        // A hub command must not trust its own "idle". The page's activity-data is what get_session_status reads.
+        // The app writes that same verdict to the session folder (and, when the admin pipe is up, to the staging file).
+        // On a slow ARM64 box the write can land just after this call, so wait before refusing.
+        string? probeProblem = null;
+        if (!trustCallerBusyReason && _hostRunning())
+            probeProblem = WaitForActivity();
         bool started;
         RpcdUpdateStatus status;
+        var now = DateTimeOffset.UtcNow;
         using (var crossProcess = AcquireLock())
         {
             if (crossProcess is null)
@@ -98,8 +110,15 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             }
             // The other agent process may have started an update, or heard from the app, since this one last looked.
             LoadShared();
-            started = _session.TryBegin(request, _hostRunning(), trustCallerBusyReason, now, out status);
+            now = DateTimeOffset.UtcNow;
+            if (!trustCallerBusyReason && _hostRunning())
+                probeProblem = _session.ActivityDiagnosis(now) is { } again
+                    ? JoinProbe(again, probeProblem)
+                    : null;
+            started = _session.TryBegin(request, _hostRunning(), trustCallerBusyReason, now, probeProblem, out status);
         }
+        if (probeProblem is not null)
+            _log?.Invoke("[rpcd-update] " + probeProblem);
         if (!started)
             return status;
 
@@ -276,13 +295,77 @@ internal sealed class RpcdRemoteUpdater : IDisposable
             if (File.Exists(_statusPath))
                 _session.Adopt(RpcdUpdateStatus.Parse(File.ReadAllText(_statusPath)));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _log?.Invoke($"[rpcd-update] Could not read the saved update status: {ex.Message}");
+        }
+        _ = ReadActivityFiles(DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>
+    /// Waits until the app's activity report is fresh, or the probe time runs out.
+    /// The returned text is the failure, for the log and the refusal detail.
+    /// </summary>
+    private string? WaitForActivity()
+    {
+        var deadline = DateTime.UtcNow + _activityProbeTimeout;
+        string? problem = null;
+        while (true)
+        {
+            problem = ReadActivityFiles(DateTimeOffset.UtcNow);
+            if (problem is null || DateTime.UtcNow >= deadline)
+                return problem;
+            Thread.Sleep(TimeSpan.FromMilliseconds(200));
+        }
+    }
+
+    /// <summary>Null when a fresh report is now held. Otherwise why the files did not confirm the page.</summary>
+    private string? ReadActivityFiles(DateTimeOffset reportedAt)
+    {
+        string? ioProblem = null;
+        RpcdActivityReport? best = null;
+        foreach (var path in new[] { _sessionActivityPath, _activityPath })
+        {
+            var (report, error) = ReadActivityFile(path);
+            if (error is not null)
+                ioProblem = error;
+            if (report is not null && (best is null || report.At >= best.At))
+                best = report;
+        }
+        if (best is not null)
+            _session.ReportActivity(best.BusyReason, best.At);
+        var diagnosis = _session.ActivityDiagnosis(reportedAt);
+        if (diagnosis is null)
+            return null;
+        return JoinProbe(diagnosis, ioProblem);
+    }
+
+    private static (RpcdActivityReport? Report, string? Error) ReadActivityFile(string path)
+    {
         try
         {
-            if (File.Exists(_activityPath) && RpcdActivityReport.Parse(File.ReadAllText(_activityPath)) is { } report)
-                _session.ReportActivity(report.BusyReason, report.At);
+            if (!File.Exists(path))
+                return (null, null);
+            var report = RpcdActivityReport.Parse(File.ReadAllText(path));
+            return report is null
+                ? (null, $"Probe: activity file '{Path.GetFileName(path)}' could not be read.")
+                : (report, null);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (null, $"Probe: could not read '{Path.GetFileName(path)}': {ex.Message}");
+        }
+    }
+
+    private static string JoinProbe(string diagnosis, string? extra)
+    {
+        if (string.IsNullOrWhiteSpace(extra))
+            return diagnosis;
+        if (extra.Contains(diagnosis, StringComparison.Ordinal))
+            return extra.Trim();
+        if (diagnosis.Contains(extra.Trim(), StringComparison.Ordinal))
+            return diagnosis;
+        return diagnosis + " " + extra.Trim();
     }
 
     /// <summary>An exclusive handle on the lock file while one process decides whether to start, or null after a few seconds of waiting.</summary>

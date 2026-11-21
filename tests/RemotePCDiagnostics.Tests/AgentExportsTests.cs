@@ -346,13 +346,13 @@ public class AgentExportsTests
         ], Finished: false, Message: null);
 
         using var doc = JsonDocument.Parse(AgentExports.Activity(new AgentExports.ActivitySnapshot([], StressSuite: progress,
-            Workflow: new AgentExports.WorkflowActivity(Core.Workflow.WorkflowStage.Review, false, null))));
+            Workflow: new AgentExports.WorkflowActivity(Core.Workflow.WorkflowStage.Applying, false, null))));
         var root = doc.RootElement;
 
         Assert.True(root.GetProperty("busy").GetBoolean());
         var stress = root.GetProperty("stressSuite");
         Assert.Equal("Memory", stress.GetProperty("current").GetString());
         Assert.Equal(["DiskStress"], stress.GetProperty("remaining").EnumerateArray().Select(e => e.GetString()).ToList());
-        Assert.Equal("Review", root.GetProperty("workflow").GetProperty("stage").GetString());
+        Assert.Equal("Applying", root.GetProperty("workflow").GetProperty("stage").GetString());
     }
 }

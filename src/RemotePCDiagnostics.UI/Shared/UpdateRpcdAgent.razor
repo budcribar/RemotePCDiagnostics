@@ -1,5 +1,7 @@
+@using RemotePCDiagnostics.Agent.Core
 @using RemotePCDiagnostics.Core.Areas
 @using RemotePCDiagnostics.Core.Benchmarks
+@using RemotePCDiagnostics.Core.Session
 @implements IDisposable
 @inject DiagnosticsService Diagnostics
 @inject ChecksScreenState Screen
@@ -143,18 +145,22 @@
         catch { }
     }
 
-    /// <summary>Sends what is running when it changed, or every time when <paramref name="force"/> (the heartbeat).</summary>
+    /// <summary>
+    /// Publishes what is running. The file is the same verdict as activity-data, written where the agent service can read it
+    /// without the admin pipe. The pipe copy is best-effort: a missed connect must not leave the file unpublished.
+    /// </summary>
     private async Task ReportAsync(bool force = false)
     {
-        if (App.Elevation is not IElevatedCommandBridge bridge)
-            return;
         var reason = AgentExports.UpdateBlockReason(Snapshot());
         if (!force && string.Equals(reason, _lastReported, StringComparison.Ordinal))
+            return;
+        RpcdActivityReport.TryWrite(AgentLayout.UpdateActivityPath(), reason, DateTimeOffset.UtcNow);
+        _lastReported = reason;
+        if (App.Elevation is not IElevatedCommandBridge bridge)
             return;
         try
         {
             await bridge.ReportDiagnosticsActivityAsync(reason);
-            _lastReported = reason;
         }
         catch { }
     }
