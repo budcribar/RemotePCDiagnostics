@@ -100,6 +100,18 @@
 </div>
 
 @code {
+    // Details expand in place, below the check's card. A passed check starts collapsed (its bullets say it all); a warning or a
+    // problem starts open, with its fixes. Once open, details stay open across re-runs (a fix re-runs the check) until collapsed.
+    private readonly Dictionary<string, bool> _detailsOpen = new(StringComparer.OrdinalIgnoreCase);
+    private static bool Collapsible(RowKind k) => k is RowKind.Passed or RowKind.Warning or RowKind.Critical or RowKind.CouldNotRun or RowKind.Blocked;
+    private bool DetailsOpen(string module, RowKind k)
+    {
+        if (_detailsOpen.TryGetValue(module, out var open)) return open;
+        if (k == RowKind.Passed) return false;
+        return _detailsOpen[module] = true;
+    }
+    private void ToggleDetails(string module, RowKind k) => _detailsOpen[module] = !DetailsOpen(module, k);
+
     /// <summary>The fix dialog and result for the integrity scan shown in the detail panel.</summary>
     private RemediationActions? _scanFixUi;
 
@@ -294,9 +306,8 @@
                         var kind = CheckRows.KindOf(r);
                         var label = CheckRows.Label(kind, RunLabel(m));
                         var isSel = string.Equals(Screen.SelectedModule, m.Name, StringComparison.OrdinalIgnoreCase);
-                        var prev = kind == RowKind.NotRun ? LastRun(m) : null;
                         var prog = kind == RowKind.Running ? Diagnostics.GetProgress(m.Name) : null;
-                        var line = kind == RowKind.NotRun ? (prev is { } pv ? $"Last run {pv.LocalTime:g}: {pv.Outcome} · {pv.Summary}" : "Not run") : kind == RowKind.Running ? (string.IsNullOrWhiteSpace(r.Message) || r.Message == "Running..." ? "In progress" : r.Message) : r.Message;
+                        var line = kind == RowKind.NotRun ? "Not run" : kind == RowKind.Running ? (string.IsNullOrWhiteSpace(r.Message) || r.Message == "Running..." ? "In progress" : r.Message) : r.Message;
                         <div @key="mod.Name" class="ct-row @(isSel ? "selected" : "") @(kind == RowKind.Running ? "is-running" : "")" role="button" tabindex="0" aria-pressed="@(isSel ? "true" : "false")" @ref="_rowRefs[mod.Name]"
                              data-testid="checks-row-@m.Name.ToLowerInvariant()" @onclick="() => SelectAndShowAsync(mod)" @onkeydown="e => RowKey(e, mod)" @onkeydown:preventDefault="false">
                             <button class="ct-check" role="checkbox" aria-checked="@(Screen.IsSelected(m.Name) ? "true" : "false")" aria-label="Include @m.DisplayName"
@@ -311,7 +322,7 @@
                                 }
                             </div>
                             <div class="ct-row-side">
-                                <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-status-@m.Name.ToLowerInvariant()">@(prev is not null ? "Earlier result" : label)</span>
+                                <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-status-@m.Name.ToLowerInvariant()">@label</span>
                                 <span class="meta">@SideText(m, r, kind)</span>
                             </div>
                         </div>
@@ -335,38 +346,56 @@
         var kind = CheckRows.KindOf(r);
         var last = kind == RowKind.Cancelled ? Screen.LastCompleted(m.Name) : null;
         var canRun = Screen.CanRunSingle(m);
-        <div class="ct-detail-head" data-check-id="@m.Name" data-run-state="@kind.ToString().ToLowerInvariant()"
+        var history = $"history?module={Uri.EscapeDataString(m.Name)}";
+        var done = kind is not (RowKind.NotRun or RowKind.Running);
+        @* The selected check's card. Not run: a dashed card with the title, "Not run", History and Play, nothing else (earlier
+           results live in History only). After a run: a solid card with a status-coloured left edge, the result's facts as bullets
+           and a Details toggle that expands the full result in place. *@
+        <div class="ct-detail-head ct-card ct-card-@(kind == RowKind.NotRun ? "notrun" : kind == RowKind.Running ? "running" : CheckRows.ChipKind(kind))" data-check-id="@m.Name" data-run-state="@kind.ToString().ToLowerInvariant()"
              data-run-id="@r.RunId" data-result-run-id="@(kind is RowKind.NotRun or RowKind.Running ? null : r.RunId)"
              data-result-source="@(kind == RowKind.NotRun ? (LastRun(m) is null ? "none" : "history") : kind == RowKind.Running ? "pending" : "current")"
              data-completed-at="@(kind is RowKind.NotRun or RowKind.Running ? null : r.Timestamp.ToString("O"))"
              data-run-message="@(kind is RowKind.NotRun or RowKind.Running ? null : AreaReportExport.Text(r.Message, AreaReportExport.MaxTextLength))">
-            <span class="icon-badge"><Icon Name="@Icon.ForModule(m.Name)" /></span>
-            <div class="ct-detail-title">
-                <div class="ct-group-line"><h2 data-testid="checks-detail-title">@m.DisplayName</h2>
-                    <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-detail-status">@CheckRows.Label(kind, RunLabel(m))</span></div>
-                <div class="meta" data-testid="checks-detail-sub">
-                    @if (kind == RowKind.NotRun && LastRun(m) is { } lr) { <span data-testid="checks-detail-lastrun">Not run in this session · last run @lr.LocalTime.ToString("g"): @lr.Outcome · @lr.Summary <a href="@($"history?module={Uri.EscapeDataString(lr.Module)}&run={lr.TimeUtc.UtcTicks}")">View details in History</a></span> }
-                    else if (kind == RowKind.NotRun) { <span>Not run in this session.</span> }
-                    else if (kind == RowKind.Running) { <span>Started @r.Timestamp.ToLocalTime().ToString("t")</span> }
-                    else { <CardList Text="@($"{r.Message} · {r.Timestamp.ToLocalTime():g}")" /> }
-                </div>
-                @if (last is { } l)
-                {
-                    <div class="meta" data-testid="checks-detail-last">Last result before it was cancelled: @CheckRows.Label(CheckRows.KindOf(l.Result), l.RunLabel) · @l.Result.Message · @l.Result.Timestamp.ToLocalTime().ToString("g")</div>
-                }
-                else if (kind == RowKind.Cancelled) { <div class="meta">Earlier results are on the History page.</div> }
+            <div class="ct-card-top">
+                <span class="icon-badge"><Icon Name="@Icon.ForModule(m.Name)" /></span>
+                <h2 data-testid="checks-detail-title">@m.DisplayName</h2>
+                <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-detail-status" title="@(done ? $"Finished {r.Timestamp.ToLocalTime():g}" : null)">@CheckRows.Label(kind, RunLabel(m))</span>
+                <span class="ct-card-actions">
+                    @* History lists every run of this check. *@
+                    <a class="ct-history-link" data-testid="checks-detail-history" data-check-id="@m.Name" href="@history"><Icon Name="hist" Size="14" /> History</a>
+                    @* Stress tests, the security audit and the audio tests have their own Start/Stop (with length) below, so no second start button here. *@
+                    @if (m is ICancellableScan scan && kind == RowKind.Running)
+                    {
+                        <button type="button" class="btn btn-stop ct-run-one" data-testid="checks-cancel-scan" data-action="cancel-check" data-check-id="@m.Name" @onclick="scan.Cancel">Cancel scan</button>
+                    }
+                    else if (!HasOwnStart(m))
+                    {
+                        var runText = kind == RowKind.NotRun ? "Run this check" : "Run again";
+                        <button class="btn btn-outline ct-run-one ct-play" data-testid="checks-run-one" data-check-id="@m.Name" data-action="run-check" data-blocked-by="@Screen.BlockingIntegrityScan(m)?.Name" disabled="@(!canRun)"
+                                aria-label="@runText" title="@(canRun ? runText : ChecksScreenState.UnavailableTooltip)" @onclick="() => { _ = Screen.RunSingleAsync(m); }"><Icon Name="play" Size="14" /></button>
+                    }
+                </span>
             </div>
-            @* Stress tests, the security audit and the audio tests have their own Start/Stop (with length) below, so no second start button here. *@
-            @if (m is ICancellableScan scan && kind == RowKind.Running)
-            {
-                <button type="button" class="btn btn-stop ct-run-one" data-testid="checks-cancel-scan" data-action="cancel-check" data-check-id="@m.Name" @onclick="scan.Cancel">Cancel scan</button>
-            }
-            else if (!HasOwnStart(m))
-            {
-                <button class="btn btn-outline ct-run-one" data-testid="checks-run-one" data-check-id="@m.Name" data-action="run-check" data-blocked-by="@Screen.BlockingIntegrityScan(m)?.Name" disabled="@(!canRun)" title="@(canRun ? null : ChecksScreenState.UnavailableTooltip)" @onclick="() => { _ = Screen.RunSingleAsync(m); }"><Icon Name="play" Size="12" /> Run just this</button>
-            }
+            <div class="ct-detail-title meta" data-testid="checks-detail-sub">
+                @if (kind == RowKind.Running) { <span>Started @r.Timestamp.ToLocalTime().ToString("t")</span> }
+                else if (done)
+                {
+                    <CardList Text="@r.Message" Class="ct-result-facts" TestId="checks-detail-facts" />
+                    @if (last is { } l)
+                    {
+                        <div data-testid="checks-detail-last">Last result before it was cancelled: @CheckRows.Label(CheckRows.KindOf(l.Result), l.RunLabel) · @l.Result.Message</div>
+                    }
+                    @if (Collapsible(kind))
+                    {
+                        var open = DetailsOpen(m.Name, kind);
+                        <button type="button" class="linklike ct-details-toggle" data-testid="checks-details-toggle" data-check-id="@m.Name" aria-expanded="@(open ? "true" : "false")"
+                                aria-controls="ct-detail-body-@m.Name" @onclick="() => ToggleDetails(m.Name, kind)"><span class="ct-caret" aria-hidden="true">@(open ? "▾" : "▸")</span> Details</button>
+                    }
+                }
+            </div>
         </div>
-        <div class="ct-detail-body" @key="m.Name">
+        @* Collapsed details stay in the page (hidden), so the result data is still there for the shop's tools; they expand it to click. *@
+        <div class="ct-detail-body" id="ct-detail-body-@m.Name" @key="m.Name" hidden="@(Collapsible(kind) && !DetailsOpen(m.Name, kind))" data-testid="checks-detail-body">
             @* The Windows integrity scans (DISM, SFC) show their result here, not on an area page: their single repair steps and the fix
                dialog live here too. Mounted while the scan re-runs after a fix, so the fix's result stays visible.
                The other long scans (large files, duplicate files) only share the live card and Cancel while they run: their result is
@@ -427,11 +456,14 @@
                     </details>
                 }
             }
+            else if (kind == RowKind.NotRun && !HasOwnStart(m))
+            {
+                @* Not run: the head's Play button is the only call to action, so no "run the check" hint here too. *@
+            }
             else
             {
                 <ModuleDetailsView DiagnosticModule="m" />
             }
         </div>
     };
-
 }
