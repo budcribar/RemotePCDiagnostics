@@ -377,7 +377,7 @@ internal static class AgentAdminHost
     }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static IDisposable? CreateWindowsSensorProvider(ILogger log, out Func<CancellationToken, Task<SensorSnapshot?>>? reader)
+    internal static IDisposable? CreateWindowsSensorProvider(ILogger log, out Func<CancellationToken, Task<SensorSnapshot?>>? reader)
     {
         var lazyProvider = new LazySensorProvider(log);
         lazyProvider.PrewarmInBackground();
