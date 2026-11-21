@@ -186,10 +186,16 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             AllowedClientSid = Win32Session.GetActiveUserSid(),
             ConnectTimeout = TimeSpan.FromSeconds(60),
         };
+        // The app reads temperatures and fans through this pipe, as it does through the elevated helper.
+        IDisposable? sensorProvider = null;
+        Func<CancellationToken, Task<RemotePCDiagnostics.Core.Sensors.SensorSnapshot?>>? sensorReader = null;
+        if (OperatingSystem.IsWindows())
+            sensorProvider = AgentAdminHost.CreateWindowsSensorProvider(pipeLog, out sensorReader);
         var pipeServer = new RemotePCDiagnostics.Core.Session.AdminPipeServer(
             serverOptions,
             new RemotePCDiagnostics.Core.Osquery.SystemProcessLauncher(),
             log: pipeLog,
+            sensorReader: sensorReader,
             selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, pipeLog, token, RelaunchAfterSetup),
             // The app's own install folder (the one this service just started it from) holds the HardeningKitty it ships.
             securityAuditor: RemotePCDiagnostics.Core.Security.SecurityAuditModule.ElevatedRunner(workDir, pipeLog),
@@ -235,7 +241,11 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
                 }
             }
             catch (OperationCanceledException) { }
-            finally { pipeServer.Dispose(); }
+            finally
+            {
+                pipeServer.Dispose();
+                sensorProvider?.Dispose();
+            }
         });
 
         return (launched, null);
@@ -422,7 +432,7 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
             _current = next;
             if (pipeOptions is not null)
                 pipeOptions.ExpectedClientPid = next.Id; // the pipe now accepts the new copy, and only it
-            log?.Invoke($"{DateTimeOffset.Now:O} [agent] The app restarted itself for session {sessionId} (pid {parentId} -> {next.Id}); following the new copy.");
+            log?.Invoke($"The app restarted itself for session {sessionId} (pid {parentId} -> {next.Id}); following the new copy.");
             return true;
         }
 
