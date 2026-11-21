@@ -70,6 +70,9 @@ public sealed class AgentSessionOptions
 
     /// <summary>The latest update progress, or the one named by request id. Null when this process has no updater.</summary>
     public Func<string, UpdateRpcdProgress?>? ReadUpdateRpcd { get; init; }
+
+    /// <summary>Persists a per-agent token assigned by the relay on first enrollment (writes secured agent.json).</summary>
+    public Action<string>? SaveAgentToken { get; init; }
 }
 
 /// <summary>
@@ -571,6 +574,7 @@ public sealed class AgentHubWorker(
         {
             MachineId = config.MachineId,
             EnrollmentKey = config.Key ?? "",
+            AgentToken = config.AgentToken ?? "",
             MachineName = platform.MachineName,
             OsVersion = platform.GetOsVersion(),
             SignedInUser = platform.GetActiveSignedInUser(),
@@ -663,6 +667,23 @@ public sealed class AgentHubWorker(
 
                     case HubCommand.BodyOneofCase.UpdateRpcdStatus:
                         _ = HandleUpdateRpcdStatusAsync(command.UpdateRpcdStatus, WriteMessageAsync, token);
+                        break;
+
+                    case HubCommand.BodyOneofCase.AssignAgentToken:
+                        var assigned = command.AssignAgentToken?.AgentToken?.Trim();
+                        if (!string.IsNullOrEmpty(assigned))
+                        {
+                            config.AgentToken = assigned;
+                            try
+                            {
+                                _options.SaveAgentToken?.Invoke(assigned);
+                                Log("Saved per-agent credential for this computer.");
+                            }
+                            catch (Exception ex)
+                            {
+                                Log($"Failed to persist per-agent credential: {ex.Message}");
+                            }
+                        }
                         break;
                 }
             }

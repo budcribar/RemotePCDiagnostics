@@ -1011,6 +1011,66 @@ public class AgentHubWorkerTests
             }
         }
     }
+
+    [Fact]
+    public void AgentConfig_AgentToken_RoundTrips_And_Clears_When_Key_Or_Server_Changes()
+    {
+        var original = new AgentConfig
+        {
+            MachineId = Guid.NewGuid().ToString("D"),
+            Server = "https://relay.example:34544",
+            Key = "rpd_live_key1",
+            AgentToken = "rpd_agt_secret_1",
+        };
+        var parsed = AgentConfig.Parse(original.ToJson());
+        Assert.NotNull(parsed);
+        Assert.Equal("rpd_agt_secret_1", parsed!.AgentToken);
+
+        // In-place upgrade keeps the token when server & key stay the same.
+        var upgraded = AgentConfig.ForInstall(parsed, new AgentArgs(AgentCommand.Install));
+        Assert.Equal("rpd_agt_secret_1", upgraded.AgentToken);
+
+        // Re-enrolling with a different key clears the old token.
+        var rekeyed = AgentConfig.ForInstall(parsed, new AgentArgs(AgentCommand.Install, Key: "rpd_live_key2"));
+        Assert.Equal("", rekeyed.AgentToken);
+    }
+
+    [Fact]
+    public async Task Hub_Sends_And_Persists_Assigned_AgentToken()
+    {
+        var cfg = new AgentConfig
+        {
+            MachineId = Guid.NewGuid().ToString("D"),
+            Server = "https://relay.example:34544",
+            Key = "rpd_live_key1",
+            AgentToken = "rpd_agt_initial",
+        };
+        var fakeClient = new FakeAgentHubClient();
+        var platform = new FakeAgentPlatform();
+        string? savedToken = null;
+        var worker = new AgentHubWorker(cfg, platform, new AgentSessionOptions
+        {
+            HeartbeatInterval = TimeSpan.FromMinutes(10),
+            SaveAgentToken = t => savedToken = t,
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var runTask = worker.RunSingleConnectionAsync(fakeClient, cts.Token);
+
+        var helloMsg = await fakeClient.ReadAgentMessageAsync(cts.Token);
+        Assert.Equal(AgentMessage.BodyOneofCase.Hello, helloMsg.BodyCase);
+        Assert.Equal("rpd_agt_initial", helloMsg.Hello.AgentToken);
+
+        await fakeClient.SendHubCommandAsync(new HubCommand
+        {
+            AssignAgentToken = new AssignAgentTokenCommand { AgentToken = "rpd_agt_rotated_2" },
+        }, cts.Token);
+        fakeClient.CompleteServerStream();
+        await runTask;
+
+        Assert.Equal("rpd_agt_rotated_2", cfg.AgentToken);
+        Assert.Equal("rpd_agt_rotated_2", savedToken);
+    }
 }
 
 public class RestartedCopyTests

@@ -15,6 +15,8 @@ public sealed class AgentConfig
     [JsonPropertyName("lifetime")] public string Lifetime { get; set; } = "persistent";
     /// <summary>Shop group slug when <c>--group</c> or a later launch supplied one. Empty when unknown. Not the enrollment key.</summary>
     [JsonPropertyName("group")] public string Group { get; set; } = "";
+    /// <summary>Per-agent token assigned by the relay authority on first enrollment and presented on every subsequent connect.</summary>
+    [JsonPropertyName("agentToken")] public string AgentToken { get; set; } = "";
 
     /// <summary>Anything other than an explicit "unattended" means ask (the safe reading of a damaged file).</summary>
     [JsonIgnore] public ConsentCeiling ConsentCeiling => string.Equals(Consent, "unattended", StringComparison.OrdinalIgnoreCase) ? ConsentCeiling.Unattended : ConsentCeiling.Ask;
@@ -38,6 +40,7 @@ public sealed class AgentConfig
             c.Consent = ConsentText(c.ConsentCeiling);
             c.Lifetime = LifetimeText(c.AgentLifetime);
             c.Group = AgentLayout.NormalizeShopGroup(c.Group) ?? "";
+            c.AgentToken = (c.AgentToken ?? "").Trim();
             return c;
         }
         catch (JsonException) { return null; }
@@ -73,15 +76,24 @@ public sealed class AgentConfig
     /// The configuration <c>install</c> writes: the machine id is kept from an existing file (so a reinstall is the same computer on
     /// the admin site), options given on the command line win, then the existing values, then the defaults (consent ask, persistent).
     /// </summary>
-    public static AgentConfig ForInstall(AgentConfig? existing, AgentArgs args, Guid? fallbackMachineId = null) => new()
+    public static AgentConfig ForInstall(AgentConfig? existing, AgentArgs args, Guid? fallbackMachineId = null)
     {
-        MachineId = existing?.MachineId ?? (fallbackMachineId ?? ResolveDefaultMachineId()).ToString("D"),
-        Server = args.Server ?? existing?.Server ?? AgentCommandLine.DefaultServer,
-        Key = args.Key ?? existing?.Key ?? "",
-        Consent = ConsentText(args.Consent ?? existing?.ConsentCeiling ?? ConsentCeiling.Ask),
-        Lifetime = LifetimeText(args.Lifetime ?? existing?.AgentLifetime ?? AgentLifetime.Persistent),
-        Group = AgentLayout.NormalizeShopGroup(args.Group) ?? AgentLayout.NormalizeShopGroup(existing?.Group) ?? "",
-    };
+        var server = args.Server ?? existing?.Server ?? AgentCommandLine.DefaultServer;
+        var key = args.Key ?? existing?.Key ?? "";
+        var keepToken = existing != null
+            && string.Equals(server, existing.Server, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(key, existing.Key, StringComparison.Ordinal);
+        return new()
+        {
+            MachineId = existing?.MachineId ?? (fallbackMachineId ?? ResolveDefaultMachineId()).ToString("D"),
+            Server = server,
+            Key = key,
+            Consent = ConsentText(args.Consent ?? existing?.ConsentCeiling ?? ConsentCeiling.Ask),
+            Lifetime = LifetimeText(args.Lifetime ?? existing?.AgentLifetime ?? AgentLifetime.Persistent),
+            Group = AgentLayout.NormalizeShopGroup(args.Group) ?? AgentLayout.NormalizeShopGroup(existing?.Group) ?? "",
+            AgentToken = keepToken ? (existing?.AgentToken ?? "").Trim() : "",
+        };
+    }
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true)]
