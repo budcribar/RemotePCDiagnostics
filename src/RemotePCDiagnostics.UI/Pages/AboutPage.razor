@@ -1,9 +1,15 @@
 @page "/about"
+@implements IDisposable
 @inject ISessionContext Session
 @inject AppServices App
+@inject AgentModeMonitor AgentLink
+@using RemotePCDiagnostics.Agent.Core
+@using RemotePCDiagnostics.Core.Areas
 @using RemotePCDiagnostics.Core.Plugins
 
-<div class="toolbar"><span class="icon-badge page-icon"><Icon Name="pc" Size="20" /></span><h1 data-rpcd-page="about" data-rpcd-contract="@BrowserContract.About" data-testid="about-title">About Remote PC Diagnostics</h1></div>
+<div data-rpcd-page="about" data-rpcd-contract="@BrowserContract.About">
+<AgentData TestId="about-report-data" Json="@ReportJson" />
+<div class="toolbar"><span class="icon-badge page-icon"><Icon Name="pc" Size="20" /></span><h1 data-testid="about-title">About Remote PC Diagnostics</h1></div>
 <div class="about-accent-line" aria-hidden="true"></div>
 <section class="card about-card">
     <h2>Version @AppBuildInfo.Release</h2>
@@ -73,6 +79,7 @@
         @if (_unsignedError is not null) { <div class="notice notice-error">@_unsignedError</div> }
     </section>
 }
+</div>
 
 @code {
     private bool _unsigned = UnsignedModulesSetting.IsOn();
@@ -91,4 +98,78 @@
 
     private IReadOnlyList<PluginRecord> Plugins =>
         App.Plugins?.Records.Where(r => r.Source == RemotePCDiagnostics.Core.ModuleSource.Plugin).ToList() ?? [];
+
+    private AboutMachineFacts? _machine;
+    private DateTimeOffset _machineAt;
+
+    private string ReportJson => AboutReport.ToJson(BuildInput());
+
+    protected override void OnInitialized()
+    {
+        AgentLink.Changed += OnChanged;
+        if (App.AppUpdate is { } updates)
+            updates.Changed += OnChanged;
+    }
+
+    public void Dispose()
+    {
+        AgentLink.Changed -= OnChanged;
+        if (App.AppUpdate is { } updates)
+            updates.Changed -= OnChanged;
+    }
+
+    private void OnChanged()
+    {
+        _machine = null;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private AboutReportInput BuildInput()
+    {
+        var machine = Machine();
+        var prefs = App.Preferences?.Current;
+        var snap = AgentLink.Current;
+        var connected = snap.Kind == AgentModeKind.Connected;
+        var check = App.AppUpdate?.LastCheck;
+        return new AboutReportInput
+        {
+            AppVersion = AppBuildInfo.Release,
+            InformationalVersion = AppBuildInfo.Version,
+            ProcessArchitecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
+            OsArchitecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),
+            OsVersion = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
+            MachineName = Session.MachineName,
+            SessionMode = Session.Mode,
+            AgentConnected = connected,
+            AgentVersion = machine.AgentVersion,
+            AgentServiceStatus = machine.AgentServiceStatus,
+            ShopGroup = AboutReport.FirstShopGroup(Session.Group, prefs?.ShopGroupSlug, connected ? snap.ShopGroup : null, machine.ShopGroup),
+            ShopName = prefs?.Branding?.ShopName,
+            AgentId = machine.AgentId,
+            InstallPath = AppContext.BaseDirectory,
+            UserName = Environment.UserName,
+            UserProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            LastUpdateCheck = check?.AtUtc,
+            UpdateAvailable = check?.UpdateAvailable == true,
+            LatestVersion = check?.LatestVersion,
+            UpdateError = check?.Error,
+        };
+    }
+
+    private AboutMachineFacts Machine()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (_machine is not null && now >= _machineAt && now - _machineAt < TimeSpan.FromSeconds(5))
+            return _machine;
+        try
+        {
+            _machine = AboutMachineFacts.Read();
+            _machineAt = now;
+            return _machine;
+        }
+        catch
+        {
+            return _machine ?? AboutMachineFacts.Empty;
+        }
+    }
 }

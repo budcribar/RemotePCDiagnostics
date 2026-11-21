@@ -48,9 +48,16 @@ public interface IStoreUpdateBackend
     Task<AppUpdateResult> DownloadAndInstallAsync(Action<AppUpdateProgress>? progress = null, CancellationToken ct = default);
 }
 
+/// <summary>
+/// One finished update check. <c>Error</c> is set only when the check itself failed, and it is a fixed sentence, never the exception text, a URL or a response body.
+/// </summary>
+public sealed record AppUpdateCheck(DateTimeOffset AtUtc, bool UpdateAvailable, string? LatestVersion, string? Error);
+
 public interface IAppUpdateService
 {
     AppUpdateInfo? Latest { get; }
+    /// <summary>The last completed check in this process, or null when none has finished.</summary>
+    AppUpdateCheck? LastCheck { get; }
     event Action? Changed;
 
     Task<AppUpdateInfo> CheckForUpdateAsync(bool force = false, CancellationToken ct = default);
@@ -440,9 +447,11 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
     private readonly SemaphoreSlim _checkLock = new(1, 1);
 
     private AppUpdateInfo? _latest;
+    private AppUpdateCheck? _lastCheck;
     private DateTimeOffset _checkedAtUtc;
 
     public AppUpdateInfo? Latest => Volatile.Read(ref _latest);
+    public AppUpdateCheck? LastCheck => Volatile.Read(ref _lastCheck);
     public event Action? Changed;
 
     public AppUpdateService(
@@ -479,6 +488,7 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
                 return _latest;
 
             AppUpdateInfo info;
+            var failed = false;
             if (_storeBackend is { IsPackagedStoreApp: true })
             {
                 try
@@ -494,6 +504,7 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _log?.Warn($"[app-update] Microsoft Store update check failed: {ex.Message}");
+                    failed = true;
                     info = new AppUpdateInfo(false, _installedVersion, null, AppInstallKind.MicrosoftStore);
                 }
             }
@@ -520,12 +531,17 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _log?.Warn($"[app-update] Release feed check failed: {ex.Message}");
+                    failed = true;
                     info = new AppUpdateInfo(false, _installedVersion, null, AppInstallKind.Standalone);
                 }
             }
 
+            var checkedAt = DateTimeOffset.UtcNow;
             Volatile.Write(ref _latest, info);
-            _checkedAtUtc = DateTimeOffset.UtcNow;
+            // The About page publishes this. Keep the exception, the feed URL and the installer URLs out of it.
+            Volatile.Write(ref _lastCheck, new AppUpdateCheck(checkedAt, info.UpdateAvailable, failed ? null : info.LatestVersion,
+                failed ? "Update check failed." : null));
+            _checkedAtUtc = checkedAt;
             Changed?.Invoke();
             return info;
         }
