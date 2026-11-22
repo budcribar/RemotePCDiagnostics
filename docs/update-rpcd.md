@@ -73,7 +73,7 @@ The agent downloads from GitHub itself. The relay must not send an installer URL
 
 ### Parked review
 
-`cancel_workflow` in RemoteWebViewAdmin (`HardwareInventoryWorkflow.CancelWorkflowAsync`) returns `not_running` unless the stage is RestartBefore, BeforeBenchmark, Applying, RestartAfter, AfterBenchmark, or Reporting. Review is not in that list, and the Review page does not show `wf-cancel`. That cancel aborts a restart and turns automatic sign-in off. It is the wrong action for a review that has not started.
+`cancel_workflow` in RemoteWebViewAdmin (`HardwareInventoryWorkflow.CancelWorkflowAsync`) returns `not_running` unless the stage is RestartBefore, BeforeBenchmark, Applying, RestartAfter, AfterBenchmark, or Reporting. Review is not in that list, and the Review page does not show `wf-cancel`. That cancel aborts a pending restart. It is the wrong action for a review that has not started.
 
 This app clears a parked review in three ways, all of which call `WorkflowService.DismissParkedReview` and return the stage to Idle:
 

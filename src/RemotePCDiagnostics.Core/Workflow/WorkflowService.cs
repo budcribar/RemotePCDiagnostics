@@ -9,9 +9,6 @@ using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Workflow;
 
-/// <summary>Credentials for the temporary automatic sign-in (used once, never saved by this app).</summary>
-public sealed record AutoLogonRequest(string User, string Domain, string Password);
-
 /// <summary>
 /// Runs the whole service call with one decision from the tech. State is saved after every step, and the app is started again
 /// (elevated, same session) after each restart, so the workflow carries on by itself.
@@ -249,62 +246,31 @@ public sealed class WorkflowService(
         prefs?.ForgetFixChoices(State.Fixes.Select(f => f.Id).ToList()); // back to the defaults, also for next time
     }
 
-    public AutoLogonStatus AutoLogonStatus() => sys.GetAutoLogonStatus();
+    public RestartSignInStatus RestartSignIn() => sys.GetRestartSignIn();
 
-    /// <summary>Automatic sign-in and continuing after a restart are set up by the Agent: the app never runs as administrator.</summary>
-    public const string NeedsAgentMessage = "Nothing was changed. Turn on Admin Repair Mode so the Agent can set up automatic sign-in and the restarts, then try again.";
+    /// <summary>Continuing after a restart is set up by the Agent: the app never runs as administrator.</summary>
+    public const string NeedsAgentMessage = "Nothing was changed. Turn on Admin Repair Mode so the Agent can set up the restarts, then try again.";
 
     // ---- step 2: the tech's one click; everything after runs by itself ----
 
-    /// <summary>Starts the unattended part. <paramref name="signIn"/> null = the PC signs in by itself already, or the client will sign in.</summary>
-    public async Task<string?> StartAsync(AutoLogonRequest? signIn, CancellationToken ct = default)
+    /// <summary>
+    /// Starts the unattended part. Windows signs the PC back in after each restart where it can (shutdown /g); otherwise someone signs in
+    /// and the workflow carries on from there. No password is asked for or stored.
+    /// </summary>
+    public async Task<string?> StartAsync(CancellationToken ct = default)
     {
         if (State.Stage != WorkflowStage.Review) return "Run the checks first.";
-        AutoLogonBackup? backup = null;
-        var alreadyOn = false;
-        if (signIn is not null)
-        {
-            var helloOnly = false; try { helloOnly = sys.GetAutoLogonStatus().BlockedByWindowsHello; } catch { }
-            bool valid;
-            try { valid = await sys.ValidateCredentialsAsync(signIn.User, signIn.Domain, signIn.Password, ct).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
-            {
-                Log("check password: " + ex.Message);
-                return NeedsAgentMessage;
-            }
-            if (!valid) return helloOnly ? "That password didn't work for this account (on a Windows Hello-only PC where you've never signed in with your password, Windows may not have the password cached locally — tick Skip below so the client signs in with their PIN). Nothing was changed." : "That password didn't work for this account. Nothing was changed.";
-            try { backup = await sys.EnableAutoLogonAsync(signIn.User, signIn.Domain, signIn.Password, RestartsInWorkflow, ct).ConfigureAwait(false); }
-            catch (Exception ex)
-            {
-                Log("enable auto sign-in: " + ex);
-                return "Windows didn't allow turning on automatic sign-in. Nothing was changed.";
-            }
-        }
-        else
-        {
-            try { alreadyOn = sys.GetAutoLogonStatus().AlreadyAutomatic; } catch (Exception ex) { Log("auto sign-in status: " + ex.Message); }
-        }
+        var signsIn = false;
+        try { signsIn = sys.GetRestartSignIn().SignsInBySelf; } catch (Exception ex) { Log("restart sign-in status: " + ex.Message); }
         if (!await sys.RegisterResumeAsync(ct).ConfigureAwait(false))
-        {
-            if (backup is not null)
-            {
-                try { await sys.DisableAutoLogonAsync(backup, CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception ex)
-                {
-                    Log("disable auto sign-in: " + ex);
-                    return "Couldn't set the app to continue after the restart, and automatic sign-in couldn't be turned off again: turn it off by hand (netplwiz).";
-                }
-            }
             return "Couldn't set the app to continue after the restart. " + NeedsAgentMessage;
-        }
         Save(s => s with
         {
-            Stage = WorkflowStage.RestartBefore, StartedUtc = DateTimeOffset.UtcNow, Actor = Actor, AutoLogonEnabled = backup is not null, AutoLogonBackup = backup, Error = null,
-            AutoLogonUsed = backup is not null, AutoLogonUser = signIn is null ? null : $"{signIn.Domain}\\{signIn.User}", AutoLogonAlreadyOn = alreadyOn,
-            AutoLogonRestoredUtc = null, AutoLogonRestoreError = null, ResumeTaskCreated = true, ResumeTaskRemoved = null, Restarts = [], RestartAborted = false,
+            Stage = WorkflowStage.RestartBefore, StartedUtc = DateTimeOffset.UtcNow, Actor = Actor, Error = null, SignsInAfterRestart = signsIn,
+            ResumeTaskCreated = true, ResumeTaskRemoved = null, Restarts = [], RestartAborted = false,
             Outcomes = [], ChangesTracked = journal is not null, ReportPath = null, ReportHtml = null,
         });
-        Event(LogLevel.Information, $"Service workflow started\r\nActor: {Actor}\r\nFixes approved: {State.Approved.Count} of {State.Fixes.Count}\r\nAutomatic sign-in: {(backup is not null ? "on (2 sign-ins)" : "off")}");
+        Event(LogLevel.Information, $"Service workflow started\r\nActor: {Actor}\r\nFixes approved: {State.Approved.Count} of {State.Fixes.Count}\r\nWindows signs back in after restarts: {(signsIn ? "yes" : "no, someone signs in")}");
         return await RestartAsync("Restarting so the before benchmark starts from a fresh boot.", ct).ConfigureAwait(false);
     }
 
@@ -383,13 +349,13 @@ public sealed class WorkflowService(
             }
             if (stage is WorkflowStage.Reporting)
             {
-                // Clean up first, so the report can say whether automatic sign-in and the restart task are really gone.
+                // Clean up first, so the report can say whether the restart task is really gone.
                 await CleanupAsync(token).ConfigureAwait(false);
                 Note("Writing the client report…");
                 Save(s => s with { Stage = WorkflowStage.Done });
                 var path = WriteReport();
                 Note(path is null ? "Done. The report is shown here (it couldn't be saved as a file)." : $"Done. Report saved to {path}");
-                Event(State.AutoLogonRestoreError is null && State.ResumeTaskRemoved != false ? LogLevel.Information : LogLevel.Warning,
+                Event(State.ResumeTaskRemoved != false ? LogLevel.Information : LogLevel.Warning,
                     $"Service workflow finished\r\nActor: {State.Actor}\r\n{bench.Comparison.OverallText}\r\nApplied: {State.Outcomes.Count(o => o.Success && !o.Skipped)} · Failed: {State.Outcomes.Count(o => !o.Success && !o.Skipped)} · Skipped: {State.Outcomes.Count(o => o.Skipped)}\r\n{CleanupText()}\r\nReport: {path ?? "(not saved)"}");
             }
         }
@@ -575,7 +541,7 @@ public sealed class WorkflowService(
     public Task<string?> RestartNowAsync(CancellationToken ct = default) =>
         WaitingForRestart ? RestartAsync("Restarting now…", ct) : Task.FromResult<string?>("Nothing is waiting for a restart.");
 
-    /// <summary>Stops the workflow: aborts a pending restart, removes automatic sign-in and the restart task. Fixes already applied stay (use Undo).</summary>
+    /// <summary>Stops the workflow: aborts a pending restart and removes the restart task. Fixes already applied stay (use Undo).</summary>
     public async Task CancelAsync()
     {
         var wasRunning = State.IsRunning;
@@ -741,7 +707,7 @@ public sealed class WorkflowService(
         Event(LogLevel.Warning, $"Service workflow failed\r\n{message}\r\n{CleanupText()}\r\nReport: {path ?? "(not saved)"}");
     }
 
-    /// <summary>Removes the restart task and turns automatic sign-in off again, recording whether each really worked (for the report).</summary>
+    /// <summary>Removes the restart task, recording whether it really went (for the report).</summary>
     private async Task CleanupAsync(CancellationToken ct)
     {
         if (State.ResumeTaskRemoved != true) // also when nothing was registered: removing a missing task is harmless
@@ -752,21 +718,10 @@ public sealed class WorkflowService(
             Save(s => s with { ResumeTaskRemoved = removed });
             if (!removed) Note($"Couldn't remove the scheduled task \"{ResumeTaskName}\". Delete it in Task Scheduler.");
         }
-        if (State.AutoLogonEnabled)
-        {
-            try { await sys.DisableAutoLogonAsync(State.AutoLogonBackup, CancellationToken.None).ConfigureAwait(false); Save(s => s with { AutoLogonEnabled = false, AutoLogonRestoredUtc = DateTimeOffset.UtcNow, AutoLogonRestoreError = null }); }
-            catch (Exception ex)
-            {
-                Log("disable auto sign-in: " + ex);
-                Save(s => s with { AutoLogonRestoreError = ex.Message });
-                Note("Automatic sign-in could NOT be turned off. Turn it off by hand (netplwiz), or Windows keeps signing in without a password.");
-            }
-        }
     }
 
     private string CleanupText() =>
-        (State.AutoLogonUsed ? State.AutoLogonRestoreError is null ? "Automatic sign-in: turned off again" : "Automatic sign-in: COULD NOT BE TURNED OFF (" + State.AutoLogonRestoreError + ")" : "Automatic sign-in: not used")
-        + "\r\n" + (State.ResumeTaskRemoved == false ? $"Scheduled task \"{ResumeTaskName}\": COULD NOT BE REMOVED" : "Scheduled task: removed");
+        State.ResumeTaskRemoved == false ? $"Scheduled task \"{ResumeTaskName}\": COULD NOT BE REMOVED" : "Scheduled task: removed";
 
     /// <summary>
     /// Builds the client report from the current state, saves it, and keeps the exact HTML in the state so the page shows the same report

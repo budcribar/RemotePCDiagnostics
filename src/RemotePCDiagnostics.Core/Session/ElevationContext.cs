@@ -350,14 +350,6 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         return await client.RunSecurityAuditAsync(timeout, ct).ConfigureAwait(false);
     }
 
-    public Task<bool> ValidateCredentialsAsync(string user, string domain, string password, CancellationToken ct = default) =>
-        ConnectedClient().ValidateCredentialsAsync(user, domain, password, ct);
-
-    public Task<AutoLogonBackup> EnableAutoLogonAsync(string user, string domain, string password, int logons, CancellationToken ct = default) =>
-        ConnectedClient().EnableAutoLogonAsync(user, domain, password, logons, ct);
-
-    public Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) =>
-        ConnectedClient().DisableAutoLogonAsync(backup, ct);
 
     public Task<IModuleHostConnection> StartModuleHostAsync(string module, CancellationToken ct = default) =>
         ConnectedClient().StartModuleHostAsync(module, ct);

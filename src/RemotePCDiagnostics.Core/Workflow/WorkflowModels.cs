@@ -57,17 +57,14 @@ public sealed record FixChange(Guid JournalId, string Text, Changes.UndoSupport 
 /// <summary>A restart the workflow asked Windows for. <paramref name="BootedUtc"/> is filled in once the app is running again on the new boot.</summary>
 public sealed record WorkflowRestart(string Why, DateTimeOffset RequestedUtc, bool Accepted, DateTimeOffset? BootedUtc = null);
 
-/// <summary>Winlogon values before the workflow turned on automatic sign-in (restored at the end). Never contains a password.</summary>
-public sealed record AutoLogonBackup(string? AutoAdminLogon, string? DefaultUserName, string? DefaultDomainName, string? AutoLogonCount, int? PasswordLessBuildVersion = null);
-
-/// <summary>Whether this PC can sign in automatically for the workflow's restarts.</summary>
-public sealed record AutoLogonStatus(string UserName, string Domain, bool AlreadyAutomatic, bool BlockedByWindowsHello, string? Note = null,
-    string? MicrosoftAccountEmail = null)
+/// <summary>
+/// Whether Windows signs this PC back in by itself after the workflow's restarts (shutdown /g): the PC's own automatic sign-in, or
+/// Windows' "Use my sign-in info to automatically finish setting up after an update" (Automatic Restart Sign-On).
+/// <paramref name="RestartSignOn"/> is null when it can't be told. The workflow never asks for or stores a password.
+/// </summary>
+public sealed record RestartSignInStatus(bool AlreadyAutomatic, bool? RestartSignOn)
 {
-    public bool CanUse => !AlreadyAutomatic;
-
-    /// <summary>What the sign-in box starts with: the Microsoft account email when the signed-in account is one, else the local user name.</summary>
-    public string PrefillUser => MicrosoftAccountEmail is { } e && e.Contains('@') ? e.Trim() : UserName;
+    public bool SignsInBySelf => AlreadyAutomatic || RestartSignOn == true;
 }
 
 /// <summary>Everything the workflow keeps across restarts (%ProgramData%\RemotePCDiagnostics\state\workflow.json, which only administrators can change). No passwords.</summary>
@@ -90,16 +87,8 @@ public sealed record WorkflowState
     public DateTimeOffset? FinishedUtc { get; init; }
     /// <summary>When the last restart was requested; used to tell whether the PC really restarted.</summary>
     public DateTimeOffset? RestartRequestedUtc { get; init; }
-    public bool AutoLogonEnabled { get; init; }
-    public AutoLogonBackup? AutoLogonBackup { get; init; }
-    /// <summary>The workflow turned automatic sign-in on (for <see cref="AutoLogonUser"/>), whether or not it's off again.</summary>
-    public bool AutoLogonUsed { get; init; }
-    public string? AutoLogonUser { get; init; }
-    /// <summary>The PC already signed in by itself before the workflow (nothing was changed).</summary>
-    public bool AutoLogonAlreadyOn { get; init; }
-    public DateTimeOffset? AutoLogonRestoredUtc { get; init; }
-    /// <summary>Set when turning automatic sign-in off again failed: the PC may still sign in without a password.</summary>
-    public string? AutoLogonRestoreError { get; init; }
+    /// <summary>When the workflow started, Windows was set to sign the PC back in by itself after each restart (nothing was changed).</summary>
+    public bool SignsInAfterRestart { get; init; }
     /// <summary>The "continue after sign-in" scheduled task was created; <see cref="ResumeTaskRemoved"/> = whether it's gone again (null = not tried yet).</summary>
     public bool ResumeTaskCreated { get; init; }
     public bool? ResumeTaskRemoved { get; init; }
@@ -190,13 +179,8 @@ public interface IWorkflowSystem
     Task AbortRestartAsync(CancellationToken ct);
     /// <summary>Time since Windows started.</summary>
     TimeSpan Uptime { get; }
-    AutoLogonStatus GetAutoLogonStatus();
-    /// <summary>Checks the password (in the Agent: Windows Hello-only sign-in is paused for the check, which needs administrator).</summary>
-    Task<bool> ValidateCredentialsAsync(string user, string domain, string password, CancellationToken ct = default);
-    /// <summary>Turns on automatic sign-in for <paramref name="logons"/> sign-ins (in the Agent; password kept as an LSA secret). Returns the previous settings.</summary>
-    Task<AutoLogonBackup> EnableAutoLogonAsync(string user, string domain, string password, int logons, CancellationToken ct = default);
-    /// <summary>Turns automatic sign-in off again (in the Agent), removes the stored password and restores the previous settings.</summary>
-    Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default);
+    /// <summary>How Windows signs back in after a restart. Read-only; needs no administrator.</summary>
+    RestartSignInStatus GetRestartSignIn();
     /// <summary>Where the client report for <paramref name="when"/> is saved (full path).</summary>
     string ReportFile(DateTimeOffset when);
     /// <summary>Where a 1-page buyer Hardware QA certificate is saved (full path).</summary>

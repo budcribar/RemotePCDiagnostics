@@ -22,7 +22,8 @@ public static class WorkflowExport
     };
 
     /// <summary>Sign-in readiness on the review screen; no names or passwords.</summary>
-    public sealed record SignIn(bool Automatic, bool CredentialsEntered, bool ClientSignsIn, bool CanStart);
+    /// <summary>Whether Windows signs back in by itself after the restarts (<paramref name="RestartSignOn"/> null = can't tell). No password is involved.</summary>
+    public sealed record SignIn(bool Automatic, bool? RestartSignOn, bool CanStart);
 
     private static string? V(string? v) => AreaReportExport.Text(v, AreaReportExport.MaxValueLength);
     private static string? T(string? v) => AreaReportExport.Text(v, AreaReportExport.MaxTextLength);
@@ -47,7 +48,6 @@ public static class WorkflowExport
         finishedAt = s.FinishedUtc?.ToString("O"),
         restartRequestedAt = s.RestartRequestedUtc?.ToString("O"),
         restarts = s.Restarts.Count,
-        autoLogonLeftOn = s.AutoLogonRestoreError is not null ? true : (bool?)null,
         checks = s.Stage == WorkflowStage.Checking
             ? checks.Select(c => new
             {
@@ -95,7 +95,7 @@ public static class WorkflowExport
             afterRestart = r.AfterRestart ? true : (bool?)null,
         }).ToList(),
         signIn = s.Stage == WorkflowStage.Review
-            ? new { automatic = signIn.Automatic, credentialsEntered = signIn.CredentialsEntered, clientSignsIn = signIn.ClientSignsIn, canStart = signIn.CanStart }
+            ? new { automatic = signIn.Automatic, restartSignOn = signIn.RestartSignOn, canStart = signIn.CanStart }
             : null,
         reportSaved = s.ReportPath is not null ? true : (bool?)null,
     };

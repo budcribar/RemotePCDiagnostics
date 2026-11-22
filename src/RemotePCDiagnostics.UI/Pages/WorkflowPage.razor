@@ -99,7 +99,6 @@
 @if (s.Error is { } err) { <p class="notice notice-error" data-testid="wf-error">@err</p> }
 @if (_message is { } m) { <p class="notice" data-testid="wf-message">@m</p> }
 
-@if (s.AutoLogonRestoreError is not null) { <p class="notice notice-error" data-testid="wf-autologon-left-on">Automatic sign-in could NOT be turned off: this PC may still sign in without a password. Turn it off by hand (netplwiz, or Sysinternals Autologon &gt; Disable).</p> }
 @if (s.ResumeTaskRemoved == false) { <p class="notice notice-error" data-testid="wf-task-left">The scheduled task "@WorkflowService.ResumeTaskName" couldn't be removed. Delete it in Task Scheduler.</p> }
 
 @switch (s.Stage)
@@ -213,22 +212,21 @@
         }
         <section class="card wf-section" data-testid="wf-signin">
             <div class="card-head"><strong>Signing in after each restart</strong></div>
-            @if (_logon is { AlreadyAutomatic: true }) { <p>This PC already signs in by itself, so nothing is needed.</p> }
+            @if (_signIn is { SignsInBySelf: true })
+            {
+                <p data-testid="wf-signs-in-by-itself">The workflow restarts the PC twice, and Windows signs it back in by itself each time (screen locked), so nobody needs to be at the PC. No password is asked for or stored.</p>
+            }
             else
             {
-                @if (_logon is { BlockedByWindowsHello: true, Note: { } note }) { <p class="notice" data-testid="wf-hello-note">@note</p> }
-                <p class="meta">The workflow restarts the PC twice. To carry on without anyone at the PC, Windows can sign in automatically for exactly those two restarts.
-                    The password is checked first, stored only the way Windows' own automatic sign-in stores it, and removed when the workflow ends or is cancelled.</p>
-                <label class="wf-field">Account <input data-testid="wf-user" @bind="_user" placeholder="user name" /></label>
-                <label class="wf-field">Password <input type="@(_showPassword ? "text" : "password")" data-testid="wf-password" @ref="_passwordBox" @bind="_password" autocomplete="off" />
-                    <button type="button" class="btn-small" data-testid="wf-password-toggle" aria-label="@(_showPassword ? "Hide password" : "Show password")" title="@(_showPassword ? "Hide password" : "Show password")" aria-pressed="@(_showPassword ? "true" : "false")" @onclick="() => _showPassword = !_showPassword"><Icon Name="@(_showPassword ? "eye-off" : "eye")" Size="12" /></button></label>
-                <p class="meta">@(_logon?.MicrosoftAccountEmail is not null ? "This PC signs in with a Microsoft account, so the box shows its email address. " : "Microsoft account? Use the account's email address. ")The password must be the account's password, not the PIN.</p>
-                <label><input type="checkbox" data-testid="wf-client-signs-in" @bind="_clientSignsIn" /> Skip: the client will sign in after each restart</label>
+                <p class="notice" data-testid="wf-restart-sign-on-off">@(_signIn?.RestartSignOn == false
+                    ? "Windows won't sign this PC back in by itself: \"Use my sign-in info to automatically finish setting up after an update\" is off (Settings > Accounts > Sign-in options)."
+                    : "Windows may not sign this PC back in by itself after a restart.")
+                    The workflow restarts the PC twice. If Windows stops at the sign-in screen, the client signs in and the workflow carries on.</p>
             }
         </section>
         @if (_startError is { } se) { <p class="notice notice-error" role="alert" data-testid="wf-signin-error">@se</p> }
         <div class="toolbar">
-            <button class="btn btn-primary" data-testid="wf-go" disabled="@(_starting || !CanStart)" @onclick="Start"><Icon Name="play" Size="12" /> @(_starting ? "Starting…" : $"Start: restart, benchmark, apply {approved} fix{(approved == 1 ? "" : "es")}, report")</button>
+            <button class="btn btn-primary" data-testid="wf-go" disabled="@_starting" @onclick="Start"><Icon Name="play" Size="12" /> @(_starting ? "Starting…" : $"Start: restart, benchmark, apply {approved} fix{(approved == 1 ? "" : "es")}, report")</button>
             <button class="btn-small" data-testid="wf-start-over" @onclick="StartOver">Start over</button>
             <button type="button" hidden data-testid="wf-dismiss" @onclick="DismissReview">Dismiss review</button>
         </div>
@@ -447,18 +445,14 @@
     private string? _publishedReportShortHash;
     private string? _publishReportError;
 
-    private AutoLogonStatus? _logon;
-    private string _user = "", _password = "";
-    private bool _clientSignsIn, _starting, _showPassword, _adminActionBusy;
+    private RestartSignInStatus? _signIn;
+    private bool _starting, _adminActionBusy;
     private string? _message, _startError;
-    private ElementReference _passwordBox;
 
-    /// <summary>The page's state for browser agents (workflow-data). Sign-in is reported as yes/no only.</summary>
+    /// <summary>The page's state for browser agents (workflow-data).</summary>
     private string WorkflowJson(WorkflowState s) => WorkflowExport.ToJson(s, Flow.Busy, Flow.WaitingForRestart, Flow.Status ?? (s.Stage == WorkflowStage.Checking ? "Running checks…" : null),
         _message, Flow.CheckItems, _openAreas,
-        new WorkflowExport.SignIn(_logon is { AlreadyAutomatic: true }, _user.Length > 0 && _password.Length > 0, _clientSignsIn, CanStart && !_starting));
-
-    private bool CanStart => _logon is { AlreadyAutomatic: true } || _clientSignsIn || (_user.Length > 0 && _password.Length > 0);
+        new WorkflowExport.SignIn(_signIn is { SignsInBySelf: true }, _signIn?.RestartSignOn, !_starting));
 
     protected override void OnInitialized()
     {
@@ -466,7 +460,7 @@
         Bench.Changed += OnChanged;
         if (Prefs is not null) Prefs.Changed += OnChanged;
         if (App.Elevation is { } elev) elev.Changed += OnChanged;
-        LoadLogon();
+        LoadSignIn();
         foreach (var a in Prefs?.Current.WorkflowOpenAreas ?? []) _openAreas.Add(a);
         Nav.LocationChanged += OnLeftWorkflow;
         if (Flow.State.Stage == WorkflowStage.Idle && !Flow.Busy && Flow.HasCompletedCheckModuleResults)
@@ -481,9 +475,9 @@
         Flow.DismissParkedReview();
     }
 
-    private void LoadLogon()
+    private void LoadSignIn()
     {
-        try { _logon = Flow.AutoLogonStatus(); _user = _logon.PrefillUser; } catch { _logon = null; }
+        try { _signIn = Flow.RestartSignIn(); } catch { _signIn = null; }
     }
 
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
@@ -496,8 +490,6 @@
         Bench.Changed -= OnChanged;
         if (Prefs is not null) Prefs.Changed -= OnChanged;
         if (App.Elevation is { } elev) elev.Changed -= OnChanged;
-        _password = "";
-        _showPassword = false;
     }
 
     private async Task EnableWorkflowAdminModeAsync()
@@ -587,27 +579,8 @@
     private async Task Start()
     {
         _starting = true; _message = null; _startError = null;
-        try
-        {
-            AutoLogonRequest? req = null;
-            if (_logon is { CanUse: true } && !_clientSignsIn)
-            {
-                // "user@outlook.com" = Microsoft account; otherwise a local or domain account on this PC's domain.
-                var user = _user.Trim();
-                var domain = user.Contains('@') ? "MicrosoftAccount" : user.Contains('\\') ? user[..user.IndexOf('\\')] : _logon.Domain;
-                if (user.Contains('\\')) user = user[(user.IndexOf('\\') + 1)..];
-                req = new AutoLogonRequest(user, domain, _password);
-            }
-            // A failed start is shown next to the Start button (not at the top of the page), and focus goes back to the password box.
-            _startError = await Flow.StartAsync(req);
-        }
-        finally { _password = ""; _showPassword = false; _starting = false; }
-        if (_startError is not null)
-        {
-            StateHasChanged();
-            await Task.Yield();
-            try { await _passwordBox.FocusAsync(preventScroll: false); } catch { }
-        }
+        try { _startError = await Flow.StartAsync(); } // a failed start is shown next to the Start button
+        finally { _starting = false; }
     }
 
     private async Task RestartNow() => _message = await Flow.RestartNowAsync();

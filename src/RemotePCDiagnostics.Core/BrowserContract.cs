@@ -8,7 +8,7 @@ namespace RemotePCDiagnostics.Core;
 public static class BrowserContract
 {
     public const int Dashboard = 1;
-    public const int Workflow = 1;
+    public const int Workflow = 2;
     public const int Checks = 4;
     public const int Stress = 1;
     public const int Interactive = 1;

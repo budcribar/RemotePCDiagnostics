@@ -17,7 +17,7 @@ public class WorkflowExportTests
         var state = new WorkflowState { Stage = WorkflowStage.Review, Fixes = [Temp, Startup], Approved = [Temp.Id], Findings = ["Low disk space"] };
 
         var json = WorkflowExport.ToJson(state, busy: false, waitingForRestart: false, status: null, message: null, [], ["Storage"],
-            new WorkflowExport.SignIn(Automatic: false, CredentialsEntered: true, ClientSignsIn: false, CanStart: true));
+            new WorkflowExport.SignIn(Automatic: false, RestartSignOn: false, CanStart: true));
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
@@ -31,7 +31,8 @@ public class WorkflowExportTests
         Assert.False(fixes[1].GetProperty("defaultOn").GetBoolean());
         Assert.Equal("medium", fixes[1].GetProperty("risk").GetString());
         Assert.True(root.GetProperty("signIn").GetProperty("canStart").GetBoolean());
-        Assert.True(root.GetProperty("signIn").GetProperty("credentialsEntered").GetBoolean());
+        Assert.False(root.GetProperty("signIn").GetProperty("automatic").GetBoolean());
+        Assert.False(root.GetProperty("signIn").GetProperty("restartSignOn").GetBoolean());
         Assert.DoesNotContain("password", json, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -47,7 +48,7 @@ public class WorkflowExportTests
         };
 
         using var doc = JsonDocument.Parse(WorkflowExport.ToJson(state, true, false, "Applying fixes (1 of 2)", null, [], [],
-            new WorkflowExport.SignIn(false, false, false, false)));
+            new WorkflowExport.SignIn(false, false, false)));
         var root = doc.RootElement;
 
         Assert.True(root.GetProperty("running").GetBoolean());
@@ -64,7 +65,7 @@ public class WorkflowExportTests
         var state = new WorkflowState { Stage = WorkflowStage.Checking };
         var checks = new List<WorkflowCheckItem> { new("DriveHealth", "Drive health", DiagnosticStatus.Running, "Checking", 1, 2) };
 
-        using var doc = JsonDocument.Parse(WorkflowExport.ToJson(state, true, false, null, null, checks, [], new WorkflowExport.SignIn(false, false, false, false)));
+        using var doc = JsonDocument.Parse(WorkflowExport.ToJson(state, true, false, null, null, checks, [], new WorkflowExport.SignIn(false, false, false)));
         var check = doc.RootElement.GetProperty("checks")[0];
 
         Assert.Equal("running", check.GetProperty("status").GetString());
