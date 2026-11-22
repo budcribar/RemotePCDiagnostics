@@ -118,15 +118,15 @@ public class NewChecksTests
     [Fact]
     public void BatteryStatus_FromRow_CutsOsqueryChemistryToItsFourLetters()
     {
-        Assert.Equal("LION", BatteryStatus.FromRow(new Dictionary<string, string> { ["chemistry"] = "LION\u0018τ" }).Chemistry);
-        Assert.Equal("LiP", BatteryStatus.FromRow(new Dictionary<string, string> { ["chemistry"] = "LiP" }).Chemistry);
+        Assert.Equal("LION", RemotePCDiagnostics.Legacy.OsqueryBatteryPowerSource.FromRow(new Dictionary<string, string> { ["chemistry"] = "LION\u0018τ" }).Chemistry);
+        Assert.Equal("LiP", RemotePCDiagnostics.Legacy.OsqueryBatteryPowerSource.FromRow(new Dictionary<string, string> { ["chemistry"] = "LiP" }).Chemistry);
     }
 
     [Fact]
     public void BatteryStatus_FromRow_UndoesOsqueryTwelveVoltConversion()
     {
         // osquery on Windows reports 42,000 mWh as 42000 / 12 = 3500 "mAh" (BUDSLAPTOP's battery report shows 42,000 mWh design capacity).
-        var b = BatteryStatus.FromRow(new Dictionary<string, string>
+        var b = RemotePCDiagnostics.Legacy.OsqueryBatteryPowerSource.FromRow(new Dictionary<string, string>
         {
             ["model"] = "L21D3PF0", ["manufacturer"] = "SMP", ["chemistry"] = "LiP", ["state"] = "Charging",
             ["percent_remaining"] = "100", ["designed_capacity"] = "3500", ["max_capacity"] = "3305", ["cycle_count"] = "120",
@@ -147,7 +147,7 @@ public class NewChecksTests
         Assert.Equal(60, wornBattery.HealthPercent);
         Assert.Equal(40, wornBattery.WearPercent);
 
-        var plan = BatteryPowerModule.ParsePowerPlan("Power Scheme GUID: a1841308-3541-4fab-bc81-f71556f20b4a  (Power saver)");
+        var plan = RemotePCDiagnostics.Legacy.OsqueryBatteryPowerSource.ParsePowerPlan("Power Scheme GUID: a1841308-3541-4fab-bc81-f71556f20b4a  (Power saver)");
         Assert.Equal("Power saver", plan);
 
         var rep = BatteryPowerModule.Build([wornBattery], plan);

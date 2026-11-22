@@ -82,6 +82,75 @@
       "exitCode": 0,
       "stdOut": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)\r\n",
       "stdErr": ""
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\Microsoft\\Windows\\Storage",
+      "query": "SELECT DeviceId, UniqueId, FriendlyName, SerialNumber, MediaType, BusType, HealthStatus, OperationalStatus, Size FROM MSFT_PhysicalDisk",
+      "rows": [
+        {
+          "DeviceId": "0",
+          "UniqueId": "<serial:5a5a01>",
+          "FriendlyName": "SAMPLE NVMe SSD 512GB",
+          "SerialNumber": "<serial:5a5a02>",
+          "MediaType": 4,
+          "BusType": 17,
+          "HealthStatus": 0,
+          "OperationalStatus": [
+            2
+          ],
+          "Size": 512110190592
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\Microsoft\\Windows\\Storage",
+      "query": "SELECT DiskNumber, DriveLetter FROM MSFT_Partition",
+      "rows": [
+        {
+          "DiskNumber": 0,
+          "DriveLetter": "\u0000"
+        },
+        {
+          "DiskNumber": 0,
+          "DriveLetter": "C"
+        },
+        {
+          "DiskNumber": 0,
+          "DriveLetter": "\u0000"
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\Microsoft\\Windows\\Storage",
+      "query": "SELECT DeviceId, Temperature, Wear, ReadErrorsUncorrected, WriteErrorsUncorrected, PowerOnHours FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '0'",
+      "rows": [
+        {
+          "DeviceId": "0",
+          "Temperature": 38,
+          "Wear": 3,
+          "ReadErrorsUncorrected": 0,
+          "WriteErrorsUncorrected": 0,
+          "PowerOnHours": 1200
+        }
+      ]
+    },
+    {
+      "kind": "process",
+      "file": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$ErrorActionPreference='SilentlyContinue';$d=@(Get-PhysicalDisk | ForEach-Object { $r=$_ | Get-StorageReliabilityCounter;$l=(@(Get-Partition -DiskNumber $_.DeviceId | Where-Object { $_.DriveLetter } | ForEach-Object { [string]$_.DriveLetter }) -join '');[pscustomobject]@{Letters=$l;Id=[string]$_.UniqueId;Name=[string]$_.FriendlyName;Serial=[string]$_.SerialNumber;MediaType=[string]$_.MediaType;BusType=[string]$_.BusType;Health=[string]$_.HealthStatus;Operational=[string]($_.OperationalStatus -join ', ');Size=[string]$_.Size;Temperature=[string]$r.Temperature;Wear=[string]$r.Wear;ReadErrors=[string]$r.ReadErrorsUncorrected;WriteErrors=[string]$r.WriteErrorsUncorrected;PowerOnHours=[string]$r.PowerOnHours } });ConvertTo-Json -InputObject $d -Compress"
+      ],
+      "exitCode": 0,
+      "stdOut": "[{\"Letters\":\"C\",\"Id\":\"<serial:5a5a01>\",\"Name\":\"SAMPLE NVMe SSD 512GB\",\"Serial\":\"<serial:5a5a02>\",\"MediaType\":\"SSD\",\"BusType\":\"NVMe\",\"Health\":\"Healthy\",\"Operational\":\"OK\",\"Size\":\"512110190592\",\"Temperature\":\"38\",\"Wear\":\"3\",\"ReadErrors\":\"0\",\"WriteErrors\":\"0\",\"PowerOnHours\":\"1200\"}]",
+      "stdErr": ""
     }
   ]
 }

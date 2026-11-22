@@ -1,0 +1,155 @@
+{
+  "moduleName": "DriveHealth",
+  "status": "Ok",
+  "message": "1 drive · healthy",
+  "report": {
+    "cards": [
+      {
+        "id": "drive0",
+        "title": "SAMPLE NVMe SSD 512GB",
+        "level": "Ok",
+        "headline": "Healthy",
+        "meta": "SSD · 476.9 GB · 38°C · 3% worn",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Overall",
+              "Healthy"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Status reported by Windows",
+              "Healthy"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Health trend",
+              "First recorded health check for this drive"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Type",
+              "SSD"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Connection",
+              "NVMe"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Size",
+              "476.9 GB"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Temperature",
+              "38°C"
+            ],
+            "detail": "The drive's overall temperature as Windows reports it (NVMe composite). Temperatures & fans shows the same overall value and, when one runs hotter, the drive's hottest internal sensor (often the controller)."
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Life used",
+              "3%"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Uncorrected read errors",
+              "0"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Uncorrected write errors",
+              "0"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Hours powered on",
+              "1,200"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Last optimized",
+              "Not reported"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Serial number",
+              "<serial:5a5a02>"
+            ]
+          }
+        ],
+        "actions": [
+          {
+            "kind": "CleanTempFiles",
+            "buttonText": "Clean up temporary files",
+            "target": "",
+            "targetLabel": "Temporary files & Recycle Bin"
+          },
+          {
+            "kind": "OptimizeSsd",
+            "buttonText": "Optimize / Retrim SSD",
+            "target": "C",
+            "targetLabel": "SAMPLE NVMe SSD 512GB"
+          }
+        ],
+        "preserveRowOrder": false
+      }
+    ],
+    "summary": "1 drive · healthy",
+    "status": "Ok",
+    "cancelled": false,
+    "keyMetrics": [
+      {
+        "id": "drive.wear",
+        "label": "Life used",
+        "value": 3,
+        "unit": "%",
+        "better": "LowerIsBetter"
+      },
+      {
+        "id": "drive.errors",
+        "label": "Uncorrected errors",
+        "value": 0,
+        "unit": "",
+        "better": "LowerIsBetter"
+      },
+      {
+        "id": "drive.temp",
+        "label": "Temperature",
+        "value": 38,
+        "unit": "°C",
+        "better": "LowerIsBetter"
+      }
+    ]
+  }
+}

@@ -25,7 +25,6 @@ public class WindowsReadOnlyTests
     public static TheoryData<string, bool> ReadOnlyScripts => new()
     {
         { "ProblemDevices", false },      // empty when no device has a problem
-        { "DriveHealth", true },
         { "NetAdapterStatistics", false }, // empty without a connected adapter
         { "FastStartupState", true },
         { "IpConfig", true },

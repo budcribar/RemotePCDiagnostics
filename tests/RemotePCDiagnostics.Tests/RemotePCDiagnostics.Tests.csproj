@@ -36,6 +36,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\RemotePCDiagnostics.Legacy\RemotePCDiagnostics.Legacy.csproj" />
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.UI\RemotePCDiagnostics.UI.csproj" />
     <!-- The modules that ship with the app (src/Modules), referenced so their code can be tested directly. -->

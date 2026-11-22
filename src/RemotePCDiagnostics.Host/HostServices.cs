@@ -53,6 +53,12 @@ public static class HostServices
         services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = L<OsqueryRunner>() }));
         // WMI is read by the Agent, never by the app (it has the rights some classes need).
         services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(sp => new RemotePCDiagnostics.Core.DataSources.AgentWmiSource(sp.GetRequiredService<IElevatedCommandBridge>()));
+        services.AddSingleton<IBatteryPowerSource>(sp => new WmiBatteryPowerSource(sp.GetRequiredService<RemotePCDiagnostics.Core.DataSources.IWmiSource>()));
+        services.AddSingleton<IDriveSource>(sp => new WmiDriveSource(sp.GetRequiredService<RemotePCDiagnostics.Core.DataSources.IWmiSource>()));
+#if RPCD_STORE
+        // The Store edition may have no Agent: then it reads as a standard user, with the legacy readers.
+        RemotePCDiagnostics.Legacy.LegacyReaders.AddLegacyFallbacks(services);
+#endif
         // Read-only EC fan diagnostic, active only on Lenovo IdeaPad 1 15ALC7 (82R4) with PawnIO installed.
         services.AddSingleton<IEcFanSource>(_ => LenovoEcFanSource.Create(loggerFactory.CreateLogger(typeof(LenovoEcFanSource).FullName!)));
         services.AddSingleton<ISensorProvider>(sp => new LhmSensorProvider(
@@ -325,7 +331,7 @@ public sealed class HostQueryBackendSlot
         Value ??= new HostQueryBackend
         {
             Sensors = sp.GetService<ISensorProvider>(), Osquery = sp.GetService<OsqueryRunner>(), Commands = sp.GetService<SystemCommandRunner>(),
-            Retrims = sp.GetService<IRetrimHistory>(),
+            Retrims = sp.GetService<IRetrimHistory>(), Drives = sp.GetService<IDriveSource>(),
         };
     }
 }

@@ -194,7 +194,7 @@ public sealed class HostQueriesTests : IDisposable
         public Task<ModuleAvailability> SensorsAvailabilityAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<SensorSnapshot> ReadSensorsAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<OsqueryQueryResult> SelectAsync(string sql, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<ProcessResult?> ReadDrivesAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<RemotePCDiagnostics.Core.Areas.DriveList?> ReadDrivesAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyDictionary<char, RetrimRecord>> ReadRetrimsAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<WinEvent>?> QueryEventsAsync(string log, string xpath, int max, CancellationToken ct = default)
         {
@@ -290,7 +290,7 @@ public sealed class HostQueriesTests : IDisposable
     public async Task Drive_health_answers_from_the_real_module_host()
     {
         var module = Bundled("RemotePCDiagnostics.Modules.DriveHealth.dll");
-        var backend = Backend() with { Commands = new SystemCommandRunner(new FakeOsquery(DriveRows)) };
+        var backend = Backend() with { Drives = new RowsDriveSource(DriveRows) };
         using var proxy = new UserModeModuleProxy(module, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: new HostQueryServer(backend));
         Assert.True((await proxy.CheckAvailabilityAsync()).IsAvailable);
         var steps = new List<string>();
@@ -310,7 +310,7 @@ public sealed class HostQueriesTests : IDisposable
     {
         var module = Bundled("RemotePCDiagnostics.Modules.DriveHealth.dll");
         Assert.True(module.Manifest.PerDevice);
-        var backend = Backend() with { Commands = new SystemCommandRunner(new FakeOsquery(TwoDrives)) };
+        var backend = Backend() with { Drives = new RowsDriveSource(TwoDrives) };
         var inner = new UserModeModuleProxy(module, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: new HostQueryServer(backend));
         using var proxy = Assert.IsType<PerDeviceModuleProxy>(PerDeviceModuleProxy.For(inner));
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
@@ -357,7 +357,7 @@ public sealed class HostQueriesTests : IDisposable
     public async Task Two_overlapping_runs_both_finish()
     {
         var module = Bundled("RemotePCDiagnostics.Modules.DriveHealth.dll");
-        var backend = Backend() with { Commands = new SystemCommandRunner(new FakeOsquery(DriveRows)) };
+        var backend = Backend() with { Drives = new RowsDriveSource(DriveRows) };
         using var proxy = new UserModeModuleProxy(module, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: new HostQueryServer(backend));
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var a = proxy.RefreshAsync(null, cts.Token);
@@ -375,7 +375,7 @@ public sealed class HostQueriesTests : IDisposable
     {
         var module = Bundled("RemotePCDiagnostics.Modules.DriveHealth.dll");
         Assert.False(module.Manifest.KeepAlive);
-        var backend = Backend() with { Commands = new SystemCommandRunner(new FakeOsquery(DriveRows)) };
+        var backend = Backend() with { Drives = new RowsDriveSource(DriveRows) };
         using var proxy = new UserModeModuleProxy(module, new ProcessModuleHostLauncher(AppContext.BaseDirectory), hostQueries: new HostQueryServer(backend))
             { IdleExit = TimeSpan.FromMilliseconds(200) };
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
@@ -660,4 +660,11 @@ public sealed class HostQueryDispatchTests
         Assert.Equal("cancelled", host.AnswerTo(1)?.Error);
         Assert.Contains(host.Written, w => w.Type == "stop");
     }
+}
+
+/// <summary>The app's drive source, answering with fixed rows.</summary>
+internal sealed class RowsDriveSource(string rows) : IDriveSource
+{
+    public Task<DriveList?> ReadDrivesAsync(CancellationToken ct) =>
+        Task.FromResult<DriveList?>(new(OsqueryJson.ParseRows(rows).Select(DriveHealth.FromRow).ToList()));
 }

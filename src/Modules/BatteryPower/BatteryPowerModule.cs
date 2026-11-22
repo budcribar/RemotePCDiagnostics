@@ -1,21 +1,14 @@
 using System.Globalization;
-using RemotePCDiagnostics.Core.DataSources;
-using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>
-/// Battery health (wear level, cycle count, charge state) and the active Windows power plan. With <paramref name="wmi"/> both come from WMI
-/// (<see cref="BatteryReader"/>, <c>Win32_PowerPlan</c>); without it from osquery <c>battery</c> and <c>powercfg /getactivescheme</c>.
-/// Both paths stay until record and replay has shown on real PCs that they agree.
+/// Battery health (wear level, cycle count, charge state) and the active Windows power plan, read from <paramref name="source"/>: WMI through
+/// the Agent in the app, and in the Store edition the legacy osquery + powercfg reader when no Agent is connected.
 /// </summary>
-public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner? commands = null, IWmiSource? wmi = null) : OsqueryAreaModuleBase(runner)
+public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log = null) : AreaModuleBase(log)
 {
-    public const string PowerPlanNamespace = @"root\cimv2\power";
-    public const string ActivePlanSql = "SELECT ElementName FROM Win32_PowerPlan WHERE IsActive = TRUE";
-
     public const string ModuleName = ModuleSlugs.BatteryPower;
-    public const string BatterySql = "SELECT * FROM battery;";
     public const int LowBatteryHealthPercent = BatteryStatus.LowHealthPercent;
 
     public override string Name => ModuleName;
@@ -23,48 +16,14 @@ public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner
     public override string DisplayName => "Battery & power plan";
     protected override string FailedMessage => "Couldn't read battery and power settings on this PC.";
 
-    public static string PowerCfg => SystemCommandRunner.SystemTool("powercfg.exe");
-
-    /// <summary>With WMI the check doesn't need the bundled osquery.</summary>
-    public override Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) =>
-        wmi is not null ? Task.FromResult(ModuleAvailability.Available) : base.CheckAvailabilityAsync(cancellationToken);
-
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        var total = commands is not null || wmi is not null ? 2 : 1;
-        progress.ReportStep(1, total, "Checking battery health…");
-        var batteries = await BatteryReader.ReadAsync(wmi, Runner.Exists ? Runner : null, ct).ConfigureAwait(false);
-        string? plan = null;
-        if (total == 2)
-        {
-            progress.ReportStep(2, total, "Checking active power plan…");
-            plan = await ReadPowerPlanAsync(ct).ConfigureAwait(false);
-        }
-
+        progress.ReportStep(1, 2, "Checking battery health…");
+        var batteries = await source.ReadBatteriesAsync(ct).ConfigureAwait(false);
+        progress.ReportStep(2, 2, "Checking active power plan…");
+        var plan = await source.ReadActivePlanAsync(ct).ConfigureAwait(false);
         if (batteries is null && plan is null) return AreaReport.Failed(FailedMessage);
         return Build(batteries, plan);
-    }
-
-    private async Task<string?> ReadPowerPlanAsync(CancellationToken ct)
-    {
-        if (wmi is not null)
-        {
-            var q = await wmi.QueryAsync(PowerPlanNamespace, ActivePlanSql, ct).ConfigureAwait(false);
-            if (q.Rows?.Select(r => r.Str("ElementName")).FirstOrDefault(n => n.Length > 0) is { } name) return name;
-        }
-        if (commands is null) return null;
-        var pr = await commands.RunAsync(PowerCfg, ["/getactivescheme"], ct).ConfigureAwait(false);
-        return pr is { ExitCode: 0 } ? ParsePowerPlan(pr.StdOut) : null;
-    }
-
-    public static string? ParsePowerPlan(string? stdout)
-    {
-        if (string.IsNullOrWhiteSpace(stdout)) return null;
-        var open = stdout.LastIndexOf('(');
-        var close = stdout.LastIndexOf(')');
-        if (open >= 0 && close > open + 1)
-            return stdout[(open + 1)..close].Trim();
-        return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
     }
 
     public static AreaReport Build(IReadOnlyList<BatteryStatus>? batteries, string? powerPlan)

@@ -205,7 +205,7 @@ public class GraphicsDriverCrashesTests
                 [new Dictionary<string, string> { ["device_name"] = "NVIDIA GeForce RTX 3060", ["provider"] = "NVIDIA", ["version"] = "32.0.15.6094", ["date"] = "2026-09-12" }];
             return Task.FromResult(new RemotePCDiagnostics.Core.Osquery.OsqueryQueryResult(sql, rows, null));
         }
-        public Task<RemotePCDiagnostics.Core.Osquery.ProcessResult?> ReadDrivesAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<RemotePCDiagnostics.Core.Areas.DriveList?> ReadDrivesAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyDictionary<char, RetrimRecord>> ReadRetrimsAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<WinEvent>?> QueryEventsAsync(string log, string xpath, int max, CancellationToken ct = default) =>
             Task.FromResult(xpath == GraphicsDriverCrashes.SystemQuery ? Resets

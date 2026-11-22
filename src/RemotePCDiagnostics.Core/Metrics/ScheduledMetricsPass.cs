@@ -71,8 +71,8 @@ public sealed class CoreMetricsProbes(string? appFolder, Func<CancellationToken,
 
     private async Task<IReadOnlyList<DiagnosticResult>> DrivesAsync(CancellationToken ct)
     {
-        var module = new DriveHealthModule(new SystemCommandRunner(log: log), new OsqueryRunner(appFolder),
-            historyStore: new DriveHealthHistoryStore(ProtectedState.PathFor("drive_health_history.json"), log));
+        var module = new DriveHealthModule(new WmiDriveSource(wmi ?? new DataSources.SystemWmiSource(log)),
+            historyStore: new DriveHealthHistoryStore(ProtectedState.PathFor("drive_health_history.json"), log), log: log);
         var detection = await module.DetectAsync(ct).ConfigureAwait(false);
         var list = new List<DiagnosticResult>();
         foreach (var instance in detection.Instances)
@@ -85,7 +85,7 @@ public sealed class CoreMetricsProbes(string? appFolder, Func<CancellationToken,
 
     private async Task<IReadOnlyList<DiagnosticResult>> BatteryAsync(CancellationToken ct)
     {
-        var batteries = await BatteryReader.ReadAsync(wmi ?? new DataSources.SystemWmiSource(log), null, ct).ConfigureAwait(false);
+        var batteries = await BatteryReader.ReadWmiAsync(wmi ?? new DataSources.SystemWmiSource(log), ct).ConfigureAwait(false);
         if (batteries is null) return [CouldNotRun.Result(ModuleSlugs.BatteryPower, "Couldn't read the battery.")];
         if (batteries.FirstOrDefault() is not { } b) return []; // no battery: nothing to track
         var worn = b.HealthPercent is < BatteryStatus.LowHealthPercent;

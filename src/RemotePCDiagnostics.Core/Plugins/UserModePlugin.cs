@@ -48,6 +48,8 @@ public static class UserModePlugin
         services.AddSingleton(new Osquery.OsqueryRunner(baseDirectory: appDirectory, options: new Osquery.OsqueryOptions { Log = log }));
         services.AddSingleton(new Areas.SystemCommandRunner(log: log));
         services.AddSingleton<DataSources.IWmiSource>(new DataSources.SystemWmiSource(log));
+        services.AddSingleton<Areas.IBatteryPowerSource>(sp => new Areas.WmiBatteryPowerSource(sp.GetRequiredService<DataSources.IWmiSource>()));
+        services.AddSingleton<Areas.IDriveSource>(sp => new Areas.WmiDriveSource(sp.GetRequiredService<DataSources.IWmiSource>()));
     }
 
     private sealed class Context(string pluginId, ILogger? log) : IPluginContext

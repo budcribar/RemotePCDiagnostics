@@ -6,6 +6,7 @@ using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.DataSources;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Recording;
+using RemotePCDiagnostics.Legacy;
 
 namespace RemotePCDiagnostics.Tests.Replay;
 
@@ -56,10 +57,17 @@ internal sealed class ReplayedPc(MachineRecording recording)
     public SystemCommandRunner Commands => new(Replay.Launcher, isProcessElevated: () => false);
     public IWmiSource Wmi => Replay.Wmi;
 
-    /// <summary>The check as the app runs it now (WMI).</summary>
-    public BatteryPowerModule BatteryPower() => new(Osquery, Commands, Wmi);
-    /// <summary>The old path (osquery and powercfg), kept until parity is shown on real PCs.</summary>
-    public BatteryPowerModule BatteryPowerOld() => new(Osquery, Commands);
+    /// <summary>The check as the app runs it (WMI, through the Agent).</summary>
+    public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi));
+    /// <summary>The Store edition without an Agent (osquery and powercfg).</summary>
+    public BatteryPowerModule BatteryPowerOld() => new(new OsqueryBatteryPowerSource(Osquery, Commands));
+
+    /// <summary>DriveHealth on WMI (in the app, the Agent's). The clock is the recording's, and nothing is saved.</summary>
+    public DriveHealthModule DriveHealth() => Drives(new WmiDriveSource(Wmi));
+    /// <summary>The Store edition without an Agent: the Get-PhysicalDisk PowerShell script, then osquery disk_info.</summary>
+    public DriveHealthModule DriveHealthOld() => Drives(new PowerShellDriveSource(Commands, Osquery));
+    private DriveHealthModule Drives(IDriveSource source) =>
+        new(source, clock: () => recording.CapturedAt, historyStore: new DriveHealthHistoryStore(), volumes: () => []);
 
     public bool Has(Func<RecordedCall, bool> match) => recording.Calls.Any(match);
 }

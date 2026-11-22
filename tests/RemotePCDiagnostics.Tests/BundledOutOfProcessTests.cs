@@ -39,6 +39,8 @@ public sealed class BundledOutOfProcessTests : IDisposable
         var services = new ServiceCollection();
         services.AddSingleton(new RemotePCDiagnostics.Core.Osquery.OsqueryRunner(baseDirectory: _root));
         services.AddSingleton(new SystemCommandRunner());
+        services.AddSingleton<IBatteryPowerSource>(new WmiBatteryPowerSource(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource()));
+        services.AddSingleton<IDriveSource>(new WmiDriveSource(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource()));
         loader.LoadBundled(services);
         return (registrar, services, made);
     }

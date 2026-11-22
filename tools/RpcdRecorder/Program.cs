@@ -3,13 +3,14 @@
 //
 //   dotnet run --project tools/RpcdRecorder -- --out <folder>   (from an admin prompt, as the Agent runs) [--osquery <path to osqueryi.exe>] [--note "text"]
 //
-// Each check runs twice: once on the new WMI path and once on the old osquery / powercfg path, so the tests can check the two agree.
+// Each check runs twice: once on the new WMI path and once on the old osquery / powercfg / PowerShell path, so the tests can check the two agree.
 
 
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.DataSources;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Recording;
+using RemotePCDiagnostics.Legacy;
 
 var outRoot = Arg("--out") ?? Path.Combine(Environment.CurrentDirectory, "recordings");
 var osqueryPath = Arg("--osquery") ?? Environment.GetEnvironmentVariable(OsqueryRunner.PathEnvironmentVariable)
@@ -34,10 +35,14 @@ if (!osquery.Exists) Console.WriteLine($"osqueryi.exe not found ({osqueryPath});
 var machine = await DescribeMachineAsync(liveWmi);
 Console.WriteLine($"Recording {machine.Manufacturer} {machine.Model} (product id {machine.ProductId}), Windows {machine.WindowsVersion} build {machine.WindowsBuild}");
 
-var checks = new (string Label, BatteryPowerModule Module)[]
+// Nothing is saved on this PC: drive history is kept in memory, and free space and retrim history aren't part of a recording yet.
+DriveHealthModule Drives(IDriveSource source) => new(source, historyStore: new DriveHealthHistoryStore(), volumes: () => []);
+var checks = new (string Label, AreaModuleBase Module)[]
 {
-    ("BatteryPower (WMI)", new BatteryPowerModule(osquery, commands, wmi)),
-    ("BatteryPower (osquery + powercfg)", new BatteryPowerModule(osquery, commands)),
+    ("BatteryPower (WMI)", new BatteryPowerModule(new WmiBatteryPowerSource(wmi))),
+    ("BatteryPower (legacy: osquery + powercfg)", new BatteryPowerModule(new OsqueryBatteryPowerSource(osquery, commands))),
+    ("DriveHealth (WMI)", Drives(new WmiDriveSource(wmi))),
+    ("DriveHealth (legacy: PowerShell)", Drives(new PowerShellDriveSource(commands, osquery))),
 };
 foreach (var (label, module) in checks)
 {
