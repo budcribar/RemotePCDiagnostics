@@ -116,13 +116,13 @@ else
                 <div class="drawer-head"><strong title="@open.Title">@open.Title</strong><button data-testid="area-drawer-close" @onclick="Close">Close</button></div>
                 @if (hasReviewed)
                 {
-                    <button type="button" class="btn-small" @onclick="ToggleReviewed">@(showingReviewed ? "Show needs review" : "Show reviewed")</button>
+                    <button type="button" class="btn-small" data-testid="area-show-reviewed" data-state="@(showingReviewed ? "reviewed" : "open")" @onclick="ToggleReviewed">@(showingReviewed ? "Show needs review" : "Show reviewed")</button>
                 }
                 @if (_reviewError is not null) { <p role="status">@_reviewError</p> }
                 @if (groupKeys.Count > 0)
                 {
                     <div class="svc-actions issue-group-actions">
-                        <button type="button" class="btn-small" disabled="@_savingReview"
+                        <button type="button" class="btn-small" disabled="@_savingReview" data-action="review-group" data-card-id="@open.Id" data-state="@(showingReviewed ? "reviewed" : "open")"
                             @onclick="() => SetReview(m.Name, groupKeys, !showingReviewed)">@(showingReviewed ? "Undo group review" : "Mark group as reviewed")</button>
                         <button type="button" class="btn-small" @onclick="() => CopyGroupForCopilot(open, issueRows)">Review group with Copilot</button>
                     </div>
@@ -195,6 +195,7 @@ else
                             var expandable = row.Detail is not null || row.GetHelpUri is not null || row.EventCopyText is not null || row.ReviewKeys is { Count: > 0 };
                             var expanded = expandable && ReferenceEquals(_expanded, row) || expandable && _expandedKey is not null && _expandedKey == RowId(row);
                             <tr @key="row" data-testid="@(row.Key is null ? null : "svc-row-" + row.Key)" class="@(expandable ? "row-expandable" : null)"
+                                data-action="@(AreaReportExport.ReviewId(row) is null ? null : "review-expand")" data-card-id="@(AreaReportExport.ReviewId(row) is null ? null : open.Id)" data-review-id="@AreaReportExport.ReviewId(row)"
                                 tabindex="@(expandable ? "0" : null)" aria-expanded="@(expandable ? (expanded ? "true" : "false") : null)"
                                 @onclick="() => ToggleRow(rowRef)" @onkeydown="e => RowKey(e, rowRef)">
                                 @for (var i = 0; i < row.Values.Count; i++)
@@ -261,7 +262,7 @@ else
                                     }
                                     @if (row.ReviewKeys is { Count: > 0 } keys)
                                     {
-                                        <button type="button" class="btn-small" disabled="@_savingReview"
+                                        <button type="button" class="btn-small" disabled="@_savingReview" data-action="review-row" data-card-id="@open.Id" data-review-id="@AreaReportExport.ReviewId(row)" data-state="@(showingReviewed ? "reviewed" : "open")"
                                             @onclick="() => SetReview(m.Name, keys, !showingReviewed)">@(showingReviewed ? "Undo review" : "Mark as reviewed")</button>
                                     }
                                     @if (row.EventCopyText is { } eventText)
