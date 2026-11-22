@@ -142,36 +142,38 @@ runs in user mode.
 What a module that ships with the app can ask the host for. The design for unsigned, third-party modules is not built; it is in
 [roadmap.md](roadmap.md#2-host-queries-for-third-party-modules).
 
-Five modules that need elevated or host-assisted reads can run out of process **in user mode** (`RemotePCDiagnostics.ModuleHost`,
+The modules that need elevated or host-assisted reads can run out of process **in user mode** (`RemotePCDiagnostics.ModuleHost`,
 restricted token, Medium integrity) by asking the app for those reads. They still ship in process;
 the About page switches each one.
 
 | Module | `capabilities` in its module.json | What the app reads for it |
 |---|---|---|
 | Temperatures & fans (`Sensors`) | `sensors.read` | Every temperature and fan reading (LibreHardwareMonitor in the app) |
-| Drive health & free space (`DriveHealth`) | `storage.drives`, `storage.retrims`, `osquery.select` | The drive health script's output, the last retrim per drive, `disk_info` |
-| Services (`Services`) | `osquery.select` | The `services` statement, with every service's details |
-| Crashes & unexpected restarts (`Crashes`) | `eventlog.query`, `crashes.minidumps`, `crashes.livekernelreports`, `osquery.select`, `events.reviewed` | Application and System log events, the minidump list, the graphics live kernel dumps, the Display class `drivers` statement, the reviewed events |
+| Drive health & free space (`DriveHealth`) | `storage.drives`, `storage.retrims` | The drive health script's output, the last retrim per drive |
+| Crashes & unexpected restarts (`Crashes`) | `eventlog.query`, `events.reviewed`, `wmi.query` | Application and System log events, the reviewed events, and through the Agent's WMI the crash dump files and the display drivers |
 | Windows error log (`EventLog`) | `eventlog.query`, `events.reviewed` | Application and System log events, the reviewed events |
+| Sleep, wake & standby drain (`SleepWake`) | `eventlog.query` | System log power events |
+| Programs & updates (`Programs`) | `wmi.query`, `packages.list` | WMI through the Agent, and the signed-in user's Store packages |
+| Hardware inventory, Services, Device Manager & drivers, Network, Resource hogs, Battery & power, Security essentials | `wmi.query` | WMI queries the app passes to the Agent (`WmiQueryPolicy`) |
 
 How it works:
 
 - **Code:** `IHostQueries` in `RemotePCDiagnostics.Core.Plugins` (`HostQueries.cs`). In the module host, `UserModePlugin.Load` registers a
   `HostQueriesClient` for a plugin whose manifest lists capabilities, and the plugin passes it to its module (for example
-  `new ServicesModule(osquery, sp.GetService<IHostQueries>())`). In the app the service isn't registered, so the module reads directly,
+  `new HostWmiSource(sp.GetService<IHostQueries>())` for the WMI readers). In the app the service isn't registered, so the module reads directly,
   as before.
 - **Wire:** on the module host's stdin and stdout, next to the existing messages:
 
   ```text
-  host → app   {"type":"query","id":3,"capability":"osquery.select","args":{"sql":"SELECT name, ... FROM services WHERE ...;"}}
-  app  → host  {"type":"answer","id":3,"ok":true,"value":{"sql":"...","rows":[...]}}
-  app  → host  {"type":"answer","id":4,"ok":false,"error":"notAllowed","reason":"only the app's own osquery statements can run"}
+  host → app   {"type":"query","id":3,"capability":"eventlog.query","args":{"log":"System","xpath":"*[System[(Level=1)]]","max":"100"}}
+  app  → host  {"type":"answer","id":3,"ok":true,"value":[...]}
+  app  → host  {"type":"answer","id":4,"ok":false,"error":"notAllowed","reason":"the Security log can't be read"}
   ```
 
 - **Checks in the app** (`HostQueryServer`), before anything runs:
   - the module ships with the app (an unsigned module gets `notAllowed` for every query, until redaction exists);
   - its module.json lists the capability (`notDeclared` otherwise). An unknown capability name disables the module at load;
-  - `osquery.select` runs only the app's own statements, verbatim (`HostCapabilities.AllowedSql`);
+  - `wmi.query` runs only read-only queries `WmiQueryPolicy` allows, through the Agent;
   - `eventlog.query` reads only the System and Application logs, at most 1,000 events, with a filter of at most 2,000 characters;
   - every query has a 2-minute limit.
 - **Results:** a result whose payload isn't an `AreaReport` crosses only if its type is listed in `ModuleHostPayloads.Types`

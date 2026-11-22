@@ -9,7 +9,6 @@ using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Optimizations;
-using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Projects;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.Core.Storage;
@@ -24,7 +23,7 @@ namespace RemotePCDiagnostics.Host;
 /// the Agent, over the admin pipe. Without it those changes fail with what to do (the app never runs as administrator).</param>
 /// <param name="machine">Makes the machine-wide changes (HKLM policy values, extension blocklists, the page file, Defender exclusions): the Agent too.</param>
 /// <param name="agent">Removes apps for every account, runs uninstallers and changes system tasks (<see cref="AppRemovalAgent"/>): the Agent too.</param>
-public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger? log = null, IAdminSettingsBackend? admin = null, IMachineTweaks? machine = null,
+public sealed partial class WindowsMemorySystem(ILogger? log = null, IAdminSettingsBackend? admin = null, IMachineTweaks? machine = null,
     IElevatedCommandBridge? agent = null) : IMemorySystem
 {
     private readonly IAdminSettingsBackend _admin = admin ?? new AgentAdminSettings(null);
@@ -73,13 +72,9 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
         progress.ReportStep(1, 5, "Reading memory and running processes…");
         var mem = ReadMemory();
 
-        // Service PIDs (osquery), so service-hosting processes are never offered as "Close app" and services get their process memory.
-        var svcPid = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        if (osquery is not null)
-        {
-            var q = await osquery.RunQueryAsync("SELECT name, pid FROM services WHERE status = 'RUNNING' AND pid > 0;", ct).ConfigureAwait(false);
-            if (q.Success) foreach (var r in q.Rows!) if (r.Int("pid") is int pid) svcPid[r.Str("name")] = pid;
-        }
+        // Service PIDs (from the service control manager, as the signed-in user), so service-hosting processes are never offered as
+        // "Close app" and services get their process memory.
+        var svcPid = RunningServicePids();
         var servicePids = svcPid.Values.ToHashSet();
 
         var procs = Process.GetProcesses();
@@ -963,6 +958,60 @@ public sealed partial class WindowsMemorySystem(OsqueryRunner? osquery, ILogger?
     }
 
     private static void Dispose(Process[] ps) { foreach (var p in ps) p.Dispose(); }
+
+    /// <summary>Each running Windows service's process ID, by service name. Empty when the service control manager can't be read.</summary>
+    public static Dictionary<string, int> RunningServicePids()
+    {
+        var pids = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (!OperatingSystem.IsWindows()) return pids;
+        var scm = OpenSCManager(null, null, SC_MANAGER_CONNECT | SC_MANAGER_ENUMERATE_SERVICE);
+        if (scm == IntPtr.Zero) return pids;
+        var buffer = IntPtr.Zero;
+        try
+        {
+            uint resume = 0, size = 0;
+            while (true)
+            {
+                var ok = EnumServicesStatusEx(scm, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_ACTIVE, buffer, size, out var needed, out var count, ref resume, null);
+                var error = ok ? 0 : Marshal.GetLastWin32Error();
+                if (!ok && error != ERROR_MORE_DATA) break;
+                var entrySize = Marshal.SizeOf<ENUM_SERVICE_STATUS_PROCESS>();
+                for (var i = 0; i < count; i++)
+                {
+                    var e = Marshal.PtrToStructure<ENUM_SERVICE_STATUS_PROCESS>(buffer + i * entrySize);
+                    if (e.ProcessId > 0 && Marshal.PtrToStringUni(e.ServiceName) is { Length: > 0 } name) pids[name] = (int)e.ProcessId;
+                }
+                if (ok || (count == 0 && needed <= size)) break;
+                // The first call (no buffer) only says how much room the list needs; later ones continue from the resume handle.
+                if (needed > size)
+                {
+                    if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+                    size = needed;
+                    buffer = Marshal.AllocHGlobal((int)size);
+                }
+            }
+        }
+        finally
+        {
+            if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            CloseServiceHandle(scm);
+        }
+        return pids;
+    }
+
+    private const uint SC_MANAGER_ENUMERATE_SERVICE = 0x0004, SERVICE_WIN32 = 0x30, SERVICE_ACTIVE = 0x1;
+    private const int SC_ENUM_PROCESS_INFO = 0, ERROR_MORE_DATA = 234;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ENUM_SERVICE_STATUS_PROCESS
+    {
+        public IntPtr ServiceName, DisplayName;
+        public uint ServiceType, CurrentState, ControlsAccepted, Win32ExitCode, ServiceSpecificExitCode, CheckPoint, WaitHint, ProcessId, ServiceFlags;
+    }
+
+    [DllImport("advapi32.dll", EntryPoint = "EnumServicesStatusExW", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool EnumServicesStatusEx(IntPtr scManager, int infoLevel, uint serviceType, uint serviceState, IntPtr services, uint bufferSize,
+        out uint bytesNeeded, out uint servicesReturned, ref uint resumeHandle, string? groupName);
 
     private const uint SC_MANAGER_CONNECT = 0x0001, READ_CONTROL = 0x00020000, DACL_SECURITY_INFORMATION = 0x4;
     [DllImport("advapi32.dll", EntryPoint = "OpenSCManagerW", SetLastError = true, CharSet = CharSet.Unicode)]

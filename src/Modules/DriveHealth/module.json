@@ -7,7 +7,7 @@
   "needsAdmin": false,
   // Ships in process. The About page can run it out of process in user mode (RemotePCDiagnostics.ModuleHost, restricted token): the
   // reads that need administrator rights then come from the app, and only these.
-  "capabilities": [ "storage.drives", "storage.retrims", "osquery.select" ],
+  "capabilities": [ "storage.drives", "storage.retrims" ],
   "outOfProcess": false,
   // One run per drive, also out of process.
   "perDevice": true

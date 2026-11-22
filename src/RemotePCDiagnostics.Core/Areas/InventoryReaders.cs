@@ -119,6 +119,17 @@ public sealed class WmiHardwareInventorySource(IWmiSource wmi) : IHardwareInvent
         return new(system, cpus, memory, disks) { Gpus = gpus, NetworkAdapters = nets, Bios = biosSection };
     }
 
+    /// <summary>Just the computer and its BIOS (for BIOS updates), without the rest of the inventory. Either is null when WMI couldn't read it.</summary>
+    public static async Task<(SystemInfo? System, BiosInfo? Bios)> ReadIdentityAsync(IWmiSource wmi, CancellationToken ct)
+    {
+        async Task<WmiRow?> First(string sql) => (await wmi.QueryAsync(Cimv2, sql, ct).ConfigureAwait(false)).Rows?.FirstOrDefault();
+        var cs = await First(ComputerSql).ConfigureAwait(false);
+        var product = await First(ProductSql).ConfigureAwait(false);
+        var board = await First(BoardSql).ConfigureAwait(false);
+        var bios = await First(BiosSql).ConfigureAwait(false);
+        return (cs is null ? null : System(cs, product, board, bios, []), bios is null ? null : Bios(bios));
+    }
+
     internal static SystemInfo System(WmiRow cs, WmiRow? product, WmiRow? board, WmiRow? bios, IReadOnlyList<WmiRow> cpus)
     {
         var cpu = cpus.FirstOrDefault();

@@ -418,27 +418,16 @@ public sealed class BiosUpdateTests
     // --- Default probes & DI wiring ---
 
     [Fact]
-    public async Task DefaultBiosSystemProbe_ReadsOsqueryAndFiltersOemFiller()
+    public async Task DefaultBiosSystemProbe_ReadsWmiAndFiltersOemFiller()
     {
-        var launcher = new FakeLauncher(sql =>
+        var wmi = new ByClassWmi(new()
         {
-            if (sql.Contains("system_info", StringComparison.OrdinalIgnoreCase))
-            {
-                return """
-                    [{"hostname":"PC1","computer_name":"PC1","uuid":"u","hardware_vendor":"Dell Inc.","hardware_model":"Latitude 7440","hardware_version":"To Be Filled By O.E.M.","hardware_serial":"ABC123","board_vendor":"Dell Inc.","board_model":"0ABCD1","board_version":"A00","board_serial":"BSN","cpu_brand":"Intel","cpu_type":"x64","cpu_physical_cores":"8","cpu_logical_cores":"16","cpu_sockets":"1","physical_memory":"17179869184"}]
-                    """;
-            }
-            if (sql.Contains("platform_info", StringComparison.OrdinalIgnoreCase))
-            {
-                return """
-                    [{"vendor":"Dell Inc.","version":"1.12.0","date":"02/20/2025","revision":"3.5"}]
-                    """;
-            }
-            return "[]";
+            ["Win32_ComputerSystem"] = """{"Name":"PC1","DNSHostName":"PC1","Manufacturer":"Dell Inc.","Model":"Latitude 7440","TotalPhysicalMemory":17179869184}""",
+            ["Win32_ComputerSystemProduct"] = """{"UUID":"u","Version":"To Be Filled By O.E.M.","IdentifyingNumber":"ABC123"}""",
+            ["Win32_BaseBoard"] = """{"Manufacturer":"Dell Inc.","Product":"0ABCD1","Version":"A00","SerialNumber":"BSN"}""",
+            ["Win32_BIOS"] = """{"Manufacturer":"Dell Inc.","SMBIOSBIOSVersion":"1.12.0","ReleaseDate":"20250220000000.000000+000","SystemBiosMajorVersion":3,"SystemBiosMinorVersion":5,"SerialNumber":"ABC123"}""",
         });
-
-        var osquery = new OsqueryRunner(baseDirectory: Path.GetTempPath(), launcher: launcher, fileExists: _ => true);
-        var probe = new DefaultBiosSystemProbe(osquery, readThisPc: false);
+        var probe = new DefaultBiosSystemProbe(wmi, readThisPc: false);
 
         var identity = await probe.ProbeAsync();
 
@@ -553,6 +542,19 @@ public sealed class BiosUpdateTests
         {
             var sql = arguments.LastOrDefault() ?? "";
             return Task.FromResult(new ProcessResult(0, sqlToJson(sql), "", TimedOut: false));
+        }
+    }
+
+    /// <summary>Answers each WMI query with one row, picked by the class the query reads.</summary>
+    private sealed class ByClassWmi(Dictionary<string, string> rows) : RemotePCDiagnostics.Core.DataSources.IWmiSource
+    {
+        public Task<RemotePCDiagnostics.Core.DataSources.WmiQueryResult> QueryAsync(string wmiNamespace, string wql, CancellationToken ct = default)
+        {
+            var cls = wql[(wql.LastIndexOf(" FROM ", StringComparison.OrdinalIgnoreCase) + 6)..].Split(' ')[0];
+            IReadOnlyList<RemotePCDiagnostics.Core.DataSources.WmiRow> found = rows.TryGetValue(cls, out var json)
+                ? [new(System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(json)!)]
+                : [];
+            return Task.FromResult(new RemotePCDiagnostics.Core.DataSources.WmiQueryResult(wmiNamespace, wql, found));
         }
     }
 }

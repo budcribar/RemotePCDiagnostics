@@ -95,16 +95,13 @@ jobs:
       - name: Build (Release)
         run: dotnet build RemotePCDiagnostics.sln -c Release --no-restore
 
-      - name: Verify bundled osqueryi.exe in Host output
+      - name: Verify the Setup edition ships no osqueryi.exe
         shell: pwsh
         run: |
+          # Setup reads through the Agent; only the Store edition (-p:RpcdEdition=Store) bundles osquery for its legacy readers.
           $exe = Get-ChildItem src/RemotePCDiagnostics.Host/bin/Release -Recurse -Filter RemotePCDiagnostics.Host.exe | Select-Object -First 1
           $osq = Join-Path $exe.DirectoryName 'tools/osquery/osqueryi.exe'
-          if (-not (Test-Path $osq)) { throw "osqueryi.exe missing from Host output: $osq" }
-          (Get-FileHash $osq -Algorithm SHA256).Hash
-          (Get-AuthenticodeSignature $osq) | Format-List Status, SignerCertificate
-          & $osq --json "SELECT hardware_vendor, hardware_model, physical_memory FROM system_info;"
-          if ($LASTEXITCODE -ne 0) { throw "osqueryi.exe exited $LASTEXITCODE" }
+          if (Test-Path $osq) { throw "osqueryi.exe is in the Setup edition's Host output: $osq" }
 
       - name: Verify bundled HardeningKitty in Host output and run an audit
         shell: pwsh

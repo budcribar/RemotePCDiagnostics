@@ -19,7 +19,7 @@ public static class BiosServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddSingleton<IBiosSystemProbe>(sp => new DefaultBiosSystemProbe(
-            sp.GetService<OsqueryRunner>(),
+            sp.GetService<DataSources.IWmiSource>(),
             sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger(typeof(DefaultBiosSystemProbe).FullName!)));
 
         services.TryAddSingleton<IBiosInstallSafetyProbe>(sp => new DefaultBiosInstallSafetyProbe(

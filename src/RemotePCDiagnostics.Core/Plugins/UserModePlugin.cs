@@ -12,7 +12,7 @@ public static class UserModePlugin
     public sealed record Loaded(ModuleManifest Manifest, IDiagnosticModule Module, Type? DetailsComponent);
 
     /// <param name="log">Where the plugin's <see cref="IPluginContext.Log"/> lines go.</param>
-    /// <param name="appDirectory">The app's folder (where tools\osquery is). When set, the plugin's services get the same helpers the
+    /// <param name="appDirectory">The app's folder. When set, the plugin's services get the same helpers the
     /// app gives a module that ships with it (<see cref="AddHelpers"/>); they run in this user-mode process, with its token.</param>
     /// <param name="hostQueries">The module host's line to the app (<see cref="IHostQueries"/>), registered for the plugin when the module
     /// lists capabilities: a module that ships with the app then asks the app for what needs administrator rights.</param>
@@ -31,7 +31,7 @@ public static class UserModePlugin
         if (Activator.CreateInstance(entry) is not IModulePlugin plugin) throw new InvalidDataException($"{manifest.EntryType} does not implement IModulePlugin");
         var context = new Context(manifest.Slug, log);
         var services = new ServiceCollection();
-        if (appDirectory is not null) AddHelpers(services, appDirectory, log);
+        if (appDirectory is not null) AddHelpers(services, log);
         if (hostQueries is not null && manifest.Capabilities.Count > 0) services.AddSingleton(hostQueries);
         // A module that lists wmi.query reads WMI through the app (the Agent's), not with the module host's own token.
         if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.WmiQuery, StringComparer.Ordinal))
@@ -46,11 +46,10 @@ public static class UserModePlugin
         return new Loaded(manifest, modules[0], context.Details.GetValueOrDefault(manifest.Id));
     }
 
-    /// <summary>The app's helpers that a module which ships with the app takes from its services: osquery (from the app's tools folder),
-    /// WMI, the registry, the readers over them, and Windows commands. Both only read; here they run with the user-mode process's token.</summary>
-    public static void AddHelpers(IServiceCollection services, string appDirectory, ILogger? log = null)
+    /// <summary>The app's helpers that a module which ships with the app takes from its services: WMI, the
+    /// registry, the readers over them, and Windows commands. Both only read; here they run with the user-mode process's token.</summary>
+    public static void AddHelpers(IServiceCollection services, ILogger? log = null)
     {
-        services.AddSingleton(new Osquery.OsqueryRunner(baseDirectory: appDirectory, options: new Osquery.OsqueryOptions { Log = log }));
         services.AddSingleton(new Areas.SystemCommandRunner(log: log));
         services.AddSingleton<DataSources.IWmiSource>(new DataSources.SystemWmiSource(log));
         services.AddSingleton<DataSources.IRegistrySource>(new DataSources.SystemRegistrySource(log));

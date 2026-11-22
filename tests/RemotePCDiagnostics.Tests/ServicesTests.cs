@@ -51,7 +51,7 @@ public class ServicesTests
         var svc = new DiagnosticsService(store, [new ServicesModule(new RemotePCDiagnostics.Legacy.OsqueryServiceSource(runner))]);
         var r = await svc.RunAsync("Services");
         Assert.Equal(DiagnosticStatus.Error, r.Status);
-        Assert.Equal(OsqueryAreaModuleBase.ToolMissingMessage, r.Message);
+        Assert.Equal(RemotePCDiagnostics.Legacy.LegacyAvailability.ToolMissingMessage, r.Message);
         Assert.DoesNotContain("/nope", r.Message);
     }
 

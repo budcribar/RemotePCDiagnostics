@@ -51,7 +51,6 @@ public static class HostServices
         services.AddSingleton(_ => AgentModeHost.CreateMonitor()); // Local only / agent link, separate from the session badge
         if (session.Mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
         services.AddSingleton<ResultStore>();
-        services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = L<OsqueryRunner>() }));
         // WMI is read by the Agent, never by the app (it has the rights some classes need).
         services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(sp => new RemotePCDiagnostics.Core.DataSources.AgentWmiSource(sp.GetRequiredService<IElevatedCommandBridge>()));
         // The registry keys checks read need no administrator rights, so the app reads them itself.
@@ -60,6 +59,7 @@ public static class HostServices
         services.AddReaders();
 #if RPCD_STORE
         // The Store edition may have no Agent: then it reads as a standard user, with the legacy readers.
+        services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = L<OsqueryRunner>() }));
         RemotePCDiagnostics.Legacy.LegacyReaders.AddLegacyFallbacks(services);
 #endif
         // Read-only EC fan diagnostic, active only on Lenovo IdeaPad 1 15ALC7 (82R4) with PawnIO installed.
@@ -73,7 +73,7 @@ public static class HostServices
             elevatedBridge: sp.GetRequiredService<IElevatedCommandBridge>(),
             isProcessElevated: () => sp.GetRequiredService<IElevationContext>().IsProcessElevated));
         // One Windows memory/startup adapter for the whole app (undo and memory suggestions share it).
-        services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(sp.GetRequiredService<OsqueryRunner>(), L<WindowsMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(),
+        services.AddSingleton<IMemorySystem>(sp => new WindowsMemorySystem(L<WindowsMemorySystem>(), sp.GetRequiredService<IAdminSettingsBackend>(),
             sp.GetRequiredService<IMachineTweaks>(), sp.GetRequiredService<IElevatedCommandBridge>()));
         // Its role interfaces resolve to the same instance, so a consumer can take only the part it uses.
         services.AddSingleton<RemotePCDiagnostics.Core.Optimizations.IMemoryProbe>(sp => sp.GetRequiredService<IMemorySystem>());
@@ -97,7 +97,7 @@ public static class HostServices
             L<RemotePCDiagnostics.Core.Changes.AgentChangeJournal>()));
         services.AddSingleton(sp => new ServiceActionService(new WindowsServiceControlBackend(sp.GetRequiredService<IAdminSettingsBackend>()), sp.GetRequiredService<ISessionContext>(), L<ServiceActionService>(),
             journal: sp.GetRequiredService<RemotePCDiagnostics.Core.Changes.IChangeJournal>()));
-        services.AddSingleton(sp => new RebootResumeCoordinator(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<OsqueryRunner>(), RebootResumeCoordinator.DefaultStateFilePath(), log: L<RebootResumeCoordinator>()));
+        services.AddSingleton(sp => new RebootResumeCoordinator(sp.GetRequiredService<SystemCommandRunner>(), RebootResumeCoordinator.DefaultStateFilePath(), log: L<RebootResumeCoordinator>()));
         // Registry and WMI settings the fixes and undo change (Fast Startup and adapter DNS through the Agent, the signed-in user's proxy here).
         services.AddSingleton<ISystemSettings>(sp => new WindowsSystemSettings(L<WindowsSystemSettings>(), sp.GetRequiredService<IAdminSettingsBackend>()));
         services.AddSingleton(sp => new RemediationService(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<ISessionContext>(), L<RemediationService>(), sp.GetRequiredService<RebootResumeCoordinator>(),
@@ -340,7 +340,7 @@ public sealed class HostQueryBackendSlot
         Agent ??= sp.GetService<RemotePCDiagnostics.Core.Session.IElevatedCommandBridge>();
         Value ??= new HostQueryBackend
         {
-            Sensors = sp.GetService<ISensorProvider>(), Osquery = sp.GetService<OsqueryRunner>(), Commands = sp.GetService<SystemCommandRunner>(),
+            Sensors = sp.GetService<ISensorProvider>(), Commands = sp.GetService<SystemCommandRunner>(),
             Retrims = sp.GetService<IRetrimHistory>(), Drives = sp.GetService<IDriveSource>(),
             Wmi = sp.GetService<RemotePCDiagnostics.Core.DataSources.IWmiSource>(),
             Packages = sp.GetService<RemotePCDiagnostics.Core.DataSources.IPackageSource>(),

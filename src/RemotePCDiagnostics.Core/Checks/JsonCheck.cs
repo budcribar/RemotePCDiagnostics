@@ -180,10 +180,15 @@ public sealed class JsonCheckModule(JsonCheck check, Func<string, CancellationTo
 /// <summary>Registers one JSON check, running its query through the app's osquery.</summary>
 public sealed class JsonCheckPlugin(JsonCheck check, ILogger? log = null) : Plugins.IModulePlugin
 {
+    public const string NoOsquery = "Checks written as data need osquery, which this edition of the app doesn't include.";
+
     public void Register(Microsoft.Extensions.DependencyInjection.IServiceCollection services, Plugins.IPluginContext context) =>
         Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<IDiagnosticModule>(services, sp =>
         {
-            var osquery = (OsqueryRunner)sp.GetService(typeof(OsqueryRunner))!;
+            // Only the Store edition ships osquery; in the Setup edition the check says it can't run here.
+            if (sp.GetService(typeof(OsqueryRunner)) is not OsqueryRunner osquery)
+                return new JsonCheckModule(check, (sql, _) => Task.FromResult(new OsqueryQueryResult(sql, null, NoOsquery)),
+                    () => ModuleAvailability.Unavailable(NoOsquery), log);
             return new JsonCheckModule(check, osquery.RunQueryAsync, osquery.CheckAvailability, log);
         });
 }

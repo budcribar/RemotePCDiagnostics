@@ -46,7 +46,7 @@ public sealed class OsqueryHardwareInventorySource(OsqueryRunner runner) : IHard
 /// <summary>Services from osquery <c>services</c> (kernel and file-system drivers left out).</summary>
 public sealed class OsqueryServiceSource(OsqueryRunner runner) : IServiceSource
 {
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => LegacyAvailability.Of(runner, OsqueryAreaModuleBase.ToolMissingMessage);
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => LegacyAvailability.Of(runner, LegacyAvailability.ToolMissingMessage);
 
     public const string Sql = "SELECT name, display_name, status, start_type, user_account, description FROM services WHERE service_type NOT LIKE '%DRIVER%';";
 
@@ -63,7 +63,7 @@ public sealed class OsqueryServiceSource(OsqueryRunner runner) : IServiceSource
 /// </summary>
 public sealed class OsqueryDeviceDriverSource(OsqueryRunner runner, SystemCommandRunner? commands) : IDeviceDriverSource
 {
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => LegacyAvailability.Of(runner, OsqueryAreaModuleBase.ToolMissingMessage);
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => LegacyAvailability.Of(runner, LegacyAvailability.ToolMissingMessage);
 
     public const string DriversSql = "SELECT device_name, description, class, provider, manufacturer, version, date, signed FROM drivers WHERE device_name != '';";
     public static string ProblemDevicesScript => Core.Scripts.PowerShellScripts.Get("ProblemDevices");
@@ -97,7 +97,7 @@ public sealed class OsqueryDeviceDriverSource(OsqueryRunner runner, SystemComman
 /// <summary>The Windows version, updates and programs from osquery <c>os_version</c>, <c>patches</c> and <c>programs</c>.</summary>
 public sealed class OsqueryProgramsSource(OsqueryRunner runner) : IProgramsSource
 {
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => LegacyAvailability.Of(runner, OsqueryAreaModuleBase.ToolMissingMessage);
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => LegacyAvailability.Of(runner, LegacyAvailability.ToolMissingMessage);
 
     public const string OsSql = "SELECT * FROM os_version;";
     public const string PatchesSql = "SELECT hotfix_id, description, installed_on FROM patches;";
@@ -123,8 +123,11 @@ public sealed class OsqueryProgramsSource(OsqueryRunner runner) : IProgramsSourc
 }
 
 /// <summary>The legacy readers need osqueryi.exe: without it the check says so (the path goes to the log only).</summary>
-internal static class LegacyAvailability
+public static class LegacyAvailability
 {
+    /// <summary>What a legacy check says when osqueryi.exe is missing.</summary>
+    public const string ToolMissingMessage = "The diagnostics tool wasn't found. Please reinstall the app.";
+
     public static Task<ModuleAvailability> Of(OsqueryRunner runner, string message)
     {
         var a = runner.CheckAvailability();

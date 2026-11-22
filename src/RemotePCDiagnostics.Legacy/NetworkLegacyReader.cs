@@ -15,7 +15,7 @@ public sealed class OsqueryNetworkSource(OsqueryRunner runner, SystemCommandRunn
     public static string StatsScript => Core.Scripts.PowerShellScripts.Get("NetAdapterStatistics");
     public static string IpConfigScript => WifiConfigModule.IpConfigScript;
 
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => LegacyAvailability.Of(runner, OsqueryAreaModuleBase.ToolMissingMessage);
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => LegacyAvailability.Of(runner, LegacyAvailability.ToolMissingMessage);
 
     public async Task<IReadOnlyList<NetworkAdapter>?> ReadAdaptersAsync(CancellationToken ct)
     {

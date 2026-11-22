@@ -45,7 +45,6 @@ public static class PackageVerifier
     {
         var required = new List<string>
         {
-            "tools/osquery/osqueryi.exe",
             "tools/HardeningKitty/HardeningKitty.psd1",
             "tools/HardeningKitty/HardeningKitty.psm1",
             "RemotePCDiagnostics.MemTest.exe",
