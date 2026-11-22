@@ -153,6 +153,208 @@
       "exitCode": 0,
       "stdOut": "[{\"Letters\":\"C\",\"Id\":\"<serial:5a5a01>\",\"Name\":\"SAMPLE NVMe SSD 512GB\",\"Serial\":\"<serial:5a5a02>\",\"MediaType\":\"SSD\",\"BusType\":\"NVMe\",\"Health\":\"Healthy\",\"Operational\":\"OK\",\"Size\":\"512110190592\",\"Temperature\":\"38\",\"Wear\":\"3\",\"ReadErrors\":\"0\",\"WriteErrors\":\"0\",\"PowerOnHours\":\"1200\"}]",
       "stdErr": ""
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT DeviceID, NetConnectionID, Description, Manufacturer, MACAddress, NetEnabled, PhysicalAdapter, NetConnectionStatus, Speed FROM Win32_NetworkAdapter",
+      "rows": [
+        {
+          "DeviceID": "1",
+          "NetConnectionID": "Wi-Fi",
+          "Description": "Sample Wi-Fi 6E AX211",
+          "Manufacturer": "SampleCo",
+          "MACAddress": "<serial:aa0001>",
+          "NetEnabled": true,
+          "PhysicalAdapter": true,
+          "NetConnectionStatus": 2,
+          "Speed": 866700000
+        },
+        {
+          "DeviceID": "2",
+          "NetConnectionID": "Ethernet",
+          "Description": "Sample 2.5GbE Controller",
+          "Manufacturer": "SampleCo",
+          "MACAddress": "<serial:aa0002>",
+          "NetEnabled": true,
+          "PhysicalAdapter": true,
+          "NetConnectionStatus": 7,
+          "Speed": 9223372036854775807
+        },
+        {
+          "DeviceID": "3",
+          "NetConnectionID": "vEthernet (Default Switch)",
+          "Description": "Hyper-V Virtual Ethernet Adapter",
+          "Manufacturer": "Microsoft",
+          "MACAddress": "<serial:aa0003>",
+          "NetEnabled": true,
+          "PhysicalAdapter": false,
+          "NetConnectionStatus": 2,
+          "Speed": 10000000000
+        },
+        {
+          "DeviceID": "4",
+          "NetConnectionID": null,
+          "Description": "WAN Miniport (IP)",
+          "Manufacturer": "Microsoft",
+          "MACAddress": null,
+          "NetEnabled": null,
+          "PhysicalAdapter": false,
+          "NetConnectionStatus": null,
+          "Speed": null
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\StandardCimv2",
+      "query": "SELECT Name, ReceivedUnicastPackets, ReceivedMulticastPackets, ReceivedBroadcastPackets, SentUnicastPackets, SentMulticastPackets, SentBroadcastPackets, ReceivedPacketErrors, OutboundPacketErrors, ReceivedDiscardedPackets, OutboundDiscardedPackets FROM MSFT_NetAdapterStatisticsSettingData",
+      "rows": [
+        {
+          "Name": "Wi-Fi",
+          "ReceivedUnicastPackets": 812345,
+          "ReceivedMulticastPackets": 2100,
+          "ReceivedBroadcastPackets": 900,
+          "SentUnicastPackets": 401234,
+          "SentMulticastPackets": 300,
+          "SentBroadcastPackets": 50,
+          "ReceivedPacketErrors": 0,
+          "OutboundPacketErrors": 0,
+          "ReceivedDiscardedPackets": 42,
+          "OutboundDiscardedPackets": 0
+        },
+        {
+          "Name": "Ethernet",
+          "ReceivedUnicastPackets": 0,
+          "ReceivedMulticastPackets": 0,
+          "ReceivedBroadcastPackets": 0,
+          "SentUnicastPackets": 0,
+          "SentMulticastPackets": 0,
+          "SentBroadcastPackets": 0,
+          "ReceivedPacketErrors": 0,
+          "OutboundPacketErrors": 0,
+          "ReceivedDiscardedPackets": 0,
+          "OutboundDiscardedPackets": 0
+        },
+        {
+          "Name": "vEthernet (Default Switch)",
+          "ReceivedUnicastPackets": 0,
+          "ReceivedMulticastPackets": 120,
+          "ReceivedBroadcastPackets": 0,
+          "SentUnicastPackets": 0,
+          "SentMulticastPackets": 60,
+          "SentBroadcastPackets": 0,
+          "ReceivedPacketErrors": 0,
+          "OutboundPacketErrors": 0,
+          "ReceivedDiscardedPackets": 0,
+          "OutboundDiscardedPackets": 0
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT Index, SettingID, Description, IPAddress, DefaultIPGateway, DNSServerSearchOrder FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE",
+      "rows": [
+        {
+          "Index": 1,
+          "SettingID": "{11111111-2222-3333-4444-555555555555}",
+          "Description": "Sample Wi-Fi 6E AX211",
+          "IPAddress": [
+            "192.168.1.23",
+            "fe80::1234:5678:9abc:def0"
+          ],
+          "DefaultIPGateway": [
+            "192.168.1.1",
+            "fe80::1"
+          ],
+          "DNSServerSearchOrder": [
+            "<serial:dd0001>"
+          ]
+        },
+        {
+          "Index": 3,
+          "SettingID": "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
+          "Description": "Hyper-V Virtual Ethernet Adapter",
+          "IPAddress": [
+            "172.20.0.1",
+            "fe80::abcd"
+          ],
+          "DefaultIPGateway": null,
+          "DNSServerSearchOrder": null
+        }
+      ]
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKLM",
+      "query": "subkeys of SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces: NameServer",
+      "rows": [
+        {
+          "_Key": "{11111111-2222-3333-4444-555555555555}",
+          "NameServer": ""
+        },
+        {
+          "_Key": "{66666666-7777-8888-9999-000000000000}",
+          "NameServer": ""
+        },
+        {
+          "_Key": "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
+          "NameServer": ""
+        }
+      ]
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKCU",
+      "query": "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings: ProxyEnable, ProxyServer",
+      "rows": [
+        {
+          "ProxyEnable": 0
+        }
+      ]
+    },
+    {
+      "kind": "process",
+      "file": "osqueryi.exe",
+      "args": [
+        "--disable_extensions",
+        "--json",
+        "SELECT * FROM interface_details;"
+      ],
+      "exitCode": 0,
+      "stdOut": "[\n  {\n    \"connection_id\": \"Wi-Fi\",\n    \"connection_status\": \"2\",\n    \"description\": \"Sample Wi-Fi 6E AX211\",\n    \"enabled\": \"1\",\n    \"friendly_name\": \"\",\n    \"ibytes\": \"\",\n    \"idrops\": \"\",\n    \"ierrors\": \"\",\n    \"interface\": \"1\",\n    \"ipackets\": \"\",\n    \"mac\": \"<serial:aa0001>\",\n    \"manufacturer\": \"SampleCo\",\n    \"obytes\": \"\",\n    \"odrops\": \"\",\n    \"oerrors\": \"\",\n    \"opackets\": \"\",\n    \"physical_adapter\": \"1\",\n    \"speed\": \"866700000\"\n  },\n  {\n    \"connection_id\": \"Ethernet\",\n    \"connection_status\": \"7\",\n    \"description\": \"Sample 2.5GbE Controller\",\n    \"enabled\": \"1\",\n    \"friendly_name\": \"\",\n    \"ibytes\": \"\",\n    \"idrops\": \"\",\n    \"ierrors\": \"\",\n    \"interface\": \"2\",\n    \"ipackets\": \"\",\n    \"mac\": \"<serial:aa0002>\",\n    \"manufacturer\": \"SampleCo\",\n    \"obytes\": \"\",\n    \"odrops\": \"\",\n    \"oerrors\": \"\",\n    \"opackets\": \"\",\n    \"physical_adapter\": \"1\",\n    \"speed\": \"0\"\n  },\n  {\n    \"connection_id\": \"vEthernet (Default Switch)\",\n    \"connection_status\": \"2\",\n    \"description\": \"Hyper-V Virtual Ethernet Adapter\",\n    \"enabled\": \"1\",\n    \"friendly_name\": \"\",\n    \"ibytes\": \"\",\n    \"idrops\": \"\",\n    \"ierrors\": \"\",\n    \"interface\": \"3\",\n    \"ipackets\": \"\",\n    \"mac\": \"<serial:aa0003>\",\n    \"manufacturer\": \"Microsoft\",\n    \"obytes\": \"\",\n    \"odrops\": \"\",\n    \"oerrors\": \"\",\n    \"opackets\": \"\",\n    \"physical_adapter\": \"0\",\n    \"speed\": \"10000000000\"\n  },\n  {\n    \"connection_id\": \"\",\n    \"connection_status\": \"0\",\n    \"description\": \"WAN Miniport (IP)\",\n    \"enabled\": \"0\",\n    \"friendly_name\": \"\",\n    \"ibytes\": \"\",\n    \"idrops\": \"\",\n    \"ierrors\": \"\",\n    \"interface\": \"4\",\n    \"ipackets\": \"\",\n    \"mac\": \"\",\n    \"manufacturer\": \"Microsoft\",\n    \"obytes\": \"\",\n    \"odrops\": \"\",\n    \"oerrors\": \"\",\n    \"opackets\": \"\",\n    \"physical_adapter\": \"0\",\n    \"speed\": \"0\"\n  }\n]",
+      "stdErr": ""
+    },
+    {
+      "kind": "process",
+      "file": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$ErrorActionPreference='SilentlyContinue';$s=@(Get-NetAdapterStatistics | ForEach-Object { [pscustomobject]@{Name=[string]$_.Name;ipackets=[string]($_.ReceivedUnicastPackets+$_.ReceivedMulticastPackets+$_.ReceivedBroadcastPackets);opackets=[string]($_.SentUnicastPackets+$_.SentMulticastPackets+$_.SentBroadcastPackets);ierrors=[string]$_.ReceivedPacketErrors;oerrors=[string]$_.OutboundPacketErrors;idrops=[string]$_.ReceivedDiscardedPackets;odrops=[string]$_.OutboundDiscardedPackets } });ConvertTo-Json -InputObject $s -Compress"
+      ],
+      "exitCode": 0,
+      "stdOut": "[{\"Name\":\"Wi-Fi\",\"ipackets\":\"815345\",\"opackets\":\"401584\",\"ierrors\":\"0\",\"oerrors\":\"0\",\"idrops\":\"42\",\"odrops\":\"0\"},{\"Name\":\"Ethernet\",\"ipackets\":\"0\",\"opackets\":\"0\",\"ierrors\":\"0\",\"oerrors\":\"0\",\"idrops\":\"0\",\"odrops\":\"0\"},{\"Name\":\"vEthernet (Default Switch)\",\"ipackets\":\"120\",\"opackets\":\"60\",\"ierrors\":\"0\",\"oerrors\":\"0\",\"idrops\":\"0\",\"odrops\":\"0\"}]",
+      "stdErr": ""
+    },
+    {
+      "kind": "process",
+      "file": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$ErrorActionPreference='SilentlyContinue'; $cfg = @(Get-NetIPConfiguration | Where-Object { $_.NetAdapter.Status -eq 'Up' } | ForEach-Object { [pscustomobject]@{ Alias = [string]$_.InterfaceAlias; Description = [string]$_.InterfaceDescription; IPv4 = [string]($_.IPv4Address | Select-Object -First 1 -ExpandProperty IPAddress); Gateway = [string]($_.IPv4DefaultGateway | Select-Object -First 1 -ExpandProperty NextHop); Dns = [string](($_.DnsServer | Where-Object AddressFamily -eq 2 | Select-Object -ExpandProperty ServerAddresses) -join ', '); DnsManual = [string](Get-ItemProperty -Path ('HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\' + $_.NetAdapter.InterfaceGuid) -Name NameServer -ErrorAction SilentlyContinue).NameServer } }); $p = Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue; $proxyOn = ($null -ne $p -and $p.ProxyEnable -eq 1); $proxySrv = if ($proxyOn) { [string]$p.ProxyServer } else { '' }; [pscustomobject]@{ Adapters = $cfg; ProxyEnabled = $proxyOn; ProxyServer = $proxySrv } | ConvertTo-Json -Compress -Depth 4"
+      ],
+      "exitCode": 0,
+      "stdOut": "{\"Adapters\":[{\"Alias\":\"Wi-Fi\",\"Description\":\"Sample Wi-Fi 6E AX211\",\"IPv4\":\"192.168.1.23\",\"Gateway\":\"192.168.1.1\",\"Dns\":\"<serial:dd0001>\",\"DnsManual\":\"\"},{\"Alias\":\"vEthernet (Default Switch)\",\"Description\":\"Hyper-V Virtual Ethernet Adapter\",\"IPv4\":\"172.20.0.1\",\"Gateway\":\"\",\"Dns\":\"\",\"DnsManual\":\"\"}],\"ProxyEnabled\":false,\"ProxyServer\":\"\"}",
+      "stdErr": ""
     }
   ]
 }

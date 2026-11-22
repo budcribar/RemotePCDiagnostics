@@ -53,6 +53,10 @@ A check whose answers a recording doesn't hold (a recording made before the reco
 | Services | WMI (`Win32_Service`) | osquery |
 | Device Manager & drivers | WMI (`Win32_PnPEntity`, `Win32_PnPSignedDriver`) | PowerShell, osquery |
 | Programs & updates | WMI (`Win32_OperatingSystem`, `Win32_QuickFixEngineering`), the registry's Uninstall keys, Store apps from Windows' package API | osquery |
+| Network (adapters, IP configuration) | WMI (`Win32_NetworkAdapter`, `MSFT_NetAdapterStatisticsSettingData`, `Win32_NetworkAdapterConfiguration`), the registry (DNS set by hand, proxy) | osquery `interface_details`, PowerShell (`Get-NetAdapterStatistics`, `Get-NetIPConfiguration`) |
+
+The Network check (`INetworkSource`) is recorded without `netsh wlan` and the network event logs, whose answers hold the Wi-Fi network's name
+and its router's address, and offline: the reachability probes and the DNS speed comparison ask the live network, so they aren't replayed.
 
 ## Readers and editions
 

@@ -56,6 +56,9 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     ("Device Manager & drivers (legacy: PowerShell + osquery)", new DeviceDriversModule(new OsqueryDeviceDriverSource(osquery, commands))),
     ("Programs & updates (WMI + registry)", new ProgramsModule(new WmiProgramsSource(wmi, registry, packages))),
     ("Programs & updates (legacy: osquery)", new ProgramsModule(new OsqueryProgramsSource(osquery))),
+    // Without netsh and the event logs (Wi-Fi and event names hold the network's name and its router's address) and offline (no probes or DNS timing).
+    ("Network (WMI + registry)", new NetworkModule(new WmiNetworkSource(wmi, registry), includeWifiAndIpConfig: true, offline: true)),
+    ("Network (legacy: osquery + PowerShell)", new NetworkModule(new OsqueryNetworkSource(osquery, commands), includeWifiAndIpConfig: true, offline: true)),
 };
 foreach (var (label, module) in checks)
 {

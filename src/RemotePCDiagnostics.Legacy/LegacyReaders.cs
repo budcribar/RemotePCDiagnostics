@@ -26,6 +26,9 @@ public static class LegacyReaders
         .AddSingleton<IDeviceDriverSource>(sp => new AgentOrFallbackDeviceDriverSource(sp.GetRequiredService<IElevatedCommandBridge>(),
             new WmiDeviceDriverSource(sp.GetRequiredService<Core.DataSources.IWmiSource>()),
             new OsqueryDeviceDriverSource(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>())))
+        .AddSingleton<INetworkSource>(sp => new AgentOrFallbackNetworkSource(sp.GetRequiredService<IElevatedCommandBridge>(),
+            new WmiNetworkSource(sp.GetRequiredService<Core.DataSources.IWmiSource>(), sp.GetRequiredService<Core.DataSources.IRegistrySource>()),
+            new OsqueryNetworkSource(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>())))
         // Programs read the registry in the app either way; only the Windows version and updates need the Agent's WMI.
         .AddSingleton<IProgramsSource>(sp => new AgentOrFallbackProgramsSource(sp.GetRequiredService<IElevatedCommandBridge>(),
             new WmiProgramsSource(sp.GetRequiredService<Core.DataSources.IWmiSource>(), sp.GetRequiredService<Core.DataSources.IRegistrySource>()),

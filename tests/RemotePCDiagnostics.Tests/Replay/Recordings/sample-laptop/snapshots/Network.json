@@ -1,0 +1,236 @@
+{
+  "moduleName": "Network",
+  "status": "Ok",
+  "message": "Active: Wi-Fi (192.168.1.23) · 1 of 2 adapters connected · no errors",
+  "report": {
+    "cards": [
+      {
+        "id": "ipdns",
+        "title": "IP, gateway, DNS & proxy",
+        "level": "Ok",
+        "headline": "192.168.1.23 (Wi-Fi)",
+        "meta": "Gateway 192.168.1.1 · DNS <serial:dd0001>",
+        "columns": [
+          "Interface",
+          "IPv4 address",
+          "Gateway",
+          "DNS servers",
+          "Adapter"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "Wi-Fi",
+              "192.168.1.23",
+              "192.168.1.1",
+              "<serial:dd0001>",
+              "Sample Wi-Fi 6E AX211"
+            ],
+            "key": "Wi-Fi"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "vEthernet (Default Switch)",
+              "172.20.0.1",
+              "None",
+              "None",
+              "Hyper-V Virtual Ethernet Adapter"
+            ],
+            "key": "vEthernet (Default Switch)"
+          }
+        ],
+        "actions": [
+          {
+            "kind": "FlushDnsAndRenewIp",
+            "buttonText": "Flush DNS & renew IP",
+            "target": "",
+            "targetLabel": ""
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "nic0",
+        "title": "Wi-Fi",
+        "level": "Ok",
+        "headline": "Connected · 866.7 Mbps",
+        "meta": "42 dropped",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Status",
+              "Connected"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Adapter",
+              "Sample Wi-Fi 6E AX211"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Manufacturer",
+              "SampleCo"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Speed",
+              "866.7 Mbps"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Hardware address",
+              "<serial:aa0001>"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Packets received",
+              "815,345"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Packets sent",
+              "401,584"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Receive errors",
+              "0"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Send errors",
+              "0"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Incoming packets dropped",
+              "42"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Outgoing packets dropped",
+              "0"
+            ]
+          }
+        ],
+        "note": "Counts are since the adapter was last started. A few dropped packets are normal.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "nic1",
+        "title": "Ethernet",
+        "level": "Neutral",
+        "headline": "Cable unplugged / no signal",
+        "meta": "No errors",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "Status",
+              "Cable unplugged / no signal"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Adapter",
+              "Sample 2.5GbE Controller"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Manufacturer",
+              "SampleCo"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Hardware address",
+              "<serial:aa0002>"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Packets received",
+              "0"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Packets sent",
+              "0"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Receive errors",
+              "0"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Send errors",
+              "0"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Incoming packets dropped",
+              "0"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Outgoing packets dropped",
+              "0"
+            ]
+          }
+        ],
+        "note": "Counts are since the adapter was last started. A few dropped packets are normal.",
+        "preserveRowOrder": false
+      }
+    ],
+    "summary": "Active: Wi-Fi (192.168.1.23) · 1 of 2 adapters connected · no errors",
+    "status": "Ok",
+    "cancelled": false
+  }
+}

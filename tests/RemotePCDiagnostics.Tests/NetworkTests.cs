@@ -1,5 +1,6 @@
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Legacy;
 
 namespace RemotePCDiagnostics.Tests;
 
@@ -16,7 +17,7 @@ public class NetworkTests
     [Fact]
     public async Task PhysicalAdapters_WithCounters()
     {
-        var r = await new NetworkModule(ScriptedLauncher.Osquery(new ScriptedLauncher((f, a) => ScriptedLauncher.Ok(Json)))).RefreshAsync(null);
+        var r = await new NetworkModule(new OsqueryNetworkSource(ScriptedLauncher.Osquery(new ScriptedLauncher((f, a) => ScriptedLauncher.Ok(Json))))).RefreshAsync(null);
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
         Assert.Equal("1 of 2 adapters connected · errors within normal range", r.Message);
         var rep = Assert.IsType<AreaReport>(r.Payload);
@@ -33,7 +34,7 @@ public class NetworkTests
         const string osq = """[{"connection_id":"Ethernet 4","description":"Microsoft Hyper-V Network Adapter","mac":"e4:fa","connection_status":"2","enabled":"1","physical_adapter":"1","speed":"0","ipackets":"","ierrors":"","oerrors":""}]""";
         const string ps = """[{"Name":"Ethernet 4","ipackets":"5000","opackets":"4000","ierrors":"0","oerrors":"0","idrops":"2","odrops":"0"}]""";
         var l = new ScriptedLauncher((f, a) => f.StartsWith("osqueryi") ? ScriptedLauncher.Ok(osq) : ScriptedLauncher.Ok(ps));
-        var r = await new NetworkModule(ScriptedLauncher.Osquery(l), new SystemCommandRunner(l)).RefreshAsync(null);
+        var r = await new NetworkModule(new OsqueryNetworkSource(ScriptedLauncher.Osquery(l), new SystemCommandRunner(l))).RefreshAsync(null);
         var card = Assert.IsType<AreaReport>(r.Payload).Cards.Single();
         Assert.Equal("2 dropped", card.Meta);
         Assert.Equal("Connected", card.Headline);
@@ -122,7 +123,7 @@ public class NetworkTests
     [Fact]
     public async Task QueryFails_Friendly()
     {
-        var r = await new NetworkModule(ScriptedLauncher.Osquery(new ScriptedLauncher((f, a) => ScriptedLauncher.Fail()))).RefreshAsync(null);
+        var r = await new NetworkModule(new OsqueryNetworkSource(ScriptedLauncher.Osquery(new ScriptedLauncher((f, a) => ScriptedLauncher.Fail())))).RefreshAsync(null);
         Assert.Equal("Couldn't read network adapter details on this PC.", r.Message);
     }
 }

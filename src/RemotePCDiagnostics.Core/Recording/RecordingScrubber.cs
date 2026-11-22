@@ -23,6 +23,7 @@ public sealed class RecordingScrubber
         "UUID", // the SMBIOS UUID (Win32_ComputerSystemProduct, osquery system_info), per unit on most makers
         "guid", "pnp_device_id", "PNPDeviceID", // a network adapter's GUID; device instance paths can hold a USB serial
         "dhcp_server", "dns_server_search_order", "dns_domain", "dns_domain_suffix_search_order", // the local network's servers and domain
+        "DNSServerSearchOrder", "Dns", "ProxyServer", // the same for the Network check (WMI, the IpConfig script, the proxy setting)
     };
 
     private readonly byte[] _key = RandomNumberGenerator.GetBytes(32);
