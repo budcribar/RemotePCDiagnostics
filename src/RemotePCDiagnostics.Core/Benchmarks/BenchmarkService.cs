@@ -119,6 +119,8 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
     private CancellationTokenSource? _cts;
 
     public event Action? Changed;
+    /// <summary>A pass finished (completed or stopped with results kept) and was saved. Raised after the save, off the UI thread.</summary>
+    public event Action<BenchmarkRun>? PassFinished;
     public BenchmarkSettings Settings => _state.Settings;
     public BenchmarkRun? Before => _state.Before;
     public BenchmarkRun? After => _state.After;
@@ -333,6 +335,7 @@ public sealed class BenchmarkService(BenchmarkRunner runner, IBenchmarkStore sto
             Save(phase == BenchmarkPhase.Before ? _state with { Before = run, After = null, RunBeforeOnStartup = false } : _state with { After = run });
             Message = run.Completed ? null : "Stopped before every benchmark finished; the finished ones are kept.";
             WriteEvent(run);
+            try { PassFinished?.Invoke(run); } catch (Exception ex) { LogWarn("PassFinished handler failed: " + ex.Message); }
             return run;
         }
         finally

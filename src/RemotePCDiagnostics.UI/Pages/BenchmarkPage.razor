@@ -5,6 +5,7 @@
 @inject BenchmarkService Bench
 @inject AppServices App
 @inject ISessionContext Session
+@inject BenchmarkUploader Uploader
 @* Before/after performance benchmarks for a service call: shows the client what the fixes actually changed. *@
 @{
     var s = Bench.Settings;
@@ -235,20 +236,21 @@ else if (Bench.Settling is { } settlePhase && Bench.SettleFraction is { } sf && 
         <p class="meta">Uploads the @(after is null ? "baseline" : "latest (after)") results with this PC's model, processor, memory and graphics card to your shop's Admin site,
             where your computers are ranked side by side for each test.</p>
         <div class="bench-hero-actions">
-            <button class="btn-small" data-testid="bench-upload" disabled="@(running || _uploading || !CanUpload)" @onclick="UploadAsync">
-                <Icon Name="upload" Size="12" /> @(_uploading ? "Uploading…" : "Upload results")</button>
-            @if (_uploadUrl is { } compareUrl)
+            <button class="btn-small" data-testid="bench-upload" disabled="@(running || Uploader.Uploading || !Uploader.CanUpload)" @onclick="() => Uploader.UploadAsync()">
+                <Icon Name="upload" Size="12" /> @(Uploader.Uploading ? "Uploading…" : "Upload results")</button>
+            @if (Uploader.CompareUrl is { } compareUrl)
             {
                 <a class="linklike" data-testid="bench-upload-link" href="@compareUrl" target="_blank" rel="noopener noreferrer">Open the comparison →</a>
             }
         </div>
-        @if (!CanUpload)
+        @if (!Uploader.CanUpload)
         {
             <p class="meta" data-testid="bench-upload-setup">Add your shop API key (rpd_live_…) and relay server on the <a href="/certificates">QA &amp; branding</a> page to upload results.</p>
         }
-        @if (_uploadMessage is { } um)
+        @if (Uploader.Message is { } um)
         {
-            <p class="@(_uploadFailed ? "notice notice-error" : "notice")" data-testid="bench-upload-status">@um</p>
+            <p class="@(Uploader.Failed ? "notice notice-error" : "notice")" data-testid="bench-upload-status"
+               data-upload-seq="@Uploader.Seq" data-upload-failed="@(Uploader.Failed ? "true" : "false")" data-uploading="@(Uploader.Uploading ? "true" : "false")">@um</p>
         }
     </section>
 }
@@ -268,81 +270,13 @@ else if (!running)
     ];
 
     private bool _customizeOpen;
-    private bool _uploading, _uploadFailed;
-    private string? _uploadMessage, _uploadUrl;
-    private readonly ShopRelayClient _fallbackRelay = new();
-
-    private string? RelayServerUrl =>
-        !string.IsNullOrWhiteSpace(App.Preferences?.Current.RelayServerUrl) ? App.Preferences!.Current.RelayServerUrl : Session.ServerUri?.ToString();
-
-    private string ApiKey => App.Preferences?.Current.ShopApiKey?.Trim() ?? "";
-
-    private bool CanUpload =>
-        ApiKey.StartsWith(ShopRelayClient.ApiKeyPrefix, StringComparison.Ordinal) && ApiKey.Length > ShopRelayClient.ApiKeyPrefix.Length
-        && ShopRelayClient.TryParseRelayUri(RelayServerUrl, out _);
-
-    /// <summary>Sends the latest pass and this PC's hardware to the shop's Admin site over its authenticated API (the shop API key, as hosted reports use).</summary>
-    private async Task UploadAsync()
-    {
-        if (_uploading || !CanUpload || !ShopRelayClient.TryParseRelayUri(RelayServerUrl, out var relayUri) || relayUri is null) return;
-        _uploading = true;
-        _uploadFailed = false;
-        _uploadMessage = "Reading this PC's hardware…";
-        StateHasChanged();
-        try
-        {
-            var hardware = App.Commands is { } commands ? await HardwareIdentityProbe.ReadAsync(commands, CancellationToken.None) : new BenchmarkHardware();
-            var request = BenchmarkUpload.Build(BenchmarkUpload.LatestRun(Bench.Before, Bench.After), MachineIdentity.Read(Session.MachineName), Session.MachineName, hardware);
-            if (request is null)
-            {
-                Fail("There are no measured results to upload yet.");
-                return;
-            }
-            _uploadMessage = "Uploading…";
-            StateHasChanged();
-            var result = await (App.ShopRelay ?? _fallbackRelay).UploadBenchmarkAsync(relayUri, ApiKey, request);
-            switch (result)
-            {
-                case ShopBenchmarkUploadResult.Uploaded up:
-                    _uploadUrl = up.CompareUrl;
-                    _uploadMessage = up.Computers is > 1
-                        ? $"Uploaded {request.Results.Count} results. Your shop now has {up.Computers} computers to compare."
-                        : $"Uploaded {request.Results.Count} results. Upload from another computer to compare them.";
-                    break;
-                case ShopBenchmarkUploadResult.Unauthorized:
-                    Fail("The shop API key was rejected. Check your rpd_live_… key on QA & branding.");
-                    break;
-                case ShopBenchmarkUploadResult.PaymentRequired:
-                    Fail("The shop's subscription or trial is inactive. Renew it on the Admin site's Shop page.");
-                    break;
-                case ShopBenchmarkUploadResult.InvalidRequest bad:
-                    Fail($"Admin did not accept the results: {bad.Error}");
-                    break;
-                case ShopBenchmarkUploadResult.NetworkError net:
-                    Fail($"Could not reach the Admin site: {net.Message}");
-                    break;
-            }
-        }
-        finally
-        {
-            _uploading = false;
-            StateHasChanged();
-        }
-    }
-
-    private void Fail(string message)
-    {
-        _uploadFailed = true;
-        _uploadMessage = message;
-    }
-
     private bool _confirmAvRun;
     private bool _confirmDevDriveRun;
 
-    protected override void OnInitialized() => Bench.Changed += OnChanged;
+    protected override void OnInitialized() { Bench.Changed += OnChanged; Uploader.Changed += OnChanged; }
     protected override Task OnInitializedAsync() => Bench.RefreshDeveloperEnvironmentAsync();
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
-    public void Dispose() => Bench.Changed -= OnChanged;
+    public void Dispose() { Bench.Changed -= OnChanged; Uploader.Changed -= OnChanged; }
 
     private void ApplyStandardPreset() =>
         Bench.UpdateSettings(Bench.Settings with { Enabled = [.. Benchmarks.DefaultEnabled], Runs = 3 });

@@ -394,6 +394,9 @@ public static class AgentExports
         {
             enabled = settings.Enabled.Select(k => k.ToString()).ToList(),
             restartBeforeAfter = settings.RestartBeforeAfter,
+            // Runs per test (bench-runs); runChoices are the values the select offers.
+            runs = settings.Runs,
+            runChoices = BenchmarkSettings.RunChoices,
         },
         // Every kind. available false means the PC lacks the hardware or software: there is no control to turn it on.
         tests = tests?.Select(t => new

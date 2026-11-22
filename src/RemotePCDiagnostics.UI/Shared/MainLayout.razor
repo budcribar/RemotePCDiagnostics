@@ -3,6 +3,8 @@
 @using RemotePCDiagnostics.Agent.Core
 @using RemotePCDiagnostics.Core.Session
 @using RemotePCDiagnostics.Core.Workflow
+@* Created here so it uploads each finished benchmark pass even when the Benchmark page is not open. *@
+@inject BenchmarkUploader BenchmarkUploads
 @inject ISessionContext Session
 @inject NavigationManager Nav
 @inject AppServices App

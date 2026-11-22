@@ -221,6 +221,11 @@ public static class HostServices
             getRelaunchArguments: () => session.Mode == SessionMode.Remote && session.ServerUri is not null && session.SessionId != Guid.Empty
                 ? SessionLaunchOptions.RestartArguments(session.ServerUri, session.SessionId, session.Unattended, session.Voice, session.Group, session.Admin)
                 : [SessionLaunchOptions.RestartedArg]));
+        // Uploads each finished benchmark pass to the shop's comparison. MainLayout injects it, so it listens from the first page on.
+        services.AddSingleton(sp => new RemotePCDiagnostics.UI.BenchmarkUploader(
+            sp.GetRequiredService<RemotePCDiagnostics.Core.Benchmarks.BenchmarkService>(),
+            sp.GetRequiredService<RemotePCDiagnostics.UI.AppServices>(),
+            sp.GetRequiredService<ISessionContext>()));
         // The optional host services pages may use (instead of injecting IServiceProvider).
         services.AddSingleton(sp => new RemotePCDiagnostics.UI.AppServices(sp.GetService<RemediationService>(), sp.GetService<ServiceActionService>(),
             sp.GetService<RemotePCDiagnostics.Core.Optimizations.MemorySuggestionService>(), sp.GetService<RemotePCDiagnostics.Core.Areas.ICopilotHandoff>(),
