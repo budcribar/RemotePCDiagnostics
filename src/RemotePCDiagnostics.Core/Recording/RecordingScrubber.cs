@@ -56,6 +56,8 @@ public sealed class RecordingScrubber
     public RecordedCall Scrub(RecordedCall c) => c with
     {
         Args = c.Args?.Select(Text).ToList(),
+        // A query can hold the PC's name (a disk's ObjectId does); scrubbed the same way as the rows, so replay still finds it.
+        Query = c.Query is { } q ? Text(q) : null,
         StdOut = c.StdOut is { } o ? Output(o) : null,
         StdErr = c.StdErr is { } e ? Text(e) : null,
         Error = c.Error is { } err ? Text(err) : null,

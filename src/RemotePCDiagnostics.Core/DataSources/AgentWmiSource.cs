@@ -33,7 +33,9 @@ public static class WmiQueryPolicy
         if (!Namespaces.Contains(wmiNamespace)) return $"WMI namespace '{wmiNamespace}' isn't one the Agent reads.";
         var q = wql.Trim();
         if (q.Length == 0 || q.Length > MaxQueryLength) return "The WMI query is empty or too long.";
-        if (!q.StartsWith("SELECT ", StringComparison.OrdinalIgnoreCase)) return "The Agent only runs WMI SELECT queries.";
+        // Both are read-only. ASSOCIATORS OF follows an object's links (a disk's reliability counters are only reachable that way).
+        if (!q.StartsWith("SELECT ", StringComparison.OrdinalIgnoreCase) && !q.StartsWith("ASSOCIATORS OF {", StringComparison.OrdinalIgnoreCase))
+            return "The Agent only runs WMI SELECT and ASSOCIATORS OF queries.";
         if (q.Any(char.IsControl)) return "The WMI query has control characters.";
         return null;
     }

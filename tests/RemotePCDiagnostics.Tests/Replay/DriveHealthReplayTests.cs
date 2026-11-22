@@ -107,7 +107,7 @@ public sealed class DriveHealthReplayTests
     [Fact]
     public async Task FailingDrive_IsAnError()
     {
-        var r = await Run(Sample.SetWmi("MSFT_PhysicalDisk", "HealthStatus", 2));
+        var r = await Run(Sample.SetWmi("FROM MSFT_PhysicalDisk", "HealthStatus", 2));
         Assert.Equal(DiagnosticStatus.Error, r.Status);
     }
 
@@ -117,14 +117,14 @@ public sealed class DriveHealthReplayTests
     [InlineData("ReadErrorsUncorrected", 4)]
     public async Task WornHotOrErroringDrive_IsAWarning(string counter, int value)
     {
-        var r = await Run(Sample.SetWmi("MSFT_StorageReliabilityCounter", counter, value));
+        var r = await Run(Sample.SetWmi("StorageReliabilityCounter", counter, value));
         Assert.Equal(DiagnosticStatus.Warning, r.Status);
     }
 
     [Fact]
     public async Task CountersRefused_StillListsTheDriveWithItsHealth()
     {
-        var r = await Run(Sample.FailWmi("MSFT_StorageReliabilityCounter", "Access denied"));
+        var r = await Run(Sample.FailWmi("StorageReliabilityCounter", "Access denied"));
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
         Assert.Contains("SAMPLE NVMe SSD", Snapshot.Normalize(r));
     }
@@ -132,7 +132,7 @@ public sealed class DriveHealthReplayTests
     [Fact]
     public async Task NoStorageWmi_FallsBackToTheDriveList()
     {
-        var r = await new ReplayedPc(Sample.FailWmi("MSFT_PhysicalDisk", "Not supported")).DriveHealth().RefreshAsync(null, TestContext.Current.CancellationToken);
+        var r = await new ReplayedPc(Sample.FailWmi("FROM MSFT_PhysicalDisk", "Not supported")).DriveHealth().RefreshAsync(null, TestContext.Current.CancellationToken);
         Assert.NotNull(r.Payload);
     }
 }

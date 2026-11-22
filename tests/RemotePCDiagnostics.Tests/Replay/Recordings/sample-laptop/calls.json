@@ -86,9 +86,10 @@
     {
       "kind": "wmi",
       "namespace": "root\\Microsoft\\Windows\\Storage",
-      "query": "SELECT DeviceId, UniqueId, FriendlyName, SerialNumber, MediaType, BusType, HealthStatus, OperationalStatus, Size FROM MSFT_PhysicalDisk",
+      "query": "SELECT ObjectId, DeviceId, UniqueId, FriendlyName, SerialNumber, MediaType, BusType, HealthStatus, OperationalStatus, Size FROM MSFT_PhysicalDisk",
       "rows": [
         {
+          "ObjectId": "{1}\\\\<pc:3c9e1a>\\root/Microsoft/Windows/Storage/Providers_v2\\SPACES_PhysicalDisk.ObjectId=\"{11111111-2222-3333-4444-555555555555}:PD:{66666666-7777-8888-9999-000000000000}\"",
           "DeviceId": "0",
           "UniqueId": "<serial:5a5a01>",
           "FriendlyName": "SAMPLE NVMe SSD 512GB",
@@ -125,7 +126,7 @@
     {
       "kind": "wmi",
       "namespace": "root\\Microsoft\\Windows\\Storage",
-      "query": "SELECT DeviceId, Temperature, Wear, ReadErrorsUncorrected, WriteErrorsUncorrected, PowerOnHours FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '0'",
+      "query": "ASSOCIATORS OF {MSFT_PhysicalDisk.ObjectId=\"{1}\\\\\\\\<pc:3c9e1a>\\\\root/Microsoft/Windows/Storage/Providers_v2\\\\SPACES_PhysicalDisk.ObjectId=\\\"{11111111-2222-3333-4444-555555555555}:PD:{66666666-7777-8888-9999-000000000000}\\\"\"} WHERE AssocClass = MSFT_PhysicalDiskToStorageReliabilityCounter",
       "rows": [
         {
           "DeviceId": "0",
@@ -133,7 +134,8 @@
           "Wear": 3,
           "ReadErrorsUncorrected": 0,
           "WriteErrorsUncorrected": 0,
-          "PowerOnHours": 1200
+          "PowerOnHours": 1200,
+          "ObjectId": "{1}\\\\<pc:3c9e1a>\\root/Microsoft/Windows/Storage/Providers_v2\\SPACES_StorageReliabilityCounter.ObjectId=\"{0}\""
         }
       ]
     },
