@@ -155,6 +155,10 @@ public interface IElevatedCommandBridge
     Task<AgentStateRead> ReadStateFileAsync(string name, CancellationToken ct = default) => Task.FromResult(AgentStateRead.Failed);
     /// <summary>Has the Agent save one of those files (null JSON deletes it). False when it couldn't.</summary>
     Task<bool> WriteStateFileAsync(string name, string? json, CancellationToken ct = default) => Task.FromResult(false);
+
+    /// <summary>Runs one read-only WMI query in the Agent, with its rights. Fails (never throws) when the Agent isn't connected or is too old.</summary>
+    Task<DataSources.WmiQueryResult> QueryWmiAsync(string wmiNamespace, string wql, CancellationToken ct = default) =>
+        Task.FromResult(DataSources.WmiQueryResult.Failed(wmiNamespace, wql, DataSources.AgentWmiSource.NotConnected));
 }
 
 /// <summary>A state file as the Agent read it: <paramref name="Ok"/> false when it couldn't; <paramref name="Json"/> null when there's no file.</summary>
@@ -537,7 +541,9 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("approved")] bool? Approved = null,
     [property: JsonPropertyName("approvedBy")] string? ApprovedBy = null,
     [property: JsonPropertyName("busyReason")] string? BusyReason = null,
-    [property: JsonPropertyName("requestId")] string? RequestId = null);
+    [property: JsonPropertyName("requestId")] string? RequestId = null,
+    [property: JsonPropertyName("wmiNamespace")] string? WmiNamespace = null,
+    [property: JsonPropertyName("wql")] string? Wql = null);
 
 /// <summary>
 /// The app removal requests' arguments: packages by name and publisher id, one uninstall command, or one task path. The Agent checks
@@ -586,7 +592,8 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("stateJson")] string? StateJson = null,
     [property: JsonPropertyName("setup")] MachineSetupResult? Setup = null,
     [property: JsonPropertyName("updateStatus")] RpcdUpdateStatus? UpdateStatus = null,
-    [property: JsonPropertyName("enrollment")] AgentEnrollmentFacts? Enrollment = null);
+    [property: JsonPropertyName("enrollment")] AgentEnrollmentFacts? Enrollment = null,
+    [property: JsonPropertyName("wmiRows")] IReadOnlyList<Dictionary<string, JsonElement>>? WmiRows = null);
 
 /// <summary>
 /// The public part of agent.json, which only administrators and SYSTEM can read: the machine id and the shop group.
@@ -646,6 +653,8 @@ public static class AdminPipeFraming
     /// <summary>The workflow, benchmark and check-settings files in the state folder: read one, or save it (no JSON deletes it).</summary>
     public const string OpStateRead = "state_read";
     public const string OpStateWrite = "state_write";
+    /// <summary>One read-only WMI query (<see cref="DataSources.WmiQueryPolicy"/>), answered with the Agent's rights; the response carries the rows.</summary>
+    public const string OpWmiQuery = "wmi_query";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -985,6 +994,16 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         return r.Ok;
     }
 
+    public async Task<DataSources.WmiQueryResult> QueryWmiAsync(string wmiNamespace, string wql, CancellationToken ct = default)
+    {
+        AdminPipeResponse r;
+        try { r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpWmiQuery, WmiNamespace: wmiNamespace, Wql: wql), ct).ConfigureAwait(false); }
+        catch (IOException ex) { return DataSources.WmiQueryResult.Failed(wmiNamespace, wql, ex.Message); }
+        if (r.Ok) return new(wmiNamespace, wql, (r.WmiRows ?? []).Select(x => new DataSources.WmiRow(x)).ToList());
+        // An Agent from before wmi_query answers "Unknown operation".
+        return DataSources.WmiQueryResult.Failed(wmiNamespace, wql, r.Error ?? "The Agent couldn't run the WMI query.");
+    }
+
     public async Task ChangeSystemSettingAsync(AdminPipeSetting setting, CancellationToken ct = default)
     {
         var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpSystemSetting, Setting: setting), ct).ConfigureAwait(false);
@@ -1203,7 +1222,8 @@ public sealed class AdminPipeServer(
     Func<IChangeJournal>? changeJournal = null,
     string? stateFolder = null,
     IMachineSetup? machineSetup = null,
-    IAgentNativeOps? nativeOps = null) : IAsyncDisposable, IDisposable
+    IAgentNativeOps? nativeOps = null,
+    DataSources.IWmiSource? wmiSource = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -1641,6 +1661,9 @@ public sealed class AdminPipeServer(
         if (request.Op is AdminPipeFraming.OpStateRead or AdminPipeFraming.OpStateWrite)
             return await Task.Run(() => HandleStateFile(request), ct).ConfigureAwait(false);
 
+        if (string.Equals(request.Op, AdminPipeFraming.OpWmiQuery, StringComparison.OrdinalIgnoreCase))
+            return await HandleWmiQueryAsync(request, ct).ConfigureAwait(false);
+
         if (string.Equals(request.Op, AdminPipeFraming.OpPrepareMachine, StringComparison.OrdinalIgnoreCase))
             return await Task.Run(PrepareMachine, ct).ConfigureAwait(false);
 
@@ -1882,6 +1905,21 @@ public sealed class AdminPipeServer(
     }
 
     /// <summary>The workflow and benchmark state for an app that isn't elevated, by fixed file name only, checked before it's saved.</summary>
+    private async Task<AdminPipeResponse> HandleWmiQueryAsync(AdminPipeRequest request, CancellationToken ct)
+    {
+        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true, IReadOnlyList<Dictionary<string, JsonElement>>? rows = null) => new(
+            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
+            Error: error, WmiRows: rows);
+        var (ns, wql) = (request.WmiNamespace ?? "", request.Wql ?? "");
+        if (DataSources.WmiQueryPolicy.Problem(ns, wql) is { } problem) return Answer(false, problem, allowed: false);
+        var r = await (_wmi ??= wmiSource ?? new DataSources.SystemWmiSource(log)).QueryAsync(ns, wql, ct).ConfigureAwait(false);
+        return r.Success
+            ? Answer(true, rows: r.Rows!.Select(x => new Dictionary<string, JsonElement>(x.Values, StringComparer.OrdinalIgnoreCase)).ToList())
+            : Answer(false, r.Error);
+    }
+
+    private DataSources.IWmiSource? _wmi;
+
     private AdminPipeResponse HandleStateFile(AdminPipeRequest request)
     {
         AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true, string? json = null) => new(

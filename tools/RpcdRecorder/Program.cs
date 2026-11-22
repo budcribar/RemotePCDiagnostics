@@ -1,7 +1,7 @@
 // Records the raw answers this PC gives to the checks that support record and replay, scrubs personal details, and saves a recording
 // folder for the replay tests (docs/record-replay.md). It only reads: no fix runs, nothing on the PC changes.
 //
-//   dotnet run --project tools/RpcdRecorder -- --out <folder> [--osquery <path to osqueryi.exe>] [--note "text"]
+//   dotnet run --project tools/RpcdRecorder -- --out <folder>   (from an admin prompt, as the Agent runs) [--osquery <path to osqueryi.exe>] [--note "text"]
 //
 // Each check runs twice: once on the new WMI path and once on the old osquery / powercfg path, so the tests can check the two agree.
 
@@ -19,6 +19,9 @@ var osqueryPath = Arg("--osquery") ?? Environment.GetEnvironmentVariable(Osquery
 var note = Arg("--note");
 
 if (!OperatingSystem.IsWindows()) { Console.Error.WriteLine("Run this on the Windows PC to record."); return 2; }
+// The app reads WMI through the Agent, which runs as administrator: record from an admin prompt so the answers match.
+if (!Environment.IsPrivilegedProcess)
+    Console.WriteLine("Not running as administrator. The Agent reads WMI as administrator, so some answers (the power plan) will differ. Run from an admin prompt.");
 
 var recorder = new CallRecorder();
 var liveWmi = new SystemWmiSource();

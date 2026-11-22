@@ -413,6 +413,11 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     public Task<bool> WriteStateFileAsync(string name, string? json, CancellationToken ct = default) =>
         ConnectedOrNull() is { } client ? client.WriteStateFileAsync(name, json, ct) : Task.FromResult(false);
 
+    public Task<DataSources.WmiQueryResult> QueryWmiAsync(string wmiNamespace, string wql, CancellationToken ct = default) =>
+        ConnectedOrNull() is { } client
+            ? client.QueryWmiAsync(wmiNamespace, wql, ct)
+            : Task.FromResult(DataSources.WmiQueryResult.Failed(wmiNamespace, wql, DataSources.AgentWmiSource.NotConnected));
+
     private AdminPipeClient? ConnectedOrNull()
     {
         lock (_stateLock)

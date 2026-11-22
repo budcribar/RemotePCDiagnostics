@@ -5,7 +5,7 @@ change that breaks one make or model shows up in the tests rather than on that P
 
 ## Recording a PC
 
-On the PC (Windows, no administrator rights needed, nothing is changed):
+On the PC, from an administrator prompt (the app reads WMI through the Agent, which runs as administrator; nothing is changed):
 
 ```
 dotnet run --project tools/RpcdRecorder -c Release -- --out <folder> [--osquery <path to osqueryi.exe>] [--note "text"]
