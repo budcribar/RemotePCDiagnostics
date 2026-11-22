@@ -438,7 +438,7 @@ public sealed class BiosUpdateTests
         });
 
         var osquery = new OsqueryRunner(baseDirectory: Path.GetTempPath(), launcher: launcher, fileExists: _ => true);
-        var probe = new DefaultBiosSystemProbe(osquery);
+        var probe = new DefaultBiosSystemProbe(osquery, log: null, readRegistry: () => default, readFirmwareMode: () => BiosFirmwareMode.Unknown);
 
         var identity = await probe.ProbeAsync();
 

@@ -14,17 +14,34 @@ public sealed class DefaultBiosSystemProbe : IBiosSystemProbe
 {
     private readonly OsqueryRunner? _osquery;
     private readonly ILogger? _log;
+    private readonly Func<WindowsBiosRegistrySnapshot>? _readRegistry;
+    private readonly Func<BiosFirmwareMode>? _readFirmwareMode;
 
     public DefaultBiosSystemProbe(OsqueryRunner? osquery = null, ILogger? log = null)
+        : this(osquery, log, null, null)
+    {
+    }
+
+    internal DefaultBiosSystemProbe(
+        OsqueryRunner? osquery,
+        ILogger? log,
+        Func<WindowsBiosRegistrySnapshot>? readRegistry,
+        Func<BiosFirmwareMode>? readFirmwareMode = null)
     {
         _osquery = osquery;
         _log = log;
+        _readRegistry = readRegistry;
+        _readFirmwareMode = readFirmwareMode;
     }
 
     public async Task<BiosSystemIdentity> ProbeAsync(CancellationToken ct = default)
     {
-        var reg = OperatingSystem.IsWindows() ? ReadWindowsBiosRegistry() : default;
-        var firmwareMode = OperatingSystem.IsWindows() ? ReadWindowsFirmwareMode() : BiosFirmwareMode.Unknown;
+        var reg = _readRegistry is not null
+            ? _readRegistry()
+            : (OperatingSystem.IsWindows() ? ReadWindowsBiosRegistry() : default);
+        var firmwareMode = _readFirmwareMode is not null
+            ? _readFirmwareMode()
+            : (OperatingSystem.IsWindows() ? ReadWindowsFirmwareMode() : BiosFirmwareMode.Unknown);
 
         SystemInfo? sys = null;
         BiosInfo? bios = null;
