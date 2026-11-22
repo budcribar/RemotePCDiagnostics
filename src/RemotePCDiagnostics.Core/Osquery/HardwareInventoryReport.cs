@@ -50,7 +50,7 @@ public static class HardwareInventoryReport
         var rows = cpus.Select(c => new AreaRow(AreaLevel.Neutral,
             [c.Model, c.Manufacturer, c.SocketDesignation, c.NumberOfCores?.ToString() ?? "", c.LogicalProcessors?.ToString() ?? "",
                 c.MaxClockSpeedMhz is > 0 ? $"{c.MaxClockSpeedMhz} MHz" : ""])).ToList();
-        return new("cpu", "Processor", AreaLevel.Ok, first.Model, meta, columns, rows);
+        return new("cpu", "Processor", AreaLevel.Ok, first.Model.Length > 0 ? first.Model : Join(first.Manufacturer, "processor"), meta, columns, rows);
     }
 
     private static AreaCard Memory(HardwareInventory inv)

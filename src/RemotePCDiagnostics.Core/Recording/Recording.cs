@@ -75,11 +75,16 @@ public sealed record RecordedMachine
     public string? Notes { get; init; }
 }
 
-/// <summary>One answer. <see cref="Kind"/> says which source: <see cref="ProcessKind"/> (osquery, PowerShell, powercfg) or <see cref="WmiKind"/>.</summary>
+/// <summary>
+/// One answer. <see cref="Kind"/> says which source: <see cref="ProcessKind"/> (osquery, PowerShell, powercfg), <see cref="WmiKind"/>, or
+/// <see cref="RegistryKind"/> (kept like WMI: <see cref="Namespace"/> is the root and view, <see cref="Query"/> what was read).
+/// </summary>
 public sealed record RecordedCall
 {
     public const string ProcessKind = "process";
     public const string WmiKind = "wmi";
+    public const string RegistryKind = "registry";
+    public const string PackagesKind = "packages";
 
     public string Kind { get; init; } = "";
 
@@ -92,7 +97,7 @@ public sealed record RecordedCall
     public string? StdErr { get; init; }
     public bool? TimedOut { get; init; }
 
-    // wmi
+    // wmi and registry
     public string? Namespace { get; init; }
     public string? Query { get; init; }
     public List<Dictionary<string, JsonElement>>? Rows { get; init; }
@@ -118,6 +123,12 @@ public sealed record RecordedCall
         Rows = r.Rows?.Select(row => row.Values.ToDictionary(p => p.Key, p => p.Value)).ToList(),
     };
 
+    public static RecordedCall FromRegistry(WmiQueryResult r) => FromWmi(r) with { Kind = RegistryKind };
+    public static RecordedCall FromPackages(WmiQueryResult r) => FromWmi(r) with { Kind = PackagesKind };
+
+    /// <summary>Kept as rows, like WMI (WMI, registry, the package list).</summary>
+    public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind;
+
     /// <summary>Short text naming the call, for test messages.</summary>
-    public string Describe() => Kind == WmiKind ? $"wmi {Namespace} \"{Query}\"" : $"{File} {string.Join(' ', Args ?? [])}";
+    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : $"{File} {string.Join(' ', Args ?? [])}";
 }

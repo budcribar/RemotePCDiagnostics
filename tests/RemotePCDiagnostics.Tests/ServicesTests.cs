@@ -18,7 +18,7 @@ public class ServicesTests
     {
         var log = new List<string>();
         var l = new ScriptedLauncher((f, a) => ScriptedLauncher.Ok(Json));
-        var m = new ServicesModule(ScriptedLauncher.Osquery(l, log));
+        var m = new ServicesModule(new RemotePCDiagnostics.Legacy.OsqueryServiceSource(ScriptedLauncher.Osquery(l, log)));
         var r = await m.RefreshAsync(null);
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
         Assert.Equal("1 running · 1 automatic service not running", r.Message);
@@ -29,7 +29,7 @@ public class ServicesTests
         Assert.Equal("Fax", rep.Cards.Single(c => c.Id == "disabled").Rows.Single().Values[0]);
         Assert.Equal(4, rep.Cards.Single(c => c.Id == "all").Rows.Count);
         Assert.Equal("Local service", rep.Cards.Single(c => c.Id == "running").Rows.Single().Values[3]);
-        Assert.Equal(ServicesModule.Sql, l.Calls.Single().Args[^1]);
+        Assert.Equal(RemotePCDiagnostics.Legacy.OsqueryServiceSource.Sql, l.Calls.Single().Args[^1]);
         Assert.Contains(log, s => s.Contains("FROM services"));
         Assert.DoesNotContain("services;", r.Message);
     }
@@ -37,7 +37,7 @@ public class ServicesTests
     [Fact]
     public async Task QueryFails_FriendlyError()
     {
-        var m = new ServicesModule(ScriptedLauncher.Osquery(new ScriptedLauncher((f, a) => ScriptedLauncher.Fail())));
+        var m = new ServicesModule(new RemotePCDiagnostics.Legacy.OsqueryServiceSource(ScriptedLauncher.Osquery(new ScriptedLauncher((f, a) => ScriptedLauncher.Fail()))));
         var r = await m.RefreshAsync(null);
         Assert.Equal(DiagnosticStatus.Error, r.Status);
         Assert.Equal("Couldn't read the list of services on this PC.", r.Message);
@@ -48,7 +48,7 @@ public class ServicesTests
     {
         var runner = new OsqueryRunner(options: new OsqueryOptions { ExecutablePath = "/nope/osqueryi.exe" }, fileExists: _ => false);
         var store = new ResultStore();
-        var svc = new DiagnosticsService(store, [new ServicesModule(runner)]);
+        var svc = new DiagnosticsService(store, [new ServicesModule(new RemotePCDiagnostics.Legacy.OsqueryServiceSource(runner))]);
         var r = await svc.RunAsync("Services");
         Assert.Equal(DiagnosticStatus.Error, r.Status);
         Assert.Equal(OsqueryAreaModuleBase.ToolMissingMessage, r.Message);

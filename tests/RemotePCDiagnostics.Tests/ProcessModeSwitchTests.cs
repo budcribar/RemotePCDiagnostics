@@ -73,8 +73,9 @@ public sealed class ProcessModeSwitchTests : IDisposable
     {
         services.AddSingleton(new RemotePCDiagnostics.Core.Osquery.OsqueryRunner(baseDirectory: root));
         services.AddSingleton(new SystemCommandRunner());
-        services.AddSingleton<IBatteryPowerSource>(new WmiBatteryPowerSource(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource()));
-        services.AddSingleton<IDriveSource>(new WmiDriveSource(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource()));
+        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource());
+        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IRegistrySource>(new RemotePCDiagnostics.Core.DataSources.SystemRegistrySource());
+        services.AddReaders();
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Sensors.ISensorProvider>());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Sensors.IEcFanSource>());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Stress.IGpuDeviceFactory>());

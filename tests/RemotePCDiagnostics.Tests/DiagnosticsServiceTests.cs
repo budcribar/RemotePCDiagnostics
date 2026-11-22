@@ -107,7 +107,7 @@ public class DiagnosticsServiceTests
     {
         var runner = new OsqueryRunner(Path.GetTempPath());
         Assert.False(runner.Exists);
-        var r = await new DiagnosticsService(new ResultStore(), [new OsqueryModule(runner)]).RunAsync("Osquery");
+        var r = await new DiagnosticsService(new ResultStore(), [new OsqueryModule(new RemotePCDiagnostics.Legacy.OsqueryHardwareInventorySource(runner))]).RunAsync("Osquery");
         Assert.Equal(DiagnosticStatus.Error, r.Status);
         Assert.Equal(OsqueryModule.ToolMissingMessage, r.Message);
     }

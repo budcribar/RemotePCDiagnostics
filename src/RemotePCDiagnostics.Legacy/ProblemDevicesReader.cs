@@ -1,6 +1,6 @@
 using System.Management;
 
-namespace RemotePCDiagnostics.Core.Platform;
+namespace RemotePCDiagnostics.Legacy;
 
 /// <summary>
 /// Native in-process C# reader for problem devices (Win32_PnPEntity where ConfigManagerErrorCode != 0).

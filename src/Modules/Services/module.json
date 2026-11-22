@@ -5,8 +5,8 @@
   "contract": "2.0",
   "entryType": "RemotePCDiagnostics.Modules.Services.ServicesPlugin",
   "needsAdmin": false,
-  // Ships in process. The About page can run it out of process in user mode (RemotePCDiagnostics.ModuleHost, restricted token): the
-  // reads that need administrator rights then come from the app, and only these.
-  "capabilities": [ "osquery.select" ],
+  // Ships in process. The About page can run it out of process in user mode (RemotePCDiagnostics.ModuleHost, restricted token): its WMI
+  // queries then go through the app to the Agent, as in process.
+  "capabilities": [ "wmi.query" ],
   "outOfProcess": false
 }

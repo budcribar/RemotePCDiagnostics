@@ -218,7 +218,7 @@ public class OsqueryRunnerTests
             ? new ProcessResult(1, "", "boom")
             : new ProcessResult(0, sql.Contains("system_info") ? """[{"hardware_vendor":"Dell","hardware_model":"X","physical_memory":"8589934592"}]""" : "[]", "")));
         var store = new ResultStore();
-        var r = await new DiagnosticsService(store, [new OsqueryModule(Runner(l))]).RunAsync("Osquery");
+        var r = await new DiagnosticsService(store, [new OsqueryModule(new RemotePCDiagnostics.Legacy.OsqueryHardwareInventorySource(Runner(l)))]).RunAsync("Osquery");
         Assert.Equal(DiagnosticStatus.Warning, r.Status);
         var inv = Assert.IsType<HardwareInventory>(store.Get("Osquery").Payload);
         Assert.True(inv.System.Success);
@@ -241,7 +241,7 @@ public class OsqueryRunnerTests
             _ => new ProcessResult(0, "[]", ""),
         }));
         var store = new ResultStore();
-        var r = await new DiagnosticsService(store, [new OsqueryModule(Runner(l))]).RunAsync("Osquery");
+        var r = await new DiagnosticsService(store, [new OsqueryModule(new RemotePCDiagnostics.Legacy.OsqueryHardwareInventorySource(Runner(l)))]).RunAsync("Osquery");
         Assert.Equal(DiagnosticStatus.Warning, r.Status);
         var inv = Assert.IsType<HardwareInventory>(store.Get("Osquery").Payload);
         Assert.Equal(1, inv.FailedSections);
@@ -263,7 +263,7 @@ public class OsqueryRunnerTests
     public async Task Module_AllFail_IsError()
     {
         var l = new FakeLauncher(_ => Task.FromResult(new ProcessResult(2, "", "bad")));
-        var r = await new DiagnosticsService(new ResultStore(), [new OsqueryModule(Runner(l))]).RunAsync("Osquery");
+        var r = await new DiagnosticsService(new ResultStore(), [new OsqueryModule(new RemotePCDiagnostics.Legacy.OsqueryHardwareInventorySource(Runner(l)))]).RunAsync("Osquery");
         Assert.Equal(DiagnosticStatus.Error, r.Status);
     }
 }

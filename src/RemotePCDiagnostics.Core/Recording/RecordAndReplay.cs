@@ -24,6 +24,27 @@ public sealed class RecordingWmiSource(IWmiSource inner, CallRecorder recorder) 
     }
 }
 
+/// <summary>Passes each registry read to the real source and records the answer.</summary>
+public sealed class RecordingPackageSource(IPackageSource inner, CallRecorder recorder) : IPackageSource
+{
+    public async Task<WmiQueryResult> ReadPackagesAsync(CancellationToken ct = default)
+    {
+        var r = await inner.ReadPackagesAsync(ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromPackages(r));
+        return r;
+    }
+}
+
+public sealed class RecordingRegistrySource(IRegistrySource inner, CallRecorder recorder) : IRegistrySource
+{
+    public async Task<WmiQueryResult> ReadAsync(RegistryRead read, CancellationToken ct = default)
+    {
+        var r = await inner.ReadAsync(read, ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromRegistry(r));
+        return r;
+    }
+}
+
 /// <summary>Passes each program run (osquery, PowerShell, powercfg) to the real launcher and records the output.</summary>
 public sealed class RecordingProcessLauncher(IProcessLauncher inner, CallRecorder recorder) : IProcessLauncher
 {
@@ -44,6 +65,7 @@ public sealed class RecordingReplay
     private readonly Dictionary<string, Queue<RecordedCall>> _byKey = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RecordedCall> _last = new(StringComparer.Ordinal);
     private readonly List<string> _misses = [];
+    private readonly HashSet<string> _asked = new(StringComparer.Ordinal);
 
     public RecordingReplay(MachineRecording recording) : this(recording.Calls) { }
 
@@ -60,7 +82,12 @@ public sealed class RecordingReplay
     /// <summary>Questions asked that the recording doesn't hold.</summary>
     public IReadOnlyList<string> Misses { get { lock (_misses) return [.. _misses]; } }
 
+    /// <summary>The <see cref="Key"/> of every question asked, held or not.</summary>
+    public IReadOnlyCollection<string> Asked { get { lock (_byKey) return [.. _asked]; } }
+
     public IWmiSource Wmi => new ReplayWmi(this);
+    public IRegistrySource Registry => new ReplayRegistry(this);
+    public IPackageSource Packages => new ReplayPackages(this);
     public IProcessLauncher Launcher => new ReplayLauncher(this);
 
     /// <summary>The same question asked twice gets the recorded answers in order, and the last one again after that.</summary>
@@ -68,6 +95,7 @@ public sealed class RecordingReplay
     {
         lock (_byKey)
         {
+            _asked.Add(key);
             if (_byKey.TryGetValue(key, out var q) && q.Count > 0) return _last[key] = q.Dequeue();
             if (_last.TryGetValue(key, out var last)) return last;
         }
@@ -75,10 +103,16 @@ public sealed class RecordingReplay
         return null;
     }
 
-    public static string Key(RecordedCall c) => c.Kind == RecordedCall.WmiKind
-        ? WmiKey(c.Namespace ?? "", c.Query ?? "")
-        : ProcessKey(c.File ?? "", c.Args ?? []);
+    public static string Key(RecordedCall c) => c.Kind switch
+    {
+        RecordedCall.WmiKind => WmiKey(c.Namespace ?? "", c.Query ?? ""),
+        RecordedCall.RegistryKind => RegistryKey(c.Namespace ?? "", c.Query ?? ""),
+        RecordedCall.PackagesKind => PackagesKey,
+        _ => ProcessKey(c.File ?? "", c.Args ?? []),
+    };
 
+    public const string PackagesKey = "packages";
+    public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
     public static string WmiKey(string ns, string wql) => "wmi\n" + ns.ToLowerInvariant() + "\n" + wql;
     public static string ProcessKey(string file, IReadOnlyList<string> args) => "process\n" + RecordedCall.FileKey(file) + "\n" + string.Join("\n", args);
 
@@ -87,6 +121,19 @@ public sealed class RecordingReplay
         public Task<WmiQueryResult> QueryAsync(string wmiNamespace, string wql, CancellationToken ct = default) =>
             Task.FromResult(replay.Answer(WmiKey(wmiNamespace, wql), $"wmi {wmiNamespace} \"{wql}\"")?.ToWmiResult()
                             ?? WmiQueryResult.Failed(wmiNamespace, wql, "Not in the recording."));
+    }
+
+    private sealed class ReplayRegistry(RecordingReplay replay) : IRegistrySource
+    {
+        public Task<WmiQueryResult> ReadAsync(RegistryRead read, CancellationToken ct = default) =>
+            Task.FromResult(replay.Answer(RegistryKey(read.Location, read.Describe()), $"registry {read.Location} \"{read.Describe()}\"")?.ToWmiResult()
+                            ?? WmiQueryResult.Failed(read.Location, read.Describe(), "Not in the recording."));
+    }
+
+    private sealed class ReplayPackages(RecordingReplay replay) : IPackageSource
+    {
+        public Task<WmiQueryResult> ReadPackagesAsync(CancellationToken ct = default) =>
+            Task.FromResult(replay.Answer(PackagesKey, "packages")?.ToWmiResult() ?? PackageList.Failed("Not in the recording."));
     }
 
     private sealed class ReplayLauncher(RecordingReplay replay) : IProcessLauncher

@@ -6,6 +6,7 @@
 // Each check runs twice: once on the new WMI path and once on the old osquery / powercfg / PowerShell path, so the tests can check the two agree.
 
 
+using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.DataSources;
 using RemotePCDiagnostics.Core.Osquery;
@@ -27,6 +28,8 @@ if (!Environment.IsPrivilegedProcess)
 var recorder = new CallRecorder();
 var liveWmi = new SystemWmiSource();
 var wmi = new RecordingWmiSource(liveWmi, recorder);
+var registry = new RecordingRegistrySource(new SystemRegistrySource(), recorder);
+var packages = new RecordingPackageSource(new RemotePCDiagnostics.Host.Platform.SystemPackageSource(), recorder);
 var launcher = new RecordingProcessLauncher(new SystemProcessLauncher(), recorder);
 var osquery = new OsqueryRunner(options: new OsqueryOptions { ExecutablePath = osqueryPath }, launcher: launcher);
 var commands = new SystemCommandRunner(launcher);
@@ -37,21 +40,35 @@ Console.WriteLine($"Recording {machine.Manufacturer} {machine.Model} (product id
 
 // Nothing is saved on this PC: drive history is kept in memory, and free space and retrim history aren't part of a recording yet.
 DriveHealthModule Drives(IDriveSource source) => new(source, historyStore: new DriveHealthHistoryStore(), volumes: () => []);
-var checks = new (string Label, AreaModuleBase Module)[]
+// The commands go through the recording launcher, so they count as scripted: the legacy problem devices come from the PowerShell script
+// (which can be replayed), not WMI read in this process.
+var checks = new (string Label, IDiagnosticModule Module)[]
 {
     ("BatteryPower (WMI)", new BatteryPowerModule(new WmiBatteryPowerSource(wmi))),
     ("BatteryPower (legacy: osquery + powercfg)", new BatteryPowerModule(new OsqueryBatteryPowerSource(osquery, commands))),
     ("DriveHealth (WMI)", Drives(new WmiDriveSource(wmi))),
     ("DriveHealth (legacy: PowerShell)", Drives(new PowerShellDriveSource(commands, osquery))),
+    ("Hardware inventory (WMI)", new OsqueryModule(new WmiHardwareInventorySource(wmi))),
+    ("Hardware inventory (legacy: osquery)", new OsqueryModule(new OsqueryHardwareInventorySource(osquery))),
+    ("Services (WMI)", new ServicesModule(new WmiServiceSource(wmi))),
+    ("Services (legacy: osquery)", new ServicesModule(new OsqueryServiceSource(osquery))),
+    ("Device Manager & drivers (WMI)", new DeviceDriversModule(new WmiDeviceDriverSource(wmi))),
+    ("Device Manager & drivers (legacy: PowerShell + osquery)", new DeviceDriversModule(new OsqueryDeviceDriverSource(osquery, commands))),
+    ("Programs & updates (WMI + registry)", new ProgramsModule(new WmiProgramsSource(wmi, registry, packages))),
+    ("Programs & updates (legacy: osquery)", new ProgramsModule(new OsqueryProgramsSource(osquery))),
 };
 foreach (var (label, module) in checks)
 {
     var r = await module.RefreshAsync(null);
     Console.WriteLine($"  {label}: {r.Status} - {r.Message}");
+    // Long lists (services, drivers, programs) print only their size.
     if (r.Payload is AreaReport report)
         foreach (var card in report.Cards)
+        {
+            if (card.Rows.Count > 12) { Console.WriteLine($"      {card.Title}: {card.Rows.Count} rows"); continue; }
             foreach (var row in card.Rows)
                 Console.WriteLine($"      {string.Join(": ", row.Values)}");
+        }
 }
 
 var scrubber = new RecordingScrubber(Environment.MachineName, UserNames());

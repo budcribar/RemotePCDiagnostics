@@ -23,7 +23,7 @@ public sealed record SystemInfo(
 
     private static readonly HashSet<string> Unset = new(StringComparer.OrdinalIgnoreCase)
     {
-        "-1", "None", "Default string", "To Be Filled By O.E.M.", "System Version", "Not Applicable", "Not Specified",
+        "-1", "None", "Default string", "To Be Filled By O.E.M.", "System Version", "Not Applicable", "Not Specified", "ConfigID",
     };
 }
 
@@ -47,9 +47,12 @@ public sealed record MemoryDevice(
 {
     public bool IsPopulated => SizeMb is > 0;
 
+    /// <summary>A module's size in MB, or null when it can't be real (none is near a petabyte): keeps the byte totals from overflowing.</summary>
+    public static long? SaneMb(long? mb) => mb is > 0 and < 1L << 30 ? mb : null;
+
     public static MemoryDevice FromRow(IReadOnlyDictionary<string, string> r) => new(
         r.Str("device_locator"), r.Str("bank_locator"), r.Str("form_factor"), r.Str("memory_type"),
-        r.Long("size"), r.Int("max_speed"), r.Int("configured_clock_speed"),
+        SaneMb(r.Long("size")), r.Int("max_speed"), r.Int("configured_clock_speed"),
         r.Str("manufacturer"), r.Str("part_number"), r.Str("serial_number"));
 }
 
@@ -184,33 +187,6 @@ public sealed record HardwareInventory(
 
     /// <summary>True when no section could be read at all.</summary>
     public bool AllSectionsFailed => FailedSections == SectionCount;
-
-    public static async Task<HardwareInventory> CollectAsync(OsqueryRunner runner, IProgress<string>? progress = null, CancellationToken ct = default)
-    {
-        async Task<OsqueryQueryResult> Q(int step, string msg, string sql) { progress.ReportStep(step, SectionCount, msg); return await runner.RunQueryAsync(sql, ct).ConfigureAwait(false); }
-        var sys = InventorySection<SystemInfo>.From(await Q(1, "Reading computer details…", SystemSql).ConfigureAwait(false), SystemInfo.FromRow);
-        var cpu = InventorySection<CpuInfo>.From(await Q(2, "Reading processor details…", CpuSql).ConfigureAwait(false), CpuInfo.FromRow);
-        var mem = InventorySection<MemoryDevice>.From(await Q(3, "Reading memory modules…", MemorySql).ConfigureAwait(false), MemoryDevice.FromRow);
-        var disk = InventorySection<DiskInfo>.From(await Q(4, "Reading storage drives…", DiskSql).ConfigureAwait(false), DiskInfo.FromRow);
-        // Each section is its own query, so one that fails (or a table this platform lacks) leaves the others intact.
-        var gpu = InventorySection<GpuInfo>.FromOptional(await Q(5, "Reading graphics adapters…", GpuSql).ConfigureAwait(false), GpuInfo.FromRow);
-        var net = InventorySection<NetworkAdapterInfo>.FromOptional(await Q(6, "Reading network adapters…", NetworkSql).ConfigureAwait(false), NetworkAdapterInfo.FromRow);
-        var bios = InventorySection<BiosInfo>.FromOptional(await Q(7, "Reading BIOS details…", BiosSql).ConfigureAwait(false), BiosInfo.FromRow);
-
-        // Fallbacks (shown to the user as normal values).
-        var s0 = sys.Items.FirstOrDefault();
-        if (cpu.Success && cpu.Items.Count == 0 && s0 is { CpuBrand.Length: > 0 })
-            cpu = cpu with { Items = [CpuFromSystem(s0)], FromFallback = true };
-        if (mem.Success && !mem.Items.Any(m => m.IsPopulated) && s0?.PhysicalMemoryBytes is > 0)
-            mem = mem with { FromFallback = true }; // UI/summary use system_info.physical_memory for the total
-        if (disk.Success && disk.Items.Count == 1 && disk.Items[0].SizeBytes is not > 0)
-        {
-            var ld = await runner.RunQueryAsync(LogicalDrivesSql, ct).ConfigureAwait(false);
-            var total = ld.Success ? SumFixedDrives(ld.Rows!) : 0;
-            if (total > 0) disk = disk with { Items = [disk.Items[0] with { SizeBytes = total }], FromFallback = true };
-        }
-        return new(sys, cpu, mem, disk) { Gpus = gpu, NetworkAdapters = net, Bios = bios, ToolMissing = !runner.Exists };
-    }
 
     public static CpuInfo CpuFromSystemPublic(SystemInfo s) => CpuFromSystem(s);
     internal static CpuInfo CpuFromSystem(SystemInfo s) =>

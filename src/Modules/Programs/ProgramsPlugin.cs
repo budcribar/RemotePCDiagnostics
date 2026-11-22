@@ -1,5 +1,4 @@
 using RemotePCDiagnostics.Core.Areas;
-using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Modules.Programs;
 
@@ -7,7 +6,7 @@ namespace RemotePCDiagnostics.Modules.Programs;
 public sealed class ProgramsPlugin : IModulePlugin
 {
     public void Register(IServiceCollection services, IPluginContext context) =>
-        services.AddModule(context, sp => new ProgramsModule(sp.GetRequiredService<OsqueryRunner>(), commands: sp.GetService<SystemCommandRunner>()),
+        services.AddModule(context, sp => new ProgramsModule(sp.GetRequiredService<IProgramsSource>(), commands: sp.GetService<SystemCommandRunner>(), log: context.Log),
             ModuleIds.Programs, typeof(ProgramsDetails));
 }
 

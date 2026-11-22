@@ -163,7 +163,7 @@ public class OsqueryDiagnosticsAndFallbackTests
             _ when sql.Contains("logical_drives") => """[{"device_id":"C:","type":"Local Disk","size":"511000000000"},{"device_id":"D:","type":"CD-ROM Disc","size":"0"},{"device_id":"E:","type":"Removable Disk","size":"32000000000"}]""",
             _ => "[]",
         });
-        var inv = await HardwareInventory.CollectAsync(Runner(l));
+        var inv = await RemotePCDiagnostics.Legacy.OsqueryHardwareInventorySource.CollectAsync(Runner(l));
         Assert.Equal(0, inv.FailedSections);
         var cpu = Assert.Single(inv.Cpus.Items);
         Assert.True(inv.Cpus.FromFallback);
@@ -192,7 +192,7 @@ public class OsqueryDiagnosticsAndFallbackTests
             _ when sql.Contains("disk_info") => """[{"disk_size":"1000"}]""",
             _ => throw new InvalidOperationException("unexpected " + sql),
         });
-        var inv = await HardwareInventory.CollectAsync(Runner(l));
+        var inv = await RemotePCDiagnostics.Legacy.OsqueryHardwareInventorySource.CollectAsync(Runner(l));
         Assert.False(inv.Cpus.FromFallback || inv.Memory.FromFallback || inv.Disks.FromFallback);
         Assert.Equal("Real CPU", inv.Cpus.Items.Single().Model);
         Assert.DoesNotContain(l.Calls, c => c.Args[^1].Contains("logical_drives"));
@@ -208,11 +208,11 @@ public class OsqueryDiagnosticsAndFallbackTests
     [Fact]
     public async Task UserMessages_AreFriendly_NoDeveloperText()
     {
-        var missing = await new DiagnosticsService(new ResultStore(), [new OsqueryModule(Runner(new FakeLauncher(_ => throw new Exception()), exists: false))]).RunAsync("Osquery");
+        var missing = await new DiagnosticsService(new ResultStore(), [new OsqueryModule(new RemotePCDiagnostics.Legacy.OsqueryHardwareInventorySource(Runner(new FakeLauncher(_ => throw new Exception()), exists: false)))]).RunAsync("Osquery");
         Assert.Equal(DiagnosticStatus.Error, missing.Status);
         Assert.Equal(OsqueryModule.ToolMissingMessage, missing.Message);
 
-        var broken = await new DiagnosticsService(new ResultStore(), [new OsqueryModule(Runner(new FakeLauncher(_ => Task.FromResult(new ProcessResult(3, "", "boom")))))]).RunAsync("Osquery");
+        var broken = await new DiagnosticsService(new ResultStore(), [new OsqueryModule(new RemotePCDiagnostics.Legacy.OsqueryHardwareInventorySource(Runner(new FakeLauncher(_ => Task.FromResult(new ProcessResult(3, "", "boom"))))))]).RunAsync("Osquery");
         Assert.Equal(OsqueryModule.AllFailedMessage, broken.Message);
 
         foreach (var msg in new[] { missing.Message, broken.Message })
@@ -223,7 +223,7 @@ public class OsqueryDiagnosticsAndFallbackTests
     [Fact]
     public void Module_DisplayName_IsHardwareInventory()
     {
-        IDiagnosticModule m = new OsqueryModule(new OsqueryRunner(fileExists: _ => false));
+        IDiagnosticModule m = new OsqueryModule(new RemotePCDiagnostics.Legacy.OsqueryHardwareInventorySource(new OsqueryRunner(fileExists: _ => false)));
         Assert.Equal("Hardware inventory", m.DisplayName);
         Assert.Equal("Osquery", m.Name);
     }

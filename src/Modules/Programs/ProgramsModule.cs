@@ -3,26 +3,12 @@ using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
-public sealed record InstalledProgram(string Name, string Version, string Publisher, DateOnly? InstalledOn)
-{
-    public static InstalledProgram FromRow(IReadOnlyDictionary<string, string> r) =>
-        new(r.Str("name"), r.Str("version"), r.Str("publisher"), ProgramsModule.ParseDate(r.Str("install_date")));
-}
-
-public sealed record InstalledUpdate(string Id, string Description, DateOnly? InstalledOn)
-{
-    public static InstalledUpdate FromRow(IReadOnlyDictionary<string, string> r) =>
-        new(r.Str("hotfix_id"), r.Str("description"), ProgramsModule.ParseDate(r.Str("installed_on")));
-}
-
-/// <summary>Windows version, installed updates (osquery <c>os_version</c>, <c>patches</c>) and installed programs (<c>programs</c>).</summary>
+/// <summary>Windows version, installed updates and installed programs, read from <paramref name="source"/> (WMI and the registry in the app,
+/// osquery in the Store edition without an Agent).</summary>
 /// <remarks>With a command runner it also lists the updates Windows has waiting, each with its own Install button.</remarks>
-public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today = null, SystemCommandRunner? commands = null) : OsqueryAreaModuleBase(runner)
+public sealed class ProgramsModule(IProgramsSource source, Func<DateOnly>? today = null, SystemCommandRunner? commands = null, ILogger? log = null) : AreaModuleBase(log)
 {
     public const string ModuleName = ModuleSlugs.Programs;
-    public const string OsSql = "SELECT * FROM os_version;";
-    public const string PatchesSql = "SELECT hotfix_id, description, installed_on FROM patches;";
-    public const string ProgramsSql = "SELECT name, version, publisher, install_date FROM programs;";
     /// <summary>Monthly Windows updates; older than this is flagged.</summary>
     public const int StaleUpdateDays = 60;
 
@@ -30,21 +16,21 @@ public sealed class ProgramsModule(OsqueryRunner runner, Func<DateOnly>? today =
     public override Guid Id => ModuleIds.Programs;
     public override string DisplayName => "Programs & updates";
     protected override string FailedMessage => "Couldn't read installed programs and updates on this PC.";
+    public override Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => source.CheckAvailabilityAsync(cancellationToken);
+
     private readonly Func<DateOnly> _today = today ?? (() => DateOnly.FromDateTime(DateTime.Today));
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        // Asked alongside the osquery reads; scripted test runners aren't asked.
+        // Asked alongside the other reads; scripted test runners aren't asked.
         var pendingRead = commands is { IsScripted: false } ? PendingUpdates.ReadAsync(commands, ct) : null;
         progress.ReportStep(1, 3, "Checking Windows version…");
-        var os = await QueryAsync(OsSql, ct).ConfigureAwait(false);
+        var os = await source.ReadWindowsVersionAsync(ct).ConfigureAwait(false);
         progress.ReportStep(2, 3, "Checking installed Windows updates…");
-        var patches = await QueryAsync(PatchesSql, ct).ConfigureAwait(false);
+        var updates = await source.ReadUpdatesAsync(ct).ConfigureAwait(false);
         progress.ReportStep(3, 3, "Reading installed programs…");
-        var programs = await QueryAsync(ProgramsSql, ct).ConfigureAwait(false);
-        var report = Build(os.Success ? os.Rows!.FirstOrDefault() : null, os.Success,
-            patches.Success ? patches.Rows!.Select(InstalledUpdate.FromRow).ToList() : null,
-            programs.Success ? programs.Rows!.Select(InstalledProgram.FromRow).ToList() : null, _today());
+        var programs = await source.ReadProgramsAsync(ct).ConfigureAwait(false);
+        var report = Build(os.Values, os.Ok, updates, programs, _today());
         return pendingRead is null ? report : WithPendingUpdates(report, await PendingOrNullAsync(pendingRead, ct).ConfigureAwait(false));
     }
 
