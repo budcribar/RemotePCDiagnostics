@@ -1393,4 +1393,208 @@ public class WorkflowTests
         Assert.Equal(DiagnosticStatus.Error, flow.State.RepairFindings.Single(x => x.Id == WindowsRepair.SfcId).Level);
         Assert.Contains("0x800F081F", sys.Report, StringComparison.OrdinalIgnoreCase);
     }
+
+    private sealed class GatedReinstallMemorySystem : IMemorySystem
+    {
+        public readonly List<string> Started = [];
+        public readonly Dictionary<string, TaskCompletionSource<bool>> Gates = new(StringComparer.OrdinalIgnoreCase);
+        public readonly Dictionary<string, TaskCompletionSource<bool>> Entered = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _installed = new(StringComparer.OrdinalIgnoreCase);
+
+        public GatedReinstallMemorySystem(params RemovableAppx[] apps)
+        {
+            foreach (var app in apps)
+            {
+                Gates[app.StoreId!] = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                Entered[app.StoreId!] = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        }
+
+        public MemoryReading ReadMemory() => new(16L << 30, 8L << 30);
+        public Task<MemorySnapshot> CaptureAsync(IReadOnlyList<ServiceInfo> s, CancellationToken ct) =>
+            Task.FromResult(new MemorySnapshot(ReadMemory(), []));
+        public Task<ActionOutcome> CloseAppAsync(string p, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public Task<ActionOutcome> ForceCloseAppAsync(string p, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public Task<ActionOutcome> RunCommandAsync(string f, IReadOnlyList<string> a, CancellationToken ct) => Task.FromResult(new ActionOutcome(true, ""));
+        public byte[]? GetStartupApproved(string n) => null;
+        public void SetStartupApproved(string n, byte[]? v) { }
+        public bool IsBrowserRunning(BrowserKind k) => false;
+        public string? ReadBrowserLocalState(BrowserKind k) => null;
+        public void WriteBrowserLocalState(BrowserKind k, string json) { }
+        public void OpenUri(string uri) { }
+        public string GetServiceStartType(string n) => "Automatic";
+        public void SetServiceStartType(string n, string t) { }
+        public async Task<WingetResult> RunWingetAsync(WingetCommand command, CancellationToken ct)
+        {
+            Started.Add(command.StoreId);
+            if (Entered.TryGetValue(command.StoreId, out var entered)) entered.TrySetResult(true);
+            if (Gates.TryGetValue(command.StoreId, out var gate)) await gate.Task.WaitAsync(ct);
+            var app = AppRemoval.Packages.Single(p => p.StoreId == command.StoreId);
+            _installed.Add(app.FamilyName);
+            return WingetResult.Exited(0);
+        }
+        public Task<bool?> IsStorePackageInstalledAsync(RemovableAppx app, CancellationToken ct) =>
+            Task.FromResult<bool?>(_installed.Contains(app.FamilyName));
+    }
+
+    private static (WorkflowService Flow, UndoService Undo, GatedReinstallMemorySystem Mem, Guid WeatherId, Guid ClipsId, Guid TodoId) MakeQueuedReinstallSetup()
+    {
+        var weather = AppRemoval.Packages.Single(p => p.Id == "bing-weather");
+        var clips = AppRemoval.Packages.Single(p => p.Id == "clipchamp");
+        var todo = AppRemoval.Packages.Single(p => p.Id == "todo");
+        var mem = new GatedReinstallMemorySystem(weather, clips, todo);
+        var journal = new InMemoryChangeJournal();
+        var wRec = StoreReinstall.Record(weather, 1024, "tech");
+        var cRec = StoreReinstall.Record(clips, 2048, "tech");
+        var tRec = StoreReinstall.Record(todo, 512, "tech");
+        journal.Add(wRec);
+        journal.Add(cRec);
+        journal.Add(tRec);
+        var undo = new UndoService(journal, new SystemCommandRunner(new ScriptedLauncher((_, _) => ScriptedLauncher.Ok(""))), mem);
+
+        var now = DateTimeOffset.Now;
+        var state = new WorkflowState
+        {
+            Stage = WorkflowStage.Done, StartedUtc = now.AddMinutes(-20), FinishedUtc = now, ReviewedUtc = now.AddMinutes(-25),
+            ChangesTracked = true, Machine = "DESKTOP-TEST01", ReviewRulesVersion = WorkflowService.CurrentReviewRulesVersion,
+            Fixes =
+            [
+                new("weather", "Remove Weather", "", "Apps", SuggestionRisk.Low, FixSource.Memory, 1, Undo: UndoSupport.Reinstall),
+                new("clips", "Remove Clipchamp", "", "Apps", SuggestionRisk.Low, FixSource.Memory, 2, Undo: UndoSupport.Reinstall),
+                new("todo", "Remove Microsoft To Do", "", "Apps", SuggestionRisk.Low, FixSource.Memory, 3, Undo: UndoSupport.Reinstall),
+            ],
+            Approved = ["weather", "clips", "todo"],
+            Outcomes =
+            [
+                new("weather", "Remove Weather", true, "Weather removed.", Changes: [new(wRec.Id, "Removed Weather", UndoSupport.Reinstall)]),
+                new("clips", "Remove Clipchamp", true, "Clipchamp removed.", Changes: [new(cRec.Id, "Removed Clipchamp", UndoSupport.Reinstall)]),
+                new("todo", "Remove Microsoft To Do", true, "Microsoft To Do removed.", Changes: [new(tRec.Id, "Removed Microsoft To Do", UndoSupport.Reinstall)]),
+            ],
+        };
+        var store = new MemFlowStore { State = state };
+        var (flow, _, _, _, _, _) = Make(null, journal, mem, DefaultModules(), flowStore: store);
+        return (flow, undo, mem, wRec.Id, cRec.Id, tRec.Id);
+    }
+
+    [Fact]
+    public async Task ReportBox_QueuesPostRunChangesSequentially_AndAllowsDequeuing()
+    {
+        var (flow, undo, mem, wId, cId, tId) = MakeQueuedReinstallSetup();
+        var weather = AppRemoval.Packages.Single(p => p.Id == "bing-weather");
+        var todo = AppRemoval.Packages.Single(p => p.Id == "todo");
+
+        var t1 = flow.UndoChangeAsync(undo, wId);
+        await mem.Entered[weather.StoreId!].Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var t2 = flow.UndoChangeAsync(undo, cId);
+        var t3 = flow.UndoChangeAsync(undo, tId);
+
+        Assert.True(flow.Busy);
+        Assert.False(flow.CanChangeAfterRun);
+        Assert.True(flow.CanQueueChangeAfterRun);
+        Assert.Equal(PostRunChangeState.Running, flow.GetChangeQueueState(wId.ToString("N")));
+        Assert.Equal(PostRunChangeState.Queued, flow.GetChangeQueueState(cId.ToString("N")));
+        Assert.Equal(PostRunChangeState.Queued, flow.GetChangeQueueState(tId.ToString("N")));
+        Assert.Equal(2, flow.QueuedChangeCount);
+        Assert.Single(mem.Started); // only the first one has started
+
+        // Dequeue the second item before it starts.
+        Assert.True(flow.DequeueChange(cId.ToString("N")));
+        Assert.Equal("Removed from queue.", await t2);
+        Assert.Equal(PostRunChangeState.Idle, flow.GetChangeQueueState(cId.ToString("N")));
+        Assert.Equal(1, flow.QueuedChangeCount);
+
+        // Finish item 1 -> item 1 flips to Done and item 3 starts automatically.
+        mem.Gates[weather.StoreId!].SetResult(true);
+        await t1;
+        Assert.Equal(PostRunChangeState.Done, flow.GetChangeQueueState("weather"));
+        await mem.Entered[todo.StoreId!].Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(PostRunChangeState.Running, flow.GetChangeQueueState(tId.ToString("N")));
+        Assert.Equal(0, flow.QueuedChangeCount);
+
+        // Finish item 3 -> queue is drained and Busy clears.
+        mem.Gates[todo.StoreId!].SetResult(true);
+        await t3;
+        Assert.Equal(PostRunChangeState.Done, flow.GetChangeQueueState("todo"));
+        Assert.False(flow.Busy);
+        Assert.True(flow.CanChangeAfterRun);
+        Assert.Equal([weather.StoreId!, todo.StoreId!], mem.Started);
+    }
+
+    [Fact]
+    public async Task ReportBox_UiShowsQueuedRunningDoneColors_AndClickDequeues()
+    {
+        var (flow, undo, mem, wId, cId, tId) = MakeQueuedReinstallSetup();
+        var weather = AppRemoval.Packages.Single(p => p.Id == "bing-weather");
+        var todo = AppRemoval.Packages.Single(p => p.Id == "todo");
+
+        using var ctx = new Bunit.BunitContext();
+        ctx.JSInterop.Mode = Bunit.JSRuntimeMode.Loose;
+        ctx.Services.AddSingleton(flow);
+        ctx.Services.AddSingleton(undo);
+        var cut = ctx.Render<RemotePCDiagnostics.UI.Shared.WorkflowReportBox>(ps => ps.Add(x => x.Html, "<html/>"));
+
+        // Click Weather -> starts running immediately.
+        cut.Find($"button[data-fix-id='weather']").Click();
+        await mem.Entered[weather.StoreId!].Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cut.WaitForAssertion(() =>
+        {
+            var btn = cut.Find("button[data-fix-id='weather']");
+            Assert.Equal("running", btn.GetAttribute("data-queue-state"));
+            Assert.Contains("wf-act-running", btn.ClassList);
+            Assert.True(btn.HasAttribute("disabled"));
+            Assert.Equal("Reinstalling…", btn.TextContent.Trim());
+        });
+
+        // Click Clipchamp and To Do while Weather is running -> both show queued color and stay clickable.
+        cut.Find("button[data-fix-id='clips']").Click();
+        cut.Find("button[data-fix-id='todo']").Click();
+        cut.WaitForAssertion(() =>
+        {
+            var cBtn = cut.Find("button[data-fix-id='clips']");
+            Assert.Equal("queued", cBtn.GetAttribute("data-queue-state"));
+            Assert.Contains("wf-act-queued", cBtn.ClassList);
+            Assert.False(cBtn.HasAttribute("disabled"));
+            Assert.Equal("Queued ×", cBtn.TextContent.Trim());
+
+            var tBtn = cut.Find("button[data-fix-id='todo']");
+            Assert.Equal("queued", tBtn.GetAttribute("data-queue-state"));
+            Assert.Contains("wf-act-queued", tBtn.ClassList);
+        });
+
+        // Click Clipchamp again while queued -> dequeues it back to idle.
+        cut.Find("button[data-fix-id='clips']").Click();
+        cut.WaitForAssertion(() =>
+        {
+            var cBtn = cut.Find("button[data-fix-id='clips']");
+            Assert.Equal("idle", cBtn.GetAttribute("data-queue-state"));
+            Assert.DoesNotContain("wf-act-queued", cBtn.ClassList);
+            Assert.Equal("Reinstall", cBtn.TextContent.Trim());
+        });
+
+        // Complete Weather -> turns green (done) as "Remove again", and To Do starts running.
+        mem.Gates[weather.StoreId!].SetResult(true);
+        await mem.Entered[todo.StoreId!].Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cut.WaitForAssertion(() =>
+        {
+            var wBtn = cut.Find("button[data-fix-id='weather']");
+            Assert.Equal("done", wBtn.GetAttribute("data-queue-state"));
+            Assert.Contains("wf-act-done", wBtn.ClassList);
+            Assert.Equal("Remove again", wBtn.TextContent.Trim());
+
+            var tBtn = cut.Find("button[data-fix-id='todo']");
+            Assert.Equal("running", tBtn.GetAttribute("data-queue-state"));
+            Assert.Contains("wf-act-running", tBtn.ClassList);
+        });
+
+        // Complete To Do -> turns green (done) as "Remove again".
+        mem.Gates[todo.StoreId!].SetResult(true);
+        cut.WaitForAssertion(() =>
+        {
+            var tBtn = cut.Find("button[data-fix-id='todo']");
+            Assert.Equal("done", tBtn.GetAttribute("data-queue-state"));
+            Assert.Contains("wf-act-done", tBtn.ClassList);
+            Assert.Equal("Remove again", tBtn.TextContent.Trim());
+        });
+        Assert.Equal([weather.StoreId!, todo.StoreId!], mem.Started);
+    }
 }

@@ -2,6 +2,7 @@
 @using RemotePCDiagnostics.Core.Workflow
 @using Microsoft.Extensions.DependencyInjection
 @using Microsoft.JSInterop
+@implements IDisposable
 @inject WorkflowService Flow
 @inject IServiceProvider Services
 @inject IJSRuntime JS
@@ -13,7 +14,7 @@
     var rows = Rows(s);
     var shown = _filter is null ? rows : rows.Where(r => r.Filter == _filter).ToList();
     var areaGroups = shown.GroupBy(r => r.AreaKey, StringComparer.OrdinalIgnoreCase).ToList();
-    var canAct = Flow.CanChangeAfterRun && _busy is null;
+    var canAct = Flow.CanQueueChangeAfterRun;
 }
 <section class="card wf-section wf-report-box" data-testid="wf-report-box">
     <div class="card-head">
@@ -113,33 +114,87 @@
     private const int AutoCollapseFixThreshold = 5;
 
     private bool _preview;
-    private string? _busy, _message;
+    private string? _message;
     private readonly HashSet<string> _firstUndone = [];
     private readonly HashSet<string> _collapsedAreas = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, bool> _fixOpenOverrides = new(StringComparer.OrdinalIgnoreCase);
 
     private string? _filter;
 
+    protected override void OnInitialized() => Flow.Changed += OnFlowChanged;
+    private void OnFlowChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
+    public void Dispose() => Flow.Changed -= OnFlowChanged;
+
+    private static string QueueStateAttr(PostRunChangeState state) => state switch
+    {
+        PostRunChangeState.Queued => "queued",
+        PostRunChangeState.Running => "running",
+        PostRunChangeState.Done => "done",
+        _ => "idle",
+    };
+
+    private static string QueueButtonCss(PostRunChangeState state) => state switch
+    {
+        PostRunChangeState.Queued => " wf-act-queued",
+        PostRunChangeState.Running => " wf-act-running",
+        PostRunChangeState.Done => " wf-act-done",
+        _ => "",
+    };
+
+    private static string QueueRowCss(PostRunChangeState state) => state switch
+    {
+        PostRunChangeState.Queued => " wf-change-queued",
+        PostRunChangeState.Running => " wf-change-running",
+        PostRunChangeState.Done => " wf-change-done",
+        _ => "",
+    };
+
     private RenderFragment RenderChangeRow(Row row, bool showTitle, bool canAct) => __builder =>
     {
         var item = row.Item;
         var key = item?.JournalId?.ToString("N") ?? row.FixId;
-        <li class="wf-change wf-edge-@row.Css" data-testid="wf-change" data-change-id="@key" data-fix-id="@row.FixId" data-tag="@row.Filter">
+        var showUndo = item is { CanUndo: true };
+        var showReapply = !showUndo && item is { CanReapply: true } && _firstUndone.Add(item.FixId);
+        var qState = showUndo ? Flow.GetChangeQueueState(key)
+            : showReapply ? Flow.GetChangeQueueState(item!.FixId)
+            : PostRunChangeState.Idle;
+        var rowClass = $"wf-change wf-edge-{row.Css}{QueueRowCss(qState)}";
+        <li class="@rowClass" data-testid="wf-change" data-change-id="@key" data-fix-id="@row.FixId" data-tag="@row.Filter" data-queue-state="@QueueStateAttr(qState)">
             <span class="wf-change-text">
                 @if (showTitle) { <span class="meta">@row.Title</span> }
                 @row.Text
             </span>
             @* A row with a button shows only the button (its colour edge already says what kind it is); the others show their label. *@
-            @if (item is { CanUndo: true })
+            @if (showUndo)
             {
-                <button type="button" class="btn-small wf-act-@row.Css" data-testid="wf-change-undo" data-change-id="@key" data-fix-id="@item.FixId" data-action="@(item.Tag == ReportTag.Reinstallable ? "reinstall" : "undo")" disabled="@(!canAct)"
-                        @onclick="() => UndoAsync(item)">@(_busy == key ? (item.Tag == ReportTag.Reinstallable ? "Reinstalling…" : "Undoing…") : item.Tag == ReportTag.Reinstallable ? "Reinstall" : "Undo")</button>
+                var undoItem = item!;
+                var btnClass = $"btn-small wf-act-{row.Css}{QueueButtonCss(qState)}";
+                var btnLabel = qState switch
+                {
+                    PostRunChangeState.Running => undoItem.Tag == ReportTag.Reinstallable ? "Reinstalling…" : "Undoing…",
+                    PostRunChangeState.Queued => "Queued ×",
+                    _ => undoItem.Tag == ReportTag.Reinstallable ? "Reinstall" : "Undo",
+                };
+                var btnTitle = qState == PostRunChangeState.Queued ? "Queued — click to remove from queue" : null;
+                <button type="button" class="@btnClass" data-testid="wf-change-undo" data-change-id="@key" data-fix-id="@undoItem.FixId" data-action="@(undoItem.Tag == ReportTag.Reinstallable ? "reinstall" : "undo")" data-queue-state="@QueueStateAttr(qState)" disabled="@(!canAct || qState == PostRunChangeState.Running)" title="@btnTitle"
+                        @onclick="() => ToggleUndoAsync(undoItem, key)">@btnLabel</button>
             }
-            else if (item is { CanReapply: true } && _firstUndone.Add(item.FixId))
+            else if (showReapply)
             {
+                var reapplyItem = item!;
+                var btnClass = $"btn-small{QueueButtonCss(qState)}";
+                var btnLabel = qState switch
+                {
+                    PostRunChangeState.Running => reapplyItem.WasReinstall ? "Removing…" : "Applying…",
+                    PostRunChangeState.Queued => "Queued ×",
+                    _ => reapplyItem.WasReinstall ? "Remove again" : "Apply again",
+                };
+                var btnTitle = qState == PostRunChangeState.Queued
+                    ? "Queued — click to remove from queue"
+                    : reapplyItem.UndoneUtc is { } u ? $"{ReportItems.Label(reapplyItem.Tag, reapplyItem.WasReinstall)} at {u.ToLocalTime():t}" : null;
                 @* One button per fix: it runs the whole fix again. *@
-                <button type="button" class="btn-small" data-testid="wf-change-reapply" data-change-id="@key" data-fix-id="@item.FixId" data-action="reapply" disabled="@(!canAct)" title="@(item.UndoneUtc is { } u ? $"{ReportItems.Label(item.Tag, item.WasReinstall)} at {u.ToLocalTime():t}" : null)"
-                        @onclick="() => ReapplyAsync(item)">@(_busy == item.FixId ? "Applying…" : item.WasReinstall ? "Remove again" : "Apply again")</button>
+                <button type="button" class="@btnClass" data-testid="wf-change-reapply" data-change-id="@key" data-fix-id="@reapplyItem.FixId" data-action="reapply" data-queue-state="@QueueStateAttr(qState)" disabled="@(!canAct || qState == PostRunChangeState.Running)" title="@btnTitle"
+                        @onclick="() => ToggleReapplyAsync(reapplyItem)">@btnLabel</button>
             }
             else
             {
@@ -216,21 +271,28 @@
         return rows;
     }
 
-    private async Task UndoAsync(ReportItem item)
+    private async Task ToggleUndoAsync(ReportItem item, string key)
     {
-        if (item.JournalId is not { } id || _busy is not null) return;
+        if (Flow.GetChangeQueueState(key) == PostRunChangeState.Queued)
+        {
+            Flow.DequeueChange(key);
+            return;
+        }
+        if (item.JournalId is not { } id) return;
         if (Services.GetService<UndoService>() is not { } undo) { await Say("Undo isn't available in this window."); return; }
-        _busy = id.ToString("N"); await Say(null);
-        try { await Say(await Flow.UndoChangeAsync(undo, id)); }
-        finally { _busy = null; }
+        if (!Flow.Busy) await Say(null);
+        await Say(await Flow.UndoChangeAsync(undo, id));
     }
 
-    private async Task ReapplyAsync(ReportItem item)
+    private async Task ToggleReapplyAsync(ReportItem item)
     {
-        if (_busy is not null) return;
-        _busy = item.FixId; await Say(null);
-        try { await Say(await Flow.ReapplyFixAsync(item.FixId)); }
-        finally { _busy = null; }
+        if (Flow.GetChangeQueueState(item.FixId) == PostRunChangeState.Queued)
+        {
+            Flow.DequeueChange(item.FixId);
+            return;
+        }
+        if (!Flow.Busy) await Say(null);
+        await Say(await Flow.ReapplyFixAsync(item.FixId));
     }
 
     private Task Say(string? message)

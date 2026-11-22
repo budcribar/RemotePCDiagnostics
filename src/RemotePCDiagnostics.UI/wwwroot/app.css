@@ -619,6 +619,14 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 .wf-change-text .meta { display: block; }
 .wf-change.wf-edge-undo { border-left-color: var(--tag-undo-edge); } .wf-change.wf-edge-reinstall { border-left-color: var(--tag-reinstall-edge); }
 .wf-change.wf-edge-perm { border-left-color: var(--tag-perm-edge); }
+.wf-change.wf-change-queued { border-left-color: var(--dot-warning); }
+.wf-change.wf-change-running { border-left-color: var(--dot-running); }
+.wf-change.wf-change-done { border-left-color: var(--dot-ok); }
+.btn-small.wf-act-queued { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn-fg); font-weight: 600; }
+.btn-small.wf-act-queued:hover:not(:disabled) { border-color: var(--dot-warning); filter: brightness(0.97); }
+.btn-small.wf-act-running { background: var(--accent-soft); border-color: var(--accent); color: var(--text-strong); opacity: .9; }
+.btn-small.wf-act-done { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok-fg); font-weight: 600; }
+.btn-small.wf-act-done:hover:not(:disabled) { border-color: var(--dot-ok); }
 .tag { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; border: 1px solid; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .tag-undo { color: var(--tag-undo-fg); background: var(--tag-undo-bg); border-color: var(--tag-undo-edge); }
 .tag-reinstall { color: var(--tag-reinstall-fg); background: var(--tag-reinstall-bg); border-color: var(--tag-reinstall-edge); }

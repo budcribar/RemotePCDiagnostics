@@ -9,6 +9,9 @@ using RemotePCDiagnostics.Core.Session;
 
 namespace RemotePCDiagnostics.Core.Workflow;
 
+/// <summary>Queue state of a single post-run Undo / Reinstall / Apply again / Remove again button.</summary>
+public enum PostRunChangeState { Idle, Queued, Running, Done }
+
 /// <summary>
 /// Runs the whole service call with one decision from the tech. State is saved after every step, and the app is started again
 /// (elevated, same session) after each restart, so the workflow carries on by itself.
@@ -40,6 +43,11 @@ public sealed class WorkflowService(
     }
     private CancellationTokenSource? _cts;
     private readonly List<WorkflowCheckItem> _checkItems = [];
+    private bool _workflowBusy;
+    private bool _changeQueueBusy;
+    private readonly List<QueuedPostRunChange> _changeQueue = [];
+    private string? _activeChangeKey;
+    private readonly HashSet<string> _completedChangeKeys = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyList<WorkflowCheckItem> CheckItems { get { lock (_gate) return _checkItems.ToList(); } }
     public int CompletedChecksCount => CheckItems.Count(c => c.Status is DiagnosticStatus.Ok or DiagnosticStatus.Warning or DiagnosticStatus.Error);
@@ -82,7 +90,7 @@ public sealed class WorkflowService(
     public TimeSpan? SettleRemaining { get; private set; }
     public TimeSpan? SettleTotal { get; private set; }
     public double? SettleFraction { get; private set; }
-    public bool Busy { get; private set; }
+    public bool Busy { get { lock (_gate) return _workflowBusy || _changeQueueBusy; } }
 
     private string Actor => ServiceActor.From(session);
     private void Log(string m) => log.Info("[workflow] " + m);
@@ -119,7 +127,7 @@ public sealed class WorkflowService(
     public async Task RunChecksAsync(CancellationToken ct = default, bool forceRerun = false)
     {
         if (Busy || State.IsRunning) return;
-        Busy = true;
+        lock (_gate) { _workflowBusy = true; _completedChangeKeys.Clear(); }
         // The Windows integrity scans (DISM ScanHealth, SFC verify-only) aren't in Run all, but the workflow needs them to decide on repairs.
         var modules = diag.Modules.Where(m => m.IncludeInRunAll || m is WindowsIntegrityModule).ToList();
         lock (_gate)
@@ -222,7 +230,7 @@ public sealed class WorkflowService(
             LogWarn("checks failed: " + ex);
             Save(s => s with { Stage = WorkflowStage.Failed, Error = "The checks couldn't finish. Try again." });
         }
-        finally { Busy = false; Raise(); }
+        finally { lock (_gate) _workflowBusy = false; Raise(); }
     }
 
     public void SetApproved(string id, bool on)
@@ -302,7 +310,7 @@ public sealed class WorkflowService(
             Note("Waiting for the restart (it was cancelled or hasn't happened yet). Use \"Restart now\" to continue.");
             return;
         }
-        Busy = true;
+        lock (_gate) _workflowBusy = true;
         _resuming = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var token = _cts.Token;
@@ -361,7 +369,7 @@ public sealed class WorkflowService(
         }
         catch (OperationCanceledException) { Log("resume cancelled"); }
         catch (Exception ex) { LogWarn("resume failed: " + ex); await FailAsync("Something went wrong while continuing the workflow.", CancellationToken.None).ConfigureAwait(false); }
-        finally { Busy = false; _cts?.Dispose(); _cts = null; _resuming?.TrySetResult(); Raise(); }
+        finally { lock (_gate) _workflowBusy = false; _cts?.Dispose(); _cts = null; _resuming?.TrySetResult(); Raise(); }
     }
 
     private async Task SettleAsync(CancellationToken ct)
@@ -582,7 +590,11 @@ public sealed class WorkflowService(
     {
         if (State.IsRunning || Busy) return;
         Status = null;
-        lock (_gate) _checkItems.Clear();
+        lock (_gate)
+        {
+            _checkItems.Clear();
+            _completedChangeKeys.Clear();
+        }
         Save(_ => new WorkflowState());
     }
 
@@ -598,65 +610,142 @@ public sealed class WorkflowService(
         return State.Stage == WorkflowStage.Idle;
     }
 
-    // ---- after the run: one-change Undo / Reinstall and Apply / Remove again, from the report box ----
+    // ---- after the run: queued sequential Undo / Reinstall and Apply / Remove again, from the report box ----
 
-    /// <summary>Report-box actions are only offered on a finished or stopped run, and one at a time.</summary>
+    private sealed class QueuedPostRunChange(
+        string key,
+        Func<CancellationToken, Task<(bool Succeeded, string Message, IReadOnlyList<string>? CompletedKeys)>> work,
+        CancellationToken ct)
+    {
+        public string Key { get; } = key;
+        public Func<CancellationToken, Task<(bool Succeeded, string Message, IReadOnlyList<string>? CompletedKeys)>> Work { get; } = work;
+        public CancellationToken Ct { get; } = ct;
+        public TaskCompletionSource<string> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    /// <summary>True when a finished or stopped run is idle and ready for an immediate change (no workflow or queued change running).</summary>
     public bool CanChangeAfterRun => !Busy && State.StartedUtc is not null && State.Stage is WorkflowStage.Done or WorkflowStage.Cancelled or WorkflowStage.Failed;
+
+    /// <summary>True when report-box actions may be queued (the run has finished or stopped, even if earlier clicks are still draining sequentially).</summary>
+    public bool CanQueueChangeAfterRun
+    {
+        get
+        {
+            bool wfBusy;
+            lock (_gate) wfBusy = _workflowBusy;
+            return !wfBusy && State.StartedUtc is not null && State.Stage is WorkflowStage.Done or WorkflowStage.Cancelled or WorkflowStage.Failed;
+        }
+    }
+
+    /// <summary>Number of post-run actions currently waiting in the queue behind the active one.</summary>
+    public int QueuedChangeCount { get { lock (_gate) return _changeQueue.Count; } }
+
+    /// <summary>Key of the post-run action currently executing (journal id "N" for undo/reinstall, fix id for reapply), or null.</summary>
+    public string? ActiveChangeKey { get { lock (_gate) return _activeChangeKey; } }
+
+    /// <summary>Queue state for a report-box button key (journal id "N" for undo/reinstall, fix id for reapply).</summary>
+    public PostRunChangeState GetChangeQueueState(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return PostRunChangeState.Idle;
+        lock (_gate)
+        {
+            if (string.Equals(_activeChangeKey, key, StringComparison.OrdinalIgnoreCase))
+                return PostRunChangeState.Running;
+            if (_changeQueue.Any(x => string.Equals(x.Key, key, StringComparison.OrdinalIgnoreCase)))
+                return PostRunChangeState.Queued;
+            return _completedChangeKeys.Contains(key) ? PostRunChangeState.Done : PostRunChangeState.Idle;
+        }
+    }
+
+    /// <summary>Removes a queued post-run action before it starts. Returns true if it was waiting in the queue and removed.</summary>
+    public bool DequeueChange(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return false;
+        QueuedPostRunChange? removed = null;
+        lock (_gate)
+        {
+            var idx = _changeQueue.FindIndex(x => string.Equals(x.Key, key, StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) return false;
+            removed = _changeQueue[idx];
+            _changeQueue.RemoveAt(idx);
+            if (_changeQueue.Count == 0 && _activeChangeKey is null)
+                _changeQueueBusy = false;
+        }
+        removed.Completion.TrySetResult("Removed from queue.");
+        Raise();
+        return true;
+    }
 
     /// <summary>
     /// Undoes one change this run made (Undo, or Reinstall for a removed Store app) through <paramref name="undo"/>, whose admin parts run in
-    /// the Agent like "Undo all". Marks it undone in the report and saves the report again. Returns the message to show.
+    /// the Agent like "Undo all". Queued sequentially so multiple clicks run one after another without waiting between clicks. Marks it undone in
+    /// the report and saves the report again. Returns the message to show.
     /// </summary>
-    public async Task<string> UndoChangeAsync(UndoService undo, Guid journalId, CancellationToken ct = default)
+    public Task<string> UndoChangeAsync(UndoService undo, Guid journalId, CancellationToken ct = default)
     {
-        if (!CanChangeAfterRun) return "Wait until the service workflow has finished.";
-        var change = State.Outcomes.SelectMany(o => o.Changes ?? []).FirstOrDefault(c => c.JournalId == journalId);
-        if (change is null) return "That change isn't part of this service.";
-        if (change.UndoneUtc is not null) return "Already undone.";
-        if (change.Undo is not (UndoSupport.Full or UndoSupport.Reinstall)) return "This change is permanent, so it can't be undone.";
-        if (journal is { IsLoaded: false }) return "The undo list is kept by the Agent. Turn on Admin Repair Mode, then try again.";
-        Busy = true; Raise();
-        try
+        if (!CanQueueChangeAfterRun) return Task.FromResult("Wait until the service workflow has finished.");
+        var owner = State.Outcomes.FirstOrDefault(o => o.Changes?.Any(c => c.JournalId == journalId) == true);
+        var change = owner?.Changes?.FirstOrDefault(c => c.JournalId == journalId);
+        if (change is null) return Task.FromResult("That change isn't part of this service.");
+        if (change.UndoneUtc is not null) return Task.FromResult("Already undone.");
+        if (change.Undo is not (UndoSupport.Full or UndoSupport.Reinstall)) return Task.FromResult("This change is permanent, so it can't be undone.");
+        if (journal is { IsLoaded: false }) return Task.FromResult("The undo list is kept by the Agent. Turn on Admin Repair Mode, then try again.");
+
+        var key = journalId.ToString("N");
+        return EnqueuePostRunChangeAsync(key, async token =>
         {
-            var r = await undo.UndoChangeAsync(journalId, Actor, ct).ConfigureAwait(false);
+            var currentOwner = State.Outcomes.FirstOrDefault(o => o.Changes?.Any(c => c.JournalId == journalId) == true);
+            var current = currentOwner?.Changes?.FirstOrDefault(c => c.JournalId == journalId);
+            if (current is null) return (false, "That change isn't part of this service.", null);
+            if (current.UndoneUtc is not null) return (false, "Already undone.", null);
+            if (current.Undo is not (UndoSupport.Full or UndoSupport.Reinstall)) return (false, "This change is permanent, so it can't be undone.", null);
+            if (journal is { IsLoaded: false }) return (false, "The undo list is kept by the Agent. Turn on Admin Repair Mode, then try again.", null);
+
+            var r = await undo.UndoChangeAsync(journalId, Actor, token).ConfigureAwait(false);
             // Not in the journal any more: "Undo all" (or the History page) already put it back.
             if (r is null || r.Success)
             {
                 MarkUndone(journalId, DateTimeOffset.UtcNow);
                 RewriteReport();
                 var message = r?.Message ?? "Already put back by an earlier undo.";
-                Note($"Undid \"{change.Text}\": {message}");
-                return message;
+                Note($"Undid \"{current.Text}\": {message}");
+                IReadOnlyList<string> done = currentOwner is { FixId.Length: > 0 } ? [key, currentOwner.FixId] : [key];
+                return (true, message, done);
             }
-            Note($"Couldn't undo \"{change.Text}\": {r.Message}");
-            return r.Message;
-        }
-        finally { Busy = false; Raise(); }
+            Note($"Couldn't undo \"{current.Text}\": {r.Message}");
+            return (false, r.Message, null);
+        }, ct);
     }
 
     /// <summary>
     /// Runs an undone fix again ("Apply again", or "Remove again" for a reinstalled app), the same way the workflow applied it, and records what
-    /// it changed this time so it can be undone again. Saves the report again. Returns the message to show.
+    /// it changed this time so it can be undone again. Queued sequentially so multiple clicks run one after another. Saves the report again.
+    /// Returns the message to show.
     /// </summary>
-    public async Task<string> ReapplyFixAsync(string fixId, CancellationToken ct = default)
+    public Task<string> ReapplyFixAsync(string fixId, CancellationToken ct = default)
     {
-        if (!CanChangeAfterRun) return "Wait until the service workflow has finished.";
+        if (!CanQueueChangeAfterRun) return Task.FromResult("Wait until the service workflow has finished.");
         var outcome = State.Outcomes.FirstOrDefault(o => o.FixId == fixId);
         var fix = State.Fixes.FirstOrDefault(f => f.Id == fixId);
-        if (outcome is null || fix is null || !ReportItems.CanReapply(State, outcome)) return "Undo this fix first, then it can be applied again.";
-        Busy = true; Raise();
-        try
+        if (outcome is null || fix is null || !ReportItems.CanReapply(State, outcome)) return Task.FromResult("Undo this fix first, then it can be applied again.");
+
+        return EnqueuePostRunChangeAsync(fixId, async token =>
         {
+            var currentOutcome = State.Outcomes.FirstOrDefault(o => o.FixId == fixId);
+            var currentFix = State.Fixes.FirstOrDefault(f => f.Id == fixId);
+            if (currentOutcome is null || currentFix is null || !ReportItems.CanReapply(State, currentOutcome))
+                return (false, "Undo this fix first, then it can be applied again.", null);
+
             IReadOnlyList<MemorySuggestion> fresh = [];
-            if (fix.Source == FixSource.Memory && memory is not null)
+            if (currentFix.Source == FixSource.Memory && memory is not null)
             {
-                await memory.ScanAsync(ct).ConfigureAwait(false);
+                await memory.ScanAsync(token).ConfigureAwait(false);
                 fresh = [.. memory.Suggestions, .. memory.StorageSuggestions];
             }
             var before = JournalIds();
             FixOutcome o;
-            try { o = await ApplyOneAsync(fix, fresh, ct).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { LogError($"reapply {fixId} failed: {ex}"); o = new(fix.Id, fix.Title, false, "Windows didn't allow this change."); }
+            try { o = await ApplyOneAsync(currentFix, fresh, token).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { LogError($"reapply {fixId} failed: {ex}"); o = new(currentFix.Id, currentFix.Title, false, "Windows didn't allow this change."); }
             var added = NewChanges(before);
             if (o.Success && !o.Skipped && added.Count > 0)
             {
@@ -666,14 +755,95 @@ public sealed class WorkflowService(
                         : x with { Message = o.Message, Changes = [.. (x.Changes ?? []).Where(c => c.UndoneUtc is null), .. added] }).ToList(),
                 });
                 RewriteReport();
-                Note($"Applied \"{fix.Title}\" again: {o.Message}");
-                return o.Message;
+                Note($"Applied \"{currentFix.Title}\" again: {o.Message}");
+                var done = new List<string>(added.Count + 1) { fixId };
+                done.AddRange(added.Select(c => c.JournalId.ToString("N")));
+                return (true, o.Message, done);
             }
             var why = o.Success ? (o.Skipped ? o.Message : "Nothing needed changing: it's already set.") : o.Message;
-            Note($"Couldn't apply \"{fix.Title}\" again: {why}");
-            return why;
+            Note($"Couldn't apply \"{currentFix.Title}\" again: {why}");
+            return (false, why, null);
+        }, ct);
+    }
+
+    private Task<string> EnqueuePostRunChangeAsync(
+        string key,
+        Func<CancellationToken, Task<(bool Succeeded, string Message, IReadOnlyList<string>? CompletedKeys)>> work,
+        CancellationToken ct)
+    {
+        QueuedPostRunChange item;
+        bool startWorker;
+        lock (_gate)
+        {
+            if (_workflowBusy || _state.StartedUtc is null || _state.Stage is not (WorkflowStage.Done or WorkflowStage.Cancelled or WorkflowStage.Failed))
+                return Task.FromResult("Wait until the service workflow has finished.");
+            if (string.Equals(_activeChangeKey, key, StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult("Already running.");
+            if (_changeQueue.Any(x => string.Equals(x.Key, key, StringComparison.OrdinalIgnoreCase)))
+                return Task.FromResult("Already queued.");
+
+            _completedChangeKeys.Remove(key);
+            item = new QueuedPostRunChange(key, work, ct);
+            _changeQueue.Add(item);
+            startWorker = !_changeQueueBusy;
+            if (startWorker) _changeQueueBusy = true;
         }
-        finally { Busy = false; Raise(); }
+        Raise();
+        if (startWorker) _ = DrainPostRunChangesAsync();
+        return item.Completion.Task;
+    }
+
+    private async Task DrainPostRunChangesAsync()
+    {
+        while (true)
+        {
+            QueuedPostRunChange next;
+            lock (_gate)
+            {
+                if (_changeQueue.Count == 0)
+                {
+                    _activeChangeKey = null;
+                    _changeQueueBusy = false;
+                    break;
+                }
+                next = _changeQueue[0];
+                _changeQueue.RemoveAt(0);
+                _activeChangeKey = next.Key;
+            }
+            Raise();
+
+            bool succeeded = false;
+            string message;
+            IReadOnlyList<string>? completedKeys = null;
+            try
+            {
+                (succeeded, message, completedKeys) = await next.Work(next.Ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                message = "Cancelled.";
+            }
+            catch (Exception ex)
+            {
+                LogError($"post-run change {next.Key} failed: {ex}");
+                message = "Windows didn't allow this change.";
+            }
+
+            bool drained;
+            lock (_gate)
+            {
+                if (succeeded && completedKeys is not null)
+                    foreach (var k in completedKeys)
+                        if (!string.IsNullOrWhiteSpace(k)) _completedChangeKeys.Add(k);
+                _activeChangeKey = null;
+                drained = _changeQueue.Count == 0;
+                if (drained) _changeQueueBusy = false;
+            }
+            next.Completion.TrySetResult(message);
+            Raise();
+            if (drained) return;
+        }
+        Raise();
     }
 
     private void MarkUndone(Guid journalId, DateTimeOffset when) =>
