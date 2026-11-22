@@ -75,11 +75,11 @@ public sealed class SystemWmiSource(ILogger? log = null, TimeSpan? timeout = nul
         WmiQueryResult result;
         try
         {
-            result = await Task.Run(() => Run(wmiNamespace, wql), ct).WaitAsync(Timeout, ct).ConfigureAwait(false);
+            result = await Task.Run(() => OperatingSystem.IsWindows() ? Run(wmiNamespace, wql) : throw new PlatformNotSupportedException(), ct).WaitAsync(Timeout, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (TimeoutException) { result = WmiQueryResult.Failed(wmiNamespace, wql, $"The query timed out after {Timeout.TotalSeconds:0}s."); }
-        catch (Exception ex) { result = WmiQueryResult.Failed(wmiNamespace, wql, ex.Message); }
+        catch (Exception ex) { result = WmiQueryResult.Failed(wmiNamespace, wql, Describe(ex)); }
         try
         {
             log.Line($"wmi {wmiNamespace} \"{wql}\" {(result.Success ? "ok" : "FAILED")} rows={result.Rows?.Count ?? 0} ms={sw.ElapsedMilliseconds}" +
@@ -87,6 +87,15 @@ public sealed class SystemWmiSource(ILogger? log = null, TimeSpan? timeout = nul
         }
         catch { /* logging never breaks a query */ }
         return result;
+    }
+
+    /// <summary>The error's text. Some WMI failures come with an empty message, so the status code (ManagementException) or type is kept too.</summary>
+    private static string Describe(Exception ex)
+    {
+        var code = OperatingSystem.IsWindows() && ex is System.Management.ManagementException me ? me.ErrorCode.ToString() : null;
+        var message = ex.Message.Trim();
+        if (code is null) return message.Length > 0 ? message : $"{ex.GetType().Name} (0x{ex.HResult:X8})";
+        return message.Length > 0 ? $"{code}: {message}" : code;
     }
 
     [SupportedOSPlatform("windows")]

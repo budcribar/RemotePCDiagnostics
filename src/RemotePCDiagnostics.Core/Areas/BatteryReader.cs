@@ -58,7 +58,7 @@ public static class BatteryReader
     }
 
     private static bool IsNoBattery(string? error) =>
-        error is not null && (error.Contains("Not supported", StringComparison.OrdinalIgnoreCase) || error.Contains("Not found", StringComparison.OrdinalIgnoreCase));
+        error is not null && new[] { "Not supported", "NotSupported", "Not found", "NotFound" }.Any(e => error.Contains(e, StringComparison.OrdinalIgnoreCase));
 
     private static WmiRow? Match(WmiQueryResult r, string instanceName) =>
         r.Rows?.FirstOrDefault(x => string.Equals(x.Str("InstanceName"), instanceName, StringComparison.OrdinalIgnoreCase))

@@ -42,7 +42,12 @@ public sealed class RecordingScrubber
     public MachineRecording Scrub(MachineRecording recording) => new()
     {
         Schema = recording.Schema,
-        Machine = recording.Machine with { Notes = recording.Machine.Notes is { } n ? Text(n) : null },
+        // The SMBIOS UUID is per unit on most makers (the product id names the model), so it is replaced like a serial.
+        Machine = recording.Machine with
+        {
+            Notes = recording.Machine.Notes is { } n ? Text(n) : null,
+            SmbiosUuid = Placeholder("serial", recording.Machine.SmbiosUuid),
+        },
         CapturedAt = recording.CapturedAt,
         Calls = recording.Calls.Select(Scrub).ToList(),
     };

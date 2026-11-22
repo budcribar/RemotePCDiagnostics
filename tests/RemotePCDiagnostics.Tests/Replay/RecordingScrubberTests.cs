@@ -47,6 +47,18 @@ public sealed class RecordingScrubberTests
     }
 
     [Fact]
+    public void ReplacesTheSmbiosUuidButKeepsTheProductId()
+    {
+        var rec = Scrubber().Scrub(new MachineRecording
+        {
+            Machine = new RecordedMachine { ProductId = "LENOVO_MT_82R4", SmbiosUuid = "ECAF7E7E-0000-4276-90F3-C4C6E699C775" },
+            Calls = [],
+        });
+        Assert.StartsWith("<serial:", rec.Machine.SmbiosUuid);
+        Assert.Equal("LENOVO_MT_82R4", rec.Machine.ProductId);
+    }
+
+    [Fact]
     public void RoundTripsThroughDisk()
     {
         var dir = Path.Combine(Path.GetTempPath(), "rpd-recording-" + Guid.NewGuid().ToString("N"));
@@ -86,6 +98,8 @@ public sealed class RecordingScrubberTests
             }
         }
         Walk(doc.RootElement, null);
+        var uuid = RecordingLibrary.Load(name).Machine.SmbiosUuid;
+        if (uuid.Length > 0 && !uuid.StartsWith('<')) problems.Add($"machine smbiosUuid = {uuid}");
         Assert.True(problems.Count == 0, string.Join("\n", problems));
     }
 
