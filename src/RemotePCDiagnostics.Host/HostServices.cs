@@ -280,7 +280,10 @@ public static class HostServices
         catch (Exception ex) { log.Error($"Modules: loading the built-in module DLLs failed: {ex.GetType().Name}: {ex.Message}"); }
         try { loader.LoadAll(services); }
         catch (Exception ex) { log.Error($"Modules: loading plugins failed: {ex.GetType().Name}: {ex.Message}"); }
+#if RPCD_STORE
+        // Checks written as data run osquery SQL, and only the Store edition ships osquery.
         LoadJsonChecks(services, plugins, For<RemotePCDiagnostics.Core.Checks.JsonCheckModule>(loggers), options?.ChecksFolder);
+#endif
         foreach (var r in plugins.Records.Skip(before))
         {
             if (r.Source == ModuleSource.BuiltIn && r.State == PluginState.Loaded) continue; // shipped with the app: only a failure is news
@@ -293,7 +296,8 @@ public static class HostServices
         return loader;
     }
 
-    /// <summary>Checks written as data (%ProgramFiles%\RemotePCDiagnostics\checks\*.json): read-only osquery, no code, so they run unsigned.</summary>
+    /// <summary>Checks written as data (%ProgramFiles%\RemotePCDiagnostics\checks\*.json): read-only osquery, no code, so they run unsigned.
+/// Store edition only: the Setup edition doesn't ship osquery and ignores the folder.</summary>
     public static void LoadJsonChecks(IServiceCollection services, PluginRegistrar plugins, ILogger? log, string? folder = null)
     {
         try

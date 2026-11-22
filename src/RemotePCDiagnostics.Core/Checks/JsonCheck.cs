@@ -185,7 +185,7 @@ public sealed class JsonCheckPlugin(JsonCheck check, ILogger? log = null) : Plug
     public void Register(Microsoft.Extensions.DependencyInjection.IServiceCollection services, Plugins.IPluginContext context) =>
         Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<IDiagnosticModule>(services, sp =>
         {
-            // Only the Store edition ships osquery; in the Setup edition the check says it can't run here.
+            // Only the Store edition ships osquery and loads these checks; without it a check says it can't run instead of failing.
             if (sp.GetService(typeof(OsqueryRunner)) is not OsqueryRunner osquery)
                 return new JsonCheckModule(check, (sql, _) => Task.FromResult(new OsqueryQueryResult(sql, null, NoOsquery)),
                     () => ModuleAvailability.Unavailable(NoOsquery), log);
