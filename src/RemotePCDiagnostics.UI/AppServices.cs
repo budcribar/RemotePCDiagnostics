@@ -1,4 +1,5 @@
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Bios;
 using RemotePCDiagnostics.Core.Checks;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Plugins;
@@ -32,4 +33,5 @@ public sealed record AppServices(
     IFullscreenService? Fullscreen = null,
     IAppUpdateService? AppUpdate = null,
     SystemCommandRunner? Commands = null,
-    CheckSettingsService? CheckSettings = null);
+    CheckSettingsService? CheckSettings = null,
+    IBiosUpdateService? Bios = null);

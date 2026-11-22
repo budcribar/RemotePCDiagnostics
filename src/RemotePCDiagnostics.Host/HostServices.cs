@@ -240,7 +240,8 @@ public static class HostServices
             sp.GetService<IFullscreenService>(),
             sp.GetService<IAppUpdateService>(),
             sp.GetService<SystemCommandRunner>(),
-            sp.GetService<CheckSettingsService>()));
+            sp.GetService<CheckSettingsService>(),
+            sp.GetService<IBiosUpdateService>()));
         // History page reads past results (event 1100) back from the Windows Event Log.
         services.AddSingleton<RemotePCDiagnostics.Core.History.IHistoryStore>(_ => EventLogHistorySource.Create(loggerFactory.CreateLogger(typeof(EventLogHistorySource).FullName!)));
         return services;
