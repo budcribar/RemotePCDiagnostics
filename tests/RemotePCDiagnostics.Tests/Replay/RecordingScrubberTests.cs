@@ -82,6 +82,22 @@ public sealed class RecordingScrubberTests
     }
 
     [Fact]
+    public void KeepsWevtutilEventsReadableXmlWithThePcNameReplaced()
+    {
+        var s = Scrubber();
+        const string events = "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Disk'/><EventID>7</EventID>"
+            + "<Computer>BUDSLAPTOP</Computer><Security UserID='S-1-5-21-1-2-3-1001'/></System><RenderingInfo Culture='en-US'><Message>C:\\Users\\bud\\x&#13;&#10;y</Message></RenderingInfo></Event>"
+            + "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Disk'/><EventID>8</EventID><Computer>BUDSLAPTOP</Computer></System></Event>";
+        var call = s.Scrub(new RecordedCall { Kind = RecordedCall.ProcessKind, File = "wevtutil.exe", Args = [], StdOut = events });
+        Assert.DoesNotContain("BUDSLAPTOP", call.StdOut);
+        Assert.DoesNotContain(@"\bud\", call.StdOut);
+        Assert.DoesNotContain("S-1-5-21-1-2-3", call.StdOut);
+        var parsed = RemotePCDiagnostics.Core.Areas.WindowsEventLog.Parse(call.StdOut!, "System");
+        Assert.Equal(2, parsed.Count);
+        Assert.StartsWith("C:\\Users\\<user:", parsed.Single(e => e.EventId == 7).Message);
+    }
+
+    [Fact]
     public void ReplacesTheSmbiosUuidButKeepsTheProductId()
     {
         var rec = Scrubber().Scrub(new MachineRecording

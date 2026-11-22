@@ -18,7 +18,7 @@ public sealed class EventChecksReplayTests
     private static bool HasWevtutil(ReplayedPc pc, string xpath) =>
         pc.Has(c => c.Kind == RecordedCall.ProcessKind && c.File == "wevtutil.exe" && c.Args?.Contains("/q:" + xpath) == true);
     private static bool HasCrashes(ReplayedPc pc) => HasWevtutil(pc, CrashesModule.Query) && pc.Has(c => c.Kind == RecordedCall.WmiKind
-        && c.Query == WmiCrashDumpSource.FilesSql(@"C:\Windows\Minidump", "dmp"));
+        && string.Equals(c.Query, WmiCrashDumpSource.FilesSql(@"C:\Windows\Minidump", "dmp"), StringComparison.OrdinalIgnoreCase));
     private static bool HasCrashesOld(ReplayedPc pc) => pc.HasFile(CrashDumpFiles.Minidumps) && pc.HasOsquery(OsqueryDeviceDriverSource.DriversSql);
     private static bool HasEventLog(ReplayedPc pc) => HasWevtutil(pc, WindowsEventLog.LevelQuery(EventLogModule.Days, 1, 2));
     private static bool HasSleepWake(ReplayedPc pc) => HasWevtutil(pc, SleepWakeModule.EventQuery(SleepWakeModule.EventDays));

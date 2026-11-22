@@ -85,7 +85,7 @@ public sealed class RecordingScrubber
     private string Output(string stdout)
     {
         var t = stdout.TrimStart();
-        if (t.StartsWith('<') && Xml(stdout) is { } xml) return xml;
+        if (t.StartsWith('<') && (Xml(stdout) ?? XmlList(stdout)) is { } xml) return xml;
         if (t.StartsWith('[') || t.StartsWith('{'))
         {
             try
@@ -102,19 +102,57 @@ public sealed class RecordingScrubber
     }
 
     /// <summary>An XML document with its sensitive elements (<see cref="SensitiveNames"/>) replaced and names replaced in all other text;
-    /// null when it isn't one document (wevtutil's events are a list of documents, scrubbed as text).</summary>
+    /// null when it isn't one document.</summary>
     private string? Xml(string text)
     {
         XDocument doc;
         try { doc = XDocument.Parse(text, LoadOptions.PreserveWhitespace); }
         catch (System.Xml.XmlException) { return null; }
-        foreach (var e in doc.Descendants().ToList())
+        ScrubXml(doc.Root!);
+        return (doc.Declaration is { } d ? d + "\n" : "") + doc.ToString(SaveOptions.DisableFormatting);
+    }
+
+    /// <summary>
+    /// A list of XML elements with no root (wevtutil's events), each scrubbed as <see cref="Xml"/> does; null when it isn't one. Scrubbed as
+    /// plain text instead, a placeholder such as &lt;pc:1a2b3c&gt; in an element would break the XML.
+    /// </summary>
+    private string? XmlList(string text)
+    {
+        var settings = new System.Xml.XmlReaderSettings
         {
-            foreach (var a in e.Attributes()) a.Value = Text(a.Value);
+            ConformanceLevel = System.Xml.ConformanceLevel.Fragment, CheckCharacters = false,
+            DtdProcessing = System.Xml.DtdProcessing.Prohibit, XmlResolver = null, IgnoreWhitespace = false,
+        };
+        var parts = new List<XNode>();
+        try
+        {
+            using var reader = System.Xml.XmlReader.Create(new StringReader(text), settings);
+            reader.MoveToContent();
+            while (!reader.EOF)
+            {
+                if (reader.NodeType == System.Xml.XmlNodeType.Element) parts.Add(XNode.ReadFrom(reader));
+                else if (reader.NodeType is System.Xml.XmlNodeType.Whitespace or System.Xml.XmlNodeType.SignificantWhitespace) { parts.Add(new XText(reader.Value)); reader.Read(); }
+                else if (!reader.Read()) break;
+            }
+        }
+        catch (System.Xml.XmlException) { return null; }
+        var sb = new StringBuilder();
+        foreach (var node in parts)
+        {
+            if (node is XElement e) { ScrubXml(e); sb.Append(e.ToString(SaveOptions.DisableFormatting)); }
+            else sb.Append(((XText)node).Value);
+        }
+        return sb.ToString();
+    }
+
+    private void ScrubXml(XElement root)
+    {
+        foreach (var e in root.DescendantsAndSelf().ToList())
+        {
+            foreach (var a in e.Attributes().Where(a => !a.IsNamespaceDeclaration)) a.Value = Text(a.Value);
             if (e.HasElements) continue;
             e.Value = SensitiveNames.Contains(e.Name.LocalName) ? Placeholder("serial", e.Value) : Text(e.Value);
         }
-        return (doc.Declaration is { } d ? d + "\n" : "") + doc.ToString(SaveOptions.DisableFormatting);
     }
 
     private void ScrubNode(JsonNode node)

@@ -129,7 +129,8 @@ public sealed class RecordingReplay
     public const string PackagesKey = "packages";
     public static string FileKey(string name) => "file\n" + name;
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
-    public static string WmiKey(string ns, string wql) => "wmi\n" + ns.ToLowerInvariant() + "\n" + wql;
+    /// <remarks>WQL ignores case, and a path in a query is spelled as Windows gave it (C:\WINDOWS on one PC, C:\Windows on another).</remarks>
+    public static string WmiKey(string ns, string wql) => "wmi\n" + ns.ToLowerInvariant() + "\n" + wql.ToLowerInvariant();
     public static string ProcessKey(string file, IReadOnlyList<string> args) => "process\n" + RecordedCall.FileKey(file) + "\n" + string.Join("\n", args);
 
     private sealed class ReplayWmi(RecordingReplay replay) : IWmiSource
