@@ -116,6 +116,31 @@ public class NewChecksTests
     }
 
     [Fact]
+    public void BatteryStatus_FromRow_CutsOsqueryChemistryToItsFourLetters()
+    {
+        Assert.Equal("LION", BatteryStatus.FromRow(new Dictionary<string, string> { ["chemistry"] = "LION\u0018τ" }).Chemistry);
+        Assert.Equal("LiP", BatteryStatus.FromRow(new Dictionary<string, string> { ["chemistry"] = "LiP" }).Chemistry);
+    }
+
+    [Fact]
+    public void BatteryStatus_FromRow_UndoesOsqueryTwelveVoltConversion()
+    {
+        // osquery on Windows reports 42,000 mWh as 42000 / 12 = 3500 "mAh" (BUDSLAPTOP's battery report shows 42,000 mWh design capacity).
+        var b = BatteryStatus.FromRow(new Dictionary<string, string>
+        {
+            ["model"] = "L21D3PF0", ["manufacturer"] = "SMP", ["chemistry"] = "LiP", ["state"] = "Charging",
+            ["percent_remaining"] = "100", ["designed_capacity"] = "3500", ["max_capacity"] = "3305", ["cycle_count"] = "120",
+        });
+        Assert.Equal(42000, b.DesignCapacity);
+        Assert.Equal(39660, b.MaxCapacity);
+        Assert.Equal(94, b.HealthPercent);
+
+        var rows = BatteryPowerModule.Build([b], "Balanced").Cards.Single(c => c.Id == "battery").Rows;
+        Assert.Contains(rows, r => r.Values.SequenceEqual(["Design capacity", "42,000 mWh"]));
+        Assert.Contains(rows, r => r.Values.SequenceEqual(["Full charge capacity", "39,660 mWh"]));
+    }
+
+    [Fact]
     public void BatteryPower_CalculatesWearAndFlagsPowerSaver()
     {
         var wornBattery = new BatteryStatus("L20M3PF0", "SMP", "LiP", "Discharging", 64, 45000, 27000, 410);

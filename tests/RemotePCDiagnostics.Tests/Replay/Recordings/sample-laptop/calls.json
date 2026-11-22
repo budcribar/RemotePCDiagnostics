@@ -1,0 +1,87 @@
+{
+  "calls": [
+    {
+      "kind": "wmi",
+      "namespace": "root\\wmi",
+      "query": "SELECT InstanceName, Capabilities, Chemistry, DesignedCapacity, DeviceName, ManufactureName FROM BatteryStaticData",
+      "rows": [
+        {
+          "InstanceName": "ACPI\\PNP0C0A\\1_0",
+          "Capabilities": 2147483648,
+          "Chemistry": 5269836,
+          "DesignedCapacity": 52500,
+          "DeviceName": "SAMPLE-BAT",
+          "ManufactureName": "SampleCo"
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\wmi",
+      "query": "SELECT InstanceName, FullChargedCapacity FROM BatteryFullChargedCapacity",
+      "rows": [
+        {
+          "InstanceName": "ACPI\\PNP0C0A\\1_0",
+          "FullChargedCapacity": 47800
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\wmi",
+      "query": "SELECT InstanceName, CycleCount FROM BatteryCycleCount",
+      "rows": [
+        {
+          "InstanceName": "ACPI\\PNP0C0A\\1_0",
+          "CycleCount": 212
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\wmi",
+      "query": "SELECT InstanceName, PowerOnline, Charging, Discharging, RemainingCapacity FROM BatteryStatus",
+      "rows": [
+        {
+          "InstanceName": "ACPI\\PNP0C0A\\1_0",
+          "PowerOnline": true,
+          "Charging": false,
+          "Discharging": false,
+          "RemainingCapacity": 47800
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2\\power",
+      "query": "SELECT ElementName FROM Win32_PowerPlan WHERE IsActive = TRUE",
+      "rows": [
+        {
+          "ElementName": "Balanced"
+        }
+      ]
+    },
+    {
+      "kind": "process",
+      "file": "osqueryi.exe",
+      "args": [
+        "--disable_extensions",
+        "--json",
+        "SELECT * FROM battery;"
+      ],
+      "exitCode": 0,
+      "stdOut": "[\n  {\n    \"amperage\": \"0\",\n    \"charged\": \"1\",\n    \"charging\": \"0\",\n    \"chemistry\": \"LiP\",\n    \"current_capacity\": \"3983\",\n    \"designed_capacity\": \"4375\",\n    \"health\": \"\",\n    \"manufacturer\": \"SampleCo\",\n    \"max_capacity\": \"3983\",\n    \"minutes_to_full_charge\": \"\",\n    \"minutes_until_empty\": \"\",\n    \"model\": \"SAMPLE-BAT\",\n    \"percent_remaining\": \"100\",\n    \"serial_number\": \"<serial:5a1e00>\",\n    \"state\": \"AC Power\",\n    \"voltage\": \"12600\",\n    \"condition\": \"\",\n    \"cycle_count\": \"212\"\n  }\n]",
+      "stdErr": ""
+    },
+    {
+      "kind": "process",
+      "file": "powercfg.exe",
+      "args": [
+        "/getactivescheme"
+      ],
+      "exitCode": 0,
+      "stdOut": "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)\r\n",
+      "stdErr": ""
+    }
+  ]
+}

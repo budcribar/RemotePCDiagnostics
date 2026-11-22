@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "machine": {
+    "productId": "SAMPLE-0001",
+    "manufacturer": "Sample Computers",
+    "model": "Sample Laptop 14",
+    "systemSku": "SAMPLE-0001",
+    "systemFamily": "Sample Laptop",
+    "baseBoardProduct": "SB-14",
+    "smbiosUuid": "",
+    "biosVersion": "S14V1.00",
+    "windowsVersion": "10.0.26100",
+    "windowsBuild": "26100",
+    "appVersion": "1.2.0.0",
+    "elevated": false,
+    "notes": "Hand-made sample (not a real PC) so the replay tests always have one recording. Values are consistent: osquery divides the WMI mWh by 12."
+  },
+  "capturedAt": "2026-11-22T09:00:00-07:00"
+}

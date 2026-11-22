@@ -41,12 +41,13 @@ public static class UserModePlugin
         return new Loaded(manifest, modules[0], context.Details.GetValueOrDefault(manifest.Id));
     }
 
-    /// <summary>The app's helpers that a module which ships with the app takes from its services: osquery (from the app's tools folder)
-    /// and Windows commands. Both only read; here they run with the user-mode process's token.</summary>
+    /// <summary>The app's helpers that a module which ships with the app takes from its services: osquery (from the app's tools folder),
+    /// WMI and Windows commands. Both only read; here they run with the user-mode process's token.</summary>
     public static void AddHelpers(IServiceCollection services, string appDirectory, ILogger? log = null)
     {
         services.AddSingleton(new Osquery.OsqueryRunner(baseDirectory: appDirectory, options: new Osquery.OsqueryOptions { Log = log }));
         services.AddSingleton(new Areas.SystemCommandRunner(log: log));
+        services.AddSingleton<DataSources.IWmiSource>(new DataSources.SystemWmiSource(log));
     }
 
     private sealed class Context(string pluginId, ILogger? log) : IPluginContext

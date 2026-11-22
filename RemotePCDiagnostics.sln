@@ -101,6 +101,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "DeveloperSetup", "Developer
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RemotePCDiagnostics.Modules.DeveloperSetup", "src\Modules\DeveloperSetup\RemotePCDiagnostics.Modules.DeveloperSetup.csproj", "{5604AEF9-A4AE-4AE0-9A59-2B46AE7252D2}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tools", "tools", "{07C2787E-EAC7-C090-1BA3-A61EC2A24D84}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RpcdRecorder", "tools\RpcdRecorder\RpcdRecorder.csproj", "{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -627,6 +631,18 @@ Global
 		{5604AEF9-A4AE-4AE0-9A59-2B46AE7252D2}.Release|x64.Build.0 = Release|Any CPU
 		{5604AEF9-A4AE-4AE0-9A59-2B46AE7252D2}.Release|x86.ActiveCfg = Release|Any CPU
 		{5604AEF9-A4AE-4AE0-9A59-2B46AE7252D2}.Release|x86.Build.0 = Release|Any CPU
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}.Debug|x64.Build.0 = Debug|Any CPU
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}.Debug|x86.Build.0 = Debug|Any CPU
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}.Release|x64.ActiveCfg = Release|Any CPU
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}.Release|x64.Build.0 = Release|Any CPU
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}.Release|x86.ActiveCfg = Release|Any CPU
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -677,5 +693,6 @@ Global
 		{EC447DCF-ABFA-6E24-52A5-D7FD48A5C558} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{19B16321-CA38-3220-CAD3-D551C8A3A8BE} = {EC447DCF-ABFA-6E24-52A5-D7FD48A5C558}
 		{5604AEF9-A4AE-4AE0-9A59-2B46AE7252D2} = {19B16321-CA38-3220-CAD3-D551C8A3A8BE}
+		{62FD28D7-FCB0-4A67-A819-02AB7A9FCD3D} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
 	EndGlobalSection
 EndGlobal

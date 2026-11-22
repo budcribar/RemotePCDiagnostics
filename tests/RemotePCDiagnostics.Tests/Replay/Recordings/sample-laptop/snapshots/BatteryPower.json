@@ -1,0 +1,133 @@
+{
+  "moduleName": "BatteryPower",
+  "status": "Ok",
+  "message": "Battery health 91% · 100% charged · Balanced plan",
+  "report": {
+    "cards": [
+      {
+        "id": "battery",
+        "title": "Battery health",
+        "level": "Ok",
+        "headline": "91% battery health",
+        "meta": "AC Power · 100% charged · 212 cycles",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "Power state",
+              "AC Power"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Current charge",
+              "100%"
+            ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Estimated battery health",
+              "91% of original capacity (9% wear)"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Design capacity",
+              "52,500 mWh"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Full charge capacity",
+              "47,800 mWh"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Cycle count",
+              "212"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Battery model",
+              "SampleCo SAMPLE-BAT"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Chemistry",
+              "LiP"
+            ]
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "plan",
+        "title": "Windows power plan",
+        "level": "Ok",
+        "headline": "Balanced",
+        "meta": "Active power scheme",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Active power plan",
+              "Balanced"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Impact",
+              "Normal processor speed scaling enabled."
+            ]
+          }
+        ],
+        "preserveRowOrder": false
+      }
+    ],
+    "summary": "Battery health 91% · 100% charged · Balanced plan",
+    "status": "Ok",
+    "cancelled": false,
+    "keyMetrics": [
+      {
+        "id": "battery.health",
+        "label": "Battery health",
+        "value": 91,
+        "unit": "%",
+        "better": "HigherIsBetter"
+      },
+      {
+        "id": "battery.capacity",
+        "label": "Full charge capacity",
+        "value": 47800,
+        "unit": "mWh",
+        "better": "HigherIsBetter"
+      },
+      {
+        "id": "battery.cycles",
+        "label": "Charge cycles",
+        "value": 212,
+        "unit": "",
+        "better": "Neutral"
+      }
+    ]
+  }
+}
