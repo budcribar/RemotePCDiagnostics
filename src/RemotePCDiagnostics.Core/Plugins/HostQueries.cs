@@ -19,8 +19,6 @@ public interface IHostQueries
     Task<ModuleAvailability> SensorsAvailabilityAsync(CancellationToken ct = default);
     /// <summary><c>sensors.read</c>: every temperature and fan reading.</summary>
     Task<SensorSnapshot> ReadSensorsAsync(CancellationToken ct = default);
-    /// <summary><c>osquery.select</c>: one of the app's own read-only statements (<see cref="HostCapabilities.AllowedSql"/>), run in the app.</summary>
-    Task<OsqueryQueryResult> SelectAsync(string sql, CancellationToken ct = default);
     /// <summary><c>storage.drives</c>: the drive health script's output (health, wear and error counters per drive).</summary>
     Task<Areas.DriveList?> ReadDrivesAsync(CancellationToken ct = default);
     /// <summary><c>storage.retrims</c>: the last retrim per drive letter.</summary>
@@ -28,10 +26,6 @@ public interface IHostQueries
     /// <summary><c>eventlog.query</c>: events from the System or Application log matching an XPath filter, newest first (null when the
     /// log couldn't be read).</summary>
     Task<IReadOnlyList<WinEvent>?> QueryEventsAsync(string log, string xpath, int max, CancellationToken ct = default);
-    /// <summary><c>crashes.minidumps</c>: the blue screen dump files in the Windows folder.</summary>
-    Task<IReadOnlyList<MinidumpFile>> ReadMinidumpsAsync(CancellationToken ct = default);
-    /// <summary><c>crashes.livekernelreports</c>: the graphics hang dumps in the admin-only <c>LiveKernelReports</c> folder.</summary>
-    Task<IReadOnlyList<MinidumpFile>> ReadLiveKernelReportsAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<MinidumpFile>>([]);
     /// <summary><c>events.reviewed</c>: the events the person marked as reviewed.</summary>
     Task<IReadOnlyCollection<string>> ReadEventReviewsAsync(CancellationToken ct = default);
     /// <summary><c>wmi.query</c>: one read-only WMI query (<see cref="DataSources.WmiQueryPolicy"/>), which the app passes to the Agent.</summary>
@@ -46,21 +40,15 @@ public interface IHostQueries
 public static class HostCapabilities
 {
     public const string SensorsRead = "sensors.read";
-    public const string OsquerySelect = "osquery.select";
     public const string StorageDrives = "storage.drives";
     public const string StorageRetrims = "storage.retrims";
     public const string EventLogQuery = "eventlog.query";
-    public const string Minidumps = "crashes.minidumps";
-    public const string LiveKernelReports = "crashes.livekernelreports";
     public const string EventReviews = "events.reviewed";
     public const string WmiQuery = "wmi.query";
     public const string PackagesList = "packages.list";
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
-        { SensorsRead, OsquerySelect, StorageDrives, StorageRetrims, EventLogQuery, Minidumps, LiveKernelReports, EventReviews, WmiQuery, PackagesList };
-
-    /// <summary>The only statements <c>osquery.select</c> runs: the app's own, verbatim. Anything else is refused.</summary>
-    public static readonly IReadOnlySet<string> AllowedSql = new HashSet<string>(StringComparer.Ordinal) { HardwareInventory.DiskSql, GraphicsDriverCrashes.DriversSql };
+        { SensorsRead, StorageDrives, StorageRetrims, EventLogQuery, EventReviews, WmiQuery, PackagesList };
 
     /// <summary>The logs <c>eventlog.query</c> reads (never Security).</summary>
     public static readonly IReadOnlySet<string> AllowedLogs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "System", "Application" };
@@ -85,7 +73,6 @@ public sealed class HostQueryException(string error, string reason) : Exception(
 public sealed record HostQueryBackend
 {
     public ISensorProvider? Sensors { get; init; }
-    public OsqueryRunner? Osquery { get; init; }
     public SystemCommandRunner? Commands { get; init; }
     public IRetrimHistory? Retrims { get; init; }
     public IDriveSource? Drives { get; init; }
@@ -93,8 +80,6 @@ public sealed record HostQueryBackend
     public DataSources.IWmiSource? Wmi { get; init; }
     /// <summary>The signed-in user's Store packages (read in the app; no administrator rights needed).</summary>
     public DataSources.IPackageSource? Packages { get; init; }
-    public Func<IReadOnlyList<MinidumpFile>> Minidumps { get; init; } = BsodHistoryModule.ReadSystemMinidumps;
-    public Func<IReadOnlyList<MinidumpFile>> LiveKernelReports { get; init; } = GraphicsDriverCrashes.ReadLiveKernelReports;
     public Func<IReadOnlyCollection<string>> EventReviews { get; init; } = Areas.EventReviews.Read;
 }
 
@@ -158,11 +143,6 @@ public sealed class HostQueryServer(Func<HostQueryBackend?> backend, ILogger? lo
                 }
                 else value = await Task.Run(sensors.Read, ct).ConfigureAwait(false);
                 break;
-            case HostCapabilities.OsquerySelect:
-                var sql = Arg(args, "sql") ?? "";
-                if (!HostCapabilities.AllowedSql.Contains(sql)) throw new HostQueryException("notAllowed", "only the app's own osquery statements can run");
-                value = await Need(backend.Osquery).RunQueryAsync(sql, ct).ConfigureAwait(false);
-                break;
             case HostCapabilities.StorageDrives:
                 value = await Need(backend.Drives).ReadDrivesAsync(ct).ConfigureAwait(false);
                 break;
@@ -178,12 +158,6 @@ public sealed class HostQueryServer(Func<HostQueryBackend?> backend, ILogger? lo
                 if (xpath.Length is 0 or > HostCapabilities.MaxXPathLength) throw new HostQueryException("badRequest", "the event filter is empty or too long");
                 if (max is < 1 or > HostCapabilities.MaxEvents) throw new HostQueryException("badRequest", $"max must be 1 to {HostCapabilities.MaxEvents}");
                 value = await new WindowsEventLog(Need(backend.Commands)).QueryAsync(logName, xpath, max, ct).ConfigureAwait(false);
-                break;
-            case HostCapabilities.Minidumps:
-                value = await Task.Run(backend.Minidumps, ct).ConfigureAwait(false);
-                break;
-            case HostCapabilities.LiveKernelReports:
-                value = await Task.Run(backend.LiveKernelReports, ct).ConfigureAwait(false);
                 break;
             case HostCapabilities.EventReviews:
                 value = backend.EventReviews().ToList();
@@ -269,9 +243,6 @@ public sealed class HostQueriesClient(Action<ModuleHostMessage> send) : IHostQue
 
     public Task<SensorSnapshot> ReadSensorsAsync(CancellationToken ct = default) => QueryAsync<SensorSnapshot>(HostCapabilities.SensorsRead, null, ct);
 
-    public Task<OsqueryQueryResult> SelectAsync(string sql, CancellationToken ct = default) =>
-        QueryAsync<OsqueryQueryResult>(HostCapabilities.OsquerySelect, new { sql }, ct);
-
     public Task<Areas.DriveList?> ReadDrivesAsync(CancellationToken ct = default) => QueryAsync<Areas.DriveList?>(HostCapabilities.StorageDrives, null, ct);
 
     public async Task<DataSources.WmiQueryResult> QueryWmiAsync(string wmiNamespace, string wql, CancellationToken ct = default)
@@ -298,12 +269,6 @@ public sealed class HostQueriesClient(Action<ModuleHostMessage> send) : IHostQue
 
     public async Task<IReadOnlyList<WinEvent>?> QueryEventsAsync(string log, string xpath, int max, CancellationToken ct = default) =>
         await QueryAsync<List<WinEvent>?>(HostCapabilities.EventLogQuery, new { log, xpath, max = max.ToString(System.Globalization.CultureInfo.InvariantCulture) }, ct).ConfigureAwait(false);
-
-    public async Task<IReadOnlyList<MinidumpFile>> ReadMinidumpsAsync(CancellationToken ct = default) =>
-        await QueryAsync<List<MinidumpFile>?>(HostCapabilities.Minidumps, null, ct).ConfigureAwait(false) ?? [];
-
-    public async Task<IReadOnlyList<MinidumpFile>> ReadLiveKernelReportsAsync(CancellationToken ct = default) =>
-        await QueryAsync<List<MinidumpFile>?>(HostCapabilities.LiveKernelReports, null, ct).ConfigureAwait(false) ?? [];
 
     public async Task<IReadOnlyCollection<string>> ReadEventReviewsAsync(CancellationToken ct = default) =>
         await QueryAsync<List<string>?>(HostCapabilities.EventReviews, null, ct).ConfigureAwait(false) ?? [];

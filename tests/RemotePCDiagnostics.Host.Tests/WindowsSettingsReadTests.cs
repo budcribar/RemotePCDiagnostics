@@ -31,9 +31,18 @@ public class WindowsSettingsReadTests
     }
 
     [Fact]
+    public void Running_services_process_ids_come_from_the_service_control_manager()
+    {
+        // The Windows Event Log service always runs, in its own svchost.
+        var pids = WindowsMemorySystem.RunningServicePids();
+        Assert.True(pids.TryGetValue("EventLog", out var pid), string.Join(", ", pids.Keys.Take(20)));
+        Assert.True(pid > 4);
+    }
+
+    [Fact]
     public async Task Page_file_settings_read_through_WMI_in_the_journal_format()
     {
-        var b64 = await new WindowsMemorySystem(null).ReadPageFileSettingsAsync(CancellationToken.None);
+        var b64 = await new WindowsMemorySystem().ReadPageFileSettingsAsync(CancellationToken.None);
         if (b64 is null) return; // Windows manages the page file size: nothing custom to record
         var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(b64));
         using var doc = System.Text.Json.JsonDocument.Parse(json);

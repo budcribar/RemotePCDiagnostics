@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Xml.Linq;
 
 namespace RemotePCDiagnostics.Core.Recording;
 
@@ -18,7 +19,7 @@ public sealed class RecordingScrubber
     {
         "SerialNumber", "serial_number", "serial", "hardware_serial", "board_serial", "UniqueID", "IdentifyingNumber",
         "MACAddress", "mac", "PermanentAddress", "CSName", "__SERVER", "UserName", "RegisteredUser", "PrimaryOwnerName",
-        "computer_name", "hostname", "local_hostname",
+        "computer_name", "hostname", "local_hostname", "ComputerName",
         "Id", // the DriveHealth script's name for a disk's UniqueId (its WWN / EUI)
         "UUID", // the SMBIOS UUID (Win32_ComputerSystemProduct, osquery system_info), per unit on most makers
         "guid", "pnp_device_id", "PNPDeviceID", // a network adapter's GUID; device instance paths can hold a USB serial
@@ -79,10 +80,12 @@ public sealed class RecordingScrubber
         Rows = c.Rows?.Select(r => r.ToDictionary(p => p.Key, p => Value(p.Key, p.Value), StringComparer.OrdinalIgnoreCase)).ToList(),
     };
 
-    /// <summary>Command output: JSON (osquery) has its sensitive columns replaced too; any text has names replaced.</summary>
+    /// <summary>Command output: JSON (osquery) and an XML document (the battery report) have their sensitive fields replaced too; any text
+    /// has names replaced.</summary>
     private string Output(string stdout)
     {
         var t = stdout.TrimStart();
+        if (t.StartsWith('<') && (Xml(stdout) ?? XmlList(stdout)) is { } xml) return xml;
         if (t.StartsWith('[') || t.StartsWith('{'))
         {
             try
@@ -96,6 +99,60 @@ public sealed class RecordingScrubber
             catch (JsonException) { /* not JSON after all: treat as text */ }
         }
         return Text(stdout);
+    }
+
+    /// <summary>An XML document with its sensitive elements (<see cref="SensitiveNames"/>) replaced and names replaced in all other text;
+    /// null when it isn't one document.</summary>
+    private string? Xml(string text)
+    {
+        XDocument doc;
+        try { doc = XDocument.Parse(text, LoadOptions.PreserveWhitespace); }
+        catch (System.Xml.XmlException) { return null; }
+        ScrubXml(doc.Root!);
+        return (doc.Declaration is { } d ? d + "\n" : "") + doc.ToString(SaveOptions.DisableFormatting);
+    }
+
+    /// <summary>
+    /// A list of XML elements with no root (wevtutil's events), each scrubbed as <see cref="Xml"/> does; null when it isn't one. Scrubbed as
+    /// plain text instead, a placeholder such as &lt;pc:1a2b3c&gt; in an element would break the XML.
+    /// </summary>
+    private string? XmlList(string text)
+    {
+        var settings = new System.Xml.XmlReaderSettings
+        {
+            ConformanceLevel = System.Xml.ConformanceLevel.Fragment, CheckCharacters = false,
+            DtdProcessing = System.Xml.DtdProcessing.Prohibit, XmlResolver = null, IgnoreWhitespace = false,
+        };
+        var parts = new List<XNode>();
+        try
+        {
+            using var reader = System.Xml.XmlReader.Create(new StringReader(text), settings);
+            reader.MoveToContent();
+            while (!reader.EOF)
+            {
+                if (reader.NodeType == System.Xml.XmlNodeType.Element) parts.Add(XNode.ReadFrom(reader));
+                else if (reader.NodeType is System.Xml.XmlNodeType.Whitespace or System.Xml.XmlNodeType.SignificantWhitespace) { parts.Add(new XText(reader.Value)); reader.Read(); }
+                else if (!reader.Read()) break;
+            }
+        }
+        catch (System.Xml.XmlException) { return null; }
+        var sb = new StringBuilder();
+        foreach (var node in parts)
+        {
+            if (node is XElement e) { ScrubXml(e); sb.Append(e.ToString(SaveOptions.DisableFormatting)); }
+            else sb.Append(((XText)node).Value);
+        }
+        return sb.ToString();
+    }
+
+    private void ScrubXml(XElement root)
+    {
+        foreach (var e in root.DescendantsAndSelf().ToList())
+        {
+            foreach (var a in e.Attributes().Where(a => !a.IsNamespaceDeclaration)) a.Value = Text(a.Value);
+            if (e.HasElements) continue;
+            e.Value = SensitiveNames.Contains(e.Name.LocalName) ? Placeholder("serial", e.Value) : Text(e.Value);
+        }
     }
 
     private void ScrubNode(JsonNode node)

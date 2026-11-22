@@ -56,6 +56,15 @@ A check whose answers a recording doesn't hold (a recording made before the reco
 | Network (adapters, IP configuration) | WMI (`Win32_NetworkAdapter`, `MSFT_NetAdapterStatisticsSettingData`, `Win32_NetworkAdapterConfiguration`), the registry (DNS set by hand, proxy) | osquery `interface_details`, PowerShell (`Get-NetAdapterStatistics`, `Get-NetIPConfiguration`) |
 | Security essentials | WMI (Defender, Security Center, BitLocker, firewall profiles, `Win32_LogicalDisk`), the registry (Secure Boot, firmware type, edition, policies), tpmtool | PowerShell probe, tpmtool |
 | Resource hogs & uptime | WMI (`Win32_OperatingSystem`, `Win32_Process`, `Win32_PhysicalMemory`, `Win32_PageFileUsage`), Fast Startup from the registry | osquery, PowerShell |
+| Crashes & unexpected restarts | The event logs (wevtutil), the dump files from WMI (`CIM_DataFile`, `Win32_Directory`), the graphics drivers from `Win32_PnPSignedDriver` | The event logs (wevtutil), the dump folders listed by the app, osquery `drivers` |
+| Windows error log | The event logs (wevtutil) | The same |
+| Sleep, wake & standby drain | powercfg, the System log (wevtutil), the battery report (`powercfg /batteryreport`, kept by name) | The same |
+
+The event log checks are built at the time the PC was recorded, in UTC (`ReportClock`, `FixedClock`), so "in the last 7 days" and the
+times shown stay the same wherever and whenever the tests run. The battery report is a file powercfg writes under a new name each run, so it
+is kept as a file answer (`RecordedCall.FileKind`) under a fixed name; its serial number and the PC's name are replaced like any other.
+The legacy dump lists are kept the same way, as JSON. Event messages are kept as Windows wrote them, with the PC's and users' names
+replaced, which is one more reason real recordings stay in the private Admin repo.
 
 The Network check (`INetworkSource`) is recorded without `netsh wlan` and the network event logs, whose answers hold the Wi-Fi network's name
 and its router's address, and offline: the reachability probes and the DNS speed comparison ask the live network, so they aren't replayed.
@@ -63,12 +72,14 @@ and its router's address, and offline: the reachability probes and the DNS speed
 ## Readers and editions
 
 Each check reads through an interface (`IBatteryPowerSource`, `IDriveSource`, `IHardwareInventorySource`, `IServiceSource`,
-`IDeviceDriverSource`, `IProgramsSource`, `ISecurityEssentialsSource`, `IResourceHogsSource`), so a build carries only the readers it uses:
+`IDeviceDriverSource`, `IProgramsSource`, `ISecurityEssentialsSource`, `IResourceHogsSource`, `ICrashDumpSource`), so a build carries only the
+readers it uses:
 
 - The Setup edition (the default build) reads WMI through the Agent (`AgentWmiSource`), never in the app. Run out of process (in the module
   host), a module asks the app for its WMI (the `wmi.query` capability), and the app asks the Agent. The registry keys Programs reads, and the
   signed-in user's Store apps (`PackageManager`), need no administrator rights, so the app reads them itself (`packages.list` out of process).
-  Programs lists only the apps among the packages: no frameworks, language resources or parts of Windows.
+  Programs lists only the apps among the packages: no frameworks, language resources or parts of Windows. The crash dump folders are for
+  administrators only, so Crashes lists them through the Agent too, and takes its graphics drivers from the drivers reader.
 - The Store edition (`-p:RpcdEdition=Store`) may run without an Agent. It also ships `RemotePCDiagnostics.Legacy` (osquery, powercfg,
   PowerShell, all as a standard user) and uses it whenever no Agent is connected.
 

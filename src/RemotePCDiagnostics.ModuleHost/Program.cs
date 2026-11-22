@@ -90,7 +90,7 @@ else
 {
     var queries = new HostQueriesClient(SendRaw);
     IDiagnosticModule module;
-    // This exe sits in the app's folder, so the app's helpers (osquery) resolve from here.
+    // This exe sits in the app's folder, so the app's helpers resolve from here.
     try { module = UserModePlugin.Load(args[0], new RemotePCDiagnostics.Logging.LineLogger(line => Console.Error.WriteLine(line)), AppContext.BaseDirectory, queries).Module; }
     catch (Exception ex)
     {

@@ -1,62 +1,46 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Microsoft.Win32;
+using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.DataSources;
 using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Bios;
 
 /// <summary>
 /// Default vendor-independent <see cref="IBiosSystemProbe"/>. Reads Windows SMBIOS registry values when available
-/// and supplements with osquery (<c>system_info</c> and <c>platform_info</c>) so vendor providers receive
+/// and supplements them with WMI through the Agent (the computer, its board and its BIOS) so vendor providers receive
 /// Manufacturer, Model, SystemSKU, BaseBoardProduct, SerialNumber, FirmwareMode, and current BIOS version/date.
 /// </summary>
 public sealed class DefaultBiosSystemProbe : IBiosSystemProbe
 {
-    private readonly OsqueryRunner? _osquery;
+    private readonly IWmiSource? _wmi;
     private readonly ILogger? _log;
-    private readonly bool _readWindowsRegistry;
 
-    /// <param name="readWindowsRegistry">False skips the SMBIOS registry values, so only osquery is used (tests pass false so the build machine's own hardware doesn't leak in).</param>
-    public DefaultBiosSystemProbe(OsqueryRunner? osquery = null, ILogger? log = null, bool readWindowsRegistry = true)
+    private readonly bool _readThisPc;
+
+    /// <param name="readThisPc">Read this PC's SMBIOS registry values and firmware type (on Windows). Tests turn it off, so only the
+    /// answers they script count, whatever PC they run on.</param>
+    public DefaultBiosSystemProbe(IWmiSource? wmi = null, ILogger? log = null, bool readThisPc = true)
     {
-        _osquery = osquery;
+        _wmi = wmi;
         _log = log;
-        _readWindowsRegistry = readWindowsRegistry;
+        _readThisPc = readThisPc;
     }
 
     public async Task<BiosSystemIdentity> ProbeAsync(CancellationToken ct = default)
     {
-        var reg = _readWindowsRegistry && OperatingSystem.IsWindows() ? ReadWindowsBiosRegistry() : default;
-        var firmwareMode = OperatingSystem.IsWindows() ? ReadWindowsFirmwareMode() : BiosFirmwareMode.Unknown;
+        var reg = _readThisPc && OperatingSystem.IsWindows() ? ReadWindowsBiosRegistry() : default;
+        var firmwareMode = _readThisPc && OperatingSystem.IsWindows() ? ReadWindowsFirmwareMode() : BiosFirmwareMode.Unknown;
 
         SystemInfo? sys = null;
         BiosInfo? bios = null;
 
-        if (_osquery is { Exists: true })
+        if (_wmi is not null)
         {
-            try
-            {
-                var sysQuery = await _osquery.RunQueryAsync(HardwareInventory.SystemSql, ct).ConfigureAwait(false);
-                if (sysQuery.Success && sysQuery.Rows is { Count: > 0 })
-                    sys = SystemInfo.FromRow(sysQuery.Rows[0]);
-            }
+            try { (sys, bios) = await WmiHardwareInventorySource.ReadIdentityAsync(_wmi, ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _log?.Warn($"BIOS system probe: osquery system_info failed: {ex.Message}");
-            }
-
-            try
-            {
-                var biosQuery = await _osquery.RunQueryAsync(HardwareInventory.BiosSql, ct).ConfigureAwait(false);
-                if (biosQuery.Success && biosQuery.Rows is { Count: > 0 })
-                    bios = BiosInfo.FromRow(biosQuery.Rows[0]);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _log?.Warn($"BIOS system probe: osquery platform_info failed: {ex.Message}");
-            }
+            catch (Exception ex) { _log?.Warn($"BIOS system probe: WMI read failed: {ex.Message}"); }
         }
 
         return MergeIdentity(

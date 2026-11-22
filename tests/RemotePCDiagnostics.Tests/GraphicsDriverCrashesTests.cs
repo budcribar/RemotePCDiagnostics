@@ -170,20 +170,23 @@ public class GraphicsDriverCrashesTests
             Reports = WindowsEventLog.Parse(Wer(Now.AddDays(-1).AddSeconds(30), "LiveKernelEvent", "141"), "Application"),
             Dumps = [new("WATCHDOG-1.dmp", Now.AddDays(-1), 1024, @"C:\Windows\LiveKernelReports\WATCHDOG\WATCHDOG-1.dmp")],
         };
-        var result = await new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, host: host).RefreshAsync(null);
+        var drivers = new FixedDrivers([new("NVIDIA GeForce RTX 3060", "DISPLAY", "NVIDIA", "32.0.15.6094", new DateOnly(2026, 9, 12), true),
+            new("Realtek Audio", "MEDIA", "Realtek", "6.0.9600.1", null, true)]);
+        var dumps = new FixedCrashDumps(liveKernelReports: host.Dumps);
+        var result = await new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, dumps, drivers, host).RefreshAsync(null);
         var report = Assert.IsType<AreaReport>(result.Payload);
         var card = report.Cards.Single(c => c.Id == GraphicsDriverCrashes.CardId);
         Assert.Equal(AreaLevel.Error, card.Level);
         Assert.Equal("1 driver reset, 1 graphics blue screen", card.Headline);
         Assert.Equal(DiagnosticStatus.Error, result.Status);
         Assert.Contains("1 driver reset, 1 graphics blue screen", report.Summary);
-        Assert.Contains(GraphicsDriverCrashes.DriversSql, host.Sql);
+        Assert.Equal(1, drivers.Reads);
         Assert.Contains("Current graphics driver: NVIDIA GeForce RTX 3060 32.0.15.6094", card.Note);
         Assert.Equal(["bsods", "power", "whea", "minidumps", "graphics", "crashes", "hangs", "apps"], report.Cards.Select(c => c.Id));
 
         // The System log can't be read: the card says so instead of showing Ok.
         host.Resets = null;
-        var failed = Assert.IsType<AreaReport>((await new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, host: host).RefreshAsync(null)).Payload);
+        var failed = Assert.IsType<AreaReport>((await new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, dumps, drivers, host).RefreshAsync(null)).Payload);
         Assert.NotNull(failed.Cards.Single(c => c.Id == GraphicsDriverCrashes.CardId).ErrorText);
     }
 
@@ -194,17 +197,9 @@ public class GraphicsDriverCrashesTests
         public IReadOnlyList<WinEvent> System { get; init; } = [];
         public IReadOnlyList<WinEvent> Reports { get; init; } = [];
         public IReadOnlyList<MinidumpFile> Dumps { get; init; } = [];
-        public List<string> Sql { get; } = [];
 
         public Task<ModuleAvailability> SensorsAvailabilityAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<RemotePCDiagnostics.Core.Sensors.SensorSnapshot> ReadSensorsAsync(CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<RemotePCDiagnostics.Core.Osquery.OsqueryQueryResult> SelectAsync(string sql, CancellationToken ct = default)
-        {
-            lock (Sql) Sql.Add(sql);
-            IReadOnlyList<IReadOnlyDictionary<string, string>> rows =
-                [new Dictionary<string, string> { ["device_name"] = "NVIDIA GeForce RTX 3060", ["provider"] = "NVIDIA", ["version"] = "32.0.15.6094", ["date"] = "2026-09-12" }];
-            return Task.FromResult(new RemotePCDiagnostics.Core.Osquery.OsqueryQueryResult(sql, rows, null));
-        }
         public Task<RemotePCDiagnostics.Core.Areas.DriveList?> ReadDrivesAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyDictionary<char, RetrimRecord>> ReadRetrimsAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<WinEvent>?> QueryEventsAsync(string log, string xpath, int max, CancellationToken ct = default) =>
@@ -212,8 +207,6 @@ public class GraphicsDriverCrashesTests
                 : xpath == GraphicsDriverCrashes.InstallQuery ? Installs
                 : xpath == GraphicsDriverCrashes.ReportQuery ? Reports
                 : log == "System" ? System : (IReadOnlyList<WinEvent>?)[]);
-        public Task<IReadOnlyList<MinidumpFile>> ReadMinidumpsAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<MinidumpFile>>([]);
-        public Task<IReadOnlyList<MinidumpFile>> ReadLiveKernelReportsAsync(CancellationToken ct = default) => Task.FromResult(Dumps);
         public Task<IReadOnlyCollection<string>> ReadEventReviewsAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyCollection<string>>([]);
     }
 }

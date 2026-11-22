@@ -225,7 +225,7 @@ public sealed class BsodHistoryModule(SystemCommandRunner commands, Func<IReadOn
     public static AreaReport Build(IReadOnlyList<WinEvent> events, IReadOnlyList<MinidumpFile>? dumps = null, DateTimeOffset? now = null)
     {
         var dmpList = dumps ?? [];
-        var cutoff = (now ?? DateTimeOffset.Now).AddDays(-RecentDays);
+        var cutoff = (now ?? ReportClock.Now).AddDays(-RecentDays);
         var bsods = events.Where(IsBugCheckEvent).OrderByDescending(e => e.Time).ToList();
         var powerLosses = events.Where(IsPowerLossEvent).OrderByDescending(e => e.Time).ToList();
         var wheaEvents = events.Where(IsWheaEvent).OrderByDescending(e => e.Time).ToList();

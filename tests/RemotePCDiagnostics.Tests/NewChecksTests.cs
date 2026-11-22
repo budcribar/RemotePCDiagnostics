@@ -227,7 +227,7 @@ public class NewChecksTests
         Assert.Equal(DiagnosticStatus.Ok, evRes.Status);
 
         // CrashesModule with includeSystemCrashes: true includes both BSOD/power cards and app crash cards
-        var crashMod = new CrashesModule(new SystemCommandRunner(launcher), includeSystemCrashes: true, minidumpReader: () => []);
+        var crashMod = new CrashesModule(new SystemCommandRunner(launcher), includeSystemCrashes: true, dumps: new FixedCrashDumps());
         Assert.Equal("Crashes & unexpected restarts", crashMod.DisplayName);
         var crashRes = await crashMod.RefreshAsync(null);
         var crashRep = Assert.IsType<AreaReport>(crashRes.Payload);

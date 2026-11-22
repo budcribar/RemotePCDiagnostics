@@ -999,6 +999,352 @@
           "Hidden": false
         }
       ]
+    },
+    {
+      "kind": "process",
+      "file": "wevtutil.exe",
+      "args": [
+        "qe",
+        "Application",
+        "/q:*[System[Provider[@Name='Application Error' or @Name='Application Hang'] and (EventID=1000 or EventID=1002) and TimeCreated[timediff(@SystemTime) <= 2592000000]]]",
+        "/c:500",
+        "/rd:true",
+        "/f:RenderedXml"
+      ],
+      "exitCode": 0,
+      "stdOut": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Application Error'/><EventID Qualifiers='0'>1000</EventID><Version>0</Version><Level>2</Level><TimeCreated SystemTime='2026-11-21T15:10:00.0000000Z'/><EventRecordID>58423</EventRecordID><Channel>Application</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data>notes.exe</Data><Data>4.2.0.0</Data><Data>6700aaaa</Data><Data>ntdll.dll</Data><Data>10.0.26100.1</Data><Data>00000000</Data><Data>c0000005</Data><Data>0000000000012345</Data></EventData><RenderingInfo Culture='en-US'><Message>Faulting application name: notes.exe, version: 4.2.0.0, time stamp: 0x6700aaaa\nFaulting module name: ntdll.dll, version: 10.0.26100.1, time stamp: 0x00000000\nException code: 0xc0000005</Message></RenderingInfo></Event><Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Application Hang'/><EventID Qualifiers='0'>1002</EventID><Version>0</Version><Level>2</Level><TimeCreated SystemTime='2026-11-20T18:30:00.0000000Z'/><EventRecordID>31943</EventRecordID><Channel>Application</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data>photoeditor.exe</Data><Data>2.1.0.0</Data><Data>1a2b</Data><Data>01db3c</Data><Data>4294967295</Data><Data>C:\\Program Files\\PhotoEditor\\photoeditor.exe</Data></EventData><RenderingInfo Culture='en-US'><Message>The program photoeditor.exe version 2.1.0.0 stopped interacting with Windows and was closed.</Message></RenderingInfo></Event><Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Application Error'/><EventID Qualifiers='0'>1000</EventID><Version>0</Version><Level>2</Level><TimeCreated SystemTime='2026-11-19T09:00:00.0000000Z'/><EventRecordID>53686</EventRecordID><Channel>Application</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data>notes.exe</Data><Data>4.2.0.0</Data><Data>6700aaaa</Data><Data>ntdll.dll</Data><Data>10.0.26100.1</Data><Data>00000000</Data><Data>c0000005</Data><Data>0000000000012345</Data></EventData><RenderingInfo Culture='en-US'><Message>Faulting application name: notes.exe, version: 4.2.0.0, time stamp: 0x6700aaaa\nFaulting module name: ntdll.dll, version: 10.0.26100.1, time stamp: 0x00000000\nException code: 0xc0000005</Message></RenderingInfo></Event><Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Application Error'/><EventID Qualifiers='0'>1000</EventID><Version>0</Version><Level>2</Level><TimeCreated SystemTime='2026-11-02T20:00:00.0000000Z'/><EventRecordID>32500</EventRecordID><Channel>Application</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data>game.exe</Data><Data>4.2.0.0</Data><Data>6700aaaa</Data><Data>ntdll.dll</Data><Data>10.0.26100.1</Data><Data>00000000</Data><Data>c0000005</Data><Data>0000000000012345</Data></EventData><RenderingInfo Culture='en-US'><Message>Faulting application name: game.exe, version: 4.2.0.0, time stamp: 0x6700aaaa\nFaulting module name: ntdll.dll, version: 10.0.26100.1, time stamp: 0x00000000\nException code: 0xc0000005</Message></RenderingInfo></Event>",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "process",
+      "file": "wevtutil.exe",
+      "args": [
+        "qe",
+        "Application",
+        "/q:*[System[Provider[@Name='.NET Runtime'] and EventID=1026 and TimeCreated[timediff(@SystemTime) <= 2592002000]]]",
+        "/c:500",
+        "/rd:true",
+        "/f:RenderedXml"
+      ],
+      "exitCode": 0,
+      "stdOut": "",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "process",
+      "file": "wevtutil.exe",
+      "args": [
+        "qe",
+        "System",
+        "/q:*[System[((EventID=41 or EventID=1001 or EventID=6008) or Provider[@Name='Microsoft-Windows-WHEA-Logger']) and TimeCreated[timediff(@SystemTime) <= 2592000000]]]",
+        "/c:250",
+        "/rd:true",
+        "/f:RenderedXml"
+      ],
+      "exitCode": 0,
+      "stdOut": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Kernel-Power'/><EventID Qualifiers='0'>41</EventID><Version>0</Version><Level>1</Level><TimeCreated SystemTime='2026-11-10T07:13:30.0000000Z'/><EventRecordID>42506</EventRecordID><Channel>System</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data Name='BugcheckCode'>159</Data><Data Name='BugcheckParameter1'>0x3</Data><Data Name='SleepInProgress'>0</Data><Data Name='PowerButtonTimestamp'>0</Data></EventData><RenderingInfo Culture='en-US'><Message>The system has rebooted without cleanly shutting down first.</Message></RenderingInfo></Event><Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-WER-SystemErrorReporting'/><EventID Qualifiers='0'>1001</EventID><Version>0</Version><Level>2</Level><TimeCreated SystemTime='2026-11-10T07:12:00.0000000Z'/><EventRecordID>11896</EventRecordID><Channel>System</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data>0x0000009f (0x0000000000000003, 0xffffb30c1a2b3c40, 0xfffff8063c2a1b3c, 0xffffb30c1d2e3f50)</Data><Data>C:\\Windows\\Minidump\\111026-12345-01.dmp</Data><Data>1a2b3c4d</Data></EventData><RenderingInfo Culture='en-US'><Message>The computer has rebooted from a bugcheck. The bugcheck was: 0x0000009f (0x0000000000000003, 0xffffb30c1a2b3c40, 0xfffff8063c2a1b3c, 0xffffb30c1d2e3f50). A dump was saved in: C:\\Windows\\Minidump\\111026-12345-01.dmp.</Message></RenderingInfo></Event>",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT Name, FileSize, LastModified FROM CIM_DataFile WHERE Drive = 'C:' AND Path = '\\\\Windows\\\\Minidump\\\\' AND Extension = 'dmp'",
+      "rows": [
+        {
+          "Name": "c:\\windows\\minidump\\111026-12345-01.dmp",
+          "FileSize": 1843200,
+          "LastModified": "20261110001200.000000-420"
+        }
+      ],
+      "hasRows": true
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT Name, FileSize, LastModified FROM CIM_DataFile WHERE Name = 'C:\\\\Windows\\\\MEMORY.DMP'",
+      "rows": [],
+      "hasRows": true
+    },
+    {
+      "kind": "process",
+      "file": "wevtutil.exe",
+      "args": [
+        "qe",
+        "System",
+        "/q:*[System[((Provider[@Name='Display'] and EventID=4101) or (Provider[@Name='nvlddmkm' or @Name='amdkmdag' or @Name='amdkmdap' or @Name='amdwddmg' or @Name='igfxnd' or @Name='igfxn' or @Name='igfx'] and (Level=1 or Level=2 or Level=3))) and TimeCreated[timediff(@SystemTime) <= 2592000000]]]",
+        "/c:300",
+        "/rd:true",
+        "/f:RenderedXml"
+      ],
+      "exitCode": 0,
+      "stdOut": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Display'/><EventID Qualifiers='0'>4101</EventID><Version>0</Version><Level>3</Level><TimeCreated SystemTime='2026-11-18T21:40:00.0000000Z'/><EventRecordID>7828</EventRecordID><Channel>System</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data>amdkmdag</Data><Data></Data></EventData><RenderingInfo Culture='en-US'><Message>Display driver amdkmdag stopped responding and has successfully recovered.</Message></RenderingInfo></Event>",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "process",
+      "file": "wevtutil.exe",
+      "args": [
+        "qe",
+        "System",
+        "/q:*[System[Provider[@Name='Microsoft-Windows-UserPnp'] and EventID=20001 and TimeCreated[timediff(@SystemTime) <= 2592000000]]]",
+        "/c:300",
+        "/rd:true",
+        "/f:RenderedXml"
+      ],
+      "exitCode": 0,
+      "stdOut": "",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "process",
+      "file": "wevtutil.exe",
+      "args": [
+        "qe",
+        "Application",
+        "/q:*[System[Provider[@Name='Windows Error Reporting'] and EventID=1001 and TimeCreated[timediff(@SystemTime) <= 2592000000]]]",
+        "/c:300",
+        "/rd:true",
+        "/f:RenderedXml"
+      ],
+      "exitCode": 0,
+      "stdOut": "",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT Name, FileSize, LastModified FROM CIM_DataFile WHERE Drive = 'C:' AND Path = '\\\\Windows\\\\LiveKernelReports\\\\' AND Extension = 'dmp'",
+      "rows": [],
+      "hasRows": true
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT Name FROM Win32_Directory WHERE Drive = 'C:' AND Path = '\\\\Windows\\\\LiveKernelReports\\\\'",
+      "rows": [
+        {
+          "Name": "c:\\windows\\livekernelreports\\watchdog"
+        },
+        {
+          "Name": "c:\\windows\\livekernelreports\\usbhub3"
+        }
+      ],
+      "hasRows": true
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT Name, FileSize, LastModified FROM CIM_DataFile WHERE Drive = 'C:' AND Path = '\\\\Windows\\\\LiveKernelReports\\\\watchdog\\\\' AND Extension = 'dmp'",
+      "rows": [
+        {
+          "Name": "c:\\windows\\livekernelreports\\watchdog\\watchdog-20261118-1440.dmp",
+          "FileSize": 524288,
+          "LastModified": "20261118144000.000000-420"
+        }
+      ],
+      "hasRows": true
+    },
+    {
+      "kind": "file",
+      "file": "legacy minidumps",
+      "stdOut": "[\n  {\n    \"fileName\": \"111026-12345-01.dmp\",\n    \"created\": \"2026-11-10T07:12:00+00:00\",\n    \"sizeBytes\": 1843200,\n    \"fullPath\": \"C:\\\\Windows\\\\Minidump\\\\111026-12345-01.dmp\"\n  }\n]",
+      "hasRows": false
+    },
+    {
+      "kind": "file",
+      "file": "legacy live kernel reports",
+      "stdOut": "[\n  {\n    \"fileName\": \"WATCHDOG-20261118-1440.dmp\",\n    \"created\": \"2026-11-18T21:40:00+00:00\",\n    \"sizeBytes\": 524288,\n    \"fullPath\": \"C:\\\\Windows\\\\LiveKernelReports\\\\WATCHDOG\\\\WATCHDOG-20261118-1440.dmp\"\n  }\n]",
+      "hasRows": false
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT DeviceName, Description, DeviceClass, DriverProviderName, Manufacturer, DriverVersion, DriverDate, IsSigned FROM Win32_PnPSignedDriver",
+      "rows": [
+        {
+          "DeviceName": "AMD Radeon(TM) Graphics",
+          "Description": "AMD Radeon(TM) Graphics",
+          "DeviceClass": "DISPLAY",
+          "DriverProviderName": "Advanced Micro Devices, Inc.",
+          "Manufacturer": "Advanced Micro Devices, Inc.",
+          "DriverVersion": "31.0.24027.1012",
+          "DriverDate": "20250801000000.******+***",
+          "IsSigned": true
+        },
+        {
+          "DeviceName": "Realtek High Definition Audio",
+          "Description": "Realtek High Definition Audio",
+          "DeviceClass": "MEDIA",
+          "DriverProviderName": "Realtek Semiconductor Corp.",
+          "Manufacturer": "Realtek",
+          "DriverVersion": "6.0.9600.1",
+          "DriverDate": "20240310000000.******+***",
+          "IsSigned": true
+        },
+        {
+          "DeviceName": null,
+          "Description": "Volume",
+          "DeviceClass": "VOLUME",
+          "DriverProviderName": "Microsoft",
+          "Manufacturer": "Microsoft",
+          "DriverVersion": "10.0.26100.1",
+          "DriverDate": "20060621000000.******+***",
+          "IsSigned": true
+        }
+      ],
+      "hasRows": true
+    },
+    {
+      "kind": "process",
+      "file": "osqueryi.exe",
+      "args": [
+        "--disable_extensions",
+        "--json",
+        "SELECT device_name, description, class, provider, manufacturer, version, date, signed FROM drivers WHERE device_name != '';"
+      ],
+      "exitCode": 0,
+      "stdOut": "[{\"device_name\":\"AMD Radeon(TM) Graphics\",\"description\":\"AMD Radeon(TM) Graphics\",\"class\":\"DISPLAY\",\"provider\":\"Advanced Micro Devices, Inc.\",\"manufacturer\":\"Advanced Micro Devices, Inc.\",\"version\":\"31.0.24027.1012\",\"date\":\"2025-08-01\",\"signed\":\"1\"},{\"device_name\":\"Realtek High Definition Audio\",\"description\":\"Realtek High Definition Audio\",\"class\":\"MEDIA\",\"provider\":\"Realtek Semiconductor Corp.\",\"manufacturer\":\"Realtek\",\"version\":\"6.0.9600.1\",\"date\":\"2024-03-10\",\"signed\":\"1\"}]",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT Name, PNPClass, DeviceID, ConfigManagerErrorCode, Status FROM Win32_PnPEntity WHERE ConfigManagerErrorCode <> 0",
+      "rows": [],
+      "hasRows": true
+    },
+    {
+      "kind": "process",
+      "file": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$ErrorActionPreference='SilentlyContinue';$p=@(Get-CimInstance Win32_PnPEntity -Filter 'ConfigManagerErrorCode <> 0' | ForEach-Object { [pscustomobject]@{Name=[string]$_.Name;Class=[string]$_.PNPClass;DeviceId=[string]$_.DeviceID;ErrorCode=[string]$_.ConfigManagerErrorCode;Status=[string]$_.Status } });ConvertTo-Json -InputObject $p -Compress"
+      ],
+      "exitCode": 0,
+      "stdOut": "[]",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "process",
+      "file": "wevtutil.exe",
+      "args": [
+        "qe",
+        "System",
+        "/q:*[System[(Level=1 or Level=2) and TimeCreated[timediff(@SystemTime) <= 604800000]]]",
+        "/c:300",
+        "/rd:true",
+        "/f:RenderedXml"
+      ],
+      "exitCode": 0,
+      "stdOut": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Service Control Manager'/><EventID Qualifiers='0'>7000</EventID><Version>0</Version><Level>2</Level><TimeCreated SystemTime='2026-11-21T08:00:00.0000000Z'/><EventRecordID>59233</EventRecordID><Channel>System</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data Name='param1'>Sample Updater</Data><Data Name='param2'>%%2</Data></EventData><RenderingInfo Culture='en-US'><Message>The Sample Updater service failed to start due to the following error: \nThe system cannot find the file specified.</Message></RenderingInfo></Event><Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Service Control Manager'/><EventID Qualifiers='0'>7000</EventID><Version>0</Version><Level>2</Level><TimeCreated SystemTime='2026-11-20T08:00:00.0000000Z'/><EventRecordID>1759</EventRecordID><Channel>System</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data Name='param1'>Sample Updater</Data><Data Name='param2'>%%2</Data></EventData><RenderingInfo Culture='en-US'><Message>The Sample Updater service failed to start due to the following error: \nThe system cannot find the file specified.</Message></RenderingInfo></Event><Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-DistributedCOM'/><EventID Qualifiers='0'>10016</EventID><Version>0</Version><Level>2</Level><TimeCreated SystemTime='2026-11-19T12:00:00.0000000Z'/><EventRecordID>11857</EventRecordID><Channel>System</Channel><Computer>SAMPLE-PC</Computer></System><EventData></EventData><RenderingInfo Culture='en-US'><Message>The application-specific permission settings do not grant Local Activation permission for the COM Server application.</Message></RenderingInfo></Event><Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Kernel-Power'/><EventID Qualifiers='0'>41</EventID><Version>0</Version><Level>1</Level><TimeCreated SystemTime='2026-11-10T07:13:30.0000000Z'/><EventRecordID>42506</EventRecordID><Channel>System</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data Name='BugcheckCode'>159</Data><Data Name='BugcheckParameter1'>0x3</Data><Data Name='SleepInProgress'>0</Data><Data Name='PowerButtonTimestamp'>0</Data></EventData><RenderingInfo Culture='en-US'><Message>The system has rebooted without cleanly shutting down first.</Message></RenderingInfo></Event>",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "process",
+      "file": "wevtutil.exe",
+      "args": [
+        "qe",
+        "Application",
+        "/q:*[System[(Level=1 or Level=2) and TimeCreated[timediff(@SystemTime) <= 604800000]]]",
+        "/c:300",
+        "/rd:true",
+        "/f:RenderedXml"
+      ],
+      "exitCode": 0,
+      "stdOut": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Application Error'/><EventID Qualifiers='0'>1000</EventID><Version>0</Version><Level>2</Level><TimeCreated SystemTime='2026-11-21T15:10:00.0000000Z'/><EventRecordID>58423</EventRecordID><Channel>Application</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data>notes.exe</Data><Data>4.2.0.0</Data><Data>6700aaaa</Data><Data>ntdll.dll</Data><Data>10.0.26100.1</Data><Data>00000000</Data><Data>c0000005</Data><Data>0000000000012345</Data></EventData><RenderingInfo Culture='en-US'><Message>Faulting application name: notes.exe, version: 4.2.0.0, time stamp: 0x6700aaaa\nFaulting module name: ntdll.dll, version: 10.0.26100.1, time stamp: 0x00000000\nException code: 0xc0000005</Message></RenderingInfo></Event><Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Application Hang'/><EventID Qualifiers='0'>1002</EventID><Version>0</Version><Level>2</Level><TimeCreated SystemTime='2026-11-20T18:30:00.0000000Z'/><EventRecordID>31943</EventRecordID><Channel>Application</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data>photoeditor.exe</Data><Data>2.1.0.0</Data><Data>1a2b</Data><Data>01db3c</Data><Data>4294967295</Data><Data>C:\\Program Files\\PhotoEditor\\photoeditor.exe</Data></EventData><RenderingInfo Culture='en-US'><Message>The program photoeditor.exe version 2.1.0.0 stopped interacting with Windows and was closed.</Message></RenderingInfo></Event><Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Security-SPP'/><EventID Qualifiers='0'>8198</EventID><Version>0</Version><Level>2</Level><TimeCreated SystemTime='2026-11-18T10:00:00.0000000Z'/><EventRecordID>38236</EventRecordID><Channel>Application</Channel><Computer>SAMPLE-PC</Computer></System><EventData></EventData><RenderingInfo Culture='en-US'><Message>License Activation (slui.exe) failed with the following error code: hr=0x8007267C</Message></RenderingInfo></Event>",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "process",
+      "file": "powercfg.exe",
+      "args": [
+        "/a"
+      ],
+      "exitCode": 0,
+      "stdOut": "The following sleep states are available on this system:\r\n    Standby (S0 Low Power Idle) Network Connected\r\n    Hibernate\r\n    Fast Startup\r\n\r\nThe following sleep states are not available on this system:\r\n    Standby (S3)\r\n        This standby state is disabled when S0 low power idle is supported.\r\n\r\n    Hybrid Sleep\r\n        Standby (S3) is not available.\r\n",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "process",
+      "file": "powercfg.exe",
+      "args": [
+        "/requests"
+      ],
+      "exitCode": 0,
+      "stdOut": "DISPLAY:\r\nNone.\r\n\r\nSYSTEM:\r\nNone.\r\n\r\nAWAYMODE:\r\nNone.\r\n\r\nEXECUTION:\r\n[PROCESS] \\Device\\HarddiskVolume3\\Program Files\\Sample\\player.exe\r\nPlaying audio\r\n\r\nPERFBOOST:\r\nNone.\r\n\r\nACTIVELOCKSCREEN:\r\nNone.\r\n",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "process",
+      "file": "powercfg.exe",
+      "args": [
+        "/waketimers"
+      ],
+      "exitCode": 0,
+      "stdOut": "Timer set by [SERVICE] \\Device\\HarddiskVolume3\\Windows\\System32\\svchost.exe (SystemEventsBroker) expires at 3:15:11 AM on 11/23/2026.\r\n  Reason: Windows will execute 'NT TASK\\Microsoft\\Windows\\UpdateOrchestrator\\Reboot' scheduled task that requested waking the computer.\r\n\r\n",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "process",
+      "file": "powercfg.exe",
+      "args": [
+        "/devicequery",
+        "wake_armed"
+      ],
+      "exitCode": 0,
+      "stdOut": "HID Keyboard Device\r\nIntel(R) Wi-Fi 6E AX211 160MHz\r\n",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "process",
+      "file": "powercfg.exe",
+      "args": [
+        "/lastwake"
+      ],
+      "exitCode": 0,
+      "stdOut": "Wake History Count - 1\r\nWake History [0]\r\n  Wake Source Count - 1\r\n  Wake Source [0]\r\n    Type: Device\r\n    Instance Path: ACPI\\PNP0C0D\\2&daba3ff&1\r\n    Friendly Name: \r\n    Description: ACPI Lid\r\n    Manufacturer: (Standard system devices)\r\n",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "process",
+      "file": "wevtutil.exe",
+      "args": [
+        "qe",
+        "System",
+        "/q:*[System[((Provider[@Name='Microsoft-Windows-Kernel-Power'] and (EventID=41 or EventID=42 or EventID=107 or EventID=506 or EventID=507)) or (Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1)) and TimeCreated[timediff(@SystemTime) <= 1209600000]]]",
+        "/c:500",
+        "/rd:true",
+        "/f:RenderedXml"
+      ],
+      "exitCode": 0,
+      "stdOut": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Power-Troubleshooter'/><EventID>1</EventID><Level>4</Level><TimeCreated SystemTime='2026-11-22T13:30:00.0000000Z'/><Channel>System</Channel></System><EventData><Data Name='SleepTime'>2026-11-22T05:00:00.0000000Z</Data><Data Name='WakeTime'>2026-11-22T13:30:00.0000000Z</Data><Data Name='WakeSourceText'>ACPI Lid</Data><Data Name='WakeTimerOwner'></Data></EventData><RenderingInfo Culture='en-US'><Message>The system has returned from a low power state.</Message></RenderingInfo></Event><Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Power-Troubleshooter'/><EventID>1</EventID><Level>4</Level><TimeCreated SystemTime='2026-11-21T10:15:00.0000000Z'/><Channel>System</Channel></System><EventData><Data Name='SleepTime'>2026-11-21T06:00:00.0000000Z</Data><Data Name='WakeTime'>2026-11-21T10:15:00.0000000Z</Data><Data Name='WakeSourceText'></Data><Data Name='WakeTimerOwner'>\\Device\\HarddiskVolume3\\Windows\\System32\\svchost.exe (SystemEventsBroker)</Data></EventData><RenderingInfo Culture='en-US'><Message>The system has returned from a low power state.</Message></RenderingInfo></Event><Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Kernel-Power'/><EventID Qualifiers='0'>41</EventID><Version>0</Version><Level>1</Level><TimeCreated SystemTime='2026-11-10T07:13:30.0000000Z'/><EventRecordID>42506</EventRecordID><Channel>System</Channel><Computer>SAMPLE-PC</Computer></System><EventData><Data Name='BugcheckCode'>159</Data><Data Name='BugcheckParameter1'>0x3</Data><Data Name='SleepInProgress'>0</Data><Data Name='PowerButtonTimestamp'>0</Data></EventData><RenderingInfo Culture='en-US'><Message>The system has rebooted without cleanly shutting down first.</Message></RenderingInfo></Event>",
+      "stdErr": "",
+      "hasRows": false
+    },
+    {
+      "kind": "file",
+      "file": "powercfg /batteryreport /xml",
+      "stdOut": "<?xml version=\"1.0\" encoding=\"utf-8\"?><BatteryReport xmlns=\"http://schemas.microsoft.com/battery/2012\"><SystemInformation><ComputerName>SAMPLE-PC</ComputerName><PlatformRole>Mobile</PlatformRole><ConnectedStandby>1</ConnectedStandby></SystemInformation><Batteries><Battery><Id>SAMPLE-BAT</Id><SerialNumber>&lt;serial:5a5a5a&gt;</SerialNumber><Chemistry>LiP</Chemistry><DesignCapacity>57000</DesignCapacity><FullChargeCapacity>53000</FullChargeCapacity><CycleCount>48</CycleCount></Battery></Batteries><RecentUsage><UsageEntry Timestamp=\"2026-11-21T06:00:00Z\" LocalTimestamp=\"2026-11-20T23:00:00\" Duration=\"153000000000\" Ac=\"0\" EntryType=\"ConnectedStandby\" ChargeCapacity=\"40000\" Discharge=\"1590\" FullChargeCapacity=\"53000\" IsNextOnBattery=\"1\" /><UsageEntry Timestamp=\"2026-11-22T05:00:00Z\" LocalTimestamp=\"2026-11-21T22:00:00\" Duration=\"306000000000\" Ac=\"0\" EntryType=\"ConnectedStandby\" ChargeCapacity=\"38000\" Discharge=\"5830\" FullChargeCapacity=\"53000\" IsNextOnBattery=\"1\" /><UsageEntry Timestamp=\"2026-11-22T16:00:00Z\" LocalTimestamp=\"2026-11-22T09:00:00\" Duration=\"0\" Ac=\"1\" EntryType=\"ReportGenerated\" ChargeCapacity=\"32000\" Discharge=\"0\" FullChargeCapacity=\"53000\" IsNextOnBattery=\"0\" /></RecentUsage><EnergyDrains /></BatteryReport>",
+      "hasRows": false
     }
   ]
 }

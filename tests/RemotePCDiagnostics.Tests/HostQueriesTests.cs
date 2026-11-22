@@ -45,34 +45,16 @@ public sealed class HostQueriesTests : IDisposable
         public SensorSnapshot Read() => Snapshot;
     }
 
-    /// <summary>osquery as if installed, answering every statement with these rows.</summary>
-    private sealed class FakeOsquery(string json) : IProcessLauncher
-    {
-        public List<IReadOnlyList<string>> Calls { get; } = [];
-        public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
-        {
-            Calls.Add(arguments);
-            return Task.FromResult(new ProcessResult(0, json, ""));
-        }
-    }
-
-    private const string ServiceRows = """
-        [{"name":"Spooler","display_name":"Print Spooler","status":"RUNNING","start_type":"AUTO_START","user_account":"LocalSystem","description":"Prints"},
-         {"name":"wuauserv","display_name":"Windows Update","status":"STOPPED","start_type":"AUTO_START","user_account":"LocalSystem","description":""}]
-        """;
-
-    private HostQueryBackend Backend(IProcessLauncher? osquery = null) => new()
+    private static HostQueryBackend Backend() => new()
     {
         Sensors = new FakeSensors(),
-        Osquery = new OsqueryRunner(baseDirectory: _root, launcher: osquery ?? new FakeOsquery(ServiceRows), fileExists: _ => true),
         Commands = new SystemCommandRunner(),
         Retrims = new FixedRetrims(),
-        Minidumps = () => [new MinidumpFile("110726-01.dmp", new DateTimeOffset(2026, 11, 7, 9, 0, 0, TimeSpan.Zero), 1024)],
         EventReviews = () => ["Application|1000|x"],
         Wmi = new ServiceWmi(),
     };
 
-    /// <summary>The Agent's WMI as the app sees it: two services, the same as <see cref="ServiceRows"/>.</summary>
+    /// <summary>The Agent's WMI as the app sees it: two services.</summary>
     private sealed class ServiceWmi : RemotePCDiagnostics.Core.DataSources.IWmiSource
     {
         public Task<RemotePCDiagnostics.Core.DataSources.WmiQueryResult> QueryAsync(string ns, string wql, CancellationToken ct = default) =>
@@ -109,21 +91,9 @@ public sealed class HostQueriesTests : IDisposable
     public async Task Only_capabilities_the_module_json_lists_are_answered()
     {
         var server = new HostQueryServer(Backend());
-        var a = await server.AnswerAsync(With(HostCapabilities.OsquerySelect), Query(HostCapabilities.SensorsRead));
+        var a = await server.AnswerAsync(With(HostCapabilities.WmiQuery), Query(HostCapabilities.SensorsRead));
         Assert.Equal("notDeclared", a.Error);
         Assert.Equal("badRequest", (await server.AnswerAsync(With("files.read"), Query("files.read"))).Error);
-    }
-
-    [Theory]
-    [InlineData("SELECT * FROM users;")]
-    [InlineData("SELECT name FROM services;")]
-    [InlineData("")]
-    public async Task Osquery_runs_only_the_apps_own_statements(string sql)
-    {
-        var osquery = new FakeOsquery("[]");
-        var a = await new HostQueryServer(Backend(osquery)).AnswerAsync(With(HostCapabilities.OsquerySelect), Query(HostCapabilities.OsquerySelect, new { sql }));
-        Assert.Equal("notAllowed", a.Error);
-        Assert.Empty(osquery.Calls); // refused before anything ran
     }
 
     [Theory]
@@ -161,25 +131,15 @@ public sealed class HostQueriesTests : IDisposable
         Assert.True(double.IsNaN(snap.Readings[1].Value!.Value)); // a sensor that reports nothing survives the trip
         Assert.True((await client.SensorsAvailabilityAsync()).IsAvailable);
 
-        var rows = await client.SelectAsync(HardwareInventory.DiskSql);
+        var rows = await client.QueryWmiAsync(@"root\cimv2", "SELECT Name FROM Win32_Service");
         Assert.True(rows.Success);
-        Assert.Equal("Spooler", rows.Rows![0]["name"]);
+        Assert.Equal("Spooler", rows.Rows![0].Str("Name"));
 
         var retrims = await client.ReadRetrimsAsync();
         Assert.Equal(RetrimSource.Windows, retrims['C'].Source);
-        Assert.Equal("110726-01.dmp", Assert.Single(await client.ReadMinidumpsAsync()).FileName);
         Assert.Equal(["Application|1000|x"], await client.ReadEventReviewsAsync());
 
-        var refused = await Assert.ThrowsAsync<HostQueryException>(() => client.SelectAsync("SELECT * FROM users;"));
-        Assert.Equal("notAllowed", refused.Error);
-    }
-
-    [Fact]
-    public async Task Services_no_longer_ask_the_app_for_osquery()
-    {
-        // Services read Win32_Service themselves now (in the module host, with its own rights), so the app refuses their old statement.
-        var client = Joined(With(HostCapabilities.OsquerySelect), Backend());
-        var refused = await Assert.ThrowsAsync<HostQueryException>(() => client.SelectAsync(RemotePCDiagnostics.Legacy.OsqueryServiceSource.Sql));
+        var refused = await Assert.ThrowsAsync<HostQueryException>(() => client.QueryWmiAsync(@"root\cimv2", "DELETE FROM Win32_Service"));
         Assert.Equal("notAllowed", refused.Error);
     }
 
@@ -197,20 +157,20 @@ public sealed class HostQueriesTests : IDisposable
     {
         var asked = new List<(string Log, int Max)>();
         var queries = new RecordingQueries(asked);
-        var module = new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, host: queries);
+        var dumps = new FixedCrashDumps();
+        var module = new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, dumps, host: queries);
         var r = await module.RefreshAsync(null);
         Assert.IsType<AreaReport>(r.Payload);
         Assert.Contains(("Application", CrashesModule.Max), asked);
         Assert.Contains(asked, a => a.Log == "System");
-        Assert.True(queries.DumpsRead);
+        // The dump files come from WMI through the Agent (the reader).
+        Assert.True(dumps.MinidumpsRead);
     }
 
     private sealed class RecordingQueries(List<(string Log, int Max)> asked) : IHostQueries
     {
-        public bool DumpsRead { get; private set; }
         public Task<ModuleAvailability> SensorsAvailabilityAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<SensorSnapshot> ReadSensorsAsync(CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<OsqueryQueryResult> SelectAsync(string sql, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<RemotePCDiagnostics.Core.Areas.DriveList?> ReadDrivesAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyDictionary<char, RetrimRecord>> ReadRetrimsAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<WinEvent>?> QueryEventsAsync(string log, string xpath, int max, CancellationToken ct = default)
@@ -218,19 +178,18 @@ public sealed class HostQueriesTests : IDisposable
             lock (asked) asked.Add((log, max));
             return Task.FromResult<IReadOnlyList<WinEvent>?>([]);
         }
-        public Task<IReadOnlyList<MinidumpFile>> ReadMinidumpsAsync(CancellationToken ct = default) { DumpsRead = true; return Task.FromResult<IReadOnlyList<MinidumpFile>>([]); }
         public Task<IReadOnlyCollection<string>> ReadEventReviewsAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyCollection<string>>([]);
     }
 
     [Theory]
     [InlineData("RemotePCDiagnostics.Modules.Sensors.dll", new[] { HostCapabilities.SensorsRead })]
-    [InlineData("RemotePCDiagnostics.Modules.DriveHealth.dll", new[] { HostCapabilities.StorageDrives, HostCapabilities.StorageRetrims, HostCapabilities.OsquerySelect })]
+    [InlineData("RemotePCDiagnostics.Modules.DriveHealth.dll", new[] { HostCapabilities.StorageDrives, HostCapabilities.StorageRetrims })]
     [InlineData("RemotePCDiagnostics.Modules.Services.dll", new[] { HostCapabilities.WmiQuery })]
     [InlineData("RemotePCDiagnostics.Modules.Osquery.dll", new[] { HostCapabilities.WmiQuery })]
     [InlineData("RemotePCDiagnostics.Modules.DeviceDrivers.dll", new[] { HostCapabilities.WmiQuery })]
     [InlineData("RemotePCDiagnostics.Modules.Programs.dll", new[] { HostCapabilities.WmiQuery, HostCapabilities.PackagesList })]
     [InlineData("RemotePCDiagnostics.Modules.BatteryPower.dll", new[] { HostCapabilities.WmiQuery })]
-    [InlineData("RemotePCDiagnostics.Modules.Crashes.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.Minidumps, HostCapabilities.LiveKernelReports, HostCapabilities.OsquerySelect, HostCapabilities.EventReviews })]
+    [InlineData("RemotePCDiagnostics.Modules.Crashes.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.EventReviews, HostCapabilities.WmiQuery })]
     [InlineData("RemotePCDiagnostics.Modules.EventLog.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.EventReviews })]
     public void The_four_modules_run_in_user_mode_and_list_what_they_ask_for(string file, string[] capabilities)
     {
@@ -515,23 +474,23 @@ public sealed class HostQueriesTests : IDisposable
 public sealed class HostQueryDispatchTests
 {
     private static UserModeModule Services() =>
-        new("x.dll", new ModuleManifest { Id = ModuleIds.Services, Slug = "Services", Capabilities = [HostCapabilities.OsquerySelect, HostCapabilities.Minidumps] },
+        new("x.dll", new ModuleManifest { Id = ModuleIds.Services, Slug = "Services", Capabilities = [HostCapabilities.WmiQuery, HostCapabilities.EventReviews] },
             BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.Services)) { Bundled = true };
 
-    /// <summary>osquery that never finishes until its run is cancelled.</summary>
-    private sealed class HangingOsquery : IProcessLauncher
+    /// <summary>WMI that never answers until its query is cancelled.</summary>
+    private sealed class HangingWmi : RemotePCDiagnostics.Core.DataSources.IWmiSource
     {
-        public async Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
+        public async Task<RemotePCDiagnostics.Core.DataSources.WmiQueryResult> QueryAsync(string wmiNamespace, string wql, CancellationToken ct = default)
         {
-            await Task.Delay(Timeout.Infinite, cancellationToken);
+            await Task.Delay(Timeout.Infinite, ct);
             throw new InvalidOperationException("unreachable");
         }
     }
 
     private static HostQueryServer Server() => new(new HostQueryBackend
     {
-        Osquery = new OsqueryRunner(baseDirectory: Path.GetTempPath(), launcher: new HangingOsquery(), fileExists: _ => true),
-        Minidumps = () => [],
+        Wmi = new HangingWmi(),
+        EventReviews = () => [],
     });
 
     private static ModuleHostMessage Query(int id, string capability, object? args = null) => new()
@@ -539,8 +498,8 @@ public sealed class HostQueryDispatchTests
         Type = "query", Id = id, Capability = capability, Args = args is null ? null : JsonSerializer.SerializeToElement(args, HostCapabilities.Json),
     };
 
-    private static readonly ModuleHostMessage SlowQuery = Query(1, HostCapabilities.OsquerySelect, new { sql = HardwareInventory.DiskSql });
-    private static readonly ModuleHostMessage FastQuery = Query(2, HostCapabilities.Minidumps);
+    private static readonly ModuleHostMessage SlowQuery = Query(1, HostCapabilities.WmiQuery, new { @namespace = @"root\cimv2", wql = "SELECT Name FROM Win32_Service" });
+    private static readonly ModuleHostMessage FastQuery = Query(2, HostCapabilities.EventReviews);
 
     /// <summary>A module host played by the test: <paramref name="onLine"/> sees each line the app writes and returns the lines to send back.</summary>
     private sealed class ScriptedHost(Func<ModuleHostMessage, IEnumerable<ModuleHostMessage>> onLine) : IModuleHostLauncher, IModuleHostConnection
@@ -585,7 +544,7 @@ public sealed class HostQueryDispatchTests
     }
 
     private static UserModeModule Crashes(bool bundled = true) =>
-        new("x.dll", new ModuleManifest { Id = ModuleIds.Crashes, Slug = "Crashes", Capabilities = [HostCapabilities.Minidumps] },
+        new("x.dll", new ModuleManifest { Id = ModuleIds.Crashes, Slug = "Crashes", Capabilities = [HostCapabilities.EventReviews] },
             BuiltInModules.Descriptors.Single(d => d.Id == ModuleIds.Crashes)) { Bundled = bundled };
 
     private static readonly Dictionary<string, JsonElement> HangPage = new()

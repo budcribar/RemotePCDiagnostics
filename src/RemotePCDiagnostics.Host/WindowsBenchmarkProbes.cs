@@ -188,7 +188,7 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
     public Task<IdleResourceSample?> ReadIdleResourcesAsync(CancellationToken ct)
     {
         double? memUsedMb = null;
-        try { memUsedMb = Math.Round(new WindowsMemorySystem(null, log).ReadMemory().UsedBytes / (double)(1L << 20), 0); } catch (Exception ex) { Log("memUsed: " + ex.Message); }
+        try { memUsedMb = Math.Round(new WindowsMemorySystem(log).ReadMemory().UsedBytes / (double)(1L << 20), 0); } catch (Exception ex) { Log("memUsed: " + ex.Message); }
 
         int? bgProcs = null;
         try
@@ -205,7 +205,7 @@ public sealed class WindowsBenchmarkProbes(SystemCommandRunner commands, ISensor
     // ---- disk space & bloatware inventory snapshot ----
     public async Task<SystemResourceSnapshot?> ReadResourceSnapshotAsync(CancellationToken ct)
     {
-        var memSys = new WindowsMemorySystem(null, log);
+        var memSys = new WindowsMemorySystem(log);
         double? diskFreeGb = null;
         try
         {

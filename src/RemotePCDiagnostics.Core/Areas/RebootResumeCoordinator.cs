@@ -51,7 +51,7 @@ public sealed record ResourceBaselineSnapshot(
         return true;
     }
 
-    public static ResourceBaselineSnapshot FromOsquery(SystemUptimeInfo? uptime, IReadOnlyList<ProcessResourceRow>? processes)
+    public static ResourceBaselineSnapshot From(SystemUptimeInfo? uptime, IReadOnlyList<ProcessResourceRow>? processes)
     {
         var upSec = uptime?.TotalSeconds ?? 0;
         if (processes is null || processes.Count == 0)
@@ -102,7 +102,6 @@ public sealed record PostRebootComparisonResult(
 /// </summary>
 public sealed class RebootResumeCoordinator(
     SystemCommandRunner commands,
-    OsqueryRunner? osquery = null,
     string? stateFilePath = null,
     string? executablePath = null,
     ILogger? log = null)
@@ -147,28 +146,9 @@ public sealed class RebootResumeCoordinator(
         catch { return null; }
     }
 
-    /// <summary>Captures the current resource baseline via osquery (if available) or <see cref="Process.GetProcesses()"/>.</summary>
-    public async Task<ResourceBaselineSnapshot> CaptureBaselineAsync(CancellationToken ct = default)
+    /// <summary>Captures the current resource baseline with <see cref="Process.GetProcesses()"/> (as the signed-in user, so no Agent is needed).</summary>
+    public Task<ResourceBaselineSnapshot> CaptureBaselineAsync(CancellationToken ct = default)
     {
-        if (osquery is not null)
-        {
-            try
-            {
-                var upQ = await osquery.RunQueryAsync(ResourceUsage.UptimeSql, ct).ConfigureAwait(false);
-                var procQ = await osquery.RunQueryAsync(ResourceUsage.ProcessesSql, ct).ConfigureAwait(false);
-                if (upQ.Success || procQ.Success)
-                {
-                    var uptime = upQ.Success && upQ.Rows is { Count: > 0 } ? SystemUptimeInfo.FromRow(upQ.Rows[0]) : null;
-                    var procs = procQ.Success && procQ.Rows is not null ? procQ.Rows.Select(ProcessResourceRow.FromRow).ToList() : null;
-                    return ResourceBaselineSnapshot.FromOsquery(uptime, procs);
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                LogWarn($"osquery baseline capture failed, falling back to Process API: {ex.Message}");
-            }
-        }
-
         var upSec = Math.Max(0, Environment.TickCount64 / 1000);
         long totalMem = 0;
         int count = 0;
@@ -190,7 +170,7 @@ public sealed class RebootResumeCoordinator(
         var top = byName.OrderByDescending(kv => kv.Value)
             .Take(3)
             .Select(kv => $"{kv.Key} ({HardwareInventory.FormatBytes(kv.Value)})");
-        return new(upSec, totalMem, count, string.Join(", ", top));
+        return Task.FromResult(new ResourceBaselineSnapshot(upSec, totalMem, count, string.Join(", ", top)));
     }
 
     /// <summary>

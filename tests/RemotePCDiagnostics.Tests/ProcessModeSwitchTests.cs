@@ -61,11 +61,10 @@ public sealed class ProcessModeSwitchTests : IDisposable
         return (registrar, modules, catalog, made);
     }
 
-    /// <summary>The app's answers to host queries, from this machine (no sensors, no osquery here).</summary>
+    /// <summary>The app's answers to host queries, from this machine (no sensors here).</summary>
     private HostQueryServer HostQueries => new(new HostQueryBackend
     {
-        Osquery = new RemotePCDiagnostics.Core.Osquery.OsqueryRunner(baseDirectory: _root), Commands = new SystemCommandRunner(),
-        Minidumps = () => [], EventReviews = () => [],
+        Commands = new SystemCommandRunner(), EventReviews = () => [],
     });
 
     /// <summary>What the app's container gives modules (the Windows adapters as do-nothing stubs: only constructors run).</summary>

@@ -76,8 +76,9 @@ public sealed record RecordedMachine
 }
 
 /// <summary>
-/// One answer. <see cref="Kind"/> says which source: <see cref="ProcessKind"/> (osquery, PowerShell, powercfg), <see cref="WmiKind"/>, or
-/// <see cref="RegistryKind"/> (kept like WMI: <see cref="Namespace"/> is the root and view, <see cref="Query"/> what was read).
+/// One answer. <see cref="Kind"/> says which source: <see cref="ProcessKind"/> (osquery, PowerShell, powercfg), <see cref="WmiKind"/>,
+/// <see cref="RegistryKind"/> (kept like WMI: <see cref="Namespace"/> is the root and view, <see cref="Query"/> what was read), or
+/// <see cref="FileKind"/> (a report a tool writes to a file, such as the battery report: <see cref="File"/> names it, <see cref="StdOut"/> holds it).
 /// </summary>
 public sealed record RecordedCall
 {
@@ -85,6 +86,7 @@ public sealed record RecordedCall
     public const string WmiKind = "wmi";
     public const string RegistryKind = "registry";
     public const string PackagesKind = "packages";
+    public const string FileKind = "file";
 
     public string Kind { get; init; } = "";
 
@@ -117,6 +119,9 @@ public sealed record RecordedCall
         TimedOut = r.TimedOut ? true : null,
     };
 
+    /// <summary>A report file's text (null when it couldn't be made), under the name the check reads it by.</summary>
+    public static RecordedCall FromFile(string name, string? text) => new() { Kind = FileKind, File = name, StdOut = text, Error = text is null ? "Not made." : null };
+
     public static RecordedCall FromWmi(WmiQueryResult r) => new()
     {
         Kind = WmiKind, Namespace = r.Namespace, Query = r.Query, Error = r.Error,
@@ -130,5 +135,5 @@ public sealed record RecordedCall
     public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind;
 
     /// <summary>Short text naming the call, for test messages.</summary>
-    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : $"{File} {string.Join(' ', Args ?? [])}";
+    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : Kind == FileKind ? $"file {File}" : $"{File} {string.Join(' ', Args ?? [])}";
 }

@@ -103,15 +103,16 @@ public class CrashesTests
         var reviewedKey = EventReviews.Key(bsodEvents.Single());
         var dump = new MinidumpFile("102926-01.dmp", DateTimeOffset.UtcNow.AddDays(-1), 262_144, @"C:\Windows\Minidump\102926-01.dmp");
 
-        var hostReviewed = new StubCrashHost(appEvents: [], sysEvents: bsodEvents, dumps: [dump], reviewed: [reviewedKey]);
-        var reviewedRes = await new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, host: hostReviewed).RefreshAsync(null);
+        var dumps = new FixedCrashDumps([dump]);
+        var hostReviewed = new StubCrashHost(appEvents: [], sysEvents: bsodEvents, reviewed: [reviewedKey]);
+        var reviewedRes = await new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, dumps, host: hostReviewed).RefreshAsync(null);
         var reviewedRep = Assert.IsType<AreaReport>(reviewedRes.Payload);
         Assert.Empty(reviewedRep.Cards.Single(c => c.Id == "bsods").Rows);
         Assert.Single(reviewedRep.ReviewedCards!.Single(c => c.Id == "bsods").Rows);
 
         // System log failure still surfaces failed BSOD/power cards, minidumps on disk, and healthy app cards.
-        var sysFailHost = new StubCrashHost(appEvents: [], sysEvents: null, dumps: [dump], reviewed: []);
-        var sysFailRes = await new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, host: sysFailHost).RefreshAsync(null);
+        var sysFailHost = new StubCrashHost(appEvents: [], sysEvents: null, reviewed: []);
+        var sysFailRes = await new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, dumps, host: sysFailHost).RefreshAsync(null);
         Assert.Equal(DiagnosticStatus.Warning, sysFailRes.Status);
         var sysFailRep = Assert.IsType<AreaReport>(sysFailRes.Payload);
         Assert.NotNull(sysFailRep.Cards.Single(c => c.Id == "bsods").ErrorText);
@@ -119,8 +120,8 @@ public class CrashesTests
         Assert.Null(sysFailRep.Cards.Single(c => c.Id == "crashes").ErrorText);
 
         // Application log failure still collects System log BSODs and minidumps instead of aborting early.
-        var appFailHost = new StubCrashHost(appEvents: null, sysEvents: bsodEvents, dumps: [dump], reviewed: []);
-        var appFailRes = await new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, host: appFailHost).RefreshAsync(null);
+        var appFailHost = new StubCrashHost(appEvents: null, sysEvents: bsodEvents, reviewed: []);
+        var appFailRes = await new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, dumps, host: appFailHost).RefreshAsync(null);
         Assert.Equal(DiagnosticStatus.Warning, appFailRes.Status);
         var appFailRep = Assert.IsType<AreaReport>(appFailRes.Payload);
         Assert.Single(appFailRep.Cards.Single(c => c.Id == "bsods").Rows);
@@ -128,16 +129,14 @@ public class CrashesTests
     }
 
     private sealed class StubCrashHost(IReadOnlyList<WinEvent>? appEvents, IReadOnlyList<WinEvent>? sysEvents,
-        IReadOnlyList<MinidumpFile> dumps, IReadOnlyCollection<string> reviewed) : RemotePCDiagnostics.Core.Plugins.IHostQueries
+        IReadOnlyCollection<string> reviewed) : RemotePCDiagnostics.Core.Plugins.IHostQueries
     {
         public Task<ModuleAvailability> SensorsAvailabilityAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<RemotePCDiagnostics.Core.Sensors.SensorSnapshot> ReadSensorsAsync(CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<RemotePCDiagnostics.Core.Osquery.OsqueryQueryResult> SelectAsync(string sql, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<RemotePCDiagnostics.Core.Areas.DriveList?> ReadDrivesAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyDictionary<char, RetrimRecord>> ReadRetrimsAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<WinEvent>?> QueryEventsAsync(string log, string xpath, int max, CancellationToken ct = default) =>
             Task.FromResult(log == "System" ? sysEvents : appEvents);
-        public Task<IReadOnlyList<MinidumpFile>> ReadMinidumpsAsync(CancellationToken ct = default) => Task.FromResult(dumps);
         public Task<IReadOnlyCollection<string>> ReadEventReviewsAsync(CancellationToken ct = default) => Task.FromResult(reviewed);
     }
 }

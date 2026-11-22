@@ -63,6 +63,41 @@ public sealed class RecordingScrubberTests
     }
 
     [Fact]
+    public void ScrubsTheBatteryReportsSerialAndPcNameButKeepsItReadable()
+    {
+        var s = Scrubber();
+        const string xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?><BatteryReport xmlns=\"http://schemas.microsoft.com/battery/2012\">"
+            + "<SystemInformation><ComputerName>BUDSLAPTOP</ComputerName></SystemInformation><Batteries><Battery><SerialNumber>ABC123</SerialNumber>"
+            + "<DesignCapacity>42000</DesignCapacity></Battery></Batteries><RecentUsage><UsageEntry Timestamp=\"2026-11-19T02:16:18Z\" EntryType=\"Suspend\" />"
+            + "</RecentUsage><Note>C:\\Users\\bud\\report.xml</Note></BatteryReport>";
+        var call = s.Scrub(RecordedCall.FromFile("powercfg /batteryreport /xml", xml));
+        Assert.DoesNotContain("ABC123", call.StdOut);
+        Assert.DoesNotContain("BUDSLAPTOP", call.StdOut);
+        Assert.DoesNotContain(@"\bud\", call.StdOut);
+        Assert.StartsWith("<?xml", call.StdOut);
+        var doc = System.Xml.Linq.XDocument.Parse(call.StdOut!);
+        Assert.Equal("42000", doc.Descendants().Single(e => e.Name.LocalName == "DesignCapacity").Value);
+        Assert.Equal("Suspend", doc.Descendants().Single(e => e.Name.LocalName == "UsageEntry").Attribute("EntryType")!.Value);
+        Assert.StartsWith("<serial:", doc.Descendants().Single(e => e.Name.LocalName == "SerialNumber").Value);
+    }
+
+    [Fact]
+    public void KeepsWevtutilEventsReadableXmlWithThePcNameReplaced()
+    {
+        var s = Scrubber();
+        const string events = "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Disk'/><EventID>7</EventID>"
+            + "<Computer>BUDSLAPTOP</Computer><Security UserID='S-1-5-21-1-2-3-1001'/></System><RenderingInfo Culture='en-US'><Message>C:\\Users\\bud\\x&#13;&#10;y</Message></RenderingInfo></Event>"
+            + "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Disk'/><EventID>8</EventID><Computer>BUDSLAPTOP</Computer></System></Event>";
+        var call = s.Scrub(new RecordedCall { Kind = RecordedCall.ProcessKind, File = "wevtutil.exe", Args = [], StdOut = events });
+        Assert.DoesNotContain("BUDSLAPTOP", call.StdOut);
+        Assert.DoesNotContain(@"\bud\", call.StdOut);
+        Assert.DoesNotContain("S-1-5-21-1-2-3", call.StdOut);
+        var parsed = RemotePCDiagnostics.Core.Areas.WindowsEventLog.Parse(call.StdOut!, "System");
+        Assert.Equal(2, parsed.Count);
+        Assert.StartsWith("C:\\Users\\<user:", parsed.Single(e => e.EventId == 7).Message);
+    }
+
+    [Fact]
     public void ReplacesTheSmbiosUuidButKeepsTheProductId()
     {
         var rec = Scrubber().Scrub(new MachineRecording
@@ -137,6 +172,7 @@ public sealed class RecordingScrubberTests
         var at = s.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
         if (at < 0) return null;
         var rest = s[(at + marker.Length)..];
+        if (rest.StartsWith("&lt;", StringComparison.Ordinal)) return null; // A placeholder inside event XML is escaped.
         var end = rest.IndexOfAny(['\\', '"', ' ', ';']);
         var user = end < 0 ? rest : rest[..end];
         string[] shared = ["Public", "Default", "Default User", "All Users"];

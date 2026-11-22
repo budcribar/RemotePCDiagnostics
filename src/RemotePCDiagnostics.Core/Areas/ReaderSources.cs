@@ -118,7 +118,8 @@ public static class ReaderRegistration
             sp.GetRequiredService<IPackageSource>()))
         .AddSingleton<Security.ISecurityEssentialsSource>(sp => new Security.WmiSecurityEssentialsSource(sp.GetRequiredService<IWmiSource>(),
             sp.GetRequiredService<IRegistrySource>(), sp.GetRequiredService<SystemCommandRunner>()))
-        .AddSingleton<IResourceHogsSource>(sp => new WmiResourceHogsSource(sp.GetRequiredService<IWmiSource>(), sp.GetRequiredService<IRegistrySource>()));
+        .AddSingleton<IResourceHogsSource>(sp => new WmiResourceHogsSource(sp.GetRequiredService<IWmiSource>(), sp.GetRequiredService<IRegistrySource>()))
+        .AddSingleton<ICrashDumpSource>(sp => new WmiCrashDumpSource(sp.GetRequiredService<IWmiSource>()));
 
     private static IServiceCollection TryAddPackages(this IServiceCollection services)
     {

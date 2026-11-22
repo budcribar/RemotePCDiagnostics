@@ -34,6 +34,7 @@ var packages = new RecordingPackageSource(new RemotePCDiagnostics.Host.Platform.
 var launcher = new RecordingProcessLauncher(new SystemProcessLauncher(), recorder);
 var osquery = new OsqueryRunner(options: new OsqueryOptions { ExecutablePath = osqueryPath }, launcher: launcher);
 var commands = new SystemCommandRunner(launcher);
+var files = new FileRecorder(recorder);
 if (!osquery.Exists) Console.WriteLine($"osqueryi.exe not found ({osqueryPath}); the old osquery path won't be recorded. Pass --osquery <path>.");
 
 var machine = await DescribeMachineAsync(liveWmi);
@@ -65,6 +66,14 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     // A restart this app scheduled isn't part of a recording. Each path takes its two process snapshots 2 s apart, as in the app.
     ("Resource hogs & uptime (WMI + registry)", new ResourceHogsModule(new WmiResourceHogsSource(wmi, registry), restartPending: () => false)),
     ("Resource hogs & uptime (legacy: osquery + PowerShell)", new ResourceHogsModule(new OsqueryResourceHogsSource(osquery, commands), restartPending: () => false)),
+    // The event logs come from wevtutil on both paths; the dump files and graphics drivers from WMI, or listed here and from osquery.
+    ("Crashes & unexpected restarts (WMI + wevtutil)", new CrashesModule(commands, includeSystemCrashes: true, new WmiCrashDumpSource(wmi), new WmiDeviceDriverSource(wmi))),
+    ("Crashes & unexpected restarts (legacy: files + osquery + wevtutil)", new CrashesModule(commands, includeSystemCrashes: true,
+        new RecordedFileCrashDumps(files), new OsqueryDeviceDriverSource(osquery, commands))),
+    ("Windows error log (wevtutil)", new EventLogModule(commands, excludeCrashEvents: true)),
+    // The battery report's own powercfg run isn't recorded (its file name changes every run); the report is, by name.
+    ("Sleep, wake & standby drain (powercfg + wevtutil)", new SleepWakeModule(commands,
+        batteryReport: new RecordedBatteryReport(files, new PowerCfgBatteryReport(new SystemCommandRunner())))),
 };
 foreach (var (label, module) in checks)
 {
@@ -172,4 +181,19 @@ static string Clean(string? s)
     s = (s ?? "").Trim();
     string[] junk = ["To be filled by O.E.M.", "Default string", "System Product Name", "None", "Not Applicable", "N/A", "0"];
     return junk.Contains(s, StringComparer.OrdinalIgnoreCase) ? "" : s;
+}
+
+/// <summary>The legacy reader's dump file lists, recorded as JSON under <see cref="CrashDumpFiles"/>'s names.</summary>
+sealed class RecordedFileCrashDumps(FileRecorder files) : ICrashDumpSource
+{
+    private readonly FileCrashDumpSource _inner = new();
+    public async Task<IReadOnlyList<MinidumpFile>> ReadMinidumpsAsync(CancellationToken ct) =>
+        CrashDumpFiles.Parse(await files.ReadAsync(CrashDumpFiles.Minidumps, async () => CrashDumpFiles.Json(await _inner.ReadMinidumpsAsync(ct))));
+    public async Task<IReadOnlyList<MinidumpFile>> ReadLiveKernelReportsAsync(CancellationToken ct) =>
+        CrashDumpFiles.Parse(await files.ReadAsync(CrashDumpFiles.LiveKernelReports, async () => CrashDumpFiles.Json(await _inner.ReadLiveKernelReportsAsync(ct))));
+}
+
+sealed class RecordedBatteryReport(FileRecorder files, IBatteryReportSource inner) : IBatteryReportSource
+{
+    public Task<string?> ReadXmlAsync(CancellationToken ct) => files.ReadAsync(PowerCfgBatteryReport.RecordingName, () => inner.ReadXmlAsync(ct));
 }

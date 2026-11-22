@@ -157,7 +157,6 @@ $RequiredFiles = @(
     'moduleui/RemotePCDiagnostics.ModuleUiHost.deps.json'
     'moduleui/wwwroot/index.html'
     'moduleui/wwwroot/app.css'
-    'tools/osquery/osqueryi.exe'
     'tools/HardeningKitty/HardeningKitty.psd1'
     'tools/HardeningKitty/HardeningKitty.psm1'
     'benchmarks/speedometer-3.1.zip'

@@ -17,7 +17,7 @@ public sealed class OsqueryResourceHogsSource(OsqueryRunner runner, SystemComman
 
     public static string FastStartupScript { get; } = Load("FastStartupState");
 
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => LegacyAvailability.Of(runner, OsqueryAreaModuleBase.ToolMissingMessage);
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => LegacyAvailability.Of(runner, LegacyAvailability.ToolMissingMessage);
 
     public async Task<SystemUptimeInfo?> ReadUptimeAsync(CancellationToken ct)
     {

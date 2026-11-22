@@ -98,6 +98,19 @@ public class JsonCheckTests
     }
 
     [Fact]
+    public async Task Without_osquery_a_check_says_it_cant_run_here()
+    {
+        // The Setup edition registers no osquery: the check is unavailable instead of failing to load.
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        new JsonCheckPlugin(JsonCheck.Parse(File.ReadAllText(SamplePath())), null).Register(services, null!);
+        var module = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<IDiagnosticModule>(
+            Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(services));
+        var a = await module.CheckAvailabilityAsync();
+        Assert.False(a.IsAvailable);
+        Assert.Equal(JsonCheckPlugin.NoOsquery, a.Reason);
+    }
+
+    [Fact]
     public void Loading_a_folder_skips_bad_and_duplicate_checks()
     {
         var dir = Path.Combine(Path.GetTempPath(), "rpcd-checks-" + Guid.NewGuid().ToString("N"));

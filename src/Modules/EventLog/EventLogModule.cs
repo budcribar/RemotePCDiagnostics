@@ -3,7 +3,9 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// <summary>Critical events and errors from the Windows System and Application logs over the last week (via <see cref="WindowsEventLog"/>).
 /// In user mode (the module host) <paramref name="host"/> is set: the event logs and the reviewed list are read by the app
 /// (<c>eventlog.query</c>, <c>events.reviewed</c>).</summary>
-public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCrashEvents = false, Plugins.IHostQueries? host = null) : AreaModuleBase(commands.Log)
+/// <param name="clock">The report's time zone (<see cref="ReportClock"/>); the PC's when null.</param>
+public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCrashEvents = false, Plugins.IHostQueries? host = null, TimeProvider? clock = null)
+    : AreaModuleBase(commands.Log)
 {
     public const string ModuleName = ModuleSlugs.EventLog;
     public const int Days = 7, MaxPerLog = 300, RepeatErrors = 5;
@@ -15,6 +17,7 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
+        using var _ = ReportClock.Use(clock);
         progress.ReportStep(1, 2, "Reading the Windows System error log…");
         var q = WindowsEventLog.LevelQuery(Days, 1, 2);
         var system = await _log.QueryAsync("System", q, MaxPerLog, ct).ConfigureAwait(false);
@@ -36,9 +39,12 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
     }
 
     private static readonly string[] Cols = ["When", "Source", "Level", "What happened"];
+
+    /// <summary>Who logged it; an event without a provider still gets a name.</summary>
+    private static string SourceOf(WinEvent e) => e.Source.Trim().Length > 0 ? e.Source : "Unknown source";
     private static readonly string[] GroupedCols = ["When", "Source", "Level", "Times", "What happened"];
     public const int MaxDetailChars = 2000, MaxListedTimes = 20;
-    private static AreaRow Row(WinEvent e) => new(e.Level == 1 ? AreaLevel.Error : AreaLevel.Warning, [WindowsEventLog.FormatTime(e.Time), e.Source, e.Level == 1 ? "Critical" : "Error", e.ShortMessage],
+    private static AreaRow Row(WinEvent e) => new(e.Level == 1 ? AreaLevel.Error : AreaLevel.Warning, [WindowsEventLog.FormatTime(e.Time), SourceOf(e), e.Level == 1 ? "Critical" : "Error", e.ShortMessage],
         [AreaSort.TimeKey(e.Time), null, e.Level == 1 ? "2" : "1", null], Detail: FullMessage(e), GetHelpUri: GetHelpFor(e), EventCopyText: CopyText(e), ReviewKeys: [EventReviews.Key(e)]);
 
     private static string CopyText(WinEvent e) =>
@@ -74,7 +80,7 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
                     : null;
                 var detail = string.Join("\n\n", new[] { times, FullMessage(e) }.Where(x => x is not null));
                 return new AreaRow(e.Level == 1 ? AreaLevel.Error : AreaLevel.Warning,
-                    [WindowsEventLog.FormatTime(e.Time), e.Source, e.Level == 1 ? "Critical" : "Error", list.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), e.ShortMessage],
+                    [WindowsEventLog.FormatTime(e.Time), SourceOf(e), e.Level == 1 ? "Critical" : "Error", list.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), e.ShortMessage],
                     [AreaSort.TimeKey(e.Time), null, e.Level == 1 ? "2" : "1", list.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), null],
                     Detail: detail.Length > 0 ? detail : null, GetHelpUri: GetHelpFor(e), EventCopyText: CopyText(e), ReviewKeys: list.Select(EventReviews.Key).ToList());
             })
@@ -100,7 +106,7 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
         {
             new("critical", "Critical problems", critical.Count > 0 ? AreaLevel.Error : AreaLevel.Ok,
                 critical.Count == 0 ? "None" : AreaModuleBase.Plural(critical.Count, "critical problem"),
-                critical.FirstOrDefault() is { } c ? $"Latest: {c.Source}, {WindowsEventLog.FormatTime(c.Time)}" : $"In the last {Days} days",
+                critical.FirstOrDefault() is { } c ? $"Latest: {SourceOf(c)}, {WindowsEventLog.FormatTime(c.Time)}" : $"In the last {Days} days",
                 Cols, critical.Select(Row).ToList(),
                 Note: "Critical problems often mean Windows shut down or restarted unexpectedly (for example a power loss or a crash)."),
         };
@@ -116,10 +122,10 @@ public sealed class EventLogModule(SystemCommandRunner commands, bool excludeCra
         var groups = all.GroupBy(Key).OrderByDescending(g => g.Count()).ThenByDescending(g => g.Max(e => e.Time)).ToList();
         var top = groups.FirstOrDefault();
         cards.Add(new("sources", "Most frequent", top is null ? AreaLevel.Ok : AreaLevel.Neutral,
-            top is null ? "Nothing repeated" : top.First().Source, top is null ? "" : $"{AreaModuleBase.Plural(top.Count(), "time")} in the last {Days} days",
+            top is null ? "Nothing repeated" : SourceOf(top.First()), top is null ? "" : $"{AreaModuleBase.Plural(top.Count(), "time")} in the last {Days} days",
             ["Source", "Where", "Times", "Last seen"],
             groups.Select(g => new AreaRow(g.Any(e => e.Level == 1) ? AreaLevel.Error : AreaLevel.Warning,
-                [g.First().Source, string.Equals(g.First().Channel, "System", StringComparison.OrdinalIgnoreCase) ? "Windows" : "Apps", g.Count().ToString(), WindowsEventLog.FormatTime(g.Max(e => e.Time))],
+                [SourceOf(g.First()), string.Equals(g.First().Channel, "System", StringComparison.OrdinalIgnoreCase) ? "Windows" : "Apps", g.Count().ToString(), WindowsEventLog.FormatTime(g.Max(e => e.Time))],
                 [null, null, null, AreaSort.TimeKey(g.Max(e => e.Time))],
                 Detail: SourceDetail(g), ReviewKeys: g.Select(EventReviews.Key).ToList())).ToList(),
             Note: "Click a source to see what it reported."));

@@ -230,7 +230,7 @@ public sealed class ResourceHogsModule(IResourceHogsSource source, TimeSpan? sam
             }
             else if (recommendRestart)
             {
-                var baseline = ResourceBaselineSnapshot.FromOsquery(uptime, processes);
+                var baseline = ResourceBaselineSnapshot.From(uptime, processes);
                 var usageDetail = baseline.UsedMemoryBytes > 0
                     ? $" ({HardwareInventory.FormatBytes(baseline.UsedMemoryBytes)} across {baseline.ProcessCount} processes)"
                     : "";
@@ -241,7 +241,7 @@ public sealed class ResourceHogsModule(IResourceHogsSource source, TimeSpan? sam
             if (longUp && uptime.FastStartupEnabled == true)
                 uptimeActions.Add(new(RemediationKind.DisableFastStartup, "Turn off Fast Startup"));
             if (restartPending) uptimeActions.Add(new(RemediationKind.CancelScheduledRestart, "Cancel restart"));
-            else if (recommendRestart) uptimeActions.Add(new(RemediationKind.ScheduleCleanRestart, "Restart PC in 60s", ResourceBaselineSnapshot.FromOsquery(uptime, processes).Encode(), "Clean PC restart"));
+            else if (recommendRestart) uptimeActions.Add(new(RemediationKind.ScheduleCleanRestart, "Restart PC in 60s", ResourceBaselineSnapshot.From(uptime, processes).Encode(), "Clean PC restart"));
             cards.Add(new("uptime", "System uptime", level, $"Up {uptime.FriendlyDuration}", meta, ["Detail", "Value"], rows,
                 Actions: uptimeActions.Count > 0 ? uptimeActions : null));
             parts.Add($"Up {uptime.FriendlyDuration}" + (longUp ? " (needs restart)" : ""));
