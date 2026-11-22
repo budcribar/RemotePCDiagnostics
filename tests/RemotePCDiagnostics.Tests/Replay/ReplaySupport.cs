@@ -159,9 +159,25 @@ internal static class Snapshot
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
-    /// <summary>What a snapshot holds: the verdict and the whole report, without the run's time.</summary>
-    public static string Normalize(DiagnosticResult r) =>
-        JsonSerializer.Serialize(new { r.ModuleName, r.Status, r.Message, Report = r.Payload }, Json).Replace("\r\n", "\n") + "\n";
+    /// <summary>What a snapshot holds: the verdict and the whole report, without the run's time, and without the events' review keys,
+    /// which hash the name of the PC the check runs on (<see cref="EventReviews.Key"/>).</summary>
+    public static string Normalize(DiagnosticResult r)
+    {
+        var node = JsonSerializer.SerializeToNode(new { r.ModuleName, r.Status, r.Message, Report = r.Payload }, Json)!;
+        DropReviewKeys(node);
+        return node.ToJsonString(Json).Replace("\r\n", "\n") + "\n";
+    }
+
+    private static void DropReviewKeys(System.Text.Json.Nodes.JsonNode? node)
+    {
+        if (node is System.Text.Json.Nodes.JsonObject o)
+        {
+            o.Remove("reviewKeys");
+            foreach (var (_, child) in o.ToList()) DropReviewKeys(child);
+        }
+        else if (node is System.Text.Json.Nodes.JsonArray a)
+            foreach (var child in a) DropReviewKeys(child);
+    }
 
     public static void Match(string recordingFolder, string checkName, DiagnosticResult result)
     {

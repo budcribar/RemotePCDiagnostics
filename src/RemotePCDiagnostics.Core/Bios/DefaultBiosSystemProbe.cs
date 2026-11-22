@@ -15,16 +15,21 @@ public sealed class DefaultBiosSystemProbe : IBiosSystemProbe
     private readonly OsqueryRunner? _osquery;
     private readonly ILogger? _log;
 
-    public DefaultBiosSystemProbe(OsqueryRunner? osquery = null, ILogger? log = null)
+    private readonly bool _readThisPc;
+
+    /// <param name="readThisPc">Read this PC's SMBIOS registry values and firmware type (on Windows). Tests turn it off, so only the
+    /// answers they script count, whatever PC they run on.</param>
+    public DefaultBiosSystemProbe(OsqueryRunner? osquery = null, ILogger? log = null, bool readThisPc = true)
     {
         _osquery = osquery;
         _log = log;
+        _readThisPc = readThisPc;
     }
 
     public async Task<BiosSystemIdentity> ProbeAsync(CancellationToken ct = default)
     {
-        var reg = OperatingSystem.IsWindows() ? ReadWindowsBiosRegistry() : default;
-        var firmwareMode = OperatingSystem.IsWindows() ? ReadWindowsFirmwareMode() : BiosFirmwareMode.Unknown;
+        var reg = _readThisPc && OperatingSystem.IsWindows() ? ReadWindowsBiosRegistry() : default;
+        var firmwareMode = _readThisPc && OperatingSystem.IsWindows() ? ReadWindowsFirmwareMode() : BiosFirmwareMode.Unknown;
 
         SystemInfo? sys = null;
         BiosInfo? bios = null;

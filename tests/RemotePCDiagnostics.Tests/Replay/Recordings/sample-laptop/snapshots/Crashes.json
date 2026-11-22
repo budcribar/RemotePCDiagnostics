@@ -29,10 +29,7 @@
               null
             ],
             "detail": "Stop code: 0x0000009f · Driver power state failure\nBugcheck parameters: 0x0000000000000003, 0xffffb30c1a2b3c40, 0xfffff8063c2a1b3c, 0xffffb30c1d2e3f50\nDump path: C:\\Windows\\Minidump\\111026-12345-01.dmp (on disk)\nReport ID: 1a2b3c4d\nThe computer has rebooted from a bugcheck. The bugcheck was: 0x0000009f (0x0000000000000003, 0xffffb30c1a2b3c40, 0xfffff8063c2a1b3c, 0xffffb30c1d2e3f50). A dump was saved in: C:\\Windows\\Minidump\\111026-12345-01.dmp.",
-            "dumpPath": "C:\\Windows\\Minidump\\111026-12345-01.dmp",
-            "reviewKeys": [
-              "6866F15C8346ABDA65E854CB05F1919CEEE0287B7761F9BFFACCD628A2C5E513"
-            ]
+            "dumpPath": "C:\\Windows\\Minidump\\111026-12345-01.dmp"
           }
         ],
         "emptyText": "No blue screen crashes were recorded in the last 30 days.",
@@ -62,10 +59,7 @@
               null,
               null
             ],
-            "detail": "Stop code: 0x0000009f · Driver power state failure\nThe system has rebooted without cleanly shutting down first.",
-            "reviewKeys": [
-              "C876B2437A219CB6B820925015BF16DB5A69C8E510FEE42286DE353E135F75B7"
-            ]
+            "detail": "Stop code: 0x0000009f · Driver power state failure\nThe system has rebooted without cleanly shutting down first."
           }
         ],
         "emptyText": "All shutdowns and restarts in the last 30 days were clean.",
@@ -145,10 +139,7 @@
               null
             ],
             "detail": "Driver at the time: 31.0.24027.1012 (1 Aug 2025)\nNov 18, 9:40 PM · Display 4101 · Display driver amdkmdag stopped responding and has successfully recovered.\nNov 18, 9:40 PM · Live kernel report c:\\windows\\livekernelreports\\watchdog\\watchdog-20261118-1440.dmp (512 KB)",
-            "dumpPath": "c:\\windows\\livekernelreports\\watchdog\\watchdog-20261118-1440.dmp",
-            "reviewKeys": [
-              "1307090E3BBBDE4EFEF8E6AE770F421AD13AA0010C347AAE07B8480158DB6E69"
-            ]
+            "dumpPath": "c:\\windows\\livekernelreports\\watchdog\\watchdog-20261118-1440.dmp"
           }
         ],
         "emptyText": "No graphics driver resets or graphics blue screens in the last 30 days.",
@@ -193,10 +184,7 @@
               null,
               null
             ],
-            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345",
-            "reviewKeys": [
-              "1961975FC987E3199CD5F1E2DA341B18A422ABA3044AC62D58597E094DC0FA18"
-            ]
+            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345"
           },
           {
             "level": "Warning",
@@ -214,10 +202,7 @@
               null,
               null
             ],
-            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345",
-            "reviewKeys": [
-              "FAC696A685E115993AF4A6CD880DA03D1FAA8009CFFDE779EA7142096125E17C"
-            ]
+            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345"
           },
           {
             "level": "Neutral",
@@ -235,10 +220,7 @@
               null,
               null
             ],
-            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345",
-            "reviewKeys": [
-              "9641653267D4032C0F544ADAB5673EA7C201BC69CADE20E4145C275A6058A50D"
-            ]
+            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345"
           }
         ],
         "preserveRowOrder": false,
@@ -280,9 +262,6 @@
               null
             ],
             "detail": "Nov 20, 6:30 PM\nStopped responding\nProgram version: 2.1.0.0\nProgram path: C:\\Program Files\\PhotoEditor\\photoeditor.exe",
-            "reviewKeys": [
-              "8A7F58B0EA4370D24FD203B243D60BCCBB1DEDF3AE6F086C088DD3B3A1D37604"
-            ],
             "hangOccurrences": [
               {
                 "time": "2026-11-20T18:30:00+00:00",
@@ -328,11 +307,7 @@
               null,
               "2026-11-21T15:10:00"
             ],
-            "detail": "Most common cause: Access violation (2 of 2 crashes)\nApp versions: 4.2.0.0",
-            "reviewKeys": [
-              "1961975FC987E3199CD5F1E2DA341B18A422ABA3044AC62D58597E094DC0FA18",
-              "FAC696A685E115993AF4A6CD880DA03D1FAA8009CFFDE779EA7142096125E17C"
-            ]
+            "detail": "Most common cause: Access violation (2 of 2 crashes)\nApp versions: 4.2.0.0"
           },
           {
             "level": "Neutral",
@@ -348,10 +323,7 @@
               null,
               "2026-11-20T18:30:00"
             ],
-            "detail": "No crashes recorded\nApp versions: 2.1.0.0",
-            "reviewKeys": [
-              "8A7F58B0EA4370D24FD203B243D60BCCBB1DEDF3AE6F086C088DD3B3A1D37604"
-            ]
+            "detail": "No crashes recorded\nApp versions: 2.1.0.0"
           },
           {
             "level": "Neutral",
@@ -367,10 +339,7 @@
               null,
               "2026-11-02T20:00:00"
             ],
-            "detail": "Most common cause: Access violation (1 of 1 crashes)\nApp versions: 4.2.0.0",
-            "reviewKeys": [
-              "9641653267D4032C0F544ADAB5673EA7C201BC69CADE20E4145C275A6058A50D"
-            ]
+            "detail": "Most common cause: Access violation (1 of 1 crashes)\nApp versions: 4.2.0.0"
           }
         ],
         "preserveRowOrder": true

@@ -51,11 +51,7 @@
               null
             ],
             "detail": "Happened 2 times: Nov 21, 8:00 AM, Nov 20, 8:00 AM\n\nThe Sample Updater service failed to start due to the following error: \nThe system cannot find the file specified.",
-            "eventCopyText": "Source: Service Control Manager\nEvent ID: 7000\nLog: System\nTime: 2026-11-21T08:00:00.0000000+00:00\n\nThe Sample Updater service failed to start due to the following error: \nThe system cannot find the file specified.",
-            "reviewKeys": [
-              "359D612F3EEF114868C524533C4451BE9251588D29DEAFEB19FE13B848427182",
-              "E88C1BC3D4B0080B644D3EC94FD3802958705060E05047996B8F257FF66C4203"
-            ]
+            "eventCopyText": "Source: Service Control Manager\nEvent ID: 7000\nLog: System\nTime: 2026-11-21T08:00:00.0000000+00:00\n\nThe Sample Updater service failed to start due to the following error: \nThe system cannot find the file specified."
           },
           {
             "level": "Warning",
@@ -73,10 +69,7 @@
               "1",
               null
             ],
-            "eventCopyText": "Source: Microsoft-Windows-DistributedCOM\nEvent ID: 10016\nLog: System\nTime: 2026-11-19T12:00:00.0000000+00:00\n\nThe application-specific permission settings do not grant Local Activation permission for the COM Server application.",
-            "reviewKeys": [
-              "BEE1FDB90D6E675EA2D3B3339CFB37AED2E6C3AAB605BDAF17F9A693558E95E2"
-            ]
+            "eventCopyText": "Source: Microsoft-Windows-DistributedCOM\nEvent ID: 10016\nLog: System\nTime: 2026-11-19T12:00:00.0000000+00:00\n\nThe application-specific permission settings do not grant Local Activation permission for the COM Server application."
           }
         ],
         "note": "Most PCs log some errors; they only matter if they repeat or match a problem you're seeing. Identical errors are grouped; click a row for the full message.",
@@ -112,10 +105,7 @@
               "1",
               null
             ],
-            "eventCopyText": "Source: Microsoft-Windows-Security-SPP\nEvent ID: 8198\nLog: Application\nTime: 2026-11-18T10:00:00.0000000+00:00\n\nLicense Activation (slui.exe) failed with the following error code: hr=0x8007267C",
-            "reviewKeys": [
-              "B5A2E6CA8C758DED43421FDBF02F8F5F47E0CCE82664F97E351E35ABCFC86EA2"
-            ]
+            "eventCopyText": "Source: Microsoft-Windows-Security-SPP\nEvent ID: 8198\nLog: Application\nTime: 2026-11-18T10:00:00.0000000+00:00\n\nLicense Activation (slui.exe) failed with the following error code: hr=0x8007267C"
           }
         ],
         "note": "Most PCs log some errors; they only matter if they repeat or match a problem you're seeing. Identical errors are grouped; click a row for the full message.",
@@ -148,11 +138,7 @@
               null,
               "2026-11-21T08:00:00"
             ],
-            "detail": "2× (last Nov 21, 8:00 AM): The Sample Updater service failed to start due to the following error:",
-            "reviewKeys": [
-              "359D612F3EEF114868C524533C4451BE9251588D29DEAFEB19FE13B848427182",
-              "E88C1BC3D4B0080B644D3EC94FD3802958705060E05047996B8F257FF66C4203"
-            ]
+            "detail": "2× (last Nov 21, 8:00 AM): The Sample Updater service failed to start due to the following error:"
           },
           {
             "level": "Warning",
@@ -168,10 +154,7 @@
               null,
               "2026-11-19T12:00:00"
             ],
-            "detail": "1× (last Nov 19, 12:00 PM): The application-specific permission settings do not grant Local Activation permission for the COM Server application.",
-            "reviewKeys": [
-              "BEE1FDB90D6E675EA2D3B3339CFB37AED2E6C3AAB605BDAF17F9A693558E95E2"
-            ]
+            "detail": "1× (last Nov 19, 12:00 PM): The application-specific permission settings do not grant Local Activation permission for the COM Server application."
           },
           {
             "level": "Warning",
@@ -187,10 +170,7 @@
               null,
               "2026-11-18T10:00:00"
             ],
-            "detail": "1× (last Nov 18, 10:00 AM): License Activation (slui.exe) failed with the following error code: hr=0x8007267C",
-            "reviewKeys": [
-              "B5A2E6CA8C758DED43421FDBF02F8F5F47E0CCE82664F97E351E35ABCFC86EA2"
-            ]
+            "detail": "1× (last Nov 18, 10:00 AM): License Activation (slui.exe) failed with the following error code: hr=0x8007267C"
           }
         ],
         "note": "Click a source to see what it reported.",
