@@ -57,7 +57,8 @@ public sealed class ScheduledMetricsPass(IMetricsProbes probes, MetricsOutbox ou
 /// </summary>
 /// <param name="appFolder">The app's folder, for osquery (the battery). Null when no app is installed or cached: the battery is then skipped.</param>
 /// <param name="sensors">Reads temperatures (the Agent's sensor provider), or null when there is none.</param>
-public sealed class CoreMetricsProbes(string? appFolder, Func<CancellationToken, Task<SensorSnapshot?>>? sensors, ILogger? log = null) : IMetricsProbes
+public sealed class CoreMetricsProbes(string? appFolder, Func<CancellationToken, Task<SensorSnapshot?>>? sensors, ILogger? log = null,
+    DataSources.IWmiSource? wmi = null) : IMetricsProbes
 {
     public async Task<IReadOnlyList<DiagnosticResult>> MeasureAsync(string checkId, CancellationToken ct)
     {
@@ -84,10 +85,9 @@ public sealed class CoreMetricsProbes(string? appFolder, Func<CancellationToken,
 
     private async Task<IReadOnlyList<DiagnosticResult>> BatteryAsync(CancellationToken ct)
     {
-        if (appFolder is null) return [];
-        var q = await new OsqueryRunner(appFolder).RunQueryAsync("SELECT * FROM battery;", ct).ConfigureAwait(false);
-        if (!q.Success) return [CouldNotRun.Result(ModuleSlugs.BatteryPower, "Couldn't read the battery.")];
-        if (q.Rows!.Select(BatteryStatus.FromRow).FirstOrDefault() is not { } b) return []; // no battery: nothing to track
+        var batteries = await BatteryReader.ReadAsync(wmi ?? new DataSources.SystemWmiSource(log), null, ct).ConfigureAwait(false);
+        if (batteries is null) return [CouldNotRun.Result(ModuleSlugs.BatteryPower, "Couldn't read the battery.")];
+        if (batteries.FirstOrDefault() is not { } b) return []; // no battery: nothing to track
         var worn = b.HealthPercent is < BatteryStatus.LowHealthPercent;
         var summary = b.HealthPercent is { } h ? $"Battery health {h}%" : "Battery present";
         var status = worn ? DiagnosticStatus.Warning : DiagnosticStatus.Ok;

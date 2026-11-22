@@ -19,9 +19,11 @@ public sealed record BatteryStatus(
     /// <summary>One row of osquery <c>battery</c>, with the capacities in mWh.</summary>
     public static BatteryStatus FromRow(IReadOnlyDictionary<string, string> r) => new(
         r.Str("model"), r.Str("manufacturer"), r.Str("chemistry"), r.Str("state"),
-        r.Int("percent_remaining"), ToMilliwattHours(r.Int("designed_capacity")), ToMilliwattHours(r.Int("max_capacity")), r.Int("cycle_count"));
+        r.Int("percent_remaining") is >= 0 and <= 100 and var pct ? pct : null, ToMilliwattHours(r.Int("designed_capacity")), ToMilliwattHours(r.Int("max_capacity")), r.Int("cycle_count"));
 
-    private static int? ToMilliwattHours(int? osqueryMilliampHours) => osqueryMilliampHours * OsqueryAssumedVolts;
+    /// <summary>Back to mWh; null when the driver didn't know the capacity (osquery passes BATTERY_UNKNOWN_CAPACITY through, divided by 12).</summary>
+    private static int? ToMilliwattHours(int? osqueryMilliampHours) =>
+        osqueryMilliampHours is { } v && BatteryReader.Capacity((long)v * OsqueryAssumedVolts) is { } mWh ? (int)mWh : null;
 
     public int? HealthPercent => DesignCapacity is > 0 && MaxCapacity is > 0
         ? (int)Math.Round(Math.Clamp(MaxCapacity.Value * 100.0 / DesignCapacity.Value, 0, 120))
