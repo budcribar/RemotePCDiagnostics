@@ -247,6 +247,8 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
     private readonly IReadOnlyList<string> _allowedToolRoots;
     private readonly long _maxPackageBytes;
     private readonly ILogger? _log;
+    private readonly Dictionary<Guid, Task<SingleUpdateInstallResult>> _wuaInstalls = [];
+    private readonly Lock _wuaInstallsLock = new();
 
     [GeneratedRegex(@"\A[0-9A-Fa-f]{64}\z", RegexOptions.CultureInvariant)]
     private static partial Regex Sha256HexRegex();
@@ -479,26 +481,38 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
 
         var clampedTimeout = TimeSpan.FromMilliseconds(Math.Clamp(timeout.TotalMilliseconds, MinTimeoutMs, MaxTimeoutMs));
 
+        // The COM install can't be stopped once started, so a timed-out one keeps running. Remember it: a retry for the same update
+        // waits on that install instead of starting a second one.
+        Task<SingleUpdateInstallResult> install;
+        lock (_wuaInstallsLock)
+        {
+            if (!_wuaInstalls.TryGetValue(updateId, out install!) || install.IsCompleted)
+            {
+                install = Task.Run(() =>
+                {
+                    var api = _wuaApiFactory is not null
+                        ? _wuaApiFactory()
+                        : CreateWindowsWuaApi();
+                    try
+                    {
+                        return AgentWindowsUpdate.InstallOneDetailed(api, updateId);
+                    }
+                    finally
+                    {
+                        if (api is IDisposable disposable)
+                        {
+                            try { disposable.Dispose(); } catch { }
+                        }
+                    }
+                }, CancellationToken.None);
+                _wuaInstalls[updateId] = install;
+            }
+        }
+
         SingleUpdateInstallResult r;
         try
         {
-            r = await Task.Run(() =>
-            {
-                var api = _wuaApiFactory is not null
-                    ? _wuaApiFactory()
-                    : CreateWindowsWuaApi();
-                try
-                {
-                    return AgentWindowsUpdate.InstallOneDetailed(api, updateId);
-                }
-                finally
-                {
-                    if (api is IDisposable disposable)
-                    {
-                        try { disposable.Dispose(); } catch { }
-                    }
-                }
-            }, CancellationToken.None).WaitAsync(clampedTimeout, ct).ConfigureAwait(false);
+            r = await install.WaitAsync(clampedTimeout, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -510,7 +524,7 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
                 Succeeded: false,
                 ResultCode: AgentWindowsUpdate.FailedCode,
                 RebootRequired: false,
-                Message: $"Windows Update install for {updateId:D} timed out after {clampedTimeout.TotalSeconds:F0}s.");
+                Message: $"Windows Update is still installing firmware update {updateId:D} after {clampedTimeout.TotalSeconds:F0}s. It may finish and be applied at the next restart; asking again waits for this same install.");
         }
         catch (Exception ex)
         {

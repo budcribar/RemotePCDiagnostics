@@ -1594,7 +1594,7 @@ public sealed class BiosAgentElevationTests
     }
 
     [Fact]
-    public async Task AdminPipeClient_MidCallCancellation_PropagatesCancellationAndDisposesPipeToPreventDesync()
+    public async Task AdminPipeClient_MidCallCancellation_PropagatesCancellationAndKeepsThePipeInStep()
     {
         using var testCts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1621,12 +1621,13 @@ public sealed class BiosAgentElevationTests
 
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(() => inFlight);
 
-                // Pipe MUST be disposed immediately on mid-flight cancellation so no stale response can desync framing.
-                Assert.False(client.IsConnected);
-
-                // Release server's in-flight work and confirm subsequent calls cannot read a stale frame.
+                // The pipe stays open (dropping it would end Admin Repair Mode in the UAC helper). The cancelled request's late
+                // answer is read in the background, so the next request gets its own answer, not that stale one.
+                Assert.True(client.IsConnected);
+                var ping = client.PingAsync(testCts.Token);
                 release.TrySetResult();
-                await Assert.ThrowsAsync<ObjectDisposedException>(() => client.PingAsync(testCts.Token));
+                await ping;
+                Assert.True(client.IsConnected);
             }
 
             await serverTask;
