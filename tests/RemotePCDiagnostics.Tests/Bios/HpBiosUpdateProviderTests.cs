@@ -622,7 +622,7 @@ public sealed class HpBiosUpdateProviderTests
             downloadUrl: url,
             sha256: payload.Sha256,
             suspendBitLocker: true,
-            allowReboot: false);
+            allowReboot: false) with { BitLockerKnownOff = true };
 
         var result = await provider.InstallAsync(request);
 
@@ -630,6 +630,13 @@ public sealed class HpBiosUpdateProviderTests
         Assert.Equal(BiosInstallStatus.StagedForReboot, result.Status);
         Assert.False(result.BitLockerSuspended);
         Assert.Equal(2, launcher.Calls.Count);
+
+        // The same manage-bde failure, when BitLocker isn't known to be off, stops the flash.
+        var before = launcher.Calls.Count;
+        var blocked = await provider.InstallAsync(request with { BitLockerKnownOff = false });
+        Assert.False(blocked.Succeeded);
+        Assert.Contains("BitLocker", blocked.Message);
+        Assert.DoesNotContain(launcher.Calls.Skip(before), c => !c.BaseName.Equals("manage-bde.exe", StringComparison.OrdinalIgnoreCase));
     }
 
     // -------------------------------------------------------------------------

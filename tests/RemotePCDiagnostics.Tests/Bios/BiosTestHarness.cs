@@ -563,6 +563,16 @@ internal sealed class FakeSignatureVerifier : IBiosSignatureVerifier
             _verifiedPaths.Add(filePath);
         return _impl(filePath, ct);
     }
+
+    /// <summary>The signer allowlist passed with each pinned verification, in call order.</summary>
+    public List<IReadOnlyCollection<string>> AllowedSignerSets { get; } = [];
+
+    public Task<bool> VerifyAuthenticodeAsync(string filePath, IReadOnlyCollection<string> allowedSignerOrganizations, CancellationToken ct = default)
+    {
+        lock (_lock)
+            AllowedSignerSets.Add(allowedSignerOrganizations);
+        return VerifyAuthenticodeAsync(filePath, ct);
+    }
 }
 
 internal sealed class FakeWindowsUpdateClient : IBiosWindowsUpdateClient

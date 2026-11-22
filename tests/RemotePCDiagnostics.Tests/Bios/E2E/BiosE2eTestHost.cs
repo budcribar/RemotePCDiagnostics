@@ -666,6 +666,9 @@ internal sealed class StubSignatureVerifier : IBiosSignatureVerifier
         _verifiedPaths.Enqueue(filePath);
         return Task.FromResult(Predicate(filePath));
     }
+
+    public Task<bool> VerifyAuthenticodeAsync(string filePath, IReadOnlyCollection<string> allowedSignerOrganizations, CancellationToken ct = default) =>
+        allowedSignerOrganizations is { Count: > 0 } ? VerifyAuthenticodeAsync(filePath, ct) : Task.FromResult(false);
 }
 
 internal sealed class StubWindowsUpdateClient : IBiosWindowsUpdateClient

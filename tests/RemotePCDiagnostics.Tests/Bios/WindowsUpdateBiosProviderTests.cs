@@ -657,7 +657,7 @@ public sealed class WindowsUpdateBiosProviderTests
             commands: RecordingProcessLauncher.CreateCommandRunner(launcherUnenc, isProcessElevated: true),
             isProcessElevated: () => true);
 
-        var r1 = await p1.InstallAsync(CreateWuaInstallRequest(packageId: SampleUpdateId.ToString("D"), suspendBitLocker: true));
+        var r1 = await p1.InstallAsync(CreateWuaInstallRequest(packageId: SampleUpdateId.ToString("D"), suspendBitLocker: true) with { BitLockerKnownOff = true });
         Assert.True(r1.Succeeded);
         Assert.False(r1.BitLockerSuspended);
 

@@ -619,7 +619,7 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
                 bridge: _elevatedBridge,
                 isProcessElevated: _isProcessElevated).ConfigureAwait(false);
 
-            if (bitLocker.ElevationRequired)
+            if (bitLocker.BlocksInstall)
             {
                 var msg = RedactText(
                     bitLocker.Message

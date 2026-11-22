@@ -431,7 +431,7 @@ public sealed partial class WindowsUpdateBiosProvider : IBiosUpdateProvider
             bridge: effectiveBridge,
             isProcessElevated: () => elevated).ConfigureAwait(false);
 
-        if (bitLocker.ElevationRequired)
+        if (bitLocker.BlocksInstall)
         {
             var rawMsg = bitLocker.Message
                 ?? $"Administrator rights (or the elevated Agent service) are required to suspend BitLocker. {ElevationService.AdminRepairHint}";

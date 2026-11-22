@@ -691,7 +691,7 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
                 bridge: _elevatedBridge,
                 isProcessElevated: _isProcessElevated).ConfigureAwait(false);
 
-            if (bitLocker.ElevationRequired)
+            if (bitLocker.BlocksInstall)
             {
                 var msg = RedactText(
                     bitLocker.Message

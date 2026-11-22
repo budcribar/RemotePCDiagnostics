@@ -10,7 +10,15 @@ public sealed record BiosBitLockerSuspendOutcome(
     bool Suspended,
     bool ElevationRequired = false,
     bool LegacyAgentUnsupported = false,
-    string? Message = null);
+    string? Message = null,
+    bool SuspendFailed = false)
+{
+    /// <summary>
+    /// True when the flash must not go ahead: elevation is missing, or suspension failed on a drive that may be encrypted
+    /// (flashing then would ask for the BitLocker recovery key on the next boot).
+    /// </summary>
+    public bool BlocksInstall => ElevationRequired || SuspendFailed;
+}
 
 /// <summary>
 /// Suspends BitLocker protection for 1 reboot via native <c>manage-bde.exe</c> using <c>ArgumentList</c> only
@@ -146,12 +154,7 @@ public static partial class BiosBitLockerSuspender
                 var sanitizedError = agentResult.Error is null
                     ? null
                     : BiosInstallerRunner.RedactSerialNumber(agentResult.Error, serialNumber);
-                log?.Info($"BitLocker suspension on {drive} via Agent did not apply (exit={agentResult.ExitCode}); continuing.");
-                return new BiosBitLockerSuspendOutcome(
-                    Suspended: false,
-                    ElevationRequired: false,
-                    LegacyAgentUnsupported: false,
-                    Message: sanitizedError);
+                return NotApplied(request, drive, $"exit={agentResult.ExitCode}", sanitizedError, log);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -181,10 +184,7 @@ public static partial class BiosBitLockerSuspender
         }
 
         if (commands is null)
-        {
-            log?.Warn("BitLocker suspension skipped: command runner is unavailable.");
-            return new BiosBitLockerSuspendOutcome(Suspended: false, Message: "Command runner is unavailable.");
-        }
+            return NotApplied(request, drive, "command runner is unavailable", "Command runner is unavailable.", log);
 
         progress?.Report(new BiosInstallProgress(
             BiosInstallStage.SuspendingBitLocker,
@@ -212,8 +212,7 @@ public static partial class BiosBitLockerSuspender
             }
 
             var exitCodeText = result is null ? "timeout/unavailable" : $"exit={result.ExitCode}";
-            log?.Info($"BitLocker suspension on {drive} did not apply ({exitCodeText}); continuing.");
-            return new BiosBitLockerSuspendOutcome(Suspended: false, Message: exitCodeText);
+            return NotApplied(request, drive, exitCodeText, exitCodeText, log);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -222,9 +221,25 @@ public static partial class BiosBitLockerSuspender
         catch (Exception ex)
         {
             var sanitized = BiosInstallerRunner.RedactSerialNumber(ex.Message, serialNumber);
-            log?.Warn($"BitLocker suspension on {drive} failed cleanly: {sanitized}");
-            return new BiosBitLockerSuspendOutcome(Suspended: false, Message: sanitized);
+            return NotApplied(request, drive, sanitized, sanitized, log);
         }
+    }
+
+    /// <summary>
+    /// Suspension didn't happen. That's fine only when the safety probe saw BitLocker off (or already suspended)
+    /// on this drive; otherwise the install is blocked rather than risking a recovery-key prompt after the flash.
+    /// </summary>
+    private static BiosBitLockerSuspendOutcome NotApplied(BiosInstallRequest request, string drive, string why, string? detail, ILogger? log)
+    {
+        if (request.BitLockerKnownOff)
+        {
+            log?.Info($"BitLocker suspension on {drive} did not apply ({why}); BitLocker is off, continuing.");
+            return new BiosBitLockerSuspendOutcome(Suspended: false, Message: detail);
+        }
+
+        var msg = $"Couldn't suspend BitLocker on {drive} ({detail ?? why}), and BitLocker may be on. The BIOS update was not started, so the PC won't ask for the BitLocker recovery key. Suspend BitLocker on {drive}, then try again.";
+        log?.Warn(msg);
+        return new BiosBitLockerSuspendOutcome(Suspended: false, Message: msg, SuspendFailed: true);
     }
 
     // Invokes commands.Launcher.RunAsync directly (never SystemCommandRunner.RunAsync) so raw tool output

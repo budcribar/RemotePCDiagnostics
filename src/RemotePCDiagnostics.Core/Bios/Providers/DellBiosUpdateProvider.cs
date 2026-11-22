@@ -620,7 +620,7 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
                 bridge: _elevatedBridge,
                 isProcessElevated: _isProcessElevated).ConfigureAwait(false);
 
-            if (bitLocker.ElevationRequired)
+            if (bitLocker.BlocksInstall)
             {
                 var msg = bitLocker.Message
                     ?? $"Administrator rights (or the elevated Agent service) are required to suspend BitLocker. {ElevationService.AdminRepairHint}";
@@ -748,7 +748,7 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
             bridge: _elevatedBridge,
             isProcessElevated: _isProcessElevated).ConfigureAwait(false);
 
-        if (bitLocker.ElevationRequired)
+        if (bitLocker.BlocksInstall)
         {
             var msg = bitLocker.Message
                 ?? $"Administrator rights (or the elevated Agent service) are required to suspend BitLocker. {ElevationService.AdminRepairHint}";

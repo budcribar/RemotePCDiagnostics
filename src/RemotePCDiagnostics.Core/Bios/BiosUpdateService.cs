@@ -174,6 +174,9 @@ public sealed class BiosUpdateService : IBiosUpdateService
             return BiosInstallResult.Blocked(reason, prev, target);
         }
 
+        // Lets the provider continue when BitLocker suspension doesn't apply only if BitLocker is known to be off.
+        request = request with { BitLockerKnownOff = snapshot.BitLockerActive == false || snapshot.BitLockerSuspended == true };
+
         var approver = string.IsNullOrWhiteSpace(request.ApprovedBy) ? "operator" : request.ApprovedBy.Trim();
         _log?.Info($"Starting BIOS update via '{provider.VendorId}' ({prev} -> {target}, approvedBy={approver}, allowReboot={request.AllowReboot}, suspendBitLocker={request.SuspendBitLocker}).");
 

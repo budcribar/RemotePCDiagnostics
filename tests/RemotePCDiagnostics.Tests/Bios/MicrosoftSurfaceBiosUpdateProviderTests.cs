@@ -743,7 +743,7 @@ public sealed class MicrosoftSurfaceBiosUpdateProviderTests
         var provider = MicrosoftSurfaceBiosUpdateProvider.CreateWithHandler(
             handler, commands: commands, signatureVerifier: new FakeSignatureVerifier(true), isProcessElevated: () => true, log: log.Logger);
 
-        var res = await provider.InstallAsync(CreateSurfaceInstallRequest(sha256: payload.Sha256));
+        var res = await provider.InstallAsync(CreateSurfaceInstallRequest(sha256: payload.Sha256) with { BitLockerKnownOff = true });
 
         Assert.False(res.Succeeded);
         Assert.Equal(BiosInstallStatus.Failed, res.Status);

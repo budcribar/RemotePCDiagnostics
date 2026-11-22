@@ -85,6 +85,30 @@ public static class BiosAgentInstallModes
         return true;
     }
 
+    private static readonly string[] HpSigners = ["HP Inc.", "HP Inc", "Hewlett-Packard Company"];
+    private static readonly string[] DellSigners = ["Dell Inc", "Dell Inc.", "Dell Technologies Inc."];
+    private static readonly string[] LenovoSigners = ["Lenovo", "Lenovo (Beijing) Limited"];
+    private static readonly string[] MicrosoftSigners = ["Microsoft Corporation"];
+    // Framework's Windows BIOS updaters wrap Insyde's flash tool, which Insyde signs.
+    private static readonly string[] FrameworkSigners = ["Framework Computer Inc", "Framework Computer Inc.", "Framework Computer, Inc.", "Insyde Software Corp."];
+
+    /// <summary>
+    /// The certificate organizations (O=) the Agent accepts as the signer of a package for <paramref name="normalizedMode"/>.
+    /// A valid signature from anyone else is refused, so the Agent never runs an arbitrary signed program elevated.
+    /// </summary>
+    public static IReadOnlyCollection<string> AllowedSignerOrganizations(string normalizedMode) => normalizedMode switch
+    {
+        HpSoftPaq or HpBiosUpdRec => HpSigners,
+        DellBiosExe or DellDcuCli => DellSigners,
+        LenovoWinUptp or LenovoPackageSilent => LenovoSigners,
+        MicrosoftSurfaceMsi => MicrosoftSigners,
+        FrameworkBiosExe or FrameworkCabCapsule => FrameworkSigners,
+        _ => [],
+    };
+
+    /// <summary>Signers accepted for the driver catalog (.cat) of a capsule cabinet: Windows Hardware Compatibility Publisher.</summary>
+    public static IReadOnlyCollection<string> AllowedCatalogSignerOrganizations { get; } = MicrosoftSigners;
+
     /// <summary>
     /// Builds the canonical <c>ArgumentList</c> for an allowlisted <paramref name="installMode"/> and reboot preference.
     /// </summary>
@@ -379,7 +403,7 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
 
             if (mode == BiosAgentInstallModes.FrameworkCabCapsule)
             {
-                var cabSigned = await _signatureVerifier.VerifyAuthenticodeAsync(stagedPath, ct).ConfigureAwait(false);
+                var cabSigned = await _signatureVerifier.VerifyAuthenticodeAsync(stagedPath, BiosAgentInstallModes.AllowedSignerOrganizations(mode), ct).ConfigureAwait(false);
                 if (!cabSigned && string.IsNullOrEmpty(normalizedSha256))
                     return Reject("BIOS cabinet package failed Agent signature verification.");
 
@@ -407,7 +431,7 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
             }
             else
             {
-                var sigValid = await _signatureVerifier.VerifyAuthenticodeAsync(stagedPath, ct).ConfigureAwait(false);
+                var sigValid = await _signatureVerifier.VerifyAuthenticodeAsync(stagedPath, BiosAgentInstallModes.AllowedSignerOrganizations(mode), ct).ConfigureAwait(false);
                 if (!sigValid)
                     return Reject("BIOS package failed Agent Authenticode signature verification.");
 
@@ -597,7 +621,7 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
                 return Reject("Dell Command | Update CLI failed Agent SHA-256 verification.");
         }
 
-        var sigValid = await _signatureVerifier.VerifyAuthenticodeAsync(resolvedTool, ct).ConfigureAwait(false);
+        var sigValid = await _signatureVerifier.VerifyAuthenticodeAsync(resolvedTool, BiosAgentInstallModes.AllowedSignerOrganizations(BiosAgentInstallModes.DellDcuCli), ct).ConfigureAwait(false);
         if (!sigValid)
             return Reject("Dell Command | Update CLI failed Agent Authenticode signature verification.");
 
@@ -892,7 +916,7 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
             if (!IsRegularNonSymlinkFileWithinRoot(fullCandidate, fullRoot))
                 continue;
 
-            if (await _signatureVerifier.VerifyAuthenticodeAsync(fullCandidate, ct).ConfigureAwait(false))
+            if (await _signatureVerifier.VerifyAuthenticodeAsync(fullCandidate, BiosAgentInstallModes.AllowedCatalogSignerOrganizations, ct).ConfigureAwait(false))
                 return true;
         }
 

@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Security.Cryptography.X509Certificates;
 
 namespace RemotePCDiagnostics.Core.Bios;
 
@@ -7,6 +8,12 @@ namespace RemotePCDiagnostics.Core.Bios;
 public interface IBiosSignatureVerifier
 {
     Task<bool> VerifyAuthenticodeAsync(string filePath, CancellationToken ct = default);
+
+    /// <summary>
+    /// True only when the signature is valid (revocation checked) and the signing certificate's organization (O=)
+    /// is exactly one of <paramref name="allowedSignerOrganizations"/>. The elevated Agent uses only this overload.
+    /// </summary>
+    Task<bool> VerifyAuthenticodeAsync(string filePath, IReadOnlyCollection<string> allowedSignerOrganizations, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -20,6 +27,8 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
 
     private const uint WTD_UI_NONE = 2;
     private const uint WTD_REVOKE_NONE = 0;
+    private const uint WTD_REVOKE_WHOLECHAIN = 1;
+    private const uint WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT = 0x80;
     private const uint WTD_CHOICE_FILE = 1;
     private const uint WTD_STATEACTION_VERIFY = 1;
     private const uint WTD_STATEACTION_CLOSE = 2;
@@ -36,11 +45,69 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             return Task.FromResult(false);
 
-        return Task.Run(() => OperatingSystem.IsWindows() && VerifyAuthenticodeWindows(filePath, ct), ct);
+        return Task.Run(() => OperatingSystem.IsWindows() && VerifyAuthenticodeWindows(filePath, checkRevocation: false, ct), ct);
+    }
+
+    public Task<bool> VerifyAuthenticodeAsync(string filePath, IReadOnlyCollection<string> allowedSignerOrganizations, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        if (!OperatingSystem.IsWindows() || allowedSignerOrganizations is not { Count: > 0 })
+            return Task.FromResult(false);
+
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            return Task.FromResult(false);
+
+        return Task.Run(() =>
+            OperatingSystem.IsWindows()
+            && VerifyAuthenticodeWindows(filePath, checkRevocation: true, ct)
+            && IsAllowedSignerOrganization(ReadSignerOrganization(filePath), allowedSignerOrganizations), ct);
+    }
+
+    /// <summary>Exact (case-insensitive) match of the signer's O= value against the allowlist. Null or empty never matches.</summary>
+    public static bool IsAllowedSignerOrganization(string? organization, IReadOnlyCollection<string> allowedSignerOrganizations)
+    {
+        if (string.IsNullOrWhiteSpace(organization) || allowedSignerOrganizations is null)
+            return false;
+        var org = organization.Trim();
+        foreach (var allowed in allowedSignerOrganizations)
+        {
+            if (string.Equals(org, allowed?.Trim(), StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>The organization (O=) of the certificate that signed <paramref name="filePath"/>, or null.</summary>
+    [SupportedOSPlatform("windows")]
+    private static string? ReadSignerOrganization(string filePath)
+    {
+        try
+        {
+#pragma warning disable SYSLIB0057 // No loader replacement exists for reading the signer of an Authenticode-signed file.
+            using var signer = new X509Certificate2(X509Certificate.CreateFromSignedFile(filePath));
+#pragma warning restore SYSLIB0057
+            return OrganizationOf(signer.SubjectName);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The O= (organizationName, 2.5.4.10) value of a distinguished name, or null.</summary>
+    public static string? OrganizationOf(X500DistinguishedName name)
+    {
+        foreach (var rdn in name.EnumerateRelativeDistinguishedNames())
+        {
+            if (rdn.GetSingleElementType().Value == "2.5.4.10")
+                return rdn.GetSingleElementValue();
+        }
+        return null;
     }
 
     [SupportedOSPlatform("windows")]
-    private static bool VerifyAuthenticodeWindows(string filePath, CancellationToken ct)
+    private static bool VerifyAuthenticodeWindows(string filePath, bool checkRevocation, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -70,13 +137,13 @@ public sealed class WinVerifyTrustSignatureVerifier : IBiosSignatureVerifier
                 pPolicyCallbackData = IntPtr.Zero,
                 pSIPClientData = IntPtr.Zero,
                 dwUIChoice = WTD_UI_NONE,
-                fdwRevocationChecks = WTD_REVOKE_NONE,
+                fdwRevocationChecks = checkRevocation ? WTD_REVOKE_WHOLECHAIN : WTD_REVOKE_NONE,
                 dwUnionChoice = WTD_CHOICE_FILE,
                 pFile = fileInfoPtr,
                 dwStateAction = WTD_STATEACTION_VERIFY,
                 hWVTStateData = IntPtr.Zero,
                 pwszURLReference = IntPtr.Zero,
-                dwProvFlags = 0,
+                dwProvFlags = checkRevocation ? WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT : 0,
                 dwUIContext = 0,
                 pSignatureSettings = IntPtr.Zero,
             };

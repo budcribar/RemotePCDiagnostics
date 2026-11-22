@@ -143,6 +143,8 @@ public sealed class BiosAgentElevationTests
         var call = Assert.Single(agentLauncher.Calls);
         Assert.Equal(expectedArgs, call.Arguments);
         AssertPathStrictlyInside(call.FileName, adminRoot.Path);
+        // The Agent pins the signer to this vendor; it never accepts just any valid signature.
+        Assert.Same(BiosAgentInstallModes.AllowedSignerOrganizations(mode), Assert.Single(sigVerifier.AllowedSignerSets));
         Assert.NotEqual(Path.GetFullPath(userPkgPath), Path.GetFullPath(call.FileName));
 
         var verifiedPath = Assert.Single(sigVerifier.VerifiedPaths);
