@@ -34,7 +34,10 @@ every recording under `RPD_RECORDINGS_DIR`. For each one they check:
 - **Damaged answers:** each answer the check asks for is broken one at a time (fails, times out, empty, garbage, each value missing,
   null, zero, negative, 0xFFFFFFFF, huge or garbage). The check must not crash, show nonsense numbers, or call something good without a
   reading. Long lists (services, drivers, programs) have values broken in their first three rows only.
-- **Known failures:** a recording edited to a known bad state (worn battery, power saver) must give the known verdict.
+- **Known failures:** a recording edited to a known bad state must give the known verdict: a worn battery, power saver, a stopped automatic
+  service, a Device Manager error, no Windows update in 90 days, an unsigned driver, a failed memory read. An app or driver made old shows
+  its old version (nothing flags age yet). The edits (`SetWmi`, `SetRows`, `AddWmiRow`, `FailWmi`) work on any recording, so troubleshooting
+  replays can start from a real PC in a known bad state.
 
 A question the recording doesn't hold fails the snapshot test: the check now asks something new, so record the PC again.
 
@@ -49,7 +52,7 @@ A check whose answers a recording doesn't hold (a recording made before the reco
 | Hardware inventory | WMI (`Win32_ComputerSystem`, `Win32_Processor`, `Win32_PhysicalMemory`, …) | osquery |
 | Services | WMI (`Win32_Service`) | osquery |
 | Device Manager & drivers | WMI (`Win32_PnPEntity`, `Win32_PnPSignedDriver`) | PowerShell, osquery |
-| Programs & updates | WMI (`Win32_OperatingSystem`, `Win32_QuickFixEngineering`), the registry's Uninstall keys | osquery |
+| Programs & updates | WMI (`Win32_OperatingSystem`, `Win32_QuickFixEngineering`), the registry's Uninstall keys, Store apps from Windows' package API | osquery |
 
 ## Readers and editions
 
@@ -57,8 +60,9 @@ Each check reads through an interface (`IBatteryPowerSource`, `IDriveSource`, `I
 `IDeviceDriverSource`, `IProgramsSource`), so a build carries only the readers it uses:
 
 - The Setup edition (the default build) reads WMI through the Agent (`AgentWmiSource`), never in the app. Run out of process (in the module
-  host), a module asks the app for its WMI (the `wmi.query` capability), and the app asks the Agent. The registry keys Programs reads need
-  no administrator rights, so the app reads them itself.
+  host), a module asks the app for its WMI (the `wmi.query` capability), and the app asks the Agent. The registry keys Programs reads, and the
+  signed-in user's Store apps (`PackageManager`), need no administrator rights, so the app reads them itself (`packages.list` out of process).
+  Programs lists only the apps among the packages: no frameworks, language resources or parts of Windows.
 - The Store edition (`-p:RpcdEdition=Store`) may run without an Agent. It also ships `RemotePCDiagnostics.Legacy` (osquery, powercfg,
   PowerShell, all as a standard user) and uses it whenever no Agent is connected.
 

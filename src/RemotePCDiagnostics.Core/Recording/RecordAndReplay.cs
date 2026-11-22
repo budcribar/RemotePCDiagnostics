@@ -25,6 +25,16 @@ public sealed class RecordingWmiSource(IWmiSource inner, CallRecorder recorder) 
 }
 
 /// <summary>Passes each registry read to the real source and records the answer.</summary>
+public sealed class RecordingPackageSource(IPackageSource inner, CallRecorder recorder) : IPackageSource
+{
+    public async Task<WmiQueryResult> ReadPackagesAsync(CancellationToken ct = default)
+    {
+        var r = await inner.ReadPackagesAsync(ct).ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromPackages(r));
+        return r;
+    }
+}
+
 public sealed class RecordingRegistrySource(IRegistrySource inner, CallRecorder recorder) : IRegistrySource
 {
     public async Task<WmiQueryResult> ReadAsync(RegistryRead read, CancellationToken ct = default)
@@ -77,6 +87,7 @@ public sealed class RecordingReplay
 
     public IWmiSource Wmi => new ReplayWmi(this);
     public IRegistrySource Registry => new ReplayRegistry(this);
+    public IPackageSource Packages => new ReplayPackages(this);
     public IProcessLauncher Launcher => new ReplayLauncher(this);
 
     /// <summary>The same question asked twice gets the recorded answers in order, and the last one again after that.</summary>
@@ -96,9 +107,11 @@ public sealed class RecordingReplay
     {
         RecordedCall.WmiKind => WmiKey(c.Namespace ?? "", c.Query ?? ""),
         RecordedCall.RegistryKind => RegistryKey(c.Namespace ?? "", c.Query ?? ""),
+        RecordedCall.PackagesKind => PackagesKey,
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
     };
 
+    public const string PackagesKey = "packages";
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
     public static string WmiKey(string ns, string wql) => "wmi\n" + ns.ToLowerInvariant() + "\n" + wql;
     public static string ProcessKey(string file, IReadOnlyList<string> args) => "process\n" + RecordedCall.FileKey(file) + "\n" + string.Join("\n", args);
@@ -115,6 +128,12 @@ public sealed class RecordingReplay
         public Task<WmiQueryResult> ReadAsync(RegistryRead read, CancellationToken ct = default) =>
             Task.FromResult(replay.Answer(RegistryKey(read.Location, read.Describe()), $"registry {read.Location} \"{read.Describe()}\"")?.ToWmiResult()
                             ?? WmiQueryResult.Failed(read.Location, read.Describe(), "Not in the recording."));
+    }
+
+    private sealed class ReplayPackages(RecordingReplay replay) : IPackageSource
+    {
+        public Task<WmiQueryResult> ReadPackagesAsync(CancellationToken ct = default) =>
+            Task.FromResult(replay.Answer(PackagesKey, "packages")?.ToWmiResult() ?? PackageList.Failed("Not in the recording."));
     }
 
     private sealed class ReplayLauncher(RecordingReplay replay) : IProcessLauncher

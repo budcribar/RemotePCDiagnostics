@@ -37,6 +37,9 @@ public interface IHostQueries
     /// <summary><c>wmi.query</c>: one read-only WMI query (<see cref="DataSources.WmiQueryPolicy"/>), which the app passes to the Agent.</summary>
     Task<DataSources.WmiQueryResult> QueryWmiAsync(string wmiNamespace, string wql, CancellationToken ct = default) =>
         Task.FromResult(DataSources.WmiQueryResult.Failed(wmiNamespace, wql, "This host can't read WMI."));
+    /// <summary><c>packages.list</c>: the signed-in user's Store packages (<see cref="DataSources.IPackageSource"/>).</summary>
+    Task<DataSources.WmiQueryResult> ListPackagesAsync(CancellationToken ct = default) =>
+        Task.FromResult(DataSources.PackageList.Failed("This host can't list Store apps."));
 }
 
 /// <summary>The capability names a module lists in module.json, and the limits the app holds every query to.</summary>
@@ -51,9 +54,10 @@ public static class HostCapabilities
     public const string LiveKernelReports = "crashes.livekernelreports";
     public const string EventReviews = "events.reviewed";
     public const string WmiQuery = "wmi.query";
+    public const string PackagesList = "packages.list";
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
-        { SensorsRead, OsquerySelect, StorageDrives, StorageRetrims, EventLogQuery, Minidumps, LiveKernelReports, EventReviews, WmiQuery };
+        { SensorsRead, OsquerySelect, StorageDrives, StorageRetrims, EventLogQuery, Minidumps, LiveKernelReports, EventReviews, WmiQuery, PackagesList };
 
     /// <summary>The only statements <c>osquery.select</c> runs: the app's own, verbatim. Anything else is refused.</summary>
     public static readonly IReadOnlySet<string> AllowedSql = new HashSet<string>(StringComparer.Ordinal) { HardwareInventory.DiskSql, GraphicsDriverCrashes.DriversSql };
@@ -87,6 +91,8 @@ public sealed record HostQueryBackend
     public IDriveSource? Drives { get; init; }
     /// <summary>The app's WMI: the Agent's.</summary>
     public DataSources.IWmiSource? Wmi { get; init; }
+    /// <summary>The signed-in user's Store packages (read in the app; no administrator rights needed).</summary>
+    public DataSources.IPackageSource? Packages { get; init; }
     public Func<IReadOnlyList<MinidumpFile>> Minidumps { get; init; } = BsodHistoryModule.ReadSystemMinidumps;
     public Func<IReadOnlyList<MinidumpFile>> LiveKernelReports { get; init; } = GraphicsDriverCrashes.ReadLiveKernelReports;
     public Func<IReadOnlyCollection<string>> EventReviews { get; init; } = Areas.EventReviews.Read;
@@ -189,6 +195,10 @@ public sealed class HostQueryServer(Func<HostQueryBackend?> backend, ILogger? lo
                 var w = await Need(backend.Wmi).QueryAsync(ns, wql, ct).ConfigureAwait(false);
                 value = new WmiAnswer(w.Error, w.Rows?.Select(row => row.Values.ToDictionary(p => p.Key, p => p.Value)).ToList());
                 break;
+            case HostCapabilities.PackagesList:
+                var pk = await Need(backend.Packages).ReadPackagesAsync(ct).ConfigureAwait(false);
+                value = new WmiAnswer(pk.Error, pk.Rows?.Select(row => row.Values.ToDictionary(p => p.Key, p => p.Value)).ToList());
+                break;
             default:
                 throw new HostQueryException("badRequest", $"unknown capability {capability}");
         }
@@ -270,6 +280,14 @@ public sealed class HostQueriesClient(Action<ModuleHostMessage> send) : IHostQue
         return a.Error is { } error || a.Rows is null
             ? DataSources.WmiQueryResult.Failed(wmiNamespace, wql, a.Error ?? "The app didn't return any rows.")
             : new(wmiNamespace, wql, a.Rows.Select(r => new DataSources.WmiRow(r)).ToList());
+    }
+
+    public async Task<DataSources.WmiQueryResult> ListPackagesAsync(CancellationToken ct = default)
+    {
+        var a = await QueryAsync<WmiAnswer>(HostCapabilities.PackagesList, null, ct).ConfigureAwait(false);
+        return a.Error is { } error || a.Rows is null
+            ? DataSources.PackageList.Failed(a.Error ?? "The app didn't return any packages.")
+            : new(DataSources.PackageList.Location, DataSources.PackageList.Query, a.Rows.Select(r => new DataSources.WmiRow(r)).ToList());
     }
 
     public async Task<IReadOnlyDictionary<char, RetrimRecord>> ReadRetrimsAsync(CancellationToken ct = default)

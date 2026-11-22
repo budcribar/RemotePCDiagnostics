@@ -57,6 +57,7 @@ internal sealed class ReplayedPc(MachineRecording recording)
     public SystemCommandRunner Commands => new(Replay.Launcher, isProcessElevated: () => false);
     public IWmiSource Wmi => Replay.Wmi;
     public IRegistrySource Registry => Replay.Registry;
+    public IPackageSource Packages => Replay.Packages;
 
     /// <summary>The check as the app runs it (WMI, through the Agent).</summary>
     public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi));
@@ -84,7 +85,9 @@ internal sealed class ReplayedPc(MachineRecording recording)
     public DeviceDriversModule DeviceDriversOld() => new(new OsqueryDeviceDriverSource(Osquery, Commands));
 
     /// <summary>Programs and updates on WMI and the registry; "today" is the day the PC was recorded.</summary>
-    public ProgramsModule Programs() => new(new WmiProgramsSource(Wmi, Registry), today: Today);
+    public ProgramsModule Programs() => new(new WmiProgramsSource(Wmi, Registry, HasPackages ? Packages : null), today: Today);
+    /// <summary>Recordings before v5 have no Store-app list; replaying one, Programs lists the Uninstall keys only.</summary>
+    private bool HasPackages => Has(c => c.Kind == RecordedCall.PackagesKind);
     public ProgramsModule ProgramsOld() => new(new OsqueryProgramsSource(Osquery), today: Today);
     private DateOnly Today() => DateOnly.FromDateTime(recording.CapturedAt.DateTime);
 
@@ -195,7 +198,7 @@ internal static class FaultInjector
             var c = rec.Calls[i];
             if (only is not null && !only.Contains(RecordingReplay.Key(c))) continue;
             var what = c.Describe();
-            if (c.Kind is RecordedCall.WmiKind or RecordedCall.RegistryKind)
+            if (c.HasRows)
             {
                 yield return ($"{what}: access denied", Replace(rec, i, c with { Rows = null, Error = "Access denied" }));
                 yield return ($"{what}: timed out", Replace(rec, i, c with { Rows = null, Error = "The query timed out after 30s." }));
@@ -256,6 +259,23 @@ internal static class RecordingEdits
     public static MachineRecording SetWmi(this MachineRecording rec, string queryContains, string property, object? value) => Map(rec, c =>
         c.Kind == RecordedCall.WmiKind && c.Query?.Contains(queryContains, StringComparison.OrdinalIgnoreCase) == true && c.Rows is { } rows
             ? c with { Rows = rows.Select(r => new Dictionary<string, JsonElement>(r, StringComparer.OrdinalIgnoreCase) { [property] = JsonSerializer.SerializeToElement(value) }).ToList() }
+            : c);
+
+    /// <summary>Sets every row whose <paramref name="matchColumn"/> is <paramref name="matchValue"/>, in WMI, registry and package answers.</summary>
+    public static MachineRecording SetRows(this MachineRecording rec, string matchColumn, string matchValue, string property, object? value) => Map(rec, c =>
+        c.HasRows && c.Rows is { } rows
+            ? c with
+            {
+                Rows = rows.Select(r => r.TryGetValue(matchColumn, out var v) && v.ValueKind == JsonValueKind.String && v.GetString() == matchValue
+                    ? new Dictionary<string, JsonElement>(r, StringComparer.OrdinalIgnoreCase) { [property] = JsonSerializer.SerializeToElement(value) }
+                    : r).ToList(),
+            }
+            : c);
+
+    /// <summary>Adds a row to every WMI answer whose query contains <paramref name="queryContains"/>.</summary>
+    public static MachineRecording AddWmiRow(this MachineRecording rec, string queryContains, IReadOnlyDictionary<string, object?> row) => Map(rec, c =>
+        c.Kind == RecordedCall.WmiKind && c.Query?.Contains(queryContains, StringComparison.OrdinalIgnoreCase) == true && c.Rows is { } rows
+            ? c with { Rows = [.. rows, row.ToDictionary(p => p.Key, p => JsonSerializer.SerializeToElement(p.Value), StringComparer.OrdinalIgnoreCase)] }
             : c);
 
     /// <summary>Makes every WMI answer whose query contains <paramref name="queryContains"/> fail with <paramref name="error"/>.</summary>

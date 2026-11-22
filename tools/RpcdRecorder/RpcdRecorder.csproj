@@ -2,13 +2,15 @@
   <!-- Records the raw answers this PC gives to the checks, for record and replay tests (docs/record-replay.md). Read-only. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Windows TFM for the package API (Store apps), shared with the app's SystemPackageSource. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- Each module project carries its own module.json (embedded in its DLL); the copies next to the exe are not used. -->
     <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\..\src\RemotePCDiagnostics.Host\Platform\SystemPackageSource.cs" Link="SystemPackageSource.cs" />
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Legacy\RemotePCDiagnostics.Legacy.csproj" />
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
     <ProjectReference Include="..\..\src\Modules\BatteryPower\RemotePCDiagnostics.Modules.BatteryPower.csproj" />

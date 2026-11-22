@@ -84,6 +84,7 @@ public sealed record RecordedCall
     public const string ProcessKind = "process";
     public const string WmiKind = "wmi";
     public const string RegistryKind = "registry";
+    public const string PackagesKind = "packages";
 
     public string Kind { get; init; } = "";
 
@@ -123,7 +124,11 @@ public sealed record RecordedCall
     };
 
     public static RecordedCall FromRegistry(WmiQueryResult r) => FromWmi(r) with { Kind = RegistryKind };
+    public static RecordedCall FromPackages(WmiQueryResult r) => FromWmi(r) with { Kind = PackagesKind };
+
+    /// <summary>Kept as rows, like WMI (WMI, registry, the package list).</summary>
+    public bool HasRows => Kind is WmiKind or RegistryKind or PackagesKind;
 
     /// <summary>Short text naming the call, for test messages.</summary>
-    public string Describe() => Kind is WmiKind or RegistryKind ? $"{Kind} {Namespace} \"{Query}\"" : $"{File} {string.Join(' ', Args ?? [])}";
+    public string Describe() => HasRows ? $"{Kind} {Namespace} \"{Query}\"" : $"{File} {string.Join(' ', Args ?? [])}";
 }

@@ -55,6 +55,7 @@ public static class HostServices
         services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(sp => new RemotePCDiagnostics.Core.DataSources.AgentWmiSource(sp.GetRequiredService<IElevatedCommandBridge>()));
         // The registry keys checks read need no administrator rights, so the app reads them itself.
         services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IRegistrySource>(_ => new RemotePCDiagnostics.Core.DataSources.SystemRegistrySource(L<RemotePCDiagnostics.Core.DataSources.SystemRegistrySource>()));
+        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IPackageSource>(_ => new RemotePCDiagnostics.Host.Platform.SystemPackageSource(L<RemotePCDiagnostics.Host.Platform.SystemPackageSource>()));
         services.AddReaders();
 #if RPCD_STORE
         // The Store edition may have no Agent: then it reads as a standard user, with the legacy readers.
@@ -334,6 +335,7 @@ public sealed class HostQueryBackendSlot
             Sensors = sp.GetService<ISensorProvider>(), Osquery = sp.GetService<OsqueryRunner>(), Commands = sp.GetService<SystemCommandRunner>(),
             Retrims = sp.GetService<IRetrimHistory>(), Drives = sp.GetService<IDriveSource>(),
             Wmi = sp.GetService<RemotePCDiagnostics.Core.DataSources.IWmiSource>(),
+            Packages = sp.GetService<RemotePCDiagnostics.Core.DataSources.IPackageSource>(),
         };
     }
 }

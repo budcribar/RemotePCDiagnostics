@@ -5,8 +5,8 @@
   "contract": "2.0",
   "entryType": "RemotePCDiagnostics.Modules.Programs.ProgramsPlugin",
   "needsAdmin": false,
-  // Out of process (the module host) its WMI queries go through the app to the Agent, as in process.
-  "capabilities": [ "wmi.query" ],
+  // Out of process (the module host) its WMI queries go through the app to the Agent, as in process, and the app lists the Store apps.
+  "capabilities": [ "wmi.query", "packages.list" ],
   "hasUi": true,
   "outOfProcess": false,
   "portableUi": true,

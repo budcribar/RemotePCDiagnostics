@@ -105,11 +105,20 @@ public sealed class AgentOrFallbackProgramsSource(Session.IElevatedCommandBridge
 /// <summary>Registers the readers the checks use, over the <see cref="IWmiSource"/> and <see cref="IRegistrySource"/> already registered.</summary>
 public static class ReaderRegistration
 {
+    /// <summary>Store apps come from <see cref="IPackageSource"/> when the app registers one (the Windows package API); otherwise none.</summary>
     public static IServiceCollection AddReaders(this IServiceCollection services) => services
+        .TryAddPackages()
         .AddSingleton<IBatteryPowerSource>(sp => new WmiBatteryPowerSource(sp.GetRequiredService<IWmiSource>()))
         .AddSingleton<IDriveSource>(sp => new WmiDriveSource(sp.GetRequiredService<IWmiSource>()))
         .AddSingleton<IHardwareInventorySource>(sp => new WmiHardwareInventorySource(sp.GetRequiredService<IWmiSource>()))
         .AddSingleton<IServiceSource>(sp => new WmiServiceSource(sp.GetRequiredService<IWmiSource>()))
         .AddSingleton<IDeviceDriverSource>(sp => new WmiDeviceDriverSource(sp.GetRequiredService<IWmiSource>()))
-        .AddSingleton<IProgramsSource>(sp => new WmiProgramsSource(sp.GetRequiredService<IWmiSource>(), sp.GetRequiredService<IRegistrySource>()));
+        .AddSingleton<IProgramsSource>(sp => new WmiProgramsSource(sp.GetRequiredService<IWmiSource>(), sp.GetRequiredService<IRegistrySource>(),
+            sp.GetRequiredService<IPackageSource>()));
+
+    private static IServiceCollection TryAddPackages(this IServiceCollection services)
+    {
+        Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton<IPackageSource, NoPackageSource>(services);
+        return services;
+    }
 }

@@ -254,7 +254,8 @@ public sealed class WmiDeviceDriverSource(IWmiSource wmi) : IDeviceDriverSource
         r.Str("DriverVersion"), CimDates.Parse(r.Str("DriverDate")), r.Bool("IsSigned") != false);
 }
 
-public sealed class WmiProgramsSource(IWmiSource wmi, IRegistrySource registry) : IProgramsSource
+/// <param name="packages">The signed-in user's Store apps, added to the Uninstall keys' programs (osquery lists them too).</param>
+public sealed class WmiProgramsSource(IWmiSource wmi, IRegistrySource registry, IPackageSource? packages = null) : IProgramsSource
 {
     public const string OsSql = "SELECT Caption, Version, BuildNumber, OSArchitecture, InstallDate FROM Win32_OperatingSystem";
     public const string UpdatesSql = "SELECT HotFixID, Description, InstalledOn FROM Win32_QuickFixEngineering";
@@ -312,6 +313,13 @@ public sealed class WmiProgramsSource(IWmiSource wmi, IRegistrySource registry) 
                 var r = await registry.ReadAsync(new RegistryRead(RegistryRoot.Users, sid + @"\" + key, ProgramValues, SubKeys: true), ct).ConfigureAwait(false);
                 list.AddRange(Programs(r));
             }
+        }
+        if (packages is not null)
+        {
+            // Without the list (it failed, or this host can't read it), the Uninstall keys' programs are still the answer.
+            var apps = await packages.ReadPackagesAsync(ct).ConfigureAwait(false);
+            list.AddRange(PackageList.Apps(apps).Select(p => new InstalledProgram(p.Str(PackageList.DisplayName), p.Str(PackageList.Version),
+                p.Str(PackageList.Publisher), OsqueryDates.Parse(p.Str(PackageList.InstalledDate)))));
         }
         return list;
     }

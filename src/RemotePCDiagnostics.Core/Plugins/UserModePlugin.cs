@@ -36,6 +36,8 @@ public static class UserModePlugin
         // A module that lists wmi.query reads WMI through the app (the Agent's), not with the module host's own token.
         if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.WmiQuery, StringComparer.Ordinal))
             services.AddSingleton<DataSources.IWmiSource>(new DataSources.HostWmiSource(hostQueries, log));
+        if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.PackagesList, StringComparer.Ordinal))
+            services.AddSingleton<DataSources.IPackageSource>(new DataSources.HostPackageSource(hostQueries, log));
         plugin.Register(services, context);
         var sp = services.BuildServiceProvider();
         var modules = sp.GetServices<IDiagnosticModule>().ToList();

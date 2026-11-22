@@ -29,6 +29,7 @@ var recorder = new CallRecorder();
 var liveWmi = new SystemWmiSource();
 var wmi = new RecordingWmiSource(liveWmi, recorder);
 var registry = new RecordingRegistrySource(new SystemRegistrySource(), recorder);
+var packages = new RecordingPackageSource(new RemotePCDiagnostics.Host.Platform.SystemPackageSource(), recorder);
 var launcher = new RecordingProcessLauncher(new SystemProcessLauncher(), recorder);
 var osquery = new OsqueryRunner(options: new OsqueryOptions { ExecutablePath = osqueryPath }, launcher: launcher);
 var commands = new SystemCommandRunner(launcher);
@@ -53,7 +54,7 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     ("Services (legacy: osquery)", new ServicesModule(new OsqueryServiceSource(osquery))),
     ("Device Manager & drivers (WMI)", new DeviceDriversModule(new WmiDeviceDriverSource(wmi))),
     ("Device Manager & drivers (legacy: PowerShell + osquery)", new DeviceDriversModule(new OsqueryDeviceDriverSource(osquery, commands))),
-    ("Programs & updates (WMI + registry)", new ProgramsModule(new WmiProgramsSource(wmi, registry))),
+    ("Programs & updates (WMI + registry)", new ProgramsModule(new WmiProgramsSource(wmi, registry, packages))),
     ("Programs & updates (legacy: osquery)", new ProgramsModule(new OsqueryProgramsSource(osquery))),
 };
 foreach (var (label, module) in checks)

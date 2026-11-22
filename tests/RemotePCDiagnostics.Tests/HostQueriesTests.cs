@@ -228,7 +228,7 @@ public sealed class HostQueriesTests : IDisposable
     [InlineData("RemotePCDiagnostics.Modules.Services.dll", new[] { HostCapabilities.WmiQuery })]
     [InlineData("RemotePCDiagnostics.Modules.Osquery.dll", new[] { HostCapabilities.WmiQuery })]
     [InlineData("RemotePCDiagnostics.Modules.DeviceDrivers.dll", new[] { HostCapabilities.WmiQuery })]
-    [InlineData("RemotePCDiagnostics.Modules.Programs.dll", new[] { HostCapabilities.WmiQuery })]
+    [InlineData("RemotePCDiagnostics.Modules.Programs.dll", new[] { HostCapabilities.WmiQuery, HostCapabilities.PackagesList })]
     [InlineData("RemotePCDiagnostics.Modules.BatteryPower.dll", new[] { HostCapabilities.WmiQuery })]
     [InlineData("RemotePCDiagnostics.Modules.Crashes.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.Minidumps, HostCapabilities.LiveKernelReports, HostCapabilities.OsquerySelect, HostCapabilities.EventReviews })]
     [InlineData("RemotePCDiagnostics.Modules.EventLog.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.EventReviews })]
