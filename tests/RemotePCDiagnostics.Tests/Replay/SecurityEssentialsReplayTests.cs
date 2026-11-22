@@ -116,6 +116,16 @@ public sealed class WmiSecurityEssentialsSourceTests
         Assert.Empty(WmiSecurityEssentialsSource.Asr(Row(("AttackSurfaceReductionRules_Ids", null))));
     }
 
+    /// <summary>WMI gives the actions as bytes, which a WMI answer holds as base64 (as recorded on BUDSLAPTOP: five rules, all block).</summary>
+    [Fact]
+    public void Asr_actions_as_bytes_are_read()
+    {
+        var asr = WmiSecurityEssentialsSource.Asr(Row(("AttackSurfaceReductionRules_Ids", new[] { "56a863a9-875e-4185-98a7-b882c64b5ce5", "d4f940ab-401b-4efc-aadc-ad5f3c50688a" }),
+            ("AttackSurfaceReductionRules_Actions", new byte[] { 1, 2 })));
+        Assert.Equal(new Dictionary<string, int> { ["56a863a9-875e-4185-98a7-b882c64b5ce5"] = 1, ["d4f940ab-401b-4efc-aadc-ad5f3c50688a"] = 2 }, asr);
+        Assert.Equal(0, WmiSecurityEssentialsSource.Asr(Row(("AttackSurfaceReductionRules_Ids", new[] { "x" }), ("AttackSurfaceReductionRules_Actions", "@@ not base64")))["x"]);
+    }
+
     [Fact]
     public void Firewall_not_configured_is_Windows_default_on()
     {

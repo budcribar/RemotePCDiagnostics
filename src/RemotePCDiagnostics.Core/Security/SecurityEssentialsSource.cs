@@ -125,9 +125,11 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
     public const string AntivirusSql = "SELECT displayName FROM AntiVirusProduct";
     public const string FirewallSql = "SELECT Name, Enabled FROM MSFT_NetFirewallProfile";
 
+    /// <summary>
+    /// Only a PC that starts in UEFI mode has UEFISecureBootEnabled (0 or 1), so its presence also gives the firmware type. (PEFirmwareType
+    /// under Control would say it directly, but Windows sets it only in Windows PE: both test laptops have none.)
+    /// </summary>
     public const string SecureBootKey = @"SYSTEM\CurrentControlSet\Control\SecureBoot\State";
-    /// <summary>PEFirmwareType: 1 legacy BIOS, 2 UEFI (what Windows' firmware_type variable says).</summary>
-    public const string ControlKey = @"SYSTEM\CurrentControlSet\Control";
     public const string CurrentVersionKey = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
     public const string GuestParametersKey = @"SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters";
 
@@ -151,7 +153,6 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
             PsKey(psKey) is var (root, path) ? await One(root, path, values).ConfigureAwait(false) : null;
 
         var secureBoot = await One(RegistryRoot.LocalMachine, SecureBootKey, "UEFISecureBootEnabled").ConfigureAwait(false);
-        var control = await One(RegistryRoot.LocalMachine, ControlKey, "PEFirmwareType").ConfigureAwait(false);
         var edition = await One(RegistryRoot.LocalMachine, CurrentVersionKey, "EditionID").ConfigureAwait(false);
         var llmnr = await Policy(SecurityFixes.LlmnrKey, SecurityFixes.LlmnrValue).ConfigureAwait(false);
         var autoRun = await Policy(SecurityFixes.AutoRunKey, SecurityFixes.AutoRunValue, SecurityFixes.AutoRunLettersValue).ConfigureAwait(false);
@@ -173,9 +174,10 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
 
         var systemDrive = os?.Str("SystemDrive") is { Length: 2 } sd && char.IsAsciiLetter(sd[0]) && sd[1] == ':' ? char.ToUpperInvariant(sd[0]) + ":" : "C:";
         var volume = volumes?.FirstOrDefault(v => string.Equals(v.Str("DriveLetter"), systemDrive, StringComparison.OrdinalIgnoreCase));
+        var secureBootValue = secureBoot?.Long("UEFISecureBootEnabled");
         return new SecurityFacts(
-            secureBoot?.Long("UEFISecureBootEnabled") is { } sb ? sb != 0 : null,
-            control?.Long("PEFirmwareType") switch { 1 => "Legacy", 2 => "UEFI", _ => null },
+            secureBootValue is { } sb ? sb != 0 : null,
+            secureBootValue is not null ? "UEFI" : null,
             edition?.Str("EditionID") is { Length: > 0 } ed ? ed : null,
             volume is null ? null : Protection(volume),
             tpm, systemDrive)
@@ -234,16 +236,33 @@ public sealed class WmiSecurityEssentialsSource(IWmiSource wmi, IRegistrySource 
     public static IReadOnlyDictionary<string, int> Asr(WmiRow preference)
     {
         var ids = Array(preference, "AttackSurfaceReductionRules_Ids");
-        var actions = Array(preference, "AttackSurfaceReductionRules_Actions");
+        var actions = Actions(preference);
         var d = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < ids.Count; i++)
         {
             if (ids[i].ValueKind != JsonValueKind.String || ids[i].GetString()!.Trim() is not { Length: > 0 } id) continue;
             // As Get-MpPreference shows it: a rule without an action counts as off.
-            var action = i < actions.Count && actions[i].ValueKind == JsonValueKind.Number && actions[i].TryGetInt32(out var a) ? a : 0;
+            var action = i < actions.Count ? actions[i] : 0;
             d[id.ToLowerInvariant()] = action;
         }
         return d;
+    }
+
+    /// <summary>
+    /// AttackSurfaceReductionRules_Actions is a uint8[], which WMI hands over as bytes, so a recorded or Agent answer holds it as base64
+    /// ("AQEBAQE=" is five 1s); a list of numbers is read too.
+    /// </summary>
+    private static IReadOnlyList<int> Actions(WmiRow preference)
+    {
+        if (!preference.Values.TryGetValue("AttackSurfaceReductionRules_Actions", out var v)) return [];
+        if (v.ValueKind == JsonValueKind.String)
+        {
+            try { return [.. Convert.FromBase64String(v.GetString()!).Select(b => (int)b)]; }
+            catch (FormatException) { return []; }
+        }
+        return v.ValueKind == JsonValueKind.Array
+            ? [.. v.EnumerateArray().Select(e => e.ValueKind == JsonValueKind.Number && e.TryGetInt32(out var a) ? a : 0)]
+            : [];
     }
 
     private static IReadOnlyList<JsonElement> Array(WmiRow row, string name) =>
