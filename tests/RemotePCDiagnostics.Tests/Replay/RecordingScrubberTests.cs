@@ -172,6 +172,7 @@ public sealed class RecordingScrubberTests
         var at = s.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
         if (at < 0) return null;
         var rest = s[(at + marker.Length)..];
+        if (rest.StartsWith("&lt;", StringComparison.Ordinal)) return null; // A placeholder inside event XML is escaped.
         var end = rest.IndexOfAny(['\\', '"', ' ', ';']);
         var user = end < 0 ? rest : rest[..end];
         string[] shared = ["Public", "Default", "Default User", "All Users"];
