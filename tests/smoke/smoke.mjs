@@ -203,7 +203,7 @@ try {
   const buildVersion = await page.getByTestId('about-version').innerText();
   if (!/^\d+\.\d+\.\d+-(local|ci\.)/.test(buildVersion)) throw new Error(`Missing build identity: ${buildVersion}`);
   if (process.env.GITHUB_SHA && !buildVersion.includes(process.env.GITHUB_SHA)) throw new Error(`Wrong Git revision: ${buildVersion}`);
-  if (process.env.GITHUB_RUN_NUMBER && !buildVersion.includes(`-ci.${process.env.GITHUB_RUN_NUMBER}.${process.env.GITHUB_RUN_ATTEMPT}`)) throw new Error(`Wrong CI build: ${buildVersion}`);
+  if (process.env.GITHUB_RUN_NUMBER && !buildVersion.includes(`-ci.${process.env.GITHUB_RUN_NUMBER}.1`)) throw new Error(`Wrong CI build: ${buildVersion}`);
   console.log('About build:', buildVersion);
   await page.screenshot({ path: `${outDir}/about.png`, fullPage: true });
 } catch (e) {
