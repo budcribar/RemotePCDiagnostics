@@ -18,8 +18,19 @@ public sealed record BatteryStatus(
 
     /// <summary>One row of osquery <c>battery</c>, with the capacities in mWh.</summary>
     public static BatteryStatus FromRow(IReadOnlyDictionary<string, string> r) => new(
-        r.Str("model"), r.Str("manufacturer"), r.Str("chemistry"), r.Str("state"),
+        r.Str("model"), r.Str("manufacturer"), OsqueryChemistry(r.Str("chemistry")), r.Str("state"),
         r.Int("percent_remaining") is >= 0 and <= 100 and var pct ? pct : null, ToMilliwattHours(r.Int("designed_capacity")), ToMilliwattHours(r.Int("max_capacity")), r.Int("cycle_count"));
+
+    /// <summary>
+    /// The chemistry is four letters at most. osquery copies the driver's 4-byte field as a C string, so without a terminating zero it runs on
+    /// into whatever follows ("LION\u0018τ" on an HP OmniBook X): keep the leading printable letters, as the WMI path does.
+    /// </summary>
+    private static string OsqueryChemistry(string s)
+    {
+        var n = 0;
+        while (n < s.Length && n < 4 && s[n] is >= ' ' and <= '~') n++;
+        return s[..n].Trim();
+    }
 
     /// <summary>Back to mWh; null when the driver didn't know the capacity (osquery passes BATTERY_UNKNOWN_CAPACITY through, divided by 12).</summary>
     private static int? ToMilliwattHours(int? osqueryMilliampHours) =>

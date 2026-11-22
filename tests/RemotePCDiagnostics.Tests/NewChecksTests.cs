@@ -116,6 +116,13 @@ public class NewChecksTests
     }
 
     [Fact]
+    public void BatteryStatus_FromRow_CutsOsqueryChemistryToItsFourLetters()
+    {
+        Assert.Equal("LION", BatteryStatus.FromRow(new Dictionary<string, string> { ["chemistry"] = "LION\u0018τ" }).Chemistry);
+        Assert.Equal("LiP", BatteryStatus.FromRow(new Dictionary<string, string> { ["chemistry"] = "LiP" }).Chemistry);
+    }
+
+    [Fact]
     public void BatteryStatus_FromRow_UndoesOsqueryTwelveVoltConversion()
     {
         // osquery on Windows reports 42,000 mWh as 42000 / 12 = 3500 "mAh" (BUDSLAPTOP's battery report shows 42,000 mWh design capacity).
