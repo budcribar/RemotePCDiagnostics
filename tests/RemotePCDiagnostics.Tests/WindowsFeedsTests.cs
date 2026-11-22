@@ -85,6 +85,7 @@ public class WindowsFeedsTests
         Assert.Equal("full", action.GetProperty("undo").GetString());
         Assert.True(row.GetProperty("result").GetProperty("succeeded").GetBoolean());
         Assert.True(row.GetProperty("canUndo").GetBoolean());
+        Assert.Equal("widgets", root.GetProperty("last").GetProperty("suggestionId").GetString());
 
         using var storage = System.Text.Json.JsonDocument.Parse(AgentExports.StorageCleanup(svc));
         Assert.False(storage.RootElement.GetProperty("scanned").GetBoolean());

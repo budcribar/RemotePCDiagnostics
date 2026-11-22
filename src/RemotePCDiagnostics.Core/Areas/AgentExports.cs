@@ -215,6 +215,7 @@ public static class AgentExports
 
     private static object? SuggestionResultExport(Optimizations.SuggestionResult? r) => r is null ? null : new
     {
+        suggestionId = V(r.SuggestionId),
         succeeded = r.Success,
         skipped = r.Skipped ? true : (bool?)null,
         message = T(r.Message),
@@ -248,7 +249,8 @@ public static class AgentExports
 
     /// <summary>
     /// The Ways to use less memory panel for browser agents (mem-suggest-data). Each action is the panel's
-    /// <c>[data-action=mem-act][data-suggestion-id][data-action-type]</c> button; one with confirm true then needs mem-confirm-yes.
+    /// <c>[data-action=mem-act][data-suggestion-id][data-action-type]</c> button; one with confirm true then needs mem-confirm-yes. last is
+    /// the newest result, also when its card is gone after the change.
     /// </summary>
     public static string MemorySuggestions(Optimizations.MemorySuggestionService svc) => JsonSerializer.Serialize(new
     {
@@ -258,6 +260,7 @@ public static class AgentExports
         busy = V(svc.Busy),
         error = T(svc.ScanError),
         freedBytes = svc.TotalFreedBytes,
+        last = SuggestionResultExport(svc.Recent.FirstOrDefault(r => Storage.StorageCleanupCatalog.Find(r.SuggestionId) is null)),
         suggestions = svc.Suggestions.Take(MaxSuggestions).Select(s => SuggestionExport(svc, s)).ToList(),
     }, Json);
 
@@ -273,6 +276,7 @@ public static class AgentExports
         busy = V(svc.Busy),
         error = T(svc.StorageError),
         freedBytes = svc.StorageFreedBytes,
+        last = SuggestionResultExport(svc.Recent.FirstOrDefault(r => Storage.StorageCleanupCatalog.Find(r.SuggestionId) is not null)),
         suggestions = svc.StorageSuggestions.Take(MaxSuggestions).Select(s => new
         {
             id = V(s.Id),
