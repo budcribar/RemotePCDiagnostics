@@ -804,11 +804,13 @@ public class WorkflowTests
         ctx.Services.AddSingleton(flow);
         var cut = ctx.Render<RemotePCDiagnostics.UI.Shared.WorkflowReportBox>(ps => ps.Add(x => x.Html, html));
         Assert.Null(cut.FindAll("[data-testid='wf-report']").FirstOrDefault()); // the full report only on request
+        // Grouped by category in first-appearance order: Startup, Network (dns, flush), Apps (weather, clips), Updates, Display.
+        Assert.Equal(["Startup", "Network", "Apps", "Updates", "Display"], cut.FindAll("[data-testid='wf-change-group']").Select(g => g.GetAttribute("data-area-key")));
         Assert.Equal(["undo", "reapply", "reinstall", "reapply"], cut.FindAll("[data-testid^='wf-change-']").Where(b => b.TagName == "BUTTON").Select(b => b.GetAttribute("data-action")));
         Assert.Equal(["Undo", "Apply again", "Reinstall", "Remove again"], cut.FindAll("button[data-testid^='wf-change-']").Select(b => b.TextContent.Trim()));
-        Assert.Equal(["Undoable", "Undone", "Reinstallable", "Undone", "Permanent", "NothingToUndo", "Skipped"], cut.FindAll("[data-testid='wf-change']").Select(li => li.GetAttribute("data-tag")));
+        Assert.Equal(["Undoable", "Undone", "NothingToUndo", "Reinstallable", "Undone", "Permanent", "Skipped"], cut.FindAll("[data-testid='wf-change']").Select(li => li.GetAttribute("data-tag")));
         // A row with a button has no label pill too; the rest keep theirs.
-        Assert.Equal(["Permanent", "Nothing to undo", "Skipped"], cut.FindAll("[data-testid='wf-change-label']").Select(x => x.TextContent.Trim()));
+        Assert.Equal(["Nothing to undo", "Permanent", "Skipped"], cut.FindAll("[data-testid='wf-change-label']").Select(x => x.TextContent.Trim()));
 
         // The summary pills filter the list; pressing the same one again (or Show all) shows every row.
         Assert.Equal(["Undoable", "Reinstallable", "Permanent", "NothingToUndo", "Undone", "Skipped"], cut.FindAll("[data-testid='wf-filter']").Select(b => b.GetAttribute("data-tag")));
@@ -825,6 +827,65 @@ public class WorkflowTests
         Assert.Empty(cut.FindAll("[data-testid='wf-filter-clear']"));
         cut.Find("[data-testid='wf-toggle-preview']").Click();
         Assert.NotNull(cut.Find("[data-testid='wf-report']"));
+    }
+
+    [Fact]
+    public void ReportBox_GroupsByCategory_AndNestsMultiChangeFixes()
+    {
+        var now = DateTimeOffset.Now;
+        var defenderChanges = Enumerable.Range(1, 7)
+            .Select(i => new FixChange(Guid.NewGuid(), $@"Defender no longer scans C:\src\repo{i}", UndoSupport.Full))
+            .ToList();
+        var state = new WorkflowState
+        {
+            Stage = WorkflowStage.Done, StartedUtc = now.AddMinutes(-10), FinishedUtc = now, ReviewedUtc = now.AddMinutes(-15), ChangesTracked = true, Machine = "DESKTOP-TEST01",
+            ReviewRulesVersion = WorkflowService.CurrentReviewRulesVersion,
+            Fixes =
+            [
+                new("browser-ext", "Turn off MSN New Tab in Chrome", "", "Browser", SuggestionRisk.Low, FixSource.Memory, 1),
+                new("office-start", "Skip the Office start screen", "", "Office", SuggestionRisk.Low, FixSource.Memory, 2),
+                new("defender", "Stop Defender rescanning code and build folders", "", "Windows", SuggestionRisk.Medium, FixSource.Memory, 3),
+            ],
+            Approved = ["browser-ext", "office-start", "defender"],
+            Outcomes =
+            [
+                new("browser-ext", "Turn off MSN New Tab in Chrome", true, "Done.", Changes: [new(Guid.NewGuid(), "MSN New Tab turned off in Chrome", UndoSupport.Full)]),
+                new("office-start", "Skip the Office start screen", true, "Done.", Changes:
+                [
+                    new(Guid.NewGuid(), "Word start screen turned off", UndoSupport.Full),
+                    new(Guid.NewGuid(), "Excel start screen turned off", UndoSupport.Full),
+                    new(Guid.NewGuid(), "PowerPoint start screen turned off", UndoSupport.Full),
+                ]),
+                new("defender", "Stop Defender rescanning code and build folders", true, "Done.", Changes: defenderChanges),
+            ],
+        };
+        var store = new MemFlowStore { State = state };
+        var (flow, _, _, _, _, _) = Make(store);
+        using var ctx = new Bunit.BunitContext();
+        ctx.JSInterop.Mode = Bunit.JSRuntimeMode.Loose;
+        ctx.Services.AddSingleton(flow);
+
+        var cut = ctx.Render<RemotePCDiagnostics.UI.Shared.WorkflowReportBox>(ps => ps.Add(x => x.Html, "<html/>"));
+
+        // Categories appear as top-level tree groups (all open by default).
+        var groups = cut.FindAll("[data-testid='wf-change-group']");
+        Assert.Equal(["Browser", "Office", "Windows"], groups.Select(g => g.GetAttribute("data-area-key")));
+        Assert.All(groups, g => Assert.True(g.HasAttribute("open")));
+
+        // Single-item fix (Browser) is a direct row; multi-item fixes (Office, Defender) are nested sub-groups.
+        var fixGroups = cut.FindAll("[data-testid='wf-change-fix-group']");
+        Assert.Equal(["office-start", "defender"], fixGroups.Select(g => g.GetAttribute("data-fix-id")));
+        // 3 items <= threshold (5): open by default; 7 items > threshold (5): collapsed by default.
+        Assert.True(fixGroups[0].HasAttribute("open"));
+        Assert.False(fixGroups[1].HasAttribute("open"));
+
+        // Expand all opens everything; clicking again collapses everything.
+        Assert.Equal("Expand all", cut.Find("[data-testid='wf-changes-expand-all']").TextContent.Trim());
+        cut.Find("[data-testid='wf-changes-expand-all']").Click();
+        Assert.Equal("Collapse all", cut.Find("[data-testid='wf-changes-expand-all']").TextContent.Trim());
+        Assert.All(cut.FindAll("[data-testid='wf-change-fix-group']"), g => Assert.True(g.HasAttribute("open")));
+        cut.Find("[data-testid='wf-changes-expand-all']").Click();
+        Assert.All(cut.FindAll("[data-testid='wf-change-group']"), g => Assert.False(g.HasAttribute("open")));
     }
 
     [Fact]
