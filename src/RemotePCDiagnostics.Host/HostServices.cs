@@ -297,6 +297,14 @@ public static class HostServices
         return loader;
     }
 
+    /// <summary>Whether this edition loads checks written as data (only the Store edition, which ships osquery).</summary>
+    public static readonly bool LoadsJsonChecks =
+#if RPCD_STORE
+        true;
+#else
+        false;
+#endif
+
     /// <summary>Checks written as data (%ProgramFiles%\RemotePCDiagnostics\checks\*.json): read-only osquery, no code, so they run unsigned.
 /// Store edition only: the Setup edition doesn't ship osquery and ignores the folder.</summary>
     public static void LoadJsonChecks(IServiceCollection services, PluginRegistrar plugins, ILogger? log, string? folder = null)

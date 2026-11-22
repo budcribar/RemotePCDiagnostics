@@ -239,7 +239,9 @@ public class HostServicesTests
             using var local = new ServiceCollection()
                 .AddRemotePCDiagnosticsHost(new SessionContext(SessionMode.Local), _ => { }, (_, _, _) => { }, modulesDir, checksFolder: checksDir)
                 .BuildServiceProvider();
-            Assert.Contains(local.GetServices<IDiagnosticModule>(), m => m.Id == checkId);
+            // Checks written as data load only in the Store edition (they need osquery); the Setup edition ignores the folder.
+            if (HostServices.LoadsJsonChecks) Assert.Contains(local.GetServices<IDiagnosticModule>(), m => m.Id == checkId);
+            else Assert.DoesNotContain(local.GetServices<IDiagnosticModule>(), m => m.Id == checkId);
 
             // Remote sessions never enable unsigned modules even when the marker is present in modulesDir.
             using var remote = new ServiceCollection()
