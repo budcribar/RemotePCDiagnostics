@@ -56,6 +56,7 @@ internal sealed class ReplayedPc(MachineRecording recording)
     public OsqueryRunner Osquery => new(options: new OsqueryOptions { ExecutablePath = "osqueryi.exe" }, launcher: Replay.Launcher, fileExists: _ => true);
     public SystemCommandRunner Commands => new(Replay.Launcher, isProcessElevated: () => false);
     public IWmiSource Wmi => Replay.Wmi;
+    public IRegistrySource Registry => Replay.Registry;
 
     /// <summary>The check as the app runs it (WMI, through the Agent).</summary>
     public BatteryPowerModule BatteryPower() => new(new WmiBatteryPowerSource(Wmi));
@@ -69,7 +70,40 @@ internal sealed class ReplayedPc(MachineRecording recording)
     private DriveHealthModule Drives(IDriveSource source) =>
         new(source, clock: () => recording.CapturedAt, historyStore: new DriveHealthHistoryStore(), volumes: () => []);
 
+    /// <summary>Hardware inventory on WMI (the Agent's).</summary>
+    public OsqueryModule Inventory() => new(new WmiHardwareInventorySource(Wmi));
+    /// <summary>The Store edition without an Agent: osquery.</summary>
+    public OsqueryModule InventoryOld() => new(new OsqueryHardwareInventorySource(Osquery));
+
+    public ServicesModule Services() => new(new WmiServiceSource(Wmi));
+    public ServicesModule ServicesOld() => new(new OsqueryServiceSource(Osquery));
+
+    /// <summary>Device Manager and drivers on WMI. Pending driver updates aren't recorded, so they aren't asked.</summary>
+    public DeviceDriversModule DeviceDrivers() => new(new WmiDeviceDriverSource(Wmi));
+    /// <summary>The Store edition: the ProblemDevices PowerShell script and the osquery drivers table.</summary>
+    public DeviceDriversModule DeviceDriversOld() => new(new OsqueryDeviceDriverSource(Osquery, Commands));
+
+    /// <summary>Programs and updates on WMI and the registry; "today" is the day the PC was recorded.</summary>
+    public ProgramsModule Programs() => new(new WmiProgramsSource(Wmi, Registry), today: Today);
+    public ProgramsModule ProgramsOld() => new(new OsqueryProgramsSource(Osquery), today: Today);
+    private DateOnly Today() => DateOnly.FromDateTime(recording.CapturedAt.DateTime);
+
     public bool Has(Func<RecordedCall, bool> match) => recording.Calls.Any(match);
+    public bool HasWmi(string query) => Has(c => c.Kind == RecordedCall.WmiKind && c.Query == query);
+    public bool HasOsquery(string sql) => Has(c => c.Kind == RecordedCall.ProcessKind && c.Args?.LastOrDefault() == sql);
+
+    /// <summary>The <see cref="RecordingReplay.Key"/> of every answer these checks ask for on this recording.</summary>
+    public static async Task<HashSet<string>> AskedByAsync(MachineRecording rec, CancellationToken ct, params Func<ReplayedPc, IDiagnosticModule>[] checks)
+    {
+        var asked = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var make in checks)
+        {
+            var pc = new ReplayedPc(rec);
+            await make(pc).RefreshAsync(null, ct);
+            asked.UnionWith(pc.Replay.Asked);
+        }
+        return asked;
+    }
 }
 
 /// <summary>
@@ -151,19 +185,23 @@ internal static class FaultInjector
         ("German decimal", JsonSerializer.SerializeToElement("1.234,5")),
     ];
 
-    public static IEnumerable<(string Fault, MachineRecording Recording)> Variants(MachineRecording rec)
+    /// <param name="only">The answers to damage (their <see cref="RecordingReplay.Key"/>); null damages every answer.</param>
+    /// <param name="maxRows">Damage values only in the first rows of each answer: long lists (services, drivers, programs) would
+    /// otherwise make tens of thousands of variants, all the same kind of row.</param>
+    public static IEnumerable<(string Fault, MachineRecording Recording)> Variants(MachineRecording rec, IReadOnlySet<string>? only = null, int maxRows = int.MaxValue)
     {
         for (var i = 0; i < rec.Calls.Count; i++)
         {
             var c = rec.Calls[i];
+            if (only is not null && !only.Contains(RecordingReplay.Key(c))) continue;
             var what = c.Describe();
-            if (c.Kind == RecordedCall.WmiKind)
+            if (c.Kind is RecordedCall.WmiKind or RecordedCall.RegistryKind)
             {
                 yield return ($"{what}: access denied", Replace(rec, i, c with { Rows = null, Error = "Access denied" }));
                 yield return ($"{what}: timed out", Replace(rec, i, c with { Rows = null, Error = "The query timed out after 30s." }));
                 yield return ($"{what}: no rows", Replace(rec, i, c with { Rows = [], Error = null }));
                 if (c.Rows is not { } rows) continue;
-                for (var r = 0; r < rows.Count; r++)
+                for (var r = 0; r < Math.Min(rows.Count, maxRows); r++)
                     foreach (var prop in rows[r].Keys)
                         foreach (var (name, value) in BadValues)
                         {
@@ -179,21 +217,21 @@ internal static class FaultInjector
                 yield return ($"{what}: empty output", Replace(rec, i, c with { StdOut = "" }));
                 yield return ($"{what}: garbage output", Replace(rec, i, c with { StdOut = "@@ not what was expected ##\n\u0000\u0007" }));
                 yield return ($"{what}: cut off halfway", Replace(rec, i, c with { StdOut = (c.StdOut ?? "")[..((c.StdOut ?? "").Length / 2)] }));
-                foreach (var (fault, stdout) in JsonFieldFaults(c.StdOut))
+                foreach (var (fault, stdout) in JsonFieldFaults(c.StdOut, maxRows))
                     yield return ($"{what}: {fault}", Replace(rec, i, c with { StdOut = stdout }));
             }
         }
     }
 
     /// <summary>For osquery output (a JSON array of rows of text): each field made missing, empty, negative, huge or garbage.</summary>
-    private static IEnumerable<(string Fault, string StdOut)> JsonFieldFaults(string? stdout)
+    private static IEnumerable<(string Fault, string StdOut)> JsonFieldFaults(string? stdout, int maxRows)
     {
         List<Dictionary<string, string>>? rows;
         try { rows = stdout is { Length: > 0 } ? JsonSerializer.Deserialize<List<Dictionary<string, string>>>(stdout) : null; }
         catch (JsonException) { rows = null; }
         if (rows is null) yield break;
         string?[] bad = [null, "", "-1", "4294967295", "99999999999999999999", "@@ garbage ##", "1.234,5"];
-        for (var r = 0; r < rows.Count; r++)
+        for (var r = 0; r < Math.Min(rows.Count, maxRows); r++)
             foreach (var key in rows[r].Keys)
                 foreach (var b in bad)
                 {
@@ -236,4 +274,80 @@ internal static class RecordingEdits
 
     private static MachineRecording Map(MachineRecording rec, Func<RecordedCall, RecordedCall> f) =>
         new() { Schema = rec.Schema, Machine = rec.Machine, CapturedAt = rec.CapturedAt, Calls = rec.Calls.Select(f).ToList() };
+}
+
+/// <summary>
+/// What a technician would see differently between two reports of the same PC: cards present, their level and headline, and their rows (as
+/// sets, so order doesn't matter). Rows <paramref name="live"/> picks (values that change from second to second) aren't compared.
+/// </summary>
+internal static class ReportDiff
+{
+    public static List<string> Between(AreaReport old, AreaReport now, Func<AreaCard, AreaRow, bool>? live = null, int perCard = 8)
+    {
+        var diffs = new List<string>();
+        if (old.Status != now.Status) diffs.Add($"status: old {old.Status}, new {now.Status}");
+        var oldCards = old.Cards.ToDictionary(c => c.Id);
+        var newCards = now.Cards.ToDictionary(c => c.Id);
+        foreach (var id in oldCards.Keys.Except(newCards.Keys)) diffs.Add($"card {id}: only on the old path");
+        foreach (var id in newCards.Keys.Except(oldCards.Keys)) diffs.Add($"card {id}: only on the new path");
+        foreach (var (id, o) in oldCards)
+        {
+            if (!newCards.TryGetValue(id, out var n)) continue;
+            if (o.Level != n.Level) diffs.Add($"card {id} level: old {o.Level}, new {n.Level}");
+            if (o.Headline != n.Headline) diffs.Add($"card {id} headline: old \"{o.Headline}\", new \"{n.Headline}\"");
+            if ((o.ErrorText is null) != (n.ErrorText is null)) diffs.Add($"card {id} error: old \"{o.ErrorText}\", new \"{n.ErrorText}\"");
+            HashSet<string> Rows(AreaCard c) => c.Rows.Where(r => live?.Invoke(c, r) != true).Select(r => $"{r.Level}: {string.Join(" | ", r.Values)}").ToHashSet(StringComparer.Ordinal);
+            var (or, nr) = (Rows(o), Rows(n));
+            var onlyOld = or.Except(nr).Order(StringComparer.Ordinal).ToList();
+            var onlyNew = nr.Except(or).Order(StringComparer.Ordinal).ToList();
+            diffs.AddRange(onlyOld.Take(perCard).Select(r => $"card {id} row only old: {r}"));
+            diffs.AddRange(onlyNew.Take(perCard).Select(r => $"card {id} row only new: {r}"));
+            if (onlyOld.Count + onlyNew.Count > 2 * perCard) diffs.Add($"card {id}: {onlyOld.Count} rows only old, {onlyNew.Count} only new in all");
+        }
+        return diffs;
+    }
+}
+
+/// <summary>Runs a check on every damaged variant of the answers it asks for, on each of its paths, and lists what went wrong.</summary>
+internal static class DamagedRuns
+{
+    public static async Task AssertSurvivesAsync(MachineRecording source, Func<DiagnosticResult, IEnumerable<string>> problems, int maxRows,
+        params (string Path, Func<ReplayedPc, IDiagnosticModule> Make)[] paths)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var asked = await ReplayedPc.AskedByAsync(source, ct, [.. paths.Select(p => p.Make)]);
+        var failures = new List<string>();
+        var variants = 0;
+        foreach (var (fault, rec) in FaultInjector.Variants(source, asked, maxRows))
+            foreach (var (path, make) in paths)
+            {
+                variants++;
+                try
+                {
+                    var r = await make(new ReplayedPc(rec)).RefreshAsync(null, ct);
+                    failures.AddRange(problems(r).Select(p => $"{path}, {fault}: {p}"));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    failures.Add($"{path}, {fault}: threw {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+        Assert.True(variants > 50, $"only {variants} damaged variants");
+        Assert.True(failures.Count == 0, $"{failures.Count} of {variants} damaged runs went wrong:\n" + string.Join("\n", failures.Take(40)));
+    }
+
+    /// <summary>What no report may show, whatever the PC answered: an empty headline, NaN, infinity or a negative size.</summary>
+    public static IEnumerable<string> CommonProblems(AreaReport report)
+    {
+        foreach (var card in report.Cards)
+        {
+            if (string.IsNullOrWhiteSpace(card.Headline) && card.ErrorText is null) yield return $"card {card.Id} has no headline";
+            foreach (var row in card.Rows)
+                foreach (var v in row.Values)
+                    if (v.Contains("NaN") || v.Contains("Infinity") || v.Contains("∞") || v.StartsWith("-1 ") || v.Contains("-1 GB") || v.Contains("-1 MB"))
+                        yield return $"{card.Id}: \"{v}\"";
+        }
+        foreach (var m in report.KeyMetrics ?? [])
+            if (!double.IsFinite(m.Value) || m.Value < 0) yield return $"metric {m.Id} = {m.Value}";
+    }
 }

@@ -10,5 +10,8 @@
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Legacy\RemotePCDiagnostics.Legacy.csproj" />
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
     <ProjectReference Include="..\..\src\Modules\BatteryPower\RemotePCDiagnostics.Modules.BatteryPower.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Osquery\RemotePCDiagnostics.Modules.Osquery.csproj" />
+    <ProjectReference Include="..\..\src\Modules\DeviceDrivers\RemotePCDiagnostics.Modules.DeviceDrivers.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Programs\RemotePCDiagnostics.Modules.Programs.csproj" />
   </ItemGroup>
 </Project>

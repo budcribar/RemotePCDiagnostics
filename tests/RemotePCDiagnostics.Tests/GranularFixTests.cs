@@ -567,7 +567,7 @@ public class HardwareInventoryReportTests
             _ => "[]",
         }, "")));
         var runner = new RemotePCDiagnostics.Core.Osquery.OsqueryRunner(Path.Combine("C:", "app"), new RemotePCDiagnostics.Core.Osquery.OsqueryOptions(), launcher, _ => true);
-        var inv = await RemotePCDiagnostics.Core.Osquery.HardwareInventory.CollectAsync(runner);
+        var inv = await RemotePCDiagnostics.Legacy.OsqueryHardwareInventorySource.CollectAsync(runner);
 
         Assert.Equal("1.2 Gbps", RemotePCDiagnostics.Core.Osquery.HardwareInventoryReport.FormatSpeed(inv.NetworkAdapters.Items.Single().SpeedBps));
         Assert.Equal("Connected", inv.NetworkAdapters.Items.Single().Status);

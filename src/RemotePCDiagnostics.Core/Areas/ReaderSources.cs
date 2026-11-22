@@ -1,3 +1,5 @@
+using RemotePCDiagnostics.Core.Osquery;
+using Microsoft.Extensions.DependencyInjection;
 using RemotePCDiagnostics.Core.DataSources;
 
 namespace RemotePCDiagnostics.Core.Areas;
@@ -63,4 +65,51 @@ public sealed class AgentOrFallbackBatteryPowerSource(Session.IElevatedCommandBr
 public sealed class AgentOrFallbackDriveSource(Session.IElevatedCommandBridge agent, IDriveSource withAgent, IDriveSource fallback) : IDriveSource
 {
     public Task<DriveList?> ReadDrivesAsync(CancellationToken ct) => (agent.IsConnected ? withAgent : fallback).ReadDrivesAsync(ct);
+}
+
+/// <inheritdoc cref="AgentOrFallbackBatteryPowerSource"/>
+public sealed class AgentOrFallbackHardwareInventorySource(Session.IElevatedCommandBridge agent, IHardwareInventorySource withAgent, IHardwareInventorySource fallback) : IHardwareInventorySource
+{
+    private IHardwareInventorySource Current => agent.IsConnected ? withAgent : fallback;
+    public Task<HardwareInventory> ReadAsync(IProgress<string>? progress, CancellationToken ct) => Current.ReadAsync(progress, ct);
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => Current.CheckAvailabilityAsync(ct);
+}
+
+/// <inheritdoc cref="AgentOrFallbackBatteryPowerSource"/>
+public sealed class AgentOrFallbackServiceSource(Session.IElevatedCommandBridge agent, IServiceSource withAgent, IServiceSource fallback) : IServiceSource
+{
+    private IServiceSource Current => agent.IsConnected ? withAgent : fallback;
+    public Task<IReadOnlyList<ServiceInfo>?> ReadServicesAsync(CancellationToken ct) => Current.ReadServicesAsync(ct);
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => Current.CheckAvailabilityAsync(ct);
+}
+
+/// <inheritdoc cref="AgentOrFallbackBatteryPowerSource"/>
+public sealed class AgentOrFallbackDeviceDriverSource(Session.IElevatedCommandBridge agent, IDeviceDriverSource withAgent, IDeviceDriverSource fallback) : IDeviceDriverSource
+{
+    private IDeviceDriverSource Current => agent.IsConnected ? withAgent : fallback;
+    public Task<IReadOnlyList<ProblemDevice>?> ReadProblemDevicesAsync(CancellationToken ct) => Current.ReadProblemDevicesAsync(ct);
+    public Task<IReadOnlyList<DriverEntry>?> ReadDriversAsync(CancellationToken ct) => Current.ReadDriversAsync(ct);
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => Current.CheckAvailabilityAsync(ct);
+}
+
+/// <inheritdoc cref="AgentOrFallbackBatteryPowerSource"/>
+public sealed class AgentOrFallbackProgramsSource(Session.IElevatedCommandBridge agent, IProgramsSource withAgent, IProgramsSource fallback) : IProgramsSource
+{
+    private IProgramsSource Current => agent.IsConnected ? withAgent : fallback;
+    public Task<WindowsVersionRead> ReadWindowsVersionAsync(CancellationToken ct) => Current.ReadWindowsVersionAsync(ct);
+    public Task<IReadOnlyList<InstalledUpdate>?> ReadUpdatesAsync(CancellationToken ct) => Current.ReadUpdatesAsync(ct);
+    public Task<IReadOnlyList<InstalledProgram>?> ReadProgramsAsync(CancellationToken ct) => Current.ReadProgramsAsync(ct);
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct) => Current.CheckAvailabilityAsync(ct);
+}
+
+/// <summary>Registers the readers the checks use, over the <see cref="IWmiSource"/> and <see cref="IRegistrySource"/> already registered.</summary>
+public static class ReaderRegistration
+{
+    public static IServiceCollection AddReaders(this IServiceCollection services) => services
+        .AddSingleton<IBatteryPowerSource>(sp => new WmiBatteryPowerSource(sp.GetRequiredService<IWmiSource>()))
+        .AddSingleton<IDriveSource>(sp => new WmiDriveSource(sp.GetRequiredService<IWmiSource>()))
+        .AddSingleton<IHardwareInventorySource>(sp => new WmiHardwareInventorySource(sp.GetRequiredService<IWmiSource>()))
+        .AddSingleton<IServiceSource>(sp => new WmiServiceSource(sp.GetRequiredService<IWmiSource>()))
+        .AddSingleton<IDeviceDriverSource>(sp => new WmiDeviceDriverSource(sp.GetRequiredService<IWmiSource>()))
+        .AddSingleton<IProgramsSource>(sp => new WmiProgramsSource(sp.GetRequiredService<IWmiSource>(), sp.GetRequiredService<IRegistrySource>()));
 }

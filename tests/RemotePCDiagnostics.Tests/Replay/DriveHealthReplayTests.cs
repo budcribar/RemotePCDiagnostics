@@ -68,7 +68,9 @@ public sealed class DriveHealthReplayTests
         Assert.SkipUnless(HasDrives(new ReplayedPc(source)), "This recording has no drive answers.");
         var failures = new List<string>();
         var variants = 0;
-        foreach (var (fault, rec) in FaultInjector.Variants(source))
+        // Only the answers the drive check asks for (a recording holds the other checks' answers too).
+        var asked = await ReplayedPc.AskedByAsync(source, ct, pc => pc.DriveHealth(), pc => pc.DriveHealthOld());
+        foreach (var (fault, rec) in FaultInjector.Variants(source, asked))
         {
             foreach (var (path, module) in new[] { ("WMI", new ReplayedPc(rec).DriveHealth()), ("PowerShell", new ReplayedPc(rec).DriveHealthOld()) })
             {

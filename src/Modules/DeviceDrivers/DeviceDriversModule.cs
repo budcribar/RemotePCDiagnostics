@@ -3,116 +3,29 @@ using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
-/// <summary>One device in Device Manager that has a non-zero <c>ConfigManagerErrorCode</c> (<c>Win32_PnPEntity</c>).</summary>
-public sealed record ProblemDevice(string Name, string Class, string DeviceId, int ErrorCode, string Status)
-{
-    public static ProblemDevice FromRow(IReadOnlyDictionary<string, string> r) => new(
-        r.Str("Name").Length > 0 ? r.Str("Name") : "Unknown device",
-        r.Str("Class"), r.Str("DeviceId"), r.Int("ErrorCode") ?? 0, r.Str("Status"));
-
-    public bool IsDisabledOnly => ErrorCode == 22;
-
-    public string FriendlyError => ErrorCode switch
-    {
-        1 => "Not configured correctly (Code 1)",
-        10 => "Cannot start (Code 10)",
-        12 => "Not enough free resources (Code 12)",
-        14 => "Restart required (Code 14)",
-        18 => "Reinstall drivers (Code 18)",
-        19 => "Registry configuration damaged (Code 19)",
-        22 => "Disabled (Code 22)",
-        24 => "Not present or not working (Code 24)",
-        28 => "Drivers not installed (Code 28)",
-        31 => "Cannot load required drivers (Code 31)",
-        32 => "Driver service disabled (Code 32)",
-        37 => "Driver initialization failed (Code 37)",
-        39 => "Driver corrupted or missing (Code 39)",
-        43 => "Device reported a problem and was stopped (Code 43)",
-        45 => "Not connected (Code 45)",
-        47 => "Prepared for safe removal (Code 47)",
-        48 => "Blocked from starting (Code 48)",
-        52 => "Unsigned driver signature (Code 52)",
-        _ => $"Problem code {ErrorCode}",
-    };
-}
-
-/// <summary>One installed hardware driver from osquery <c>drivers</c>.</summary>
-public sealed record DriverEntry(string DeviceName, string Class, string Provider, string Version, DateOnly? Date, bool Signed)
-{
-    public static DriverEntry FromRow(IReadOnlyDictionary<string, string> r) => new(
-        r.Str("device_name").Length > 0 ? r.Str("device_name") : r.Str("description"),
-        r.Str("class"),
-        r.Str("provider").Length > 0 ? r.Str("provider") : r.Str("manufacturer"),
-        r.Str("version"),
-        OsqueryDates.Parse(r.Str("date")),
-        r.Str("signed") != "0");
-}
-
 /// <summary>
-/// Device Manager problems (<c>Win32_PnPEntity</c> where <c>ConfigManagerErrorCode &lt;&gt; 0</c>) and hardware driver versions
-/// (osquery <c>drivers</c>).
+/// Device Manager problems (devices with a non-zero <c>ConfigManagerErrorCode</c>) and hardware driver versions, read from
+/// <paramref name="source"/> (WMI in the app, osquery and PowerShell in the Store edition without an Agent).
 /// </summary>
-public sealed class DeviceDriversModule(OsqueryRunner runner, SystemCommandRunner commands) : OsqueryAreaModuleBase(runner)
+public sealed class DeviceDriversModule(IDeviceDriverSource source, SystemCommandRunner? commands = null, ILogger? log = null) : AreaModuleBase(log)
 {
     public const string ModuleName = ModuleSlugs.DeviceDrivers;
-    public const string DriversSql = "SELECT device_name, description, class, provider, manufacturer, version, date, signed FROM drivers WHERE device_name != '';";
-    public static string ProblemDevicesScript => Scripts.PowerShellScripts.Get("ProblemDevices");
 
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.DeviceDrivers;
     public override string DisplayName => "Device Manager & drivers";
     protected override string FailedMessage => "Couldn't check Device Manager and drivers on this PC.";
 
+    public override Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => source.CheckAvailabilityAsync(cancellationToken);
+
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         // Asked alongside the other reads; scripted test runners aren't asked.
         var pendingRead = commands is { IsScripted: false } ? PendingUpdates.ReadAsync(commands, ct) : null;
         progress.ReportStep(1, 2, "Checking Device Manager for problem devices…");
-        List<ProblemDevice>? problems = null;
-        if (commands is { IsScripted: true })
-        {
-            var pr = await commands.RunPowerShellAsync(ProblemDevicesScript, ct).ConfigureAwait(false);
-            if (pr is { ExitCode: 0 })
-            {
-                if (string.IsNullOrWhiteSpace(pr.StdOut) || pr.StdOut.Trim() == "[]") problems = [];
-                else
-                {
-                    try { problems = OsqueryJson.ParseRows(pr.StdOut).Select(ProblemDevice.FromRow).ToList(); }
-                    catch (FormatException ex) { LogWarn($"{Name}: problem devices output unreadable: {ex.Message}"); }
-                }
-            }
-        }
-        else
-        {
-            try
-            {
-                problems = Platform.ProblemDevicesReader.Read()
-                    .Select(p => new ProblemDevice(p.Name, p.Class, p.DeviceId, p.ErrorCode, p.Status))
-                    .ToList();
-            }
-            catch (Exception ex)
-            {
-                LogWarn($"{Name}: in-process problem devices reader failed: {ex.Message}");
-            }
-
-            if (problems is null && commands is not null)
-            {
-                var pr = await commands.RunPowerShellAsync(ProblemDevicesScript, ct).ConfigureAwait(false);
-                if (pr is { ExitCode: 0 })
-                {
-                    if (string.IsNullOrWhiteSpace(pr.StdOut) || pr.StdOut.Trim() == "[]") problems = [];
-                    else
-                    {
-                        try { problems = OsqueryJson.ParseRows(pr.StdOut).Select(ProblemDevice.FromRow).ToList(); }
-                        catch (FormatException ex) { LogWarn($"{Name}: problem devices output unreadable: {ex.Message}"); }
-                    }
-                }
-            }
-        }
-
+        var problems = await source.ReadProblemDevicesAsync(ct).ConfigureAwait(false);
         progress.ReportStep(2, 2, "Reading hardware drivers…");
-        var drvQ = await QueryAsync(DriversSql, ct).ConfigureAwait(false);
-        var drivers = drvQ.Success ? drvQ.Rows!.Select(DriverEntry.FromRow).ToList() : null;
+        var drivers = await source.ReadDriversAsync(ct).ConfigureAwait(false);
         var report = Build(problems, drivers);
         if (pendingRead is null) return report;
         PendingUpdateList? pending = null;

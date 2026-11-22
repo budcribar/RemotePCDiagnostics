@@ -20,6 +20,9 @@ public sealed class RecordingScrubber
         "MACAddress", "mac", "PermanentAddress", "CSName", "__SERVER", "UserName", "RegisteredUser", "PrimaryOwnerName",
         "computer_name", "hostname", "local_hostname",
         "Id", // the DriveHealth script's name for a disk's UniqueId (its WWN / EUI)
+        "UUID", // the SMBIOS UUID (Win32_ComputerSystemProduct, osquery system_info), per unit on most makers
+        "guid", "pnp_device_id", "PNPDeviceID", // a network adapter's GUID; device instance paths can hold a USB serial
+        "dhcp_server", "dns_server_search_order", "dns_domain", "dns_domain_suffix_search_order", // the local network's servers and domain
     };
 
     private readonly byte[] _key = RandomNumberGenerator.GetBytes(32);
@@ -127,9 +130,31 @@ public sealed class RecordingScrubber
         return $"<{kind}:{Convert.ToHexString(mac, 0, 3).ToLowerInvariant()}>";
     }
 
-    /// <summary>Replaces the PC's name and user names where they stand as a whole word (not inside a longer word).</summary>
+    private const string SidPrefix = "S-1-5-21-";
+
+    private string Sids(string s)
+    {
+        var at = 0;
+        while ((at = s.IndexOf(SidPrefix, at, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+            var end = at + SidPrefix.Length;
+            while (end < s.Length && (char.IsAsciiDigit(s[end]) || s[end] == '-')) end++;
+            // A domain or machine SID has three sub-authorities after S-1-5-21 (and a user's a fourth, the RID).
+            if (end - at < SidPrefix.Length + 5 || (at > 0 && char.IsLetterOrDigit(s[at - 1]))) { at = end; continue; }
+            var p = Placeholder("sid", s[at..end].TrimEnd('-'));
+            s = string.Concat(s.AsSpan(0, at), p, s.AsSpan(end));
+            at += p.Length;
+        }
+        return s;
+    }
+
+    /// <summary>
+    /// Replaces the PC's name and user names where they stand as a whole word (not inside a longer word), and account SIDs
+    /// (<c>S-1-5-21-…</c>, which name one user on one PC: the HKEY_USERS subkeys).
+    /// </summary>
     public string Text(string s)
     {
+        s = Sids(s);
         foreach (var (value, kind) in _names)
         {
             var at = 0;

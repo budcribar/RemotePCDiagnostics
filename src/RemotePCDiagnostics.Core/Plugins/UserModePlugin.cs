@@ -33,6 +33,9 @@ public static class UserModePlugin
         var services = new ServiceCollection();
         if (appDirectory is not null) AddHelpers(services, appDirectory, log);
         if (hostQueries is not null && manifest.Capabilities.Count > 0) services.AddSingleton(hostQueries);
+        // A module that lists wmi.query reads WMI through the app (the Agent's), not with the module host's own token.
+        if (hostQueries is not null && manifest.Capabilities.Contains(HostCapabilities.WmiQuery, StringComparer.Ordinal))
+            services.AddSingleton<DataSources.IWmiSource>(new DataSources.HostWmiSource(hostQueries, log));
         plugin.Register(services, context);
         var sp = services.BuildServiceProvider();
         var modules = sp.GetServices<IDiagnosticModule>().ToList();
@@ -42,14 +45,14 @@ public static class UserModePlugin
     }
 
     /// <summary>The app's helpers that a module which ships with the app takes from its services: osquery (from the app's tools folder),
-    /// WMI and Windows commands. Both only read; here they run with the user-mode process's token.</summary>
+    /// WMI, the registry, the readers over them, and Windows commands. Both only read; here they run with the user-mode process's token.</summary>
     public static void AddHelpers(IServiceCollection services, string appDirectory, ILogger? log = null)
     {
         services.AddSingleton(new Osquery.OsqueryRunner(baseDirectory: appDirectory, options: new Osquery.OsqueryOptions { Log = log }));
         services.AddSingleton(new Areas.SystemCommandRunner(log: log));
         services.AddSingleton<DataSources.IWmiSource>(new DataSources.SystemWmiSource(log));
-        services.AddSingleton<Areas.IBatteryPowerSource>(sp => new Areas.WmiBatteryPowerSource(sp.GetRequiredService<DataSources.IWmiSource>()));
-        services.AddSingleton<Areas.IDriveSource>(sp => new Areas.WmiDriveSource(sp.GetRequiredService<DataSources.IWmiSource>()));
+        services.AddSingleton<DataSources.IRegistrySource>(new DataSources.SystemRegistrySource(log));
+        Areas.ReaderRegistration.AddReaders(services);
     }
 
     private sealed class Context(string pluginId, ILogger? log) : IPluginContext

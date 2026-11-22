@@ -5,6 +5,8 @@
   "contract": "2.0",
   "entryType": "RemotePCDiagnostics.Modules.Osquery.OsqueryPlugin",
   "needsAdmin": false,
+  // Out of process (the module host) its WMI queries go through the app to the Agent, as in process.
+  "capabilities": [ "wmi.query" ],
   "hasUi": true,
   "portableUi": false,
   // Its page reads only the module's results, so out of process the app still renders it.

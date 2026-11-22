@@ -53,8 +53,9 @@ public static class HostServices
         services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = L<OsqueryRunner>() }));
         // WMI is read by the Agent, never by the app (it has the rights some classes need).
         services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(sp => new RemotePCDiagnostics.Core.DataSources.AgentWmiSource(sp.GetRequiredService<IElevatedCommandBridge>()));
-        services.AddSingleton<IBatteryPowerSource>(sp => new WmiBatteryPowerSource(sp.GetRequiredService<RemotePCDiagnostics.Core.DataSources.IWmiSource>()));
-        services.AddSingleton<IDriveSource>(sp => new WmiDriveSource(sp.GetRequiredService<RemotePCDiagnostics.Core.DataSources.IWmiSource>()));
+        // The registry keys checks read need no administrator rights, so the app reads them itself.
+        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IRegistrySource>(_ => new RemotePCDiagnostics.Core.DataSources.SystemRegistrySource(L<RemotePCDiagnostics.Core.DataSources.SystemRegistrySource>()));
+        services.AddReaders();
 #if RPCD_STORE
         // The Store edition may have no Agent: then it reads as a standard user, with the legacy readers.
         RemotePCDiagnostics.Legacy.LegacyReaders.AddLegacyFallbacks(services);
@@ -86,7 +87,7 @@ public static class HostServices
         services.AddSingleton(_ => new RetrimLog(RetrimLog.DefaultPath(), L<RetrimLog>()));
         services.AddSingleton<IRetrimHistory>(sp => new RetrimHistory(sp.GetRequiredService<RetrimLog>(), new WindowsRetrimEvents(L<WindowsRetrimEvents>()), L<RetrimHistory>()));
         services.AddSingleton<RemotePCDiagnostics.Core.Areas.IDriveHealthHistoryStore>(_ => new RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore(RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore.DefaultPath(), L<RemotePCDiagnostics.Core.Areas.DriveHealthHistoryStore>()));
-        services.AddSingleton<ServicesModule>();
+        services.AddSingleton(sp => new ServicesModule(sp.GetRequiredService<IServiceSource>(), L<ServicesModule>()));
         // Reversible changes (with their "before" values) for "Undo all changes" / --undo-all; survives restarts.
         // The app isn't elevated, so the Agent reads and saves it (the state folder is for administrators only).
         services.AddSingleton<RemotePCDiagnostics.Core.Changes.IChangeJournal>(sp => new RemotePCDiagnostics.Core.Changes.AgentChangeJournal(
@@ -332,6 +333,7 @@ public sealed class HostQueryBackendSlot
         {
             Sensors = sp.GetService<ISensorProvider>(), Osquery = sp.GetService<OsqueryRunner>(), Commands = sp.GetService<SystemCommandRunner>(),
             Retrims = sp.GetService<IRetrimHistory>(), Drives = sp.GetService<IDriveSource>(),
+            Wmi = sp.GetService<RemotePCDiagnostics.Core.DataSources.IWmiSource>(),
         };
     }
 }

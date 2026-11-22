@@ -9,14 +9,27 @@ namespace RemotePCDiagnostics.Legacy;
 /// <summary>Registers the Store edition's readers: the Agent's when it is connected, these otherwise.</summary>
 public static class LegacyReaders
 {
-    /// <summary>Replaces the Agent-only <see cref="IBatteryPowerSource"/> and <see cref="IDriveSource"/> with Agent-or-legacy ones.</summary>
+    /// <summary>Replaces the Agent-only readers (battery, drives, hardware, services, drivers, programs) with Agent-or-legacy ones.</summary>
     public static IServiceCollection AddLegacyFallbacks(this IServiceCollection services) => services
         .AddSingleton<IBatteryPowerSource>(sp => new AgentOrFallbackBatteryPowerSource(sp.GetRequiredService<IElevatedCommandBridge>(),
             new WmiBatteryPowerSource(sp.GetRequiredService<Core.DataSources.IWmiSource>()),
             new OsqueryBatteryPowerSource(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>())))
         .AddSingleton<IDriveSource>(sp => new AgentOrFallbackDriveSource(sp.GetRequiredService<IElevatedCommandBridge>(),
             new WmiDriveSource(sp.GetRequiredService<Core.DataSources.IWmiSource>()),
-            new PowerShellDriveSource(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<OsqueryRunner>())));
+            new PowerShellDriveSource(sp.GetRequiredService<SystemCommandRunner>(), sp.GetRequiredService<OsqueryRunner>())))
+        .AddSingleton<IHardwareInventorySource>(sp => new AgentOrFallbackHardwareInventorySource(sp.GetRequiredService<IElevatedCommandBridge>(),
+            new WmiHardwareInventorySource(sp.GetRequiredService<Core.DataSources.IWmiSource>()),
+            new OsqueryHardwareInventorySource(sp.GetRequiredService<OsqueryRunner>())))
+        .AddSingleton<IServiceSource>(sp => new AgentOrFallbackServiceSource(sp.GetRequiredService<IElevatedCommandBridge>(),
+            new WmiServiceSource(sp.GetRequiredService<Core.DataSources.IWmiSource>()),
+            new OsqueryServiceSource(sp.GetRequiredService<OsqueryRunner>())))
+        .AddSingleton<IDeviceDriverSource>(sp => new AgentOrFallbackDeviceDriverSource(sp.GetRequiredService<IElevatedCommandBridge>(),
+            new WmiDeviceDriverSource(sp.GetRequiredService<Core.DataSources.IWmiSource>()),
+            new OsqueryDeviceDriverSource(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>())))
+        // Programs read the registry in the app either way; only the Windows version and updates need the Agent's WMI.
+        .AddSingleton<IProgramsSource>(sp => new AgentOrFallbackProgramsSource(sp.GetRequiredService<IElevatedCommandBridge>(),
+            new WmiProgramsSource(sp.GetRequiredService<Core.DataSources.IWmiSource>(), sp.GetRequiredService<Core.DataSources.IRegistrySource>()),
+            new OsqueryProgramsSource(sp.GetRequiredService<OsqueryRunner>())));
 }
 
 /// <summary>Batteries from osquery <c>battery</c>, the plan from <c>powercfg /getactivescheme</c>. Both work as a standard user.</summary>

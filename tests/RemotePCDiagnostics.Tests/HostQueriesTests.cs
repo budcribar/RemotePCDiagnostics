@@ -69,7 +69,25 @@ public sealed class HostQueriesTests : IDisposable
         Retrims = new FixedRetrims(),
         Minidumps = () => [new MinidumpFile("110726-01.dmp", new DateTimeOffset(2026, 11, 7, 9, 0, 0, TimeSpan.Zero), 1024)],
         EventReviews = () => ["Application|1000|x"],
+        Wmi = new ServiceWmi(),
     };
+
+    /// <summary>The Agent's WMI as the app sees it: two services, the same as <see cref="ServiceRows"/>.</summary>
+    private sealed class ServiceWmi : RemotePCDiagnostics.Core.DataSources.IWmiSource
+    {
+        public Task<RemotePCDiagnostics.Core.DataSources.WmiQueryResult> QueryAsync(string ns, string wql, CancellationToken ct = default) =>
+            Task.FromResult(new RemotePCDiagnostics.Core.DataSources.WmiQueryResult(ns, wql, wql.Contains("Win32_Service") ?
+            [
+                Service("Spooler", "Print Spooler", "Running", "Prints"),
+                Service("wuauserv", "Windows Update", "Stopped", ""),
+            ] : []));
+
+        private static RemotePCDiagnostics.Core.DataSources.WmiRow Service(string name, string display, string state, string description) =>
+            RemotePCDiagnostics.Core.DataSources.WmiRow.From(new Dictionary<string, object?>
+            {
+                ["Name"] = name, ["DisplayName"] = display, ["State"] = state, ["StartMode"] = "Auto", ["StartName"] = "LocalSystem", ["Description"] = description,
+            });
+    }
 
     private sealed class FixedRetrims : IRetrimHistory
     {
@@ -143,7 +161,7 @@ public sealed class HostQueriesTests : IDisposable
         Assert.True(double.IsNaN(snap.Readings[1].Value!.Value)); // a sensor that reports nothing survives the trip
         Assert.True((await client.SensorsAvailabilityAsync()).IsAvailable);
 
-        var rows = await client.SelectAsync(ServicesModule.Sql);
+        var rows = await client.SelectAsync(HardwareInventory.DiskSql);
         Assert.True(rows.Success);
         Assert.Equal("Spooler", rows.Rows![0]["name"]);
 
@@ -157,20 +175,19 @@ public sealed class HostQueriesTests : IDisposable
     }
 
     [Fact]
-    public async Task Services_in_user_mode_lists_what_the_app_read()
+    public async Task Services_no_longer_ask_the_app_for_osquery()
     {
-        var module = new ServicesModule(new OsqueryRunner(baseDirectory: _root), Joined(With(HostCapabilities.OsquerySelect), Backend()));
-        Assert.True((await module.CheckAvailabilityAsync()).IsAvailable); // no osquery of its own needed
-        var r = await module.RefreshAsync(null);
-        var report = Assert.IsType<AreaReport>(r.Payload);
-        Assert.Equal(2, report.Cards.Single(c => c.Id == "all").Rows!.Count);
-        Assert.Contains("1 running", report.Summary);
+        // Services read Win32_Service themselves now (in the module host, with its own rights), so the app refuses their old statement.
+        var client = Joined(With(HostCapabilities.OsquerySelect), Backend());
+        var refused = await Assert.ThrowsAsync<HostQueryException>(() => client.SelectAsync(RemotePCDiagnostics.Legacy.OsqueryServiceSource.Sql));
+        Assert.Equal("notAllowed", refused.Error);
     }
 
     [Fact]
     public async Task A_refused_query_is_a_failed_check_not_a_crash()
     {
-        var module = new ServicesModule(new OsqueryRunner(baseDirectory: _root), Joined(With(/* nothing declared */), Backend()));
+        var module = new DriveHealthModule(new HostDriveSource(Joined(With(/* nothing declared */), Backend()), DriveHealthModule.ModuleName),
+            historyStore: new DriveHealthHistoryStore(), volumes: () => []);
         var r = await module.RefreshAsync(null);
         Assert.Equal(DiagnosticStatus.Error, r.Status);
     }
@@ -208,7 +225,11 @@ public sealed class HostQueriesTests : IDisposable
     [Theory]
     [InlineData("RemotePCDiagnostics.Modules.Sensors.dll", new[] { HostCapabilities.SensorsRead })]
     [InlineData("RemotePCDiagnostics.Modules.DriveHealth.dll", new[] { HostCapabilities.StorageDrives, HostCapabilities.StorageRetrims, HostCapabilities.OsquerySelect })]
-    [InlineData("RemotePCDiagnostics.Modules.Services.dll", new[] { HostCapabilities.OsquerySelect })]
+    [InlineData("RemotePCDiagnostics.Modules.Services.dll", new[] { HostCapabilities.WmiQuery })]
+    [InlineData("RemotePCDiagnostics.Modules.Osquery.dll", new[] { HostCapabilities.WmiQuery })]
+    [InlineData("RemotePCDiagnostics.Modules.DeviceDrivers.dll", new[] { HostCapabilities.WmiQuery })]
+    [InlineData("RemotePCDiagnostics.Modules.Programs.dll", new[] { HostCapabilities.WmiQuery })]
+    [InlineData("RemotePCDiagnostics.Modules.BatteryPower.dll", new[] { HostCapabilities.WmiQuery })]
     [InlineData("RemotePCDiagnostics.Modules.Crashes.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.Minidumps, HostCapabilities.LiveKernelReports, HostCapabilities.OsquerySelect, HostCapabilities.EventReviews })]
     [InlineData("RemotePCDiagnostics.Modules.EventLog.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.EventReviews })]
     public void The_four_modules_run_in_user_mode_and_list_what_they_ask_for(string file, string[] capabilities)
@@ -518,7 +539,7 @@ public sealed class HostQueryDispatchTests
         Type = "query", Id = id, Capability = capability, Args = args is null ? null : JsonSerializer.SerializeToElement(args, HostCapabilities.Json),
     };
 
-    private static readonly ModuleHostMessage SlowQuery = Query(1, HostCapabilities.OsquerySelect, new { sql = ServicesModule.Sql });
+    private static readonly ModuleHostMessage SlowQuery = Query(1, HostCapabilities.OsquerySelect, new { sql = HardwareInventory.DiskSql });
     private static readonly ModuleHostMessage FastQuery = Query(2, HostCapabilities.Minidumps);
 
     /// <summary>A module host played by the test: <paramref name="onLine"/> sees each line the app writes and returns the lines to send back.</summary>

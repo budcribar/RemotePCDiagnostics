@@ -17,6 +17,23 @@ public sealed class AgentWmiSource(IElevatedCommandBridge agent) : IWmiSource
             : Task.FromResult(WmiQueryResult.Failed(wmiNamespace, wql, NotConnected));
 }
 
+/// <summary>
+/// WMI for a module in user mode (the module host): each query goes to the app (<c>wmi.query</c>), which passes it to the Agent, so the module
+/// host never reads WMI itself either. A refused or failed query is a failed answer, as from <see cref="AgentWmiSource"/>.
+/// </summary>
+public sealed class HostWmiSource(Plugins.IHostQueries host, ILogger? log = null) : IWmiSource
+{
+    public async Task<WmiQueryResult> QueryAsync(string wmiNamespace, string wql, CancellationToken ct = default)
+    {
+        try { return await host.QueryWmiAsync(wmiNamespace, wql, ct).ConfigureAwait(false); }
+        catch (Plugins.HostQueryException ex)
+        {
+            log.Warn($"wmi.query refused ({ex.Error}): {ex.Message}");
+            return WmiQueryResult.Failed(wmiNamespace, wql, ex.Message);
+        }
+    }
+}
+
 /// <summary>What the Agent's <c>wmi_query</c> runs: one SELECT, in a namespace the checks read. WQL SELECT only reads.</summary>
 public static class WmiQueryPolicy
 {

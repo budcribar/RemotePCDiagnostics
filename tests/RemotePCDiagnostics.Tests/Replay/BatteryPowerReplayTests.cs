@@ -74,7 +74,10 @@ public sealed class BatteryPowerReplayTests
         var ct = TestContext.Current.CancellationToken;
         var failures = new List<string>();
         var variants = 0;
-        foreach (var (fault, rec) in FaultInjector.Variants(RecordingLibrary.Load(name)))
+        var source = RecordingLibrary.Load(name);
+        // Only the answers the battery check asks for (a recording holds the other checks' answers too).
+        var asked = await ReplayedPc.AskedByAsync(source, ct, pc => pc.BatteryPower(), pc => pc.BatteryPowerOld());
+        foreach (var (fault, rec) in FaultInjector.Variants(source, asked))
         {
             foreach (var (path, module) in new[] { ("WMI", new ReplayedPc(rec).BatteryPower()), ("osquery", new ReplayedPc(rec).BatteryPowerOld()) })
             {

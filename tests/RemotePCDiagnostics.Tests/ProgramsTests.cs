@@ -24,7 +24,7 @@ public class ProgramsTests
     [Fact]
     public async Task Builds_Version_Updates_Programs()
     {
-        var m = new ProgramsModule(ScriptedLauncher.Osquery(Launcher()), () => Today);
+        var m = new ProgramsModule(new RemotePCDiagnostics.Legacy.OsqueryProgramsSource(ScriptedLauncher.Osquery(Launcher())), () => Today);
         var r = await m.RefreshAsync(null);
         Assert.Equal(DiagnosticStatus.Ok, r.Status);
         Assert.Equal("Microsoft Windows 11 Pro · last update 15 days ago · 2 programs", r.Message);
@@ -49,7 +49,7 @@ public class ProgramsTests
     [Fact]
     public async Task OnePartFails_OthersStillShown_FriendlyCardError()
     {
-        var r = await new ProgramsModule(ScriptedLauncher.Osquery(Launcher(failPatches: true)), () => Today).RefreshAsync(null);
+        var r = await new ProgramsModule(new RemotePCDiagnostics.Legacy.OsqueryProgramsSource(ScriptedLauncher.Osquery(Launcher(failPatches: true))), () => Today).RefreshAsync(null);
         var rep = Assert.IsType<AreaReport>(r.Payload);
         Assert.Equal(DiagnosticStatus.Warning, r.Status);
         Assert.Equal("Couldn't read installed updates.", rep.Cards.Single(c => c.Id == "updates").ErrorText);

@@ -2,7 +2,7 @@ using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
-/// <summary>One Windows service (osquery <c>services</c>).</summary>
+/// <summary>One Windows service. Status and start type use the service control manager's words (RUNNING, AUTO_START), as osquery does.</summary>
 public sealed record ServiceInfo(string Name, string DisplayName, string Status, string StartType, string Account, string Description)
 {
     public static ServiceInfo FromRow(IReadOnlyDictionary<string, string> r) => new(
@@ -34,20 +34,17 @@ public sealed record ServiceInfo(string Name, string DisplayName, string Status,
     };
 }
 
-/// <summary>Windows services via osquery <c>services</c> (kernel/file-system drivers excluded). In user mode (the module host)
-/// <paramref name="host"/> is set and the query runs in the app (<c>osquery.select</c>), which sees every service's details.</summary>
-public sealed class ServicesModule(OsqueryRunner runner, Plugins.IHostQueries? host = null) : OsqueryAreaModuleBase(runner), IServiceRows
+/// <summary>Windows services (not drivers), read from <paramref name="source"/>: WMI through the Agent (from the module host, by way of the app),
+/// osquery in the Store edition without an Agent.</summary>
+public sealed class ServicesModule(IServiceSource source, ILogger? log = null) : AreaModuleBase(log), IServiceRows
 {
-    /// <summary>In user mode osquery runs in the app, so the module host needs no copy of its own.</summary>
-    public override Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) =>
-        host is null ? base.CheckAvailabilityAsync(cancellationToken) : Task.FromResult(ModuleAvailability.Available);
-
     public const string ModuleName = ModuleSlugs.Services;
-    public const string Sql = "SELECT name, display_name, status, start_type, user_account, description FROM services WHERE service_type NOT LIKE '%DRIVER%';";
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.Services;
     public override string DisplayName => "Services";
     protected override string FailedMessage => "Couldn't read the list of services on this PC.";
+
+    public override Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => source.CheckAvailabilityAsync(cancellationToken);
 
     /// <summary>Services from the last successful check, by service name (used by the row Start/Stop/Restart controls).</summary>
     public IReadOnlyDictionary<string, ServiceInfo> Latest { get; private set; } = new Dictionary<string, ServiceInfo>();
@@ -55,11 +52,8 @@ public sealed class ServicesModule(OsqueryRunner runner, Plugins.IHostQueries? h
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
         progress?.Report("Checking services…");
-        var q = host is null ? await QueryAsync(Sql, ct).ConfigureAwait(false)
-            : await Plugins.HostQueryExtensions.AskAsync(host, Name, Logger, h => h.SelectAsync(Sql, ct)).ConfigureAwait(false);
-        if (q is not { Success: true }) return AreaReport.Failed(FailedMessage);
+        if (await source.ReadServicesAsync(ct).ConfigureAwait(false) is not { } list) return AreaReport.Failed(FailedMessage);
 
-        var list = q.Rows!.Select(ServiceInfo.FromRow).ToList();
         Latest = list.GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         return Build(list);
     }

@@ -39,8 +39,9 @@ public sealed class BundledOutOfProcessTests : IDisposable
         var services = new ServiceCollection();
         services.AddSingleton(new RemotePCDiagnostics.Core.Osquery.OsqueryRunner(baseDirectory: _root));
         services.AddSingleton(new SystemCommandRunner());
-        services.AddSingleton<IBatteryPowerSource>(new WmiBatteryPowerSource(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource()));
-        services.AddSingleton<IDriveSource>(new WmiDriveSource(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource()));
+        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource());
+        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IRegistrySource>(new RemotePCDiagnostics.Core.DataSources.SystemRegistrySource());
+        services.AddReaders();
         loader.LoadBundled(services);
         return (registrar, services, made);
     }
@@ -92,9 +93,9 @@ public sealed class BundledOutOfProcessTests : IDisposable
         using var programs = new UserModeModuleProxy(new UserModeModule(Dll("RemotePCDiagnostics.Modules.Programs.dll"), manifest, descriptor) { Bundled = true }, new ProcessModuleHostLauncher(AppContext.BaseDirectory));
         try
         {
+            // It reads WMI and the registry now, so it needs no osquery.
             var a = await programs.CheckAvailabilityAsync();
-            Assert.False(a.IsAvailable);
-            Assert.Equal(OsqueryAreaModuleBase.ToolMissingMessage, a.Reason);
+            Assert.True(a.IsAvailable, a.Reason);
             var r = await programs.RefreshAsync(null);
             Assert.False(r is { Status: DiagnosticStatus.Error } && r.Message.StartsWith("The module host", StringComparison.Ordinal), r.Message);
             Assert.IsType<AreaReport>(r.Payload);
@@ -134,7 +135,7 @@ public sealed class BundledOutOfProcessTests : IDisposable
     public void Without_the_app_folder_the_helpers_are_missing()
     {
         var ex = Assert.ThrowsAny<Exception>(() => UserModePlugin.Load(Dll("RemotePCDiagnostics.Modules.Programs.dll")));
-        Assert.Contains("OsqueryRunner", ex.ToString());
+        Assert.Contains("IProgramsSource", ex.ToString());
     }
 
     [Fact]

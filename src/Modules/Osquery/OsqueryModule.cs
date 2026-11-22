@@ -1,7 +1,10 @@
+using RemotePCDiagnostics.Core.Areas;
+
 namespace RemotePCDiagnostics.Core.Osquery;
 
-/// <summary>Hardware inventory via osqueryi (system_info, cpu_info, memory_devices, disk_info, video_info, interface_details, platform_info).</summary>
-public sealed class OsqueryModule(OsqueryRunner runner) : IDiagnosticModule
+/// <summary>Hardware inventory (computer, processor, memory, drives, graphics, network adapters, BIOS), read from <paramref name="source"/>:
+/// WMI through the Agent in the app, osquery in the Store edition without an Agent. The check keeps its old id and name.</summary>
+public sealed class OsqueryModule(IHardwareInventorySource source) : IDiagnosticModule
 {
     public const string ToolMissingMessage = "The hardware tool wasn't found. Please reinstall the app.";
     public const string AllFailedMessage = "Couldn't read hardware details on this PC.";
@@ -12,17 +15,11 @@ public sealed class OsqueryModule(OsqueryRunner runner) : IDiagnosticModule
     public string DisplayName => "Hardware inventory";
     public event EventHandler<DiagnosticResult>? Updated;
 
-    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default)
-    {
-        var a = runner.CheckAvailability();
-        if (a.IsAvailable) return Task.FromResult(a);
-        runner.Options.Log.Line(a.Reason ?? runner.NotFoundMessage); // developer detail (path) goes to the log only
-        return Task.FromResult(ModuleAvailability.Unavailable(ToolMissingMessage));
-    }
+    public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => source.CheckAvailabilityAsync(cancellationToken);
 
     public async Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken cancellationToken = default)
     {
-        var inv = await HardwareInventory.CollectAsync(runner, progress, cancellationToken).ConfigureAwait(false);
+        var inv = await source.ReadAsync(progress, cancellationToken).ConfigureAwait(false);
         var status = inv.AllSectionsFailed ? DiagnosticStatus.Error : inv.FailedSections == 0 ? DiagnosticStatus.Ok : DiagnosticStatus.Warning;
         return new DiagnosticResult<HardwareInventory>(Name, status, Summarize(inv), DateTimeOffset.Now, inv);
     }

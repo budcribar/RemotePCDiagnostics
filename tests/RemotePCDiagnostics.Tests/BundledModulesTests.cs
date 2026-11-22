@@ -37,8 +37,9 @@ public sealed class BundledModulesTests : IDisposable
         var services = new ServiceCollection();
         services.AddSingleton(new OsqueryRunner(baseDirectory: _root));
         services.AddSingleton(new SystemCommandRunner());
-        services.AddSingleton<IBatteryPowerSource>(new WmiBatteryPowerSource(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource()));
-        services.AddSingleton<IDriveSource>(new WmiDriveSource(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource()));
+        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource());
+        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IRegistrySource>(new RemotePCDiagnostics.Core.DataSources.SystemRegistrySource());
+        services.AddReaders();
         // The app's Windows adapters the test modules take (only their constructors run here).
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Sensors.ISensorProvider>());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Sensors.IEcFanSource>());
@@ -147,7 +148,7 @@ public sealed class BundledModulesTests : IDisposable
         using var sp = services.BuildServiceProvider();
         var module = Assert.Single(sp.GetServices<IDiagnosticModule>());
         // The module's base type is the app's own Core type, not a second copy loaded into the module's context.
-        Assert.True(module is OsqueryAreaModuleBase);
+        Assert.True(module is AreaModuleBase);
     }
 
     [Fact]
