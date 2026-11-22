@@ -1009,7 +1009,7 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
                 continue;
 
             var candidate = Path.Combine(root, "Dell", "CommandUpdate", "dcu-cli.exe");
-            if (File.Exists(candidate) && !IsSymlinkOrReparsePath(candidate))
+            if (File.Exists(candidate) && TryValidateDcuCliFileAndAncestors(candidate, requireExists: true, out _, out _))
                 return candidate;
         }
 

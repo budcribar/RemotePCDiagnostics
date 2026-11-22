@@ -44,6 +44,12 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
     [GeneratedRegex(@"\A[0-9A-Fa-f]{64}\z", RegexOptions.CultureInvariant)]
     private static partial Regex Sha256HexRegex();
 
+    [GeneratedRegex(@"\d+", RegexOptions.CultureInvariant)]
+    private static partial Regex DigitRunsRegex();
+
+    [GeneratedRegex(@"^([A-Za-z]+)[\.\-\s_]*(\d+(?:\.\d+)*)$", RegexOptions.CultureInvariant)]
+    private static partial Regex PrefixNumericRegex();
+
     private readonly HttpClient _httpClient;
     private readonly SystemCommandRunner? _commands;
     private readonly IBiosSignatureVerifier _signatureVerifier;
@@ -269,7 +275,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
                     if (parsedDesc is null)
                         continue;
 
-                    if (!IsFamilyCompatible(currentFamily, parsedDesc.Family))
+                    if (parsedDesc.HasDescriptorFamilyConflict || !IsFamilyCompatible(currentFamily, parsedDesc.Family))
                     {
                         hadMismatchedFamily = true;
                         continue;
@@ -314,9 +320,10 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
 
                 if (hadMismatchedFamily)
                 {
-                    return BiosLatestInfo.Unsupported(
-                        VendorId,
-                        $"No Lenovo BIOS package matching family '{currentFamily}' was found for MTM {mtm}.");
+                    var familyMsg = string.IsNullOrEmpty(currentFamily)
+                        ? $"No Lenovo BIOS package with a consistent BIOS family was found for MTM {mtm}."
+                        : $"No Lenovo BIOS package matching family '{currentFamily}' was found for MTM {mtm}.";
+                    return BiosLatestInfo.Unsupported(VendorId, familyMsg);
                 }
 
                 return BiosLatestInfo.Failed(
@@ -324,7 +331,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
                     $"Lenovo BIOS descriptor for MTM {mtm} did not contain a valid BIOS release.");
             }
 
-            var best = SelectNewestDescriptor(candidates);
+            var best = SelectNewestDescriptor(candidates, currentFamily);
             var isNewer = IsCandidateNewer(currentPrimary, currentFamily, currentNumeric, current.ReleaseDate, best);
 
             var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -506,7 +513,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
     internal static ParsedLenovoVersion ParseLenovoVersion(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
-            return new("", "", null, null);
+            return new("", "", null, null, LenovoVersionKind.Empty);
 
         var trimmed = raw.Trim();
 
@@ -519,22 +526,53 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
         if (symNum.Success)
         {
             var symbolic = symNum.Groups[1].Value.ToUpperInvariant();
-            var numeric = symNum.Groups[2].Value;
             var family = ExtractFamily(symbolic);
-            return new(symbolic, family, numeric, symbolic);
+            if (!string.IsNullOrEmpty(family))
+            {
+                var numeric = symNum.Groups[2].Value;
+                return new(symbolic, family, numeric, symbolic, LenovoVersionKind.RecognizedSymbolic);
+            }
         }
 
         var pureNum = PureNumericRegex().Match(trimmed);
         if (pureNum.Success)
         {
             var numeric = pureNum.Groups[1].Value;
-            return new(numeric, "", numeric, null);
+            return new(numeric, "", numeric, null, LenovoVersionKind.PureNumeric);
         }
 
         var upper = trimmed.ToUpperInvariant();
         var extractedFamily = ExtractFamily(upper);
-        var sym = !string.IsNullOrEmpty(extractedFamily) ? upper : null;
-        return new(trimmed, extractedFamily, null, sym);
+        if (!string.IsNullOrEmpty(extractedFamily))
+            return new(trimmed, extractedFamily, null, upper, LenovoVersionKind.RecognizedSymbolic);
+
+        return new(trimmed, "", null, null, LenovoVersionKind.Unrecognized);
+    }
+
+    internal static ParsedLenovoVersion ParseIndexVersionHint(
+        string? biosVersion,
+        string? version,
+        out bool hasIndexFamilyConflict)
+    {
+        var parsedIndexBios = ParseLenovoVersion(biosVersion);
+        var parsedIndexVersion = ParseLenovoVersion(version);
+        hasIndexFamilyConflict = HasFamilyConflict(parsedIndexBios.Family, parsedIndexVersion.Family);
+
+        if (!string.IsNullOrEmpty(parsedIndexBios.Family))
+            return parsedIndexBios;
+
+        if (!string.IsNullOrEmpty(parsedIndexVersion.Family))
+            return parsedIndexVersion;
+
+        if (parsedIndexBios.Kind == LenovoVersionKind.PureNumeric)
+            return parsedIndexBios;
+
+        if (parsedIndexVersion.Kind == LenovoVersionKind.PureNumeric)
+            return parsedIndexVersion;
+
+        return parsedIndexBios.Kind != LenovoVersionKind.Empty
+            ? parsedIndexBios
+            : parsedIndexVersion;
     }
 
     internal static string ExtractFamily(string? symbolicVersion)
@@ -639,14 +677,16 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             var version = GetChildValue(pkg, "version");
             var release = GetChildValue(pkg, "release");
             var biosVersion = GetChildValue(pkg, "BiosVersion");
-            var parsedBios = ParseLenovoVersion(biosVersion ?? version);
+            var parsedIndexHint = ParseIndexVersionHint(biosVersion, version, out _);
 
             results.Add(new LenovoIndexEntry(
                 DescriptorUrl: descriptorUrl,
                 Version: version,
                 ReleaseDate: BiosVersionComparer.TryParseReleaseDate(release),
                 BiosVersion: biosVersion,
-                Family: parsedBios.Family));
+                Family: parsedIndexHint.Family,
+                VersionKind: parsedIndexHint.Kind,
+                CompareVersion: parsedIndexHint.Version));
         }
 
         return results;
@@ -778,6 +818,106 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
         return info with { Message = safeMessage, ReleaseSummary = safeSummary };
     }
 
+    private static int GetIndexEntryFamilyRank(LenovoIndexEntry entry, string currentFamily)
+    {
+        if (string.IsNullOrEmpty(currentFamily))
+            return 0;
+
+        if (string.IsNullOrEmpty(entry.Family))
+            return 1;
+
+        return string.Equals(entry.Family, currentFamily, StringComparison.OrdinalIgnoreCase)
+            ? 2
+            : 0;
+    }
+
+    private static int GetIndexEntryVersionKindRank(LenovoVersionKind kind) =>
+        kind switch
+        {
+            LenovoVersionKind.RecognizedSymbolic or LenovoVersionKind.PureNumeric => 2,
+            LenovoVersionKind.Empty => 1,
+            _ => 0,
+        };
+
+    private static int CompareNullableDateDescending(DateOnly? a, DateOnly? b)
+    {
+        if (a.HasValue && b.HasValue)
+            return b.Value.CompareTo(a.Value);
+
+        if (b.HasValue)
+            return 1;
+
+        if (a.HasValue)
+            return -1;
+
+        return 0;
+    }
+
+    private static string GetVersionSortClassKey(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+            return "0:";
+
+        var normalized = version.Trim();
+        if (normalized.StartsWith("Rev.", StringComparison.OrdinalIgnoreCase))
+            normalized = normalized[4..].Trim();
+        else if (normalized.StartsWith("v", StringComparison.OrdinalIgnoreCase)
+                 && normalized.Length > 1
+                 && char.IsDigit(normalized[1]))
+        {
+            normalized = normalized[1..].Trim();
+        }
+
+        if (normalized.Length == 0)
+            return "0:";
+
+        var prefixMatch = PrefixNumericRegex().Match(normalized);
+        if (prefixMatch.Success)
+        {
+            return AllSegmentsFitInt64(prefixMatch.Groups[2].Value)
+                ? "2:PFX:" + prefixMatch.Groups[1].Value.ToUpperInvariant()
+                : "4:LIT:" + normalized.ToUpperInvariant();
+        }
+
+        if (IsDottedNumeric(normalized))
+        {
+            return AllSegmentsFitInt64(normalized)
+                ? "1:NUM"
+                : "4:LIT:" + normalized.ToUpperInvariant();
+        }
+
+        var digitMatches = DigitRunsRegex().Matches(normalized);
+        if (digitMatches.Count > 0)
+        {
+            foreach (Match m in digitMatches)
+            {
+                if (!long.TryParse(m.Value, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+                    return "4:LIT:" + normalized.ToUpperInvariant();
+            }
+
+            return $"3:SKEL:{digitMatches.Count}:{DigitRunsRegex().Replace(normalized, "#").ToUpperInvariant()}";
+        }
+
+        return "4:LIT:" + normalized.ToUpperInvariant();
+    }
+
+    private static bool IsDottedNumeric(string value)
+    {
+        var parts = value.Split('.');
+        return parts.Length > 0 && parts.All(p => p.Length > 0 && p.All(char.IsAsciiDigit));
+    }
+
+    private static bool AllSegmentsFitInt64(string dottedNumeric)
+    {
+        foreach (var part in dottedNumeric.Split('.'))
+        {
+            if (!long.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+                return false;
+        }
+
+        return true;
+    }
+
     private static List<LenovoIndexEntry> OrderIndexEntries(List<LenovoIndexEntry> entries, string currentFamily)
     {
         if (!string.IsNullOrEmpty(currentFamily))
@@ -794,25 +934,60 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             }
         }
 
-        entries.Sort((a, b) =>
+        var bucketMaxDates = new Dictionary<(int FamilyRank, int KindRank, string ClassKey), DateOnly?>();
+        var keyed = new List<(LenovoIndexEntry Entry, int FamilyRank, int KindRank, string ClassKey, string? CompareVersion)>(entries.Count);
+
+        foreach (var entry in entries)
         {
-            var verCmp = BiosVersionComparer.Compare(b.Version ?? b.BiosVersion, a.Version ?? a.BiosVersion);
+            var familyRank = GetIndexEntryFamilyRank(entry, currentFamily);
+            var kindRank = GetIndexEntryVersionKindRank(entry.VersionKind);
+            var compareVersion = !string.IsNullOrEmpty(entry.CompareVersion)
+                ? entry.CompareVersion
+                : entry.Version ?? entry.BiosVersion;
+            var classKey = GetVersionSortClassKey(compareVersion);
+
+            keyed.Add((entry, familyRank, kindRank, classKey, compareVersion));
+
+            var bucketKey = (familyRank, kindRank, classKey);
+            if (!bucketMaxDates.TryGetValue(bucketKey, out var existingMax)
+                || (entry.ReleaseDate.HasValue && (!existingMax.HasValue || entry.ReleaseDate.Value > existingMax.Value)))
+            {
+                bucketMaxDates[bucketKey] = entry.ReleaseDate;
+            }
+        }
+
+        keyed.Sort((a, b) =>
+        {
+            var familyCmp = b.FamilyRank.CompareTo(a.FamilyRank);
+            if (familyCmp != 0)
+                return familyCmp;
+
+            var kindCmp = b.KindRank.CompareTo(a.KindRank);
+            if (kindCmp != 0)
+                return kindCmp;
+
+            var bucketDateCmp = CompareNullableDateDescending(
+                bucketMaxDates[(a.FamilyRank, a.KindRank, a.ClassKey)],
+                bucketMaxDates[(b.FamilyRank, b.KindRank, b.ClassKey)]);
+            if (bucketDateCmp != 0)
+                return bucketDateCmp;
+
+            var classCmp = StringComparer.Ordinal.Compare(a.ClassKey, b.ClassKey);
+            if (classCmp != 0)
+                return classCmp;
+
+            var verCmp = BiosVersionComparer.Compare(b.CompareVersion, a.CompareVersion);
             if (verCmp.HasValue && verCmp.Value != 0)
                 return verCmp.Value;
 
-            if (a.ReleaseDate.HasValue && b.ReleaseDate.HasValue)
-                return b.ReleaseDate.Value.CompareTo(a.ReleaseDate.Value);
+            var dateCmp = CompareNullableDateDescending(a.Entry.ReleaseDate, b.Entry.ReleaseDate);
+            if (dateCmp != 0)
+                return dateCmp;
 
-            if (b.ReleaseDate.HasValue)
-                return 1;
-
-            if (a.ReleaseDate.HasValue)
-                return -1;
-
-            return 0;
+            return StringComparer.OrdinalIgnoreCase.Compare(a.Entry.DescriptorUrl, b.Entry.DescriptorUrl);
         });
 
-        return entries;
+        return keyed.ConvertAll(k => k.Entry);
     }
 
     private LenovoDescriptorCandidate? ParseDescriptor(
@@ -836,14 +1011,73 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
         if (string.IsNullOrWhiteSpace(parsedPrimary.Version))
             return null;
 
-        var parsedSymbolic = ParseLenovoVersion(FirstNonEmpty(detectBiosVersion, xmlBiosVersion, indexEntry.BiosVersion));
-        var primaryIsNumericOnly = !string.IsNullOrEmpty(parsedPrimary.NumericVersion)
-            && string.IsNullOrEmpty(parsedPrimary.Family);
-        var symbolicVersion = parsedPrimary.SymbolicVersion ?? (primaryIsNumericOnly ? parsedSymbolic.SymbolicVersion : null);
-        var family = !string.IsNullOrEmpty(parsedPrimary.Family)
-            ? parsedPrimary.Family
-            : (primaryIsNumericOnly ? parsedSymbolic.Family : "");
-        var numericVersion = parsedPrimary.NumericVersion ?? parsedSymbolic.NumericVersion;
+        var parsedDetect = ParseLenovoVersion(detectBiosVersion);
+        var parsedXmlBios = ParseLenovoVersion(xmlBiosVersion);
+        var parsedDescriptorHint = !string.IsNullOrEmpty(parsedDetect.Family)
+            ? parsedDetect
+            : !string.IsNullOrEmpty(parsedXmlBios.Family)
+                ? parsedXmlBios
+                : parsedDetect.Kind != LenovoVersionKind.Empty
+                    ? parsedDetect
+                    : parsedXmlBios;
+        var parsedIndexHint = ParseIndexVersionHint(indexEntry.BiosVersion, indexEntry.Version, out var hasIndexFamilyConflict);
+
+        var hasAnyDescriptorVersion = !string.IsNullOrWhiteSpace(rawAttrVersion)
+            || !string.IsNullOrWhiteSpace(detectBiosVersion)
+            || !string.IsNullOrWhiteSpace(xmlBiosVersion);
+
+        var hasDescriptorFamilyConflict =
+            HasFamilyConflict(parsedPrimary.Family, parsedDetect.Family)
+            || HasFamilyConflict(parsedPrimary.Family, parsedXmlBios.Family)
+            || HasFamilyConflict(parsedDetect.Family, parsedXmlBios.Family)
+            || (!hasAnyDescriptorVersion && hasIndexFamilyConflict);
+
+        string family;
+        string? symbolicVersion;
+        string? numericVersion;
+
+        switch (parsedPrimary.Kind)
+        {
+            case LenovoVersionKind.RecognizedSymbolic:
+                family = parsedPrimary.Family;
+                symbolicVersion = parsedPrimary.SymbolicVersion;
+                numericVersion = parsedPrimary.NumericVersion;
+                if (string.IsNullOrEmpty(numericVersion)
+                    && !hasDescriptorFamilyConflict
+                    && !string.IsNullOrEmpty(parsedDescriptorHint.NumericVersion)
+                    && (string.IsNullOrEmpty(parsedDescriptorHint.SymbolicVersion)
+                        || string.Equals(parsedDescriptorHint.SymbolicVersion, parsedPrimary.SymbolicVersion, StringComparison.OrdinalIgnoreCase)))
+                {
+                    numericVersion = parsedDescriptorHint.NumericVersion;
+                }
+                break;
+
+            case LenovoVersionKind.PureNumeric:
+                if (!string.IsNullOrEmpty(parsedDescriptorHint.Family))
+                {
+                    family = parsedDescriptorHint.Family;
+                    symbolicVersion = parsedDescriptorHint.SymbolicVersion;
+                }
+                else
+                {
+                    family = parsedIndexHint.Family;
+                    symbolicVersion = parsedIndexHint.SymbolicVersion;
+                    if (hasIndexFamilyConflict)
+                        hasDescriptorFamilyConflict = true;
+                }
+
+                numericVersion = parsedPrimary.NumericVersion;
+                break;
+
+            default: // LenovoVersionKind.Unrecognized
+                // Preserve descriptor-local family so cross-family <DetectVersion>/<BiosVersion>
+                // is rejected as UnsupportedHardware, while NEVER inheriting numericVersion,
+                // symbolicVersion, or index-only family onto an unrecognized Package@version.
+                family = parsedDescriptorHint.Family;
+                symbolicVersion = null;
+                numericVersion = null;
+                break;
+        }
 
         var releaseDate = BiosVersionComparer.TryParseReleaseDate(GetChildValue(root, "ReleaseDate"))
             ?? indexEntry.ReleaseDate;
@@ -891,6 +1125,8 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             Family: family,
             NumericVersion: numericVersion,
             SymbolicVersion: symbolicVersion,
+            PrimaryKind: parsedPrimary.Kind,
+            HasDescriptorFamilyConflict: hasDescriptorFamilyConflict,
             PackageId: packageId,
             ReleaseDate: releaseDate,
             Severity: severity,
@@ -904,10 +1140,18 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             InstallMode: installMode);
     }
 
+    private static bool HasFamilyConflict(string a, string b) =>
+        !string.IsNullOrEmpty(a)
+        && !string.IsNullOrEmpty(b)
+        && !string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
     private static bool IsFamilyCompatible(string currentFamily, string candidateFamily) =>
         string.IsNullOrEmpty(currentFamily)
         || string.IsNullOrEmpty(candidateFamily)
         || string.Equals(currentFamily, candidateFamily, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsRecognizedPrimaryKind(LenovoVersionKind kind) =>
+        kind is LenovoVersionKind.RecognizedSymbolic or LenovoVersionKind.PureNumeric;
 
     private static bool IsCandidateNewer(
         string currentPrimary,
@@ -916,18 +1160,13 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
         DateOnly? currentReleaseDate,
         LenovoDescriptorCandidate candidate)
     {
-        if (!IsFamilyCompatible(currentFamily, candidate.Family))
+        if (candidate.HasDescriptorFamilyConflict || !IsFamilyCompatible(currentFamily, candidate.Family))
             return false;
 
-        // Defense in depth: when the installed BIOS family is known, never fall through to
-        // skeleton digit-run comparison against an unrecognized non-numeric symbolic version.
-        if (!string.IsNullOrEmpty(currentFamily)
-            && string.IsNullOrEmpty(candidate.Family)
-            && string.IsNullOrEmpty(candidate.NumericVersion)
-            && !PureNumericRegex().IsMatch(candidate.Version))
-        {
+        // Defense in depth: never promote an unrecognized Package@version to UpdateAvailable
+        // via skeleton digit-run matching, inherited metadata, or <ReleaseDate> fallback.
+        if (!IsRecognizedPrimaryKind(candidate.PrimaryKind))
             return false;
-        }
 
         if (!string.IsNullOrEmpty(currentPrimary))
         {
@@ -953,25 +1192,63 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
         return BiosVersionComparer.IsNewer(currentPrimary, candidate.Version, currentReleaseDate, candidate.ReleaseDate);
     }
 
-    private static LenovoDescriptorCandidate SelectNewestDescriptor(List<LenovoDescriptorCandidate> candidates)
+    private static int GetCandidateSelectionRank(LenovoDescriptorCandidate candidate, string currentFamily)
+    {
+        if (!IsRecognizedPrimaryKind(candidate.PrimaryKind))
+            return 0;
+
+        if (!string.IsNullOrEmpty(currentFamily)
+            && string.Equals(candidate.Family, currentFamily, StringComparison.OrdinalIgnoreCase))
+        {
+            return 2;
+        }
+
+        return 1;
+    }
+
+    private static LenovoDescriptorCandidate SelectNewestDescriptor(
+        List<LenovoDescriptorCandidate> candidates,
+        string currentFamily)
     {
         var best = candidates[0];
+        var bestRank = GetCandidateSelectionRank(best, currentFamily);
+
         for (var i = 1; i < candidates.Count; i++)
         {
             var candidate = candidates[i];
-            int? cmp = null;
+            var candidateRank = GetCandidateSelectionRank(candidate, currentFamily);
 
-            if (IsFamilyCompatible(best.Family, candidate.Family))
+            if (candidateRank != bestRank)
+            {
+                if (candidateRank > bestRank)
+                {
+                    best = candidate;
+                    bestRank = candidateRank;
+                }
+                continue;
+            }
+
+            int? cmp = null;
+            var familiesCompatible = IsFamilyCompatible(best.Family, candidate.Family);
+
+            if (familiesCompatible)
+            {
                 cmp = BiosVersionComparer.Compare(best.Version, candidate.Version);
 
-            if (!cmp.HasValue && !string.IsNullOrEmpty(best.NumericVersion) && !string.IsNullOrEmpty(candidate.NumericVersion))
-                cmp = BiosVersionComparer.Compare(best.NumericVersion, candidate.NumericVersion);
+                if (!cmp.HasValue && !string.IsNullOrEmpty(best.SymbolicVersion) && !string.IsNullOrEmpty(candidate.SymbolicVersion))
+                    cmp = BiosVersionComparer.Compare(best.SymbolicVersion, candidate.SymbolicVersion);
+
+                if (!cmp.HasValue && !string.IsNullOrEmpty(best.NumericVersion) && !string.IsNullOrEmpty(candidate.NumericVersion))
+                    cmp = BiosVersionComparer.Compare(best.NumericVersion, candidate.NumericVersion);
+            }
 
             if (cmp < 0)
             {
                 best = candidate;
             }
-            else if ((cmp is null or 0) && candidate.ReleaseDate.HasValue
+            else if ((cmp is null or 0)
+                     && (familiesCompatible || string.IsNullOrEmpty(currentFamily))
+                     && candidate.ReleaseDate.HasValue
                      && (!best.ReleaseDate.HasValue || candidate.ReleaseDate.Value > best.ReleaseDate.Value))
             {
                 best = candidate;
@@ -1013,7 +1290,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
 
     private static string? FindDetectBiosVersion(XElement root)
     {
-        string? fallback = null;
+        string? untypedFallback = null;
         foreach (var el in root.Descendants())
         {
             if (!el.Name.LocalName.Equals("DetectVersion", StringComparison.OrdinalIgnoreCase))
@@ -1023,13 +1300,18 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             if (string.IsNullOrEmpty(value))
                 continue;
 
-            fallback ??= value;
             var typeAttr = GetAttribute(el, "type");
-            if (string.Equals(typeAttr, "BIOS", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(typeAttr, "BIOS", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(typeAttr, "UEFI", StringComparison.OrdinalIgnoreCase))
+            {
                 return value;
+            }
+
+            if (string.IsNullOrEmpty(typeAttr))
+                untypedFallback ??= value;
         }
 
-        return fallback;
+        return untypedFallback;
     }
 
     private static XElement? SelectInstallerFileElement(XElement root)
@@ -1333,24 +1615,37 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
         }
     }
 
+    internal enum LenovoVersionKind
+    {
+        Empty = 0,
+        RecognizedSymbolic = 1,
+        PureNumeric = 2,
+        Unrecognized = 3,
+    }
+
     internal sealed record ParsedLenovoVersion(
         string Version,
         string Family,
         string? NumericVersion,
-        string? SymbolicVersion);
+        string? SymbolicVersion,
+        LenovoVersionKind Kind);
 
     private sealed record LenovoIndexEntry(
         string DescriptorUrl,
         string? Version,
         DateOnly? ReleaseDate,
         string? BiosVersion,
-        string Family);
+        string Family,
+        LenovoVersionKind VersionKind,
+        string? CompareVersion);
 
     private sealed record LenovoDescriptorCandidate(
         string Version,
         string Family,
         string? NumericVersion,
         string? SymbolicVersion,
+        LenovoVersionKind PrimaryKind,
+        bool HasDescriptorFamilyConflict,
         string? PackageId,
         DateOnly? ReleaseDate,
         BiosUpdateSeverity Severity,

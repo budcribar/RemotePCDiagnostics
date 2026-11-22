@@ -989,6 +989,944 @@ public sealed class LenovoBiosUpdateProviderTests
     }
 
     // -------------------------------------------------------------------------
+    // L13 — Iteration 3 Hardening Regressions (LenovoVersionKind, 3-Source Truth Table,
+    //       Descriptor Family Conflicts, EC Non-Interference, ReleaseDate & Multi-Descriptor Safety)
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("1.99a", "N33ET99W (1.99)", false)]
+    [InlineData("1.99a", "N33ET99W (1.99)", true)]
+    [InlineData("UNKNOWN_BIOS_99", "N33ET99W (1.99)", false)]
+    [InlineData("UNKNOWN_BIOS_99", "N33ET99W (1.99)", true)]
+    [InlineData("FAKEBIOS (1.99)", "N33ET99W (1.99)", false)]
+    [InlineData("X99ZZ100WWZ (1.99)", "N33ET99W (1.99)", false)]
+    [InlineData("UNKNOWN99 (1.99)", "N33ET99W (1.99)", false)]
+    public async Task GetLatestVersionAsync_UnknownOrNonStandardPackageVersion_WithCrossFamilyDetectVersion_ReturnsUnsupportedHardware(
+        string packageVersion,
+        string detectBiosVersion,
+        bool useRawCurrent)
+    {
+        var indexXml = """
+            <packages>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/crossdetect.xml</location>
+                <release>2025-01-01</release>
+              </package>
+            </packages>
+            """;
+        var descXml = $"""
+            <Package id="crossdetect" version="{packageVersion}">
+              <ReleaseDate>2025-01-01</ReleaseDate>
+              <DetectVersion type="BIOS">{detectBiosVersion}</DetectVersion>
+              <Files><Installer><File><Name>crossdetect.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", indexXml, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/crossdetect.xml", descXml, "application/xml");
+
+        var provider = LenovoBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+        var current = useRawCurrent ? identity.CurrentBios : await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UnsupportedHardware, latest.Status);
+        Assert.Null(latest.DownloadUrl);
+    }
+
+    [Theory]
+    [InlineData("UNKNOWN_BIOS_99", "N33ET99W (1.99)")]
+    [InlineData("UNKNOWN_BIOS_99", "N32ET99W (1.99)")]
+    [InlineData("1.99a", "N33ET99W (1.99)")]
+    [InlineData("1.99a", "N32ET99W (1.99)")]
+    [InlineData("FAKEBIOS (1.99)", "N32ET92W")]
+    [InlineData("UNKNOWN99 (1.99)", "N32ET99W (1.99)")]
+    public async Task GetLatestVersionAsync_UnknownOrNonStandardPackageVersion_WithIndexBiosVersion_NeverLeaksNumericOrReturnsUpdateAvailable(
+        string packageVersion,
+        string indexBiosVersion)
+    {
+        var indexXml = $"""
+            <packages>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/idxleak.xml</location>
+                <BiosVersion>{indexBiosVersion}</BiosVersion>
+                <release>2025-01-01</release>
+              </package>
+            </packages>
+            """;
+        var descXml = $"""
+            <Package id="idxleak" version="{packageVersion}">
+              <ReleaseDate>2025-01-01</ReleaseDate>
+              <Files><Installer><File><Name>idxleak.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", indexXml, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/idxleak.xml", descXml, "application/xml");
+
+        var provider = LenovoBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+
+        foreach (var current in new[] { await provider.GetCurrentVersionAsync(identity), identity.CurrentBios })
+        {
+            var latest = await provider.GetLatestVersionAsync(identity, current);
+
+            Assert.NotEqual(BiosCheckStatus.UpdateAvailable, latest.Status);
+            Assert.Null(latest.DownloadUrl);
+            Assert.False(latest.Metadata?.ContainsKey("numericVersion") == true);
+        }
+    }
+
+    [Theory]
+    [InlineData("UNKNOWN_BIOS_99", "N32ET85W (1.60)")]
+    [InlineData("UNKNOWN_BIOS_99", "N32ET99W (1.99)")]
+    [InlineData("1.99a", "N32ET99W (1.99)")]
+    public async Task GetLatestVersionAsync_UnknownPackageVersion_WithSameFamilyDetectVersionAndNewerDate_NeverReturnsUpdateAvailable(
+        string packageVersion,
+        string detectBiosVersion)
+    {
+        var indexXml = """
+            <packages>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/samedetect.xml</location>
+                <release>2025-12-31</release>
+              </package>
+            </packages>
+            """;
+        var descXml = $"""
+            <Package id="samedetect" version="{packageVersion}">
+              <ReleaseDate>2025-12-31</ReleaseDate>
+              <DetectVersion type="BIOS">{detectBiosVersion}</DetectVersion>
+              <Files><Installer><File><Name>samedetect.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", indexXml, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/samedetect.xml", descXml, "application/xml");
+
+        var provider = LenovoBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UpToDate, latest.Status);
+        Assert.Null(latest.DownloadUrl);
+        Assert.False(latest.Metadata?.ContainsKey("numericVersion") == true);
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_RecognizedSymbolic_DescriptorFamilyConflictRejected_WhileEcDetectVersionIgnored()
+    {
+        var conflictDescXml = """
+            <Package id="conflict" version="N32ET92W">
+              <ReleaseDate>2024-06-15</ReleaseDate>
+              <DetectVersion type="BIOS">N33ET99W</DetectVersion>
+              <Files><Installer><File><Name>conflict.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var conflictHandler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", SampleIndexXml, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/n32uj20w_2_.xml", conflictDescXml, "application/xml");
+
+        var provider = LenovoBiosUpdateProvider.CreateWithHandler(conflictHandler);
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var conflictResult = await provider.GetLatestVersionAsync(identity, current);
+        Assert.Equal(BiosCheckStatus.UnsupportedHardware, conflictResult.Status);
+        Assert.Null(conflictResult.DownloadUrl);
+
+        var ecDescXml = """
+            <Package id="ecnoninterference" version="N32ET92W">
+              <ReleaseDate>2024-06-15</ReleaseDate>
+              <DetectVersion type="EC">N32HT35W</DetectVersion>
+              <Files><Installer><File><Name>n32uj20w.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var ecHandler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", SampleIndexXml, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/n32uj20w_2_.xml", ecDescXml, "application/xml");
+
+        var ecResult = await LenovoBiosUpdateProvider.CreateWithHandler(ecHandler)
+            .GetLatestVersionAsync(identity, current);
+        Assert.Equal(BiosCheckStatus.UpdateAvailable, ecResult.Status);
+        Assert.Equal("N32ET92W", ecResult.LatestVersion);
+        Assert.Equal("N32ET", ecResult.Metadata?["biosFamily"]);
+    }
+
+    [Theory]
+    [InlineData("1.68", "N32ET92W (1.68)", "", BiosCheckStatus.UpdateAvailable, "1.68", "N32ET")]
+    [InlineData("1.65", "N32ET89W (1.65)", "", BiosCheckStatus.UpToDate, "1.65", "N32ET")]
+    [InlineData("1.68", "N33ET99W (1.99)", "", BiosCheckStatus.UnsupportedHardware, null, null)]
+    [InlineData("1.68/1.22", "N32ET92W (1.68)", "N33ET99W", BiosCheckStatus.UpdateAvailable, "1.68", "N32ET")]
+    [InlineData("1.68/1.22", "N33ET99W (1.99)", "", BiosCheckStatus.UnsupportedHardware, null, null)]
+    [InlineData("1.68", "", "N32ET92W", BiosCheckStatus.UpdateAvailable, "1.68", "N32ET")]
+    [InlineData("1.68", "", "N33ET99W (1.99)", BiosCheckStatus.UnsupportedHardware, null, null)]
+    public async Task GetLatestVersionAsync_ValidNumericPackageVersion_RespectsDetectVersionAndIndexFamily(
+        string packageVersion,
+        string detectBiosVersion,
+        string indexBiosVersion,
+        BiosCheckStatus expectedStatus,
+        string? expectedVersion,
+        string? expectedFamily)
+    {
+        var indexBiosElement = string.IsNullOrEmpty(indexBiosVersion) ? "" : $"<BiosVersion>{indexBiosVersion}</BiosVersion>";
+        var detectElement = string.IsNullOrEmpty(detectBiosVersion)
+            ? ""
+            : $"""<DetectVersion type="BIOS">{detectBiosVersion}</DetectVersion>""";
+
+        var indexXml = $"""
+            <packages>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/numpkg.xml</location>
+                {indexBiosElement}
+                <release>2024-06-15</release>
+              </package>
+            </packages>
+            """;
+        var descXml = $"""
+            <Package id="numpkg" version="{packageVersion}">
+              <ReleaseDate>2024-06-15</ReleaseDate>
+              {detectElement}
+              <Files><Installer><File><Name>numpkg.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", indexXml, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/numpkg.xml", descXml, "application/xml");
+
+        var provider = LenovoBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(expectedStatus, latest.Status);
+        if (expectedVersion is not null)
+        {
+            Assert.Equal(expectedVersion, latest.LatestVersion);
+            Assert.Equal(expectedFamily, latest.Metadata?["biosFamily"]);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetLatestVersionAsync_MultiDescriptor_UnknownFormatWithNewerReleaseDate_DoesNotShadowValidSameFamilyDescriptor(
+        bool unknownFirst)
+    {
+        const string unknownPkg = """
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/unknown_newer.xml</location>
+                <version>UNKNOWN_BIOS_99</version>
+                <release>2025-01-01</release>
+              </package>
+            """;
+        const string validPkg = """
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/valid_n32.xml</location>
+                <version>N32ET90W</version>
+                <release>2024-06-15</release>
+              </package>
+            """;
+
+        var indexXml = unknownFirst
+            ? $"<packages>{unknownPkg}{validPkg}</packages>"
+            : $"<packages>{validPkg}{unknownPkg}</packages>";
+
+        const string unknownDesc = """
+            <Package id="unk99" version="UNKNOWN_BIOS_99">
+              <ReleaseDate>2025-01-01</ReleaseDate>
+              <Files><Installer><File><Name>unk99.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+        const string validDesc = """
+            <Package id="n32et90w" version="N32ET90W">
+              <ReleaseDate>2024-06-15</ReleaseDate>
+              <Files><Installer><File><Name>n32et90w.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", indexXml, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/unknown_newer.xml", unknownDesc, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/valid_n32.xml", validDesc, "application/xml");
+
+        var provider = LenovoBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UpdateAvailable, latest.Status);
+        Assert.Equal("N32ET90W", latest.LatestVersion);
+        Assert.Equal("N32ET", latest.Metadata?["biosFamily"]);
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_MultiDescriptor_UnspecifiedFamilyOlderNumericWithNewerDate_DoesNotShadowExplicitSameFamilyDescriptor()
+    {
+        const string indexXml = """
+            <packages>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/unspec_num.xml</location>
+                <version>1.62</version>
+                <release>2025-01-01</release>
+              </package>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/valid_n32.xml</location>
+                <version>N32ET90W</version>
+                <release>2024-06-15</release>
+              </package>
+            </packages>
+            """;
+        const string unspecDesc = """
+            <Package id="unspec" version="1.62">
+              <ReleaseDate>2025-01-01</ReleaseDate>
+              <Files><Installer><File><Name>unspec.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+        const string validDesc = """
+            <Package id="n32et90w" version="N32ET90W">
+              <ReleaseDate>2024-06-15</ReleaseDate>
+              <Files><Installer><File><Name>n32et90w.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", indexXml, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/unspec_num.xml", unspecDesc, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/valid_n32.xml", validDesc, "application/xml");
+
+        var provider = LenovoBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UpdateAvailable, latest.Status);
+        Assert.Equal("N32ET90W", latest.LatestVersion);
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_CurrentWithoutFamily_UnknownFormatWithNewerReleaseDate_NeverReturnsUpdateAvailableAndDoesNotShadowValidDescriptor()
+    {
+        const string singleUnknownIndex = """
+            <packages>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/unk.xml</location>
+                <version>UNKNOWN_BIOS_99</version>
+                <release>2025-01-01</release>
+              </package>
+            </packages>
+            """;
+        const string unknownDesc = """
+            <Package id="unk99" version="UNKNOWN_BIOS_99">
+              <ReleaseDate>2025-01-01</ReleaseDate>
+              <Files><Installer><File><Name>unk99.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "1.65");
+
+        var singleHandler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", singleUnknownIndex, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/unk.xml", unknownDesc, "application/xml");
+
+        var singleProvider = LenovoBiosUpdateProvider.CreateWithHandler(singleHandler);
+        var current = await singleProvider.GetCurrentVersionAsync(identity);
+        Assert.Equal("", current.Family);
+
+        var singleLatest = await singleProvider.GetLatestVersionAsync(identity, current);
+        Assert.NotEqual(BiosCheckStatus.UpdateAvailable, singleLatest.Status);
+        Assert.Null(singleLatest.DownloadUrl);
+
+        const string multiIndex = """
+            <packages>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/unk.xml</location>
+                <version>UNKNOWN_BIOS_99</version>
+                <release>2025-01-01</release>
+              </package>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/valid.xml</location>
+                <version>N32ET90W (1.68)</version>
+                <release>2024-06-15</release>
+              </package>
+            </packages>
+            """;
+        const string validDesc = """
+            <Package id="n32et90w" version="N32ET90W (1.68)">
+              <ReleaseDate>2024-06-15</ReleaseDate>
+              <Files><Installer><File><Name>n32et90w.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var multiHandler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", multiIndex, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/unk.xml", unknownDesc, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/valid.xml", validDesc, "application/xml");
+
+        var multiLatest = await LenovoBiosUpdateProvider.CreateWithHandler(multiHandler)
+            .GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UpdateAvailable, multiLatest.Status);
+        Assert.Equal("N32ET90W", multiLatest.LatestVersion);
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_OrderIndexEntries_PrioritizesMatchingFamilyAheadOfSixNewerUnspecifiedEntries()
+    {
+        var unknownEntries = string.Join(
+            Environment.NewLine,
+            Enumerable.Range(1, 6).Select(i => $"""
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/unknown_{i}.xml</location>
+                <version>UNKNOWN_{i}</version>
+                <release>2025-01-0{i}</release>
+              </package>
+            """));
+
+        var indexXml = $"""
+            <packages>
+              {unknownEntries}
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/n32.xml</location>
+                <BiosVersion>N32ET92W</BiosVersion>
+                <release>2024-06-15</release>
+              </package>
+            </packages>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", indexXml, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/n32.xml", """
+                <Package id="n32" version="N32ET92W">
+                  <ReleaseDate>2024-06-15</ReleaseDate>
+                  <Files><Installer><File><Name>n32.exe</Name></File></Installer></Files>
+                </Package>
+                """, "application/xml");
+
+        for (var i = 1; i <= 6; i++)
+        {
+            handler.MapText($"https://download.lenovo.com/pccbbs/mobiles/unknown_{i}.xml", $"""
+                <Package id="unk{i}" version="UNKNOWN_{i}">
+                  <ReleaseDate>2025-01-0{i}</ReleaseDate>
+                  <Files><Installer><File><Name>unk{i}.exe</Name></File></Installer></Files>
+                </Package>
+                """, "application/xml");
+        }
+
+        var provider = LenovoBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UpdateAvailable, latest.Status);
+        Assert.Equal("N32ET92W", latest.LatestVersion);
+        Assert.Equal("N32ET", latest.Metadata?["biosFamily"]);
+    }
+
+    // -------------------------------------------------------------------------
+    // L14 — Iteration 4 Hardening Regressions (Index <version> Family Propagation,
+    //       Index Family Conflicts, 3-Tier Family Priority & Transitive Ordering)
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("N33ET99W", "1.99", BiosCheckStatus.UnsupportedHardware, null, null)]
+    [InlineData("N32ET92W", "1.68", BiosCheckStatus.UpdateAvailable, "1.68", "N32ET")]
+    public async Task GetLatestVersionAsync_IndexVersionOnly_PureNumericDescriptor_PropagatesIndexFamily(
+        string indexVersion,
+        string descriptorNumericVersion,
+        BiosCheckStatus expectedStatus,
+        string? expectedVersion,
+        string? expectedFamily)
+    {
+        var indexXml = $"""
+            <packages>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/biospkg.xml</location>
+                <version>{indexVersion}</version>
+                <release>2025-02-01</release>
+              </package>
+            </packages>
+            """;
+        var descXml = $"""
+            <Package id="biospkg" version="{descriptorNumericVersion}">
+              <ReleaseDate>2025-02-01</ReleaseDate>
+              <Files><Installer><File><Name>biospkg.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", indexXml, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/biospkg.xml", descXml, "application/xml");
+
+        var provider = LenovoBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(expectedStatus, latest.Status);
+        if (expectedVersion is null)
+        {
+            Assert.Null(latest.DownloadUrl);
+        }
+        else
+        {
+            Assert.Equal(expectedVersion, latest.LatestVersion);
+            Assert.Equal(expectedFamily, latest.Metadata?["biosFamily"]);
+        }
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_IndexVersionCrossFamilyWithNumericBiosVersion_AndIndexConflicts_FailClosedUnlessDescriptorAuthoritative()
+    {
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+
+        // P08b: <BiosVersion>1.99</BiosVersion> + <version>N33ET99W</version> with pure numeric descriptor -> UnsupportedHardware
+        const string p08bIndex = """
+            <packages>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/biospkg.xml</location>
+                <version>N33ET99W</version>
+                <BiosVersion>1.99</BiosVersion>
+                <release>2025-02-01</release>
+              </package>
+            </packages>
+            """;
+        const string pureNumericDesc = """
+            <Package id="biospkg" version="1.99">
+              <ReleaseDate>2025-02-01</ReleaseDate>
+              <Files><Installer><File><Name>biospkg.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var p08bHandler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", p08bIndex, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/biospkg.xml", pureNumericDesc, "application/xml");
+
+        var p08bProvider = LenovoBiosUpdateProvider.CreateWithHandler(p08bHandler);
+        var current = await p08bProvider.GetCurrentVersionAsync(identity);
+        var p08bLatest = await p08bProvider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UnsupportedHardware, p08bLatest.Status);
+        Assert.Null(p08bLatest.DownloadUrl);
+
+        // Conflicting index <BiosVersion>N32ET92W</BiosVersion> + <version>N33ET99W</version> on pure numeric descriptor without descriptor family -> UnsupportedHardware
+        const string conflictIndex = """
+            <packages>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/biospkg.xml</location>
+                <version>N33ET99W</version>
+                <BiosVersion>N32ET92W</BiosVersion>
+                <release>2025-02-01</release>
+              </package>
+            </packages>
+            """;
+
+        var conflictHandler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", conflictIndex, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/biospkg.xml", pureNumericDesc, "application/xml");
+
+        var conflictLatest = await LenovoBiosUpdateProvider.CreateWithHandler(conflictHandler)
+            .GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UnsupportedHardware, conflictLatest.Status);
+        Assert.Null(conflictLatest.DownloadUrl);
+
+        // Same conflicting index, but descriptor carries authoritative descriptor-local <DetectVersion type="BIOS"> -> UpdateAvailable
+        const string authoritativeDesc = """
+            <Package id="biospkg" version="1.68">
+              <ReleaseDate>2025-02-01</ReleaseDate>
+              <DetectVersion type="BIOS">N32ET92W (1.68)</DetectVersion>
+              <Files><Installer><File><Name>biospkg.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+
+        var authHandler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", conflictIndex, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/biospkg.xml", authoritativeDesc, "application/xml");
+
+        var authLatest = await LenovoBiosUpdateProvider.CreateWithHandler(authHandler)
+            .GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UpdateAvailable, authLatest.Status);
+        Assert.Equal("1.68", authLatest.LatestVersion);
+        Assert.Equal("N32ET", authLatest.Metadata?["biosFamily"]);
+
+        // Unrecognized descriptor remains strictly isolated from index <version>
+        const string unrecognizedDesc = """
+            <Package id="biospkg" version="UNKNOWN_BIOS_99">
+              <ReleaseDate>2025-02-01</ReleaseDate>
+              <Files><Installer><File><Name>biospkg.exe</Name></File></Installer></Files>
+            </Package>
+            """;
+        const string sameFamVersionIndex = """
+            <packages>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/biospkg.xml</location>
+                <version>N32ET99W (1.99)</version>
+                <release>2025-02-01</release>
+              </package>
+            </packages>
+            """;
+
+        var unkHandler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", sameFamVersionIndex, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/biospkg.xml", unrecognizedDesc, "application/xml");
+
+        var unkLatest = await LenovoBiosUpdateProvider.CreateWithHandler(unkHandler)
+            .GetLatestVersionAsync(identity, current);
+
+        Assert.NotEqual(BiosCheckStatus.UpdateAvailable, unkLatest.Status);
+        Assert.Null(unkLatest.DownloadUrl);
+        Assert.False(unkLatest.Metadata?.ContainsKey("numericVersion") == true);
+        Assert.False(unkLatest.Metadata?.ContainsKey("biosFamily") == true);
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_OrderIndexEntries_PrioritizesUnspecifiedAheadOfSixNewerMismatchedFamilyEntries()
+    {
+        var mismatchedEntries = string.Join(
+            Environment.NewLine,
+            Enumerable.Range(1, 6).Select(i => $"""
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/n33_{i}.xml</location>
+                <BiosVersion>N33ET9{i}W</BiosVersion>
+                <release>2026-01-0{i}</release>
+              </package>
+            """));
+
+        var indexXml = $"""
+            <packages>
+              {mismatchedEntries}
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>https://download.lenovo.com/pccbbs/mobiles/unspec_valid.xml</location>
+                <version>1.68</version>
+                <release>2024-06-15</release>
+              </package>
+            </packages>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", indexXml, "application/xml")
+            .MapText("https://download.lenovo.com/pccbbs/mobiles/unspec_valid.xml", """
+                <Package id="n32valid" version="N32ET92W (1.68)">
+                  <ReleaseDate>2024-06-15</ReleaseDate>
+                  <Files><Installer><File><Name>n32valid.exe</Name></File></Installer></Files>
+                </Package>
+                """, "application/xml");
+
+        for (var i = 1; i <= 6; i++)
+        {
+            handler.MapText($"https://download.lenovo.com/pccbbs/mobiles/n33_{i}.xml", $"""
+                <Package id="n33_{i}" version="N33ET9{i}W">
+                  <ReleaseDate>2026-01-0{i}</ReleaseDate>
+                  <Files><Installer><File><Name>n33_{i}.exe</Name></File></Installer></Files>
+                </Package>
+                """, "application/xml");
+        }
+
+        var provider = LenovoBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UpdateAvailable, latest.Status);
+        Assert.Equal("N32ET92W", latest.LatestVersion);
+        Assert.Equal("N32ET", latest.Metadata?["biosFamily"]);
+        Assert.Equal(
+            "https://download.lenovo.com/pccbbs/mobiles/unspec_valid.xml",
+            handler.Requests[1].RequestUri!.AbsoluteUri);
+
+        // When ALL entries are explicitly mismatched, still returns UnsupportedHardware.
+        var allMismatchIndex = $"<packages>{mismatchedEntries}</packages>";
+        var allMismatchHandler = new FakeBiosHttpHandler()
+            .MapText("https://download.lenovo.com/catalog/20XW_Win11.xml", allMismatchIndex, "application/xml");
+        for (var i = 1; i <= 6; i++)
+        {
+            allMismatchHandler.MapText($"https://download.lenovo.com/pccbbs/mobiles/n33_{i}.xml", $"""
+                <Package id="n33_{i}" version="N33ET9{i}W">
+                  <ReleaseDate>2026-01-0{i}</ReleaseDate>
+                  <Files><Installer><File><Name>n33_{i}.exe</Name></File></Installer></Files>
+                </Package>
+                """, "application/xml");
+        }
+
+        var mismatchLatest = await LenovoBiosUpdateProvider.CreateWithHandler(allMismatchHandler)
+            .GetLatestVersionAsync(identity, current);
+        Assert.Equal(BiosCheckStatus.UnsupportedHardware, mismatchLatest.Status);
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_OrderIndexEntries_24MixedSkeletonEntries_SortsTransitivelyWithoutException()
+    {
+        var packageElements = new List<string>();
+        var handler = new FakeBiosHttpHandler();
+
+        for (var i = 0; i < 8; i++)
+        {
+            var numUrl = $"https://download.lenovo.com/pccbbs/mobiles/num_old_{i}.xml";
+            var unkUrl = $"https://download.lenovo.com/pccbbs/mobiles/unk_mid_{i}.xml";
+            var pfxUrl = $"https://download.lenovo.com/pccbbs/mobiles/pfx_new_{i}.xml";
+
+            var numVer = i == 0 ? "1.68" : $"1.6{i % 5}";
+            var numDate = i == 0 ? "2024-01-01" : $"2026-01-0{i + 1}";
+
+            packageElements.Add($"""
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>{numUrl}</location>
+                <version>{numVer}</version>
+                <release>{numDate}</release>
+              </package>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>{unkUrl}</location>
+                <version>UNKNOWN_{i}</version>
+                <release>2025-01-0{i + 1}</release>
+              </package>
+              <package>
+                <category>BIOS/UEFI</category>
+                <location>{pfxUrl}</location>
+                <version>A{10 + i}</version>
+                <release>2026-02-0{i + 1}</release>
+              </package>
+            """);
+
+            handler.MapText(numUrl, $"""
+                <Package id="num_{i}" version="{numVer}">
+                  <ReleaseDate>{numDate}</ReleaseDate>
+                  <Files><Installer><File><Name>num_{i}.exe</Name></File></Installer></Files>
+                </Package>
+                """, "application/xml");
+            handler.MapText(unkUrl, $"""
+                <Package id="unk_{i}" version="UNKNOWN_{i}">
+                  <ReleaseDate>2025-01-0{i + 1}</ReleaseDate>
+                  <Files><Installer><File><Name>unk_{i}.exe</Name></File></Installer></Files>
+                </Package>
+                """, "application/xml");
+            handler.MapText(pfxUrl, $"""
+                <Package id="pfx_{i}" version="A{10 + i}">
+                  <ReleaseDate>2026-02-0{i + 1}</ReleaseDate>
+                  <Files><Installer><File><Name>pfx_{i}.exe</Name></File></Installer></Files>
+                </Package>
+                """, "application/xml");
+        }
+
+        handler.MapText(
+            "https://download.lenovo.com/catalog/20XW_Win11.xml",
+            $"<packages>{string.Join(Environment.NewLine, packageElements)}</packages>",
+            "application/xml");
+
+        var provider = LenovoBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UpdateAvailable, latest.Status);
+        Assert.Equal("1.68", latest.LatestVersion);
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_OrderIndexEntries_24LiteralHashEntriesWithDifferingDigitRuns_SortsDeterministicallyAndSelectsValidUpdate()
+    {
+        // 24 index entries containing literal '#' characters whose digit-run skeletons collide
+        // ("A###", "X###") with differing digit-run counts (1 vs 2), including both exact
+        // strict-weak-order counterexample triples (A1## / A1#2 / A##2 and X1#2 / X##3 / X2#1).
+        var literalHashEntries = new List<(string Id, string Version, string ReleaseDate)>
+        {
+            ("a1_hh", "A1##", "2026-06-03"),
+            ("a1_h2", "A1#2", "2026-06-02"),
+            ("a_hh2", "A##2", "2026-06-01"),
+            ("x1_h2", "X1#2", "2026-06-03"),
+            ("x_hh3", "X##3", "2026-06-02"),
+            ("x2_h1", "X2#1", "2026-06-01"),
+        };
+
+        for (var i = 0; i < 6; i++)
+        {
+            var day = 1 + (i * 3);
+            literalHashEntries.Add(($"a_mix1_{i}", $"A{i + 3}##", $"2026-05-{day:D2}"));
+            literalHashEntries.Add(($"a_mix2_{i}", $"A{i + 2}#{i + 4}", $"2026-05-{day + 1:D2}"));
+            literalHashEntries.Add(($"x_mix_{i}", i % 2 == 0 ? $"X##{i + 4}" : $"X{i + 3}#{i + 1}", $"2026-05-{day + 2:D2}"));
+        }
+
+        Assert.Equal(24, literalHashEntries.Count);
+
+        var identity = BiosIdentityFactory.Lenovo(biosVersion: "N32ET89W (1.65 )");
+
+        static List<T> Permute<T>(IReadOnlyList<T> source, int mode)
+        {
+            var copy = source.ToList();
+            if (mode == 0)
+                return copy;
+            if (mode == 1)
+            {
+                copy.Reverse();
+                return copy;
+            }
+
+            var rng = new Random(mode);
+            for (var i = copy.Count - 1; i > 0; i--)
+            {
+                var j = rng.Next(i + 1);
+                (copy[i], copy[j]) = (copy[j], copy[i]);
+            }
+
+            return copy;
+        }
+
+        int[] permutationModes = [0, 1, 42, 1337, 9001, 202606];
+
+        // Part 1: 24 literal-'#' entries alone across 6 shuffled permutations -> zero ArgumentException,
+        // non-Failed status, and 100% identical top-5 canonical fetch ordering across all permutations.
+        List<string>? baselineHashOnlyFetchOrder = null;
+        foreach (var mode in permutationModes)
+        {
+            var orderedInput = Permute(literalHashEntries, mode);
+            var handler = new FakeBiosHttpHandler();
+            var pkgXml = new List<string>(orderedInput.Count);
+
+            foreach (var (id, version, releaseDate) in orderedInput)
+            {
+                var url = $"https://download.lenovo.com/pccbbs/mobiles/{id}.xml";
+                pkgXml.Add($"""
+                  <package>
+                    <category>BIOS/UEFI</category>
+                    <location>{url}</location>
+                    <version>{version}</version>
+                    <release>{releaseDate}</release>
+                  </package>
+                """);
+                handler.MapText(url, $"""
+                    <Package id="{id}" version="{version}">
+                      <ReleaseDate>{releaseDate}</ReleaseDate>
+                      <Files><Installer><File><Name>{id}.exe</Name></File></Installer></Files>
+                    </Package>
+                    """, "application/xml");
+            }
+
+            handler.MapText(
+                "https://download.lenovo.com/catalog/20XW_Win11.xml",
+                $"<packages>{string.Join(Environment.NewLine, pkgXml)}</packages>",
+                "application/xml");
+
+            var provider = LenovoBiosUpdateProvider.CreateWithHandler(handler);
+            var current = await provider.GetCurrentVersionAsync(identity);
+            var latest = await provider.GetLatestVersionAsync(identity, current);
+
+            Assert.Equal(BiosCheckStatus.UpToDate, latest.Status);
+
+            var fetchOrder = handler.Requests
+                .Skip(1)
+                .Select(r => r.RequestUri!.AbsoluteUri)
+                .ToList();
+            Assert.Equal(5, fetchOrder.Count);
+
+            if (baselineHashOnlyFetchOrder is null)
+                baselineHashOnlyFetchOrder = fetchOrder;
+            else
+                Assert.Equal(baselineHashOnlyFetchOrder, fetchOrder);
+        }
+
+        // Part 2: Same 24 literal-'#' entries + 1 valid BIOS update (older release date) across 6 permutations ->
+        // zero ArgumentException, identical canonical fetch order, and accurate UpdateAvailable selection.
+        const string validDescriptorUrl = "https://download.lenovo.com/pccbbs/mobiles/valid_bios_update.xml";
+        var allEntriesWithValid = new List<(string Id, string Version, string ReleaseDate)>(literalHashEntries)
+        {
+            ("valid_bios_update", "1.68", "2024-01-01"),
+        };
+
+        List<string>? baselineWithValidFetchOrder = null;
+        foreach (var mode in permutationModes)
+        {
+            var orderedInput = Permute(allEntriesWithValid, mode);
+            var handler = new FakeBiosHttpHandler();
+            var pkgXml = new List<string>(orderedInput.Count);
+
+            foreach (var (id, version, releaseDate) in orderedInput)
+            {
+                var url = $"https://download.lenovo.com/pccbbs/mobiles/{id}.xml";
+                pkgXml.Add($"""
+                  <package>
+                    <category>BIOS/UEFI</category>
+                    <location>{url}</location>
+                    <version>{version}</version>
+                    <release>{releaseDate}</release>
+                  </package>
+                """);
+
+                var descVersion = id == "valid_bios_update" ? "N32ET92W (1.68)" : version;
+                handler.MapText(url, $"""
+                    <Package id="{id}" version="{descVersion}">
+                      <ReleaseDate>{releaseDate}</ReleaseDate>
+                      <Files><Installer><File><Name>{id}.exe</Name></File></Installer></Files>
+                    </Package>
+                    """, "application/xml");
+            }
+
+            handler.MapText(
+                "https://download.lenovo.com/catalog/20XW_Win11.xml",
+                $"<packages>{string.Join(Environment.NewLine, pkgXml)}</packages>",
+                "application/xml");
+
+            var provider = LenovoBiosUpdateProvider.CreateWithHandler(handler);
+            var current = await provider.GetCurrentVersionAsync(identity);
+            var latest = await provider.GetLatestVersionAsync(identity, current);
+
+            Assert.Equal(BiosCheckStatus.UpdateAvailable, latest.Status);
+            Assert.Equal("N32ET92W", latest.LatestVersion);
+            Assert.Equal("https://download.lenovo.com/pccbbs/mobiles/valid_bios_update.exe", latest.DownloadUrl);
+            Assert.Equal("N32ET", latest.Metadata?["biosFamily"]);
+
+            var fetchOrder = handler.Requests
+                .Skip(1)
+                .Select(r => r.RequestUri!.AbsoluteUri)
+                .ToList();
+            Assert.Equal(5, fetchOrder.Count);
+            Assert.Equal(validDescriptorUrl, fetchOrder[0]);
+
+            if (baselineWithValidFetchOrder is null)
+                baselineWithValidFetchOrder = fetchOrder;
+            else
+                Assert.Equal(baselineWithValidFetchOrder, fetchOrder);
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 

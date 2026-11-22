@@ -902,6 +902,8 @@ public sealed class HpBiosUpdateProviderTests
     [InlineData("BIOS", "HP BIOS Configuration Utility")]
     [InlineData("BIOS", "Intel CSME Firmware Update")]
     [InlineData("BIOS", "Intel AMT Firmware Update")]
+    [InlineData("BIOS", "Intel ME Firmware")]
+    [InlineData("BIOS", "Intel(R) ME Firmware")]
     public async Task GetLatestVersionAsync_PeripheralOrIntelMeFirmware_IsExcludedEvenUnderBiosCategory(
         string category,
         string name)
@@ -1016,6 +1018,36 @@ public sealed class HpBiosUpdateProviderTests
         Assert.Equal("01.10.00", latest.LatestVersion);
         Assert.Equal("sp170002", latest.PackageId);
         Assert.Equal("786G1", latest.Metadata?["family"]);
+    }
+
+    [Fact]
+    public async Task GetLatestVersionAsync_IntelMeteorLakeSystemBiosTitle_IsAcceptedAndMatchesFamily()
+    {
+        const string xml = """
+            <ImagePal>
+              <UpdateInfo>
+                <Id>sp175001</Id>
+                <Category>BIOS - System Firmware</Category>
+                <Name>HP EliteBook Intel Meteor Lake System BIOS Update (U70)</Name>
+                <Version>01.16.00</Version>
+                <Url>https://ftp.hp.com/pub/softpaq/sp175001.exe</Url>
+              </UpdateInfo>
+            </ImagePal>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://hpia.hpcloud.hp.com/ref/880d/880d_64_11.0.cab", xml, "application/xml");
+
+        var provider = HpBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Hp(biosVersion: "U70 Ver. 01.12.00");
+        var current = await provider.GetCurrentVersionAsync(identity);
+
+        var latest = await provider.GetLatestVersionAsync(identity, current);
+
+        Assert.Equal(BiosCheckStatus.UpdateAvailable, latest.Status);
+        Assert.Equal("01.16.00", latest.LatestVersion);
+        Assert.Equal("sp175001", latest.PackageId);
+        Assert.Equal("U70", latest.Metadata?["family"]);
     }
 
     // -------------------------------------------------------------------------

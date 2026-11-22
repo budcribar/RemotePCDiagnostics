@@ -34,7 +34,7 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
         "dock", "ssd", "hdd", "nvme", "storage", "camera", "webcam",
         "audio", "thunderbolt", "network", "wlan", "bluetooth", "wwan",
         "touchpad", "keyboard", "monitor", "display", "battery", "gpu",
-        "management engine", "intel me", "csme", "configuration utility",
+        "management engine", "csme", "configuration utility",
     ];
 
     [GeneratedRegex(@"\b(?:amt|me)\b", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
