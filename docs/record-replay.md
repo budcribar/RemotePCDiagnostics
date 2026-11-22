@@ -18,7 +18,8 @@ It writes `<folder>/<product id>-<date>/` with:
 - `scrub-report.txt`: what was replaced before saving.
 
 The PC name, user names and serial numbers are replaced with placeholders (`<pc:…>`, `<user:…>`, `<serial:…>`) before the files are
-written. Even so, a recording lists the PC's hardware and software, so real recordings stay out of this public repo.
+written, and so is the SMBIOS UUID. Even so, a recording lists the PC's hardware and software, so real recordings stay out of this public
+repo: they are kept in the private Admin repo under `test-data/rpcd-recordings`. Point `RPD_RECORDINGS_DIR` at that folder.
 
 ## Running the tests
 
