@@ -86,4 +86,18 @@ public sealed class HistoryTrendsTests
         var k = Assert.Single(HistoryTrends.Metrics(e));
         Assert.Equal((81.5, "°C", MetricTrend.LowerIsBetter), (k.Value, k.Unit, k.Better));
     }
+
+    [Fact]
+    public void HistoryData_CarriesKeyMetrics_OnlyWhenTheRunHasThem()
+    {
+        var battery = Logged(BatteryPowerModule.Build([new BatteryStatus("M", "Acme", "LiOn", "Charging", 80, 50000, 43500, 312)], "Balanced"), "BatteryPower", T0);
+        var none = Logged(BatteryPowerModule.Build([], "Balanced"), "BatteryPower", T0.AddDays(-1));
+        using var doc = System.Text.Json.JsonDocument.Parse(AgentExports.History([battery, none], [], "30d", true));
+        var entries = doc.RootElement.GetProperty("entries");
+        var health = entries[0].GetProperty("keyMetrics")[0];
+        Assert.Equal("battery.health", health.GetProperty("id").GetString());
+        Assert.Equal(87, health.GetProperty("value").GetDouble());
+        Assert.Equal("87%", health.GetProperty("text").GetString());
+        Assert.False(entries[1].TryGetProperty("keyMetrics", out _));
+    }
 }

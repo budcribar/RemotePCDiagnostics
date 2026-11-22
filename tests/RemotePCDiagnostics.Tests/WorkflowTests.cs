@@ -806,7 +806,23 @@ public class WorkflowTests
         Assert.Null(cut.FindAll("[data-testid='wf-report']").FirstOrDefault()); // the full report only on request
         Assert.Equal(["undo", "reapply", "reinstall", "reapply"], cut.FindAll("[data-testid^='wf-change-']").Where(b => b.TagName == "BUTTON").Select(b => b.GetAttribute("data-action")));
         Assert.Equal(["Undo", "Apply again", "Reinstall", "Remove again"], cut.FindAll("button[data-testid^='wf-change-']").Select(b => b.TextContent.Trim()));
-        Assert.Equal(["Undoable", "Undone", "Reinstallable", "Undone", "Permanent", "NothingToUndo"], cut.FindAll("[data-testid='wf-change']").Select(li => li.GetAttribute("data-tag")));
+        Assert.Equal(["Undoable", "Undone", "Reinstallable", "Undone", "Permanent", "NothingToUndo", "Skipped"], cut.FindAll("[data-testid='wf-change']").Select(li => li.GetAttribute("data-tag")));
+        // A row with a button has no label pill too; the rest keep theirs.
+        Assert.Equal(["Permanent", "Nothing to undo", "Skipped"], cut.FindAll("[data-testid='wf-change-label']").Select(x => x.TextContent.Trim()));
+
+        // The summary pills filter the list; pressing the same one again (or Show all) shows every row.
+        Assert.Equal(["Undoable", "Reinstallable", "Permanent", "NothingToUndo", "Undone", "Skipped"], cut.FindAll("[data-testid='wf-filter']").Select(b => b.GetAttribute("data-tag")));
+        cut.Find("[data-testid='wf-filter'][data-tag='Undone']").Click();
+        Assert.Equal(["dns", "clips"], cut.FindAll("[data-testid='wf-change']").Select(li => li.GetAttribute("data-fix-id")));
+        Assert.Equal("true", cut.Find("[data-testid='wf-filter'][data-tag='Undone']").GetAttribute("aria-pressed"));
+        Assert.Equal(["Apply again", "Remove again"], cut.FindAll("button[data-testid^='wf-change-']").Select(b => b.TextContent.Trim()));
+        cut.Find("[data-testid='wf-filter'][data-tag='Undone']").Click();
+        Assert.Equal(7, cut.FindAll("[data-testid='wf-change']").Count);
+        cut.Find("[data-testid='wf-filter'][data-tag='Permanent']").Click();
+        Assert.Equal(["updates"], cut.FindAll("[data-testid='wf-change']").Select(li => li.GetAttribute("data-fix-id")));
+        cut.Find("[data-testid='wf-filter-clear']").Click();
+        Assert.Equal(7, cut.FindAll("[data-testid='wf-change']").Count);
+        Assert.Empty(cut.FindAll("[data-testid='wf-filter-clear']"));
         cut.Find("[data-testid='wf-toggle-preview']").Click();
         Assert.NotNull(cut.Find("[data-testid='wf-report']"));
     }

@@ -71,4 +71,47 @@ public class WorkflowExportTests
         Assert.Equal("running", check.GetProperty("status").GetString());
         Assert.Equal(2, check.GetProperty("total").GetInt32());
     }
+
+    [Fact]
+    public void Done_lists_report_changes_with_the_ids_and_actions_of_their_buttons()
+    {
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+        var state = new WorkflowState
+        {
+            Stage = WorkflowStage.Done,
+            StartedUtc = DateTimeOffset.UtcNow,
+            ChangesTracked = true,
+            Fixes = [Temp, Startup],
+            Outcomes =
+            [
+                new FixOutcome(Temp.Id, Temp.Title, true, "Freed 2.1 GB", Changes: [new FixChange(a, "Deleted temp files", Core.Changes.UndoSupport.None)]),
+                new FixOutcome(Startup.Id, Startup.Title, true, "Done", Changes: [new FixChange(b, "OneDrive no longer starts", Core.Changes.UndoSupport.Full, DateTimeOffset.UtcNow)]),
+            ],
+        };
+
+        using var doc = JsonDocument.Parse(WorkflowExport.ToJson(state, false, false, null, null, [], [], new WorkflowExport.SignIn(false, false, false),
+            canChange: true, changeMessage: "Undid 1 change."));
+        var root = doc.RootElement;
+
+        Assert.Equal(2, root.GetProperty("schema").GetInt32());
+        Assert.True(root.GetProperty("canChange").GetBoolean());
+        Assert.Equal("Undid 1 change.", root.GetProperty("changeMessage").GetString());
+        var changes = root.GetProperty("changes");
+        Assert.Equal(a.ToString("N"), changes[0].GetProperty("changeId").GetString());
+        Assert.Equal("Permanent", changes[0].GetProperty("tag").GetString());
+        Assert.Equal(0, changes[0].GetProperty("actions").GetArrayLength());
+        Assert.Equal("Undone", changes[1].GetProperty("tag").GetString());
+        Assert.Equal("reapply", changes[1].GetProperty("actions")[0].GetString());
+        Assert.Equal(Startup.Id, changes[1].GetProperty("fixId").GetString());
+    }
+
+    [Fact]
+    public void Changes_are_left_out_until_the_run_has_finished()
+    {
+        var state = new WorkflowState { Stage = WorkflowStage.Applying, Outcomes = [new FixOutcome(Temp.Id, Temp.Title, true, "ok")] };
+        using var doc = JsonDocument.Parse(WorkflowExport.ToJson(state, true, false, null, null, [], [], new WorkflowExport.SignIn(false, false, false)));
+        Assert.False(doc.RootElement.TryGetProperty("changes", out _));
+        Assert.False(doc.RootElement.TryGetProperty("canChange", out _));
+    }
 }

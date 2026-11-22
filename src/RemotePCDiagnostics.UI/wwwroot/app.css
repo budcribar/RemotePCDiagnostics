@@ -613,6 +613,12 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 [data-theme="dark"] { --tag-undo-fg: #6ee7b7; --tag-undo-bg: rgba(16,185,129,.14); --tag-undo-edge: #10b981; --tag-reinstall-fg: #93c5fd; --tag-reinstall-bg: rgba(59,130,246,.16); --tag-reinstall-edge: #3b82f6;
     --tag-perm-fg: #fca5a5; --tag-perm-bg: rgba(239,68,68,.15); --tag-perm-edge: #ef4444; --tag-none-fg: #c3cfd8; --tag-none-bg: rgba(255,255,255,.06); --tag-none-edge: #6b7f8f; }
 .wf-report-box .wf-report { margin-top: 10px; }
+/* The summary pills filter the list: pressed = only that kind, the rest dim until it's pressed again. */
+.wf-filter { cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; line-height: 1.6; padding: 1px 10px; min-height: 0; }
+.wf-filter:hover { filter: brightness(1.08); }
+.wf-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wf-filter.is-active { box-shadow: 0 0 0 2px currentColor inset; }
+.wf-filter.is-dimmed { opacity: .55; }
 .wf-log { margin-top: 16px; }
 .wf-overall-progress { max-width: 100%; margin: 8px 0 12px; }
 .wf-check-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }

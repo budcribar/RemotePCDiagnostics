@@ -10,9 +10,8 @@
    Every button runs through WorkflowService and UndoService, whose admin parts run in the Agent: the app itself never runs as administrator. *@
 @{
     var s = Flow.State;
-    var items = s.Outcomes.SelectMany(o => ReportItems.For(s, o)).ToList();
-    var skipped = s.Outcomes.Count(o => o.Skipped);
-    var failed = s.Outcomes.Count(o => !o.Success && !o.Skipped);
+    var rows = Rows(s);
+    var shown = _filter is null ? rows : rows.Where(r => r.Filter == _filter).ToList();
     var canAct = Flow.CanChangeAfterRun && _busy is null;
 }
 <section class="card wf-section wf-report-box" data-testid="wf-report-box">
@@ -24,39 +23,51 @@
         </span>
     </div>
     <p class="meta" data-testid="wf-report-path">@(s.ReportPath is { } p ? $"Saved on this PC: {p}" : "The report couldn't be saved as a file. Open report shows it in a browser tab.")</p>
-    <div class="wf-report-counts" data-testid="wf-report-counts">
-        @Count(items, ReportTag.Undoable) @Count(items, ReportTag.Reinstallable) @Count(items, ReportTag.Permanent) @Count(items, ReportTag.NothingToUndo) @Count(items, ReportTag.Undone)
-        @if (skipped > 0) { <span class="tag tag-none" data-tag="Skipped">@skipped skipped</span> }
-        @if (failed > 0) { <span class="tag tag-perm" data-tag="Failed">@failed couldn't be applied</span> }
+    @* The counts are filters: click one to show only those rows, click it again (or Show all) for every row. *@
+    <div class="wf-report-counts" data-testid="wf-report-counts" role="group" aria-label="Show only">
+        @foreach (var (filter, css, label) in Filters)
+        {
+            var f = filter;
+            var n = rows.Count(r => r.Filter == f);
+            if (n == 0) continue;
+            <button type="button" class="tag tag-@css wf-filter @(_filter == f ? "is-active" : _filter is null ? "" : "is-dimmed")" data-testid="wf-filter" data-tag="@f"
+                    aria-pressed="@(_filter == f ? "true" : "false")" @onclick="() => _filter = _filter == f ? null : f">@n · @label</button>
+        }
+        @if (_filter is not null) { <button type="button" class="linklike" data-testid="wf-filter-clear" @onclick="() => _filter = null">Show all</button> }
     </div>
     @if (_message is { } m) { <p class="notice" role="status" data-testid="wf-change-message">@m</p> }
-    @if (items.Count == 0)
+    @if (rows.Count == 0)
     {
         <p class="meta">Nothing lasting was changed, so there's nothing to undo.</p>
     }
     else
     {
         <ul class="wf-changes" data-testid="wf-changes">
-            @foreach (var x in items)
+            @foreach (var r in shown)
             {
-                var item = x;
-                var key = item.JournalId?.ToString("N") ?? item.FixId;
-                <li class="wf-change wf-edge-@ReportItems.Css(item.Tag)" data-testid="wf-change" data-change-id="@key" data-fix-id="@item.FixId" data-tag="@item.Tag">
+                var row = r;
+                var item = row.Item;
+                var key = item?.JournalId?.ToString("N") ?? row.FixId;
+                <li class="wf-change wf-edge-@row.Css" data-testid="wf-change" data-change-id="@key" data-fix-id="@row.FixId" data-tag="@row.Filter">
                     <span class="wf-change-text">
-                        @if (item.Text != item.FixTitle) { <span class="meta">@item.FixTitle</span> }
-                        @item.Text
+                        @if (row.Text != row.Title) { <span class="meta">@row.Title</span> }
+                        @row.Text
                     </span>
-                    <span class="tag tag-@ReportItems.Css(item.Tag)">@ReportItems.Label(item.Tag, item.WasReinstall)@(item.UndoneUtc is { } u ? " " + u.ToLocalTime().ToString("t") : "")</span>
-                    @if (item.CanUndo)
+                    @* A row with a button shows only the button (its colour edge already says what kind it is); the others show their label. *@
+                    @if (item is { CanUndo: true })
                     {
-                        <button type="button" class="btn-small" data-testid="wf-change-undo" data-action="@(item.Tag == ReportTag.Reinstallable ? "reinstall" : "undo")" disabled="@(!canAct)"
+                        <button type="button" class="btn-small wf-act-@row.Css" data-testid="wf-change-undo" data-change-id="@key" data-fix-id="@item.FixId" data-action="@(item.Tag == ReportTag.Reinstallable ? "reinstall" : "undo")" disabled="@(!canAct)"
                                 @onclick="() => UndoAsync(item)">@(_busy == key ? (item.Tag == ReportTag.Reinstallable ? "Reinstalling…" : "Undoing…") : item.Tag == ReportTag.Reinstallable ? "Reinstall" : "Undo")</button>
                     }
-                    else if (item.CanReapply && _firstUndone.Add(item.FixId))
+                    else if (item is { CanReapply: true } && _firstUndone.Add(item.FixId))
                     {
                         @* One button per fix: it runs the whole fix again. *@
-                        <button type="button" class="btn-small" data-testid="wf-change-reapply" data-action="reapply" disabled="@(!canAct)"
+                        <button type="button" class="btn-small" data-testid="wf-change-reapply" data-change-id="@key" data-fix-id="@item.FixId" data-action="reapply" disabled="@(!canAct)" title="@(item.UndoneUtc is { } u ? $"{ReportItems.Label(item.Tag, item.WasReinstall)} at {u.ToLocalTime():t}" : null)"
                                 @onclick="() => ReapplyAsync(item)">@(_busy == item.FixId ? "Applying…" : item.WasReinstall ? "Remove again" : "Apply again")</button>
+                    }
+                    else
+                    {
+                        <span class="tag tag-@row.Css" data-testid="wf-change-label">@row.Label</span>
                     }
                 </li>
             }
@@ -72,32 +83,66 @@
 @code {
     /// <summary>The report exactly as shown in the file (built by the page for runs saved by an older version).</summary>
     [Parameter, EditorRequired] public string Html { get; set; } = "";
+    /// <summary>The last Undo / Reinstall / Apply again result (or null while one runs), for the page's workflow-data.</summary>
+    [Parameter] public EventCallback<string?> MessageChanged { get; set; }
 
     private bool _preview;
     private string? _busy, _message;
     private readonly HashSet<string> _firstUndone = [];
 
-    private static RenderFragment Count(List<ReportItem> items, ReportTag tag) => __builder =>
+    private string? _filter;
+
+    /// <summary>One row of the list: a change (or a fix that journaled nothing), a skipped fix, or one that couldn't be applied.</summary>
+    private sealed record Row(string Filter, string Css, string Label, string FixId, string Title, string Text, ReportItem? Item);
+
+    /// <summary>The filter pills, in order. Rows with a filter that has no rows get no pill.</summary>
+    private static readonly (string Filter, string Css, string Label)[] Filters =
+    [
+        (nameof(ReportTag.Undoable), "undo", ReportItems.Label(ReportTag.Undoable)),
+        (nameof(ReportTag.Reinstallable), "reinstall", ReportItems.Label(ReportTag.Reinstallable)),
+        (nameof(ReportTag.Permanent), "perm", ReportItems.Label(ReportTag.Permanent)),
+        (nameof(ReportTag.NothingToUndo), "none", ReportItems.Label(ReportTag.NothingToUndo)),
+        (nameof(ReportTag.Undone), "none", ReportItems.Label(ReportTag.Undone)),
+        ("Skipped", "none", "Skipped"),
+        ("Failed", "perm", "Couldn't be applied"),
+    ];
+
+    private static List<Row> Rows(WorkflowState s)
     {
-        var n = items.Count(i => i.Tag == tag);
-        if (n > 0) { <span class="tag tag-@ReportItems.Css(tag)" data-tag="@tag">@n · @ReportItems.Label(tag)</span> }
-    };
+        var rows = new List<Row>();
+        foreach (var o in s.Outcomes)
+        {
+            if (o.Skipped) { rows.Add(new("Skipped", "none", "Skipped", o.FixId, o.Title, o.Message, null)); continue; }
+            var lines = ReportItems.For(s, o);
+            if (!o.Success) rows.Add(new("Failed", "perm", "Couldn't be applied", o.FixId, o.Title, o.Message, null));
+            foreach (var i in lines)
+                rows.Add(new(i.Tag.ToString(), ReportItems.Css(i.Tag),
+                    ReportItems.Label(i.Tag, i.WasReinstall) + (i.UndoneUtc is { } u ? " " + u.ToLocalTime().ToString("t") : ""), i.FixId, i.FixTitle, i.Text, i));
+        }
+        return rows;
+    }
 
     private async Task UndoAsync(ReportItem item)
     {
         if (item.JournalId is not { } id || _busy is not null) return;
-        if (Services.GetService<UndoService>() is not { } undo) { _message = "Undo isn't available in this window."; return; }
-        _busy = id.ToString("N"); _message = null;
-        try { _message = await Flow.UndoChangeAsync(undo, id); }
+        if (Services.GetService<UndoService>() is not { } undo) { await Say("Undo isn't available in this window."); return; }
+        _busy = id.ToString("N"); await Say(null);
+        try { await Say(await Flow.UndoChangeAsync(undo, id)); }
         finally { _busy = null; }
     }
 
     private async Task ReapplyAsync(ReportItem item)
     {
         if (_busy is not null) return;
-        _busy = item.FixId; _message = null;
-        try { _message = await Flow.ReapplyFixAsync(item.FixId); }
+        _busy = item.FixId; await Say(null);
+        try { await Say(await Flow.ReapplyFixAsync(item.FixId)); }
         finally { _busy = null; }
+    }
+
+    private Task Say(string? message)
+    {
+        _message = message;
+        return MessageChanged.InvokeAsync(message);
     }
 
     /// <summary>
