@@ -5,5 +5,7 @@
   "contract": "2.0",
   "entryType": "RemotePCDiagnostics.Modules.SecurityEssentials.SecurityEssentialsPlugin",
   "needsAdmin": false,
+  // Out of process (the module host) its WMI queries go through the app to the Agent, as in process.
+  "capabilities": [ "wmi.query" ],
   "hasUi": false
 }

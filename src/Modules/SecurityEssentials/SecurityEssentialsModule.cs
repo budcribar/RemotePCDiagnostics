@@ -3,62 +3,14 @@ using RemotePCDiagnostics.Core.Areas;
 
 namespace RemotePCDiagnostics.Core.Security;
 
-/// <summary>What the Security essentials probe read. Null fields couldn't be read.</summary>
-/// <param name="SecureBoot">UEFISecureBootEnabled: true on, false off, null when the key is missing (legacy BIOS or no Secure Boot support).</param>
-/// <param name="Firmware">"UEFI" or "Legacy" (Windows' firmware_type), or null.</param>
-/// <param name="Edition">EditionID, e.g. "Core" (Home) or "Professional".</param>
-/// <param name="Encryption">Shell property System.Volume.BitLockerProtection of the system drive, or null.</param>
-/// <param name="Tpm">tpmtool details, or null when tpmtool couldn't run.</param>
-public sealed record SecurityFacts(bool? SecureBoot, string? Firmware, string? Edition, int? Encryption, TpmFacts? Tpm, string SystemDrive = "C:")
-{
-    /// <summary>Get-MpComputerStatus AMRunningMode: "Normal" when Defender is the active antivirus; "Passive mode" / "EDR Block Mode" / null otherwise.</summary>
-    public string? DefenderMode { get; init; }
-    public bool? RealTimeProtection { get; init; }
-    public bool? TamperProtection { get; init; }
-    /// <summary>Get-MpPreference PUAProtection: 0 off, 1 block, 2 audit.</summary>
-    public int? Pua { get; init; }
-    /// <summary>Get-MpPreference EnableNetworkProtection: 0 off, 1 block, 2 audit.</summary>
-    public int? NetworkProtection { get; init; }
-    /// <summary>Configured ASR rules (lower-case id → action: 0 off, 1 block, 2 audit, 6 warn). Null = couldn't read.</summary>
-    public IReadOnlyDictionary<string, int>? AsrRules { get; init; }
-    /// <summary>Registered antivirus products (Security Center), e.g. ["Windows Defender"].</summary>
-    public IReadOnlyList<string> Antivirus { get; init; } = [];
-    /// <summary>Windows Firewall profile → on. Empty = couldn't read.</summary>
-    public IReadOnlyDictionary<string, bool> Firewall { get; init; } = new Dictionary<string, bool>();
-    /// <summary>Policy EnableMulticast (0 = LLMNR off), null when not set (Windows default: on).</summary>
-    public long? LlmnrPolicy { get; init; }
-    /// <summary>Policy NoDriveTypeAutoRun (HKLM), null when not set (Windows default: AutoRun on for some drives).</summary>
-    public long? AutoRunPolicy { get; init; }
-    /// <summary>Policy NoDriveTypeAutoRun for the signed-in user (HKCU), null when not set. Used only when the HKLM value isn't set.</summary>
-    public long? AutoRunUserPolicy { get; init; }
-    /// <summary>Policy NoDriveAutoRun (drive letter bits, A: = bit 0), HKLM then HKCU, null when neither is set.</summary>
-    public long? AutoRunLetterPolicy { get; init; }
-    /// <summary>This PC's drives: letter → Windows drive type (2 removable, 3 fixed, 4 network, 5 CD/DVD, 6 RAM disk). Empty = couldn't read.</summary>
-    public IReadOnlyDictionary<char, int> Drives { get; init; } = new Dictionary<char, int>();
-    /// <summary>AllowInsecureGuestAuth (policy first, then the LanmanWorkstation parameter), null when neither is set.</summary>
-    public long? InsecureGuest { get; init; }
-
-    public bool IsUefi => string.Equals(Firmware, "UEFI", StringComparison.OrdinalIgnoreCase);
-    public bool IsLegacy => string.Equals(Firmware, "Legacy", StringComparison.OrdinalIgnoreCase);
-    public bool IsHome => Edition is { } e && e.StartsWith("Core", StringComparison.OrdinalIgnoreCase);
-    /// <summary>Defender is the active antivirus, so its settings apply (another antivirus puts it in passive mode).</summary>
-    public bool DefenderActive => string.Equals(DefenderMode, "Normal", StringComparison.OrdinalIgnoreCase);
-}
-
-/// <summary>The lines of <c>tpmtool getdeviceinformation</c> this check uses.</summary>
-public sealed record TpmFacts(bool Present, string? Version, bool? ReadyForStorage, string? Manufacturer, string? Pcr7Binding)
-{
-    public bool IsVersion2 => Version is { } v && v.TrimStart().StartsWith("2", StringComparison.Ordinal);
-    public bool Pcr7BindingPossible => Pcr7Binding is null || !Pcr7Binding.Contains("Not Possible", StringComparison.OrdinalIgnoreCase);
-}
-
 /// <summary>
-/// The security settings that matter most on a typical PC, each explained in plain words, read without administrator rights:
+/// The security settings that matter most on a typical PC, each explained in plain words:
 /// Secure Boot, TPM and drive encryption; antivirus and firewall; Defender's PUA blocking, network protection and a safe set of
 /// Attack Surface Reduction rules; LLMNR, AutoRun and insecure guest logons. The settings this app can change safely carry a fix
-/// (<see cref="RemediationKind.ApplySecuritySetting"/>), which puts them in the fix list with Undo.
+/// (<see cref="RemediationKind.ApplySecuritySetting"/>), which puts them in the fix list with Undo. Read from <paramref name="source"/>: WMI
+/// through the Agent plus the registry and tpmtool in the app, or the PowerShell probe in the Store edition without an Agent.
 /// </summary>
-public sealed class SecurityEssentialsModule(SystemCommandRunner commands) : AreaModuleBase(commands.Log)
+public sealed class SecurityEssentialsModule(ISecurityEssentialsSource source, ILogger? log = null) : AreaModuleBase(log)
 {
     public const string ModuleName = ModuleSlugs.SecurityEssentials;
     public override string Name => ModuleName;
@@ -66,116 +18,14 @@ public sealed class SecurityEssentialsModule(SystemCommandRunner commands) : Are
     public override string DisplayName => "Security essentials";
     protected override string FailedMessage => "Couldn't read this PC's security settings.";
 
-    public static string TpmTool => SystemCommandRunner.SystemTool("tpmtool.exe");
-
-    /// <summary>Read-only probe: registry values, Defender status, firewall profiles and one Shell property, printed as key=value lines.</summary>
-    public static readonly string ProbeScript =
-        "$ErrorActionPreference='SilentlyContinue';" +
-        "function D($k,$n){$v=(Get-ItemProperty -Path $k -Name $n).$n;if($null -eq $v){''}else{[int64]$v}};" +
-        "$s=Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\SecureBoot\\State';" +
-        "if($s -and $null -ne $s.UEFISecureBootEnabled){'SecureBoot='+$s.UEFISecureBootEnabled}else{'SecureBoot='};" +
-        "'Firmware='+$env:firmware_type;" +
-        "'Edition='+(Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion').EditionID;" +
-        "'SystemDrive='+$env:SystemDrive;" +
-        "try{'Encryption='+(New-Object -ComObject Shell.Application).NameSpace($env:SystemDrive+'\\').Self.ExtendedProperty('System.Volume.BitLockerProtection')}catch{'Encryption='};" +
-        "$c=Get-MpComputerStatus;if($c){'DefenderMode='+$c.AMRunningMode;'RealTime='+$c.RealTimeProtectionEnabled;'Tamper='+$c.IsTamperProtected};" +
-        "$p=Get-MpPreference;if($p){'Pua='+[int]$p.PUAProtection;'NetworkProtection='+[int]$p.EnableNetworkProtection;" +
-        "$ids=@($p.AttackSurfaceReductionRules_Ids);$a=@($p.AttackSurfaceReductionRules_Actions);" +
-        "'Asr='+((0..($ids.Count-1)|Where-Object{$ids[$_]}|ForEach-Object{$ids[$_]+':'+[int]$a[$_]}) -join ',')};" +
-        "'Antivirus='+((Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct|ForEach-Object{$_.displayName}) -join ';');" +
-        "'Firewall='+((Get-NetFirewallProfile|ForEach-Object{$_.Name+':'+$_.Enabled}) -join ',');" +
-        "'Llmnr='+(D '" + SecurityFixes.LlmnrKey + "' '" + SecurityFixes.LlmnrValue + "');" +
-        "'AutoRun='+(D '" + SecurityFixes.AutoRunKey + "' '" + SecurityFixes.AutoRunValue + "');" +
-        "'AutoRunUser='+(D '" + SecurityFixes.AutoRunUserKey + "' '" + SecurityFixes.AutoRunValue + "');" +
-        "$l=D '" + SecurityFixes.AutoRunKey + "' '" + SecurityFixes.AutoRunLettersValue + "';" +
-        "if([string]$l -eq ''){$l=D '" + SecurityFixes.AutoRunUserKey + "' '" + SecurityFixes.AutoRunLettersValue + "'};'AutoRunLetters='+$l;" +
-        "'Drives='+((Get-CimInstance Win32_LogicalDisk|ForEach-Object{$_.DeviceID+[int]$_.DriveType}) -join ',');" +
-        "$g=D 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\LanmanWorkstation' 'AllowInsecureGuestAuth';" +
-        "if([string]$g -eq ''){$g=D 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\LanmanWorkstation\\Parameters' 'AllowInsecureGuestAuth'};'InsecureGuest='+$g";
-
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        progress.ReportStep(1, 2, "Checking security settings…");
-        var probe = await commands.RunPowerShellAsync(ProbeScript, ct).ConfigureAwait(false);
-        progress.ReportStep(2, 2, "Checking the security chip (TPM)…");
-
-        var tpm = await commands.RunAsync(TpmTool, ["getdeviceinformation"], ct).ConfigureAwait(false);
-        if (probe is not { ExitCode: 0 } && tpm is not { ExitCode: 0 }) return AreaReport.Failed(FailedMessage);
-        var facts = ParseProbe(probe is { ExitCode: 0 } ? probe.StdOut : null, tpm is { ExitCode: 0 } ? ParseTpm(tpm.StdOut) : null);
+        if (await source.ReadAsync(progress, ct).ConfigureAwait(false) is not { } facts) return AreaReport.Failed(FailedMessage);
         Log($"{Name}: secureBoot={facts.SecureBoot?.ToString() ?? "?"} firmware={facts.Firmware ?? "?"} edition={facts.Edition ?? "?"} encryption={facts.Encryption?.ToString() ?? "?"} " +
             $"tpm={(facts.Tpm is { } t ? $"present={t.Present} v={t.Version} ready={t.ReadyForStorage} pcr7={t.Pcr7Binding}" : "?")} defender={facts.DefenderMode ?? "?"} pua={facts.Pua} np={facts.NetworkProtection} " +
             $"asr={facts.AsrRules?.Count.ToString(CultureInfo.InvariantCulture) ?? "?"} av='{string.Join(";", facts.Antivirus)}' fw={string.Join(",", facts.Firewall.Select(kv => $"{kv.Key}:{kv.Value}"))} " +
             $"llmnr={facts.LlmnrPolicy} autorun={facts.AutoRunPolicy}/{facts.AutoRunUserPolicy}/{facts.AutoRunLetterPolicy} drives={string.Join(",", facts.Drives.Select(kv => $"{kv.Key}:{kv.Value}"))} guest={facts.InsecureGuest}");
         return Build(facts);
-    }
-
-    private static Dictionary<string, string> KeyValues(string? text, char separator)
-    {
-        var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var raw in (text ?? "").Split('\n'))
-        {
-            var line = raw.Trim().TrimStart('-').Trim();
-            var i = line.IndexOf(separator);
-            if (i <= 0) continue;
-            d[line[..i].Trim()] = line[(i + 1)..].Trim();
-        }
-        return d;
-    }
-
-    public static SecurityFacts ParseProbe(string? stdout, TpmFacts? tpm)
-    {
-        var kv = KeyValues(stdout, '=');
-        string? Str(string k) => kv.TryGetValue(k, out var v) && v.Length > 0 ? v : null;
-        int? Int(string k) => Str(k) is { } s && int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) ? n : null;
-        long? Long(string k) => Str(k) is { } s && long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) ? n : null;
-        bool? Bool(string k) => Str(k) is { } s && bool.TryParse(s, out var b) ? b : null;
-
-        IReadOnlyDictionary<string, int>? asr = null;
-        if (kv.TryGetValue("Asr", out var asrText))
-        {
-            var d = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var part in asrText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                var c = part.LastIndexOf(':');
-                if (c > 0 && int.TryParse(part[(c + 1)..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var act)) d[part[..c].ToLowerInvariant()] = act;
-            }
-            asr = d;
-        }
-        var fw = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        foreach (var part in (Str("Firewall") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var c = part.IndexOf(':');
-            if (c > 0) fw[part[..c]] = part[(c + 1)..].Equals("True", StringComparison.OrdinalIgnoreCase);
-        }
-
-        // "C:3,D:5": drive letter, colon, Win32_LogicalDisk.DriveType.
-        var drives = new Dictionary<char, int>();
-        foreach (var part in (Str("Drives") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var c = part.IndexOf(':');
-            if (c == 1 && char.IsAsciiLetter(part[0]) && int.TryParse(part[2..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var type))
-                drives[char.ToUpperInvariant(part[0])] = type;
-        }
-
-        return new(Int("SecureBoot") is { } sb ? sb != 0 : null, Str("Firmware"), Str("Edition"), Int("Encryption"), tpm, Str("SystemDrive") ?? "C:")
-        {
-            DefenderMode = Str("DefenderMode"), RealTimeProtection = Bool("RealTime"), TamperProtection = Bool("Tamper"),
-            Pua = Int("Pua"), NetworkProtection = Int("NetworkProtection"), AsrRules = asr,
-            Antivirus = (Str("Antivirus") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-            Firewall = fw, LlmnrPolicy = Long("Llmnr"), AutoRunPolicy = Long("AutoRun"), AutoRunUserPolicy = Long("AutoRunUser"),
-            AutoRunLetterPolicy = Long("AutoRunLetters"), Drives = drives, InsecureGuest = Long("InsecureGuest"),
-        };
-    }
-
-    /// <summary>Parses <c>tpmtool getdeviceinformation</c> ("-TPM Present: True" lines). Null when the output has no TPM Present line.</summary>
-    public static TpmFacts? ParseTpm(string? stdout)
-    {
-        var kv = KeyValues(stdout, ':');
-        if (!kv.TryGetValue("TPM Present", out var present)) return null;
-        bool? Bool(string k) => kv.TryGetValue(k, out var v) && bool.TryParse(v, out var b) ? b : null;
-        string? Str(string k) => kv.TryGetValue(k, out var v) && v.Length > 0 ? v : null;
-        return new(bool.TryParse(present, out var p) && p, Str("TPM Version"), Bool("Ready For Storage"),
-            Str("TPM Manufacturer Full Name") ?? Str("TPM Manufacturer ID"), Str("Bitlocker PCR7 Binding State"));
     }
 
     /// <summary>System.Volume.BitLockerProtection: 1 on, 3 encrypting, 5 suspended, 6 locked; 2, 8 (waiting for activation) and 0 are not protected.</summary>

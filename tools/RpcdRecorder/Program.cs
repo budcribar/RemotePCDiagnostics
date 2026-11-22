@@ -11,6 +11,7 @@ using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.DataSources;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Recording;
+using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Legacy;
 
 var outRoot = Arg("--out") ?? Path.Combine(Environment.CurrentDirectory, "recordings");
@@ -56,6 +57,8 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     ("Device Manager & drivers (legacy: PowerShell + osquery)", new DeviceDriversModule(new OsqueryDeviceDriverSource(osquery, commands))),
     ("Programs & updates (WMI + registry)", new ProgramsModule(new WmiProgramsSource(wmi, registry, packages))),
     ("Programs & updates (legacy: osquery)", new ProgramsModule(new OsqueryProgramsSource(osquery))),
+    ("Security essentials (WMI + registry + tpmtool)", new SecurityEssentialsModule(new WmiSecurityEssentialsSource(wmi, registry, commands))),
+    ("Security essentials (legacy: PowerShell + tpmtool)", new SecurityEssentialsModule(new PowerShellSecurityEssentialsSource(commands))),
 };
 foreach (var (label, module) in checks)
 {

@@ -33,7 +33,7 @@ public sealed class AgentWmiTests
     }
 
     [Theory]
-    [InlineData(@"root\securitycenter2", "SELECT * FROM AntiVirusProduct")]
+    [InlineData(@"root\subscription", "SELECT * FROM __EventFilter")]
     [InlineData(@"root\cimv2", "DELETE FROM Win32_Process")]
     [InlineData(@"root\cimv2", "")]
     [InlineData(@"root\cimv2", "SELECT * FROM Win32_Process\u0000x")]

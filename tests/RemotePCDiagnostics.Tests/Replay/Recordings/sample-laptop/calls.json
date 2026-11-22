@@ -153,6 +153,213 @@
       "exitCode": 0,
       "stdOut": "[{\"Letters\":\"C\",\"Id\":\"<serial:5a5a01>\",\"Name\":\"SAMPLE NVMe SSD 512GB\",\"Serial\":\"<serial:5a5a02>\",\"MediaType\":\"SSD\",\"BusType\":\"NVMe\",\"Health\":\"Healthy\",\"Operational\":\"OK\",\"Size\":\"512110190592\",\"Temperature\":\"38\",\"Wear\":\"3\",\"ReadErrors\":\"0\",\"WriteErrors\":\"0\",\"PowerOnHours\":\"1200\"}]",
       "stdErr": ""
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKLM",
+      "query": "SYSTEM\\CurrentControlSet\\Control\\SecureBoot\\State: UEFISecureBootEnabled",
+      "rows": [
+        {
+          "UEFISecureBootEnabled": 1
+        }
+      ]
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKLM",
+      "query": "SYSTEM\\CurrentControlSet\\Control: PEFirmwareType",
+      "rows": [
+        {
+          "PEFirmwareType": 2
+        }
+      ]
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKLM",
+      "query": "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion: EditionID",
+      "rows": [
+        {
+          "EditionID": "Core"
+        }
+      ]
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKLM",
+      "query": "SOFTWARE\\Policies\\Microsoft\\Windows NT\\DNSClient: EnableMulticast",
+      "rows": []
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKLM",
+      "query": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer: NoDriveTypeAutoRun, NoDriveAutoRun",
+      "rows": [
+        {}
+      ]
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKCU",
+      "query": "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer: NoDriveTypeAutoRun, NoDriveAutoRun",
+      "rows": [
+        {
+          "NoDriveTypeAutoRun": 145
+        }
+      ]
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKLM",
+      "query": "SOFTWARE\\Policies\\Microsoft\\Windows\\LanmanWorkstation: AllowInsecureGuestAuth",
+      "rows": []
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKLM",
+      "query": "SYSTEM\\CurrentControlSet\\Services\\LanmanWorkstation\\Parameters: AllowInsecureGuestAuth",
+      "rows": [
+        {}
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT SystemDrive FROM Win32_OperatingSystem",
+      "rows": [
+        {
+          "SystemDrive": "C:"
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT DeviceID, DriveType, Size FROM Win32_LogicalDisk",
+      "rows": [
+        {
+          "DeviceID": "C:",
+          "DriveType": 3,
+          "Size": 511101161472
+        },
+        {
+          "DeviceID": "D:",
+          "DriveType": 2,
+          "Size": 31914983424
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2\\Security\\MicrosoftVolumeEncryption",
+      "query": "SELECT DriveLetter, ProtectionStatus, ConversionStatus, IsVolumeInitializedForProtection FROM Win32_EncryptableVolume",
+      "rows": [
+        {
+          "DriveLetter": "C:",
+          "ProtectionStatus": 1,
+          "ConversionStatus": 1,
+          "IsVolumeInitializedForProtection": true
+        },
+        {
+          "DriveLetter": "D:",
+          "ProtectionStatus": 0,
+          "ConversionStatus": 0,
+          "IsVolumeInitializedForProtection": false
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\Microsoft\\Windows\\Defender",
+      "query": "SELECT AMRunningMode, RealTimeProtectionEnabled, IsTamperProtected FROM MSFT_MpComputerStatus",
+      "rows": [
+        {
+          "AMRunningMode": "Normal",
+          "RealTimeProtectionEnabled": true,
+          "IsTamperProtected": true
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\Microsoft\\Windows\\Defender",
+      "query": "SELECT PUAProtection, EnableNetworkProtection, AttackSurfaceReductionRules_Ids, AttackSurfaceReductionRules_Actions FROM MSFT_MpPreference",
+      "rows": [
+        {
+          "PUAProtection": 0,
+          "EnableNetworkProtection": 0,
+          "AttackSurfaceReductionRules_Ids": [
+            "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2"
+          ],
+          "AttackSurfaceReductionRules_Actions": [
+            1
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\SecurityCenter2",
+      "query": "SELECT displayName FROM AntiVirusProduct",
+      "rows": [
+        {
+          "displayName": "Windows Defender"
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\StandardCimv2",
+      "query": "SELECT Name, Enabled FROM MSFT_NetFirewallProfile",
+      "rows": [
+        {
+          "Name": "Domain",
+          "Enabled": 1
+        },
+        {
+          "Name": "Private",
+          "Enabled": 1
+        },
+        {
+          "Name": "Public",
+          "Enabled": 1
+        }
+      ]
+    },
+    {
+      "kind": "process",
+      "file": "tpmtool.exe",
+      "args": [
+        "getdeviceinformation"
+      ],
+      "exitCode": 0,
+      "stdOut": "\r\n-TPM Present: True\r\n-TPM Version: 2.0\r\n-TPM Manufacturer ID: SMPL\r\n-TPM Manufacturer Full Name: SampleCo\r\n-TPM Manufacturer Version: 1.0.0.0\r\n-PPI Version: 1.3\r\n-Is Initialized: True\r\n-Ready For Storage: True\r\n-Ready For Attestation: True\r\n-Bitlocker PCR7 Binding State: Bound\r\n-TPM Spec Version: 1.59\r\n",
+      "stdErr": ""
+    },
+    {
+      "kind": "process",
+      "file": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$ErrorActionPreference='SilentlyContinue';function D($k,$n){$v=(Get-ItemProperty -Path $k -Name $n).$n;if($null -eq $v){''}else{[int64]$v}};$s=Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\SecureBoot\\State';if($s -and $null -ne $s.UEFISecureBootEnabled){'SecureBoot='+$s.UEFISecureBootEnabled}else{'SecureBoot='};'Firmware='+$env:firmware_type;'Edition='+(Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion').EditionID;'SystemDrive='+$env:SystemDrive;try{'Encryption='+(New-Object -ComObject Shell.Application).NameSpace($env:SystemDrive+'\\').Self.ExtendedProperty('System.Volume.BitLockerProtection')}catch{'Encryption='};$c=Get-MpComputerStatus;if($c){'DefenderMode='+$c.AMRunningMode;'RealTime='+$c.RealTimeProtectionEnabled;'Tamper='+$c.IsTamperProtected};$p=Get-MpPreference;if($p){'Pua='+[int]$p.PUAProtection;'NetworkProtection='+[int]$p.EnableNetworkProtection;$ids=@($p.AttackSurfaceReductionRules_Ids);$a=@($p.AttackSurfaceReductionRules_Actions);'Asr='+((0..($ids.Count-1)|Where-Object{$ids[$_]}|ForEach-Object{$ids[$_]+':'+[int]$a[$_]}) -join ',')};'Antivirus='+((Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct|ForEach-Object{$_.displayName}) -join ';');'Firewall='+((Get-NetFirewallProfile|ForEach-Object{$_.Name+':'+$_.Enabled}) -join ',');'Llmnr='+(D 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\DNSClient' 'EnableMulticast');'AutoRun='+(D 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer' 'NoDriveTypeAutoRun');'AutoRunUser='+(D 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer' 'NoDriveTypeAutoRun');$l=D 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer' 'NoDriveAutoRun';if([string]$l -eq ''){$l=D 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer' 'NoDriveAutoRun'};'AutoRunLetters='+$l;'Drives='+((Get-CimInstance Win32_LogicalDisk|ForEach-Object{$_.DeviceID+[int]$_.DriveType}) -join ',');$g=D 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\LanmanWorkstation' 'AllowInsecureGuestAuth';if([string]$g -eq ''){$g=D 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\LanmanWorkstation\\Parameters' 'AllowInsecureGuestAuth'};'InsecureGuest='+$g"
+      ],
+      "exitCode": 0,
+      "stdOut": "SecureBoot=1\r\nFirmware=UEFI\r\nEdition=Core\r\nSystemDrive=C:\r\nEncryption=1\r\nDefenderMode=Normal\r\nRealTime=True\r\nTamper=True\r\nPua=0\r\nNetworkProtection=0\r\nAsr=9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2:1\r\nAntivirus=Windows Defender\r\nFirewall=Domain:True,Private:True,Public:True\r\nLlmnr=\r\nAutoRun=\r\nAutoRunUser=145\r\nAutoRunLetters=\r\nDrives=C:3,D:2\r\nInsecureGuest=\r\n",
+      "stdErr": ""
+    },
+    {
+      "kind": "process",
+      "file": "tpmtool.exe",
+      "args": [
+        "getdeviceinformation"
+      ],
+      "exitCode": 0,
+      "stdOut": "\r\n-TPM Present: True\r\n-TPM Version: 2.0\r\n-TPM Manufacturer ID: SMPL\r\n-TPM Manufacturer Full Name: SampleCo\r\n-TPM Manufacturer Version: 1.0.0.0\r\n-PPI Version: 1.3\r\n-Is Initialized: True\r\n-Ready For Storage: True\r\n-Ready For Attestation: True\r\n-Bitlocker PCR7 Binding State: Bound\r\n-TPM Spec Version: 1.59\r\n",
+      "stdErr": ""
     }
   ]
 }

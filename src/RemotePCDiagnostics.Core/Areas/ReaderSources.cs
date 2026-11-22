@@ -114,7 +114,9 @@ public static class ReaderRegistration
         .AddSingleton<IServiceSource>(sp => new WmiServiceSource(sp.GetRequiredService<IWmiSource>()))
         .AddSingleton<IDeviceDriverSource>(sp => new WmiDeviceDriverSource(sp.GetRequiredService<IWmiSource>()))
         .AddSingleton<IProgramsSource>(sp => new WmiProgramsSource(sp.GetRequiredService<IWmiSource>(), sp.GetRequiredService<IRegistrySource>(),
-            sp.GetRequiredService<IPackageSource>()));
+            sp.GetRequiredService<IPackageSource>()))
+        .AddSingleton<Security.ISecurityEssentialsSource>(sp => new Security.WmiSecurityEssentialsSource(sp.GetRequiredService<IWmiSource>(),
+            sp.GetRequiredService<IRegistrySource>(), sp.GetRequiredService<SystemCommandRunner>()));
 
     private static IServiceCollection TryAddPackages(this IServiceCollection services)
     {

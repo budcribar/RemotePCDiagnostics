@@ -42,6 +42,8 @@ public static class WmiQueryPolicy
     public static readonly IReadOnlySet<string> Namespaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         @"root\cimv2", @"root\wmi", @"root\cimv2\power", @"root\Microsoft\Windows\Storage", @"root\StandardCimv2",
+        // Security essentials: Defender, Security Center's antivirus list, BitLocker.
+        @"root\Microsoft\Windows\Defender", @"root\SecurityCenter2", @"root\cimv2\Security\MicrosoftVolumeEncryption",
     };
 
     /// <summary>Why the Agent won't run this query, or null when it will.</summary>
