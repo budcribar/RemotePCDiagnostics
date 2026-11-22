@@ -34,6 +34,7 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | --- | --- | --- |
 | dashboard | 1 | Metadata on RPCD main when versions were introduced (November 2026) |
 | workflow | 1 | Same, including `workflow-data` |
+| workflow | 2 | `workflow-data` schema 2: once the run has finished (Done, Cancelled or Failed), `changes` lists the client report's lines (`changeId`, `fixId`, `fixTitle`, `text`, `tag`, `label`, `undoneAt`, and `actions`: `undo`, `reinstall` or `reapply`), with `canChange` (whether the buttons work now) and `changeMessage` (the last Undo, Reinstall or Apply again result). The `wf-change-undo` and `wf-change-reapply` buttons carry `data-change-id` and `data-fix-id`, the same ids as `changes` |
 | checks | 1 | Same, including `checks-list-data`, `area-report-data`, generic `run-check`/`cancel-check` markers, fix and service action metadata |
 | checks | 2 | Storage bytes: `total-storage-bytes`, `free-storage-bytes` and `used-storage-bytes` under `drive-health-counts`, and the new `disk-space-counts` block. The Drive health report gains a `capacity` card that the drive counts leave out. A finished Large files & folders or Duplicate files scan shows the generic report (`area-status`, cards, drawers and their fix buttons) like any other check; only DISM and SFC keep the scan output panel with `checks-scan-fixes` |
 | checks | 3 | Fixes: `fix-data` (the running fix and the last result) on every check page, `remediation-running` with `remediation-working` and `remediation-stop` while a fix runs, `remediation-busy` on a second fix, and the `pending-updates` and `pending-driver-updates` cards with an `InstallUpdate` fix per update |
@@ -47,6 +48,7 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | certificates | 1 | Same |
 | history | 1 | Same, including `history-data` |
 | history | 2 | `history-data` names the test and result filters (`testFilter`, `outcomeFilter`); `history-loading` is present through every reload, not only the first read |
+| history | 3 | Each `history-data` entry adds `keyMetrics` when the run recorded any: `id`, `label`, `value`, `unit` and `text` (such as battery health, free space, temperatures and memory in use) |
 | about | 1 | Same, including `about-version` |
 | about | 2 | `about-report-data` (schema 1) on the page root: app version, informational version, channel, process and OS architecture, agent version and service status, whether the agent is connected, session mode (`local` or `agent`), shop group, shop name and agent id, machine name, OS, masked install path, and the last update check. No enrollment key, shop API key, relay URL or contact details |
 | module | 1 | Same (a module's own page outside Checks) |

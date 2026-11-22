@@ -49,13 +49,13 @@
                     <span class="tag tag-@ReportItems.Css(item.Tag)">@ReportItems.Label(item.Tag, item.WasReinstall)@(item.UndoneUtc is { } u ? " " + u.ToLocalTime().ToString("t") : "")</span>
                     @if (item.CanUndo)
                     {
-                        <button type="button" class="btn-small" data-testid="wf-change-undo" data-action="@(item.Tag == ReportTag.Reinstallable ? "reinstall" : "undo")" disabled="@(!canAct)"
+                        <button type="button" class="btn-small" data-testid="wf-change-undo" data-change-id="@key" data-fix-id="@item.FixId" data-action="@(item.Tag == ReportTag.Reinstallable ? "reinstall" : "undo")" disabled="@(!canAct)"
                                 @onclick="() => UndoAsync(item)">@(_busy == key ? (item.Tag == ReportTag.Reinstallable ? "Reinstalling…" : "Undoing…") : item.Tag == ReportTag.Reinstallable ? "Reinstall" : "Undo")</button>
                     }
                     else if (item.CanReapply && _firstUndone.Add(item.FixId))
                     {
                         @* One button per fix: it runs the whole fix again. *@
-                        <button type="button" class="btn-small" data-testid="wf-change-reapply" data-action="reapply" disabled="@(!canAct)"
+                        <button type="button" class="btn-small" data-testid="wf-change-reapply" data-change-id="@key" data-fix-id="@item.FixId" data-action="reapply" disabled="@(!canAct)"
                                 @onclick="() => ReapplyAsync(item)">@(_busy == item.FixId ? "Applying…" : item.WasReinstall ? "Remove again" : "Apply again")</button>
                     }
                 </li>
@@ -72,6 +72,8 @@
 @code {
     /// <summary>The report exactly as shown in the file (built by the page for runs saved by an older version).</summary>
     [Parameter, EditorRequired] public string Html { get; set; } = "";
+    /// <summary>The last Undo / Reinstall / Apply again result (or null while one runs), for the page's workflow-data.</summary>
+    [Parameter] public EventCallback<string?> MessageChanged { get; set; }
 
     private bool _preview;
     private string? _busy, _message;
@@ -86,18 +88,24 @@
     private async Task UndoAsync(ReportItem item)
     {
         if (item.JournalId is not { } id || _busy is not null) return;
-        if (Services.GetService<UndoService>() is not { } undo) { _message = "Undo isn't available in this window."; return; }
-        _busy = id.ToString("N"); _message = null;
-        try { _message = await Flow.UndoChangeAsync(undo, id); }
+        if (Services.GetService<UndoService>() is not { } undo) { await Say("Undo isn't available in this window."); return; }
+        _busy = id.ToString("N"); await Say(null);
+        try { await Say(await Flow.UndoChangeAsync(undo, id)); }
         finally { _busy = null; }
     }
 
     private async Task ReapplyAsync(ReportItem item)
     {
         if (_busy is not null) return;
-        _busy = item.FixId; _message = null;
-        try { _message = await Flow.ReapplyFixAsync(item.FixId); }
+        _busy = item.FixId; await Say(null);
+        try { await Say(await Flow.ReapplyFixAsync(item.FixId)); }
         finally { _busy = null; }
+    }
+
+    private Task Say(string? message)
+    {
+        _message = message;
+        return MessageChanged.InvokeAsync(message);
     }
 
     /// <summary>
