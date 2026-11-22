@@ -24,6 +24,17 @@ public sealed class RecordingScrubber
         "guid", "pnp_device_id", "PNPDeviceID", // a network adapter's GUID; device instance paths can hold a USB serial
         "dhcp_server", "dns_server_search_order", "dns_domain", "dns_domain_suffix_search_order", // the local network's servers and domain
         "DNSServerSearchOrder", "Dns", "ProxyServer", // the same for the Network check (WMI, the IpConfig script, the proxy setting)
+        "NameServer", "DnsManual", // DNS servers entered by hand (the registry, the IpConfig script)
+    };
+
+    /// <summary>
+    /// Columns that hold IP addresses (WMI <c>Win32_NetworkAdapterConfiguration</c>, the IpConfig script). An IPv6 address (a link-local or
+    /// unique local one names the interface and the network) or a public IPv4 address is replaced by a placeholder that keeps its family
+    /// (<see cref="RecordingPlaceholders"/>); a private IPv4 address (192.168.x.x, 10.x.x.x) is kept, as it is the same on most home networks.
+    /// </summary>
+    public static readonly IReadOnlySet<string> AddressNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "IPAddress", "DefaultIPGateway", "IPv4", "Gateway",
     };
 
     private readonly byte[] _key = RandomNumberGenerator.GetBytes(32);
@@ -95,7 +106,7 @@ public sealed class RecordingScrubber
                 foreach (var (name, child) in o.ToList())
                 {
                     if (child is JsonValue v && v.TryGetValue<string>(out var s))
-                        o[name] = SensitiveNames.Contains(name) ? Placeholder("serial", s) : Text(s);
+                        o[name] = SensitiveNames.Contains(name) ? Placeholder("serial", s) : AddressNames.Contains(name) ? Address(s) : Text(s);
                     else if (child is not null) ScrubNode(child);
                 }
                 break;
@@ -114,13 +125,24 @@ public sealed class RecordingScrubber
         if (value.ValueKind == JsonValueKind.String)
         {
             var s = value.GetString()!;
-            return JsonSerializer.SerializeToElement(SensitiveNames.Contains(name) ? Placeholder("serial", s) : Text(s));
+            return JsonSerializer.SerializeToElement(SensitiveNames.Contains(name) ? Placeholder("serial", s) : AddressNames.Contains(name) ? Address(s) : Text(s));
         }
         if (value.ValueKind == JsonValueKind.Array)
             return JsonSerializer.SerializeToElement(value.EnumerateArray().Select(e => Value(name, e)).ToList());
         if (SensitiveNames.Contains(name) && value.ValueKind == JsonValueKind.Number)
             return JsonSerializer.SerializeToElement(Placeholder("serial", value.GetRawText()));
         return value;
+    }
+
+    /// <summary>An IP address as <see cref="AddressNames"/> says; anything else as other text.</summary>
+    public string Address(string value)
+    {
+        if (!System.Net.IPAddress.TryParse(value.Trim(), out var ip)) return Text(value);
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6) return Placeholder(RecordingPlaceholders.Ipv6Kind, value);
+        var b = ip.GetAddressBytes();
+        var isPrivate = b[0] == 10 || b[0] == 127 || (b[0] == 172 && b[1] is >= 16 and <= 31) || (b[0] == 192 && b[1] == 168)
+                        || (b[0] == 169 && b[1] == 254) || (b[0] == 100 && b[1] is >= 64 and <= 127) || b.All(x => x == 0);
+        return isPrivate ? value : Placeholder(RecordingPlaceholders.Ipv4Kind, value);
     }
 
     private string Placeholder(string kind, string value)
@@ -172,4 +194,11 @@ public sealed class RecordingScrubber
         }
         return s;
     }
+}
+
+/// <summary>The beginnings of the placeholders an IP address is replaced with, so a reader can still tell IPv4 from IPv6.</summary>
+public static class RecordingPlaceholders
+{
+    public const string Ipv4Kind = "ipv4", Ipv6Kind = "ipv6";
+    public const string Ipv4 = "<" + Ipv4Kind + ":", Ipv6 = "<" + Ipv6Kind + ":";
 }

@@ -142,4 +142,25 @@ public sealed class RecordingScrubberTests
         string[] shared = ["Public", "Default", "Default User", "All Users"];
         return user.Length == 0 || user.StartsWith('<') || shared.Contains(user, StringComparer.OrdinalIgnoreCase) ? null : user;
     }
+
+    [Fact]
+    public void ReplacesIpv6AndPublicAddressesKeepingTheFamily_KeepsPrivateIpv4()
+    {
+        var s = Scrubber();
+        var row = s.Scrub(new RecordedCall
+        {
+            Kind = RecordedCall.WmiKind, Namespace = @"root\cimv2", Query = "q",
+            Rows = [new()
+            {
+                ["IPAddress"] = JsonSerializer.SerializeToElement(new[] { "192.168.1.46", "fe80::877e:a690:b067:97e9", "fd21:7783:5a6:434::1" }),
+                ["DefaultIPGateway"] = JsonSerializer.SerializeToElement(new[] { "203.0.113.7" }),
+            }],
+        }).Rows![0];
+        var ips = row["IPAddress"].EnumerateArray().Select(e => e.GetString()!).ToList();
+        Assert.Equal("192.168.1.46", ips[0]);
+        Assert.All(ips.Skip(1), ip => Assert.StartsWith(RecordingPlaceholders.Ipv6, ip));
+        Assert.StartsWith(RecordingPlaceholders.Ipv4, row["DefaultIPGateway"][0].GetString());
+        Assert.Equal("10.0.0.1", s.Address("10.0.0.1"));
+        Assert.Equal("not an address", s.Address("not an address"));
+    }
 }

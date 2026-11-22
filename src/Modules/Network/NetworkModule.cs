@@ -102,8 +102,9 @@ public sealed class NetworkModule(INetworkSource source, SystemCommandRunner? co
             var head = a.FriendlyConnection + (a.IsConnected && NetworkAdapter.FormatSpeed(a.SpeedBps) is { Length: > 0 } s ? $" · {s}" : "");
             var rows = new List<AreaRow>();
             void Add(string l, string v, AreaLevel lv = AreaLevel.Neutral) { if (v.Length > 0) rows.Add(new(lv, [l, v])); }
+            // Only a connected adapter has a speed: Windows keeps a nominal one for an unplugged adapter (3 Mbps for Bluetooth).
             Add("Status", a.FriendlyConnection, a.IsConnected ? AreaLevel.Ok : AreaLevel.Neutral);
-            Add("Adapter", a.Description); Add("Manufacturer", a.Manufacturer); Add("Speed", NetworkAdapter.FormatSpeed(a.SpeedBps)); Add("Hardware address", a.Mac);
+            Add("Adapter", a.Description); Add("Manufacturer", a.Manufacturer); if (a.IsConnected) Add("Speed", NetworkAdapter.FormatSpeed(a.SpeedBps)); Add("Hardware address", a.Mac);
             if (a.HasCounters)
             {
                 Add("Packets received", N(a.PacketsIn)); Add("Packets sent", N(a.PacketsOut));

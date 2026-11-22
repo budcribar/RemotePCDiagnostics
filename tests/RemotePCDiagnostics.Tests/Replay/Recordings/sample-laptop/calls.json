@@ -983,6 +983,34 @@
       "exitCode": 0,
       "stdOut": "{\"FastStartup\":\"1\",\"TotalBytes\":\"16718393344\",\"FreeBytes\":\"6266224640\",\"CommitLimitBytes\":\"18865876992\",\"CommitFreeBytes\":\"5935005696\",\"InstalledBytes\":\"17179869184\",\"PagefileUsedBytes\":\"220200960\",\"PagefileSizeBytes\":\"2147483648\"}\r\n",
       "stdErr": ""
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\StandardCimv2",
+      "query": "SELECT Name, InterfaceDescription, DeviceID, InterfaceOperationalStatus, Hidden FROM MSFT_NetAdapter",
+      "rows": [
+        {
+          "Name": "Wi-Fi",
+          "InterfaceDescription": "Sample Wi-Fi 6E AX211",
+          "DeviceID": "{11111111-2222-3333-4444-555555555555}",
+          "InterfaceOperationalStatus": 1,
+          "Hidden": false
+        },
+        {
+          "Name": "Ethernet",
+          "InterfaceDescription": "Sample 2.5GbE Controller",
+          "DeviceID": "{66666666-7777-8888-9999-000000000000}",
+          "InterfaceOperationalStatus": 2,
+          "Hidden": false
+        },
+        {
+          "Name": "vEthernet (Default Switch)",
+          "InterfaceDescription": "Hyper-V Virtual Ethernet Adapter",
+          "DeviceID": "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
+          "InterfaceOperationalStatus": 1,
+          "Hidden": false
+        }
+      ]
     }
   ]
 }
