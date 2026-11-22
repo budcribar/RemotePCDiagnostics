@@ -56,6 +56,9 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     ("Device Manager & drivers (legacy: PowerShell + osquery)", new DeviceDriversModule(new OsqueryDeviceDriverSource(osquery, commands))),
     ("Programs & updates (WMI + registry)", new ProgramsModule(new WmiProgramsSource(wmi, registry, packages))),
     ("Programs & updates (legacy: osquery)", new ProgramsModule(new OsqueryProgramsSource(osquery))),
+    // A restart this app scheduled isn't part of a recording. Each path takes its two process snapshots 2 s apart, as in the app.
+    ("Resource hogs & uptime (WMI + registry)", new ResourceHogsModule(new WmiResourceHogsSource(wmi, registry), restartPending: () => false)),
+    ("Resource hogs & uptime (legacy: osquery + PowerShell)", new ResourceHogsModule(new OsqueryResourceHogsSource(osquery, commands), restartPending: () => false)),
 };
 foreach (var (label, module) in checks)
 {

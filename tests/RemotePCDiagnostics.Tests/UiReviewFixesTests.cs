@@ -102,7 +102,7 @@ public class UiReviewFixesTests
     }
 
     [Fact]
-    public void ResourceHogs_ScriptReadsMemory() => Assert.Contains("TotalVisibleMemorySize", ResourceHogsModule.FastStartupScript);
+    public void ResourceHogs_ScriptReadsMemory() => Assert.Contains("TotalVisibleMemorySize", RemotePCDiagnostics.Legacy.OsqueryResourceHogsSource.FastStartupScript);
 
     // ---- Temperatures text ----
     [Theory]

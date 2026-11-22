@@ -1,11 +1,11 @@
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
-namespace RemotePCDiagnostics.Core.Platform;
+namespace RemotePCDiagnostics.Legacy;
 
 /// <summary>
 /// Native in-process C# reader for Fast Startup (HiberbootEnabled registry) and total/free physical memory.
-/// Replaces FastStartupState.ps1 to avoid ~400 ms of PowerShell subprocess overhead in standard user mode.
+/// Used instead of FastStartupState.ps1 (which takes ~400 ms to start PowerShell) by the Store edition without an Agent, as a standard user.
 /// </summary>
 public static class FastStartupReader
 {

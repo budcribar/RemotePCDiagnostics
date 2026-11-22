@@ -17,5 +17,6 @@
     <ProjectReference Include="..\..\src\Modules\Osquery\RemotePCDiagnostics.Modules.Osquery.csproj" />
     <ProjectReference Include="..\..\src\Modules\DeviceDrivers\RemotePCDiagnostics.Modules.DeviceDrivers.csproj" />
     <ProjectReference Include="..\..\src\Modules\Programs\RemotePCDiagnostics.Modules.Programs.csproj" />
+    <ProjectReference Include="..\..\src\Modules\ResourceHogs\RemotePCDiagnostics.Modules.ResourceHogs.csproj" />
   </ItemGroup>
 </Project>

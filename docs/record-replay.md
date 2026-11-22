@@ -53,11 +53,12 @@ A check whose answers a recording doesn't hold (a recording made before the reco
 | Services | WMI (`Win32_Service`) | osquery |
 | Device Manager & drivers | WMI (`Win32_PnPEntity`, `Win32_PnPSignedDriver`) | PowerShell, osquery |
 | Programs & updates | WMI (`Win32_OperatingSystem`, `Win32_QuickFixEngineering`), the registry's Uninstall keys, Store apps from Windows' package API | osquery |
+| Resource hogs & uptime | WMI (`Win32_OperatingSystem`, `Win32_Process`, `Win32_PhysicalMemory`, `Win32_PageFileUsage`), Fast Startup from the registry | osquery, PowerShell |
 
 ## Readers and editions
 
 Each check reads through an interface (`IBatteryPowerSource`, `IDriveSource`, `IHardwareInventorySource`, `IServiceSource`,
-`IDeviceDriverSource`, `IProgramsSource`), so a build carries only the readers it uses:
+`IDeviceDriverSource`, `IProgramsSource`, `IResourceHogsSource`), so a build carries only the readers it uses:
 
 - The Setup edition (the default build) reads WMI through the Agent (`AgentWmiSource`), never in the app. Run out of process (in the module
   host), a module asks the app for its WMI (the `wmi.query` capability), and the app asks the Agent. The registry keys Programs reads, and the
