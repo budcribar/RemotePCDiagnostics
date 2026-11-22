@@ -3,8 +3,11 @@
   <PropertyGroup>
     <Product>Remote PC Diagnostics</Product>
     <Version>1.2.0</Version>
-    <!-- The SDK appends the Git revision to InformationalVersion. CI retries stay distinguishable. -->
-    <InformationalVersion Condition="'$(GITHUB_RUN_NUMBER)' != ''">$(Version)-ci.$(GITHUB_RUN_NUMBER).$(GITHUB_RUN_ATTEMPT)</InformationalVersion>
+    <!-- The SDK appends the Git revision to InformationalVersion.
+         Keep the attempt segment fixed at .1 (not GITHUB_RUN_ATTEMPT): "Re-run failed jobs" reuses artifacts
+         built in attempt 1 while the release job runs in attempt 2, which would make release notes (or a retried
+         agent/installer job) advertise .2 while reused binaries are stamped .1. -->
+    <InformationalVersion Condition="'$(GITHUB_RUN_NUMBER)' != ''">$(Version)-ci.$(GITHUB_RUN_NUMBER).1</InformationalVersion>
     <InformationalVersion Condition="'$(GITHUB_RUN_NUMBER)' == ''">$(Version)-local</InformationalVersion>
     <!-- RemoteBlazorWebView packages (Wpf, RemoteWebView, RemoteWebViewService.Lib, RemoteComponents), from nuget.org since
          10.0.15. third_party/RemoteBlazorWebView/packages holds the earlier local 10.0.14-embedded.8 build and is no longer used. -->
