@@ -23,6 +23,8 @@ public sealed class DriveHealthReplayTests
         Snapshot.Match(RecordingLibrary.Folder(name), "DriveHealth", result);
     }
 
+    private const int TemperatureDriftC = 3;
+
     /// <summary>WMI reads the same drives, health and counters as the Get-PhysicalDisk script it replaces.</summary>
     [Theory]
     [MemberData(nameof(Recordings))]
@@ -38,10 +40,18 @@ public sealed class DriveHealthReplayTests
         Assert.NotNull(wmi);
         Assert.Equal(0, ps?.ExitCode);
         var old = Core.Osquery.OsqueryJson.ParseRows(ps!.StdOut).Select(DriveHealth.FromRow).ToList();
-        Assert.Equal(old.Select(Describe), wmi.Select(Describe));
+        Assert.Equal(old.Select(d => Describe(d with { TemperatureC = null })), wmi.Select(d => Describe(d with { TemperatureC = null })));
+        // Temperature is a live reading and the two paths read it seconds apart (29 vs 30 °C on a real PC), so allow a small drift.
+        for (var i = 0; i < old.Count; i++)
+        {
+            Assert.Equal(old[i].TemperatureC is null, wmi[i].TemperatureC is null);
+            Assert.InRange(Math.Abs((old[i].TemperatureC ?? 0) - (wmi[i].TemperatureC ?? 0)), 0, TemperatureDriftC);
+        }
 
+        // With the drift settled, the two reports must match exactly: the PowerShell answer is given the WMI temperatures.
+        var aligned = rec.WithPowerShellTemperatures(PowerShellDriveSource.Script, wmi.Select(d => d.TemperatureC).ToList());
         var newReport = Normalized(await pc.DriveHealth().RefreshAsync(null, ct));
-        var oldReport = Normalized(await new ReplayedPc(rec).DriveHealthOld().RefreshAsync(null, ct));
+        var oldReport = Normalized(await new ReplayedPc(aligned).DriveHealthOld().RefreshAsync(null, ct));
         Assert.Equal(oldReport, newReport);
 
         static string Describe(DriveHealth d) => string.Join(" | ", d.Name, d.Serial, d.MediaType, d.BusType, d.Health, d.Operational, d.SizeBytes,
