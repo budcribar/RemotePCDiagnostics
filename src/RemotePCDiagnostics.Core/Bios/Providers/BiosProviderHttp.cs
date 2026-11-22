@@ -35,20 +35,36 @@ public static class BiosProviderHttp
     /// </summary>
     public static async Task<bool> MoveIntoPlaceOrReuseIdenticalAsync(string partPath, string finalPath, CancellationToken ct)
     {
-        try
+        // The other install can be replacing or reading the file at the very moment this one looks at it, which Windows reports as
+        // "being used by another process". That clears within moments, so try again a few times before giving up.
+        const int attempts = 8;
+        for (var attempt = 1; ; attempt++)
         {
-            File.Move(partPath, finalPath, overwrite: true);
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            if (!File.Exists(finalPath) || IsSymlinkOrReparsePath(finalPath))
-                throw;
-            var ours = await BiosPackageVerifier.ComputeSha256HexAsync(partPath, ct).ConfigureAwait(false);
-            var theirs = await BiosPackageVerifier.ComputeSha256HexAsync(finalPath, ct).ConfigureAwait(false);
-            if (!string.Equals(ours, theirs, StringComparison.Ordinal))
-                throw;
-            return false;
+            try
+            {
+                File.Move(partPath, finalPath, overwrite: true);
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (!File.Exists(finalPath) || IsSymlinkOrReparsePath(finalPath))
+                    throw;
+                bool? identical;
+                try
+                {
+                    var ours = await BiosPackageVerifier.ComputeSha256HexAsync(partPath, ct).ConfigureAwait(false);
+                    var theirs = await BiosPackageVerifier.ComputeSha256HexAsync(finalPath, ct).ConfigureAwait(false);
+                    identical = string.Equals(ours, theirs, StringComparison.Ordinal);
+                }
+                catch (IOException) when (attempt < attempts)
+                {
+                    identical = null; // the file is busy: wait and try the move again
+                }
+                if (identical == false) throw;
+                if (identical == true) return false;
+                if (attempt >= attempts) throw;
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), ct).ConfigureAwait(false);
         }
     }
 
