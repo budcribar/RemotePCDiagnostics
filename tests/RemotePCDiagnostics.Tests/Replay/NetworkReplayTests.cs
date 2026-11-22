@@ -53,6 +53,11 @@ public sealed class NetworkReplayTests
         var oldPc = new ReplayedPc(rec);
         var old = WithoutGains((AreaReport)(await NetworkOld(oldPc).RefreshAsync(null, ct)).Payload!);
         Assert.Empty(oldPc.Replay.Misses);
+        // An adapter that is up but that Win32_NetworkAdapter (so osquery) doesn't name is shown only on the WMI path, without a hardware
+        // address (the HP OmniBook X's Wi-Fi). Cards are compared by adapter name, as that card moves the others' order.
+        var oldTitles = old.Cards.Select(c => c.Title).ToHashSet(StringComparer.Ordinal);
+        now = ByTitle(now with { Cards = now.Cards.Where(c => !IsNic(c) || oldTitles.Contains(c.Title) || c.Rows.Any(x => x.Values[0] == "Hardware address")).ToList() });
+        old = ByTitle(old);
         var diffs = ReportDiff.Between(old, now, Live);
         Assert.True(diffs.Count == 0, $"{diffs.Count} differences:\n" + string.Join("\n", diffs));
     }
@@ -75,6 +80,9 @@ public sealed class NetworkReplayTests
             _ => c,
         }).ToList(),
     };
+
+    private static bool IsNic(AreaCard c) => c.Id.StartsWith("nic", StringComparison.Ordinal);
+    private static AreaReport ByTitle(AreaReport r) => r with { Cards = r.Cards.Select(c => IsNic(c) ? c with { Id = "nic:" + c.Title } : c).ToList() };
 
     /// <summary>Traffic keeps flowing between the two reads, so the packet counts differ by a little.</summary>
     private static bool Live(AreaCard card, AreaRow row) =>
