@@ -600,9 +600,11 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
         var resolvedStagingDir = effectiveRequest.StagingDirectory!;
         var targetFilePath = Path.Combine(resolvedStagingDir, safeFileName);
         var targetPartPath = targetFilePath + ".part";
-        if (IsSymlinkOrReparsePoint(targetFilePath) || IsSymlinkOrReparsePoint(targetPartPath))
+        if (IsSymlinkOrReparsePoint(targetFilePath)
+            || IsSymlinkOrReparsePoint(targetPartPath)
+            || Directory.Exists(targetFilePath))
         {
-            const string symErr = "Target package staging file or .part path is a symbolic link or reparse point.";
+            const string symErr = "Target package staging file or .part path is a symbolic link, reparse point, or existing directory.";
             LogWarn(symErr, serial);
             redactingProgress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, symErr));
             return BiosInstallResult.Failed(symErr, prev, target);
@@ -1496,57 +1498,93 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
     private UrlExtractionState TryExtractPackageUrlFromJson(JsonElement item, out string? validatedUrl)
     {
         validatedUrl = null;
-        string[] urlKeys = ["downloadUrl", "packageUrl", "cabUrl", "exeUrl", "installerUrl", "url", "location", "fileUrl", "link"];
+        string[] explicitDownloadKeys = ["downloadUrl", "download_url", "packageUrl", "cabUrl", "exeUrl", "installerUrl", "fileUrl"];
+        string[] fallbackUrlKeys = ["url", "location", "link"];
         var sawUntrusted = false;
 
-        foreach (var key in urlKeys)
+        foreach (var key in explicitDownloadKeys)
         {
             if (!TryGetPropertyIgnoreCase(item, out var prop, key))
                 continue;
 
-            if (prop.ValueKind == JsonValueKind.String)
+            var propState = TryExtractPackageUrlFromJsonProperty(prop, out var valid);
+            if (propState == UrlExtractionState.Valid)
             {
-                var raw = prop.GetString()?.Trim();
-                if (string.IsNullOrEmpty(raw))
-                    continue;
-
-                if (TryValidateFrameworkPackageUrl(raw, out var valid))
-                {
-                    validatedUrl = valid;
-                    return UrlExtractionState.Valid;
-                }
-
-                sawUntrusted = true;
+                validatedUrl = valid;
+                return UrlExtractionState.Valid;
             }
-            else if (prop.ValueKind == JsonValueKind.Object)
-            {
-                if (TryGetPropertyIgnoreCase(prop, out var nested, "url", "href", "downloadUrl", "location")
-                    && nested.ValueKind == JsonValueKind.String)
-                {
-                    var raw = nested.GetString()?.Trim();
-                    if (!string.IsNullOrEmpty(raw))
-                    {
-                        if (TryValidateFrameworkPackageUrl(raw, out var valid))
-                        {
-                            validatedUrl = valid;
-                            return UrlExtractionState.Valid;
-                        }
 
-                        sawUntrusted = true;
-                    }
-                }
-                else
-                {
-                    sawUntrusted = true;
-                }
-            }
-            else
+            if (propState == UrlExtractionState.Untrusted)
             {
-                sawUntrusted = true;
+                // Fail closed when an explicit download URL property is poisoned/untrusted
+                // or has an invalid JSON value kind rather than falling back to a secondary "url" property.
+                return UrlExtractionState.Untrusted;
             }
         }
 
+        foreach (var key in fallbackUrlKeys)
+        {
+            if (!TryGetPropertyIgnoreCase(item, out var prop, key))
+                continue;
+
+            var propState = TryExtractPackageUrlFromJsonProperty(prop, out var valid);
+            if (propState == UrlExtractionState.Valid)
+            {
+                validatedUrl = valid;
+                return UrlExtractionState.Valid;
+            }
+
+            if (propState == UrlExtractionState.Untrusted)
+                sawUntrusted = true;
+        }
+
         return sawUntrusted ? UrlExtractionState.Untrusted : UrlExtractionState.Absent;
+    }
+
+    private static UrlExtractionState TryExtractPackageUrlFromJsonProperty(JsonElement prop, out string? validatedUrl)
+    {
+        validatedUrl = null;
+        if (prop.ValueKind == JsonValueKind.String)
+        {
+            var raw = prop.GetString()?.Trim();
+            if (string.IsNullOrEmpty(raw))
+                return UrlExtractionState.Absent;
+
+            if (TryValidateFrameworkPackageUrl(raw, out var valid))
+            {
+                validatedUrl = valid;
+                return UrlExtractionState.Valid;
+            }
+
+            return UrlExtractionState.Untrusted;
+        }
+
+        if (prop.ValueKind == JsonValueKind.Object)
+        {
+            if (TryGetPropertyIgnoreCase(prop, out var nested, "url", "href", "downloadUrl", "location"))
+            {
+                if (nested.ValueKind == JsonValueKind.String)
+                {
+                    var raw = nested.GetString()?.Trim();
+                    if (string.IsNullOrEmpty(raw))
+                        return UrlExtractionState.Absent;
+
+                    if (TryValidateFrameworkPackageUrl(raw, out var valid))
+                    {
+                        validatedUrl = valid;
+                        return UrlExtractionState.Valid;
+                    }
+
+                    return UrlExtractionState.Untrusted;
+                }
+
+                return UrlExtractionState.Untrusted;
+            }
+
+            return UrlExtractionState.Untrusted;
+        }
+
+        return UrlExtractionState.Untrusted;
     }
 
     private static bool TryValidateFrameworkPackageUrl(string rawUrl, out string validatedUrl)
@@ -2602,7 +2640,7 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
     {
         var downloadUrl = request.Target.DownloadUrl!;
         var finalPath = Path.Combine(stagingDir, fileName);
-        var partPath = finalPath + ".part";
+        var partPath = $"{finalPath}.{Guid.NewGuid():N}.part";
         var createdPart = false;
         var moved = false;
         var keepFile = false;
@@ -2610,10 +2648,13 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
         try
         {
             if (IsSymlinkOrReparsePoint(stagingDir)
+                || HasSymlinkOrReparseAncestor(stagingDir)
+                || File.Exists(stagingDir)
                 || IsSymlinkOrReparsePoint(finalPath)
+                || Directory.Exists(finalPath)
                 || IsSymlinkOrReparsePoint(partPath))
             {
-                const string symMsg = "Staging directory or target package file is a symbolic link or reparse point.";
+                const string symMsg = "Staging directory or target package file is a symbolic link, reparse point, or conflicting directory.";
                 log?.Warn($"[{VendorId}] {symMsg}");
                 return BiosVerifiedPackageResult.Fail(symMsg);
             }
@@ -2621,10 +2662,12 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
             Directory.CreateDirectory(stagingDir);
 
             if (IsSymlinkOrReparsePoint(stagingDir)
+                || HasSymlinkOrReparseAncestor(stagingDir)
                 || IsSymlinkOrReparsePoint(finalPath)
+                || Directory.Exists(finalPath)
                 || IsSymlinkOrReparsePoint(partPath))
             {
-                const string symMsg = "Staging directory or target package file became a symbolic link or reparse point.";
+                const string symMsg = "Staging directory or target package file became a symbolic link, reparse point, or conflicting directory.";
                 log?.Warn($"[{VendorId}] {symMsg}");
                 return BiosVerifiedPackageResult.Fail(symMsg);
             }
@@ -2647,9 +2690,13 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
                 return BiosVerifiedPackageResult.Fail(err);
             }
 
-            if (IsSymlinkOrReparsePoint(finalPath) || IsSymlinkOrReparsePoint(partPath))
+            if (IsSymlinkOrReparsePoint(stagingDir)
+                || HasSymlinkOrReparseAncestor(stagingDir)
+                || IsSymlinkOrReparsePoint(finalPath)
+                || Directory.Exists(finalPath)
+                || IsSymlinkOrReparsePoint(partPath))
             {
-                const string symMsg = "Target package file or .part path is a symbolic link or reparse point.";
+                const string symMsg = "Target package file or .part path is a symbolic link, reparse point, or conflicting directory.";
                 log?.Warn($"[{VendorId}] {symMsg}");
                 return BiosVerifiedPackageResult.Fail(symMsg);
             }
@@ -2658,7 +2705,7 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
             var lastPercent = 0;
 
             await using (var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
-            await using (var dest = new FileStream(partPath, FileMode.Create, FileAccess.Write, FileShare.None, ReadBufferSize, useAsync: true))
+            await using (var dest = new FileStream(partPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, ReadBufferSize, useAsync: true))
             {
                 createdPart = true;
                 var buffer = ArrayPool<byte>.Shared.Rent(ReadBufferSize);
@@ -2706,9 +2753,13 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
                 return BiosVerifiedPackageResult.Fail(emptyErr);
             }
 
-            if (IsSymlinkOrReparsePoint(finalPath) || IsSymlinkOrReparsePoint(partPath))
+            if (IsSymlinkOrReparsePoint(stagingDir)
+                || HasSymlinkOrReparseAncestor(stagingDir)
+                || IsSymlinkOrReparsePoint(finalPath)
+                || Directory.Exists(finalPath)
+                || IsSymlinkOrReparsePoint(partPath))
             {
-                const string symMsg = "Target package file or .part path became a symbolic link or reparse point.";
+                const string symMsg = "Target package file or .part path became a symbolic link, reparse point, or conflicting directory.";
                 log?.Warn($"[{VendorId}] {symMsg}");
                 return BiosVerifiedPackageResult.Fail(symMsg);
             }
@@ -2826,7 +2877,22 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
             var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if ((int)response.StatusCode is not (301 or 302 or 303 or 307 or 308))
             {
-                if (!Path.GetExtension(current.AbsolutePath).Equals(expectedExt, StringComparison.OrdinalIgnoreCase))
+                var effectiveUri = current;
+                if (response.RequestMessage?.RequestUri is { } finalUri)
+                {
+                    if (!finalUri.IsAbsoluteUri
+                        || !TryValidateVendorUrl(finalUri.AbsoluteUri, AllowedHostSuffixes, out var validatedFinal)
+                        || (!string.IsNullOrWhiteSpace(finalUri.OriginalString)
+                            && !TryValidateVendorUrl(finalUri.OriginalString, AllowedHostSuffixes, out _)))
+                    {
+                        response.Dispose();
+                        throw new InvalidOperationException("Rejected redirect target: final response URL failed vendor HTTPS/domain/path validation.");
+                    }
+
+                    effectiveUri = validatedFinal;
+                }
+
+                if (!Path.GetExtension(effectiveUri.AbsolutePath).Equals(expectedExt, StringComparison.OrdinalIgnoreCase))
                 {
                     response.Dispose();
                     throw new InvalidOperationException($"Rejected redirect target: Framework BIOS installer package must have the expected '{expectedExt}' extension.");
@@ -3028,7 +3094,19 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
 
             var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if ((int)response.StatusCode is not (301 or 302 or 303 or 307 or 308))
+            {
+                if (response.RequestMessage?.RequestUri is { } finalUri
+                    && (!finalUri.IsAbsoluteUri
+                        || !TryValidateVendorUrl(finalUri.AbsoluteUri, AllowedHostSuffixes, out _)
+                        || (!string.IsNullOrWhiteSpace(finalUri.OriginalString)
+                            && !TryValidateVendorUrl(finalUri.OriginalString, AllowedHostSuffixes, out _))))
+                {
+                    response.Dispose();
+                    throw new InvalidOperationException("Rejected redirect target: final response URL failed vendor HTTPS/domain/path validation.");
+                }
+
                 return response;
+            }
 
             string? rawNonValidated = null;
             if (response.Headers.NonValidated.TryGetValues("Location", out var rawLocs))

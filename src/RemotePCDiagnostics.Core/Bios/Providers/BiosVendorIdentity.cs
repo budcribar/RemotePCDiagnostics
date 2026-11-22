@@ -17,6 +17,9 @@ public static partial class BiosVendorIdentity
         "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     };
 
+    internal static bool IsWindowsReservedDeviceName(string? stem) =>
+        !string.IsNullOrWhiteSpace(stem) && WindowsReservedDeviceNames.Contains(stem);
+
     [GeneratedRegex(@"^(?:0[xX])?([0-9A-Fa-f]{4})$", RegexOptions.CultureInvariant)]
     private static partial Regex FourHexRegex();
 
@@ -247,7 +250,7 @@ public static partial class BiosVendorIdentity
 
         var cleaned = TrimEdgeWhitespaceAndDots(sb.ToString());
         if (cleaned.Length > 128)
-            cleaned = TrimEdgeWhitespaceAndDots(cleaned[..128]);
+            cleaned = TruncatePreservingExtension(cleaned, maxLength: 128);
 
         if (string.IsNullOrWhiteSpace(cleaned) || cleaned is "." or "..")
             return safeFallback;
@@ -258,6 +261,38 @@ public static partial class BiosVendorIdentity
             return safeFallback;
 
         return cleaned;
+    }
+
+    private static string TruncatePreservingExtension(string cleaned, int maxLength)
+    {
+        var lastDot = cleaned.LastIndexOf('.');
+        if (lastDot > 0)
+        {
+            var ext = cleaned[lastDot..];
+            if (IsValidShortExtension(ext) && ext.Length < maxLength)
+            {
+                var maxStemLen = maxLength - ext.Length;
+                var truncatedStem = TrimEdgeWhitespaceAndDots(cleaned[..maxStemLen]);
+                if (!string.IsNullOrEmpty(truncatedStem))
+                    return truncatedStem + ext;
+            }
+        }
+
+        return TrimEdgeWhitespaceAndDots(cleaned[..maxLength]);
+    }
+
+    private static bool IsValidShortExtension(string ext)
+    {
+        if (ext.Length < 2 || ext.Length > 16 || ext[0] != '.')
+            return false;
+
+        for (var i = 1; i < ext.Length; i++)
+        {
+            if (!char.IsAsciiLetterOrDigit(ext[i]))
+                return false;
+        }
+
+        return true;
     }
 
     private static string TrimEdgeWhitespaceAndDots(string value)

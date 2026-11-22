@@ -1210,6 +1210,375 @@ public sealed class BiosProviderInfrastructureTests
         Assert.Null(await BiosArchiveAndXml.ExtractXmlFromCabOrPlainAsync(bigPlainXml, "hp", maxDecompressedBytes: 64));
     }
 
+    [Fact]
+    public void ArchiveAndXml_ExtractZipSafe_RejectsSymlinkedAncestorDirectory()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"rpd-bios-zip-anc-{Guid.NewGuid():N}");
+        try
+        {
+            var outsideDir = Path.Combine(tempRoot, "outside");
+            var linkParent = Path.Combine(tempRoot, "link-parent");
+            var zipPath = Path.Combine(tempRoot, "pkg.zip");
+            Directory.CreateDirectory(outsideDir);
+            Directory.CreateSymbolicLink(linkParent, outsideDir);
+
+            using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+            {
+                var entry = archive.CreateEntry("bios.bin");
+                using var s = entry.Open();
+                s.Write("PAYLOAD"u8);
+            }
+
+            var childDest = Path.Combine(linkParent, "newSubdir");
+            Assert.Throws<InvalidDataException>(() => BiosArchiveAndXml.ExtractZipSafe(zipPath, childDest));
+            Assert.False(Directory.Exists(Path.Combine(outsideDir, "newSubdir")));
+            Assert.Empty(Directory.GetFileSystemEntries(outsideDir));
+
+            var deepChildDest = Path.Combine(linkParent, "a", "b", "c");
+            Assert.Throws<InvalidDataException>(() => BiosArchiveAndXml.ExtractZipSafe(zipPath, deepChildDest));
+            Assert.Empty(Directory.GetFileSystemEntries(outsideDir));
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+                Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ArchiveAndXml_TryExtractCabEntriesWithStatus_DistinguishesUnsupportedCompressionFromUnsafeAndNeverCallsExpandOnUnsafe()
+    {
+        var xmlBytes = Encoding.UTF8.GetBytes("<Catalog><Bios>3.0</Bios></Catalog>");
+
+        // Valid NONE and MSZIP succeed
+        var rawCab = TestCabBuilder.CreateUncompressed(new Dictionary<string, byte[]> { ["Catalog.xml"] = xmlBytes });
+        Assert.Equal(CabExtractionStatus.Succeeded, BiosArchiveAndXml.TryExtractCabEntriesWithStatus(rawCab, out var rawEntries));
+        Assert.Single(rawEntries);
+
+        var mszipCab = TestCabBuilder.CreateMsZip(new Dictionary<string, byte[]> { ["Catalog.xml"] = xmlBytes });
+        Assert.Equal(CabExtractionStatus.Succeeded, BiosArchiveAndXml.TryExtractCabEntriesWithStatus(mszipCab, out var mszipEntries));
+        Assert.Single(mszipEntries);
+
+        // Valid LZX (3) and Quantum (2) return UnsupportedCompression
+        var lzxCab = TestCabBuilder.CreateWithUnsupportedCompression("Catalog.xml", xmlBytes, typeCompress: 3);
+        Assert.Equal(CabExtractionStatus.UnsupportedCompression, BiosArchiveAndXml.TryExtractCabEntriesWithStatus(lzxCab, out _));
+
+        var quantumCab = TestCabBuilder.CreateWithUnsupportedCompression("Catalog.xml", xmlBytes, typeCompress: 2);
+        Assert.Equal(CabExtractionStatus.UnsupportedCompression, BiosArchiveAndXml.TryExtractCabEntriesWithStatus(quantumCab, out _));
+
+        // Unsafe CABs — EVEN WHEN FOLDER IS LZX (typeCompress = 3) — MUST return UnsafeOrInvalid and NEVER call expand.exe
+        var unsafeCabs = new[]
+        {
+            TestCabBuilder.CreateUncompressed(new Dictionary<string, byte[]> { ["../../evil.xml"] = xmlBytes }),
+            TestCabBuilder.CreateWithUnsupportedCompression("../../evil.xml", xmlBytes, typeCompress: 3),
+            TestCabBuilder.CreateWithUnsupportedCompression("/abs.xml", xmlBytes, typeCompress: 3),
+            TestCabBuilder.CreateWithUnsupportedCompression("\\abs.xml", xmlBytes, typeCompress: 3),
+            TestCabBuilder.CreateWithUnsupportedCompression("C:drive.xml", xmlBytes, typeCompress: 3),
+            TestCabBuilder.CreateWithUnsupportedCompression("bad\u0001name.xml", xmlBytes, typeCompress: 3),
+            TestCabBuilder.CreateUncompressed(new Dictionary<string, byte[]> { ["bomb.xml"] = new byte[512] }),
+            TestCabBuilder.CreateWithUnsupportedCompression("bomb.xml", new byte[512], typeCompress: 3),
+            [(byte)'M', (byte)'S', (byte)'C', (byte)'F', 0xFF, 0xFF, 0x01, 0x02],
+        };
+
+        var expandLauncher = new RecordingProcessLauncher(_ => new ProcessResult(0, "should never run", ""));
+        var expandCommands = RecordingProcessLauncher.CreateCommandRunner(expandLauncher);
+
+        foreach (var badCab in unsafeCabs)
+        {
+            Assert.Equal(
+                CabExtractionStatus.UnsafeOrInvalid,
+                BiosArchiveAndXml.TryExtractCabEntriesWithStatus(badCab, out _, maxTotalBytes: 128));
+
+            var extracted = await BiosArchiveAndXml.ExtractXmlFromCabOrPlainAsync(
+                badCab,
+                "unsafe-test",
+                expandCommands,
+                maxDecompressedBytes: 128);
+            Assert.Null(extracted);
+        }
+
+        Assert.Empty(expandLauncher.Calls);
+
+        // Post-expand.exe hardening: if expand.exe drops an XML inside a symlinked subdir, reject it cleanly
+        var tempOutside = Path.Combine(Path.GetTempPath(), $"rpd-bios-cab-sym-out-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempOutside);
+        try
+        {
+            var outsideXml = Path.Combine(tempOutside, "evil.xml");
+            await File.WriteAllTextAsync(outsideXml, "<Catalog><Bios>9.9</Bios></Catalog>");
+
+            var symlinkExpandLauncher = new RecordingProcessLauncher(call =>
+            {
+                var outDir = call.Arguments[2];
+                Directory.CreateSymbolicLink(Path.Combine(outDir, "linked"), tempOutside);
+                return new ProcessResult(0, "ok", "");
+            });
+            var symlinkCommands = RecordingProcessLauncher.CreateCommandRunner(symlinkExpandLauncher);
+            var rejected = await BiosArchiveAndXml.ExtractXmlFromCabOrPlainAsync(lzxCab, "sym-test", symlinkCommands);
+            Assert.Null(rejected);
+            Assert.Single(symlinkExpandLauncher.Calls);
+        }
+        finally
+        {
+            if (Directory.Exists(tempOutside))
+                Directory.Delete(tempOutside, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void VendorIdentity_SanitizeFileName_Over128CharsPreservesValidExtensionAndBlocksReservedNames()
+    {
+        // Long filename with version dots + .exe preserves .exe and stays <= 128 chars
+        var longHp = "https://ftp.hp.com/pub/softpaq/HP_EliteBook_840_G10_BIOS_v01.14.00_" + new string('a', 100) + ".exe";
+        var sanitizedHp = BiosVendorIdentity.SanitizeFileName(longHp, "fallback.exe");
+        Assert.True(sanitizedHp.Length <= 128);
+        Assert.Equal(".exe", Path.GetExtension(sanitizedHp));
+        Assert.StartsWith("HP_EliteBook_840_G10_BIOS_v01.14.00_", sanitizedHp, StringComparison.Ordinal);
+
+        // Other valid short extensions (.msi, .cab, .zip, .xml) preserved
+        foreach (var ext in new[] { ".msi", ".cab", ".zip", ".xml" })
+        {
+            var longName = "Vendor_Firmware_v2.3.4_" + new string('z', 130) + ext;
+            var sanitized = BiosVendorIdentity.SanitizeFileName(longName, "fallback.bin");
+            Assert.True(sanitized.Length <= 128);
+            Assert.Equal(ext, Path.GetExtension(sanitized));
+        }
+
+        // Windows reserved device names remain blocked even after truncation
+        Assert.Equal("fallback.exe", BiosVendorIdentity.SanitizeFileName("CON." + new string('a', 140) + ".exe", "fallback.exe"));
+        Assert.Equal("fallback.exe", BiosVendorIdentity.SanitizeFileName("CON" + new string('.', 135) + "exe", "fallback.exe"));
+        Assert.Equal("fallback.msi", BiosVendorIdentity.SanitizeFileName("NUL   ." + new string('x', 130) + ".msi", "fallback.msi"));
+
+        // Overly-long fake extension (>16 chars) or non-alphanumeric extension is NOT preserved
+        var fakeLongExt = "bios." + new string('a', 140);
+        var sanitizedFakeLong = BiosVendorIdentity.SanitizeFileName(fakeLongExt, "fallback.bin");
+        Assert.Equal(128, sanitizedFakeLong.Length);
+
+        var nonAlnumExt = "bios_" + new string('a', 130) + ".ex_e";
+        var sanitizedNonAlnum = BiosVendorIdentity.SanitizeFileName(nonAlnumExt, "fallback.bin");
+        Assert.Equal(128, sanitizedNonAlnum.Length);
+        Assert.DoesNotContain(".ex_e", sanitizedNonAlnum, StringComparison.Ordinal);
+
+        // Extensionless >128-char filename truncates cleanly to 128
+        var noExt = new string('b', 160);
+        Assert.Equal(128, BiosVendorIdentity.SanitizeFileName(noExt, "fallback.bin").Length);
+    }
+
+    [Fact]
+    public async Task Archive_LzxCabWithAdsWhitespaceTraversalWildcardsOrReservedNames_ReturnsUnsafeAndNeverInvokesExpandExe()
+    {
+        var xmlBytes = Encoding.UTF8.GetBytes("<Catalog><Bios>1.2.3</Bios></Catalog>");
+        var unsafeEntryNames = new[]
+        {
+            "evil.xml:ads",
+            "sub/C:evil.xml",
+            ".. /evil.xml",
+            "sub/ .. /evil.xml",
+            ". /evil.xml",
+            "sub/evil.xml.",
+            "sub/*.xml",
+            "sub/evil?.xml",
+            "sub/evil|pipe.xml",
+            "sub/evil\"quote.xml",
+            "sub/<evil>.xml",
+            "CON.xml",
+            "NUL/evil.xml",
+            "PRN.xml",
+            "AUX/test.xml",
+            "COM1.xml",
+            "LPT9/catalog.xml",
+        };
+
+        var expandLauncher = new RecordingProcessLauncher(_ => new ProcessResult(0, "should-never-run", ""));
+        var expandCommands = RecordingProcessLauncher.CreateCommandRunner(expandLauncher);
+
+        foreach (var badName in unsafeEntryNames)
+        {
+            var lzxCab = TestCabBuilder.CreateWithUnsupportedCompression(badName, xmlBytes, typeCompress: 3);
+            Assert.Equal(
+                CabExtractionStatus.UnsafeOrInvalid,
+                BiosArchiveAndXml.TryExtractCabEntriesWithStatus(lzxCab, out _));
+
+            var extracted = await BiosArchiveAndXml.ExtractXmlFromCabOrPlainAsync(
+                lzxCab,
+                "lzx-unsafe-name-test",
+                expandCommands);
+            Assert.Null(extracted);
+        }
+
+        Assert.Empty(expandLauncher.Calls);
+    }
+
+    [Fact]
+    public async Task Http_Hop0TraversalUrls_RejectedBeforeSendingAnyRequestEvenWith302OrNullRequestMessage()
+    {
+        var traversalUrls = new[]
+        {
+            "https://ftp.hp.com/pub/../../secret.exe",
+            "https://ftp.hp.com/pub/%2e%2e/secret.exe",
+            "https://ftp.hp.com/pub/%252e%252e/secret.exe",
+            "https://ftp.hp.com/pub/%5c/evil.exe",
+            "https://ftp.hp.com/pub/%00.exe",
+            "https://ftp.hp.com/pub/%2f/evil.exe",
+        };
+
+        var sentCount = 0;
+        var nullReqHandler = new FakeBiosHttpHandler().MapPredicate(_ => true, (_, _) =>
+        {
+            Interlocked.Increment(ref sentCount);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                RequestMessage = null,
+                Content = new ByteArrayContent("payload"u8.ToArray()),
+            });
+        });
+
+        var redirectHandler = new FakeBiosHttpHandler().MapPredicate(_ => true, (_, _) =>
+        {
+            Interlocked.Increment(ref sentCount);
+            var resp = new HttpResponseMessage(HttpStatusCode.Found);
+            resp.Headers.TryAddWithoutValidation("Location", "https://ftp.hp.com/pub/clean.exe");
+            return Task.FromResult(resp);
+        });
+
+        using var nullReqClient = BiosProviderHttp.CreateClient(nullReqHandler);
+        using var redirectClient = BiosProviderHttp.CreateClient(redirectHandler);
+        var stage = Path.Combine(Path.GetTempPath(), $"rpd-bios-hop0-{Guid.NewGuid():N}");
+
+        try
+        {
+            foreach (var badUrl in traversalUrls)
+            {
+                await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    BiosProviderHttp.GetFollowingAllowedRedirectsAsync(nullReqClient, badUrl, ["hp.com"]));
+                await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    BiosProviderHttp.GetFollowingAllowedRedirectsAsync(redirectClient, badUrl, ["hp.com"]));
+
+                var dl1 = await BiosProviderHttp.DownloadToStagingAsync(
+                    nullReqClient, badUrl, ["hp.com"], stage, "pkg.exe", null, CancellationToken.None);
+                Assert.False(dl1.Succeeded);
+
+                var dl2 = await BiosProviderHttp.DownloadToStagingAsync(
+                    redirectClient, badUrl, ["hp.com"], stage, "pkg.exe", null, CancellationToken.None);
+                Assert.False(dl2.Succeeded);
+            }
+
+            Assert.Equal(0, sentCount);
+            Assert.False(Directory.Exists(stage));
+        }
+        finally
+        {
+            if (Directory.Exists(stage))
+                Directory.Delete(stage, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Archive_ExtractZipSafe_RejectsAdsTraversalWhitespaceControlWildcardsReservedAndBadDirEntries_WhileAllowingValidDirsAndFiles()
+    {
+        using var dir = new TempStagingDir();
+
+        var maliciousEntryNames = new[]
+        {
+            "evil.txt:ads",
+            "sub/C:evil.txt",
+            ".. /evil.txt",
+            "sub/ .. /evil.txt",
+            ". /evil.txt",
+            "..\u00A0/evil.txt",
+            "CON.txt",
+            "CON\u00A0.txt",
+            "NUL/evil.txt",
+            "PRN",
+            "AUX",
+            "COM1.bin",
+            "COM9/evil.txt",
+            "LPT1.txt",
+            "LPT9/evil.txt",
+            "sub/evil.txt.",
+            "sub./evil.txt",
+            "sub/*.txt",
+            "sub/a?b.txt",
+            "sub/a|b.txt",
+            "sub/a\"b.txt",
+            "sub/a<b.txt",
+            "sub/a>b.txt",
+            "sub/a\tb.txt",
+            "sub/a\0b.txt",
+            "sub/a\nb.txt",
+            "sub/a\u007Fb.txt",
+            "CON/",
+            "/",
+            "//",
+            ".. /",
+            "a//b/",
+            "sub//",
+            "sub//file.txt",
+        };
+
+        foreach (var badName in maliciousEntryNames)
+        {
+            var badZip = dir.FilePath($"bad-parity-{Guid.NewGuid():N}.zip");
+            using (var z = ZipFile.Open(badZip, ZipArchiveMode.Create))
+            {
+                var entry = z.CreateEntry(badName);
+                if (!badName.EndsWith('/'))
+                {
+                    using var s = entry.Open();
+                    s.Write("pwn"u8);
+                }
+            }
+
+            var outDir = dir.FilePath($"out-bad-{Guid.NewGuid():N}");
+            var ex = Record.Exception(() => BiosArchiveAndXml.ExtractZipSafe(badZip, outDir));
+            Assert.True(
+                ex is InvalidDataException,
+                $"Expected InvalidDataException for ZIP entry '{badName.Replace("\0", "\\0").Replace("\t", "\\t").Replace("\n", "\\n")}', but got {ex?.GetType().FullName ?? "no exception"}.");
+            if (Directory.Exists(outDir))
+                Assert.Empty(Directory.GetFiles(outDir, "*", SearchOption.AllDirectories));
+        }
+
+        // Mixed archive (valid entry followed by malicious entry) must reject before extracting any file
+        var mixedZip = dir.FilePath("mixed-bad.zip");
+        using (var z = ZipFile.Open(mixedZip, ZipArchiveMode.Create))
+        {
+            var goodEntry = z.CreateEntry("good.txt");
+            using (var s = goodEntry.Open())
+                s.Write("ok"u8);
+
+            var badEntry = z.CreateEntry("CON.txt");
+            using (var s = badEntry.Open())
+                s.Write("pwn"u8);
+        }
+
+        var mixedOutDir = dir.FilePath("out-mixed");
+        Assert.Throws<InvalidDataException>(() => BiosArchiveAndXml.ExtractZipSafe(mixedZip, mixedOutDir));
+        if (Directory.Exists(mixedOutDir))
+            Assert.Empty(Directory.GetFiles(mixedOutDir, "*", SearchOption.AllDirectories));
+
+        // Valid files and valid directory entries ("sub/", "a/b/") continue to extract cleanly
+        var validZip = dir.FilePath("valid-parity.zip");
+        using (var z = ZipFile.Open(validZip, ZipArchiveMode.Create))
+        {
+            z.CreateEntry("sub/");
+            z.CreateEntry("a/b/");
+
+            var e1 = z.CreateEntry("sub/bios.bin");
+            using (var s1 = e1.Open())
+                s1.Write("BIOS-SUB"u8);
+
+            var e2 = z.CreateEntry("a/b/firmware_v1.2.3.bin");
+            using (var s2 = e2.Open())
+                s2.Write("BIOS-AB"u8);
+        }
+
+        var validOutDir = dir.FilePath("out-valid");
+        var extracted = BiosArchiveAndXml.ExtractZipSafe(validZip, validOutDir, maxTotalBytes: 4096);
+        Assert.Equal(2, extracted.Count);
+        Assert.Equal("BIOS-SUB", File.ReadAllText(Path.Combine(validOutDir, "sub", "bios.bin")));
+        Assert.Equal("BIOS-AB", File.ReadAllText(Path.Combine(validOutDir, "a", "b", "firmware_v1.2.3.bin")));
+    }
+
     private sealed class CancellingStreamContent(CancellationTokenSource cts) : HttpContent
     {
         protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>

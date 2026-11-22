@@ -717,7 +717,8 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
 
-        if (BiosArchiveAndXml.TryExtractCabEntries(cabBytes, out var entries, _maxPackageBytes))
+        var cabStatus = BiosArchiveAndXml.TryExtractCabEntriesWithStatus(cabBytes, out var entries, _maxPackageBytes);
+        if (cabStatus == CabExtractionStatus.Succeeded)
         {
             try
             {
@@ -771,7 +772,9 @@ public sealed partial class AgentBiosOperations : IAgentBiosOperations
             }
         }
 
-        if (OperatingSystem.IsWindows() && _launcher is SystemProcessLauncher)
+        if (cabStatus == CabExtractionStatus.UnsupportedCompression
+            && OperatingSystem.IsWindows()
+            && _launcher is SystemProcessLauncher)
         {
             var expandTool = SystemCommandRunner.SystemTool("expand.exe");
             ProcessResult pr;

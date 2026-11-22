@@ -606,8 +606,9 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
             if (!TryEnsureExecutableExtension(verified.FilePath, out var packagePath, out var extError))
             {
                 TryDeleteFile(verified.FilePath);
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, extError));
-                return BiosInstallResult.Failed(extError, prev, target);
+                var safeExtError = BiosInstallerRunner.RedactSerialNumber(extError, request.System?.SerialNumber);
+                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, safeExtError));
+                return BiosInstallResult.Failed(safeExtError, prev, target);
             }
 
             var bitLocker = await BiosBitLockerSuspender.SuspendForOneRebootWithResultAsync(
@@ -1494,26 +1495,8 @@ public sealed partial class DellBiosUpdateProvider : IBiosUpdateProvider
             : null;
     }
 
-    private static bool TryEnsureExecutableExtension(string filePath, out string executablePath, out string error)
-    {
-        executablePath = filePath;
-        error = "";
-
-        var ext = Path.GetExtension(filePath);
-        if (string.Equals(ext, ".exe", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (string.IsNullOrEmpty(ext))
-        {
-            var renamed = filePath + ".exe";
-            File.Move(filePath, renamed, overwrite: true);
-            executablePath = renamed;
-            return true;
-        }
-
-        error = $"Dell BIOS installer package must be an .exe file (got '{ext}').";
-        return false;
-    }
+    private static bool TryEnsureExecutableExtension(string filePath, out string executablePath, out string error) =>
+        BiosPackageVerification.TryEnsureExecutableExtension(filePath, "Dell", out executablePath, out error);
 
     private static async Task<byte[]> ReadBoundedBytesAsync(HttpContent content, long maxBytes, CancellationToken ct)
     {

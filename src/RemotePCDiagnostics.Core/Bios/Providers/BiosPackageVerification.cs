@@ -186,11 +186,13 @@ public static class BiosPackageVerification
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(request);
 
+        var serial = request.System?.SerialNumber;
         var downloadUrl = request.Target.DownloadUrl;
         if (!BiosProviderHttp.TryValidateHttpsUrl(downloadUrl, allowedHostSuffixes, out _, out var urlReason))
         {
-            log?.Warn($"[{vendorId}] BIOS package download URL rejected: {urlReason}");
-            return BiosVerifiedPackageResult.Fail($"BIOS package URL is not allowed: {urlReason}");
+            var safeReason = BiosInstallerRunner.RedactSerialNumber(urlReason, serial);
+            log?.Warn($"[{vendorId}] BIOS package download URL rejected: {safeReason}");
+            return BiosVerifiedPackageResult.Fail($"BIOS package URL is not allowed: {safeReason}");
         }
 
         var createdTempDir = string.IsNullOrWhiteSpace(request.StagingDirectory);
@@ -215,8 +217,11 @@ public static class BiosPackageVerification
 
             if (!download.Succeeded || string.IsNullOrWhiteSpace(download.FilePath))
             {
-                log?.Warn($"[{vendorId}] BIOS package download failed: {download.ErrorMessage}");
-                return BiosVerifiedPackageResult.Fail(download.ErrorMessage ?? "BIOS package download failed.");
+                var safeErr = BiosInstallerRunner.RedactSerialNumber(
+                    download.ErrorMessage ?? "BIOS package download failed.",
+                    serial);
+                log?.Warn($"[{vendorId}] BIOS package download failed: {safeErr}");
+                return BiosVerifiedPackageResult.Fail(safeErr);
             }
 
             filePath = download.FilePath;
@@ -278,6 +283,52 @@ public static class BiosPackageVerification
                     TryDeleteDirectoryIfEmpty(stagingDir);
             }
         }
+    }
+
+    internal static bool TryEnsureExecutableExtension(
+        string filePath,
+        string displayName,
+        out string executablePath,
+        out string error,
+        string requiredExtension = ".exe")
+    {
+        executablePath = filePath;
+        error = "";
+
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            error = $"Downloaded {displayName} BIOS installer package path is empty.";
+            return false;
+        }
+
+        var ext = Path.GetExtension(filePath);
+        if (string.Equals(ext, requiredExtension, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (string.IsNullOrEmpty(ext))
+        {
+            var renamed = filePath + requiredExtension;
+            if (BiosProviderHttp.IsSymlinkOrReparsePath(renamed) || Directory.Exists(renamed))
+            {
+                error = $"Target {displayName} BIOS package path '{Path.GetFileName(renamed)}' conflicts with an unsafe link or existing directory.";
+                return false;
+            }
+
+            try
+            {
+                File.Move(filePath, renamed, overwrite: true);
+                executablePath = renamed;
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                error = $"Failed to stage {displayName} BIOS package with '{requiredExtension}' extension: {ex.Message}";
+                return false;
+            }
+        }
+
+        error = $"{displayName} BIOS installer package must be an {requiredExtension} file (got '{ext}').";
+        return false;
     }
 
     private static void TryDeleteFile(string path)

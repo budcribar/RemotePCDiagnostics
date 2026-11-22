@@ -290,13 +290,20 @@ public sealed partial class MsiBiosUpdateProvider : IBiosUpdateProvider
                 metadata["rawVersion"] = current.Version.Trim();
         }
 
-        var safeMetadata = RedactMetadata(metadata, system.SerialNumber);
-        var safeVersion = RedactText(normalizedVersion, system.SerialNumber);
-        var safeFamily = RedactText(family, system.SerialNumber);
+        var serial = system.SerialNumber;
+        var safeVendor = RedactText(current.Vendor ?? "", serial);
+        var safeVersion = RedactText(normalizedVersion, serial);
+        var safeReleaseDateRaw = RedactText(current.ReleaseDateRaw ?? "", serial);
+        var safeSmbiosRevision = RedactText(current.SmbiosRevision ?? "", serial);
+        var safeFamily = RedactText(family, serial);
+        var safeMetadata = RedactMetadata(metadata, serial);
 
         return Task.FromResult(current with
         {
+            Vendor = safeVendor,
             Version = safeVersion,
+            ReleaseDateRaw = safeReleaseDateRaw,
+            SmbiosRevision = safeSmbiosRevision,
             Family = safeFamily,
             ProviderId = VendorId,
             Metadata = safeMetadata.Count > 0 ? safeMetadata : null,
@@ -1523,7 +1530,19 @@ public sealed partial class MsiBiosUpdateProvider : IBiosUpdateProvider
 
             var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if ((int)response.StatusCode is not (301 or 302 or 303 or 307 or 308))
+            {
+                if (response.RequestMessage?.RequestUri is { } finalUri
+                    && (!finalUri.IsAbsoluteUri
+                        || !TryValidateVendorUrl(finalUri.AbsoluteUri, AllowedHostSuffixes, out _)
+                        || (!string.IsNullOrWhiteSpace(finalUri.OriginalString)
+                            && !TryValidateVendorUrl(finalUri.OriginalString, AllowedHostSuffixes, out _))))
+                {
+                    response.Dispose();
+                    throw new InvalidOperationException("Rejected redirect target: final response URL failed vendor HTTPS/domain/path validation.");
+                }
+
                 return response;
+            }
 
             string? rawNonValidated = null;
             if (response.Headers.NonValidated.TryGetValues("Location", out var rawLocs))
@@ -2234,6 +2253,14 @@ public sealed partial class MsiBiosUpdateProvider : IBiosUpdateProvider
             return true;
         }
 
+        var spacePlusEncoded = secret.Replace(" ", "+", StringComparison.Ordinal);
+        if (!string.Equals(spacePlusEncoded, secret, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(spacePlusEncoded, formEncoded, StringComparison.OrdinalIgnoreCase)
+            && url.Contains(spacePlusEncoded, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         var candidate = url;
         for (var round = 0; round < 2; round++)
         {
@@ -2250,11 +2277,10 @@ public sealed partial class MsiBiosUpdateProvider : IBiosUpdateProvider
             if (decoded.Contains(secret, StringComparison.OrdinalIgnoreCase))
                 return true;
 
-            var queryStart = decoded.IndexOf('?');
-            if (queryStart >= 0 && decoded.IndexOf('+', queryStart) >= 0)
+            if (decoded.Contains('+', StringComparison.Ordinal))
             {
-                var queryWithSpaces = decoded[queryStart..].Replace('+', ' ');
-                if (queryWithSpaces.Contains(secret, StringComparison.OrdinalIgnoreCase))
+                var decodedWithSpaces = decoded.Replace('+', ' ');
+                if (decodedWithSpaces.Contains(secret, StringComparison.OrdinalIgnoreCase))
                     return true;
             }
 
@@ -2264,17 +2290,16 @@ public sealed partial class MsiBiosUpdateProvider : IBiosUpdateProvider
             candidate = decoded;
         }
 
-        var rawQueryStart = url.IndexOf('?');
-        if (rawQueryStart >= 0 && url.IndexOf('+', rawQueryStart) >= 0)
+        if (url.Contains('+', StringComparison.Ordinal))
         {
-            var rawQueryWithSpaces = url[rawQueryStart..].Replace('+', ' ');
-            if (rawQueryWithSpaces.Contains(secret, StringComparison.OrdinalIgnoreCase))
+            var rawWithSpaces = url.Replace('+', ' ');
+            if (rawWithSpaces.Contains(secret, StringComparison.OrdinalIgnoreCase))
                 return true;
 
             try
             {
-                var decodedQuery = Uri.UnescapeDataString(rawQueryWithSpaces);
-                if (decodedQuery.Contains(secret, StringComparison.OrdinalIgnoreCase))
+                var decodedRaw = Uri.UnescapeDataString(rawWithSpaces);
+                if (decodedRaw.Contains(secret, StringComparison.OrdinalIgnoreCase))
                     return true;
             }
             catch (UriFormatException)

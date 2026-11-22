@@ -172,6 +172,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
                 ct).ConfigureAwait(false);
 
             string indexXml;
+            Uri indexUri;
             try
             {
                 if (response.StatusCode == HttpStatusCode.NotFound && isWin11)
@@ -189,13 +190,16 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    return BiosProviderHttp.ClassifyHttpStatus(
-                        VendorId,
-                        DisplayName,
-                        response.StatusCode,
-                        $"MTM {mtm}");
+                    return RedactLatestInfo(
+                        BiosProviderHttp.ClassifyHttpStatus(
+                            VendorId,
+                            DisplayName,
+                            response.StatusCode,
+                            $"MTM {mtm}"),
+                        system.SerialNumber);
                 }
 
+                indexUri = ResolvePostRedirectUri(response, effectiveIndexUrl);
                 indexXml = await ReadBoundedStringAsync(response.Content, MaxCatalogXmlBytes, ct).ConfigureAwait(false);
             }
             finally
@@ -204,7 +208,6 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             }
 
             var indexDoc = BiosArchiveAndXml.ParseXmlSafe(indexXml);
-            var indexUri = new Uri(effectiveIndexUrl, UriKind.Absolute);
 
             var currentParsed = ParseLenovoVersion(current.Version);
             var currentPrimary = currentParsed.Version;
@@ -263,7 +266,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
 
                     var descXml = await ReadBoundedStringAsync(descResp.Content, MaxCatalogXmlBytes, ct).ConfigureAwait(false);
                     var descDoc = BiosArchiveAndXml.ParseXmlSafe(descXml);
-                    var descUri = new Uri(indexEntry.DescriptorUrl, UriKind.Absolute);
+                    var descUri = ResolvePostRedirectUri(descResp, indexEntry.DescriptorUrl);
 
                     var parsedDesc = ParseDescriptor(descDoc, descUri, indexEntry, out var unsafeUrl);
                     if (unsafeUrl)
@@ -311,11 +314,13 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
 
                 if (lastDescriptorFailureStatus.HasValue)
                 {
-                    return BiosProviderHttp.ClassifyHttpStatus(
-                        VendorId,
-                        DisplayName,
-                        lastDescriptorFailureStatus.Value,
-                        lastDescriptorFailureContext);
+                    return RedactLatestInfo(
+                        BiosProviderHttp.ClassifyHttpStatus(
+                            VendorId,
+                            DisplayName,
+                            lastDescriptorFailureStatus.Value,
+                            lastDescriptorFailureContext),
+                        system.SerialNumber);
                 }
 
                 if (hadMismatchedFamily)
@@ -323,7 +328,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
                     var familyMsg = string.IsNullOrEmpty(currentFamily)
                         ? $"No Lenovo BIOS package with a consistent BIOS family was found for MTM {mtm}."
                         : $"No Lenovo BIOS package matching family '{currentFamily}' was found for MTM {mtm}.";
-                    return BiosLatestInfo.Unsupported(VendorId, familyMsg);
+                    return RedactLatestInfo(BiosLatestInfo.Unsupported(VendorId, familyMsg), system.SerialNumber);
                 }
 
                 return BiosLatestInfo.Failed(
@@ -432,8 +437,9 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             if (!TryEnsureExecutableExtension(verified.FilePath, out var packagePath, out var extError))
             {
                 TryDeleteFile(verified.FilePath);
-                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, extError));
-                return BiosInstallResult.Failed(extError, previousVersion, targetVersion);
+                var safeExtError = BiosInstallerRunner.RedactSerialNumber(extError, request.System?.SerialNumber);
+                progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, safeExtError));
+                return BiosInstallResult.Failed(safeExtError, previousVersion, targetVersion);
             }
 
             var bitLocker = await BiosBitLockerSuspender.SuspendForOneRebootWithResultAsync(
@@ -875,15 +881,15 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
         if (prefixMatch.Success)
         {
             return AllSegmentsFitInt64(prefixMatch.Groups[2].Value)
-                ? "2:PFX:" + prefixMatch.Groups[1].Value.ToUpperInvariant()
-                : "4:LIT:" + normalized.ToUpperInvariant();
+                ? "2:PFX:" + prefixMatch.Groups[1].Value
+                : "4:LIT:" + normalized;
         }
 
         if (IsDottedNumeric(normalized))
         {
             return AllSegmentsFitInt64(normalized)
                 ? "1:NUM"
-                : "4:LIT:" + normalized.ToUpperInvariant();
+                : "4:LIT:" + normalized;
         }
 
         var digitMatches = DigitRunsRegex().Matches(normalized);
@@ -892,13 +898,25 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             foreach (Match m in digitMatches)
             {
                 if (!long.TryParse(m.Value, NumberStyles.None, CultureInfo.InvariantCulture, out _))
-                    return "4:LIT:" + normalized.ToUpperInvariant();
+                    return "4:LIT:" + normalized;
             }
 
-            return $"3:SKEL:{digitMatches.Count}:{DigitRunsRegex().Replace(normalized, "#").ToUpperInvariant()}";
+            return $"3:SKEL:{digitMatches.Count}:{DigitRunsRegex().Replace(normalized, "#")}";
         }
 
-        return "4:LIT:" + normalized.ToUpperInvariant();
+        return "4:LIT:" + normalized;
+    }
+
+    private static Uri ResolvePostRedirectUri(HttpResponseMessage response, string fallbackUrl)
+    {
+        var requestUri = response.RequestMessage?.RequestUri;
+        if (requestUri is { IsAbsoluteUri: true }
+            && BiosProviderHttp.TryValidateHttpsUrl(requestUri.AbsoluteUri, AllowedHostSuffixes, out var validated, out _))
+        {
+            return validated;
+        }
+
+        return new Uri(fallbackUrl, UriKind.Absolute);
     }
 
     private static bool IsDottedNumeric(string value)
@@ -934,7 +952,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             }
         }
 
-        var bucketMaxDates = new Dictionary<(int FamilyRank, int KindRank, string ClassKey), DateOnly?>();
+        var bucketMaxDates = new Dictionary<(int FamilyRank, int KindRank, string ClassKey), DateOnly?>(IndexBucketKeyComparer.Instance);
         var keyed = new List<(LenovoIndexEntry Entry, int FamilyRank, int KindRank, string ClassKey, string? CompareVersion)>(entries.Count);
 
         foreach (var entry in entries)
@@ -972,7 +990,7 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             if (bucketDateCmp != 0)
                 return bucketDateCmp;
 
-            var classCmp = StringComparer.Ordinal.Compare(a.ClassKey, b.ClassKey);
+            var classCmp = StringComparer.OrdinalIgnoreCase.Compare(a.ClassKey, b.ClassKey);
             if (classCmp != 0)
                 return classCmp;
 
@@ -988,6 +1006,19 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
         });
 
         return keyed.ConvertAll(k => k.Entry);
+    }
+
+    private sealed class IndexBucketKeyComparer : IEqualityComparer<(int FamilyRank, int KindRank, string ClassKey)>
+    {
+        public static IndexBucketKeyComparer Instance { get; } = new();
+
+        public bool Equals((int FamilyRank, int KindRank, string ClassKey) x, (int FamilyRank, int KindRank, string ClassKey) y) =>
+            x.FamilyRank == y.FamilyRank
+            && x.KindRank == y.KindRank
+            && StringComparer.OrdinalIgnoreCase.Equals(x.ClassKey, y.ClassKey);
+
+        public int GetHashCode((int FamilyRank, int KindRank, string ClassKey) obj) =>
+            HashCode.Combine(obj.FamilyRank, obj.KindRank, StringComparer.OrdinalIgnoreCase.GetHashCode(obj.ClassKey));
     }
 
     private LenovoDescriptorCandidate? ParseDescriptor(
@@ -1531,26 +1562,8 @@ public sealed partial class LenovoBiosUpdateProvider : IBiosUpdateProvider
             : null;
     }
 
-    private static bool TryEnsureExecutableExtension(string filePath, out string executablePath, out string error)
-    {
-        executablePath = filePath;
-        error = "";
-
-        var ext = Path.GetExtension(filePath);
-        if (string.Equals(ext, ".exe", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (string.IsNullOrEmpty(ext))
-        {
-            var renamed = filePath + ".exe";
-            File.Move(filePath, renamed, overwrite: true);
-            executablePath = renamed;
-            return true;
-        }
-
-        error = $"Lenovo BIOS installer package must be an .exe file (got '{ext}').";
-        return false;
-    }
+    private static bool TryEnsureExecutableExtension(string filePath, out string executablePath, out string error) =>
+        BiosPackageVerification.TryEnsureExecutableExtension(filePath, "Lenovo", out executablePath, out error);
 
     private static async Task<string> ReadBoundedStringAsync(HttpContent content, long maxBytes, CancellationToken ct)
     {

@@ -106,7 +106,9 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
         "wlan",
         "wi-fi",
         "wifi",
-        "lte",
+        "lte modem",
+        "lte driver",
+        "lte firmware",
         "modem",
         "keyboard",
         "type cover",
@@ -566,9 +568,11 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
         var resolvedStagingDir = effectiveRequest.StagingDirectory!;
         var targetFilePath = Path.Combine(resolvedStagingDir, safeFileName);
         var targetPartPath = targetFilePath + ".part";
-        if (IsSymlinkOrReparsePoint(targetFilePath) || IsSymlinkOrReparsePoint(targetPartPath))
+        if (IsSymlinkOrReparsePoint(targetFilePath)
+            || IsSymlinkOrReparsePoint(targetPartPath)
+            || Directory.Exists(targetFilePath))
         {
-            const string symErr = "Target package staging file or .part path is a symbolic link or reparse point.";
+            const string symErr = "Target package staging file or .part path is a symbolic link, reparse point, or existing directory.";
             LogWarn(symErr, serial);
             redactingProgress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, symErr));
             return BiosInstallResult.Failed(symErr, prev, target);
@@ -1812,7 +1816,19 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
 
             var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if ((int)response.StatusCode is not (301 or 302 or 303 or 307 or 308))
+            {
+                if (response.RequestMessage?.RequestUri is { } finalUri
+                    && (!finalUri.IsAbsoluteUri
+                        || !TryValidateVendorUrl(finalUri.AbsoluteUri, AllowedHostSuffixes, out _)
+                        || (!string.IsNullOrWhiteSpace(finalUri.OriginalString)
+                            && !TryValidateVendorUrl(finalUri.OriginalString, AllowedHostSuffixes, out _))))
+                {
+                    response.Dispose();
+                    throw new InvalidOperationException("Rejected redirect target: final response URL failed vendor HTTPS/domain/path validation.");
+                }
+
                 return response;
+            }
 
             string? rawNonValidated = null;
             if (response.Headers.NonValidated.TryGetValues("Location", out var rawLocs))
@@ -2134,7 +2150,7 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
     {
         var downloadUrl = request.Target.DownloadUrl!;
         var finalPath = Path.Combine(stagingDir, fileName);
-        var partPath = finalPath + ".part";
+        var partPath = $"{finalPath}.{Guid.NewGuid():N}.part";
         var createdPart = false;
         var moved = false;
         var keepFile = false;
@@ -2142,10 +2158,13 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
         try
         {
             if (IsSymlinkOrReparsePoint(stagingDir)
+                || HasSymlinkOrReparseAncestor(stagingDir)
+                || File.Exists(stagingDir)
                 || IsSymlinkOrReparsePoint(finalPath)
+                || Directory.Exists(finalPath)
                 || IsSymlinkOrReparsePoint(partPath))
             {
-                const string symMsg = "Staging directory or target package file is a symbolic link or reparse point.";
+                const string symMsg = "Staging directory or target package file is a symbolic link, reparse point, or conflicting directory.";
                 log?.Warn($"[{VendorId}] {symMsg}");
                 return BiosVerifiedPackageResult.Fail(symMsg);
             }
@@ -2153,10 +2172,12 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
             Directory.CreateDirectory(stagingDir);
 
             if (IsSymlinkOrReparsePoint(stagingDir)
+                || HasSymlinkOrReparseAncestor(stagingDir)
                 || IsSymlinkOrReparsePoint(finalPath)
+                || Directory.Exists(finalPath)
                 || IsSymlinkOrReparsePoint(partPath))
             {
-                const string symMsg = "Staging directory or target package file became a symbolic link or reparse point.";
+                const string symMsg = "Staging directory or target package file became a symbolic link, reparse point, or conflicting directory.";
                 log?.Warn($"[{VendorId}] {symMsg}");
                 return BiosVerifiedPackageResult.Fail(symMsg);
             }
@@ -2179,9 +2200,13 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
                 return BiosVerifiedPackageResult.Fail(err);
             }
 
-            if (IsSymlinkOrReparsePoint(finalPath) || IsSymlinkOrReparsePoint(partPath))
+            if (IsSymlinkOrReparsePoint(stagingDir)
+                || HasSymlinkOrReparseAncestor(stagingDir)
+                || IsSymlinkOrReparsePoint(finalPath)
+                || Directory.Exists(finalPath)
+                || IsSymlinkOrReparsePoint(partPath))
             {
-                const string symMsg = "Target package file or .part path is a symbolic link or reparse point.";
+                const string symMsg = "Target package file or .part path is a symbolic link, reparse point, or conflicting directory.";
                 log?.Warn($"[{VendorId}] {symMsg}");
                 return BiosVerifiedPackageResult.Fail(symMsg);
             }
@@ -2190,7 +2215,7 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
             var lastPercent = 0;
 
             await using (var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
-            await using (var dest = new FileStream(partPath, FileMode.Create, FileAccess.Write, FileShare.None, ReadBufferSize, useAsync: true))
+            await using (var dest = new FileStream(partPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, ReadBufferSize, useAsync: true))
             {
                 createdPart = true;
                 var buffer = ArrayPool<byte>.Shared.Rent(ReadBufferSize);
@@ -2238,9 +2263,13 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
                 return BiosVerifiedPackageResult.Fail(emptyErr);
             }
 
-            if (IsSymlinkOrReparsePoint(finalPath) || IsSymlinkOrReparsePoint(partPath))
+            if (IsSymlinkOrReparsePoint(stagingDir)
+                || HasSymlinkOrReparseAncestor(stagingDir)
+                || IsSymlinkOrReparsePoint(finalPath)
+                || Directory.Exists(finalPath)
+                || IsSymlinkOrReparsePoint(partPath))
             {
-                const string symMsg = "Target package file or .part path became a symbolic link or reparse point.";
+                const string symMsg = "Target package file or .part path became a symbolic link, reparse point, or conflicting directory.";
                 log?.Warn($"[{VendorId}] {symMsg}");
                 return BiosVerifiedPackageResult.Fail(symMsg);
             }
@@ -2359,7 +2388,22 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
             var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if ((int)response.StatusCode is not (301 or 302 or 303 or 307 or 308))
             {
-                var finalExt = Path.GetExtension(current.AbsolutePath);
+                var effectiveUri = current;
+                if (response.RequestMessage?.RequestUri is { } finalUri)
+                {
+                    if (!finalUri.IsAbsoluteUri
+                        || !TryValidateVendorUrl(finalUri.AbsoluteUri, AllowedHostSuffixes, out var validatedFinal)
+                        || (!string.IsNullOrWhiteSpace(finalUri.OriginalString)
+                            && !TryValidateVendorUrl(finalUri.OriginalString, AllowedHostSuffixes, out _)))
+                    {
+                        response.Dispose();
+                        throw new InvalidOperationException("Rejected redirect target: final response URL failed vendor HTTPS/domain/path validation.");
+                    }
+
+                    effectiveUri = validatedFinal;
+                }
+
+                var finalExt = Path.GetExtension(effectiveUri.AbsolutePath);
                 if (!string.IsNullOrEmpty(finalExt) && !finalExt.Equals(".msi", StringComparison.OrdinalIgnoreCase))
                 {
                     response.Dispose();
@@ -2565,13 +2609,19 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
         if (string.IsNullOrEmpty(ext))
         {
             var candidate = filePath + ".msi";
+            if (IsSymlinkOrReparsePoint(candidate) || Directory.Exists(candidate))
+            {
+                error = $"Target Microsoft Surface package path '{Path.GetFileName(candidate)}' conflicts with an unsafe link or existing directory.";
+                return false;
+            }
+
             try
             {
                 File.Move(filePath, candidate, overwrite: true);
                 msiPath = candidate;
                 return true;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 error = $"Failed to stage Microsoft Surface MSI package with .msi extension: {ex.Message}";
                 return false;
