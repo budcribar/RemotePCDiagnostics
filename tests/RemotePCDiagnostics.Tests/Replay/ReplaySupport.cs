@@ -100,6 +100,31 @@ internal sealed class ReplayedPc(MachineRecording recording)
         .Where(c => c.Kind == RecordedCall.WmiKind && c.Query == WmiResourceHogsSource.ProcessorsSql && c.Rows is { Count: > 0 })
         .Select(c => c.ToWmiResult().Rows![0].Long("NumberOfLogicalProcessors")).FirstOrDefault(n => n is > 0) is { } n ? (int)n : 4;
 
+    /// <summary>The checks that show event times: "now" is when the PC was recorded, and times are shown in UTC, wherever the tests run.</summary>
+    public TimeProvider Clock => new FixedClock(recording.CapturedAt);
+
+    /// <summary>Crashes with the dump files and graphics drivers on WMI (the Agent's); the event logs from wevtutil on both paths.</summary>
+    public CrashesModule Crashes() => new(Commands, includeSystemCrashes: true, new WmiCrashDumpSource(Wmi, @"C:\Windows"), new WmiDeviceDriverSource(Wmi), clock: Clock);
+    /// <summary>The Store edition without an Agent: the folders listed by the app itself (recorded as lists), and the osquery drivers table.</summary>
+    public CrashesModule CrashesOld() => new(Commands, includeSystemCrashes: true, new ReplayedFileDumps(Replay), new OsqueryDeviceDriverSource(Osquery, Commands), clock: Clock);
+    public EventLogModule EventLog() => new(Commands, excludeCrashEvents: true, clock: Clock);
+    public SleepWakeModule SleepWake() => new(Commands, batteryReport: new ReplayedBatteryReport(Replay), clock: Clock);
+
+    public bool HasFile(string name) => Has(c => c.Kind == RecordedCall.FileKind && c.File == name);
+
+    private sealed class ReplayedFileDumps(RecordingReplay replay) : ICrashDumpSource
+    {
+        public Task<IReadOnlyList<MinidumpFile>> ReadMinidumpsAsync(CancellationToken ct) =>
+            Task.FromResult(CrashDumpFiles.Parse(replay.FileText(CrashDumpFiles.Minidumps)));
+        public Task<IReadOnlyList<MinidumpFile>> ReadLiveKernelReportsAsync(CancellationToken ct) =>
+            Task.FromResult(CrashDumpFiles.Parse(replay.FileText(CrashDumpFiles.LiveKernelReports)));
+    }
+
+    private sealed class ReplayedBatteryReport(RecordingReplay replay) : IBatteryReportSource
+    {
+        public Task<string?> ReadXmlAsync(CancellationToken ct) => Task.FromResult(replay.FileText(PowerCfgBatteryReport.RecordingName));
+    }
+
     public bool Has(Func<RecordedCall, bool> match) => recording.Calls.Any(match);
     public bool HasWmi(string query) => Has(c => c.Kind == RecordedCall.WmiKind && c.Query == query);
     public bool HasOsquery(string sql) => Has(c => c.Kind == RecordedCall.ProcessKind && c.Args?.LastOrDefault() == sql);
@@ -229,7 +254,7 @@ internal static class FaultInjector
                 yield return ($"{what}: empty output", Replace(rec, i, c with { StdOut = "" }));
                 yield return ($"{what}: garbage output", Replace(rec, i, c with { StdOut = "@@ not what was expected ##\n\u0000\u0007" }));
                 yield return ($"{what}: cut off halfway", Replace(rec, i, c with { StdOut = (c.StdOut ?? "")[..((c.StdOut ?? "").Length / 2)] }));
-                foreach (var (fault, stdout) in JsonFieldFaults(c.StdOut, maxRows))
+                foreach (var (fault, stdout) in JsonFieldFaults(c.StdOut, maxRows).Concat(EventFaults(c.StdOut)))
                     yield return ($"{what}: {fault}", Replace(rec, i, c with { StdOut = stdout }));
             }
         }
@@ -251,6 +276,36 @@ internal static class FaultInjector
                     if (b is null) copy[r].Remove(key); else copy[r][key] = b;
                     yield return ($"row {r} {key} = {(b is null ? "missing" : "\"" + b + "\"")}", JsonSerializer.Serialize(copy));
                 }
+    }
+
+    /// <summary>For wevtutil output (events as XML): in the newest event, each value (an element's text or an attribute) made missing or garbage.</summary>
+    private static IEnumerable<(string Fault, string StdOut)> EventFaults(string? stdout)
+    {
+        const string close = "</Event>";
+        var start = stdout?.IndexOf("<Event", StringComparison.Ordinal) ?? -1;
+        var end = start < 0 ? -1 : stdout!.IndexOf(close, start, StringComparison.Ordinal);
+        if (end < 0) yield break;
+        end += close.Length;
+        System.Xml.Linq.XElement first;
+        try { first = System.Xml.Linq.XElement.Parse(stdout![start..end]); }
+        catch (System.Xml.XmlException) { yield break; }
+        string With(Action<System.Xml.Linq.XElement> edit)
+        {
+            var copy = new System.Xml.Linq.XElement(first);
+            edit(copy);
+            return stdout![..start] + copy.ToString(System.Xml.Linq.SaveOptions.DisableFormatting) + stdout[end..];
+        }
+        var leaves = first.Descendants().Where(e => !e.HasElements).ToList();
+        for (var n = 0; n < leaves.Count; n++)
+        {
+            var at = n;
+            System.Xml.Linq.XElement Leaf(System.Xml.Linq.XElement copy) => copy.Descendants().Where(e => !e.HasElements).ElementAt(at);
+            var label = leaves[n].Name.LocalName + (leaves[n].Attribute("Name") is { } a ? $"[{a.Value}]" : "");
+            yield return ($"event 0 {label} missing", With(c => Leaf(c).Remove()));
+            if (leaves[n].Value.Length > 0) yield return ($"event 0 {label} garbage", With(c => Leaf(c).Value = "@@ garbage ##"));
+            foreach (var attr in leaves[n].Attributes().Where(x => !x.IsNamespaceDeclaration).Select(x => x.Name).ToList())
+                yield return ($"event 0 {label} @{attr.LocalName} garbage", With(c => Leaf(c).SetAttributeValue(attr, "@@ garbage ##")));
+        }
     }
 
     private static MachineRecording Replace(MachineRecording rec, int index, RecordedCall call)

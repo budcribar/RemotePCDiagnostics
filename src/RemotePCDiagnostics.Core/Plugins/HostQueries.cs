@@ -60,7 +60,7 @@ public static class HostCapabilities
         { SensorsRead, OsquerySelect, StorageDrives, StorageRetrims, EventLogQuery, Minidumps, LiveKernelReports, EventReviews, WmiQuery, PackagesList };
 
     /// <summary>The only statements <c>osquery.select</c> runs: the app's own, verbatim. Anything else is refused.</summary>
-    public static readonly IReadOnlySet<string> AllowedSql = new HashSet<string>(StringComparer.Ordinal) { HardwareInventory.DiskSql, GraphicsDriverCrashes.DriversSql };
+    public static readonly IReadOnlySet<string> AllowedSql = new HashSet<string>(StringComparer.Ordinal) { HardwareInventory.DiskSql };
 
     /// <summary>The logs <c>eventlog.query</c> reads (never Security).</summary>
     public static readonly IReadOnlySet<string> AllowedLogs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "System", "Application" };

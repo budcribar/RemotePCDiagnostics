@@ -197,12 +197,15 @@ public sealed class HostQueriesTests : IDisposable
     {
         var asked = new List<(string Log, int Max)>();
         var queries = new RecordingQueries(asked);
-        var module = new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, host: queries);
+        var dumps = new FixedCrashDumps();
+        var module = new CrashesModule(new SystemCommandRunner(), includeSystemCrashes: true, dumps, host: queries);
         var r = await module.RefreshAsync(null);
         Assert.IsType<AreaReport>(r.Payload);
         Assert.Contains(("Application", CrashesModule.Max), asked);
         Assert.Contains(asked, a => a.Log == "System");
-        Assert.True(queries.DumpsRead);
+        // The dump files come from WMI through the Agent (the reader), not from the app.
+        Assert.True(dumps.MinidumpsRead);
+        Assert.False(queries.DumpsRead);
     }
 
     private sealed class RecordingQueries(List<(string Log, int Max)> asked) : IHostQueries
@@ -230,7 +233,7 @@ public sealed class HostQueriesTests : IDisposable
     [InlineData("RemotePCDiagnostics.Modules.DeviceDrivers.dll", new[] { HostCapabilities.WmiQuery })]
     [InlineData("RemotePCDiagnostics.Modules.Programs.dll", new[] { HostCapabilities.WmiQuery, HostCapabilities.PackagesList })]
     [InlineData("RemotePCDiagnostics.Modules.BatteryPower.dll", new[] { HostCapabilities.WmiQuery })]
-    [InlineData("RemotePCDiagnostics.Modules.Crashes.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.Minidumps, HostCapabilities.LiveKernelReports, HostCapabilities.OsquerySelect, HostCapabilities.EventReviews })]
+    [InlineData("RemotePCDiagnostics.Modules.Crashes.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.EventReviews, HostCapabilities.WmiQuery })]
     [InlineData("RemotePCDiagnostics.Modules.EventLog.dll", new[] { HostCapabilities.EventLogQuery, HostCapabilities.EventReviews })]
     public void The_four_modules_run_in_user_mode_and_list_what_they_ask_for(string file, string[] capabilities)
     {

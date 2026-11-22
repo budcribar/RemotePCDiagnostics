@@ -45,6 +45,17 @@ public sealed class RecordingRegistrySource(IRegistrySource inner, CallRecorder 
     }
 }
 
+/// <summary>Records a report file under a fixed name (its real path changes every run).</summary>
+public sealed class FileRecorder(CallRecorder recorder)
+{
+    public async Task<string?> ReadAsync(string name, Func<Task<string?>> read)
+    {
+        var text = await read().ConfigureAwait(false);
+        recorder.Add(RecordedCall.FromFile(name, text));
+        return text;
+    }
+}
+
 /// <summary>Passes each program run (osquery, PowerShell, powercfg) to the real launcher and records the output.</summary>
 public sealed class RecordingProcessLauncher(IProcessLauncher inner, CallRecorder recorder) : IProcessLauncher
 {
@@ -90,6 +101,9 @@ public sealed class RecordingReplay
     public IPackageSource Packages => new ReplayPackages(this);
     public IProcessLauncher Launcher => new ReplayLauncher(this);
 
+    /// <summary>The report file recorded under <paramref name="name"/>; null when it wasn't made or isn't in the recording.</summary>
+    public string? FileText(string name) => Answer(FileKey(name), $"file {name}") is { Error: null } c ? c.StdOut : null;
+
     /// <summary>The same question asked twice gets the recorded answers in order, and the last one again after that.</summary>
     private RecordedCall? Answer(string key, string description)
     {
@@ -108,10 +122,12 @@ public sealed class RecordingReplay
         RecordedCall.WmiKind => WmiKey(c.Namespace ?? "", c.Query ?? ""),
         RecordedCall.RegistryKind => RegistryKey(c.Namespace ?? "", c.Query ?? ""),
         RecordedCall.PackagesKind => PackagesKey,
+        RecordedCall.FileKind => FileKey(c.File ?? ""),
         _ => ProcessKey(c.File ?? "", c.Args ?? []),
     };
 
     public const string PackagesKey = "packages";
+    public static string FileKey(string name) => "file\n" + name;
     public static string RegistryKey(string location, string read) => "registry\n" + location + "\n" + read;
     public static string WmiKey(string ns, string wql) => "wmi\n" + ns.ToLowerInvariant() + "\n" + wql;
     public static string ProcessKey(string file, IReadOnlyList<string> args) => "process\n" + RecordedCall.FileKey(file) + "\n" + string.Join("\n", args);
@@ -142,4 +158,15 @@ public sealed class RecordingReplay
             Task.FromResult(replay.Answer(ProcessKey(fileName, arguments), $"{RecordedCall.FileKey(fileName)} {string.Join(' ', arguments)}")?.ToProcessResult()
                             ?? new ProcessResult(1, "", "Not in the recording."));
     }
+}
+
+/// <summary>How a recording keeps the legacy reader's dump file lists (it lists the folders itself, so there is no WMI answer to keep): JSON, by name.</summary>
+public static class CrashDumpFiles
+{
+    public const string Minidumps = "legacy minidumps", LiveKernelReports = "legacy live kernel reports";
+
+    public static string Json(IReadOnlyList<Areas.MinidumpFile> files) => System.Text.Json.JsonSerializer.Serialize(files, MachineRecording.Json);
+
+    public static IReadOnlyList<Areas.MinidumpFile> Parse(string? json) =>
+        json is null ? [] : System.Text.Json.JsonSerializer.Deserialize<List<Areas.MinidumpFile>>(json, MachineRecording.Json) ?? [];
 }

@@ -1,0 +1,253 @@
+{
+  "moduleName": "SleepWake",
+  "status": "Warning",
+  "message": "Modern Standby · 1.1%/h asleep · 1 unexpected wake · 2 wake devices",
+  "report": {
+    "cards": [
+      {
+        "id": "states",
+        "title": "Sleep states",
+        "level": "Ok",
+        "headline": "Modern Standby (S0 Low Power Idle)",
+        "meta": "Hibernate available",
+        "columns": [
+          "Sleep state",
+          "Status"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Standby (S0 Low Power Idle) Network Connected",
+              "Available"
+            ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Hibernate",
+              "Available"
+            ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Fast Startup",
+              "Available"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Standby (S3)",
+              "Not available: This standby state is disabled when S0 low power idle is supported."
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Hybrid Sleep",
+              "Not available: Standby (S3) is not available."
+            ]
+          }
+        ],
+        "note": "Modern Standby keeps the PC connected while asleep, like a phone. Apps, updates and devices can keep it busy, so battery drain while asleep is worth watching.",
+        "preserveRowOrder": true
+      },
+      {
+        "id": "drain",
+        "title": "Battery drain while asleep",
+        "level": "Ok",
+        "headline": "1.1% of the battery per hour asleep",
+        "meta": "About 8.8% over an 8-hour night · 2 sleeps on battery, last 7 days",
+        "columns": [
+          "Went to sleep",
+          "Asleep for",
+          "Battery used",
+          "Per hour"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Nov 22, 5:00 AM",
+              "8 h 30 min",
+              "11% (5,830 mWh)",
+              "1.3% / h"
+            ],
+            "sortKeys": [
+              "2026-11-22T05:00:00.0000000+00:00",
+              "00000000306000000000",
+              null,
+              null
+            ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Nov 21, 6:00 AM",
+              "4 h 15 min",
+              "3.0% (1,590 mWh)",
+              "0.7% / h"
+            ],
+            "sortKeys": [
+              "2026-11-21T06:00:00.0000000+00:00",
+              "00000000153000000000",
+              null,
+              null
+            ]
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "wakes",
+        "title": "Recent wakes",
+        "level": "Warning",
+        "headline": "1 wake by a timer or the network",
+        "meta": "Last wake: Device: ACPI Lid",
+        "columns": [
+          "Woke at",
+          "Asleep for",
+          "Woke because"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "Nov 22, 1:30 PM",
+              "8 h 30 min",
+              "ACPI Lid"
+            ],
+            "sortKeys": [
+              "2026-11-22T13:30:00.0000000+00:00",
+              "00000000306000000000",
+              null
+            ]
+          },
+          {
+            "level": "Warning",
+            "values": [
+              "Nov 21, 10:15 AM",
+              "4 h 15 min",
+              "Wake timer: \\Device\\HarddiskVolume3\\Windows\\System32\\svchost.exe (SystemEventsBroker)"
+            ],
+            "sortKeys": [
+              "2026-11-21T10:15:00.0000000+00:00",
+              "00000000153000000000",
+              null
+            ]
+          }
+        ],
+        "emptyText": "The PC didn't wake from sleep in the last 14 days.",
+        "note": "A wake timer (often Windows Update or a scheduled task) or a network adapter woke the PC with nobody using it. That is the usual cause of a laptop that is hot or flat after a night in a bag.",
+        "preserveRowOrder": false,
+        "eventCount": 2,
+        "windowDays": 14
+      },
+      {
+        "id": "devices",
+        "title": "Devices that can wake the PC",
+        "level": "Ok",
+        "headline": "2 devices can wake the PC",
+        "meta": "1 network adapter among them",
+        "columns": [
+          "Device",
+          "Kind",
+          "Recent wakes"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "HID Keyboard Device",
+              "Keyboard",
+              "No recent wakes"
+            ],
+            "key": "HID Keyboard Device",
+            "actions": [
+              {
+                "kind": "DisableDeviceWake",
+                "buttonText": "Stop it waking the PC",
+                "target": "HID Keyboard Device",
+                "targetLabel": "HID Keyboard Device"
+              }
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Intel(R) Wi-Fi 6E AX211 160MHz",
+              "Network adapter",
+              "No recent wakes"
+            ],
+            "key": "Intel(R) Wi-Fi 6E AX211 160MHz",
+            "actions": [
+              {
+                "kind": "DisableDeviceWake",
+                "buttonText": "Stop it waking the PC",
+                "target": "Intel(R) Wi-Fi 6E AX211 160MHz",
+                "targetLabel": "Intel(R) Wi-Fi 6E AX211 160MHz"
+              }
+            ]
+          }
+        ],
+        "emptyText": "No device is allowed to wake this PC.",
+        "note": "A mouse moved in a bag or a network adapter can wake a sleeping PC. Stopping a device from waking it is undoable; the power button still wakes the PC.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "timers",
+        "title": "Wake timers",
+        "level": "Warning",
+        "headline": "1 wake timer set",
+        "meta": "Timers woke the PC 1 time in 14 days",
+        "columns": [
+          "Set by",
+          "Wakes the PC at",
+          "Why"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "[SERVICE] \\Device\\HarddiskVolume3\\Windows\\System32\\svchost.exe (SystemEventsBroker)",
+              "3:15:11 AM on 11/23/2026",
+              "Windows will execute 'NT TASK\\Microsoft\\Windows\\UpdateOrchestrator\\Reboot' scheduled task that requested waking the computer."
+            ]
+          }
+        ],
+        "emptyText": "Nothing has asked Windows to wake the PC.",
+        "note": "To stop timers waking the PC on battery: Control Panel > Power Options > Change plan settings > Change advanced power settings > Sleep > Allow wake timers > On battery: Disable.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "blockers",
+        "title": "What keeps the PC awake",
+        "level": "Ok",
+        "headline": "Nothing is stopping the PC from sleeping",
+        "meta": "Right now",
+        "columns": [
+          "Keeps awake",
+          "Requested by",
+          "Why"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "App running",
+              "player.exe (process)",
+              "Playing audio"
+            ]
+          }
+        ],
+        "emptyText": "No app, driver or service is asking Windows to stay awake.",
+        "preserveRowOrder": false
+      }
+    ],
+    "summary": "Modern Standby · 1.1%/h asleep · 1 unexpected wake · 2 wake devices",
+    "status": "Warning",
+    "cancelled": false
+  }
+}

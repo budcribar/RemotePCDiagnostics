@@ -119,11 +119,12 @@ public sealed class WindowsEventLog(SystemCommandRunner commands, Plugins.IHostQ
     }
 
     /// <summary>Friendly time, e.g. "Oct 29, 2:15 PM" (year added when not this year).</summary>
-    public static string FormatTime(DateTimeOffset t) => FormatTime(t, DateTimeOffset.Now);
+    /// <remarks>Shown in <see cref="ReportClock"/>'s zone, the PC's own unless a check was given a clock.</remarks>
+    public static string FormatTime(DateTimeOffset t) => FormatTime(t, ReportClock.Now);
     public static string FormatTime(DateTimeOffset t, DateTimeOffset now)
     {
         if (t == default) return "";
-        var l = t.ToLocalTime();
-        return l.ToString(l.Year == now.ToLocalTime().Year ? "MMM d, h:mm tt" : "MMM d yyyy, h:mm tt", CultureInfo.InvariantCulture);
+        var l = ReportClock.Local(t);
+        return l.ToString(l.Year == ReportClock.Local(now).Year ? "MMM d, h:mm tt" : "MMM d yyyy, h:mm tt", CultureInfo.InvariantCulture);
     }
 }

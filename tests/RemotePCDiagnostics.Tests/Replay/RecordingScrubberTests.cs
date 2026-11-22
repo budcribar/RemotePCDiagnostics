@@ -63,6 +63,25 @@ public sealed class RecordingScrubberTests
     }
 
     [Fact]
+    public void ScrubsTheBatteryReportsSerialAndPcNameButKeepsItReadable()
+    {
+        var s = Scrubber();
+        const string xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?><BatteryReport xmlns=\"http://schemas.microsoft.com/battery/2012\">"
+            + "<SystemInformation><ComputerName>BUDSLAPTOP</ComputerName></SystemInformation><Batteries><Battery><SerialNumber>ABC123</SerialNumber>"
+            + "<DesignCapacity>42000</DesignCapacity></Battery></Batteries><RecentUsage><UsageEntry Timestamp=\"2026-11-19T02:16:18Z\" EntryType=\"Suspend\" />"
+            + "</RecentUsage><Note>C:\\Users\\bud\\report.xml</Note></BatteryReport>";
+        var call = s.Scrub(RecordedCall.FromFile("powercfg /batteryreport /xml", xml));
+        Assert.DoesNotContain("ABC123", call.StdOut);
+        Assert.DoesNotContain("BUDSLAPTOP", call.StdOut);
+        Assert.DoesNotContain(@"\bud\", call.StdOut);
+        Assert.StartsWith("<?xml", call.StdOut);
+        var doc = System.Xml.Linq.XDocument.Parse(call.StdOut!);
+        Assert.Equal("42000", doc.Descendants().Single(e => e.Name.LocalName == "DesignCapacity").Value);
+        Assert.Equal("Suspend", doc.Descendants().Single(e => e.Name.LocalName == "UsageEntry").Attribute("EntryType")!.Value);
+        Assert.StartsWith("<serial:", doc.Descendants().Single(e => e.Name.LocalName == "SerialNumber").Value);
+    }
+
+    [Fact]
     public void ReplacesTheSmbiosUuidButKeepsTheProductId()
     {
         var rec = Scrubber().Scrub(new MachineRecording

@@ -1,0 +1,101 @@
+{
+  "moduleName": "DeviceDrivers",
+  "status": "Ok",
+  "message": "All devices working · 2 drivers",
+  "report": {
+    "cards": [
+      {
+        "id": "problems",
+        "title": "Device Manager problems",
+        "level": "Ok",
+        "headline": "All devices working",
+        "meta": "No Device Manager errors or missing drivers",
+        "columns": [
+          "Device",
+          "Category",
+          "Problem"
+        ],
+        "rows": [],
+        "emptyText": "No devices with problems were reported by Windows.",
+        "actions": [
+          {
+            "kind": "CheckAndInstallDriverUpdates",
+            "buttonText": "Check & install driver updates",
+            "target": "",
+            "targetLabel": ""
+          },
+          {
+            "kind": "ScanHardwareChanges",
+            "buttonText": "Scan for hardware changes",
+            "target": "",
+            "targetLabel": ""
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "drivers",
+        "title": "Hardware drivers",
+        "level": "Ok",
+        "headline": "2 drivers",
+        "meta": "All reported drivers are signed",
+        "columns": [
+          "Device",
+          "Category",
+          "Provider",
+          "Version",
+          "Date"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "AMD Radeon(TM) Graphics",
+              "DISPLAY",
+              "Advanced Micro Devices, Inc.",
+              "31.0.24027.1012",
+              "1 Aug 2025"
+            ],
+            "sortKeys": [
+              null,
+              null,
+              null,
+              null,
+              "2025-08-01"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Realtek High Definition Audio",
+              "MEDIA",
+              "Realtek Semiconductor Corp.",
+              "6.0.9600.1",
+              "10 Mar 2024"
+            ],
+            "sortKeys": [
+              null,
+              null,
+              null,
+              null,
+              "2024-03-10"
+            ]
+          }
+        ],
+        "emptyText": "No drivers were reported.",
+        "actions": [
+          {
+            "kind": "CheckAndInstallDriverUpdates",
+            "buttonText": "Check & install driver updates",
+            "target": "",
+            "targetLabel": ""
+          }
+        ],
+        "preserveRowOrder": false
+      }
+    ],
+    "summary": "All devices working · 2 drivers",
+    "status": "Ok",
+    "cancelled": false
+  }
+}

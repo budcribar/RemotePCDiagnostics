@@ -20,5 +20,7 @@
     <ProjectReference Include="..\..\src\Modules\Network\RemotePCDiagnostics.Modules.Network.csproj" />
     <ProjectReference Include="..\..\src\Modules\SecurityEssentials\RemotePCDiagnostics.Modules.SecurityEssentials.csproj" />
     <ProjectReference Include="..\..\src\Modules\ResourceHogs\RemotePCDiagnostics.Modules.ResourceHogs.csproj" />
+    <ProjectReference Include="..\..\src\Modules\EventLog\RemotePCDiagnostics.Modules.EventLog.csproj" />
+    <ProjectReference Include="..\..\src\Modules\SleepWake\RemotePCDiagnostics.Modules.SleepWake.csproj" />
   </ItemGroup>
 </Project>

@@ -41,8 +41,13 @@ public sealed record SleepWakeFacts(
 /// the devices allowed to wake it, recent wakes and failed resumes from the System log, and how much battery each sleep on battery
 /// used (from the battery report). Each wake-armed device carries a fix that stops it waking the PC (<see cref="RemediationKind.DisableDeviceWake"/>, undoable).
 /// </summary>
-public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQueries? host = null) : AreaModuleBase(commands.Log)
+/// <param name="batteryReport">The battery report's XML; <see cref="PowerCfgBatteryReport"/> over <paramref name="commands"/> when null.</param>
+/// <param name="clock">The report's "now" and time zone (<see cref="ReportClock"/>); the PC's when null.</param>
+public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQueries? host = null, IBatteryReportSource? batteryReport = null,
+    TimeProvider? clock = null) : AreaModuleBase(commands.Log)
 {
+    private readonly IBatteryReportSource _batteryReport = batteryReport ?? new PowerCfgBatteryReport(commands);
+
     public const string ModuleName = ModuleSlugs.SleepWake;
     public const int EventDays = 14;
     /// <summary>Unexpected wakes (timers, network) in <see cref="EventDays"/> days at which the wakes card warns.</summary>
@@ -64,6 +69,7 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
+        using var _ = ReportClock.Use(clock);
         const int total = 7;
         async Task<string?> Run(int step, string what, params string[] args)
         {
@@ -91,21 +97,14 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
             lastOut is null ? null : SleepWakeParsers.ParseLastWake(lastOut),
             events, standby);
         if (states is null && facts.WakeArmed is null && events is null && standby is null) return AreaReport.Failed(FailedMessage);
-        return Build(facts, DateTimeOffset.Now);
+        return Build(facts, ReportClock.Now);
     }
 
     /// <summary>The battery report's sleep periods on battery; null when the report couldn't be made (a PC without a battery has none).</summary>
     private async Task<IReadOnlyList<StandbySession>?> ReadStandbyAsync(CancellationToken ct)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"rpcd-battery-{Guid.NewGuid():N}.xml");
-        try
-        {
-            var pr = await commands.RunAsync(PowerCfg, StandbyDrain.Args(path), ct).ConfigureAwait(false);
-            if (pr is not { ExitCode: 0 } || !File.Exists(path)) return null;
-            return StandbyDrain.Parse(await File.ReadAllTextAsync(path, ct).ConfigureAwait(false));
-        }
+        try { return StandbyDrain.Parse(await _batteryReport.ReadXmlAsync(ct).ConfigureAwait(false)); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { LogWarn($"{Name}: battery report unreadable: {ex.Message}"); return null; }
-        finally { try { File.Delete(path); } catch { } }
     }
 
     private static readonly string[] NetworkWords = ["ethernet", "wi-fi", "wifi", "wireless", "wlan", "network", "gbe", "lan "];
@@ -339,4 +338,30 @@ public sealed class SleepWakeModule(SystemCommandRunner commands, Plugins.IHostQ
     }
 
     private static string Pct(double v) => v.ToString(v < 10 ? "0.0" : "0", CultureInfo.InvariantCulture) + "%";
+}
+
+/// <summary>Where the sleep check gets the battery report (<c>powercfg /batteryreport /xml</c>), which powercfg only writes to a file.</summary>
+public interface IBatteryReportSource
+{
+    /// <summary>The report's XML, or null when powercfg couldn't make it.</summary>
+    Task<string?> ReadXmlAsync(CancellationToken ct);
+}
+
+/// <summary>Runs <c>powercfg /batteryreport</c> into a temporary file, reads it and deletes it.</summary>
+public sealed class PowerCfgBatteryReport(SystemCommandRunner commands) : IBatteryReportSource
+{
+    /// <summary>How a recording names the report (its file name changes every run).</summary>
+    public const string RecordingName = "powercfg /batteryreport /xml";
+
+    public async Task<string?> ReadXmlAsync(CancellationToken ct)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"rpcd-battery-{Guid.NewGuid():N}.xml");
+        try
+        {
+            var pr = await commands.RunAsync(SleepWakeModule.PowerCfg, StandbyDrain.Args(path), ct).ConfigureAwait(false);
+            if (pr is not { ExitCode: 0 } || !File.Exists(path)) return null;
+            return await File.ReadAllTextAsync(path, ct).ConfigureAwait(false);
+        }
+        finally { try { File.Delete(path); } catch { } }
+    }
 }

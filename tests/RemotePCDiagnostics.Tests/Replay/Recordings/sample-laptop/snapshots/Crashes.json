@@ -1,0 +1,540 @@
+{
+  "moduleName": "Crashes",
+  "status": "Warning",
+  "message": "1 blue screen, 1 unexpected restart in the last 30 days (none in the last 7 days) · 1 driver reset · 3 crashes, 1 freeze in the last 30 days · most: notes.exe",
+  "report": {
+    "cards": [
+      {
+        "id": "bsods",
+        "title": "Blue screen crashes (BSOD)",
+        "level": "Neutral",
+        "headline": "1 blue screen",
+        "meta": "Latest: Nov 10, 7:12 AM",
+        "columns": [
+          "When",
+          "Type",
+          "Details"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "Nov 10, 7:12 AM",
+              "Blue screen (BugCheck)",
+              "0x0000009f · Driver power state failure"
+            ],
+            "sortKeys": [
+              "2026-11-10T07:12:00",
+              null,
+              null
+            ],
+            "detail": "Stop code: 0x0000009f · Driver power state failure\nBugcheck parameters: 0x0000000000000003, 0xffffb30c1a2b3c40, 0xfffff8063c2a1b3c, 0xffffb30c1d2e3f50\nDump path: C:\\Windows\\Minidump\\111026-12345-01.dmp (on disk)\nReport ID: 1a2b3c4d\nThe computer has rebooted from a bugcheck. The bugcheck was: 0x0000009f (0x0000000000000003, 0xffffb30c1a2b3c40, 0xfffff8063c2a1b3c, 0xffffb30c1d2e3f50). A dump was saved in: C:\\Windows\\Minidump\\111026-12345-01.dmp.",
+            "dumpPath": "C:\\Windows\\Minidump\\111026-12345-01.dmp",
+            "reviewKeys": [
+              "6866F15C8346ABDA65E854CB05F1919CEEE0287B7761F9BFFACCD628A2C5E513"
+            ]
+          }
+        ],
+        "emptyText": "No blue screen crashes were recorded in the last 30 days.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "power",
+        "title": "Unexpected power losses & resets",
+        "level": "Neutral",
+        "headline": "1 unexpected restart",
+        "meta": "Latest: Nov 10, 7:13 AM",
+        "columns": [
+          "When",
+          "Type",
+          "Details"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "Nov 10, 7:13 AM",
+              "Kernel-Power (Event 41)",
+              "0x0000009f · Driver power state failure"
+            ],
+            "sortKeys": [
+              "2026-11-10T07:13:30",
+              null,
+              null
+            ],
+            "detail": "Stop code: 0x0000009f · Driver power state failure\nThe system has rebooted without cleanly shutting down first.",
+            "reviewKeys": [
+              "C876B2437A219CB6B820925015BF16DB5A69C8E510FEE42286DE353E135F75B7"
+            ]
+          }
+        ],
+        "emptyText": "All shutdowns and restarts in the last 30 days were clean.",
+        "note": "Event 41 happens when the PC loses power, is forced off by holding the power button, or resets before Windows can write a crash log.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "whea",
+        "title": "Hardware error events (WHEA)",
+        "level": "Ok",
+        "headline": "None",
+        "meta": "In the last 30 days",
+        "columns": [
+          "When",
+          "Severity",
+          "Details"
+        ],
+        "rows": [],
+        "emptyText": "No WHEA hardware error events were recorded in the last 30 days.",
+        "note": "WHEA-Logger records CPU core/cache, memory, and PCIe hardware faults reported directly by the processor or chipset.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "minidumps",
+        "title": "Crash dump files",
+        "level": "Neutral",
+        "headline": "1 dump file",
+        "meta": "Latest: 111026-12345-01.dmp (Nov 10, 7:12 AM)",
+        "columns": [
+          "When",
+          "File",
+          "Size"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "Nov 10, 7:12 AM",
+              "111026-12345-01.dmp",
+              "1.8 MB"
+            ],
+            "sortKeys": [
+              "2026-11-10T07:12:00",
+              null,
+              "1843200"
+            ],
+            "detail": "c:\\windows\\minidump\\111026-12345-01.dmp\nBlue screen recorded: Nov 10, 7:12 AM · 0x0000009f · Driver power state failure",
+            "dumpPath": "c:\\windows\\minidump\\111026-12345-01.dmp"
+          }
+        ],
+        "emptyText": "No dumps were found in C:\\Windows\\Minidump or at C:\\Windows\\MEMORY.DMP.",
+        "note": "Expand a dump and choose Analyze dump to run Windows Debugging Tools. Analysis may download public symbols from Microsoft.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "graphics",
+        "title": "Graphics driver crashes & resets",
+        "level": "Warning",
+        "headline": "1 driver reset",
+        "meta": "Latest: Nov 18, 9:40 PM · driver 31.0.24027.1012 (1 Aug 2025)",
+        "columns": [
+          "When",
+          "What happened",
+          "Driver at the time"
+        ],
+        "rows": [
+          {
+            "level": "Warning",
+            "values": [
+              "Nov 18, 9:40 PM",
+              "Display driver stopped responding and recovered (TDR)",
+              "31.0.24027.1012 (1 Aug 2025)"
+            ],
+            "sortKeys": [
+              "2026-11-18T21:40:00",
+              null,
+              null
+            ],
+            "detail": "Driver at the time: 31.0.24027.1012 (1 Aug 2025)\nNov 18, 9:40 PM · Display 4101 · Display driver amdkmdag stopped responding and has successfully recovered.\nNov 18, 9:40 PM · Live kernel report c:\\windows\\livekernelreports\\watchdog\\watchdog-20261118-1440.dmp (512 KB)",
+            "dumpPath": "c:\\windows\\livekernelreports\\watchdog\\watchdog-20261118-1440.dmp",
+            "reviewKeys": [
+              "1307090E3BBBDE4EFEF8E6AE770F421AD13AA0010C347AAE07B8480158DB6E69"
+            ]
+          }
+        ],
+        "emptyText": "No graphics driver resets or graphics blue screens in the last 30 days.",
+        "note": "A few resets can come from one game or app. If they continue, do a clean reinstall of the graphics driver, then run the GPU stress test. Current graphics driver: AMD Radeon(TM) Graphics 31.0.24027.1012 (1 Aug 2025).",
+        "preserveRowOrder": false,
+        "eventCount": 1,
+        "windowDays": 30,
+        "recentEventCount": 1,
+        "recentWindowDays": 7,
+        "runCheck": {
+          "checkId": "GpuStress",
+          "buttonText": "Run GPU stress test"
+        }
+      },
+      {
+        "id": "crashes",
+        "title": "Apps that closed unexpectedly",
+        "level": "Warning",
+        "headline": "3 crashes",
+        "meta": "Latest: notes.exe, Nov 21, 3:10 PM",
+        "columns": [
+          "When",
+          "App",
+          "Type",
+          "Version",
+          "Details"
+        ],
+        "rows": [
+          {
+            "level": "Warning",
+            "values": [
+              "Nov 21, 3:10 PM",
+              "notes.exe",
+              "Crash",
+              "4.2.0.0",
+              "Access violation (in ntdll.dll)"
+            ],
+            "sortKeys": [
+              "2026-11-21T15:10:00",
+              null,
+              null,
+              null,
+              null
+            ],
+            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345",
+            "reviewKeys": [
+              "1961975FC987E3199CD5F1E2DA341B18A422ABA3044AC62D58597E094DC0FA18"
+            ]
+          },
+          {
+            "level": "Warning",
+            "values": [
+              "Nov 19, 9:00 AM",
+              "notes.exe",
+              "Crash",
+              "4.2.0.0",
+              "Access violation (in ntdll.dll)"
+            ],
+            "sortKeys": [
+              "2026-11-19T09:00:00",
+              null,
+              null,
+              null,
+              null
+            ],
+            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345",
+            "reviewKeys": [
+              "FAC696A685E115993AF4A6CD880DA03D1FAA8009CFFDE779EA7142096125E17C"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Nov 2, 8:00 PM",
+              "game.exe",
+              "Crash",
+              "4.2.0.0",
+              "Access violation (in ntdll.dll)"
+            ],
+            "sortKeys": [
+              "2026-11-02T20:00:00",
+              null,
+              null,
+              null,
+              null
+            ],
+            "detail": "Access violation (in ntdll.dll)\nException code: 0xc0000005\nProgram version: 4.2.0.0\nModule version: 10.0.26100.1\nFault offset: 0000000000012345",
+            "reviewKeys": [
+              "9641653267D4032C0F544ADAB5673EA7C201BC69CADE20E4145C275A6058A50D"
+            ]
+          }
+        ],
+        "preserveRowOrder": false,
+        "eventCount": 3,
+        "windowDays": 30,
+        "recentEventCount": 2,
+        "recentWindowDays": 7
+      },
+      {
+        "id": "hangs",
+        "title": "Apps that stopped responding",
+        "level": "Warning",
+        "headline": "1 time",
+        "meta": "Latest: photoeditor.exe, Nov 20, 6:30 PM",
+        "columns": [
+          "When",
+          "App",
+          "Type",
+          "Version",
+          "Details",
+          "Count"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "Nov 20, 6:30 PM",
+              "photoeditor.exe",
+              "Freeze",
+              "2.1.0.0",
+              "Stopped responding",
+              "1"
+            ],
+            "sortKeys": [
+              "2026-11-20T18:30:00",
+              null,
+              null,
+              null,
+              null
+            ],
+            "detail": "Nov 20, 6:30 PM\nStopped responding\nProgram version: 2.1.0.0\nProgram path: C:\\Program Files\\PhotoEditor\\photoeditor.exe",
+            "reviewKeys": [
+              "8A7F58B0EA4370D24FD203B243D60BCCBB1DEDF3AE6F086C088DD3B3A1D37604"
+            ],
+            "hangOccurrences": [
+              {
+                "time": "2026-11-20T18:30:00+00:00",
+                "app": "photoeditor.exe",
+                "path": "C:\\Program Files\\PhotoEditor\\photoeditor.exe",
+                "package": "",
+                "type": "",
+                "reportId": ""
+              }
+            ]
+          }
+        ],
+        "preserveRowOrder": false,
+        "eventCount": 1,
+        "windowDays": 30,
+        "recentEventCount": 1,
+        "recentWindowDays": 7
+      },
+      {
+        "id": "apps",
+        "title": "Most affected apps",
+        "level": "Neutral",
+        "headline": "notes.exe",
+        "meta": "2 problems in the last 30 days",
+        "columns": [
+          "App",
+          "Crashes",
+          "Freezes",
+          "Last time"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "notes.exe",
+              "2",
+              "0",
+              "Nov 21, 3:10 PM"
+            ],
+            "sortKeys": [
+              null,
+              null,
+              null,
+              "2026-11-21T15:10:00"
+            ],
+            "detail": "Most common cause: Access violation (2 of 2 crashes)\nApp versions: 4.2.0.0",
+            "reviewKeys": [
+              "1961975FC987E3199CD5F1E2DA341B18A422ABA3044AC62D58597E094DC0FA18",
+              "FAC696A685E115993AF4A6CD880DA03D1FAA8009CFFDE779EA7142096125E17C"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "photoeditor.exe",
+              "0",
+              "1",
+              "Nov 20, 6:30 PM"
+            ],
+            "sortKeys": [
+              null,
+              null,
+              null,
+              "2026-11-20T18:30:00"
+            ],
+            "detail": "No crashes recorded\nApp versions: 2.1.0.0",
+            "reviewKeys": [
+              "8A7F58B0EA4370D24FD203B243D60BCCBB1DEDF3AE6F086C088DD3B3A1D37604"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "game.exe",
+              "1",
+              "0",
+              "Nov 2, 8:00 PM"
+            ],
+            "sortKeys": [
+              null,
+              null,
+              null,
+              "2026-11-02T20:00:00"
+            ],
+            "detail": "Most common cause: Access violation (1 of 1 crashes)\nApp versions: 4.2.0.0",
+            "reviewKeys": [
+              "9641653267D4032C0F544ADAB5673EA7C201BC69CADE20E4145C275A6058A50D"
+            ]
+          }
+        ],
+        "preserveRowOrder": true
+      }
+    ],
+    "summary": "1 blue screen, 1 unexpected restart in the last 30 days (none in the last 7 days) · 1 driver reset · 3 crashes, 1 freeze in the last 30 days · most: notes.exe",
+    "status": "Warning",
+    "reviewedCards": [
+      {
+        "id": "bsods",
+        "title": "Blue screen crashes (BSOD)",
+        "level": "Ok",
+        "headline": "None",
+        "meta": "In the last 30 days",
+        "columns": [
+          "When",
+          "Type",
+          "Details"
+        ],
+        "rows": [],
+        "emptyText": "No blue screen crashes were recorded in the last 30 days.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "power",
+        "title": "Unexpected power losses & resets",
+        "level": "Ok",
+        "headline": "None",
+        "meta": "In the last 30 days",
+        "columns": [
+          "When",
+          "Type",
+          "Details"
+        ],
+        "rows": [],
+        "emptyText": "All shutdowns and restarts in the last 30 days were clean.",
+        "note": "Event 41 happens when the PC loses power, is forced off by holding the power button, or resets before Windows can write a crash log.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "whea",
+        "title": "Hardware error events (WHEA)",
+        "level": "Ok",
+        "headline": "None",
+        "meta": "In the last 30 days",
+        "columns": [
+          "When",
+          "Severity",
+          "Details"
+        ],
+        "rows": [],
+        "emptyText": "No WHEA hardware error events were recorded in the last 30 days.",
+        "note": "WHEA-Logger records CPU core/cache, memory, and PCIe hardware faults reported directly by the processor or chipset.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "minidumps",
+        "title": "Crash dump files",
+        "level": "Neutral",
+        "headline": "1 dump file",
+        "meta": "Latest: 111026-12345-01.dmp (Nov 10, 7:12 AM)",
+        "columns": [
+          "When",
+          "File",
+          "Size"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "Nov 10, 7:12 AM",
+              "111026-12345-01.dmp",
+              "1.8 MB"
+            ],
+            "sortKeys": [
+              "2026-11-10T07:12:00",
+              null,
+              "1843200"
+            ],
+            "detail": "c:\\windows\\minidump\\111026-12345-01.dmp",
+            "dumpPath": "c:\\windows\\minidump\\111026-12345-01.dmp"
+          }
+        ],
+        "emptyText": "No dumps were found in C:\\Windows\\Minidump or at C:\\Windows\\MEMORY.DMP.",
+        "note": "Expand a dump and choose Analyze dump to run Windows Debugging Tools. Analysis may download public symbols from Microsoft.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "graphics",
+        "title": "Graphics driver crashes & resets",
+        "level": "Ok",
+        "headline": "None",
+        "meta": "In the last 30 days",
+        "columns": [
+          "When",
+          "What happened",
+          "Driver at the time"
+        ],
+        "rows": [],
+        "emptyText": "No graphics driver resets or graphics blue screens in the last 30 days.",
+        "note": "Windows resets the graphics driver when the GPU stops responding for about 2 seconds (Event 4101, a TDR); the screen goes black or flickers and comes back. Current graphics driver: AMD Radeon(TM) Graphics 31.0.24027.1012 (1 Aug 2025).",
+        "preserveRowOrder": false,
+        "eventCount": 0,
+        "windowDays": 30,
+        "recentEventCount": 0,
+        "recentWindowDays": 7
+      },
+      {
+        "id": "crashes",
+        "title": "Apps that closed unexpectedly",
+        "level": "Ok",
+        "headline": "None",
+        "meta": "In the last 30 days",
+        "columns": [
+          "When",
+          "App",
+          "Type",
+          "Version",
+          "Details"
+        ],
+        "rows": [],
+        "preserveRowOrder": false,
+        "eventCount": 0,
+        "windowDays": 30,
+        "recentEventCount": 0,
+        "recentWindowDays": 7
+      },
+      {
+        "id": "hangs",
+        "title": "Apps that stopped responding",
+        "level": "Ok",
+        "headline": "None",
+        "meta": "In the last 30 days",
+        "columns": [
+          "When",
+          "App",
+          "Type",
+          "Version",
+          "Details",
+          "Count"
+        ],
+        "rows": [],
+        "preserveRowOrder": false,
+        "eventCount": 0,
+        "windowDays": 30,
+        "recentEventCount": 0,
+        "recentWindowDays": 7
+      },
+      {
+        "id": "apps",
+        "title": "Most affected apps",
+        "level": "Ok",
+        "headline": "No problems recorded",
+        "meta": "In the last 30 days",
+        "columns": [
+          "App",
+          "Crashes",
+          "Freezes",
+          "Last time"
+        ],
+        "rows": [],
+        "preserveRowOrder": true
+      }
+    ],
+    "cancelled": false
+  }
+}

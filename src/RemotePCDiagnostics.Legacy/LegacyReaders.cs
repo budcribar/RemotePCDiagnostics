@@ -9,7 +9,7 @@ namespace RemotePCDiagnostics.Legacy;
 /// <summary>Registers the Store edition's readers: the Agent's when it is connected, these otherwise.</summary>
 public static class LegacyReaders
 {
-    /// <summary>Replaces the Agent-only readers (battery, drives, hardware, services, drivers, programs, security essentials, resource hogs) with Agent-or-legacy ones.</summary>
+    /// <summary>Replaces the Agent-only readers (battery, drives, hardware, services, drivers, programs, security essentials, resource hogs, crash dumps) with Agent-or-legacy ones.</summary>
     public static IServiceCollection AddLegacyFallbacks(this IServiceCollection services) => services
         .AddSingleton<IBatteryPowerSource>(sp => new AgentOrFallbackBatteryPowerSource(sp.GetRequiredService<IElevatedCommandBridge>(),
             new WmiBatteryPowerSource(sp.GetRequiredService<Core.DataSources.IWmiSource>()),
@@ -39,7 +39,9 @@ public static class LegacyReaders
             new PowerShellSecurityEssentialsSource(sp.GetRequiredService<SystemCommandRunner>())))
         .AddSingleton<IResourceHogsSource>(sp => new AgentOrFallbackResourceHogsSource(sp.GetRequiredService<IElevatedCommandBridge>(),
             new WmiResourceHogsSource(sp.GetRequiredService<Core.DataSources.IWmiSource>(), sp.GetRequiredService<Core.DataSources.IRegistrySource>()),
-            new OsqueryResourceHogsSource(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>())));
+            new OsqueryResourceHogsSource(sp.GetRequiredService<OsqueryRunner>(), sp.GetRequiredService<SystemCommandRunner>())))
+        .AddSingleton<ICrashDumpSource>(sp => new AgentOrFallbackCrashDumpSource(sp.GetRequiredService<IElevatedCommandBridge>(),
+            new WmiCrashDumpSource(sp.GetRequiredService<Core.DataSources.IWmiSource>()), new FileCrashDumpSource()));
 }
 
 /// <summary>Batteries from osquery <c>battery</c>, the plan from <c>powercfg /getactivescheme</c>. Both work as a standard user.</summary>

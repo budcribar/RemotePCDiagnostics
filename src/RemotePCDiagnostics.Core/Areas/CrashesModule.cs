@@ -2,13 +2,15 @@ namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>
 /// App crashes ("Application Error", event 1000) and freezes ("Application Hang", event 1002) from the Windows
-/// Application log over the last 30 days, via <see cref="WindowsEventLog"/>. In user mode (the module host) <paramref name="host"/> is
-/// set: the event logs, the blue screen dumps, the graphics live kernel dumps, the graphics drivers and the reviewed list are read by the
-/// app (<c>eventlog.query</c>, <c>crashes.minidumps</c>, <c>crashes.livekernelreports</c>, <c>osquery.select</c>, <c>events.reviewed</c>).
-/// With system crashes included it also shows graphics driver crashes and resets (<see cref="GraphicsDriverCrashes"/>).
+/// Application log over the last 30 days, via <see cref="WindowsEventLog"/>. With system crashes included it also shows blue screens and
+/// unexpected restarts, the blue screen dumps, and graphics driver crashes and resets (<see cref="GraphicsDriverCrashes"/>): the dump files
+/// come from <paramref name="dumps"/> and the graphics drivers from <paramref name="drivers"/> (both WMI through the Agent in the app).
+/// In user mode (the module host) <paramref name="host"/> is set: the event logs and the reviewed list are read by the app
+/// (<c>eventlog.query</c>, <c>events.reviewed</c>), and WMI goes through the app to the Agent (<c>wmi.query</c>).
 /// </summary>
-public sealed class CrashesModule(SystemCommandRunner commands, bool includeSystemCrashes = false, Func<IReadOnlyList<MinidumpFile>>? minidumpReader = null,
-    Plugins.IHostQueries? host = null, Osquery.OsqueryRunner? osquery = null, Func<IReadOnlyList<MinidumpFile>>? liveKernelReader = null)
+/// <param name="clock">The report's "now" and time zone (<see cref="ReportClock"/>); the PC's when null.</param>
+public sealed class CrashesModule(SystemCommandRunner commands, bool includeSystemCrashes = false, ICrashDumpSource? dumps = null,
+    IDeviceDriverSource? drivers = null, Plugins.IHostQueries? host = null, TimeProvider? clock = null)
     : AreaModuleBase(commands.Log), IHangEvidenceSource
 {
     public const string HangsCardId = "hangs";
@@ -23,8 +25,13 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
 
     private async Task<IReadOnlyList<MinidumpFile>> DumpsAsync(CancellationToken ct)
     {
-        try { return host is null ? (minidumpReader ?? BsodHistoryModule.ReadSystemMinidumps)() : await host.ReadMinidumpsAsync(ct).ConfigureAwait(false); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { return []; }
+        if (dumps is null) return [];
+        try { return await dumps.ReadMinidumpsAsync(ct).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogWarn($"{Name}: crash dumps unreadable: {ex.Message}");
+            return [];
+        }
     }
 
     public static string Query =>
@@ -32,6 +39,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
+        using var _ = ReportClock.Use(clock);
         var total = includeSystemCrashes ? 4 : 2;
         progress.ReportStep(1, total, "Looking for app crashes and hangs…");
         var events = await _log.QueryAsync("Application", Query, Max, ct).ConfigureAwait(false);
@@ -54,16 +62,16 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
 
         progress.ReportStep(3, total, "Checking for blue screens and unexpected restarts…");
         var sysEvents = await _log.QueryAsync("System", BsodHistoryModule.Query, BsodHistoryModule.MaxEvents, ct).ConfigureAwait(false);
-        var dumps = await DumpsAsync(ct).ConfigureAwait(false);
+        var dumpFiles = await DumpsAsync(ct).ConfigureAwait(false);
 
-        if (events is null && sysEvents is null && dumps.Count == 0)
+        if (events is null && sysEvents is null && dumpFiles.Count == 0)
             return AreaReport.Failed(FailedMessage);
 
         AreaReport bsodReport;
         if (sysEvents is null)
         {
             const string sysFailed = "Couldn't read blue screen and shutdown history on this PC.";
-            var dumpCard = BsodHistoryModule.Build([], dumps).Cards.Single(c => c.Id == "minidumps");
+            var dumpCard = BsodHistoryModule.Build([], dumpFiles).Cards.Single(c => c.Id == "minidumps");
             bsodReport = new(
                 [
                     AreaCard.Failed("bsods", "Blue screen crashes (BSOD)", sysFailed),
@@ -76,9 +84,9 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         }
         else
         {
-            bsodReport = BsodHistoryModule.Build(sysEvents.Where(e => !reviewed.Contains(EventReviews.Key(e))).ToList(), dumps) with
+            bsodReport = BsodHistoryModule.Build(sysEvents.Where(e => !reviewed.Contains(EventReviews.Key(e))).ToList(), dumpFiles) with
             {
-                ReviewedCards = BsodHistoryModule.Build(sysEvents.Where(e => reviewed.Contains(EventReviews.Key(e))).ToList(), dumps).Cards
+                ReviewedCards = BsodHistoryModule.Build(sysEvents.Where(e => reviewed.Contains(EventReviews.Key(e))).ToList(), dumpFiles).Cards
             };
         }
 
@@ -115,29 +123,31 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         var resets = await resetsTask;
         var installs = (await installsTask ?? []).Select(GraphicsDriverCrashes.ToInstall).OfType<GpuDriverInstall>().ToList();
         var reports = await reportsTask;
-        var dumps = await dumpsTask;
-        var drivers = await driversTask;
+        var liveDumps = await dumpsTask;
+        var gpuDrivers = await driversTask;
         Log($"{Name}: graphics resets={resets?.Count.ToString() ?? "failed"} reports={reports?.Count.ToString() ?? "failed"} installs={installs.Count} " +
-            $"liveDumps={dumps.Count} drivers={drivers?.Count.ToString() ?? "failed"}");
+            $"liveDumps={liveDumps.Count} drivers={gpuDrivers?.Count.ToString() ?? "failed"}");
         if (resets is null)
         {
             var failed = AreaCard.Failed(GraphicsDriverCrashes.CardId, GraphicsDriverCrashes.Title, "Couldn't read graphics driver events on this PC.");
-            return (failed, GraphicsDriverCrashes.Build([], [], installs, drivers));
+            return (failed, GraphicsDriverCrashes.Build([], [], installs, gpuDrivers));
         }
         var events = resets.Where(GraphicsDriverCrashes.IsResetEvent)
             .Concat((reports ?? []).Where(e => GraphicsDriverCrashes.LiveKernelCode(e) is not null))
             .Concat((bsodEvents ?? []).Where(e => GraphicsDriverCrashes.GraphicsBugCheck(e) is not null))
             .ToList();
-        return (GraphicsDriverCrashes.Build(events.Where(e => !reviewed.Contains(EventReviews.Key(e))).ToList(), dumps, installs, drivers),
-            GraphicsDriverCrashes.Build(events.Where(e => reviewed.Contains(EventReviews.Key(e))).ToList(), [], installs, drivers));
+        return (GraphicsDriverCrashes.Build(events.Where(e => !reviewed.Contains(EventReviews.Key(e))).ToList(), liveDumps, installs, gpuDrivers),
+            GraphicsDriverCrashes.Build(events.Where(e => reviewed.Contains(EventReviews.Key(e))).ToList(), [], installs, gpuDrivers));
     }
 
     private async Task<IReadOnlyList<MinidumpFile>> LiveKernelReportsAsync(CancellationToken ct)
     {
+        if (dumps is null) return [];
         try
         {
-            return host is null ? await Task.Run(liveKernelReader ?? GraphicsDriverCrashes.ReadLiveKernelReports, ct).ConfigureAwait(false)
-                : await host.ReadLiveKernelReportsAsync(ct).ConfigureAwait(false);
+            var cutoff = ReportClock.Now.AddDays(-GraphicsDriverCrashes.Days);
+            return (await dumps.ReadLiveKernelReportsAsync(ct).ConfigureAwait(false)).Where(d => d.Created >= cutoff)
+                .OrderByDescending(d => d.Created).Take(WmiCrashDumpSource.MaxFiles).ToList();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -148,12 +158,10 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
 
     private async Task<IReadOnlyList<GpuDriver>?> GpuDriversAsync(CancellationToken ct)
     {
+        if (drivers is null) return null;
         try
         {
-            var q = host is not null
-                ? await Plugins.HostQueryExtensions.AskAsync(host, Name, Logger, h => h.SelectAsync(GraphicsDriverCrashes.DriversSql, ct)).ConfigureAwait(false)
-                : osquery is not null ? await osquery.RunQueryAsync(GraphicsDriverCrashes.DriversSql, ct).ConfigureAwait(false) : null;
-            return q is { Success: true, Rows: { } rows } ? rows.Select(GpuDriver.FromRow).ToList() : null;
+            return (await drivers.ReadDriversAsync(ct).ConfigureAwait(false))?.Where(GraphicsDriverCrashes.IsDisplayDriver).Select(GpuDriver.From).ToList();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -223,7 +231,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
     /// Older incidents are still listed but shown neutral.</summary>
     public static AreaReport Build(IReadOnlyList<WinEvent> events, DateTimeOffset? now = null)
     {
-        var cutoff = (now ?? DateTimeOffset.Now).AddDays(-RecentDays);
+        var cutoff = (now ?? ReportClock.Now).AddDays(-RecentDays);
         var all = events.Where(e => e.EventId is 1000 or 1002).Select(ToIncident).OrderByDescending(i => i.Time).ToList();
         var runtime = events.Where(e => e.EventId == 1026 && e.Provider.Equals(".NET Runtime", StringComparison.OrdinalIgnoreCase))
             .Select(e =>

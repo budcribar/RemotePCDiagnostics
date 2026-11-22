@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Xml.Linq;
 
 namespace RemotePCDiagnostics.Core.Recording;
 
@@ -18,7 +19,7 @@ public sealed class RecordingScrubber
     {
         "SerialNumber", "serial_number", "serial", "hardware_serial", "board_serial", "UniqueID", "IdentifyingNumber",
         "MACAddress", "mac", "PermanentAddress", "CSName", "__SERVER", "UserName", "RegisteredUser", "PrimaryOwnerName",
-        "computer_name", "hostname", "local_hostname",
+        "computer_name", "hostname", "local_hostname", "ComputerName",
         "Id", // the DriveHealth script's name for a disk's UniqueId (its WWN / EUI)
         "UUID", // the SMBIOS UUID (Win32_ComputerSystemProduct, osquery system_info), per unit on most makers
         "guid", "pnp_device_id", "PNPDeviceID", // a network adapter's GUID; device instance paths can hold a USB serial
@@ -79,10 +80,12 @@ public sealed class RecordingScrubber
         Rows = c.Rows?.Select(r => r.ToDictionary(p => p.Key, p => Value(p.Key, p.Value), StringComparer.OrdinalIgnoreCase)).ToList(),
     };
 
-    /// <summary>Command output: JSON (osquery) has its sensitive columns replaced too; any text has names replaced.</summary>
+    /// <summary>Command output: JSON (osquery) and an XML document (the battery report) have their sensitive fields replaced too; any text
+    /// has names replaced.</summary>
     private string Output(string stdout)
     {
         var t = stdout.TrimStart();
+        if (t.StartsWith('<') && Xml(stdout) is { } xml) return xml;
         if (t.StartsWith('[') || t.StartsWith('{'))
         {
             try
@@ -96,6 +99,22 @@ public sealed class RecordingScrubber
             catch (JsonException) { /* not JSON after all: treat as text */ }
         }
         return Text(stdout);
+    }
+
+    /// <summary>An XML document with its sensitive elements (<see cref="SensitiveNames"/>) replaced and names replaced in all other text;
+    /// null when it isn't one document (wevtutil's events are a list of documents, scrubbed as text).</summary>
+    private string? Xml(string text)
+    {
+        XDocument doc;
+        try { doc = XDocument.Parse(text, LoadOptions.PreserveWhitespace); }
+        catch (System.Xml.XmlException) { return null; }
+        foreach (var e in doc.Descendants().ToList())
+        {
+            foreach (var a in e.Attributes()) a.Value = Text(a.Value);
+            if (e.HasElements) continue;
+            e.Value = SensitiveNames.Contains(e.Name.LocalName) ? Placeholder("serial", e.Value) : Text(e.Value);
+        }
+        return (doc.Declaration is { } d ? d + "\n" : "") + doc.ToString(SaveOptions.DisableFormatting);
     }
 
     private void ScrubNode(JsonNode node)

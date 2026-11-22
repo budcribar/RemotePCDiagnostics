@@ -1,0 +1,272 @@
+{
+  "moduleName": "EventLog",
+  "status": "Ok",
+  "message": "Last 7 days: 3 Windows errors, 1 app errors",
+  "report": {
+    "cards": [
+      {
+        "id": "critical",
+        "title": "Critical problems",
+        "level": "Ok",
+        "headline": "None",
+        "meta": "In the last 7 days",
+        "columns": [
+          "When",
+          "Source",
+          "Level",
+          "What happened"
+        ],
+        "rows": [],
+        "note": "Critical problems often mean Windows shut down or restarted unexpectedly (for example a power loss or a crash).",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "system",
+        "title": "Windows errors",
+        "level": "Ok",
+        "headline": "3 errors",
+        "meta": "In the last 7 days",
+        "columns": [
+          "When",
+          "Source",
+          "Level",
+          "Times",
+          "What happened"
+        ],
+        "rows": [
+          {
+            "level": "Warning",
+            "values": [
+              "Nov 21, 8:00 AM",
+              "Service Control Manager",
+              "Error",
+              "2",
+              "The Sample Updater service failed to start due to the following error:"
+            ],
+            "sortKeys": [
+              "2026-11-21T08:00:00",
+              null,
+              "1",
+              "2",
+              null
+            ],
+            "detail": "Happened 2 times: Nov 21, 8:00 AM, Nov 20, 8:00 AM\n\nThe Sample Updater service failed to start due to the following error: \nThe system cannot find the file specified.",
+            "eventCopyText": "Source: Service Control Manager\nEvent ID: 7000\nLog: System\nTime: 2026-11-21T08:00:00.0000000+00:00\n\nThe Sample Updater service failed to start due to the following error: \nThe system cannot find the file specified.",
+            "reviewKeys": [
+              "359D612F3EEF114868C524533C4451BE9251588D29DEAFEB19FE13B848427182",
+              "E88C1BC3D4B0080B644D3EC94FD3802958705060E05047996B8F257FF66C4203"
+            ]
+          },
+          {
+            "level": "Warning",
+            "values": [
+              "Nov 19, 12:00 PM",
+              "DistributedCOM",
+              "Error",
+              "1",
+              "The application-specific permission settings do not grant Local Activation permission for the COM Server application."
+            ],
+            "sortKeys": [
+              "2026-11-19T12:00:00",
+              null,
+              "1",
+              "1",
+              null
+            ],
+            "eventCopyText": "Source: Microsoft-Windows-DistributedCOM\nEvent ID: 10016\nLog: System\nTime: 2026-11-19T12:00:00.0000000+00:00\n\nThe application-specific permission settings do not grant Local Activation permission for the COM Server application.",
+            "reviewKeys": [
+              "BEE1FDB90D6E675EA2D3B3339CFB37AED2E6C3AAB605BDAF17F9A693558E95E2"
+            ]
+          }
+        ],
+        "note": "Most PCs log some errors; they only matter if they repeat or match a problem you're seeing. Identical errors are grouped; click a row for the full message.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "apps",
+        "title": "App errors",
+        "level": "Ok",
+        "headline": "1 error",
+        "meta": "In the last 7 days",
+        "columns": [
+          "When",
+          "Source",
+          "Level",
+          "Times",
+          "What happened"
+        ],
+        "rows": [
+          {
+            "level": "Warning",
+            "values": [
+              "Nov 18, 10:00 AM",
+              "Security-SPP",
+              "Error",
+              "1",
+              "License Activation (slui.exe) failed with the following error code: hr=0x8007267C"
+            ],
+            "sortKeys": [
+              "2026-11-18T10:00:00",
+              null,
+              "1",
+              "1",
+              null
+            ],
+            "eventCopyText": "Source: Microsoft-Windows-Security-SPP\nEvent ID: 8198\nLog: Application\nTime: 2026-11-18T10:00:00.0000000+00:00\n\nLicense Activation (slui.exe) failed with the following error code: hr=0x8007267C",
+            "reviewKeys": [
+              "B5A2E6CA8C758DED43421FDBF02F8F5F47E0CCE82664F97E351E35ABCFC86EA2"
+            ]
+          }
+        ],
+        "note": "Most PCs log some errors; they only matter if they repeat or match a problem you're seeing. Identical errors are grouped; click a row for the full message.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "sources",
+        "title": "Most frequent",
+        "level": "Neutral",
+        "headline": "Service Control Manager",
+        "meta": "2 times in the last 7 days",
+        "columns": [
+          "Source",
+          "Where",
+          "Times",
+          "Last seen"
+        ],
+        "rows": [
+          {
+            "level": "Warning",
+            "values": [
+              "Service Control Manager",
+              "Windows",
+              "2",
+              "Nov 21, 8:00 AM"
+            ],
+            "sortKeys": [
+              null,
+              null,
+              null,
+              "2026-11-21T08:00:00"
+            ],
+            "detail": "2× (last Nov 21, 8:00 AM): The Sample Updater service failed to start due to the following error:",
+            "reviewKeys": [
+              "359D612F3EEF114868C524533C4451BE9251588D29DEAFEB19FE13B848427182",
+              "E88C1BC3D4B0080B644D3EC94FD3802958705060E05047996B8F257FF66C4203"
+            ]
+          },
+          {
+            "level": "Warning",
+            "values": [
+              "DistributedCOM",
+              "Windows",
+              "1",
+              "Nov 19, 12:00 PM"
+            ],
+            "sortKeys": [
+              null,
+              null,
+              null,
+              "2026-11-19T12:00:00"
+            ],
+            "detail": "1× (last Nov 19, 12:00 PM): The application-specific permission settings do not grant Local Activation permission for the COM Server application.",
+            "reviewKeys": [
+              "BEE1FDB90D6E675EA2D3B3339CFB37AED2E6C3AAB605BDAF17F9A693558E95E2"
+            ]
+          },
+          {
+            "level": "Warning",
+            "values": [
+              "Security-SPP",
+              "Apps",
+              "1",
+              "Nov 18, 10:00 AM"
+            ],
+            "sortKeys": [
+              null,
+              null,
+              null,
+              "2026-11-18T10:00:00"
+            ],
+            "detail": "1× (last Nov 18, 10:00 AM): License Activation (slui.exe) failed with the following error code: hr=0x8007267C",
+            "reviewKeys": [
+              "B5A2E6CA8C758DED43421FDBF02F8F5F47E0CCE82664F97E351E35ABCFC86EA2"
+            ]
+          }
+        ],
+        "note": "Click a source to see what it reported.",
+        "preserveRowOrder": false
+      }
+    ],
+    "summary": "Last 7 days: 3 Windows errors, 1 app errors",
+    "status": "Ok",
+    "reviewedCards": [
+      {
+        "id": "critical",
+        "title": "Critical problems",
+        "level": "Ok",
+        "headline": "None",
+        "meta": "In the last 7 days",
+        "columns": [
+          "When",
+          "Source",
+          "Level",
+          "What happened"
+        ],
+        "rows": [],
+        "note": "Critical problems often mean Windows shut down or restarted unexpectedly (for example a power loss or a crash).",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "system",
+        "title": "Windows errors",
+        "level": "Ok",
+        "headline": "No errors",
+        "meta": "In the last 7 days",
+        "columns": [
+          "When",
+          "Source",
+          "Level",
+          "Times",
+          "What happened"
+        ],
+        "rows": [],
+        "note": "Most PCs log some errors; they only matter if they repeat or match a problem you're seeing. Identical errors are grouped; click a row for the full message.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "apps",
+        "title": "App errors",
+        "level": "Ok",
+        "headline": "No errors",
+        "meta": "In the last 7 days",
+        "columns": [
+          "When",
+          "Source",
+          "Level",
+          "Times",
+          "What happened"
+        ],
+        "rows": [],
+        "note": "Most PCs log some errors; they only matter if they repeat or match a problem you're seeing. Identical errors are grouped; click a row for the full message.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "sources",
+        "title": "Most frequent",
+        "level": "Ok",
+        "headline": "Nothing repeated",
+        "meta": "",
+        "columns": [
+          "Source",
+          "Where",
+          "Times",
+          "Last seen"
+        ],
+        "rows": [],
+        "note": "Click a source to see what it reported.",
+        "preserveRowOrder": false
+      }
+    ],
+    "cancelled": false
+  }
+}

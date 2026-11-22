@@ -3,13 +3,10 @@ using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
-/// <summary>A graphics driver installed on this PC (osquery <c>drivers</c>, Display class).</summary>
+/// <summary>A graphics driver installed on this PC (a Display class driver from <see cref="IDeviceDriverSource"/>).</summary>
 public sealed record GpuDriver(string Device, string Provider, string Version, DateOnly? Date)
 {
-    public static GpuDriver FromRow(IReadOnlyDictionary<string, string> r) => new(
-        r.Str("device_name").Length > 0 ? r.Str("device_name") : r.Str("description"),
-        r.Str("provider").Length > 0 ? r.Str("provider") : r.Str("manufacturer"),
-        r.Str("version"), OsqueryDates.Parse(r.Str("date")));
+    public static GpuDriver From(DriverEntry d) => new(d.DeviceName, d.Provider, d.Version, d.Date);
 
     public string Label => string.Join(" ", new[] { Device, Version, Date is { } d ? $"({OsqueryDates.Format(d)})" : null }
         .Where(s => !string.IsNullOrWhiteSpace(s)));
@@ -38,7 +35,8 @@ public static class GraphicsDriverCrashes
     /// <summary>The display driver services that log their own events, longest first so "igfxn" wins over "igfx".</summary>
     public static readonly IReadOnlyList<string> DriverServices = ["nvlddmkm", "amdkmdag", "amdkmdap", "amdwddmg", "igfxnd", "igfxn", "igfx"];
 
-    public const string DriversSql = "SELECT device_name, description, provider, manufacturer, version, date FROM drivers WHERE upper(class) = 'DISPLAY';";
+    /// <summary>A graphics driver: the Display device class.</summary>
+    public static bool IsDisplayDriver(DriverEntry d) => d.Class.Equals("DISPLAY", StringComparison.OrdinalIgnoreCase);
 
     private static long WindowMs => (long)Days * 86_400_000;
 
@@ -221,7 +219,7 @@ public static class GraphicsDriverCrashes
         IReadOnlyList<GpuDriver>? drivers, DateTimeOffset? now = null)
     {
         var current = drivers ?? [];
-        var cutoff = (now ?? DateTimeOffset.Now).AddDays(-RecentDays);
+        var cutoff = (now ?? ReportClock.Now).AddDays(-RecentDays);
         var incidents = Incidents(events, reports, installs, current);
         var resets = incidents.Where(i => !i.BlueScreen).ToList();
         var bsods = incidents.Count(i => i.BlueScreen);
