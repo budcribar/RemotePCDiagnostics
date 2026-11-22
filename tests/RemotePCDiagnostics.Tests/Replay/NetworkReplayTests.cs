@@ -24,7 +24,8 @@ public sealed class NetworkReplayTests
     internal static NetworkModule NetworkOld(ReplayedPc pc) =>
         new(new OsqueryNetworkSource(pc.Osquery, pc.Commands), includeWifiAndIpConfig: true, offline: true);
 
-    private static bool HasNew(ReplayedPc pc) => pc.HasWmi(WmiNetworkSource.AdaptersSql);
+    // v6 recordings were made while this check was being written, before it asked MSFT_NetAdapter: they count as not knowing the check.
+    private static bool HasNew(ReplayedPc pc) => pc.HasWmi(WmiNetworkSource.AdaptersSql) && pc.HasWmi(WmiNetworkSource.NetAdaptersSql);
     // Older recordings hold interface_details too (for the hardware inventory), but not the IP configuration script.
     private static bool HasOld(ReplayedPc pc) => pc.HasOsquery(OsqueryNetworkSource.Sql)
         && pc.Has(c => c.Kind == RecordedCall.ProcessKind && c.Args?.LastOrDefault() == OsqueryNetworkSource.IpConfigScript);
