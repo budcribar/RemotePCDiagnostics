@@ -476,6 +476,28 @@ public sealed class BiosUpdateTests
         Assert.Equal("N32ET91W", outcome.Latest.LatestVersion);
     }
 
+    [Fact]
+    public async Task InstallUpdate_SurvivesAThrowingCanHandleOnTheTargetsProvider_AndSafetyCheckUsesTheSameProvider()
+    {
+        var system = SampleIdentity("HP");
+        var installCaps = new BiosProviderCapabilities(CanCheckLatest: true, CanInstall: true, RequiresElevation: false);
+        var hp = new FakeBiosProvider("hp", "HP", capabilities: installCaps, canHandle: _ => true,
+            install: (r, _, _) => Task.FromResult(new BiosInstallResult(true, BiosInstallStatus.StagedForReboot)));
+        var wu = new FakeBiosProvider("windowsupdate", "Windows Update", priority: 10, capabilities: installCaps,
+            canHandle: _ => throw new InvalidOperationException("probe failed"));
+        var service = new BiosUpdateService(new FakeSystemProbe(system), new FakeSafetyProbe(SafeSnapshot()), [hp, wu]);
+
+        // The target names the Windows Update provider, whose CanHandle throws: that must not escape InstallUpdateAsync.
+        var wuTarget = BiosLatestInfo.UpdateAvailable("windowsupdate", "F.12");
+        var request = new BiosInstallRequest(system, system.CurrentBios, wuTarget, Approved: true);
+        var result = await service.InstallUpdateAsync(request);
+
+        Assert.True(result.Succeeded, result.Message);
+        Assert.Equal(1, hp.InstallCalls);
+        Assert.Equal(0, wu.InstallCalls);
+        Assert.True((await service.EvaluateInstallSafetyAsync(request)).Passed);
+    }
+
     // --- Test doubles ---
 
     private sealed class SampleLenovoProvider : IBiosUpdateProvider

@@ -24,6 +24,17 @@ public interface IFoundUpdate
 /// <summary>What <c>IUpdateInstaller.Install</c> answered: <c>OperationResultCode</c> (2 succeeded, 3 with errors, 4 failed, 5 aborted).</summary>
 public sealed record UpdateInstallOutcome(int ResultCode, int HResult, bool RebootRequired);
 
+/// <summary>Structured outcome of installing one update by Windows Update ID via <see cref="AgentWindowsUpdate.InstallOneDetailed"/>.</summary>
+public sealed record SingleUpdateInstallResult(
+    bool Found,
+    bool Installed,
+    int DownloadResult,
+    int ResultCode,
+    int HResult,
+    bool RebootRequired,
+    string Title,
+    string Error);
+
 /// <summary>The Windows Update Agent calls the Agent makes (<see cref="WuaComApi"/> on Windows, a fake in tests).</summary>
 public interface IWindowsUpdateApi
 {
@@ -116,11 +127,12 @@ public static class AgentWindowsUpdate
     }
 
     /// <summary>
-    /// One update by ID. Always exit 0 with <c>{Found, Installed, DownloadResult, ResultCode, HResult, RebootRequired, Title, Error}</c>,
-    /// with Windows Update's own error in Error, as the script did.
+    /// Installs one update by ID and returns a typed <see cref="SingleUpdateInstallResult"/> without JSON serialization overhead.
     /// </summary>
-    public static ProcessResult InstallOne(IWindowsUpdateApi api, Guid updateId)
+    public static SingleUpdateInstallResult InstallOneDetailed(IWindowsUpdateApi api, Guid updateId)
     {
+        ArgumentNullException.ThrowIfNull(api);
+
         bool found = false, installed = false, reboot = false;
         int downloadResult = -1, resultCode = -1, hresult = 0;
         string title = "", error = "";
@@ -148,16 +160,27 @@ public static class AgentWindowsUpdate
             error = Describe(ex);
         }
 
+        return new SingleUpdateInstallResult(found, installed, downloadResult, resultCode, hresult, reboot, title, error);
+    }
+
+    /// <summary>
+    /// One update by ID. Always exit 0 with <c>{Found, Installed, DownloadResult, ResultCode, HResult, RebootRequired, Title, Error}</c>,
+    /// with Windows Update's own error in Error, as the script did.
+    /// </summary>
+    public static ProcessResult InstallOne(IWindowsUpdateApi api, Guid updateId)
+    {
+        var r = InstallOneDetailed(api, updateId);
+
         return new ProcessResult(0, Json(w =>
         {
-            w.WriteBoolean("Found", found);
-            w.WriteBoolean("Installed", installed);
-            w.WriteNumber("DownloadResult", downloadResult);
-            w.WriteNumber("ResultCode", resultCode);
-            w.WriteNumber("HResult", hresult);
-            w.WriteBoolean("RebootRequired", reboot);
-            w.WriteString("Title", title);
-            w.WriteString("Error", error);
+            w.WriteBoolean("Found", r.Found);
+            w.WriteBoolean("Installed", r.Installed);
+            w.WriteNumber("DownloadResult", r.DownloadResult);
+            w.WriteNumber("ResultCode", r.ResultCode);
+            w.WriteNumber("HResult", r.HResult);
+            w.WriteBoolean("RebootRequired", r.RebootRequired);
+            w.WriteString("Title", r.Title);
+            w.WriteString("Error", r.Error);
         }), "");
     }
 

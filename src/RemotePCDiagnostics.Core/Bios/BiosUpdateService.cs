@@ -32,17 +32,39 @@ public sealed class BiosUpdateService : IBiosUpdateService
         ArgumentNullException.ThrowIfNull(system);
         foreach (var provider in Providers)
         {
-            try
-            {
-                if (provider.CanHandle(system))
-                    return provider;
-            }
-            catch (Exception ex)
-            {
-                _log?.Warn($"BIOS provider '{provider.VendorId}' threw in CanHandle: {ex.Message}");
-            }
+            if (SafeCanHandle(provider, system))
+                return provider;
         }
         return null;
+    }
+
+    private bool SafeCanHandle(IBiosUpdateProvider provider, BiosSystemIdentity system)
+    {
+        try
+        {
+            return provider.CanHandle(system);
+        }
+        catch (Exception ex)
+        {
+            _log?.Warn($"BIOS provider '{provider.VendorId}' threw in CanHandle: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The provider that installs <paramref name="request"/>: the one that found the target (<see cref="BiosLatestInfo.ProviderId"/>)
+    /// when it handles this PC, else this PC's own provider (which then checks the target against its own URL allowlist).
+    /// The safety check and the install both use this, so they always agree on the provider's capabilities.
+    /// </summary>
+    private IBiosUpdateProvider? SelectInstallProvider(BiosInstallRequest request)
+    {
+        var resolved = ResolveProvider(request.System);
+        var wanted = request.Target.ProviderId;
+        if (resolved is null || string.IsNullOrWhiteSpace(wanted) || string.Equals(wanted, resolved.VendorId, StringComparison.OrdinalIgnoreCase))
+            return resolved;
+
+        return Providers.FirstOrDefault(p =>
+            string.Equals(p.VendorId, wanted, StringComparison.OrdinalIgnoreCase) && SafeCanHandle(p, request.System)) ?? resolved;
     }
 
     public async Task<BiosCurrentInfo> GetCurrentVersionAsync(CancellationToken ct = default)
@@ -122,7 +144,7 @@ public sealed class BiosUpdateService : IBiosUpdateService
     public async Task<BiosSafetyCheckResult> EvaluateInstallSafetyAsync(BiosInstallRequest request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var provider = ResolveProvider(request.System);
+        var provider = SelectInstallProvider(request);
         var capabilities = provider?.Capabilities ?? new BiosProviderCapabilities();
         var snapshot = await _safetyProbe.ProbeAsync(ct).ConfigureAwait(false);
         return BiosInstallSafetyEvaluator.Evaluate(snapshot, request, capabilities);
@@ -147,18 +169,9 @@ public sealed class BiosUpdateService : IBiosUpdateService
         if (request.Target.Status != BiosCheckStatus.UpdateAvailable)
             return BiosInstallResult.Refused(request.Target.Message ?? "No installable BIOS update is available.", prev, target);
 
-        var provider = ResolveProvider(request.System);
+        var provider = SelectInstallProvider(request);
         if (provider is null)
             return BiosInstallResult.Unsupported("No BIOS update provider is registered for this hardware.", prev, target);
-
-        if (!string.IsNullOrWhiteSpace(request.Target.ProviderId)
-            && !string.Equals(request.Target.ProviderId, provider.VendorId, StringComparison.OrdinalIgnoreCase))
-        {
-            var targetProvider = Providers.FirstOrDefault(p =>
-                string.Equals(p.VendorId, request.Target.ProviderId, StringComparison.OrdinalIgnoreCase) && p.CanHandle(request.System));
-            if (targetProvider is not null)
-                provider = targetProvider;
-        }
 
         if (!provider.Capabilities.CanInstall)
             return BiosInstallResult.Unsupported($"{provider.DisplayName} BIOS provider does not support automated installation.", prev, target);
@@ -173,6 +186,9 @@ public sealed class BiosUpdateService : IBiosUpdateService
             progress?.Report(new BiosInstallProgress(BiosInstallStage.Failed, 0, reason));
             return BiosInstallResult.Blocked(reason, prev, target);
         }
+
+        // Lets the provider continue when BitLocker suspension doesn't apply only if BitLocker is known to be off.
+        request = request with { BitLockerKnownOff = snapshot.BitLockerActive == false || snapshot.BitLockerSuspended == true };
 
         var approver = string.IsNullOrWhiteSpace(request.ApprovedBy) ? "operator" : request.ApprovedBy.Trim();
         _log?.Info($"Starting BIOS update via '{provider.VendorId}' ({prev} -> {target}, approvedBy={approver}, allowReboot={request.AllowReboot}, suspendBitLocker={request.SuspendBitLocker}).");
