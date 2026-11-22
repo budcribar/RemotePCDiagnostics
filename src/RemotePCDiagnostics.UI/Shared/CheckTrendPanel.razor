@@ -1,0 +1,218 @@
+@using System.Globalization
+@using System.Net
+@using RemotePCDiagnostics.Core.History
+@* A check's History as trends, shown in place on its card: a chart of its one or two key numbers over time, then its runs (date, status,
+   key value), each expanding to its summary and numbers. Drives are per drive. Summaries and labels come from the PC's own history and
+   are shown as text only. *@
+<div class="ct-trend" data-testid="checks-trend-panel" data-check-id="@Module">
+    @if (Entries is null)
+    {
+        <p class="meta" role="status">Reading this check's history…</p>
+    }
+    else if (_runs.Count == 0)
+    {
+        <p class="meta" data-testid="checks-trend-empty">No earlier runs of this check in the last @Days days.</p>
+    }
+    else
+    {
+        @if (_instances.Count > 1)
+        {
+            <div class="ct-trend-instances" role="group" aria-label="Drive">
+                @foreach (var (id, label) in _instances)
+                {
+                    <button type="button" class="btn-small @(id == _instance ? "is-on" : "")" aria-pressed="@(id == _instance ? "true" : "false")" data-testid="checks-trend-instance" data-instance-id="@id" @onclick="() => Pick(id)">@label</button>
+                }
+            </div>
+        }
+        @if (_series.Count > 0)
+        {
+            <div class="ct-trend-charts">
+                @foreach (var s in _series.Take(ChartsShown))
+                {
+                    @Chart(s)
+                }
+            </div>
+        }
+        else
+        {
+            <p class="meta">This check didn't record numbers to chart. Its runs are below.</p>
+        }
+        <ul class="ct-trend-runs" data-testid="checks-trend-runs">
+            @foreach (var r in _runs.Take(_showAll ? int.MaxValue : RunsShown))
+            {
+                var open = _open == r;
+                <li class="ct-trend-run @(open ? "is-open" : "")" data-testid="checks-trend-run">
+                    <button type="button" class="ct-trend-row" aria-expanded="@(open ? "true" : "false")" @onclick="() => _open = open ? null : r">
+                        <span class="dot @Dot(r.Outcome)" aria-hidden="true"></span>
+                        <span>@r.LocalTime.ToString("MMM d, h:mm tt", CultureInfo.CurrentCulture)</span>
+                        <span class="ct-trend-outcome">@OutcomeText(r.Outcome)</span>
+                        <span class="ct-trend-value" data-testid="checks-trend-value">@(HistoryTrends.KeyValue(r) ?? "")</span>
+                    </button>
+                    @if (open)
+                    {
+                        <div class="ct-trend-detail" data-testid="checks-trend-run-detail">
+                            @if (!string.IsNullOrWhiteSpace(r.Summary)) { <p>@r.Summary</p> }
+                            @if (HistoryTrends.Metrics(r) is { Count: > 0 } metrics)
+                            {
+                                <dl class="ct-trend-kv">
+                                    @foreach (var m in metrics)
+                                    {
+                                        <dt>@m.Label</dt><dd>@KeyMetricText.Value(m.Value, m.Unit)</dd>
+                                    }
+                                </dl>
+                            }
+                            @if (r.Details is { Count: > 0 } details)
+                            {
+                                <ul class="ct-trend-lines">
+                                    @foreach (var line in details.Take(12)) { <li>@line</li> }
+                                </ul>
+                            }
+                            @if (!string.IsNullOrEmpty(r.AppVersion)) { <div class="meta">Version @r.AppVersion</div> }
+                        </div>
+                    }
+                </li>
+            }
+        </ul>
+        <div class="ct-trend-foot">
+            @if (_runs.Count > RunsShown && !_showAll)
+            {
+                <button type="button" class="linklike" data-testid="checks-trend-more" @onclick="() => _showAll = true">Show all @_runs.Count runs</button>
+            }
+            <a href="@HistoryHref" data-testid="checks-trend-open-history">Open in History</a>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Module { get; set; } = "";
+    /// <summary>Every History entry read for the page (null while it is being read).</summary>
+    [Parameter] public IReadOnlyList<HistoryEntry>? Entries { get; set; }
+    [Parameter] public int Days { get; set; } = 90;
+    [Parameter] public string HistoryHref { get; set; } = "history";
+
+    private const int ChartsShown = 2, RunsShown = 8, DotEveryRunUpTo = 30;
+    private IReadOnlyList<HistoryEntry>? _seen;
+    private IReadOnlyList<(string Id, string Label)> _instances = [];
+    private string? _instance;
+    private IReadOnlyList<HistoryEntry> _runs = [];
+    private IReadOnlyList<TrendSeries> _series = [];
+    private HistoryEntry? _open;
+    private bool _showAll;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_seen, Entries)) return;
+        _seen = Entries;
+        var all = Entries is null ? [] : HistoryTrends.Runs(Entries, Module);
+        _instances = HistoryTrends.Instances(all);
+        if (_instance is null || !_instances.Any(i => i.Id == _instance))
+            _instance = _instances.Count > 0 ? _instances[0].Id : null;
+        Build(all);
+    }
+
+    private void Pick(string id)
+    {
+        _instance = id;
+        _open = null;
+        _showAll = false;
+        Build(Entries is null ? [] : HistoryTrends.Runs(Entries, Module));
+    }
+
+    private void Build(IReadOnlyList<HistoryEntry> all)
+    {
+        _runs = _instance is null ? all : all.Where(r => string.Equals(r.InstanceId, _instance, StringComparison.OrdinalIgnoreCase)).ToList();
+        _series = HistoryTrends.Series(_runs);
+    }
+
+    private static string Dot(string outcome) => outcome switch
+    {
+        "OK" => "dot-ok",
+        "Warning" => "dot-warning",
+        "Critical" => "dot-error",
+        _ => "dot-neutral",
+    };
+
+    private static string OutcomeText(string outcome) => outcome switch
+    {
+        "OK" => "Passed",
+        "Critical" => "Problem",
+        "" => "Unknown",
+        _ => outcome,
+    };
+
+    private static string F(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
+
+    // An SVG <text> written as markup: inside a code block Razor reads a literal <text> tag as its own. The label is our own formatting.
+    private static MarkupString Axis(double x, double y, string anchor, string label) =>
+        new($"<text x=\"{F(x)}\" y=\"{F(y)}\" text-anchor=\"{anchor}\" class=\"ct-trend-axis\">{WebUtility.HtmlEncode(label)}</text>");
+
+    // A y-axis that starts and ends on round numbers, a tick every round step (three to five), percentages kept within 0 to 100.
+    private static (double Min, double Max, List<double> Ticks) Scale(double lo, double hi, bool percent)
+    {
+        if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+        var raw = (hi - lo) / 2;
+        var pow = Math.Pow(10, Math.Floor(Math.Log10(raw)));
+        var step = new[] { 1, 2, 2.5, 5, 10 }.Select(m => m * pow).First(m => m >= raw);
+        var min = Math.Floor(lo / step) * step;
+        var max = Math.Ceiling(hi / step) * step;
+        if (percent) { min = Math.Max(0, min); max = Math.Min(100, max); }
+        if (max - min < step) max = min + step;
+        var ticks = new List<double>();
+        for (var t = max; t >= min - step / 2; t -= step)
+            ticks.Add(Math.Round(t, 6));
+        return (min, max, ticks);
+    }
+
+    private static string Tick(double v, string unit)
+    {
+        var n = Math.Abs(v) >= 10_000 ? (v / 1000).ToString("0.#", CultureInfo.InvariantCulture) + "k" : v.ToString("#,0.##", CultureInfo.InvariantCulture);
+        return unit is "%" or "°C" ? n + unit : n;
+    }
+
+    // One series per chart (never two y-scales): a 2px line over a recessive grid, a dot for the latest run and runs that warned, the
+    // value, date and status of every run on hover.
+    private static RenderFragment Chart(TrendSeries s) => __builder =>
+    {
+        const double W = 520, H = 150, L = 46, R = 12, T = 12, B = 24;
+        var pts = s.Points;
+        var (min, max, ticks) = Scale(pts.Min(p => p.Value), pts.Max(p => p.Value), s.Unit == "%");
+        var t0 = pts[0].TimeUtc;
+        var span = Math.Max(1, (pts[^1].TimeUtc - t0).TotalSeconds);
+        double X(int i) => pts.Count == 1 ? L + (W - L - R) / 2 : L + (pts[i].TimeUtc - t0).TotalSeconds / span * (W - L - R);
+        double Y(double v) => T + (1 - (v - min) / (max - min)) * (H - T - B);
+        var last = pts[^1];
+        var change = s.ChangeText();
+        <figure class="ct-trend-chart" data-testid="checks-trend-series" data-series-id="@s.Id">
+            <figcaption class="ct-trend-head">
+                <span class="ct-trend-label">@s.Label</span>
+                <span class="ct-trend-latest" data-testid="checks-trend-latest">@KeyMetricText.Value(last.Value, s.Unit)</span>
+                <span class="ct-trend-change @(s.Worsening ? "is-worse" : "")" data-testid="checks-trend-change">@(s.Worsening ? "⚠ " : "")@(change ?? "One run so far")</span>
+            </figcaption>
+            <svg viewBox="0 0 @F(W) @F(H)" role="img" aria-label="@s.Label over time, latest @KeyMetricText.Value(last.Value, s.Unit)">
+                @foreach (var tick in ticks)
+                {
+                    <line x1="@F(L)" x2="@F(W - R)" y1="@F(Y(tick))" y2="@F(Y(tick))" class="ct-trend-grid" />
+                    @Axis(L - 6, Y(tick) + 4, "end", Tick(tick, s.Unit))
+                }
+                @Axis(L, H - 6, "start", t0.ToLocalTime().ToString("MMM d", CultureInfo.CurrentCulture))
+                @if (pts.Count > 1)
+                {
+                    @Axis(W - R, H - 6, "end", last.TimeUtc.ToLocalTime().ToString("MMM d", CultureInfo.CurrentCulture))
+                    <polyline points="@string.Join(" ", pts.Select((p, i) => F(X(i)) + "," + F(Y(p.Value))))" class="ct-trend-line" />
+                }
+                @for (var i = 0; i < pts.Count; i++)
+                {
+                    var p = pts[i];
+                    <g class="ct-trend-pt">
+                        <title>@KeyMetricText.Value(p.Value, s.Unit) · @p.TimeUtc.ToLocalTime().ToString("MMM d, h:mm tt", CultureInfo.CurrentCulture) · @OutcomeText(p.Outcome)</title>
+                        <circle cx="@F(X(i))" cy="@F(Y(p.Value))" r="10" class="ct-trend-hit" />
+                        @if (pts.Count <= DotEveryRunUpTo || i == pts.Count - 1 || p.Outcome is "Warning" or "Critical")
+                        {
+                            <circle cx="@F(X(i))" cy="@F(Y(p.Value))" r="@(i == pts.Count - 1 ? "4.5" : "3")" class="ct-trend-mark @(p.Outcome switch { "Warning" => "is-warn", "Critical" => "is-err", _ => "" })" />
+                        }
+                    </g>
+                }
+            </svg>
+        </figure>
+    };
+}

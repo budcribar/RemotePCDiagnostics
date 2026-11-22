@@ -138,6 +138,28 @@
     }
     private RemotePCDiagnostics.Core.History.HistoryEntry? LastRun(IDiagnosticModule m) => _lastRuns.GetValueOrDefault(m.Name);
 
+    // The History toggle on a check's card: its trend over the last 90 days, read again from History each time it opens (so this
+    // session's runs are in it), off the render thread.
+    private const int TrendDays = 90;
+    private readonly HashSet<string> _historyOpen = new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<RemotePCDiagnostics.Core.History.HistoryEntry>? _trendEntries;
+    private void ToggleHistory(string module)
+    {
+        if (_historyOpen.Remove(module)) return;
+        _historyOpen.Add(module);
+        _ = LoadTrendAsync();
+    }
+    private async Task LoadTrendAsync()
+    {
+        try
+        {
+            var read = await Task.Run(() => History.Read(TimeSpan.FromDays(TrendDays)));
+            _trendEntries = RemotePCDiagnostics.Core.History.HistoryNames.Normalize(read.Entries, Diagnostics.Catalog).ToList();
+        }
+        catch { _trendEntries = []; /* no history source: the panel says there are no earlier runs */ }
+        await InvokeAsync(StateHasChanged);
+    }
+
     // Which page this is, from the address: /stress is the Stress tests page, anything else (/checks) the Checks page.
     // /checks and /stress use this same component, so Blazor keeps the instance (and, with no parameters, doesn't redraw it) when
     // switching between them: redraw on every address change.
@@ -348,6 +370,7 @@
         var canRun = Screen.CanRunSingle(m);
         var history = $"history?module={Uri.EscapeDataString(m.Name)}";
         var done = kind is not (RowKind.NotRun or RowKind.Running);
+        var historyOpen = _historyOpen.Contains(m.Name);
         @* The selected check's card. Not run: a dashed card with the title, "Not run", History and Play, nothing else (earlier
            results live in History only). After a run: a solid card with a status-coloured left edge, the result's facts as bullets
            and a Details toggle that expands the full result in place. *@
@@ -361,8 +384,9 @@
                 <h2 data-testid="checks-detail-title">@m.DisplayName</h2>
                 <span class="chip chip-@CheckRows.ChipKind(kind)" data-testid="checks-detail-status" title="@(done ? $"Finished {r.Timestamp.ToLocalTime():g}" : null)">@CheckRows.Label(kind, RunLabel(m))</span>
                 <span class="ct-card-actions">
-                    @* History lists every run of this check. *@
-                    <a class="ct-history-link" data-testid="checks-detail-history" data-check-id="@m.Name" href="@history"><Icon Name="hist" Size="14" /> History</a>
+                    @* History opens this check's trend in place (its key numbers over time, then its runs); the History page has every run. *@
+                    <button type="button" class="linklike ct-history-link" data-testid="checks-detail-history" data-check-id="@m.Name" aria-expanded="@(historyOpen ? "true" : "false")"
+                            aria-controls="ct-trend-@m.Name" @onclick="() => ToggleHistory(m.Name)"><Icon Name="hist" Size="14" /> History</button>
                     @* Stress tests, the security audit and the audio tests have their own Start/Stop (with length) below, so no second start button here. *@
                     @if (m is ICancellableScan scan && kind == RowKind.Running)
                     {
@@ -393,6 +417,10 @@
                     }
                 }
             </div>
+            @if (historyOpen)
+            {
+                <div id="ct-trend-@m.Name"><CheckTrendPanel Module="@m.Name" Entries="_trendEntries" Days="TrendDays" HistoryHref="@history" /></div>
+            }
         </div>
         @* Collapsed details stay in the page (hidden), so the result data is still there for the shop's tools; they expand it to click. *@
         <div class="ct-detail-body" id="ct-detail-body-@m.Name" @key="m.Name" hidden="@(Collapsible(kind) && !DetailsOpen(m.Name, kind))" data-testid="checks-detail-body">

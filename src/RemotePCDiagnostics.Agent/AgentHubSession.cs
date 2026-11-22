@@ -73,6 +73,9 @@ public sealed class AgentSessionOptions
 
     /// <summary>Persists a per-agent token assigned by the relay on first enrollment (writes secured agent.json).</summary>
     public Action<string>? SaveAgentToken { get; init; }
+
+    /// <summary>The scheduled metrics pass and its outbox (null: this agent runs none, as in tests and session-lifetime agents).</summary>
+    public AgentMetrics? Metrics { get; init; }
 }
 
 /// <summary>
@@ -504,6 +507,9 @@ public sealed class AgentHubWorker(
     public async Task RunLoopAsync(CancellationToken stoppingToken)
     {
         var backoff = new Backoff();
+        // Passes run on their schedule whether or not the relay is reachable; their runs wait in the outbox.
+        using var metricsCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var metricsLoop = _options.Metrics?.RunAsync(IsBusyForMetrics, metricsCts.Token) ?? Task.CompletedTask;
 
         while (!stoppingToken.IsCancellationRequested && !_stopAfterSingleSession)
         {
@@ -553,6 +559,17 @@ public sealed class AgentHubWorker(
                 break;
             }
         }
+        await metricsCts.CancelAsync().ConfigureAwait(false);
+        try { await metricsLoop.ConfigureAwait(false); } catch { }
+    }
+
+    /// <summary>The app (or a session) is running: a scheduled pass waits, so it never competes with a technician's checks.</summary>
+    private bool IsBusyForMetrics()
+    {
+        bool running; string id;
+        lock (_stateGate) { running = _sessionRunning; id = _runningSessionId; }
+        try { return ResolveSessionStatus(running, id).Running; }
+        catch { return running; }
     }
 
     /// <summary>
@@ -596,6 +613,7 @@ public sealed class AgentHubWorker(
             Lifetime = config.AgentLifetime == AgentLifetime.Session
                 ? Lifetime.RemoveAfterSession
                 : Lifetime.Persistent,
+            MetricsScheduleRevision = _options.Metrics?.ScheduleRevision ?? 0,
         };
         if (platform.GetBootTime() is { } booted)
             hello.BootTime = Google.Protobuf.WellKnownTypes.Timestamp.FromDateTimeOffset(booted);
@@ -644,6 +662,7 @@ public sealed class AgentHubWorker(
         }
 
         var heartbeatTask = PumpHeartbeatsAsync(WriteMessageAsync, token);
+        _options.Metrics?.Attach(WriteMessageAsync);
         Task? activeLaunchTask = null;
 
         try
@@ -679,6 +698,19 @@ public sealed class AgentHubWorker(
                         _ = HandleUpdateRpcdStatusAsync(command.UpdateRpcdStatus, WriteMessageAsync, token);
                         break;
 
+                    case HubCommand.BodyOneofCase.MetricsSchedule:
+                        _options.Metrics?.ApplySchedule(command.MetricsSchedule);
+                        break;
+
+                    case HubCommand.BodyOneofCase.MetricsAck:
+                        _options.Metrics?.Acknowledge(command.MetricsAck.ThroughSeq);
+                        break;
+
+                    case HubCommand.BodyOneofCase.CollectMetrics:
+                        if (_options.Metrics?.CollectNow() == false)
+                            Log("Collect metrics: a pass was asked for a moment ago; ignored.");
+                        break;
+
                     case HubCommand.BodyOneofCase.AssignAgentToken:
                         var assigned = command.AssignAgentToken?.AgentToken?.Trim();
                         if (!string.IsNullOrEmpty(assigned))
@@ -700,14 +732,18 @@ public sealed class AgentHubWorker(
         }
         finally
         {
+            bool wasCurrent;
             lock (_stateGate)
             {
-                if (ReferenceEquals(_currentStreamCts, streamCts))
+                wasCurrent = ReferenceEquals(_currentStreamCts, streamCts);
+                if (wasCurrent)
                 {
                     _currentWrite = null;
                     _currentStreamCts = null;
                 }
             }
+            if (wasCurrent)
+                _options.Metrics?.Attach(null);
             await streamCts.CancelAsync().ConfigureAwait(false);
             try { await heartbeatTask.ConfigureAwait(false); } catch { }
             // Completes when the launch ends, or once it reached READY and no longer depends on this stream.
@@ -746,6 +782,7 @@ public sealed class AgentHubWorker(
                     SessionRunning = running,
                     SessionId = sessionId,
                     CachedAppVersion = platform.GetCachedOrInstalledAppVersion(),
+                    MetricsScheduleRevision = _options.Metrics?.ScheduleRevision ?? 0,
                 };
                 await writeAsync(new AgentMessage { Heartbeat = hb }, ct).ConfigureAwait(false);
                 AnnounceLink(true);

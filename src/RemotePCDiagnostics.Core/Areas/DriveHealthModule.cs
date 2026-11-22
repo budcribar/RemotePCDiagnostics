@@ -451,8 +451,23 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
             : drives.Count == 1 ? $"1 drive · healthy{freePart}" : $"{drives.Count} drives · all healthy{freePart}";
         if (degrading > 0)
             summary = $"{summary} ({Plural(degrading, "drive")} getting worse)";
-        return new(cards, summary, AreaReport.Worst(cards.Select(c => c.Level)));
+        // One drive's own result (each drive is its own History series): free space, life used and media errors over time.
+        return new(cards, summary, AreaReport.Worst(cards.Select(c => c.Level))) { KeyMetrics = drives.Count == 1 ? KeyMetrics(drives[0], volumes.Of(drives[0])) : null };
     }
+
+    /// <summary>What a drive's History charts: free space shrinking toward full, SMART life used and uncorrected errors climbing.</summary>
+    public static IReadOnlyList<KeyMetric>? KeyMetrics(DriveHealth d, IReadOnlyList<DriveCapacityInfo> volumes)
+    {
+        var list = new List<KeyMetric>();
+        if (volumes.Count > 0) list.Add(new("drive.free", "Free space", Math.Round(volumes.Sum(v => v.FreeBytes) / GiB, 1), "GB", MetricTrend.HigherIsBetter));
+        if (d.Wear is { } wear) list.Add(new("drive.wear", "Life used", wear, "%", MetricTrend.LowerIsBetter));
+        if (d.ReadErrors is not null || d.WriteErrors is not null)
+            list.Add(new("drive.errors", "Uncorrected errors", (d.ReadErrors ?? 0) + (d.WriteErrors ?? 0), "", MetricTrend.LowerIsBetter));
+        if (d.TemperatureC is > 0) list.Add(new("drive.temp", "Temperature", d.TemperatureC.Value, "°C", MetricTrend.LowerIsBetter));
+        return list.Count > 0 ? list : null;
+    }
+
+    private const double GiB = 1024d * 1024 * 1024;
 }
 
 /// <summary>The PC's volumes and the physical drive each one is on.</summary>

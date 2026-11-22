@@ -345,6 +345,10 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
         }
 
         var status = AreaReport.Worst(cards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));
-        return new(cards, parts.Count > 0 ? string.Join(" · ", parts) : "No process details available.", status);
+        // Tracked over time: memory in use rising as junk piles up, and how long the PC goes between restarts.
+        var metrics = new List<KeyMetric>();
+        if (memory is { } m2) metrics.Add(CheckKeyMetrics.MemoryUsed(m2.UsedPercent));
+        if (uptime is not null) metrics.Add(CheckKeyMetrics.Uptime(TimeSpan.FromDays(uptime.Days) + TimeSpan.FromHours(uptime.Hours)));
+        return new(cards, parts.Count > 0 ? string.Join(" · ", parts) : "No process details available.", status) { KeyMetrics = metrics.Count > 0 ? metrics : null };
     }
 }

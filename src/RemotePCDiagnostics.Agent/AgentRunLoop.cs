@@ -5,6 +5,13 @@ namespace RemotePCDiagnostics.Agent;
 /// <summary>The service and <c>run</c> share one loop: the relay stream, the badge file, and the desktop-install watch.</summary>
 internal static class AgentRunLoop
 {
+    /// <summary>The installed app's folder (osquery is in it), or null when the app isn't installed.</summary>
+    private static string? AppFolder()
+    {
+        try { return Path.GetDirectoryName(AgentPaths.TryFindLocalInstalledHostExe() ?? AgentPaths.TryFindStoreHostExe()); }
+        catch { return null; }
+    }
+
     public static async Task RunAsync(AgentConfig config, Action<string>? log, CancellationToken ct)
     {
         using var updater = new RpcdRemoteUpdater(
@@ -23,8 +30,28 @@ internal static class AgentRunLoop
         var publisher = new AgentStatusPublisher();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var removing = 0;
+        // Scheduled metrics (persistent agents only): the fleet admin's schedule, a capped outbox in the protected state folder.
+        AgentMetrics? metrics = null;
+        if (config.AgentLifetime != AgentLifetime.Session && OperatingSystem.IsWindows())
+        {
+            try
+            {
+                var metricsLog = RemotePCDiagnostics.Core.Logging.AppLoggerFactory.From(log).CreateLogger("AgentMetrics");
+                // The sensor driver is opened for the one reading and closed again, not held for the life of the service.
+                async Task<RemotePCDiagnostics.Core.Sensors.SensorSnapshot?> ReadSensorsAsync(CancellationToken token)
+                {
+                    using var provider = AgentAdminHost.CreateWindowsSensorProvider(metricsLog, out var reader);
+                    return reader is null ? null : await reader(token).ConfigureAwait(false);
+                }
+                metrics = new AgentMetrics(config.MachineId, RemotePCDiagnostics.Core.ProtectedState.Folder(),
+                    () => new RemotePCDiagnostics.Core.Metrics.CoreMetricsProbes(AppFolder(), ReadSensorsAsync, metricsLog),
+                    AgentMetrics.EventLogHistory(log), AgentPaths.GetInstalledOrCachedAppVersion, log: log);
+            }
+            catch (Exception ex) { log?.Invoke($"Scheduled metrics unavailable: {ex.Message}"); }
+        }
         var worker = new AgentHubWorker(config, platform, new AgentSessionOptions
         {
+            Metrics = metrics,
             Log = log,
             LinkChanged = (connected, group) => publisher.Publish(connected, group),
             ReleaseAnnounced = (stable, prerelease) => publisher.PublishRelease(stable, prerelease),

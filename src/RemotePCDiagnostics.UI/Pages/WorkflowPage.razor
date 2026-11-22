@@ -108,7 +108,7 @@
         @if (s.Stage != WorkflowStage.Idle && s.StartedUtc is not null)
         {
             @* What the stopped run already did to the PC: the report box, with the same report as the saved file. *@
-            <WorkflowReportBox Html="@ReportHtml(s)" />
+            <WorkflowReportBox Html="@ReportHtml(s)" MessageChanged="m => _changeMessage = m" />
         }
         <button class="btn btn-primary" data-testid="wf-start-checks" disabled="@Flow.Busy" @onclick="RunChecks"><Icon Name="play" Size="12" /> Start: run all checks</button>
         break;
@@ -272,7 +272,7 @@
                 </div>
             </div>
         }
-        <WorkflowReportBox Html="@ReportHtml(s)" />
+        <WorkflowReportBox Html="@ReportHtml(s)" MessageChanged="m => _changeMessage = m" />
         break;
 
     default:
@@ -450,13 +450,13 @@
     private AutoLogonStatus? _logon;
     private string _user = "", _password = "";
     private bool _clientSignsIn, _starting, _showPassword, _adminActionBusy;
-    private string? _message, _startError;
+    private string? _message, _startError, _changeMessage;
     private ElementReference _passwordBox;
 
     /// <summary>The page's state for browser agents (workflow-data). Sign-in is reported as yes/no only.</summary>
     private string WorkflowJson(WorkflowState s) => WorkflowExport.ToJson(s, Flow.Busy, Flow.WaitingForRestart, Flow.Status ?? (s.Stage == WorkflowStage.Checking ? "Running checks…" : null),
         _message, Flow.CheckItems, _openAreas,
-        new WorkflowExport.SignIn(_logon is { AlreadyAutomatic: true }, _user.Length > 0 && _password.Length > 0, _clientSignsIn, CanStart && !_starting));
+        new WorkflowExport.SignIn(_logon is { AlreadyAutomatic: true }, _user.Length > 0 && _password.Length > 0, _clientSignsIn, CanStart && !_starting), Flow.CanChangeAfterRun, _changeMessage);
 
     private bool CanStart => _logon is { AlreadyAutomatic: true } || _clientSignsIn || (_user.Length > 0 && _password.Length > 0);
 
