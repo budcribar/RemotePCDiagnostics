@@ -37,6 +37,7 @@ public sealed class AgentWmiTests
     [InlineData(@"root\cimv2", "DELETE FROM Win32_Process")]
     [InlineData(@"root\cimv2", "")]
     [InlineData(@"root\cimv2", "SELECT * FROM Win32_Process\u0000x")]
+    [InlineData(@"root\cimv2", "REFERENCES OF {Win32_Process.Handle=\"4\"}")]
     public async Task The_agent_runs_only_selects_in_the_namespaces_checks_read(string ns, string wql)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -49,6 +50,18 @@ public sealed class AgentWmiTests
             await task;
         }
         Assert.Equal(0, fake.Calls);
+    }
+
+    [Fact]
+    public void A_disks_reliability_counters_are_read_through_its_link_as_windows_requires()
+    {
+        // A real MSFT_PhysicalDisk.ObjectId (name and GUIDs changed): backslashes and quotes must be escaped inside the WQL string.
+        const string objectId = @"{1}\\PC1\root/Microsoft/Windows/Storage/Providers_v2\SPACES_PhysicalDisk.ObjectId=""{dd282e87-0000-0000-0000-000000000000}:PD:{12d8ecbc-0000-0000-0000-000000000000}""";
+        var wql = Core.Areas.DriveReader.CounterSql(objectId);
+        Assert.Equal(
+            @"ASSOCIATORS OF {MSFT_PhysicalDisk.ObjectId=""{1}\\\\PC1\\root/Microsoft/Windows/Storage/Providers_v2\\SPACES_PhysicalDisk.ObjectId=\""{dd282e87-0000-0000-0000-000000000000}:PD:{12d8ecbc-0000-0000-0000-000000000000}\""""} WHERE AssocClass = MSFT_PhysicalDiskToStorageReliabilityCounter",
+            wql);
+        Assert.Null(WmiQueryPolicy.Problem(Core.Areas.DriveReader.StorageNamespace, wql));
     }
 
     [Fact]

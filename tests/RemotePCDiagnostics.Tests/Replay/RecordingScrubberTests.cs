@@ -22,6 +22,22 @@ public sealed class RecordingScrubberTests
     }
 
     [Fact]
+    public void ScrubsThePcNameInAQueryTheSameWayAsInTheRowItCameFrom()
+    {
+        var s = Scrubber();
+        const string objectId = @"{1}\\BUDSLAPTOP\root/Microsoft/Windows/Storage/Providers_v2\SPACES_PhysicalDisk.ObjectId=""{x}:PD:{y}""";
+        var disk = s.Scrub(new RecordedCall
+        {
+            Kind = RecordedCall.WmiKind, Namespace = @"root\Microsoft\Windows\Storage", Query = "q",
+            Rows = [new() { ["ObjectId"] = JsonSerializer.SerializeToElement(objectId) }],
+        });
+        var counter = s.Scrub(new RecordedCall { Kind = RecordedCall.WmiKind, Query = Core.Areas.DriveReader.CounterSql(objectId), Rows = [] });
+        Assert.DoesNotContain("BUDSLAPTOP", counter.Query);
+        // Replay builds the counter query from the scrubbed disk row, so it must equal the scrubbed recorded query.
+        Assert.Equal(Core.Areas.DriveReader.CounterSql(disk.Rows![0]["ObjectId"].GetString()!), counter.Query);
+    }
+
+    [Fact]
     public void ReplacesSerialsInWmiRowsAndOsqueryOutput()
     {
         var s = Scrubber();

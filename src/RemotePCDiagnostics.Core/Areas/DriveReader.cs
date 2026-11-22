@@ -12,11 +12,15 @@ public static class DriveReader
 {
     public const string StorageNamespace = @"root\Microsoft\Windows\Storage";
     public const string PartitionSql = "SELECT DiskNumber, DriveLetter FROM MSFT_Partition";
-    public const string DiskSql = "SELECT DeviceId, UniqueId, FriendlyName, SerialNumber, MediaType, BusType, HealthStatus, OperationalStatus, Size FROM MSFT_PhysicalDisk";
+    public const string DiskSql = "SELECT ObjectId, DeviceId, UniqueId, FriendlyName, SerialNumber, MediaType, BusType, HealthStatus, OperationalStatus, Size FROM MSFT_PhysicalDisk";
 
-    /// <summary>One drive's reliability counters. <paramref name="deviceId"/> is the disk number, so only digits are put in the query.</summary>
-    public static string CounterSql(string deviceId) =>
-        $"SELECT DeviceId, Temperature, Wear, ReadErrorsUncorrected, WriteErrorsUncorrected, PowerOnHours FROM MSFT_StorageReliabilityCounter WHERE DeviceId = '{deviceId}'";
+    /// <summary>
+    /// One drive's reliability counters. Windows only hands them out through the disk's link to them: a plain SELECT on
+    /// MSFT_StorageReliabilityCounter returns nothing, even as administrator. <paramref name="objectId"/> is the disk's ObjectId,
+    /// escaped for a WQL string (backslashes and quotes).
+    /// </summary>
+    public static string CounterSql(string objectId) =>
+        $"ASSOCIATORS OF {{MSFT_PhysicalDisk.ObjectId=\"{objectId.Replace(@"\", @"\\").Replace("\"", "\\\"")}\"}} WHERE AssocClass = MSFT_PhysicalDiskToStorageReliabilityCounter";
 
     public static async Task<IReadOnlyList<DriveHealth>?> ReadWmiAsync(IWmiSource wmi, CancellationToken ct)
     {
@@ -33,10 +37,11 @@ public static class DriveReader
         foreach (var d in disks.Rows!)
         {
             var id = d.Str("DeviceId").Trim();
+            var objectId = d.Str("ObjectId");
             WmiRow? counter = null;
-            if (id.Length is > 0 and <= 10 && id.All(char.IsAsciiDigit))
+            if (objectId.Length > 0)
             {
-                var c = await wmi.QueryAsync(StorageNamespace, CounterSql(id), ct).ConfigureAwait(false);
+                var c = await wmi.QueryAsync(StorageNamespace, CounterSql(objectId), ct).ConfigureAwait(false);
                 counter = c.Rows is { Count: > 0 } rows ? rows[0] : null;
             }
             var diskLetters = long.TryParse(id, out var num) && letters.TryGetValue(num, out var ls) ? new string([.. ls]) : "";
