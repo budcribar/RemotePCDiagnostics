@@ -5,7 +5,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>
 /// Reads the PC's batteries. From WMI when it is given (the <c>root\wmi</c> battery classes, the same driver data osquery reads), otherwise
-/// from osquery <c>battery</c>. Null means the batteries couldn't be read; an empty list means the PC has none.
+/// from osquery <c>battery</c> (also when WMI fails and osquery is given). Null means the batteries couldn't be read; an empty list means the PC has none.
 /// </summary>
 public static class BatteryReader
 {
@@ -24,7 +24,8 @@ public static class BatteryReader
 
     public static async Task<IReadOnlyList<BatteryStatus>?> ReadAsync(IWmiSource? wmi, OsqueryRunner? osquery, CancellationToken ct)
     {
-        if (wmi is not null) return await ReadWmiAsync(wmi, ct).ConfigureAwait(false);
+        // WMI first; osquery when WMI couldn't be read (in the app, when the Agent isn't connected).
+        if (wmi is not null && await ReadWmiAsync(wmi, ct).ConfigureAwait(false) is { } fromWmi) return fromWmi;
         if (osquery is null) return null;
         var q = await osquery.RunQueryAsync(OsquerySql, ct).ConfigureAwait(false);
         return q.Success ? q.Rows!.Select(BatteryStatus.FromRow).ToList() : null;

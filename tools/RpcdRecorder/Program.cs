@@ -1,7 +1,7 @@
 // Records the raw answers this PC gives to the checks that support record and replay, scrubs personal details, and saves a recording
 // folder for the replay tests (docs/record-replay.md). It only reads: no fix runs, nothing on the PC changes.
 //
-//   dotnet run --project tools/RpcdRecorder -- --out <folder> [--osquery <path to osqueryi.exe>] [--note "text"]
+//   dotnet run --project tools/RpcdRecorder -- --out <folder>   (from an admin prompt, as the Agent runs) [--osquery <path to osqueryi.exe>] [--note "text"]
 //
 // Each check runs twice: once on the new WMI path and once on the old osquery / powercfg path, so the tests can check the two agree.
 
@@ -19,6 +19,9 @@ var osqueryPath = Arg("--osquery") ?? Environment.GetEnvironmentVariable(Osquery
 var note = Arg("--note");
 
 if (!OperatingSystem.IsWindows()) { Console.Error.WriteLine("Run this on the Windows PC to record."); return 2; }
+// The app reads WMI through the Agent, which runs as administrator: record from an admin prompt so the answers match.
+if (!Environment.IsPrivilegedProcess)
+    Console.WriteLine("Not running as administrator. The Agent reads WMI as administrator, so some answers (the power plan) will differ. Run from an admin prompt.");
 
 var recorder = new CallRecorder();
 var liveWmi = new SystemWmiSource();
@@ -105,7 +108,7 @@ static async Task<RecordedMachine> DescribeMachineAsync(IWmiSource wmi)
     var model = Clean(cs?.Str("Model"));
     return new RecordedMachine
     {
-        ProductId = sku.Length > 0 ? sku : boardProduct.Length > 0 ? boardProduct : model,
+        ProductId = ProductId(Clean(cs?.Str("Manufacturer")), sku, boardProduct, model),
         Manufacturer = Clean(cs?.Str("Manufacturer")),
         Model = model,
         SystemSku = sku,
@@ -118,6 +121,18 @@ static async Task<RecordedMachine> DescribeMachineAsync(IWmiSource wmi)
         AppVersion = typeof(BatteryPowerModule).Assembly.GetName().Version?.ToString() ?? "",
         Elevated = Environment.IsPrivilegedProcess,
     };
+}
+
+/// <summary>
+/// The BIOS identifier that names the hardware platform. HP's is the System Board ID (Win32_BaseBoard.Product, "8CBE" on the OmniBook X 14
+/// and EliteBook Ultra G1q), so its recordings are keyed by maker and board ("HP-8CBE"). Other makers' board names are generic (Lenovo's
+/// "LNVNB161216"), so their SKU is used, which on Lenovo holds the machine type ("LENOVO_MT_82R4_…").
+/// </summary>
+static string ProductId(string manufacturer, string sku, string boardProduct, string model)
+{
+    var hp = manufacturer.Equals("HP", StringComparison.OrdinalIgnoreCase) || manufacturer.StartsWith("Hewlett", StringComparison.OrdinalIgnoreCase);
+    if (hp && boardProduct.Length > 0) return "HP-" + boardProduct;
+    return sku.Length > 0 ? sku : boardProduct.Length > 0 ? boardProduct : model;
 }
 
 /// <summary>Firmware placeholders ("To be filled by O.E.M.", "Default string") count as empty.</summary>

@@ -51,7 +51,8 @@ public static class HostServices
         if (session.Mode == SessionMode.Local) services.AddSingleton<ICopilotHandoff, CopilotHandoff>();
         services.AddSingleton<ResultStore>();
         services.AddSingleton<OsqueryRunner>(_ => new OsqueryRunner(options: new OsqueryOptions { Log = L<OsqueryRunner>() }));
-        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(_ => new RemotePCDiagnostics.Core.DataSources.SystemWmiSource(L<RemotePCDiagnostics.Core.DataSources.SystemWmiSource>()));
+        // WMI is read by the Agent, never by the app (it has the rights some classes need).
+        services.AddSingleton<RemotePCDiagnostics.Core.DataSources.IWmiSource>(sp => new RemotePCDiagnostics.Core.DataSources.AgentWmiSource(sp.GetRequiredService<IElevatedCommandBridge>()));
         // Read-only EC fan diagnostic, active only on Lenovo IdeaPad 1 15ALC7 (82R4) with PawnIO installed.
         services.AddSingleton<IEcFanSource>(_ => LenovoEcFanSource.Create(loggerFactory.CreateLogger(typeof(LenovoEcFanSource).FullName!)));
         services.AddSingleton<ISensorProvider>(sp => new LhmSensorProvider(

@@ -33,7 +33,7 @@ public sealed class BatteryPowerModule(OsqueryRunner runner, SystemCommandRunner
     {
         var total = commands is not null || wmi is not null ? 2 : 1;
         progress.ReportStep(1, total, "Checking battery health…");
-        var batteries = await BatteryReader.ReadAsync(wmi, wmi is null ? Runner : null, ct).ConfigureAwait(false);
+        var batteries = await BatteryReader.ReadAsync(wmi, Runner.Exists ? Runner : null, ct).ConfigureAwait(false);
         string? plan = null;
         if (total == 2)
         {
