@@ -1,0 +1,500 @@
+{
+  "moduleName": "SecurityEssentials",
+  "status": "Warning",
+  "message": "6 settings worth changing (6 can be fixed here) · Unwanted app blocking is off · Network protection is off · 1 of 5 protection rules on",
+  "report": {
+    "cards": [
+      {
+        "id": "encryption",
+        "title": "Drive encryption",
+        "level": "Ok",
+        "headline": "Drive C: is encrypted",
+        "meta": "Device encryption",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Drive C:",
+              "Encrypted"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Windows edition",
+              "Home (Device encryption)"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Why it matters",
+              "Files on this drive can't be read if the drive is removed from the PC."
+            ]
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "secureboot",
+        "title": "Secure Boot",
+        "level": "Ok",
+        "headline": "Secure Boot is on",
+        "meta": "UEFI startup",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Secure Boot",
+              "On"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Startup mode",
+              "UEFI"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Why it matters",
+              "Only trusted, signed startup software can load before Windows."
+            ]
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "tpm",
+        "title": "Security chip (TPM)",
+        "level": "Ok",
+        "headline": "TPM 2.0 ready",
+        "meta": "SampleCo",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Present",
+              "Yes"
+            ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Version",
+              "2.0"
+            ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Ready to protect keys",
+              "Yes"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Maker",
+              "SampleCo"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Why it matters",
+              "The TPM keeps encryption keys and Windows Hello sign-in safe, even if someone takes the drive out."
+            ]
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "antivirus",
+        "title": "Antivirus",
+        "level": "Ok",
+        "headline": "Microsoft Defender is protecting this PC",
+        "meta": "",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "Antivirus",
+              "Windows Defender"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Microsoft Defender",
+              "Active"
+            ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Real-time protection",
+              "On"
+            ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Tamper Protection",
+              "On"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Why it matters",
+              "Antivirus with real-time protection blocks malware as it arrives, before it can run."
+            ]
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "firewall",
+        "title": "Windows Firewall",
+        "level": "Ok",
+        "headline": "Firewall is on",
+        "meta": "",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Domain networks",
+              "On"
+            ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Private networks",
+              "On"
+            ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Public networks",
+              "On"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Why it matters",
+              "The firewall stops other devices on the network from connecting to programs on this PC."
+            ]
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "pua",
+        "title": "Potentially unwanted app blocking",
+        "level": "Warning",
+        "headline": "Unwanted app blocking is off",
+        "meta": "",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Warning",
+            "values": [
+              "Potentially unwanted app blocking",
+              "Off"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Why it matters",
+              "Microsoft Defender can block adware, browser hijackers and junk bundled with free downloads."
+            ]
+          }
+        ],
+        "note": "Turns on Defender's potentially unwanted app (PUA) blocking (the Settings toggle under Windows Security > App & browser control > Reputation-based protection). Some download helpers and toolbars may be blocked; you can allow one in Windows Security > Protection history.",
+        "actions": [
+          {
+            "kind": "ApplySecuritySetting",
+            "buttonText": "Turn on PUA blocking",
+            "target": "pua",
+            "targetLabel": "Potentially unwanted app blocking"
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "networkprotection",
+        "title": "Network protection",
+        "level": "Warning",
+        "headline": "Network protection is off",
+        "meta": "",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Warning",
+            "values": [
+              "Network protection",
+              "Off"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Why it matters",
+              "Network protection stops every app, not just Edge, from connecting to known phishing and malware sites."
+            ]
+          }
+        ],
+        "note": "Turns on Microsoft Defender network protection. A site Microsoft rates as dangerous is blocked in every browser and app.",
+        "actions": [
+          {
+            "kind": "ApplySecuritySetting",
+            "buttonText": "Turn on network protection",
+            "target": "network-protection",
+            "targetLabel": "Network protection"
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "asr",
+        "title": "Attack Surface Reduction rules",
+        "level": "Warning",
+        "headline": "1 of 5 protection rules on",
+        "meta": "Microsoft Defender",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Block password theft from the Windows sign-in process (LSASS)",
+              "On (blocks)"
+            ]
+          },
+          {
+            "level": "Warning",
+            "values": [
+              "Block abuse of vulnerable signed drivers",
+              "Off"
+            ]
+          },
+          {
+            "level": "Warning",
+            "values": [
+              "Block scripts that hide what they do (obfuscated)",
+              "Off"
+            ]
+          },
+          {
+            "level": "Warning",
+            "values": [
+              "Block Office apps from starting other programs",
+              "Off"
+            ]
+          },
+          {
+            "level": "Warning",
+            "values": [
+              "Block programs in email attachments and webmail",
+              "Off"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Why it matters",
+              "Attack Surface Reduction rules block the most common ways malware gets in: Office macros starting programs, disguised scripts, email attachments, and password theft. Windows doesn't turn them on by itself."
+            ]
+          }
+        ],
+        "note": "Turns on 5 Microsoft Defender rules: Block password theft from the Windows sign-in process (LSASS); Block abuse of vulnerable signed drivers; Block scripts that hide what they do (obfuscated); Block Office apps from starting other programs; Block programs in email attachments and webmail. Rarely, an Office add-in or an old script tool is blocked; Windows Security shows a notice when that happens.",
+        "actions": [
+          {
+            "kind": "ApplySecuritySetting",
+            "buttonText": "Turn on 5 protection rules",
+            "target": "asr",
+            "targetLabel": "Attack Surface Reduction rules"
+          }
+        ],
+        "preserveRowOrder": true
+      },
+      {
+        "id": "llmnr",
+        "title": "Local name lookups (LLMNR)",
+        "level": "Warning",
+        "headline": "LLMNR is on",
+        "meta": "",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Warning",
+            "values": [
+              "LLMNR",
+              "On (Windows default)"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Why it matters",
+              "LLMNR is an old way of finding PCs by name on a local network. On public Wi-Fi, an attacker can answer these lookups and capture your sign-in details."
+            ]
+          }
+        ],
+        "note": "Turns off LLMNR with the Windows policy (EnableMulticast = 0). Normal DNS keeps working.",
+        "actions": [
+          {
+            "kind": "ApplySecuritySetting",
+            "buttonText": "Turn off LLMNR",
+            "target": "llmnr",
+            "targetLabel": "Local name lookups (LLMNR)"
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "autorun",
+        "title": "AutoRun for drives",
+        "level": "Warning",
+        "headline": "AutoRun is on for removable, CD/DVD, fixed and RAM drives",
+        "meta": "",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Warning",
+            "values": [
+              "Removable drives (USB sticks, memory cards)",
+              "On (your user policy) · D:"
+            ]
+          },
+          {
+            "level": "Warning",
+            "values": [
+              "CD/DVD drives",
+              "On (your user policy)"
+            ]
+          },
+          {
+            "level": "Warning",
+            "values": [
+              "Fixed drives (internal and external disks)",
+              "On (your user policy) · C:"
+            ]
+          },
+          {
+            "level": "Warning",
+            "values": [
+              "RAM disks",
+              "On (your user policy)"
+            ]
+          },
+          {
+            "level": "Ok",
+            "values": [
+              "Off for",
+              "network and unknown drives"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Why it matters",
+              "Windows can start a program automatically when a USB stick or disc is inserted, which is a way malware spreads."
+            ]
+          }
+        ],
+        "note": "Turns off AutoRun on all drives (policy NoDriveTypeAutoRun = 255). You can still open a drive yourself in File Explorer.",
+        "actions": [
+          {
+            "kind": "ApplySecuritySetting",
+            "buttonText": "Turn off AutoRun",
+            "target": "autorun",
+            "targetLabel": "AutoRun for drives"
+          }
+        ],
+        "preserveRowOrder": true
+      },
+      {
+        "id": "guest",
+        "title": "Network drive guest logons",
+        "level": "Warning",
+        "headline": "Insecure guest logons are allowed",
+        "meta": "",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Warning",
+            "values": [
+              "Guest access to network drives",
+              "Allowed (Windows Home default)"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Why it matters",
+              "Guest logons let this PC open shared folders without a password. Someone on the same network can pretend to be that shared folder and send this PC harmful files."
+            ]
+          }
+        ],
+        "note": "Turns off insecure guest logons with the Windows policy (AllowInsecureGuestAuth = 0), so shared folders need a user name and password. An older network drive (NAS) that only allows guest access stops opening until you set a password on it. Not ticked by default for that reason.",
+        "actions": [
+          {
+            "kind": "ApplySecuritySetting",
+            "buttonText": "Turn off insecure guest logons",
+            "target": "guest-logons",
+            "targetLabel": "Network drive guest logons"
+          }
+        ],
+        "preserveRowOrder": false
+      }
+    ],
+    "summary": "6 settings worth changing (6 can be fixed here) · Unwanted app blocking is off · Network protection is off · 1 of 5 protection rules on",
+    "status": "Warning",
+    "cancelled": false
+  }
+}

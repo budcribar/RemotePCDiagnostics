@@ -1,6 +1,7 @@
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Security;
+using RemotePCDiagnostics.Legacy;
 
 namespace RemotePCDiagnostics.Tests;
 
@@ -31,7 +32,7 @@ public class SecurityFixesTests
     [Fact]
     public void Probe_output_becomes_fixable_cards()
     {
-        var f = SecurityEssentialsModule.ParseProbe(ProbeOutput, Tpm2);
+        var f = PowerShellSecurityEssentialsSource.ParseProbe(ProbeOutput, Tpm2);
         Assert.True(f.DefenderActive);
         Assert.Equal(0, f.Pua);
         Assert.Empty(f.AsrRules!);
@@ -54,7 +55,7 @@ public class SecurityFixesTests
     [Fact]
     public void Asr_rules_parse_and_count()
     {
-        var f = SecurityEssentialsModule.ParseProbe("DefenderMode=Normal\nAsr=9E6C4E1F-7D60-472F-BA1A-A39EF669E4B2:1,d4f940ab-401b-4efc-aadc-ad5f3c50688a:2", null);
+        var f = PowerShellSecurityEssentialsSource.ParseProbe("DefenderMode=Normal\nAsr=9E6C4E1F-7D60-472F-BA1A-A39EF669E4B2:1,d4f940ab-401b-4efc-aadc-ad5f3c50688a:2", null);
         Assert.Equal(1, f.AsrRules!["9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2"]);
         var card = Card(SecurityEssentialsModule.Build(f), "asr");
         Assert.Equal("1 of 5 protection rules on", card.Headline);
@@ -66,7 +67,7 @@ public class SecurityFixesTests
     {
         // #71: the explanation row said "It's off" under an "on" headline.
         var asr = string.Join(",", SecurityFixes.SafeAsrRules.Select(r => r.Id + ":1"));
-        var f = SecurityEssentialsModule.ParseProbe($"DefenderMode=Normal\nPua=1\nNetworkProtection=1\nAsr={asr}", Tpm2);
+        var f = PowerShellSecurityEssentialsSource.ParseProbe($"DefenderMode=Normal\nPua=1\nNetworkProtection=1\nAsr={asr}", Tpm2);
         var rep = SecurityEssentialsModule.Build(f);
         foreach (var id in new[] { "pua", "networkprotection", "asr" })
         {
@@ -80,7 +81,7 @@ public class SecurityFixesTests
     [Fact]
     public void Another_antivirus_means_no_defender_fixes()
     {
-        var f = SecurityEssentialsModule.ParseProbe("DefenderMode=Passive mode\nPua=0\nNetworkProtection=0\nAsr=\nAntivirus=Windows Defender;Norton 360", Tpm2);
+        var f = PowerShellSecurityEssentialsSource.ParseProbe("DefenderMode=Passive mode\nPua=0\nNetworkProtection=0\nAsr=\nAntivirus=Windows Defender;Norton 360", Tpm2);
         var rep = SecurityEssentialsModule.Build(f);
         Assert.Equal("Protected by Norton 360", Card(rep, "antivirus").Headline);
         Assert.Equal(AreaLevel.Ok, Card(rep, "antivirus").Level);
@@ -94,7 +95,7 @@ public class SecurityFixesTests
     [Fact]
     public void Defender_real_time_off_is_critical()
     {
-        var f = SecurityEssentialsModule.ParseProbe("DefenderMode=Normal\nRealTime=False\nTamper=True", Tpm2);
+        var f = PowerShellSecurityEssentialsSource.ParseProbe("DefenderMode=Normal\nRealTime=False\nTamper=True", Tpm2);
         var rep = SecurityEssentialsModule.Build(f);
         Assert.Equal(DiagnosticStatus.Error, rep.Status);
         Assert.Equal("Real-time protection is off", Card(rep, "antivirus").Headline);
@@ -121,7 +122,7 @@ public class SecurityFixesTests
     [Fact]
     public void Fixes_reach_the_fix_list_as_undoable_admin_fixes()
     {
-        var f = SecurityEssentialsModule.ParseProbe("DefenderMode=Normal\nPua=0\nNetworkProtection=1\nAsr=\nLlmnr=0\nAutoRun=255", null);
+        var f = PowerShellSecurityEssentialsSource.ParseProbe("DefenderMode=Normal\nPua=0\nNetworkProtection=1\nAsr=\nLlmnr=0\nAutoRun=255", null);
         var rep = SecurityEssentialsModule.Build(f);
         var result = new DiagnosticResult<AreaReport>(ModuleSlugs.SecurityEssentials, rep.Status, rep.Summary, DateTimeOffset.Now, rep);
         var fixes = RemotePCDiagnostics.Core.Workflow.FixCatalog.Build([result], [], new RemediationService(new SystemCommandRunner()));
@@ -138,7 +139,7 @@ public class SecurityFixesTests
     [Fact]
     public void Guest_logon_fix_is_offered_on_home_but_not_ticked_and_plans_never_mention_admin()
     {
-        var f = SecurityEssentialsModule.ParseProbe("Edition=Core\nDefaultMode=Normal\nLlmnr=0\nAutoRun=255\nInsecureGuest=", null);
+        var f = PowerShellSecurityEssentialsSource.ParseProbe("Edition=Core\nDefaultMode=Normal\nLlmnr=0\nAutoRun=255\nInsecureGuest=", null);
         var rep = SecurityEssentialsModule.Build(f);
         var result = new DiagnosticResult<AreaReport>(ModuleSlugs.SecurityEssentials, rep.Status, rep.Summary, DateTimeOffset.Now, rep);
         var plans = new RemediationService(new SystemCommandRunner());
