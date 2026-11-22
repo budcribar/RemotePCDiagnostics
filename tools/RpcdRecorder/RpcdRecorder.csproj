@@ -5,6 +5,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Each module project carries its own module.json (embedded in its DLL); the copies next to the exe are not used. -->
+    <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\RemotePCDiagnostics.Legacy\RemotePCDiagnostics.Legacy.csproj" />
