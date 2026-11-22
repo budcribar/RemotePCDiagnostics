@@ -11,6 +11,7 @@ using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.DataSources;
 using RemotePCDiagnostics.Core.Osquery;
 using RemotePCDiagnostics.Core.Recording;
+using RemotePCDiagnostics.Core.Security;
 using RemotePCDiagnostics.Legacy;
 
 var outRoot = Arg("--out") ?? Path.Combine(Environment.CurrentDirectory, "recordings");
@@ -59,6 +60,8 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     // Without netsh and the event logs (Wi-Fi and event names hold the network's name and its router's address) and offline (no probes or DNS timing).
     ("Network (WMI + registry)", new NetworkModule(new WmiNetworkSource(wmi, registry), includeWifiAndIpConfig: true, offline: true)),
     ("Network (legacy: osquery + PowerShell)", new NetworkModule(new OsqueryNetworkSource(osquery, commands), includeWifiAndIpConfig: true, offline: true)),
+    ("Security essentials (WMI + registry + tpmtool)", new SecurityEssentialsModule(new WmiSecurityEssentialsSource(wmi, registry, commands))),
+    ("Security essentials (legacy: PowerShell + tpmtool)", new SecurityEssentialsModule(new PowerShellSecurityEssentialsSource(commands))),
 };
 foreach (var (label, module) in checks)
 {

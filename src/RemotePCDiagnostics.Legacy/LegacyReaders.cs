@@ -9,7 +9,7 @@ namespace RemotePCDiagnostics.Legacy;
 /// <summary>Registers the Store edition's readers: the Agent's when it is connected, these otherwise.</summary>
 public static class LegacyReaders
 {
-    /// <summary>Replaces the Agent-only readers (battery, drives, hardware, services, drivers, programs) with Agent-or-legacy ones.</summary>
+    /// <summary>Replaces the Agent-only readers (battery, drives, hardware, services, drivers, programs, security essentials) with Agent-or-legacy ones.</summary>
     public static IServiceCollection AddLegacyFallbacks(this IServiceCollection services) => services
         .AddSingleton<IBatteryPowerSource>(sp => new AgentOrFallbackBatteryPowerSource(sp.GetRequiredService<IElevatedCommandBridge>(),
             new WmiBatteryPowerSource(sp.GetRequiredService<Core.DataSources.IWmiSource>()),
@@ -32,7 +32,11 @@ public static class LegacyReaders
         // Programs read the registry in the app either way; only the Windows version and updates need the Agent's WMI.
         .AddSingleton<IProgramsSource>(sp => new AgentOrFallbackProgramsSource(sp.GetRequiredService<IElevatedCommandBridge>(),
             new WmiProgramsSource(sp.GetRequiredService<Core.DataSources.IWmiSource>(), sp.GetRequiredService<Core.DataSources.IRegistrySource>()),
-            new OsqueryProgramsSource(sp.GetRequiredService<OsqueryRunner>())));
+            new OsqueryProgramsSource(sp.GetRequiredService<OsqueryRunner>())))
+        .AddSingleton<Core.Security.ISecurityEssentialsSource>(sp => new Core.Security.AgentOrFallbackSecurityEssentialsSource(sp.GetRequiredService<IElevatedCommandBridge>(),
+            new Core.Security.WmiSecurityEssentialsSource(sp.GetRequiredService<Core.DataSources.IWmiSource>(), sp.GetRequiredService<Core.DataSources.IRegistrySource>(),
+                sp.GetRequiredService<SystemCommandRunner>()),
+            new PowerShellSecurityEssentialsSource(sp.GetRequiredService<SystemCommandRunner>())));
 }
 
 /// <summary>Batteries from osquery <c>battery</c>, the plan from <c>powercfg /getactivescheme</c>. Both work as a standard user.</summary>

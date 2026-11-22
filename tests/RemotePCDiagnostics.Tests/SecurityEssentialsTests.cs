@@ -1,6 +1,7 @@
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Security;
+using RemotePCDiagnostics.Legacy;
 
 namespace RemotePCDiagnostics.Tests;
 
@@ -57,25 +58,25 @@ public class SecurityEssentialsTests
     [Fact]
     public void ParseTpm_reads_tpmtool_lines()
     {
-        var t = SecurityEssentialsModule.ParseTpm(TpmOutput)!;
+        var t = TpmReader.Parse(TpmOutput)!;
         Assert.True(t.Present);
         Assert.True(t.IsVersion2);
         Assert.True(t.ReadyForStorage);
         Assert.Equal("AMD", t.Manufacturer);
         Assert.False(t.Pcr7BindingPossible);
-        Assert.Null(SecurityEssentialsModule.ParseTpm("tpmtool: unknown command"));
+        Assert.Null(TpmReader.Parse("tpmtool: unknown command"));
     }
 
     [Fact]
     public void ParseProbe_reads_key_values_and_blanks_as_unknown()
     {
-        var f = SecurityEssentialsModule.ParseProbe("SecureBoot=0\r\nFirmware=UEFI\r\nEdition=Core\r\nSystemDrive=C:\r\nEncryption=0\r\n", null);
+        var f = PowerShellSecurityEssentialsSource.ParseProbe("SecureBoot=0\r\nFirmware=UEFI\r\nEdition=Core\r\nSystemDrive=C:\r\nEncryption=0\r\n", null);
         Assert.False(f.SecureBoot);
         Assert.True(f.IsUefi);
         Assert.True(f.IsHome);
         Assert.Equal(0, f.Encryption);
 
-        var blank = SecurityEssentialsModule.ParseProbe("SecureBoot=\nFirmware=Legacy\nEdition=Professional\nEncryption=\n", null);
+        var blank = PowerShellSecurityEssentialsSource.ParseProbe("SecureBoot=\nFirmware=Legacy\nEdition=Professional\nEncryption=\n", null);
         Assert.Null(blank.SecureBoot);
         Assert.Null(blank.Encryption);
         Assert.True(blank.IsLegacy);
@@ -85,7 +86,7 @@ public class SecurityEssentialsTests
     [Fact]
     public void Secure_boot_off_explains_why_device_encryption_is_missing()
     {
-        var rep = SecurityEssentialsModule.Build(new(false, "UEFI", "Core", 0, SecurityEssentialsModule.ParseTpm(TpmOutput)));
+        var rep = SecurityEssentialsModule.Build(new(false, "UEFI", "Core", 0, TpmReader.Parse(TpmOutput)));
         Assert.Equal(DiagnosticStatus.Warning, rep.Status);
         Assert.StartsWith("5 settings worth changing (3 can be fixed here) · Drive C: isn't encrypted · Secure Boot is off", rep.Summary);
 
@@ -145,7 +146,7 @@ public class SecurityEssentialsTests
     [Fact]
     public void ParseProbe_reads_autorun_policies_and_drives()
     {
-        var f = SecurityEssentialsModule.ParseProbe("AutoRun=\nAutoRunUser=149\nAutoRunLetters=8\nDrives=C:3,d:5,E:2,bad,F:x\n", null);
+        var f = PowerShellSecurityEssentialsSource.ParseProbe("AutoRun=\nAutoRunUser=149\nAutoRunLetters=8\nDrives=C:3,d:5,E:2,bad,F:x\n", null);
         Assert.Null(f.AutoRunPolicy);
         Assert.Equal(149, f.AutoRunUserPolicy);
         Assert.Equal(8, f.AutoRunLetterPolicy);
@@ -194,7 +195,7 @@ public class SecurityEssentialsTests
         var d = new ModuleCatalog().Get(ModuleIds.SecurityEssentials)!;
         Assert.Equal(ModuleKind.Check, d.Kind);
         Assert.Equal(ModuleGroups.Security, d.Group);
-        var m = new SecurityEssentialsModule(new SystemCommandRunner());
+        var m = new SecurityEssentialsModule(new PowerShellSecurityEssentialsSource(new SystemCommandRunner()));
         Assert.True(((IDiagnosticModule)m).IncludeInRunAll);
         Assert.Equal(ModuleSlugs.SecurityEssentials, m.Name);
     }

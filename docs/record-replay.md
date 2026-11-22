@@ -54,6 +54,7 @@ A check whose answers a recording doesn't hold (a recording made before the reco
 | Device Manager & drivers | WMI (`Win32_PnPEntity`, `Win32_PnPSignedDriver`) | PowerShell, osquery |
 | Programs & updates | WMI (`Win32_OperatingSystem`, `Win32_QuickFixEngineering`), the registry's Uninstall keys, Store apps from Windows' package API | osquery |
 | Network (adapters, IP configuration) | WMI (`Win32_NetworkAdapter`, `MSFT_NetAdapterStatisticsSettingData`, `Win32_NetworkAdapterConfiguration`), the registry (DNS set by hand, proxy) | osquery `interface_details`, PowerShell (`Get-NetAdapterStatistics`, `Get-NetIPConfiguration`) |
+| Security essentials | WMI (Defender, Security Center, BitLocker, firewall profiles, `Win32_LogicalDisk`), the registry (Secure Boot, firmware type, edition, policies), tpmtool | PowerShell probe, tpmtool |
 
 The Network check (`INetworkSource`) is recorded without `netsh wlan` and the network event logs, whose answers hold the Wi-Fi network's name
 and its router's address, and offline: the reachability probes and the DNS speed comparison ask the live network, so they aren't replayed.
@@ -61,7 +62,7 @@ and its router's address, and offline: the reachability probes and the DNS speed
 ## Readers and editions
 
 Each check reads through an interface (`IBatteryPowerSource`, `IDriveSource`, `IHardwareInventorySource`, `IServiceSource`,
-`IDeviceDriverSource`, `IProgramsSource`), so a build carries only the readers it uses:
+`IDeviceDriverSource`, `IProgramsSource`, `ISecurityEssentialsSource`), so a build carries only the readers it uses:
 
 - The Setup edition (the default build) reads WMI through the Agent (`AgentWmiSource`), never in the app. Run out of process (in the module
   host), a module asks the app for its WMI (the `wmi.query` capability), and the app asks the Agent. The registry keys Programs reads, and the

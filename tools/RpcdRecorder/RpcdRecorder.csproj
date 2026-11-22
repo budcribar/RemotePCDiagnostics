@@ -18,5 +18,6 @@
     <ProjectReference Include="..\..\src\Modules\DeviceDrivers\RemotePCDiagnostics.Modules.DeviceDrivers.csproj" />
     <ProjectReference Include="..\..\src\Modules\Programs\RemotePCDiagnostics.Modules.Programs.csproj" />
     <ProjectReference Include="..\..\src\Modules\Network\RemotePCDiagnostics.Modules.Network.csproj" />
+    <ProjectReference Include="..\..\src\Modules\SecurityEssentials\RemotePCDiagnostics.Modules.SecurityEssentials.csproj" />
   </ItemGroup>
 </Project>
