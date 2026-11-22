@@ -55,6 +55,7 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | module | 1 | Same (a module's own page outside Checks) |
 | module | 2 | The storage bytes of checks version 2. `disk-space-counts` is also present before the first scan, then without `data-result-run-id` |
 | module | 3 | The fix metadata of checks version 3 |
+| module | 4 | `mem-suggest-data` (Resource hogs) and `storage-cleanup-data` (Drive health): each suggestion with its id, actions and their undo, and the last result. Buttons carry `data-action` (`mem-act`, `mem-force`, `mem-undo`, `storage-delete`) with `data-suggestion-id`, and `mem-act` also `data-action-type`. Confirm with `mem-confirm-yes` or `storage-confirm-yes` |
 
 ## Checks list (`checks-list-data`)
 

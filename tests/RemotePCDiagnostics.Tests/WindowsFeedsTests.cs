@@ -68,6 +68,29 @@ public class WindowsFeedsTests
         Assert.Null(RegistryAllowlist.Find(@"HKCU\Software\Policies\Microsoft\Windows\Explorer|DisableSearchBoxSuggestions")); // deliberately not used
     }
 
+    [Fact]
+    public async Task Agent_copy_lists_each_suggestion_with_its_actions_undo_and_last_result()
+    {
+        var (_, _, svc) = Make();
+        await svc.ScanAsync();
+        var widgets = svc.Suggestions.Single(x => x.Id == "widgets");
+        await svc.ApplyAsync(widgets, widgets.Actions[0]);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(AgentExports.MemorySuggestions(svc));
+        var root = doc.RootElement;
+        Assert.True(root.GetProperty("scanned").GetBoolean());
+        var row = root.GetProperty("suggestions").EnumerateArray().Single(x => x.GetProperty("id").GetString() == "widgets");
+        var action = Assert.Single(row.GetProperty("actions").EnumerateArray());
+        Assert.Equal("DisableWidgets", action.GetProperty("type").GetString());
+        Assert.Equal("full", action.GetProperty("undo").GetString());
+        Assert.True(row.GetProperty("result").GetProperty("succeeded").GetBoolean());
+        Assert.True(row.GetProperty("canUndo").GetBoolean());
+
+        using var storage = System.Text.Json.JsonDocument.Parse(AgentExports.StorageCleanup(svc));
+        Assert.False(storage.RootElement.GetProperty("scanned").GetBoolean());
+        Assert.Empty(storage.RootElement.GetProperty("suggestions").EnumerateArray());
+    }
+
     // ---- engine: Widgets ----
 
     [Fact]

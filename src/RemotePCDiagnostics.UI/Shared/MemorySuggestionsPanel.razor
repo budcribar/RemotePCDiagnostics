@@ -2,6 +2,7 @@
 @implements IDisposable
 @* "Ways to use less memory" on the Resource hogs page. All actions run on the host PC and only from an explicit click. *@
 <section class="ms-panel" data-testid="mem-suggest">
+    <AgentData TestId="mem-suggest-data" Json="@RemotePCDiagnostics.Core.Areas.AgentExports.MemorySuggestions(Svc)" />
     <div class="ms-head">
         <h2 class="section-title" tabindex="-1" @ref="_heading" data-testid="mem-suggest-title">Ways to use less memory</h2>
         <button class="btn-small" data-testid="mem-rescan" disabled="@(Svc.Scanning || Svc.Busy is not null)" @onclick="() => Svc.ScanAsync()">@(Svc.Scanning ? "Checking…" : "Check again")</button>
@@ -71,15 +72,15 @@
                         {
                             @foreach (var a in s.Actions)
                             {
-                                <button class="btn-small @(a == s.Actions[0] ? "btn-outline" : "")" data-testid="mem-act-@a.Type" disabled="@(Svc.Busy is not null || Svc.Scanning)"
+                                <button class="btn-small @(a == s.Actions[0] ? "btn-outline" : "")" data-testid="mem-act-@a.Type" data-action="mem-act" data-suggestion-id="@s.Id" data-action-type="@a.Type" disabled="@(Svc.Busy is not null || Svc.Scanning)"
                                         @onclick="() => Click(s, a)">@(Svc.Busy == s.Id ? "Working…" : a.Label)</button>
                             }
                             @if (res?.CanForceClose == true && s.Actions.FirstOrDefault(a => a.Type == MemoryActionType.CloseApp) is { } ca)
                             {
                                 var force = new MemoryAction(MemoryActionType.ForceCloseApp, ca.Target, "Force close", $"Force close {MemoryText.FriendlyAppName(ca.Target)}? Unsaved work in it WILL be lost.");
-                                <button class="btn-small btn-stop" data-testid="mem-force" disabled="@(Svc.Busy is not null)" @onclick="() => Click(s, force)">Force close</button>
+                                <button class="btn-small btn-stop" data-testid="mem-force" data-action="mem-force" data-suggestion-id="@s.Id" disabled="@(Svc.Busy is not null)" @onclick="() => Click(s, force)">Force close</button>
                             }
-                            @if (undo is not null) { <button class="btn-small" data-testid="mem-undo" disabled="@(Svc.Busy is not null)" @onclick="() => Svc.UndoAsync(undo)">Undo</button> }
+                            @if (undo is not null) { <button class="btn-small" data-testid="mem-undo" data-action="mem-undo" data-suggestion-id="@s.Id" disabled="@(Svc.Busy is not null)" @onclick="() => Svc.UndoAsync(undo)">Undo</button> }
                         }
                     </div>
                 }

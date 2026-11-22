@@ -201,6 +201,90 @@ public static class AgentExports
         };
     }
 
+    // ---- Memory suggestions and storage cleanup (Resource hogs and Drive health pages) --------------------------------------
+
+    public const int MaxSuggestions = 60;
+
+    private static string UndoKey(Changes.UndoSupport u) => u switch
+    {
+        Changes.UndoSupport.Full => "full",
+        Changes.UndoSupport.NothingToUndo => "nothing",
+        Changes.UndoSupport.Reinstall => "reinstall",
+        _ => "none",
+    };
+
+    private static object? SuggestionResultExport(Optimizations.SuggestionResult? r) => r is null ? null : new
+    {
+        succeeded = r.Success,
+        skipped = r.Skipped ? true : (bool?)null,
+        message = T(r.Message),
+        action = r.Action?.ToString(),
+        undone = r.Undone ? true : (bool?)null,
+        canForceClose = r.CanForceClose ? true : (bool?)null,
+        at = new DateTimeOffset(r.When.ToUniversalTime(), TimeSpan.Zero).ToString("O"),
+    };
+
+    private static object SuggestionExport(Optimizations.MemorySuggestionService svc, Optimizations.MemorySuggestion s) => new
+    {
+        id = V(s.Id),
+        title = V(s.Title),
+        why = T(s.Why),
+        note = T(s.Note),
+        category = V(s.Category),
+        kind = s.Kind.ToString().ToLowerInvariant(),
+        risk = s.Risk.ToString().ToLowerInvariant(),
+        savingBytes = s.SavingBytes,
+        defaultOn = s.DefaultOn,
+        actions = s.Actions.Select(a => new
+        {
+            type = a.Type.ToString(),
+            label = V(a.Label),
+            confirm = a.Confirm is not null ? true : (bool?)null,
+            undo = UndoKey(s.Undo ?? Changes.Undoability.Of(a.Type)),
+        }).ToList(),
+        canUndo = svc.UndoFor(s.Id) is not null ? true : (bool?)null,
+        result = SuggestionResultExport(svc.ResultFor(s.Id)),
+    };
+
+    /// <summary>
+    /// The Ways to use less memory panel for browser agents (mem-suggest-data). Each action is the panel's
+    /// <c>[data-action=mem-act][data-suggestion-id][data-action-type]</c> button; one with confirm true then needs mem-confirm-yes.
+    /// </summary>
+    public static string MemorySuggestions(Optimizations.MemorySuggestionService svc) => JsonSerializer.Serialize(new
+    {
+        schema = SchemaVersion,
+        scanned = svc.Snapshot is not null,
+        scanning = svc.Scanning,
+        busy = V(svc.Busy),
+        error = T(svc.ScanError),
+        freedBytes = svc.TotalFreedBytes,
+        suggestions = svc.Suggestions.Take(MaxSuggestions).Select(s => SuggestionExport(svc, s)).ToList(),
+    }, Json);
+
+    /// <summary>
+    /// The Caches and leftovers panel for browser agents (storage-cleanup-data): nothing is listed until storage-scan has measured.
+    /// Each delete is <c>[data-action=storage-delete][data-suggestion-id]</c>, then storage-confirm-yes. Deleting can't be undone.
+    /// </summary>
+    public static string StorageCleanup(Optimizations.MemorySuggestionService svc) => JsonSerializer.Serialize(new
+    {
+        schema = SchemaVersion,
+        scanned = svc.StorageScanned,
+        scanning = svc.ScanningStorage,
+        busy = V(svc.Busy),
+        error = T(svc.StorageError),
+        freedBytes = svc.StorageFreedBytes,
+        suggestions = svc.StorageSuggestions.Take(MaxSuggestions).Select(s => new
+        {
+            id = V(s.Id),
+            title = V(s.Title),
+            why = T(s.Why),
+            sizeBytes = svc.StorageItems.FirstOrDefault(i => i.Id == s.Id)?.SizeBytes,
+            defaultOn = s.DefaultOn,
+            undo = "none",
+            result = SuggestionResultExport(svc.ResultFor(s.Id)),
+        }).ToList(),
+    }, Json);
+
     // ---- Undo changes (History and Benchmark pages) -----------------------------------------------------------------------
 
     /// <summary>

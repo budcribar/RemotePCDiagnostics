@@ -17,7 +17,7 @@ public static class BrowserContract
     public const int Certificates = 1;
     public const int History = 3;
     public const int About = 2;
-    public const int Module = 3;
+    public const int Module = 4;
 
     /// <summary>Every page marker value and its version.</summary>
     public static IReadOnlyDictionary<string, int> Pages { get; } = new Dictionary<string, int>(StringComparer.Ordinal)
