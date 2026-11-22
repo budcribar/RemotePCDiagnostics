@@ -1443,7 +1443,7 @@ public class WorkflowTests
         var clips = AppRemoval.Packages.Single(p => p.Id == "clipchamp");
         var todo = AppRemoval.Packages.Single(p => p.Id == "todo");
         var mem = new GatedReinstallMemorySystem(weather, clips, todo);
-        var journal = new InMemoryChangeJournal();
+        var journal = new MemoryChangeJournal();
         var wRec = StoreReinstall.Record(weather, 1024, "tech");
         var cRec = StoreReinstall.Record(clips, 2048, "tech");
         var tRec = StoreReinstall.Record(todo, 512, "tech");
