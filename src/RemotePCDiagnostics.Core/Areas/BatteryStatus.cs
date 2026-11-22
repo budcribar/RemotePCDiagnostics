@@ -1,40 +1,12 @@
-using RemotePCDiagnostics.Core.Osquery;
-
 namespace RemotePCDiagnostics.Core.Areas;
 
-/// <summary>One battery from osquery <c>battery</c>. <see cref="DesignCapacity"/> and <see cref="MaxCapacity"/> are in mWh.</summary>
+/// <summary>One battery. <see cref="DesignCapacity"/> and <see cref="MaxCapacity"/> are in mWh.</summary>
 public sealed record BatteryStatus(
     string Model, string Manufacturer, string Chemistry, string State,
     int? PercentRemaining, int? DesignCapacity, int? MaxCapacity, int? CycleCount)
 {
     /// <summary>Below this health a battery needs attention.</summary>
     public const int LowHealthPercent = 70;
-
-    /// <summary>
-    /// On Windows, osquery's <c>battery</c> table divides the capacities Windows reports in mWh by an assumed 12 V, to show them in
-    /// mAh like its macOS table (osquery/tables/system/windows/battery.cpp). Multiplying back gives mWh again, to within 12 mWh.
-    /// </summary>
-    public const int OsqueryAssumedVolts = 12;
-
-    /// <summary>One row of osquery <c>battery</c>, with the capacities in mWh.</summary>
-    public static BatteryStatus FromRow(IReadOnlyDictionary<string, string> r) => new(
-        r.Str("model"), r.Str("manufacturer"), OsqueryChemistry(r.Str("chemistry")), r.Str("state"),
-        r.Int("percent_remaining") is >= 0 and <= 100 and var pct ? pct : null, ToMilliwattHours(r.Int("designed_capacity")), ToMilliwattHours(r.Int("max_capacity")), r.Int("cycle_count"));
-
-    /// <summary>
-    /// The chemistry is four letters at most. osquery copies the driver's 4-byte field as a C string, so without a terminating zero it runs on
-    /// into whatever follows ("LION\u0018τ" on an HP OmniBook X): keep the leading printable letters, as the WMI path does.
-    /// </summary>
-    private static string OsqueryChemistry(string s)
-    {
-        var n = 0;
-        while (n < s.Length && n < 4 && s[n] is >= ' ' and <= '~') n++;
-        return s[..n].Trim();
-    }
-
-    /// <summary>Back to mWh; null when the driver didn't know the capacity (osquery passes BATTERY_UNKNOWN_CAPACITY through, divided by 12).</summary>
-    private static int? ToMilliwattHours(int? osqueryMilliampHours) =>
-        osqueryMilliampHours is { } v && BatteryReader.Capacity((long)v * OsqueryAssumedVolts) is { } mWh ? (int)mWh : null;
 
     public int? HealthPercent => DesignCapacity is > 0 && MaxCapacity is > 0
         ? (int)Math.Round(Math.Clamp(MaxCapacity.Value * 100.0 / DesignCapacity.Value, 0, 120))

@@ -34,3 +34,14 @@ every recording under `RPD_RECORDINGS_DIR`. For each one they check:
 - **Known failures:** a recording edited to a known bad state (worn battery, power saver) must give the known verdict.
 
 A question the recording doesn't hold fails the snapshot test: the check now asks something new, so record the PC again.
+
+## Readers and editions
+
+Each check reads through an interface (`IBatteryPowerSource`, `IDriveSource`, and more as checks move), so a build carries only the
+readers it uses:
+
+- The Setup edition (the default build) reads everything through the Agent (`WmiBatteryPowerSource`, `WmiDriveSource` on `AgentWmiSource`).
+- The Store edition (`-p:RpcdEdition=Store`) may run without an Agent. It also ships `RemotePCDiagnostics.Legacy` (osquery, powercfg,
+  PowerShell, all as a standard user) and uses it whenever no Agent is connected.
+
+The recorder runs both, and the replay tests compare them on every recording, so the Store edition's readers stay checked against real PCs.

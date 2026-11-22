@@ -1,6 +1,7 @@
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Recording;
+using RemotePCDiagnostics.Legacy;
 
 namespace RemotePCDiagnostics.Tests.Replay;
 
@@ -26,12 +27,12 @@ public sealed class BatteryPowerReplayTests
     {
         var rec = RecordingLibrary.Load(name);
         var pc = new ReplayedPc(rec);
-        Assert.SkipUnless(pc.Has(c => c.Query == BatteryReader.StaticSql) && pc.Has(c => c.Args?.LastOrDefault() == BatteryReader.OsquerySql),
+        Assert.SkipUnless(pc.Has(c => c.Query == BatteryReader.StaticSql) && pc.Has(c => c.Args?.LastOrDefault() == OsqueryBatteryPowerSource.BatterySql),
             "This recording doesn't hold both the WMI and the osquery battery answers.");
         var ct = TestContext.Current.CancellationToken;
 
         var wmi = await BatteryReader.ReadWmiAsync(pc.Wmi, ct);
-        var osq = await BatteryReader.ReadAsync(null, pc.Osquery, ct);
+        var osq = await new OsqueryBatteryPowerSource(pc.Osquery).ReadBatteriesAsync(ct);
         Assert.NotNull(wmi);
         Assert.NotNull(osq);
         Assert.Equal(osq.Count, wmi.Count);
@@ -50,13 +51,17 @@ public sealed class BatteryPowerReplayTests
 
         var newReport = (AreaReport)(await pc.BatteryPower().RefreshAsync(null, ct)).Payload!;
         var oldReport = (AreaReport)(await new ReplayedPc(rec).BatteryPowerOld().RefreshAsync(null, ct)).Payload!;
-        Assert.Equal(Plan(oldReport), Plan(newReport));
-        Assert.Equal(oldReport.Status, newReport.Status);
+        // Win32_PowerPlan answers only an administrator (the Agent): a recording made without admin rights has no WMI plan to compare.
+        if (rec.Machine.Elevated)
+        {
+            Assert.Equal(Plan(oldReport), Plan(newReport));
+            Assert.Equal(oldReport.Status, newReport.Status);
+        }
 
         static void AssertClose(int? expected, int? actual)
         {
             Assert.Equal(expected is null, actual is null);
-            if (expected is { } e && actual is { } a) Assert.InRange(a - e, 0, BatteryStatus.OsqueryAssumedVolts - 1);
+            if (expected is { } e && actual is { } a) Assert.InRange(a - e, 0, OsqueryBatteryPowerSource.OsqueryAssumedVolts - 1);
         }
         static string Plan(AreaReport r) => r.Cards.Single(c => c.Id == "plan").Headline;
     }

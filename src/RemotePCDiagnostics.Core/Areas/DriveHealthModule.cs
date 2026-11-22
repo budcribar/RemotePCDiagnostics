@@ -10,7 +10,12 @@ public sealed record DriveHealth(
 {
     public static DriveHealth FromRow(IReadOnlyDictionary<string, string> r) => new(
         r.Str("Name"), r.Str("Serial"), r.Str("MediaType"), r.Str("BusType"), r.Str("Health"), r.Str("Operational"),
-        r.Long("Size"), r.Int("Temperature"), r.Int("Wear"), r.Long("ReadErrors"), r.Long("WriteErrors"), r.Long("PowerOnHours"), r.Str("Letters"), r.Str("Id"));
+        r.Long("Size") is > 0 and var size ? size : null, Range(r.Int("Temperature"), 1, 150), Range(r.Int("Wear"), 0, 100),
+        NonNegative(r.Long("ReadErrors")), NonNegative(r.Long("WriteErrors")), NonNegative(r.Long("PowerOnHours")), r.Str("Letters"), r.Str("Id"));
+
+    // A counter outside what a drive can report is a bad reading, not a value to show (or to warn on).
+    internal static int? Range(long? v, int min, int max) => v is { } x && x >= min && x <= max ? (int)x : null;
+    internal static long? NonNegative(long? v) => v is >= 0 ? v : null;
 
     /// <summary>The raw id the instance key is hashed from: the serial number (also known to the osquery fallback), else the storage
     /// UniqueId (WWN/EUI), else the name. Never the disk number, which changes when drives are added.</summary>
@@ -56,21 +61,19 @@ public sealed record DriveHealth(
 }
 
 /// <summary>
-/// Drive health. osquery has no SMART table on Windows, so health comes from Windows Storage
-/// (Get-PhysicalDisk HealthStatus/OperationalStatus + Get-StorageReliabilityCounter) via PowerShell.
-/// If that fails, drives are listed from osquery disk_info with health marked as not reported.
+/// Drive health from <paramref name="drives"/>: Windows Storage WMI through the Agent in the app (<see cref="WmiDriveSource"/>; the Agent
+/// can read the reliability counters), the app's own source in the module host (<see cref="HostDriveSource"/>), and in the Store edition the
+/// legacy Get-PhysicalDisk / osquery reader when no Agent is connected.
 /// One instance per physical drive (keyed on <see cref="DriveHealth.RawId"/>); the page still shows one report with a card per drive
 /// (<see cref="Combine"/>). One drive read serves every drive of a run.
 /// Free space is read with the drives (<see cref="DriveVolumes"/>): each volume counts for the drive it is on, so a drive with a
 /// nearly full volume needs attention, in its own result as well as in the report.
 /// </summary>
-/// <remarks>In user mode (the module host) <paramref name="host"/> is set: the health script and the drive list run in the app
-/// (<c>storage.drives</c>, <c>osquery.select</c>), since the reliability counters need administrator rights.</remarks>
-public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunner osquery, IRetrimHistory? retrims = null, Func<DateTimeOffset>? clock = null,
-    Plugins.IHostQueries? host = null, IDriveHealthHistoryStore? historyStore = null, Func<IReadOnlyList<DriveCapacityInfo>>? volumes = null)
-    : AreaModuleBase(commands.Log ?? osquery.Options.Log), IPerDeviceModule, IInstanceSummary, IHasAreaPanels
+public sealed class DriveHealthModule(IDriveSource drives, IRetrimHistory? retrims = null, Func<DateTimeOffset>? clock = null,
+    IDriveHealthHistoryStore? historyStore = null, Func<IReadOnlyList<DriveCapacityInfo>>? volumes = null, ILogger? log = null)
+    : AreaModuleBase(log), IPerDeviceModule, IInstanceSummary, IHasAreaPanels
 {
-    private readonly IDriveHealthHistoryStore _history = historyStore ?? new DriveHealthHistoryStore(DriveHealthHistoryStore.DefaultPath(), commands.Log ?? osquery.Options.Log);
+    private readonly IDriveHealthHistoryStore _history = historyStore ?? new DriveHealthHistoryStore(DriveHealthHistoryStore.DefaultPath(), log);
     public AreaPanels Panels => AreaPanels.StorageCleanup;
     /// <summary>The instance used when the drive list itself can't be read, so the failure is still reported as a run.</summary>
     public const string AllDrivesKey = "all";
@@ -86,10 +89,6 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     public override Guid Id => ModuleIds.DriveHealth;
     public override string DisplayName => "Drive health & free space";
     protected override string FailedMessage => "Couldn't check drive health on this PC.";
-
-    public static string Script => Scripts.PowerShellScripts.Get("DriveHealth");
-
-    public static IReadOnlyList<string> Arguments => SystemCommandRunner.PowerShellArgs(Script);
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
@@ -198,46 +197,17 @@ public sealed class DriveHealthModule(SystemCommandRunner commands, OsqueryRunne
     {
         var now = Now();
         progress.ReportStep(1, 2, "Checking drive health and SMART status…");
-        List<DriveHealth>? drives = null;
-        if (commands.ElevatedBridge is { IsConnected: true } bridge)
+        var list = await drives.ReadDrivesAsync(ct).ConfigureAwait(false);
+        if (list is not { Drives.Count: > 0 })
         {
-            try
-            {
-                var bridgedDrives = await bridge.ReadDrivesAsync(ct).ConfigureAwait(false);
-                if (bridgedDrives is { Count: > 0 })
-                    drives = bridgedDrives.ToList();
-            }
-            catch (Exception ex)
-            {
-                LogWarn($"{Name}: elevated bridge ReadDrivesAsync failed: {ex.Message}");
-            }
+            LogWarn($"{Name}: the drives couldn't be read");
+            return new(null, null, now, null, now);
         }
-
-        if (drives is null || drives.Count == 0)
-        {
-            var pr = host is null ? await commands.RunPowerShellAsync(Script, ct).ConfigureAwait(false)
-                : await Plugins.HostQueryExtensions.AskAsync(host, Name, Logger, h => h.ReadDrivesAsync(ct)).ConfigureAwait(false);
-            if (pr is { ExitCode: 0 })
-            {
-                try { drives = OsqueryJson.ParseRows(pr.StdOut).Select(DriveHealth.FromRow).ToList(); }
-                catch (FormatException ex) { LogWarn($"{Name}: storage health output unreadable: {ex.Message}"); }
-            }
-        }
-        if (drives is { Count: > 0 })
-        {
-            _history.Record(drives, now);
-            progress.ReportStep(2, 2, "Checking SSD optimization history…");
-            return new(drives, await ReadRetrimsAsync(ct).ConfigureAwait(false), now, null, now);
-        }
-
-        LogWarn($"{Name}: Windows storage health unavailable; falling back to osquery disk_info (no health data)");
-        progress.ReportStep(2, 2, "Reading drive list…");
-        var q = host is null ? await osquery.RunQueryAsync(HardwareInventory.DiskSql, ct).ConfigureAwait(false)
-            : await Plugins.HostQueryExtensions.AskAsync(host, Name, Logger, h => h.SelectAsync(HardwareInventory.DiskSql, ct)).ConfigureAwait(false);
-        if (q is not { Success: true }) return new(null, null, now, null, now);
-        var fallback = q.Rows!.Select(DiskInfo.FromRow)
-            .Select(d => new DriveHealth(d.HardwareModel, d.Serial, "", d.Type, "", "", d.SizeBytes, null, null, null, null, null)).ToList();
-        return new(fallback, null, now, "Windows didn't report drive health on this PC, so only the drive list is shown.", now);
+        var found = list.Drives.ToList();
+        // A list without health (the legacy osquery list, with its notice) isn't a health reading.
+        if (list.Notice is null) _history.Record(found, now);
+        progress.ReportStep(2, 2, "Checking SSD optimization history…");
+        return new(found, await ReadRetrimsAsync(ct).ConfigureAwait(false), now, list.Notice, now);
     }
 
 

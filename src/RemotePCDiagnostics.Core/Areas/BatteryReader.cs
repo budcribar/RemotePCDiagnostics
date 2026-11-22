@@ -1,11 +1,10 @@
 using RemotePCDiagnostics.Core.DataSources;
-using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>
-/// Reads the PC's batteries. From WMI when it is given (the <c>root\wmi</c> battery classes, the same driver data osquery reads), otherwise
-/// from osquery <c>battery</c> (also when WMI fails and osquery is given). Null means the batteries couldn't be read; an empty list means the PC has none.
+/// Reads the PC's batteries from WMI (the <c>root\wmi</c> battery classes, the same driver data osquery reads). Null means the batteries
+/// couldn't be read; an empty list means the PC has none. The osquery reader is in RemotePCDiagnostics.Legacy.
 /// </summary>
 public static class BatteryReader
 {
@@ -14,22 +13,12 @@ public static class BatteryReader
     public const string FullChargeSql = "SELECT InstanceName, FullChargedCapacity FROM BatteryFullChargedCapacity";
     public const string CycleCountSql = "SELECT InstanceName, CycleCount FROM BatteryCycleCount";
     public const string StatusSql = "SELECT InstanceName, PowerOnline, Charging, Discharging, RemainingCapacity FROM BatteryStatus";
-    public const string OsquerySql = "SELECT * FROM battery;";
 
     /// <summary>BATTERY_SYSTEM_BATTERY and BATTERY_IS_SHORT_TERM: osquery (and so this) skips a UPS or other short-term battery.</summary>
     public const long SystemBatteryFlag = 0x80000000;
     public const long ShortTermFlag = 0x20000000;
     /// <summary>What a battery driver reports for a capacity it doesn't know (BATTERY_UNKNOWN_CAPACITY).</summary>
     public const long UnknownCapacity = 0xFFFFFFFF;
-
-    public static async Task<IReadOnlyList<BatteryStatus>?> ReadAsync(IWmiSource? wmi, OsqueryRunner? osquery, CancellationToken ct)
-    {
-        // WMI first; osquery when WMI couldn't be read (in the app, when the Agent isn't connected).
-        if (wmi is not null && await ReadWmiAsync(wmi, ct).ConfigureAwait(false) is { } fromWmi) return fromWmi;
-        if (osquery is null) return null;
-        var q = await osquery.RunQueryAsync(OsquerySql, ct).ConfigureAwait(false);
-        return q.Success ? q.Rows!.Select(BatteryStatus.FromRow).ToList() : null;
-    }
 
     public static async Task<IReadOnlyList<BatteryStatus>?> ReadWmiAsync(IWmiSource wmi, CancellationToken ct)
     {

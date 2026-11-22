@@ -22,7 +22,7 @@ public interface IHostQueries
     /// <summary><c>osquery.select</c>: one of the app's own read-only statements (<see cref="HostCapabilities.AllowedSql"/>), run in the app.</summary>
     Task<OsqueryQueryResult> SelectAsync(string sql, CancellationToken ct = default);
     /// <summary><c>storage.drives</c>: the drive health script's output (health, wear and error counters per drive).</summary>
-    Task<ProcessResult?> ReadDrivesAsync(CancellationToken ct = default);
+    Task<Areas.DriveList?> ReadDrivesAsync(CancellationToken ct = default);
     /// <summary><c>storage.retrims</c>: the last retrim per drive letter.</summary>
     Task<IReadOnlyDictionary<char, RetrimRecord>> ReadRetrimsAsync(CancellationToken ct = default);
     /// <summary><c>eventlog.query</c>: events from the System or Application log matching an XPath filter, newest first (null when the
@@ -80,6 +80,7 @@ public sealed record HostQueryBackend
     public OsqueryRunner? Osquery { get; init; }
     public SystemCommandRunner? Commands { get; init; }
     public IRetrimHistory? Retrims { get; init; }
+    public IDriveSource? Drives { get; init; }
     public Func<IReadOnlyList<MinidumpFile>> Minidumps { get; init; } = BsodHistoryModule.ReadSystemMinidumps;
     public Func<IReadOnlyList<MinidumpFile>> LiveKernelReports { get; init; } = GraphicsDriverCrashes.ReadLiveKernelReports;
     public Func<IReadOnlyCollection<string>> EventReviews { get; init; } = Areas.EventReviews.Read;
@@ -151,7 +152,7 @@ public sealed class HostQueryServer(Func<HostQueryBackend?> backend, ILogger? lo
                 value = await Need(backend.Osquery).RunQueryAsync(sql, ct).ConfigureAwait(false);
                 break;
             case HostCapabilities.StorageDrives:
-                value = await Need(backend.Commands).RunAsync(SystemCommandRunner.PowerShell, DriveHealthModule.Arguments, ct).ConfigureAwait(false);
+                value = await Need(backend.Drives).ReadDrivesAsync(ct).ConfigureAwait(false);
                 break;
             case HostCapabilities.StorageRetrims:
                 var retrims = backend.Retrims is { } r ? await r.LatestAsync(ct).ConfigureAwait(false) : new Dictionary<char, RetrimRecord>();
@@ -245,7 +246,7 @@ public sealed class HostQueriesClient(Action<ModuleHostMessage> send) : IHostQue
     public Task<OsqueryQueryResult> SelectAsync(string sql, CancellationToken ct = default) =>
         QueryAsync<OsqueryQueryResult>(HostCapabilities.OsquerySelect, new { sql }, ct);
 
-    public Task<ProcessResult?> ReadDrivesAsync(CancellationToken ct = default) => QueryAsync<ProcessResult?>(HostCapabilities.StorageDrives, null, ct);
+    public Task<Areas.DriveList?> ReadDrivesAsync(CancellationToken ct = default) => QueryAsync<Areas.DriveList?>(HostCapabilities.StorageDrives, null, ct);
 
     public async Task<IReadOnlyDictionary<char, RetrimRecord>> ReadRetrimsAsync(CancellationToken ct = default)
     {

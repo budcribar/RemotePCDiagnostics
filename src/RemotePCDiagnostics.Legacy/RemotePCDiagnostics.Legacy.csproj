@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The readers that work without the Agent (osquery, powercfg, PowerShell, as a standard user). Only the Store edition ships them, for
+    when no Agent is connected (RpcdEdition=Store); the Setup edition reads everything through the Agent and doesn't reference this.
+    The recorder and the replay tests use them too, so they stay checked against real PCs.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\RemotePCDiagnostics.Core\RemotePCDiagnostics.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Microsoft.Extensions.Logging.ILogger" Alias="ILogger" />
+    <Using Include="RemotePCDiagnostics.Logging" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="*.ps1" LogicalName="Legacy/%(Filename).ps1" />
+  </ItemGroup>
+</Project>

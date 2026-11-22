@@ -37,6 +37,8 @@ public sealed class BundledModulesTests : IDisposable
         var services = new ServiceCollection();
         services.AddSingleton(new OsqueryRunner(baseDirectory: _root));
         services.AddSingleton(new SystemCommandRunner());
+        services.AddSingleton<IBatteryPowerSource>(new WmiBatteryPowerSource(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource()));
+        services.AddSingleton<IDriveSource>(new WmiDriveSource(new RemotePCDiagnostics.Core.DataSources.SystemWmiSource()));
         // The app's Windows adapters the test modules take (only their constructors run here).
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Sensors.ISensorProvider>());
         services.AddSingleton(Stub<RemotePCDiagnostics.Core.Sensors.IEcFanSource>());

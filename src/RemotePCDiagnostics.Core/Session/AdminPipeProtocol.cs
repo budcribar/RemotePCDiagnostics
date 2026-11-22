@@ -1492,7 +1492,7 @@ public sealed class AdminPipeServer(
         {
             try
             {
-                var drives = Platform.WindowsStorageDriveReader.ReadDrives();
+                var drives = await Areas.DriveReader.ReadWmiAsync(_wmi ??= wmiSource ?? new DataSources.SystemWmiSource(log), ct).ConfigureAwait(false) ?? [];
                 return new AdminPipeResponse(
                     Ok: true,
                     Allowed: true,

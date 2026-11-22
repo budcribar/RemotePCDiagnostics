@@ -133,7 +133,7 @@ public class CrashesTests
         public Task<ModuleAvailability> SensorsAvailabilityAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<RemotePCDiagnostics.Core.Sensors.SensorSnapshot> ReadSensorsAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<RemotePCDiagnostics.Core.Osquery.OsqueryQueryResult> SelectAsync(string sql, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<RemotePCDiagnostics.Core.Osquery.ProcessResult?> ReadDrivesAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<RemotePCDiagnostics.Core.Areas.DriveList?> ReadDrivesAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyDictionary<char, RetrimRecord>> ReadRetrimsAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<WinEvent>?> QueryEventsAsync(string log, string xpath, int max, CancellationToken ct = default) =>
             Task.FromResult(log == "System" ? sysEvents : appEvents);

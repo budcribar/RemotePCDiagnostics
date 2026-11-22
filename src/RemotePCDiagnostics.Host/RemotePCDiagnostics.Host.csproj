@@ -10,6 +10,13 @@
     <ApplicationIcon>Assets\diagnostics.ico</ApplicationIcon>
     <RootNamespace>RemotePCDiagnostics.Host</RootNamespace>
   </PropertyGroup>
+  <!-- RpcdEdition=Store builds the Store edition, which also ships the legacy (no-Agent) readers; the default Setup edition doesn't. -->
+  <PropertyGroup Condition="'$(RpcdEdition)' == 'Store'">
+    <DefineConstants>$(DefineConstants);RPCD_STORE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(RpcdEdition)' == 'Store'">
+    <ProjectReference Include="..\RemotePCDiagnostics.Legacy\RemotePCDiagnostics.Legacy.csproj" />
+  </ItemGroup>
   <ItemGroup>
     <Resource Include="Assets\diagnostics.ico" />
   </ItemGroup>

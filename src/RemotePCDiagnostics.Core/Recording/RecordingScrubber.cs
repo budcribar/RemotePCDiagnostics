@@ -19,6 +19,7 @@ public sealed class RecordingScrubber
         "SerialNumber", "serial_number", "serial", "hardware_serial", "board_serial", "UniqueID", "IdentifyingNumber",
         "MACAddress", "mac", "PermanentAddress", "CSName", "__SERVER", "UserName", "RegisteredUser", "PrimaryOwnerName",
         "computer_name", "hostname", "local_hostname",
+        "Id", // the DriveHealth script's name for a disk's UniqueId (its WWN / EUI)
     };
 
     private readonly byte[] _key = RandomNumberGenerator.GetBytes(32);

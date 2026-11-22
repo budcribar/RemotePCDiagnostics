@@ -17,8 +17,9 @@ public class DriveHealthTests
     {
         var log = new List<string>();
         var l = new ScriptedLauncher(run);
-        return (new DriveHealthModule(new SystemCommandRunner(l, new LineLogger(s => log.Add(s))), ScriptedLauncher.Osquery(l, log),
-            volumes: volumes ?? (() => [])), l, log);
+        var commands = new SystemCommandRunner(l, new LineLogger(s => log.Add(s)));
+        return (new DriveHealthModule(new RemotePCDiagnostics.Legacy.PowerShellDriveSource(commands, ScriptedLauncher.Osquery(l, log)),
+            volumes: volumes ?? (() => []), log: commands.Log), l, log);
     }
 
     private const long GB = 1024L * 1024 * 1024;
@@ -159,8 +160,8 @@ public class DriveHealthTests
             started.TrySetResult();
             return release.Task.WaitAsync(ct);
         });
-        var m = new DriveHealthModule(new SystemCommandRunner(launcher), new OsqueryRunner(Path.GetTempPath(), launcher: launcher, fileExists: _ => true),
-            volumes: () => []);
+        var m = new DriveHealthModule(new RemotePCDiagnostics.Legacy.PowerShellDriveSource(new SystemCommandRunner(launcher),
+            new OsqueryRunner(Path.GetTempPath(), launcher: launcher, fileExists: _ => true)), volumes: () => []);
         var instance = DriveHealthModule.Instances([DriveHealth.FromRow(new Dictionary<string, string> { ["Name"] = "Samsung SSD 980 1TB", ["Serial"] = "S1" })])[0].Instance;
 
         using var ctsA = new CancellationTokenSource();
