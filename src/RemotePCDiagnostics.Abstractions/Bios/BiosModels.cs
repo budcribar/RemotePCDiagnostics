@@ -174,7 +174,8 @@ public sealed record BiosInstallRequest(
     bool SuspendBitLocker = true,
     bool AllowReboot = false,
     bool VerifyHash = true,
-    string? StagingDirectory = null);
+    string? StagingDirectory = null,
+    bool BitLockerKnownOff = false);
 
 /// <summary>Progress snapshot reported while downloading, verifying, or staging a BIOS update.</summary>
 public sealed record BiosInstallProgress(

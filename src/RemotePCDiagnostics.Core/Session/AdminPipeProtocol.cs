@@ -11,6 +11,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Win32.SafeHandles;
 using RemotePCDiagnostics.Agent.Core;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Bios;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Optimizations;
 using RemotePCDiagnostics.Core.Osquery;
@@ -147,6 +148,17 @@ public interface IElevatedCommandBridge
     /// <summary>Runs one read-only WMI query in the Agent, with its rights. Fails (never throws) when the Agent isn't connected or is too old.</summary>
     Task<DataSources.WmiQueryResult> QueryWmiAsync(string wmiNamespace, string wql, CancellationToken ct = default) =>
         Task.FromResult(DataSources.WmiQueryResult.Failed(wmiNamespace, wql, DataSources.AgentWmiSource.NotConnected));
+    /// <summary>Suspends BitLocker on <paramref name="systemDrive"/> for 1 reboot via the elevated Agent.</summary>
+    Task<BiosAgentBitLockerResult> SuspendBitLockerAsync(string systemDrive, CancellationToken ct = default) =>
+        throw new AdminRequiredException("The Agent isn't connected or does not support elevated BIOS BitLocker suspension. " + ElevationService.AdminRepairHint);
+
+    /// <summary>Copies, verifies, and runs a typed allowlisted BIOS installer in the elevated Agent.</summary>
+    Task<BiosAgentInstallResult> RunBiosInstallerAsync(BiosAgentInstallRequest request, CancellationToken ct = default) =>
+        throw new AdminRequiredException("The Agent isn't connected or does not support elevated BIOS installation. " + ElevationService.AdminRepairHint);
+
+    /// <summary>Installs a specific pending UEFI firmware update by GUID via Windows Update Agent COM in the elevated Agent.</summary>
+    Task<BiosWuaInstallOutcome> InstallBiosWindowsUpdateAsync(Guid updateId, TimeSpan? timeout = null, CancellationToken ct = default) =>
+        throw new AdminRequiredException("The Agent isn't connected or does not support elevated BIOS Windows Updates. " + ElevationService.AdminRepairHint);
 }
 
 /// <summary>A state file as the Agent read it: <paramref name="Ok"/> false when it couldn't; <paramref name="Json"/> null when there's no file.</summary>
@@ -530,7 +542,10 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("busyReason")] string? BusyReason = null,
     [property: JsonPropertyName("requestId")] string? RequestId = null,
     [property: JsonPropertyName("wmiNamespace")] string? WmiNamespace = null,
-    [property: JsonPropertyName("wql")] string? Wql = null);
+    [property: JsonPropertyName("wql")] string? Wql = null,
+    [property: JsonPropertyName("biosSystemDrive")] string? BiosSystemDrive = null,
+    [property: JsonPropertyName("biosInstall")] BiosAgentInstallRequest? BiosInstall = null,
+    [property: JsonPropertyName("biosWuaUpdateId")] string? BiosWuaUpdateId = null);
 
 /// <summary>
 /// The app removal requests' arguments: packages by name and publisher id, one uninstall command, or one task path. The Agent checks
@@ -571,7 +586,12 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("setup")] MachineSetupResult? Setup = null,
     [property: JsonPropertyName("updateStatus")] RpcdUpdateStatus? UpdateStatus = null,
     [property: JsonPropertyName("enrollment")] AgentEnrollmentFacts? Enrollment = null,
-    [property: JsonPropertyName("wmiRows")] IReadOnlyList<Dictionary<string, JsonElement>>? WmiRows = null);
+    [property: JsonPropertyName("wmiRows")] IReadOnlyList<Dictionary<string, JsonElement>>? WmiRows = null,
+    [property: JsonPropertyName("biosBitLocker")] BiosAgentBitLockerResult? BiosBitLocker = null,
+    [property: JsonPropertyName("biosInstallResult")] BiosAgentInstallResult? BiosInstallResult = null,
+    [property: JsonPropertyName("biosWuaOutcome")] BiosWuaInstallOutcome? BiosWuaOutcome = null,
+    [property: JsonPropertyName("biosJobId")] string? BiosJobId = null,
+    [property: JsonPropertyName("biosJobRunning")] bool BiosJobRunning = false);
 
 /// <summary>
 /// The public part of agent.json, which only administrators and SYSTEM can read: the machine id and the shop group.
@@ -630,6 +650,18 @@ public static class AdminPipeFraming
     public const string OpStateWrite = "state_write";
     /// <summary>One read-only WMI query (<see cref="DataSources.WmiQueryPolicy"/>), answered with the Agent's rights; the response carries the rows.</summary>
     public const string OpWmiQuery = "wmi_query";
+    /// <summary>Suspends BitLocker on the validated system drive for 1 reboot before flashing BIOS.</summary>
+    public const string OpBiosSuspendBitLocker = "bios_suspend_bitlocker";
+    /// <summary>Copies a BIOS package into an admin-owned staging directory, verifies integrity and signatures, and runs an allowlisted vendor install mode.</summary>
+    public const string OpBiosRunInstaller = "bios_run_installer";
+    /// <summary>Installs a specific pending UEFI firmware update by GUID via Windows Update Agent COM.</summary>
+    public const string OpBiosInstallWua = "bios_install_wua";
+    /// <summary>
+    /// Polls a BIOS install or firmware update the Agent runs in the background (<c>requestId</c> = <c>biosJobId</c>). The answer is
+    /// <c>biosJobRunning</c> while it runs, then the operation's own response once. Installs run as jobs so that one taking half an hour
+    /// doesn't hold the pipe, which carries every other Agent request from the app.
+    /// </summary>
+    public const string OpBiosJobStatus = "bios_job_status";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -1012,6 +1044,79 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         return new ProcessResult(r.ExitCode, r.StdOut, r.StdErr, r.TimedOut);
     }
 
+    public async Task<BiosAgentBitLockerResult> SuspendBitLockerAsync(string systemDrive, CancellationToken ct = default)
+    {
+        var r = await SendAsync(
+            new AdminPipeRequest(AdminPipeFraming.OpBiosSuspendBitLocker, TimeoutMs: 60_000, BiosSystemDrive: systemDrive),
+            ct).ConfigureAwait(false);
+        if (!r.Allowed && r.BiosBitLocker is null)
+            throw new AdminRequiredException("The Agent on this PC does not support elevated BIOS operations yet. Update Remote PC Diagnostics, then try again.");
+        return r.BiosBitLocker ?? new BiosAgentBitLockerResult(r.Ok, r.Allowed, r.ExitCode, r.Error);
+    }
+
+    public async Task<BiosAgentInstallResult> RunBiosInstallerAsync(BiosAgentInstallRequest request, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var timeoutMs = Math.Clamp(request.TimeoutMs <= 0 ? 600_000 : request.TimeoutMs, 1_000, 1_800_000);
+        var normalized = request with { TimeoutMs = timeoutMs };
+        var r = await RunBiosJobAsync(
+            new AdminPipeRequest(AdminPipeFraming.OpBiosRunInstaller, TimeoutMs: timeoutMs, BiosInstall: normalized),
+            timeoutMs, ct).ConfigureAwait(false);
+        if (!r.Allowed && r.BiosInstallResult is null)
+            throw new AdminRequiredException("The Agent on this PC does not support elevated BIOS operations yet. Update Remote PC Diagnostics, then try again.");
+        return r.BiosInstallResult ?? new BiosAgentInstallResult(false, r.Allowed, r.ExitCode, r.TimedOut, null, r.Error);
+    }
+
+    public async Task<BiosWuaInstallOutcome> InstallBiosWindowsUpdateAsync(Guid updateId, TimeSpan? timeout = null, CancellationToken ct = default)
+    {
+        if (updateId == Guid.Empty)
+            return new BiosWuaInstallOutcome(false, -1, false, "A valid non-empty Windows Update ID is required.");
+
+        var timeoutMs = (int)Math.Clamp((timeout ?? TimeSpan.FromMinutes(10)).TotalMilliseconds, 1_000, 1_800_000);
+        var r = await RunBiosJobAsync(
+            new AdminPipeRequest(AdminPipeFraming.OpBiosInstallWua, TimeoutMs: timeoutMs, BiosWuaUpdateId: updateId.ToString("D")),
+            timeoutMs, ct).ConfigureAwait(false);
+        if (!r.Allowed && r.BiosWuaOutcome is null)
+            throw new AdminRequiredException("The Agent on this PC does not support elevated BIOS operations yet. Update Remote PC Diagnostics, then try again.");
+        return r.BiosWuaOutcome ?? new BiosWuaInstallOutcome(r.Ok, r.ExitCode, false, r.Error ?? "");
+    }
+
+    /// <summary>How often the app asks the Agent whether a BIOS job has finished.</summary>
+    public static TimeSpan BiosJobPollInterval { get; set; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Starts a BIOS job in the Agent and polls it until it finishes. Each poll is a short request, so other Agent requests (sensors,
+    /// state files, commands) keep flowing during a long install. Cancelling stops the waiting only: a started flash is never interrupted.
+    /// </summary>
+    private async Task<AdminPipeResponse> RunBiosJobAsync(AdminPipeRequest start, int timeoutMs, CancellationToken ct)
+    {
+        var r = await SendAsync(start, ct).ConfigureAwait(false);
+        if (r.BiosJobId is not { Length: > 0 } jobId)
+            return r; // Refused or answered at once.
+
+        var deadline = Environment.TickCount64 + timeoutMs + (long)TimeSpan.FromMinutes(2).TotalMilliseconds;
+        while (r.BiosJobRunning)
+        {
+            if (Environment.TickCount64 > deadline)
+            {
+                _log?.Warn($"[admin-pipe] BIOS job '{start.Op}' still running in the Agent after {timeoutMs} ms; giving up waiting.");
+                return new AdminPipeResponse(Ok: false, Allowed: true, ExitCode: -1, TimedOut: true,
+                    Error: "The Agent is still running the BIOS update. Don't restart or power off the PC until it finishes.");
+            }
+            try
+            {
+                await Task.Delay(BiosJobPollInterval, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                _log?.Info($"[admin-pipe] Stopped waiting for BIOS job '{start.Op}'; the Agent keeps running it.");
+                throw;
+            }
+            r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpBiosJobStatus, RequestId: jobId), ct).ConfigureAwait(false);
+        }
+        return r;
+    }
+
     /// <summary>An Agent from before a request existed answers "Unknown operation" (not allowed).</summary>
     private static void ThrowIfRefused(AdminPipeResponse r)
     {
@@ -1093,21 +1198,53 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         await _requestLock.WaitAsync(ct).ConfigureAwait(false);
+        var releaseLock = true;
         try
         {
             if (!_pipe.IsConnected)
                 throw new IOException("Admin helper named pipe is disconnected.");
 
-            await AdminPipeFraming.WriteFrameAsync(_pipe, request, ct).ConfigureAwait(false);
-            var response = await AdminPipeFraming.ReadFrameAsync<AdminPipeResponse>(_pipe, ct).ConfigureAwait(false);
-            if (response is null)
-                throw new IOException("Admin helper closed the named pipe connection.");
-            return response;
+            // Neither the write nor the read takes the caller's token: stopping either mid-frame would leave the pipe out of step.
+            await AdminPipeFraming.WriteFrameAsync(_pipe, request, CancellationToken.None).ConfigureAwait(false);
+            var read = AdminPipeFraming.ReadFrameAsync<AdminPipeResponse>(_pipe, CancellationToken.None);
+            try
+            {
+                return await read.WaitAsync(ct).ConfigureAwait(false)
+                    ?? throw new IOException("Admin helper closed the named pipe connection.");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // The Agent still answers this request. Read that answer in the background (holding the lock, so the next request
+                // reads its own answer) instead of dropping the pipe, which would end Admin Repair Mode in the UAC helper.
+                releaseLock = false;
+                _ = DrainCancelledAsync(read, request);
+                throw;
+            }
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
             Dispose();
             throw;
+        }
+        finally
+        {
+            if (releaseLock)
+                _requestLock.Release();
+        }
+    }
+
+    private async Task DrainCancelledAsync(Task<AdminPipeResponse?> read, AdminPipeRequest request)
+    {
+        try
+        {
+            var wait = TimeSpan.FromMilliseconds(Math.Max(request.TimeoutMs, 0)) + TimeSpan.FromMinutes(1);
+            if (await read.WaitAsync(wait).ConfigureAwait(false) is null)
+                Dispose();
+        }
+        catch
+        {
+            _log?.Warn($"[admin-pipe] No answer to the cancelled '{request.Op}'; dropping the pipe.");
+            Dispose();
         }
         finally
         {
@@ -1175,7 +1312,8 @@ public sealed class AdminPipeServer(
     string? stateFolder = null,
     IMachineSetup? machineSetup = null,
     IAgentNativeOps? nativeOps = null,
-    DataSources.IWmiSource? wmiSource = null) : IAsyncDisposable, IDisposable
+    DataSources.IWmiSource? wmiSource = null,
+    IAgentBiosOperations? biosOperations = null) : IAsyncDisposable, IDisposable
 {
     public AdminPipeServer(
         AdminPipeServerOptions options,
@@ -1616,6 +1754,17 @@ public sealed class AdminPipeServer(
         if (string.Equals(request.Op, AdminPipeFraming.OpPrepareMachine, StringComparison.OrdinalIgnoreCase))
             return await Task.Run(PrepareMachine, ct).ConfigureAwait(false);
 
+        if (request.Op is AdminPipeFraming.OpBiosSuspendBitLocker)
+            return await HandleBiosOperationAsync(request, ct).ConfigureAwait(false);
+
+        if (request.Op is AdminPipeFraming.OpBiosRunInstaller or AdminPipeFraming.OpBiosInstallWua)
+            return biosOperations is null
+                ? await HandleBiosOperationAsync(request, ct).ConfigureAwait(false)
+                : await StartBiosJobAsync(request, ct).ConfigureAwait(false);
+
+        if (request.Op is AdminPipeFraming.OpBiosJobStatus)
+            return BiosJobStatus(request.RequestId);
+
         return new AdminPipeResponse(
             Ok: false,
             Allowed: false,
@@ -1623,6 +1772,208 @@ public sealed class AdminPipeServer(
             HelperPid: Environment.ProcessId,
             ExitCode: -1,
             Error: $"Unknown operation '{request.Op}'.");
+    }
+
+    private sealed record BiosJob(string Id, string Key, Task<AdminPipeResponse> Work);
+
+    private readonly Dictionary<string, BiosJob> _biosJobs = new(StringComparer.Ordinal);
+    private readonly Lock _biosJobsLock = new();
+
+    /// <summary>
+    /// Runs a BIOS install or firmware update in the background and answers at once with its job id. A request for the same package
+    /// (or the same Windows Update) while one runs joins that job, so a retry never starts a second flash of the same firmware.
+    /// </summary>
+    /// <summary>A BIOS request that ends this quickly (a refusal, a bad path) is answered directly instead of as a job.</summary>
+    public static TimeSpan BiosJobDirectAnswer { get; set; } = TimeSpan.FromSeconds(3);
+
+    private async Task<AdminPipeResponse> StartBiosJobAsync(AdminPipeRequest request, CancellationToken ct)
+    {
+        var key = request.Op == AdminPipeFraming.OpBiosInstallWua
+            ? "wua:" + (request.BiosWuaUpdateId ?? "").Trim().ToLowerInvariant()
+            : $"install:{request.BiosInstall?.InstallMode}:{request.BiosInstall?.ExpectedSha256?.ToLowerInvariant()}:{request.BiosInstall?.PackagePath}";
+        BiosJob job;
+        lock (_biosJobsLock)
+        {
+            job = _biosJobs.Values.FirstOrDefault(j => j.Key == key && !j.Work.IsCompleted)!;
+            if (job is null)
+            {
+                // The service's lifetime token, not the request's: a flash that has started must not be stopped by the app going away.
+                job = new BiosJob(Guid.NewGuid().ToString("N"), key, Task.Run(() => HandleBiosOperationAsync(request, ct), CancellationToken.None));
+                _biosJobs[job.Id] = job;
+            }
+            else
+            {
+                log.Info($"[admin-pipe-server] '{request.Op}' for the same firmware is already running; joining job {job.Id}.");
+            }
+        }
+        try { await job.Work.WaitAsync(BiosJobDirectAnswer, ct).ConfigureAwait(false); }
+        catch (TimeoutException) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch { } // A faulted job is answered by BiosJobStatus.
+        var status = BiosJobStatus(job.Id);
+        return status.BiosJobRunning ? status : status with { BiosJobId = null };
+    }
+
+    private AdminPipeResponse BiosJobStatus(string? jobId)
+    {
+        BiosJob? job;
+        lock (_biosJobsLock)
+            _biosJobs.TryGetValue(jobId ?? "", out job);
+        if (job is null)
+            return new AdminPipeResponse(false, false, Environment.IsPrivilegedProcess, Environment.ProcessId, -1,
+                Error: "The Agent has no BIOS job with that id (it may have restarted).");
+        if (!job.Work.IsCompleted)
+            return new AdminPipeResponse(true, true, Environment.IsPrivilegedProcess, Environment.ProcessId, 0,
+                BiosJobId: job.Id, BiosJobRunning: true);
+
+        lock (_biosJobsLock)
+            _biosJobs.Remove(job.Id);
+        if (!job.Work.IsCompletedSuccessfully)
+            return new AdminPipeResponse(false, true, Environment.IsPrivilegedProcess, Environment.ProcessId, -1,
+                Error: "The Agent stopped before the BIOS job finished.", BiosJobId: job.Id);
+        return job.Work.Result with { BiosJobId = job.Id, BiosJobRunning = false };
+    }
+
+    private async Task<AdminPipeResponse> HandleBiosOperationAsync(AdminPipeRequest request, CancellationToken ct)
+    {
+        if (biosOperations is null)
+        {
+            return new AdminPipeResponse(
+                Ok: false,
+                Allowed: false,
+                Elevated: Environment.IsPrivilegedProcess,
+                HelperPid: Environment.ProcessId,
+                ExitCode: -1,
+                Error: "BIOS operations are not supported by this elevated helper.");
+        }
+
+        try
+        {
+            switch (request.Op)
+            {
+                case AdminPipeFraming.OpBiosSuspendBitLocker:
+                {
+                    var res = await biosOperations.SuspendBitLockerAsync(request.BiosSystemDrive ?? "", ct).ConfigureAwait(false);
+                    return new AdminPipeResponse(
+                        Ok: res.Suspended,
+                        Allowed: res.Allowed,
+                        Elevated: Environment.IsPrivilegedProcess,
+                        HelperPid: Environment.ProcessId,
+                        ExitCode: res.ExitCode,
+                        Error: res.Error,
+                        BiosBitLocker: res);
+                }
+
+                case AdminPipeFraming.OpBiosRunInstaller:
+                {
+                    if (request.BiosInstall is null)
+                    {
+                        var missing = new BiosAgentInstallResult(false, false, -1, false, null, "No BIOS install request was provided.");
+                        return new AdminPipeResponse(
+                            Ok: false,
+                            Allowed: false,
+                            Elevated: Environment.IsPrivilegedProcess,
+                            HelperPid: Environment.ProcessId,
+                            ExitCode: -1,
+                            Error: missing.Error,
+                            BiosInstallResult: missing);
+                    }
+
+                    var res = await biosOperations.RunBiosInstallerAsync(request.BiosInstall, ct).ConfigureAwait(false);
+                    return new AdminPipeResponse(
+                        Ok: res.Executed && !res.TimedOut && res.ExitCode == 0,
+                        Allowed: res.Allowed,
+                        Elevated: Environment.IsPrivilegedProcess,
+                        HelperPid: Environment.ProcessId,
+                        ExitCode: res.ExitCode,
+                        TimedOut: res.TimedOut,
+                        Error: res.Error,
+                        BiosInstallResult: res);
+                }
+
+                case AdminPipeFraming.OpBiosInstallWua:
+                {
+                    var rawId = request.BiosWuaUpdateId;
+                    if (string.IsNullOrEmpty(rawId)
+                        || rawId.Length != 36
+                        || !Guid.TryParseExact(rawId, "D", out var updateId)
+                        || updateId == Guid.Empty)
+                    {
+                        var invalid = new BiosWuaInstallOutcome(false, -1, false, "A valid non-empty Windows Update ID is required.");
+                        return new AdminPipeResponse(
+                            Ok: false,
+                            Allowed: false,
+                            Elevated: Environment.IsPrivilegedProcess,
+                            HelperPid: Environment.ProcessId,
+                            ExitCode: -1,
+                            Error: invalid.Message,
+                            BiosWuaOutcome: invalid);
+                    }
+
+                    var timeout = TimeSpan.FromMilliseconds(Math.Clamp(request.TimeoutMs <= 0 ? 600_000 : request.TimeoutMs, 1_000, 1_800_000));
+                    var res = await biosOperations.InstallWindowsUpdateAsync(updateId, timeout, ct).ConfigureAwait(false);
+                    return new AdminPipeResponse(
+                        Ok: res.Succeeded,
+                        Allowed: true,
+                        Elevated: Environment.IsPrivilegedProcess,
+                        HelperPid: Environment.ProcessId,
+                        ExitCode: res.ResultCode,
+                        Error: res.Succeeded ? null : res.Message,
+                        BiosWuaOutcome: res);
+                }
+
+                default:
+                    return new AdminPipeResponse(
+                        Ok: false,
+                        Allowed: false,
+                        Elevated: Environment.IsPrivilegedProcess,
+                        HelperPid: Environment.ProcessId,
+                        ExitCode: -1,
+                        Error: $"Unknown BIOS operation '{request.Op}'.");
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            log?.Warn($"[admin-pipe-server] BIOS operation '{request.Op}' failed: {ex.Message}");
+            return request.Op switch
+            {
+                AdminPipeFraming.OpBiosSuspendBitLocker => new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: -1,
+                    Error: ex.Message,
+                    BiosBitLocker: new BiosAgentBitLockerResult(false, true, -1, ex.Message)),
+                AdminPipeFraming.OpBiosRunInstaller => new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: -1,
+                    Error: ex.Message,
+                    BiosInstallResult: new BiosAgentInstallResult(false, true, -1, false, null, ex.Message)),
+                AdminPipeFraming.OpBiosInstallWua => new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: AgentWindowsUpdate.FailedCode,
+                    Error: ex.Message,
+                    BiosWuaOutcome: new BiosWuaInstallOutcome(false, AgentWindowsUpdate.FailedCode, false, ex.Message)),
+                _ => new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: true,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: -1,
+                    Error: ex.Message),
+            };
+        }
     }
 
     private AdminPipeResponse PrepareMachine()

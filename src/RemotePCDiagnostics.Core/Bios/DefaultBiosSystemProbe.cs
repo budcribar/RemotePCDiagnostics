@@ -14,16 +14,19 @@ public sealed class DefaultBiosSystemProbe : IBiosSystemProbe
 {
     private readonly OsqueryRunner? _osquery;
     private readonly ILogger? _log;
+    private readonly bool _readWindowsRegistry;
 
-    public DefaultBiosSystemProbe(OsqueryRunner? osquery = null, ILogger? log = null)
+    /// <param name="readWindowsRegistry">False skips the SMBIOS registry values, so only osquery is used (tests pass false so the build machine's own hardware doesn't leak in).</param>
+    public DefaultBiosSystemProbe(OsqueryRunner? osquery = null, ILogger? log = null, bool readWindowsRegistry = true)
     {
         _osquery = osquery;
         _log = log;
+        _readWindowsRegistry = readWindowsRegistry;
     }
 
     public async Task<BiosSystemIdentity> ProbeAsync(CancellationToken ct = default)
     {
-        var reg = OperatingSystem.IsWindows() ? ReadWindowsBiosRegistry() : default;
+        var reg = _readWindowsRegistry && OperatingSystem.IsWindows() ? ReadWindowsBiosRegistry() : default;
         var firmwareMode = OperatingSystem.IsWindows() ? ReadWindowsFirmwareMode() : BiosFirmwareMode.Unknown;
 
         SystemInfo? sys = null;

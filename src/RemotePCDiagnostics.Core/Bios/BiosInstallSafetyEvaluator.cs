@@ -40,6 +40,8 @@ public static class BiosInstallSafetyEvaluator
 
         if (snapshot.BitLockerActive == true && snapshot.BitLockerSuspended != true && !request.SuspendBitLocker)
             blockers.Add("BitLocker is active on the system drive and suspension is disabled. Suspend BitLocker (or enable SuspendBitLocker) to avoid a recovery key prompt after flashing.");
+        else if (snapshot.BitLockerActive is null && !request.SuspendBitLocker)
+            warnings.Add("Could not read the BitLocker state of the system drive, and suspension is disabled. If BitLocker is on, the PC will ask for the recovery key after flashing.");
 
         if (snapshot.PendingReboot == true)
             blockers.Add("A Windows or firmware restart is already pending. Restart the PC first before staging a BIOS update.");
