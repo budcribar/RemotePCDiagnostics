@@ -1,7 +1,6 @@
 using System.Globalization;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Logging;
-using ILogger = Microsoft.Extensions.Logging.ILogger;
 using RemotePCDiagnostics.Core.DataSources;
 using Windows.Management.Deployment;
 
@@ -11,7 +10,7 @@ namespace RemotePCDiagnostics.Host.Platform;
 /// The signed-in user's Store packages from Windows' package API (PackageManager.FindPackagesForUser with the current user), which needs no
 /// administrator rights and no PowerShell. A package whose details can't be read is skipped.
 /// </summary>
-public sealed class SystemPackageSource(ILogger? log = null) : IPackageSource
+public sealed class SystemPackageSource(Microsoft.Extensions.Logging.ILogger? log = null) : IPackageSource
 {
     public Task<WmiQueryResult> ReadPackagesAsync(CancellationToken ct = default) => Task.Run(() =>
     {
