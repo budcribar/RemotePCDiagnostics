@@ -355,6 +355,34 @@
       "exitCode": 0,
       "stdOut": "{\"Adapters\":[{\"Alias\":\"Wi-Fi\",\"Description\":\"Sample Wi-Fi 6E AX211\",\"IPv4\":\"192.168.1.23\",\"Gateway\":\"192.168.1.1\",\"Dns\":\"<serial:dd0001>\",\"DnsManual\":\"\"},{\"Alias\":\"vEthernet (Default Switch)\",\"Description\":\"Hyper-V Virtual Ethernet Adapter\",\"IPv4\":\"172.20.0.1\",\"Gateway\":\"\",\"Dns\":\"\",\"DnsManual\":\"\"}],\"ProxyEnabled\":false,\"ProxyServer\":\"\"}",
       "stdErr": ""
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\StandardCimv2",
+      "query": "SELECT Name, InterfaceDescription, DeviceID, InterfaceOperationalStatus, Hidden FROM MSFT_NetAdapter",
+      "rows": [
+        {
+          "Name": "Wi-Fi",
+          "InterfaceDescription": "Sample Wi-Fi 6E AX211",
+          "DeviceID": "{11111111-2222-3333-4444-555555555555}",
+          "InterfaceOperationalStatus": 1,
+          "Hidden": false
+        },
+        {
+          "Name": "Ethernet",
+          "InterfaceDescription": "Sample 2.5GbE Controller",
+          "DeviceID": "{66666666-7777-8888-9999-000000000000}",
+          "InterfaceOperationalStatus": 2,
+          "Hidden": false
+        },
+        {
+          "Name": "vEthernet (Default Switch)",
+          "InterfaceDescription": "Hyper-V Virtual Ethernet Adapter",
+          "DeviceID": "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
+          "InterfaceOperationalStatus": 1,
+          "Hidden": false
+        }
+      ]
     }
   ]
 }

@@ -48,21 +48,31 @@ public sealed class NetworkReplayTests
         var pc = new ReplayedPc(rec);
         Assert.SkipUnless(HasNew(pc) && HasOld(pc), "This recording doesn't hold both the WMI and the osquery + PowerShell network answers.");
         var ct = TestContext.Current.CancellationToken;
-        var now = WithoutDns((AreaReport)(await Network(pc).RefreshAsync(null, ct)).Payload!);
+        var now = WithoutGains((AreaReport)(await Network(pc).RefreshAsync(null, ct)).Payload!);
         var oldPc = new ReplayedPc(rec);
-        var old = WithoutDns((AreaReport)(await NetworkOld(oldPc).RefreshAsync(null, ct)).Payload!);
+        var old = WithoutGains((AreaReport)(await NetworkOld(oldPc).RefreshAsync(null, ct)).Payload!);
         Assert.Empty(oldPc.Replay.Misses);
         var diffs = ReportDiff.Between(old, now, Live);
         Assert.True(diffs.Count == 0, $"{diffs.Count} differences:\n" + string.Join("\n", diffs));
     }
 
     /// <summary>
-    /// The DNS servers are scrubbed one placeholder per value: WMI lists them one by one, the script joins them into one value first, so two or
-    /// more servers get different placeholders on the two paths. The column is left out of both.
+    /// Left out of both before comparing: a connected adapter's link speed, which WMI reports and osquery doesn't (0 on both test PCs; the
+    /// headline's " · 1.2 Gbps" and the Speed row); and the DNS servers, scrubbed one placeholder per value: WMI lists them one by one, the
+    /// script joins them into one value first, so two or more servers get different placeholders on the two paths.
     /// </summary>
-    private static AreaReport WithoutDns(AreaReport r) => r with
+    private static AreaReport WithoutGains(AreaReport r) => r with
     {
-        Cards = r.Cards.Select(c => c.Id == "ipdns" ? c with { Rows = c.Rows.Select(x => x.Values.Count > 3 ? x with { Values = x.Values.Select((v, i) => i == 3 ? "" : v).ToList() } : x).ToList() } : c).ToList(),
+        Cards = r.Cards.Select(c => c.Id switch
+        {
+            "ipdns" => c with { Rows = c.Rows.Select(x => x.Values.Count > 3 ? x with { Values = x.Values.Select((v, i) => i == 3 ? "" : v).ToList() } : x).ToList() },
+            _ when c.Id.StartsWith("nic", StringComparison.Ordinal) => c with
+            {
+                Headline = c.Headline.Split(" · ")[0],
+                Rows = c.Rows.Where(x => x.Values.Count == 0 || x.Values[0] != "Speed").ToList(),
+            },
+            _ => c,
+        }).ToList(),
     };
 
     /// <summary>Traffic keeps flowing between the two reads, so the packet counts differ by a little.</summary>
@@ -101,7 +111,8 @@ public sealed class NetworkReplayTests
     {
         var rec = RecordingLibrary.Load(name);
         Assert.SkipUnless(HasNew(new ReplayedPc(rec)), "This recording has no WMI network answers.");
-        var unplugged = rec.SetWmi(WmiNetworkSource.AdaptersSql, "NetConnectionStatus", 7);
+        var unplugged = rec.SetWmi(WmiNetworkSource.AdaptersSql, "NetConnectionStatus", 7)
+            .SetWmi(WmiNetworkSource.NetAdaptersSql, "InterfaceOperationalStatus", 2);
         var r = await Network(new ReplayedPc(unplugged)).RefreshAsync(null, TestContext.Current.CancellationToken);
         Assert.Contains("Not connected to a network", r.Message);
         // No adapter is up, so no IP configuration is listed either.

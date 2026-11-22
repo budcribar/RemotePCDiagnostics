@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using RemotePCDiagnostics.Core.DataSources;
 using RemotePCDiagnostics.Core.Osquery;
+using RemotePCDiagnostics.Core.Recording;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
@@ -92,6 +93,9 @@ public sealed class WmiNetworkSource(IWmiSource wmi, IRegistrySource registry) :
     public const string StatisticsSql =
         "SELECT Name, ReceivedUnicastPackets, ReceivedMulticastPackets, ReceivedBroadcastPackets, SentUnicastPackets, SentMulticastPackets, " +
         "SentBroadcastPackets, ReceivedPacketErrors, OutboundPacketErrors, ReceivedDiscardedPackets, OutboundDiscardedPackets FROM MSFT_NetAdapterStatisticsSettingData";
+    /// <summary>The adapters as Get-NetAdapter lists them, which names every adapter that is up. Win32_NetworkAdapter can leave one out: on an
+    /// HP OmniBook X (arm64) its Wi-Fi adapter has no connection name or status there.</summary>
+    public const string NetAdaptersSql = "SELECT Name, InterfaceDescription, DeviceID, InterfaceOperationalStatus, Hidden FROM MSFT_NetAdapter";
     public const string ConfigSql =
         "SELECT Index, SettingID, Description, IPAddress, DefaultIPGateway, DNSServerSearchOrder FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = TRUE";
 
@@ -148,14 +152,15 @@ public sealed class WmiNetworkSource(IWmiSource wmi, IRegistrySource registry) :
     public async Task<IpConfigSnapshot?> ReadIpConfigAsync(CancellationToken ct)
     {
         var configs = await wmi.QueryAsync(WmiHardwareInventorySource.Cimv2, ConfigSql, ct).ConfigureAwait(false);
-        var adapters = await wmi.QueryAsync(WmiHardwareInventorySource.Cimv2, AdaptersSql, ct).ConfigureAwait(false);
+        var adapters = await wmi.QueryAsync(StandardCimv2, NetAdaptersSql, ct).ConfigureAwait(false);
         if (!configs.Success || !adapters.Success) return null;
         var interfaces = await registry.ReadAsync(InterfacesRead, ct).ConfigureAwait(false);
         var proxy = await registry.ReadAsync(ProxyRead, ct).ConfigureAwait(false);
 
-        var byIndex = new Dictionary<string, WmiRow>(StringComparer.OrdinalIgnoreCase);
+        // MSFT_NetAdapter's DeviceID is the interface GUID, the configuration's SettingID.
+        var byGuid = new Dictionary<string, WmiRow>(StringComparer.OrdinalIgnoreCase);
         foreach (var a in adapters.Rows!)
-            if (a.Str("DeviceID") is { Length: > 0 } id) byIndex.TryAdd(id, a);
+            if (a.Str("DeviceID") is { Length: > 0 } id) byGuid.TryAdd(id, a);
         // Unread (no rows) means unknown, as in the PowerShell script when the key can't be read.
         Dictionary<string, WmiRow>? manualDns = interfaces.Success
             ? interfaces.Rows!.GroupBy(r => r.Str(RegistryRead.KeyColumn), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
@@ -164,14 +169,13 @@ public sealed class WmiNetworkSource(IWmiSource wmi, IRegistrySource registry) :
         var list = new List<ActiveAdapterIp>();
         foreach (var c in configs.Rows!)
         {
-            // As Get-NetIPConfiguration with Status 'Up': only adapters Windows says are connected.
-            if (!byIndex.TryGetValue(c.Str("Index"), out var adapter) || adapter.Long("NetConnectionStatus") is not (2 or 9)) continue;
+            // As Get-NetIPConfiguration with NetAdapter.Status 'Up': a visible adapter whose interface is up (InterfaceOperationalStatus 1).
             var guid = c.Str("SettingID");
-            bool? dnsManual = manualDns is null || guid.Length == 0 ? null
-                : manualDns.TryGetValue(guid, out var key) && key.Str("NameServer").Length > 0;
+            if (!byGuid.TryGetValue(guid, out var adapter) || adapter.Bool("Hidden") == true || adapter.Long("InterfaceOperationalStatus") != 1) continue;
+            bool? dnsManual = manualDns is null ? null : manualDns.TryGetValue(guid, out var key) && key.Str("NameServer").Length > 0;
             list.Add(new ActiveAdapterIp(
-                NetworkAdapter.FirstNonEmpty(adapter.Str("NetConnectionID"), adapter.Str("Description")),
-                NetworkAdapter.FirstNonEmpty(adapter.Str("Description"), c.Str("Description")),
+                NetworkAdapter.FirstNonEmpty(adapter.Str("Name"), adapter.Str("InterfaceDescription")),
+                NetworkAdapter.FirstNonEmpty(adapter.Str("InterfaceDescription"), c.Str("Description")),
                 Ipv4(c, "IPAddress").FirstOrDefault() ?? "",
                 Ipv4(c, "DefaultIPGateway").FirstOrDefault() ?? "",
                 string.Join(", ", Ipv4(c, "DNSServerSearchOrder")),
@@ -183,8 +187,10 @@ public sealed class WmiNetworkSource(IWmiSource wmi, IRegistrySource registry) :
         return new IpConfigSnapshot(list, proxyOn, proxyOn ? p!.Str("ProxyServer") : "");
     }
 
-    /// <summary>The addresses in a string-array property without the IPv6 ones (WMI lists both). Not an address at all is kept: a recording's
-    /// DNS servers are placeholders.</summary>
+    /// <summary>
+    /// The IPv4 addresses in a string-array property (WMI lists the IPv6 ones too). A recording replaces addresses with placeholders that keep
+    /// the family (<c>&lt;ipv4:…&gt;</c>, <c>&lt;ipv6:…&gt;</c>) and DNS servers with <c>&lt;serial:…&gt;</c>, which are kept unless an IPv4 address is there.
+    /// </summary>
     private static IEnumerable<string> Ipv4(WmiRow r, string name)
     {
         if (!r.Values.TryGetValue(name, out var v)) return [];
@@ -194,7 +200,10 @@ public sealed class WmiNetworkSource(IWmiSource wmi, IRegistrySource registry) :
             JsonValueKind.String => [v.GetString()!.Trim()],
             _ => [],
         };
-        return items.Where(s => s.Length > 0 && !(IPAddress.TryParse(s, out var ip) && ip.AddressFamily == AddressFamily.InterNetworkV6)).ToList();
+        var list = items.Where(s => s.Length > 0).ToList();
+        var v4 = list.Where(s => (IPAddress.TryParse(s, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork)
+                                 || s.StartsWith(RecordingPlaceholders.Ipv4, StringComparison.Ordinal)).ToList();
+        return v4.Count > 0 ? v4 : list.Where(s => !IPAddress.TryParse(s, out _) && !s.StartsWith(RecordingPlaceholders.Ipv6, StringComparison.Ordinal)).ToList();
     }
 }
 
