@@ -114,11 +114,29 @@ public sealed class WmiNetworkSource(IWmiSource wmi, IRegistrySource registry) :
         var byName = new Dictionary<string, WmiRow>(StringComparer.OrdinalIgnoreCase);
         foreach (var s in stats.Rows ?? [])
             if (s.Str("Name") is { Length: > 0 } n) byName.TryAdd(n, s);
-        return q.Rows!.Select(r =>
-        {
-            var a = Adapter(r);
-            return byName.TryGetValue(a.Name, out var s) ? WithCounters(a, s) : a;
-        }).ToList();
+        var list = q.Rows!.Select(Adapter).ToList();
+        list.AddRange(await MissingUpAdaptersAsync(list, q.Rows!, ct).ConfigureAwait(false));
+        return list.Select(a => byName.TryGetValue(a.Name, out var s) ? WithCounters(a, s) : a).ToList();
+    }
+
+    /// <summary>
+    /// Adapters that are up but that Win32_NetworkAdapter (and so osquery) doesn't name: on an HP OmniBook X (arm64) the connected Wi-Fi
+    /// adapter has no connection name, status or physical flag there, so the check said "Not connected". Get-NetAdapter's list
+    /// (MSFT_NetAdapter) names it; it is added as a connected network card. Its hardware address and speed aren't known.
+    /// </summary>
+    private async Task<IEnumerable<NetworkAdapter>> MissingUpAdaptersAsync(List<NetworkAdapter> known, IReadOnlyList<WmiRow> win32, CancellationToken ct)
+    {
+        var q = await wmi.QueryAsync(StandardCimv2, NetAdaptersSql, ct).ConfigureAwait(false);
+        if (!q.Success) return [];
+        var names = known.Select(a => a.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return q.Rows!
+            .Where(r => r.Bool("Hidden") != true && r.Long("InterfaceOperationalStatus") == 1 && r.Str("Name") is { Length: > 0 } n && !names.Contains(n))
+            .Select(r =>
+            {
+                var description = r.Str("InterfaceDescription");
+                var manufacturer = win32.FirstOrDefault(w => w.Str("Description").Equals(description, StringComparison.OrdinalIgnoreCase))?.Str("Manufacturer") ?? "";
+                return new NetworkAdapter(r.Str("Name"), description, manufacturer, "", "2", true, true, null, null, null, null, null, null, null);
+            }).ToList();
     }
 
     /// <summary>One Win32_NetworkAdapter, named as osquery names it: the connection name ("Wi-Fi"), else the description, else the index.</summary>
