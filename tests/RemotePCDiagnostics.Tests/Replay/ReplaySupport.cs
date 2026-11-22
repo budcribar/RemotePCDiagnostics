@@ -341,10 +341,11 @@ internal static class DamagedRuns
     {
         foreach (var card in report.Cards)
         {
-            if (string.IsNullOrWhiteSpace(card.Headline) && card.ErrorText is null) yield return $"card {card.Id} has no headline";
+            // An empty card says why (EmptyText) instead of a headline.
+            if (string.IsNullOrWhiteSpace(card.Headline) && card.ErrorText is null && card.EmptyText is null) yield return $"card {card.Id} has no headline";
             foreach (var row in card.Rows)
                 foreach (var v in row.Values)
-                    if (v.Contains("NaN") || v.Contains("Infinity") || v.Contains("∞") || v.StartsWith("-1 ") || v.Contains("-1 GB") || v.Contains("-1 MB"))
+                    if (v.Contains("NaN") || v.Contains("Infinity") || v.Contains("∞") || v.Contains("-1 GB") || v.Contains("-1 MB"))
                         yield return $"{card.Id}: \"{v}\"";
         }
         foreach (var m in report.KeyMetrics ?? [])

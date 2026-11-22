@@ -23,7 +23,7 @@ public sealed record SystemInfo(
 
     private static readonly HashSet<string> Unset = new(StringComparer.OrdinalIgnoreCase)
     {
-        "-1", "None", "Default string", "To Be Filled By O.E.M.", "System Version", "Not Applicable", "Not Specified",
+        "-1", "None", "Default string", "To Be Filled By O.E.M.", "System Version", "Not Applicable", "Not Specified", "ConfigID",
     };
 }
 
@@ -47,9 +47,12 @@ public sealed record MemoryDevice(
 {
     public bool IsPopulated => SizeMb is > 0;
 
+    /// <summary>A module's size in MB, or null when it can't be real (none is near a petabyte): keeps the byte totals from overflowing.</summary>
+    public static long? SaneMb(long? mb) => mb is > 0 and < 1L << 30 ? mb : null;
+
     public static MemoryDevice FromRow(IReadOnlyDictionary<string, string> r) => new(
         r.Str("device_locator"), r.Str("bank_locator"), r.Str("form_factor"), r.Str("memory_type"),
-        r.Long("size"), r.Int("max_speed"), r.Int("configured_clock_speed"),
+        SaneMb(r.Long("size")), r.Int("max_speed"), r.Int("configured_clock_speed"),
         r.Str("manufacturer"), r.Str("part_number"), r.Str("serial_number"));
 }
 

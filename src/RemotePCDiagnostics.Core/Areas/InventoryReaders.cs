@@ -106,6 +106,9 @@ public sealed class WmiHardwareInventorySource(IWmiSource wmi) : IHardwareInvent
             cpus = cpus with { Items = [HardwareInventory.CpuFromSystemPublic(s0)], FromFallback = true };
         if (memory.Success && !memory.Items.Any(m => m.IsPopulated) && s0?.PhysicalMemoryBytes is > 0)
             memory = memory with { FromFallback = true };
+        // Installed memory, as osquery reports it: the modules' total (16 GB), not what Windows can use (15.6 GB).
+        if (s0 is not null && memory.Items.Where(m => m.IsPopulated).Sum(m => m.SizeMb ?? 0) is > 0 and var installedMb)
+            system = system with { Items = [s0 with { PhysicalMemoryBytes = installedMb * 1024 * 1024 }] };
         if (disks.Success && disks.Items.Count == 1 && disks.Items[0].SizeBytes is not > 0)
         {
             var ld = await Q(LogicalDrivesSql).ConfigureAwait(false);
@@ -120,12 +123,15 @@ public sealed class WmiHardwareInventorySource(IWmiSource wmi) : IHardwareInvent
     {
         var cpu = cpus.FirstOrDefault();
         var vendor = cs.Str("Manufacturer");
-        // Lenovo keeps the marketing model in Win32_ComputerSystemProduct.Version (Model holds the machine type), as osquery reads it.
-        var model = vendor.StartsWith("LENOVO", StringComparison.OrdinalIgnoreCase) && product?.Str("Version") is { Length: > 0 } v ? v : cs.Str("Model");
+        // Lenovo keeps the marketing model in Win32_ComputerSystemProduct.Version and the machine type in Model; osquery shows the first as
+        // the model and the second as the version.
+        var lenovo = vendor.StartsWith("LENOVO", StringComparison.OrdinalIgnoreCase) && product?.Str("Version") is { Length: > 0 };
+        var model = lenovo ? product!.Str("Version") : cs.Str("Model");
+        var version = lenovo ? cs.Str("Model") : product?.Str("Version") ?? "";
         var name = cs.Str("Name");
         return new SystemInfo(
             cs.Str("DNSHostName") is { Length: > 0 } dns ? dns : name, name, product?.Str("UUID") ?? "",
-            vendor, model, SystemInfo.Reported(product?.Str("Version") ?? ""), bios?.Str("SerialNumber") ?? "",
+            vendor, model, SystemInfo.Reported(version), bios?.Str("SerialNumber") ?? "",
             board?.Str("Manufacturer") ?? "", board?.Str("Product") ?? "", SystemInfo.Reported(board?.Str("Version") ?? ""), board?.Str("SerialNumber") ?? "",
             cpu?.Str("Name") ?? "", Architecture(cpu?.Long("Architecture")),
             Sum(cpus, "NumberOfCores"), Sum(cpus, "NumberOfLogicalProcessors"), cpus.Count > 0 ? cpus.Count : null,
@@ -148,7 +154,7 @@ public sealed class WmiHardwareInventorySource(IWmiSource wmi) : IHardwareInvent
 
     internal static MemoryDevice Memory(WmiRow r) => new(
         r.Str("DeviceLocator"), r.Str("BankLabel"), FormFactor(r.Long("FormFactor")), MemoryType(r.Long("SMBIOSMemoryType")),
-        r.Long("Capacity") is > 0 and var bytes ? bytes / (1024 * 1024) : null, Int(r, "Speed"), Int(r, "ConfiguredClockSpeed"),
+        MemoryDevice.SaneMb(r.Long("Capacity") is > 0 and var bytes ? bytes / (1024 * 1024) : null), Int(r, "Speed"), Int(r, "ConfiguredClockSpeed"),
         r.Str("Manufacturer"), r.Str("PartNumber"), r.Str("SerialNumber"));
 
     /// <summary>Win32_PhysicalMemory.FormFactor (CIM codes), in the SMBIOS words osquery shows.</summary>
@@ -181,12 +187,13 @@ public sealed class WmiHardwareInventorySource(IWmiSource wmi) : IHardwareInvent
         r.Str("NetConnectionID").Length > 0 ? r.Str("NetConnectionID") : r.Str("Name"), r.Str("Description"), r.Str("Manufacturer"),
         r.Str("AdapterType"), r.Bool("PhysicalAdapter"), r.Bool("NetEnabled"),
         r.Long("NetConnectionStatus") is { } status ? NetworkAdapterInfo.ConnectionStatus(status.ToString(CultureInfo.InvariantCulture)) : "",
-        r.Long("Speed") is >= 0 and var speed ? speed : null);
+        // Speed means little on an adapter that isn't connected, and long.MaxValue is WMI's "unknown".
+        r.Long("NetConnectionStatus") == 2 && r.Long("Speed") is > 0 and < long.MaxValue and var speed ? speed : null);
 
-    /// <summary>The release date as SMBIOS (and osquery) gives it: MM/dd/yyyy.</summary>
+    /// <summary>The release date as osquery's platform_info gives it: yyyy-MM-dd.</summary>
     internal static BiosInfo Bios(WmiRow r) => new(
         r.Str("Manufacturer"), r.Str("SMBIOSBIOSVersion"),
-        CimDates.Parse(r.Str("ReleaseDate"))?.ToString("MM/dd/yyyy", CultureInfo.InvariantCulture) ?? "",
+        CimDates.Parse(r.Str("ReleaseDate"))?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "",
         r.Long("SystemBiosMajorVersion") is { } major and < 255 && r.Long("SystemBiosMinorVersion") is { } minor and < 255 ? $"{major}.{minor}" : "");
 
     private static int? Int(WmiRow r, string name) => r.Long(name) is { } v and >= int.MinValue and <= int.MaxValue ? (int)v : null;
@@ -235,8 +242,9 @@ public sealed class WmiDeviceDriverSource(IWmiSource wmi) : IDeviceDriverSource
     public async Task<IReadOnlyList<DriverEntry>?> ReadDriversAsync(CancellationToken ct)
     {
         var q = await wmi.QueryAsync(WmiHardwareInventorySource.Cimv2, DriversSql, ct).ConfigureAwait(false);
-        // As osquery's query: only drivers for a named device.
-        return q.Success ? q.Rows!.Where(r => r.Str("DeviceName").Length > 0).Select(Driver).ToList() : null;
+        // As osquery's query (device_name != ''): a name of only spaces counts, as on the WPD volume driver.
+        return q.Success ? q.Rows!.Where(r => r.Values.TryGetValue("DeviceName", out var n) && n.ValueKind == System.Text.Json.JsonValueKind.String && n.GetString()!.Length > 0)
+            .Select(Driver).ToList() : null;
     }
 
     public static DriverEntry Driver(WmiRow r) => new(

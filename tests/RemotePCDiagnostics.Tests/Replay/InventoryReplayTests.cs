@@ -38,11 +38,31 @@ public sealed class HardwareInventoryReplayTests
         var pc = new ReplayedPc(rec);
         Assert.SkipUnless(HasNew(pc) && HasOld(pc), "This recording doesn't hold both the WMI and the osquery hardware answers.");
         var ct = TestContext.Current.CancellationToken;
-        var now = Report(await pc.Inventory().RefreshAsync(null, ct));
-        var old = Report(await new ReplayedPc(rec).InventoryOld().RefreshAsync(null, ct));
+        var now = WithoutGains(Report(await pc.Inventory().RefreshAsync(null, ct)));
+        var old = WithoutGains(Report(await new ReplayedPc(rec).InventoryOld().RefreshAsync(null, ct)));
         var diffs = ReportDiff.Between(old, now, Live);
         Assert.True(diffs.Count == 0, $"{diffs.Count} differences:\n" + string.Join("\n", diffs));
     }
+
+    /// <summary>
+    /// What WMI shows that osquery doesn't, left out of both before comparing: the motherboard (osquery's board fields are empty on Windows),
+    /// the memory type (osquery says Unknown), the graphics adapter's name (osquery shows the chip, "AMD Radeon Graphics Processor (0x164C)";
+    /// WMI the name Device Manager shows, "AMD Radeon(TM) Graphics"), and a connected adapter's link speed (osquery reports 0).
+    /// </summary>
+    private static AreaReport WithoutGains(AreaReport r) => r with
+    {
+        Cards = r.Cards.Select(c => c.Id switch
+        {
+            "system" => c with { Rows = c.Rows.Where(x => x.Values[0] != "Motherboard").ToList() },
+            "memory" => c with { Rows = c.Rows.Select(x => Blank(x, 3)).ToList() },
+            "gpu" => c with { Headline = "", Rows = c.Rows.Select(x => Blank(x, 0)).ToList() },
+            "network" => c with { Rows = c.Rows.Select(x => Blank(x, 4)).ToList() },
+            _ => c,
+        }).ToList(),
+    };
+
+    private static AreaRow Blank(AreaRow row, int column) =>
+        row with { Values = row.Values.Select((v, i) => i == column ? "" : v).ToList() };
 
     /// <summary>The processor's load and current clock change from moment to moment; the two paths read them seconds apart.</summary>
     private static bool Live(AreaCard card, AreaRow row) =>
