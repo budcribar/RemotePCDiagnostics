@@ -47,6 +47,7 @@ Every page marker carries its page's contract version: `[data-rpcd-page="checks"
 | certificates | 1 | Same |
 | history | 1 | Same, including `history-data` |
 | history | 2 | `history-data` names the test and result filters (`testFilter`, `outcomeFilter`); `history-loading` is present through every reload, not only the first read |
+| history | 3 | Undo changes panel: `undo-data` (pending and permanent changes, last result, `resultSeq`), `undo-details` / `undo-list-toggle`, one `undo-one-{id}` button per change, `undo-one-result` |
 | about | 1 | Same, including `about-version` |
 | about | 2 | `about-report-data` (schema 1) on the page root: app version, informational version, channel, process and OS architecture, agent version and service status, whether the agent is connected, session mode (`local` or `agent`), shop group, shop name and agent id, machine name, OS, masked install path, and the last update check. No enrollment key, shop API key, relay URL or contact details |
 | module | 1 | Same (a module's own page outside Checks) |

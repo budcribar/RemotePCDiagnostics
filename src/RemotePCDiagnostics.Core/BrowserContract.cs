@@ -13,9 +13,9 @@ public static class BrowserContract
     public const int Stress = 1;
     public const int Interactive = 1;
     public const int SecurityAudit = 1;
-    public const int Benchmark = 3;
+    public const int Benchmark = 4;
     public const int Certificates = 1;
-    public const int History = 2;
+    public const int History = 3;
     public const int About = 2;
     public const int Module = 3;
 

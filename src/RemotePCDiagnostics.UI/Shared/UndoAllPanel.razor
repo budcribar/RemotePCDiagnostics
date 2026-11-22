@@ -12,6 +12,7 @@
     var permanent = all.Where(c => Undoability.Of(c) == UndoSupport.None).ToList();
 }
 <section class="card undo-panel" data-testid="undo-panel">
+    <AgentData TestId="undo-data" Json="@AgentExports.Undo(Journal.IsLoaded, pending, permanent, _busyId is not null || _busy, _resultSeq, _result, _one)" />
     <div class="card-head"><strong>Undo changes</strong>
         <span class="meta" data-testid="undo-count">@(pending.Count == 0 ? (Journal.IsLoaded ? "Nothing to undo" : "Saved changes not read yet") : $"{pending.Count} change{(pending.Count == 1 ? "" : "s")} can be undone")</span></div>
     @if (!Journal.IsLoaded)
@@ -30,10 +31,15 @@
     {
         @if (pending.Count > 0)
         {
-        <details>
-            <summary class="meta">Show what will be put back</summary>
+        <details data-testid="undo-details">
+            <summary class="meta" data-testid="undo-list-toggle">Show what will be put back</summary>
             <ul class="undo-list" data-testid="undo-list">
-                @foreach (var c in pending) { <li>@c.Label <span class="meta">· @c.TimeUtc.ToLocalTime().ToString("g") · @c.Actor@(c.NeedsRestart ? " · needs a restart" : "")@(c.Kind == ChangeKind.StoreReinstall ? " · reinstalls from the Microsoft Store (needs internet)" : "")</span></li> }
+                @foreach (var c in pending)
+                {
+                    var change = c;
+                    <li data-change-id="@c.Id">@c.Label <span class="meta">· @c.TimeUtc.ToLocalTime().ToString("g") · @c.Actor@(c.NeedsRestart ? " · needs a restart" : "")@(c.Kind == ChangeKind.StoreReinstall ? " · reinstalls from the Microsoft Store (needs internet)" : "")</span>
+                        <button class="btn-small" data-testid="undo-one-@c.Id" disabled="@(_busy || _busyId is not null)" @onclick="() => UndoOne(change)">@(_busyId == c.Id ? "Undoing…" : c.Kind == ChangeKind.StoreReinstall ? "Reinstall" : "Undo")</button></li>
+                }
             </ul>
         </details>
         }
@@ -47,6 +53,10 @@
             else { <button class="btn btn-outline" data-testid="undo-all" @onclick="() => _confirm = true">@(pending.Count == 0 ? "Clear this list" : "Undo all changes")</button> }
         </div>
     }
+    @if (_one is { } one)
+    {
+        <p class="@(one.Success || one.Skipped ? "meta" : "notice")" data-testid="undo-one-result">@one.Change.Label: @one.Message</p>
+    }
     @if (_result is { } r)
     {
         <p class="@(r.Failed > 0 ? "notice" : "meta")" data-testid="undo-result">@r.Summary</p>
@@ -58,7 +68,11 @@
 
 @code {
     private bool _confirm, _busy;
+    private Guid? _busyId;
     private UndoAllResult? _result;
+    private UndoItemResult? _one;
+    /// <summary>Goes up with every finished undo, so an agent can tell a new result from the one it saw before clicking.</summary>
+    private int _resultSeq;
     protected override void OnInitialized() => Journal.Changed += OnChanged;
     private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
     public void Dispose() => Journal.Changed -= OnChanged;
@@ -66,7 +80,19 @@
     private async Task UndoAll()
     {
         _busy = true;
-        try { _result = await Undo.UndoAllAsync(ServiceActor.From(Session)); }
-        finally { _busy = false; _confirm = false; }
+        try { _result = await Undo.UndoAllAsync(ServiceActor.From(Session)); _one = null; }
+        finally { _busy = false; _confirm = false; _resultSeq++; }
+    }
+
+    private async Task UndoOne(ChangeRecord change)
+    {
+        _busyId = change.Id;
+        try
+        {
+            _one = await Undo.UndoChangeAsync(change.Id, ServiceActor.From(Session))
+                ?? new UndoItemResult(change, false, "Already undone, or no longer listed.");
+            _result = null;
+        }
+        finally { _busyId = null; _resultSeq++; }
     }
 }

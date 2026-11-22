@@ -201,6 +201,68 @@ public static class AgentExports
         };
     }
 
+    // ---- Undo changes (History and Benchmark pages) -----------------------------------------------------------------------
+
+    /// <summary>
+    /// The Undo changes panel for browser agents (undo-data): what can be put back (each with its undo-one-{id} button), what is
+    /// permanent, and the last undo's result. resultSeq goes up with every finished undo.
+    /// </summary>
+    public static string Undo(bool loaded, IReadOnlyList<Changes.ChangeRecord> pending, IReadOnlyList<Changes.ChangeRecord> permanent, bool busy,
+        int resultSeq, Changes.UndoAllResult? all, Changes.UndoItemResult? one) =>
+        JsonSerializer.Serialize(BuildUndo(loaded, pending, permanent, busy, resultSeq, all, one), Json);
+
+    public static object BuildUndo(bool loaded, IReadOnlyList<Changes.ChangeRecord> pending, IReadOnlyList<Changes.ChangeRecord> permanent, bool busy,
+        int resultSeq, Changes.UndoAllResult? all, Changes.UndoItemResult? one) => new
+    {
+        schema = SchemaVersion,
+        loaded,
+        busy,
+        pending = pending.Select(Change).ToList(),
+        permanent = permanent.Select(Change).ToList(),
+        resultSeq,
+        lastResult = all is not null
+            ? new
+            {
+                kind = "all",
+                summary = T(all.Summary),
+                succeeded = all.Succeeded,
+                failed = all.Failed,
+                skipped = all.Skipped,
+                needsRestart = all.NeedsRestart,
+                items = all.Items.Select(Item).ToList(),
+            }
+            : one is not null
+                ? new
+                {
+                    kind = "one",
+                    summary = T(one.Message),
+                    succeeded = one.Success ? 1 : 0,
+                    failed = !one.Success && !one.Skipped ? 1 : 0,
+                    skipped = one.Skipped ? 1 : 0,
+                    needsRestart = one.Success && one.Change.NeedsRestart,
+                    items = new[] { Item(one) }.ToList(),
+                }
+                : null,
+    };
+
+    private static object Change(Changes.ChangeRecord c) => new
+    {
+        id = c.Id.ToString(),
+        label = T(c.Label),
+        kind = c.Kind.ToString(),
+        at = c.TimeUtc.ToString("O"),
+        actor = V(c.Actor),
+        needsRestart = c.NeedsRestart,
+    };
+
+    private static object Item(Changes.UndoItemResult i) => new
+    {
+        id = i.Change.Id.ToString(),
+        label = T(i.Change.Label),
+        outcome = i.Success ? "undone" : i.Skipped ? "permanent" : "failed",
+        message = T(i.Message),
+    };
+
     // ---- Which checks are turned on -------------------------------------------------------------------------------------
 
     /// <summary>The Checks page's enablement for browser agents (checks-report-data): every diagnostic check, hidden hardware included.</summary>
