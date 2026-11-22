@@ -2767,8 +2767,7 @@ public sealed partial class FrameworkBiosUpdateProvider : IBiosUpdateProvider
             if (lastPercent < 100)
                 progress?.Report(new BiosInstallProgress(BiosInstallStage.Downloading, 100, $"Downloaded {fileName}."));
 
-            File.Move(partPath, finalPath, overwrite: true);
-            moved = true;
+            moved = await BiosProviderHttp.MoveIntoPlaceOrReuseIdenticalAsync(partPath, finalPath, ct).ConfigureAwait(false);
 
             if (request.VerifyHash && !string.IsNullOrWhiteSpace(request.Target.Sha256))
             {

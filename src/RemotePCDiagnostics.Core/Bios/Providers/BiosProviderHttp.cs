@@ -28,6 +28,30 @@ public sealed record BiosDownloadResult(
 /// </summary>
 public static class BiosProviderHttp
 {
+    /// <summary>
+    /// Moves a finished download into place. On Windows the move fails while another install of the same package still has
+    /// <paramref name="finalPath"/> open; when that file has exactly the bytes just downloaded, it is used as is. Returns true when this
+    /// call moved its file (false: the identical file already there is used, and the caller deletes its own .part).
+    /// </summary>
+    public static async Task<bool> MoveIntoPlaceOrReuseIdenticalAsync(string partPath, string finalPath, CancellationToken ct)
+    {
+        try
+        {
+            File.Move(partPath, finalPath, overwrite: true);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            if (!File.Exists(finalPath) || IsSymlinkOrReparsePath(finalPath))
+                throw;
+            var ours = await BiosPackageVerifier.ComputeSha256HexAsync(partPath, ct).ConfigureAwait(false);
+            var theirs = await BiosPackageVerifier.ComputeSha256HexAsync(finalPath, ct).ConfigureAwait(false);
+            if (!string.Equals(ours, theirs, StringComparison.Ordinal))
+                throw;
+            return false;
+        }
+    }
+
     public const int DefaultMaxRedirects = 5;
     public const long DefaultMaxDownloadBytes = 512L * 1024 * 1024;
     public const string DefaultUserAgent = "RemotePCDiagnostics-BiosUpdater/1.0";
@@ -276,8 +300,7 @@ public static class BiosProviderHttp
             if (lastPercent < 100)
                 progress?.Report(new BiosInstallProgress(BiosInstallStage.Downloading, 100, $"Downloaded {fileName}."));
 
-            File.Move(partPath, finalPath, overwrite: true);
-            moved = true;
+            moved = await MoveIntoPlaceOrReuseIdenticalAsync(partPath, finalPath, ct).ConfigureAwait(false);
             return BiosDownloadResult.Ok(finalPath, downloaded);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
