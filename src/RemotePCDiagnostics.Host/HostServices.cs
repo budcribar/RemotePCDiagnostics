@@ -3,6 +3,7 @@ using PeakSWC.RemoteBlazorWebView;
 using PeakSWC.RemoteWebView;
 using RemotePCDiagnostics.Core;
 using RemotePCDiagnostics.Core.Areas;
+using RemotePCDiagnostics.Core.Bios;
 using RemotePCDiagnostics.Core.Checks;
 using RemotePCDiagnostics.Core.Changes;
 using RemotePCDiagnostics.Core.Optimizations;
@@ -111,6 +112,8 @@ public static class HostServices
         services.AddSingleton<IGpuDeviceFactory>(_ => new RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory(L<RemotePCDiagnostics.Host.Gpu.D3D11GpuDeviceFactory>()));
         // Webcam test: cameras through Windows MediaCapture (a preview window only at the PC itself).
         services.AddSingleton<RemotePCDiagnostics.Core.Webcam.IWebcamIo>(_ => new MediaCaptureWebcamIo(L<MediaCaptureWebcamIo>(), showPreview: session.Mode == SessionMode.Local));
+        // Vendor-independent BIOS update orchestrator and probes (vendor providers register via AddBiosUpdateProvider<T>).
+        services.AddBiosUpdates();
         // Every built-in module goes through the same registration path a plugin uses.
         var plugins = new PluginRegistrar(session, HostVersion(), L<PluginRegistrar>());
         services.AddSingleton(plugins);
