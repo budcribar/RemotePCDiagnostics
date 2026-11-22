@@ -35,7 +35,8 @@ public static class AreaReportExport
 
     public static ExportedReport Build(AreaReport report, IReadOnlyList<ExportedService>? services = null)
     {
-        var cards = report.Cards.Take(MaxCards).Select(Card).ToList();
+        var cards = report.Cards.Take(MaxCards)
+            .Select(card => Card(card, report.ReviewedCards?.FirstOrDefault(r => r.Id == card.Id))).ToList();
         return new ExportedReport(
             SchemaVersion,
             report.Status.ToString().ToLowerInvariant(),
@@ -71,7 +72,16 @@ public static class AreaReportExport
             }).ToList()
             : null;
 
-    private static ExportedCard Card(AreaCard card)
+    public const int MaxReviewedRows = 50;
+
+    /// <summary>
+    /// The id of a row a technician can mark as reviewed (crash and event rows), from its first review key; null for any other row.
+    /// The page puts it on the row (<c>data-review-id</c>) and on its Mark as reviewed button.
+    /// </summary>
+    public static string? ReviewId(AreaRow row) =>
+        row.ReviewKeys is { Count: > 0 } keys && keys[0] is { Length: > 0 } key ? key[..Math.Min(16, key.Length)].ToLowerInvariant() : null;
+
+    private static ExportedCard Card(AreaCard card, AreaCard? reviewed)
     {
         // Rows that need attention, worst first, keeping the module's order within a level. A row with no verdict (Neutral)
         // is listed too: drivers, programs and processes often carry the useful facts at that level. So is any row with a fix.
@@ -105,6 +115,8 @@ public static class AreaReportExport
             Actions = Actions(card.Actions),
             RunCheck = card.RunCheck is { } link ? new ExportedCheckLink(link.CheckId, link.ButtonText) : null,
             ListedRowCount = attention.Count,
+            ReviewedRows = reviewed?.Rows.Where(row => ReviewId(row) is not null).Take(MaxReviewedRows).Select(Row).ToList() is { Count: > 0 } done
+                ? done : null,
         };
     }
 
@@ -119,6 +131,7 @@ public static class AreaReportExport
             row.HangOccurrences is { Count: > 0 } hangs ? hangs.Count : null)
         {
             Actions = Actions(row.Actions),
+            ReviewId = ReviewId(row),
         };
     }
 
@@ -172,12 +185,18 @@ public static class AreaReportExport
 
         /// <summary>How many rows qualify for <c>Rows</c> (every row that is not ok, and any row with a fix) before the cap.</summary>
         public int ListedRowCount { get; init; }
+
+        /// <summary>Rows a technician marked as reviewed, which the card no longer counts (the drawer's Show reviewed).</summary>
+        public IReadOnlyList<ExportedRow>? ReviewedRows { get; init; }
     }
 
     public sealed record ExportedRow(string Level, string? Key, IReadOnlyList<string> Values, string? Detail, int? Occurrences)
     {
         /// <summary>One-click fixes on this row (buttons in the card's drawer).</summary>
         public IReadOnlyList<ExportedAction>? Actions { get; init; }
+
+        /// <summary>Set on a row that can be marked as reviewed (or, in <c>ReviewedRows</c>, put back).</summary>
+        public string? ReviewId { get; init; }
     }
 
     /// <summary>A one-click fix as the page offers it. Kind is a <see cref="RemediationKind"/> name.</summary>

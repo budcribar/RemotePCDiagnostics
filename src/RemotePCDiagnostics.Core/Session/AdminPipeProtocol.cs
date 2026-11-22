@@ -71,18 +71,6 @@ public interface IElevatedCommandBridge
         Task.FromResult<SecurityAuditRun?>(null);
 
     /// <summary>
-    /// The workflow's automatic sign-in, done by the Agent (it writes HKLM and an LSA secret). Each throws
-    /// <see cref="InvalidOperationException"/> with the Agent's reason when it can't, and <see cref="NotSupportedException"/> when the
-    /// Agent is from before this existed.
-    /// </summary>
-    Task<bool> ValidateCredentialsAsync(string user, string domain, string password, CancellationToken ct = default) =>
-        throw new NotSupportedException("The Agent can't check sign-in passwords.");
-    Task<AutoLogonBackup> EnableAutoLogonAsync(string user, string domain, string password, int logons, CancellationToken ct = default) =>
-        throw new NotSupportedException("The Agent can't turn on automatic sign-in.");
-    Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default) =>
-        throw new NotSupportedException("The Agent can't turn off automatic sign-in.");
-
-    /// <summary>
     /// Has the Agent run RemotePCDiagnostics.ModuleHost with administrator rights for a module that ships with the app and needs them
     /// (<paramref name="module"/> is its DLL path, or "--shared"), and returns the app's end of it (<see cref="AgentModuleHost"/>). Throws
     /// <see cref="InvalidOperationException"/> with the Agent's reason when it can't, and <see cref="NotSupportedException"/> when the
@@ -527,7 +515,6 @@ public sealed record AdminPipeRequest(
     [property: JsonPropertyName("arguments")] IReadOnlyList<string>? Arguments = null,
     [property: JsonPropertyName("timeoutMs")] int TimeoutMs = 60_000,
     [property: JsonPropertyName("channel")] string? Channel = null,
-    [property: JsonPropertyName("autoLogon")] AdminPipeAutoLogon? AutoLogon = null,
     [property: JsonPropertyName("module")] string? Module = null,
     [property: JsonPropertyName("setting")] AdminPipeSetting? Setting = null,
     [property: JsonPropertyName("appRemoval")] AdminPipeAppRemoval? AppRemoval = null,
@@ -561,14 +548,6 @@ public sealed record AdminPipePackage(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("publisherId")] string PublisherId);
 
-/// <summary>The automatic sign-in requests' arguments. The password is sent only to check it and to turn sign-in on.</summary>
-public sealed record AdminPipeAutoLogon(
-    [property: JsonPropertyName("user")] string? User = null,
-    [property: JsonPropertyName("domain")] string? Domain = null,
-    [property: JsonPropertyName("password")] string? Password = null,
-    [property: JsonPropertyName("logons")] int Logons = 0,
-    [property: JsonPropertyName("backup")] AutoLogonBackup? Backup = null);
-
 public sealed record AdminPipeResponse(
     [property: JsonPropertyName("ok")] bool Ok,
     [property: JsonPropertyName("allowed")] bool Allowed = true,
@@ -584,7 +563,6 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("updateResult")] AppUpdateResult? UpdateResult = null,
     [property: JsonPropertyName("report")] string? Report = null,
     [property: JsonPropertyName("cancelled")] bool Cancelled = false,
-    [property: JsonPropertyName("autoLogonBackup")] AutoLogonBackup? AutoLogonBackup = null,
     [property: JsonPropertyName("modulePipe")] string? ModulePipe = null,
     [property: JsonPropertyName("left")] IReadOnlyList<string>? Left = null,
     [property: JsonPropertyName("taskState")] string? TaskState = null,
@@ -626,9 +604,6 @@ public static class AdminPipeFraming
     public const string OpSecurityAudit = "security_audit";
     /// <summary>Sent while a <see cref="OpSecurityAudit"/> request runs: stops it. It gets no response of its own.</summary>
     public const string OpCancel = "cancel";
-    public const string OpValidateCredentials = "validate_credentials";
-    public const string OpEnableAutoLogon = "enable_autologon";
-    public const string OpDisableAutoLogon = "disable_autologon";
     /// <summary>Starts a module host in the Agent for a module that needs administrator; the response names the pipe that carries its lines.</summary>
     public const string OpModuleHost = "module_host";
     /// <summary>Secures the state folder, registers the Event Log source and runs the history updates; the response carries what was done.</summary>
@@ -901,28 +876,6 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
     {
         var response = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpUpdateRpcdStatus, RequestId: requestId), ct).ConfigureAwait(false);
         return response.UpdateStatus;
-    }
-
-    public async Task<bool> ValidateCredentialsAsync(string user, string domain, string password, CancellationToken ct = default)
-    {
-        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpValidateCredentials, AutoLogon: new(user, domain, password)), ct).ConfigureAwait(false);
-        ThrowIfRefused(r);
-        return r.Ok;
-    }
-
-    public async Task<AutoLogonBackup> EnableAutoLogonAsync(string user, string domain, string password, int logons, CancellationToken ct = default)
-    {
-        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpEnableAutoLogon, AutoLogon: new(user, domain, password, logons)), ct).ConfigureAwait(false);
-        ThrowIfRefused(r);
-        if (!r.Ok || r.AutoLogonBackup is null) throw new InvalidOperationException(r.Error ?? "The Agent didn't turn on automatic sign-in.");
-        return r.AutoLogonBackup;
-    }
-
-    public async Task DisableAutoLogonAsync(AutoLogonBackup? backup, CancellationToken ct = default)
-    {
-        var r = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpDisableAutoLogon, AutoLogon: new(Backup: backup)), ct).ConfigureAwait(false);
-        ThrowIfRefused(r);
-        if (!r.Ok) throw new InvalidOperationException(r.Error ?? "The Agent didn't turn off automatic sign-in.");
     }
 
     /// <summary>How long the app waits to open the pipe of a module host the Agent started.</summary>
@@ -1213,7 +1166,6 @@ public sealed class AdminPipeServer(
     ILogger? log = null,
     Func<AppUpdateChannel, IReadOnlyList<string>?, CancellationToken, Task<AppUpdateResult>>? selfUpdater = null,
     Func<TimeSpan, CancellationToken, Task<SecurityAuditRun>>? securityAuditor = null,
-    IAutoLogonBackend? autoLogon = null,
     AgentModuleHost? moduleHost = null,
     IAdminSettingsBackend? adminSettings = null,
     IMachineTweaks? machineTweaks = null,
@@ -1639,9 +1591,6 @@ public sealed class AdminPipeServer(
         if (string.Equals(request.Op, AdminPipeFraming.OpSecurityAudit, StringComparison.OrdinalIgnoreCase))
             return await RunSecurityAuditAsync(request, ct).ConfigureAwait(false);
 
-        if (request.Op is AdminPipeFraming.OpValidateCredentials or AdminPipeFraming.OpEnableAutoLogon or AdminPipeFraming.OpDisableAutoLogon)
-            return await Task.Run(() => HandleAutoLogon(request), ct).ConfigureAwait(false);
-
         if (string.Equals(request.Op, AdminPipeFraming.OpModuleHost, StringComparison.OrdinalIgnoreCase))
             return await Task.Run(() => StartModuleHost(request), ct).ConfigureAwait(false);
         if (string.Equals(request.Op, AdminPipeFraming.OpSystemSetting, StringComparison.OrdinalIgnoreCase))
@@ -1685,46 +1634,6 @@ public sealed class AdminPipeServer(
         log.Info($"[admin-pipe-server] Machine setup: state folder secured={setup.StateFolderSecured}, event source={setup.EventSourceReady}, " +
             $"history update={setup.HistoryUpdate}, log move={setup.LogMove}.");
         return new(Ok: setup.Done, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: setup.Done ? 0 : -1, Setup: setup);
-    }
-
-    /// <summary>The maximum sign-ins automatic sign-in may be turned on for (the workflow needs two).</summary>
-    public const int MaxAutoLogons = 5;
-
-    private AdminPipeResponse HandleAutoLogon(AdminPipeRequest request)
-    {
-        AdminPipeResponse Answer(bool ok, string? error = null, bool allowed = true, AutoLogonBackup? backup = null) => new(
-            Ok: ok, Allowed: allowed, Elevated: Environment.IsPrivilegedProcess, HelperPid: Environment.ProcessId, ExitCode: ok ? 0 : -1,
-            Error: error, AutoLogonBackup: backup);
-
-        if (autoLogon is null) return Answer(false, "Automatic sign-in is not supported by this elevated helper.", allowed: false);
-        var a = request.AutoLogon ?? new AdminPipeAutoLogon();
-        try
-        {
-            switch (request.Op)
-            {
-                case AdminPipeFraming.OpValidateCredentials:
-                    if (string.IsNullOrWhiteSpace(a.User) || a.Password is null) return Answer(false, "A user name and password are required.");
-                    return Answer(autoLogon.Validate(a.User, a.Domain ?? "", a.Password));
-                case AdminPipeFraming.OpEnableAutoLogon:
-                    if (string.IsNullOrWhiteSpace(a.User) || a.Password is null) return Answer(false, "A user name and password are required.");
-                    if (a.Logons is < 1 or > MaxAutoLogons) return Answer(false, $"Automatic sign-in is limited to 1 to {MaxAutoLogons} sign-ins.");
-                    var backup = autoLogon.Enable(a.User, a.Domain ?? "", a.Password, a.Logons);
-                    log.Info($"[admin-pipe-server] Automatic sign-in turned on for {a.Domain}\\{a.User} ({a.Logons} sign-ins).");
-                    return Answer(true, backup: backup);
-                default:
-                    // Only Winlogon's own values come back: AutoAdminLogon is "0" or "1", nothing else is written.
-                    if (a.Backup is { AutoAdminLogon: not (null or "0" or "1") })
-                        return Answer(false, "The saved sign-in settings aren't valid.");
-                    autoLogon.Disable(a.Backup);
-                    log.Info("[admin-pipe-server] Automatic sign-in turned off and the previous settings restored.");
-                    return Answer(true);
-            }
-        }
-        catch (Exception ex)
-        {
-            log.Warn($"[admin-pipe-server] {request.Op} failed: {ex.Message}");
-            return Answer(false, ex.Message);
-        }
     }
 
     /// <summary>

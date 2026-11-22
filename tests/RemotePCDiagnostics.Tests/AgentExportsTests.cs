@@ -199,7 +199,7 @@ public class AgentExportsTests
             settings, null, null, BenchmarkComparison.Build(null, null), null, false, null, false, false, null, tests: tests), AgentJson()));
         var root = doc.RootElement;
 
-        Assert.Equal(3, BrowserContract.Benchmark);
+        Assert.Equal(4, BrowserContract.Benchmark);
         var enabled = root.GetProperty("settings").GetProperty("enabled").EnumerateArray().Select(e => e.GetString()).ToList();
         Assert.Equal(["Speedometer", "DeveloperCSharp"], enabled);
         var rows = root.GetProperty("tests").EnumerateArray().ToList();

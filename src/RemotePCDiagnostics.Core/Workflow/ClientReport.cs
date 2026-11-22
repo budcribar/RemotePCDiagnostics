@@ -7,7 +7,7 @@ namespace RemotePCDiagnostics.Core.Workflow;
 /// <summary>
 /// The report the tech hands to the client: one self-contained HTML page (prints to PDF from any browser), in plain language:
 /// what was found, what was fixed (with the exact settings changed), what the before/after measurements show, what the service itself
-/// did to the PC (restarts, temporary automatic sign-in, its restart task), what can be undone, and what's still recommended.
+/// did to the PC (restarts, how the PC signed back in, its restart task), what can be undone, and what's still recommended.
 /// </summary>
 public static class ClientReport
 {
@@ -88,11 +88,6 @@ public static class ClientReport
             sb.Append("<div class=\"tech-notes\" data-testid=\"report-tech-notes\"><strong>Technician notes</strong><div>").Append(E(techNotes)).Append("</div></div>");
 
         // Anything the service itself couldn't put back goes first, where nobody can miss it.
-        if (s.AutoLogonRestoreError is { } alErr)
-            sb.Append("<div class=\"alert\"><strong>Important: automatic sign-in could not be turned off.</strong> This PC may still sign in")
-              .Append(s.AutoLogonUser is { Length: > 0 } au ? " to " + E(au) : "").Append(" by itself after a restart, without asking for a password. ")
-              .Append("Ask the person who serviced this PC to turn it off now (run netplwiz and tick \"Users must enter a user name and password\", or use Sysinternals Autologon &gt; Disable). Windows said: ")
-              .Append(E(alErr)).Append("</div>");
         if (s.ResumeTaskRemoved == false)
             sb.Append("<div class=\"alert\"><strong>A scheduled task was left behind.</strong> The Task Scheduler task \"").Append(E(WorkflowService.ResumeTaskName))
               .Append("\" couldn't be removed; it starts Remote PC Diagnostics each time you sign in. Delete it in Task Scheduler (Task Scheduler Library).</div>");
@@ -204,7 +199,7 @@ public static class ClientReport
             sb.Append("</ul>");
         }
 
-        // What the service itself did to the PC (not fixes): restarts, automatic sign-in, the restart task, the report file.
+        // What the service itself did to the PC (not fixes): restarts, how the PC signed back in, the restart task, the report file.
         if (s.StartedUtc is not null)
         {
             sb.Append("<h2>What the service itself did</h2><ul>");
@@ -216,22 +211,9 @@ public static class ClientReport
                 else sb.Append("<li>Asked Windows to restart at ").Append(E(T(r.RequestedUtc))).Append(", but Windows didn't accept it.</li>");
             }
             if (s.RestartAborted) sb.Append("<li>A restart that was about to happen was called off when the service was cancelled.</li>");
-            if (s.AutoLogonUsed)
-            {
-                var who = s.AutoLogonUser is { Length: > 0 } u ? " for " + E(u) : "";
-                sb.Append("<li>");
-                if (s.AutoLogonRestoreError is not null)
-                    sb.Append("<strong>Turned on automatic sign-in").Append(who).Append(" for the restarts, and it could NOT be turned off again</strong> (see the warning at the top).");
-                else if (s.AutoLogonEnabled)
-                    sb.Append("<strong>Turned on automatic sign-in").Append(who).Append(" for the restarts; it is still on.</strong> Ask the person who serviced this PC to turn it off.");
-                else
-                    sb.Append("Turned on automatic sign-in").Append(who).Append(" so the PC could sign in by itself after the restarts, then turned it off again")
-                      .Append(s.AutoLogonRestoredUtc is { } back ? $" at {E(T(back))}" : "")
-                      .Append(": the stored password was removed and the previous sign-in settings").Append(s.AutoLogonBackup?.PasswordLessBuildVersion is 2 ? " (including \"Only allow Windows Hello sign-in\")" : "").Append(" were put back.");
-                sb.Append("</li>");
-            }
-            else if (s.AutoLogonAlreadyOn) sb.Append("<li>This PC already signed in by itself; the service didn't change that.</li>");
-            else sb.Append("<li>Automatic sign-in wasn't used: someone signed in after each restart.</li>");
+            sb.Append(s.SignsInAfterRestart
+                ? "<li>Windows signed the PC back in after each restart by itself. The service never asked for or stored a password.</li>"
+                : "<li>Someone signed in after each restart. The service never asked for or stored a password.</li>");
             if (s.ResumeTaskCreated)
             {
                 sb.Append("<li>Created the Task Scheduler task \"").Append(E(WorkflowService.ResumeTaskName)).Append("\" so the app carried on by itself after each restart; ")

@@ -201,6 +201,156 @@ public static class AgentExports
         };
     }
 
+    // ---- Memory suggestions and storage cleanup (Resource hogs and Drive health pages) --------------------------------------
+
+    public const int MaxSuggestions = 60;
+
+    private static string UndoKey(Changes.UndoSupport u) => u switch
+    {
+        Changes.UndoSupport.Full => "full",
+        Changes.UndoSupport.NothingToUndo => "nothing",
+        Changes.UndoSupport.Reinstall => "reinstall",
+        _ => "none",
+    };
+
+    private static object? SuggestionResultExport(Optimizations.SuggestionResult? r) => r is null ? null : new
+    {
+        suggestionId = V(r.SuggestionId),
+        succeeded = r.Success,
+        skipped = r.Skipped ? true : (bool?)null,
+        message = T(r.Message),
+        action = r.Action?.ToString(),
+        undone = r.Undone ? true : (bool?)null,
+        canForceClose = r.CanForceClose ? true : (bool?)null,
+        at = new DateTimeOffset(r.When.ToUniversalTime(), TimeSpan.Zero).ToString("O"),
+    };
+
+    private static object SuggestionExport(Optimizations.MemorySuggestionService svc, Optimizations.MemorySuggestion s) => new
+    {
+        id = V(s.Id),
+        title = V(s.Title),
+        why = T(s.Why),
+        note = T(s.Note),
+        category = V(s.Category),
+        kind = s.Kind.ToString().ToLowerInvariant(),
+        risk = s.Risk.ToString().ToLowerInvariant(),
+        savingBytes = s.SavingBytes,
+        defaultOn = s.DefaultOn,
+        actions = s.Actions.Select(a => new
+        {
+            type = a.Type.ToString(),
+            label = V(a.Label),
+            confirm = a.Confirm is not null ? true : (bool?)null,
+            undo = UndoKey(s.Undo ?? Changes.Undoability.Of(a.Type)),
+        }).ToList(),
+        canUndo = svc.UndoFor(s.Id) is not null ? true : (bool?)null,
+        result = SuggestionResultExport(svc.ResultFor(s.Id)),
+    };
+
+    /// <summary>
+    /// The Ways to use less memory panel for browser agents (mem-suggest-data). Each action is the panel's
+    /// <c>[data-action=mem-act][data-suggestion-id][data-action-type]</c> button; one with confirm true then needs mem-confirm-yes. last is
+    /// the newest result, also when its card is gone after the change.
+    /// </summary>
+    public static string MemorySuggestions(Optimizations.MemorySuggestionService svc) => JsonSerializer.Serialize(new
+    {
+        schema = SchemaVersion,
+        scanned = svc.Snapshot is not null,
+        scanning = svc.Scanning,
+        busy = V(svc.Busy),
+        error = T(svc.ScanError),
+        freedBytes = svc.TotalFreedBytes,
+        last = SuggestionResultExport(svc.Recent.FirstOrDefault(r => Storage.StorageCleanupCatalog.Find(r.SuggestionId) is null)),
+        suggestions = svc.Suggestions.Take(MaxSuggestions).Select(s => SuggestionExport(svc, s)).ToList(),
+    }, Json);
+
+    /// <summary>
+    /// The Caches and leftovers panel for browser agents (storage-cleanup-data): nothing is listed until storage-scan has measured.
+    /// Each delete is <c>[data-action=storage-delete][data-suggestion-id]</c>, then storage-confirm-yes. Deleting can't be undone.
+    /// </summary>
+    public static string StorageCleanup(Optimizations.MemorySuggestionService svc) => JsonSerializer.Serialize(new
+    {
+        schema = SchemaVersion,
+        scanned = svc.StorageScanned,
+        scanning = svc.ScanningStorage,
+        busy = V(svc.Busy),
+        error = T(svc.StorageError),
+        freedBytes = svc.StorageFreedBytes,
+        last = SuggestionResultExport(svc.Recent.FirstOrDefault(r => Storage.StorageCleanupCatalog.Find(r.SuggestionId) is not null)),
+        suggestions = svc.StorageSuggestions.Take(MaxSuggestions).Select(s => new
+        {
+            id = V(s.Id),
+            title = V(s.Title),
+            why = T(s.Why),
+            sizeBytes = svc.StorageItems.FirstOrDefault(i => i.Id == s.Id)?.SizeBytes,
+            defaultOn = s.DefaultOn,
+            undo = "none",
+            result = SuggestionResultExport(svc.ResultFor(s.Id)),
+        }).ToList(),
+    }, Json);
+
+    // ---- Undo changes (History and Benchmark pages) -----------------------------------------------------------------------
+
+    /// <summary>
+    /// The Undo changes panel for browser agents (undo-data): what can be put back (each with its undo-one-{id} button), what is
+    /// permanent, and the last undo's result. resultSeq goes up with every finished undo.
+    /// </summary>
+    public static string Undo(bool loaded, IReadOnlyList<Changes.ChangeRecord> pending, IReadOnlyList<Changes.ChangeRecord> permanent, bool busy,
+        int resultSeq, Changes.UndoAllResult? all, Changes.UndoItemResult? one) =>
+        JsonSerializer.Serialize(BuildUndo(loaded, pending, permanent, busy, resultSeq, all, one), Json);
+
+    public static object BuildUndo(bool loaded, IReadOnlyList<Changes.ChangeRecord> pending, IReadOnlyList<Changes.ChangeRecord> permanent, bool busy,
+        int resultSeq, Changes.UndoAllResult? all, Changes.UndoItemResult? one) => new
+    {
+        schema = SchemaVersion,
+        loaded,
+        busy,
+        pending = pending.Select(Change).ToList(),
+        permanent = permanent.Select(Change).ToList(),
+        resultSeq,
+        lastResult = all is not null
+            ? new
+            {
+                kind = "all",
+                summary = T(all.Summary),
+                succeeded = all.Succeeded,
+                failed = all.Failed,
+                skipped = all.Skipped,
+                needsRestart = all.NeedsRestart,
+                items = all.Items.Select(Item).ToList(),
+            }
+            : one is not null
+                ? new
+                {
+                    kind = "one",
+                    summary = T(one.Message),
+                    succeeded = one.Success ? 1 : 0,
+                    failed = !one.Success && !one.Skipped ? 1 : 0,
+                    skipped = one.Skipped ? 1 : 0,
+                    needsRestart = one.Success && one.Change.NeedsRestart,
+                    items = new[] { Item(one) }.ToList(),
+                }
+                : null,
+    };
+
+    private static object Change(Changes.ChangeRecord c) => new
+    {
+        id = c.Id.ToString(),
+        label = T(c.Label),
+        kind = c.Kind.ToString(),
+        at = c.TimeUtc.ToString("O"),
+        actor = V(c.Actor),
+        needsRestart = c.NeedsRestart,
+    };
+
+    private static object Item(Changes.UndoItemResult i) => new
+    {
+        id = i.Change.Id.ToString(),
+        label = T(i.Change.Label),
+        outcome = i.Success ? "undone" : i.Skipped ? "permanent" : "failed",
+        message = T(i.Message),
+    };
+
     // ---- Which checks are turned on -------------------------------------------------------------------------------------
 
     /// <summary>The Checks page's enablement for browser agents (checks-report-data): every diagnostic check, hidden hardware included.</summary>
@@ -336,6 +486,9 @@ public static class AgentExports
         {
             enabled = settings.Enabled.Select(k => k.ToString()).ToList(),
             restartBeforeAfter = settings.RestartBeforeAfter,
+            // Runs per test (bench-runs); runChoices are the values the select offers.
+            runs = settings.Runs,
+            runChoices = BenchmarkSettings.RunChoices,
         },
         // Every kind. available false means the PC lacks the hardware or software: there is no control to turn it on.
         tests = tests?.Select(t => new

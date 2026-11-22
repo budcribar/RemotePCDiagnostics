@@ -147,4 +147,20 @@ public class AreaReportExportActionTests
         Assert.False(svc.GetProperty("canStop").GetBoolean());
         Assert.False(System.Text.Json.JsonDocument.Parse(AreaReportExport.ToJson(report)).RootElement.TryGetProperty("services", out _));
     }
+
+    [Fact]
+    public void Reviewable_rows_carry_a_review_id_and_reviewed_rows_are_listed_on_their_card()
+    {
+        var open = new AreaRow(AreaLevel.Warning, ["chrome.exe", "2"], ReviewKeys: ["ABCDEF0123456789FFFF", "0000"]);
+        var done = new AreaRow(AreaLevel.Warning, ["teams.exe", "1"], ReviewKeys: ["1111222233334444AAAA"]);
+        var plain = new AreaRow(AreaLevel.Warning, ["other", "1"]);
+        var report = new AreaReport([new AreaCard("app-crashes", "App crashes", AreaLevel.Warning, "2", "", ["App", "Count"], [open, plain])], "s",
+            DiagnosticStatus.Warning, ReviewedCards: [new AreaCard("app-crashes", "App crashes", AreaLevel.Ok, "", "", ["App", "Count"], [done])]);
+
+        var card = JsonDocument.Parse(AreaReportExport.ToJson(report)).RootElement.GetProperty("cards")[0];
+
+        Assert.Equal("abcdef0123456789", card.GetProperty("rows")[0].GetProperty("reviewId").GetString());
+        Assert.False(card.GetProperty("rows")[1].TryGetProperty("reviewId", out _));
+        Assert.Equal("1111222233334444", Assert.Single(card.GetProperty("reviewedRows").EnumerateArray()).GetProperty("reviewId").GetString());
+    }
 }

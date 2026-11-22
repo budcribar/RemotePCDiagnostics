@@ -3,6 +3,7 @@
 @implements IDisposable
 @* "Caches and leftovers you can delete" on the Storage page. Measured only when asked (it sizes big folders); deleting is permanent and runs only from a click (or the service workflow). *@
 <section class="ms-panel" data-testid="storage-cleanup">
+    <AgentData TestId="storage-cleanup-data" Json="@RemotePCDiagnostics.Core.Areas.AgentExports.StorageCleanup(Svc)" />
     <div class="ms-head">
         <h2 class="section-title" data-testid="storage-cleanup-title">Caches and leftovers you can delete</h2>
         <button class="btn-small" data-testid="storage-scan" disabled="@(Svc.ScanningStorage || Svc.Busy is not null)" @onclick="() => Svc.ScanStorageAsync(refresh: Svc.StorageScanned)">
@@ -46,7 +47,7 @@
                     }
                     else
                     {
-                        <button class="btn-small btn-outline" data-testid="storage-delete" disabled="@(Svc.Busy is not null || Svc.ScanningStorage)" @onclick="() => _confirm = s.Id">@(Svc.Busy == s.Id ? "Deleting…" : "Delete")</button>
+                        <button class="btn-small btn-outline" data-testid="storage-delete" data-action="storage-delete" data-suggestion-id="@s.Id" disabled="@(Svc.Busy is not null || Svc.ScanningStorage)" @onclick="() => _confirm = s.Id">@(Svc.Busy == s.Id ? "Deleting…" : "Delete")</button>
                     }
                 </div>
                 @if (res is not null) { <div class="@(res.Success ? "svc-result-ok" : "error-text")" data-testid="storage-result">@res.Message</div> }
