@@ -224,6 +224,16 @@ internal static class RecordingEdits
     public static MachineRecording FailWmi(this MachineRecording rec, string queryContains, string error) => Map(rec, c =>
         c.Kind == RecordedCall.WmiKind && c.Query?.Contains(queryContains, StringComparison.OrdinalIgnoreCase) == true ? c with { Rows = null, Error = error } : c);
 
+    /// <summary>Sets the Temperature of each drive (in order) in the answer to the PowerShell drive script.</summary>
+    public static MachineRecording WithPowerShellTemperatures(this MachineRecording rec, string script, IReadOnlyList<int?> temperatures) => Map(rec, c =>
+    {
+        if (c.Kind != RecordedCall.ProcessKind || c.Args?.LastOrDefault() != script || c.StdOut is null) return c;
+        var drives = System.Text.Json.Nodes.JsonNode.Parse(c.StdOut)!.AsArray();
+        for (var i = 0; i < drives.Count && i < temperatures.Count; i++)
+            drives[i]!["Temperature"] = temperatures[i]?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "";
+        return c with { StdOut = drives.ToJsonString() };
+    });
+
     private static MachineRecording Map(MachineRecording rec, Func<RecordedCall, RecordedCall> f) =>
         new() { Schema = rec.Schema, Machine = rec.Machine, CapturedAt = rec.CapturedAt, Calls = rec.Calls.Select(f).ToList() };
 }
