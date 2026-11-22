@@ -19,5 +19,6 @@
     <ProjectReference Include="..\..\src\Modules\Programs\RemotePCDiagnostics.Modules.Programs.csproj" />
     <ProjectReference Include="..\..\src\Modules\Network\RemotePCDiagnostics.Modules.Network.csproj" />
     <ProjectReference Include="..\..\src\Modules\SecurityEssentials\RemotePCDiagnostics.Modules.SecurityEssentials.csproj" />
+    <ProjectReference Include="..\..\src\Modules\ResourceHogs\RemotePCDiagnostics.Modules.ResourceHogs.csproj" />
   </ItemGroup>
 </Project>

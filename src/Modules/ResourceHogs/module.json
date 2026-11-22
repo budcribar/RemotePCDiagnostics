@@ -5,5 +5,7 @@
   "contract": "2.0",
   "entryType": "RemotePCDiagnostics.Modules.ResourceHogs.ResourceHogsPlugin",
   "needsAdmin": false,
+  // Run out of process (user mode, restricted token), its WMI queries go through the app to the Agent, as in process.
+  "capabilities": [ "wmi.query" ],
   "hasUi": false
 }

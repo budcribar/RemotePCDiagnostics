@@ -30,7 +30,7 @@ public class NewChecksTests
             return ScriptedLauncher.Ok(psJson);
         });
 
-        var module = new ResourceHogsModule(ScriptedLauncher.Osquery(launcher), new SystemCommandRunner(launcher), sampleWindow: TimeSpan.Zero);
+        var module = new ResourceHogsModule(new RemotePCDiagnostics.Legacy.OsqueryResourceHogsSource(ScriptedLauncher.Osquery(launcher), new SystemCommandRunner(launcher)), sampleWindow: TimeSpan.Zero, restartPending: () => false);
         var res = await module.RefreshAsync(null);
         Assert.Equal(DiagnosticStatus.Warning, res.Status);
         var rep = Assert.IsType<AreaReport>(res.Payload);

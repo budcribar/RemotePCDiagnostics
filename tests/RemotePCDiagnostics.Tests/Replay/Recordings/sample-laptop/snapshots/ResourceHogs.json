@@ -1,0 +1,740 @@
+{
+  "moduleName": "ResourceHogs",
+  "status": "Ok",
+  "message": "RAM 62% in use · Up 3d 2h · top memory: chrome.exe (1.3 GB)",
+  "report": {
+    "cards": [
+      {
+        "id": "ram",
+        "title": "Memory in use",
+        "level": "Ok",
+        "headline": "62% in use",
+        "meta": "5.8 GB free of 15.6 GB usable",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "In use",
+              "9.7 GB (62%)"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Free",
+              "5.8 GB"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Usable by Windows",
+              "15.6 GB"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "What this means",
+              "There's enough free memory."
+            ]
+          }
+        ],
+        "note": "\"Usable\" can be less than the installed memory: Windows sets some aside, for example for built-in graphics.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "commit",
+        "title": "Memory commitments",
+        "level": "Ok",
+        "headline": "12 GB committed",
+        "meta": "69% of the 17.6 GB limit · 16 GB RAM",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "Committed",
+              "12 GB (69% of the limit)"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Commit limit (RAM + page file)",
+              "17.6 GB"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Installed RAM",
+              "16 GB"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Page file in use",
+              "210 MB of 2 GB"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "What this means",
+              "Apps' reserved memory fits in RAM."
+            ]
+          }
+        ],
+        "note": "Committed memory is what apps and Windows have reserved. It's backed by RAM and, when RAM runs short, by the page file.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "uptime",
+        "title": "System uptime",
+        "level": "Ok",
+        "headline": "Up 3d 2h",
+        "meta": "Fast Startup is enabled",
+        "columns": [
+          "Detail",
+          "Value"
+        ],
+        "rows": [
+          {
+            "level": "Ok",
+            "values": [
+              "Time since last restart",
+              "3 days, 2 hours, 30 minutes"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Fast Startup",
+              "Enabled (Shut Down does not fully reset the kernel)"
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Recommendation",
+              "A clean restart will clear accumulated background processes (2.6 GB across 12 processes) and automatically resume this session after sign-in."
+            ]
+          }
+        ],
+        "actions": [
+          {
+            "kind": "ScheduleCleanRestart",
+            "buttonText": "Restart PC in 60s",
+            "target": "reboot-baseline:up=268200;mem=2798649344;procs=12;top=chrome.exe%20%281.3%20GB%29%2C%20Code.exe%20%28870%20MB%29%2C%20MsMpEng.exe%20%28240%20MB%29",
+            "targetLabel": "Clean PC restart"
+          }
+        ],
+        "preserveRowOrder": false
+      },
+      {
+        "id": "apps",
+        "title": "Top apps (with their helper processes)",
+        "level": "Ok",
+        "headline": "chrome.exe (1.3 GB)",
+        "meta": "Busiest now: chrome.exe (9.4% CPU) · 8 apps",
+        "columns": [
+          "App",
+          "Processes",
+          "CPU now",
+          "Memory",
+          "Private memory",
+          "Disk now"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "chrome.exe",
+              "3",
+              "9.4%",
+              "1.3 GB",
+              "1010 MB",
+              "732.4 KB/s"
+            ],
+            "sortKeys": [
+              null,
+              "3",
+              "938",
+              "1373634560",
+              "1059061760",
+              "750000"
+            ],
+            "key": "app:chrome.exe",
+            "actions": [
+              {
+                "kind": "EndProcessGroup",
+                "buttonText": "End task",
+                "target": "chrome.exe",
+                "targetLabel": "chrome.exe (3)"
+              }
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Code.exe",
+              "2",
+              "1.9%",
+              "870 MB",
+              "620 MB",
+              "146.5 KB/s"
+            ],
+            "sortKeys": [
+              null,
+              "2",
+              "188",
+              "912261120",
+              "650117120",
+              "150000"
+            ],
+            "key": "app:Code.exe",
+            "actions": [
+              {
+                "kind": "EndProcessGroup",
+                "buttonText": "End task",
+                "target": "Code.exe",
+                "targetLabel": "Code.exe (2)"
+              }
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "MsMpEng.exe",
+              "1",
+              "0.5%",
+              "240 MB",
+              "310 MB",
+              "39.1 KB/s"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "50",
+              "251658240",
+              "325058560",
+              "40000"
+            ],
+            "key": "app:MsMpEng.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "explorer.exe",
+              "1",
+              "0%",
+              "180 MB",
+              "120 MB",
+              "0 B/s"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "0",
+              "188743680",
+              "125829120",
+              "0"
+            ],
+            "key": "app:explorer.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "RuntimeBroker.exe",
+              "1",
+              "0%",
+              "22 MB",
+              "8 MB",
+              "0 B/s"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "0",
+              "23068672",
+              "8388608",
+              "0"
+            ],
+            "key": "app:RuntimeBroker.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "services.exe",
+              "1",
+              "0%",
+              "11 MB",
+              "6 MB",
+              "0 B/s"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "0",
+              "11534336",
+              "6291456",
+              "0"
+            ],
+            "key": "app:services.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "wininit.exe",
+              "1",
+              "0%",
+              "6 MB",
+              "2 MB",
+              "0 B/s"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "0",
+              "6291456",
+              "2097152",
+              "0"
+            ],
+            "key": "app:wininit.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "userinit.exe",
+              "1",
+              "0%",
+              "—",
+              "—",
+              "0 B/s"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "0",
+              "0",
+              "0",
+              "0"
+            ],
+            "key": "app:userinit.exe",
+            "actions": [
+              {
+                "kind": "EndProcessGroup",
+                "buttonText": "End task",
+                "target": "userinit.exe",
+                "targetLabel": "userinit.exe"
+              }
+            ]
+          }
+        ],
+        "emptyText": "No apps running.",
+        "note": "CPU and disk are measured over 2 seconds; CPU % is of the whole PC. Each app includes the helper processes it started (for example browser tabs, or the web views inside an app). Memory is the working set; private memory is what the app has reserved for itself.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "memory",
+        "title": "Top memory consumers",
+        "level": "Ok",
+        "headline": "chrome.exe (1.3 GB)",
+        "meta": "8 active apps · 12 processes total",
+        "columns": [
+          "App",
+          "Instances",
+          "Memory",
+          "CPU time",
+          "Disk I/O"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "chrome.exe",
+              "3",
+              "1.3 GB",
+              "19m 14s",
+              "1.8 GB"
+            ],
+            "sortKeys": [
+              null,
+              "3",
+              "1373634560",
+              "1154500",
+              "1930879840"
+            ],
+            "key": "chrome.exe",
+            "actions": [
+              {
+                "kind": "EndProcessGroup",
+                "buttonText": "End task",
+                "target": "chrome.exe",
+                "targetLabel": "chrome.exe (3)"
+              }
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Code.exe",
+              "2",
+              "870 MB",
+              "6m 32s",
+              "520.3 MB"
+            ],
+            "sortKeys": [
+              null,
+              "2",
+              "912261120",
+              "392300",
+              "545559520"
+            ],
+            "key": "Code.exe",
+            "actions": [
+              {
+                "kind": "EndProcessGroup",
+                "buttonText": "End task",
+                "target": "Code.exe",
+                "targetLabel": "Code.exe (2)"
+              }
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "MsMpEng.exe",
+              "1",
+              "240 MB",
+              "4m 3s",
+              "2.3 GB"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "251658240",
+              "243080",
+              "2462136448"
+            ],
+            "key": "MsMpEng.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "explorer.exe",
+              "1",
+              "180 MB",
+              "1m 34s",
+              "490 MB"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "188743680",
+              "94000",
+              "513802240"
+            ],
+            "key": "explorer.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "RuntimeBroker.exe",
+              "1",
+              "22 MB",
+              "2.4 s",
+              "5 MB"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "23068672",
+              "2400",
+              "5242880"
+            ],
+            "key": "RuntimeBroker.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "services.exe",
+              "1",
+              "11 MB",
+              "3 s",
+              "24 MB"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "11534336",
+              "3000",
+              "25165824"
+            ],
+            "key": "services.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "wininit.exe",
+              "1",
+              "6 MB",
+              "0.5 s",
+              "4 MB"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "6291456",
+              "460",
+              "4194304"
+            ],
+            "key": "wininit.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "userinit.exe",
+              "1",
+              "—",
+              "0 s",
+              "—"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "0",
+              "0",
+              "0"
+            ],
+            "key": "userinit.exe",
+            "actions": [
+              {
+                "kind": "EndProcessGroup",
+                "buttonText": "End task",
+                "target": "userinit.exe",
+                "targetLabel": "userinit.exe"
+              }
+            ]
+          }
+        ],
+        "note": "Apps with multiple background processes (like browsers) are grouped together.",
+        "preserveRowOrder": false
+      },
+      {
+        "id": "cpu",
+        "title": "Most CPU & disk activity",
+        "level": "Neutral",
+        "headline": "chrome.exe",
+        "meta": "19m 14s CPU time · 1.8 GB disk I/O",
+        "columns": [
+          "App",
+          "Instances",
+          "Memory",
+          "CPU time",
+          "Disk I/O"
+        ],
+        "rows": [
+          {
+            "level": "Neutral",
+            "values": [
+              "chrome.exe",
+              "3",
+              "1.3 GB",
+              "19m 14s",
+              "1.8 GB"
+            ],
+            "sortKeys": [
+              null,
+              "3",
+              "1373634560",
+              "1154500",
+              "1930879840"
+            ],
+            "key": "chrome.exe",
+            "actions": [
+              {
+                "kind": "EndProcessGroup",
+                "buttonText": "End task",
+                "target": "chrome.exe",
+                "targetLabel": "chrome.exe (3)"
+              }
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "Code.exe",
+              "2",
+              "870 MB",
+              "6m 32s",
+              "520.3 MB"
+            ],
+            "sortKeys": [
+              null,
+              "2",
+              "912261120",
+              "392300",
+              "545559520"
+            ],
+            "key": "Code.exe",
+            "actions": [
+              {
+                "kind": "EndProcessGroup",
+                "buttonText": "End task",
+                "target": "Code.exe",
+                "targetLabel": "Code.exe (2)"
+              }
+            ]
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "MsMpEng.exe",
+              "1",
+              "240 MB",
+              "4m 3s",
+              "2.3 GB"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "251658240",
+              "243080",
+              "2462136448"
+            ],
+            "key": "MsMpEng.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "explorer.exe",
+              "1",
+              "180 MB",
+              "1m 34s",
+              "490 MB"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "188743680",
+              "94000",
+              "513802240"
+            ],
+            "key": "explorer.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "services.exe",
+              "1",
+              "11 MB",
+              "3 s",
+              "24 MB"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "11534336",
+              "3000",
+              "25165824"
+            ],
+            "key": "services.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "RuntimeBroker.exe",
+              "1",
+              "22 MB",
+              "2.4 s",
+              "5 MB"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "23068672",
+              "2400",
+              "5242880"
+            ],
+            "key": "RuntimeBroker.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "wininit.exe",
+              "1",
+              "6 MB",
+              "0.5 s",
+              "4 MB"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "6291456",
+              "460",
+              "4194304"
+            ],
+            "key": "wininit.exe"
+          },
+          {
+            "level": "Neutral",
+            "values": [
+              "userinit.exe",
+              "1",
+              "—",
+              "0 s",
+              "—"
+            ],
+            "sortKeys": [
+              null,
+              "1",
+              "0",
+              "0",
+              "0"
+            ],
+            "key": "userinit.exe",
+            "actions": [
+              {
+                "kind": "EndProcessGroup",
+                "buttonText": "End task",
+                "target": "userinit.exe",
+                "targetLabel": "userinit.exe"
+              }
+            ]
+          }
+        ],
+        "note": "Cumulative CPU time and disk read/write since each app started.",
+        "preserveRowOrder": false
+      }
+    ],
+    "summary": "RAM 62% in use · Up 3d 2h · top memory: chrome.exe (1.3 GB)",
+    "status": "Ok",
+    "cancelled": false,
+    "keyMetrics": [
+      {
+        "id": "memory.used",
+        "label": "Memory in use",
+        "value": 62,
+        "unit": "%",
+        "better": "LowerIsBetter"
+      },
+      {
+        "id": "uptime.days",
+        "label": "Days since restart",
+        "value": 3.1,
+        "unit": "days",
+        "better": "LowerIsBetter"
+      }
+    ]
+  }
+}

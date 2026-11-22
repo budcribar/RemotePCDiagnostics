@@ -62,6 +62,9 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     ("Network (legacy: osquery + PowerShell)", new NetworkModule(new OsqueryNetworkSource(osquery, commands), includeWifiAndIpConfig: true, offline: true)),
     ("Security essentials (WMI + registry + tpmtool)", new SecurityEssentialsModule(new WmiSecurityEssentialsSource(wmi, registry, commands))),
     ("Security essentials (legacy: PowerShell + tpmtool)", new SecurityEssentialsModule(new PowerShellSecurityEssentialsSource(commands))),
+    // A restart this app scheduled isn't part of a recording. Each path takes its two process snapshots 2 s apart, as in the app.
+    ("Resource hogs & uptime (WMI + registry)", new ResourceHogsModule(new WmiResourceHogsSource(wmi, registry), restartPending: () => false)),
+    ("Resource hogs & uptime (legacy: osquery + PowerShell)", new ResourceHogsModule(new OsqueryResourceHogsSource(osquery, commands), restartPending: () => false)),
 };
 foreach (var (label, module) in checks)
 {

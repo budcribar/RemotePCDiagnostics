@@ -1,44 +1,26 @@
-using System.Diagnostics;
-using System.Globalization;
 using RemotePCDiagnostics.Core.Osquery;
+using System.Globalization;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
 /// <summary>
-/// Top resource hogs (memory, CPU time, disk I/O) and system uptime via osquery <c>uptime</c> and <c>processes</c>,
-/// plus Windows Fast Startup (<c>HiberbootEnabled</c>) via PowerShell.
+/// Top resource hogs (memory, CPU, disk I/O), system uptime, memory in use and Windows Fast Startup, read from <paramref name="source"/>: WMI
+/// through the Agent (Fast Startup from the registry in the app), osquery and PowerShell in the Store edition without an Agent.
 /// </summary>
-/// <summary>Physical memory: what Windows can use and what's free right now.</summary>
-public sealed record MemoryUse(long TotalBytes, long AvailableBytes)
-{
-    public long UsedBytes => Math.Max(0, TotalBytes - AvailableBytes);
-    public int UsedPercent => TotalBytes > 0 ? (int)Math.Round(100.0 * UsedBytes / TotalBytes) : 0;
-
-    /// <summary>Commit charge: memory apps and Windows have reserved, backed by RAM or the page file.</summary>
-    public long? CommitUsedBytes { get; init; }
-    /// <summary>Commit limit: RAM plus the current page file size.</summary>
-    public long? CommitLimitBytes { get; init; }
-    /// <summary>RAM installed in the PC (can be more than <see cref="TotalBytes"/>).</summary>
-    public long? InstalledBytes { get; init; }
-    public long? PagefileUsedBytes { get; init; }
-    public long? PagefileSizeBytes { get; init; }
-
-    public bool HasCommit => CommitUsedBytes is >= 0 && CommitLimitBytes is > 0;
-    public int CommitPercent => HasCommit ? (int)Math.Round(100.0 * CommitUsedBytes!.Value / CommitLimitBytes!.Value) : 0;
-}
-
 /// <param name="sampleWindow">How long to wait between the two process snapshots used for CPU % and disk rate. Zero takes one snapshot and
 /// reports cumulative CPU time and disk I/O only.</param>
-public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner? commands = null, TimeSpan? sampleWindow = null) : OsqueryAreaModuleBase(runner), IHasAreaPanels
+/// <param name="timer">Times that wait (<see cref="SampleTimer.Instant"/> in replays).</param>
+/// <param name="restartPending">Whether a clean restart this app scheduled is pending (default: its state file exists).</param>
+public sealed class ResourceHogsModule(IResourceHogsSource source, TimeSpan? sampleWindow = null, SampleTimer? timer = null,
+    Func<bool>? restartPending = null, ILogger? log = null) : AreaModuleBase(log), IHasAreaPanels
 {
     public static readonly TimeSpan DefaultSampleWindow = TimeSpan.FromSeconds(2);
     private readonly TimeSpan _sampleWindow = sampleWindow ?? DefaultSampleWindow;
+    private readonly SampleTimer _timer = timer ?? SampleTimer.Real;
+    private readonly Func<bool> _restartPending = restartPending ?? (() => RebootResumeCoordinator.TryReadPendingStateFile() is not null);
 
     public AreaPanels Panels => AreaPanels.MemorySuggestions;
     public const string ModuleName = ModuleSlugs.ResourceHogs;
-    public const string UptimeSql = ResourceUsage.UptimeSql;
-    public const string ProcessesSql = ResourceUsage.ProcessesSql;
-    public static string FastStartupScript => Scripts.PowerShellScripts.Get("FastStartupState");
 
     /// <summary>RAM in use at or above this percentage makes the check a warning (matches the "Memory is almost full" suggestion).</summary>
     public const int HighMemoryPercent = 85;
@@ -60,79 +42,38 @@ public sealed class ResourceHogsModule(OsqueryRunner runner, SystemCommandRunner
     public override string DisplayName => "Resource hogs & uptime";
     protected override string FailedMessage => "Couldn't read running processes and uptime on this PC.";
 
+    public override Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => source.CheckAvailabilityAsync(cancellationToken);
+
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        var totalSteps = commands is not null ? 3 : 2;
+        const int totalSteps = 3;
         progress.ReportStep(1, totalSteps, "Checking system uptime…");
-        var upQ = await QueryAsync(UptimeSql, ct).ConfigureAwait(false);
+        var uptime = await source.ReadUptimeAsync(ct).ConfigureAwait(false);
         progress.ReportStep(2, totalSteps, "Checking running processes…");
-        var procQ = await QueryAsync(ProcessesSql, ct).ConfigureAwait(false);
-        if (!upQ.Success && !procQ.Success) return AreaReport.Failed(FailedMessage);
-        var procs = procQ.Success ? procQ.Rows!.Select(ProcessResourceRow.FromRow).ToList() : null;
+        var procs = await source.ReadProcessesAsync(ct).ConfigureAwait(false);
+        if (uptime is null && procs is null) return AreaReport.Failed(FailedMessage);
 
         // Second snapshot after a short wait: the difference gives CPU % and disk rate right now, not totals since each app started.
         Dictionary<int, ProcessRate>? rates = null;
         if (procs is not null && _sampleWindow > TimeSpan.Zero)
         {
             progress.ReportStep(2, totalSteps, "Measuring CPU and disk activity…");
-            var sw = Stopwatch.StartNew();
-            await Task.Delay(_sampleWindow, ct).ConfigureAwait(false);
-            var againQ = await QueryAsync(ProcessesSql, ct).ConfigureAwait(false);
-            sw.Stop();
-            if (againQ.Success)
+            var started = _timer.Now;
+            await _timer.DelayAsync(_sampleWindow, ct).ConfigureAwait(false);
+            var again = await source.ReadProcessesAsync(ct).ConfigureAwait(false);
+            var elapsed = _timer.Now - started;
+            if (again is not null)
             {
-                var again = againQ.Rows!.Select(ProcessResourceRow.FromRow).ToList();
-                rates = ProcessTree.Rates(procs, again, sw.Elapsed, Environment.ProcessorCount);
+                var cores = await source.ReadLogicalProcessorsAsync(ct).ConfigureAwait(false);
+                rates = ProcessTree.Rates(procs, again, elapsed, cores);
                 procs = again;
             }
         }
 
         progress.ReportStep(3, totalSteps, "Checking memory use and Fast Startup…");
-        bool? fastStartup = null;
-        MemoryUse? memory = null;
-        if (commands is { IsScripted: true })
-        {
-            var pr = await commands.RunPowerShellAsync(FastStartupScript, ct).ConfigureAwait(false);
-            if (pr is { ExitCode: 0 } && !string.IsNullOrWhiteSpace(pr.StdOut))
-            {
-                try
-                {
-                    var row = OsqueryJson.ParseRows("[" + pr.StdOut.Trim().TrimStart('[').TrimEnd(']') + "]").FirstOrDefault();
-                    fastStartup = row?.Str("FastStartup") switch { "1" => true, "0" => false, _ => null };
-                    if (row?.Long("TotalBytes") is long total && total > 0 && row.Long("FreeBytes") is long free && free >= 0)
-                    {
-                        var limit = row.Long("CommitLimitBytes");
-                        var commitFree = row.Long("CommitFreeBytes");
-                        memory = new MemoryUse(total, free)
-                        {
-                            CommitLimitBytes = limit is > 0 ? limit : null,
-                            CommitUsedBytes = limit is > 0 && commitFree is >= 0 ? Math.Max(0, limit.Value - commitFree.Value) : null,
-                            InstalledBytes = row.Long("InstalledBytes") is > 0 and var inst ? inst : null,
-                            PagefileUsedBytes = row.Long("PagefileUsedBytes") is >= 0 and var pu ? pu : null,
-                            PagefileSizeBytes = row.Long("PagefileSizeBytes") is >= 0 and var ps ? ps : null,
-                        };
-                    }
-                }
-                catch (FormatException) { }
-            }
-        }
-        else
-        {
-            var (fs, totalBytes, freeBytes) = Platform.FastStartupReader.Read();
-            fastStartup = fs;
-            var (commitUsed, commitLimit, installed, pfUsed, pfSize) = Platform.FastStartupReader.ReadCommit();
-            memory = totalBytes is > 0 && freeBytes is >= 0
-                ? new MemoryUse(totalBytes.Value, freeBytes.Value)
-                {
-                    CommitUsedBytes = commitUsed, CommitLimitBytes = commitLimit, InstalledBytes = installed,
-                    PagefileUsedBytes = pfUsed, PagefileSizeBytes = pfSize,
-                }
-                : null;
-        }
-
-        var uptime = upQ.Success && upQ.Rows!.Count > 0 ? SystemUptimeInfo.FromRow(upQ.Rows[0], fastStartup) : null;
-        var restartPending = RebootResumeCoordinator.TryReadPendingStateFile() is not null;
-        return Build(uptime, procs, memory, restartPending, rates);
+        var (memory, fastStartup) = await source.ReadMemoryAsync(ct).ConfigureAwait(false);
+        if (uptime is not null) uptime = uptime with { FastStartupEnabled = fastStartup };
+        return Build(uptime, procs, memory, _restartPending(), rates);
     }
 
     public static List<ProcessGroupUsage> GroupProcesses(IEnumerable<ProcessResourceRow> rows) => ResourceUsage.GroupProcesses(rows);

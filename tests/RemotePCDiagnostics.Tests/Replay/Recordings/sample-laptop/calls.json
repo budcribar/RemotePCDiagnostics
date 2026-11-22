@@ -562,6 +562,427 @@
       "exitCode": 0,
       "stdOut": "\r\n-TPM Present: True\r\n-TPM Version: 2.0\r\n-TPM Manufacturer ID: SMPL\r\n-TPM Manufacturer Full Name: SampleCo\r\n-TPM Manufacturer Version: 1.0.0.0\r\n-PPI Version: 1.3\r\n-Is Initialized: True\r\n-Ready For Storage: True\r\n-Ready For Attestation: True\r\n-Bitlocker PCR7 Binding State: Bound\r\n-TPM Spec Version: 1.59\r\n",
       "stdErr": ""
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT LastBootUpTime, LocalDateTime FROM Win32_OperatingSystem",
+      "rows": [
+        {
+          "LastBootUpTime": "20261119063000.500000-420",
+          "LocalDateTime": "20261122090000.500000-420"
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT ProcessId, ParentProcessId, Name, CreationDate, WorkingSetSize, PrivatePageCount, UserModeTime, KernelModeTime, ReadTransferCount, WriteTransferCount FROM Win32_Process WHERE ProcessId > 4",
+      "rows": [
+        {
+          "ProcessId": 700,
+          "ParentProcessId": 4,
+          "Name": "wininit.exe",
+          "CreationDate": "20261119063000.500000-420",
+          "WorkingSetSize": 6291456,
+          "PrivatePageCount": 2097152,
+          "UserModeTime": 1200000,
+          "KernelModeTime": 3400000,
+          "ReadTransferCount": 3145728,
+          "WriteTransferCount": 1048576
+        },
+        {
+          "ProcessId": 900,
+          "ParentProcessId": 700,
+          "Name": "services.exe",
+          "CreationDate": "20261119063000.500000-420",
+          "WorkingSetSize": 11534336,
+          "PrivatePageCount": 6291456,
+          "UserModeTime": 9000000,
+          "KernelModeTime": 21000000,
+          "ReadTransferCount": 20971520,
+          "WriteTransferCount": 4194304
+        },
+        {
+          "ProcessId": 1200,
+          "ParentProcessId": 900,
+          "Name": "svchost.exe",
+          "CreationDate": "20261119063000.500000-420",
+          "WorkingSetSize": 31457280,
+          "PrivatePageCount": 12582912,
+          "UserModeTime": 40000000,
+          "KernelModeTime": 60000000,
+          "ReadTransferCount": 83886080,
+          "WriteTransferCount": 12582912
+        },
+        {
+          "ProcessId": 3100,
+          "ParentProcessId": 900,
+          "Name": "MsMpEng.exe",
+          "CreationDate": "20261119063100.500000-420",
+          "WorkingSetSize": 251658240,
+          "PrivatePageCount": 325058560,
+          "UserModeTime": 1820000000,
+          "KernelModeTime": 610000000,
+          "ReadTransferCount": 2147483648,
+          "WriteTransferCount": 314572800
+        },
+        {
+          "ProcessId": 4980,
+          "ParentProcessId": 4800,
+          "Name": "userinit.exe",
+          "CreationDate": "20261119063200.500000-420",
+          "WorkingSetSize": 0,
+          "PrivatePageCount": 0,
+          "UserModeTime": 0,
+          "KernelModeTime": 0,
+          "ReadTransferCount": 0,
+          "WriteTransferCount": 0
+        },
+        {
+          "ProcessId": 5120,
+          "ParentProcessId": 4980,
+          "Name": "explorer.exe",
+          "CreationDate": "20261119063200.500000-420",
+          "WorkingSetSize": 188743680,
+          "PrivatePageCount": 125829120,
+          "UserModeTime": 610000000,
+          "KernelModeTime": 330000000,
+          "ReadTransferCount": 419430400,
+          "WriteTransferCount": 94371840
+        },
+        {
+          "ProcessId": 7000,
+          "ParentProcessId": 5120,
+          "Name": "chrome.exe",
+          "CreationDate": "20261119113000.500000-420",
+          "WorkingSetSize": 429916160,
+          "PrivatePageCount": 272629760,
+          "UserModeTime": 5200000000,
+          "KernelModeTime": 1400000000,
+          "ReadTransferCount": 943718400,
+          "WriteTransferCount": 734003200
+        },
+        {
+          "ProcessId": 7010,
+          "ParentProcessId": 7000,
+          "Name": "chrome.exe",
+          "CreationDate": "20261119113100.500000-420",
+          "WorkingSetSize": 650117120,
+          "PrivatePageCount": 566231040,
+          "UserModeTime": 3300000000,
+          "KernelModeTime": 520000000,
+          "ReadTransferCount": 125829120,
+          "WriteTransferCount": 83886080
+        },
+        {
+          "ProcessId": 7020,
+          "ParentProcessId": 7000,
+          "Name": "chrome.exe",
+          "CreationDate": "20261119113200.500000-420",
+          "WorkingSetSize": 293601280,
+          "PrivatePageCount": 220200960,
+          "UserModeTime": 900000000,
+          "KernelModeTime": 210000000,
+          "ReadTransferCount": 31457280,
+          "WriteTransferCount": 10485760
+        },
+        {
+          "ProcessId": 8000,
+          "ParentProcessId": 5120,
+          "Name": "Code.exe",
+          "CreationDate": "20261119213000.500000-420",
+          "WorkingSetSize": 545259520,
+          "PrivatePageCount": 346030080,
+          "UserModeTime": 2100000000,
+          "KernelModeTime": 400000000,
+          "ReadTransferCount": 314572800,
+          "WriteTransferCount": 125829120
+        },
+        {
+          "ProcessId": 8010,
+          "ParentProcessId": 8000,
+          "Name": "Code.exe",
+          "CreationDate": "20261119213100.500000-420",
+          "WorkingSetSize": 367001600,
+          "PrivatePageCount": 304087040,
+          "UserModeTime": 1200000000,
+          "KernelModeTime": 220000000,
+          "ReadTransferCount": 62914560,
+          "WriteTransferCount": 41943040
+        },
+        {
+          "ProcessId": 9100,
+          "ParentProcessId": 1200,
+          "Name": "RuntimeBroker.exe",
+          "CreationDate": "20261119070000.500000-420",
+          "WorkingSetSize": 23068672,
+          "PrivatePageCount": 8388608,
+          "UserModeTime": 15000000,
+          "KernelModeTime": 9000000,
+          "ReadTransferCount": 4194304,
+          "WriteTransferCount": 1048576
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT ProcessId, ParentProcessId, Name, CreationDate, WorkingSetSize, PrivatePageCount, UserModeTime, KernelModeTime, ReadTransferCount, WriteTransferCount FROM Win32_Process WHERE ProcessId > 4",
+      "rows": [
+        {
+          "ProcessId": 700,
+          "ParentProcessId": 4,
+          "Name": "wininit.exe",
+          "CreationDate": "20261119063000.500000-420",
+          "WorkingSetSize": 6291456,
+          "PrivatePageCount": 2097152,
+          "UserModeTime": 1200000,
+          "KernelModeTime": 3400000,
+          "ReadTransferCount": 3145728,
+          "WriteTransferCount": 1048576
+        },
+        {
+          "ProcessId": 900,
+          "ParentProcessId": 700,
+          "Name": "services.exe",
+          "CreationDate": "20261119063000.500000-420",
+          "WorkingSetSize": 11534336,
+          "PrivatePageCount": 6291456,
+          "UserModeTime": 9000000,
+          "KernelModeTime": 21000000,
+          "ReadTransferCount": 20971520,
+          "WriteTransferCount": 4194304
+        },
+        {
+          "ProcessId": 1200,
+          "ParentProcessId": 900,
+          "Name": "svchost.exe",
+          "CreationDate": "20261119063000.500000-420",
+          "WorkingSetSize": 31457280,
+          "PrivatePageCount": 12582912,
+          "UserModeTime": 40000000,
+          "KernelModeTime": 60000000,
+          "ReadTransferCount": 83886080,
+          "WriteTransferCount": 12582912
+        },
+        {
+          "ProcessId": 3100,
+          "ParentProcessId": 900,
+          "Name": "MsMpEng.exe",
+          "CreationDate": "20261119063100.500000-420",
+          "WorkingSetSize": 251658240,
+          "PrivatePageCount": 325058560,
+          "UserModeTime": 1820800000,
+          "KernelModeTime": 610000000,
+          "ReadTransferCount": 2147563648,
+          "WriteTransferCount": 314572800
+        },
+        {
+          "ProcessId": 4980,
+          "ParentProcessId": 4800,
+          "Name": "userinit.exe",
+          "CreationDate": "20261119063200.500000-420",
+          "WorkingSetSize": 0,
+          "PrivatePageCount": 0,
+          "UserModeTime": 0,
+          "KernelModeTime": 0,
+          "ReadTransferCount": 0,
+          "WriteTransferCount": 0
+        },
+        {
+          "ProcessId": 5120,
+          "ParentProcessId": 4980,
+          "Name": "explorer.exe",
+          "CreationDate": "20261119063200.500000-420",
+          "WorkingSetSize": 188743680,
+          "PrivatePageCount": 125829120,
+          "UserModeTime": 610000000,
+          "KernelModeTime": 330000000,
+          "ReadTransferCount": 419430400,
+          "WriteTransferCount": 94371840
+        },
+        {
+          "ProcessId": 7000,
+          "ParentProcessId": 5120,
+          "Name": "chrome.exe",
+          "CreationDate": "20261119113000.500000-420",
+          "WorkingSetSize": 429916160,
+          "PrivatePageCount": 272629760,
+          "UserModeTime": 5200000000,
+          "KernelModeTime": 1400000000,
+          "ReadTransferCount": 943718400,
+          "WriteTransferCount": 734003200
+        },
+        {
+          "ProcessId": 7010,
+          "ParentProcessId": 7000,
+          "Name": "chrome.exe",
+          "CreationDate": "20261119113100.500000-420",
+          "WorkingSetSize": 650117120,
+          "PrivatePageCount": 566231040,
+          "UserModeTime": 3315000000,
+          "KernelModeTime": 520000000,
+          "ReadTransferCount": 127329120,
+          "WriteTransferCount": 83886080
+        },
+        {
+          "ProcessId": 7020,
+          "ParentProcessId": 7000,
+          "Name": "chrome.exe",
+          "CreationDate": "20261119113200.500000-420",
+          "WorkingSetSize": 293601280,
+          "PrivatePageCount": 220200960,
+          "UserModeTime": 900000000,
+          "KernelModeTime": 210000000,
+          "ReadTransferCount": 31457280,
+          "WriteTransferCount": 10485760
+        },
+        {
+          "ProcessId": 8000,
+          "ParentProcessId": 5120,
+          "Name": "Code.exe",
+          "CreationDate": "20261119213000.500000-420",
+          "WorkingSetSize": 545259520,
+          "PrivatePageCount": 346030080,
+          "UserModeTime": 2103000000,
+          "KernelModeTime": 400000000,
+          "ReadTransferCount": 314872800,
+          "WriteTransferCount": 125829120
+        },
+        {
+          "ProcessId": 8010,
+          "ParentProcessId": 8000,
+          "Name": "Code.exe",
+          "CreationDate": "20261119213100.500000-420",
+          "WorkingSetSize": 367001600,
+          "PrivatePageCount": 304087040,
+          "UserModeTime": 1200000000,
+          "KernelModeTime": 220000000,
+          "ReadTransferCount": 62914560,
+          "WriteTransferCount": 41943040
+        },
+        {
+          "ProcessId": 9100,
+          "ParentProcessId": 1200,
+          "Name": "RuntimeBroker.exe",
+          "CreationDate": "20261119070000.500000-420",
+          "WorkingSetSize": 23068672,
+          "PrivatePageCount": 8388608,
+          "UserModeTime": 15000000,
+          "KernelModeTime": 9000000,
+          "ReadTransferCount": 4194304,
+          "WriteTransferCount": 1048576
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT NumberOfLogicalProcessors FROM Win32_ComputerSystem",
+      "rows": [
+        {
+          "NumberOfLogicalProcessors": 8
+        }
+      ]
+    },
+    {
+      "kind": "registry",
+      "namespace": "HKLM",
+      "query": "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power: HiberbootEnabled",
+      "rows": [
+        {
+          "HiberbootEnabled": 1
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT TotalVisibleMemorySize, FreePhysicalMemory, TotalVirtualMemorySize, FreeVirtualMemory FROM Win32_OperatingSystem",
+      "rows": [
+        {
+          "TotalVisibleMemorySize": 16326556,
+          "FreePhysicalMemory": 6123456,
+          "TotalVirtualMemorySize": 18423708,
+          "FreeVirtualMemory": 5800000
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT Capacity FROM Win32_PhysicalMemory",
+      "rows": [
+        {
+          "Capacity": 8589934592
+        },
+        {
+          "Capacity": 8589934592
+        }
+      ]
+    },
+    {
+      "kind": "wmi",
+      "namespace": "root\\cimv2",
+      "query": "SELECT CurrentUsage, AllocatedBaseSize FROM Win32_PageFileUsage",
+      "rows": [
+        {
+          "CurrentUsage": 210,
+          "AllocatedBaseSize": 2048
+        }
+      ]
+    },
+    {
+      "kind": "process",
+      "file": "osqueryi.exe",
+      "args": [
+        "--disable_extensions",
+        "--json",
+        "SELECT days, hours, minutes, total_seconds FROM uptime;"
+      ],
+      "exitCode": 0,
+      "stdOut": "[\n  {\n    \"days\": \"3\",\n    \"hours\": \"2\",\n    \"minutes\": \"30\",\n    \"total_seconds\": \"268212\"\n  }\n]",
+      "stdErr": ""
+    },
+    {
+      "kind": "process",
+      "file": "osqueryi.exe",
+      "args": [
+        "--disable_extensions",
+        "--json",
+        "SELECT pid, parent, name, start_time, resident_size, total_size, user_time, system_time, disk_bytes_read, disk_bytes_written FROM processes WHERE pid > 4;"
+      ],
+      "exitCode": 0,
+      "stdOut": "[\n  {\n    \"pid\": \"700\",\n    \"parent\": \"4\",\n    \"name\": \"wininit.exe\",\n    \"start_time\": \"1795095000\",\n    \"resident_size\": \"6291456\",\n    \"total_size\": \"2097152\",\n    \"user_time\": \"120\",\n    \"system_time\": \"340\",\n    \"disk_bytes_read\": \"3145728\",\n    \"disk_bytes_written\": \"1048576\"\n  },\n  {\n    \"pid\": \"900\",\n    \"parent\": \"700\",\n    \"name\": \"services.exe\",\n    \"start_time\": \"1795095000\",\n    \"resident_size\": \"11534336\",\n    \"total_size\": \"6291456\",\n    \"user_time\": \"900\",\n    \"system_time\": \"2100\",\n    \"disk_bytes_read\": \"20971520\",\n    \"disk_bytes_written\": \"4194304\"\n  },\n  {\n    \"pid\": \"1200\",\n    \"parent\": \"900\",\n    \"name\": \"svchost.exe\",\n    \"start_time\": \"1795095000\",\n    \"resident_size\": \"31457280\",\n    \"total_size\": \"12582912\",\n    \"user_time\": \"4000\",\n    \"system_time\": \"6000\",\n    \"disk_bytes_read\": \"83886080\",\n    \"disk_bytes_written\": \"12582912\"\n  },\n  {\n    \"pid\": \"3100\",\n    \"parent\": \"900\",\n    \"name\": \"MsMpEng.exe\",\n    \"start_time\": \"1795095060\",\n    \"resident_size\": \"251658240\",\n    \"total_size\": \"325058560\",\n    \"user_time\": \"182080\",\n    \"system_time\": \"61000\",\n    \"disk_bytes_read\": \"2147483648\",\n    \"disk_bytes_written\": \"314572800\"\n  },\n  {\n    \"pid\": \"4980\",\n    \"parent\": \"4800\",\n    \"name\": \"userinit.exe\",\n    \"start_time\": \"1795095120\",\n    \"resident_size\": \"0\",\n    \"total_size\": \"0\",\n    \"user_time\": \"0\",\n    \"system_time\": \"0\",\n    \"disk_bytes_read\": \"0\",\n    \"disk_bytes_written\": \"0\"\n  },\n  {\n    \"pid\": \"5120\",\n    \"parent\": \"4980\",\n    \"name\": \"explorer.exe\",\n    \"start_time\": \"1795095120\",\n    \"resident_size\": \"188743680\",\n    \"total_size\": \"125829120\",\n    \"user_time\": \"61000\",\n    \"system_time\": \"33000\",\n    \"disk_bytes_read\": \"419430400\",\n    \"disk_bytes_written\": \"94371840\"\n  },\n  {\n    \"pid\": \"7000\",\n    \"parent\": \"5120\",\n    \"name\": \"chrome.exe\",\n    \"start_time\": \"1795113000\",\n    \"resident_size\": \"429916160\",\n    \"total_size\": \"272629760\",\n    \"user_time\": \"520000\",\n    \"system_time\": \"140000\",\n    \"disk_bytes_read\": \"943718400\",\n    \"disk_bytes_written\": \"734003200\"\n  },\n  {\n    \"pid\": \"7010\",\n    \"parent\": \"7000\",\n    \"name\": \"chrome.exe\",\n    \"start_time\": \"1795113060\",\n    \"resident_size\": \"650117120\",\n    \"total_size\": \"566231040\",\n    \"user_time\": \"331500\",\n    \"system_time\": \"52000\",\n    \"disk_bytes_read\": \"125829120\",\n    \"disk_bytes_written\": \"83886080\"\n  },\n  {\n    \"pid\": \"7020\",\n    \"parent\": \"7000\",\n    \"name\": \"chrome.exe\",\n    \"start_time\": \"1795113120\",\n    \"resident_size\": \"293601280\",\n    \"total_size\": \"220200960\",\n    \"user_time\": \"90000\",\n    \"system_time\": \"21000\",\n    \"disk_bytes_read\": \"31457280\",\n    \"disk_bytes_written\": \"10485760\"\n  },\n  {\n    \"pid\": \"8000\",\n    \"parent\": \"5120\",\n    \"name\": \"Code.exe\",\n    \"start_time\": \"1795149000\",\n    \"resident_size\": \"545259520\",\n    \"total_size\": \"346030080\",\n    \"user_time\": \"210300\",\n    \"system_time\": \"40000\",\n    \"disk_bytes_read\": \"314572800\",\n    \"disk_bytes_written\": \"125829120\"\n  },\n  {\n    \"pid\": \"8010\",\n    \"parent\": \"8000\",\n    \"name\": \"Code.exe\",\n    \"start_time\": \"1795149060\",\n    \"resident_size\": \"367001600\",\n    \"total_size\": \"304087040\",\n    \"user_time\": \"120000\",\n    \"system_time\": \"22000\",\n    \"disk_bytes_read\": \"62914560\",\n    \"disk_bytes_written\": \"41943040\"\n  },\n  {\n    \"pid\": \"9100\",\n    \"parent\": \"1200\",\n    \"name\": \"RuntimeBroker.exe\",\n    \"start_time\": \"1795096800\",\n    \"resident_size\": \"23068672\",\n    \"total_size\": \"8388608\",\n    \"user_time\": \"1500\",\n    \"system_time\": \"900\",\n    \"disk_bytes_read\": \"4194304\",\n    \"disk_bytes_written\": \"1048576\"\n  }\n]",
+      "stdErr": ""
+    },
+    {
+      "kind": "process",
+      "file": "osqueryi.exe",
+      "args": [
+        "--disable_extensions",
+        "--json",
+        "SELECT pid, parent, name, start_time, resident_size, total_size, user_time, system_time, disk_bytes_read, disk_bytes_written FROM processes WHERE pid > 4;"
+      ],
+      "exitCode": 0,
+      "stdOut": "[\n  {\n    \"pid\": \"700\",\n    \"parent\": \"4\",\n    \"name\": \"wininit.exe\",\n    \"start_time\": \"1795095000\",\n    \"resident_size\": \"6291456\",\n    \"total_size\": \"2097152\",\n    \"user_time\": \"120\",\n    \"system_time\": \"340\",\n    \"disk_bytes_read\": \"3145728\",\n    \"disk_bytes_written\": \"1048576\"\n  },\n  {\n    \"pid\": \"900\",\n    \"parent\": \"700\",\n    \"name\": \"services.exe\",\n    \"start_time\": \"1795095000\",\n    \"resident_size\": \"11534336\",\n    \"total_size\": \"6291456\",\n    \"user_time\": \"900\",\n    \"system_time\": \"2100\",\n    \"disk_bytes_read\": \"20971520\",\n    \"disk_bytes_written\": \"4194304\"\n  },\n  {\n    \"pid\": \"1200\",\n    \"parent\": \"900\",\n    \"name\": \"svchost.exe\",\n    \"start_time\": \"1795095000\",\n    \"resident_size\": \"31457280\",\n    \"total_size\": \"12582912\",\n    \"user_time\": \"4000\",\n    \"system_time\": \"6000\",\n    \"disk_bytes_read\": \"83886080\",\n    \"disk_bytes_written\": \"12582912\"\n  },\n  {\n    \"pid\": \"3100\",\n    \"parent\": \"900\",\n    \"name\": \"MsMpEng.exe\",\n    \"start_time\": \"1795095060\",\n    \"resident_size\": \"251658240\",\n    \"total_size\": \"325058560\",\n    \"user_time\": \"182120\",\n    \"system_time\": \"61000\",\n    \"disk_bytes_read\": \"2147483648\",\n    \"disk_bytes_written\": \"314572800\"\n  },\n  {\n    \"pid\": \"4980\",\n    \"parent\": \"4800\",\n    \"name\": \"userinit.exe\",\n    \"start_time\": \"1795095120\",\n    \"resident_size\": \"0\",\n    \"total_size\": \"0\",\n    \"user_time\": \"0\",\n    \"system_time\": \"0\",\n    \"disk_bytes_read\": \"0\",\n    \"disk_bytes_written\": \"0\"\n  },\n  {\n    \"pid\": \"5120\",\n    \"parent\": \"4980\",\n    \"name\": \"explorer.exe\",\n    \"start_time\": \"1795095120\",\n    \"resident_size\": \"188743680\",\n    \"total_size\": \"125829120\",\n    \"user_time\": \"61000\",\n    \"system_time\": \"33000\",\n    \"disk_bytes_read\": \"419430400\",\n    \"disk_bytes_written\": \"94371840\"\n  },\n  {\n    \"pid\": \"7000\",\n    \"parent\": \"5120\",\n    \"name\": \"chrome.exe\",\n    \"start_time\": \"1795113000\",\n    \"resident_size\": \"429916160\",\n    \"total_size\": \"272629760\",\n    \"user_time\": \"520000\",\n    \"system_time\": \"140000\",\n    \"disk_bytes_read\": \"943718400\",\n    \"disk_bytes_written\": \"734003200\"\n  },\n  {\n    \"pid\": \"7010\",\n    \"parent\": \"7000\",\n    \"name\": \"chrome.exe\",\n    \"start_time\": \"1795113060\",\n    \"resident_size\": \"650117120\",\n    \"total_size\": \"566231040\",\n    \"user_time\": \"332250\",\n    \"system_time\": \"52000\",\n    \"disk_bytes_read\": \"125829120\",\n    \"disk_bytes_written\": \"83886080\"\n  },\n  {\n    \"pid\": \"7020\",\n    \"parent\": \"7000\",\n    \"name\": \"chrome.exe\",\n    \"start_time\": \"1795113120\",\n    \"resident_size\": \"293601280\",\n    \"total_size\": \"220200960\",\n    \"user_time\": \"90000\",\n    \"system_time\": \"21000\",\n    \"disk_bytes_read\": \"31457280\",\n    \"disk_bytes_written\": \"10485760\"\n  },\n  {\n    \"pid\": \"8000\",\n    \"parent\": \"5120\",\n    \"name\": \"Code.exe\",\n    \"start_time\": \"1795149000\",\n    \"resident_size\": \"545259520\",\n    \"total_size\": \"346030080\",\n    \"user_time\": \"210450\",\n    \"system_time\": \"40000\",\n    \"disk_bytes_read\": \"314572800\",\n    \"disk_bytes_written\": \"125829120\"\n  },\n  {\n    \"pid\": \"8010\",\n    \"parent\": \"8000\",\n    \"name\": \"Code.exe\",\n    \"start_time\": \"1795149060\",\n    \"resident_size\": \"367001600\",\n    \"total_size\": \"304087040\",\n    \"user_time\": \"120000\",\n    \"system_time\": \"22000\",\n    \"disk_bytes_read\": \"62914560\",\n    \"disk_bytes_written\": \"41943040\"\n  },\n  {\n    \"pid\": \"9100\",\n    \"parent\": \"1200\",\n    \"name\": \"RuntimeBroker.exe\",\n    \"start_time\": \"1795096800\",\n    \"resident_size\": \"23068672\",\n    \"total_size\": \"8388608\",\n    \"user_time\": \"1500\",\n    \"system_time\": \"900\",\n    \"disk_bytes_read\": \"4194304\",\n    \"disk_bytes_written\": \"1048576\"\n  }\n]",
+      "stdErr": ""
+    },
+    {
+      "kind": "process",
+      "file": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$ErrorActionPreference='SilentlyContinue';$v=(Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power' -Name HiberbootEnabled).HiberbootEnabled;$o=Get-CimInstance Win32_OperatingSystem;$pf=@(Get-CimInstance Win32_PageFileUsage);$inst=(Get-CimInstance Win32_PhysicalMemory | Measure-Object Capacity -Sum).Sum;[pscustomobject]@{FastStartup=[string]$v;TotalBytes=[string]([int64]$o.TotalVisibleMemorySize*1024);FreeBytes=[string]([int64]$o.FreePhysicalMemory*1024);CommitLimitBytes=[string]([int64]$o.TotalVirtualMemorySize*1024);CommitFreeBytes=[string]([int64]$o.FreeVirtualMemory*1024);InstalledBytes=[string]([int64]$inst);PagefileUsedBytes=[string]([int64](($pf | Measure-Object CurrentUsage -Sum).Sum)*1MB);PagefileSizeBytes=[string]([int64](($pf | Measure-Object AllocatedBaseSize -Sum).Sum)*1MB)} | ConvertTo-Json -Compress"
+      ],
+      "exitCode": 0,
+      "stdOut": "{\"FastStartup\":\"1\",\"TotalBytes\":\"16718393344\",\"FreeBytes\":\"6266224640\",\"CommitLimitBytes\":\"18865876992\",\"CommitFreeBytes\":\"5935005696\",\"InstalledBytes\":\"17179869184\",\"PagefileUsedBytes\":\"220200960\",\"PagefileSizeBytes\":\"2147483648\"}\r\n",
+      "stdErr": ""
     }
   ]
 }
