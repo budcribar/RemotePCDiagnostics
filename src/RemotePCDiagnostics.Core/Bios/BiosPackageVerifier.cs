@@ -35,9 +35,26 @@ public static class BiosPackageVerifier
     public static async Task<string> ComputeSha256HexAsync(string filePath, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
-        await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, useAsync: true);
-        var hash = await SHA256.HashDataAsync(stream, ct).ConfigureAwait(false);
-        return Convert.ToHexString(hash).ToLowerInvariant();
+        const int maxAttempts = 6;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await using var stream = new FileStream(
+                    filePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read | FileShare.Delete,
+                    64 * 1024,
+                    useAsync: true);
+                var hash = await SHA256.HashDataAsync(stream, ct).ConfigureAwait(false);
+                return Convert.ToHexString(hash).ToLowerInvariant();
+            }
+            catch (IOException) when (attempt < maxAttempts && File.Exists(filePath))
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(25 * attempt), ct).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>Verifies <paramref name="filePath"/> against an expected 64-character hex SHA-256 digest using constant-time comparison.</summary>

@@ -28,15 +28,99 @@ public sealed record BiosDownloadResult(
 /// </summary>
 public static class BiosProviderHttp
 {
+    private sealed class PathGate
+    {
+        public SemaphoreSlim Semaphore { get; } = new(1, 1);
+        public int RefCount;
+    }
+
+    private static readonly Lock StagingPathGatesLock = new();
+    private static readonly Dictionary<string, PathGate> StagingPathGates = new(StringComparer.OrdinalIgnoreCase);
+
+    private static async Task<IDisposable> AcquireStagingPathGateAsync(string finalPath, CancellationToken ct)
+    {
+        var key = Path.GetFullPath(finalPath);
+        PathGate gate;
+        lock (StagingPathGatesLock)
+        {
+            if (!StagingPathGates.TryGetValue(key, out gate!))
+            {
+                gate = new PathGate();
+                StagingPathGates[key] = gate;
+            }
+            gate.RefCount++;
+        }
+
+        try
+        {
+            await gate.Semaphore.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            ReleaseStagingPathGate(key, gate, acquired: false);
+            throw;
+        }
+
+        return new StagingPathGateReleaser(key, gate);
+    }
+
+    private static void ReleaseStagingPathGate(string key, PathGate gate, bool acquired)
+    {
+        if (acquired)
+            gate.Semaphore.Release();
+
+        bool dispose;
+        lock (StagingPathGatesLock)
+        {
+            gate.RefCount--;
+            dispose = gate.RefCount == 0 && StagingPathGates.TryGetValue(key, out var current) && ReferenceEquals(current, gate);
+            if (dispose)
+                StagingPathGates.Remove(key);
+        }
+
+        if (dispose)
+            gate.Semaphore.Dispose();
+    }
+
+    private sealed class StagingPathGateReleaser(string key, PathGate gate) : IDisposable
+    {
+        private int _disposed;
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                ReleaseStagingPathGate(key, gate, acquired: true);
+        }
+    }
+
     /// <summary>
-    /// Moves a finished download into place. On Windows the move fails while another install of the same package still has
-    /// <paramref name="finalPath"/> open; when that file has exactly the bytes just downloaded, it is used as is. Returns true when this
-    /// call moved its file (false: the identical file already there is used, and the caller deletes its own .part).
+    /// Moves a finished download into place. Serializes per <paramref name="finalPath"/> so two concurrent downloads of the same
+    /// package do not overwrite <paramref name="finalPath"/> while the first caller is hashing or launching it: if <paramref name="finalPath"/>
+    /// already exists with the exact bytes just downloaded, it is reused as is (returns false, and the caller deletes its own .part).
     /// </summary>
     public static async Task<bool> MoveIntoPlaceOrReuseIdenticalAsync(string partPath, string finalPath, CancellationToken ct)
     {
-        // The other install can be replacing or reading the file at the very moment this one looks at it, which Windows reports as
-        // "being used by another process". That clears within moments, so try again a few times before giving up.
+        using var _ = await AcquireStagingPathGateAsync(finalPath, ct).ConfigureAwait(false);
+
+        if (IsSymlinkOrReparsePath(finalPath))
+            throw new IOException("Target package path is an unsafe symbolic link or reparse point.");
+
+        if (File.Exists(finalPath))
+        {
+            try
+            {
+                var ours = await BiosPackageVerifier.ComputeSha256HexAsync(partPath, ct).ConfigureAwait(false);
+                var theirs = await BiosPackageVerifier.ComputeSha256HexAsync(finalPath, ct).ConfigureAwait(false);
+                if (string.Equals(ours, theirs, StringComparison.Ordinal))
+                    return false;
+            }
+            catch (IOException)
+            {
+                // Fall through to the move + retry path if finalPath disappeared or was busy.
+            }
+        }
+
+        // An external process (e.g., AV scanner or another process) can still briefly hold finalPath on Windows,
+        // so retry a few times before giving up.
         const int attempts = 8;
         for (var attempt = 1; ; attempt++)
         {
@@ -47,22 +131,29 @@ public static class BiosProviderHttp
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                if (!File.Exists(finalPath) || IsSymlinkOrReparsePath(finalPath))
+                if (IsSymlinkOrReparsePath(finalPath))
                     throw;
-                bool? identical;
-                try
+                if (!File.Exists(finalPath))
                 {
-                    var ours = await BiosPackageVerifier.ComputeSha256HexAsync(partPath, ct).ConfigureAwait(false);
-                    var theirs = await BiosPackageVerifier.ComputeSha256HexAsync(finalPath, ct).ConfigureAwait(false);
-                    identical = string.Equals(ours, theirs, StringComparison.Ordinal);
+                    if (attempt >= attempts) throw;
                 }
-                catch (IOException) when (attempt < attempts)
+                else
                 {
-                    identical = null; // the file is busy: wait and try the move again
+                    bool? identical;
+                    try
+                    {
+                        var ours = await BiosPackageVerifier.ComputeSha256HexAsync(partPath, ct).ConfigureAwait(false);
+                        var theirs = await BiosPackageVerifier.ComputeSha256HexAsync(finalPath, ct).ConfigureAwait(false);
+                        identical = string.Equals(ours, theirs, StringComparison.Ordinal);
+                    }
+                    catch (IOException) when (attempt < attempts)
+                    {
+                        identical = null; // the file is busy: wait and try the move again
+                    }
+                    if (identical == false) throw;
+                    if (identical == true) return false;
+                    if (attempt >= attempts) throw;
                 }
-                if (identical == false) throw;
-                if (identical == true) return false;
-                if (attempt >= attempts) throw;
             }
             await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), ct).ConfigureAwait(false);
         }
