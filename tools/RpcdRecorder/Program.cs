@@ -57,8 +57,14 @@ var checks = new (string Label, IDiagnosticModule Module)[]
     ("Device Manager & drivers (legacy: PowerShell + osquery)", new DeviceDriversModule(new OsqueryDeviceDriverSource(osquery, commands))),
     ("Programs & updates (WMI + registry)", new ProgramsModule(new WmiProgramsSource(wmi, registry, packages))),
     ("Programs & updates (legacy: osquery)", new ProgramsModule(new OsqueryProgramsSource(osquery))),
+    // Without netsh and the event logs (Wi-Fi and event names hold the network's name and its router's address) and offline (no probes or DNS timing).
+    ("Network (WMI + registry)", new NetworkModule(new WmiNetworkSource(wmi, registry), includeWifiAndIpConfig: true, offline: true)),
+    ("Network (legacy: osquery + PowerShell)", new NetworkModule(new OsqueryNetworkSource(osquery, commands), includeWifiAndIpConfig: true, offline: true)),
     ("Security essentials (WMI + registry + tpmtool)", new SecurityEssentialsModule(new WmiSecurityEssentialsSource(wmi, registry, commands))),
     ("Security essentials (legacy: PowerShell + tpmtool)", new SecurityEssentialsModule(new PowerShellSecurityEssentialsSource(commands))),
+    // A restart this app scheduled isn't part of a recording. Each path takes its two process snapshots 2 s apart, as in the app.
+    ("Resource hogs & uptime (WMI + registry)", new ResourceHogsModule(new WmiResourceHogsSource(wmi, registry), restartPending: () => false)),
+    ("Resource hogs & uptime (legacy: osquery + PowerShell)", new ResourceHogsModule(new OsqueryResourceHogsSource(osquery, commands), restartPending: () => false)),
 };
 foreach (var (label, module) in checks)
 {

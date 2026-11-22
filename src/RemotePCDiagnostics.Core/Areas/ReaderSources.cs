@@ -113,10 +113,12 @@ public static class ReaderRegistration
         .AddSingleton<IHardwareInventorySource>(sp => new WmiHardwareInventorySource(sp.GetRequiredService<IWmiSource>()))
         .AddSingleton<IServiceSource>(sp => new WmiServiceSource(sp.GetRequiredService<IWmiSource>()))
         .AddSingleton<IDeviceDriverSource>(sp => new WmiDeviceDriverSource(sp.GetRequiredService<IWmiSource>()))
+        .AddSingleton<INetworkSource>(sp => new WmiNetworkSource(sp.GetRequiredService<IWmiSource>(), sp.GetRequiredService<IRegistrySource>()))
         .AddSingleton<IProgramsSource>(sp => new WmiProgramsSource(sp.GetRequiredService<IWmiSource>(), sp.GetRequiredService<IRegistrySource>(),
             sp.GetRequiredService<IPackageSource>()))
         .AddSingleton<Security.ISecurityEssentialsSource>(sp => new Security.WmiSecurityEssentialsSource(sp.GetRequiredService<IWmiSource>(),
-            sp.GetRequiredService<IRegistrySource>(), sp.GetRequiredService<SystemCommandRunner>()));
+            sp.GetRequiredService<IRegistrySource>(), sp.GetRequiredService<SystemCommandRunner>()))
+        .AddSingleton<IResourceHogsSource>(sp => new WmiResourceHogsSource(sp.GetRequiredService<IWmiSource>(), sp.GetRequiredService<IRegistrySource>()));
 
     private static IServiceCollection TryAddPackages(this IServiceCollection services)
     {

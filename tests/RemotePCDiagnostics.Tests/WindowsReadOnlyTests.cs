@@ -26,7 +26,6 @@ public class WindowsReadOnlyTests
     {
         { "ProblemDevices", false },      // empty when no device has a problem
         { "NetAdapterStatistics", false }, // empty without a connected adapter
-        { "FastStartupState", true },
         { "IpConfig", true },
         { "DefenderExclusions", true },
         { "DockDevices", true },

@@ -91,6 +91,15 @@ internal sealed class ReplayedPc(MachineRecording recording)
     public ProgramsModule ProgramsOld() => new(new OsqueryProgramsSource(Osquery), today: Today);
     private DateOnly Today() => DateOnly.FromDateTime(recording.CapturedAt.DateTime);
 
+    /// <summary>Resource hogs on WMI (the Agent's) and the registry. The 2 s wait between process snapshots takes no time; no restart is pending.</summary>
+    public ResourceHogsModule ResourceHogs() => new(new WmiResourceHogsSource(Wmi, Registry), timer: SampleTimer.Instant(), restartPending: () => false);
+    /// <summary>The Store edition without an Agent: osquery and the FastStartupState script, with CPU % a share of the recorded PC's processors.</summary>
+    public ResourceHogsModule ResourceHogsOld() => new(new OsqueryResourceHogsSource(Osquery, Commands, LogicalProcessors), timer: SampleTimer.Instant(),
+        restartPending: () => false);
+    private int LogicalProcessors() => recording.Calls
+        .Where(c => c.Kind == RecordedCall.WmiKind && c.Query == WmiResourceHogsSource.ProcessorsSql && c.Rows is { Count: > 0 })
+        .Select(c => c.ToWmiResult().Rows![0].Long("NumberOfLogicalProcessors")).FirstOrDefault(n => n is > 0) is { } n ? (int)n : 4;
+
     public bool Has(Func<RecordedCall, bool> match) => recording.Calls.Any(match);
     public bool HasWmi(string query) => Has(c => c.Kind == RecordedCall.WmiKind && c.Query == query);
     public bool HasOsquery(string sql) => Has(c => c.Kind == RecordedCall.ProcessKind && c.Args?.LastOrDefault() == sql);

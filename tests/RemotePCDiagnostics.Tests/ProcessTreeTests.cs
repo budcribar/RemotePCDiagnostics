@@ -199,7 +199,7 @@ public class ProcessTreeTests
         Assert.Equal(new ProcessResourceRow("app.exe", 42, 1000, 15, 3, 7, 1763500000, 2000), row);
         Assert.Contains("parent", ResourceUsage.ProcessesSql);
         Assert.Contains("total_size", ResourceUsage.ProcessesSql);
-        Assert.Contains("Win32_PageFileUsage", ResourceHogsModule.FastStartupScript);
+        Assert.Contains("Win32_PageFileUsage", RemotePCDiagnostics.Legacy.OsqueryResourceHogsSource.FastStartupScript);
     }
 
     [Fact]
@@ -221,7 +221,7 @@ public class ProcessTreeTests
             if (sql.Contains("uptime")) return ScriptedLauncher.Ok(uptimeJson);
             return ScriptedLauncher.Ok(Procs(Interlocked.Increment(ref procCalls) == 1 ? 0 : 1_000_000));
         });
-        var module = new ResourceHogsModule(ScriptedLauncher.Osquery(launcher), new SystemCommandRunner(launcher), sampleWindow: TimeSpan.FromMilliseconds(20));
+        var module = new ResourceHogsModule(new RemotePCDiagnostics.Legacy.OsqueryResourceHogsSource(ScriptedLauncher.Osquery(launcher), new SystemCommandRunner(launcher)), sampleWindow: TimeSpan.FromMilliseconds(20), restartPending: () => false);
         var rep = Assert.IsType<AreaReport>((await module.RefreshAsync(null)).Payload);
 
         Assert.Equal(2, procCalls);

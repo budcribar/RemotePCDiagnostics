@@ -3,171 +3,78 @@ using RemotePCDiagnostics.Core.Osquery;
 
 namespace RemotePCDiagnostics.Core.Areas;
 
-/// <summary>One network adapter with traffic and error counters (osquery <c>interface_details</c>; all values strings).</summary>
-public sealed record NetworkAdapter(
-    string Name, string Description, string Manufacturer, string Mac, string ConnectionStatus, bool? Enabled, bool? Physical,
-    long? SpeedBps, long? PacketsIn, long? PacketsOut, long? ErrorsIn, long? ErrorsOut, long? DropsIn, long? DropsOut)
-{
-    public static NetworkAdapter FromRow(IReadOnlyDictionary<string, string> r) => new(
-        FirstNonEmpty(r.Str("connection_id"), r.Str("friendly_name"), r.Str("description"), r.Str("interface")),
-        r.Str("description"), r.Str("manufacturer"), r.Str("mac"), r.Str("connection_status"), Bool(r.Str("enabled")), Bool(r.Str("physical_adapter")),
-        Positive(r.Long("speed")) ?? Positive(r.Long("link_speed")) * 1_000_000,
-        r.Long("ipackets"), r.Long("opackets"), r.Long("ierrors"), r.Long("oerrors"), r.Long("idrops"), r.Long("odrops"));
-
-    private static string FirstNonEmpty(params string[] s) => s.FirstOrDefault(x => x.Length > 0) ?? "";
-    private static bool? Bool(string s) => s switch { "1" or "true" or "True" => true, "0" or "false" or "False" => false, _ => null };
-    private static long? Positive(long? v) => v is > 0 and < long.MaxValue / 1_000_000 ? v : null;
-
-    /// <summary>Win32_NetworkAdapter NetConnectionStatus codes (osquery reports the number).</summary>
-    public string FriendlyConnection => ConnectionStatus switch
-    {
-        "2" => "Connected", "7" => "Cable unplugged / no signal", "0" => "Disconnected", "1" => "Connecting", "3" => "Disconnecting",
-        "4" => "Hardware not present", "5" => "Hardware disabled", "6" => "Hardware problem", "8" => "Authenticating", "9" => "Authenticated",
-        "10" => "Authentication failed", "11" => "Invalid address", "12" => "Credentials required",
-        "" => Enabled == false ? "Turned off" : "Unknown",
-        _ => ConnectionStatus,
-    };
-
-    public bool IsConnected => ConnectionStatus is "2" or "9";
-    public bool HasCounters => PacketsIn is not null || ErrorsIn is not null || ErrorsOut is not null;
-    public long Errors => (ErrorsIn ?? 0) + (ErrorsOut ?? 0);
-    public long Drops => (DropsIn ?? 0) + (DropsOut ?? 0);
-    public long Packets => (PacketsIn ?? 0) + (PacketsOut ?? 0);
-
-    /// <summary>Errors (not drops) above 1% of traffic, or any errors with almost no traffic, are flagged.</summary>
-    public const double ErrorRateWarning = 0.01;
-
-    public AreaLevel Level
-    {
-        get
-        {
-            if (!HasCounters) return IsConnected ? AreaLevel.Ok : AreaLevel.Neutral;
-            if (Errors > 0 && (Packets == 0 || (double)Errors / Packets >= ErrorRateWarning)) return AreaLevel.Warning;
-            return IsConnected ? AreaLevel.Ok : AreaLevel.Neutral;
-        }
-    }
-
-    public static string FormatSpeed(long? bps) => bps switch
-    {
-        null or <= 0 => "",
-        >= 1_000_000_000 => $"{bps / 1_000_000_000.0:0.#} Gbps",
-        >= 1_000_000 => $"{bps / 1_000_000.0:0.#} Mbps",
-        _ => $"{bps / 1000.0:0.#} Kbps",
-    };
-}
-
 /// <summary>
-/// Network adapters via osquery <c>interface_details</c>. osquery 5.24 on Windows leaves the packet/error counters
-/// blank, so when none are reported they are filled from Windows' Get-NetAdapterStatistics (matched by adapter name).
+/// Network adapters and their error counters, with (<paramref name="includeWifiAndIpConfig"/>) Wi-Fi signal, IP configuration, a DNS speed
+/// comparison, recent network events and reachability probes. The adapters and IP configuration come from <paramref name="source"/>: WMI
+/// through the Agent, or osquery and PowerShell in the Store edition without an Agent. Wi-Fi (netsh) and the event history (wevtutil) need
+/// <paramref name="commands"/>; <paramref name="offline"/> leaves out what asks the live network (the DNS comparison and the probes), for
+/// recordings and their replays.
 /// </summary>
-public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? commands = null, bool includeWifiAndIpConfig = false, DnsSpeedTest? dnsTest = null) : OsqueryAreaModuleBase(runner)
+public sealed class NetworkModule(INetworkSource source, SystemCommandRunner? commands = null, bool includeWifiAndIpConfig = false, DnsSpeedTest? dnsTest = null,
+    ILogger? log = null, bool offline = false) : AreaModuleBase(log ?? commands?.Log)
 {
-    public static string StatsScript => Scripts.PowerShellScripts.Get("NetAdapterStatistics");
-
     public const string ModuleName = ModuleSlugs.Network;
-    public const string Sql = "SELECT * FROM interface_details;";
     public override string Name => ModuleName;
     public override Guid Id => ModuleIds.Network;
     public override string DisplayName => includeWifiAndIpConfig ? "Network & Wi-Fi" : "Network adapters";
     protected override string FailedMessage => "Couldn't read network adapter details on this PC.";
 
+    public override Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken cancellationToken = default) => source.CheckAvailabilityAsync(cancellationToken);
+
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        var total = includeWifiAndIpConfig && commands is not null ? 4 : 1;
+        var total = includeWifiAndIpConfig ? 4 : 1;
         progress.ReportStep(1, total, "Checking network adapters…");
-        var q = await QueryAsync(Sql, ct).ConfigureAwait(false);
-        if (!q.Success) return AreaReport.Failed(FailedMessage);
-        var adapters = q.Rows!.Select(NetworkAdapter.FromRow).ToList();
-        if (adapters.Count > 0 && !adapters.Any(a => a.HasCounters))
-        {
-            if (commands is { IsScripted: true })
-            {
-                Log($"{Name}: interface_details reported no traffic/error counters; using Get-NetAdapterStatistics");
-                var pr = await commands.RunPowerShellAsync(StatsScript, ct).ConfigureAwait(false);
-                if (pr is { ExitCode: 0 })
-                {
-                    try { adapters = MergeStatistics(adapters, OsqueryJson.ParseRows(pr.StdOut)); }
-                    catch (FormatException ex) { LogWarn($"{Name}: adapter statistics unreadable: {ex.Message}"); }
-                }
-            }
-            else
-            {
-                var netStats = Platform.NetworkInfoReader.ReadAdapterStatistics();
-                if (netStats.Count > 0)
-                {
-                    adapters = adapters.Select(a =>
-                    {
-                        if (a.HasCounters || !netStats.TryGetValue(a.Name, out var s)) return a;
-                        return a with
-                        {
-                            PacketsIn = s.PacketsIn,
-                            PacketsOut = s.PacketsOut,
-                            ErrorsIn = s.ErrorsIn,
-                            ErrorsOut = s.ErrorsOut,
-                            DropsIn = s.DropsIn,
-                            DropsOut = s.DropsOut,
-                        };
-                    }).ToList();
-                }
-            }
-        }
+        if (await source.ReadAdaptersAsync(ct).ConfigureAwait(false) is not { } adapters) return AreaReport.Failed(FailedMessage);
         var baseReport = Build(adapters);
-        if (!includeWifiAndIpConfig || commands is null)
+        if (!includeWifiAndIpConfig)
             return baseReport;
 
         progress.ReportStep(2, total, "Checking Wi-Fi signal and IP configuration…");
         var connectedAdapters = ConnectedCount(adapters);
-        var (wlanRes, ipSnap) = await ReadWifiAndIpAsync(commands, ct).ConfigureAwait(false);
+        var (wlanRes, ipSnap) = await ReadWifiAndIpAsync(ct).ConfigureAwait(false);
         if (connectedAdapters > 0 && ipSnap is not { Adapters.Count: > 0 })
         {
             // The adapter list says we're connected but the IP read came back empty: usually the network stack was mid-change
             // (resume, roaming, adapter reset). Read once more before reporting it, so the check doesn't claim the PC is offline.
             Log($"{Name}: {connectedAdapters} adapter(s) connected but no IP configuration was read; retrying in {IpConfigRetryDelay.TotalSeconds:0.#} s");
             await Task.Delay(IpConfigRetryDelay, ct).ConfigureAwait(false);
-            (wlanRes, ipSnap) = await ReadWifiAndIpAsync(commands, ct).ConfigureAwait(false);
+            (wlanRes, ipSnap) = await ReadWifiAndIpAsync(ct).ConfigureAwait(false);
         }
         var wlanOk = wlanRes is { ExitCode: 0 };
         var ipOk = ipSnap is { Adapters.Count: > 0 };
         var gateway = ipSnap is null ? null : WifiConfigModule.PrimaryAdapter(ipSnap)?.Gateway;
         // Measure the current DNS against Cloudflare/Google (a few seconds; nothing changed) so switching is only suggested when it's faster.
         DnsComparison? dns = null;
-        if (ipSnap is not null && WifiConfigModule.PrimaryAdapter(ipSnap) is { } primary && !DnsSpeedTest.IsPublicAlready(primary.Dns))
+        if (!offline && ipSnap is not null && WifiConfigModule.PrimaryAdapter(ipSnap) is { } primary && !DnsSpeedTest.IsPublicAlready(primary.Dns))
         {
             progress.ReportStep(3, total, "Comparing DNS speed…");
-            try { dns = await (dnsTest ?? new DnsSpeedTest(log: commands.Log)).CompareAsync(primary.Dns, ct).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is not OperationCanceledException) { commands.Log.Warn($"DNS speed test failed: {ex.Message}"); }
+            try { dns = await (dnsTest ?? new DnsSpeedTest(log: Logger)).CompareAsync(primary.Dns, ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { LogWarn($"DNS speed test failed: {ex.Message}"); }
         }
         progress.ReportStep(4, total, "Checking recent network events and reachability.");
-        var history = NetworkDiagnostics.ReadHistoryAsync(commands, ct);
-        var probes = NetworkDiagnostics.ProbeAsync(gateway, ct);
+        var history = commands is null ? Task.FromResult<AreaCard?>(null) : Nullable(NetworkDiagnostics.ReadHistoryAsync(commands, ct));
+        var probes = offline ? Task.FromResult<AreaCard?>(null) : Nullable(NetworkDiagnostics.ProbeAsync(gateway, ct));
         await Task.WhenAll(history, probes).ConfigureAwait(false);
         var wifiRep = wlanOk || ipOk ? WifiConfigModule.Build(
             wlanOk ? WifiConfigModule.ParseNetshWlan(wlanRes!.StdOut) : null, wlanOk, ipSnap, dns, connectedAdapters) : null;
-        var combinedCards = (wifiRep?.Cards ?? []).Concat(baseReport.Cards)
-            .Append(await history.ConfigureAwait(false)).Append(await probes.ConfigureAwait(false)).ToList();
+        // Without commands netsh wasn't asked, so there is no Wi-Fi card to show (rather than one saying it couldn't be read).
+        var combinedCards = (wifiRep?.Cards ?? []).Where(c => commands is not null || c.Id != "wifi").Concat(baseReport.Cards)
+            .Concat(new[] { await history.ConfigureAwait(false), await probes.ConfigureAwait(false) }.OfType<AreaCard>()).ToList();
         var combinedStatus = AreaReport.Worst(combinedCards.Select(c => c.ErrorText is not null ? AreaLevel.Warning : c.Level));
         var combinedSummary = wifiRep is null ? baseReport.Summary : $"{wifiRep.Summary} · {baseReport.Summary}";
         return new(combinedCards, combinedSummary, combinedStatus);
     }
 
+    private static async Task<AreaCard?> Nullable(Task<AreaCard> card) => await card.ConfigureAwait(false);
+
     /// <summary>Wait before re-reading IP configuration when it came back empty while an adapter is connected.</summary>
     public static TimeSpan IpConfigRetryDelay { get; set; } = TimeSpan.FromSeconds(2);
 
-    private static async Task<(ProcessResult? Wlan, IpConfigSnapshot? Ip)> ReadWifiAndIpAsync(SystemCommandRunner commands, CancellationToken ct)
+    private async Task<(ProcessResult? Wlan, IpConfigSnapshot? Ip)> ReadWifiAndIpAsync(CancellationToken ct)
     {
-        var wlanRes = await commands.RunAsync(WifiConfigModule.Netsh, ["wlan", "show", "interfaces"], ct).ConfigureAwait(false);
-        IpConfigSnapshot? ipSnap = null;
-        if (commands.IsScripted)
-        {
-            var ipRes = await commands.RunPowerShellAsync(WifiConfigModule.IpConfigScript, ct).ConfigureAwait(false);
-            if (ipRes is { ExitCode: 0 })
-                ipSnap = WifiConfigModule.ParseIpSnapshot(ipRes.StdOut);
-        }
-        else
-        {
-            ipSnap = Platform.NetworkInfoReader.ReadIpConfig();
-        }
-        return (wlanRes, ipSnap);
+        var wlanRes = commands is null ? null : await commands.RunAsync(WifiConfigModule.Netsh, ["wlan", "show", "interfaces"], ct).ConfigureAwait(false);
+        return (wlanRes, await source.ReadIpConfigAsync(ct).ConfigureAwait(false));
     }
 
     /// <summary>The adapters the report shows: real network cards when Windows says which are physical, else any with a MAC or link.</summary>
@@ -176,17 +83,6 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
 
     /// <summary>How many of the shown adapters are connected (the "N of M adapters connected" count).</summary>
     public static int ConnectedCount(IReadOnlyList<NetworkAdapter> all) => Shown(all).Count(a => a.IsConnected);
-
-    /// <summary>Fills blank counters from Get-NetAdapterStatistics rows (matched on adapter name = connection name).</summary>
-    public static List<NetworkAdapter> MergeStatistics(IReadOnlyList<NetworkAdapter> adapters, IReadOnlyList<IReadOnlyDictionary<string, string>> stats)
-    {
-        var byName = stats.GroupBy(r => r.Str("Name"), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
-        return adapters.Select(a => a.HasCounters || !byName.TryGetValue(a.Name, out var r) ? a : a with
-        {
-            PacketsIn = r.Long("ipackets"), PacketsOut = r.Long("opackets"), ErrorsIn = r.Long("ierrors"), ErrorsOut = r.Long("oerrors"),
-            DropsIn = r.Long("idrops"), DropsOut = r.Long("odrops"),
-        }).ToList();
-    }
 
     private static string N(long? v) => v?.ToString("N0", CultureInfo.InvariantCulture) ?? "Not reported";
 
@@ -206,8 +102,9 @@ public sealed class NetworkModule(OsqueryRunner runner, SystemCommandRunner? com
             var head = a.FriendlyConnection + (a.IsConnected && NetworkAdapter.FormatSpeed(a.SpeedBps) is { Length: > 0 } s ? $" · {s}" : "");
             var rows = new List<AreaRow>();
             void Add(string l, string v, AreaLevel lv = AreaLevel.Neutral) { if (v.Length > 0) rows.Add(new(lv, [l, v])); }
+            // Only a connected adapter has a speed: Windows keeps a nominal one for an unplugged adapter (3 Mbps for Bluetooth).
             Add("Status", a.FriendlyConnection, a.IsConnected ? AreaLevel.Ok : AreaLevel.Neutral);
-            Add("Adapter", a.Description); Add("Manufacturer", a.Manufacturer); Add("Speed", NetworkAdapter.FormatSpeed(a.SpeedBps)); Add("Hardware address", a.Mac);
+            Add("Adapter", a.Description); Add("Manufacturer", a.Manufacturer); if (a.IsConnected) Add("Speed", NetworkAdapter.FormatSpeed(a.SpeedBps)); Add("Hardware address", a.Mac);
             if (a.HasCounters)
             {
                 Add("Packets received", N(a.PacketsIn)); Add("Packets sent", N(a.PacketsOut));
