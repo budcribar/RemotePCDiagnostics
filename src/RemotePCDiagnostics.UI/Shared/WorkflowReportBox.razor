@@ -12,12 +12,17 @@
     var s = Flow.State;
     var rows = Rows(s);
     var shown = _filter is null ? rows : rows.Where(r => r.Filter == _filter).ToList();
+    var areaGroups = shown.GroupBy(r => r.AreaKey, StringComparer.OrdinalIgnoreCase).ToList();
     var canAct = Flow.CanChangeAfterRun && _busy is null;
 }
 <section class="card wf-section wf-report-box" data-testid="wf-report-box">
     <div class="card-head">
         <strong>Client report</strong>
         <span class="wf-report-links">
+            @if (areaGroups.Count > 0)
+            {
+                <button type="button" class="linklike" data-testid="wf-changes-expand-all" @onclick="() => ToggleAllTree(areaGroups)">@(AllTreeOpen(areaGroups) ? "Collapse all" : "Expand all")</button>
+            }
             <button type="button" class="btn btn-primary btn-small" data-testid="wf-open-report" @onclick="OpenReport"><Icon Name="cert" Size="12" /> Open report</button>
             <button type="button" class="linklike" data-testid="wf-toggle-preview" aria-expanded="@(_preview ? "true" : "false")" @onclick="() => _preview = !_preview">@(_preview ? "Hide preview" : "Show preview")</button>
         </span>
@@ -42,36 +47,54 @@
     }
     else
     {
-        <ul class="wf-changes" data-testid="wf-changes">
-            @foreach (var r in shown)
+        <div class="wf-tree" data-testid="wf-changes">
+            @foreach (var areaGroup in areaGroups)
             {
-                var row = r;
-                var item = row.Item;
-                var key = item?.JournalId?.ToString("N") ?? row.FixId;
-                <li class="wf-change wf-edge-@row.Css" data-testid="wf-change" data-change-id="@key" data-fix-id="@row.FixId" data-tag="@row.Filter">
-                    <span class="wf-change-text">
-                        @if (row.Text != row.Title) { <span class="meta">@row.Title</span> }
-                        @row.Text
-                    </span>
-                    @* A row with a button shows only the button (its colour edge already says what kind it is); the others show their label. *@
-                    @if (item is { CanUndo: true })
-                    {
-                        <button type="button" class="btn-small wf-act-@row.Css" data-testid="wf-change-undo" data-change-id="@key" data-fix-id="@item.FixId" data-action="@(item.Tag == ReportTag.Reinstallable ? "reinstall" : "undo")" disabled="@(!canAct)"
-                                @onclick="() => UndoAsync(item)">@(_busy == key ? (item.Tag == ReportTag.Reinstallable ? "Reinstalling…" : "Undoing…") : item.Tag == ReportTag.Reinstallable ? "Reinstall" : "Undo")</button>
-                    }
-                    else if (item is { CanReapply: true } && _firstUndone.Add(item.FixId))
-                    {
-                        @* One button per fix: it runs the whole fix again. *@
-                        <button type="button" class="btn-small" data-testid="wf-change-reapply" data-change-id="@key" data-fix-id="@item.FixId" data-action="reapply" disabled="@(!canAct)" title="@(item.UndoneUtc is { } u ? $"{ReportItems.Label(item.Tag, item.WasReinstall)} at {u.ToLocalTime():t}" : null)"
-                                @onclick="() => ReapplyAsync(item)">@(_busy == item.FixId ? "Applying…" : item.WasReinstall ? "Remove again" : "Apply again")</button>
-                    }
-                    else
-                    {
-                        <span class="tag tag-@row.Css" data-testid="wf-change-label">@row.Label</span>
-                    }
-                </li>
+                var areaKey = areaGroup.Key;
+                var areaName = areaGroup.First().AreaName;
+                var areaOpen = IsAreaOpen(areaKey);
+                var fixGroups = areaGroup.GroupBy(r => r.FixId, StringComparer.OrdinalIgnoreCase).ToList();
+                <details class="wf-tree-group" data-testid="wf-change-group" data-area-key="@areaKey" open="@areaOpen">
+                    <summary class="wf-tree-summary" data-testid="wf-change-group-toggle" @onclick:preventDefault @onclick="() => ToggleArea(areaKey)">
+                        <span class="wf-caret" aria-hidden="true">@(areaOpen ? "▾" : "▸")</span>
+                        <strong class="wf-tree-title">@areaName</strong>
+                        <span class="meta wf-tree-count">@CountLabel(areaGroup.Count())</span>
+                    </summary>
+                    <ul class="wf-changes wf-tree-list">
+                        @foreach (var fixGroup in fixGroups)
+                        {
+                            var fixRows = fixGroup.ToList();
+                            if (fixRows.Count == 1)
+                            {
+                                var row = fixRows[0];
+                                @RenderChangeRow(row, showTitle: row.Text != row.Title, canAct)
+                            }
+                            else
+                            {
+                                var fixKey = fixGroup.Key;
+                                var fixTitle = fixRows[0].Title;
+                                var fixOpen = IsFixOpen(fixKey, fixRows.Count);
+                                <li class="wf-tree-fix-item">
+                                    <details class="wf-tree-fix" data-testid="wf-change-fix-group" data-fix-id="@fixKey" open="@fixOpen">
+                                        <summary class="wf-tree-fix-summary" data-testid="wf-change-fix-toggle" @onclick:preventDefault @onclick="() => ToggleFix(fixKey, fixRows.Count)">
+                                            <span class="wf-caret" aria-hidden="true">@(fixOpen ? "▾" : "▸")</span>
+                                            <span class="wf-tree-fix-title">@fixTitle</span>
+                                            <span class="meta wf-tree-count">@CountLabel(fixRows.Count)</span>
+                                        </summary>
+                                        <ul class="wf-changes wf-tree-sublist">
+                                            @foreach (var r in fixRows)
+                                            {
+                                                @RenderChangeRow(r, showTitle: false, canAct)
+                                            }
+                                        </ul>
+                                    </details>
+                                </li>
+                            }
+                        }
+                    </ul>
+                </details>
             }
-        </ul>
+        </div>
         _firstUndone.Clear();
     }
     @if (_preview)
@@ -86,14 +109,79 @@
     /// <summary>The last Undo / Reinstall / Apply again result (or null while one runs), for the page's workflow-data.</summary>
     [Parameter] public EventCallback<string?> MessageChanged { get; set; }
 
+    /// <summary>Multi-item fixes with more than this many entries start collapsed so long lists (like Defender exclusions) stay scannable.</summary>
+    private const int AutoCollapseFixThreshold = 5;
+
     private bool _preview;
     private string? _busy, _message;
     private readonly HashSet<string> _firstUndone = [];
+    private readonly HashSet<string> _collapsedAreas = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, bool> _fixOpenOverrides = new(StringComparer.OrdinalIgnoreCase);
 
     private string? _filter;
 
+    private RenderFragment RenderChangeRow(Row row, bool showTitle, bool canAct) => __builder =>
+    {
+        var item = row.Item;
+        var key = item?.JournalId?.ToString("N") ?? row.FixId;
+        <li class="wf-change wf-edge-@row.Css" data-testid="wf-change" data-change-id="@key" data-fix-id="@row.FixId" data-tag="@row.Filter">
+            <span class="wf-change-text">
+                @if (showTitle) { <span class="meta">@row.Title</span> }
+                @row.Text
+            </span>
+            @* A row with a button shows only the button (its colour edge already says what kind it is); the others show their label. *@
+            @if (item is { CanUndo: true })
+            {
+                <button type="button" class="btn-small wf-act-@row.Css" data-testid="wf-change-undo" data-change-id="@key" data-fix-id="@item.FixId" data-action="@(item.Tag == ReportTag.Reinstallable ? "reinstall" : "undo")" disabled="@(!canAct)"
+                        @onclick="() => UndoAsync(item)">@(_busy == key ? (item.Tag == ReportTag.Reinstallable ? "Reinstalling…" : "Undoing…") : item.Tag == ReportTag.Reinstallable ? "Reinstall" : "Undo")</button>
+            }
+            else if (item is { CanReapply: true } && _firstUndone.Add(item.FixId))
+            {
+                @* One button per fix: it runs the whole fix again. *@
+                <button type="button" class="btn-small" data-testid="wf-change-reapply" data-change-id="@key" data-fix-id="@item.FixId" data-action="reapply" disabled="@(!canAct)" title="@(item.UndoneUtc is { } u ? $"{ReportItems.Label(item.Tag, item.WasReinstall)} at {u.ToLocalTime():t}" : null)"
+                        @onclick="() => ReapplyAsync(item)">@(_busy == item.FixId ? "Applying…" : item.WasReinstall ? "Remove again" : "Apply again")</button>
+            }
+            else
+            {
+                <span class="tag tag-@row.Css" data-testid="wf-change-label">@row.Label</span>
+            }
+        </li>
+    };
+
+    private bool IsAreaOpen(string areaKey) => !_collapsedAreas.Contains(areaKey);
+
+    private void ToggleArea(string areaKey)
+    {
+        if (!_collapsedAreas.Remove(areaKey))
+            _collapsedAreas.Add(areaKey);
+    }
+
+    private bool IsFixOpen(string fixKey, int count) =>
+        _fixOpenOverrides.TryGetValue(fixKey, out var open) ? open : count <= AutoCollapseFixThreshold;
+
+    private void ToggleFix(string fixKey, int count) =>
+        _fixOpenOverrides[fixKey] = !IsFixOpen(fixKey, count);
+
+    private bool AllTreeOpen(List<IGrouping<string, Row>> areaGroups) =>
+        areaGroups.All(ag => IsAreaOpen(ag.Key)
+            && ag.GroupBy(r => r.FixId, StringComparer.OrdinalIgnoreCase)
+                 .Where(fg => fg.Count() > 1)
+                 .All(fg => IsFixOpen(fg.Key, fg.Count())));
+
+    private void ToggleAllTree(List<IGrouping<string, Row>> areaGroups)
+    {
+        var open = !AllTreeOpen(areaGroups);
+        if (open) _collapsedAreas.Clear();
+        else foreach (var ag in areaGroups) _collapsedAreas.Add(ag.Key);
+
+        foreach (var fg in areaGroups.SelectMany(ag => ag.GroupBy(r => r.FixId, StringComparer.OrdinalIgnoreCase)).Where(fg => fg.Count() > 1))
+            _fixOpenOverrides[fg.Key] = open;
+    }
+
+    private static string CountLabel(int n) => n == 1 ? "1 change" : $"{n} changes";
+
     /// <summary>One row of the list: a change (or a fix that journaled nothing), a skipped fix, or one that couldn't be applied.</summary>
-    private sealed record Row(string Filter, string Css, string Label, string FixId, string Title, string Text, ReportItem? Item);
+    private sealed record Row(string AreaKey, string AreaName, string Filter, string Css, string Label, string FixId, string Title, string Text, ReportItem? Item);
 
     /// <summary>The filter pills, in order. Rows with a filter that has no rows get no pill.</summary>
     private static readonly (string Filter, string Css, string Label)[] Filters =
@@ -109,14 +197,20 @@
 
     private static List<Row> Rows(WorkflowState s)
     {
+        var fixById = new Dictionary<string, WorkflowFix>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in s.Fixes) fixById.TryAdd(f.Id, f);
+
         var rows = new List<Row>();
         foreach (var o in s.Outcomes)
         {
-            if (o.Skipped) { rows.Add(new("Skipped", "none", "Skipped", o.FixId, o.Title, o.Message, null)); continue; }
+            var (areaKey, areaName) = fixById.TryGetValue(o.FixId, out var fix) && !string.IsNullOrWhiteSpace(fix.Area)
+                ? (fix.GroupKey, fix.Area)
+                : ("Other", "Other");
+            if (o.Skipped) { rows.Add(new(areaKey, areaName, "Skipped", "none", "Skipped", o.FixId, o.Title, o.Message, null)); continue; }
             var lines = ReportItems.For(s, o);
-            if (!o.Success) rows.Add(new("Failed", "perm", "Couldn't be applied", o.FixId, o.Title, o.Message, null));
+            if (!o.Success) rows.Add(new(areaKey, areaName, "Failed", "perm", "Couldn't be applied", o.FixId, o.Title, o.Message, null));
             foreach (var i in lines)
-                rows.Add(new(i.Tag.ToString(), ReportItems.Css(i.Tag),
+                rows.Add(new(areaKey, areaName, i.Tag.ToString(), ReportItems.Css(i.Tag),
                     ReportItems.Label(i.Tag, i.WasReinstall) + (i.UndoneUtc is { } u ? " " + u.ToLocalTime().ToString("t") : ""), i.FixId, i.FixTitle, i.Text, i));
         }
         return rows;
