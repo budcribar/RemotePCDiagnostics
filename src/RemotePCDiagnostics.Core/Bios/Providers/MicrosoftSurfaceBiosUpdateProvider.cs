@@ -2277,8 +2277,23 @@ public sealed partial class MicrosoftSurfaceBiosUpdateProvider : IBiosUpdateProv
             if (lastPercent < 100)
                 progress?.Report(new BiosInstallProgress(BiosInstallStage.Downloading, 100, $"Downloaded {fileName}."));
 
-            File.Move(partPath, finalPath, overwrite: true);
-            moved = true;
+            try
+            {
+                File.Move(partPath, finalPath, overwrite: true);
+                moved = true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // On Windows the overwrite fails while another install of the same package is still reading finalPath.
+                // With a pinned SHA-256, that file is as good as ours: verify it and use it (finally removes our .part).
+                if (!request.VerifyHash || string.IsNullOrWhiteSpace(request.Target.Sha256) || !File.Exists(finalPath))
+                    throw;
+                var (sameValid, sameActual) = await BiosPackageVerifier.VerifyFileSha256Async(finalPath, request.Target.Sha256, ct).ConfigureAwait(false);
+                if (!sameValid)
+                    throw;
+                log?.Info($"[{VendorId}] {fileName} is already staged by another install with the same SHA-256; using it.");
+                return BiosVerifiedPackageResult.Ok(finalPath, downloaded, actualSha256: sameActual, verifiedBySha256: true);
+            }
 
             if (request.VerifyHash && !string.IsNullOrWhiteSpace(request.Target.Sha256))
             {
