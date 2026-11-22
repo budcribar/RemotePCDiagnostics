@@ -290,6 +290,10 @@ public static class AgentExports
             measurements = HistoryPresentation.Measurements(e).Take(MaxDetailLines)
                 .Select(m => new { name = V(m.Name), value = V(m.Value) }).ToList(),
             details = HistoryPresentation.Details(e).Take(MaxDetailLines).Select(T).OfType<string>().ToList(),
+            // The numbers the check tracks over time (contract 3); left out when the result has none.
+            keyMetrics = HistoryTrends.Metrics(e) is { Count: > 0 } km
+                ? km.Select(k => new { id = V(k.Id), label = V(k.Label), value = k.Value, unit = V(k.Unit), text = KeyMetricText.Value(k.Value, k.Unit) }).ToList()
+                : null,
         }).ToList(),
         fixes = fixes.OrderByDescending(f => f.TimeUtc).Take(MaxFixes).Select(f => new
         {

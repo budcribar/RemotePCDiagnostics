@@ -11,7 +11,7 @@ namespace RemotePCDiagnostics.Core.Areas;
 /// </summary>
 public static class WorkflowExport
 {
-    public const int SchemaVersion = 1;
+    public const int SchemaVersion = 2;
     public const int MaxFixes = 200;
     public const int MaxLines = 50;
 
@@ -28,11 +28,42 @@ public static class WorkflowExport
     private static string? T(string? v) => AreaReportExport.Text(v, AreaReportExport.MaxTextLength);
 
     public static string ToJson(WorkflowState s, bool busy, bool waitingForRestart, string? status, string? message,
-        IReadOnlyList<WorkflowCheckItem> checks, IReadOnlyCollection<string> openAreas, SignIn signIn) =>
-        JsonSerializer.Serialize(Build(s, busy, waitingForRestart, status, message, checks, openAreas, signIn), Json);
+        IReadOnlyList<WorkflowCheckItem> checks, IReadOnlyCollection<string> openAreas, SignIn signIn, bool canChange = false, string? changeMessage = null) =>
+        JsonSerializer.Serialize(Build(s, busy, waitingForRestart, status, message, checks, openAreas, signIn, canChange, changeMessage), Json);
+
+    /// <summary>
+    /// The client report's changes, one per line of the report box, with the actions its buttons offer: <c>undo</c> or
+    /// <c>reinstall</c> (the wf-change-undo button) and <c>reapply</c> (wf-change-reapply, once per fix: it runs the whole fix again).
+    /// <c>changeId</c> is the button's data-change-id.
+    /// </summary>
+    private static bool Finished(WorkflowState s) => s.Stage is WorkflowStage.Done or WorkflowStage.Cancelled or WorkflowStage.Failed;
+
+    public static IReadOnlyList<object> Changes(WorkflowState s)
+    {
+        var reapplyOffered = new HashSet<string>(StringComparer.Ordinal);
+        var list = new List<object>();
+        foreach (var item in s.Outcomes.SelectMany(o => ReportItems.For(s, o)).Take(MaxFixes))
+        {
+            var actions = new List<string>();
+            if (item.CanUndo) actions.Add(item.Tag == ReportTag.Reinstallable ? "reinstall" : "undo");
+            else if (item.CanReapply && reapplyOffered.Add(item.FixId)) actions.Add("reapply");
+            list.Add(new
+            {
+                changeId = item.JournalId?.ToString("N") ?? item.FixId,
+                fixId = item.FixId,
+                fixTitle = V(item.FixTitle),
+                text = T(item.Text),
+                tag = item.Tag.ToString(),
+                label = ReportItems.Label(item.Tag, item.WasReinstall),
+                undoneAt = item.UndoneUtc?.ToString("O"),
+                actions,
+            });
+        }
+        return list;
+    }
 
     public static object Build(WorkflowState s, bool busy, bool waitingForRestart, string? status, string? message,
-        IReadOnlyList<WorkflowCheckItem> checks, IReadOnlyCollection<string> openAreas, SignIn signIn) => new
+        IReadOnlyList<WorkflowCheckItem> checks, IReadOnlyCollection<string> openAreas, SignIn signIn, bool canChange = false, string? changeMessage = null) => new
     {
         schema = SchemaVersion,
         stage = s.Stage.ToString(),
@@ -98,5 +129,8 @@ public static class WorkflowExport
             ? new { automatic = signIn.Automatic, credentialsEntered = signIn.CredentialsEntered, clientSignsIn = signIn.ClientSignsIn, canStart = signIn.CanStart }
             : null,
         reportSaved = s.ReportPath is not null ? true : (bool?)null,
+        changes = Finished(s) ? Changes(s) : null,
+        canChange = Finished(s) ? canChange : (bool?)null,
+        changeMessage = T(changeMessage),
     };
 }
