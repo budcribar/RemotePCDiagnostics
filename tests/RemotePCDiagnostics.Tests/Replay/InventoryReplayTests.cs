@@ -200,27 +200,61 @@ public sealed class ProgramsReplayTests
         var now = (AreaReport)(await pc.Programs().RefreshAsync(null, ct)).Payload!;
         var old = (AreaReport)(await new ReplayedPc(rec).ProgramsOld().RefreshAsync(null, ct)).Payload!;
 
-        // osquery also lists every Store package, frameworks and parts of Windows included; the new path lists only the apps among them
-        // (PackageList.Apps). A program only osquery lists must be one of those packages.
+        // Programs from the registry's Uninstall keys must match exactly. Store apps are compared on their own (StoreAppDiffs).
+        var registryNames = rec.Calls.Where(c => c.Kind == RecordedCall.RegistryKind).SelectMany(c => c.ToWmiResult().Rows ?? [])
+            .Select(r => r.Str("DisplayName")).Where(n => n.Length > 0).ToHashSet(StringComparer.Ordinal);
         var packages = await new ReplayedPc(rec).Packages.ReadPackagesAsync(ct);
-        var notApps = (packages.Rows ?? []).Where(p => !PackageList.IsApp(p)).Select(p => p.Str(PackageList.DisplayName)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var diffs = ReportDiff.Between(WithoutGains(old, notApps), WithoutGains(now, notApps));
+        var diffs = ReportDiff.Between(RegistryOnly(old, registryNames), RegistryOnly(now, registryNames));
+        diffs.AddRange(StoreAppDiffs(Programs(old), Programs(now), registryNames, packages));
         Assert.True(diffs.Count == 0, $"{diffs.Count} differences:\n" + string.Join("\n", diffs));
     }
 
+    private static IReadOnlyList<AreaRow> Programs(AreaReport r) => r.Cards.Single(c => c.Id == "programs").Rows;
+
     /// <summary>
-    /// Leaves out what only one path has on purpose: Windows' display version ("26H2"; osquery's os_version has none), and the Store packages
-    /// that aren't apps (osquery lists them; see above). The programs headline counts them, so it isn't compared.
+    /// The report without the Store apps, and without what only one path has on purpose: Windows' display version ("26H2"; osquery's
+    /// os_version has none). The programs headline counts the Store packages, so it isn't compared.
     /// </summary>
-    private static AreaReport WithoutGains(AreaReport r, IReadOnlySet<string> notApps) => r with
+    private static AreaReport RegistryOnly(AreaReport r, IReadOnlySet<string> registryNames) => r with
     {
         Cards = r.Cards.Select(c => c.Id switch
         {
             "windows" => c with { Meta = "", Rows = c.Rows.Where(x => x.Values[0] != "Version").ToList() },
-            "programs" => c with { Headline = "", Meta = "", Rows = c.Rows.Where(x => !notApps.Contains(x.Values[0])).ToList() },
+            "programs" => c with { Headline = "", Meta = "", Rows = c.Rows.Where(x => registryNames.Contains(x.Values[0])).ToList() },
             _ => c,
         }).ToList(),
     };
+
+    /// <summary>
+    /// osquery reads Store packages from the registry, for every user, frameworks and parts of Windows included, and names a package whose
+    /// display name is a resource by its package name ("Microsoft.WindowsCalculator"). Windows' package API gives the signed-in user's
+    /// packages with their real names ("Windows Calculator"). So each app the new path lists that osquery lists too (by either name) must
+    /// have a row there with the same version and publisher, and osquery's rows for anything else are left out. The install date isn't
+    /// compared: osquery's is in UTC and some differ by days (it reads another time). Apps only the new path lists are gains (osquery
+    /// misses neutral and sparse packages such as Edge, OneDrive and McAfee).
+    /// </summary>
+    private static IEnumerable<string> StoreAppDiffs(IReadOnlyList<AreaRow> old, IReadOnlyList<AreaRow> now, IReadOnlySet<string> registryNames,
+        WmiQueryResult packages)
+    {
+        var oldStore = old.Where(r => !registryNames.Contains(r.Values[0])).ToLookup(r => r.Values[0], StringComparer.OrdinalIgnoreCase);
+        var shown = now.Select(r => (r.Values[0], r.Values[1])).ToHashSet();
+        var compared = 0;
+        // An app with an Uninstall key too (Edge) is listed as that key shows it, so it's compared with the registry's programs.
+        foreach (var app in PackageList.Apps(packages).Where(p => !registryNames.Contains(p.Str(PackageList.DisplayName))))
+        {
+            var (name, version, publisher) = (app.Str(PackageList.DisplayName), app.Str(PackageList.Version), app.Str(PackageList.Publisher));
+            if (!shown.Contains((name, version))) { yield return $"store app missing on the new path: {name} {version}"; continue; }
+            var packageName = app.Str(PackageList.FullName).Split('_')[0];
+            var rows = oldStore[name].Concat(oldStore[packageName]).ToList();
+            if (rows.Count == 0) continue;
+            compared++;
+            if (rows.FirstOrDefault(r => r.Values[1] == version) is not { } match)
+                yield return $"store app {name}: new {version}, osquery {string.Join(", ", rows.Select(r => r.Values[1]))}";
+            else if (match.Values[2] != publisher)
+                yield return $"store app {name} publisher: new \"{publisher}\", osquery \"{match.Values[2]}\"";
+        }
+        if (compared == 0) yield return "no store app is listed by both paths";
+    }
 
     [Theory]
     [MemberData(nameof(Recordings))]

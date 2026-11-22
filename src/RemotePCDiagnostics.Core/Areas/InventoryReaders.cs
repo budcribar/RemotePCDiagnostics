@@ -316,9 +316,11 @@ public sealed class WmiProgramsSource(IWmiSource wmi, IRegistrySource registry, 
         }
         if (packages is not null)
         {
-            // Without the list (it failed, or this host can't read it), the Uninstall keys' programs are still the answer.
+            // Without the list (it failed, or this host can't read it), the Uninstall keys' programs are still the answer. An app that
+            // also has an Uninstall key (Edge, for one) is listed once, as its Uninstall key shows it.
             var apps = await packages.ReadPackagesAsync(ct).ConfigureAwait(false);
-            list.AddRange(PackageList.Apps(apps).Select(p => new InstalledProgram(p.Str(PackageList.DisplayName), p.Str(PackageList.Version),
+            var listed = list.Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            list.AddRange(PackageList.Apps(apps).Where(p => !listed.Contains(p.Str(PackageList.DisplayName))).Select(p => new InstalledProgram(p.Str(PackageList.DisplayName), p.Str(PackageList.Version),
                 p.Str(PackageList.Publisher), OsqueryDates.Parse(p.Str(PackageList.InstalledDate)))));
         }
         return list;
