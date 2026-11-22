@@ -601,16 +601,18 @@ public class MemorySuggestionTests
         Assert.DoesNotContain(Build(Busy with { TransparencyOn = false }), x => x.Id == "transparency");
 
     [Fact]
-    public async Task PageFile_FixedSize_OneClick_ManagedIsInfo()
+    public async Task PageFile_FixedSizeAndManaged_BothOfferFixes()
     {
-        var tight = new MemorySnapshot(new(16 * Gb, 4 * Gb, 30 * Gb, 32 * Gb), []);
-        var info = Build(tight with { AutoPageFile = true }).Single(x => x.Id == "commit");
-        Assert.Equal(SuggestionKind.Info, info.Kind);
-        Assert.Empty(info.Actions);
+        var tight = new MemorySnapshot(new(16 * Gb, 4 * Gb, 19 * Gb, 22 * Gb), []);
+        var managed = Build(tight with { AutoPageFile = true }).Single(x => x.Id == "commit");
+        Assert.Equal(SuggestionKind.Automated, managed.Kind);
+        Assert.Equal(MemoryActionType.IncreasePageFile, Assert.Single(managed.Actions).Type);
+
         var (svc, sys, _) = Make(tight with { AutoPageFile = false });
         await svc.ScanAsync();
         var s = svc.Suggestions.Single(x => x.Id == "commit");
         Assert.Equal(SuggestionKind.Automated, s.Kind);
+        Assert.Equal(MemoryActionType.AutoManagePageFile, Assert.Single(s.Actions).Type);
         Assert.True((await svc.ApplyAsync(s, s.Actions.Single())).Success);
         Assert.Contains("pagefile", sys.Calls);
     }

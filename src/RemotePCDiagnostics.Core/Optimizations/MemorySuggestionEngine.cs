@@ -373,16 +373,19 @@ public static class MemorySuggestionEngine
             var more = dfn.MissingFolders.Count - shown.Count;
             var hog = s.App("MsMpEng") is { } msmp && msmp.MemoryBytes >= 250 * Mb ? $" Defender is using {MemoryText.Size(msmp.MemoryBytes)} right now." : "";
             var steps = new List<string>();
-            if (dfn.MissingFolders.Count > 0) steps.Add("Folders: " + string.Join("; ", shown) + (more > 0 ? $" (+{more} more)" : ""));
-            if (dfn.MissingProcesses.Count > 0) steps.Add("Build tools: " + string.Join(", ", dfn.MissingProcesses.Select(Path.GetFileName).Distinct(StringComparer.OrdinalIgnoreCase)));
-            steps.Add("Only code folders found from Visual Studio, VS Code, Rider and Windows Search, plus the NuGet package cache. Never Downloads, Desktop, Documents or a whole drive.");
+            if (dfn.MissingFolders.Count > 0) steps.Add("New folders: " + string.Join("; ", shown) + (more > 0 ? $" (+{more} more)" : ""));
+            if (dfn.MissingProcesses.Count > 0) steps.Add("New build tools: " + string.Join(", ", dfn.MissingProcesses.Select(Path.GetFileName).Distinct(StringComparer.OrdinalIgnoreCase)));
+            steps.Add("Only new code folders not yet excluded in Defender (from Visual Studio, VS Code, Rider and Windows Search, plus the NuGet package cache). Never Downloads, Desktop, Documents or a whole drive.");
             steps.Add("Undo removes exactly these exclusions.");
+            var detailItems = new List<string>(dfn.MissingFolders.Count + dfn.MissingProcesses.Count);
+            foreach (var f in dfn.MissingFolders) detailItems.Add(f);
+            foreach (var p in dfn.MissingProcesses) detailItems.Add($"Build tool: {Path.GetFileName(p)} ({p})");
             list.Add(new("defender-exclusions", "Stop Defender rescanning code and build folders",
                 $"Microsoft Defender scans every file a build writes. Excluding {DefenderProbe.Describe(dfn.MissingFolders.Count, dfn.MissingProcesses.Count)} makes builds noticeably faster.{hog}",
                 null, SuggestionRisk.Medium, SuggestionKind.Automated, steps,
                 [new(MemoryActionType.AddDefenderExclusions, "", "Add exclusions",
                     "Add these Defender exclusions? Files in these folders and files opened by these build tools won't be scanned for malware. Needs administrator rights.")],
-                "Windows", "Applies right away."));
+                "Windows", "Applies right away.", DetailItems: detailItems));
         }
         else if (s.Defender is null && s.App("MsMpEng") is { } def && def.MemoryBytes >= 250 * Mb && Running(s, "devenv", "MSBuild", "VBCSCompiler", "Code"))
             list.Add(new("defender-exclusions", "Exclude your code and build folders from Defender scanning",
@@ -410,15 +413,31 @@ public static class MemorySuggestionEngine
         }
         if (m.CommitBytes is { } cb && m.CommitLimitBytes is > 0 and var cl && cb >= cl * 0.8)
         {
-            // A fixed-size page file can be switched to Windows-managed (grows as needed) with one click; already managed = info only.
             var fixedSize = s.AutoPageFile == false;
-            list.Add(new("commit", "Page file is under pressure", $"Committed memory is {MemoryText.Size(cb)} of a {MemoryText.Size(cl)} limit ({(int)(100.0 * cb / cl)}%). Apps may fail to start if it fills up."
-                    + (fixedSize ? " The page file has a fixed size on this PC." : ""),
-                null, SuggestionRisk.Low, fixedSize ? SuggestionKind.Automated : SuggestionKind.Info,
-                fixedSize ? ["Closing apps is the fastest fix", "Letting Windows manage the page file lets it grow when needed (takes effect after a restart)"] : ["Closing apps is the fastest fix"],
-                fixedSize ? [new(MemoryActionType.AutoManagePageFile, "", "Let Windows manage the page file",
-                    "Let Windows manage the page file size? Takes effect after the next restart. The current custom size isn't kept. Needs administrator rights.")] : [],
-                "Windows"));
+            if (fixedSize)
+            {
+                list.Add(new("commit", "Page file is under pressure", $"Committed memory is {MemoryText.Size(cb)} of a {MemoryText.Size(cl)} limit ({(int)(100.0 * cb / cl)}%). Apps may fail to start if it fills up. The page file has a fixed size on this PC.",
+                    null, SuggestionRisk.Low, SuggestionKind.Automated,
+                    ["Closing apps is the fastest fix", "Letting Windows manage the page file lets it grow when needed (takes effect after a restart)"],
+                    [new(MemoryActionType.AutoManagePageFile, "", "Let Windows manage the page file",
+                        "Let Windows manage the page file size? Takes effect after the next restart. The current custom size isn't kept. Needs administrator rights.")],
+                    "Windows"));
+            }
+            else
+            {
+                var ramMb = (uint)Math.Max(4096, m.TotalBytes / Mb);
+                var currentPageMb = cl > m.TotalBytes ? (uint)((cl - m.TotalBytes) / Mb) : 0u;
+                var initialMb = Math.Clamp(Math.Max(ramMb, currentPageMb + 4096), 8192u, 32768u);
+                var maxMb = Math.Clamp(Math.Max(ramMb * 2, initialMb + 8192), 16384u, 65536u);
+                var initialGb = (int)Math.Round(initialMb / 1024.0);
+                var maxGb = (int)Math.Round(maxMb / 1024.0);
+                list.Add(new("commit", "Page file is under pressure", $"Committed memory is {MemoryText.Size(cb)} of a {MemoryText.Size(cl)} limit ({(int)(100.0 * cb / cl)}%). Apps may fail to start if it fills up.",
+                    null, SuggestionRisk.Low, SuggestionKind.Automated,
+                    ["Closing apps is the fastest fix", $"Setting a larger page file ({initialGb}–{maxGb} GB on the system drive) raises the commit limit (takes effect after a restart)", "Undo returns the page file to Windows-managed."],
+                    [new(MemoryActionType.IncreasePageFile, $"{initialMb}:{maxMb}", $"Increase page file ({initialGb}–{maxGb} GB)",
+                        $"Set the system drive page file to {initialGb}–{maxGb} GB? Takes effect after the next restart. Undo returns it to Windows-managed. Needs administrator rights.")],
+                    "Windows", "Takes effect after the next restart."));
+            }
         }
         if (s.App("Memory Compression") is { } mc && mc.MemoryBytes >= 500 * Mb)
             list.Add(new("compression", "Windows is compressing memory", $"Memory compression holds {MemoryText.Size(mc.MemoryBytes)}. That's Windows squeezing memory because RAM is tight; it's normal, but a sign more RAM or fewer open apps would help.",

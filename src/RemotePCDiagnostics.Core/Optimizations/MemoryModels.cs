@@ -151,7 +151,7 @@ public enum MemoryActionType
 {
     CloseApp, ForceCloseApp, ShutdownBuildServers, DisableStartup, EnableBrowserMemorySaver, OpenSettings,
     StopService, SetServiceManual, SetServiceDisabled,
-    RestartPc, DisableFastStartup, DisableTransparency, AutoManagePageFile,
+    RestartPc, DisableFastStartup, DisableTransparency, AutoManagePageFile, IncreasePageFile,
     AddDefenderExclusions, DisableWidgets, DisableSearchHighlights, ReduceHibernateFile,
     SkipOfficeStartScreen,
     SetPdfDefaultPrinter,
@@ -173,7 +173,7 @@ public sealed record MemoryAction(MemoryActionType Type, string Target, string L
 public sealed record MemorySuggestion(
     string Id, string Title, string Why, long? SavingBytes, SuggestionRisk Risk, SuggestionKind Kind,
     IReadOnlyList<string> Steps, IReadOnlyList<MemoryAction> Actions, string Category = "General", string? Note = null, bool DefaultOn = true,
-    string? UndoChip = null, string? SavingText = null, Changes.UndoSupport? Undo = null);
+    string? UndoChip = null, string? SavingText = null, Changes.UndoSupport? Undo = null, IReadOnlyList<string>? DetailItems = null);
 
 public static class MemoryText
 {

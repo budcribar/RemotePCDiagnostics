@@ -30,7 +30,7 @@ public static class FixCatalog
     public static readonly IReadOnlySet<MemoryActionType> UnattendedMemoryActions = new HashSet<MemoryActionType>
     {
         MemoryActionType.DisableStartup, MemoryActionType.EnableBrowserMemorySaver, MemoryActionType.SetServiceManual, MemoryActionType.SetServiceDisabled,
-        MemoryActionType.DisableTransparency, MemoryActionType.AutoManagePageFile,
+        MemoryActionType.DisableTransparency, MemoryActionType.AutoManagePageFile, MemoryActionType.IncreasePageFile,
         MemoryActionType.AddDefenderExclusions,
         MemoryActionType.DisableWidgets, MemoryActionType.DisableSearchHighlights, MemoryActionType.ReduceHibernateFile,
         MemoryActionType.SkipOfficeStartScreen,
@@ -84,8 +84,9 @@ public static class FixCatalog
     private static bool CanRunUnattended(MemoryAction action) => UnattendedMemoryActions.Contains(action.Type);
 
     /// <param name="catalog">Names a fix's area when it isn't one of the fixed areas; defaults to the built-in modules.</param>
+    /// <param name="appliedChanges">Changes already applied and still in the undo journal; matching fixes are omitted from Review (shown only for Undo).</param>
     public static IReadOnlyList<WorkflowFix> Build(IEnumerable<DiagnosticResult> results, IEnumerable<MemorySuggestion> suggestions, RemediationService? plans = null,
-        ModuleCatalog? catalog = null)
+        ModuleCatalog? catalog = null, IReadOnlyList<Changes.ChangeRecord>? appliedChanges = null)
     {
         var list = new List<WorkflowFix>();
         var seen = new HashSet<string>();
@@ -127,7 +128,7 @@ public static class FixCatalog
             if (a is null) continue;
             var id = MemoryId(s.Id, a.Type, a.Target);
             if (!seen.Add(id)) continue;
-            var order = a.Type switch { MemoryActionType.DisableStartup => 20, MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled => 22, MemoryActionType.AutoManagePageFile => 12, MemoryActionType.CleanStorage => 40, _ => 15 };
+            var order = a.Type switch { MemoryActionType.DisableStartup => 20, MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled => 22, MemoryActionType.AutoManagePageFile or MemoryActionType.IncreasePageFile => 12, MemoryActionType.CleanStorage => 40, _ => 15 };
 
             var manual = a.Type == MemoryActionType.SetServiceManual;
             var disabled = a.Type == MemoryActionType.SetServiceDisabled;
@@ -140,14 +141,69 @@ public static class FixCatalog
                 : s.Why;
             list.Add(new(id, title, why, s.Category, s.Risk, FixSource.Memory, order,
                 SuggestionId: s.Id, MemoryAction: a.Type, MemoryTarget: a.Target,
-                NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
+                NeedsAdmin: a.Type is MemoryActionType.AutoManagePageFile or MemoryActionType.IncreasePageFile or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
                     or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension
                     or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.RemoveNarratorAddons
                     || (a.Type == MemoryActionType.StopBrowserBackground && a.Target == nameof(BrowserKind.Edge)),
-                Undo: s.Undo ?? Changes.Undoability.Of(a.Type), DefaultOn: s.DefaultOn, UndoChip: s.UndoChip, AreaKey: s.Category));
+                Undo: s.Undo ?? Changes.Undoability.Of(a.Type), DefaultOn: s.DefaultOn, UndoChip: s.UndoChip, AreaKey: s.Category, Details: s.DetailItems));
         }
 
+        if (appliedChanges is { Count: > 0 })
+            list = list.Where(f => !IsAlreadyApplied(f, appliedChanges)).ToList();
+
         return list.OrderBy(f => f.Order).ThenBy(f => f.Area).ThenBy(f => f.Title, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// True when this one-time fix is already recorded as active in the undo journal (not yet undone), so Review does not offer it again.
+    /// Repeatable maintenance/repairs (temp cleanup, storage caches, SSD trim, updates, DISM/SFC repairs) are never suppressed.
+    /// </summary>
+    public static bool IsAlreadyApplied(WorkflowFix fix, IReadOnlyList<Changes.ChangeRecord> applied)
+    {
+        if (applied.Count == 0) return false;
+        bool HasKind(Changes.ChangeKind kind) => applied.Any(c => c.Kind == kind);
+        bool Has(Changes.ChangeKind kind, string? target) =>
+            !string.IsNullOrWhiteSpace(target)
+            && applied.Any(c => c.Kind == kind && string.Equals(c.Target, target, StringComparison.OrdinalIgnoreCase));
+
+        if (fix.Source == FixSource.Remediation && fix.Remediation is { } a)
+        {
+            return a.Kind switch
+            {
+                RemediationKind.SetBalancedPowerPlan => HasKind(Changes.ChangeKind.PowerPlan),
+                RemediationKind.DisableSystemProxy => HasKind(Changes.ChangeKind.SystemProxy),
+                RemediationKind.SetPublicDns or RemediationKind.ResetDhcpDns => Has(Changes.ChangeKind.AdapterDns, a.Target),
+                RemediationKind.ApplySecuritySetting => Has(Changes.ChangeKind.SecuritySetting, a.Target),
+                RemediationKind.DisableDeviceWake => Has(Changes.ChangeKind.DeviceWake, a.Target),
+                _ => false,
+            };
+        }
+
+        if (fix.Source == FixSource.Memory && fix.MemoryAction is { } mt)
+        {
+            var target = fix.MemoryTarget;
+            return mt switch
+            {
+                MemoryActionType.DisableStartup => Has(Changes.ChangeKind.StartupApp, target),
+                MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled => Has(Changes.ChangeKind.ServiceStartType, target),
+                MemoryActionType.EnableBrowserMemorySaver => Has(Changes.ChangeKind.BrowserSettings, target),
+                MemoryActionType.DisableTransparency => HasKind(Changes.ChangeKind.Transparency),
+                MemoryActionType.AutoManagePageFile or MemoryActionType.IncreasePageFile => HasKind(Changes.ChangeKind.PageFile),
+                MemoryActionType.ReduceHibernateFile => HasKind(Changes.ChangeKind.HiberFileType),
+                MemoryActionType.SetPdfDefaultPrinter => HasKind(Changes.ChangeKind.DefaultPrinter),
+                MemoryActionType.BlockBrowserExtension => Has(Changes.ChangeKind.ExtensionBlock, target),
+                MemoryActionType.StopBrowserBackground => !string.IsNullOrWhiteSpace(target)
+                    && applied.Any(c => c.Kind == Changes.ChangeKind.BrowserLocalStateValue
+                        && c.Target.StartsWith(target + "|", StringComparison.OrdinalIgnoreCase)),
+                MemoryActionType.DisableWidgets => Has(Changes.ChangeKind.RegistryValue, Changes.RegistryAllowlist.WidgetsPolicy.Target),
+                MemoryActionType.DisableSearchHighlights => Has(Changes.ChangeKind.RegistryValue, Changes.RegistryAllowlist.SearchHighlightsPolicy.Target),
+                MemoryActionType.DisableOfficeOptionalExperiences => Has(Changes.ChangeKind.RegistryValue, Changes.RegistryAllowlist.OfficeOptionalConnectedExperiences.Target),
+                MemoryActionType.RemoveApp => Has(Changes.ChangeKind.StoreReinstall, target),
+                _ => false,
+            };
+        }
+
+        return false;
     }
 
     public const string RepairArea = "Windows repair";

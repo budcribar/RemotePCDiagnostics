@@ -14,6 +14,8 @@ public sealed class AgentStateFile(IElevatedCommandBridge agent, string name, st
 {
     public string Name => name;
 
+    private static readonly TimeSpan PipeTimeout = TimeSpan.FromSeconds(5);
+
     /// <summary>The file's JSON, or null when there is none or it couldn't be read.</summary>
     public string? Read()
     {
@@ -21,10 +23,11 @@ public sealed class AgentStateFile(IElevatedCommandBridge agent, string name, st
         {
             try
             {
-                var r = Task.Run(() => agent.ReadStateFileAsync(name)).GetAwaiter().GetResult();
+                using var cts = new CancellationTokenSource(PipeTimeout);
+                var r = Task.Run(() => agent.ReadStateFileAsync(name, cts.Token)).GetAwaiter().GetResult();
                 if (r.Ok) return r.Json;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException) { log.Warn($"[state] The Agent couldn't read {name}: {ex.Message}"); }
+            catch (Exception ex) { log.Warn($"[state] The Agent couldn't read {name}: {ex.Message}"); }
         }
         if (string.IsNullOrEmpty(fallbackPath)) return null;
         try { return File.Exists(fallbackPath) ? File.ReadAllText(fallbackPath) : null; }
@@ -38,9 +41,10 @@ public sealed class AgentStateFile(IElevatedCommandBridge agent, string name, st
         {
             try
             {
-                if (Task.Run(() => agent.WriteStateFileAsync(name, json)).GetAwaiter().GetResult()) return true;
+                using var cts = new CancellationTokenSource(PipeTimeout);
+                if (Task.Run(() => agent.WriteStateFileAsync(name, json, cts.Token)).GetAwaiter().GetResult()) return true;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException) { log.Warn($"[state] The Agent couldn't save {name}: {ex.Message}"); }
+            catch (Exception ex) { log.Warn($"[state] The Agent couldn't save {name}: {ex.Message}"); }
         }
         if (!string.IsNullOrEmpty(fallbackPath))
         {

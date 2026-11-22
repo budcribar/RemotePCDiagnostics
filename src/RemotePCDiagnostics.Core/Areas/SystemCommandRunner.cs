@@ -85,8 +85,8 @@ public sealed class SystemCommandRunner(
         ProcessResult pr;
         try
         {
-            pr = outputLine is not null && _launcher is SystemProcessLauncher system
-                ? await system.RunAsync(fileName, arguments, effectiveTimeout, ct, outputLine).ConfigureAwait(false)
+            pr = outputLine is not null
+                ? await _launcher.RunAsync(fileName, arguments, effectiveTimeout, ct, outputLine).ConfigureAwait(false)
                 : await _launcher.RunAsync(fileName, arguments, effectiveTimeout, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

@@ -41,7 +41,7 @@ public static class Undoability
     {
         MemoryActionType.DisableStartup or MemoryActionType.EnableBrowserMemorySaver or MemoryActionType.SetServiceManual
             or MemoryActionType.SetServiceDisabled or MemoryActionType.StopService or MemoryActionType.AddDefenderExclusions
-            or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile or MemoryActionType.DisableFastStartup
+            or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile or MemoryActionType.IncreasePageFile or MemoryActionType.DisableFastStartup
             or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights or MemoryActionType.ReduceHibernateFile
             or MemoryActionType.SkipOfficeStartScreen or MemoryActionType.SetPdfDefaultPrinter or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension or MemoryActionType.StopBrowserBackground or MemoryActionType.StopSilentAppInstalls => UndoSupport.Full,
         // By action type, removed apps can't be put back (their scheduled tasks, Game DVR and Xbox service settings can; undo restores those).
@@ -79,7 +79,7 @@ public static class Undoability
             ChangeKind.ServiceStartType => c.Previous,
             ChangeKind.ServiceRunning => c.Previous?.ToLowerInvariant(),
             ChangeKind.FastStartup or ChangeKind.SystemProxy or ChangeKind.Transparency => c.Previous == "0" ? "off" : "on",
-            ChangeKind.PageFile => "a custom size",
+            ChangeKind.PageFile => string.Equals(c.Previous, Session.PageFileSettings.AutoMarker, StringComparison.OrdinalIgnoreCase) ? "managed by Windows" : "a custom size",
             _ => null,
         };
         return string.IsNullOrWhiteSpace(was) || c.Label.Contains("(was ", StringComparison.Ordinal) ? c.Label : $"{c.Label} (was {was})";

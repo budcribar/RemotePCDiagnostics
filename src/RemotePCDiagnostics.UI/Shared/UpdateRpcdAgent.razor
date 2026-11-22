@@ -172,10 +172,18 @@
         _ = InvokeAsync(StateHasChanged);
     }
 
+    private int _reportPending;
+
     private void OnChanged()
     {
-        _ = ReportAsync();
-        _ = InvokeAsync(StateHasChanged);
+        if (Interlocked.Exchange(ref _reportPending, 1) != 0) return;
+        _ = RunReportAsync();
+    }
+
+    private async Task RunReportAsync()
+    {
+        try { await ReportAsync(); }
+        finally { Interlocked.Exchange(ref _reportPending, 0); }
     }
 
     private void OnProgress(object? sender, (string ModuleName, CheckProgress? Progress) e) => OnChanged();

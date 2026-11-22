@@ -157,7 +157,7 @@
                             <div class="wf-check-side">
                                 @if (c.Status == DiagnosticStatus.Running && c.HasProgress)
                                 {
-                                    <span class="meta wf-check-step" data-testid="wf-check-step-@c.Id.ToLowerInvariant()">@c.Step / @c.Total</span>
+                                    <span class="meta wf-check-step" data-testid="wf-check-step-@c.Id.ToLowerInvariant()">@(c.Total == 100 ? $"{c.Step}%" : $"{c.Step} / {c.Total}")</span>
                                 }
                                 <span class="chip @chipClass">@chipLabel</span>
                             </div>
@@ -201,6 +201,18 @@
                         <span><strong>@f.Title</strong>@if (f.Risk != SuggestionRisk.Low) { <span class="chip chip-warn">@f.Risk risk</span> }@if (f.Slow) { <span class="chip chip-na">can take a while</span> }@if (!f.DefaultOn) { <span class="chip chip-na" data-testid="wf-fix-optin" title="Not ticked by default: tick it only if it's worth it for this client.">opt-in</span> }@if ((f.UndoChip ?? RemotePCDiagnostics.Core.Changes.Undoability.Chip(f.Undo)) is { } undoChip) { <span class="chip @(f.Undo == RemotePCDiagnostics.Core.Changes.UndoSupport.None && f.UndoChip is null ? "chip-warn" : "chip-na")" data-testid="wf-fix-undo">@undoChip</span> }
                             <span class="meta wf-why">@f.Why</span></span>
                     </label>
+                    @if (f.Details is { Count: > 0 } details)
+                    {
+                        <details class="wf-fix-details" data-testid="wf-fix-details" style="margin: -4px 0 8px 26px;">
+                            <summary class="meta">Show @details.Count new @(details.Count == 1 ? "item" : "items") not yet excluded</summary>
+                            <ul class="meta" style="margin: 4px 0 0 18px; padding: 0;">
+                                @foreach (var d in details)
+                                {
+                                    <li>@d</li>
+                                }
+                            </ul>
+                        </details>
+                    }
                 }
             }
             <p class="meta">@FixCatalog.NotNeededNote</p>
@@ -210,20 +222,16 @@
             <section class="card wf-section"><div class="card-head"><strong>For the client to do (goes in the report)</strong></div>
                 <ul>@foreach (var r in s.Recommendations) { <li>@r</li> }</ul></section>
         }
-        <section class="card wf-section" data-testid="wf-signin">
-            <div class="card-head"><strong>Signing in after each restart</strong></div>
-            @if (_signIn is { SignsInBySelf: true })
-            {
-                <p data-testid="wf-signs-in-by-itself">The workflow restarts the PC twice, and Windows signs it back in by itself each time (screen locked), so nobody needs to be at the PC. No password is asked for or stored.</p>
-            }
-            else
-            {
+        @if (_signIn is not { SignsInBySelf: true })
+        {
+            <section class="card wf-section" data-testid="wf-signin">
+                <div class="card-head"><strong>Signing in after each restart</strong></div>
                 <p class="notice" data-testid="wf-restart-sign-on-off">@(_signIn?.RestartSignOn == false
                     ? "Windows won't sign this PC back in by itself: \"Use my sign-in info to automatically finish setting up after an update\" is off (Settings > Accounts > Sign-in options)."
                     : "Windows may not sign this PC back in by itself after a restart.")
                     The workflow restarts the PC twice. If Windows stops at the sign-in screen, the client signs in and the workflow carries on.</p>
-            }
-        </section>
+            </section>
+        }
         @if (_startError is { } se) { <p class="notice notice-error" role="alert" data-testid="wf-signin-error">@se</p> }
         <div class="toolbar">
             <button class="btn btn-primary" data-testid="wf-go" disabled="@_starting" @onclick="Start"><Icon Name="play" Size="12" /> @(_starting ? "Starting…" : $"Start: restart, benchmark, apply {approved} fix{(approved == 1 ? "" : "es")}, report")</button>
@@ -480,9 +488,25 @@
         try { _signIn = Flow.RestartSignIn(); } catch { _signIn = null; }
     }
 
-    private void OnChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
+    private int _renderQueued;
+    private bool _disposed;
+
+    private void OnChanged()
+    {
+        if (_disposed || Interlocked.Exchange(ref _renderQueued, 1) != 0) return;
+        try
+        {
+            _ = InvokeAsync(() =>
+            {
+                Interlocked.Exchange(ref _renderQueued, 0);
+                if (!_disposed) StateHasChanged();
+            });
+        }
+        catch { Interlocked.Exchange(ref _renderQueued, 0); }
+    }
     public void Dispose()
     {
+        _disposed = true;
         Nav.LocationChanged -= OnLeftWorkflow;
         if (!WorkflowService.IsWorkflowRoute(Nav.ToBaseRelativePath(Nav.Uri)))
             Flow.DismissParkedReview();

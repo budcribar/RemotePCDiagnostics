@@ -248,7 +248,9 @@ public sealed class UndoService(IChangeJournal journal, SystemCommandRunner comm
 
             case ChangeKind.PageFile:
                 if (memory is null || c.Previous is null) return Fail("The original page file size wasn't recorded.");
-                var o = await memory.RestorePageFileAsync(c.Previous, ct).ConfigureAwait(false);
+                var o = string.Equals(c.Previous, PageFileSettings.AutoMarker, StringComparison.OrdinalIgnoreCase)
+                    ? await memory.EnableAutoPageFileAsync(ct).ConfigureAwait(false)
+                    : await memory.RestorePageFileAsync(c.Previous, ct).ConfigureAwait(false);
                 return new(c, o.Success, o.Message);
         }
         return Fail("Unknown change.");

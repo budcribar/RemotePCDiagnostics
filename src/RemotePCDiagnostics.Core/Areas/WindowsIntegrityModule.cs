@@ -52,7 +52,7 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
 
     protected override async Task<AreaReport> CollectAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        progress?.Report("Checking Windows integrity. This can take several minutes.");
+        progress.ReportStep(0, 100, "Checking Windows integrity. This can take several minutes.");
         var exe = SystemCommandRunner.SystemTool(ToolExe);
         var args = Arguments;
         using var scan = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -81,7 +81,9 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
                     System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var percent)
                     || percent > 100 || percent <= lastPercent) return;
                 lastPercent = percent;
-                RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, $"Scan {percent:0.#}% complete", started, percent));
+                var message = $"Scan {percent:0.#}% complete";
+                progress.ReportStep((int)Math.Round(percent), 100, message);
+                RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, message, started, percent));
             }).ConfigureAwait(false);
             scan.Token.ThrowIfCancellationRequested();
         }

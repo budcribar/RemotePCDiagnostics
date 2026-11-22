@@ -347,6 +347,9 @@ public sealed record DefenderPaths(IReadOnlyList<string> SystemFolders, IReadOnl
 /// <summary>The custom page file sizes as the change journal keeps them: base64 of a JSON array of {Name, InitialSize, MaximumSize}.</summary>
 public static class PageFileSettings
 {
+    /// <summary>Journal <c>Previous</c> marker when the page file was managed by Windows before this app set a larger custom size.</summary>
+    public const string AutoMarker = "auto";
+
     /// <summary>One Win32_PageFileSetting (the names match what the earlier PowerShell version wrote).</summary>
     public sealed record Size(string Name, uint InitialSize, uint MaximumSize)
     {

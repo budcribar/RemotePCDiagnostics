@@ -35,12 +35,28 @@
         if (App.Workflow is { } workflow) workflow.Changed += OnChanged;
     }
 
-    private void OnChanged() => _ = InvokeAsync(StateHasChanged);
+    private int _renderQueued;
+    private bool _disposed;
+
+    private void OnChanged()
+    {
+        if (_disposed || Interlocked.Exchange(ref _renderQueued, 1) != 0) return;
+        try
+        {
+            _ = InvokeAsync(() =>
+            {
+                Interlocked.Exchange(ref _renderQueued, 0);
+                if (!_disposed) StateHasChanged();
+            });
+        }
+        catch { Interlocked.Exchange(ref _renderQueued, 0); }
+    }
     private void OnProgress(object? sender, (string ModuleName, CheckProgress? Progress) e) => OnChanged();
     private void OnStress(object? sender, StressSuiteProgress e) => OnChanged();
 
     public void Dispose()
     {
+        _disposed = true;
         Diagnostics.ProgressChanged -= OnProgress;
         Diagnostics.StressSuiteProgressChanged -= OnStress;
         Screen.Changed -= OnChanged;

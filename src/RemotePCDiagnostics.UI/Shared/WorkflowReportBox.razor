@@ -74,10 +74,11 @@
                             {
                                 var fixKey = fixGroup.Key;
                                 var fixTitle = fixRows[0].Title;
-                                var fixOpen = IsFixOpen(fixKey, fixRows.Count);
+                                var hasReapply = fixRows.Any(r => r.Item is { CanReapply: true });
+                                var fixOpen = IsFixOpen(fixKey, fixRows.Count, hasReapply);
                                 <li class="wf-tree-fix-item">
                                     <details class="wf-tree-fix" data-testid="wf-change-fix-group" data-fix-id="@fixKey" open="@fixOpen">
-                                        <summary class="wf-tree-fix-summary" data-testid="wf-change-fix-toggle" @onclick:preventDefault @onclick="() => ToggleFix(fixKey, fixRows.Count)">
+                                        <summary class="wf-tree-fix-summary" data-testid="wf-change-fix-toggle" @onclick:preventDefault @onclick="() => ToggleFix(fixKey, fixRows.Count, hasReapply)">
                                             <span class="wf-caret" aria-hidden="true">@(fixOpen ? "▾" : "▸")</span>
                                             <span class="wf-tree-fix-title">@fixTitle</span>
                                             <span class="meta wf-tree-count">@CountLabel(fixRows.Count)</span>
@@ -211,17 +212,17 @@
             _collapsedAreas.Add(areaKey);
     }
 
-    private bool IsFixOpen(string fixKey, int count) =>
-        _fixOpenOverrides.TryGetValue(fixKey, out var open) ? open : count <= AutoCollapseFixThreshold;
+    private bool IsFixOpen(string fixKey, int count, bool hasReapply = false) =>
+        _fixOpenOverrides.TryGetValue(fixKey, out var open) ? open : hasReapply || count <= AutoCollapseFixThreshold;
 
-    private void ToggleFix(string fixKey, int count) =>
-        _fixOpenOverrides[fixKey] = !IsFixOpen(fixKey, count);
+    private void ToggleFix(string fixKey, int count, bool hasReapply = false) =>
+        _fixOpenOverrides[fixKey] = !IsFixOpen(fixKey, count, hasReapply);
 
     private bool AllTreeOpen(List<IGrouping<string, Row>> areaGroups) =>
         areaGroups.All(ag => IsAreaOpen(ag.Key)
             && ag.GroupBy(r => r.FixId, StringComparer.OrdinalIgnoreCase)
                  .Where(fg => fg.Count() > 1)
-                 .All(fg => IsFixOpen(fg.Key, fg.Count())));
+                 .All(fg => IsFixOpen(fg.Key, fg.Count(), fg.Any(r => r.Item is { CanReapply: true }))));
 
     private void ToggleAllTree(List<IGrouping<string, Row>> areaGroups)
     {

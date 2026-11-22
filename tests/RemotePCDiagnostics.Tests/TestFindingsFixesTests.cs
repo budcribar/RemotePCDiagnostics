@@ -583,6 +583,58 @@ public class TestFindingsFixesTests
         Assert.Contains("Defender no longer scans 2 folders and 1 build tool.", r.Message);
     }
 
+    [Fact]
+    public void Defender_PlanAndWorkflowFix_ShowOnlyNewExclusions()
+    {
+        var status = new DefenderProbe.Status(
+            Active: true,
+            Paths: [@"D:\src\existing"],
+            Processes: ["MSBuild.exe"],
+            ExclusionsReadable: true);
+        var info = DefenderProbe.Plan(
+            status,
+            [@"D:\src\existing\sub", @"D:\src\newrepo"],
+            nugetPackages: null,
+            buildTools: [@"C:\VS\MSBuild.exe", @"C:\VS\VBCSCompiler.exe"]);
+
+        Assert.Equal([@"D:\src\newrepo"], info.MissingFolders);
+        Assert.Equal([@"C:\VS\VBCSCompiler.exe"], info.MissingProcesses);
+
+        var suggestions = MemorySuggestionEngine.Build(new MemorySnapshot(new(16 * Gb, 8 * Gb), [], Defender: info));
+        var fix = Assert.Single(RemotePCDiagnostics.Core.Workflow.FixCatalog.Build([], suggestions), f => f.MemoryAction == MemoryActionType.AddDefenderExclusions);
+        Assert.NotNull(fix.Details);
+        Assert.Contains(@"D:\src\newrepo", fix.Details);
+        Assert.DoesNotContain(fix.Details, d => d.Contains("existing", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(fix.Details, d => d.Contains("VBCSCompiler.exe", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(fix.Details, d => d.Contains("MSBuild.exe", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void FixCatalog_OmitsAlreadyAppliedFixes_UntilUndone()
+    {
+        var startup = new MemorySuggestion(
+            "startup-spotify", "Stop Spotify starting with Windows", "Saves RAM", 100L << 20,
+            SuggestionRisk.Low, SuggestionKind.Automated, [],
+            [new(MemoryActionType.DisableStartup, "Spotify", "Don't start automatically")], "Startup");
+        var cleanup = new MemorySuggestion(
+            "storage-npm", "Clean npm cache", "Frees disk space", 500L << 20,
+            SuggestionRisk.Low, SuggestionKind.Automated, [],
+            [new(MemoryActionType.CleanStorage, "npm", "Clean")], "Storage");
+
+        var applied = new List<ChangeRecord>
+        {
+            ChangeRecord.New(ChangeKind.StartupApp, "Spotify", null, "Spotify won't start with Windows", "local"),
+        };
+
+        var filtered = RemotePCDiagnostics.Core.Workflow.FixCatalog.Build([], [startup, cleanup], appliedChanges: applied);
+        Assert.DoesNotContain(filtered, f => f.MemoryAction == MemoryActionType.DisableStartup);
+        Assert.Contains(filtered, f => f.MemoryAction == MemoryActionType.CleanStorage);
+
+        // Once undone (removed from the journal), it can be offered again.
+        var afterUndo = RemotePCDiagnostics.Core.Workflow.FixCatalog.Build([], [startup, cleanup], appliedChanges: []);
+        Assert.Contains(afterUndo, f => f.MemoryAction == MemoryActionType.DisableStartup);
+    }
+
     [Theory]
     [InlineData("Codex now starts only when needed. Takes effect after the next restart.", true)]
     [InlineData("Word will open straight to a blank document. Takes effect the next time each app opens.", true)]

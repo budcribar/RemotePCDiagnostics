@@ -60,6 +60,18 @@ public static class DefenderProbe
         return f.Equals(e, StringComparison.OrdinalIgnoreCase) || f.StartsWith(e + "\\", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>An existing process exclusion covers a build tool when it matches its full path or its bare executable name (e.g. MSBuild.exe).</summary>
+    public static bool CoversProcess(string existing, string tool)
+    {
+        var e = Normalize(existing);
+        var t = Normalize(tool);
+        if (e.Equals(t, StringComparison.OrdinalIgnoreCase)) return true;
+        if (e.Contains('\\')) return false;
+        var lastSlash = t.LastIndexOf('\\');
+        var toolName = lastSlash >= 0 ? t[(lastSlash + 1)..] : t;
+        return toolName.Equals(e, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string Normalize(string p) => Environment.ExpandEnvironmentVariables(p.Trim().Trim('"')).Replace('/', '\\').TrimEnd('\\');
 
     public static DefenderInfo Plan(Status status, IReadOnlyList<string> projectFolders, string? nugetPackages, IReadOnlyList<string> buildTools)
@@ -67,7 +79,7 @@ public static class DefenderProbe
         if (!status.Active || !status.ExclusionsReadable) return new(false, projectFolders, [], []);
         var wanted = projectFolders.Concat(nugetPackages is null ? [] : [nugetPackages]).Distinct(StringComparer.OrdinalIgnoreCase);
         var missing = wanted.Where(f => !status.Paths.Any(e => Covers(e, f))).ToList();
-        var procs = buildTools.Where(t => !status.Processes.Any(e => Normalize(e).Equals(Normalize(t), StringComparison.OrdinalIgnoreCase))).ToList();
+        var procs = buildTools.Where(t => !status.Processes.Any(e => CoversProcess(e, t))).ToList();
         return new(true, projectFolders, missing, procs);
     }
 
@@ -107,7 +119,7 @@ public static class DefenderProbe
             var paths = Strings(doc.RootElement, "Paths");
             var procs = Strings(doc.RootElement, "Procs");
             return (folders.Where(f => paths.Any(e => Covers(e, f))).ToList(),
-                    processes.Where(t => procs.Any(e => Normalize(e).Equals(Normalize(t), StringComparison.OrdinalIgnoreCase))).ToList());
+                    processes.Where(t => procs.Any(e => CoversProcess(e, t))).ToList());
         }
         catch (JsonException) { return ([], []); }
     }

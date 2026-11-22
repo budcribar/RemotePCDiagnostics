@@ -16,6 +16,13 @@ public interface IProcessLauncher
     /// </summary>
     Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken, string? workingDirectory)
         => RunAsync(fileName, arguments, timeout, cancellationToken);
+
+    /// <summary>
+    /// Runs the process and invokes <paramref name="outputLine"/> as stdout lines arrive when the launcher supports streaming.
+    /// The default ignores <paramref name="outputLine"/> and calls <see cref="RunAsync(string, IReadOnlyList{string}, TimeSpan, CancellationToken)"/>.
+    /// </summary>
+    Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken, Action<string>? outputLine)
+        => RunAsync(fileName, arguments, timeout, cancellationToken);
 }
 
 /// <summary>Starts a real process with no console window, capturing stdout and stderr.</summary>

@@ -33,7 +33,7 @@ public static class MemoryFeedback
     /// <summary>Whether an action's effect should show right away (closing/stopping) or only later (settings).</summary>
     public static bool IsDeferred(MemoryActionType t) => t is MemoryActionType.DisableStartup or MemoryActionType.EnableBrowserMemorySaver
         or MemoryActionType.SetServiceManual or MemoryActionType.SetServiceDisabled or MemoryActionType.OpenSettings
-        or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile
+        or MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup or MemoryActionType.DisableTransparency or MemoryActionType.AutoManagePageFile or MemoryActionType.IncreasePageFile
         or MemoryActionType.AddDefenderExclusions or MemoryActionType.DisableWidgets or MemoryActionType.DisableSearchHighlights
         or MemoryActionType.ReduceHibernateFile or MemoryActionType.SkipOfficeStartScreen or MemoryActionType.SetPdfDefaultPrinter or MemoryActionType.DisableOfficeOptionalExperiences or MemoryActionType.BlockBrowserExtension
         or MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.StopSilentAppInstalls or MemoryActionType.RemoveNarratorAddons; // disk space / later installs, not memory
@@ -432,6 +432,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
                 MemoryActionType.BlockBrowserExtension => Browser.UndoExtensionBlock(u),
                 MemoryActionType.StopBrowserBackground => await Browser.UndoBrowserBackgroundAsync(u, ct).ConfigureAwait(false),
                 MemoryActionType.ReduceHibernateFile => await Power.UndoHibernateAsync(u, ct).ConfigureAwait(false),
+                MemoryActionType.IncreasePageFile => await Power.UndoIncreasePageFileAsync(ct).ConfigureAwait(false),
                 MemoryActionType.StopSilentAppInstalls => Ctx.UndoRegistry(u, "Windows may install promoted apps and show suggestions again."),
                 MemoryActionType.RemoveApp or MemoryActionType.RemoveXboxApps or MemoryActionType.RemoveNarratorAddons => await Apps.UndoAppRemovalAsync(u, ct).ConfigureAwait(false),
                 MemoryActionType.DisableTransparency => Shell.UndoTransparency(u),
@@ -501,6 +502,7 @@ public sealed class MemorySuggestionService(IMemorySystem sys, ServicesModule? s
             MemoryActionType.RestartPc or MemoryActionType.DisableFastStartup => await Power.RestartOrFastStartupAsync(a, ct).ConfigureAwait(false),
             MemoryActionType.ReduceHibernateFile => await Power.ReduceHibernateFileAsync(s, ct).ConfigureAwait(false),
             MemoryActionType.AutoManagePageFile => await Power.AutoManagePageFileAsync(ct).ConfigureAwait(false),
+            MemoryActionType.IncreasePageFile => await Power.IncreasePageFileAsync(s, a, ct).ConfigureAwait(false),
             MemoryActionType.DisableTransparency => Shell.DisableTransparency(s, a),
             MemoryActionType.DisableWidgets => await Shell.DisableWidgetsAsync(s, ct).ConfigureAwait(false),
             MemoryActionType.DisableSearchHighlights => Shell.DisableSearchHighlights(s),

@@ -41,6 +41,47 @@ internal sealed class PowerSuggestions(SuggestionContext c)
         return pf;
     }
 
+    /// <summary>Sets a larger custom page file on the system drive and journals "auto" so Undo returns it to Windows-managed.</summary>
+    internal async Task<ActionOutcome> IncreasePageFileAsync(MemorySuggestion s, MemoryAction a, CancellationToken ct)
+    {
+        var parts = (a.Target ?? "").Split(':');
+        if (parts.Length != 2 || !uint.TryParse(parts[0], out var initialMb) || !uint.TryParse(parts[1], out var maxMb)
+            || initialMb < 4096 || maxMb < initialMb || maxMb > 131072)
+            return new(false, "The requested page file size isn't valid.");
+
+        var root = Path.GetPathRoot(Environment.SystemDirectory);
+        if (string.IsNullOrEmpty(root) || root.Length < 2 || root[1] != ':') root = @"C:\";
+        try
+        {
+            var drive = new DriveInfo(root);
+            if (drive.IsReady)
+            {
+                var neededBytes = ((long)initialMb + 10240L) * 1024L * 1024L;
+                if (drive.AvailableFreeSpace < neededBytes)
+                    return new(false, $"Not enough free space on {root} to increase the page file safely.");
+            }
+        }
+        catch { }
+
+        var pageFilePath = Path.Combine(root, "pagefile.sys");
+        var encoded = PageFileSettings.Encode([new PageFileSettings.Size(pageFilePath, initialMb, maxMb)]);
+        var r = await c.Sys.RestorePageFileAsync(encoded, ct).ConfigureAwait(false);
+        if (!r.Success) return r;
+
+        var initialGb = (int)Math.Round(initialMb / 1024.0);
+        var maxGb = (int)Math.Round(maxMb / 1024.0);
+        c.Journal(ChangeKind.PageFile, "", PageFileSettings.AutoMarker, $"Page file set to {initialGb}–{maxGb} GB (was managed by Windows)", restart: true);
+        c.AddUndo(new(s.Id, "Page file size", MemoryActionType.IncreasePageFile, "", PageFileSettings.AutoMarker));
+        return new(true, $"Page file set to {initialGb}–{maxGb} GB on {root}. Takes effect after the next restart.");
+    }
+
+    internal async Task<ActionOutcome> UndoIncreasePageFileAsync(CancellationToken ct)
+    {
+        var r = await c.Sys.EnableAutoPageFileAsync(ct).ConfigureAwait(false);
+        if (r.Success) try { c.JournalStore?.RemoveLatest(ChangeKind.PageFile, ""); } catch { }
+        return r;
+    }
+
     /// <summary>Restart (with auto-resume after sign-in) or Fast Startup off: the same audited path as the Remediation buttons.</summary>
     internal async Task<ActionOutcome> RestartOrFastStartupAsync(MemoryAction a, CancellationToken ct)
     {

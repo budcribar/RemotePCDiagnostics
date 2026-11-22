@@ -591,7 +591,10 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("biosInstallResult")] BiosAgentInstallResult? BiosInstallResult = null,
     [property: JsonPropertyName("biosWuaOutcome")] BiosWuaInstallOutcome? BiosWuaOutcome = null,
     [property: JsonPropertyName("biosJobId")] string? BiosJobId = null,
-    [property: JsonPropertyName("biosJobRunning")] bool BiosJobRunning = false);
+    [property: JsonPropertyName("biosJobRunning")] bool BiosJobRunning = false,
+    [property: JsonPropertyName("commandJobId")] string? CommandJobId = null,
+    [property: JsonPropertyName("commandJobRunning")] bool CommandJobRunning = false,
+    [property: JsonPropertyName("outputLines")] IReadOnlyList<string>? OutputLines = null);
 
 /// <summary>
 /// The public part of agent.json, which only administrators and SYSTEM can read: the machine id and the shop group.
@@ -662,6 +665,13 @@ public static class AdminPipeFraming
     /// doesn't hold the pipe, which carries every other Agent request from the app.
     /// </summary>
     public const string OpBiosJobStatus = "bios_job_status";
+    /// <summary>
+    /// Polls a long-running elevated command (such as DISM or SFC) running in the background (<c>requestId</c> = <c>commandJobId</c>),
+    /// draining any new stdout lines in <c>outputLines</c> while keeping the pipe free for state saves, sensors and other requests.
+    /// </summary>
+    public const string OpCommandJobStatus = "command_job_status";
+    /// <summary>Cancels a running background command job (<c>requestId</c> = <c>commandJobId</c>).</summary>
+    public const string OpCommandJobCancel = "command_job_cancel";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -792,16 +802,57 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
     public async Task<AdminPipeResponse> PingAsync(CancellationToken ct = default) =>
         await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpPing), ct).ConfigureAwait(false);
 
+    /// <summary>How often the app polls a background command job (DISM, SFC) for new stdout lines and completion.</summary>
+    public static TimeSpan CommandJobPollInterval { get; set; } = TimeSpan.FromMilliseconds(500);
+
     public async Task<AdminPipeResponse> RunCommandAsync(
         string fileName,
         IReadOnlyList<string> arguments,
         TimeSpan timeout,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Action<string>? outputLine = null)
     {
+        void EmitLines(IReadOnlyList<string>? lines)
+        {
+            if (outputLine is null || lines is null || lines.Count == 0) return;
+            foreach (var line in lines)
+            {
+                try { outputLine(line); } catch { }
+            }
+        }
+
         var timeoutMs = (int)Math.Clamp(timeout.TotalMilliseconds, 1_000, 3_600_000);
-        return await SendAsync(
+        var response = await SendAsync(
             new AdminPipeRequest(AdminPipeFraming.OpRunCommand, fileName, arguments, timeoutMs),
             ct).ConfigureAwait(false);
+        EmitLines(response.OutputLines);
+
+        if (response.CommandJobId is { Length: > 0 } jobId)
+        {
+            var deadline = Environment.TickCount64 + timeoutMs + (long)TimeSpan.FromMinutes(2).TotalMilliseconds;
+            while (response.CommandJobRunning)
+            {
+                if (Environment.TickCount64 > deadline)
+                {
+                    _log.Warn($"[admin-pipe] Command job '{Path.GetFileName(fileName)}' still running after {timeoutMs} ms; cancelling.");
+                    await TryCancelCommandJobAsync(jobId).ConfigureAwait(false);
+                    return response with { Ok = false, ExitCode = -1, TimedOut = true, Error = "Command timed out." };
+                }
+                try
+                {
+                    await Task.Delay(CommandJobPollInterval, ct).ConfigureAwait(false);
+                    response = await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpCommandJobStatus, RequestId: jobId), ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    await TryCancelCommandJobAsync(jobId).ConfigureAwait(false);
+                    throw;
+                }
+                EmitLines(response.OutputLines);
+            }
+        }
+
+        return response;
     }
 
     public async Task<ProcessResult?> RunElevatedAsync(
@@ -811,7 +862,7 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         CancellationToken ct,
         Action<string>? outputLine = null)
     {
-        var response = await RunCommandAsync(fileName, arguments, timeout, ct).ConfigureAwait(false);
+        var response = await RunCommandAsync(fileName, arguments, timeout, ct, outputLine).ConfigureAwait(false);
         if (!response.Allowed)
         {
             _log.Warn($"[admin-pipe] Rejected non-allowlisted command '{fileName}': {response.Error}");
@@ -823,15 +874,17 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
             return null;
         }
 
-        if (outputLine is not null && !string.IsNullOrEmpty(response.StdOut))
-        {
-            foreach (var line in response.StdOut.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
-            {
-                try { outputLine(line); } catch { }
-            }
-        }
-
         return new ProcessResult(response.ExitCode, response.StdOut, response.StdErr, response.TimedOut);
+    }
+
+    private async Task TryCancelCommandJobAsync(string jobId)
+    {
+        try
+        {
+            using var cancelCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await SendAsync(new AdminPipeRequest(AdminPipeFraming.OpCommandJobCancel, RequestId: jobId), cancelCts.Token).ConfigureAwait(false);
+        }
+        catch { }
     }
 
     public async Task<SensorSnapshot?> ReadSensorsAsync(CancellationToken ct = default)
@@ -1513,35 +1566,14 @@ public sealed class AdminPipeServer(
                     Error: argError ?? "Command arguments are not permitted by the elevated repair allowlist.");
             }
             var timeout = TimeSpan.FromMilliseconds(Math.Clamp(request.TimeoutMs, 1_000, 3_600_000));
-            try
-            {
-                var pr = await _launcher.RunAsync(resolvedTool, args, timeout, ct).ConfigureAwait(false);
-                return new AdminPipeResponse(
-                    Ok: !pr.TimedOut,
-                    Allowed: true,
-                    Elevated: Environment.IsPrivilegedProcess,
-                    HelperPid: Environment.ProcessId,
-                    ExitCode: pr.ExitCode,
-                    StdOut: pr.StdOut,
-                    StdErr: pr.StdErr,
-                    TimedOut: pr.TimedOut,
-                    Error: pr.TimedOut ? "Command timed out." : null);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                return new AdminPipeResponse(
-                    Ok: false,
-                    Allowed: true,
-                    Elevated: Environment.IsPrivilegedProcess,
-                    HelperPid: Environment.ProcessId,
-                    ExitCode: -1,
-                    Error: ex.Message);
-            }
+            return await StartCommandJobAsync(resolvedTool, args, timeout, ct).ConfigureAwait(false);
         }
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpCommandJobStatus, StringComparison.OrdinalIgnoreCase))
+            return CommandJobStatus(request.RequestId);
+
+        if (string.Equals(request.Op, AdminPipeFraming.OpCommandJobCancel, StringComparison.OrdinalIgnoreCase))
+            return CancelCommandJob(request.RequestId);
 
         if (string.Equals(request.Op, AdminPipeFraming.OpReadSensors, StringComparison.OrdinalIgnoreCase))
         {
@@ -1772,6 +1804,137 @@ public sealed class AdminPipeServer(
             HelperPid: Environment.ProcessId,
             ExitCode: -1,
             Error: $"Unknown operation '{request.Op}'.");
+    }
+
+    private sealed class CommandJob(string id, CancellationTokenSource cts)
+    {
+        private readonly Lock _linesLock = new();
+        private List<string> _lines = [];
+        public string Id { get; } = id;
+        public CancellationTokenSource Cts { get; } = cts;
+        public Task<AdminPipeResponse> Work { get; set; } = null!;
+
+        public void AppendLine(string line)
+        {
+            lock (_linesLock) _lines.Add(line);
+        }
+
+        public IReadOnlyList<string>? DrainLines()
+        {
+            lock (_linesLock)
+            {
+                if (_lines.Count == 0) return null;
+                var drained = _lines;
+                _lines = [];
+                return drained;
+            }
+        }
+    }
+
+    private readonly Dictionary<string, CommandJob> _commandJobs = new(StringComparer.Ordinal);
+    private readonly Lock _commandJobsLock = new();
+
+    /// <summary>A streaming command that finishes this quickly answers directly without polling.</summary>
+    public static TimeSpan CommandJobDirectAnswer { get; set; } = TimeSpan.FromMilliseconds(200);
+
+    private async Task<AdminPipeResponse> StartCommandJobAsync(
+        string resolvedTool,
+        IReadOnlyList<string> args,
+        TimeSpan timeout,
+        CancellationToken ct)
+    {
+        var jobCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var job = new CommandJob(Guid.NewGuid().ToString("N"), jobCts);
+        job.Work = Task.Run(() => RunCommandCoreAsync(resolvedTool, args, timeout, jobCts.Token, job.AppendLine), CancellationToken.None);
+        lock (_commandJobsLock) _commandJobs[job.Id] = job;
+
+        try { await job.Work.WaitAsync(CommandJobDirectAnswer, ct).ConfigureAwait(false); }
+        catch (TimeoutException) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch { }
+
+        var status = CommandJobStatus(job.Id);
+        return status.CommandJobRunning ? status : status with { CommandJobId = null };
+    }
+
+    private AdminPipeResponse CommandJobStatus(string? jobId)
+    {
+        CommandJob? job;
+        lock (_commandJobsLock)
+            _commandJobs.TryGetValue(jobId ?? "", out job);
+        if (job is null)
+            return new AdminPipeResponse(false, false, Environment.IsPrivilegedProcess, Environment.ProcessId, -1,
+                Error: "The Agent has no command job with that id (it may have restarted).");
+
+        var lines = job.DrainLines();
+        if (!job.Work.IsCompleted)
+            return new AdminPipeResponse(true, true, Environment.IsPrivilegedProcess, Environment.ProcessId, 0,
+                CommandJobId: job.Id, CommandJobRunning: true, OutputLines: lines);
+
+        lock (_commandJobsLock) _commandJobs.Remove(job.Id);
+        try { job.Cts.Dispose(); } catch { }
+        if (!job.Work.IsCompletedSuccessfully)
+            return new AdminPipeResponse(false, true, Environment.IsPrivilegedProcess, Environment.ProcessId, -1,
+                Error: "The Agent stopped before the command finished.", CommandJobId: job.Id, OutputLines: lines);
+        return job.Work.Result with { CommandJobId = job.Id, CommandJobRunning = false, OutputLines = lines };
+    }
+
+    private AdminPipeResponse CancelCommandJob(string? jobId)
+    {
+        CommandJob? job;
+        lock (_commandJobsLock)
+            _commandJobs.TryGetValue(jobId ?? "", out job);
+        if (job is not null)
+        {
+            try { job.Cts.Cancel(); } catch { }
+        }
+        return new AdminPipeResponse(true, true, Environment.IsPrivilegedProcess, Environment.ProcessId, 0);
+    }
+
+    private async Task<AdminPipeResponse> RunCommandCoreAsync(
+        string resolvedTool,
+        IReadOnlyList<string> args,
+        TimeSpan timeout,
+        CancellationToken ct,
+        Action<string>? outputLine)
+    {
+        try
+        {
+            var pr = outputLine is not null
+                ? await _launcher.RunAsync(resolvedTool, args, timeout, ct, outputLine).ConfigureAwait(false)
+                : await _launcher.RunAsync(resolvedTool, args, timeout, ct).ConfigureAwait(false);
+            return new AdminPipeResponse(
+                Ok: !pr.TimedOut,
+                Allowed: true,
+                Elevated: Environment.IsPrivilegedProcess,
+                HelperPid: Environment.ProcessId,
+                ExitCode: pr.ExitCode,
+                StdOut: pr.StdOut,
+                StdErr: pr.StdErr,
+                TimedOut: pr.TimedOut,
+                Error: pr.TimedOut ? "Command timed out." : null);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return new AdminPipeResponse(
+                Ok: false,
+                Allowed: true,
+                Elevated: Environment.IsPrivilegedProcess,
+                HelperPid: Environment.ProcessId,
+                ExitCode: -1,
+                Cancelled: true,
+                Error: "Command cancelled.");
+        }
+        catch (Exception ex)
+        {
+            return new AdminPipeResponse(
+                Ok: false,
+                Allowed: true,
+                Elevated: Environment.IsPrivilegedProcess,
+                HelperPid: Environment.ProcessId,
+                ExitCode: -1,
+                Error: ex.Message);
+        }
     }
 
     private sealed record BiosJob(string Id, string Key, Task<AdminPipeResponse> Work);

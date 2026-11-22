@@ -223,9 +223,10 @@ public sealed class DiskSpaceModule(ILogger? log = null, string? targetRoot = nu
             var currentDir = pendingDirs.Pop();
 
             scannedFolders++;
+            if ((scannedFolders & 63) == 0) Thread.Yield();
             var now = Environment.TickCount64;
-            // Throttle progress updates to at most once per 250ms to prevent flooding the Blazor UI dispatcher
-            if (now - lastReportTicks >= 250)
+            // Throttle progress updates to at most once per 500ms to prevent flooding the Blazor UI dispatcher
+            if (now - lastReportTicks >= 500)
             {
                 lastReportTicks = now;
                 progress?.ReportStep(2, 3, $"Scanning {Path.GetFileName(currentDir)} ({largeFiles.Count} large files found)…");

@@ -163,7 +163,7 @@ public sealed class WorkflowService(
                 {
                     UpdateCheckItem(m.Name, item => item with { Status = DiagnosticStatus.Running, Message = cp.Message, Step = cp.Step, Total = cp.Total });
                     Status = cp.HasProgress
-                        ? $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · {m.DisplayName} ({cp.Step}/{cp.Total}): {cp.Message}"
+                        ? $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · {m.DisplayName} ({(cp.Total == 100 ? $"{cp.Step}%" : $"{cp.Step}/{cp.Total}")}): {cp.Message}"
                         : $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · {m.DisplayName}: {cp.Message}";
                     Raise();
                 });
@@ -211,7 +211,7 @@ public sealed class WorkflowService(
                 suggestions = [.. memory.Suggestions, .. memory.StorageSuggestions];
             }
             var snapshot = results.Snapshot.Values.ToList();
-            var fixes = FixCatalog.Build(snapshot, suggestions, remediation, diag.Catalog);
+            var fixes = FixCatalog.Build(snapshot, suggestions, remediation, diag.Catalog, journal?.All);
             var notOffered = FixCatalog.NotOffered(snapshot, suggestions, remediation);
             var findings = snapshot.Where(r => r.Status is DiagnosticStatus.Warning or DiagnosticStatus.Error && !Cancellation.IsCancelled(r) && !CheckEnableRules.IsTurnedOff(r))
                 .Select(r => $"{diag.Catalog.DisplayName(r.ModuleName)}: {r.Message} (scan {r.Timestamp:O})").ToList();

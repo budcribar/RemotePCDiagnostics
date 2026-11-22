@@ -235,4 +235,132 @@ public class WindowsIntegrityTests
         var card = Assert.Single(Assert.IsType<AreaReport>(r.Payload).Cards);
         Assert.DoesNotContain(card.Rows, x => x.Values[0] == DismScanHealthModule.NoImageRowTitle);
     }
+
+    [Fact]
+    public async Task Dism_ReportsPercentageProgress()
+    {
+        var launcher = new StreamingLauncher(
+            ["[==== 20.0% ====]", "[=========== 60.5% ===========]", "[==========================100.0%==========================]"],
+            new(0, "No component store corruption detected.\nThe operation completed successfully.", ""));
+        var dism = new DismScanHealthModule(new SystemCommandRunner(launcher, isProcessElevated: () => true)) { FindImages = () => [] };
+        var steps = new List<CheckProgress>();
+        var progress = CheckProgressExtensions.Create(steps.Add);
+
+        var r = await dism.RefreshAsync(progress);
+
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+        Assert.Equal([(0, 100), (20, 100), (60, 100), (100, 100)], steps.Select(s => (s.Step, s.Total)).ToList());
+        Assert.Contains(steps, s => s.Step == 20 && s.Message == "Scan 20% complete");
+    }
+
+    [Fact]
+    public async Task Sfc_ReportsPercentageProgress()
+    {
+        var nulPadded = string.Concat("Verification 42% complete.".Select(c => $"{c}\0"));
+        var launcher = new StreamingLauncher(
+            ["Beginning verification phase of system scan.", nulPadded, "Verification 100% complete."],
+            new(0, "Windows Resource Protection did not find any integrity violations.", ""));
+        var sfc = new SfcVerifyOnlyModule(new SystemCommandRunner(launcher, isProcessElevated: () => true));
+        var steps = new List<CheckProgress>();
+        var progress = CheckProgressExtensions.Create(steps.Add);
+
+        var r = await sfc.RefreshAsync(progress);
+
+        Assert.Equal(DiagnosticStatus.Ok, r.Status);
+        Assert.Equal([(0, 100), (42, 100), (100, 100)], steps.Select(s => (s.Step, s.Total)).ToList());
+        Assert.Contains(steps, s => s.Step == 42 && s.Message == "Scan 42% complete");
+    }
+
+    private sealed class StreamingLauncher(IReadOnlyList<string> lines, ProcessResult result) : IProcessLauncher
+    {
+        public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct) =>
+            Task.FromResult(result);
+
+        public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine)
+        {
+            if (outputLine is not null)
+                foreach (var line in lines) outputLine(line);
+            return Task.FromResult(result);
+        }
+    }
+
+    [Fact]
+    public async Task AdminPipe_RunElevated_StreamsProgressWithoutBlockingOtherPipeRequests()
+    {
+        var pipeName = "rpcd-test-cmdjob-" + Guid.NewGuid().ToString("N");
+        var firstLineSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCommand = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var launcher = new BlockingStreamingLauncher(firstLineSent, releaseCommand);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var server = new RemotePCDiagnostics.Core.Session.AdminPipeServer(
+            new RemotePCDiagnostics.Core.Session.AdminPipeServerOptions
+            {
+                PipeName = pipeName,
+                ConnectTimeout = TimeSpan.FromSeconds(5),
+                CustomClientVerifier = _ => (true, null),
+            },
+            launcher: launcher);
+
+        var prevPoll = RemotePCDiagnostics.Core.Session.AdminPipeClient.CommandJobPollInterval;
+        var prevDirect = RemotePCDiagnostics.Core.Session.AdminPipeServer.CommandJobDirectAnswer;
+        RemotePCDiagnostics.Core.Session.AdminPipeClient.CommandJobPollInterval = TimeSpan.FromMilliseconds(25);
+        RemotePCDiagnostics.Core.Session.AdminPipeServer.CommandJobDirectAnswer = TimeSpan.FromMilliseconds(25);
+        try
+        {
+            var serverTask = server.RunSingleSessionAsync(cts.Token);
+            using var client = await RemotePCDiagnostics.Core.Session.AdminPipeClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(5), ct: cts.Token);
+
+            var received = new List<string>();
+            var gotLiveProgress = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var runTask = client.RunElevatedAsync(
+                SystemCommandRunner.SystemTool("sfc.exe"),
+                ["/verifyonly"],
+                TimeSpan.FromMinutes(1),
+                cts.Token,
+                line =>
+                {
+                    received.Add(line);
+                    if (line.Contains("42%")) gotLiveProgress.TrySetResult();
+                });
+
+            await firstLineSent.Task.WaitAsync(cts.Token);
+            await gotLiveProgress.Task.WaitAsync(cts.Token);
+
+            // Pipe must remain free while SFC is still running.
+            var ping = await client.PingAsync(cts.Token);
+            Assert.True(ping.Ok);
+            Assert.False(runTask.IsCompleted);
+
+            releaseCommand.SetResult();
+            var pr = await runTask.WaitAsync(cts.Token);
+            Assert.NotNull(pr);
+            Assert.Equal(0, pr!.ExitCode);
+            Assert.Contains(received, l => l.Contains("42%"));
+            Assert.Contains(received, l => l.Contains("100%"));
+
+            client.Dispose();
+            await serverTask.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            RemotePCDiagnostics.Core.Session.AdminPipeClient.CommandJobPollInterval = prevPoll;
+            RemotePCDiagnostics.Core.Session.AdminPipeServer.CommandJobDirectAnswer = prevDirect;
+        }
+    }
+
+    private sealed class BlockingStreamingLauncher(TaskCompletionSource firstLineSent, TaskCompletionSource release) : IProcessLauncher
+    {
+        public Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct) =>
+            RunAsync(fileName, arguments, timeout, ct, outputLine: null);
+
+        public async Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken ct, Action<string>? outputLine)
+        {
+            outputLine?.Invoke("Verification 42% complete.");
+            firstLineSent.TrySetResult();
+            await release.Task.WaitAsync(ct);
+            outputLine?.Invoke("Verification 100% complete.");
+            return new(0, "Windows Resource Protection did not find any integrity violations.", "");
+        }
+    }
 }
