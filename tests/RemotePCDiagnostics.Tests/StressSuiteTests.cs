@@ -314,7 +314,8 @@ public class StressSuiteTests
     {
         var hang = new TaskCompletionSource<DiagnosticResult>();
         var (svc, store, mods, events) = Build(n => n == "MemoryTest" ? (_, _) => hang.Task : null);
-        svc.StressHangLimitOverride = TimeSpan.FromMilliseconds(100);
+        // The limit applies to every step, so it must leave the fakes that finish at once room on a busy CI runner (100 ms didn't).
+        svc.StressHangLimitOverride = TimeSpan.FromSeconds(1);
         svc.StressStopGrace = TimeSpan.FromMilliseconds(100);
         var r = await svc.RunStressSuiteAsync(StressSuiteMode.Short, null).WaitAsync(TimeSpan.FromSeconds(20));
         Assert.Equal(StressSuiteOutcome.Completed, r.Outcome);
