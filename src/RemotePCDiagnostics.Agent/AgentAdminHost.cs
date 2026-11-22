@@ -156,9 +156,10 @@ internal static class AgentAdminHost
                 StartDevBenchmarkSweep(machineTweaks, log);
                 using var updater = NewUpdater(log);
 
+                var launcher = new SystemProcessLauncher();
                 var server = new AdminPipeServer(
                     serverOptions,
-                    new SystemProcessLauncher(),
+                    launcher,
                     sensorReader: sensorReader,
                     log: log,
                     selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token),
@@ -169,7 +170,8 @@ internal static class AgentAdminHost
                     machineTweaks: machineTweaks,
                     changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
                     stateFolder: ProtectedState.Folder(),
-                    machineSetup: AgentMachineSetup.ForSignedInUser(log));
+                    machineSetup: AgentMachineSetup.ForSignedInUser(log),
+                    biosOperations: new AgentBiosOperations(launcher, log: log));
                 updater.Bind(serverOptions);
 
                 var serverTask = Task.Run(async () =>
@@ -270,9 +272,10 @@ internal static class AgentAdminHost
                     };
                     updater.Bind(serverOptions);
 
+                    var launcher = new SystemProcessLauncher();
                     using var server = new AdminPipeServer(
                         serverOptions,
-                        new SystemProcessLauncher(),
+                        launcher,
                         sensorReader: sensorReader,
                         log: log,
                         selfUpdater: (channel, relaunchArgs, token) => AgentSelfUpdater.RunAsync(channel, relaunchArgs, log, token),
@@ -285,7 +288,8 @@ internal static class AgentAdminHost
                         machineTweaks: machineTweaks,
                         changeJournal: () => new FileChangeJournal(FileChangeJournal.DefaultPath(), log),
                         stateFolder: ProtectedState.Folder(),
-                        machineSetup: AgentMachineSetup.ForSignedInUser(log));
+                        machineSetup: AgentMachineSetup.ForSignedInUser(log),
+                        biosOperations: new AgentBiosOperations(launcher, log: log));
 
                     await server.RunSingleSessionAsync(cts.Token).ConfigureAwait(false);
                     return ExitOk;
