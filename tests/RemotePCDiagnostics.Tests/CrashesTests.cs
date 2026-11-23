@@ -173,6 +173,83 @@ public class CrashesTests
         Assert.Equal("Stopped responding (background suspend)", row.Values[4]);
     }
 
+    [Fact]
+    public void CrashIncident_IncludesEventIdPackageNameAndEvidenceOccurrence()
+    {
+        var reportId = "0539dbfd-0e36-43ad-b6b4-b8accd228383";
+        var xml = EventLogTests.Ev("Application Error", 1000, 2, NowAgo(1), "Faulting application name: backgroundTaskHost.exe", "Application",
+            "<Data Name='AppName'>backgroundTaskHost.exe</Data>" +
+            "<Data Name='AppVersion'>10.0.26100.9549</Data>" +
+            "<Data Name='AppTimeStamp'>0</Data>" +
+            "<Data Name='ModuleName'>combase.dll</Data>" +
+            "<Data Name='ModuleVersion'>10.0.26100.9711</Data>" +
+            "<Data Name='ModuleTimeStamp'>0</Data>" +
+            "<Data Name='ExceptionCode'>c0000005</Data>" +
+            "<Data Name='FaultingOffset'>00000000000a4144</Data>" +
+            "<Data Name='ProcessId'>0x960</Data>" +
+            "<Data Name='ProcessCreationTime'>0</Data>" +
+            "<Data Name='AppPath'>C:\\WINDOWS\\system32\\backgroundTaskHost.exe</Data>" +
+            "<Data Name='ModulePath'>C:\\WINDOWS\\System32\\combase.dll</Data>" +
+            $"<Data Name='IntegratorReportId'>{reportId}</Data>" +
+            "<Data Name='PackageFullName'>Microsoft.Windows.Photos_2026.1.0_x64__8wekyb3d8bbwe</Data>" +
+            "<Data Name='PackageRelativeAppId'>App</Data>");
+
+        var rep = B(xml);
+        var crashRow = Assert.Single(rep.Cards.Single(c => c.Id == "crashes").Rows);
+        Assert.Contains("Event ID: 1000 (Application Error)", crashRow.Detail);
+        Assert.Contains("Package name: Microsoft.Windows.Photos_2026.1.0_x64__8wekyb3d8bbwe", crashRow.Detail);
+        Assert.Contains("Package app ID: App", crashRow.Detail);
+        Assert.Null(crashRow.HangOccurrences);
+        var ev = Assert.Single(crashRow.EvidenceOccurrences!);
+        Assert.Equal("backgroundTaskHost.exe", ev.App);
+        Assert.Equal("Crash", ev.Type);
+        Assert.Equal(reportId, ev.ReportId);
+        Assert.Equal("Microsoft.Windows.Photos_2026.1.0_x64__8wekyb3d8bbwe", ev.Package);
+
+        var appRow = Assert.Single(rep.Cards.Single(c => c.Id == "apps").Rows);
+        Assert.Single(appRow.EvidenceOccurrences!);
+    }
+
+    [Fact]
+    public async Task FindHangEvidenceAsync_CollectsWerMemoryAnd24HourUpdateContextForCrash()
+    {
+        var reportId = "0539dbfd-0e36-43ad-b6b4-b8accd228383";
+        var crashTime = new DateTimeOffset(2026, 11, 8, 19, 33, 0, TimeSpan.Zero);
+        var werEvent = WindowsEventLog.Parse(EventLogTests.Ev("Windows Error Reporting", 1001, 4,
+            crashTime.AddSeconds(2).ToString("O"),
+            $"Fault bucket 123456, type 5\nReport Id: {reportId}\nP1: backgroundTaskHost.exe", "Application"), "Application");
+        var memEvent = WindowsEventLog.Parse(EventLogTests.Ev("Microsoft-Windows-Resource-Exhaustion-Detector", 2004, 3,
+            crashTime.AddMinutes(-1).ToString("O"),
+            "Windows successfully diagnosed a low virtual memory condition.", "System"), "System");
+        var updateEvent = WindowsEventLog.Parse(EventLogTests.Ev("Microsoft-Windows-WindowsUpdateClient", 19, 4,
+            crashTime.AddHours(-6).ToString("O"),
+            "Installation Successful: Windows successfully installed KB5040001.", "System"), "System");
+
+        var queries = new List<(string Log, string XPath)>();
+        var host = new CallbackCrashHost((log, xpath) =>
+        {
+            queries.Add((log, xpath));
+            if (log == "Application" && xpath.Contains("EventID=1001")) return werEvent;
+            if (log == "System" && xpath.Contains("Resource-Exhaustion-Detector")) return memEvent;
+            if (log == "System" && xpath.Contains("EventID=19")) return updateEvent;
+            return [];
+        });
+
+        var module = new CrashesModule(new SystemCommandRunner(), host: host);
+        var occurrence = new HangOccurrence(crashTime, "backgroundTaskHost.exe", @"C:\WINDOWS\system32\backgroundTaskHost.exe",
+            "Microsoft.Windows.Photos_2026.1.0_x64__8wekyb3d8bbwe", "Crash", reportId);
+        var evidence = await module.FindHangEvidenceAsync([occurrence], CancellationToken.None);
+
+        Assert.Contains("Matching report ID", evidence);
+        Assert.Contains("Fault bucket 123456", evidence);
+        Assert.Contains("Memory pressure and low-memory events", evidence);
+        Assert.Contains("low virtual memory condition", evidence);
+        Assert.Contains("Recent Windows Update and app install activity", evidence);
+        Assert.Contains("KB5040001", evidence);
+        Assert.Contains(queries, q => q.Log == "System" && q.XPath.Contains("Resource-Exhaustion-Detector"));
+        Assert.Contains(queries, q => q.Log == "System" && q.XPath.Contains("WindowsUpdateClient") && q.XPath.Contains("EventID=19"));
+    }
+
     private sealed class StubCrashHost(IReadOnlyList<WinEvent>? appEvents, IReadOnlyList<WinEvent>? sysEvents,
         IReadOnlyCollection<string> reviewed) : RemotePCDiagnostics.Core.Plugins.IHostQueries
     {
@@ -183,5 +260,16 @@ public class CrashesTests
         public Task<IReadOnlyList<WinEvent>?> QueryEventsAsync(string log, string xpath, int max, CancellationToken ct = default) =>
             Task.FromResult(log == "System" ? sysEvents : appEvents);
         public Task<IReadOnlyCollection<string>> ReadEventReviewsAsync(CancellationToken ct = default) => Task.FromResult(reviewed);
+    }
+
+    private sealed class CallbackCrashHost(Func<string, string, IReadOnlyList<WinEvent>?> onQuery) : RemotePCDiagnostics.Core.Plugins.IHostQueries
+    {
+        public Task<ModuleAvailability> SensorsAvailabilityAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<RemotePCDiagnostics.Core.Sensors.SensorSnapshot> ReadSensorsAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<RemotePCDiagnostics.Core.Areas.DriveList?> ReadDrivesAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyDictionary<char, RetrimRecord>> ReadRetrimsAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<WinEvent>?> QueryEventsAsync(string log, string xpath, int max, CancellationToken ct = default) =>
+            Task.FromResult(onQuery(log, xpath));
+        public Task<IReadOnlyCollection<string>> ReadEventReviewsAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyCollection<string>>([]);
     }
 }

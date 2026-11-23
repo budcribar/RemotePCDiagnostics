@@ -179,6 +179,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
     public sealed record Incident(DateTimeOffset Time, string App, string Version, bool IsCrash, string Part, string Message)
     {
         public HangOccurrence? Hang { get; init; }
+        public HangOccurrence? Evidence { get; init; }
         public string? ReviewKey { get; init; }
         public string ReportId { get; init; } = "";
         public string Code { get; init; } = "";
@@ -222,16 +223,21 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         var fields = isCrash
             ? new[] { ("Module version", 4, "ModuleVersion"), ("Fault offset", 7, "FaultingOffset"),
                 ("Process ID", 8, "ProcessId"), ("Program path", 10, "AppPath"),
-                ("Module path", 11, "ModulePath"), ("Report ID", 12, "IntegratorReportId") }
+                ("Module path", 11, "ModulePath"), ("Report ID", 12, "IntegratorReportId"),
+                ("Package name", 13, "PackageFullName"), ("Package app ID", 14, "PackageRelativeAppId") }
             : new[] { ("Program path", 5, "ExeFileName"), ("Freeze type", 9, "HangType"), ("Report ID", 6, "ReportId") };
+        var eventLabel = string.IsNullOrWhiteSpace(e.Source) ? e.EventId.ToString() : $"{e.EventId} ({e.Source})";
         var metadata = fields.Select(f => (f.Item1, Value: e.DataAt(f.Item2, f.Item3)))
             .Prepend(("Program version", Value: version))
+            .Prepend(("Event ID", Value: eventLabel))
             .Where(f => !string.IsNullOrWhiteSpace(f.Value))
             .Select(f => $"{f.Item1}: {f.Value}");
         return new(e.Time, app.Length > 0 ? app : "Unknown app", version, isCrash, part, e.ShortMessage)
         {
             Hang = isCrash ? null : new(e.Time, app, e.DataAt(5, "ExeFileName"), e.DataAt(7, "PackageFullName"),
                 e.DataAt(9, "HangType"), reportId),
+            Evidence = !isCrash ? null : new(e.Time, app, e.DataAt(10, "AppPath"), e.DataAt(13, "PackageFullName"),
+                "Crash", reportId),
             ReviewKey = EventReviews.Key(e),
             ReportId = reportId,
             Code = code.Length > 0 && !code.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? $"0x{code}" : code,
@@ -419,7 +425,9 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         string[] cols = ["When", "App", "Type", "Version", "Details"];
         AreaRow Row(Incident i) => new(i.IsCrash && Recent(i) ? AreaLevel.Warning : AreaLevel.Neutral,
             [WindowsEventLog.FormatTime(i.Time), i.App, i.IsCrash ? "Crash" : "Freeze", i.Version, i.Details],
-            [AreaSort.TimeKey(i.Time), null, null, null, null], Detail: i.Expanded, ReviewKeys: i.ReviewKey is { } key ? [key] : null);
+            [AreaSort.TimeKey(i.Time), null, null, null, null], Detail: i.Expanded,
+            ReviewKeys: i.ReviewKey is { } key ? [key] : null,
+            EvidenceOccurrences: i.Evidence is { } ev ? [ev] : null);
 
         var byApp = all.GroupBy(i => i.App, StringComparer.OrdinalIgnoreCase)
             .OrderByDescending(g => g.Count()).ThenByDescending(g => g.Max(i => i.Time)).ToList();
@@ -456,7 +464,9 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
                 top is null ? "No problems recorded" : top.Key, top is null ? $"In the last {Days} days" : $"{AreaModuleBase.Plural(top.Count(), "problem")} in the last {Days} days",
                 ["App", "Crashes", "Freezes", "Last time"],
                 byApp.Select(g => new AreaRow(AreaLevel.Neutral, [g.Key, g.Count(i => i.IsCrash).ToString(), g.Count(i => !i.IsCrash).ToString(), WindowsEventLog.FormatTime(g.Max(i => i.Time))],
-                    [null, null, null, AreaSort.TimeKey(g.Max(i => i.Time))], Detail: AppDetails(g), ReviewKeys: g.Select(i => i.ReviewKey).OfType<string>().ToList())).ToList(), PreserveRowOrder: true),
+                    [null, null, null, AreaSort.TimeKey(g.Max(i => i.Time))], Detail: AppDetails(g),
+                    ReviewKeys: g.Select(i => i.ReviewKey).OfType<string>().ToList(),
+                    EvidenceOccurrences: g.Select(i => i.Evidence ?? i.Hang).OfType<HangOccurrence>().ToList())).ToList(), PreserveRowOrder: true),
         };
         var summary = all.Count == 0 ? $"No app crashes in the last {Days} days"
             : recent.Count == 0 ? $"No crashes in the last {RecentDays} days ({older} older)"
@@ -471,14 +481,21 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         var selected = occurrences.Where(h => h.Time != default).Distinct().OrderByDescending(h => h.Time)
             .Take(maxOccurrences).OrderBy(h => h.Time).ToList();
         var windows = new List<(DateTimeOffset Start, DateTimeOffset End)>();
-        foreach (var hang in selected)
+        var changeWindows = new List<(DateTimeOffset Start, DateTimeOffset End)>();
+        foreach (var incident in selected)
         {
-            var start = hang.Time.AddMinutes(-5);
-            var end = hang.Time.AddMinutes(5);
+            var start = incident.Time.AddMinutes(-5);
+            var end = incident.Time.AddMinutes(5);
             if (windows.Count > 0 && start <= windows[^1].End)
                 windows[^1] = (windows[^1].Start, end);
             else
                 windows.Add((start, end));
+
+            var changeStart = incident.Time.AddHours(-24);
+            if (changeWindows.Count > 0 && changeStart <= changeWindows[^1].End)
+                changeWindows[^1] = (changeWindows[^1].Start, end);
+            else
+                changeWindows.Add((changeStart, end));
         }
 
         var reportIds = selected.Select(h => Guid.TryParse(h.ReportId, out var id) ? id : Guid.Empty)
@@ -491,26 +508,21 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             var systemQuery = $"*[System[{time} and (Level=1 or Level=2 or Level=3 or Provider[@Name='Microsoft-Windows-WindowsUpdateClient' or @Name='Microsoft-Windows-Kernel-PnP'])]]";
             var storageQuery = $"*[System[{time} and Provider[@Name='disk' or @Name='Ntfs' or @Name='Microsoft-Windows-Ntfs' or @Name='Microsoft-Windows-StorPort' or @Name='stornvme' or @Name='storahci' or @Name='iaStorAC' or @Name='iaStorVD' or @Name='volmgr'] and (Level=1 or Level=2 or Level=3 or EventID=7 or EventID=11 or EventID=15 or EventID=51 or EventID=129 or EventID=153 or EventID=157)]]";
             var serviceQuery = $"*[System[{time} and Provider[@Name='Service Control Manager'] and (EventID=7000 or EventID=7001 or EventID=7009 or EventID=7011 or EventID=7022 or EventID=7023 or EventID=7024)]]";
+            var memoryQuery = $"*[System[{time} and ((Provider[@Name='Microsoft-Windows-Resource-Exhaustion-Detector'] and EventID=2004) or (Provider[@Name='Application Popup'] and EventID=26) or Provider[@Name='Microsoft-Windows-MemoryDiagnostics-Results'] or Provider[@Name='Microsoft-Windows-Kernel-Memory'])]]";
             var storageTask = _log.QueryAsync("System", storageQuery, 20, ct);
             var serviceTask = _log.QueryAsync("System", serviceQuery, 20, ct);
+            var memoryTask = _log.QueryAsync("System", memoryQuery, 20, ct);
             var appTask = _log.QueryAsync("Application", appQuery, 60, ct);
             var systemTask = _log.QueryAsync("System", systemQuery, 60, ct);
-            await Task.WhenAll(appTask, systemTask, storageTask, serviceTask).ConfigureAwait(false);
+            await Task.WhenAll(appTask, systemTask, storageTask, serviceTask, memoryTask).ConfigureAwait(false);
             var app = await appTask;
             var system = await systemTask;
 
             lines.Add($"\n{WindowsEventLog.FormatTime(start)} to {WindowsEventLog.FormatTime(end)}");
             AddFollowUp("Storage stalls and file-system events", await storageTask);
             AddFollowUp("Service startup, dependency, and timeout events", await serviceTask);
+            AddFollowUp("Memory pressure and low-memory events", await memoryTask);
 
-            void AddFollowUp(string title, IReadOnlyList<WinEvent>? events)
-            {
-                lines.Add(title);
-                if (events is null) lines.Add("Could not read this event query.");
-                else if (events.Count == 0) lines.Add("No matching events in this window.");
-                else foreach (var e in events.OrderBy(e => e.Time))
-                    lines.Add($"Nearby event · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId} · {e.ShortMessage}");
-            }
             if (app is null || system is null) lines.Add("Some event logs could not be read.");
             var related = (app ?? []).Concat(system ?? [])
                 .Select(e => (Event: e, Exact: e.EventId == 1001 &&
@@ -524,9 +536,38 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
                 lines.Add($"{(exact ? "Matching report ID" : "Nearby event")} · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId}\n{message}");
             }
         }
-        if (occurrences.Count > maxOccurrences) lines.Add($"Timeline limited to the {maxOccurrences} latest freezes.");
-        lines.Add("Historical memory pressure, disk latency, and wait-chain measurements were not collected by this lookup.");
+        foreach (var (start, end) in changeWindows)
+        {
+            var time = $"TimeCreated[@SystemTime >= '{start.UtcDateTime:O}' and @SystemTime <= '{end.UtcDateTime:O}']";
+            var updateQuery = $"*[System[{time} and Provider[@Name='Microsoft-Windows-WindowsUpdateClient'] and (EventID=19 or EventID=20 or EventID=43 or EventID=44)]]";
+            var installQuery = $"*[System[{time} and Provider[@Name='MsiInstaller'] and (EventID=1033 or EventID=1034 or EventID=11707 or EventID=11708)]]";
+            var updateTask = _log.QueryAsync("System", updateQuery, 15, ct);
+            var installTask = _log.QueryAsync("Application", installQuery, 15, ct);
+            await Task.WhenAll(updateTask, installTask).ConfigureAwait(false);
+            var updates = await updateTask;
+            var installs = await installTask;
+            lines.Add($"\nRecent Windows Update and app install activity ({WindowsEventLog.FormatTime(start)} to {WindowsEventLog.FormatTime(end)})");
+            if (updates is null && installs is null) lines.Add("Could not read this event query.");
+            else
+            {
+                var changes = (updates ?? []).Concat(installs ?? []).OrderBy(e => e.Time).Take(15).ToList();
+                if (changes.Count == 0) lines.Add("No Windows Update or MSI installer events in this window.");
+                else foreach (var e in changes)
+                    lines.Add($"Nearby event · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId} · {e.ShortMessage}");
+            }
+        }
+        if (occurrences.Count > maxOccurrences) lines.Add($"Timeline limited to the {maxOccurrences} latest incidents.");
+        lines.Add("Historical disk latency and wait-chain measurements were not collected by this lookup.");
         return string.Join("\n", lines);
+
+        void AddFollowUp(string title, IReadOnlyList<WinEvent>? events)
+        {
+            lines.Add(title);
+            if (events is null) lines.Add("Could not read this event query.");
+            else if (events.Count == 0) lines.Add("No matching events in this window.");
+            else foreach (var e in events.OrderBy(e => e.Time))
+                lines.Add($"Nearby event · {WindowsEventLog.FormatTime(e.Time)} · {e.Source} {e.EventId} · {e.ShortMessage}");
+        }
     }
 
     private static string AppDetails(IEnumerable<Incident> incidents)

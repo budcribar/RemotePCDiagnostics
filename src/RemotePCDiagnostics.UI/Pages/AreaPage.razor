@@ -297,7 +297,7 @@ else
                                                         }
                                                         @if (row.ReviewKeys is { Count: > 0 } keys)
                                                         {
-                                                            <button type="button" class="btn-small" data-action="review-copilot-row" @onclick="() => ReviewRowWithCopilot(open, rowRef)">Review with Copilot</button>
+                                                            <button type="button" class="btn-small" disabled="@_collectingCopilotRow" data-action="review-copilot-row" @onclick="() => ReviewRowWithCopilot(m, shown, open, rowRef)">Review with Copilot</button>
                                                             <button type="button" class="btn-small" disabled="@_savingReview" data-action="review-row" data-card-id="@open.Id" data-review-id="@AreaReportExport.ReviewId(row)" data-state="@(showingReviewed ? "reviewed" : "open")"
                                                                 @onclick="() => SetReview(m.Name, keys, !showingReviewed)">@(showingReviewed ? "Undo review" : "Mark as reviewed")</button>
                                                             @if (ReferenceEquals(_copilotRow, row) && _copilotRowStatus is not null)
@@ -500,25 +500,69 @@ else
 
     private AreaRow? _copilotRow;
     private string? _copilotRowStatus;
+    private bool _collectingCopilotRow;
 
-    private async Task ReviewRowWithCopilot(AreaCard card, AreaRow row)
+    private async Task ReviewRowWithCopilot(IDiagnosticModule module, AreaReport report, AreaCard card, AreaRow row)
     {
-        var prompt = BuildCopilotPrompt(card, [row]);
+        if (_collectingCopilotRow) return;
+        _collectingCopilotRow = true;
         _copilotRow = row;
         try
         {
-            await ClipboardJs.InvokeVoidAsync("navigator.clipboard.writeText", prompt);
-            _copilotRowStatus = "Details and prompt copied to clipboard.";
+            var prompt = BuildCopilotPrompt(card, [row]);
+            var occurrences = row.EvidenceOccurrences is { Count: > 0 } ev ? ev : row.HangOccurrences;
+            if (module.Feature<IHangEvidenceSource>() is { } evidenceSource && occurrences is { Count: > 0 })
+            {
+                _copilotRowStatus = "Collecting related events…";
+                StateHasChanged();
+                var timeline = await evidenceSource.FindHangEvidenceAsync(occurrences, CancellationToken.None);
+                var context = BuildReportContext(module.Name, report, card);
+                prompt = string.Join("\n\n", new[] { prompt, context, timeline }.Where(section => !string.IsNullOrWhiteSpace(section)));
+            }
+            try
+            {
+                await ClipboardJs.InvokeVoidAsync("navigator.clipboard.writeText", prompt);
+                _copilotRowStatus = "Details and prompt copied to clipboard.";
+            }
+            catch (JSException)
+            {
+                _copilotRowStatus = "Couldn't copy details to clipboard.";
+            }
+            try
+            {
+                await ClipboardJs.InvokeVoidAsync("window.open", "https://copilot.microsoft.com/", "_blank", "noopener,noreferrer");
+            }
+            catch (JSException) { }
         }
-        catch (JSException)
+        finally { _collectingCopilotRow = false; }
+    }
+
+    private string BuildReportContext(string moduleName, AreaReport report, AreaCard currentCard)
+    {
+        var lines = new List<string>();
+        var reportCards = report.Cards
+            .Where(c => c.Id != currentCard.Id && (c.EventCount > 0 || c.Level is AreaLevel.Warning or AreaLevel.Error || c.Rows.Count > 0))
+            .Select(c => $"- {c.Title}: {c.Headline}{(string.IsNullOrWhiteSpace(c.Meta) ? "" : $" ({c.Meta})")}")
+            .ToList();
+        if (reportCards.Count > 0)
         {
-            _copilotRowStatus = "Couldn't copy details to clipboard.";
+            lines.Add("Other findings in this diagnostic report (separate from the historical timeline):");
+            lines.AddRange(reportCards);
         }
-        try
+        var otherChecks = Diagnostics.Modules
+            .Where(check => !string.Equals(check.Name, moduleName, StringComparison.OrdinalIgnoreCase))
+            .Select(check => (check, Result: Store.Get(check.Name)))
+            .Where(x => x.Result.Status is DiagnosticStatus.Warning or DiagnosticStatus.Error
+                || (x.check is ICancellableScan && x.Result.Status == DiagnosticStatus.Ok))
+            .Select(x => $"- {x.check.DisplayName} ({x.Result.Status}): {x.Result.Message}")
+            .ToList();
+        if (otherChecks.Count > 0)
         {
-            await ClipboardJs.InvokeVoidAsync("window.open", "https://copilot.microsoft.com/", "_blank", "noopener,noreferrer");
+            if (lines.Count > 0) lines.Add("");
+            lines.Add("Other completed checks at scan time:");
+            lines.AddRange(otherChecks);
         }
-        catch (JSException) { }
+        return string.Join("\n", lines);
     }
 
     private string BuildCopilotPrompt(AreaCard card, IReadOnlyList<AreaRow> rows)

@@ -397,6 +397,65 @@ public class DashboardUiPolishTests : BunitContext
         cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-testid='osquery-card-crashes']")));
     }
 
+    [Fact]
+    public void AreaPage_ReviewWithCopilot_CrashRow_CollectsTimelineAndReportContext()
+    {
+        var store = new ResultStore();
+        var crashMod = new FakeEvidenceModule(ModuleSlugs.Crashes, "Matching report ID · Windows Error Reporting 1001\nFault bucket 999");
+        var dismMod = new FakeModule(ModuleSlugs.DismScanHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DismScanHealth)));
+        RegisterDashboardServices(store, crashMod, dismMod);
+        JSInterop.SetupVoid("navigator.clipboard.writeText", _ => true);
+        JSInterop.SetupVoid("window.open", _ => true);
+
+        var occurrence = new HangOccurrence(new DateTimeOffset(2026, 11, 8, 19, 33, 0, TimeSpan.Zero),
+            "backgroundTaskHost.exe", @"C:\WINDOWS\system32\backgroundTaskHost.exe",
+            "Microsoft.Windows.Photos_2026.1.0_x64__8wekyb3d8bbwe", "Crash", "0539dbfd-0e36-43ad-b6b4-b8accd228383");
+        var report = new AreaReport(
+        [
+            new AreaCard("crashes", "Apps that closed unexpectedly", AreaLevel.Warning, "1 crash", "Latest: backgroundTaskHost.exe",
+                ["When", "App", "Type"], [
+                    new AreaRow(AreaLevel.Warning, ["Nov 8, 7:33 PM", "backgroundTaskHost.exe", "Crash"],
+                        Detail: "Access violation (in combase.dll)\nEvent ID: 1000 (Application Error)",
+                        ReviewKeys: ["k1"],
+                        EvidenceOccurrences: [occurrence])
+                ]) { EventCount = 1 },
+            new AreaCard("hangs", "Apps that stopped responding", AreaLevel.Warning, "2 times", "Latest: olk.exe",
+                ["When", "App"], []) { EventCount = 2 },
+        ], "1 crash, 2 freezes", DiagnosticStatus.Warning);
+        store.Set(new DiagnosticResult<AreaReport>(ModuleSlugs.Crashes, DiagnosticStatus.Warning, report.Summary, DateTimeOffset.Now, report));
+        store.Set(new DiagnosticResult(ModuleSlugs.DismScanHealth, DiagnosticStatus.Warning, "DISM found repairable corruption.", DateTimeOffset.Now));
+
+        var cut = Render<AreaPage>(p => p.Add(c => c.Slug, ModuleSlugs.Crashes));
+        cut.Find("[data-testid='osquery-card-crashes'] .card-summary-toggle").Click();
+        cut.Find("tr.row-expandable").Click();
+        cut.Find("button.btn-small[data-action='review-copilot-row']").Click();
+
+        var invocations = JSInterop.Invocations.ToList();
+        var copyIdx = invocations.FindIndex(i => i.Identifier == "navigator.clipboard.writeText");
+        Assert.True(copyIdx >= 0, "Expected clipboard write invocation");
+        var copiedPrompt = Assert.IsType<string>(invocations[copyIdx].Arguments[0]);
+        Assert.Contains("Event ID: 1000 (Application Error)", copiedPrompt);
+        Assert.Contains("Other findings in this diagnostic report", copiedPrompt);
+        Assert.Contains("Apps that stopped responding: 2 times", copiedPrompt);
+        Assert.Contains("Other completed checks at scan time:", copiedPrompt);
+        Assert.Contains("DISM found repairable corruption.", copiedPrompt);
+        Assert.Contains("Matching report ID · Windows Error Reporting 1001", copiedPrompt);
+    }
+
+    private sealed class FakeEvidenceModule(string name, string evidence) : IDiagnosticModule, IHangEvidenceSource
+    {
+        public string Name => name;
+        public Guid Id => TestIds.For(name);
+        public string HangCardId => CrashesModule.HangsCardId;
+        public event EventHandler<DiagnosticResult>? Updated { add { } remove { } }
+        public Task<ModuleAvailability> CheckAvailabilityAsync(CancellationToken ct = default) =>
+            Task.FromResult(ModuleAvailability.Available);
+        public Task<DiagnosticResult> RefreshAsync(IProgress<string>? progress, CancellationToken ct = default) =>
+            Task.FromResult(FakeModule.Ok(name));
+        public Task<string> FindHangEvidenceAsync(IReadOnlyList<HangOccurrence> occurrences, CancellationToken ct) =>
+            Task.FromResult(evidence);
+    }
+
     private static string RepoRoot()
     {
         for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
