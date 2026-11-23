@@ -260,6 +260,8 @@ internal sealed class WindowsAgentPlatform(string? configuredServer = null, Acti
                 PipeName = RemotePCDiagnostics.Core.Session.ElevationService.ServiceAdminPipeName,
                 ExpectedClientExePath = hostExe,
                 AllowInteractiveUsers = true,
+                // The client is a user-owned process: a standard user only gets reads, an administrator gets repairs.
+                RestrictStandardUsers = true,
                 ConnectTimeout = Timeout.InfiniteTimeSpan,
             };
             using var pipeServer = CreatePipeServer(serverOptions, workDir, pipeLog, out var sensorProvider);

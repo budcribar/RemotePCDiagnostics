@@ -175,6 +175,70 @@ public sealed class AdminHelperAndElevationTests
         await serverTask;
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AgentServicePipe_GivesStandardUsersOnlyReadOps(bool clientIsAdmin)
+    {
+        var pipeName = $"rpd-svc-{Guid.NewGuid():N}";
+        var launcher = new RecordingLauncher((exe, args) => new ProcessResult(0, "ran", ""));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var server = new AdminPipeServer(
+            new AdminPipeServerOptions
+            {
+                PipeName = pipeName,
+                RestrictStandardUsers = true,
+                ClientIsAdministrator = _ => clientIsAdmin,
+            },
+            launcher,
+            changeJournal: () => new RemotePCDiagnostics.Core.Changes.FileChangeJournal(Path.Combine(Path.GetTempPath(), $"{pipeName}.json"), null));
+
+        var serverTask = server.RunSingleSessionAsync(cts.Token);
+
+        await using (var client = await AdminPipeClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(10), cts.Token))
+        {
+            Assert.Equal(!clientIsAdmin, client.Restricted);
+
+            var run = await client.RunCommandAsync("ipconfig.exe", ["/flushdns"], TimeSpan.FromSeconds(10), cts.Token);
+            Assert.Equal(clientIsAdmin, run.Ok);
+            Assert.Equal(clientIsAdmin ? 1 : 0, launcher.Calls.Count);
+            if (!clientIsAdmin)
+            {
+                Assert.False(run.Allowed);
+                Assert.Contains("administrator", run.Error, StringComparison.OrdinalIgnoreCase);
+            }
+
+            // Reads still work for everyone.
+            Assert.NotNull(await client.ReadChangeJournalAsync(cts.Token));
+        }
+
+        await serverTask;
+    }
+
+    [Fact]
+    public void AgentServicePipe_ReadOnlyOpsChangeNothing()
+    {
+        string[] changing =
+        [
+            AdminPipeFraming.OpRunCommand, AdminPipeFraming.OpSelfUpdate, AdminPipeFraming.OpUpdateRpcd, AdminPipeFraming.OpSecurityAudit,
+            AdminPipeFraming.OpModuleHost, AdminPipeFraming.OpPrepareMachine, AdminPipeFraming.OpSystemSetting, AdminPipeFraming.OpRemoveAppx,
+            AdminPipeFraming.OpRunUninstaller, AdminPipeFraming.OpSetScheduledTask, AdminPipeFraming.OpJournalRemove, AdminPipeFraming.OpJournalAdd,
+            AdminPipeFraming.OpMachineTweak, AdminPipeFraming.OpAgentScript, AdminPipeFraming.OpStateWrite, AdminPipeFraming.OpBiosSuspendBitLocker,
+            AdminPipeFraming.OpBiosRunInstaller, AdminPipeFraming.OpBiosInstallWua, AdminPipeFraming.OpCommandJobCancel,
+        ];
+        foreach (var op in changing)
+            Assert.False(AdminPipeServer.ReadOnlyOps.Contains(op), op);
+    }
+
+    [Fact]
+    public void ElevationService_RestrictedAgentClientIsNotAdminCapable()
+    {
+        // HasAdminCapabilities needs an Agent that does repairs for this user, never the app's own elevation.
+        using var elevation = new ElevationService(new SessionContext(SessionMode.Local), isProcessElevated: () => true,
+            customConnector: (_, _) => throw new IOException("none"));
+        Assert.False(elevation.HasAdminCapabilities);
+    }
+
     [Fact]
     public async Task AdminPipeServer_RejectsUnverifiedClientProcessImmediately()
     {
