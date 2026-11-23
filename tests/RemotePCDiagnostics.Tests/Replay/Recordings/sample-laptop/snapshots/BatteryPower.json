@@ -9,7 +9,7 @@
         "title": "Battery health",
         "level": "Ok",
         "headline": "91% battery health",
-        "meta": "AC Power · 100% charged · 212 cycles",
+        "meta": "212 cycles · SampleCo SAMPLE-BAT",
         "columns": [
           "Detail",
           "Value"

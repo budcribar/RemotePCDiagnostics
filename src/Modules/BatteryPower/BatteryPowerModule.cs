@@ -51,9 +51,10 @@ public sealed class BatteryPowerModule(IBatteryPowerSource source, ILogger? log 
             var level = worn ? AreaLevel.Warning : health is null ? AreaLevel.Neutral : AreaLevel.Ok;
             var headline = health is { } h ? $"{h}% battery health" : (b.State.Length > 0 ? b.State : "Battery present");
             var metaParts = new List<string>();
-            if (b.State.Length > 0) metaParts.Add(b.State);
-            if (b.PercentRemaining is { } pct) metaParts.Add($"{pct}% charged");
             if (b.CycleCount is > 0) metaParts.Add($"{b.CycleCount} cycles");
+            var model = string.Join(" ", new[] { b.Manufacturer, b.Model }.Where(x => x.Length > 0));
+            if (model.Length > 0) metaParts.Add(model);
+            else if (b.Chemistry.Length > 0) metaParts.Add(b.Chemistry);
 
             var rows = new List<AreaRow>();
             void Add(string l, string? v, AreaLevel lv = AreaLevel.Neutral) { if (!string.IsNullOrWhiteSpace(v)) rows.Add(new(lv, [l, v])); }

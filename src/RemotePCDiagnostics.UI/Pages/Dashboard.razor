@@ -284,44 +284,47 @@
                             </span>
                         </div>
 
-                        <div class="dash-card-body" @onclick="() => ToggleExpand(name)">
-                            @if (name == LibreHardwareMonitorModule.ModuleName)
-                            {
-                                <div class="dash-sensor-compact">
-                                    <div class="gauge gauge-compact gauge-@Level(cpuGroup)" data-testid="dashboard-cpu-gauge">
-                                        <svg viewBox="0 0 120 120" role="img" aria-label="@(cpuTemp is { } a ? $"CPU temperature {a:0} degrees" : "No CPU temperature reading")">
-                                            <circle class="gauge-track" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="75 100" transform="rotate(135 60 60)" />
-                                            @if (cpuTemp is { } t)
-                                            {
-                                                <circle class="gauge-fill" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="@($"{Math.Clamp(t, 0, 100) * 0.75:0.#} 100")" transform="rotate(135 60 60)" />
-                                            }
-                                            <text class="gauge-num" x="60" y="62" text-anchor="middle">@(cpuTemp is { } v ? $"{v:0}°C" : "—")</text>
-                                            <text class="gauge-sub" x="60" y="80" text-anchor="middle">@(cpuTemp is null ? (thBusy ? "Checking…" : "No reading") : "CPU temp")</text>
-                                        </svg>
+                        @if (!expanded)
+                        {
+                            <div class="dash-card-body" @onclick="() => ToggleExpand(name)">
+                                @if (name == LibreHardwareMonitorModule.ModuleName)
+                                {
+                                    <div class="dash-sensor-compact">
+                                        <div class="gauge gauge-compact gauge-@Level(cpuGroup)" data-testid="dashboard-cpu-gauge">
+                                            <svg viewBox="0 0 120 120" role="img" aria-label="@(cpuTemp is { } a ? $"CPU temperature {a:0} degrees" : "No CPU temperature reading")">
+                                                <circle class="gauge-track" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="75 100" transform="rotate(135 60 60)" />
+                                                @if (cpuTemp is { } t)
+                                                {
+                                                    <circle class="gauge-fill" cx="60" cy="60" r="46" pathLength="100" stroke-dasharray="@($"{Math.Clamp(t, 0, 100) * 0.75:0.#} 100")" transform="rotate(135 60 60)" />
+                                                }
+                                                <text class="gauge-num" x="60" y="62" text-anchor="middle">@(cpuTemp is { } v ? $"{v:0}°C" : "—")</text>
+                                                <text class="gauge-sub" x="60" y="80" text-anchor="middle">@(cpuTemp is null ? (thBusy ? "Checking…" : "No reading") : "CPU temp")</text>
+                                            </svg>
+                                        </div>
+                                        <div class="desc" data-testid="dashboard-thermal">
+                                            @if (thBusy) { <span>Checking temperatures…</span> }
+                                            else { <CardList Text="@th.Message" /> }
+                                        </div>
                                     </div>
-                                    <div class="desc" data-testid="dashboard-thermal">
-                                        @if (thBusy) { <span>Checking temperatures…</span> }
-                                        else { <CardList Text="@th.Message" /> }
+                                }
+                                else if (name == ModuleSlugs.Osquery)
+                                {
+                                    <div class="@(hw.Status == DiagnosticStatus.Error ? "card-msg error-text" : "card-msg card-msg-full")">
+                                        @if (hwBusy) { <span>Querying hardware…</span> }
+                                        else if (hw.Status == DiagnosticStatus.Error || inv is null) { <span>@hw.Message</span> }
+                                        else { <CardList Text="@inv.FriendlySummary()" Strong="true" /> }
                                     </div>
-                                </div>
-                            }
-                            else if (name == ModuleSlugs.Osquery)
-                            {
-                                <div class="@(hw.Status == DiagnosticStatus.Error ? "card-msg error-text" : "card-msg card-msg-full")">
-                                    @if (hwBusy) { <span>Querying hardware…</span> }
-                                    else if (hw.Status == DiagnosticStatus.Error || inv is null) { <span>@hw.Message</span> }
-                                    else { <CardList Text="@inv.FriendlySummary()" Strong="true" /> }
-                                </div>
-                            }
-                            else if (isRunning)
-                            {
-                                <div class="card-msg card-msg-full"><span>Checking…</span></div>
-                            }
-                            else if (r.Status != DiagnosticStatus.NotRun)
-                            {
-                                <div class="card-msg card-msg-full"><CardList Text="@r.Message" Strong="true" /></div>
-                            }
-                        </div>
+                                }
+                                else if (isRunning)
+                                {
+                                    <div class="card-msg card-msg-full"><span>Checking…</span></div>
+                                }
+                                else if (r.Status != DiagnosticStatus.NotRun)
+                                {
+                                    <div class="card-msg card-msg-full"><CardList Text="@r.Message" Strong="true" /></div>
+                                }
+                            </div>
+                        }
 
                         @if (expanded)
                         {
