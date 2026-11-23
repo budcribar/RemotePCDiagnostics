@@ -1541,7 +1541,9 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
 .dash-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .dash-section-head .ct-section-label { margin: 0; }
 
-.dash-triage-list { padding: 0; overflow: hidden; }
+.dash-triage { padding: 0; overflow: hidden; }
+.dash-triage-summary .dot { margin: 0; flex-shrink: 0; }
+.dash-triage-list { padding: 0; overflow: hidden; border-top: 1px solid var(--border); }
 .dash-triage-row { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--border); }
 .dash-triage-row:last-child { border-bottom: none; }
 .dash-triage-row .dot { margin: 0; flex-shrink: 0; }

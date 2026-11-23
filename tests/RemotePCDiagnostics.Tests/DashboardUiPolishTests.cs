@@ -192,6 +192,39 @@ public class DashboardUiPolishTests : BunitContext
         Assert.Contains("document.title = machine;", dialogsJs);
     }
 
+    [Fact]
+    public void Dashboard_NeedsAttention_StartsCollapsed_AndExpandsAndCollapses()
+    {
+        var store = new ResultStore();
+        var crashes = new FakeModule(ModuleSlugs.Crashes, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.Crashes)));
+        var eventLog = new FakeModule(ModuleSlugs.EventLog, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.EventLog)));
+        RegisterDashboardServices(store, crashes, eventLog);
+        store.Set(new DiagnosticResult(ModuleSlugs.Crashes, DiagnosticStatus.Warning, "1 unexpected restart", DateTimeOffset.Now));
+        store.Set(new DiagnosticResult(ModuleSlugs.EventLog, DiagnosticStatus.Warning, "128 Windows errors", DateTimeOffset.Now));
+
+        var cut = Render<Dashboard>();
+
+        var details = cut.Find("details[data-testid='dashboard-triage']");
+        var toggle = cut.Find("[data-testid='dashboard-triage-toggle']");
+        Assert.False(details.HasAttribute("open"));
+        Assert.Equal("false", toggle.GetAttribute("aria-expanded"));
+        Assert.Contains("Needs attention · 2", toggle.TextContent);
+
+        toggle.Click();
+        details = cut.Find("details[data-testid='dashboard-triage']");
+        toggle = cut.Find("[data-testid='dashboard-triage-toggle']");
+        Assert.True(details.HasAttribute("open"));
+        Assert.Equal("true", toggle.GetAttribute("aria-expanded"));
+        Assert.NotNull(cut.Find("[data-testid='dashboard-triage-crashes']"));
+        Assert.NotNull(cut.Find("[data-testid='dashboard-triage-eventlog']"));
+
+        toggle.Click();
+        details = cut.Find("details[data-testid='dashboard-triage']");
+        toggle = cut.Find("[data-testid='dashboard-triage-toggle']");
+        Assert.False(details.HasAttribute("open"));
+        Assert.Equal("false", toggle.GetAttribute("aria-expanded"));
+    }
+
     private static string RepoRoot()
     {
         for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)

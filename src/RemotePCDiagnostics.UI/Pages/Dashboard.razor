@@ -178,14 +178,19 @@
         </div>
     </section>
 
-    @* Zone 3: Needs Attention (errors first, expands card in place on Inspect) *@
+    @* Zone 3: Needs Attention (errors first, starts collapsed, expands card in place on Inspect) *@
     @if (problems.Count > 0)
     {
-        <section class="dash-triage" data-testid="dashboard-triage">
-            <div class="dash-section-head">
-                <h2 class="ct-section-label">Needs attention · @problems.Count</h2>
-            </div>
-            <div class="card dash-triage-list">
+        <details class="card dash-triage" data-testid="dashboard-triage" open="@_triageOpen">
+            <summary class="bench-customize-summary dash-triage-summary" data-testid="dashboard-triage-toggle" aria-expanded="@(_triageOpen ? "true" : "false")"
+                     @onclick="() => _triageOpen = !_triageOpen" @onclick:preventDefault="true">
+                <span class="bench-customize-title">
+                    <span class="dot @(errorCount > 0 ? "dot-error" : "dot-warning")"></span>
+                    <span>Needs attention · @problems.Count</span>
+                </span>
+                <span class="chevron-icon @(_triageOpen ? "is-open" : "")" aria-hidden="true">▾</span>
+            </summary>
+            <div class="dash-triage-list">
                 @foreach (var item in problems)
                 {
                     var mod = item.Module;
@@ -203,7 +208,7 @@
                     </div>
                 }
             </div>
-        </section>
+        </details>
     }
 
     @* Zone 4: Customizable, Drag-and-Drop System Checks Grid (In-Place Expand/Collapse) *@
@@ -421,6 +426,7 @@
 
 @code {
     private readonly HashSet<string> _expanded = new(StringComparer.OrdinalIgnoreCase);
+    private bool _triageOpen;
     private bool _customizeOpen;
     private bool _remotePrefsLoaded;
     private string? _dragId;
