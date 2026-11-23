@@ -54,7 +54,7 @@ function Publish-Target {
         --self-contained true `
         -p:PublishProfile=Installer `
         -p:PublishReadyToRun=$r2rStr `
-        -o $OutDir
+        -o $OutDir | Out-Host
 
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish failed for $Rid (ReadyToRun=$r2rStr) with exit code $LASTEXITCODE"
