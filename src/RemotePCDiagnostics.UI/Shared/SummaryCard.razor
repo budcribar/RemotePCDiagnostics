@@ -1,11 +1,22 @@
-@* Clickable summary card. Error/empty states use friendly text supplied by the page. *@
-<div class="card card-click" data-testid="osquery-card-@Id" role="button" tabindex="0"
-     @onclick="() => OnOpen.InvokeAsync(Id)" @onkeydown='e => { if (e.Key is "Enter" or " ") OnOpen.InvokeAsync(Id); }'>
-    <div class="card-head"><span class="@DotCss"></span><strong title="@Title">@Title</strong></div>
-    @if (ErrorText is not null) { <div class="headline error-text" data-testid="osquery-card-@Id-error">@ErrorText</div> }
-    else if (EmptyText is not null) { <div class="headline warn-text" data-testid="osquery-card-@Id-empty">@EmptyText</div> }
-    else { @ChildContent }
-    <div class="meta card-foot">Click for details</div>
+@* Expandable summary card. Error/empty states use friendly text supplied by the page. *@
+<div class="card card-expandable @(Expanded ? "card-expanded" : "")" data-testid="osquery-card-@Id">
+    <div class="card-summary-toggle" role="button" tabindex="0" aria-expanded="@(Expanded ? "true" : "false")"
+         @onclick="() => OnOpen.InvokeAsync(Id)" @onkeydown='e => { if (e.Key is "Enter" or " ") OnOpen.InvokeAsync(Id); }'>
+        <div class="card-head">
+            <span class="@DotCss"></span>
+            <strong title="@Title">@Title</strong>
+            <span class="chevron-icon @(Expanded ? "is-open" : "")" aria-hidden="true">▾</span>
+        </div>
+        @if (ErrorText is not null) { <div class="headline error-text" data-testid="osquery-card-@Id-error">@ErrorText</div> }
+        else if (EmptyText is not null) { <div class="headline warn-text" data-testid="osquery-card-@Id-empty">@EmptyText</div> }
+        else { @ChildContent }
+    </div>
+    @if (Expanded && Details is not null)
+    {
+        <div class="card-details" data-testid="@DetailsTestId">
+            @Details
+        </div>
+    }
 </div>
 @code {
     [Parameter, EditorRequired] public string Id { get; set; } = "";
@@ -16,7 +27,10 @@
     [Parameter] public string? EmptyText { get; set; }
     /// <summary>Optional explicit dot: "ok", "warning", "error".</summary>
     [Parameter] public string? Dot { get; set; }
+    [Parameter] public bool Expanded { get; set; }
+    [Parameter] public string? DetailsTestId { get; set; }
     [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public RenderFragment? Details { get; set; }
     [Parameter] public EventCallback<string> OnOpen { get; set; }
     private string DotCss => "dot dot-" + (ErrorText is not null ? "error" : EmptyText is not null ? "warning" : Dot ?? "ok");
 }

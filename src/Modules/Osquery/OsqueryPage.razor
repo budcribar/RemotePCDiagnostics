@@ -27,88 +27,115 @@
     @* The same machine-readable copy every other check has, so an agent reads the inventory itself and not only three numbers. *@
     @if (!busy) { <AreaReportData Report="@HardwareInventoryReport.Build(inv, r.Status, r.Message)" CheckId="@ModuleSlugs.Osquery" RunId="r.RunId" /> }
     <div class="cards">
-        <SummaryCard Id="system" Title="Computer" OnOpen="Open"
+        <SummaryCard Id="system" Title="Computer" Expanded="@_expandedCards.Contains("system")" DetailsTestId="osquery-drawer-system" OnOpen="Toggle"
                      ErrorText="@(inv.System.Success ? null : "Couldn't read computer details on this PC.")"
                      EmptyText="@(inv.System.Success && sys is null ? "Computer details aren't available on this PC." : null)">
-            <div class="headline">@Join(sys?.HardwareVendor, sys?.HardwareModel)</div>
-            <CardList Text="@(sys is null ? "" : (sys.ComputerName.Length > 0 ? sys.ComputerName : sys.Hostname))" />
+            <ChildContent>
+                <div class="headline">@Join(sys?.HardwareVendor, sys?.HardwareModel)</div>
+                <CardList Text="@(sys is null ? "" : (sys.ComputerName.Length > 0 ? sys.ComputerName : sys.Hostname))" />
+            </ChildContent>
+            <Details>
+                <div class="card-details-scroll">
+                    <DetailTable Section="inv.System" Columns="SystemCols" ErrorText="Couldn't read computer details on this PC." EmptyText="Computer details aren't available on this PC." />
+                </div>
+            </Details>
         </SummaryCard>
         @{ var c = inv.Cpus.Items.FirstOrDefault(); }
-        <SummaryCard Id="cpu" Title="Processor" OnOpen="Open"
+        <SummaryCard Id="cpu" Title="Processor" Expanded="@_expandedCards.Contains("cpu")" DetailsTestId="osquery-drawer-cpu" OnOpen="Toggle"
                      ErrorText="@(inv.Cpus.Success || sys?.CpuBrand is { Length: > 0 } ? null : "Couldn't read processor details on this PC.")"
                      EmptyText="@(inv.Cpus.Success && c is null ? "Processor details aren't available on this PC." : null)">
-            <div class="headline">@(c?.Model is { Length: > 0 } m ? m : Dash(sys?.CpuBrand))</div>
-            <CardList Text="@CpuMeta(c ?? (sys is null ? null : HardwareInventory.CpuFromSystemPublic(sys)))" />
-            <span hidden data-field="logical-processor-count" data-unit="count" data-value="@(c?.LogicalProcessors ?? sys?.CpuLogicalCores)"></span>
-        </SummaryCard>
-        @{ var pop = inv.Memory.Items.Where(d => d.IsPopulated).ToList(); }
-        <SummaryCard Id="memory" Title="Memory" OnOpen="Open"
-                     ErrorText="@(inv.Memory.Success || inv.TotalMemoryBytes is > 0 ? null : "Couldn't read memory details on this PC.")"
-                     EmptyText="@(inv.TotalMemoryBytes is > 0 ? null : "Memory details aren't available on this PC.")">
-            <div class="headline" data-field="installed-memory" data-unit="bytes" data-value="@inv.TotalMemoryBytes">@HardwareInventory.FormatBytes(inv.TotalMemoryBytes)</div>
-            <CardList Text="@(pop.Count > 0 ? $"{pop.Count} of {inv.Memory.Items.Count} slots in use · {Dash(pop[0].MemoryType)}" : "Installed memory")" />
-        </SummaryCard>
-        <SummaryCard Id="disks" Title="Storage" OnOpen="Open"
-                     ErrorText="@(inv.Disks.Success ? null : "Couldn't read storage details on this PC.")"
-                     EmptyText="@(inv.Disks.Success && inv.Disks.Items.Count == 0 ? "Storage details aren't available on this PC." : null)">
-            <div class="headline" data-field="physical-drive-count" data-unit="count" data-value="@(inv.Disks.Success ? (int?)inv.Disks.Items.Count : null)">@(inv.Disks.Items.Count == 1 ? "1 drive" : $"{inv.Disks.Items.Count} drives")@(inv.TotalDiskBytes > 0 ? $" ({HardwareInventory.FormatBytes(inv.TotalDiskBytes)})" : "")</div>
-            <CardList Items="@inv.Disks.Items.Select(d => Dash(d.HardwareModel)).Take(3)" />
-        </SummaryCard>
-        @{ var gpus = inv.Gpus.Items.Where(g => g.Model.Length > 0).ToList(); }
-        <SummaryCard Id="gpu" Title="Graphics" OnOpen="Open"
-                     ErrorText="@(inv.Gpus.Success ? null : "Couldn't read graphics details on this PC.")"
-                     EmptyText="@(inv.Gpus.Success && gpus.Count == 0 ? "Graphics details aren't available on this PC." : null)">
-            <div class="headline">@(gpus.Count > 0 ? gpus[0].Model : "—")</div>
-            <CardList Items="@gpus.Skip(1).Select(g => g.Model).Take(2)" />
-        </SummaryCard>
-        @{ var nics = inv.PhysicalNetworkAdapters.Where(a => a.Description.Length > 0).ToList(); }
-        <SummaryCard Id="network" Title="Network adapters" OnOpen="Open"
-                     ErrorText="@(inv.NetworkAdapters.Success ? null : "Couldn't read network adapter details on this PC.")"
-                     EmptyText="@(inv.NetworkAdapters.Success && nics.Count == 0 ? "Network adapter details aren't available on this PC." : null)">
-            <div class="headline" data-field="network-adapter-count" data-unit="count" data-value="@(inv.NetworkAdapters.Success ? (int?)nics.Count : null)">@(nics.Count == 1 ? "1 adapter" : $"{nics.Count} adapters")</div>
-            <CardList Items="@nics.Select(a => a.Description).Take(3)" />
-        </SummaryCard>
-        @{ var bios = inv.Bios.Items.FirstOrDefault(b => b.Vendor.Length + b.Version.Length > 0); }
-        <SummaryCard Id="bios" Title="BIOS" OnOpen="Open"
-                     ErrorText="@(inv.Bios.Success ? null : "Couldn't read BIOS details on this PC.")"
-                     EmptyText="@(inv.Bios.Success && bios is null ? "BIOS details aren't available on this PC." : null)">
-            <div class="headline">@Join(bios?.Vendor, bios?.Version)</div>
-            <CardList Text="@(bios?.Date ?? "")" />
-        </SummaryCard>
-    </div>
-
-    @if (_open is not null)
-    {
-        <div class="drawer-backdrop" @onclick="Close"></div>
-        <aside class="drawer" role="dialog" aria-modal="true" aria-label="@Titles[_open]" tabindex="-1" @onkeydown='e => { if (e.Key == "Escape") Close(); }' data-testid="osquery-drawer-@_open">
-            <div class="drawer-head"><strong title="@Titles[_open]">@Titles[_open]</strong><button data-testid="osquery-drawer-close" @onclick="Close">Close</button></div>
-            @switch (_open)
-            {
-                case "system": <DetailTable Section="inv.System" Columns="SystemCols" ErrorText="Couldn't read computer details on this PC." EmptyText="Computer details aren't available on this PC." />; break;
-                case "cpu":
+            <ChildContent>
+                <div class="headline">@(c?.Model is { Length: > 0 } m ? m : Dash(sys?.CpuBrand))</div>
+                <CardList Text="@CpuMeta(c ?? (sys is null ? null : HardwareInventory.CpuFromSystemPublic(sys)))" />
+                <span hidden data-field="logical-processor-count" data-unit="count" data-value="@(c?.LogicalProcessors ?? sys?.CpuLogicalCores)"></span>
+            </ChildContent>
+            <Details>
+                @{
                     var cpus = inv.Cpus.Items.Count == 0 && sys is not null && sys.CpuBrand.Length > 0
                         ? inv.Cpus with { Items = [HardwareInventory.CpuFromSystemPublic(sys)], Error = null } : inv.Cpus;
-                    <DetailTable Section="cpus" Columns="CpuCols" ErrorText="Couldn't read processor details on this PC." EmptyText="Processor details aren't available on this PC." />; break;
-                case "memory":
+                }
+                <div class="card-details-scroll">
+                    <DetailTable Section="cpus" Columns="CpuCols" ErrorText="Couldn't read processor details on this PC." EmptyText="Processor details aren't available on this PC." />
+                </div>
+            </Details>
+        </SummaryCard>
+        @{ var pop = inv.Memory.Items.Where(d => d.IsPopulated).ToList(); }
+        <SummaryCard Id="memory" Title="Memory" Expanded="@_expandedCards.Contains("memory")" DetailsTestId="osquery-drawer-memory" OnOpen="Toggle"
+                     ErrorText="@(inv.Memory.Success || inv.TotalMemoryBytes is > 0 ? null : "Couldn't read memory details on this PC.")"
+                     EmptyText="@(inv.TotalMemoryBytes is > 0 ? null : "Memory details aren't available on this PC.")">
+            <ChildContent>
+                <div class="headline" data-field="installed-memory" data-unit="bytes" data-value="@inv.TotalMemoryBytes">@HardwareInventory.FormatBytes(inv.TotalMemoryBytes)</div>
+                <CardList Text="@(pop.Count > 0 ? $"{pop.Count} of {inv.Memory.Items.Count} slots in use · {Dash(pop[0].MemoryType)}" : "Installed memory")" />
+            </ChildContent>
+            <Details>
+                <div class="card-details-scroll">
                     @if (inv.Memory.Items.Count == 0 && inv.TotalMemoryBytes is > 0) { <table class="detail"><tr><th>Installed memory</th><td>@HardwareInventory.FormatBytes(inv.TotalMemoryBytes)</td></tr></table> }
                     else { <DetailTable Section="inv.Memory" Columns="MemCols" ErrorText="Couldn't read memory details on this PC." EmptyText="Memory details aren't available on this PC." /> }
-                    break;
-                case "disks": <DetailTable Section="inv.Disks" Columns="DiskCols" ErrorText="Couldn't read storage details on this PC." EmptyText="Storage details aren't available on this PC." />; break;
-                case "gpu": <DetailTable Section="inv.Gpus" Columns="GpuCols" ErrorText="Couldn't read graphics details on this PC." EmptyText="Graphics details aren't available on this PC." />; break;
-                case "network":
-                    var nicSection = inv.NetworkAdapters with { Items = inv.PhysicalNetworkAdapters };
-                    <DetailTable Section="nicSection" Columns="NetCols" ErrorText="Couldn't read network adapter details on this PC." EmptyText="Network adapter details aren't available on this PC." />; break;
-                case "bios": <DetailTable Section="inv.Bios" Columns="BiosCols" ErrorText="Couldn't read BIOS details on this PC." EmptyText="BIOS details aren't available on this PC." />; break;
-            }
-        </aside>
-    }
+                </div>
+            </Details>
+        </SummaryCard>
+        <SummaryCard Id="disks" Title="Storage" Expanded="@_expandedCards.Contains("disks")" DetailsTestId="osquery-drawer-disks" OnOpen="Toggle"
+                     ErrorText="@(inv.Disks.Success ? null : "Couldn't read storage details on this PC.")"
+                     EmptyText="@(inv.Disks.Success && inv.Disks.Items.Count == 0 ? "Storage details aren't available on this PC." : null)">
+            <ChildContent>
+                <div class="headline" data-field="physical-drive-count" data-unit="count" data-value="@(inv.Disks.Success ? (int?)inv.Disks.Items.Count : null)">@(inv.Disks.Items.Count == 1 ? "1 drive" : $"{inv.Disks.Items.Count} drives")@(inv.TotalDiskBytes > 0 ? $" ({HardwareInventory.FormatBytes(inv.TotalDiskBytes)})" : "")</div>
+                <CardList Items="@inv.Disks.Items.Select(d => Dash(d.HardwareModel)).Take(3)" />
+            </ChildContent>
+            <Details>
+                <div class="card-details-scroll">
+                    <DetailTable Section="inv.Disks" Columns="DiskCols" ErrorText="Couldn't read storage details on this PC." EmptyText="Storage details aren't available on this PC." />
+                </div>
+            </Details>
+        </SummaryCard>
+        @{ var gpus = inv.Gpus.Items.Where(g => g.Model.Length > 0).ToList(); }
+        <SummaryCard Id="gpu" Title="Graphics" Expanded="@_expandedCards.Contains("gpu")" DetailsTestId="osquery-drawer-gpu" OnOpen="Toggle"
+                     ErrorText="@(inv.Gpus.Success ? null : "Couldn't read graphics details on this PC.")"
+                     EmptyText="@(inv.Gpus.Success && gpus.Count == 0 ? "Graphics details aren't available on this PC." : null)">
+            <ChildContent>
+                <div class="headline">@(gpus.Count > 0 ? gpus[0].Model : "—")</div>
+                <CardList Items="@gpus.Skip(1).Select(g => g.Model).Take(2)" />
+            </ChildContent>
+            <Details>
+                <div class="card-details-scroll">
+                    <DetailTable Section="inv.Gpus" Columns="GpuCols" ErrorText="Couldn't read graphics details on this PC." EmptyText="Graphics details aren't available on this PC." />
+                </div>
+            </Details>
+        </SummaryCard>
+        @{ var nics = inv.PhysicalNetworkAdapters.Where(a => a.Description.Length > 0).ToList(); }
+        <SummaryCard Id="network" Title="Network adapters" Expanded="@_expandedCards.Contains("network")" DetailsTestId="osquery-drawer-network" OnOpen="Toggle"
+                     ErrorText="@(inv.NetworkAdapters.Success ? null : "Couldn't read network adapter details on this PC.")"
+                     EmptyText="@(inv.NetworkAdapters.Success && nics.Count == 0 ? "Network adapter details aren't available on this PC." : null)">
+            <ChildContent>
+                <div class="headline" data-field="network-adapter-count" data-unit="count" data-value="@(inv.NetworkAdapters.Success ? (int?)nics.Count : null)">@(nics.Count == 1 ? "1 adapter" : $"{nics.Count} adapters")</div>
+                <CardList Items="@nics.Select(a => a.Description).Take(3)" />
+            </ChildContent>
+            <Details>
+                @{ var nicSection = inv.NetworkAdapters with { Items = inv.PhysicalNetworkAdapters }; }
+                <div class="card-details-scroll">
+                    <DetailTable Section="nicSection" Columns="NetCols" ErrorText="Couldn't read network adapter details on this PC." EmptyText="Network adapter details aren't available on this PC." />
+                </div>
+            </Details>
+        </SummaryCard>
+        @{ var bios = inv.Bios.Items.FirstOrDefault(b => b.Vendor.Length + b.Version.Length > 0); }
+        <SummaryCard Id="bios" Title="BIOS" Expanded="@_expandedCards.Contains("bios")" DetailsTestId="osquery-drawer-bios" OnOpen="Toggle"
+                     ErrorText="@(inv.Bios.Success ? null : "Couldn't read BIOS details on this PC.")"
+                     EmptyText="@(inv.Bios.Success && bios is null ? "BIOS details aren't available on this PC." : null)">
+            <ChildContent>
+                <div class="headline">@Join(bios?.Vendor, bios?.Version)</div>
+                <CardList Text="@(bios?.Date ?? "")" />
+            </ChildContent>
+            <Details>
+                <div class="card-details-scroll">
+                    <DetailTable Section="inv.Bios" Columns="BiosCols" ErrorText="Couldn't read BIOS details on this PC." EmptyText="BIOS details aren't available on this PC." />
+                </div>
+            </Details>
+        </SummaryCard>
+    </div>
 }
 
 @code {
-    private string? _open;
-    private static readonly Dictionary<string, string> Titles = new() { ["system"] = "Computer", ["cpu"] = "Processor", ["memory"] = "Memory", ["disks"] = "Storage", ["gpu"] = "Graphics", ["network"] = "Network adapters", ["bios"] = "BIOS" };
-    private void Open(string id) => _open = id;
-    private void Close() => _open = null;
+    private readonly HashSet<string> _expandedCards = new(StringComparer.OrdinalIgnoreCase);
+    private void Toggle(string id) { if (!_expandedCards.Remove(id)) _expandedCards.Add(id); }
     private static string Dash(string? s) => string.IsNullOrWhiteSpace(s) ? "—" : s;
     private static string Join(params string?[] s) => Dash(string.Join(" ", s.Where(x => !string.IsNullOrWhiteSpace(x))));
     private static string N(long? v) => v?.ToString() ?? "";

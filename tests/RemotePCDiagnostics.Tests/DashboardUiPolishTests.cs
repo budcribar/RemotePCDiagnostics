@@ -1,6 +1,7 @@
 using Bunit;
 using Microsoft.Extensions.DependencyInjection;
 using RemotePCDiagnostics.Core;
+using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Sensors;
 using RemotePCDiagnostics.Core.Session;
 using RemotePCDiagnostics.UI;
@@ -234,6 +235,53 @@ public class DashboardUiPolishTests : BunitContext
         toggle = cut.Find("[data-testid='dashboard-triage-toggle']");
         Assert.False(details.HasAttribute("open"));
         Assert.Equal("false", toggle.GetAttribute("aria-expanded"));
+    }
+
+    [Fact]
+    public void AppCss_DashCardDetails_HidesRedundantToolbarAndStatusLine()
+    {
+        var root = RepoRoot();
+        var css = File.ReadAllText(Path.Combine(root, "src", "RemotePCDiagnostics.UI", "wwwroot", "app.css"));
+
+        Assert.Contains(".dash-card-details .toolbar > h1, .dash-card-details .toolbar > .page-icon { display: none; }", css);
+        Assert.Contains(".dash-card-details > .toolbar:not(:has(button, select, input, label)), .dash-card-details > .status-line { display: none; }", css);
+    }
+
+    [Fact]
+    public void AreaPage_Cards_ExpandAndCollapseInline_WithoutClickForDetails()
+    {
+        var store = new ResultStore();
+        var biosMod = new FakeModule(ModuleSlugs.BiosFirmware, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.BiosFirmware)));
+        RegisterDashboardServices(store, biosMod);
+        var report = new AreaReport(
+        [
+            new AreaCard("update", "BIOS update status", AreaLevel.Warning, "BIOS update check failed", "Catalog error",
+                ["Detail", "Value"], [new AreaRow(AreaLevel.Warning, ["Status", "Catalog error"])]),
+            new AreaCard("current", "Current BIOS / UEFI", AreaLevel.Ok, "F.34", "Insyde",
+                ["Detail", "Value"], [new AreaRow(AreaLevel.Ok, ["Version", "F.34"])]),
+        ], "BIOS F.34 (update check failed)", DiagnosticStatus.Warning);
+        store.Set(new DiagnosticResult<AreaReport>(ModuleSlugs.BiosFirmware, DiagnosticStatus.Warning, report.Summary, DateTimeOffset.Now, report));
+
+        var cut = Render<AreaPage>(p => p.Add(c => c.Slug, ModuleSlugs.BiosFirmware));
+
+        Assert.DoesNotContain("Click for details", cut.Markup, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(cut.FindAll("[data-testid='area-drawer-update']"));
+        Assert.Empty(cut.FindAll("[data-testid='area-drawer-current']"));
+
+        cut.Find("[data-testid='osquery-card-update'] .card-summary-toggle").Click();
+        var updateCard = cut.Find("[data-testid='osquery-card-update']");
+        Assert.Contains("card-expanded", updateCard.GetAttribute("class") ?? "");
+        Assert.Equal("true", updateCard.QuerySelector(".card-summary-toggle")?.GetAttribute("aria-expanded"));
+        Assert.NotNull(updateCard.QuerySelector("[data-testid='area-drawer-update']"));
+        Assert.Contains("Catalog error", updateCard.TextContent);
+
+        cut.Find("[data-testid='osquery-card-current'] .card-summary-toggle").Click();
+        Assert.NotNull(cut.Find("[data-testid='osquery-card-update'] [data-testid='area-drawer-update']"));
+        Assert.NotNull(cut.Find("[data-testid='osquery-card-current'] [data-testid='area-drawer-current']"));
+
+        cut.Find("[data-testid='osquery-card-update'] .card-summary-toggle").Click();
+        Assert.Empty(cut.FindAll("[data-testid='area-drawer-update']"));
+        Assert.Equal("false", cut.Find("[data-testid='osquery-card-update'] .card-summary-toggle").GetAttribute("aria-expanded"));
     }
 
     private static string RepoRoot()
