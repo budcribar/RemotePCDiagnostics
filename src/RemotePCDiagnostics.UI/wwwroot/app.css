@@ -1563,7 +1563,10 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
 .ct-row.dragging { opacity: 0.45; }
 
 .dash-sensor-compact { display: flex; align-items: center; gap: 12px; }
-.gauge-compact { width: 72px; height: 72px; margin: 0; flex-shrink: 0; }
+.dash-sensor-compact .desc { flex: 1; min-width: 0; }
+.gauge-compact { width: 84px; height: 84px; margin: 0; flex-shrink: 0; }
+.gauge.gauge-compact svg { width: 100%; height: 100%; display: block; }
+.gauge.gauge-compact .gauge-sub { font-size: 11px; }
 .dash-empty { padding: 20px; text-align: center; }
 
 .dash-tools-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
