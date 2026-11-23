@@ -474,7 +474,29 @@ jobs:
 
           $setup = Get-ChildItem $armOutDir -Filter 'RemotePCDiagnostics-Setup-*-win-arm64.exe' | Select-Object -First 1
           if (-not $setup) { throw 'ARM64 Setup executable was not produced' }
-          "Built ARM64 release assets: $($setup.Name), $agentFileName, $(Split-Path -Leaf $agentMsi)"
+
+          $testShopBaseName = "RemotePCDiagnostics-TestShop-Setup-$ver-win-arm64"
+          pwsh -NoProfile -File installer/Build-Installer.ps1 `
+            -Rid win-arm64 `
+            -Version $ver `
+            -SkipPublish `
+            -SkipVerify `
+            -Compression $env:INSTALLER_COMPRESSION `
+            -OutputDir $armOutDir `
+            -OutputBaseName $testShopBaseName `
+            -RemoteServerUrl 'https://server.remoteblazorwebview.com:34544' `
+            -ShopGroup 'test-shop' `
+            -AgentExePath $agentDest `
+            -AgentServerUrl 'https://server.remoteblazorwebview.com:34544' `
+            -AgentEnrollmentKey 'test-shop' `
+            -AgentConsent 'unattended'
+          if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 for ARM64 TestShop bundle failed ($LASTEXITCODE)" }
+
+          $testShopSetup = Join-Path $armOutDir "$testShopBaseName.exe"
+          if (-not (Test-Path -LiteralPath $testShopSetup)) { throw "ARM64 TestShop bundle missing: $testShopSetup" }
+          if (-not (Test-Path -LiteralPath "$testShopSetup.sha256")) { throw "ARM64 TestShop bundle sha256 missing: $testShopSetup.sha256" }
+
+          "Built ARM64 release assets: $($setup.Name), $testShopBaseName.exe, $agentFileName, $(Split-Path -Leaf $agentMsi)"
 
       - name: Upload Windows ARM64 installer and Fleet Agent
         if: env.PUBLISH_ARTIFACTS == 'true'
@@ -484,6 +506,8 @@ jobs:
           path: |
             artifacts/arm64-release/RemotePCDiagnostics-Setup-*-win-arm64.exe
             artifacts/arm64-release/RemotePCDiagnostics-Setup-*-win-arm64.exe.sha256
+            artifacts/arm64-release/RemotePCDiagnostics-TestShop-Setup-*-win-arm64.exe
+            artifacts/arm64-release/RemotePCDiagnostics-TestShop-Setup-*-win-arm64.exe.sha256
             artifacts/arm64-release/RemotePCDiagnostics.Agent-*-win-arm64.exe
             artifacts/arm64-release/RemotePCDiagnostics.Agent-*-win-arm64.exe.sha256
             artifacts/arm64-release/RemotePCDiagnostics.Agent-*-win-arm64.msi
@@ -950,8 +974,8 @@ jobs:
             sha256sum --check --strict "$f.sha256"
             count=$((count + 1))
           done
-          if [[ $count -lt 8 ]]; then
-            echo "::error::Expected at least 8 release binaries (5 x64 + 3 arm64), found $count"
+          if [[ $count -lt 9 ]]; then
+            echo "::error::Expected at least 9 release binaries (5 x64 + 4 arm64), found $count"
             exit 1
           fi
 
