@@ -29,25 +29,28 @@
         </div>
     </div>
 }
-@if (running is not null && mine)
+@if (!HideBanner)
 {
-    <div class="notice" data-testid="remediation-running" data-state="working"
-         data-action-kind="@running.Action.Kind" data-action-target="@running.Action.Target">
-        <strong>@running.Title</strong>
-        <span class="meta" data-testid="remediation-working">@(running.Progress ?? "Working… please wait.") You can leave this page; it keeps running.</span>
-        <button class="btn-small" data-testid="remediation-stop" @onclick="() => Actions?.CancelRunning()">Cancel</button>
-    </div>
-}
-else if (running is not null && _blocked)
-{
-    <div class="notice" data-testid="remediation-busy">@running.Title is still running. Wait for it to finish before starting another fix.</div>
-}
-@if (last is not null && !mine)
-{
-    <div class="notice @(last.Success ? "svc-result-ok" : "notice-error")" data-testid="remediation-result"
-         data-outcome="@(last.Success ? "succeeded" : "failed")" data-action-kind="@last.Action.Kind" data-action-target="@last.Action.Target"
-         data-restart-needed="@(last.RestartNeeded ? "true" : "false")"
-         data-result-seq="@last.Seq">@last.Message</div>
+    @if (running is not null && mine)
+    {
+        <div class="notice" data-testid="remediation-running" data-state="working"
+             data-action-kind="@running.Action.Kind" data-action-target="@running.Action.Target">
+            <strong>@running.Title</strong>
+            <span class="meta" data-testid="remediation-working">@(running.Progress ?? "Working… please wait.") You can leave this page; it keeps running.</span>
+            <button class="btn-small" data-testid="remediation-stop" @onclick="() => Actions?.CancelRunning()">Cancel</button>
+        </div>
+    }
+    else if (running is not null && _blocked)
+    {
+        <div class="notice" data-testid="remediation-busy">@running.Title is still running. Wait for it to finish before starting another fix.</div>
+    }
+    @if (last is not null && !mine)
+    {
+        <div class="notice @(last.Success ? "svc-result-ok" : "notice-error")" data-testid="remediation-result"
+             data-outcome="@(last.Success ? "succeeded" : "failed")" data-action-kind="@last.Action.Kind" data-action-target="@last.Action.Target"
+             data-restart-needed="@(last.RestartNeeded ? "true" : "false")"
+             data-result-seq="@last.Seq">@last.Message</div>
+    }
 }
 @if (ShowRecent && Actions is not null && Actions.Recent.Count > 0)
 {
@@ -66,11 +69,19 @@ else if (running is not null && _blocked)
     [Parameter] public RemediationService? Actions { get; set; }
     /// <summary>Runs after a fix from this page succeeded while the page is still open (the page runs its check again).</summary>
     [Parameter] public EventCallback OnCompleted { get; set; }
+    /// <summary>Notifies the parent when running/result state changes (used when the status banner is rendered inline in a card).</summary>
+    [Parameter] public EventCallback OnStateChanged { get; set; }
     [Parameter] public bool ShowRecent { get; set; } = true;
+    /// <summary>When true, the parent renders the running/result banner inline inside the triggering card instead of at the top of the page.</summary>
+    [Parameter] public bool HideBanner { get; set; }
     /// <summary>The check this page shows. The running notice and the result appear on the page of the check the fix belongs to.</summary>
     [Parameter] public string Origin { get; set; } = "";
 
+    public string? ActiveCardId { get; private set; }
+    public bool IsBlocked => _blocked;
+
     private RemediationPlan? _plan;
+    private string? _pendingCardId;
     private bool _blocked;
     private RemediationService? _subscribed;
     // The last result this component has already reacted to, so a result is followed by one re-run of the check.
@@ -85,23 +96,29 @@ else if (running is not null && _blocked)
         if (Actions is not null) Actions.RunChanged += OnRunChanged;
     }
 
-    public void Ask(AreaAction action)
+    public void Ask(AreaAction action, string? cardId = null)
     {
         if (Actions is null) return;
         _blocked = Actions.Running is not null;
+        _pendingCardId = cardId;
+        if (_blocked) ActiveCardId = cardId;
         _plan = _blocked ? null : Actions.Plan(action);
         StateHasChanged();
+        if (OnStateChanged.HasDelegate) _ = OnStateChanged.InvokeAsync();
     }
 
-    private void CloseDialog() => _plan = null;
+    private void CloseDialog() { _plan = null; _pendingCardId = null; }
 
     private void Run()
     {
         if (Actions is null || _plan is null) return;
         var act = _plan.Action;
+        ActiveCardId = _pendingCardId;
         _plan = null;
+        _pendingCardId = null;
         // Not awaited: the fix belongs to the service and ends there; OnRunChanged shows its progress and result.
         _ = Actions.RunTrackedAsync(act, Origin);
+        if (OnStateChanged.HasDelegate) _ = OnStateChanged.InvokeAsync();
     }
 
     private void OnRunChanged() => _ = InvokeAsync(async () =>
@@ -109,6 +126,7 @@ else if (running is not null && _blocked)
         if (_disposed) return;
         if (Actions?.Running is null) _blocked = false;
         StateHasChanged();
+        if (OnStateChanged.HasDelegate) await OnStateChanged.InvokeAsync();
         if (Actions?.LastRun is { } done && done.Seq != _seenSeq)
         {
             _seenSeq = done.Seq;

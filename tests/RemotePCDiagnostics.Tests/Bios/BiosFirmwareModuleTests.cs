@@ -92,6 +92,10 @@ public sealed class BiosFirmwareModuleTests
         Assert.Equal(AreaLevel.Ok, report.Cards[0].Level);
         Assert.Null(report.Cards[0].Actions);
         Assert.Contains("up to date", report.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("F.34", report.Summary, StringComparison.Ordinal);
+        Assert.Equal("Up to date", report.Cards[0].Headline);
+        Assert.DoesNotContain("F.34", report.Cards[0].Meta, StringComparison.Ordinal);
+        Assert.Equal("F.34", report.Cards[1].Headline);
     }
 
     [Fact]

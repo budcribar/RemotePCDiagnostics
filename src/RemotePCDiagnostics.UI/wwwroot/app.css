@@ -294,6 +294,8 @@ button:disabled { opacity: 1; color: var(--text-muted); background: var(--surfac
 [data-theme="light"] .btn-outline:hover:not(:disabled) { background: #eef3ff; border-color: #1d4ed8; color: #1d4ed8; }
 [data-theme="dark"] .btn-outline { color: var(--accent); border-color: rgba(0,229,255,.6); }
 .btn-small { min-height: 30px; padding: 4px 12px; font-size: 13px; border-radius: 8px; background: var(--surface); color: var(--accent); border: 1px solid var(--border-strong); }
+a.btn-small { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 600; text-decoration: none; cursor: pointer; transition: background-color .15s, border-color .15s, box-shadow .15s, color .15s; }
+a.btn-small:hover { border-color: var(--accent); color: var(--accent); }
 [data-theme="light"] .btn-small { color: #1d4ed8; }
 .status-line .status-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .status-line .status-action { margin-left: auto; flex: none; }
@@ -352,7 +354,9 @@ table.sortable .sort-arrow { color: var(--text-muted); }
 
 /* Service actions (Services drawer & recent changes) */
 .svc-actions { display: inline-flex; gap: 6px; align-items: center; flex-wrap: nowrap; }
-.svc-actions button { min-height: 28px; padding: 3px 9px; font-size: 12px; }
+td.svc-actions { display: table-cell; white-space: nowrap; word-break: normal; width: 1%; }
+td.svc-actions button + button { margin-left: 6px; }
+.svc-actions button { min-height: 28px; padding: 3px 9px; font-size: 12px; white-space: nowrap; word-break: normal; }
 .svc-lock { color: var(--text-faint); font-size: 12px; white-space: nowrap; }
 .svc-modal-backdrop { position: fixed; inset: 0; background: var(--backdrop); z-index: 20; display: grid; place-items: center; animation: fade .12s ease-out; }
 .svc-modal { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 18px 20px; width: min(460px, 92vw); }
@@ -725,8 +729,15 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 
 table.sortable .drawer-time { white-space: nowrap; }
 table.sortable .drawer-count { width: 1%; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
-table.detail tr.row-detail td { white-space: normal; }
-.row-detail-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0.5rem; }
+table.detail tr.row-detail td { white-space: normal; padding: 10px 14px; font-family: var(--font); font-size: 13px; line-height: 1.5; }
+.row-detail-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0; }
+.row-detail-text + .row-detail-text { margin-top: 8px; }
+.row-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.row-detail-actions:first-child { margin-top: 0; }
+.row-detail-actions .meta { margin: 0; }
+.row-detail-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); cursor: pointer; }
+.row-detail-check input[type="checkbox"] { min-height: auto; padding: 0; margin: 0; }
+.issue-group-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
 
 
 /* ---- Structured card lists & professional card polish ---- */
@@ -1568,6 +1579,9 @@ body:has(.display-qa-overlay) [class*="rbwv-"] { display: none !important; }
 [data-theme="light"] .card-expandable:not(.card-expanded):hover { border-color: #c7d7fb; box-shadow: 0 6px 20px rgba(15,23,42,.10); }
 .cards > .card.card-expanded { grid-column: 1 / -1; border-color: var(--accent); }
 .card-details { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.card-details p.meta { max-width: none; }
+.card-details > p { margin: 0 0 8px; }
+.card-details > p:last-child { margin-bottom: 0; }
 .card-details-scroll { max-height: 60vh; overflow: auto; max-width: 100%; }
 .card-details-scroll table.sticky-head tr:first-child th { position: sticky; top: 0; z-index: 1; background: var(--surface); }
 .dash-grip { color: var(--text-muted); opacity: 0.55; font-size: 12px; cursor: grab; user-select: none; letter-spacing: -2px; flex-shrink: 0; }

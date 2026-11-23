@@ -333,6 +333,14 @@ public sealed class DiagnosticsService
         return await RunAsync(module, progress, ct).ConfigureAwait(false);
     }
 
+    /// <summary>Re-runs a module without switching its stored result to <see cref="DiagnosticStatus.Running"/>,
+    /// so the UI keeps showing the current report and diffs in the updated result once it finishes.</summary>
+    public async Task<DiagnosticResult> RefreshQuietlyAsync(string moduleName, CancellationToken ct = default)
+    {
+        var module = FindRunnable(moduleName) ?? throw new ArgumentException($"Unknown module '{moduleName}'.", nameof(moduleName));
+        return await StartRun(module, null, ct, out _, silent: true).ConfigureAwait(false);
+    }
+
     /// <summary>Runs one device of a per-device module (a webcam picked on its page). The module's result then counts this device's new
     /// result and the latest result of each other device.</summary>
     public async Task<DiagnosticResult> RunInstanceAsync(string moduleName, string instanceKey, IProgress<string>? progress = null, CancellationToken ct = default)
@@ -513,7 +521,7 @@ public sealed class DiagnosticsService
     private Task<DiagnosticResult> RunAsync(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, string? onlyInstance = null, bool gateInstances = false) =>
         StartRun(module, progress, ct, out _, onlyInstance, gateInstances);
 
-    private Task<DiagnosticResult> StartRun(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, out Func<Task>? cleanupOnce, string? onlyInstance = null, bool gateInstances = false)
+    private Task<DiagnosticResult> StartRun(IDiagnosticModule module, IProgress<string>? progress, CancellationToken ct, out Func<Task>? cleanupOnce, string? onlyInstance = null, bool gateInstances = false, bool silent = false)
     {
         if (TurnedOffResult(module) is { } skipped)
         {
@@ -527,7 +535,7 @@ public sealed class DiagnosticsService
             {
                 var runId = Guid.NewGuid();
                 _runIds[module.Name] = runId;
-                MarkRunning(module, runId);
+                if (!silent) MarkRunning(module, runId);
                 var tcs = new TaskCompletionSource<DiagnosticResult>(TaskCreationOptions.RunContinuationsAsynchronously);
                 _inFlight[module.Name] = existing = tcs.Task;
                 Func<Task>? cleanup = null;
@@ -546,7 +554,7 @@ public sealed class DiagnosticsService
                 {
                     DiagnosticResult? res = null;
                     Exception? err = null;
-                    try { res = await RunCoreAsync(module, runId, progress, ct, onlyInstance, gateInstances).ConfigureAwait(false); }
+                    try { res = await RunCoreAsync(module, runId, progress, ct, onlyInstance, gateInstances, silent).ConfigureAwait(false); }
                     catch (Exception ex) { err = ex; }
                     finally
                     {
@@ -591,11 +599,12 @@ public sealed class DiagnosticsService
         return result;
     }
 
-    private async Task<DiagnosticResult> RunCoreAsync(IDiagnosticModule module, Guid runId, IProgress<string>? progress, CancellationToken ct, string? onlyInstance, bool gateInstances)
+    private async Task<DiagnosticResult> RunCoreAsync(IDiagnosticModule module, Guid runId, IProgress<string>? progress, CancellationToken ct, string? onlyInstance, bool gateInstances, bool silent = false)
     {
         var startedAt = _store.Get(module.Name) is { Status: DiagnosticStatus.Running } cur ? cur.Timestamp : DateTimeOffset.Now;
         var trackedProgress = CheckProgressExtensions.Create(cp =>
         {
+            if (silent) return;
             _progress[module.Name] = cp;
             if (!string.IsNullOrWhiteSpace(cp.Message))
                 _store.Set(new DiagnosticResult(module.Name, DiagnosticStatus.Running, cp.Message, startedAt) { RunId = runId });

@@ -2,7 +2,9 @@
 @inherits ModuleDetailsBase
 @{
     var r = Store.Get(ModuleSlugs.Osquery);
-    var inv = r.Payload as HardwareInventory;
+    var liveInv = r.Payload as HardwareInventory;
+    if (liveInv is not null) _lastInventory = liveInv;
+    var inv = liveInv ?? (r.Status == DiagnosticStatus.Running ? _lastInventory : null);
     var sys = inv?.System.Items.FirstOrDefault();
     var busy = r.Status is DiagnosticStatus.Running or DiagnosticStatus.NotRun;
 }
@@ -135,6 +137,9 @@
 
 @code {
     private readonly HashSet<string> _expandedCards = new(StringComparer.OrdinalIgnoreCase);
+    private HardwareInventory? _lastInventory;
+    protected override bool ShouldReactTo(DiagnosticResult r) =>
+        string.Equals(r.ModuleName, ModuleSlugs.Osquery, StringComparison.OrdinalIgnoreCase);
     private void Toggle(string id) { if (!_expandedCards.Remove(id)) _expandedCards.Add(id); }
     private static string Dash(string? s) => string.IsNullOrWhiteSpace(s) ? "—" : s;
     private static string Join(params string?[] s) => Dash(string.Join(" ", s.Where(x => !string.IsNullOrWhiteSpace(x))));

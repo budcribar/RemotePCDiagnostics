@@ -48,6 +48,17 @@ public sealed class SystemCommandRunner(
     /// <summary>Returns the result, or null when the process couldn't start / timed out (details logged).</summary>
     public Task<ProcessResult?> RunAsync(string fileName, IReadOnlyList<string> arguments, CancellationToken ct) => RunAsync(fileName, arguments, null, ct);
 
+    /// <summary>
+    /// Runs an allowlisted admin system tool strictly through the Agent when this process isn't elevated, rather than falling back
+    /// to an un-elevated local launch when the Agent isn't connected.
+    /// </summary>
+    public Task<ProcessResult?> RunAdminToolAsync(string fileName, IReadOnlyList<string> arguments, CancellationToken ct)
+    {
+        if (!HasAdminRights && !IsScripted)
+            return Task.FromResult<ProcessResult?>(AgentFailed("The Agent isn't connected. " + ElevationService.AdminRepairHint));
+        return RunAsync(fileName, arguments, ct);
+    }
+
 
     /// <summary>Same, with a longer limit for slow work (cleanup, updates); null = <see cref="Timeout"/>.</summary>
     public async Task<ProcessResult?> RunAsync(string fileName, IReadOnlyList<string> arguments, TimeSpan? timeout, CancellationToken ct, Action<string>? outputLine = null)

@@ -6,6 +6,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="RemotePCDiagnostics.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="NuGet.Versioning" Version="8.0.0" />
     <!-- UserModePlugin builds a plugin's own container inside a user-mode process. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.15" />

@@ -106,6 +106,9 @@
     private (string Signature, Guid? RunId, DateTimeOffset Timestamp)? _lastRender;
     private DiagnosticResult? _lastDone;
 
+    protected override bool ShouldReactTo(DiagnosticResult r) =>
+        string.Equals(r.ModuleName, LibreHardwareMonitorModule.ModuleName, StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Latest finished result; while a read runs, keep showing the previous data (no flashing/loading state).</summary>
     private DiagnosticResult Shown()
     {

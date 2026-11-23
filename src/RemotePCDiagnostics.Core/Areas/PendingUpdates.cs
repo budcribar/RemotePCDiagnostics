@@ -34,12 +34,13 @@ public static class PendingUpdates
         lock (Gate) _read = null;
     }
 
-    /// <summary>The pending updates, or null when Windows couldn't be asked.</summary>
+    /// <summary>The pending updates, or null when Windows couldn't be asked. Coalesces concurrent in-flight reads
+    /// without caching completed results across refreshes, so out-of-process modules immediately see updates installed by RemediationService.</summary>
     public static Task<PendingUpdateList?> ReadAsync(SystemCommandRunner commands, CancellationToken ct)
     {
         lock (Gate)
         {
-            if (_read is { IsFaulted: false, IsCanceled: false } && DateTimeOffset.UtcNow - _readAt < CacheFor) return _read;
+            if (_read is { IsCompleted: false }) return _read;
             _readAt = DateTimeOffset.UtcNow;
             return _read = ReadOnceAsync(commands, ct);
         }

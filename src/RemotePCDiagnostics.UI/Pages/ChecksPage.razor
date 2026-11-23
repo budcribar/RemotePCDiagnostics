@@ -416,7 +416,9 @@
 
     private string SideText(IDiagnosticModule m, DiagnosticResult r, RowKind kind)
     {
-        if (kind is RowKind.Running) return Diagnostics.GetProgress(m.Name) is { HasProgress: true } cp ? $"{cp.Step}/{cp.Total}" : "";
+        if (kind is RowKind.Running)
+            return Diagnostics.GetProgress(m.Name) is { HasProgress: true } cp && cp.Total != 100 && !r.Message.Contains('%')
+                ? $"{cp.Step}/{cp.Total}" : "";
         if (kind is RowKind.NotRun)
             return m is IStressSuiteModule ? (Screen.Mode == StressSuiteMode.Extended ? "~5 min" : "~1 min") : "";
         return r.Timestamp.ToLocalTime().ToString("t");

@@ -174,11 +174,9 @@ public sealed class BiosFirmwareModule(IBiosUpdateService? bios = null, SystemCo
             BiosCheckStatus.UpToDate => (
                 AreaLevel.Ok,
                 DiagnosticStatus.Ok,
-                $"Up to date ({curVer})",
-                string.IsNullOrWhiteSpace(latest.LatestVersion)
-                    ? $"Matches latest {prov} catalog."
-                    : $"Matches latest {prov} catalog ({latest.LatestVersion}).",
-                $"BIOS up to date ({curVer})"),
+                "Up to date",
+                $"Matches latest {prov} catalog.",
+                "BIOS up to date"),
             BiosCheckStatus.UnsupportedHardware => (
                 AreaLevel.Neutral,
                 DiagnosticStatus.Ok,

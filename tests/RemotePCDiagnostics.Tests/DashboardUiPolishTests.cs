@@ -284,6 +284,119 @@ public class DashboardUiPolishTests : BunitContext
         Assert.Equal("false", cut.Find("[data-testid='osquery-card-update'] .card-summary-toggle").GetAttribute("aria-expanded"));
     }
 
+    [Fact]
+    public void AppCss_CardDetailsNoteAndRowDetailActions_AreFormattedCleanly()
+    {
+        var root = RepoRoot();
+        var css = File.ReadAllText(Path.Combine(root, "src", "RemotePCDiagnostics.UI", "wwwroot", "app.css"));
+
+        Assert.Contains(".card-details p.meta { max-width: none; }", css);
+        Assert.Contains(".card-details > p { margin: 0 0 8px; }", css);
+        Assert.Contains("a.btn-small {", css);
+        Assert.Contains(".row-detail-actions {", css);
+        Assert.Contains(".issue-group-actions {", css);
+        Assert.Contains("td.svc-actions { display: table-cell; white-space: nowrap; word-break: normal; width: 1%; }", css);
+        Assert.Contains(".svc-actions button { min-height: 28px; padding: 3px 9px; font-size: 12px; white-space: nowrap; word-break: normal; }", css);
+    }
+
+    [Fact]
+    public void AreaPage_ExpandedRowDetail_ReviewWithCopilotCopiesPromptBeforeOpening()
+    {
+        var store = new ResultStore();
+        var crashMod = new FakeModule(ModuleSlugs.Crashes, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.Crashes)));
+        RegisterDashboardServices(store, crashMod);
+        var report = new AreaReport(
+        [
+            new AreaCard("apps", "Most affected apps", AreaLevel.Neutral, "Host.exe", "3 problems",
+                ["App", "Crashes"], [
+                    new AreaRow(AreaLevel.Neutral, ["Host.exe", "2"],
+                        Detail: "Unhandled error: NotImplementedException",
+                        EventCopyText: "Event ID 1026: System.NotImplementedException",
+                        ReviewKeys: ["k1"])
+                ]),
+        ], "3 problems", DiagnosticStatus.Ok);
+        store.Set(new DiagnosticResult<AreaReport>(ModuleSlugs.Crashes, DiagnosticStatus.Ok, report.Summary, DateTimeOffset.Now, report));
+
+        var cut = Render<AreaPage>(p => p.Add(c => c.Slug, ModuleSlugs.Crashes));
+        cut.Find("[data-testid='osquery-card-apps'] .card-summary-toggle").Click();
+        cut.Find("tr.row-expandable").Click();
+
+        var actions = cut.Find("[data-testid='area-row-detail'] .row-detail-actions");
+        var copilot = actions.QuerySelector("button.btn-small[data-action='review-copilot-row']");
+        var review = actions.QuerySelector("button.btn-small[data-action='review-row']");
+        Assert.NotNull(copilot);
+        Assert.Equal("Review with Copilot", copilot!.TextContent.Trim());
+        Assert.NotNull(review);
+        Assert.Equal("Mark as reviewed", review!.TextContent.Trim());
+
+        copilot.Click();
+
+        var invocations = JSInterop.Invocations.ToList();
+        var copyIdx = invocations.FindIndex(i => i.Identifier == "navigator.clipboard.writeText");
+        var openIdx = invocations.FindIndex(i => i.Identifier == "window.open");
+        Assert.True(copyIdx >= 0, "Expected clipboard write invocation");
+        Assert.True(openIdx > copyIdx, "Expected Copilot window.open after clipboard copy");
+
+        var copiedPrompt = Assert.IsType<string>(invocations[copyIdx].Arguments[0]);
+        Assert.Contains("Help someone triage this Windows diagnostic finding.", copiedPrompt);
+        Assert.Contains("Diagnostic group: Most affected apps", copiedPrompt);
+        Assert.Contains("App: Host.exe", copiedPrompt);
+        Assert.Contains("Unhandled error: NotImplementedException", copiedPrompt);
+        Assert.Contains("Event ID 1026: System.NotImplementedException", copiedPrompt);
+        Assert.Equal("https://copilot.microsoft.com/", invocations[openIdx].Arguments[0]);
+    }
+
+    [Fact]
+    public async Task RefreshQuietlyAsync_UpdatesResultWithoutEmittingRunningState()
+    {
+        var store = new ResultStore();
+        var tcs = new TaskCompletionSource<DiagnosticResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mod = new FakeModule(ModuleSlugs.Crashes, _ => tcs.Task);
+        var diagnostics = new DiagnosticsService(store, [mod]);
+
+        var initial = new DiagnosticResult(ModuleSlugs.Crashes, DiagnosticStatus.Warning, "2 crashes", DateTimeOffset.Now);
+        store.Set(initial);
+
+        var observedStatuses = new List<DiagnosticStatus>();
+        store.Changed += (_, r) => { if (r.ModuleName == ModuleSlugs.Crashes) observedStatuses.Add(r.Status); };
+
+        var refreshTask = diagnostics.RefreshQuietlyAsync(ModuleSlugs.Crashes);
+        Assert.Equal(DiagnosticStatus.Warning, store.Get(ModuleSlugs.Crashes).Status);
+        Assert.Empty(observedStatuses);
+
+        tcs.SetResult(new DiagnosticResult(ModuleSlugs.Crashes, DiagnosticStatus.Ok, "1 crash", DateTimeOffset.Now));
+        await refreshTask;
+
+        Assert.Equal([DiagnosticStatus.Ok], observedStatuses);
+        Assert.Equal("1 crash", store.Get(ModuleSlugs.Crashes).Message);
+    }
+
+    [Fact]
+    public void AreaPage_KeepsCardsMountedWhileRunning_AndIgnoresUnrelatedStoreUpdates()
+    {
+        var store = new ResultStore();
+        var crashMod = new FakeModule(ModuleSlugs.Crashes, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.Crashes)));
+        var otherMod = new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth)));
+        RegisterDashboardServices(store, crashMod, otherMod);
+        var report = new AreaReport(
+        [
+            new AreaCard("crashes", "Apps that closed unexpectedly", AreaLevel.Warning, "1 crash", "Latest: Preview.exe",
+                ["App"], [new AreaRow(AreaLevel.Warning, ["Preview.exe"])]),
+        ], "1 crash", DiagnosticStatus.Warning);
+        store.Set(new DiagnosticResult<AreaReport>(ModuleSlugs.Crashes, DiagnosticStatus.Warning, report.Summary, DateTimeOffset.Now, report));
+
+        var cut = Render<AreaPage>(p => p.Add(c => c.Slug, ModuleSlugs.Crashes));
+        var rendersBefore = cut.RenderCount;
+
+        // Updating an unrelated module must not re-render this AreaPage.
+        store.Set(new DiagnosticResult(ModuleSlugs.DriveHealth, DiagnosticStatus.Ok, "Healthy", DateTimeOffset.Now));
+        Assert.Equal(rendersBefore, cut.RenderCount);
+
+        // Even while the module itself is Running, existing cards stay mounted instead of disappearing.
+        store.Set(new DiagnosticResult(ModuleSlugs.Crashes, DiagnosticStatus.Running, "Checking…", DateTimeOffset.Now));
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-testid='osquery-card-crashes']")));
+    }
+
     private static string RepoRoot()
     {
         for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)

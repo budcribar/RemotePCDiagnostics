@@ -16,9 +16,11 @@ else
 {
     var r = Store.Get(m.Name);
     var rep = r.Report() as AreaReport; // a per-device module (drive health) combines its devices into one report
+    if (rep is not null) _lastReport = (m.Name, rep);
+    var cachedRep = string.Equals(_lastReport.Module, m.Name, StringComparison.OrdinalIgnoreCase) ? _lastReport.Report : null;
     // Large files & folders before its first scan: how full the drive is, read live. It is not a result, so it stays out of
     // area-report-data and everything else that describes a finished run.
-    var shown = rep ?? (m.Name == ModuleSlugs.DiskSpace ? CapacityPreview(m) : null);
+    var shown = rep ?? cachedRep ?? (m.Name == ModuleSlugs.DiskSpace ? CapacityPreview(m) : null);
     var busy = r.Status == DiagnosticStatus.Running;
     var svcModule = m.Feature<IServiceRows>(); // also from a stand-in for a module that runs out of process
     var svcActions = svcModule is null ? null : App.ServiceActions;
@@ -39,7 +41,8 @@ else
     }
     @if (!busy && rep?.Notice is { } notice) { <p class="meta" data-testid="area-notice">@notice</p> }
     @* Always mounted (even while the check re-runs after a fix), so the fix's result message stays visible near the top. *@
-    @if (remActions is not null) { <RemediationActions @ref="_remUi" Actions="remActions" ShowRecent="hasRemActions" Origin="@m.Name" OnCompleted="() => Diagnostics.RunAsync(m.Name)" /> }
+    var remBannerCardId = _remUi?.ActiveCardId is { } activeRemCard && _expandedCards.Contains(activeRemCard) ? activeRemCard : null;
+    @if (remActions is not null) { <RemediationActions @ref="_remUi" Actions="remActions" ShowRecent="hasRemActions" HideBanner="@(remBannerCardId is not null)" Origin="@m.Name" OnStateChanged="StateHasChanged" OnCompleted="() => Diagnostics.RefreshQuietlyAsync(m.Name)" /> }
 
     @if (!busy && rep is not null)
     {
@@ -72,7 +75,7 @@ else
                 var cardId = c.Id;
                 var isExpanded = _expandedCards.Contains(cardId);
                 @* EmptyText describes an empty details panel; only show it on the card when there really is nothing in it. *@
-                <SummaryCard Id="@cardId" Title="@c.Title" Expanded="@isExpanded" DetailsTestId="@($"area-drawer-{cardId}")" OnOpen="ToggleCard" ErrorText="@c.ErrorText" EmptyText="@(c.Rows.Count == 0 && string.IsNullOrEmpty(c.Headline) ? c.EmptyText : null)" Dot="@Dot(c.Level)">
+                <SummaryCard @key="cardId" Id="@cardId" Title="@c.Title" Expanded="@isExpanded" DetailsTestId="@($"area-drawer-{cardId}")" OnOpen="ToggleCard" ErrorText="@c.ErrorText" EmptyText="@(c.Rows.Count == 0 && string.IsNullOrEmpty(c.Headline) ? c.EmptyText : null)" Dot="@Dot(c.Level)">
                     <ChildContent>
                         <div class="headline" data-field="@c.Id" data-outcome="@c.Level.ToString().ToLowerInvariant()"
                              data-event-count="@c.EventCount" data-window-days="@c.WindowDays"
@@ -93,7 +96,7 @@ else
                                 @foreach (var act in c.Actions)
                                 {
                                     var a = act;
-                                    <button class="btn-small" data-testid="remediation-card-@c.Id-@a.Kind" data-action="remediate" data-card-id="@c.Id" data-action-kind="@a.Kind" data-action-target="@a.Target" @onclick="() => _remUi?.Ask(a)">@a.ButtonText</button>
+                                    <button class="btn-small" data-testid="remediation-card-@c.Id-@a.Kind" data-action="remediate" data-card-id="@c.Id" data-action-kind="@a.Kind" data-action-target="@a.Target" @onclick="() => _remUi?.Ask(a, cardId)">@a.ButtonText</button>
                                 }
                             </div>
                         }
@@ -109,18 +112,50 @@ else
                             var hasRowRemActions = remActions is not null && open.Rows.Any(rw => rw.Actions is { Count: > 0 });
                             var isKeyValue = open.Columns is ["Detail", "Value"] && svcActions is null && !hasRowRemActions;
                         }
-                        @if (hasReviewed)
+                        @if (remActions is not null && string.Equals(remBannerCardId, cardId, StringComparison.OrdinalIgnoreCase))
                         {
-                            <button type="button" class="btn-small" data-testid="area-show-reviewed" data-state="@(showingReviewed ? "reviewed" : "open")" @onclick="() => ToggleReviewed(cardId)">@(showingReviewed ? "Show needs review" : "Show reviewed")</button>
+                            var remRunning = remActions.Running;
+                            var remMine = remRunning is not null && remRunning.Origin == m.Name;
+                            var remLast = remActions.LastRun is { } rl && rl.Origin == m.Name ? rl : null;
+                            @if (remRunning is not null && remMine)
+                            {
+                                <div class="notice" data-testid="remediation-running" data-state="working"
+                                     data-action-kind="@remRunning.Action.Kind" data-action-target="@remRunning.Action.Target">
+                                    <strong>@remRunning.Title</strong>
+                                    <span class="meta" data-testid="remediation-working">@(remRunning.Progress ?? "Working… please wait.") You can leave this page; it keeps running.</span>
+                                    <button class="btn-small" data-testid="remediation-stop" @onclick="() => remActions.CancelRunning()">Cancel</button>
+                                </div>
+                            }
+                            else if (remRunning is not null && _remUi?.IsBlocked == true)
+                            {
+                                <div class="notice" data-testid="remediation-busy">@remRunning.Title is still running. Wait for it to finish before starting another fix.</div>
+                            }
+                            @if (remLast is not null && !remMine)
+                            {
+                                <div class="notice @(remLast.Success ? "svc-result-ok" : "notice-error")" data-testid="remediation-result"
+                                     data-outcome="@(remLast.Success ? "succeeded" : "failed")" data-action-kind="@remLast.Action.Kind" data-action-target="@remLast.Action.Target"
+                                     data-restart-needed="@(remLast.RestartNeeded ? "true" : "false")"
+                                     data-result-seq="@remLast.Seq">@remLast.Message</div>
+                            }
+                        }
+                        @if (hasReviewed || groupKeys.Count > 0)
+                        {
+                            <div class="issue-group-actions" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">
+                                @if (hasReviewed)
+                                {
+                                    <button type="button" class="btn-small" data-testid="area-show-reviewed" data-state="@(showingReviewed ? "reviewed" : "open")" @onclick="() => ToggleReviewed(cardId)">@(showingReviewed ? "Show needs review" : "Show reviewed")</button>
+                                }
+                                @if (groupKeys.Count > 0)
+                                {
+                                    <button type="button" class="btn-small" disabled="@_savingReview" data-action="review-group" data-card-id="@open.Id" data-state="@(showingReviewed ? "reviewed" : "open")"
+                                        @onclick="() => SetReview(m.Name, groupKeys, !showingReviewed)">@(showingReviewed ? "Undo group review" : "Mark group as reviewed")</button>
+                                    <button type="button" class="btn-small" @onclick="() => CopyGroupForCopilot(open, issueRows)">Review group with Copilot</button>
+                                }
+                            </div>
                         }
                         @if (_reviewError is not null) { <p role="status">@_reviewError</p> }
                         @if (groupKeys.Count > 0)
                         {
-                            <div class="svc-actions issue-group-actions" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">
-                                <button type="button" class="btn-small" disabled="@_savingReview" data-action="review-group" data-card-id="@open.Id" data-state="@(showingReviewed ? "reviewed" : "open")"
-                                    @onclick="() => SetReview(m.Name, groupKeys, !showingReviewed)">@(showingReviewed ? "Undo group review" : "Mark group as reviewed")</button>
-                                <button type="button" class="btn-small" @onclick="() => CopyGroupForCopilot(open, issueRows)">Review group with Copilot</button>
-                            </div>
                             @if (m.Feature<IHangEvidenceSource>() is { } crashModule && open.Id == crashModule.HangCardId)
                             {
                                 var selected = issueRows.Where(_selectedHangGroups.Contains).ToList();
@@ -145,13 +180,13 @@ else
                         }
                         @if (open.Note is { } note) { <p class="meta">@note</p> }
                         @if (open.Id == "memory" && memSvc is not null) { <p><button class="linklike" data-testid="mem-suggest-link" @onclick="ShowSuggestions">See ways to use less memory</button></p> }
-                        @if (remActions is not null && open.Actions is { Count: > 0 })
+                        @if (remActions is not null && !ReferenceEquals(open, c) && open.Actions is { Count: > 0 })
                         {
                             <div class="svc-actions" style="margin-bottom:0.6rem" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">
                                 @foreach (var act in open.Actions)
                                 {
                                     var a = act;
-                                    <button class="btn-small" data-testid="remediation-drawer-@open.Id-@a.Kind" data-action="remediate" data-card-id="@open.Id" data-action-kind="@a.Kind" data-action-target="@a.Target" @onclick="() => _remUi?.Ask(a)">@a.ButtonText</button>
+                                    <button class="btn-small" data-testid="remediation-drawer-@open.Id-@a.Kind" data-action="remediate" data-card-id="@open.Id" data-action-kind="@a.Kind" data-action-target="@a.Target" @onclick="() => _remUi?.Ask(a, cardId)">@a.ButtonText</button>
                                 }
                             </div>
                         }
@@ -229,7 +264,7 @@ else
                                                         @foreach (var act in row.Actions)
                                                         {
                                                             var a = act;
-                                                            <button data-testid="remediation-row-@a.Kind" data-action="remediate" data-card-id="@open.Id" data-row-key="@row.Key" data-action-kind="@a.Kind" data-action-target="@a.Target" @onclick="() => _remUi?.Ask(a)">@a.ButtonText</button>
+                                                            <button data-testid="remediation-row-@a.Kind" data-action="remediate" data-card-id="@open.Id" data-row-key="@row.Key" data-action-kind="@a.Kind" data-action-target="@a.Target" @onclick="() => _remUi?.Ask(a, cardId)">@a.ButtonText</button>
                                                         }
                                                     }
                                                 </td>
@@ -237,67 +272,76 @@ else
                                         </tr>
                                         @if (expanded)
                                         {
+                                            var hasHangActions = m.Feature<IHangEvidenceSource>() is not null && row.HangOccurrences is { Count: > 0 };
+                                            var hasRowDetailActions = hasHangActions
+                                                || row.ReviewKeys is { Count: > 0 }
+                                                || row.EventCopyText is not null
+                                                || row.GetHelpUri is not null
+                                                || row.DumpPath is not null
+                                                || row.FilePath is not null;
                                             <tr class="row-detail" data-testid="area-row-detail"><td colspan="@(open.Columns.Count + (svcActions is not null || hasRowRemActions ? 1 : 0))">
                                                 @if (row.Detail is { } detail)
                                                 {
                                                     <div class="row-detail-text">@detail</div>
                                                 }
-                                                @if (m.Feature<IHangEvidenceSource>() is { } crashes && row.HangOccurrences is { Count: > 0 } occurrences)
+                                                @if (hasRowDetailActions)
                                                 {
-                                                    <label><input type="checkbox" checked="@_selectedHangGroups.Contains(row)"
-                                                        @onchange="e => SelectHangGroup(row, e.Value is true)" /> Include in shared timeline</label>
-                                                    <button type="button" class="btn-small" disabled="@_findingHangEvidence"
-                                                        @onclick="() => FindHangEvidence(crashes, row, occurrences)">Find related evidence</button>
-                                                    <button type="button" class="btn-small" @onclick="() => CopyGroupForCopilot(open, [row])">Review freeze group with Copilot</button>
-                                                    @if (ReferenceEquals(_hangEvidenceRow, row))
-                                                    {
-                                                        <div class="row-detail-text" role="status">@(_findingHangEvidence ? "Checking Windows logs…" : _hangEvidence)</div>
-                                                    }
-                                                }
-                                                @if (row.ReviewKeys is { Count: > 0 })
-                                                {
-                                                    <a href="https://copilot.microsoft.com/" target="_blank" rel="noopener noreferrer">Review with Copilot</a>
-                                                }
-                                                @if (row.ReviewKeys is { Count: > 0 } keys)
-                                                {
-                                                    <button type="button" class="btn-small" disabled="@_savingReview" data-action="review-row" data-card-id="@open.Id" data-review-id="@AreaReportExport.ReviewId(row)" data-state="@(showingReviewed ? "reviewed" : "open")"
-                                                        @onclick="() => SetReview(m.Name, keys, !showingReviewed)">@(showingReviewed ? "Undo review" : "Mark as reviewed")</button>
-                                                }
-                                                @if (row.EventCopyText is { } eventText)
-                                                {
-                                                    <button type="button" class="btn-small" @onclick="() => CopyEvent(eventText)">Copy event details</button>
-                                                    @if (_copyStatus is not null)
-                                                    {
-                                                        <span role="status">@_copyStatus</span>
-                                                    }
-                                                }
-                                                @if (row.GetHelpUri is { } helpUri)
-                                                {
-                                                    <button type="button" class="btn-small" @onclick="() => OpenGetHelp(helpUri)">Open in Get Help</button>
-                                                    @if (_getHelpError is not null)
-                                                    {
-                                                        <p role="status">@_getHelpError</p>
-                                                    }
-                                                }
-                                                @if (row.DumpPath is { } dumpPath)
-                                                {
-                                                    <div class="svc-actions" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">
-                                                        <button type="button" class="btn-small" disabled="@_analyzingDump" @onclick="() => AnalyzeDump(dumpPath)">Analyze dump</button>
+                                                    <div class="row-detail-actions" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">
+                                                        @if (m.Feature<IHangEvidenceSource>() is { } crashes && row.HangOccurrences is { Count: > 0 } occurrences)
+                                                        {
+                                                            <label class="row-detail-check"><input type="checkbox" checked="@_selectedHangGroups.Contains(row)"
+                                                                @onchange="e => SelectHangGroup(row, e.Value is true)" /> Include in shared timeline</label>
+                                                            <button type="button" class="btn-small" disabled="@_findingHangEvidence"
+                                                                @onclick="() => FindHangEvidence(crashes, row, occurrences)">Find related evidence</button>
+                                                            <button type="button" class="btn-small" @onclick="() => CopyGroupForCopilot(open, [row])">Review freeze group with Copilot</button>
+                                                        }
+                                                        @if (row.ReviewKeys is { Count: > 0 } keys)
+                                                        {
+                                                            <button type="button" class="btn-small" data-action="review-copilot-row" @onclick="() => ReviewRowWithCopilot(open, rowRef)">Review with Copilot</button>
+                                                            <button type="button" class="btn-small" disabled="@_savingReview" data-action="review-row" data-card-id="@open.Id" data-review-id="@AreaReportExport.ReviewId(row)" data-state="@(showingReviewed ? "reviewed" : "open")"
+                                                                @onclick="() => SetReview(m.Name, keys, !showingReviewed)">@(showingReviewed ? "Undo review" : "Mark as reviewed")</button>
+                                                            @if (ReferenceEquals(_copilotRow, row) && _copilotRowStatus is not null)
+                                                            {
+                                                                <span class="meta" role="status">@_copilotRowStatus</span>
+                                                            }
+                                                        }
+                                                        @if (row.EventCopyText is { } eventText)
+                                                        {
+                                                            <button type="button" class="btn-small" @onclick="() => CopyEvent(eventText)">Copy event details</button>
+                                                            @if (_copyStatus is not null)
+                                                            {
+                                                                <span class="meta" role="status">@_copyStatus</span>
+                                                            }
+                                                        }
+                                                        @if (row.GetHelpUri is { } helpUri)
+                                                        {
+                                                            <button type="button" class="btn-small" @onclick="() => OpenGetHelp(helpUri)">Open in Get Help</button>
+                                                        }
+                                                        @if (row.DumpPath is { } dumpPath)
+                                                        {
+                                                            <button type="button" class="btn-small" disabled="@_analyzingDump" @onclick="() => AnalyzeDump(dumpPath)">Analyze dump</button>
+                                                        }
+                                                        @if (row.FilePath is { } filePath)
+                                                        {
+                                                            <button type="button" class="btn-small" data-testid="open-file-manager" @onclick="() => OpenFileManager(filePath, row)">Open in file manager</button>
+                                                        }
                                                     </div>
-                                                    @if (_analyzedDump == dumpPath)
-                                                    {
-                                                        <pre style="white-space:pre-wrap;overflow-wrap:anywhere" role="status">@(_analyzingDump ? "Analyzing dump…" : _dumpAnalysis)</pre>
-                                                    }
                                                 }
-                                                @if (row.FilePath is { } filePath)
+                                                @if (hasHangActions && ReferenceEquals(_hangEvidenceRow, row))
                                                 {
-                                                    <div class="svc-actions" style="margin-top:0.5rem" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">
-                                                        <button type="button" class="btn-small" data-testid="open-file-manager" @onclick="() => OpenFileManager(filePath, row)">Open in file manager</button>
-                                                    </div>
-                                                    @if (_fileManagerError is not null && ReferenceEquals(_fileManagerErrorRow, row))
-                                                    {
-                                                        <p role="status" class="error-text">@_fileManagerError</p>
-                                                    }
+                                                    <div class="row-detail-text" role="status">@(_findingHangEvidence ? "Checking Windows logs…" : _hangEvidence)</div>
+                                                }
+                                                @if (row.GetHelpUri is not null && _getHelpError is not null)
+                                                {
+                                                    <p role="status">@_getHelpError</p>
+                                                }
+                                                @if (row.DumpPath is { } analyzedDumpPath && _analyzedDump == analyzedDumpPath)
+                                                {
+                                                    <pre style="white-space:pre-wrap;overflow-wrap:anywhere" role="status">@(_analyzingDump ? "Analyzing dump…" : _dumpAnalysis)</pre>
+                                                }
+                                                @if (row.FilePath is not null && _fileManagerError is not null && ReferenceEquals(_fileManagerErrorRow, row))
+                                                {
+                                                    <p role="status" class="error-text">@_fileManagerError</p>
                                                 }
                                             </td></tr>
                                         }
@@ -319,6 +363,11 @@ else
     [Parameter] public string Slug { get; set; } = "";
     private readonly HashSet<string> _expandedCards = new(StringComparer.OrdinalIgnoreCase);
     private string? _lastSlug;
+    private (string? Module, AreaReport? Report) _lastReport;
+
+    protected override bool ShouldReactTo(DiagnosticResult r) =>
+        string.Equals(r.ModuleName, Slug, StringComparison.OrdinalIgnoreCase)
+        || _lastReport.Report?.Cards.Any(c => c.RunCheck is { } link && string.Equals(link.CheckId, r.ModuleName, StringComparison.OrdinalIgnoreCase)) == true;
 
     private (string Root, DateTimeOffset ReadAt, AreaReport? Report) _capacityPreview;
     private static readonly TimeSpan CapacityPreviewFor = TimeSpan.FromSeconds(30);
@@ -365,7 +414,7 @@ else
             EventReviews.Set(keys, reviewed);
             _expanded = null;
             _expandedKey = null;
-            await Diagnostics.RunAsync(module);
+            await Diagnostics.RefreshQuietlyAsync(module);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -449,16 +498,46 @@ else
         }
     }
 
+    private AreaRow? _copilotRow;
+    private string? _copilotRowStatus;
+
+    private async Task ReviewRowWithCopilot(AreaCard card, AreaRow row)
+    {
+        var prompt = BuildCopilotPrompt(card, [row]);
+        _copilotRow = row;
+        try
+        {
+            await ClipboardJs.InvokeVoidAsync("navigator.clipboard.writeText", prompt);
+            _copilotRowStatus = "Details and prompt copied to clipboard.";
+        }
+        catch (JSException)
+        {
+            _copilotRowStatus = "Couldn't copy details to clipboard.";
+        }
+        try
+        {
+            await ClipboardJs.InvokeVoidAsync("window.open", "https://copilot.microsoft.com/", "_blank", "noopener,noreferrer");
+        }
+        catch (JSException) { }
+    }
+
     private string BuildCopilotPrompt(AreaCard card, IReadOnlyList<AreaRow> rows)
     {
         var findings = rows.Select(row =>
         {
             var fields = string.Join("\n", card.Columns.Zip(row.Values, (label, value) => $"{label}: {value}"));
+            var detail = row.Detail;
+            var eventText = row.EventCopyText;
+            var includeDetail = !string.IsNullOrWhiteSpace(detail)
+                && (string.IsNullOrWhiteSpace(eventText) || !eventText.Contains(detail, StringComparison.Ordinal));
             var evidence = ReferenceEquals(_hangEvidenceRow, row) ? _hangEvidence : null;
-            return string.Join("\n", new[] { fields, row.EventCopyText ?? row.Detail, evidence }.Where(text => !string.IsNullOrWhiteSpace(text)));
+            return string.Join("\n", new[] { fields, includeDetail ? detail : null, eventText, evidence }.Where(text => !string.IsNullOrWhiteSpace(text)));
         });
+        var intro = rows.Count == 1
+            ? "Help someone triage this Windows diagnostic finding."
+            : "Help someone triage this group of Windows diagnostic findings.";
         return $$"""
-            Help someone triage this group of Windows diagnostic findings.
+            {{intro}}
             - Start with the issues that warrant attention and explain why. Identify related or repeated events where the evidence supports a connection.
             - Cite the event IDs, error codes, app names, or timestamps that support your conclusions. Separate confirmed observations from suspected causes.
             - Give prioritized, read-only checks first. For each check, explain what result would confirm or rule out a suspected cause. Flag any suggested repair that requires administrator access, a restart, or a configuration change.

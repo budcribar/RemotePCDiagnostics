@@ -544,7 +544,7 @@ public sealed class RemediationService(
         if (armed is null) return new(false, "Couldn't read which devices can wake this PC.");
         if (DeviceWake.FindArmed(armed, action.Target) is not { } device)
             return new(true, $"{Display(action)} already can't wake the PC.");
-        return await RunSimpleAsync(DeviceWake.PowerCfg, ["/devicedisablewake", device],
+        return await RunAdminSimpleAsync(DeviceWake.PowerCfg, ["/devicedisablewake", device],
             $"{Display(action)} no longer wakes the PC from sleep.",
             $"Couldn't stop {Display(action)} from waking the PC (administrator rights required).", ct).ConfigureAwait(false);
     }
@@ -667,7 +667,7 @@ public sealed class RemediationService(
         if (pr is not { ExitCode: 0 })
         {
             await RebootResume.CancelPendingRebootAsync(ct).ConfigureAwait(false);
-            return new(false, "Couldn't schedule a restart.");
+            return new(false, Failure(pr, "Couldn't schedule a restart."));
         }
 
         var baselineNote = state.PreUsedMemoryBytes > 0
@@ -682,7 +682,7 @@ public sealed class RemediationService(
         await RebootResume.CancelPendingRebootAsync(ct).ConfigureAwait(false);
         return pr is { ExitCode: 0 }
             ? new(true, "Cancelled the scheduled restart and cleared the post-reboot auto-resume entry.")
-            : new(false, "No scheduled restart was active to cancel.");
+            : new(false, SystemCommandRunner.AgentFailure(pr) ?? "No scheduled restart was active to cancel.");
     }
 
     private static string Display(AreaAction a) =>
@@ -720,6 +720,12 @@ public sealed class RemediationService(
         return pr is { ExitCode: 0 } ? new(true, okMsg) : new(false, Failure(pr, failMsg));
     }
 
+    private async Task<RemediationResult> RunAdminSimpleAsync(string exe, IReadOnlyList<string> args, string okMsg, string failMsg, CancellationToken ct)
+    {
+        var pr = await commands.RunAdminToolAsync(exe, args, ct).ConfigureAwait(false);
+        return pr is { ExitCode: 0 } ? new(true, okMsg) : new(false, Failure(pr, failMsg));
+    }
+
     /// <summary>
     /// The failure text: what the Agent said when it couldn't run the command (<see cref="SystemCommandRunner.AgentFailure"/>), else
     /// <paramref name="failMsg"/>, plus <see cref="ElevationService.AdminRepairHint"/> when the Agent wasn't there to run it.
@@ -730,8 +736,8 @@ public sealed class RemediationService(
 
     private async Task<RemediationResult> RunPnpUtilAsync(IReadOnlyList<string> args, string okMsg, string failMsg, CancellationToken ct)
     {
-        var pr = await commands.RunAsync(SystemCommandRunner.SystemTool("pnputil.exe"), args, ct).ConfigureAwait(false);
-        return pr is { ExitCode: 0 } ? new(true, okMsg) : new(false, failMsg);
+        var pr = await commands.RunAdminToolAsync(SystemCommandRunner.SystemTool("pnputil.exe"), args, ct).ConfigureAwait(false);
+        return pr is { ExitCode: 0 } ? new(true, okMsg) : new(false, Failure(pr, failMsg));
     }
 
     /// <summary>Time limits for fixes that legitimately take minutes (the default limit is 60 s).</summary>
@@ -781,7 +787,7 @@ public sealed class RemediationService(
             return new(true, "Flushed DNS cache and renewed IP configuration.");
         if (flush is { ExitCode: 0 })
             return new(true, "Flushed DNS cache (IP lease renewal wasn't needed or uses static IP).");
-        return new(false, "Couldn't flush DNS cache or renew IP configuration.");
+        return new(false, Failure(flush, "Couldn't flush DNS cache or renew IP configuration."));
     }
 
     private async Task<RemediationResult> RunWindowsUpdateAsync(bool driversOnly, CancellationToken ct)
