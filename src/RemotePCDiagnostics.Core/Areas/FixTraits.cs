@@ -7,12 +7,12 @@ public static class FixTraits
     public static bool Slow(RemediationKind k) => k is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates
         or RemediationKind.InstallUpdate or RemediationKind.AnalyzeComponentStore or RemediationKind.CleanUpComponentStore
         or RemediationKind.RepairComponentStore or RemediationKind.RepairComponentStoreFromImage or RemediationKind.RepairSystemFiles
-        or RemediationKind.OptimizeSsd;
+        or RemediationKind.OptimizeSsd or RemediationKind.InstallBiosUpdate;
 
     /// <summary>Windows may ask for a restart to finish it.</summary>
     public static bool MayNeedRestart(RemediationKind k) => k is RemediationKind.CheckAndInstallDriverUpdates or RemediationKind.CheckAndInstallWindowsUpdates
         or RemediationKind.InstallUpdate or RemediationKind.CleanUpComponentStore or RemediationKind.RepairComponentStore
-        or RemediationKind.RepairComponentStoreFromImage or RemediationKind.RepairSystemFiles;
+        or RemediationKind.RepairComponentStoreFromImage or RemediationKind.RepairSystemFiles or RemediationKind.InstallBiosUpdate;
 
     public static string Risk(RemediationKind k) => Workflow.FixCatalog.RiskOf(k).ToString().ToLowerInvariant();
 

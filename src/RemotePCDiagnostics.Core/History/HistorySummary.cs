@@ -415,6 +415,7 @@ public static class HistorySummary
         RemediationKind.CleanTempFiles => DiskCleanupCategory,
         RemediationKind.OptimizeSsd => "SSD optimization",
         RemediationKind.DisableDeviceWake => "Device wake",
+        RemediationKind.InstallBiosUpdate => "BIOS update",
         _ => "Automated fix",
     };
 
