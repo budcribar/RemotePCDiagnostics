@@ -203,7 +203,7 @@ public class WorkflowTests
         Assert.True(s.Fixes[^1].Slow);
         Assert.Equal(3, s.Findings.Count);
         Assert.NotNull(s.ReviewedUtc);
-        Assert.All(s.Findings, finding => Assert.Contains("(scan ", finding));
+        Assert.All(s.Findings, finding => Assert.DoesNotContain("(scan ", finding));
     }
 
     [Fact]

@@ -32,7 +32,7 @@ public interface IElevationContext
 {
     bool IsProcessElevated { get; }
     bool IsAdminHelperConnected { get; }
-    bool HasAdminCapabilities => IsProcessElevated || IsAdminHelperConnected;
+    bool HasAdminCapabilities => IsAdminHelperConnected;
 
     event Action? Changed;
 
@@ -47,6 +47,8 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     public const string AdminHelperExeName = "RemotePCDiagnostics.Agent.exe";
     public const string AdminPipeEnvVar = "RPD_ADMIN_PIPE";
     public const string AdminPipeArgPrefix = "--admin-pipe=";
+    /// <summary>Well-known local pipe hosted by the persistent Agent service so a user-mode Host launched from the Desktop connects with no UAC prompt.</summary>
+    public const string ServiceAdminPipeName = "rpd-agent-service";
     private const int ErrorCancelled = 1223; // ERROR_CANCELLED when user declines UAC prompt
 
     private readonly ISessionContext _session;
@@ -84,9 +86,9 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         {
             // Keep trying for the life of the app. A single connect used to stick: once that pipe died, the client
             // stayed disposed and the activity probe never reached the agent until the service was restarted.
-            _ = KeepInitialPipeAsync(initialPipe);
+            _ = KeepInitialPipeAsync(initialPipe, quiet: false);
         }
-        else if (_session.Admin && !IsProcessElevated)
+        else if (_session.Admin)
         {
             _ = Task.Run(async () =>
             {
@@ -101,6 +103,11 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
                 }
             });
         }
+        else if (_customConnector is null && OperatingSystem.IsWindows())
+        {
+            // Launched locally (e.g. Desktop icon): connect silently to the persistent Agent service pipe if it is running (zero UAC).
+            _ = KeepInitialPipeAsync(ServiceAdminPipeName, quiet: true);
+        }
     }
 
     public bool IsProcessElevated => _isProcessElevated();
@@ -114,7 +121,16 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         }
     }
 
-    public bool HasAdminCapabilities => IsProcessElevated || IsAdminHelperConnected;
+    /// <summary>
+    /// Connected to an Agent that does admin work for this app. A standard Windows user on the Agent service pipe only gets
+    /// reads (sensors, state), so that is reduced functionality, the same as no Agent.
+    /// </summary>
+    public bool HasAdminCapabilities => IsAdminHelperConnected && !IsRestrictedClient;
+
+    private bool IsRestrictedClient
+    {
+        get { lock (_stateLock) return _client?.Restricted == true; }
+    }
 
     bool IElevatedCommandBridge.IsConnected => IsAdminHelperConnected;
 
@@ -149,16 +165,27 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     public async Task<ElevationResult> EnableAdminModeAsync(CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (IsProcessElevated)
-            return new ElevationResult(true, false, "Already running with Administrator privileges.");
-        if (IsAdminHelperConnected)
+        if (HasAdminCapabilities)
             return new ElevationResult(true, false, "Admin Repair Mode is already active.");
 
         await _enableGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (IsAdminHelperConnected)
+            if (HasAdminCapabilities)
                 return new ElevationResult(true, false, "Admin Repair Mode is already active.");
+
+            // A standard user's service pipe only reads; fall through to the helper, whose UAC prompt asks for an administrator.
+            if (_customConnector is null && OperatingSystem.IsWindows() && !IsAdminHelperConnected)
+            {
+                try
+                {
+                    if (await TryConnectPipeAsync(ServiceAdminPipeName, TimeSpan.FromMilliseconds(500), ct).ConfigureAwait(false)
+                        && HasAdminCapabilities)
+                        return new ElevationResult(true, false, "Connected to the Remote PC Diagnostics Agent.");
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch { }
+            }
 
             var pipeName = $"rpd-admin-{Guid.NewGuid():N}";
             var helperExe = Path.Combine(_baseDirectory, AdminHelperExeName);
@@ -458,7 +485,8 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         if (string.IsNullOrWhiteSpace(pipeName)) return false;
         try
         {
-            var client = await AdminPipeClient.ConnectAsync(pipeName, timeout, ct, _log).ConfigureAwait(false);
+            var client = await AdminPipeClient.ConnectAsync(pipeName, timeout, ct, _log,
+                requireSystemOwnedPipe: string.Equals(pipeName, ServiceAdminPipeName, StringComparison.OrdinalIgnoreCase)).ConfigureAwait(false);
             AdminPipeClient? previous;
             lock (_stateLock)
             {
@@ -467,7 +495,7 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
             }
             previous?.Dispose();
             client.Disconnected += OnHelperDisconnected;
-            _log?.Info($"[elevation] Connected to initial admin pipe '{pipeName}' (helperPid={client.HelperPid}, elevated={client.HelperIsElevated}).");
+            _log?.Info($"[elevation] Connected to initial admin pipe '{pipeName}' (helperPid={client.HelperPid}, elevated={client.HelperIsElevated}, restricted={client.Restricted}).");
             NotifyChanged();
             return true;
         }
@@ -516,8 +544,9 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     /// <summary>
     /// Connects to the service pipe, and connects again whenever that client is gone. A dead client is not reused.
     /// </summary>
-    private async Task KeepInitialPipeAsync(string pipeName)
+    private async Task KeepInitialPipeAsync(string pipeName, bool quiet)
     {
+        var connectTimeout = quiet ? TimeSpan.FromMilliseconds(500) : TimeSpan.FromSeconds(3);
         while (Volatile.Read(ref _disposed) == 0)
         {
             if (!IsAdminHelperConnected)
@@ -528,13 +557,17 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
                     entered = await _enableGate.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
                     if (entered && !IsAdminHelperConnected && Volatile.Read(ref _disposed) == 0)
                     {
-                        _log?.Info($"[elevation] Connecting to admin pipe '{pipeName}'.");
-                        await TryConnectPipeAsync(pipeName, TimeSpan.FromSeconds(3), CancellationToken.None).ConfigureAwait(false);
+                        if (!quiet)
+                            _log?.Info($"[elevation] Connecting to admin pipe '{pipeName}'.");
+                        var connected = await TryConnectPipeAsync(pipeName, connectTimeout, CancellationToken.None).ConfigureAwait(false);
+                        if (connected && quiet)
+                            _log?.Info($"[elevation] Connected to Agent service pipe '{pipeName}'.");
                     }
                 }
                 catch (Exception ex)
                 {
-                    _log?.Warn($"[elevation] Admin pipe '{pipeName}' did not connect: {ex.Message}");
+                    if (!quiet)
+                        _log?.Warn($"[elevation] Admin pipe '{pipeName}' did not connect: {ex.Message}");
                 }
                 finally
                 {

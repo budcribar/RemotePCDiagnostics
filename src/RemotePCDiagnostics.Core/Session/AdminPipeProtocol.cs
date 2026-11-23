@@ -594,7 +594,9 @@ public sealed record AdminPipeResponse(
     [property: JsonPropertyName("biosJobRunning")] bool BiosJobRunning = false,
     [property: JsonPropertyName("commandJobId")] string? CommandJobId = null,
     [property: JsonPropertyName("commandJobRunning")] bool CommandJobRunning = false,
-    [property: JsonPropertyName("outputLines")] IReadOnlyList<string>? OutputLines = null);
+    [property: JsonPropertyName("outputLines")] IReadOnlyList<string>? OutputLines = null,
+    /// <summary>On ping: this pipe only serves read-only ops to this client (a standard Windows user on the Agent service pipe).</summary>
+    [property: JsonPropertyName("restricted")] bool Restricted = false);
 
 /// <summary>
 /// The public part of agent.json, which only administrators and SYSTEM can read: the machine id and the shop group.
@@ -752,6 +754,8 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
     public string PipeName { get; }
     public int HelperPid { get; private set; }
     public bool HelperIsElevated { get; private set; }
+    /// <summary>The Agent only serves read-only ops to this client (a standard Windows user on the Agent service pipe).</summary>
+    public bool Restricted { get; private set; }
 
     public bool IsConnected => Volatile.Read(ref _disposed) == 0 && _pipe.IsConnected;
 
@@ -766,7 +770,8 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
         string pipeName,
         TimeSpan connectTimeout,
         CancellationToken ct,
-        ILogger? log = null)
+        ILogger? log = null,
+        bool requireSystemOwnedPipe = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         var pipe = new NamedPipeClientStream(
@@ -780,6 +785,8 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
             using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             connectCts.CancelAfter(connectTimeout);
             await pipe.ConnectAsync(connectCts.Token).ConfigureAwait(false);
+            if (requireSystemOwnedPipe && OperatingSystem.IsWindows() && PipeOwnerProblem(pipe) is { } ownerProblem)
+                throw new IOException(ownerProblem);
 
             var client = new AdminPipeClient(pipeName, pipe, log);
             var ping = await client.PingAsync(connectCts.Token).ConfigureAwait(false);
@@ -790,12 +797,33 @@ public sealed class AdminPipeClient : IElevatedCommandBridge, IAsyncDisposable, 
             }
             client.HelperPid = ping.HelperPid;
             client.HelperIsElevated = ping.Elevated;
+            client.Restricted = ping.Restricted;
             return client;
         }
         catch
         {
             pipe.Dispose();
             throw;
+        }
+    }
+
+    /// <summary>
+    /// A well-known pipe name can be created first by any user. Only one made by SYSTEM or an elevated administrator (the
+    /// Agent service) is trusted; a standard user's process can't give its pipe either owner.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    internal static string? PipeOwnerProblem(NamedPipeClientStream pipe)
+    {
+        try
+        {
+            var owner = pipe.GetAccessControl().GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+            if (owner is not null && (owner.IsWellKnown(WellKnownSidType.LocalSystemSid) || owner.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid)))
+                return null;
+            return $"The pipe '{pipe}' is owned by '{owner?.Value ?? "nobody"}', not the Agent service.";
+        }
+        catch (Exception ex)
+        {
+            return $"Could not check who owns the Agent pipe: {ex.Message}";
         }
     }
 
@@ -1326,6 +1354,15 @@ public sealed record AdminPipeServerOptions
     public int? ExpectedClientPid { get; set; }
     public string? ExpectedClientExePath { get; set; }
     public string? AllowedClientSid { get; set; }
+    /// <summary>When true, grants ReadWrite pipe access to locally logged-in interactive users (still verified by <see cref="ExpectedClientExePath"/>).</summary>
+    public bool AllowInteractiveUsers { get; set; }
+    /// <summary>
+    /// When true, a client whose Windows account isn't a local administrator only gets <see cref="AdminPipeServer.ReadOnlyOps"/>.
+    /// Set on the always-on Agent service pipe: the client is a user-owned process, so it gets no more than its user could do.
+    /// </summary>
+    public bool RestrictStandardUsers { get; set; }
+    /// <summary>Tests only: decides whether the connected client is a local administrator (default: the client's token).</summary>
+    public Func<NamedPipeServerStream, bool>? ClientIsAdministrator { get; set; }
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(30);
     public Func<NamedPipeServerStream, (bool Allowed, string? Reason)>? CustomClientVerifier { get; set; }
     /// <summary>Folders vendor uninstallers may be run from (null = Program Files, see <see cref="AppRemoval.IsVendorUninstaller"/>). Tests only.</summary>
@@ -1393,7 +1430,8 @@ public sealed class AdminPipeServer(
 
         using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
-            connectCts.CancelAfter(options.ConnectTimeout);
+            if (options.ConnectTimeout != Timeout.InfiniteTimeSpan && options.ConnectTimeout > TimeSpan.Zero)
+                connectCts.CancelAfter(options.ConnectTimeout);
             await server.WaitForConnectionAsync(connectCts.Token).ConfigureAwait(false);
         }
 
@@ -1450,10 +1488,35 @@ public sealed class AdminPipeServer(
         }
     }
 
+    /// <summary>
+    /// Ops a standard (non-administrator) user may use on a <see cref="AdminPipeServerOptions.RestrictStandardUsers"/> pipe: reads only.
+    /// Everything that changes the machine needs an administrator account or a technician session.
+    /// </summary>
+    public static readonly FrozenSet<string> ReadOnlyOps = new[]
+    {
+        AdminPipeFraming.OpPing,
+        AdminPipeFraming.OpCancel,
+        AdminPipeFraming.OpReadSensors,
+        AdminPipeFraming.OpReadDrives,
+        AdminPipeFraming.OpWmiQuery,
+        AdminPipeFraming.OpStateRead,
+        AdminPipeFraming.OpJournalList,
+        AdminPipeFraming.OpReportActivity,
+        AdminPipeFraming.OpUpdateRpcdStatus,
+        AdminPipeFraming.OpAgentEnrollment,
+        AdminPipeFraming.OpBiosJobStatus,
+        AdminPipeFraming.OpCommandJobStatus,
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+
+    internal const string RestrictedOpMessage =
+        "This needs a Windows administrator account. Sign in as an administrator, or ask the shop to start a session.";
+
     private async Task ServeAsync(NamedPipeServerStream server, CancellationToken ct)
     {
         // A request read while a cancellable one ran (the client sends only a cancel then, so this is rare).
         Task<AdminPipeRequest?>? pendingRead = null;
+        // Decided on the first request: Windows only lets a server impersonate its client after reading from the pipe.
+        bool? restricted = options.RestrictStandardUsers ? null : false;
         while (server.IsConnected && !ct.IsCancellationRequested)
         {
             AdminPipeRequest? request;
@@ -1477,11 +1540,27 @@ public sealed class AdminPipeServer(
             if (string.Equals(request.Op, AdminPipeFraming.OpCancel, StringComparison.OrdinalIgnoreCase))
                 continue; // Nothing is running to stop (the request finished first); a cancel gets no response.
 
+            restricted ??= !IsClientAdministrator(server);
+
             AdminPipeResponse response;
-            if (string.Equals(request.Op, AdminPipeFraming.OpSecurityAudit, StringComparison.OrdinalIgnoreCase))
+            if (restricted == true && !ReadOnlyOps.Contains(request.Op ?? ""))
+            {
+                log.Info($"[admin-pipe-server] Refused '{request.Op}' on '{options.PipeName}': the client isn't a Windows administrator.");
+                response = new AdminPipeResponse(
+                    Ok: false,
+                    Allowed: false,
+                    Elevated: Environment.IsPrivilegedProcess,
+                    HelperPid: Environment.ProcessId,
+                    ExitCode: -1,
+                    Error: RestrictedOpMessage,
+                    Restricted: true);
+            }
+            else if (string.Equals(request.Op, AdminPipeFraming.OpSecurityAudit, StringComparison.OrdinalIgnoreCase))
                 (response, pendingRead) = await HandleCancellableAsync(server, request, ct).ConfigureAwait(false);
             else
                 response = await HandleRequestAsync(request, ct).ConfigureAwait(false);
+            if (restricted == true && string.Equals(request.Op, AdminPipeFraming.OpPing, StringComparison.OrdinalIgnoreCase))
+                response = response with { Restricted = true };
             try
             {
                 await AdminPipeFraming.WriteFrameAsync(server, response, ct).ConfigureAwait(false);
@@ -2493,6 +2572,12 @@ public sealed class AdminPipeServer(
                 security.AddAccessRule(new PipeAccessRule(currentUserSid, PipeAccessRights.FullControl, AccessControlType.Allow));
         }
 
+        if (options.AllowInteractiveUsers)
+        {
+            var interactiveSid = new SecurityIdentifier(WellKnownSidType.InteractiveSid, null);
+            security.AddAccessRule(new PipeAccessRule(interactiveSid, PipeAccessRights.ReadWrite, AccessControlType.Allow));
+        }
+
         if (!string.IsNullOrWhiteSpace(options.AllowedClientSid))
         {
             try
@@ -2516,6 +2601,50 @@ public sealed class AdminPipeServer(
             outBufferSize: 65536,
             security);
     }
+
+    /// <summary>
+    /// Whether the connected client's Windows account is a local administrator: an un-elevated admin (UAC split token), an
+    /// elevated one, or an admin with UAC off. Fails closed. Must run after a frame was read (impersonation needs that).
+    /// </summary>
+    private bool IsClientAdministrator(NamedPipeServerStream server)
+    {
+        if (options.ClientIsAdministrator is { } custom)
+            return custom(server);
+        if (!OperatingSystem.IsWindows())
+            return false;
+        try
+        {
+            var isAdmin = false;
+            server.RunAsClient(() =>
+            {
+                using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
+                isAdmin = TokenIsAdministrator(identity);
+            });
+            return isAdmin;
+        }
+        catch (Exception ex)
+        {
+            log.Warn($"[admin-pipe-server] Could not read the client's account on '{options.PipeName}' ({ex.Message}); treating it as a standard user.");
+            return false;
+        }
+    }
+
+    private const int TokenElevationTypeClass = 18; // TOKEN_INFORMATION_CLASS.TokenElevationType
+    private const int TokenElevationTypeFull = 2;
+    private const int TokenElevationTypeLimited = 3;
+
+    private static bool TokenIsAdministrator(WindowsIdentity identity)
+    {
+        if (GetTokenInformation(identity.AccessToken, TokenElevationTypeClass, out var elevationType, sizeof(int), out _)
+            && elevationType is TokenElevationTypeFull or TokenElevationTypeLimited)
+            return true; // A UAC split token only exists for members of Administrators.
+        // TokenElevationTypeDefault: a standard user, or an administrator with UAC turned off.
+        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(SafeAccessTokenHandle tokenHandle, int tokenInformationClass,
+        out int tokenInformation, int tokenInformationLength, out int returnLength);
 
     private static (bool Allowed, string? Reason) VerifyConnectedClient(
         NamedPipeServerStream server,

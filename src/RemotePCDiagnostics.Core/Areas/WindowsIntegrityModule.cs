@@ -81,9 +81,8 @@ public abstract class WindowsIntegrityModule(SystemCommandRunner commands) : Are
                     System.Globalization.NumberStyles.AllowDecimalPoint, System.Globalization.CultureInfo.InvariantCulture, out var percent)
                     || percent > 100 || percent <= lastPercent) return;
                 lastPercent = percent;
-                var message = $"Scan {percent:0.#}% complete";
-                progress.ReportStep((int)Math.Round(percent), 100, message);
-                RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, message, started, percent));
+                progress.ReportStep((int)Math.Round(percent), 100, "Scanning…");
+                RaiseUpdated(new DiagnosticResult<double>(Name, DiagnosticStatus.Running, $"Scan {percent:0.#}% complete", started, percent));
             }).ConfigureAwait(false);
             scan.Token.ThrowIfCancellationRequested();
         }

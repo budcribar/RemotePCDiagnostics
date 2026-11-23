@@ -157,14 +157,12 @@ public sealed class WorkflowService(
                     continue;
                 }
                 UpdateCheckItem(m.Name, item => item with { Status = DiagnosticStatus.Running, Message = "Running…" });
-                Status = $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · {m.DisplayName}…";
+                Status = $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done)";
                 Raise();
                 var progress = CheckProgressExtensions.Create(cp =>
                 {
                     UpdateCheckItem(m.Name, item => item with { Status = DiagnosticStatus.Running, Message = cp.Message, Step = cp.Step, Total = cp.Total });
-                    Status = cp.HasProgress
-                        ? $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · {m.DisplayName} ({(cp.Total == 100 ? $"{cp.Step}%" : $"{cp.Step}/{cp.Total}")}): {cp.Message}"
-                        : $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · {m.DisplayName}: {cp.Message}";
+                    Status = $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done)";
                     Raise();
                 });
                 var r = await diag.RunAsync(m.Name, progress, ct).ConfigureAwait(false);
@@ -176,12 +174,12 @@ public sealed class WorkflowService(
             {
                 UpdateCheckItem("MemoryScan", item => item with { Status = DiagnosticStatus.Running, Message = "Looking for ways to use less memory…", Step = 1, Total = 5 });
                 Note("Looking for ways to use less memory…");
+                Status = $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done)";
+                Raise();
                 var memProgress = CheckProgressExtensions.Create(cp =>
                 {
                     UpdateCheckItem("MemoryScan", item => item with { Status = DiagnosticStatus.Running, Message = cp.Message, Step = cp.Step > 0 ? cp.Step : item.Step, Total = cp.Total > 0 ? cp.Total : item.Total });
-                    Status = cp.HasProgress
-                        ? $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · Memory, startup & apps ({cp.Step}/{cp.Total}): {cp.Message}"
-                        : $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · Memory, startup & apps: {cp.Message}";
+                    Status = $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done)";
                     Raise();
                 });
                 if (forceRerun || memory.Snapshot is null || memory.ScanError is not null)
@@ -194,12 +192,12 @@ public sealed class WorkflowService(
                 Note("Measuring caches and leftovers that can be deleted…");
                 var storageTotal = Storage.StorageCleanupCatalog.All.Count + 3;
                 UpdateCheckItem("StorageScan", item => item with { Status = DiagnosticStatus.Running, Message = "Measuring caches and leftovers that can be deleted…", Step = 1, Total = storageTotal });
+                Status = $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done)";
+                Raise();
                 var storageProgress = CheckProgressExtensions.Create(cp =>
                 {
                     UpdateCheckItem("StorageScan", item => item with { Status = DiagnosticStatus.Running, Message = cp.Message, Step = cp.Step > 0 ? cp.Step : item.Step, Total = cp.Total > 0 ? cp.Total : item.Total });
-                    Status = cp.HasProgress
-                        ? $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · Storage caches & leftovers ({cp.Step}/{cp.Total}): {cp.Message}"
-                        : $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done) · Storage caches & leftovers: {cp.Message}";
+                    Status = $"Running checks ({CompletedChecksCount} of {TotalChecksCount} done)";
                     Raise();
                 });
                 if (forceRerun || !memory.StorageScanned || memory.StorageError is not null)
@@ -214,7 +212,7 @@ public sealed class WorkflowService(
             var fixes = FixCatalog.Build(snapshot, suggestions, remediation, diag.Catalog, journal?.All);
             var notOffered = FixCatalog.NotOffered(snapshot, suggestions, remediation);
             var findings = snapshot.Where(r => r.Status is DiagnosticStatus.Warning or DiagnosticStatus.Error && !Cancellation.IsCancelled(r) && !CheckEnableRules.IsTurnedOff(r))
-                .Select(r => $"{diag.Catalog.DisplayName(r.ModuleName)}: {r.Message} (scan {r.Timestamp:O})").ToList();
+                .Select(r => $"{diag.Catalog.DisplayName(r.ModuleName)}: {r.Message}").ToList();
             var hw = results.Get(ModuleSlugs.Osquery).Payload is HardwareInventory inv ? inv.FriendlySummary() : "";
             Save(s => s with
             {
