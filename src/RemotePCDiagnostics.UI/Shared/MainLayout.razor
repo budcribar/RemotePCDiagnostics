@@ -536,9 +536,12 @@
 
     private void OpenUpdateDialog()
     {
-        _updateError = null;
-        _updateMessage = null;
-        _updateProgress = null;
+        if (!_updateInstalling)
+        {
+            _updateError = null;
+            _updateMessage = null;
+            _updateProgress = null;
+        }
         _updateDialogOpen = true;
     }
 
@@ -560,6 +563,7 @@
         _updateProgress = new AppUpdateProgress("starting", null, "Preparing update...");
         StateHasChanged();
 
+        var installStarted = false;
         try
         {
             var result = await updater.InstallUpdateAsync(p =>
@@ -569,6 +573,7 @@
             });
             if (result.Ok)
             {
+                installStarted = true;
                 _updateMessage = result.Message ?? "Update started.";
             }
             else
@@ -582,7 +587,8 @@
         }
         finally
         {
-            _updateInstalling = false;
+            if (!installStarted)
+                _updateInstalling = false;
             StateHasChanged();
         }
     }

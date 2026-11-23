@@ -71,7 +71,7 @@ code, pre, kbd, samp { font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono
 .icon { flex: none; display: inline-block; vertical-align: middle; }
 
 /* Toolbar Start buttons (data-testid *-start) read as primary actions on every page. */
-.toolbar button[data-testid$="-start"]:not(:disabled), .btn-primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); box-shadow: var(--glow); }
+.toolbar button[data-testid$="-start"]:not(:disabled), .btn-primary:not(:disabled) { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); box-shadow: var(--glow); }
 .toolbar button[data-testid$="-start"]:not(:disabled):hover, .btn-primary:hover:not(:disabled) { filter: brightness(1.08); color: var(--accent-fg); }
 .btn { height: 36px; padding: 0 18px; font-weight: 700; }
 .btn-outline { width: 100%; background: var(--accent-soft); color: var(--accent); border-color: transparent; }
