@@ -121,7 +121,16 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         }
     }
 
-    public bool HasAdminCapabilities => IsAdminHelperConnected;
+    /// <summary>
+    /// Connected to an Agent that does admin work for this app. A standard Windows user on the Agent service pipe only gets
+    /// reads (sensors, state), so that is reduced functionality, the same as no Agent.
+    /// </summary>
+    public bool HasAdminCapabilities => IsAdminHelperConnected && !IsRestrictedClient;
+
+    private bool IsRestrictedClient
+    {
+        get { lock (_stateLock) return _client?.Restricted == true; }
+    }
 
     bool IElevatedCommandBridge.IsConnected => IsAdminHelperConnected;
 
@@ -156,20 +165,22 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
     public async Task<ElevationResult> EnableAdminModeAsync(CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (IsAdminHelperConnected)
+        if (HasAdminCapabilities)
             return new ElevationResult(true, false, "Admin Repair Mode is already active.");
 
         await _enableGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (IsAdminHelperConnected)
+            if (HasAdminCapabilities)
                 return new ElevationResult(true, false, "Admin Repair Mode is already active.");
 
-            if (_customConnector is null && OperatingSystem.IsWindows())
+            // A standard user's service pipe only reads; fall through to the helper, whose UAC prompt asks for an administrator.
+            if (_customConnector is null && OperatingSystem.IsWindows() && !IsAdminHelperConnected)
             {
                 try
                 {
-                    if (await TryConnectPipeAsync(ServiceAdminPipeName, TimeSpan.FromMilliseconds(500), ct).ConfigureAwait(false))
+                    if (await TryConnectPipeAsync(ServiceAdminPipeName, TimeSpan.FromMilliseconds(500), ct).ConfigureAwait(false)
+                        && HasAdminCapabilities)
                         return new ElevationResult(true, false, "Connected to the Remote PC Diagnostics Agent.");
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -474,7 +485,8 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
         if (string.IsNullOrWhiteSpace(pipeName)) return false;
         try
         {
-            var client = await AdminPipeClient.ConnectAsync(pipeName, timeout, ct, _log).ConfigureAwait(false);
+            var client = await AdminPipeClient.ConnectAsync(pipeName, timeout, ct, _log,
+                requireSystemOwnedPipe: string.Equals(pipeName, ServiceAdminPipeName, StringComparison.OrdinalIgnoreCase)).ConfigureAwait(false);
             AdminPipeClient? previous;
             lock (_stateLock)
             {
@@ -483,7 +495,7 @@ public sealed class ElevationService : IElevationContext, IElevatedCommandBridge
             }
             previous?.Dispose();
             client.Disconnected += OnHelperDisconnected;
-            _log?.Info($"[elevation] Connected to initial admin pipe '{pipeName}' (helperPid={client.HelperPid}, elevated={client.HelperIsElevated}).");
+            _log?.Info($"[elevation] Connected to initial admin pipe '{pipeName}' (helperPid={client.HelperPid}, elevated={client.HelperIsElevated}, restricted={client.Restricted}).");
             NotifyChanged();
             return true;
         }

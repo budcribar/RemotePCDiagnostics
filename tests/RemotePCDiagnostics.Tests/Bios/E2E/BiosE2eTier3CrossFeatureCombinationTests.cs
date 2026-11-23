@@ -552,7 +552,7 @@ public sealed class BiosE2eTier3CrossFeatureCombinationTests
         // (!Elevated, Disconnected) -> BlockedByPrerequisites (0 downloads, 0 pipe, 0 local)
         { false, false, "hp", true, false },
         { false, false, "windows-update", true, false },
-        // (Elevated, Disconnected) -> executes locally on Host (0 pipe)
+        // (Elevated, Disconnected) -> also BlockedByPrerequisites: the app never does admin work itself, only the Agent does
         { true, false, "hp", true, false },
         { true, false, "windows-update", true, false }
     };
@@ -602,7 +602,7 @@ public sealed class BiosE2eTier3CrossFeatureCombinationTests
         var res = await host.Service.InstallUpdateAsync(
             new BiosInstallRequest(identity, identity.CurrentBios, target, Approved: true, SuspendBitLocker: suspendBitLocker, AllowReboot: allowReboot, VerifyHash: true, StagingDirectory: host.StagingDir.Path));
 
-        if (!isProcessElevated && !bridgeConnected)
+        if (!bridgeConnected)
         {
             Assert.False(res.Succeeded);
             Assert.Equal(BiosInstallStatus.BlockedByPrerequisites, res.Status);
@@ -659,16 +659,6 @@ public sealed class BiosE2eTier3CrossFeatureCombinationTests
                 }
             }
 
-            Assert.Equal(suspendBitLocker, res.BitLockerSuspended);
-        }
-        else // Elevated + Disconnected -> runs locally
-        {
-            Assert.True(res.Succeeded, res.Message);
-            Assert.True(host.HermeticSafetyProbe!.LastRealSnapshot!.HasElevation);
-            if (vendorId == "windows-update")
-                Assert.Single(host.WindowsUpdateClient.InstalledUpdateIds);
-            else
-                Assert.NotEmpty(host.HostProcessLauncher.Calls);
             Assert.Equal(suspendBitLocker, res.BitLockerSuspended);
         }
 

@@ -1789,6 +1789,9 @@ public sealed class BiosProvidersIntegrationTests
     {
         public bool IsProcessElevated { get; set; } = isProcessElevated;
         public bool IsAdminHelperConnected { get; set; } = isAdminHelperConnected;
+        // These tests prove DI wiring of IElevationContext into providers, so "elevated" still counts here.
+        // The real ElevationService only counts the Agent (the app never runs as admin).
+        public bool HasAdminCapabilities => IsProcessElevated || IsAdminHelperConnected;
 
         public event Action? Changed
         {
