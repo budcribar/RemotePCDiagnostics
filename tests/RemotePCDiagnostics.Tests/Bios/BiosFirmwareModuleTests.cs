@@ -25,15 +25,14 @@ public sealed class BiosFirmwareModuleTests
     [Fact]
     public void Build_UpdateAvailableRecommended_ReturnsWarningWithInstallAction()
     {
-        var latest = new BiosLatestInfo(
+        var latest = BiosLatestInfo.UpdateAvailable(
             "hp",
-            BiosCheckStatus.UpdateAvailable,
-            LatestVersion: "F.36",
-            ReleaseDate: new DateOnly(2026, 9, 15),
-            Severity: BiosUpdateSeverity.Recommended,
-            PackageId: "sp160001",
-            SizeBytes: 24 * 1024 * 1024,
-            ReleaseSummary: "Improves system stability.");
+            latestVersion: "F.36",
+            releaseDate: new DateOnly(2026, 9, 15),
+            severity: BiosUpdateSeverity.Recommended,
+            packageId: "sp160001",
+            sizeBytes: 24 * 1024 * 1024,
+            releaseSummary: "Improves system stability.");
         var outcome = MakeOutcome(latest);
 
         var report = BiosFirmwareModule.Build(outcome);
@@ -59,11 +58,10 @@ public sealed class BiosFirmwareModuleTests
     [Fact]
     public void Build_UpdateAvailableCritical_ReturnsErrorWithInstallAction()
     {
-        var latest = new BiosLatestInfo(
+        var latest = BiosLatestInfo.UpdateAvailable(
             "hp",
-            BiosCheckStatus.UpdateAvailable,
-            LatestVersion: "F.36",
-            Severity: BiosUpdateSeverity.Critical);
+            latestVersion: "F.36",
+            severity: BiosUpdateSeverity.Critical);
         var report = BiosFirmwareModule.Build(MakeOutcome(latest));
 
         Assert.Equal(DiagnosticStatus.Error, report.Status);
@@ -74,7 +72,7 @@ public sealed class BiosFirmwareModuleTests
     [Fact]
     public void Build_UpdateAvailableNonInstallableProvider_OmitsInstallActionAndAddsManualNote()
     {
-        var latest = new BiosLatestInfo("msi", BiosCheckStatus.UpdateAvailable, LatestVersion: "1.20");
+        var latest = BiosLatestInfo.UpdateAvailable("msi", "1.20");
         var provider = new StubBiosProvider("msi", "MSI", canInstall: false);
 
         var report = BiosFirmwareModule.Build(MakeOutcome(latest, providerId: "msi", providerDisplayName: "MSI"), provider);
@@ -87,7 +85,7 @@ public sealed class BiosFirmwareModuleTests
     [Fact]
     public void Build_UpToDate_ReturnsOkWithNoActions()
     {
-        var latest = new BiosLatestInfo("hp", BiosCheckStatus.UpToDate, LatestVersion: "F.34");
+        var latest = BiosLatestInfo.UpToDate("hp", "F.34");
         var report = BiosFirmwareModule.Build(MakeOutcome(latest));
 
         Assert.Equal(DiagnosticStatus.Ok, report.Status);
@@ -113,7 +111,7 @@ public sealed class BiosFirmwareModuleTests
     [InlineData(BiosCheckStatus.Failed)]
     public void Build_TransientOrErrorStatuses_ReturnWarning(BiosCheckStatus status)
     {
-        var latest = new BiosLatestInfo("hp", status, Message: "Catalog unreachable.");
+        var latest = new BiosLatestInfo(status, "hp", Message: "Catalog unreachable.");
         var report = BiosFirmwareModule.Build(MakeOutcome(latest));
 
         Assert.Equal(DiagnosticStatus.Warning, report.Status);
@@ -122,17 +120,17 @@ public sealed class BiosFirmwareModuleTests
     }
 
     [Fact]
-    public async Task RunAsync_WithStubService_ProducesAreaReportWithIncludeInRunAll()
+    public async Task RefreshAsync_WithStubService_ProducesAreaReportWithIncludeInRunAll()
     {
-        var latest = new BiosLatestInfo("hp", BiosCheckStatus.UpdateAvailable, LatestVersion: "F.36");
+        var latest = BiosLatestInfo.UpdateAvailable("hp", "F.36");
         var svc = new StubBiosService(MakeOutcome(latest), new StubBiosProvider("hp", "HP", canInstall: true));
         var module = new BiosFirmwareModule(svc);
 
-        Assert.True(module.IncludeInRunAll);
+        Assert.True(((IDiagnosticModule)module).IncludeInRunAll);
         Assert.Equal(ModuleIds.BiosFirmware, module.Id);
         Assert.Equal(ModuleSlugs.BiosFirmware, module.Name);
 
-        var result = await module.RunAsync();
+        var result = await module.RefreshAsync(progress: null);
         Assert.Equal(DiagnosticStatus.Warning, result.Status);
         var report = Assert.IsType<AreaReport>(result.Payload);
         Assert.Single(report.Cards[0].Actions!);
@@ -141,11 +139,11 @@ public sealed class BiosFirmwareModuleTests
     [Fact]
     public async Task RemediationService_InstallBiosUpdate_PlansAndExecutesViaBiosService()
     {
-        var latest = new BiosLatestInfo("hp", BiosCheckStatus.UpdateAvailable, LatestVersion: "F.36");
+        var latest = BiosLatestInfo.UpdateAvailable("hp", "F.36");
         var outcome = MakeOutcome(latest);
         var installResult = new BiosInstallResult(
             Succeeded: true,
-            Status: BiosInstallStatus.RebootRequired,
+            Status: BiosInstallStatus.StagedForReboot,
             RequiresReboot: true,
             PreviousVersion: "F.34",
             TargetVersion: "F.36",
@@ -185,7 +183,7 @@ public sealed class BiosFirmwareModuleTests
         Assert.True(FixTraits.MayNeedRestart(RemediationKind.InstallBiosUpdate));
         Assert.Equal(UndoSupport.None, Undoability.Of(RemediationKind.InstallBiosUpdate));
 
-        var latest = new BiosLatestInfo("hp", BiosCheckStatus.UpdateAvailable, LatestVersion: "F.36");
+        var latest = BiosLatestInfo.UpdateAvailable("hp", "F.36");
         var report = BiosFirmwareModule.Build(MakeOutcome(latest));
         var result = new DiagnosticResult(ModuleSlugs.BiosFirmware, report.Status, report.Summary, DateTimeOffset.Now, report);
         var fixes = FixCatalog.Build([result], []);
@@ -220,7 +218,7 @@ public sealed class BiosFirmwareModuleTests
         {
             LastInstallRequest = request;
             progress?.Report(new BiosInstallProgress(BiosInstallStage.Installing, 50, "Staging BIOS update…"));
-            return Task.FromResult(installResult ?? new BiosInstallResult(true, BiosInstallStatus.Succeeded, PreviousVersion: request.Current.Version, TargetVersion: request.Target.LatestVersion));
+            return Task.FromResult(installResult ?? new BiosInstallResult(true, BiosInstallStatus.Completed, PreviousVersion: request.Current.Version, TargetVersion: request.Target.LatestVersion));
         }
     }
 }
