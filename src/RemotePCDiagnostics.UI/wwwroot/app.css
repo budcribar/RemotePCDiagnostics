@@ -1009,7 +1009,9 @@ table.detail tr.row-detail td { white-space: normal; }
 
 /* ---------- Bench Refurbisher QA Suite (10-min intake, keyboard rollover & display dead-pixel overlay) ---------- */
 a.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; border: 1px solid var(--border-strong); border-radius: 8px; font-size: 13px; box-sizing: border-box; cursor: pointer; transition: background-color .15s, border-color .15s, box-shadow .15s, color .15s; }
-.bench-qa-options { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
+.bench-qa-options { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 10px 0 12px; }
+.bench-qa-select-all { font-weight: 600; color: var(--text); padding-bottom: 6px; margin-bottom: 2px; border-bottom: 1px solid var(--border); width: 100%; }
+.bench-qa-banner .banner-actions { margin-left: 0; justify-content: flex-start; }
 .phys-qa-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px; }
 .phys-qa-pane { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); min-width: 0; }
 .kb-zone { padding: 10px 12px; border: 1px dashed var(--border-strong); border-radius: 8px; background: var(--surface); cursor: pointer; outline: none; }

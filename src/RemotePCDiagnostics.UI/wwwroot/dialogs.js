@@ -500,10 +500,45 @@
         }
     }
 
+    async function publishQaCertificate(snapshotJson) {
+        try {
+            const res = await fetch('/api/shop/qa-certificates', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'RemotePCDiagnostics'
+                },
+                body: snapshotJson
+            });
+            const text = await res.text();
+            let data = null;
+            try { data = JSON.parse(text); } catch { }
+            return {
+                ok: res.ok,
+                status: res.status,
+                id: data?.id || null,
+                url: data?.url || null,
+                shortHash: data?.shortHash || null,
+                error: data?.error || (res.ok ? null : `HTTP ${res.status}`)
+            };
+        } catch (e) {
+            return {
+                ok: false,
+                status: 0,
+                id: null,
+                url: null,
+                shortHash: null,
+                error: String(e?.message || e || 'Network error')
+            };
+        }
+    }
+
     window.rpdSession = {
         isRemoteDisplay,
         saveAsFile,
         openHtml,
+        publishQaCertificate,
         getControlInfo,
         releaseControlToLocal,
         subscribeControl: (dotNetRef) => {

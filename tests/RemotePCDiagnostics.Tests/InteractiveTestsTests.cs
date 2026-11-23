@@ -163,6 +163,7 @@ public class InteractiveTestsTests
         Assert.True(File.Exists(pagePath));
         var content = File.ReadAllText(pagePath);
 
+        Assert.Contains("data-testid=\"bench-qa-select-all\"", content);
         Assert.Contains("data-testid=\"bench-qa-include-keyboard\"", content);
         Assert.Contains("data-testid=\"bench-qa-include-display\"", content);
         Assert.Contains("Physical keyboard matrix &amp; rollover check", content);
@@ -172,16 +173,8 @@ public class InteractiveTestsTests
         Assert.Contains("@if (benchRunning && _activeInteractiveSection is { Length: > 0 })", content);
         Assert.DoesNotContain("\n<PhysicalBenchQaCard Service=\"ActivePhysicalQa\" />", content);
 
-        // Branding strip and warning banner
-        Assert.Contains("data-testid=\"shop-branded-strip\"", content);
-        Assert.Contains("data-testid=\"branding-unconfigured-banner\"", content);
-        Assert.Contains("Shop branding and warranty are not configured.", content);
-        Assert.Contains("Buyer certificates and service reports will generate unbranded until configured on your admin portal.", content);
-        Assert.Contains("data-testid=\"branding-portal-btn\"", content);
-        Assert.Contains("data-testid=\"branding-admin-link\"", content);
-        Assert.Contains("data-testid=\"branding-card\"", content);
-
-        // Relay card should not contain manual inputs for server URL, group slug, or API key
+        // Local branding override form and manual relay inputs are removed (branding & publishing live on Admin)
+        Assert.DoesNotContain("data-testid=\"branding-card\"", content);
         Assert.DoesNotContain("data-testid=\"relay-server-url\"", content);
         Assert.DoesNotContain("data-testid=\"relay-group-slug\"", content);
         Assert.DoesNotContain("data-testid=\"relay-api-key\"", content);
@@ -190,14 +183,16 @@ public class InteractiveTestsTests
         Assert.DoesNotContain("href=\"checks\"", content);
         Assert.DoesNotContain("href=\"stress\"", content);
 
-        // Save certificate initiates browser file download in remote display
+        // Save certificate initiates browser file download and Publish posts via browser session cookie
         Assert.Contains("rpdSession.saveAsFile", content);
+        Assert.Contains("rpdSession.publishQaCertificate", content);
 
-        // dialogs.js provides saveAsFile helper
+        // dialogs.js provides saveAsFile and publishQaCertificate helpers
         var dialogsJsPath = Path.Combine(FindRepoRoot(), "src", "RemotePCDiagnostics.UI", "wwwroot", "dialogs.js");
         Assert.True(File.Exists(dialogsJsPath));
         var jsContent = File.ReadAllText(dialogsJsPath);
         Assert.Contains("function saveAsFile(", jsContent);
+        Assert.Contains("function publishQaCertificate(", jsContent);
         Assert.Contains("window.saveAsFile = saveAsFile", jsContent);
         Assert.Contains("saveAsFile,", jsContent);
     }

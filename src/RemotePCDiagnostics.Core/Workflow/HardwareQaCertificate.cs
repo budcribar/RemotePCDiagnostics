@@ -2,6 +2,7 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using RemotePCDiagnostics.Core.Areas;
 using RemotePCDiagnostics.Core.Checks;
 using RemotePCDiagnostics.Core.Osquery;
@@ -156,6 +157,44 @@ public static class HardwareQaCertificate
             Branding: normBrand);
     }
 
+    public const string EmbeddedSnapshotMetaName = "rpcd-qa-snapshot";
+
+    private static readonly JsonSerializerOptions SnapshotJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
+    /// <summary>
+    /// Serializes a <see cref="HardwareQaSnapshot"/> (excluding local shop branding) to JSON for publishing on the Admin portal.
+    /// </summary>
+    public static string ToSnapshotJson(HardwareQaSnapshot s)
+    {
+        ArgumentNullException.ThrowIfNull(s);
+        var payload = new
+        {
+            s.CertificateId,
+            s.VerificationHash,
+            s.Generated,
+            s.MachineName,
+            s.ManufacturerModel,
+            s.SerialNumber,
+            s.Processor,
+            s.Memory,
+            s.Storage,
+            s.OperatingSystem,
+            Verdict = s.Verdict.ToString(),
+            Items = s.Items.Select(i => new
+            {
+                i.Id,
+                i.Label,
+                Status = i.Status.ToString(),
+                i.Summary,
+                i.Cancelled,
+            }).ToArray(),
+        };
+        return JsonSerializer.Serialize(payload, SnapshotJsonOptions);
+    }
+
     public static string BuildHtml(HardwareQaSnapshot s)
     {
         ArgumentNullException.ThrowIfNull(s);
@@ -182,9 +221,11 @@ public static class HardwareQaCertificate
         };
 
         var qrSvg = QrCodeSvg.Render(s.QrPayload, quietZoneModules: 2, ariaLabel: $"Hardware QA verification QR code {s.CertificateId}");
+        var embeddedSnapshotB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(ToSnapshotJson(s)));
         var sb = new StringBuilder(14_000);
 
         sb.Append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
+          .Append("<meta name=\"").Append(EmbeddedSnapshotMetaName).Append("\" content=\"").Append(embeddedSnapshotB64).Append("\">")
           .Append("<title>").Append(E(shopTitle)).Append(" – ").Append(E(s.ManufacturerModel != "Not reported" ? s.ManufacturerModel : s.MachineName)).Append(" (").Append(E(s.CertificateId)).Append(")</title><style>")
           .Append("@page{size:auto;margin:10mm}")
           .Append("*{box-sizing:border-box}body{overflow-x:hidden;font-family:Segoe UI,system-ui,-apple-system,sans-serif;color:#111827;max-width:860px;margin:20px auto;padding:0 18px;line-height:1.4;background:#fff}")
