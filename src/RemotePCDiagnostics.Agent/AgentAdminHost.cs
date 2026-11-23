@@ -55,7 +55,21 @@ internal static class AgentAdminHost
                 }
                 catch (System.ComponentModel.Win32Exception)
                 {
-                    // User declined UAC prompt
+                    // User declined UAC prompt: still open Host un-elevated in Restricted Mode.
+                    var fallbackHost = Path.Combine(AppContext.BaseDirectory, "RemotePCDiagnostics.Host.exe");
+                    if (File.Exists(fallbackHost))
+                    {
+                        var hostOnlyArgs = (args.ForwardedArgs ?? [])
+                            .Where(a => !string.Equals(a, "--launch", StringComparison.OrdinalIgnoreCase))
+                            .ToList();
+                        var fallbackPsi = new ProcessStartInfo(fallbackHost)
+                        {
+                            WorkingDirectory = AppContext.BaseDirectory,
+                            UseShellExecute = false,
+                        };
+                        foreach (var a in hostOnlyArgs) fallbackPsi.ArgumentList.Add(a);
+                        try { Process.Start(fallbackPsi)?.Dispose(); } catch { }
+                    }
                     return ExitOk;
                 }
             }

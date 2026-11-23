@@ -14,11 +14,12 @@ everything that is planned but not built.
 | `src/RemotePCDiagnostics.Core` | net10.0 | The engine, platform-neutral: `DiagnosticsService`, `ResultStore`, the built-in modules that need administrator and the types every module shares, fixes (`RemediationService`), undo (`UndoService`, change journal), the service workflow, optimizations, the module loader, and interfaces for everything the OS does (`IMemorySystem`, `ISystemSettings`, `IProcessLauncher`, …). Optimizations (`Core/Optimizations`) are one class per suggestion family (browser, Office, services, power, shell, Defender, startup apps, app removal) behind `MemorySuggestionService`. Fixed PowerShell scripts are embedded from `Core/Scripts`. |
 | `src/Modules/*` | net10.0 | The built-in modules that don't need administrator, one project and one DLL each (code, page, `module.json`). Built into `builtin-modules\` next to the exe and loaded in process by `ModuleLoader.LoadBundled` (see [module-plugins.md](module-plugins.md#modules-that-ship-with-the-app)). The ones that need administrator stay in Core and Host (`BuiltInModulesPlugin.CompiledIn`). |
 | `src/RemotePCDiagnostics.UI` | net10.0 Razor library | Pages and components. Takes optional host services through `AppServices`. |
-| `src/RemotePCDiagnostics.Host` | net10.0-windows, WPF | The app: elevated entry point, `HostServices` (the composition root), the Windows adapters (registry, WMI, LibreHardwareMonitor, WASAPI, Direct3D, DXCore), RemoteBlazorWebView and the loopback relay for module UIs. |
+| `src/RemotePCDiagnostics.Host` | net10.0-windows, WPF | The app: user-mode-only entry point (`asInvoker`), `HostServices` (the composition root), user-mode Windows adapters (registry, WASAPI, Direct3D, DXCore), RemoteBlazorWebView and the loopback relay for module UIs. Never runs elevated. |
 | `src/RemotePCDiagnostics.ModuleHost` | net10.0 | Runs one unsigned module out of process (JSON lines over stdin/stdout). |
 | `src/RemotePCDiagnostics.ModuleUi` | net10.0 | The `IModuleUi` remote-component contract between the module page and `ModuleUiHost`, and `IModuleUiFrames`. The RemoteComponents source generator writes `ModuleUiFrame` (the page's sandboxed iframe) and `ModuleUiReceiver` from it. |
 | `src/RemotePCDiagnostics.ModuleUiHost` | net10.0-windows | Renders an unsigned module's own UI out of process (`RemoteComponentHost`), framed in the module page. Gets the module's latest result over stdin. |
 | `src/RemotePCDiagnostics.MemTest` | net10.0 | The RAM stress helper process. |
+| `src/RemotePCDiagnostics.Agent` | net10.0-windows | The elevated Windows service / admin helper that owns the secured Admin Named Pipe (`AdminPipeProtocol`) for WMI queries, hardware sensors, DISM/SFC, system repairs, protected state files, change journal, and BIOS updates. |
 | `src/RemotePCDiagnostics.Agent.Core` | net10.0 | The agent's pure logic (release manifest, signature, cache, launch rules, backoff); AOT-safe. The contract is `src/RemotePCDiagnostics.Agent/Protos/agent.proto`. |
 | `samples/SampleModule`, `samples/SampleModuleUi` | net10.0 | Example plugins (a check, and a check with its own UI). |
 | `tests/*` | | xUnit: `RemotePCDiagnostics.Tests` (Core and UI logic), `RemotePCDiagnostics.Host.Tests` (composition root, Windows reads), `RemotePCDiagnostics.Agent.Core.Tests`. |
@@ -29,16 +30,17 @@ Standalone tools that reference Core but aren't part of the app are in `tools/pr
 ## Layering
 
 ```
-Abstractions  ←  Core  ←  UI  ←  Host
+Abstractions  ←  Core  ←  UI  ←  Host (user mode only) ──pipe──▶ Agent (elevated)
                   ↑               ↓ starts
                   └── ModuleHost, ModuleUiHost, MemTest (child processes)
 ```
 
 - Abstractions knows nothing of the app. Core knows nothing of Windows APIs or the UI: it describes what it needs as interfaces, and the
   Host implements them. Tests use fakes for those interfaces, so almost all logic runs without Windows.
-- Registry and WMI work happens in process through those interfaces. PowerShell is used only where there is no reasonable in-process
-  replacement, from the embedded scripts (`PowerShellScripts.Get`); real Windows tools (dism, sfc, powercfg, pnputil, ipconfig, wevtutil,
-  winget) go through `SystemCommandRunner`. The `WindowsReadOnly` test category runs every read-only script and query on a real PC.
+- User-mode registry reads happen in process; all WMI queries, hardware sensors, and admin-level system tools (dism, sfc, powercfg,
+  pnputil, ipconfig, winget) route to the elevated `Agent` over the Admin Named Pipe (`AdminPipeProtocol`). PowerShell is used only
+  where there is no reasonable in-process replacement, from the embedded scripts (`PowerShellScripts.Get`). The `WindowsReadOnly` test
+  category runs every read-only script and query on a real PC.
 
 ## Plugin contract
 
@@ -47,17 +49,16 @@ any code runs and checks the contract version (majors must match; the host's min
 
 - Signed with the project key: loaded into its own `AssemblyLoadContext` in the app. The contract assembly and the DI, logging and
   Components assemblies are shared with the host, so types match.
-- Unsigned: never loaded into the elevated app. If the person at the PC turned unsigned modules on, the module runs in `ModuleHost`
+- Unsigned: never loaded in process. If the person at the PC turned unsigned modules on, the module runs in `ModuleHost`
   and its UI in `ModuleUiHost`, both with a restricted, Medium-integrity token. One-click fixes are stripped from their reports.
 - A module's details UI gets `DiagnosticModule` and the latest result (`ModuleDetails.LastResult`, a cascading value).
 
 ## Privilege model
 
-- The Host always runs elevated (`requireAdministrator`), because fixes, sensors and event logs need it.
-- State the elevated app acts on (change journal, workflow, pending reboot, benchmarks) lives in `%ProgramData%\RemotePCDiagnostics\state`,
-  which only Administrators and SYSTEM can write (`ProtectedState`); older copies in `%LOCALAPPDATA%` are moved once at start.
-- Settings that belong to the signed-in user (the proxy) are read and written in that user's own registry hive, not the elevated
-  account's, which differs when another account's password was typed at the UAC prompt.
+- **The Host runs in user mode only (`asInvoker`) and must never be run elevated.** All privileged operations — WMI queries (`AgentWmiSource`), hardware sensors, DISM/SFC scans and repairs, system tweaks, Defender exclusions, BIOS updates, and protected state writes — are performed exclusively by the elevated `RemotePCDiagnostics.Agent` over the ACL-secured Admin Named Pipe (`AdminPipeProtocol`).
+- Protected state (change journal, workflow, pending reboot, benchmarks) lives in `%ProgramData%\RemotePCDiagnostics\state`,
+  which only Administrators and SYSTEM can write (`ProtectedState`); the Host reads and writes it through the Agent.
+- Settings that belong to the signed-in user (such as the user proxy and HKCU preferences) are read and written directly in the signed-in user's own registry hive by the user-mode Host.
 - Child processes for untrusted code get a restricted token (Administrators deny-only, privileges removed, Medium integrity).
 - Remote mode: a remote user drives the same UI through RemoteBlazorWebView (see [Remote sessions](#remote-sessions)). Actions are
   attributed to the actor ("Local user" or "Remote user") and the person at the PC is told. A remote user who has control has the

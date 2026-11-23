@@ -1326,6 +1326,8 @@ public sealed record AdminPipeServerOptions
     public int? ExpectedClientPid { get; set; }
     public string? ExpectedClientExePath { get; set; }
     public string? AllowedClientSid { get; set; }
+    /// <summary>When true, grants ReadWrite pipe access to locally logged-in interactive users (still verified by <see cref="ExpectedClientExePath"/>).</summary>
+    public bool AllowInteractiveUsers { get; set; }
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(30);
     public Func<NamedPipeServerStream, (bool Allowed, string? Reason)>? CustomClientVerifier { get; set; }
     /// <summary>Folders vendor uninstallers may be run from (null = Program Files, see <see cref="AppRemoval.IsVendorUninstaller"/>). Tests only.</summary>
@@ -1393,7 +1395,8 @@ public sealed class AdminPipeServer(
 
         using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
-            connectCts.CancelAfter(options.ConnectTimeout);
+            if (options.ConnectTimeout != Timeout.InfiniteTimeSpan && options.ConnectTimeout > TimeSpan.Zero)
+                connectCts.CancelAfter(options.ConnectTimeout);
             await server.WaitForConnectionAsync(connectCts.Token).ConfigureAwait(false);
         }
 
@@ -2491,6 +2494,12 @@ public sealed class AdminPipeServer(
         {
             if (currentIdentity.User is { } currentUserSid)
                 security.AddAccessRule(new PipeAccessRule(currentUserSid, PipeAccessRights.FullControl, AccessControlType.Allow));
+        }
+
+        if (options.AllowInteractiveUsers)
+        {
+            var interactiveSid = new SecurityIdentifier(WellKnownSidType.InteractiveSid, null);
+            security.AddAccessRule(new PipeAccessRule(interactiveSid, PipeAccessRights.ReadWrite, AccessControlType.Allow));
         }
 
         if (!string.IsNullOrWhiteSpace(options.AllowedClientSid))

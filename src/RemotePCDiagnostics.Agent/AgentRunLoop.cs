@@ -63,6 +63,7 @@ internal static class AgentRunLoop
                 AgentPaths.WriteSecuredConfig(config);
             },
         });
+        var localPipe = platform.RunLocalHostPipeAsync(linked.Token);
         var watch = DesktopInstallWatch.RunAsync(linked.Token, log, () =>
         {
             Interlocked.Exchange(ref removing, 1);
@@ -78,6 +79,8 @@ internal static class AgentRunLoop
             if (Volatile.Read(ref removing) == 0)
                 publisher.Publish(false, null);
             try { linked.Cancel(); } catch { }
+            try { await localPipe.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
             try { await watch.ConfigureAwait(false); }
             catch (OperationCanceledException) { }
         }
