@@ -188,6 +188,8 @@ public sealed class BiosUpdateService : IBiosUpdateService
                     _log?.Info($"BIOS provider '{primaryProvider.VendorId}' had no vendor BIOS package; falling back to '{candidate.VendorId}' ({fallbackLatest.Status}).");
                     return new BiosUpdateCheckOutcome(system, fallbackCurrent, fallbackLatest, candidate.VendorId, candidate.DisplayName);
                 }
+
+                _log?.Warn($"Fallback BIOS provider '{candidate.VendorId}' returned {fallbackLatest.Status}: {fallbackLatest.Message}");
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)

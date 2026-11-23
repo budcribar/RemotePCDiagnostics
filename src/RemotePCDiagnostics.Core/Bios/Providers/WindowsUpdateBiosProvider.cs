@@ -1199,6 +1199,16 @@ internal sealed class WindowsUpdateAgentBiosClient : IBiosWindowsUpdateClient
 
             searcherObj = session.CreateUpdateSearcher();
             dynamic searcher = searcherObj;
+            try
+            {
+                // Query Windows Update's local catalog cache (same as PendingUpdates.ps1) so non-elevated
+                // checks return immediately and don't fail or stall on live online WUA server/policy errors.
+                searcher.Online = false;
+            }
+            catch (COMException)
+            {
+                // Best-effort offline cache mode.
+            }
             searchResultObj = searcher.Search(AgentWindowsUpdate.Criteria(driversOnly: true));
             dynamic searchResult = searchResultObj;
             updatesObj = searchResult.Updates;
