@@ -404,6 +404,92 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+  installer-arm64:
+    name: Windows ARM64 installer & Fleet Agent
+    if: ${{ inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]')) || (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[full-release]')) }}
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rpcd
+
+      - name: Ensure Inno Setup 6
+        shell: pwsh
+        run: |
+          $iscc = @(
+            'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+            'C:\Program Files\Inno Setup 6\ISCC.exe'
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Build win-arm64 Agent EXE, Agent MSI, and Setup EXE
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [xml]$props = Get-Content Directory.Build.props
+          $ver = ($props.Project.PropertyGroup | ForEach-Object { $_['Version'] } | Where-Object { $_ } | Select-Object -First 1).InnerText.Trim()
+
+          $agentPubDir = Join-Path $env:RUNNER_TEMP 'agent-publish-arm64'
+          if (Test-Path $agentPubDir) { Remove-Item $agentPubDir -Recurse -Force }
+          dotnet publish src/RemotePCDiagnostics.Agent/RemotePCDiagnostics.Agent.csproj `
+            -c Release -r win-arm64 --self-contained `
+            -p:PublishSingleFile=true -p:PublishReadyToRun=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:DebugType=None -o $agentPubDir
+          if ($LASTEXITCODE -ne 0) { throw "win-arm64 Agent publish failed ($LASTEXITCODE)" }
+
+          $agentOutDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts/agent-arm64'
+          New-Item -ItemType Directory -Force $agentOutDir | Out-Null
+          $agentFileName = "RemotePCDiagnostics.Agent-$ver-win-arm64.exe"
+          $agentDest = Join-Path $agentOutDir $agentFileName
+          Copy-Item -LiteralPath (Join-Path $agentPubDir 'RemotePCDiagnostics.Agent.exe') -Destination $agentDest -Force
+
+          $hash = (Get-FileHash -LiteralPath $agentDest -Algorithm SHA256).Hash.ToLowerInvariant()
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText("$agentDest.sha256", "$hash  $agentFileName", $utf8NoBom)
+
+          pwsh -NoProfile -File msi/Build-AgentMsi.ps1 -Version $ver -Rid win-arm64 -SkipPublish -AgentExePath $agentDest -OutputDir $agentOutDir
+          if ($LASTEXITCODE -ne 0) { throw "Build-AgentMsi.ps1 (win-arm64) failed ($LASTEXITCODE)" }
+
+          $agentMsi = Join-Path $agentOutDir "RemotePCDiagnostics.Agent-$ver-win-arm64.msi"
+          if (-not (Test-Path -LiteralPath $agentMsi)) { throw "ARM64 Agent MSI missing: $agentMsi" }
+
+          pwsh -NoProfile -File installer/Build-Installer.ps1 -Rid win-arm64 -Compression $env:INSTALLER_COMPRESSION -AgentMsiPath $agentMsi
+          if ($LASTEXITCODE -ne 0) { throw "Build-Installer.ps1 (win-arm64) failed ($LASTEXITCODE)" }
+
+          # Verify staged Host and Agent executables are genuine ARM64 PE binaries (0xAA64).
+          foreach ($bin in @($agentDest, (Join-Path $env:GITHUB_WORKSPACE 'artifacts/installer-stage-win-arm64/RemotePCDiagnostics.Host.exe'))) {
+            $fs = [System.IO.File]::OpenRead($bin)
+            try {
+              $br = [System.IO.BinaryReader]::new($fs)
+              $fs.Seek(0x3C, [System.IO.SeekOrigin]::Begin) | Out-Null
+              $peOff = $br.ReadInt32()
+              $fs.Seek($peOff + 4, [System.IO.SeekOrigin]::Begin) | Out-Null
+              $machine = $br.ReadUInt16()
+              if ($machine -ne 0xAA64) { throw "Expected ARM64 (0xAA64) PE header for $bin, got 0x$($machine.ToString('X4'))" }
+            } finally { $fs.Dispose() }
+          }
+
+          $setup = Get-ChildItem artifacts/installer -Filter 'RemotePCDiagnostics-Setup-*-win-arm64.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'ARM64 Setup executable was not produced' }
+          "Built ARM64 release assets: $($setup.Name), $agentFileName, $(Split-Path -Leaf $agentMsi)"
+
+      - name: Upload Windows ARM64 installer and Fleet Agent
+        if: env.PUBLISH_ARTIFACTS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: RemotePCDiagnostics-Arm64
+          path: |
+            artifacts/installer/RemotePCDiagnostics-Setup-*-win-arm64.exe
+            artifacts/installer/RemotePCDiagnostics-Setup-*-win-arm64.exe.sha256
+            artifacts/agent-arm64/RemotePCDiagnostics.Agent-*-win-arm64.exe
+            artifacts/agent-arm64/RemotePCDiagnostics.Agent-*-win-arm64.exe.sha256
+            artifacts/agent-arm64/RemotePCDiagnostics.Agent-*-win-arm64.msi
+            artifacts/agent-arm64/RemotePCDiagnostics.Agent-*-win-arm64.msi.sha256
+          if-no-files-found: error
+          retention-days: 5
+
   testshop:
     name: TestShop demo bundle (RPCD + RPCDA)
     runs-on: windows-latest
@@ -810,7 +896,7 @@ jobs:
   release:
     name: Publish GitHub release
     if: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || inputs.release_tag != ''))) && (inputs.full_release || inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[full-release]'))) }}
-    needs: [service-workflow, build-test, installer, testshop, agent, smoke]
+    needs: [service-workflow, build-test, installer, installer-arm64, testshop, agent, smoke]
     runs-on: ubuntu-latest
     concurrency:
       group: github-release
@@ -822,6 +908,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: RemotePCDiagnostics-Setup-win-x64
+          path: release-assets
+
+      - name: Download Windows ARM64 installer and Fleet Agent artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: RemotePCDiagnostics-Arm64
           path: release-assets
 
       - name: Download TestShop demo bundle artifact

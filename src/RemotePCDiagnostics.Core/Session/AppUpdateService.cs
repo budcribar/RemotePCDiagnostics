@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -250,7 +251,25 @@ public static class AppUpdateInstaller
         string? InstallerUrl,
         string? InstallerSha256Url,
         string? AgentMsiUrl,
-        string? AgentMsiSha256Url);
+        string? AgentMsiSha256Url,
+        string? Arm64InstallerUrl = null,
+        string? Arm64InstallerSha256Url = null,
+        string? Arm64AgentMsiUrl = null,
+        string? Arm64AgentMsiSha256Url = null)
+    {
+        public (string? InstallerUrl, string? InstallerSha256Url, string? AgentMsiUrl, string? AgentMsiSha256Url) ResolveDownloads(Architecture osArch)
+        {
+            if (osArch == Architecture.Arm64)
+            {
+                var instUrl = !string.IsNullOrWhiteSpace(Arm64InstallerUrl) ? Arm64InstallerUrl : InstallerUrl;
+                var instSha = !string.IsNullOrWhiteSpace(Arm64InstallerUrl) ? Arm64InstallerSha256Url : InstallerSha256Url;
+                var msiUrl = !string.IsNullOrWhiteSpace(Arm64AgentMsiUrl) ? Arm64AgentMsiUrl : AgentMsiUrl;
+                var msiSha = !string.IsNullOrWhiteSpace(Arm64AgentMsiUrl) ? Arm64AgentMsiSha256Url : AgentMsiSha256Url;
+                return (instUrl, instSha, msiUrl, msiSha);
+            }
+            return (InstallerUrl, InstallerSha256Url, AgentMsiUrl, AgentMsiSha256Url);
+        }
+    }
 
     public sealed record ReleaseFeed(ReleaseFeedChannel? Stable, ReleaseFeedChannel? Prerelease);
 
@@ -571,16 +590,17 @@ public sealed class AppUpdateService : IAppUpdateService, IDisposable
                     var selected = _channel == AppUpdateChannel.Prerelease ? feed?.Prerelease : feed?.Stable;
                     var isNewer = AppVersionComparer.IsNewer(selected?.Version, _installedVersion) == true;
                     var hasAgentBridge = _getElevatedBridge?.Invoke()?.IsConnected == true;
+                    var downloads = selected?.ResolveDownloads(RuntimeInformation.OSArchitecture);
                     info = new AppUpdateInfo(
                         UpdateAvailable: isNewer,
                         InstalledVersion: _installedVersion,
                         LatestVersion: selected?.Version,
                         InstallKind: AppInstallKind.Standalone,
                         ReleaseUrl: selected?.ReleaseUrl,
-                        InstallerUrl: selected?.InstallerUrl,
-                        InstallerSha256Url: selected?.InstallerSha256Url,
-                        AgentMsiUrl: selected?.AgentMsiUrl,
-                        AgentMsiSha256Url: selected?.AgentMsiSha256Url,
+                        InstallerUrl: downloads?.InstallerUrl,
+                        InstallerSha256Url: downloads?.InstallerSha256Url,
+                        AgentMsiUrl: downloads?.AgentMsiUrl,
+                        AgentMsiSha256Url: downloads?.AgentMsiSha256Url,
                         CanInstallSilently: hasAgentBridge);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)

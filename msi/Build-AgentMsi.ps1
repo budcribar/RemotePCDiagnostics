@@ -12,6 +12,8 @@
 [CmdletBinding()]
 param(
     [string] $Version = '',
+    [ValidateSet('win-x64', 'win-arm64')]
+    [string] $Rid = 'win-x64',
     [string] $AgentExePath = '',
     [string] $OutputDir = '',
     [switch] $SkipPublish
@@ -58,17 +60,19 @@ $OutputDir = (Resolve-Path -LiteralPath $OutputDir).Path
 $LocalNuGetDir = Join-Path $RepoRoot 'third_party/RemoteBlazorWebView/packages'
 New-Item -ItemType Directory -Force -Path $LocalNuGetDir | Out-Null
 
+$WixPlatform = if ($Rid -eq 'win-arm64') { 'arm64' } else { 'x64' }
+
 if (-not $SkipPublish -and [string]::IsNullOrWhiteSpace($AgentExePath)) {
-    $PubDir = Join-Path $RepoRoot 'artifacts/agent-stage'
+    $PubDir = Join-Path $RepoRoot "artifacts/agent-stage-$Rid"
     if (Test-Path -LiteralPath $PubDir) {
         Remove-Item -LiteralPath $PubDir -Recurse -Force
     }
     New-Item -ItemType Directory -Force -Path $PubDir | Out-Null
 
-    Write-Host "Publishing RemotePCDiagnostics.Agent $Version (win-x64 single-file self-contained) ..." -ForegroundColor Cyan
+    Write-Host "Publishing RemotePCDiagnostics.Agent $Version ($Rid single-file self-contained) ..." -ForegroundColor Cyan
     & dotnet publish (Join-Path $RepoRoot 'src/RemotePCDiagnostics.Agent/RemotePCDiagnostics.Agent.csproj') `
         -c Release `
-        -r win-x64 `
+        -r $Rid `
         --self-contained `
         -p:PublishSingleFile=true `
         -p:IncludeNativeLibrariesForSelfExtract=true `
@@ -86,20 +90,21 @@ if ([string]::IsNullOrWhiteSpace($AgentExePath) -or -not (Test-Path -LiteralPath
 }
 $AgentExePath = (Resolve-Path -LiteralPath $AgentExePath).Path
 
-$WixStageOut = Join-Path $RepoRoot 'artifacts/agent-msi-stage'
+$WixStageOut = Join-Path $RepoRoot "artifacts/agent-msi-stage-$Rid"
 if (Test-Path -LiteralPath $WixStageOut) {
     Remove-Item -LiteralPath $WixStageOut -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $WixStageOut | Out-Null
 
-$MsiBaseName = "RemotePCDiagnostics.Agent-$Version-win-x64"
+$MsiBaseName = "RemotePCDiagnostics.Agent-$Version-$Rid"
 $MsiFileName = "$MsiBaseName.msi"
 $WixProj = Join-Path $PSScriptRoot 'RemotePCDiagnostics.Agent.Msi.wixproj'
 $IconPath = (Resolve-Path -LiteralPath (Join-Path $RepoRoot 'src/RemotePCDiagnostics.Host/Assets/diagnostics.ico')).Path
 
-Write-Host "Building MSI package $MsiFileName (ProductVersion=$NumericVersion) ..." -ForegroundColor Cyan
+Write-Host "Building MSI package $MsiFileName (ProductVersion=$NumericVersion, Platform=$WixPlatform) ..." -ForegroundColor Cyan
 & dotnet build $WixProj `
     -c Release `
+    "-p:InstallerPlatform=$WixPlatform" `
     "-p:AppNumericVersion=$NumericVersion" `
     "-p:AgentExePath=$AgentExePath" `
     "-p:IconPath=$IconPath" `
@@ -119,7 +124,7 @@ Copy-Item -LiteralPath $BuiltMsi.FullName -Destination $DestMsi -Force
 
 $MsiSizeBytes = (Get-Item -LiteralPath $DestMsi).Length
 if ($MsiSizeBytes -lt 5MB) {
-    throw "MSI package '$DestMsi' is unexpectedly small ($MsiSizeBytes bytes); expected embedded self-contained win-x64 agent."
+    throw "MSI package '$DestMsi' is unexpectedly small ($MsiSizeBytes bytes); expected embedded self-contained $Rid agent."
 }
 
 $Hash = (Get-FileHash -LiteralPath $DestMsi -Algorithm SHA256).Hash.ToLowerInvariant()

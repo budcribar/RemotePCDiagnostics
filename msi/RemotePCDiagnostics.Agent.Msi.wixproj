@@ -1,7 +1,7 @@
 <Project Sdk="WixToolset.Sdk/5.0.2">
   <PropertyGroup>
     <OutputType>Package</OutputType>
-    <InstallerPlatform>x64</InstallerPlatform>
+    <InstallerPlatform Condition="'$(InstallerPlatform)' == ''">x64</InstallerPlatform>
     <OutputName Condition="'$(MsiOutputName)' != ''">$(MsiOutputName)</OutputName>
     <OutputName Condition="'$(MsiOutputName)' == ''">RemotePCDiagnostics.Agent</OutputName>
     <AppNumericVersion Condition="'$(AppNumericVersion)' == ''">1.2.0</AppNumericVersion>
