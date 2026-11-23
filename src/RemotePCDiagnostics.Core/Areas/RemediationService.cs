@@ -135,7 +135,9 @@ public sealed class RemediationService(
                 $"Restart {label}?",
                 $"Resets hardware device '{label}' in Device Manager via pnputil.",
                 "Windows will stop and restart the device driver without rebooting the PC.",
-                "Requires administrator privileges. If this is a network or display device, it may briefly disconnect or flicker.",
+                commands.HasAdminRights
+                    ? "If this is a network or display device, it may briefly disconnect or flicker."
+                    : "Requires administrator privileges. If this is a network or display device, it may briefly disconnect or flicker.",
                 !string.IsNullOrWhiteSpace(action.Target)),
 
             RemediationKind.EnableDevice => new(
@@ -143,7 +145,7 @@ public sealed class RemediationService(
                 $"Enable {label}?",
                 $"Re-enables disabled device '{label}' in Device Manager via pnputil.",
                 "Windows will enable the device and load its driver.",
-                "Requires administrator privileges.",
+                commands.HasAdminRights ? null : "Requires administrator privileges.",
                 !string.IsNullOrWhiteSpace(action.Target)),
 
             RemediationKind.ScanHardwareChanges => new(
@@ -737,7 +739,26 @@ public sealed class RemediationService(
     private async Task<RemediationResult> RunPnpUtilAsync(IReadOnlyList<string> args, string okMsg, string failMsg, CancellationToken ct)
     {
         var pr = await commands.RunAdminToolAsync(SystemCommandRunner.SystemTool("pnputil.exe"), args, ct).ConfigureAwait(false);
-        return pr is { ExitCode: 0 } ? new(true, okMsg) : new(false, Failure(pr, failMsg));
+        if (pr is { ExitCode: 0 }) return new(true, okMsg);
+        // ERROR_SUCCESS_REBOOT_REQUIRED (3010): pnputil succeeded, Windows needs a restart to finish.
+        if (pr is { ExitCode: 3010 }) return new(true, $"{okMsg} Restart the PC to finish.", RestartNeeded: true);
+        if (SystemCommandRunner.AgentFailure(pr) is { } agentWhy) return new(false, agentWhy);
+        if (pr is not null && commands.HasAdminRights)
+        {
+            var detail = FirstUsefulLine(pr.StdErr) ?? FirstUsefulLine(pr.StdOut);
+            var cleanFail = failMsg.Replace(" (administrator rights required).", ".").Replace(" (administrator rights required)", "");
+            return new(false, detail is not null ? $"{cleanFail} ({detail})" : $"{cleanFail} (pnputil exit code {pr.ExitCode}).");
+        }
+        return new(false, Failure(pr, failMsg));
+    }
+
+    private static string? FirstUsefulLine(string? output)
+    {
+        if (string.IsNullOrWhiteSpace(output)) return null;
+        var lines = output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var match = lines.LastOrDefault(l => !l.StartsWith("Microsoft PnP Utility", StringComparison.OrdinalIgnoreCase)
+            && !l.StartsWith("Instance ID:", StringComparison.OrdinalIgnoreCase));
+        return string.IsNullOrWhiteSpace(match) ? null : AreaReportExport.Text(match, 200);
     }
 
     /// <summary>Time limits for fixes that legitimately take minutes (the default limit is 60 s).</summary>

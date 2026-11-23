@@ -235,7 +235,7 @@ table.detail th, table.detail td { border-bottom: 1px solid var(--border); paddi
 table.detail tr:last-child th, table.detail tr:last-child td { border-bottom: 0; }
 table.detail td { font-variant-numeric: tabular-nums; }
 [data-theme="dark"] table.detail td { font-family: var(--font-num); font-size: 12.5px; }
-table.detail.grid th { width: auto; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; } table.detail.grid td { word-break: break-word; }
+table.detail.grid th { width: auto; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; } table.detail.grid td { overflow-wrap: break-word; }
 table.detail tbody tr:hover td, tr.clickable:hover td { background: var(--surface-hover); }
 tr.clickable { cursor: pointer; }
 /* Sortable drawer tables (shared by all area pages). */
