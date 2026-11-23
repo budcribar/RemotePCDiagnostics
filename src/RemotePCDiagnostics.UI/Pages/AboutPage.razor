@@ -23,49 +23,66 @@
         <dt>Operating system</dt><dd>@System.Runtime.InteropServices.RuntimeInformation.OSDescription</dd>
         <dt>Process architecture</dt><dd>@System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture</dd>
     </dl>
-    <p class="meta">CI builds include a build number, attempt and Git revision. Local builds are marked local and may include uncommitted changes. Older logs retain the version information originally recorded.</p>
 </section>
 @if (Plugins.Count > 0)
 {
-    <section class="card about-card" data-testid="about-plugins">
-        <h2>Module plugins</h2>
-        <p>Modules installed in the modules folder. Signed modules run inside the app; unsigned ones never do.</p>
-        <table class="about-plugins">
-            <thead><tr><th>Module</th><th>Version</th><th>Signature</th><th>State</th></tr></thead>
-            <tbody>
-            @foreach (var p in Plugins)
-            {
-                <tr data-testid="about-plugin">
-                    <td><strong>@(p.DisplayName ?? p.PluginId)</strong><div class="meta">@p.PluginId@(p.ModuleId is { } id ? $" · {id}" : "")</div></td>
-                    <td>@(p.Version ?? "—")</td>
-                    <td>@(p.Signature ?? "—")</td>
-                    <td>@(p.UserMode ? "User mode" : p.State.ToString())@if (p.Reason is { Length: > 0 } && !p.UserMode) {<div class="meta">@p.Reason</div>}</td>
-                </tr>
-            }
-            </tbody>
-        </table>
-    </section>
+    <details class="card about-card bench-customize" data-testid="about-plugins" open="@_pluginsOpen">
+        <summary class="bench-customize-summary" data-testid="about-plugins-toggle" aria-expanded="@(_pluginsOpen ? "true" : "false")"
+                 @onclick="() => _pluginsOpen = !_pluginsOpen" @onclick:preventDefault="true">
+            <span class="bench-customize-title">
+                <span>Module plugins</span>
+                <span class="meta">(@Plugins.Count @(Plugins.Count == 1 ? "module" : "modules"))</span>
+            </span>
+            <span class="chevron-icon @(_pluginsOpen ? "is-open" : "")" aria-hidden="true">▾</span>
+        </summary>
+        <div class="bench-customize-body">
+            <p>Modules installed in the modules folder. Signed modules run inside the app; unsigned ones never do.</p>
+            <table class="about-plugins">
+                <thead><tr><th>Module</th><th>Version</th><th>Signature</th><th>State</th></tr></thead>
+                <tbody>
+                @foreach (var p in Plugins)
+                {
+                    <tr data-testid="about-plugin">
+                        <td><strong>@(p.DisplayName ?? p.PluginId)</strong><div class="meta">@p.PluginId@(p.ModuleId is { } id ? $" · {id}" : "")</div></td>
+                        <td>@(p.Version ?? "—")</td>
+                        <td>@(p.Signature ?? "—")</td>
+                        <td>@(p.UserMode ? "User mode" : p.State.ToString())@if (p.Reason is { Length: > 0 } && !p.UserMode) {<div class="meta">@p.Reason</div>}</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </details>
 }
 
 @if (BuiltInDlls.Count > 0)
 {
-    <section class="card about-card" data-testid="about-builtin-modules">
-        <h2>Built-in modules</h2>
-        <p>Modules that ship with the app as their own DLLs (builtin-modules folder next to the app). @BuiltInDlls.Count(p => p.State == PluginState.Loaded) of @BuiltInDlls.Count loaded.</p>
-        <table class="about-plugins">
-            <thead><tr><th>Module</th><th>File</th><th>State</th></tr></thead>
-            <tbody>
-            @foreach (var p in BuiltInDlls)
-            {
-                <tr data-testid="about-builtin-module">
-                    <td><strong>@(p.DisplayName ?? p.PluginId)</strong>@if (p.ModuleId is { } id) {<div class="meta">@id</div>}</td>
-                    <td class="meta" style="overflow-wrap:anywhere">@System.IO.Path.GetFileName(p.Path)</td>
-                    <td>@p.State@if (p.Reason is { Length: > 0 }) {<div class="meta">@p.Reason</div>}</td>
-                </tr>
-            }
-            </tbody>
-        </table>
-    </section>
+    <details class="card about-card bench-customize" data-testid="about-builtin-modules" open="@_builtInOpen">
+        <summary class="bench-customize-summary" data-testid="about-builtin-modules-toggle" aria-expanded="@(_builtInOpen ? "true" : "false")"
+                 @onclick="() => _builtInOpen = !_builtInOpen" @onclick:preventDefault="true">
+            <span class="bench-customize-title">
+                <span>Built-in modules</span>
+                <span class="meta">(@BuiltInDlls.Count(p => p.State == PluginState.Loaded) of @BuiltInDlls.Count loaded)</span>
+            </span>
+            <span class="chevron-icon @(_builtInOpen ? "is-open" : "")" aria-hidden="true">▾</span>
+        </summary>
+        <div class="bench-customize-body">
+            <p>Modules that ship with the app as their own DLLs (builtin-modules folder next to the app).</p>
+            <table class="about-plugins">
+                <thead><tr><th>Module</th><th>File</th><th>State</th></tr></thead>
+                <tbody>
+                @foreach (var p in BuiltInDlls)
+                {
+                    <tr data-testid="about-builtin-module">
+                        <td><strong>@(p.DisplayName ?? p.PluginId)</strong>@if (p.ModuleId is { } id) {<div class="meta">@id</div>}</td>
+                        <td class="meta" style="overflow-wrap:anywhere">@System.IO.Path.GetFileName(p.Path)</td>
+                        <td>@p.State@if (p.Reason is { Length: > 0 }) {<div class="meta">@p.Reason</div>}</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </details>
 }
 
 @if (Session.Mode == SessionMode.Local)
@@ -84,6 +101,8 @@
 @code {
     private bool _unsigned = UnsignedModulesSetting.IsOn();
     private string? _unsignedError;
+    private bool _pluginsOpen;
+    private bool _builtInOpen;
 
     private void ToggleUnsigned(ChangeEventArgs e)
     {

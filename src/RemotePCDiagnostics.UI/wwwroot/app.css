@@ -700,7 +700,7 @@ tr.history-day.clickable:hover td { background: var(--surface-hover); }
 .run-progress-indeterminate > div { height: 100%; width: 35%; border-radius: 99px; background: var(--accent); animation: run-indeterminate 1.6s ease-in-out infinite; }
 @keyframes run-indeterminate { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
 /* About page: gentle fade-in and a slowly shimmering accent line under the title */
-.about-card { animation: about-in .5s ease-out both; }
+.about-card { animation: about-in .5s ease-out both; margin-bottom: 12px; }
 .about-card:nth-of-type(2) { animation-delay: .08s; } .about-card:nth-of-type(3) { animation-delay: .16s; }
 @keyframes about-in { from { opacity: 0; transform: translateY(6px); } }
 .about-accent-line { height: 2px; max-width: 320px; margin: -4px 0 14px; border-radius: 99px; overflow: hidden; background: var(--accent); opacity: .6; position: relative; }

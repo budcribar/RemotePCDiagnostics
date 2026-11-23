@@ -78,6 +78,52 @@ public class AboutPageTests : BunitContext
             Assert.DoesNotContain(Path.DirectorySeparatorChar + Environment.UserName + Path.DirectorySeparatorChar, path, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(Path.AltDirectorySeparatorChar + Environment.UserName + Path.AltDirectorySeparatorChar, path, StringComparison.OrdinalIgnoreCase);
         }
+
+        Assert.DoesNotContain("CI builds include a build number", cut.Markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void About_page_module_lists_expand_and_collapse()
+    {
+        using var monitor = new AgentModeMonitor(_ => AgentModeSnapshot.LocalOnly, startLoop: false);
+        var session = new SessionContext(SessionMode.Local);
+        var registrar = new RemotePCDiagnostics.Core.Plugins.PluginRegistrar(session, new Version(1, 0));
+        registrar.RecordDisabled(new RemotePCDiagnostics.Core.Plugins.PluginRecord("sample.plugin", ModuleSource.Plugin, RemotePCDiagnostics.Core.Plugins.PluginState.Disabled, "unsigned")
+        {
+            DisplayName = "Sample Plugin",
+            Version = "1.2.3",
+        });
+        registrar.RecordDisabled(new RemotePCDiagnostics.Core.Plugins.PluginRecord("builtin.sample", ModuleSource.BuiltIn, RemotePCDiagnostics.Core.Plugins.PluginState.Disabled, "test")
+        {
+            DisplayName = "Sample Built-in",
+            Path = "/app/builtin-modules/Sample.dll",
+        });
+
+        Services.AddSingleton<ISessionContext>(session);
+        Services.AddSingleton(new AppServices(Plugins: registrar));
+        Services.AddSingleton(monitor);
+
+        var cut = Render<AboutPage>();
+
+        foreach (var testId in new[] { "about-plugins", "about-builtin-modules" })
+        {
+            var details = cut.Find($"details[data-testid='{testId}']");
+            var toggle = cut.Find($"[data-testid='{testId}-toggle']");
+            Assert.False(details.HasAttribute("open"));
+            Assert.Equal("false", toggle.GetAttribute("aria-expanded"));
+
+            toggle.Click();
+            details = cut.Find($"details[data-testid='{testId}']");
+            toggle = cut.Find($"[data-testid='{testId}-toggle']");
+            Assert.True(details.HasAttribute("open"));
+            Assert.Equal("true", toggle.GetAttribute("aria-expanded"));
+
+            toggle.Click();
+            details = cut.Find($"details[data-testid='{testId}']");
+            toggle = cut.Find($"[data-testid='{testId}-toggle']");
+            Assert.False(details.HasAttribute("open"));
+            Assert.Equal("false", toggle.GetAttribute("aria-expanded"));
+        }
     }
 
     private static readonly string[] SecretFieldNames =
