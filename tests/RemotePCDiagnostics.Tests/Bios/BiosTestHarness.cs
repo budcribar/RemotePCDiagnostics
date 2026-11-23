@@ -627,6 +627,13 @@ internal static class TestCabBuilder
     public static byte[] CreateWithUnsupportedCompression(string fileName, byte[] payload, ushort typeCompress = 3) =>
         BuildCab(new Dictionary<string, byte[]> { [fileName] = payload }, typeCompress, 0, 0, 0, 32768);
 
+    /// <summary>
+    /// Builds a valid MS-CAB archive with <c>TYPE_LZX</c> (window size 21, <c>0x1503</c>) encoding each CFDATA block
+    /// as a spec-compliant LZX uncompressed block (block type 3) so pure-C# LZX decompression can be unit-tested.
+    /// </summary>
+    public static byte[] CreateLzxUncompressed(IReadOnlyDictionary<string, byte[]> files, int maxBlockSize = 32768) =>
+        BuildCab(files, typeCompress: 0x1503, 0, 0, 0, maxBlockSize);
+
     private static byte[] BuildCab(
         IReadOnlyDictionary<string, byte[]> files,
         ushort typeCompress,
@@ -649,6 +656,7 @@ internal static class TestCabBuilder
         var folderBytes = folderStream.ToArray();
         var blocks = new List<(byte[] Compressed, ushort UncompLen)>();
         var pos = 0;
+        var isFirstBlock = true;
         do
         {
             var chunkLen = Math.Min(maxBlockSize, folderBytes.Length - pos);
@@ -666,6 +674,10 @@ internal static class TestCabBuilder
                     deflate.Write(chunk, 0, chunk.Length);
                 blockPayload = deflateMs.ToArray();
             }
+            else if (typeCompress == 0x1503)
+            {
+                blockPayload = EncodeLzxUncompressedBlock(chunk, isFirstBlock);
+            }
             else
             {
                 blockPayload = chunk;
@@ -673,6 +685,7 @@ internal static class TestCabBuilder
 
             blocks.Add((blockPayload, (ushort)chunkLen));
             pos += chunkLen;
+            isFirstBlock = false;
         }
         while (pos < folderBytes.Length);
 
@@ -747,6 +760,43 @@ internal static class TestCabBuilder
         cab.Write(cfDataBytes, 0, cfDataBytes.Length);
 
         return cab.ToArray();
+    }
+
+    private static byte[] EncodeLzxUncompressedBlock(byte[] chunk, bool isFirstBlock)
+    {
+        using var ms = new MemoryStream();
+        uint bitBuf = 0;
+        var bitCount = 0;
+
+        void WriteBits(uint value, int count)
+        {
+            bitBuf = (bitBuf << count) | (value & ((1u << count) - 1));
+            bitCount += count;
+            while (bitCount >= 16)
+            {
+                bitCount -= 16;
+                var word = (ushort)((bitBuf >> bitCount) & 0xFFFF);
+                WriteUInt16(ms, word);
+            }
+        }
+
+        if (isFirstBlock)
+            WriteBits(0, 1); // intelFlag = 0
+        WriteBits(3, 3); // BlockTypeUncompressed
+        WriteBits((uint)((chunk.Length >> 8) & 0xFFFF), 16);
+        WriteBits((uint)(chunk.Length & 0xFF), 8);
+
+        if (bitCount > 0)
+            WriteBits(0, 16 - bitCount);
+
+        WriteUInt32(ms, 1); // R0
+        WriteUInt32(ms, 1); // R1
+        WriteUInt32(ms, 1); // R2
+        ms.Write(chunk, 0, chunk.Length);
+        if ((chunk.Length & 1) != 0)
+            ms.WriteByte(0);
+
+        return ms.ToArray();
     }
 
     private static void WriteUInt16(Stream s, ushort v)

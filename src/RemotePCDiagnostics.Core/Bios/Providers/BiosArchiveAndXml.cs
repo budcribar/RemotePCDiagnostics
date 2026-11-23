@@ -231,8 +231,9 @@ public static class BiosArchiveAndXml
     }
 
     /// <summary>
-    /// Pure-C# Microsoft Cabinet (<c>MSCF</c>) reader supporting <c>TYPE_NONE</c> (0) and <c>TYPE_MSZIP</c> (1).
-    /// Returns <c>false</c> cleanly (never throws) on unsupported compression (e.g., LZX), corrupt/truncated archives,
+    /// Pure-C# Microsoft Cabinet (<c>MSCF</c>) reader supporting <c>TYPE_NONE</c> (0), <c>TYPE_MSZIP</c> (1),
+    /// and <c>TYPE_LZX</c> (3, window sizes 15..21).
+    /// Returns <c>false</c> cleanly (never throws) on unsupported compression (e.g., Quantum), corrupt/truncated archives,
     /// path traversal entries, or archives exceeding <paramref name="maxTotalBytes"/>.
     /// </summary>
     public static bool TryExtractCabEntries(
@@ -334,7 +335,7 @@ public static class BiosArchiveAndXml
                 var coffCabStart = BinaryPrimitives.ReadUInt32LittleEndian(span[pos..]);
                 var cCFData = BinaryPrimitives.ReadUInt16LittleEndian(span[(pos + 4)..]);
                 var typeCompress = BinaryPrimitives.ReadUInt16LittleEndian(span[(pos + 6)..]);
-                folders[i] = new CabFolder(coffCabStart, cCFData, typeCompress & 0x000F);
+                folders[i] = new CabFolder(coffCabStart, cCFData, typeCompress & 0x000F, (typeCompress >> 8) & 0x001F);
                 pos += folderRecordSize;
             }
 
@@ -402,8 +403,11 @@ public static class BiosArchiveAndXml
                 if (folder.CompressionMethod is not (0 or 1 or 2 or 3))
                     return CabExtractionStatus.UnsafeOrInvalid;
 
-                if (folder.CompressionMethod is 2 or 3)
+                if (folder.CompressionMethod == 2
+                    || (folder.CompressionMethod == 3 && !LzxDecoder.IsSupportedWindowBits(folder.WindowBits)))
+                {
                     hasUnsupportedCompression = true;
+                }
 
                 long dataPos = folder.CoffCabStart;
                 long folderUncomp = 0;
@@ -446,7 +450,7 @@ public static class BiosArchiveAndXml
             if (hasUnsupportedCompression)
                 return CabExtractionStatus.UnsupportedCompression;
 
-            // Pass 2: Pure-C# extraction for TYPE_NONE (0) and TYPE_MSZIP (1).
+            // Pass 2: Pure-C# extraction for TYPE_NONE (0), TYPE_MSZIP (1), and TYPE_LZX (3, window 15..21).
             var result = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
             long cumulativeUncomp = 0;
 
@@ -458,6 +462,14 @@ public static class BiosArchiveAndXml
                 var folder = folders[f];
                 long dataPos = folder.CoffCabStart;
                 using var folderStream = new MemoryStream();
+                LzxDecoder? lzx = null;
+                byte[]? lzxBlockBuf = null;
+                if (folder.CompressionMethod == 3)
+                {
+                    if (!LzxDecoder.TryCreate(folder.WindowBits, out lzx))
+                        return CabExtractionStatus.UnsupportedCompression;
+                    lzxBlockBuf = new byte[32768];
+                }
 
                 for (var b = 0; b < folder.CCFData; b++)
                 {
@@ -473,7 +485,7 @@ public static class BiosArchiveAndXml
                         folderStream.Write(cabBytes, (int)payloadOffset, cbData);
                         cumulativeUncomp += cbUncomp;
                     }
-                    else
+                    else if (folder.CompressionMethod == 1)
                     {
                         if (!TryDecompressMsZipBlock(cabBytes, (int)(payloadOffset + 2), cbData - 2, cbUncomp, out var blockBuf))
                         {
@@ -485,6 +497,14 @@ public static class BiosArchiveAndXml
                         }
 
                         folderStream.Write(blockBuf, 0, cbUncomp);
+                        cumulativeUncomp += cbUncomp;
+                    }
+                    else
+                    {
+                        if (!lzx!.TryDecompressBlock(cabBytes, (int)payloadOffset, cbData, cbUncomp, lzxBlockBuf!))
+                            return CabExtractionStatus.UnsupportedCompression;
+
+                        folderStream.Write(lzxBlockBuf!, 0, cbUncomp);
                         cumulativeUncomp += cbUncomp;
                     }
 
@@ -976,6 +996,6 @@ public static class BiosArchiveAndXml
         }
     }
 
-    private readonly record struct CabFolder(uint CoffCabStart, ushort CCFData, int CompressionMethod);
+    private readonly record struct CabFolder(uint CoffCabStart, ushort CCFData, int CompressionMethod, int WindowBits);
     private readonly record struct CabFileEntry(string SanitizedName, uint CbFile, uint UoffFolderStart);
 }
