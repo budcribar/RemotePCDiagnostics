@@ -57,13 +57,13 @@ public sealed class BiosFirmwareModuleTests
     }
 
     [Fact]
-    public void Build_UpdateAvailableSecurity_ReturnsErrorWithInstallAction()
+    public void Build_UpdateAvailableCritical_ReturnsErrorWithInstallAction()
     {
         var latest = new BiosLatestInfo(
             "hp",
             BiosCheckStatus.UpdateAvailable,
             LatestVersion: "F.36",
-            Severity: BiosUpdateSeverity.Security);
+            Severity: BiosUpdateSeverity.Critical);
         var report = BiosFirmwareModule.Build(MakeOutcome(latest));
 
         Assert.Equal(DiagnosticStatus.Error, report.Status);

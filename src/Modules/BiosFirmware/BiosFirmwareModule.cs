@@ -213,7 +213,7 @@ public sealed class BiosFirmwareModule(IBiosUpdateService? bios = null, SystemCo
         string curVer)
     {
         var target = string.IsNullOrWhiteSpace(latest.LatestVersion) ? "newer version" : latest.LatestVersion;
-        var urgent = latest.Severity is BiosUpdateSeverity.Critical or BiosUpdateSeverity.Security;
+        var urgent = latest.Severity == BiosUpdateSeverity.Critical;
         var level = urgent ? AreaLevel.Error : AreaLevel.Warning;
         var status = urgent ? DiagnosticStatus.Error : DiagnosticStatus.Warning;
         var severityTag = urgent ? $" ({latest.Severity})" : "";
