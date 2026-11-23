@@ -224,12 +224,17 @@ public static class CheckEnableRules
     }
 }
 
-/// <summary>The saved enablement for this PC. A missing file means every diagnostic check is enabled.</summary>
+/// <summary>
+/// The saved enablement for this PC. A missing file means every diagnostic check is enabled. A remote technician's own preferences
+/// (<see cref="ApplyRemotePrefs"/>) sit on top for this session only: <see cref="Settings"/> returns them, but they are never saved to
+/// the PC, and <see cref="Reload"/> or a saved change does not drop them.
+/// </summary>
 public sealed class CheckSettingsService
 {
     private readonly ICheckSettingsStore _store;
     private readonly object _gate = new();
     private CheckSettings _state;
+    private CheckSettings? _session;
 
     public CheckSettingsService(ICheckSettingsStore store)
     {
@@ -239,13 +244,20 @@ public sealed class CheckSettingsService
 
     public event Action? Changed;
 
-    public CheckSettings Settings { get { lock (_gate) return _state; } }
+    /// <summary>What this session uses: the technician's session preferences when set, otherwise what is saved on the PC.</summary>
+    public CheckSettings Settings { get { lock (_gate) return _session ?? _state; } }
+
+    /// <summary>What is saved on the PC, ignoring any session preferences.</summary>
+    public CheckSettings SavedSettings { get { lock (_gate) return _state; } }
+
+    /// <summary>True while a remote technician's preferences are applied on top of the saved settings.</summary>
+    public bool HasSessionPrefs { get { lock (_gate) return _session is not null; } }
 
     public bool IsEnabled(string checkId) => Settings.IsEnabled(checkId);
 
     /// <summary>
     /// Reads the saved file again: the app reads it through the Agent, which may connect after the service was made. Does nothing when
-    /// nothing could be read. True when it read the file.
+    /// nothing could be read. True when it read the file. Session preferences stay as they are.
     /// </summary>
     public bool Reload()
     {
@@ -259,35 +271,73 @@ public sealed class CheckSettingsService
     public void SetEnabled(string checkId, bool on, bool available) => SetEnabled(checkId, on, available, persistToHost: true);
 
     public void SetEnabled(string checkId, bool on, bool available, bool persistToHost) =>
-        Save(Settings with { Disabled = CheckEnableRules.WithEnabled(Settings, checkId, on, available) }, persistToHost);
+        Update(s => s with { Disabled = CheckEnableRules.WithEnabled(s, checkId, on, available) }, persistToHost);
 
     public void SetAll(IEnumerable<string> availableIds, bool on) => SetAll(availableIds, on, persistToHost: true);
 
-    public void SetAll(IEnumerable<string> availableIds, bool on, bool persistToHost) =>
-        Save(Settings with { Disabled = CheckEnableRules.WithAll(Settings, availableIds, on) }, persistToHost);
+    public void SetAll(IEnumerable<string> availableIds, bool on, bool persistToHost)
+    {
+        var ids = availableIds.ToList();
+        Update(s => s with { Disabled = CheckEnableRules.WithAll(s, ids, on) }, persistToHost);
+    }
 
-    public void SetOrder(IEnumerable<string> orderedIds, bool persistToHost = true) =>
-        Save(Settings with { Order = CheckEnableRules.NormalizeOrder(orderedIds) }, persistToHost);
+    public void SetOrder(IEnumerable<string> orderedIds, bool persistToHost = true)
+    {
+        var order = CheckEnableRules.NormalizeOrder(orderedIds);
+        Update(s => s with { Order = order }, persistToHost);
+    }
 
-    public void Reorder(string fromId, string toId, IEnumerable<string> allIds, bool persistToHost = true) =>
-        Save(Settings with { Order = CheckEnableRules.Reorder(Settings.Order, allIds, fromId, toId) }, persistToHost);
+    public void Reorder(string fromId, string toId, IEnumerable<string> allIds, bool persistToHost = true)
+    {
+        var ids = allIds.ToList();
+        Update(s => s with { Order = CheckEnableRules.Reorder(s.Order, ids, fromId, toId) }, persistToHost);
+    }
 
     /// <summary>Applies a remote technician's saved preferences to this session without overwriting the customer PC's host settings file.</summary>
-    public void ApplyRemotePrefs(CheckSettings prefs) => Save(prefs, persistToHost: false);
-
-    private void Save(CheckSettings settings, bool persistToHost = true)
+    public void ApplyRemotePrefs(CheckSettings prefs)
     {
-        CheckSettings saved;
-        lock (_gate)
-            _state = saved = settings with
-            {
-                SchemaVersion = CheckSettings.CurrentSchemaVersion,
-                Disabled = CheckEnableRules.Normalize(settings.Disabled),
-                Order = CheckEnableRules.NormalizeOrder(settings.Order),
-            };
-        if (persistToHost) _store.Save(saved);
+        lock (_gate) _session = Clean(prefs);
         Raise();
     }
+
+    /// <summary>Drops the technician's session preferences, so <see cref="Settings"/> is what is saved on the PC again.</summary>
+    public void ClearSessionPrefs()
+    {
+        lock (_gate)
+        {
+            if (_session is null) return;
+            _session = null;
+        }
+        Raise();
+    }
+
+    /// <summary>
+    /// With <paramref name="persistToHost"/>, changes and saves the PC's settings (and the session preferences too, when set, so the
+    /// change shows). Without it, changes only the session preferences, starting from what is saved when there are none yet.
+    /// </summary>
+    private void Update(Func<CheckSettings, CheckSettings> change, bool persistToHost)
+    {
+        CheckSettings? toSave = null;
+        lock (_gate)
+        {
+            if (persistToHost)
+            {
+                _state = toSave = Clean(change(_state));
+                if (_session is not null) _session = Clean(change(_session));
+            }
+            else
+                _session = Clean(change(_session ?? _state));
+        }
+        if (toSave is not null) _store.Save(toSave);
+        Raise();
+    }
+
+    private static CheckSettings Clean(CheckSettings settings) => settings with
+    {
+        SchemaVersion = CheckSettings.CurrentSchemaVersion,
+        Disabled = CheckEnableRules.Normalize(settings.Disabled),
+        Order = CheckEnableRules.NormalizeOrder(settings.Order),
+    };
 
     private void Raise() { try { Changed?.Invoke(); } catch { } }
 }

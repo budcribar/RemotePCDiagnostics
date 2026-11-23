@@ -163,13 +163,14 @@
         <div class="dash-verdict-actions">
             @if (checking && Screen.RunningGroup == CheckGroup.Checks)
             {
-                <button type="button" class="btn btn-stop" data-testid="dashboard-refresh" @onclick="Screen.Stop">
+                <button type="button" class="btn btn-stop" data-testid="dashboard-checks-stop" @onclick="Screen.Stop">
                     Stop
                 </button>
             }
             else
             {
-                <button type="button" class="btn btn-primary" data-testid="dashboard-refresh" disabled="@(checking || enabledModules.Count == 0)" @onclick="RefreshAll" title="Refresh all enabled checks">
+                @* dashboard-runall and dashboard-checks-stop are the ids Admin's run_checks and stop_checks click. *@
+                <button type="button" class="btn btn-primary" data-testid="dashboard-runall" disabled="@(checking || enabledModules.Count == 0)" @onclick="RefreshAll" title="Refresh all enabled checks">
                     <span class="@(checking ? "dash-spin" : "")"><Icon Name="refresh" Size="14" /></span>
                     <span>Refresh</span>
                 </button>

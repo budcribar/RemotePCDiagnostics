@@ -150,7 +150,8 @@ public class CheckEnablementTests
         Assert.Contains("data-testid=\"checks-settings-toggle\"", page, StringComparison.Ordinal);
         Assert.Contains("aria-expanded=\"@(_checksOpen ? \"true\" : \"false\")\"", page, StringComparison.Ordinal);
         Assert.Contains("open=\"@_checksOpen\"", page, StringComparison.Ordinal);
-        Assert.Contains("data-testid=\"checks-toggle-all\"", page, StringComparison.Ordinal);
+        Assert.Contains("data-testid=\"checks-enable-all\"", page, StringComparison.Ordinal);
+        Assert.Contains("data-testid=\"checks-disable-all\"", page, StringComparison.Ordinal);
         Assert.Contains("data-testid=\"checks-refresh\"", page, StringComparison.Ordinal);
         Assert.Contains("data-testid=\"@CheckEnableRules.Control(check.Id)\"", page, StringComparison.Ordinal);
         Assert.Contains("data-check-id=\"@check.Id\"", page, StringComparison.Ordinal);
@@ -191,6 +192,37 @@ public class CheckEnablementTests
         Assert.False(svc.IsEnabled(ModuleSlugs.DriveHealth));
         Assert.Equal([ModuleSlugs.Osquery, ModuleSlugs.BatteryPower], svc.Settings.Order);
         Assert.Same(hostSnapshot, store.State);
+    }
+
+    [Fact]
+    public void Session_prefs_stay_in_the_session_survive_Reload_and_never_reach_the_saved_file()
+    {
+        var store = new MemoryCheckSettingsStore();
+        var svc = new CheckSettingsService(store);
+        svc.SetEnabled(ModuleSlugs.Osquery, on: false, available: true);
+
+        svc.ApplyRemotePrefs(new CheckSettings { Disabled = [ModuleSlugs.DriveHealth] });
+        Assert.True(svc.HasSessionPrefs);
+        Assert.True(svc.IsEnabled(ModuleSlugs.Osquery));
+        Assert.False(svc.IsEnabled(ModuleSlugs.DriveHealth));
+
+        // A session-only change edits the technician's list, not the PC's.
+        svc.SetEnabled(ModuleSlugs.BatteryPower, on: false, available: true, persistToHost: false);
+        Assert.Equal([ModuleSlugs.Osquery], store.State!.Disabled);
+        Assert.False(svc.IsEnabled(ModuleSlugs.BatteryPower));
+
+        // Reading the saved file again (the Agent connected) keeps the session preferences.
+        Assert.True(svc.Reload());
+        Assert.False(svc.IsEnabled(ModuleSlugs.DriveHealth));
+
+        // A saved change applies to the PC's own list only: the technician's list is not written to the file.
+        svc.SetEnabled(ModuleSlugs.Crashes, on: false, available: true);
+        Assert.Equal([ModuleSlugs.Crashes, ModuleSlugs.Osquery], store.State!.Disabled);
+        Assert.False(svc.IsEnabled(ModuleSlugs.Crashes));
+
+        svc.ClearSessionPrefs();
+        Assert.False(svc.HasSessionPrefs);
+        Assert.Equal(store.State!.Disabled, svc.Settings.Disabled);
     }
 
     [Fact]

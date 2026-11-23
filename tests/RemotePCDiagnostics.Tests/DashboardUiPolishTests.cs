@@ -37,7 +37,7 @@ public class DashboardUiPolishTests : BunitContext
         Assert.DoesNotContain("Updated ", card.TextContent, StringComparison.OrdinalIgnoreCase);
 
         // Verdict bar has single Refresh button and no 10-min QA / stress suite clutter.
-        Assert.NotNull(cut.Find("[data-testid='dashboard-refresh']"));
+        Assert.NotNull(cut.Find("[data-testid='dashboard-runall']"));
         Assert.Empty(cut.FindAll("[data-testid='dashboard-bench-qa']"));
         Assert.Empty(cut.FindAll("[data-testid='dashboard-runall-stress-short']"));
     }
@@ -65,10 +65,10 @@ public class DashboardUiPolishTests : BunitContext
         var m1 = new FakeModule(ModuleSlugs.DriveHealth, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.DriveHealth)));
         var m2 = new FakeModule(ModuleSlugs.Crashes, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.Crashes)));
         var m3 = new FakeModule(ModuleSlugs.EventLog, _ => Task.FromResult(FakeModule.Ok(ModuleSlugs.EventLog)));
+        RegisterDashboardServices(store, m1, m2, m3); // registering a module resets its stored result, so register first
         store.Set(new DiagnosticResult(ModuleSlugs.DriveHealth, DiagnosticStatus.Error, "SMART failure", DateTimeOffset.Now));
         store.Set(new DiagnosticResult(ModuleSlugs.Crashes, DiagnosticStatus.Warning, "2 app faults", DateTimeOffset.Now));
         store.Set(new DiagnosticResult(ModuleSlugs.EventLog, DiagnosticStatus.Warning, "4 errors", DateTimeOffset.Now));
-        RegisterDashboardServices(store, m1, m2, m3);
 
         var cut = Render<NavRail>();
 
@@ -81,6 +81,7 @@ public class DashboardUiPolishTests : BunitContext
     {
         var store = new ResultStore();
         var sensorMod = new FakeModule(LibreHardwareMonitorModule.ModuleName, _ => Task.FromResult(FakeModule.Ok(LibreHardwareMonitorModule.ModuleName)));
+        RegisterDashboardServices(store, sensorMod);
         var snap = new SensorSnapshot([
             new("Snapdragon X Elite", HardwareKind.Cpu, "CPU Package", SensorKind.Temperature, 65, 55, 70, "°C"),
             new("NVMe Drive", HardwareKind.Storage, "Composite Temperature", SensorKind.Temperature, 42, 38, 45, "°C"),
@@ -88,7 +89,6 @@ public class DashboardUiPolishTests : BunitContext
         var report = LibreHardwareMonitorModule.BuildReport(snap);
         var msg = LibreHardwareMonitorModule.Summarize(report);
         store.Set(new DiagnosticResult<SensorReport>(LibreHardwareMonitorModule.ModuleName, DiagnosticStatus.Ok, msg, DateTimeOffset.Now, report));
-        RegisterDashboardServices(store, sensorMod);
 
         var cut = Render<Dashboard>();
 

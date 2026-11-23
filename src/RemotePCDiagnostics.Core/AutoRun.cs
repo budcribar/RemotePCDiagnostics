@@ -77,7 +77,7 @@ public static class AutoRun
                     if (ct.IsCancellationRequested) return;
                     if (settings is not null && !settings.IsEnabled(name)) return;
                     log.Info($"Auto-run: starting {name}");
-                    var result = await service.RunAsync(name, ct).ConfigureAwait(false);
+                    var result = await service.RunAsync(name, ct: ct).ConfigureAwait(false);
                     log.Info($"Auto-run: {name} finished: {result.Status}");
                 }
                 catch (OperationCanceledException) { }

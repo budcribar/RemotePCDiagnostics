@@ -22,7 +22,6 @@
     var checkChoices = _group == CheckGroup.Checks ? Diagnostics.CheckChoices() : [];
     var availableChecks = checkChoices.Where(c => c.Available).ToList();
     var enabledChecks = availableChecks.Count(c => c.Enabled);
-    var allChecksOn = availableChecks.Count > 0 && enabledChecks == availableChecks.Count;
     var checksRunning = Screen.RunningGroup == CheckGroup.Checks || Screen.Modules(CheckGroup.Checks).Any(m => Store.Get(m.Name).Status == DiagnosticStatus.Running);
 }
 <div class="ct-page">
@@ -77,16 +76,9 @@
             </summary>
             <div class="bench-customize-body">
                 <div class="bench-preset-group">
-                    <label class="dash-master-check">
-                        <input type="checkbox"
-                               @ref="_masterCheckRef"
-                               data-testid="checks-toggle-all"
-                               checked="@allChecksOn"
-                               disabled="@ChecksLocked"
-                               @onclick="() => SetAllChecks(!allChecksOn)"
-                               @onclick:preventDefault="true" />
-                        <span>@(allChecksOn ? "Disable all" : "Enable all")</span>
-                    </label>
+                    @* checks-enable-all and checks-disable-all are what Admin's set_enabled_checks clicks (Checks contract 4). *@
+                    <button type="button" class="btn-small" data-testid="checks-enable-all" disabled="@ChecksLocked" @onclick="() => SetAllChecks(true)">Enable all</button>
+                    <button type="button" class="btn-small" data-testid="checks-disable-all" disabled="@ChecksLocked" @onclick="() => SetAllChecks(false)">Disable all</button>
                 </div>
                 <div class="bench-kinds">
                     @foreach (var choice in availableChecks)
@@ -189,7 +181,6 @@
 
     private void OnScreenChanged() { try { _ = InvokeAsync(StateHasChanged); } catch { } }
 
-    private ElementReference _masterCheckRef;
     private string? _dragCheckId;
     private string? _dropCheckId;
     private bool PersistToHost => Session.Mode != SessionMode.Remote;
@@ -199,13 +190,6 @@
         if (firstRender)
         {
             try { await JS.InvokeVoidAsync("rpdSplit.init"); } catch { /* no JS helper (older host page): fixed 55% split */ }
-        }
-        if (_group == CheckGroup.Checks && _checksOpen)
-        {
-            var available = Diagnostics.CheckChoices().Where(c => c.Available).ToList();
-            var enabled = available.Count(c => c.Enabled);
-            var indeterminate = enabled > 0 && enabled < available.Count;
-            try { await JS.InvokeVoidAsync("rpdSetIndeterminate", _masterCheckRef, indeterminate); } catch { }
         }
     }
 
