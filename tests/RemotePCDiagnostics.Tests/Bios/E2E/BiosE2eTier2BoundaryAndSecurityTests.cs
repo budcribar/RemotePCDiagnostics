@@ -447,7 +447,7 @@ public sealed class BiosE2eTier2BoundaryAndSecurityTests
 
     public static TheoryData<string, BiosSystemIdentity, string[]> Http404ProviderCases => new()
     {
-        { "hp", E2eIdentities.HpEliteBook(), ["https://hpia.hpcloud.hp.com/ref/8b41/8b41_64_11.0.cab", "https://hpia.hpcloud.hp.com/ref/8b41/8b41_64_10.0.cab"] },
+        { "hp", E2eIdentities.HpEliteBook(), ["https://hpia.hpcloud.hp.com/ref/8b41/"] },
         { "dell", E2eIdentities.DellLatitude(), ["https://downloads.dell.com/catalog/CatalogPC.cab"] },
         { "lenovo", E2eIdentities.LenovoThinkPad(), ["https://download.lenovo.com/catalog/21HM_Win11.xml", "https://download.lenovo.com/catalog/21HM_Win10.xml"] },
         { "asus", E2eIdentities.AsusRog(), ["https://www.asus.com/support/api/product.asmx/GetPDBIOS"] },
