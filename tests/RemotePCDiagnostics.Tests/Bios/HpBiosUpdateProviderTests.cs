@@ -1144,6 +1144,81 @@ public sealed class HpBiosUpdateProviderTests
         Assert.Equal("U70", latest.Metadata?["family"]);
     }
 
+    [Fact]
+    public async Task GetLatestVersionAsync_DriverOnlyArm64Catalog_SignalsAndFallsBackToWindowsUpdate()
+    {
+        const string xml = """
+            <ImagePal>
+              <UpdateInfo>
+                <Id>sp174812</Id>
+                <Category>Dock - Firmware and Driver</Category>
+                <Name>HP USB-C Dock G5 - Firmware</Name>
+                <Version>1.0.27.0</Version>
+                <Url>https://ftp.hp.com/pub/softpaq/sp174812.exe</Url>
+              </UpdateInfo>
+              <UpdateInfo>
+                <Id>sp153582</Id>
+                <Category>Firmware</Category>
+                <Name>ELAN Touch Firmware</Name>
+                <Version>6701</Version>
+                <Url>https://ftp.hp.com/pub/softpaq/sp153582.exe</Url>
+              </UpdateInfo>
+            </ImagePal>
+            """;
+
+        var handler = new FakeBiosHttpHandler()
+            .MapText("https://hpia.hpcloud.hp.com/ref/8cbe/8cbe_arm64_11.0.24h2.cab", xml, "application/xml");
+
+        var hpProvider = HpBiosUpdateProvider.CreateWithHandler(handler);
+        var identity = BiosIdentityFactory.Hp(boardProduct: "8CBE", biosVersion: "F.34") with { Architecture = "ARM64" };
+        var current = await hpProvider.GetCurrentVersionAsync(identity);
+
+        // Direct HP provider call still reports UnsupportedHardware, with fallbackToWindowsUpdate=true.
+        var hpLatest = await hpProvider.GetLatestVersionAsync(identity, current);
+        Assert.Equal(BiosCheckStatus.UnsupportedHardware, hpLatest.Status);
+        Assert.Equal("true", hpLatest.Metadata?[BiosUpdateService.FallbackToWindowsUpdateMetadataKey]);
+
+        // BiosUpdateService falls back to WindowsUpdateBiosProvider when no HP BIOS SoftPaq is published.
+        var wuaUpToDate = new WindowsUpdateBiosProvider(wuaClient: new InlineWuaClient([]));
+        var service = new BiosUpdateService(
+            new StaticSystemProbe(identity),
+            new StaticSafetyProbe(),
+            [hpProvider, wuaUpToDate]);
+
+        var outcome = await service.CheckForUpdateAsync();
+        Assert.Equal(WindowsUpdateBiosProvider.ProviderVendorId, outcome.ProviderId);
+        Assert.Equal("Windows Update", outcome.ProviderDisplayName);
+        Assert.Equal(BiosCheckStatus.UpToDate, outcome.Latest.Status);
+        Assert.Equal("F.34", outcome.Latest.LatestVersion);
+    }
+
+    private sealed class StaticSystemProbe(BiosSystemIdentity identity) : IBiosSystemProbe
+    {
+        public Task<BiosSystemIdentity> ProbeAsync(CancellationToken ct = default) => Task.FromResult(identity);
+    }
+
+    private sealed class StaticSafetyProbe : IBiosInstallSafetyProbe
+    {
+        public Task<BiosSafetySnapshot> ProbeAsync(CancellationToken ct = default) =>
+            Task.FromResult(new BiosSafetySnapshot(
+                OnAcPower: true,
+                HasBattery: true,
+                BatteryPercent: 100,
+                BitLockerActive: false,
+                BitLockerSuspended: null,
+                HasElevation: true,
+                PendingReboot: false));
+    }
+
+    private sealed class InlineWuaClient(IReadOnlyList<BiosWuaFirmwareUpdate> updates) : IBiosWindowsUpdateClient
+    {
+        public Task<IReadOnlyList<BiosWuaFirmwareUpdate>> SearchPendingFirmwareUpdatesAsync(CancellationToken ct = default) =>
+            Task.FromResult(updates);
+
+        public Task<BiosWuaInstallOutcome> InstallUpdateAsync(Guid updateId, CancellationToken ct = default) =>
+            Task.FromResult(new BiosWuaInstallOutcome(Succeeded: true, ResultCode: 0, RebootRequired: false, Message: "ok"));
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------

@@ -126,6 +126,12 @@ public sealed class BiosUpdateService : IBiosUpdateService
         try
         {
             var latest = await provider.GetLatestVersionAsync(system, current, ct).ConfigureAwait(false);
+            if (ShouldFallbackToLowerPriorityProvider(latest))
+            {
+                var fallbackOutcome = await TryCheckWithFallbackProviderAsync(system, current, provider, ct).ConfigureAwait(false);
+                if (fallbackOutcome is not null)
+                    return fallbackOutcome;
+            }
             return new BiosUpdateCheckOutcome(system, current, latest, provider.VendorId, provider.DisplayName);
         }
         catch (OperationCanceledException) { throw; }
@@ -139,6 +145,58 @@ public sealed class BiosUpdateService : IBiosUpdateService
                 provider.VendorId,
                 provider.DisplayName);
         }
+    }
+
+    internal const string FallbackToWindowsUpdateMetadataKey = "fallbackToWindowsUpdate";
+
+    private static bool ShouldFallbackToLowerPriorityProvider(BiosLatestInfo latest) =>
+        latest.Status == BiosCheckStatus.UnsupportedHardware
+        && latest.Metadata is not null
+        && latest.Metadata.TryGetValue(FallbackToWindowsUpdateMetadataKey, out var flag)
+        && string.Equals(flag, "true", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<BiosUpdateCheckOutcome?> TryCheckWithFallbackProviderAsync(
+        BiosSystemIdentity system,
+        BiosCurrentInfo primaryCurrent,
+        IBiosUpdateProvider primaryProvider,
+        CancellationToken ct)
+    {
+        foreach (var candidate in Providers)
+        {
+            if (candidate.Priority >= primaryProvider.Priority)
+                continue;
+            if (!SafeCanHandle(candidate, system) || !candidate.Capabilities.CanCheckLatest)
+                continue;
+
+            BiosCurrentInfo fallbackCurrent;
+            try
+            {
+                fallbackCurrent = await candidate.GetCurrentVersionAsync(system, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log?.Warn($"Fallback BIOS provider '{candidate.VendorId}' failed to read current version; using primary info: {ex.Message}");
+                fallbackCurrent = primaryCurrent with { ProviderId = candidate.VendorId };
+            }
+
+            try
+            {
+                var fallbackLatest = await candidate.GetLatestVersionAsync(system, fallbackCurrent, ct).ConfigureAwait(false);
+                if (fallbackLatest.Status is BiosCheckStatus.UpdateAvailable or BiosCheckStatus.UpToDate)
+                {
+                    _log?.Info($"BIOS provider '{primaryProvider.VendorId}' had no vendor BIOS package; falling back to '{candidate.VendorId}' ({fallbackLatest.Status}).");
+                    return new BiosUpdateCheckOutcome(system, fallbackCurrent, fallbackLatest, candidate.VendorId, candidate.DisplayName);
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log?.Warn($"Fallback BIOS provider '{candidate.VendorId}' failed during update check: {ex.Message}");
+            }
+        }
+
+        return null;
     }
 
     public async Task<BiosSafetyCheckResult> EvaluateInstallSafetyAsync(BiosInstallRequest request, CancellationToken ct = default)

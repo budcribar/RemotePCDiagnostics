@@ -419,6 +419,8 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
 
         var candidates = new List<HpCatalogEntry>();
         var hadDisallowedUrl = false;
+        var sawNonBiosEntries = false;
+        var sawAnyBiosEntry = false;
 
         foreach (var el in doc.Descendants())
         {
@@ -433,7 +435,13 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
             var category = GetField(el, "Category", "Type", "Class", "ComponentType");
             var name = GetField(el, "Name", "Title", "ProductName");
             if (!IsBiosCategory(category, name))
+            {
+                if (!string.IsNullOrWhiteSpace(category) || !string.IsNullOrWhiteSpace(name))
+                    sawNonBiosEntries = true;
                 continue;
+            }
+
+            sawAnyBiosEntry = true;
 
             var rawVersion = GetField(el, "Version", "BiosVersion", "FirmwareVersion");
             var (verFamily, normalizedVersion) = NormalizeHpVersion(rawVersion);
@@ -499,9 +507,26 @@ public sealed partial class HpBiosUpdateProvider : IBiosUpdateProvider
                     $"HP BIOS catalog for SystemId {systemId} returned a disallowed download URL.");
             }
 
-            return BiosLatestInfo.Unsupported(
+            var unsupported = BiosLatestInfo.Unsupported(
                 VendorId,
                 $"No HP BIOS release was found in catalog for SystemId {systemId}.");
+
+            // Platforms whose valid HPIA catalog lists drivers/firmware but zero System BIOS SoftPaqs
+            // (notably HP Snapdragon ARM64 models) deliver UEFI BIOS updates via Windows Update capsules.
+            if (sawNonBiosEntries && !sawAnyBiosEntry)
+            {
+                unsupported = unsupported with
+                {
+                    Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["systemId"] = systemId,
+                        ["osVersion"] = usedOs,
+                        [BiosUpdateService.FallbackToWindowsUpdateMetadataKey] = "true",
+                    },
+                };
+            }
+
+            return unsupported;
         }
 
         var best = candidates[0];
