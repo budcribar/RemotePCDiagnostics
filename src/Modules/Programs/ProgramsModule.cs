@@ -41,14 +41,26 @@ public sealed class ProgramsModule(IProgramsSource source, Func<DateOnly>? today
         catch (Exception ex) { LogWarn($"{Name}: pending updates unreadable: {ex.Message}"); return null; }
     }
 
-    /// <summary>Adds the pending-updates card after the installed-updates card. It never changes the check's result.</summary>
+    /// <summary>Adds the pending-updates card (and the failed-updates card when any recent install failed) after the installed-updates
+    /// card. Pending updates never change the check's status; recent failed updates raise it to at least Warning.</summary>
     public static AreaReport WithPendingUpdates(AreaReport report, PendingUpdateList? pending)
     {
         if (report.Cards.Count == 0) return report;
         var cards = report.Cards.ToList();
         var at = cards.FindIndex(c => c.Id == "updates");
-        cards.Insert(at < 0 ? cards.Count : at + 1, PendingUpdates.Card(pending, drivers: false));
-        return report with { Cards = cards };
+        var insertAt = at < 0 ? cards.Count : at + 1;
+        cards.Insert(insertAt, PendingUpdates.Card(pending, drivers: false));
+
+        var failedCard = PendingUpdates.FailedCard(pending);
+        if (failedCard is null)
+            return report with { Cards = cards };
+
+        cards.Insert(insertAt + 1, failedCard);
+        var status = (DiagnosticStatus)Math.Max((int)report.Status, (int)DiagnosticStatus.Warning);
+        var summary = string.IsNullOrWhiteSpace(report.Summary)
+            ? failedCard.Headline
+            : $"{report.Summary} · {failedCard.Headline}";
+        return report with { Cards = cards, Status = status, Summary = summary };
     }
 
     public static DateOnly? ParseDate(string s) => OsqueryDates.Parse(s);

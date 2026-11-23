@@ -328,6 +328,72 @@ public class GranularFixTests
     }
 
     [Fact]
+    public void Failed_update_history_drops_self_healed_old_and_one_off_defender_entries()
+    {
+        var now = new DateTimeOffset(2026, 11, 23, 12, 0, 0, TimeSpan.Zero);
+        var entries = new[]
+        {
+            // Failed twice, still failing (should be kept with Attempts=2)
+            new UpdateHistoryEntry(Id1, "2026-11 Cumulative Update (KB5068861)", now.AddDays(-2), 1, 4, unchecked((int)0x800F0922)),
+            new UpdateHistoryEntry(Id1, "2026-11 Cumulative Update (KB5068861)", now.AddDays(-5), 1, 4, unchecked((int)0x800F0922)),
+            // Failed earlier, then succeeded (should be excluded)
+            new UpdateHistoryEntry(Id2, "2026-11 .NET Security Update (KB5135243)", now.AddDays(-3), 1, 4, unchecked((int)0x80070643)),
+            new UpdateHistoryEntry(Id2, "2026-11 .NET Security Update (KB5135243)", now.AddDays(-1), 1, 2, 0),
+            // Older than 30 days (should be excluded)
+            new UpdateHistoryEntry("old-id", "2026-09 Cumulative Update", now.AddDays(-45), 1, 4, unchecked((int)0x80070070)),
+            // Uninstallation failure (Operation=2, should be excluded)
+            new UpdateHistoryEntry("uninstall-id", "Some Removed Update", now.AddDays(-1), 2, 4, unchecked((int)0x80070005)),
+            // Single transient Defender definition failure (should be excluded)
+            new UpdateHistoryEntry("def-1", "Security Intelligence Update for Microsoft Defender Antivirus - KB2267602", now.AddHours(-6), 1, 4, unchecked((int)0x8024402C)),
+            // Repeated Defender definition failure (3+ times, should be kept)
+            new UpdateHistoryEntry("def-stuck", "Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (1.463.433.0)", now.AddHours(-1), 1, 4, unchecked((int)0x80072EE2)),
+            new UpdateHistoryEntry("def-stuck", "Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (1.463.433.0)", now.AddHours(-3), 1, 4, unchecked((int)0x80072EE2)),
+            new UpdateHistoryEntry("def-stuck", "Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (1.463.433.0)", now.AddHours(-5), 1, 4, unchecked((int)0x80072EE2)),
+        };
+
+        var failed = PendingUpdates.SummarizeFailedHistory(entries, now);
+        Assert.Equal(2, failed.Count);
+        Assert.Equal("def-stuck", failed[0].Id);
+        Assert.Equal(3, failed[0].FailedAttempts);
+        Assert.Equal(Id1, failed[1].Id);
+        Assert.Equal(2, failed[1].FailedAttempts);
+        Assert.Contains("0x800F0922", PendingUpdates.DescribeHResult(failed[1].HResult));
+        Assert.Contains("DISM", PendingUpdates.DescribeHResult(failed[1].HResult));
+        Assert.Equal("0x80070002", PendingUpdates.DescribeHResult(unchecked((int)0x80070002)));
+    }
+
+    [Fact]
+    public void Failed_updates_card_joins_programs_and_raises_status_to_warning()
+    {
+        var programs = ProgramsModule.Build(
+            new Dictionary<string, string> { ["name"] = "Windows 11 Pro" },
+            true,
+            [new("KB1", "Update", new DateOnly(2026, 11, 20))],
+            [],
+            new DateOnly(2026, 11, 23));
+        Assert.Equal(DiagnosticStatus.Ok, programs.Status);
+
+        var failed = new FailedUpdate(Id1, "2026-11 Cumulative Update (KB5068861)", new DateTimeOffset(2026, 11, 22, 10, 0, 0, TimeSpan.Zero), unchecked((int)0x80070643), 3);
+        var withFailed = ProgramsModule.WithPendingUpdates(programs, new PendingUpdateList([], RebootRequired: true, FailedUpdates: [failed]));
+
+        Assert.Equal(DiagnosticStatus.Warning, withFailed.Status);
+        Assert.Contains("1 failed update", withFailed.Summary);
+
+        var updatesIndex = withFailed.Cards.ToList().FindIndex(c => c.Id == "updates");
+        Assert.Equal(PendingUpdates.SoftwareCardId, withFailed.Cards[updatesIndex + 1].Id);
+        var failedCard = withFailed.Cards[updatesIndex + 2];
+        Assert.Equal(PendingUpdates.FailedCardId, failedCard.Id);
+        Assert.Equal(AreaLevel.Warning, failedCard.Level);
+        var row = Assert.Single(failedCard.Rows);
+        Assert.Equal(AreaLevel.Error, row.Level); // 3+ attempts
+        Assert.Contains("0x80070643", row.Values[3]);
+        Assert.Contains(failedCard.Actions!, a => a.Kind == RemediationKind.ScheduleCleanRestart);
+
+        // No failed card when FailedUpdates is empty
+        Assert.Null(PendingUpdates.FailedCard(new PendingUpdateList([], false, [])));
+    }
+
+    [Fact]
     public void Install_takes_only_a_Windows_Update_ID()
     {
         var plan = AgentScripts.Plan(AgentScripts.Of(AgentScripts.InstallUpdate, Id1.ToUpperInvariant()), null, out _)!;

@@ -30,7 +30,6 @@ public class WindowsReadOnlyTests
         { "DefenderExclusions", true },
         { "DockDevices", true },
         { "MemoryProbe", true },
-        { "PendingUpdates", true },       // prints its JSON even when Windows Update can't be asked
     };
 
     /// <summary>Needs the Windows Search service, which a PC may have turned off: run, but its exit code isn't asserted.</summary>

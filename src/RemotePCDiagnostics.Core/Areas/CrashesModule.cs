@@ -42,8 +42,14 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         using var _ = ReportClock.Use(clock);
         var total = includeSystemCrashes ? 4 : 2;
         progress.ReportStep(1, total, "Looking for app crashes and hangs…");
-        var events = await _log.QueryAsync("Application", Query, Max, ct).ConfigureAwait(false);
-        Log($"{Name}: source=wevtutil Application log (Application Error 1000 / Application Hang 1002) events={events?.Count.ToString() ?? "failed"}");
+        var eventsTask = _log.QueryAsync("Application", Query, Max, ct);
+        var werTask = includeSystemCrashes
+            ? _log.QueryAsync("Application", GraphicsDriverCrashes.ReportQuery, GraphicsDriverCrashes.MaxEvents, ct)
+            : Task.FromResult<IReadOnlyList<WinEvent>?>(null);
+        await Task.WhenAll(eventsTask, werTask).ConfigureAwait(false);
+        var events = await eventsTask;
+        var werReports = await werTask;
+        Log($"{Name}: source=wevtutil Application log (Application Error 1000 / Application Hang 1002) events={events?.Count.ToString() ?? "failed"} wer={werReports?.Count.ToString() ?? "n/a"}");
         progress.ReportStep(2, total, "Checking .NET runtime crash details…");
         var runtime = events?.Any(e => e.EventId == 1000) == true
             ? await _log.QueryAsync("Application",
@@ -52,10 +58,12 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             : null;
         var reviewed = await EventReviews.ReadAsync(host, ct).ConfigureAwait(false);
         var runtimeEvents = (runtime ?? []).Where(e => e.EventId == 1026).ToList();
-        var appReport = events is null ? AreaReport.Failed(FailedMessage)
-            : Build(events.Where(e => !reviewed.Contains(EventReviews.Key(e))).Concat(runtimeEvents).ToList()) with
+        var werAppEvents = (werReports ?? []).Where(IsWerAppEvent).ToList();
+        var appEvents = events is null ? null : events.Concat(werAppEvents).ToList();
+        var appReport = appEvents is null ? AreaReport.Failed(FailedMessage)
+            : Build(appEvents.Where(e => !reviewed.Contains(EventReviews.Key(e))).Concat(runtimeEvents).ToList()) with
             {
-                ReviewedCards = Build(events.Where(e => reviewed.Contains(EventReviews.Key(e))).Concat(runtimeEvents).ToList()).Cards
+                ReviewedCards = Build(appEvents.Where(e => reviewed.Contains(EventReviews.Key(e))).Concat(runtimeEvents).ToList()).Cards
             };
         if (!includeSystemCrashes)
             return appReport;
@@ -98,7 +106,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             : appReport;
 
         progress.ReportStep(4, total, "Checking for graphics driver crashes and resets…");
-        var (graphics, reviewedGraphics) = await GraphicsAsync(sysEvents, reviewed, ct).ConfigureAwait(false);
+        var (graphics, reviewedGraphics) = await GraphicsAsync(sysEvents, werReports, reviewed, ct).ConfigureAwait(false);
 
         var combinedCards = bsodReport.Cards.Append(graphics).Concat(appSection.Cards).ToList();
         var graphicsStatus = graphics.ErrorText is not null ? DiagnosticStatus.Warning : AreaReport.Worst([graphics.Level]);
@@ -111,18 +119,16 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
     }
 
     /// <summary>The graphics driver crashes &amp; resets card, and the same card for the events marked reviewed.</summary>
-    private async Task<(AreaCard Card, AreaCard Reviewed)> GraphicsAsync(IReadOnlyList<WinEvent>? bsodEvents, IReadOnlyCollection<string> reviewed,
-        CancellationToken ct)
+    private async Task<(AreaCard Card, AreaCard Reviewed)> GraphicsAsync(IReadOnlyList<WinEvent>? bsodEvents,
+        IReadOnlyList<WinEvent>? reports, IReadOnlyCollection<string> reviewed, CancellationToken ct)
     {
         var resetsTask = _log.QueryAsync("System", GraphicsDriverCrashes.SystemQuery, GraphicsDriverCrashes.MaxEvents, ct);
         var installsTask = _log.QueryAsync("System", GraphicsDriverCrashes.InstallQuery, GraphicsDriverCrashes.MaxEvents, ct);
-        var reportsTask = _log.QueryAsync("Application", GraphicsDriverCrashes.ReportQuery, GraphicsDriverCrashes.MaxEvents, ct);
         var dumpsTask = LiveKernelReportsAsync(ct);
         var driversTask = GpuDriversAsync(ct);
-        await Task.WhenAll(resetsTask, installsTask, reportsTask, dumpsTask, driversTask).ConfigureAwait(false);
+        await Task.WhenAll(resetsTask, installsTask, dumpsTask, driversTask).ConfigureAwait(false);
         var resets = await resetsTask;
         var installs = (await installsTask ?? []).Select(GraphicsDriverCrashes.ToInstall).OfType<GpuDriverInstall>().ToList();
-        var reports = await reportsTask;
         var liveDumps = await dumpsTask;
         var gpuDrivers = await driversTask;
         Log($"{Name}: graphics resets={resets?.Count.ToString() ?? "failed"} reports={reports?.Count.ToString() ?? "failed"} installs={installs.Count} " +
@@ -174,6 +180,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
     {
         public HangOccurrence? Hang { get; init; }
         public string? ReviewKey { get; init; }
+        public string ReportId { get; init; } = "";
         public string Code { get; init; } = "";
         public string? RuntimeError { get; init; }
         public string? Stack { get; init; }
@@ -190,7 +197,10 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
                 _ => $"Exception {Code}"
             };
 
-        public string Details => !IsCrash ? "Stopped responding"
+        public string Details => !IsCrash
+            ? (string.Equals(Hang?.Type, "Quiesce", StringComparison.OrdinalIgnoreCase)
+                ? "Stopped responding (background suspend)"
+                : "Stopped responding")
             : Cause is { } cause ? Part.Length > 0 ? $"{cause} (in {Part})" : cause
             : Part.Length > 0 ? $"Closed unexpectedly (problem in {Part})" : "Closed unexpectedly";
 
@@ -208,6 +218,7 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         var part = isCrash ? e.DataAt(3, "ModuleName") : "";
         var version = e.DataAt(1, "AppVersion");
         var code = isCrash ? e.DataAt(6, "ExceptionCode") : "";
+        var reportId = isCrash ? e.DataAt(12, "IntegratorReportId") : e.DataAt(6, "ReportId");
         var fields = isCrash
             ? new[] { ("Module version", 4, "ModuleVersion"), ("Fault offset", 7, "FaultingOffset"),
                 ("Process ID", 8, "ProcessId"), ("Program path", 10, "AppPath"),
@@ -220,19 +231,146 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
         return new(e.Time, app.Length > 0 ? app : "Unknown app", version, isCrash, part, e.ShortMessage)
         {
             Hang = isCrash ? null : new(e.Time, app, e.DataAt(5, "ExeFileName"), e.DataAt(7, "PackageFullName"),
-                e.DataAt(9, "HangType"), e.DataAt(6, "ReportId")),
+                e.DataAt(9, "HangType"), reportId),
             ReviewKey = EventReviews.Key(e),
+            ReportId = reportId,
             Code = code.Length > 0 && !code.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? $"0x{code}" : code,
             Metadata = string.Join("\n", metadata)
         };
     }
+
+    private static readonly HashSet<string> WerCrashEventNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "APPCRASH", "BEX", "BEX64", "MoAppCrash", "MoBEX", "CLR20r3", "StowedException"
+    };
+
+    private static readonly HashSet<string> WerHangEventNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "AppHangB1", "MoAppHang"
+    };
+
+    private static bool IsWerAppEvent(WinEvent e) =>
+        e.EventId == 1001 && e.Provider.Equals("Windows Error Reporting", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Converts a Windows Error Reporting Event 1001 into an app crash/hang incident when it represents a real app/service
+    /// failure (ignoring BlueScreen, LiveKernelEvent, and telemetry buckets).</summary>
+    public static Incident? TryWerToIncident(WinEvent e)
+    {
+        if (!IsWerAppEvent(e)) return null;
+        var eventName = e.DataAt(2, "EventName");
+        var isCrash = WerCrashEventNames.Contains(eventName);
+        var isHang = !isCrash && WerHangEventNames.Contains(eventName);
+        if (!isCrash && !isHang) return null;
+
+        var p1 = e.DataAt(5, "P1");
+        var p2 = e.DataAt(6, "P2");
+        var p3 = e.DataAt(7, "P3");
+        var p4 = e.DataAt(8, "P4");
+        var p5 = e.DataAt(9, "P5");
+        var p6 = e.DataAt(10, "P6");
+        var p7 = e.DataAt(11, "P7");
+        var bucket = e.DataAt(0, "Bucket");
+        var reportId = e.DataAt(19, "ReportId");
+
+        string app, version, part = "", code = "", package = "", hangType = "";
+        if (eventName.StartsWith("Mo", StringComparison.OrdinalIgnoreCase))
+        {
+            package = p1;
+            app = p2.StartsWith("praid:", StringComparison.OrdinalIgnoreCase) && p2.Length > 6
+                ? p2[6..]
+                : p1.Split('_')[0];
+            version = p3;
+            if (isCrash)
+            {
+                if (p4.Contains('.')) part = p4;
+                if (LooksHexCode(p7)) code = NormalizeHexCode(p7);
+            }
+            else
+            {
+                hangType = p6 == "2097152" ? "Quiesce" : p6;
+            }
+        }
+        else if (eventName.Equals("CLR20r3", StringComparison.OrdinalIgnoreCase))
+        {
+            app = p1;
+            version = p2;
+            part = e.DataAt(13, "P9");
+        }
+        else if (eventName.Equals("StowedException", StringComparison.OrdinalIgnoreCase))
+        {
+            package = p1.Contains('_') ? p1 : "";
+            app = p1.Split('_')[0];
+            version = p2;
+            part = p3;
+        }
+        else if (isHang)
+        {
+            app = p1;
+            version = p2;
+            hangType = p5 == "2097152" ? "Quiesce" : p5;
+        }
+        else
+        {
+            app = p1;
+            version = p2;
+            part = p4;
+            if (LooksHexCode(p7)) code = NormalizeHexCode(p7);
+        }
+
+        if (string.IsNullOrWhiteSpace(app)) return null;
+
+        var metadata = new[]
+        {
+            string.IsNullOrWhiteSpace(version) ? null : $"Program version: {version}",
+            $"WER event: {eventName}",
+            string.IsNullOrWhiteSpace(bucket) ? null : $"Fault bucket: {bucket}",
+            string.IsNullOrWhiteSpace(hangType) ? null : $"Freeze type: {hangType}",
+            string.IsNullOrWhiteSpace(reportId) ? null : $"Report ID: {reportId}"
+        }.Where(line => line is not null);
+
+        return new(e.Time, app, version, isCrash, part, e.ShortMessage)
+        {
+            Hang = isCrash ? null : new(e.Time, app, "", package, hangType, reportId),
+            ReviewKey = EventReviews.Key(e),
+            ReportId = reportId,
+            Code = code,
+            Metadata = string.Join("\n", metadata)
+        };
+    }
+
+    private static bool LooksHexCode(string value)
+    {
+        var trimmed = value.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? value[2..] : value;
+        return trimmed.Length is >= 6 and <= 8 && trimmed.All(Uri.IsHexDigit);
+    }
+
+    private static string NormalizeHexCode(string value) =>
+        value.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? value : $"0x{value}";
 
     /// <summary>Yellow only for a crash/freeze in the last 7 days; red when one app crashed 3+ times in 7 days.
     /// Older incidents are still listed but shown neutral.</summary>
     public static AreaReport Build(IReadOnlyList<WinEvent> events, DateTimeOffset? now = null)
     {
         var cutoff = (now ?? ReportClock.Now).AddDays(-RecentDays);
-        var all = events.Where(e => e.EventId is 1000 or 1002).Select(ToIncident).OrderByDescending(i => i.Time).ToList();
+        var primary = events.Where(e => e.EventId is 1000 or 1002).Select(ToIncident).ToList();
+
+        // Append WER-only Event 1001 incidents that don't duplicate an Event 1000/1002 (or another Event 1001 with the same ReportId).
+        var knownReportIds = new HashSet<string>(
+            primary.Select(i => i.ReportId).Where(id => !string.IsNullOrWhiteSpace(id)),
+            StringComparer.OrdinalIgnoreCase);
+        var all = new List<Incident>(primary);
+        foreach (var wer in events.Where(IsWerAppEvent).Select(TryWerToIncident).OfType<Incident>())
+        {
+            if (!string.IsNullOrWhiteSpace(wer.ReportId) && !knownReportIds.Add(wer.ReportId))
+                continue;
+            if (primary.Any(p => p.IsCrash == wer.IsCrash
+                && (p.Time - wer.Time).Duration() <= TimeSpan.FromSeconds(10)
+                && AppsMatch(p, wer)))
+                continue;
+            all.Add(wer);
+        }
+        all.Sort((a, b) => b.Time.CompareTo(a.Time));
+
         var runtime = events.Where(e => e.EventId == 1026 && e.Provider.Equals(".NET Runtime", StringComparison.OrdinalIgnoreCase))
             .Select(e =>
             {
@@ -259,6 +397,17 @@ public sealed class CrashesModule(SystemCommandRunner commands, bool includeSyst
             if (matchedCrashes.Contains(index) || !matchedRuntime.Add(entry.id)) continue;
             matchedCrashes.Add(index);
             all[index] = all[index] with { RuntimeError = entry.value.Error, Stack = entry.value.Stack };
+        }
+
+        static bool AppsMatch(Incident primaryIncident, Incident werIncident)
+        {
+            if (string.Equals(primaryIncident.App, werIncident.App, StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (!string.IsNullOrWhiteSpace(primaryIncident.Hang?.Package)
+                && !string.IsNullOrWhiteSpace(werIncident.Hang?.Package)
+                && string.Equals(primaryIncident.Hang.Package, werIncident.Hang.Package, StringComparison.OrdinalIgnoreCase))
+                return true;
+            return false;
         }
 
         bool Recent(Incident i) => i.Time >= cutoff;

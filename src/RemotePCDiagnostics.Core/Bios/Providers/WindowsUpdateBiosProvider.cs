@@ -1201,7 +1201,7 @@ internal sealed class WindowsUpdateAgentBiosClient : IBiosWindowsUpdateClient
             dynamic searcher = searcherObj;
             try
             {
-                // Query Windows Update's local catalog cache (same as PendingUpdates.ps1) so non-elevated
+                // Query Windows Update's local catalog cache (same as PendingUpdates) so non-elevated
                 // checks return immediately and don't fail or stall on live online WUA server/policy errors.
                 searcher.Online = false;
             }
